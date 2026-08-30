@@ -253,6 +253,20 @@ def test_merge_hold_directions_recognizes_equivalent_permission() -> None:
     ) == {}
 
 
+def test_merge_hold_directions_scopes_numbered_pr_permission() -> None:
+    """Verify permission for another numbered PR cannot withdraw this task's hold."""
+    assert merge_hold_directions(
+        "You may merge PR #621.",
+        active_holds=("do not merge",),
+        active_pull_request=620,
+    ) == {}
+    assert merge_hold_directions(
+        "You may merge PR #620.",
+        active_holds=("do not merge",),
+        active_pull_request=620,
+    ) == {"do not merge": "remove"}
+
+
 def test_merge_hold_directions_preserves_long_conditional_permission() -> None:
     """Verify a long conditional prefix cannot withdraw an active hold."""
     assert merge_hold_directions(
@@ -301,6 +315,9 @@ def test_merge_hold_directions_recognizes_plain_approval_condition() -> None:
     ) == {"wait for approval": "add"}
     assert merge_hold_directions(
         "Implement issue #602, but do not merge without my approval."
+    ) == {"wait for approval": "add"}
+    assert merge_hold_directions(
+        "Implement issue #602, but do not merge prior to maintainer approval."
     ) == {"wait for approval": "add"}
     assert merge_hold_directions(
         "Implement issue #602, but merge after CI passes."

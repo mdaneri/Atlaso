@@ -2300,6 +2300,42 @@
       "expected_holds": [
         "wait for approval"
       ]
+    },
+    {
+      "name": "permission-for-numbered-other-pr-does-not-withdraw-current-hold",
+      "default_merge_authority": true,
+      "active_pull_request": 620,
+      "instructions": [
+        {
+          "text": "Implement issue #602 and deliver PR #620, but do not merge.",
+          "add_holds": [
+            "do not merge"
+          ]
+        },
+        {
+          "text": "You may merge PR #621."
+        }
+      ],
+      "generated": "For PR #620, preserve the do not merge hold.",
+      "expected_holds": [
+        "do not merge"
+      ]
+    },
+    {
+      "name": "prior-to-maintainer-approval-is-preserved",
+      "default_merge_authority": true,
+      "instructions": [
+        {
+          "text": "Implement issue #602, but do not merge prior to maintainer approval.",
+          "add_holds": [
+            "wait for approval"
+          ]
+        }
+      ],
+      "generated": "Wait for maintainer approval before merging.",
+      "expected_holds": [
+        "wait for approval"
+      ]
     }
   ]
 }
