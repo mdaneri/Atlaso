@@ -188,7 +188,7 @@ function isValidSuppressionDeclaration (property, value) {
   }
   if (property === 'color') {
     return /^(?:transparent|currentcolor|black|silver|gray|white|maroon|red|purple|fuchsia|green|lime|olive|yellow|navy|blue|teal|aqua|orange|rebeccapurple)$/.test(value) ||
-      /^#[0-9a-f]{3,8}$/.test(value) ||
+      /^#(?:[0-9a-f]{3}|[0-9a-f]{4}|[0-9a-f]{6}|[0-9a-f]{8})$/.test(value) ||
       /^(?:rgb|rgba|hsl|hsla|hwb|lab|lch|oklab|oklch|color|color-mix|light-dark)\(.+\)$/.test(value)
   }
   return true
@@ -459,6 +459,14 @@ function isHtmlSuppressed () {
   if (htmlStack.some(entry => entry.irreversible)) {
     return true
   }
+  for (const entry of htmlStack) {
+    if (
+      entry.closedDetails &&
+      !htmlStack.some(candidate => candidate.summaryOwner === entry)
+    ) {
+      return true
+    }
+  }
   let visibilityHidden = false
   for (let index = htmlStack.length - 1; index >= 0; index -= 1) {
     if (htmlStack[index].visibility) {
@@ -524,19 +532,29 @@ function updateHtmlSuppression (content, inlineContext = false) {
       ? htmlStack[htmlStack.length - 1].customProperties
       : new Map()
     const suppression = hasHiddenAttributes(attributes, inheritedCustomProperties, tag)
+    const parent = htmlStack.length ? htmlStack[htmlStack.length - 1] : null
+    let summaryOwner = null
+    if (tag === 'summary' && parent?.closedDetails && !parent.summarySeen) {
+      parent.summarySeen = true
+      summaryOwner = parent
+    }
     const foreign = tag === 'svg' || tag === 'math' || Boolean(
       htmlStack.length && htmlStack[htmlStack.length - 1].foreign
     )
     if (!match.groups.selfClosing || (!voidTags.has(tag) && !foreign)) {
-      htmlStack.push({
+      const entry = {
         tag,
         irreversible: suppressedTags.has(tag) || suppression.irreversible,
+        closedDetails: tag === 'details' && !/\sopen(?:\s|=|$)/i.test(attributes),
+        summarySeen: false,
+        summaryOwner,
         visibility: suppression.visibility,
         color: suppression.color,
         inline: inlineContext,
         foreign,
         customProperties: suppression.customProperties
-      })
+      }
+      htmlStack.push(entry)
     }
   }
 }
