@@ -283,6 +283,17 @@
       "expected_holds": []
     },
     {
+      "name": "coordinated-negated-work-ineligible",
+      "default_merge_authority": false,
+      "instructions": [
+        {
+          "text": "Do not implement, fix, or deliver any changes; only explain the failure."
+        }
+      ],
+      "generated": "Explain the failure without changing or merging the pull request.",
+      "expected_holds": []
+    },
+    {
       "name": "explicit-approval-condition",
       "default_merge_authority": true,
       "instructions": [
@@ -335,6 +346,26 @@
       "expected_holds": [
         "do not merge"
       ]
+    },
+    {
+      "name": "present-tense-approval-hold-withdrawal",
+      "default_merge_authority": true,
+      "instructions": [
+        {
+          "text": "Implement the change, but wait for approval.",
+          "add_holds": [
+            "wait for approval"
+          ]
+        },
+        {
+          "text": "You no longer need to wait for approval.",
+          "remove_holds": [
+            "wait for approval"
+          ]
+        }
+      ],
+      "generated": "The approval hold was removed; continue through guarded squash merge.",
+      "expected_holds": []
     },
     {
       "name": "future-hold-withdrawal",

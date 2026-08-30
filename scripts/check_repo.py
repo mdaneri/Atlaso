@@ -521,6 +521,7 @@ MERGE_HOLD_WITHDRAWAL_MARKERS = (
     "withdrawn",
     "withdraw the",
     "no longer applies",
+    "no longer need to",
     "rescinded",
     "revoked",
     "may merge now",
@@ -593,6 +594,15 @@ DEFAULT_MERGE_AUTHORITY_SOURCE_MARKERS = re.compile(
     r"\bwork on (?:an? )?(?:existing )?(?:ordinary )?(?:pull request|pr)\b|"
     r"pull[- ]request delivery|guarded[- ]squash merge|"
     r"task-owned pull request|ordinary same-repository"
+)
+DEFAULT_MERGE_AUTHORITY_COORDINATED_NO_WORK = re.compile(
+    r"\b(?:do not|don't|don’t|must not|without)\s+"
+    r"(?:\w+\s+){0,3}"
+    r"(?:implement|fix|resolve|solve|deliver|update|change|modify|edit|make|"
+    r"add|remove|create|build|refactor)"
+    r"(?:\s*(?:,\s*(?:(?:and|or)\s+)?|\s+(?:and|or)\s+)"
+    r"(?:implement|fix|resolve|solve|deliver|update|change|modify|edit|make|"
+    r"add|remove|create|build|refactor)){1,}"
 )
 MERGE_AUTHORITY_INSTRUCTION_BOUNDARY = re.compile(
     r"(?:[;,.!?]+|\s+(?:but|and)\s+)"
@@ -805,16 +815,23 @@ def source_has_default_merge_authority(instructions: tuple[str, ...]) -> bool:
     eligible = False
     for instruction in instructions:
         normalized = " ".join(instruction.casefold().split())
-        segments = (
-            segment.strip()
-            for segment in MERGE_AUTHORITY_INSTRUCTION_BOUNDARY.split(normalized)
-            if segment.strip()
+        exclusion_matches = tuple(
+            DEFAULT_MERGE_AUTHORITY_SOURCE_EXCLUSIONS.finditer(normalized)
+        ) + tuple(DEFAULT_MERGE_AUTHORITY_COORDINATED_NO_WORK.finditer(normalized))
+        events = [
+            (match.start(), 0, False)
+            for match in exclusion_matches
+        ]
+        events.extend(
+            (match.start(), 1, True)
+            for match in DEFAULT_MERGE_AUTHORITY_SOURCE_MARKERS.finditer(normalized)
+            if not any(
+                exclusion.start() <= match.start() < exclusion.end()
+                for exclusion in exclusion_matches
+            )
         )
-        for segment in segments:
-            if DEFAULT_MERGE_AUTHORITY_SOURCE_EXCLUSIONS.search(segment) is not None:
-                eligible = False
-            elif DEFAULT_MERGE_AUTHORITY_SOURCE_MARKERS.search(segment) is not None:
-                eligible = True
+        for _, _, event_eligibility in sorted(events):
+            eligible = event_eligibility
     return eligible
 
 

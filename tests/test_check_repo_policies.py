@@ -1020,6 +1020,45 @@ def test_merge_authority_transfer_applies_structured_hold_withdrawal(
     assert check_merge_authority_transfer_fixtures(tmp_path) == []
 
 
+def test_merge_authority_transfer_recognizes_no_longer_need_withdrawal(
+    tmp_path: Path,
+) -> None:
+    """Verify present no-longer-needed wording removes an approval hold.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
+    path = tmp_path / MERGE_AUTHORITY_TRANSFER_FIXTURE_PATH
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        json.dumps(
+            {
+                "cases": [
+                    {
+                        "name": "no longer need approval",
+                        "default_merge_authority": True,
+                        "instructions": [
+                            {
+                                "text": "Implement the change, but wait for approval.",
+                                "add_holds": ["wait for approval"],
+                            },
+                            {
+                                "text": "You no longer need to wait for approval.",
+                                "remove_holds": ["wait for approval"],
+                            },
+                        ],
+                        "generated": "Continue through guarded squash merge.",
+                        "expected_holds": [],
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    assert check_merge_authority_transfer_fixtures(tmp_path) == []
+
+
 def test_merge_authority_transfer_rejects_mislabeled_hold_removal(
     tmp_path: Path,
 ) -> None:
@@ -1730,6 +1769,49 @@ def test_merge_authority_transfer_rejects_negated_authority_verbs(
             f"merge authority fixture negated {verb} declared default authority "
             "does not match its source instructions"
         )
+
+
+def test_merge_authority_transfer_preserves_coordinated_work_negation(
+    tmp_path: Path,
+) -> None:
+    """Verify one negation remains scoped across a coordinated work-verb list.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
+    path = tmp_path / MERGE_AUTHORITY_TRANSFER_FIXTURE_PATH
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        json.dumps(
+            {
+                "cases": [
+                    {
+                        "name": "coordinated negated work",
+                        "default_merge_authority": True,
+                        "instructions": [
+                            {
+                                "text": (
+                                    "Do not implement, fix, or deliver any changes; "
+                                    "only explain the failure."
+                                )
+                            }
+                        ],
+                        "generated": "Continue through guarded squash merge.",
+                        "expected_holds": [],
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    findings = check_merge_authority_transfer_fixtures(tmp_path)
+
+    assert len(findings) == 1
+    assert findings[0].message == (
+        "merge authority fixture coordinated negated work declared default authority "
+        "does not match its source instructions"
+    )
 
 
 def test_merge_authority_transfer_rejects_invented_approval_condition(
