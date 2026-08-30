@@ -310,6 +310,22 @@
       ]
     },
     {
+      "name": "explicit-keep-this-pull-request-open",
+      "default_merge_authority": true,
+      "instructions": [
+        {
+          "text": "Implement issue #602, but keep this pull request open.",
+          "add_holds": [
+            "leave open"
+          ]
+        }
+      ],
+      "generated": "Preserve the explicit leave open instruction.",
+      "expected_holds": [
+        "leave open"
+      ]
+    },
+    {
       "name": "explicit-pr-only",
       "default_merge_authority": true,
       "instructions": [
@@ -653,6 +669,17 @@
       "expected_holds": []
     },
     {
+      "name": "verify-implementation-ineligible",
+      "default_merge_authority": false,
+      "instructions": [
+        {
+          "text": "Verify the implementation and report findings."
+        }
+      ],
+      "generated": "Verify the implementation and report findings.",
+      "expected_holds": []
+    },
+    {
       "name": "check-implementation-ineligible",
       "default_merge_authority": false,
       "instructions": [
@@ -957,6 +984,25 @@
           "add_holds": [
             "do not merge"
           ]
+        }
+      ],
+      "generated": "Preserve the explicit do not merge instruction.",
+      "expected_holds": [
+        "do not merge"
+      ]
+    },
+    {
+      "name": "long-conditional-standalone-permission",
+      "default_merge_authority": true,
+      "instructions": [
+        {
+          "text": "Implement the change, but do not merge.",
+          "add_holds": [
+            "do not merge"
+          ]
+        },
+        {
+          "text": "If the maintainer approves the final updated validation report, you can merge now."
         }
       ],
       "generated": "Preserve the explicit do not merge instruction.",

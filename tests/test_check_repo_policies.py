@@ -179,6 +179,22 @@ def test_merge_hold_directions_recognizes_equivalent_permission() -> None:
         ) == {"do not merge": "remove"}
 
 
+def test_merge_hold_directions_preserves_long_conditional_permission() -> None:
+    """Verify a long conditional prefix cannot withdraw an active hold."""
+    assert merge_hold_directions(
+        "If the maintainer approves the final updated validation report, "
+        "you can merge now.",
+        active_holds=("do not merge",),
+    ) == {}
+
+
+def test_merge_hold_directions_recognizes_this_pull_request_hold() -> None:
+    """Verify this-pull-request wording remains an explicit leave-open hold."""
+    assert merge_hold_directions(
+        "Implement issue #602, but keep this pull request open."
+    ) == {"leave open": "add"}
+
+
 def test_source_authority_excludes_patch_review() -> None:
     """Verify reviewing an existing patch is review-only work."""
     assert not source_has_default_merge_authority(
@@ -189,6 +205,9 @@ def test_source_authority_excludes_patch_review() -> None:
     )
     assert not source_has_default_merge_authority(
         ("Check the implementation for bugs and report findings.",)
+    )
+    assert not source_has_default_merge_authority(
+        ("Verify the implementation and report findings.",)
     )
     assert not source_has_default_merge_authority(
         ("Do not add any code; review the implementation and report findings.",)

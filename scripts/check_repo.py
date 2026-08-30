@@ -489,9 +489,13 @@ EXPLICIT_MERGE_HOLD_PATTERNS = {
     "leave open": (
         "leave open",
         "leave the pull request open",
+        "leave this pull request open",
         "leave the pr open",
+        "leave this pr open",
         "keep the pull request open",
+        "keep this pull request open",
         "keep the pr open",
+        "keep this pr open",
     ),
     "pr only": (
         "pull request only",
@@ -634,7 +638,8 @@ DEFAULT_MERGE_AUTHORITY_WORKFLOW_EXCLUSIONS = re.compile(
     r"private (?:vulnerability|advisory|remediation))\b"
 )
 DEFAULT_MERGE_AUTHORITY_DIRECT_REVIEW = re.compile(
-    r"(?:review|inspect|check|analy(?:ze|sis)|assess|audit|evaluat(?:e|ion))\s+"
+    r"(?:review|inspect|check|verif(?:y|ication)|validat(?:e|ion)|"
+    r"analy(?:ze|sis)|assess|audit|evaluat(?:e|ion))\s+"
     r"(?:the\s+)?(?:implementation|changes?|code|patch|fix(?:es)?)\b"
     r"(?:\s+and\s+(?:report|summarize|describe)\b[^;.!?]*)?"
 )
@@ -846,6 +851,19 @@ def _is_hold_discussion(segment: str, offset: int) -> bool:
     return MERGE_HOLD_DISCUSSION_CONTEXT.search(prefix) is not None
 
 
+def _task_clause_prefix(text: str, offset: int) -> str:
+    """Return all text before an offset in the current sentence-level clause.
+
+    Args:
+        text: Normalized instruction text being classified.
+        offset: Character offset whose preceding clause context is requested.
+    """
+    clause_start = 0
+    for boundary in MERGE_AUTHORITY_TASK_CLAUSE_BOUNDARY.finditer(text, 0, offset):
+        clause_start = boundary.end()
+    return text[clause_start:offset]
+
+
 def _hold_targets_other_task(segment: str, offset: int, pattern: str) -> bool:
     """Return whether a hold phrase explicitly targets a different task.
 
@@ -1029,7 +1047,7 @@ def merge_hold_directions(
     for permission_match in MERGE_HOLD_STANDALONE_PERMISSION.finditer(normalized):
         permission_offset = permission_match.start()
         permission = permission_match.group(0)
-        prefix = normalized[max(0, permission_offset - 24) : permission_offset]
+        prefix = _task_clause_prefix(normalized, permission_offset)
         suffix = normalized[
             permission_match.end() : permission_match.end() + 40
         ]
