@@ -410,7 +410,7 @@ def _segment_requirement_paths(segment: str) -> list[str]:
         elif argument.startswith("--requirement="):
             paths.append(argument.removeprefix("--requirement="))
         elif argument.startswith("-r") and len(argument) > 2:
-            paths.append(argument[2:].removeprefix("="))
+            paths.append(argument[2:])
         index += 1
     return paths
 
