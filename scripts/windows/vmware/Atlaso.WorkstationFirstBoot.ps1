@@ -1733,7 +1733,39 @@ function Get-AtlasoWorkstationFirstBootStage {
         return ''
     }
     $normalized = if ($null -eq $value) { '' } else { $value.Trim().ToLowerInvariant() }
-    if ($normalized -match '^[a-z][a-z0-9-]{0,63}$') {
+    $layerStages = @(
+        'management-network',
+        'resolver',
+        'management-web-server',
+        'firewall',
+        'hostname',
+        'root-password',
+        'root-ssh',
+        'bootstrap-administrator-password',
+        'ssh-host-key',
+        'development-administrator-ssh',
+        'test-vm-hostname',
+        'appliance-environment',
+        'development-root-ca-staging-and-guest-info-scrub',
+        'console-credential-refresh',
+        'host-state-durability',
+        'pending-success-marker',
+        'ovf-credential-scrub',
+        'applied-marker'
+    )
+    $knownStages = @($layerStages)
+    $knownStages += @($layerStages | ForEach-Object { "failed-$_" })
+    $knownStages += @(
+        'vmware-customization-complete',
+        'https-development-root-proof',
+        'https-development-root-proof-complete',
+        'https-development-root-import',
+        'https-development-root-import-complete',
+        'failed-https-development-root-proof',
+        'failed-https-development-root-import',
+        'failed-https-development-root-staging-removal'
+    )
+    if ($knownStages -ccontains $normalized) {
         return $normalized
     }
     return ''

@@ -153,6 +153,25 @@ function Invoke-AtlasoUnavailableFirstBootStageVmrun {
     return 'present'
 }
 
+<#
+.SYNOPSIS
+Return an unknown credential-shaped diagnostic-stage value.
+
+.PARAMETER Arguments
+vmrun-compatible arguments used to select the requested guest-info key.
+#>
+function Invoke-AtlasoUnknownFirstBootStageVmrun {
+    param(
+        [Parameter(ValueFromRemainingArguments = $true)][string[]]$Arguments
+    )
+
+    $global:LASTEXITCODE = 0
+    if ($Arguments -contains 'guestinfo.atlaso.test_vm_first_boot_stage') {
+        return 'credential-shaped-token'
+    }
+    return 'present'
+}
+
 $validKey = 'ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIAABAgMEBQYHCAkKCwwNDg8QERITFBUWFxgZGhscHR4f atlaso&test'
 $temporaryRoot = Join-Path ([System.IO.Path]::GetTempPath()) "atlaso-workstation-key-$([guid]::NewGuid().ToString('N'))"
 New-Item -ItemType Directory -Path $temporaryRoot | Out-Null
@@ -300,6 +319,13 @@ try {
             $unavailableStageFailure -match 'simulated diagnostic read failure'
         ) {
             throw 'An unavailable stage diagnostic must preserve the primary scrub timeout.'
+        }
+        $unknownStage = Get-AtlasoWorkstationFirstBootStage `
+            -VmxPath (Join-Path $temporaryRoot 'stage-unknown.vmx') `
+            -VmrunPath 'Invoke-AtlasoUnknownFirstBootStageVmrun' `
+            -TimeoutSeconds 5
+        if ($unknownStage) {
+            throw 'An unknown credential-shaped first-boot stage must not reach host diagnostics.'
         }
         $script:RuntimeSignerScrubCalls = [System.Collections.Generic.List[string]]::new()
         Clear-AtlasoWorkstationDevelopmentRootCaRuntimePrivateKey `
