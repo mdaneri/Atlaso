@@ -278,6 +278,9 @@ def test_merge_hold_directions_recognizes_plain_approval_condition() -> None:
         "Implement issue #602, but merge only after the code owner approves."
     ) == {"wait for approval": "add"}
     assert merge_hold_directions(
+        "Implement issue #602, but wait for code owner approval before merging."
+    ) == {"wait for approval": "add"}
+    assert merge_hold_directions(
         "Implement issue #602, but merge after CI passes."
     ) == {"do not merge": "add"}
     assert merge_hold_directions(
@@ -295,6 +298,9 @@ def test_object_qualified_auto_merge_denial_is_not_a_manual_hold() -> None:
     """Verify disabling auto-merge does not block guarded manual merge."""
     assert merge_hold_directions(
         "Do not merge this pull request automatically."
+    ) == {}
+    assert merge_hold_directions(
+        "Do not merge this pull request via auto-merge."
     ) == {}
 
 
@@ -394,6 +400,9 @@ def test_source_authority_honors_later_stop_work() -> None:
     )
     assert not source_has_default_merge_authority(
         ("Implement issue #602.", "Please stop work; only explain the failure.")
+    )
+    assert not source_has_default_merge_authority(
+        ("Implement issue #602.", "Stop working on this task.")
     )
     assert source_has_default_merge_authority(
         ("Implement issue #602.", "Please stop work if CI fails.")

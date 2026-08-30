@@ -1900,6 +1900,47 @@
       "expected_holds": [
         "wait for approval"
       ]
+    },
+    {
+      "name": "auto-merge-transport-denial-keeps-manual-authority",
+      "default_merge_authority": true,
+      "instructions": [
+        {
+          "text": "Implement issue #602, but do not merge this pull request via auto-merge."
+        }
+      ],
+      "generated": "Keep GitHub auto-merge disabled and complete the guarded merge when eligible.",
+      "expected_holds": []
+    },
+    {
+      "name": "stop-working-revokes-authority",
+      "default_merge_authority": false,
+      "instructions": [
+        {
+          "text": "Implement issue #602."
+        },
+        {
+          "text": "Stop working on this task."
+        }
+      ],
+      "generated": "Stop task work without continuing delivery or guarded merge.",
+      "expected_holds": []
+    },
+    {
+      "name": "qualified-owner-wait-is-preserved",
+      "default_merge_authority": true,
+      "instructions": [
+        {
+          "text": "Implement issue #602, but wait for code owner approval before merging.",
+          "add_holds": [
+            "wait for approval"
+          ]
+        }
+      ],
+      "generated": "Wait for approval from the code owner before merging.",
+      "expected_holds": [
+        "wait for approval"
+      ]
     }
   ]
 }

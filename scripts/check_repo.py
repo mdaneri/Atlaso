@@ -613,6 +613,8 @@ MERGE_HOLD_WITHDRAWAL_NONCURRENT_SUFFIX = re.compile(
 AUTO_MERGE_ONLY_PATTERN = re.compile(
     r"\b(?:do not|don't|don’t)\s+(?:"
     r"merge(?:\s+(?:(?:this|the)\s+)?(?:pull request|pr))?\s+automatically|"
+    r"merge(?:\s+(?:(?:this|the)\s+)?(?:pull request|pr))?\s+"
+    r"(?:via|using|with)\s+(?:github\s+)?auto[- ]merge|"
     r"automatically\s+merge(?:\s+(?:(?:this|the)\s+)?(?:pull request|pr))?"
     r")\b"
 )
@@ -716,17 +718,17 @@ DEFAULT_MERGE_AUTHORITY_SUPERSEDING_REVIEW_PREFIX = re.compile(
 DEFAULT_MERGE_AUTHORITY_SUPERSEDING_REVIEW_MARKER = re.compile(r"\binstead\b")
 DEFAULT_MERGE_AUTHORITY_STOP_WORK = re.compile(
     r"(?:^|[;.!?]\s*)(?:please\s+)?(?:stop|cancel|cease|end)\s+"
-    r"(?:(?:all|further|this|the)\s+)?(?:work|implementation|task)\b"
+    r"(?:(?:all|further|this|the)\s+)?(?:work(?:ing)?|implementation|task)\b"
     r"(?![^;.!?]*\b(?:if|unless|when|once|after|before)\b)[^;.!?]*"
 )
 DEFAULT_MERGE_AUTHORITY_POST_STOP_SUMMARY = re.compile(
     r"(?:^|[;.!?]\s*)(?:please\s+)?(?:stop|cancel|cease|end)\s+"
-    r"(?:(?:all|further|this|the)\s+)?(?:work|implementation|task)\b"
+    r"(?:(?:all|further|this|the)\s+)?(?:work(?:ing)?|implementation|task)\b"
     r"[^.!?]*[.!?]\s*(?:summarize|describe|explain|report|document)\b[^.!?]*"
 )
 DEFAULT_MERGE_AUTHORITY_POST_STOP_STATUS = re.compile(
     r"(?:^|[;.!?]\s*)(?:please\s+)?(?:stop|cancel|cease|end)\s+"
-    r"(?:(?:all|further|this|the)\s+)?(?:work|implementation|task)\b"
+    r"(?:(?:all|further|this|the)\s+)?(?:work(?:ing)?|implementation|task)\b"
     r"[^.!?]*[.!?]\s*(?:(?:the|this|that)\s+)?"
     r"(?:implementation|work|task|change|patch|fix)\s+"
     r"(?:is|isn't|isn’t|is not|remains?|was|wasn't|wasn’t|was not)\b[^.!?]*"
@@ -823,8 +825,11 @@ MERGE_HOLD_APPROVAL_CONDITION = re.compile(
 )
 MERGE_HOLD_APPROVAL_BEFORE_MERGING = re.compile(
     r"\b(?:wait (?:for|until)\s+(?:(?:the\s+)?"
-    r"(?:user|maintainer|owner)\s+to\s+approve|approval)|"
-    r"(?:get|obtain|require)\s+(?:(?:the\s+)?(?:user|maintainer|owner)"
+    r"(?:user|maintainer|(?:[a-z][a-z0-9_-]*\s+)?owner)\s+to\s+approve|"
+    r"(?:(?:the\s+)?(?:user|maintainer|(?:[a-z][a-z0-9_-]*\s+)?owner)"
+    r"(?:'s|’s)?\s+)?approval)|"
+    r"(?:get|obtain|require)\s+(?:(?:the\s+)?"
+    r"(?:user|maintainer|(?:[a-z][a-z0-9_-]*\s+)?owner)"
     r"(?:'s|’s)?\s+)?approval)\b[^.!?]{0,40}\bbefore merging\b"
 )
 MERGE_HOLD_NON_PR_OBJECT = re.compile(
