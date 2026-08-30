@@ -646,7 +646,8 @@ DEFAULT_MERGE_AUTHORITY_NEGATIONS = re.compile(
     r"(?:\s+\w+){0,3})\s*$"
 )
 DEFAULT_MERGE_AUTHORITY_TRAILING_NEGATIONS = re.compile(
-    r"^\s*(?:[,;]\s*)?(?:(?:but|and)\s+)?"
+    r"^\s*(?:[\u0022\u0027\u0060\u2019\u201d]\s*)?"
+    r"(?:[,;]\s*)?(?:(?:but|and)\s+)?"
     r"(?:(?:does|do|is|are|must|should|can|may|will|would)\s+"
     r"(?:not|never)|doesn't|doesn’t|isn't|isn’t|aren't|aren’t|"
     r"cannot|can't|can’t|won't|won’t|wouldn't|wouldn’t|"
@@ -853,7 +854,9 @@ MERGE_HOLD_OTHER_TASK_TRAILING_CLAUSE = re.compile(
     r"\s+(?:and|or|but)\s+(?:(?:for|on)\s+)?(?:(?:the|an?)\s+)?"
     r"(?:unrelated|other|another)\s+(?:pull request|pr)\b[^;.!?]*$"
 )
-MERGE_HOLD_NUMBERED_PR_REFERENCE = re.compile(r"\b(?:pull request|pr)\s*#(\d+)\b")
+MERGE_HOLD_NUMBERED_PR_REFERENCE = re.compile(
+    r"\b(?:pull[- ]request|pr)\s*#(\d+)\b"
+)
 MERGE_AUTHORITY_TASK_CLAUSE_BOUNDARY = re.compile(r"[;.?!]+")
 MERGE_AUTHORITY_COORDINATED_CLAUSE_BOUNDARY = re.compile(
     r",\s+(?:but|and)\s+|\s+but\s+"

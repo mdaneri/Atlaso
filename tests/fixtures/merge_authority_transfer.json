@@ -2314,6 +2314,9 @@
         },
         {
           "text": "You may merge PR #621."
+        },
+        {
+          "text": "You may merge pull-request #622."
         }
       ],
       "generated": "For PR #620, preserve the do not merge hold.",

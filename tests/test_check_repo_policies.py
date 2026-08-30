@@ -265,6 +265,11 @@ def test_merge_hold_directions_scopes_numbered_pr_permission() -> None:
         active_holds=("do not merge",),
         active_pull_request=620,
     ) == {"do not merge": "remove"}
+    assert merge_hold_directions(
+        "You may merge pull-request #621.",
+        active_holds=("do not merge",),
+        active_pull_request=620,
+    ) == {}
 
 
 def test_merge_hold_directions_preserves_long_conditional_permission() -> None:
@@ -541,6 +546,9 @@ def test_generated_authority_rejects_absence_of_authority() -> None:
     )
     assert not has_affirmative_default_merge_authority(
         "Can I complete the guarded merge?"
+    )
+    assert not has_affirmative_default_merge_authority(
+        "The phrase “Complete the guarded merge” is prohibited."
     )
 
 
@@ -1641,6 +1649,44 @@ def test_merge_authority_transfer_rejects_generated_authority_denial(
     assert findings[0].message == (
         "merge authority fixture generated authority denial omits affirmative "
         "default authority"
+    )
+
+
+def test_merge_authority_transfer_rejects_quoted_generated_authority_denial(
+    tmp_path: Path,
+) -> None:
+    """Verify quoted affirmative wording cannot hide a generated denial.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
+    path = tmp_path / MERGE_AUTHORITY_TRANSFER_FIXTURE_PATH
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        json.dumps(
+            {
+                "cases": [
+                    {
+                        "name": "quoted generated authority denial",
+                        "default_merge_authority": True,
+                        "instructions": [{"text": "Implement issue #602."}],
+                        "generated": (
+                            "The phrase “Complete the guarded merge” is prohibited."
+                        ),
+                        "expected_holds": [],
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    findings = check_merge_authority_transfer_fixtures(tmp_path)
+
+    assert len(findings) == 1
+    assert findings[0].message == (
+        "merge authority fixture quoted generated authority denial omits "
+        "affirmative default authority"
     )
 
 
