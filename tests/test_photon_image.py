@@ -1503,7 +1503,7 @@ def test_photon_provisioning_prepares_attached_data_disks():
     assert final_update_index < final_guest_agent_closure_index < final_compatibility_index
     assert final_update_index < final_python_closure_index < final_compatibility_index
     assert final_update_index < final_notice_index < final_compatibility_index
-    assert provision.count("install_powershell_profile") == 3
+    assert provision.count("install_powershell_profile") == 4
     assert provision.count("verify_bootstrap_powercli") == 3
     assert final_update_index < final_profile_install_index
     final_bootstrap_powercli_index = provision.rindex("verify_bootstrap_powercli")

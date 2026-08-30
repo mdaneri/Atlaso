@@ -638,7 +638,7 @@ def test_rejects_altered_non_wheel_system_content(
                 names.append("producer.pem")
             return names
         powershell_profile = _powershell_profile_output(
-            commands, "/opt/microsoft/powershell/7/profile.ps1"
+            commands, "/usr/share/powershell/profile.ps1"
         )
         if powershell_profile is not None:
             return powershell_profile
@@ -722,7 +722,7 @@ def test_verifies_every_release_refreshed_non_wheel_file(
             return ["/dev/sda: ext4"]
         if any(command.startswith("is-file ") for command in commands):
             return [
-                "true" if path == "/usr/share/powershell/profile.ps1" else "false"
+                "true" if path == powershell_profile_target else "false"
                 for path in verifier.POWERSHELL_PROFILE_TARGETS
             ]
         if commands[-1] == "ls /etc/atlaso/update-trust.d":
@@ -751,7 +751,7 @@ def test_verifies_every_release_refreshed_non_wheel_file(
     assert verified == len(source_bytes)
     expected_metadata = {
         *verifier.DEPLOYED_FILE_MODES,
-        "/usr/share/powershell/profile.ps1",
+        powershell_profile_target,
         "/etc/atlaso/update-trust.d/atlaso-release-test.pem",
     }
     expected_metadata.remove(default_profile_target)
