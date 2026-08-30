@@ -672,6 +672,10 @@ def test_vmware_wheel_deploy_exposes_fail_closed_vault_shell_commands():
     assert "PowerShell global profile path must be a regular file or absent" in deploy
     assert 'mktemp "$powershell_home/.atlaso-profile.XXXXXX"' in deploy
     assert 'mv -fT -- "$powershell_profile_temporary" "$powershell_profile"' in deploy
+    assert 'inactive_powershell_profile="$inactive_powershell_home/profile.ps1"' in deploy
+    assert 'cmp -s -- "$inactive_powershell_profile" "$powershell_profile"' in deploy
+    assert 'rm -f -- "$inactive_powershell_profile"' in deploy
+    assert "Inactive PowerShell global profile is not Atlaso-owned" in deploy
     assert "ATLASO_GLOBAL_POWERSHELL_PROFILE" in deploy
     assert ". '/opt/atlaso/bin/atlaso-vault-profile.ps1'" in deploy
     delimiter = "<<'ATLASO_GLOBAL_POWERSHELL_PROFILE'\n"

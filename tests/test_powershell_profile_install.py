@@ -17,6 +17,29 @@ pytestmark = pytest.mark.skipif(
 )
 
 
+def _supported_binary(trusted_root: Path, relative_binary: str) -> Path:
+    """Create one safely owned supported executable fixture.
+
+    Args:
+        trusted_root: Fixture trust boundary.
+        relative_binary: Reviewed executable path relative to the fixture root.
+
+    Returns:
+        Canonical executable fixture path.
+    """
+
+    binary = trusted_root / relative_binary
+    binary.parent.mkdir(parents=True)
+    binary.write_bytes(b"fixture pwsh\n")
+    binary.chmod(0o755)
+    for directory in (trusted_root, *binary.parents):
+        if directory == trusted_root.parent:
+            break
+        if directory.exists() and directory.is_relative_to(trusted_root):
+            directory.chmod(0o755)
+    return binary
+
+
 def _layout(tmp_path: Path, relative_binary: str) -> tuple[Path, Path, Path]:
     """Create one safe fixture layout and return its root, command, and binary.
 
@@ -26,19 +49,11 @@ def _layout(tmp_path: Path, relative_binary: str) -> tuple[Path, Path, Path]:
     """
 
     trusted_root = tmp_path / "root"
-    binary = trusted_root / relative_binary
-    binary.parent.mkdir(parents=True)
-    binary.write_bytes(b"fixture pwsh\n")
-    binary.chmod(0o755)
+    binary = _supported_binary(trusted_root, relative_binary)
     command = trusted_root / "usr/bin/pwsh"
     command.parent.mkdir(parents=True, exist_ok=True)
     if command != binary:
         command.symlink_to(binary)
-    for directory in (trusted_root, *binary.parents):
-        if directory == tmp_path.parent:
-            break
-        if directory.exists() and directory.is_relative_to(trusted_root):
-            directory.chmod(0o755)
     return trusted_root, command, binary
 
 
@@ -89,6 +104,114 @@ def test_installs_current_and_supported_legacy_layouts(
     assert stat.S_IMODE(metadata.st_mode) == 0o644
     assert metadata.st_uid == os.getuid()
     assert metadata.st_gid == os.getgid()
+
+
+def test_removes_exact_atlaso_profile_from_inactive_supported_layout(
+    tmp_path: Path,
+) -> None:
+    """Retire the old Atlaso copy after PowerShell moves to another layout.
+
+    Args:
+        tmp_path: Pytest-owned temporary directory.
+    """
+
+    trusted_root, command, current_binary = _layout(
+        tmp_path, "usr/share/powershell/pwsh"
+    )
+    legacy_binary = _supported_binary(
+        trusted_root, "opt/microsoft/powershell/7/pwsh"
+    )
+    source = _source(trusted_root)
+    inactive_profile = legacy_binary.parent / "profile.ps1"
+    inactive_profile.write_bytes(source.read_bytes())
+    inactive_profile.chmod(0o644)
+
+    installed = installer.install_global_profile(
+        command,
+        source,
+        supported_binaries={current_binary, legacy_binary},
+        trusted_ancestor=trusted_root,
+        expected_uid=os.getuid(),
+        expected_gid=os.getgid(),
+    )
+
+    assert installed == current_binary.parent / "profile.ps1"
+    assert installed.read_bytes() == source.read_bytes()
+    assert not inactive_profile.exists()
+
+
+def test_rejects_non_atlaso_profile_in_inactive_supported_layout(
+    tmp_path: Path,
+) -> None:
+    """Never delete producer content from an inactive reviewed directory.
+
+    Args:
+        tmp_path: Pytest-owned temporary directory.
+    """
+
+    trusted_root, command, current_binary = _layout(
+        tmp_path, "usr/share/powershell/pwsh"
+    )
+    legacy_binary = _supported_binary(
+        trusted_root, "opt/microsoft/powershell/7/pwsh"
+    )
+    source = _source(trusted_root)
+    inactive_profile = legacy_binary.parent / "profile.ps1"
+    inactive_profile.write_text("producer content\n", encoding="utf-8")
+    inactive_profile.chmod(0o644)
+
+    with pytest.raises(installer.ProfileInstallError) as error:
+        installer.install_global_profile(
+            command,
+            source,
+            supported_binaries={current_binary, legacy_binary},
+            trusted_ancestor=trusted_root,
+            expected_uid=os.getuid(),
+            expected_gid=os.getgid(),
+        )
+
+    assert str(error.value) == (
+        f"Inactive PowerShell global profile is not Atlaso-owned: {inactive_profile}"
+    )
+    assert inactive_profile.read_text(encoding="utf-8") == "producer content\n"
+
+
+def test_rejects_inactive_supported_directory_symlink(tmp_path: Path) -> None:
+    """Never inspect or remove a profile through an inactive-root symlink.
+
+    Args:
+        tmp_path: Pytest-owned temporary directory.
+    """
+
+    trusted_root, command, current_binary = _layout(
+        tmp_path, "usr/share/powershell/pwsh"
+    )
+    source = _source(trusted_root)
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    inactive_root = trusted_root / "opt/microsoft/powershell/7"
+    inactive_root.parent.mkdir(parents=True)
+    inactive_root.symlink_to(outside, target_is_directory=True)
+    inactive_binary = inactive_root / "pwsh"
+    outside_profile = outside / "profile.ps1"
+    outside_profile.write_bytes(source.read_bytes())
+    outside_profile.chmod(0o644)
+
+    with pytest.raises(installer.ProfileInstallError) as error:
+        installer.install_global_profile(
+            command,
+            source,
+            supported_binaries={current_binary, inactive_binary},
+            trusted_ancestor=trusted_root,
+            expected_uid=os.getuid(),
+            expected_gid=os.getgid(),
+        )
+
+    assert str(error.value) == (
+        "PowerShell profile directory must be a canonical directory: "
+        f"{inactive_root}"
+    )
+    assert outside_profile.exists()
 
 
 def test_rejects_unexpected_profile_root_with_exact_diagnostic(tmp_path: Path) -> None:

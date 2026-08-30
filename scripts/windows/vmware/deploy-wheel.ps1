@@ -1439,9 +1439,13 @@ if [ -n "$pwsh_path" ]; then
     case "$powershell_home" in
         /usr/share/powershell)
             powershell_ancestors="/ /usr /usr/share /usr/share/powershell"
+            inactive_powershell_home="/opt/microsoft/powershell/7"
+            inactive_powershell_ancestors="/ /opt /opt/microsoft /opt/microsoft/powershell /opt/microsoft/powershell/7"
             ;;
         /opt/microsoft/powershell/7)
             powershell_ancestors="/ /opt /opt/microsoft /opt/microsoft/powershell /opt/microsoft/powershell/7"
+            inactive_powershell_home="/usr/share/powershell"
+            inactive_powershell_ancestors="/ /usr /usr/share /usr/share/powershell"
             ;;
         *)
             echo "PowerShell resolved to an unsupported global profile directory: $powershell_home" >&2
@@ -1516,6 +1520,39 @@ ATLASO_GLOBAL_POWERSHELL_PROFILE
     if [ "$profile_metadata" != "0:0:644:regular file" ]; then
         echo "PowerShell global profile verification failed: $powershell_profile" >&2
         exit 2
+    fi
+    inactive_powershell_profile="$inactive_powershell_home/profile.ps1"
+    if [ -L "$inactive_powershell_profile" ] || [ -e "$inactive_powershell_profile" ]; then
+        # A package-layout transition may leave Atlaso's prior profile behind.
+        # Delete only the exact root-owned Atlaso bytes through a canonical,
+        # non-writable supported directory chain.
+        for powershell_directory in $inactive_powershell_ancestors; do
+            if [ -L "$powershell_directory" ] || [ ! -d "$powershell_directory" ]; then
+                echo "PowerShell profile directory must be a canonical directory: $powershell_directory" >&2
+                exit 2
+            fi
+            powershell_metadata="$(stat -c '%u:%g:%a' "$powershell_directory")"
+            old_ifs="$IFS"
+            IFS=:
+            set -- $powershell_metadata
+            IFS="$old_ifs"
+            if [ "$1" != "0" ] || [ "$2" != "0" ]; then
+                echo "PowerShell profile directory must be owned by root: $powershell_directory" >&2
+                exit 2
+            fi
+            if [ $((0$3 & 0022)) -ne 0 ]; then
+                echo "PowerShell profile directory must not be writable by group or other: $powershell_directory" >&2
+                exit 2
+            fi
+        done
+        if [ -L "$inactive_powershell_profile" ] || [ ! -f "$inactive_powershell_profile" ] || \
+            [ "$(stat -c '%u:%g:%a:%F' "$inactive_powershell_profile")" != "0:0:644:regular file" ] || \
+            ! cmp -s -- "$inactive_powershell_profile" "$powershell_profile"; then
+            echo "Inactive PowerShell global profile is not Atlaso-owned: $inactive_powershell_profile" >&2
+            exit 2
+        fi
+        rm -f -- "$inactive_powershell_profile"
+        sync -f "$inactive_powershell_home"
     fi
 fi
 if [ -n "$helper_path" ]; then

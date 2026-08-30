@@ -19,6 +19,9 @@ by the reviewed package layout. Current images use `/usr/share/powershell`; the 
 Hyper-V artifacts fail closed when the executable resolves elsewhere, when the profile ancestry is not root-owned and
 non-writable, or when the destination is a symlink. Protected artifact verification accepts exactly one of those two
 profile locations and requires the admitted Atlaso bytes with mode `0644`.
+When a package update moves the executable between those layouts, provisioning and wheel deployment remove the
+inactive copy only after proving its canonical root-owned directory chain, exact Atlaso bytes, ownership, and mode.
+Unexpected inactive content or a symlink fails closed instead of being removed or followed.
 
 Virtualization has its own immutable Release namespace. A maintainer's existing Windows workstation creates and smokes
 `virtualization-vX.Y.Z-rc.N`; a protected GitHub-hosted job signs and publishes it. Manual stable promotion runs that
@@ -81,7 +84,8 @@ console setting, vault profile, complete PowerShell global profile, and boot-bra
 admitted software-release commit. The installer places that profile in the supported PowerShell runtime home discovered
 from the resolved `pwsh` executable, including the Photon package locations `/opt/microsoft/powershell/7` and
 `/usr/share/powershell`. The producer replaces that global profile with the canonical Atlaso import instead
-of preserving workstation-controlled commands. Before comparing bytes, the finalizer also requires each privileged
+of preserving workstation-controlled commands, and safely retires a proven Atlaso copy from the inactive supported
+layout so exactly one global profile remains. Before comparing bytes, the finalizer also requires each privileged
 file and trust key to be a root-owned regular file with its exact declared mode; every ancestor must be a root-owned
 directory without group or other write access.
 It also requires the installed update-trust directory to contain exactly that commit's public PEM set, rejecting both

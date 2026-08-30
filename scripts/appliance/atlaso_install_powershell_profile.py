@@ -134,6 +134,136 @@ def resolve_profile_root(
     return current
 
 
+def _validate_optional_profile_root(
+    profile_root: Path,
+    *,
+    trusted_ancestor: Path,
+    expected_uid: int,
+    expected_gid: int,
+) -> bool:
+    """Validate an inactive supported root when its directory still exists.
+
+    Args:
+        profile_root: Inactive supported PowerShell package directory.
+        trusted_ancestor: Highest directory checked for safe ancestry.
+        expected_uid: Required numeric owner for the directory chain.
+        expected_gid: Required numeric group for the directory chain.
+
+    Returns:
+        ``True`` when the complete canonical directory exists, otherwise ``False``.
+    """
+
+    try:
+        canonical_ancestor = trusted_ancestor.resolve(strict=True)
+        relative_root = profile_root.relative_to(canonical_ancestor)
+    except (OSError, ValueError) as exc:
+        raise ProfileInstallError(
+            f"Inactive PowerShell profile directory escapes its trusted filesystem boundary: {profile_root}"
+        ) from exc
+    if any(component in {".", ".."} for component in relative_root.parts):
+        raise ProfileInstallError(
+            f"Inactive PowerShell profile directory escapes its trusted filesystem boundary: {profile_root}"
+        )
+
+    current = canonical_ancestor
+    _require_safe_directory(
+        current, expected_uid=expected_uid, expected_gid=expected_gid
+    )
+    for component in relative_root.parts:
+        current /= component
+        try:
+            current.lstat()
+        except FileNotFoundError:
+            return False
+        except OSError as exc:
+            raise ProfileInstallError(
+                f"Inactive PowerShell profile directory is unavailable: {current}"
+            ) from exc
+        _require_safe_directory(
+            current, expected_uid=expected_uid, expected_gid=expected_gid
+        )
+    if current != profile_root:
+        raise ProfileInstallError(
+            f"Inactive PowerShell profile directory is not canonical: {profile_root}"
+        )
+    return True
+
+
+def _remove_inactive_profiles(
+    active_root: Path,
+    source_bytes: bytes,
+    *,
+    supported_binaries: Collection[Path],
+    trusted_ancestor: Path,
+    expected_uid: int,
+    expected_gid: int,
+) -> None:
+    """Remove only exact Atlaso profiles from inactive reviewed layouts.
+
+    Args:
+        active_root: Canonical directory selected by the installed runtime.
+        source_bytes: Exact Atlaso global-profile content.
+        supported_binaries: Canonical executable identities admitted by policy.
+        trusted_ancestor: Highest directory checked for safe ancestry.
+        expected_uid: Required numeric owner for removable content.
+        expected_gid: Required numeric group for removable content.
+    """
+
+    directory_flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0)
+    verify_flags = os.O_RDONLY
+    if hasattr(os, "O_NOFOLLOW"):
+        directory_flags |= os.O_NOFOLLOW
+        verify_flags |= os.O_NOFOLLOW
+
+    for supported_binary in sorted(set(supported_binaries), key=str):
+        inactive_root = supported_binary.parent
+        if inactive_root == active_root:
+            continue
+        if not _validate_optional_profile_root(
+            inactive_root,
+            trusted_ancestor=trusted_ancestor,
+            expected_uid=expected_uid,
+            expected_gid=expected_gid,
+        ):
+            continue
+
+        directory_fd = os.open(inactive_root, directory_flags)
+        try:
+            try:
+                profile_fd = os.open("profile.ps1", verify_flags, dir_fd=directory_fd)
+            except FileNotFoundError:
+                continue
+            except OSError as exc:
+                raise ProfileInstallError(
+                    f"Inactive PowerShell global profile is not Atlaso-owned: {inactive_root / 'profile.ps1'}"
+                ) from exc
+            try:
+                metadata = os.fstat(profile_fd)
+                content = os.read(profile_fd, len(source_bytes) + 1)
+            finally:
+                os.close(profile_fd)
+            if (
+                not stat.S_ISREG(metadata.st_mode)
+                or metadata.st_uid != expected_uid
+                or metadata.st_gid != expected_gid
+                or stat.S_IMODE(metadata.st_mode) != 0o644
+                or content != source_bytes
+            ):
+                raise ProfileInstallError(
+                    f"Inactive PowerShell global profile is not Atlaso-owned: {inactive_root / 'profile.ps1'}"
+                )
+            os.unlink("profile.ps1", dir_fd=directory_fd)
+            os.fsync(directory_fd)
+        except ProfileInstallError:
+            raise
+        except OSError as exc:
+            raise ProfileInstallError(
+                f"Inactive PowerShell global profile removal failed safely: {inactive_root / 'profile.ps1'}"
+            ) from exc
+        finally:
+            os.close(directory_fd)
+
+
 def install_global_profile(
     pwsh_path: Path,
     profile_source: Path,
@@ -268,6 +398,14 @@ def install_global_profile(
         except FileNotFoundError:
             pass
         os.close(directory_fd)
+    _remove_inactive_profiles(
+        profile_root,
+        source_bytes,
+        supported_binaries=supported_binaries,
+        trusted_ancestor=trusted_ancestor,
+        expected_uid=expected_uid,
+        expected_gid=expected_gid,
+    )
     return target_path
 
 
