@@ -316,17 +316,22 @@ def _segment_requirement_paths(segment: str) -> list[str]:
     Args:
         segment: Command text with outer separators already removed.
     """
+    # PowerShell treats Windows path separators literally, while POSIX shlex
+    # consumes them as escapes. Doubling path-like separators preserves both
+    # forms without hiding an intentionally escaped option such as ``\-r``.
+    tokenizable = re.sub(r"\\(?=[A-Za-z0-9_.])", r"\\\\", segment)
     try:
-        tokens = shlex.split(segment, posix=True)
+        tokens = shlex.split(tokenizable, posix=True)
     except ValueError:
         return []
     pip_index = -1
     for index, token in enumerate(tokens):
-        if PIP_LAUNCHER_RE.fullmatch(token):
+        launcher = token.replace("\\", "/").rsplit("/", maxsplit=1)[-1]
+        if PIP_LAUNCHER_RE.fullmatch(launcher):
             pip_index = index
             break
         if (
-            PYTHON_LAUNCHER_RE.fullmatch(token)
+            PYTHON_LAUNCHER_RE.fullmatch(launcher)
             and index + 2 < len(tokens)
             and tokens[index + 1] == "-m"
             and PIP_MODULE_RE.fullmatch(tokens[index + 2])

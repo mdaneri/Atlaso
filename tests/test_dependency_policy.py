@@ -177,6 +177,9 @@ def test_dependency_policy_recognizes_prefixed_python_pip_invocations(
         "'pip' install -r requirements-ad-hoc.lock",
         "pip.exe install -r requirements-ad-hoc.lock",
         "'pip.exe' install -r requirements-ad-hoc.lock",
+        "./venv/bin/pip install -r requirements-ad-hoc.lock",
+        "./venv/bin/python -m pip install -r requirements-ad-hoc.lock",
+        "C:\\venv\\Scripts\\pip.exe install -r requirements-ad-hoc.lock",
         "PIP_CONFIG_FILE=/dev/null python -m pip install -r requirements-ad-hoc.lock",
         "& python -m pip install -r requirements-ad-hoc.lock",
     )
