@@ -118,6 +118,15 @@ def test_merge_hold_directions_preserves_branch_targeted_hold() -> None:
     ) == {"do not merge": "add"}
 
 
+def test_merge_hold_directions_recognizes_merge_deferral() -> None:
+    """Verify explicit source-side merge deferrals remain task holds."""
+    for instruction in (
+        "Implement issue #602, but hold off on merging.",
+        "Implement issue #602, but defer the merge.",
+    ):
+        assert merge_hold_directions(instruction) == {"do not merge": "add"}
+
+
 def test_merge_hold_directions_preserves_shared_active_task_hold() -> None:
     """Verify another-PR wording cannot erase an active-task hold."""
     assert merge_hold_directions(
@@ -285,6 +294,10 @@ def test_generated_authority_rejects_imperative_denial() -> None:
         "Pause the guarded squash merge.",
     ):
         assert not has_affirmative_default_merge_authority(instruction)
+
+    assert not has_affirmative_default_merge_authority(
+        "Plan the guarded squash merge, but do not execute it."
+    )
 
 
 def test_generated_permission_cannot_withdraw_source_hold(tmp_path: Path) -> None:

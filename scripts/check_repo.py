@@ -485,7 +485,20 @@ MERGE_AUTHORITY_TRANSFER_FIXTURE_PATH = Path(
     "tests/fixtures/merge_authority_transfer.json"
 )
 EXPLICIT_MERGE_HOLD_PATTERNS = {
-    "do not merge": ("do not merge", "don't merge", "don’t merge"),
+    "do not merge": (
+        "do not merge",
+        "don't merge",
+        "don’t merge",
+        "hold off on merging",
+        "hold off on the merge",
+        "defer merging",
+        "defer the merge",
+        "delay merging",
+        "delay the merge",
+        "postpone merging",
+        "postpone the merge",
+        "pause before merging",
+    ),
     "leave open": (
         "leave open",
         "leave the pull request open",
@@ -592,7 +605,8 @@ DEFAULT_MERGE_AUTHORITY_NEGATIONS = re.compile(
     r"(?:\s+\w+){0,3})\s*$"
 )
 DEFAULT_MERGE_AUTHORITY_TRAILING_NEGATIONS = re.compile(
-    r"^\s*(?:(?:does|do|is|are|must|should|can|may|will|would)\s+"
+    r"^\s*(?:[,;]\s*)?(?:(?:but|and)\s+)?"
+    r"(?:(?:does|do|is|are|must|should|can|may|will|would)\s+"
     r"(?:not|never)|doesn't|doesn’t|isn't|isn’t|aren't|aren’t|"
     r"cannot|can't|can’t|won't|won’t|wouldn't|wouldn’t|"
     r"(?:is|are|remains?|be)\s+(?:forbidden|disallowed|prohibited))\b"
@@ -689,7 +703,7 @@ MERGE_AUTHORITY_COARSE_BOUNDARY = re.compile(r"(?:[;,.!?]+|\s+but\s+)")
 MERGE_HOLD_DISCUSSION_CONTEXT = re.compile(
     r"\b(?:explain(?:ed|ing)?|document(?:ed|ing)?|discuss(?:ed|ing)?|"
     r"describe(?:d|s|ing)?|mention(?:ed|ing)?|refer(?:red|ring)?|"
-    r"test(?:ed|ing)?)\b"
+    r"test(?:ed|ing)?|plan(?:ned|ning)?)\b"
 )
 DEFAULT_MERGE_AUTHORITY_ACTION_BOUNDARY = re.compile(
     r"(?:[;,.!?]+|\s+(?:and|then|but)\s+)"
@@ -963,7 +977,7 @@ def merge_hold_directions(
             marker_offset = clause.find(marker)
             while marker_offset >= 0:
                 prefix = clause[:marker_offset]
-                if MERGE_HOLD_WITHDRAWAL_NONCURRENT_PREFIX.search(prefix):
+                if MERGE_HOLD_WITHDRAWAL_NONCURRENT_PREFIX.search(clause):
                     marker_end = marker_offset + len(marker)
                     for hold, patterns in EXPLICIT_MERGE_HOLD_PATTERNS.items():
                         for pattern in patterns:

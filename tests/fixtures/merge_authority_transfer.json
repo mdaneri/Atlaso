@@ -241,6 +241,22 @@
       ]
     },
     {
+      "name": "explicit-hold-off-on-merging",
+      "default_merge_authority": true,
+      "instructions": [
+        {
+          "text": "Implement issue #602, but hold off on merging.",
+          "add_holds": [
+            "do not merge"
+          ]
+        }
+      ],
+      "generated": "Preserve the explicit hold off on merging instruction.",
+      "expected_holds": [
+        "do not merge"
+      ]
+    },
+    {
       "name": "qualified-explicit-do-not-merge",
       "default_merge_authority": true,
       "instructions": [
@@ -1063,6 +1079,28 @@
         },
         {
           "text": "If approved, withdraw the do not merge hold.",
+          "add_holds": [
+            "do not merge"
+          ]
+        }
+      ],
+      "generated": "Preserve the explicit do not merge instruction.",
+      "expected_holds": [
+        "do not merge"
+      ]
+    },
+    {
+      "name": "trailing-conditional-named-withdrawal",
+      "default_merge_authority": true,
+      "instructions": [
+        {
+          "text": "Implement the change, but do not merge.",
+          "add_holds": [
+            "do not merge"
+          ]
+        },
+        {
+          "text": "Withdraw the do not merge hold if CI passes.",
           "add_holds": [
             "do not merge"
           ]
