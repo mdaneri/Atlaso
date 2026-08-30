@@ -3039,15 +3039,37 @@ def _setup_python_step_uses_cache(step_lines: list[str]) -> bool:
     lines = [line.split("#", 1)[0] for line in step_lines]
     if not any(re.search(r"\buses:\s*['\"]?actions/setup-python@", line) for line in lines):
         return False
-    cache_input = re.compile(
-        r"(?:^|[,{]\s*)cache:\s*['\"]?(?:pip|pipenv|poetry)['\"]?(?=\s*(?:[,}]|$))"
-    )
-    flow_with_cache = re.compile(
-        r"(?:^|[,{]\s*)with:\s*\{[^{}]*\bcache:\s*"
-        r"['\"]?(?:pip|pipenv|poetry)['\"]?(?=\s*(?:[,}]|$))"
-    )
-    if any(flow_with_cache.search(line) for line in lines):
-        return True
+    def enabled(value: str) -> bool:
+        return value.strip() not in {"", "''", '""', "null", "~"}
+
+    joined = " ".join(line.strip() for line in lines)
+    flow_with = re.search(r"\bwith:\s*\{", joined)
+    if flow_with is not None:
+        opening = flow_with.end() - 1
+        depth = 0
+        quote = ""
+        body_end = len(joined)
+        for position, character in enumerate(joined[opening:], opening):
+            if quote:
+                if character == quote and joined[position - 1] != "\\":
+                    quote = ""
+                continue
+            if character in "'\"":
+                quote = character
+            elif character == "{":
+                depth += 1
+            elif character == "}":
+                depth -= 1
+                if depth == 0:
+                    body_end = position
+                    break
+        body = joined[opening + 1 : body_end]
+        flow_cache = re.search(
+            r"(?:^|,)\s*cache:\s*(.*?)(?=,\s*[A-Za-z0-9_-]+\s*:|$)",
+            body,
+        )
+        if flow_cache is not None:
+            return enabled(flow_cache.group(1))
     for index, line in enumerate(lines):
         stripped = line.lstrip()
         match = re.match(r"with:\s*(.*)$", stripped)
@@ -3055,7 +3077,7 @@ def _setup_python_step_uses_cache(step_lines: list[str]) -> bool:
             continue
         inline_value = match.group(1)
         if inline_value:
-            return cache_input.search(inline_value) is not None
+            return False
         with_indent = len(line) - len(stripped)
         for candidate in lines[index + 1 :]:
             candidate_stripped = candidate.lstrip()
@@ -3064,8 +3086,10 @@ def _setup_python_step_uses_cache(step_lines: list[str]) -> bool:
             candidate_indent = len(candidate) - len(candidate_stripped)
             if candidate_indent <= with_indent:
                 break
-            if candidate_indent == with_indent + 2 and cache_input.search(candidate_stripped):
-                return True
+            if candidate_indent == with_indent + 2:
+                cache_match = re.match(r"cache:\s*(.*)$", candidate_stripped)
+                if cache_match is not None:
+                    return enabled(cache_match.group(1))
         return False
     return False
 
@@ -3081,7 +3105,6 @@ def check_protected_workflow_caches(root: Path) -> list[Finding]:
     """
 
     findings: list[Finding] = []
-    job_key = re.compile(r"^  ([A-Za-z0-9_-]+):\s*(?:#.*)?$")
     for relative_path in PROTECTED_PUBLICATION_WORKFLOWS:
         path = root / relative_path
         text, error = read_text(path)
@@ -3095,8 +3118,30 @@ def check_protected_workflow_caches(root: Path) -> list[Finding]:
                 workflow_permissions = _workflow_permissions(lines, index, 0)
                 break
         jobs_index = next(
-            (index for index, line in enumerate(lines) if re.match(r"^jobs:\s*(?:#.*)?$", line)),
+            (
+                index
+                for index, line in enumerate(lines)
+                if re.match(r"^\s*jobs:\s*(?:#.*)?$", line)
+            ),
             len(lines),
+        )
+        jobs_indent = (
+            len(lines[jobs_index]) - len(lines[jobs_index].lstrip())
+            if jobs_index < len(lines)
+            else 0
+        )
+        job_indent = next(
+            (
+                len(line) - len(line.lstrip())
+                for line in lines[jobs_index + 1 :]
+                if line.strip()
+                and not line.lstrip().startswith("#")
+                and len(line) - len(line.lstrip()) > jobs_indent
+            ),
+            jobs_indent + 2,
+        )
+        job_key = re.compile(
+            rf"^\s{{{job_indent}}}([A-Za-z0-9_-]+):\s*(?:#.*)?$"
         )
         job_starts = [
             (index, match.group(1))
@@ -3106,33 +3151,60 @@ def check_protected_workflow_caches(root: Path) -> list[Finding]:
         for position, (start, job_id) in enumerate(job_starts):
             end = job_starts[position + 1][0] if position + 1 < len(job_starts) else len(lines)
             job_lines = lines[start:end]
+            property_indent = min(
+                (
+                    len(line) - len(line.lstrip())
+                    for line in job_lines[1:]
+                    if line.strip()
+                    and not line.lstrip().startswith("#")
+                    and len(line) - len(line.lstrip()) > job_indent
+                ),
+                default=job_indent + 2,
+            )
             effective_permissions = workflow_permissions
             for offset, line in enumerate(job_lines):
-                if re.match(r"^    permissions:\s*(?:[^#].*)?$", line):
-                    effective_permissions = _workflow_permissions(job_lines, offset, 4)
+                indent = len(line) - len(line.lstrip())
+                if indent == property_indent and re.match(
+                    r"^\s*permissions:\s*(?:[^#].*)?$", line
+                ):
+                    effective_permissions = _workflow_permissions(
+                        job_lines, offset, property_indent
+                    )
                     break
             steps_index = next(
                 (
                     offset
                     for offset, line in enumerate(job_lines)
-                    if re.match(r"^    steps:\s*(?:#.*)?$", line)
+                    if len(line) - len(line.lstrip()) == property_indent
+                    and re.match(r"^\s*steps:\s*(?:#.*)?$", line)
                 ),
                 len(job_lines),
             )
+            steps_indent = property_indent
             steps_end = next(
                 (
                     offset
                     for offset, line in enumerate(job_lines[steps_index + 1 :], steps_index + 1)
                     if line.strip()
                     and not line.lstrip().startswith("#")
-                    and len(line) - len(line.lstrip()) <= 4
+                    and len(line) - len(line.lstrip()) <= steps_indent
                 ),
                 len(job_lines),
+            )
+            step_indent = next(
+                (
+                    len(line) - len(line.lstrip())
+                    for line in job_lines[steps_index + 1 : steps_end]
+                    if line.lstrip().startswith("- ")
+                    and len(line) - len(line.lstrip()) > steps_indent
+                ),
+                steps_indent + 2,
             )
             step_starts = [
                 offset
                 for offset, line in enumerate(job_lines[steps_index + 1 : steps_end], steps_index + 1)
-                if line.startswith("      - ")
+                if len(line) - len(line.lstrip()) == step_indent
+                and line.lstrip().startswith("- ")
             ]
             for step_position, step_start in enumerate(step_starts):
                 step_end = (

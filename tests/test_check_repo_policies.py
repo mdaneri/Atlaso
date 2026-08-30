@@ -268,6 +268,56 @@ jobs:
     assert check_protected_workflow_caches(tmp_path) == []
 
 
+def test_protected_workflow_cache_policy_uses_relative_job_indentation(tmp_path: Path) -> None:
+    """Formatting-only job indentation cannot disable the protected policy.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest.
+    """
+
+    write_protected_workflows(
+        tmp_path,
+        """permissions: read-all
+jobs:
+    publish:
+      runs-on: ubuntu-latest
+      steps:
+        - uses: actions/setup-python@v7
+          with:
+            cache: pip
+""",
+    )
+
+    findings = check_protected_workflow_caches(tmp_path)
+
+    assert len(findings) == len(PROTECTED_PUBLICATION_WORKFLOWS)
+
+
+def test_protected_workflow_cache_policy_rejects_dynamic_cache_input(tmp_path: Path) -> None:
+    """A nonempty expression is conservatively treated as cache-enabled.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest.
+    """
+
+    write_protected_workflows(
+        tmp_path,
+        """permissions: read-all
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/setup-python@v7
+        with:
+          cache: ${{ matrix.cache }}
+""",
+    )
+
+    findings = check_protected_workflow_caches(tmp_path)
+
+    assert len(findings) == len(PROTECTED_PUBLICATION_WORKFLOWS)
+
+
 def test_protected_workflow_cache_policy_ignores_ordinary_ci(tmp_path: Path) -> None:
     """Ordinary CI cache policy remains outside protected publication checks.
 
