@@ -2387,12 +2387,12 @@ def strip_markdown_deleted_content(text: str) -> str:
             can_close = bool(previous and not previous.isspace())
             if in_deletion and can_close:
                 in_deletion = False
-                markdown_parts.append("")
-                cursor = run_end
-                continue
-            if not in_deletion and can_open:
+                tilde_run = tilde_run[2:]
+            if not in_deletion and len(tilde_run) >= 2 and can_open:
                 # A longer run leaves its leading tildes literal and uses the
-                # final pair as the opening delimiter.
+                # final pair as the opening delimiter. Residual tildes after
+                # a closing pair are evaluated the same way so one run can
+                # close one deleted span and open the next.
                 markdown_parts.append(tilde_run[:-2])
                 in_deletion = True
                 cursor = run_end
