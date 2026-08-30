@@ -10,6 +10,7 @@ const tokens = markdown.parse(source, {})
 const output = []
 let blockquoteDepth = 0
 let deletionDepth = 0
+let headingPrefix = ''
 const htmlStack = []
 
 const suppressedTags = new Set(['del', 's', 'strike', 'iframe', 'script', 'style', 'pre', 'textarea', 'template', 'title'])
@@ -299,7 +300,10 @@ function hasHiddenAttributes (attributes) {
     const encodedImportance = extractCssImportant(
       encodedDeclaration.slice(separator + 1).trim()
     )
-    let value = decodeCssEscapes(encodedImportance.value).trim().toLowerCase()
+    let value = decodeCssEscapes(encodedImportance.value).trim()
+    if (!property.startsWith('--') && !value.includes('var(')) {
+      value = value.toLowerCase()
+    }
     const important = encodedImportance.important
     if (
       !property.startsWith('--') &&
@@ -320,8 +324,9 @@ function hasHiddenAttributes (attributes) {
     const declaration = declarations.get(property)
     if (!declaration?.value.includes('var(')) continue
     const resolved = resolveCssVariables(declaration.value, customProperties)
-    declaration.value = resolved !== null && isValidSuppressionDeclaration(property, resolved)
-      ? resolved
+    const normalizedResolved = resolved?.toLowerCase() ?? null
+    declaration.value = normalizedResolved !== null && isValidSuppressionDeclaration(property, normalizedResolved)
+      ? normalizedResolved
       : 'unset'
   }
   return {
@@ -523,9 +528,15 @@ for (const token of tokens) {
     blockquoteDepth = Math.max(0, blockquoteDepth - 1)
     continue
   }
+  if (token.type === 'heading_open') {
+    headingPrefix = `${'#'.repeat(Number.parseInt(token.tag.slice(1), 10))} `
+    continue
+  }
   if (token.type === 'inline') {
+    if (!blockquoteDepth && headingPrefix) output.push(headingPrefix)
     processInline(token.children)
     output.push('\n')
+    headingPrefix = ''
   } else if (token.type === 'paragraph_close') {
     for (let index = htmlStack.length - 1; index >= 0; index -= 1) {
       if (htmlStack[index].inline && !formattingTags.has(htmlStack[index].tag)) {

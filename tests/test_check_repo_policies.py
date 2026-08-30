@@ -1212,6 +1212,25 @@ def test_agent_policy_gate_rejects_missing_maintainer_break_glass_contract(
                 f"required agent policy marker is missing: {marker}"
             )
 
+    canonical_heading = "### Maintainer override / break-glass"
+    write_policy_files(tmp_path)
+    contributing = tmp_path / "CONTRIBUTING.md"
+    contributing.write_text(
+        contributing.read_text(encoding="utf-8").replace(
+            canonical_heading,
+            f"<!-- {canonical_heading} -->",
+            1,
+        ),
+        encoding="utf-8",
+    )
+    findings = check_agent_policy_gate(tmp_path)
+    assert any(
+        finding.path == contributing
+        and finding.message
+        == f"required agent policy marker is missing: {canonical_heading}"
+        for finding in findings
+    )
+
     prohibition = (
         "automation must never use or request a ruleset or administrative bypass"
     )
@@ -1330,6 +1349,7 @@ def test_agent_policy_gate_rejects_missing_maintainer_break_glass_contract(
         f'<span aria-hidden="tr&#117;e">{prohibition}</span>',
         f'<span style="display:none;display:block\\!important">{prohibition}</span>',
         f'<span style="--state:none;display:var(--state)">{prohibition}</span>',
+        f'<span style="--State:none;display:var(--State)">{prohibition}</span>',
     )
     for replacement in complex_html_replacements:
         for relative_path in required_entry_points:

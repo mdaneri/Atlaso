@@ -164,6 +164,11 @@ MAINTAINER_BREAK_GLASS_SHARED_MARKERS = (
     "cannot be delegated to automation",
 )
 
+MAINTAINER_BREAK_GLASS_OPERATIVE_MARKERS = (
+    *MAINTAINER_BREAK_GLASS_SHARED_MARKERS,
+    "### Maintainer override / break-glass",
+)
+
 REQUIRED_POLICY_MARKERS = {
     Path("AGENTS.md"): (
         "## Mandatory Agent Startup Gate",
@@ -1008,7 +1013,7 @@ def check_agent_policy_gate(root: Path) -> list[Finding]:
             if (
                 marker not in markdown_operative_text
                 and marker not in normalized_markdown_operative_text
-                if marker in MAINTAINER_BREAK_GLASS_SHARED_MARKERS
+                if marker in MAINTAINER_BREAK_GLASS_OPERATIVE_MARKERS
                 else marker not in text and marker not in normalized_text
             )
         )
