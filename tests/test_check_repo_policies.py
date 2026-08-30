@@ -449,6 +449,19 @@ def test_merge_hold_directions_recognizes_indefinite_pr_only_instruction() -> No
     assert merge_hold_directions("Only create a PR for issue #602.") == {
         "pr only": "add"
     }
+    assert merge_hold_directions("Only submit a pull request for issue #602.") == {
+        "pr only": "add"
+    }
+    assert merge_hold_directions("Only prepare a PR for issue #602.") == {
+        "pr only": "add"
+    }
+
+
+def test_merge_hold_directions_classifies_approval_until_as_resumable() -> None:
+    """Verify an approval-until condition is the resumable approval hold."""
+    assert merge_hold_directions(
+        "Do not merge until the maintainer approves."
+    ) == {"wait for approval": "add"}
 
 
 def test_source_authority_keeps_workflow_policy_subject_eligible() -> None:

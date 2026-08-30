@@ -787,6 +787,31 @@ function Remove-AtlasoWorkstationStaleRegistrations {
         }
     }
 }
+
+<#
+.SYNOPSIS
+Repair missing VMware Workstation registrations inside one exact Atlaso scope.
+
+.PARAMETER ScopeRoot
+Exact non-reparse-point Atlaso scope that bounds missing registration repair.
+#>
+function Repair-AtlasoWorkstationStaleRegistrations {
+    [CmdletBinding(SupportsShouldProcess = $true)]
+    param(
+        [Parameter(Mandatory = $true)][string]$ScopeRoot
+    )
+    $resolvedScopeRoot = Get-AtlasoCanonicalPath -Path $ScopeRoot
+    $filesystemRoot = [System.IO.Path]::GetPathRoot($resolvedScopeRoot)
+    if (-not $filesystemRoot -or (Test-AtlasoSamePath -Left $resolvedScopeRoot -Right $filesystemRoot)) {
+        throw "Refusing to repair VMware registrations for a filesystem root: $resolvedScopeRoot"
+    }
+    Assert-AtlasoPathHasNoReparsePoint -Path $resolvedScopeRoot
+    if ($PSCmdlet.ShouldProcess($resolvedScopeRoot, 'Remove missing Atlaso VMware Workstation registrations')) {
+        Remove-AtlasoWorkstationStaleRegistrations `
+            -InventoryPath (Resolve-AtlasoWorkstationInventoryPath) `
+            -ScopeRoot $resolvedScopeRoot
+    }
+}
 <#
 .SYNOPSIS
 Capture filesystem identities for a validated artifact root and descendants.
@@ -1410,6 +1435,7 @@ Export-ModuleMember -Function @(
     'Assert-AtlasoStrictDescendantPath',
     'ConvertFrom-AtlasoVmrunListOutput',
     'Get-AtlasoVmxDisplayName',
+    'Repair-AtlasoWorkstationStaleRegistrations',
     'Remove-AtlasoWorkstationArtifactRoot',
     'Remove-AtlasoWorkstationVmArtifacts',
     'Test-AtlasoStrictDescendantPath'

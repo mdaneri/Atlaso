@@ -207,8 +207,11 @@ failure, fallback ISO paths, and forced whole-child timeout through the parent-o
 endpoint-protection cleanup failure terminates the build instead of reporting success with a credential-bearing
 artifact left behind. `-PrepareIsoOnly` is rejected because retaining that ISO would retain a reusable build credential.
 
-GUI builds start or reuse a responsive VMware Workstation UI as a process separate from Packer before invoking the
-VMware builder. The parent starts the exact resolved `vmware.exe` before creating the bounded image-build child, then
+GUI builds repair exact missing Atlaso registrations inside the configured output scope before Workstation is started,
+while the existing full output cleanup remains after network preflight. They then start or reuse a responsive VMware
+Workstation UI as a process separate from Packer before invoking the VMware builder. An already-open UI still blocks
+required stale-registration repair with the exact close-the-UI diagnostic. The parent starts the exact resolved
+`vmware.exe` before creating the bounded image-build child, then
 the child verifies that UI remains responsive immediately before Packer starts. This preserves the visible console
 while keeping the sensitive job non-breakaway; Packer, plugins, and their VM consumers cannot leave that job. Until SSH
 provisioning begins, the wrapper reports sanitized,
@@ -349,8 +352,12 @@ continues the same registration and identity-aware running-inventory postconditi
 absent through the final gate. It does not enumerate or recursively remove the missing directory, so the same
 `create-atlaso-test-vm.ps1 -Redeploy` invocation can proceed to a fresh clone. A recreated root or changed target
 inventory remains an ambiguous state that fails closed and preserves the new path.
-Focused regression coverage exercises that complete redeploy wrapper with a synthetic schema-v2, role-bound source
-payload and separately proves that missing-target cleanup and sibling-prefix data-disk resets still fail closed.
+Focused regression coverage runs a test-only copy of the normal wrapper with only its host-global signer, credential,
+and post-clone startup boundaries stubbed. The wrapper still performs its real input validation, redeploy cleanup,
+data-disk checks, and low-level clone orchestration against a synthetic schema-v2, role-bound source payload. This
+proves that provider-owned root removal continues into cloning and that missing targets, sibling-prefix data disks, and
+invalid SSH-key inputs fail before cleanup. The harness does not use `-NoStart`; the production wrapper still requires
+first boot to consume and scrub the shared development signer.
 
 The read-only Workstation registration inventory may reside beneath a redirected `%APPDATA%` junction or symbolic link.
 The non-reparse-point requirement remains enforced on the Atlaso artifact root that cleanup recursively deletes, not on

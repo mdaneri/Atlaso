@@ -64,10 +64,13 @@ captures the exact disposable build-account UID, gives only that UID a bounded g
 bounded forced termination only for survivors. It then verifies the session is gone, removes the temporary build
 account and authorization, deletes both its staged source and installed copy, syncs the filesystem, and powers off.
 Workstation builds show the VMware console by default so boot/install progress is visible; pass `-Headless` for
-unattended runs. For the default GUI build, the wrapper starts or reuses a responsive VMware Workstation UI before
-Packer invokes `vmrun`. Starting the UI as a separate process prevents the Workstation GUI start transition from
-retaining Packer's redirected output handles after the builder is already running. Do not replace this ordering with an
-arbitrary delay or a raw `packer build` invocation.
+unattended runs. For the default GUI build, the wrapper first repairs any exact missing Atlaso registration inside the
+configured output scope while the Workstation UI is closed, then starts or reuses a responsive Workstation UI before
+Packer invokes `vmrun`. The later full output cleanup retains its existing checked post-network-preflight boundary.
+Starting the UI as a separate process prevents the Workstation GUI start transition from retaining Packer's redirected
+output handles after the builder is already running. Do not replace this ordering with an arbitrary delay or a raw
+`packer build` invocation. If Workstation was already open and a scoped stale registration needs repair, the wrapper
+still fails with the exact close-the-UI diagnostic instead of weakening inventory safety.
 
 The wrapper emits sanitized startup heartbeats until Packer reaches SSH provisioning. Each heartbeat binds diagnostics
 to the expected builder VMX filesystem identity and distinguishes missing or replaced output, an unavailable provider,

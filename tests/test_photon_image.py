@@ -2037,6 +2037,22 @@ def test_create_atlaso_vmware_test_vm_wrapper_uses_common_helpers():
     assert "-ProcessLauncher $requireExistingUi" in build_script
     assert "Start-AtlasoWorkstationUiBreakawayProcess -FilePath $FilePath" not in build_script
     assert "Initialize-AtlasoWorkstationGui -VmrunPath $parentVmrunPath" in build_script
+    parent_gui_launch = build_script.index(
+        "Initialize-AtlasoWorkstationGui -VmrunPath $parentVmrunPath"
+    )
+    pre_gui_repair = build_script.index(
+        "Repair-AtlasoWorkstationStaleRegistrations `"
+    )
+    gui_guard = build_script.rindex(
+        "if (-not $Headless -and -not $ValidateOnly) {", 0, parent_gui_launch
+    )
+    keep_output_guard = build_script.index(
+        "if (-not $KeepExistingOutput) {", gui_guard, pre_gui_repair
+    )
+    assert gui_guard < keep_output_guard < pre_gui_repair < parent_gui_launch
+    assert "-ScopeRoot $outerCleanupOutputDirectory" in build_script[
+        pre_gui_repair:parent_gui_launch
+    ]
     assert "[scriptblock]$ProcessLauncher" in build_monitor
     assert "The VMware Workstation UI launcher returned an unexpected executable identity." in build_monitor
     child_gui_check = build_script.index("Initialize-AtlasoWorkstationGui `")
@@ -2067,6 +2083,7 @@ def test_create_atlaso_vmware_test_vm_wrapper_uses_common_helpers():
     assert "Resolve-WorkstationOutputDirectory -PackerDirectory $PackerDirectory -OutputDirectory $OutputDirectory" in build_script
     assert "Atlaso.WorkstationCleanup.psm1" in build_script
     assert "Remove-AtlasoWorkstationArtifactRoot" in build_script
+    assert "Repair-AtlasoWorkstationStaleRegistrations" in build_script
     assert "-ExpectedRemovalRoot $workstationOutputDirectory" in build_script
     assert build_script.index("Remove-AtlasoWorkstationArtifactRoot") < build_script.index(
         "Invoke-AtlasoPhotonImageBuild"
@@ -2904,3 +2921,31 @@ def test_lifecycle_runner_summarizes_apply_validation_html():
     assert summary.startswith("Resolve validation errors before submitting appliance changes.")
     assert "CA listen interfaces must use configured access targets." in summary
     assert "doctype" not in summary.lower()
+
+
+def test_vmware_gui_builder_repairs_stale_rows_before_ui_startup() -> None:
+    """Keep GUI-only stale repair ahead of provider startup and full cleanup."""
+    wrapper = Path("scripts/windows/vmware/build-photon-image.ps1").read_text(
+        encoding="utf-8"
+    )
+    gui_launch = wrapper.index(
+        "Initialize-AtlasoWorkstationGui -VmrunPath $parentVmrunPath"
+    )
+    gui_guard = wrapper.rindex(
+        "if (-not $Headless -and -not $ValidateOnly) {", 0, gui_launch
+    )
+    repair = wrapper.index("Repair-AtlasoWorkstationStaleRegistrations `", gui_guard)
+    keep_existing_guard = wrapper.index(
+        "if (-not $KeepExistingOutput) {", gui_guard, repair
+    )
+    child_start = wrapper.index("-Action 'The isolated VMware Photon image build'")
+    parent_return = wrapper.index("    return\n}", child_start)
+    child_cleanup = wrapper.index(
+        "if (-not $ValidateOnly -and -not $PrepareIsoOnly) {", parent_return
+    )
+    full_cleanup = wrapper.index("Remove-AtlasoWorkstationArtifactRoot `", child_cleanup)
+
+    assert wrapper.count("Repair-AtlasoWorkstationStaleRegistrations `") == 1
+    assert gui_guard < keep_existing_guard < repair < gui_launch < child_start
+    assert child_start < parent_return < child_cleanup < full_cleanup
+    assert "-ScopeRoot $outerCleanupOutputDirectory" in wrapper[repair:gui_launch]

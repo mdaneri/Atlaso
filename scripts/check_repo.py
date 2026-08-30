@@ -528,6 +528,14 @@ EXPLICIT_MERGE_HOLD_PATTERNS = {
         "only create a pull request",
         "only create a pr",
         "only create an pr",
+        "only submit the pull request",
+        "only submit a pull request",
+        "only submit a pr",
+        "only submit an pr",
+        "only prepare the pull request",
+        "only prepare a pull request",
+        "only prepare a pr",
+        "only prepare an pr",
     ),
     "wait for approval": (
         "wait for approval",
@@ -846,7 +854,7 @@ MERGE_HOLD_NONAPPROVAL_CONDITION = re.compile(
     r"[^.!?]{0,40}\bbefore merging)\b"
 )
 MERGE_HOLD_APPROVAL_CONDITION = re.compile(
-    r"\b(?:merge(?: only)?|only merge)\s+(?:after|when|if|once)\s+"
+    r"\b(?:merge(?: only)?|only merge)\s+(?:after|when|if|once|until)\s+"
     r"(?:i|we|(?:the\s+)?maintainer|"
     r"(?:the\s+)?(?:[a-z][a-z0-9_-]*\s+)?owner)\s+approves?\b"
 )
@@ -1089,6 +1097,28 @@ def _hold_targets_non_pr_object(
     )
 
 
+def _is_approval_scoped_do_not_merge(
+    hold: str, segment: str, offset: int, pattern: str
+) -> bool:
+    """Return whether a do-not-merge phrase belongs to an approval condition.
+
+    Args:
+        hold: Canonical merge-hold name being classified.
+        segment: Current instruction segment containing the hold phrase.
+        offset: Character offset where the hold phrase begins.
+        pattern: Exact hold phrase matched in the segment.
+    """
+    if hold != "do not merge":
+        return False
+    hold_end = offset + len(pattern)
+    approval_matches = (
+        tuple(MERGE_HOLD_APPROVAL_CONDITION.finditer(segment))
+        + tuple(MERGE_HOLD_APPROVAL_BEFORE_MERGING.finditer(segment))
+        + tuple(MERGE_HOLD_WITHOUT_APPROVAL.finditer(segment))
+    )
+    return any(match.start() < hold_end and offset < match.end() for match in approval_matches)
+
+
 def merge_hold_directions(
     text: str, *, active_holds: tuple[str, ...] = ()
 ) -> dict[str, str | None]:
@@ -1211,6 +1241,8 @@ def merge_hold_directions(
                     ) and not _hold_targets_other_task(
                         segment, pattern_offset, pattern
                     ) and not _hold_targets_non_pr_object(
+                        hold, segment, pattern_offset, pattern
+                    ) and not _is_approval_scoped_do_not_merge(
                         hold, segment, pattern_offset, pattern
                     ):
                         has_directive_occurrence = True
