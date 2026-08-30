@@ -19,6 +19,22 @@ const formattingTags = new Set([
   'a', 'b', 'big', 'code', 'em', 'font', 'i', 'nobr', 's', 'small',
   'strike', 'strong', 'tt', 'u'
 ])
+const optionalEndTagClosures = new Map([
+  ['p', new Set(['p'])],
+  ['li', new Set(['li'])],
+  ['dt', new Set(['dt', 'dd'])],
+  ['dd', new Set(['dt', 'dd'])],
+  ['rt', new Set(['rt', 'rp'])],
+  ['rp', new Set(['rt', 'rp'])],
+  ['option', new Set(['option'])],
+  ['optgroup', new Set(['option', 'optgroup'])],
+  ['tr', new Set(['tr'])],
+  ['th', new Set(['th', 'td'])],
+  ['td', new Set(['th', 'td'])],
+  ['thead', new Set(['thead', 'tbody', 'tfoot'])],
+  ['tbody', new Set(['thead', 'tbody', 'tfoot'])],
+  ['tfoot', new Set(['thead', 'tbody'])]
+])
 
 function splitCssFunctionArguments (value) {
   const argumentsList = []
@@ -223,6 +239,40 @@ function extractCssImportant (value) {
   return { value, important: false }
 }
 
+function resolveCssVariables (value, customProperties, seen = new Set()) {
+  let resolved = ''
+  let cursor = 0
+  while (cursor < value.length) {
+    const start = value.indexOf('var(', cursor)
+    if (start < 0) return resolved + value.slice(cursor)
+    resolved += value.slice(cursor, start)
+    let depth = 1
+    let end = start + 4
+    for (; end < value.length && depth > 0; end += 1) {
+      if (value[end] === '(') depth += 1
+      if (value[end] === ')') depth -= 1
+    }
+    if (depth !== 0) return null
+    const argumentsList = splitCssFunctionArguments(value.slice(start + 4, end - 1))
+    const name = argumentsList.shift()?.trim()
+    if (!name?.startsWith('--')) return null
+    let replacement = customProperties.get(name)?.value
+    if (replacement === undefined || seen.has(name)) {
+      replacement = argumentsList.length ? argumentsList.join(',').trim() : null
+    }
+    if (replacement === null) return null
+    const replacementResolved = resolveCssVariables(
+      replacement,
+      customProperties,
+      new Set([...seen, name])
+    )
+    if (replacementResolved === null) return null
+    resolved += replacementResolved
+    cursor = end
+  }
+  return resolved
+}
+
 function hasHiddenAttributes (attributes) {
   const parsedAttributes = new Map()
   const attributePattern = /(?:^|\s)([^\s"'=<>`/]+)(?:\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'=<>`]+)))?/g
@@ -241,20 +291,38 @@ function hasHiddenAttributes (attributes) {
     if (separator < 0) {
       continue
     }
-    const property = decodeCssEscapes(encodedDeclaration.slice(0, separator))
-      .trim().toLowerCase()
+    const decodedProperty = decodeCssEscapes(encodedDeclaration.slice(0, separator))
+      .trim()
+    const property = decodedProperty.startsWith('--')
+      ? decodedProperty
+      : decodedProperty.toLowerCase()
     const encodedImportance = extractCssImportant(
       encodedDeclaration.slice(separator + 1).trim()
     )
     let value = decodeCssEscapes(encodedImportance.value).trim().toLowerCase()
     const important = encodedImportance.important
-    if (!isValidSuppressionDeclaration(property, value)) {
+    if (
+      !property.startsWith('--') &&
+      !isValidSuppressionDeclaration(property, value) &&
+      !value.includes('var(')
+    ) {
       continue
     }
     const current = declarations.get(property)
     if (!current || important || !current.important) {
       declarations.set(property, { value, important })
     }
+  }
+  const customProperties = new Map(
+    [...declarations].filter(([property]) => property.startsWith('--'))
+  )
+  for (const property of ['display', 'visibility', 'content-visibility', 'opacity']) {
+    const declaration = declarations.get(property)
+    if (!declaration?.value.includes('var(')) continue
+    const resolved = resolveCssVariables(declaration.value, customProperties)
+    declaration.value = resolved !== null && isValidSuppressionDeclaration(property, resolved)
+      ? resolved
+      : 'unset'
   }
   return {
     irreversible: (
@@ -373,6 +441,15 @@ function updateHtmlSuppression (content, inlineContext = false) {
         }
       }
       continue
+    }
+    const optionalClosures = optionalEndTagClosures.get(tag)
+    if (optionalClosures) {
+      for (let index = htmlStack.length - 1; index >= 0; index -= 1) {
+        if (optionalClosures.has(htmlStack[index].tag)) {
+          htmlStack.splice(index)
+          break
+        }
+      }
     }
     const attributes = match.groups.attributes
     const suppression = hasHiddenAttributes(attributes)
