@@ -12,7 +12,7 @@ let blockquoteDepth = 0
 let deletionDepth = 0
 const htmlStack = []
 
-const suppressedTags = new Set(['del', 's', 'strike', 'script', 'style', 'pre', 'textarea', 'template'])
+const suppressedTags = new Set(['del', 's', 'strike', 'script', 'style', 'pre', 'textarea', 'template', 'title'])
 const voidTags = new Set(['area', 'base', 'br', 'col', 'embed', 'hr', 'img', 'input', 'link', 'meta', 'param', 'source', 'track', 'wbr'])
 const rawTextTags = new Set(['script', 'style', 'textarea', 'title'])
 
@@ -31,8 +31,28 @@ function hasHiddenAttributes (attributes) {
   if ((parsedAttributes.get('aria-hidden') || '').toLowerCase() === 'true') {
     return true
   }
-  const styleValue = (parsedAttributes.get('style') || '').replace(/\/\*[\s\S]*?\*\//g, '')
-  return Boolean(styleValue && /(?:display\s*:\s*none|visibility\s*:\s*hidden)/i.test(styleValue))
+  const styleValue = markdown.utils
+    .unescapeAll(parsedAttributes.get('style') || '')
+    .replace(/\/\*[\s\S]*?\*\//g, '')
+  const declarations = new Map()
+  for (const declaration of styleValue.split(';')) {
+    const separator = declaration.indexOf(':')
+    if (separator < 0) {
+      continue
+    }
+    const property = declaration.slice(0, separator).trim().toLowerCase()
+    let value = declaration.slice(separator + 1).trim().toLowerCase()
+    const important = /!\s*important\s*$/i.test(value)
+    value = value.replace(/!\s*important\s*$/i, '').trim()
+    const current = declarations.get(property)
+    if (!current || important || !current.important) {
+      declarations.set(property, { value, important })
+    }
+  }
+  return (
+    declarations.get('display')?.value === 'none' ||
+    ['hidden', 'collapse'].includes(declarations.get('visibility')?.value)
+  )
 }
 
 function isHtmlSuppressed () {
