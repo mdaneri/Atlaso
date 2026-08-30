@@ -226,6 +226,12 @@ def test_merge_hold_directions_recognizes_equivalent_permission() -> None:
             instruction,
             active_holds=("do not merge",),
         ) == {"do not merge": "remove"}
+    assert merge_hold_directions(
+        "Do not merge now.", active_holds=("do not merge",)
+    ) == {"do not merge": "add"}
+    assert merge_hold_directions(
+        "You cannot merge now.", active_holds=("do not merge",)
+    ) == {}
 
 
 def test_merge_hold_directions_preserves_long_conditional_permission() -> None:
@@ -409,6 +415,8 @@ def test_source_authority_keeps_workflow_policy_subject_eligible() -> None:
         "Prepare a pull request for issue #602.",
         "Open a pull request for issue #602.",
         "Submit a pull request for issue #602.",
+        "Revert the change introduced by PR #602.",
+        "Roll back the change introduced by PR #602.",
     ):
         assert source_has_default_merge_authority((instruction,))
 

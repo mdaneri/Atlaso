@@ -741,9 +741,9 @@ DEFAULT_MERGE_AUTHORITY_SOURCE_MARKERS = re.compile(
     r"\b(?:implement|fix|patch|resolve|solve|deliver)\b|"
     r"\bcomplete\s+(?:the\s+)?implementation\b|"
     r"\b(?:update|change|modify|edit|add|remove|create|build|refactor|"
-    r"prepare|open|submit)\s+"
+    r"prepare|open|submit|revert|roll back)\s+"
     r"(?:(?:the|this|that|an?|new|existing)\s+)?"
-    r"(?:code|implementation|documentation|docs?|tests?|files?|repository|repo|"
+    r"(?:code|changes?|implementation|documentation|docs?|tests?|files?|repository|repo|"
     r"scripts?|modules?|packages?|workflows?|polic(?:y|ies)|checkers?|fixtures?|"
     r"features?|behavio(?:u)?r|support|pages?|guides?|configuration|config|"
     r"api|ui|issue(?:s)?(?:\s+#\d+)?|pull request|pr)\b|"
@@ -1265,6 +1265,8 @@ def merge_hold_directions(
             permission_match.end() : permission_match.end() + 40
         ]
         if (
+            MERGE_HOLD_WITHDRAWAL_NEGATIONS.search(prefix) is None
+            and
             MERGE_HOLD_WITHDRAWAL_NONCURRENT_PREFIX.search(prefix) is None
             and MERGE_HOLD_WITHDRAWAL_NONCURRENT_SUFFIX.search(suffix) is None
             and not _hold_targets_other_task(

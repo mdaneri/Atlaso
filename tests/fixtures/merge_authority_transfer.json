@@ -1851,6 +1851,39 @@
       ],
       "generated": "Report the authorization status without implementation or pull-request delivery.",
       "expected_holds": []
+    },
+    {
+      "name": "negated-merge-now-preserves-hold",
+      "default_merge_authority": true,
+      "instructions": [
+        {
+          "text": "Implement issue #602, but do not merge.",
+          "add_holds": [
+            "do not merge"
+          ]
+        },
+        {
+          "text": "Do not merge now.",
+          "add_holds": [
+            "do not merge"
+          ]
+        }
+      ],
+      "generated": "Do not merge now; leave the pull request ready for later delivery.",
+      "expected_holds": [
+        "do not merge"
+      ]
+    },
+    {
+      "name": "revert-request-grants-authority",
+      "default_merge_authority": true,
+      "instructions": [
+        {
+          "text": "Revert the change introduced by PR #602."
+        }
+      ],
+      "generated": "Preserve default merge authority and complete the guarded merge when eligible.",
+      "expected_holds": []
     }
   ]
 }
