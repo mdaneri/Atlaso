@@ -283,6 +283,9 @@ def test_merge_hold_directions_recognizes_plain_approval_condition() -> None:
         "Implement issue #602, but wait for code owner approval before merging."
     ) == {"wait for approval": "add"}
     assert merge_hold_directions(
+        "Implement issue #602, but do not merge without my approval."
+    ) == {"wait for approval": "add"}
+    assert merge_hold_directions(
         "Implement issue #602, but merge after CI passes."
     ) == {"do not merge": "add"}
     assert merge_hold_directions(

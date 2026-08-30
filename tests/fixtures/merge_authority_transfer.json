@@ -2017,6 +2017,22 @@
       ],
       "generated": "Explain the possible fix without implementation or pull-request delivery.",
       "expected_holds": []
+    },
+    {
+      "name": "without-approval-merge-hold-is-preserved",
+      "default_merge_authority": true,
+      "instructions": [
+        {
+          "text": "Implement issue #602, but do not merge without my approval.",
+          "add_holds": [
+            "wait for approval"
+          ]
+        }
+      ],
+      "generated": "Wait for my approval before merging.",
+      "expected_holds": [
+        "wait for approval"
+      ]
     }
   ]
 }
