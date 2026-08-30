@@ -36,6 +36,12 @@ const optionalEndTagClosures = new Map([
   ['tbody', new Set(['thead', 'tbody', 'tfoot'])],
   ['tfoot', new Set(['thead', 'tbody'])]
 ])
+const paragraphClosingTags = new Set([
+  'address', 'article', 'aside', 'blockquote', 'details', 'div', 'dl',
+  'fieldset', 'figcaption', 'figure', 'footer', 'form', 'h1', 'h2', 'h3',
+  'h4', 'h5', 'h6', 'header', 'hgroup', 'hr', 'main', 'menu', 'nav', 'ol',
+  'p', 'pre', 'search', 'section', 'table', 'ul'
+])
 
 function splitCssFunctionArguments (value) {
   const argumentsList = []
@@ -95,9 +101,13 @@ function evaluateCalcExpression (value) {
     let result = parseFactor()
     if (result === null) return null
     while (true) {
+      const whitespaceStart = index
       skipWhitespace()
       const operator = value[index]
-      if (operator !== '*' && operator !== '/') break
+      if (operator !== '*' && operator !== '/') {
+        index = whitespaceStart
+        break
+      }
       index += 1
       const right = parseFactor()
       if (right === null || (operator === '/' && right === 0)) return null
@@ -109,10 +119,15 @@ function evaluateCalcExpression (value) {
     let result = parseTerm()
     if (result === null) return null
     while (true) {
+      const whitespaceStart = index
       skipWhitespace()
+      const hasLeadingWhitespace = index > whitespaceStart
       const operator = value[index]
       if (operator !== '+' && operator !== '-') break
       index += 1
+      const rightWhitespaceStart = index
+      skipWhitespace()
+      if (!hasLeadingWhitespace || index === rightWhitespaceStart) return null
       const right = parseTerm()
       if (right === null) return null
       result = operator === '+' ? result + right : result - right
@@ -455,6 +470,14 @@ function updateHtmlSuppression (content, inlineContext = false) {
         }
       }
       continue
+    }
+    if (paragraphClosingTags.has(tag)) {
+      for (let index = htmlStack.length - 1; index >= 0; index -= 1) {
+        if (htmlStack[index].tag === 'p') {
+          htmlStack.splice(index)
+          break
+        }
+      }
     }
     const optionalClosures = optionalEndTagClosures.get(tag)
     if (optionalClosures) {
