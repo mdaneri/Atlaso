@@ -116,6 +116,9 @@ def test_merge_hold_directions_preserves_direct_hold_request() -> None:
     assert merge_hold_directions(
         "I ask that you do not merge this pull request."
     ) == {"do not merge": "add"}
+    assert merge_hold_directions(
+        "I decided: do not merge this pull request."
+    ) == {"do not merge": "add"}
 
 
 def test_merge_hold_directions_preserves_branch_targeted_hold() -> None:
@@ -529,6 +532,9 @@ def test_source_authority_excludes_diagnostic_how_to_questions() -> None:
     assert not source_has_default_merge_authority(("How should we fix issue #602?",))
     assert not source_has_default_merge_authority(
         ("What is needed to implement issue #602?",)
+    )
+    assert not source_has_default_merge_authority(
+        ("Please investigate how to fix issue #602.",)
     )
 
 

@@ -698,6 +698,9 @@ DEFAULT_MERGE_AUTHORITY_SOURCE_EXCLUSIONS = re.compile(
     r"(?:diagnos(?:e|tic)|investigat(?:e|ion)|analy(?:ze|sis)|assess|inspect)"
     r"[^.!?]{0,80}\b(?:without|no)\b[^.!?]{0,40}"
     r"\b(?:implement|chang|modif|edit|mak)|"
+    r"(?:please\s+)?(?:investigate|analyze|assess|diagnose|inspect|evaluate)\s+"
+    r"(?:how|what|whether)\b[^.!?]{0,80}\b"
+    r"(?:implement|fix|patch|resolve|solve|change|modify|edit)\b|"
     r"(?:open(?:ing)?|create|submit|prepare|deliver|leave|keep)\s+"
     r"(?:(?:an?|the|this)\s+)?draft (?:pull request|pr)|"
     r"(?:open(?:ing)?|create|submit|prepare|deliver|leave|keep)\s+"
@@ -824,6 +827,9 @@ MERGE_HOLD_DISCUSSION_CONTEXT = re.compile(
 )
 MERGE_HOLD_DIRECT_REQUEST_CONTEXT = re.compile(
     r"\b(?:i|we)\s+(?:ask|request)\s+that\s+(?:you\s+)?$"
+)
+MERGE_HOLD_DIRECT_DECISION_CONTEXT = re.compile(
+    r"\b(?:(?:i|we)\s+decid(?:e|ed)|(?:my|our)\s+decision\s+is)\s*:\s*$"
 )
 DEFAULT_MERGE_AUTHORITY_ACTION_BOUNDARY = re.compile(
     r"(?:[;,.!?]+|\s+(?:and|then|but)\s+)"
@@ -1051,7 +1057,10 @@ def _is_hold_discussion(segment: str, offset: int) -> bool:
         offset: Character offset where the hold phrase begins.
     """
     prefix = segment[max(0, offset - 100) : offset]
-    if MERGE_HOLD_DIRECT_REQUEST_CONTEXT.search(prefix) is not None:
+    if (
+        MERGE_HOLD_DIRECT_REQUEST_CONTEXT.search(prefix) is not None
+        or MERGE_HOLD_DIRECT_DECISION_CONTEXT.search(prefix) is not None
+    ):
         return False
     return MERGE_HOLD_DISCUSSION_CONTEXT.search(prefix) is not None
 

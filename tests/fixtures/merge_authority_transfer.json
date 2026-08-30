@@ -1913,6 +1913,33 @@
       "expected_holds": []
     },
     {
+      "name": "direct-decision-preserves-hold",
+      "default_merge_authority": true,
+      "instructions": [
+        {
+          "text": "Implement issue #602. I decided: do not merge this pull request.",
+          "add_holds": [
+            "do not merge"
+          ]
+        }
+      ],
+      "generated": "Keep the explicit do not merge hold.",
+      "expected_holds": [
+        "do not merge"
+      ]
+    },
+    {
+      "name": "imperative-investigation-is-diagnostic",
+      "default_merge_authority": false,
+      "instructions": [
+        {
+          "text": "Please investigate how to fix issue #602."
+        }
+      ],
+      "generated": "Investigate the issue and report the diagnostic approach without changing repository or GitHub state.",
+      "expected_holds": []
+    },
+    {
       "name": "pronoun-review-reclassifies-task",
       "default_merge_authority": false,
       "instructions": [
