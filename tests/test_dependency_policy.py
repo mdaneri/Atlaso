@@ -243,6 +243,64 @@ def test_dependency_policy_rejects_external_checkout_requirement_lock(
     )
 
 
+def test_dependency_policy_limits_checkout_inputs_to_with_mapping(
+    tmp_path: Path,
+) -> None:
+    """Verify nested step mappings cannot overwrite checkout inputs.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
+    write_valid_policy(tmp_path)
+    workflow = tmp_path / ".github" / "workflows" / "release.yml"
+    workflow.parent.mkdir(parents=True, exist_ok=True)
+    workflow.write_text(
+        """jobs:
+  external:
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          repository: attacker/other
+        env:
+          repository: mdaneri/Atlaso
+      - run: python -m pip install -r requirements-release-tools.lock
+""",
+        encoding="utf-8",
+    )
+
+    assert any(
+        "root workflow requirement is not sourced from Atlaso: "
+        "requirements-release-tools.lock" in error
+        for error in validate(tmp_path)
+    )
+
+
+def test_dependency_policy_tokenizes_escaped_requirement_flag(
+    tmp_path: Path,
+) -> None:
+    """Verify shell escapes are removed before requirement flag matching.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
+    write_valid_policy(tmp_path)
+    (tmp_path / "requirements-ad-hoc.lock").write_text(
+        "placeholder\n", encoding="utf-8"
+    )
+    workflow = tmp_path / ".github" / "workflows" / "release.yml"
+    workflow.parent.mkdir(parents=True, exist_ok=True)
+    workflow.write_text(
+        "run: python -m pip install \\-r requirements-ad-hoc.lock\n",
+        encoding="utf-8",
+    )
+
+    assert any(
+        "workflow requirement lock is outside the generated dependency policy "
+        "inventory: requirements-ad-hoc.lock" in error
+        for error in validate(tmp_path)
+    )
+
+
 def test_dependency_policy_rejects_untrusted_atlaso_checkout_ref(
     tmp_path: Path,
 ) -> None:

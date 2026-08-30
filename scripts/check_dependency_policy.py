@@ -17,21 +17,15 @@ PIN_RE = re.compile(
     r"^[A-Za-z0-9_.-]+==[^\s\\;]+(?:\s*;\s*[^\\]+)?\s*\\?$"
 )
 HASH_RE = re.compile(r"--hash=sha256:[0-9a-f]{64}")
-PIP_COMMAND_RE = re.compile(
-    r"(?<![A-Za-z0-9_.-])"
-    r"(?:"
-    r"(?P<python_quote>['\"]?)"
-    r"(?:python(?:\d+(?:\.\d+)*)?(?:\.exe)?|py(?:\.exe)?)"
-    r"(?P=python_quote)\s+-m\s+"
-    r"(?P<module_quote>['\"]?)pip(?:\d+(?:\.\d+)*)?(?:\.__main__)?"
-    r"(?P=module_quote)"
-    r"|(?P<pip_quote>['\"]?)pip(?:\d+(?:\.\d+)*)?(?:\.exe)?(?P=pip_quote)"
-    r")\s+[^\s;&|]+"
-    r"(?P<args>.*)$"
+PYTHON_LAUNCHER_RE = re.compile(
+    r"(?:python(?:\d+(?:\.\d+)*)?(?:\.exe)?|py(?:\.exe)?)",
+    re.IGNORECASE,
 )
-WORKFLOW_REQUIREMENT_RE = re.compile(
-    r"(?<!\S)(?:--requirement(?:=|\s+)|-r(?:=|\s*))"
-    r"(?:['\"])?(?P<path>[^\s'\"]+)"
+PIP_LAUNCHER_RE = re.compile(
+    r"pip(?:\d+(?:\.\d+)*)?(?:\.exe)?", re.IGNORECASE
+)
+PIP_MODULE_RE = re.compile(
+    r"pip(?:\d+(?:\.\d+)*)?(?:\.__main__)?", re.IGNORECASE
 )
 RUN_RE = re.compile(r"^(?P<indent>\s*)(?:-\s+)?run:\s*(?P<value>.*)$")
 TRUSTED_ATLASO_REFS = {
@@ -183,9 +177,21 @@ def _workflow_checkout_sources(
         checkout_path = ""
         repository = "${{ github.repository }}"
         ref = ""
+        with_indent = -1
         for candidate in lines[index + 1 :]:
-            if candidate.strip() and len(candidate) - len(candidate.lstrip()) <= step_indent:
+            candidate_indent = len(candidate) - len(candidate.lstrip())
+            if candidate.strip() and candidate_indent <= step_indent:
                 break
+            if candidate.strip() == "with:" and candidate_indent == step_indent + 2:
+                with_indent = candidate_indent
+                continue
+            if with_indent < 0:
+                continue
+            if candidate.strip() and candidate_indent <= with_indent:
+                with_indent = -1
+                continue
+            if candidate_indent != with_indent + 2:
+                continue
             path_value = _yaml_scalar(candidate, "path")
             if path_value is not None and re.fullmatch(
                 r"[A-Za-z0-9._/-]+", path_value
@@ -274,6 +280,50 @@ def _shell_command_segments(command: str) -> list[str]:
     if segment:
         segments.append(segment)
     return segments
+
+
+def _segment_requirement_paths(segment: str) -> list[str]:
+    """Return requirement paths from one quote-aware shell command segment.
+
+    Args:
+        segment: Command text with outer separators already removed.
+    """
+    try:
+        tokens = shlex.split(segment, posix=True)
+    except ValueError:
+        return []
+    pip_index = -1
+    for index, token in enumerate(tokens):
+        if PIP_LAUNCHER_RE.fullmatch(token):
+            pip_index = index
+            break
+        if (
+            PYTHON_LAUNCHER_RE.fullmatch(token)
+            and index + 2 < len(tokens)
+            and tokens[index + 1] == "-m"
+            and PIP_MODULE_RE.fullmatch(tokens[index + 2])
+        ):
+            pip_index = index + 2
+            break
+    if pip_index < 0 or pip_index + 1 >= len(tokens):
+        return []
+
+    paths: list[str] = []
+    arguments = tokens[pip_index + 2 :]
+    index = 0
+    while index < len(arguments):
+        argument = arguments[index]
+        if argument in {"-r", "--requirement"}:
+            if index + 1 < len(arguments):
+                paths.append(arguments[index + 1])
+                index += 2
+                continue
+        elif argument.startswith("--requirement="):
+            paths.append(argument.removeprefix("--requirement="))
+        elif argument.startswith("-r") and len(argument) > 2:
+            paths.append(argument[2:].removeprefix("="))
+        index += 1
+    return paths
 
 
 def _workflow_step_working_directory(lines: list[str], index: int) -> str:
@@ -444,13 +494,10 @@ def _workflow_requirement_paths(lines: list[str]) -> list[tuple[int, str, str]]:
     references: list[tuple[int, str, str]] = []
     for line_number, command, working_directory in _workflow_run_commands(lines):
         for segment in _shell_command_segments(command):
-            for pip_command in PIP_COMMAND_RE.finditer(segment):
-                references.extend(
-                    (line_number, match.group("path"), working_directory)
-                    for match in WORKFLOW_REQUIREMENT_RE.finditer(
-                        pip_command.group("args")
-                    )
-                )
+            references.extend(
+                (line_number, path, working_directory)
+                for path in _segment_requirement_paths(segment)
+            )
     return references
 
 
