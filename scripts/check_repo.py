@@ -2423,21 +2423,85 @@ def strip_markdown_deleted_content(text: str) -> str:
             return False
         if suffix_marker != "(":
             return False
-        depth = 1
         destination_cursor = suffix_start + 1
-        while destination_cursor < len(without_html_deletions):
-            character = without_html_deletions[destination_cursor]
-            if character == "\\":
-                destination_cursor += 2
-                continue
-            if character == "(":
-                depth += 1
-            elif character == ")":
-                depth -= 1
-                if depth == 0:
-                    return True
+        while (
+            destination_cursor < len(without_html_deletions)
+            and without_html_deletions[destination_cursor].isspace()
+        ):
             destination_cursor += 1
-        return False
+        if destination_cursor >= len(without_html_deletions):
+            return False
+        if without_html_deletions[destination_cursor] == ")":
+            return True
+        if without_html_deletions[destination_cursor] == "<":
+            destination_cursor += 1
+            while destination_cursor < len(without_html_deletions):
+                character = without_html_deletions[destination_cursor]
+                if character == "\\":
+                    destination_cursor += 2
+                    continue
+                if character in {"<", "\r", "\n"}:
+                    return False
+                if character == ">":
+                    destination_cursor += 1
+                    break
+                destination_cursor += 1
+            else:
+                return False
+        else:
+            nested_parentheses = 0
+            destination_start = destination_cursor
+            while destination_cursor < len(without_html_deletions):
+                character = without_html_deletions[destination_cursor]
+                if character == "\\":
+                    destination_cursor += 2
+                    continue
+                if character.isspace() or ord(character) < 0x20:
+                    break
+                if character == "(":
+                    nested_parentheses += 1
+                    if nested_parentheses > 32:
+                        return False
+                elif character == ")":
+                    if nested_parentheses == 0:
+                        return destination_cursor > destination_start
+                    nested_parentheses -= 1
+                destination_cursor += 1
+            if destination_cursor == destination_start or nested_parentheses:
+                return False
+        while (
+            destination_cursor < len(without_html_deletions)
+            and without_html_deletions[destination_cursor].isspace()
+        ):
+            destination_cursor += 1
+        if destination_cursor >= len(without_html_deletions):
+            return False
+        title_opener = without_html_deletions[destination_cursor]
+        if title_opener in {'"', "'", "("}:
+            title_closer = ")" if title_opener == "(" else title_opener
+            destination_cursor += 1
+            while destination_cursor < len(without_html_deletions):
+                character = without_html_deletions[destination_cursor]
+                if character == "\\":
+                    destination_cursor += 2
+                    continue
+                if character in {"\r", "\n"}:
+                    return False
+                if character == title_closer:
+                    destination_cursor += 1
+                    break
+                destination_cursor += 1
+            else:
+                return False
+            while (
+                destination_cursor < len(without_html_deletions)
+                and without_html_deletions[destination_cursor].isspace()
+            ):
+                destination_cursor += 1
+        return (
+            destination_cursor < len(without_html_deletions)
+            and without_html_deletions[destination_cursor] == ")"
+        )
 
     while link_cursor < len(without_html_deletions):
         if without_html_deletions[link_cursor] == "\\" and (
