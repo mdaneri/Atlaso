@@ -1115,6 +1115,12 @@ elseif ($requiresBuilderReservation) {
         $BuilderStaticDns = @($managementGateway)
         Write-Host "Using VMware NAT gateway DNS for Photon builder: $($BuilderStaticDns -join ', ')."
     }
+    if (-not $finalAddressWasPassed) {
+        $FinalMgmtAddress = 'dhcp'
+    }
+    if (-not $finalGatewayWasPassed -and $FinalMgmtAddress -ne 'dhcp') {
+        $FinalMgmtGateway = $managementGateway
+    }
     Write-Host "Discovered VMware management network $($management.Name) for safe builder-address admission."
 }
 

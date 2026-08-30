@@ -184,6 +184,8 @@ def test_photon_wrapper_preflights_credentials_before_image_mutation() -> None:
     assert "$BuilderStaticGateway = $managementGateway" in skipped_check_defaults
     assert "$BuilderStaticDns = @($managementGateway)" in skipped_check_defaults
     assert "Get-Ipv4CidrFromSubnetOffset `" in skipped_check_defaults
+    assert "$FinalMgmtAddress = 'dhcp'" in skipped_check_defaults
+    assert "$FinalMgmtGateway = $managementGateway" in skipped_check_defaults
     assert "(@($BuilderStaticGateway) + $managementHostAddresses)" in wrapper
     assert "Cleanup marker root does not match the exact task-created Photon root." in wrapper
     assert "$Job.TerminateAndWait(10000)" in runner
