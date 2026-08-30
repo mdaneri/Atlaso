@@ -255,7 +255,9 @@ restart proves that process tree gone, recovery also requires the exact VM to be
 ambiguous state remains reserved with an actionable error.
 The non-secret release handoff lives under the same per-user state root instead of the temporary credential directory.
 If cleanup retains a running VM, stop that VM and rerun the wrapper; startup retries every exact pending handoff before
-allocating another address and deletes a handoff only after its ledger release succeeds.
+allocating another address, skips handoffs whose exact owner process is still active, and deletes a handoff only after
+its ledger release succeeds. Ledger publication uses write-through file replacement and directory-metadata flushing;
+if handoff publication fails before any VM starts, the owning child rolls back its exact reservation.
 
 Use `-BuilderAddressPoolStartOffset` and `-BuilderAddressPoolEndOffset` to select another bounded pool. An explicit
 `-BuilderStaticIp` is a one-address pool and must pass the same VMware DHCP, fixed-address, observation, and reservation

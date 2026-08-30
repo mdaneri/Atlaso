@@ -1089,9 +1089,26 @@ if (-not [string]::IsNullOrWhiteSpace($BuilderStaticIp)) {
         -VmName $VmName `
         -RepositoryRoot $repoRoot
     $BuilderStaticIp = $builderReservation.Cidr
-    Write-AtlasoDurableJsonFile `
-        -Path $resolvedBuilderAddressReservationPath `
-        -Payload $builderReservation
+    try {
+        Write-AtlasoDurableJsonFile `
+            -Path $resolvedBuilderAddressReservationPath `
+            -Payload $builderReservation
+    }
+    catch {
+        $publicationError = $_
+        try {
+            # The child still owns this live process identity, and no VM has
+            # started, so exact rollback is safer than stranding the address.
+            Exit-AtlasoVmwareBuilderAddressReservation `
+                -Reservation $builderReservation `
+                -VmrunPath $resolvedReservationVmrun `
+                -StateRoot $builderReservationStateRoot
+        }
+        catch {
+            throw "Builder-address handoff publication failed and exact reservation rollback also failed: $($publicationError.Exception.Message) Rollback: $($_.Exception.Message)"
+        }
+        throw $publicationError
+    }
     Write-Host "Reserved Photon builder temporary SSH address $BuilderStaticIp for this exact build."
 }
 

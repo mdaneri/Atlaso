@@ -123,6 +123,23 @@ exit 1
         if ($_.Exception.Message -eq 'A running builder VM released its address reservation.') { throw }
     }
 
+    $truncatedVmrunPath = Join-Path $testRoot 'fake-truncated-vmrun.ps1'
+    [System.IO.File]::WriteAllText(
+        $truncatedVmrunPath,
+        "param([Parameter(ValueFromRemainingArguments = `$true)][string[]]`$Arguments)`n'Total running VMs: 1'`nexit 0`n",
+        [System.Text.UTF8Encoding]::new($false)
+    )
+    try {
+        Exit-AtlasoVmwareBuilderAddressReservation `
+            -Reservation $first `
+            -VmrunPath $truncatedVmrunPath `
+            -StateRoot $stateRoot
+        throw 'A truncated vmrun inventory released its builder address.'
+    }
+    catch {
+        if ($_.Exception.Message -eq 'A truncated vmrun inventory released its builder address.') { throw }
+    }
+
     try {
         $null = Enter-AtlasoVmwareBuilderAddressReservation `
             @common `
@@ -141,6 +158,49 @@ exit 1
     }
     Exit-AtlasoVmwareBuilderAddressReservation -Reservation $replacement -VmrunPath $vmrunPath -StateRoot $stateRoot
     Exit-AtlasoVmwareBuilderAddressReservation -Reservation $second -VmrunPath $vmrunPath -StateRoot $stateRoot
+
+    $activeStateRoot = Join-Path $testRoot 'active-owner-state'
+    $activeCommon = $common.Clone()
+    $activeCommon.StateRoot = $activeStateRoot
+    $activeOwnerReservation = Enter-AtlasoVmwareBuilderAddressReservation `
+        @activeCommon `
+        -OutputDirectory (Join-Path $testRoot 'active-owner-output')
+    $sleeper = Start-Process `
+        -FilePath (Get-Process -Id $PID).Path `
+        -ArgumentList @('-NoLogo', '-NoProfile', '-Command', 'Start-Sleep -Seconds 30') `
+        -WindowStyle Hidden `
+        -PassThru
+    try {
+        $sleeper.Refresh()
+        $activeOwnerReservation.OwnerPid = $sleeper.Id
+        $activeOwnerReservation.OwnerStartTimeUtcTicks = $sleeper.StartTime.ToUniversalTime().Ticks
+        $activeLedgerPath = Join-Path $activeStateRoot 'reservations.json'
+        $activeLedger = [ordered]@{ Schema = 1; Reservations = @($activeOwnerReservation) }
+        [System.IO.File]::WriteAllText(
+            $activeLedgerPath,
+            (($activeLedger | ConvertTo-Json -Depth 6) + "`n"),
+            [System.Text.UTF8Encoding]::new($false)
+        )
+        try {
+            Exit-AtlasoVmwareBuilderAddressReservation `
+                -Reservation $activeOwnerReservation `
+                -VmrunPath $vmrunPath `
+                -StateRoot $activeStateRoot
+            throw 'A live foreign owner released its builder address.'
+        }
+        catch {
+            if ($_.Exception.Message -eq 'A live foreign owner released its builder address.') { throw }
+        }
+    }
+    finally {
+        Stop-Process -Id $sleeper.Id -Force -ErrorAction SilentlyContinue
+        $sleeper.WaitForExit()
+        $sleeper.Dispose()
+    }
+    Exit-AtlasoVmwareBuilderAddressReservation `
+        -Reservation $activeOwnerReservation `
+        -VmrunPath $vmrunPath `
+        -StateRoot $activeStateRoot
 
     $ledgerPath = Join-Path $stateRoot 'reservations.json'
     $currentBootIdentity = ([DateTimeOffset](
@@ -204,6 +264,7 @@ exit 1
             'builder-address-reservation-'
             'pending-releases'
             'Complete-AtlasoBuilderAddressReservationHandoff'
+            'Builder-address handoff publication failed and exact reservation rollback also failed'
         )) {
         if (-not $wrapper.Contains($required, [StringComparison]::Ordinal)) {
             throw "The Photon wrapper is missing builder reservation integration marker: $required"

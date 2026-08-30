@@ -214,11 +214,17 @@ function Get-AtlasoRunningVmwareVmxPaths {
     param([Parameter(Mandatory = $true)][string]$VmrunPath)
 
     $lines = @(& $VmrunPath -T ws list)
-    if ($LASTEXITCODE -ne 0 -or $lines.Count -eq 0 -or $lines[0] -notmatch '^Total running VMs:\s*\d+\s*$') {
+    if ($LASTEXITCODE -ne 0 -or $lines.Count -eq 0 -or $lines[0] -notmatch '^Total running VMs:\s*(\d+)\s*$') {
         throw 'Could not obtain a trustworthy VMware Workstation running inventory.'
     }
-    return @($lines | Select-Object -Skip 1 | Where-Object { -not [string]::IsNullOrWhiteSpace($_) } |
-        ForEach-Object { [System.IO.Path]::GetFullPath($_.Trim()) })
+    $declaredCount = [int]$Matches[1]
+    $reportedPaths = @($lines | Select-Object -Skip 1 | Where-Object {
+            -not [string]::IsNullOrWhiteSpace($_)
+        } | ForEach-Object { [System.IO.Path]::GetFullPath($_.Trim()) })
+    if ($reportedPaths.Count -ne $declaredCount) {
+        throw "vmrun list reported $declaredCount VMs but returned $($reportedPaths.Count) paths; the builder address remains reserved."
+    }
+    return $reportedPaths
 }
 
 function Test-AtlasoVmwareAddressObservedInUse {
@@ -340,7 +346,14 @@ function Write-AtlasoBuilderReservationLedger {
     try {
         $json = [ordered]@{ Schema = 1; Reservations = @($Reservations) } | ConvertTo-Json -Depth 6
         $bytes = [System.Text.UTF8Encoding]::new($false).GetBytes("$json`n")
-        $stream = [System.IO.File]::Open($temporary, 'CreateNew', 'Write', 'None')
+        $stream = [System.IO.FileStream]::new(
+            $temporary,
+            [System.IO.FileMode]::CreateNew,
+            [System.IO.FileAccess]::Write,
+            [System.IO.FileShare]::None,
+            4096,
+            [System.IO.FileOptions]::WriteThrough
+        )
         try {
             $stream.Write($bytes, 0, $bytes.Length)
             $stream.Flush($true)
@@ -348,12 +361,123 @@ function Write-AtlasoBuilderReservationLedger {
         finally {
             $stream.Dispose()
         }
-        [System.IO.File]::Move($temporary, $Path, $true)
+        Move-AtlasoBuilderLedgerDurableFile `
+            -SourcePath $temporary `
+            -DestinationPath $Path `
+            -Replace
+        Sync-AtlasoBuilderLedgerDirectory -DirectoryPath (Split-Path -Parent $Path)
     }
     finally {
         if (Test-Path -LiteralPath $temporary) {
             Remove-Item -LiteralPath $temporary -Force
         }
+    }
+}
+
+function Move-AtlasoBuilderLedgerDurableFile {
+    <#
+    .SYNOPSIS
+    Replace the builder ledger with Windows write-through rename semantics.
+    .PARAMETER SourcePath
+    Exact flushed temporary ledger path.
+    .PARAMETER DestinationPath
+    Exact final ledger path on the same volume.
+    .PARAMETER Replace
+    Replace an existing validated ledger.
+    #>
+    param(
+        [Parameter(Mandatory = $true)][string]$SourcePath,
+        [Parameter(Mandatory = $true)][string]$DestinationPath,
+        [switch]$Replace
+    )
+
+    if (-not $IsWindows) {
+        throw 'Durable builder-ledger replacement requires Windows.'
+    }
+    if (-not ('Atlaso.WorkstationDurableFile' -as [type])) {
+        Add-Type -TypeDefinition @'
+using System.Runtime.InteropServices;
+namespace Atlaso {
+    public static class WorkstationDurableFile {
+        [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+        public static extern bool MoveFileEx(string existingPath, string newPath, uint flags);
+    }
+}
+'@
+    }
+    [uint32]$flags = 0x00000008
+    if ($Replace) { $flags = $flags -bor 0x00000001 }
+    if (-not [Atlaso.WorkstationDurableFile]::MoveFileEx(
+            (Resolve-Path -LiteralPath $SourcePath).Path,
+            [System.IO.Path]::GetFullPath($DestinationPath),
+            $flags
+        )) {
+        $errorCode = [Runtime.InteropServices.Marshal]::GetLastWin32Error()
+        throw [ComponentModel.Win32Exception]::new(
+            $errorCode,
+            'Durable builder-ledger replacement failed.'
+        )
+    }
+}
+
+function Sync-AtlasoBuilderLedgerDirectory {
+    <#
+    .SYNOPSIS
+    Flush builder-ledger directory metadata through an exact Windows handle.
+    .PARAMETER DirectoryPath
+    Existing non-reparse-point ledger directory.
+    #>
+    param([Parameter(Mandatory = $true)][string]$DirectoryPath)
+
+    $resolvedDirectory = (Resolve-Path -LiteralPath $DirectoryPath).Path
+    $directory = Get-Item -LiteralPath $resolvedDirectory -Force -ErrorAction Stop
+    if (-not $directory.PSIsContainer -or
+        ($directory.Attributes -band [System.IO.FileAttributes]::ReparsePoint)) {
+        throw 'Durable builder-ledger synchronization requires a non-reparse-point directory.'
+    }
+    if (-not ('Atlaso.WorkstationDurableDirectory' -as [type])) {
+        Add-Type -TypeDefinition @'
+using System;
+using System.Runtime.InteropServices;
+using Microsoft.Win32.SafeHandles;
+namespace Atlaso {
+    public static class WorkstationDurableDirectory {
+        [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+        public static extern SafeFileHandle CreateFileW(string path, uint desiredAccess,
+            uint shareMode, IntPtr securityAttributes, uint creationDisposition,
+            uint flagsAndAttributes, IntPtr templateFile);
+        [DllImport("kernel32.dll", SetLastError = true)]
+        [return: MarshalAs(UnmanagedType.Bool)]
+        public static extern bool FlushFileBuffers(SafeFileHandle handle);
+    }
+}
+'@
+    }
+    [uint32]$flags = [uint32]::Parse(
+        '82000000',
+        [Globalization.NumberStyles]::HexNumber
+    )
+    $handle = [Atlaso.WorkstationDurableDirectory]::CreateFileW(
+        $resolvedDirectory,
+        [uint32]0x40000000,
+        [uint32]0x00000007,
+        [IntPtr]::Zero,
+        [uint32]0x00000003,
+        $flags,
+        [IntPtr]::Zero
+    )
+    try {
+        if ($handle.IsInvalid -or
+            -not [Atlaso.WorkstationDurableDirectory]::FlushFileBuffers($handle)) {
+            $errorCode = [Runtime.InteropServices.Marshal]::GetLastWin32Error()
+            throw [ComponentModel.Win32Exception]::new(
+                $errorCode,
+                'Durable builder-ledger directory synchronization failed.'
+            )
+        }
+    }
+    finally {
+        $handle.Dispose()
     }
 }
 
@@ -588,6 +712,12 @@ function Exit-AtlasoVmwareBuilderAddressReservation {
                 [StringComparison]::OrdinalIgnoreCase
             )) {
             throw 'The exact VMware builder-address reservation could not be proven for release.'
+        }
+        if ([int]$matching[0].OwnerPid -ne $PID -and
+            (Test-AtlasoProcessIdentityActive `
+                -ProcessId ([int]$matching[0].OwnerPid) `
+                -StartTimeUtcTicks ([long]$matching[0].OwnerStartTimeUtcTicks))) {
+            throw "Builder address $($matching[0].Address) remains reserved because its exact owner process is still active."
         }
         $running = @(Get-AtlasoRunningVmwareVmxPaths -VmrunPath $VmrunPath)
         $vmx = [System.IO.Path]::GetFullPath([string]$matching[0].VmxPath)
