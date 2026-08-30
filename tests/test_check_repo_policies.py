@@ -1316,6 +1316,7 @@ def test_agent_policy_gate_rejects_missing_maintainer_break_glass_contract(
         f'<span style="display:/* comment */none">{prohibition}</span>',
         f'<span style="display&#58;none">{prohibition}</span>',
         f"<title>{prohibition}</title>",
+        f'<span style="display:n\\6f ne">{prohibition}</span>',
     )
     for replacement in complex_html_replacements:
         for relative_path in required_entry_points:
@@ -1371,6 +1372,23 @@ def test_agent_policy_gate_rejects_missing_maintainer_break_glass_contract(
         assert prohibition in original
         path.write_text(
             original.replace(prohibition, operative_html_replacement, 1),
+            encoding="utf-8",
+        )
+
+        assert check_agent_policy_gate(tmp_path) == []
+
+    visible_entity_replacement = (
+        "\n\n<div>\n"
+        f"{prohibition.replace(' or administrative', ' &#111;r administrative')}"
+        "\n</div>\n\n"
+    )
+    for relative_path in required_entry_points:
+        write_policy_files(tmp_path)
+        path = tmp_path / relative_path
+        original = path.read_text(encoding="utf-8")
+        assert prohibition in original
+        path.write_text(
+            original.replace(prohibition, visible_entity_replacement, 1),
             encoding="utf-8",
         )
 

@@ -31,9 +31,9 @@ function hasHiddenAttributes (attributes) {
   if ((parsedAttributes.get('aria-hidden') || '').toLowerCase() === 'true') {
     return true
   }
-  const styleValue = markdown.utils
+  const styleValue = decodeCssEscapes(markdown.utils
     .unescapeAll(parsedAttributes.get('style') || '')
-    .replace(/\/\*[\s\S]*?\*\//g, '')
+    .replace(/\/\*[\s\S]*?\*\//g, ''))
   const declarations = new Map()
   for (const declaration of styleValue.split(';')) {
     const separator = declaration.indexOf(':')
@@ -52,6 +52,21 @@ function hasHiddenAttributes (attributes) {
   return (
     declarations.get('display')?.value === 'none' ||
     ['hidden', 'collapse'].includes(declarations.get('visibility')?.value)
+  )
+}
+
+function decodeCssEscapes (value) {
+  return value.replace(
+    /\\(?:([0-9A-Fa-f]{1,6})(?:\r\n|[ \t\r\n\f])?|([^\r\n\f]))/g,
+    (_, hexadecimal, escapedCharacter) => {
+      if (!hexadecimal) {
+        return escapedCharacter
+      }
+      const codePoint = Number.parseInt(hexadecimal, 16)
+      return String.fromCodePoint(
+        codePoint === 0 || codePoint > 0x10FFFF ? 0xFFFD : codePoint
+      )
+    }
   )
 }
 
@@ -95,7 +110,7 @@ function processHtmlBlock (content) {
   let cursor = 0
   for (const match of content.matchAll(tagPattern)) {
     if (!blockquoteDepth && !isHtmlSuppressed()) {
-      output.push(content.slice(cursor, match.index))
+      output.push(markdown.utils.unescapeAll(content.slice(cursor, match.index)))
     }
     if (/^<\/?[A-Za-z]/.test(match[0])) {
       updateHtmlSuppression(match[0])
@@ -103,7 +118,7 @@ function processHtmlBlock (content) {
     cursor = match.index + match[0].length
   }
   if (!blockquoteDepth && !isHtmlSuppressed()) {
-    output.push(content.slice(cursor))
+    output.push(markdown.utils.unescapeAll(content.slice(cursor)))
   }
   output.push('\n')
 }
