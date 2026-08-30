@@ -41,6 +41,8 @@ Internal marker preserving whether the caller explicitly bound the builder DNS a
 Internal task-owned directory containing all plaintext image-build artifacts.
 .PARAMETER OutputCleanupClaimPath
 Internal durable marker proving the isolated child claimed a pre-existing output root.
+.PARAMETER BuilderAddressReservationPath
+Internal non-secret handoff for the exact temporary address reservation.
 .PARAMETER VmName
 Builder virtual-machine name.
 .PARAMETER OutputDirectory
@@ -59,6 +61,12 @@ Services VMware network.
 Optional host adapter for bridged management.
 .PARAMETER BuilderStaticIp
 Temporary Photon builder address.
+.PARAMETER BuilderAddressPoolStartOffset
+First host offset in the temporary builder-address pool.
+.PARAMETER BuilderAddressPoolEndOffset
+Final host offset in the temporary builder-address pool.
+.PARAMETER VmwareDhcpConfigPath
+Optional explicit VMware vmnetdhcp.conf path.
 .PARAMETER BuilderStaticNetmask
 Temporary Photon builder netmask.
 .PARAMETER BuilderStaticGateway
@@ -145,6 +153,7 @@ param(
     [switch]$BuilderStaticDnsBound,
     [string]$SensitiveBuildDirectory = '',
     [string]$OutputCleanupClaimPath = '',
+    [string]$BuilderAddressReservationPath = '',
     [string]$VmName = 'Atlaso-Photon-Builder-VMware',
     [string]$OutputDirectory = '',
     [string]$SshHost = '',
@@ -155,6 +164,11 @@ param(
     [string]$BridgedInterfaceAlias = '',
     # Legacy fallbacks; normal builds replace these from the selected VMware vmnet unless explicitly passed.
     [string]$BuilderStaticIp = '192.168.167.30/24',
+    [ValidateRange(1, 4294967294)]
+    [uint32]$BuilderAddressPoolStartOffset = 30,
+    [ValidateRange(1, 4294967294)]
+    [uint32]$BuilderAddressPoolEndOffset = 49,
+    [string]$VmwareDhcpConfigPath = '',
     [string]$BuilderStaticNetmask = '255.255.255.0',
     [string]$BuilderStaticGateway = '192.168.167.2',
     [string[]]$BuilderStaticDns = @(),
@@ -193,6 +207,7 @@ Import-Module (Join-Path $PSScriptRoot '..\common\Atlaso.PhotonImage.psm1') -For
 Import-Module (Join-Path $PSScriptRoot 'Atlaso.WorkstationCleanup.psm1') -Force
 Import-Module (Join-Path $PSScriptRoot 'Atlaso.VmwarePayload.psm1') -Force
 Import-Module (Join-Path $PSScriptRoot 'Atlaso.WorkstationBuildMonitor.psm1') -Force
+Import-Module (Join-Path $PSScriptRoot 'Atlaso.WorkstationBuilderAddress.psm1') -Force
 
 <#
 .SYNOPSIS
@@ -377,6 +392,12 @@ if ($CredentialChild) {
     else {
         [System.IO.Path]::GetFullPath($OutputCleanupClaimPath)
     }
+    $resolvedBuilderAddressReservationPath = if ([string]::IsNullOrWhiteSpace($BuilderAddressReservationPath)) {
+        ''
+    }
+    else {
+        [System.IO.Path]::GetFullPath($BuilderAddressReservationPath)
+    }
     $sensitiveBuildRoot = if ([string]::IsNullOrWhiteSpace($SensitiveBuildDirectory)) {
         ''
     }
@@ -398,6 +419,14 @@ if ($CredentialChild) {
         ) -or
         (Split-Path -Leaf $resolvedOutputCleanupClaimPath) -cne 'output-cleanup-claimed.json') {
         throw 'The isolated Photon output-cleanup claim path is unavailable or invalid.'
+    }
+    if ([string]::IsNullOrWhiteSpace($resolvedBuilderAddressReservationPath) -or
+        -not $resolvedBuilderAddressReservationPath.StartsWith(
+            $credentialRootPrefix,
+            [StringComparison]::OrdinalIgnoreCase
+        ) -or
+        (Split-Path -Leaf $resolvedBuilderAddressReservationPath) -cne 'builder-address-reservation.json') {
+        throw 'The isolated Photon builder-address reservation path is unavailable or invalid.'
     }
     if (-not [string]::IsNullOrWhiteSpace($PreparedIsoPath)) {
         $resolvedChildPreparedIsoPath = [System.IO.Path]::GetFullPath($PreparedIsoPath)
@@ -474,6 +503,7 @@ else {
     $childCredentialBundlePath = Join-Path $credentialRoot 'credentials.json'
     $childSensitiveBuildDirectory = Join-Path $credentialRoot 'sensitive-build'
     $childOutputCleanupClaimPath = Join-Path $credentialRoot 'output-cleanup-claimed.json'
+    $childBuilderAddressReservationPath = Join-Path $credentialRoot 'builder-address-reservation.json'
     $outerCleanupPackerDirectory = if ([string]::IsNullOrWhiteSpace($PackerDirectory)) {
         Join-Path $PSScriptRoot '..\..\..\image\vmware-workstation'
     }
@@ -538,6 +568,7 @@ else {
             '-CredentialBundlePath', $childCredentialBundlePath,
             '-SensitiveBuildDirectory', $childSensitiveBuildDirectory,
             '-OutputCleanupClaimPath', $childOutputCleanupClaimPath,
+            '-BuilderAddressReservationPath', $childBuilderAddressReservationPath,
             '-PreparedIsoPath', $childPreparedIsoPath
         )
         $excludedParameters = @(
@@ -547,7 +578,8 @@ else {
             'CredentialTimeoutSeconds', 'ImageBuildTimeoutSeconds',
             'CredentialBundlePath', 'CredentialChild',
             'BuilderStaticDnsJson', 'BuilderStaticDnsBound',
-            'SensitiveBuildDirectory', 'OutputCleanupClaimPath', 'PreparedIsoPath'
+            'SensitiveBuildDirectory', 'OutputCleanupClaimPath',
+            'BuilderAddressReservationPath', 'PreparedIsoPath'
         )
         foreach ($entry in $PSBoundParameters.GetEnumerator()) {
             if ($entry.Key -in $excludedParameters) {
@@ -622,12 +654,28 @@ else {
             throw 'Refusing to clean an invalid Photon credential bridge root.'
         }
         if (-not $processTreeTerminationUnproven) {
+            $reservationReleaseError = $null
+            if (Test-Path -LiteralPath $childBuilderAddressReservationPath -PathType Leaf) {
+                try {
+                    $builderReservation = Get-Content -LiteralPath $childBuilderAddressReservationPath -Raw |
+                        ConvertFrom-Json
+                    Exit-AtlasoVmwareBuilderAddressReservation `
+                        -Reservation $builderReservation `
+                        -VmrunPath (Resolve-WorkstationVmrunPath -Path $VmrunPath)
+                }
+                catch {
+                    $reservationReleaseError = $_
+                }
+            }
             $cleanupMarker = Get-Content -LiteralPath $cleanupMarkerPath -Raw -ErrorAction Stop |
                 ConvertFrom-Json
             Complete-AtlasoPhotonBuildCleanup `
                 -MarkerPath $cleanupMarkerPath `
                 -Marker $cleanupMarker `
                 -ExpectedRootPath $credentialRoot
+            if ($null -ne $reservationReleaseError) {
+                throw "The VMware builder address reservation was retained: $($reservationReleaseError.Exception.Message)"
+            }
         }
     }
     return
@@ -896,6 +944,8 @@ $builderGatewayWasPassed = $PSBoundParameters.ContainsKey('BuilderStaticGateway'
 $builderDnsWasPassed = $PSBoundParameters.ContainsKey('BuilderStaticDns') -or $BuilderStaticDnsBound
 $finalAddressWasPassed = $PSBoundParameters.ContainsKey('FinalMgmtAddress')
 $finalGatewayWasPassed = $PSBoundParameters.ContainsKey('FinalMgmtGateway')
+$management = $null
+$managementGateway = ''
 
 if (-not $SkipNetworkCheck) {
     $management = Get-WorkstationManagementNetwork -NetworkName $VmnetName -ServiceNetworkName $ServiceVmnetName -ResolvedVmrunPath $VmrunPath -BridgedInterfaceAlias $BridgedInterfaceAlias
@@ -926,6 +976,47 @@ if (-not $SkipNetworkCheck) {
     Write-Host "Using VMware management network $($management.Name) on $($management.Subnet)/$($management.Mask)."
     Write-Host "Using VMware services network $ServiceVmnetName for the second appliance NIC."
     Write-Host "Photon builder temporary SSH address: $BuilderStaticIp; final appliance management address: $FinalMgmtAddress."
+}
+
+if (-not [string]::IsNullOrWhiteSpace($BuilderStaticIp)) {
+    $resolvedReservationVmrun = Resolve-WorkstationVmrunPath -Path $VmrunPath
+    $builderParts = @($BuilderStaticIp -split '/', 2)
+    if ($builderParts.Count -ne 2 -or $builderParts[1] -notmatch '^\d{1,2}$') {
+        throw "BuilderStaticIp must be a canonical IPv4 CIDR; got '$BuilderStaticIp'."
+    }
+    $builderPrefix = [int]$builderParts[1]
+    if ($builderPrefix -ne (Get-Ipv4PrefixLength -Netmask $BuilderStaticNetmask)) {
+        throw 'BuilderStaticIp prefix and BuilderStaticNetmask do not describe the same network.'
+    }
+    $reservationSubnet = if ($null -ne $management) {
+        [string]$management.Subnet
+    }
+    else {
+        $builderValue = ConvertTo-Ipv4Integer -Address $builderParts[0]
+        $maskValue = ConvertTo-Ipv4Integer -Address $BuilderStaticNetmask
+        ConvertFrom-Ipv4Integer -Address ($builderValue -band $maskValue)
+    }
+    $reservationDhcpEnabled = $null -ne $management -and [string]$management.Dhcp -ieq 'true'
+    $preferredBuilderAddress = if ($builderIpWasPassed) { $builderParts[0] } else { '' }
+    $builderReservation = Enter-AtlasoVmwareBuilderAddressReservation `
+        -NetworkName $VmnetName `
+        -Subnet $reservationSubnet `
+        -Netmask $BuilderStaticNetmask `
+        -DhcpEnabled:$reservationDhcpEnabled `
+        -PreferredAddress $preferredBuilderAddress `
+        -PoolStartOffset $BuilderAddressPoolStartOffset `
+        -PoolEndOffset $BuilderAddressPoolEndOffset `
+        -AdditionalExcludedAddresses @($BuilderStaticGateway) `
+        -DhcpConfigPath $VmwareDhcpConfigPath `
+        -VmrunPath $resolvedReservationVmrun `
+        -OutputDirectory $workstationOutputDirectory `
+        -VmName $VmName `
+        -RepositoryRoot $repoRoot
+    $BuilderStaticIp = $builderReservation.Cidr
+    Write-AtlasoDurableJsonFile `
+        -Path $resolvedBuilderAddressReservationPath `
+        -Payload $builderReservation
+    Write-Host "Reserved Photon builder temporary SSH address $BuilderStaticIp for this exact build."
 }
 
 if (-not $ValidateOnly -and -not $PrepareIsoOnly -and -not $SkipNetworkCheck) {

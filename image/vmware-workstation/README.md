@@ -243,13 +243,23 @@ pwsh -ExecutionPolicy Bypass `
 
 The build wrapper reads the selected VMware network before rendering Packer variables. For NAT/host-only vmnets it uses
 `vmrun -T ws listHostNetworks`; for bridged `vmnet0` it falls back to the active Windows IPv4 interface, or the
-interface named by `-BridgedInterfaceAlias`. Unless overridden, it chooses host offset `.30` for the temporary Photon
-builder SSH address and uses DHCP for the final appliance management address. For NAT vmnets, the wrapper points the
-temporary builder at the VMware NAT gateway DNS proxy, normally host offset `.2`, instead of copying unrelated host DNS
-servers into the Photon kickstart. Pass `-BuilderStaticIp`, `-BuilderStaticGateway`, and `-BuilderStaticDns` together
-only when a different builder address plan is intentional. Pass `-FinalMgmtAddress` and `-FinalMgmtGateway` only when a
-static final management address is intentional. Pass `-ServiceVmnetName` only when the second appliance NIC should
-attach to a different Workstation network.
+interface named by `-BridgedInterfaceAlias`. Unless overridden, it atomically selects the first free address from host
+offsets `.30` through `.49` for the temporary Photon builder and uses DHCP for the completed appliance management
+address. Before publishing a reservation, it reads the exact selected subnet from VMware's `vmnetdhcp.conf` and rejects
+the pool when any address overlaps a VMware dynamic range or fixed address. It also excludes addresses held by another
+Atlaso reservation, reported by a running Workstation guest, or present in the Windows neighbor table; ping is not used
+as free-address proof. The per-user ledger serializes concurrent worktrees and binds each reservation to the exact task
+worktree, source commit, branch, process, output root, VM name, and VMX path. An interrupted owner is recovered only
+after the exact VM is inactive and the address is no longer observed; ambiguous state remains reserved with an
+actionable error.
+
+Use `-BuilderAddressPoolStartOffset` and `-BuilderAddressPoolEndOffset` to select another bounded pool. An explicit
+`-BuilderStaticIp` is a one-address pool and must pass the same VMware DHCP, fixed-address, observation, and reservation
+checks. For NAT vmnets, the wrapper points the temporary builder at the VMware NAT gateway DNS proxy, normally host
+offset `.2`, instead of copying unrelated host DNS servers into the Photon kickstart. Pass `-BuilderStaticGateway` and
+`-BuilderStaticDns` only when a different builder address plan is intentional. Pass `-FinalMgmtAddress` and
+`-FinalMgmtGateway` only when a static final management address is intentional. Pass `-ServiceVmnetName` only when the
+second appliance NIC should attach to a different Workstation network.
 
 Create or adjust missing lifecycle vmnets in VMware Virtual Network Editor. The scripts intentionally do not rewrite
 global Workstation vmnet configuration because `vnetlib.exe` behavior is version-sensitive and can affect unrelated VMs.

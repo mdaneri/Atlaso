@@ -82,7 +82,8 @@ def test_photon_wrapper_preflights_credentials_before_image_mutation() -> None:
         in wrapper
     )
     assert "'-SensitiveBuildDirectory', $childSensitiveBuildDirectory" in wrapper
-    assert "'SensitiveBuildDirectory', 'OutputCleanupClaimPath', 'PreparedIsoPath'" in wrapper
+    assert "'SensitiveBuildDirectory', 'OutputCleanupClaimPath'," in wrapper
+    assert "'BuilderAddressReservationPath', 'PreparedIsoPath'" in wrapper
     assert "-SensitiveBuildDirectory $SensitiveBuildDirectory" in wrapper
     assert "[System.IO.Directory]::Delete($resolvedRoot, $true)" in wrapper
     assert "photon-image-build-cleanup.json" in wrapper

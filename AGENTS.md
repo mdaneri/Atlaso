@@ -708,6 +708,13 @@ The following cross-cutting boundaries always apply:
   redaction. On timeout, terminate only the Packer process tree and honor `-PackerOnError cleanup` through the checked
   exact-root cleanup; preserve exact artifacts for other failure selections. Never print connection credentials or VMX
   contents, and do not mask a start-handoff failure with an arbitrary delay.
+- Before any canonical VMware Photon builder starts, atomically reserve one temporary static IPv4 address from the
+  configured per-host pool. Parse the selected vmnet's exact `vmnetdhcp.conf` subnet, reject a pool or explicit address
+  that overlaps a VMware DHCP range or fixed address, and exclude observed non-ICMP use. Serialize the durable ledger
+  across Atlaso worktrees, bind each entry to the exact task worktree, source commit, branch, owner process, output root,
+  VM name, and VMX path, and retain it
+  while that exact VM remains active or recovery evidence is ambiguous. Release only after normal inactive-VM
+  completion or ownership-verified stale recovery. The completed appliance still uses management DHCP by default.
 - Validate live appliance readiness through `/openapi.json`, not VMware Tools IP discovery or service color alone.
 - A successful tty1 management-network correction must explicitly apply Network and Firewall from the corrected state,
   retry unfinished first-boot HTTPS before applying Appliance Settings, validate nginx before reload, ensure nginx and
