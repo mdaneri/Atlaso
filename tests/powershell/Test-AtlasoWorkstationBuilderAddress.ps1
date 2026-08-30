@@ -265,6 +265,9 @@ exit 1
             'pending-releases'
             'Complete-AtlasoBuilderAddressReservationHandoff'
             'Builder-address handoff publication failed and exact reservation rollback also failed'
+            'SkipNetworkCheck suppresses topology preparation, not allocator safety'
+            'HostAddresses'
+            '(@($BuilderStaticGateway) + $managementHostAddresses)'
         )) {
         if (-not $wrapper.Contains($required, [StringComparison]::Ordinal)) {
             throw "The Photon wrapper is missing builder reservation integration marker: $required"

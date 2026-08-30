@@ -173,6 +173,8 @@ def test_photon_wrapper_preflights_credentials_before_image_mutation() -> None:
     assert "Remove-Item -LiteralPath $childBuilderAddressReservationPath -Force" in wrapper
     assert "$publicationError = $_" in wrapper
     assert "exact reservation rollback also failed" in wrapper
+    assert "SkipNetworkCheck suppresses topology preparation, not allocator safety" in wrapper
+    assert "(@($BuilderStaticGateway) + $managementHostAddresses)" in wrapper
     assert "Cleanup marker root does not match the exact task-created Photon root." in wrapper
     assert "$Job.TerminateAndWait(10000)" in runner
     assert "$Job.CompleteAndWait(10000)" in runner

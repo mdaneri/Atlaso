@@ -995,6 +995,32 @@ function Get-WorkstationManagementNetwork {
     if ([string]::IsNullOrWhiteSpace($management.Subnet) -or [string]::IsNullOrWhiteSpace($management.Mask)) {
         throw "Management VMware network $NetworkName did not report an IPv4 subnet and mask."
     }
+    if ([string]$management.Type -ieq 'bridged') {
+        if (-not $management.PSObject.Properties['InterfaceAlias'] -or
+            [string]::IsNullOrWhiteSpace([string]$management.InterfaceAlias)) {
+            throw 'Bridged VMware network discovery did not identify the selected host interface.'
+        }
+        try {
+            $hostConfigurations = @(Get-NetIPConfiguration `
+                    -InterfaceAlias ([string]$management.InterfaceAlias) `
+                    -ErrorAction Stop)
+            $hostAddresses = @($hostConfigurations.IPv4Address | ForEach-Object {
+                    [string]$_.IPAddress
+                } | Where-Object {
+                    -not [string]::IsNullOrWhiteSpace($_)
+                } | Select-Object -Unique)
+        }
+        catch {
+            throw "Could not inspect the selected bridged host interface '$($management.InterfaceAlias)' for address exclusion."
+        }
+        if ($hostAddresses.Count -eq 0) {
+            throw "The selected bridged host interface '$($management.InterfaceAlias)' has no IPv4 address to exclude."
+        }
+        $management | Add-Member `
+            -NotePropertyName HostAddresses `
+            -NotePropertyValue $hostAddresses `
+            -Force
+    }
 
     if (-not [string]::IsNullOrWhiteSpace($ServiceNetworkName)) {
         $serviceName = $ServiceNetworkName.ToLowerInvariant()
@@ -1053,6 +1079,16 @@ if (-not $SkipNetworkCheck) {
     Write-Host "Using VMware services network $ServiceVmnetName for the second appliance NIC."
     Write-Host "Photon builder temporary SSH address: $BuilderStaticIp; final appliance management address: $FinalMgmtAddress."
 }
+elseif (-not [string]::IsNullOrWhiteSpace($BuilderStaticIp)) {
+    # SkipNetworkCheck suppresses topology preparation, not allocator safety.
+    # Read-only discovery is still required to establish exact DHCP exclusions.
+    $management = Get-WorkstationManagementNetwork `
+        -NetworkName $VmnetName `
+        -ServiceNetworkName '' `
+        -ResolvedVmrunPath $VmrunPath `
+        -BridgedInterfaceAlias $BridgedInterfaceAlias
+    Write-Host "Discovered VMware management network $($management.Name) for safe builder-address admission."
+}
 
 if (-not [string]::IsNullOrWhiteSpace($BuilderStaticIp)) {
     $resolvedReservationVmrun = Resolve-WorkstationVmrunPath -Path $VmrunPath
@@ -1073,6 +1109,13 @@ if (-not [string]::IsNullOrWhiteSpace($BuilderStaticIp)) {
         ConvertFrom-Ipv4Integer -Address ($builderValue -band $maskValue)
     }
     $reservationDhcpEnabled = $null -ne $management -and [string]$management.Dhcp -ieq 'true'
+    $managementHostAddresses = if ($null -ne $management -and
+        $management.PSObject.Properties['HostAddresses']) {
+        @($management.HostAddresses)
+    }
+    else {
+        @()
+    }
     $preferredBuilderAddress = if ($builderIpWasPassed) { $builderParts[0] } else { '' }
     $builderReservation = Enter-AtlasoVmwareBuilderAddressReservation `
         -NetworkName $VmnetName `
@@ -1082,7 +1125,7 @@ if (-not [string]::IsNullOrWhiteSpace($BuilderStaticIp)) {
         -PreferredAddress $preferredBuilderAddress `
         -PoolStartOffset $BuilderAddressPoolStartOffset `
         -PoolEndOffset $BuilderAddressPoolEndOffset `
-        -AdditionalExcludedAddresses @($BuilderStaticGateway) `
+        -AdditionalExcludedAddresses (@($BuilderStaticGateway) + $managementHostAddresses) `
         -DhcpConfigPath $VmwareDhcpConfigPath `
         -VmrunPath $resolvedReservationVmrun `
         -OutputDirectory $workstationOutputDirectory `

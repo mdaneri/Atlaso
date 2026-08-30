@@ -719,7 +719,9 @@ The following cross-cutting boundaries always apply:
   storage, never recover it while its exact owner process remains active, retry it after a preserved VM stops, and
   delete it only after exact ledger release succeeds. Publish ledger state with write-through replacement plus directory
   metadata synchronization, and roll back an exact pre-VM reservation if its handoff cannot be published. Release
-  normally only after inactive-VM completion. The completed appliance still uses management DHCP by default.
+  normally only after inactive-VM completion. Exclude every IPv4 address on the selected bridged host interface, and never
+  let skipped topology preparation bypass read-only DHCP-state discovery. The completed appliance still uses management
+  DHCP by default.
 - Validate live appliance readiness through `/openapi.json`, not VMware Tools IP discovery or service color alone.
 - A successful tty1 management-network correction must explicitly apply Network and Firewall from the corrected state,
   retry unfinished first-boot HTTPS before applying Appliance Settings, validate nginx before reload, ensure nginx and

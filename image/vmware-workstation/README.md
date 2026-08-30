@@ -258,6 +258,8 @@ If cleanup retains a running VM, stop that VM and rerun the wrapper; startup ret
 allocating another address, skips handoffs whose exact owner process is still active, and deletes a handoff only after
 its ledger release succeeds. Ledger publication uses write-through file replacement and directory-metadata flushing;
 if handoff publication fails before any VM starts, the owning child rolls back its exact reservation.
+Bridged admission also excludes all IPv4 addresses on the selected Windows interface. `-SkipNetworkCheck` skips topology
+preparation but still performs read-only management-vmnet discovery so DHCP state and exclusions cannot become unknown.
 
 Use `-BuilderAddressPoolStartOffset` and `-BuilderAddressPoolEndOffset` to select another bounded pool. An explicit
 `-BuilderStaticIp` is a one-address pool and must pass the same VMware DHCP, fixed-address, observation, and reservation
