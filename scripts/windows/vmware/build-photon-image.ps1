@@ -597,9 +597,17 @@ else {
     }
     $childPreparedIsoPath = Join-Path (Join-Path $childSensitiveBuildDirectory 'kickstart') $preparedIsoLeaf
     if (-not $Headless -and -not $ValidateOnly) {
+        $parentVmrunPath = Resolve-WorkstationVmrunPath -Path $VmrunPath
+        if (-not $KeepExistingOutput) {
+            # Stale library repair requires Workstation to be closed. Repair
+            # only missing registrations here; the child retains full output
+            # cleanup after network preparation and immediately before build.
+            Repair-AtlasoWorkstationStaleRegistrations `
+                -ScopeRoot $outerCleanupOutputDirectory `
+                -Confirm:$false
+        }
         # This parent is outside the sensitive Windows job and owns the only
         # permitted Workstation UI launch; descendants receive no breakaway right.
-        $parentVmrunPath = Resolve-WorkstationVmrunPath -Path $VmrunPath
         $null = Initialize-AtlasoWorkstationGui -VmrunPath $parentVmrunPath
     }
     [void][System.IO.Directory]::CreateDirectory($credentialRoot)
