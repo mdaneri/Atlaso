@@ -2306,11 +2306,24 @@ def strip_markdown_deleted_content(text: str) -> str:
     Args:
         text: Markdown source whose active policy prose must be inspected.
     """
-    without_html_deletions = re.sub(
+    html_deletion_pattern = re.compile(
         r'''<(?P<tag>del|s|strike)\b(?:[^<>"']|"[^"]*"|'[^']*')*>'''
-        r'''.*?(?:</(?P=tag)[ \t\r\n]*>|$)''',
+        r'''(?:(?!<(?P=tag)\b).)*?</(?P=tag)[ \t\r\n]*>''',
+        flags=re.DOTALL | re.IGNORECASE,
+    )
+    without_html_deletions = text
+    while True:
+        updated_text, replacement_count = html_deletion_pattern.subn(
+            lambda match: re.sub(r"[^\r\n]", "", match.group(0)),
+            without_html_deletions,
+        )
+        without_html_deletions = updated_text
+        if replacement_count == 0:
+            break
+    without_html_deletions = re.sub(
+        r'''<(?P<tag>del|s|strike)\b(?:[^<>"']|"[^"]*"|'[^']*')*>.*$''',
         lambda match: re.sub(r"[^\r\n]", "", match.group(0)),
-        text,
+        without_html_deletions,
         flags=re.DOTALL | re.IGNORECASE,
     )
     return re.sub(

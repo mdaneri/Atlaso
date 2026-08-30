@@ -1243,6 +1243,9 @@ def test_agent_policy_gate_rejects_missing_maintainer_break_glass_contract(
         f"<del>{prohibition}</del>",
         f"<s>{prohibition}</s>",
         f"<strike>{prohibition}</strike>",
+        f"<del><del>retired</del> {prohibition}</del>",
+        f"<s><s>retired</s> {prohibition}</s>",
+        f"<strike><strike>retired</strike> {prohibition}</strike>",
         f"~~{prohibition}~~",
     )
     for replacement in nonoperative_replacements:
