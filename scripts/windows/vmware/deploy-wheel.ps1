@@ -1435,10 +1435,13 @@ ln -sfn "$venv/bin/atlaso-vault" /usr/bin/atlaso-vault
 pwsh_path="$(command -v pwsh || true)"
 if [ -n "$pwsh_path" ]; then
     powershell_home="$(dirname "$(readlink -f "$pwsh_path")")"
-    if [ "$powershell_home" != "/opt/microsoft/powershell/7" ]; then
-        echo "PowerShell resolved to an unsupported global profile directory: $powershell_home" >&2
-        exit 2
-    fi
+    case "$powershell_home" in
+        /opt/microsoft/powershell/7 | /usr/share/powershell) ;;
+        *)
+            echo "PowerShell resolved to an unsupported global profile directory: $powershell_home" >&2
+            exit 2
+            ;;
+    esac
     cat >"/opt/atlaso/bin/atlaso-vault-profile.ps1" <<'ATLASO_POWERSHELL_PROFILE'
 function global:Get-AtlasoVault {
     [CmdletBinding()]

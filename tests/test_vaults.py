@@ -661,7 +661,7 @@ def test_vmware_wheel_deploy_exposes_fail_closed_vault_shell_commands():
     assert 'ln -sfn "$venv/bin/atlaso-vault" /usr/bin/atlaso-vault' in deploy
     assert "function global:Get-AtlasoVault" in deploy
     assert "/opt/atlaso/.venv/bin/atlaso-vault" in deploy
-    assert 'powershell_home" != "/opt/microsoft/powershell/7"' in deploy
+    assert "/opt/microsoft/powershell/7 | /usr/share/powershell" in deploy
     assert 'touch "$powershell_home/profile.ps1"' not in deploy
     assert '>>"$powershell_home/profile.ps1"' not in deploy
     assert "ATLASO_GLOBAL_POWERSHELL_PROFILE" in deploy

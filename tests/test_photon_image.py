@@ -129,8 +129,40 @@ def test_vmware_template_scrubs_credentials_and_host_identity() -> None:
     provision = Path("image/common/scripts/provision-atlaso.sh").read_text(encoding="utf-8")
     assert '"ATLASO_SECRET_KEY": "INITIALIZATION_REQUIRED"' in provision
     assert 'usermod --password \'!\' "$BOOTSTRAP_USERNAME"' in provision
-    assert "rm -f /etc/ssh/ssh_host_* /etc/machine-id" in provision
+    identity_scrub = "rm -f /etc/ssh/ssh_host_* /etc/machine-id"
+    assert provision.count(identity_scrub) == 2
+    final_update = provision.index('run_tdnf "Final Photon OS update verification" update')
+    final_scrub = provision.rindex(identity_scrub)
+    zero_fill = provision.index('zero_fill_free_space / "Photon OS filesystem"')
+    assert final_update < final_scrub < zero_fill
+    assert "find /etc/ssh -maxdepth 1 -type f -name 'ssh_host_*'" in provision
+    assert '|| [ -e /etc/machine-id ] || [ -e /var/lib/dbus/machine-id ]' in provision
+    assert "Final Photon update left reusable host identity material" in provision
     assert "guestinfo.atlaso.template_ssh_host_ed25519_public_key" not in provision
+
+
+def test_build_info_records_the_installed_default_photon_kernel() -> None:
+    """Build provenance follows Photon's default boot entry after updates."""
+
+    provision = Path("image/common/scripts/provision-atlaso.sh").read_text(encoding="utf-8")
+    assert "kernel=$(uname -r)" not in provision
+    assert 'kernel_config="$(readlink -f /boot/photon.cfg)"' in provision
+    assert "/boot/linux-*.cfg" in provision
+    assert "kernel_image=\"$(sed -n 's/^photon_linux=//p'" in provision
+    assert '[ ! -f "/boot/$kernel_image" ]' in provision
+    assert 'if ! boot_kernel="$(default_boot_kernel)"; then' in provision
+    assert "Could not resolve the Photon default boot kernel" in provision
+    assert "kernel=$boot_kernel" in provision
+    write_build_info_start = provision.index("write_build_info() {")
+    boot_kernel_resolution = provision.index(
+        'if ! boot_kernel="$(default_boot_kernel)"; then', write_build_info_start
+    )
+    build_info_heredoc = provision.index("cat >/etc/atlaso/build-info <<EOF")
+    assert boot_kernel_resolution < build_info_heredoc
+    assert "kernel=$(default_boot_kernel)" not in provision[build_info_heredoc:]
+    final_update = provision.index('run_tdnf "Final Photon OS update verification" update')
+    final_build_info = provision.rindex("write_build_info")
+    assert final_update < final_build_info
 
 
 def test_every_virtualenv_systemd_unit_disables_generated_bytecode() -> None:
@@ -843,6 +875,7 @@ def test_photon_provisioning_installs_default_nginx_management_proxy():
     assert '"$ATLASO_HOME/image/common/powershell/atlaso-vault-profile.ps1"' in script
     assert '"$ATLASO_HOME/image/common/powershell/profile.ps1"' in script
     assert '"$POWERSHELL_HOME/profile.ps1"' in script
+    assert "/opt/microsoft/powershell/7 | /usr/share/powershell" in script
     assert 'touch "$POWERSHELL_HOME/profile.ps1"' not in script
     assert '>>"$POWERSHELL_HOME/profile.ps1"' not in script
     profile = Path("image/common/powershell/atlaso-vault-profile.ps1").read_text(encoding="utf-8")
@@ -1402,8 +1435,63 @@ def test_photon_provisioning_prepares_attached_data_disks():
     assert "x-systemd.requires-mounts-for=%s" in provision
     assert 'mount --bind "$ATLASO_SYSTEM_CONTENT_MOUNT/opt-atlaso" "$ATLASO_HOME"' in provision
     assert "powershell-modules" in provision
-    assert 'run_tdnf "Build-only package removal" remove python3-devel' in provision
-    assert "tdnf -y clean all" in provision
+    assert (
+        'run_tdnf "Build-only package removal" --noautoremove remove python3-devel'
+        in provision
+    )
+    assert provision.count(
+        'run_tdnf "Final Photon package cache cleanup" clean all'
+    ) == 2
+    assert 'run_tdnf "Final Photon repository refresh" makecache' in provision
+    assert 'run_tdnf "Final Photon OS update verification" update' in provision
+    final_update_index = provision.index(
+        'run_tdnf "Final Photon OS update verification" update'
+    )
+    final_guest_agent_closure_index = provision.rindex("stage_guest_agent_packages")
+    final_python_closure_index = provision.rindex("stage_python_runtime_packages")
+    final_notice_index = provision.rindex("write_third_party_notices")
+    final_compatibility_index = provision.index(
+        'log_step "revalidating Photon compatibility and runtime capabilities '
+        'after final update"'
+    )
+    final_profile_install_index = provision.rindex("install_powershell_profile")
+    assert provision.count("stage_python_runtime_packages") == 3
+    assert provision.count("stage_guest_agent_packages") == 3
+    assert provision.count("write_third_party_notices") == 3
+    assert final_update_index < final_guest_agent_closure_index < final_compatibility_index
+    assert final_update_index < final_python_closure_index < final_compatibility_index
+    assert final_update_index < final_notice_index < final_compatibility_index
+    assert provision.count("install_powershell_profile") == 3
+    assert provision.count("verify_bootstrap_powercli") == 3
+    assert final_update_index < final_profile_install_index
+    final_bootstrap_powercli_index = provision.rindex("verify_bootstrap_powercli")
+    assert final_profile_install_index < final_bootstrap_powercli_index
+    assert final_profile_install_index < provision.rindex(
+        "Import-Module VCF.PowerCLI -RequiredVersion"
+    )
+    assert final_bootstrap_powercli_index < provision.rindex("nginx -t")
+    assert 'sudo -H -u "$BOOTSTRAP_USERNAME"' in provision
+    assert "Get-Command Connect-VIServer" in provision
+    assert final_update_index < provision.rindex("nginx -t")
+    assert final_update_index < provision.rindex(
+        '"$ATLASO_HOME/.venv/bin/python" '
+        '"$ATLASO_HOME/scripts/check_photon_compatibility.py"'
+    )
+    assert final_compatibility_index < provision.rindex(
+        'python3 "$PHOTON_PACKAGE_STATE_VERIFIER" --guest-platform '
+        '"$ATLASO_GUEST_PLATFORM"'
+    )
+    assert provision.count(
+        'python3 "$PHOTON_PACKAGE_STATE_VERIFIER" --guest-platform '
+        '"$ATLASO_GUEST_PLATFORM"'
+    ) == 2
+    assert provision.count("write_build_info") == 4
+    assert final_update_index < provision.rindex("write_build_info")
+    assert "vcf_sdk=$(" in provision
+    assert "printf 'vcf_sdk=%s\\n'" not in provision
+    assert provision.rindex("write_build_info") < provision.rindex(
+        'run_tdnf "Final Photon package cache cleanup" clean all'
+    )
     assert "zero_fill_free_space / \"Photon OS filesystem\"" in provision
     assert 'zero_fill_free_space "$ATLASO_SYSTEM_CONTENT_MOUNT" "Atlaso system-content filesystem"' in provision
     assert "reserve_kib=524288" in provision
@@ -1598,8 +1686,14 @@ def test_photon_image_optional_pip_global_index_configuration():
     assert 'write_pip_config "$ATLASO_HOME/.venv/pip.conf"' in script
     assert '--requirement "$ATLASO_HOME/requirements-appliance.lock"' in script
     assert 'pip install --no-compile --no-deps "$ATLASO_HOME"' in script
+    assert 'ATLASO_SITE_PACKAGES_REAL="$(readlink -f "$ATLASO_SITE_PACKAGES")"' in script
+    assert (
+        'ATLASO_EXPECTED_SITE_PACKAGES="$ATLASO_RELEASE_DIR/.venv/lib/python3.14/site-packages"'
+        in script
+    )
+    assert 'if [ "$ATLASO_SITE_PACKAGES_REAL" != "$ATLASO_EXPECTED_SITE_PACKAGES" ]; then' in script
     assert "Atlaso site-packages resolved outside the expected release environment." in script
-    assert 'find "$ATLASO_SITE_PACKAGES" -type f -name \'*.pyc\' -delete' in script
+    assert 'find "$ATLASO_SITE_PACKAGES_REAL" -type f -name \'*.pyc\' -delete' in script
     assert "/etc/atlaso/update-trust.d" in script
     assert 'trust_source_dir="$ATLASO_HOME/image/common/update-trust"' in script
     assert 'for trust_key in "$trust_source_dir"/*.pem' in script
@@ -1653,7 +1747,9 @@ def test_photon_build_installs_the_complete_qemu_build_toolchain() -> None:
     package_removal = next(
         line.strip()
         for line in provision.splitlines()
-        if line.strip().startswith('run_tdnf "Build-only package removal" remove ')
+        if line.strip().startswith(
+            'run_tdnf "Build-only package removal" --noautoremove remove '
+        )
     )
 
     assert " gcc " in f" {package_install} "
@@ -1670,8 +1766,8 @@ def test_photon_build_installs_the_complete_qemu_build_toolchain() -> None:
         in provision
     )
     assert (
-        'install -o root -g root -m 0600 "$qemu_rpm" '
-        '"$GUEST_AGENT_STAGING/qemu/$(basename "$qemu_rpm")"'
+        '"$QEMU_GUEST_AGENT_RPM" '
+        '"$GUEST_AGENT_STAGING/qemu/$(basename "$QEMU_GUEST_AGENT_RPM")"'
         in provision
     )
     assert "--nogpgcheck" not in provision

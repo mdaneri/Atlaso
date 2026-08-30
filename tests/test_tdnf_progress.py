@@ -6,10 +6,14 @@ import subprocess
 import sys
 from pathlib import Path
 
+from scripts import run_tdnf_with_progress as progress
+
 SCRIPT = Path("scripts/run_tdnf_with_progress.py").resolve()
 
 
-def run_progress_wrapper(tmp_path: Path, child_source: str, *extra_args: str) -> subprocess.CompletedProcess[str]:
+def run_progress_wrapper(
+    tmp_path: Path, child_source: str, *extra_args: str
+) -> subprocess.CompletedProcess[str]:
     """Run progress wrapper.
 
     Args:
@@ -91,3 +95,88 @@ def test_progress_wrapper_replays_bounded_normalized_tail_on_failure(tmp_path):
     assert "line-204" in result.stderr
     assert "final failure" in result.stderr
     assert "line-202" not in result.stderr
+
+
+def test_progress_wrapper_rejects_tdnf_error_with_zero_exit_status(tmp_path):
+    """Treat a repository error reported with status zero as fatal.
+
+    Args:
+        tmp_path: Temporary cache root for the captured TDNF transcript.
+    """
+
+    result = run_progress_wrapper(
+        tmp_path,
+        "print(\"Error: Failed to synchronize cache for repo 'photon-updates'\"); "
+        "print(\"Disabling Repo: 'photon-updates'\")",
+    )
+
+    assert result.returncode == 1
+    assert "reported an error despite exit status 0" in result.stderr
+    assert "Failed to synchronize cache" in result.stderr
+    assert "Disabling Repo" in result.stderr
+
+
+def test_reported_tdnf_failure_scans_large_transcripts_incrementally(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """Successful transcript scanning does not materialize the complete file.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+        monkeypatch: Pytest fixture used to reject whole-file byte reads.
+    """
+
+    transcript = tmp_path / "tdnf.log"
+    transcript.write_text(("downloaded package\n" * 200_000) + "Error(1022): bad repo\n")
+
+    def reject_read_bytes(_path: Path) -> bytes:
+        """Reject whole-file reads from the transcript scanner.
+
+        Args:
+            _path: Path whose whole-file read must remain unused.
+
+        Returns:
+            This helper never returns.
+
+        Raises:
+            AssertionError: Always, because the scanner must iterate the file.
+        """
+
+        raise AssertionError("whole-file transcript read is forbidden")
+
+    monkeypatch.setattr(Path, "read_bytes", reject_read_bytes)
+
+    assert progress._reported_tdnf_failure(transcript)
+
+
+def test_failure_tail_scans_large_transcripts_incrementally(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """Failure-tail replay retains only the requested final lines.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+        monkeypatch: Pytest fixture used to reject whole-file byte reads.
+    """
+
+    transcript = tmp_path / "tdnf.log"
+    transcript.write_text(
+        ("downloaded package\n" * 200_000)
+        + "\x1b[31mError(1022): bad repo\x1b[0m\rDisabling Repo: photon-updates\n"
+    )
+
+    def reject_read_bytes(_path: Path) -> bytes:
+        """Reject whole-file reads from failure-tail replay.
+
+        Args:
+            _path: Path whose whole-file read must remain unused.
+        """
+
+        raise AssertionError("whole-file transcript read is forbidden")
+
+    monkeypatch.setattr(Path, "read_bytes", reject_read_bytes)
+
+    assert progress._failure_tail(transcript, 2) == [
+        "Error(1022): bad repo",
+        "Disabling Repo: photon-updates",
+    ]

@@ -104,8 +104,10 @@ PowerShell profile is staged with the other common
 image assets so provisioning can install the interactive `Get-AtlasoVault` helper. Notice lock verification inventories
 only top-level virtual-environment distributions and ignores package-internal vendored metadata. Long TDNF operations
 emit compact 30-second heartbeats with elapsed time and cache size instead of streaming terminal progress redraws
-through Packer. Successful operations report their duration, while failures retain the TDNF exit status and replay a
-normalized, bounded output tail.
+through Packer. Successful operations report their duration. Failures preserve a nonzero TDNF exit status and replay a
+normalized, bounded output tail; a zero-status transcript that reports a TDNF error or disabled repository is promoted
+to fatal exit status 1. The zero-status error scan streams the transcript line by line so long successful transactions
+do not require another full in-memory copy after TDNF exits.
 Photon 5.0 packages the C and C++ compiler front ends together as `gcc`. The image requests and later removes that one
 build-only package; it does not request the unavailable `gcc-c++` name used by distributions that split the front ends.
 It also treats `binutils` and `linux-api-headers` as build-only because Photon packages the assembler, linker, and Linux
@@ -200,10 +202,22 @@ root block-device dependency chain, requires the Photon root disk at `0:0:0`, re
 `0:1:0`, and requires exactly those two payload disks. A missing, ambiguous, reversed, mislabeled, or capacity-mismatched
 layout fails the image build before it can become a reusable artifact.
 The two 500 GiB application data disks remain empty OVF declarations, so the reusable builder contains no large blank
-data-disk payloads. The build removes `python3-devel` after compatibility validation, clears build caches and staged
-sources, zero-fills free blocks on both payload filesystems while retaining a 512 MiB safety reserve, deletes the fill
-files, requests TRIM, and lets Packer compact both payload VMDKs. Zero-filling makes compaction deterministic even when
-the VMware virtual disks do not advertise discard. After a successful build, the wrapper writes a schema-v2 provenance
+data-disk payloads. After compatibility validation, the build removes the QEMU build toolchain with TDNF dependency
+auto-removal disabled. It then requires valid `/etc/os-release` and `/etc/photon-release` files, verifies TDNF's
+effective `distroverpkg` RPM (the explicit setting or Photon's `photon-release` default) plus the Photon, RPM, TDNF,
+Python, PowerShell, and VMware guest-agent runtime packages,
+and performs a fatal cache cleanup, repository refresh, and final Photon update before checking that runtime state
+again. The post-update check re-resolves the installed `pwsh` runtime home and reinstalls Atlaso's global profile there,
+then rewrites build information with the kernel selected by Photon's default boot entry and the final PowerShell,
+PowerCLI, and VCF SDK versions. The final PowerCLI proof runs as the bootstrap administrator and requires
+`Connect-VIServer`, not merely a root-owned module import. Only then does it clear build caches and staged sources. It
+fails before writing build information if the default boot entry or its kernel image cannot be resolved. It
+repeats and verifies the SSH host-key and machine-ID scrub after the final package
+transaction so package scriptlets cannot leave reusable build-time identity behind, then zero-fills free blocks on both
+payload filesystems while
+retaining a 512 MiB safety reserve, delete the fill files, request TRIM, and let Packer compact both payload VMDKs.
+Zero-filling makes compaction deterministic even when the VMware virtual disks do not advertise discard. After a
+successful build, the wrapper writes a schema-v2 provenance
 JSON file beside the VMX containing the exact source commit, tracked-source state, and the verified role, SCSI unit,
 virtual capacity, SHA-256 hash, and byte size for the VMX and both VMDKs. Test-VM cloning and OVF export require that
 exact role-bound provenance, so an older unproven image or a later reversed/tampered payload is rejected before cloning
