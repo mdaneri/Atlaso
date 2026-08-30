@@ -2546,6 +2546,8 @@ def test_vmware_test_identity_is_bound_to_the_exact_pull_request():
     assert '"test-results\\vmware-workstation-lifecycle\\$LabName"' in lifecycle_runner
     assert "Refusing lifecycle reuse because the exact PR-owned result root already exists" in lifecycle_runner
     assert "vmware-identity.json" in lifecycle_runner
+    assert "'.vmware-identity.{0}.tmp'" in lifecycle_runner
+    assert "[System.IO.File]::Move($identityTempPath, $identityPath, $true)" in lifecycle_runner
     assert "Invoke-TrackedLifecycleVmCreation" in lifecycle_runner
     assert "Publish ownership before an external copy or VMX writer" in lifecycle_runner
     assert "pull_request_number = $PullRequestNumber" in lifecycle_runner

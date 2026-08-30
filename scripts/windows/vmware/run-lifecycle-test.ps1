@@ -1601,7 +1601,7 @@ $identityVms = [System.Collections.Generic.List[object]]::new()
 Durably refresh the lifecycle identity evidence for every admitted VM record.
 #>
 function Write-LifecycleIdentityEvidence {
-    [ordered]@{
+    $identityJson = [ordered]@{
         lab_name            = $LabName
         pull_request_number = $PullRequestNumber
         purpose             = $vmIdentity.Purpose
@@ -1609,7 +1609,24 @@ function Write-LifecycleIdentityEvidence {
         result_root         = $resultRoot
         log_identity        = $LabName
         vms                 = @($identityVms)
-    } | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath $identityPath -Encoding UTF8
+    } | ConvertTo-Json -Depth 5
+
+    # Keep every observable ownership manifest complete. The temporary file is
+    # created beside the destination so the final replace stays on one volume.
+    $identityTempPath = Join-Path $resultRoot ('.vmware-identity.{0}.tmp' -f [guid]::NewGuid().ToString('N'))
+    try {
+        [System.IO.File]::WriteAllText(
+            $identityTempPath,
+            $identityJson,
+            [System.Text.UTF8Encoding]::new($false)
+        )
+        [System.IO.File]::Move($identityTempPath, $identityPath, $true)
+    }
+    finally {
+        if (Test-Path -LiteralPath $identityTempPath -PathType Leaf) {
+            Remove-Item -LiteralPath $identityTempPath -Force
+        }
+    }
 }
 
 <#
