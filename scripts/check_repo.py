@@ -533,6 +533,9 @@ EXPLICIT_MERGE_HOLD_PATTERNS = {
         "wait for me to approve",
         "wait for us to approve",
         "after approval",
+        "after my approval",
+        "after our approval",
+        "after your approval",
         "after maintainer approval",
         "once approved",
         "when approved",
@@ -688,6 +691,11 @@ DEFAULT_MERGE_AUTHORITY_STOP_WORK = re.compile(
     r"(?:^|[;.!?]\s*)(?:please\s+)?(?:stop|cancel|cease|end)\s+"
     r"(?:(?:all|further|this|the)\s+)?(?:work|implementation|task)\b"
     r"(?![^;.!?]*\b(?:if|unless|when|once|after|before)\b)[^;.!?]*"
+)
+DEFAULT_MERGE_AUTHORITY_POST_STOP_SUMMARY = re.compile(
+    r"(?:^|[;.!?]\s*)(?:please\s+)?(?:stop|cancel|cease|end)\s+"
+    r"(?:(?:all|further|this|the)\s+)?(?:work|implementation|task)\b"
+    r"[^.!?]*[.!?]\s*(?:summarize|describe|explain|report|document)\b[^.!?]*"
 )
 DEFAULT_MERGE_AUTHORITY_NEGATED_MUTATION = re.compile(
     r"(?:^|[;.!?]\s*)(?:please\s+)?(?:do not|don't|don’t|must not)\s+"
@@ -1215,6 +1223,8 @@ def source_has_default_merge_authority(instructions: tuple[str, ...]) -> bool:
             DEFAULT_MERGE_AUTHORITY_COORDINATED_NO_WORK.finditer(normalized)
         ) + tuple(
             DEFAULT_MERGE_AUTHORITY_STOP_WORK.finditer(normalized)
+        ) + tuple(
+            DEFAULT_MERGE_AUTHORITY_POST_STOP_SUMMARY.finditer(normalized)
         ) + tuple(
             DEFAULT_MERGE_AUTHORITY_NEGATED_MUTATION.finditer(normalized)
         ) + tuple(

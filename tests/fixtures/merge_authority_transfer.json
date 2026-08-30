@@ -449,6 +449,22 @@
       ]
     },
     {
+      "name": "explicit-merge-after-my-approval",
+      "default_merge_authority": true,
+      "instructions": [
+        {
+          "text": "Implement issue #602, but merge only after my approval.",
+          "add_holds": [
+            "wait for approval"
+          ]
+        }
+      ],
+      "generated": "Preserve the explicit wait for approval instruction.",
+      "expected_holds": [
+        "wait for approval"
+      ]
+    },
+    {
       "name": "later-explicit-hold-withdrawal",
       "default_merge_authority": true,
       "instructions": [
@@ -1390,6 +1406,20 @@
         }
       ],
       "generated": "Preserve default merge authority and complete the guarded merge when eligible.",
+      "expected_holds": []
+    },
+    {
+      "name": "stop-work-summary-remains-ineligible",
+      "default_merge_authority": false,
+      "instructions": [
+        {
+          "text": "Implement issue #602."
+        },
+        {
+          "text": "Stop work on this task. Summarize the implementation."
+        }
+      ],
+      "generated": "Summarize the implementation without continuing delivery.",
       "expected_holds": []
     }
   ]

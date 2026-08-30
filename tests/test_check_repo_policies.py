@@ -197,6 +197,9 @@ def test_merge_hold_directions_recognizes_first_person_approval() -> None:
     assert merge_hold_directions(
         "Implement issue #602, but merge only if I approve."
     ) == {"wait for approval": "add"}
+    assert merge_hold_directions(
+        "Implement issue #602, but merge only after my approval."
+    ) == {"wait for approval": "add"}
 
 
 def test_merge_hold_directions_recognizes_equivalent_permission() -> None:
@@ -265,6 +268,12 @@ def test_source_authority_honors_later_stop_work() -> None:
     )
     assert source_has_default_merge_authority(
         ("Implement issue #602.", "Please stop work if CI fails.")
+    )
+    assert not source_has_default_merge_authority(
+        (
+            "Implement issue #602.",
+            "Stop work on this task. Summarize the implementation.",
+        )
     )
 
 
