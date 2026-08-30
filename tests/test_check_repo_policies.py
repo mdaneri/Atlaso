@@ -1321,6 +1321,7 @@ def test_agent_policy_gate_rejects_missing_maintainer_break_glass_contract(
         f'<span style="display&#58none">{prohibition}</span>',
         f'<span style="display:none;--x:foo\\;display:block">{prohibition}</span>',
         f'<span style="display:none" style="display:block">{prohibition}</span>',
+        f'<span style="opacity:0">{prohibition}</span>',
     )
     for replacement in complex_html_replacements:
         for relative_path in required_entry_points:
@@ -1412,6 +1413,27 @@ def test_agent_policy_gate_rejects_missing_maintainer_break_glass_contract(
         )
 
         assert check_agent_policy_gate(tmp_path) == []
+
+    visible_unclosed_inline_replacement = (
+        f"<span hidden>retired\n\n{prohibition}"
+    )
+    for relative_path in required_entry_points:
+        write_policy_files(tmp_path)
+        path = tmp_path / relative_path
+        original = path.read_text(encoding="utf-8")
+        assert prohibition in original
+        path.write_text(
+            original.replace(prohibition, visible_unclosed_inline_replacement, 1),
+            encoding="utf-8",
+        )
+
+        findings = check_agent_policy_gate(tmp_path)
+        assert not any(
+            finding.path == path
+            and finding.message
+            == f"required agent policy marker is missing: {prohibition}"
+            for finding in findings
+        )
 
     visible_cascade_replacement = (
         f'<span style="display:none;display:block">{prohibition}</span>'

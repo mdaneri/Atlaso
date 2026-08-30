@@ -16,6 +16,72 @@ const suppressedTags = new Set(['del', 's', 'strike', 'script', 'style', 'pre', 
 const voidTags = new Set(['area', 'base', 'br', 'col', 'embed', 'hr', 'img', 'input', 'link', 'meta', 'param', 'source', 'track', 'wbr'])
 const rawTextTags = new Set(['script', 'style', 'textarea', 'title'])
 
+function splitCssFunctionArguments (value) {
+  const argumentsList = []
+  let current = ''
+  let parenthesisDepth = 0
+  for (const character of value) {
+    if (character === '(') {
+      parenthesisDepth += 1
+    } else if (character === ')') {
+      parenthesisDepth = Math.max(0, parenthesisDepth - 1)
+    }
+    if (character === ',' && parenthesisDepth === 0) {
+      argumentsList.push(current.trim())
+      current = ''
+    } else {
+      current += character
+    }
+  }
+  argumentsList.push(current.trim())
+  return argumentsList
+}
+
+function parseOpacityValue (value) {
+  const numeric = value.match(/^([+-]?(?:\d+(?:\.\d*)?|\.\d+))(%)?$/)
+  if (numeric) {
+    const parsed = Number.parseFloat(numeric[1])
+    return numeric[2] ? parsed / 100 : parsed
+  }
+  const functional = value.match(/^(calc|min|max|clamp)\((.*)\)$/)
+  if (!functional) {
+    return null
+  }
+  const values = splitCssFunctionArguments(functional[2]).map(parseOpacityValue)
+  if (values.some(item => item === null)) {
+    return null
+  }
+  if (functional[1] === 'calc' && values.length === 1) {
+    return values[0]
+  }
+  if (functional[1] === 'min' && values.length > 0) {
+    return Math.min(...values)
+  }
+  if (functional[1] === 'max' && values.length > 0) {
+    return Math.max(...values)
+  }
+  if (functional[1] === 'clamp' && values.length === 3) {
+    return Math.max(values[0], Math.min(values[1], values[2]))
+  }
+  return null
+}
+
+function isValidSuppressionDeclaration (property, value) {
+  if (property === 'display') {
+    return /^(?:none|inline|block|inline-block|flow-root|flex|inline-flex|grid|inline-grid|table|list-item|contents)$/.test(value)
+  }
+  if (property === 'visibility') {
+    return /^(?:visible|hidden|collapse)$/.test(value)
+  }
+  if (property === 'content-visibility') {
+    return /^(?:visible|hidden|auto)$/.test(value)
+  }
+  if (property === 'opacity') {
+    return parseOpacityValue(value) !== null
+  }
+  return true
+}
+
 function hasHiddenAttributes (attributes) {
   const parsedAttributes = new Map()
   const attributePattern = /(?:^|\s)([^\s"'=<>`/]+)(?:\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'=<>`]+)))?/g
@@ -44,6 +110,9 @@ function hasHiddenAttributes (attributes) {
     let value = declaration.slice(separator + 1).trim().toLowerCase()
     const important = /!\s*important\s*$/i.test(value)
     value = value.replace(/!\s*important\s*$/i, '').trim()
+    if (!isValidSuppressionDeclaration(property, value)) {
+      continue
+    }
     const current = declarations.get(property)
     if (!current || important || !current.important) {
       declarations.set(property, { value, important })
@@ -51,7 +120,9 @@ function hasHiddenAttributes (attributes) {
   }
   return (
     declarations.get('display')?.value === 'none' ||
-    ['hidden', 'collapse'].includes(declarations.get('visibility')?.value)
+    ['hidden', 'collapse'].includes(declarations.get('visibility')?.value) ||
+    declarations.get('content-visibility')?.value === 'hidden' ||
+    (parseOpacityValue(declarations.get('opacity')?.value || '') ?? 1) <= 0
   )
 }
 
@@ -129,7 +200,7 @@ function isHtmlSuppressed () {
   return htmlStack.some(entry => entry.suppressed)
 }
 
-function updateHtmlSuppression (content) {
+function updateHtmlSuppression (content, inlineContext = false) {
   const tagPattern = /<(?<closing>\/)?(?<tag>[A-Za-z][A-Za-z0-9-]*)\b(?<attributes>(?:[^<>"']|"[^"]*"|'[^']*')*?)(?<selfClosing>\/)?\s*>/g
   for (const match of content.matchAll(tagPattern)) {
     const tag = match.groups.tag.toLowerCase()
@@ -152,7 +223,11 @@ function updateHtmlSuppression (content) {
     const attributes = match.groups.attributes
     const hidden = hasHiddenAttributes(attributes)
     if (!match.groups.selfClosing || !voidTags.has(tag)) {
-      htmlStack.push({ tag, suppressed: suppressedTags.has(tag) || hidden })
+      htmlStack.push({
+        tag,
+        suppressed: suppressedTags.has(tag) || hidden,
+        inline: inlineContext
+      })
     }
   }
 }
@@ -189,7 +264,7 @@ function processInline (children) {
       continue
     }
     if (token.type === 'html_inline') {
-      updateHtmlSuppression(token.content)
+      updateHtmlSuppression(token.content, true)
       continue
     }
     if (blockquoteDepth || deletionDepth || isHtmlSuppressed()) {
@@ -215,6 +290,12 @@ for (const token of tokens) {
   if (token.type === 'inline') {
     processInline(token.children)
     output.push('\n')
+  } else if (token.type === 'paragraph_close') {
+    for (let index = htmlStack.length - 1; index >= 0; index -= 1) {
+      if (htmlStack[index].inline) {
+        htmlStack.splice(index, 1)
+      }
+    }
   } else if (token.type === 'html_block') {
     processHtmlBlock(token.content)
   }
