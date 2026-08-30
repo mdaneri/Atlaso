@@ -12,9 +12,9 @@ let blockquoteDepth = 0
 let deletionDepth = 0
 const htmlStack = []
 
-const suppressedTags = new Set(['del', 's', 'strike', 'script', 'style', 'pre', 'textarea', 'template', 'title'])
+const suppressedTags = new Set(['del', 's', 'strike', 'iframe', 'script', 'style', 'pre', 'textarea', 'template', 'title'])
 const voidTags = new Set(['area', 'base', 'br', 'col', 'embed', 'hr', 'img', 'input', 'link', 'meta', 'param', 'source', 'track', 'wbr'])
-const rawTextTags = new Set(['script', 'style', 'textarea', 'title'])
+const rawTextTags = new Set(['iframe', 'script', 'style', 'textarea', 'title'])
 const formattingTags = new Set([
   'a', 'b', 'big', 'code', 'em', 'font', 'i', 'nobr', 's', 'small',
   'strike', 'strong', 'tt', 'u'
@@ -184,6 +184,27 @@ function stripCssComments (value) {
   return outputValue
 }
 
+function findCssDeclarationSeparator (value) {
+  let quote = null
+  for (let index = 0; index < value.length; index += 1) {
+    const character = value[index]
+    if (character === '\\' && index + 1 < value.length) {
+      index += 1
+      continue
+    }
+    if (quote) {
+      if (character === quote) quote = null
+      continue
+    }
+    if (character === '"' || character === "'") {
+      quote = character
+    } else if (character === ':') {
+      return index
+    }
+  }
+  return -1
+}
+
 function hasHiddenAttributes (attributes) {
   const parsedAttributes = new Map()
   const attributePattern = /(?:^|\s)([^\s"'=<>`/]+)(?:\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'=<>`]+)))?/g
@@ -198,13 +219,14 @@ function hasHiddenAttributes (attributes) {
   )
   const declarations = new Map()
   for (const encodedDeclaration of splitCssDeclarations(styleValue)) {
-    const declaration = decodeCssEscapes(encodedDeclaration)
-    const separator = declaration.indexOf(':')
+    const separator = findCssDeclarationSeparator(encodedDeclaration)
     if (separator < 0) {
       continue
     }
-    const property = declaration.slice(0, separator).trim().toLowerCase()
-    let value = declaration.slice(separator + 1).trim().toLowerCase()
+    const property = decodeCssEscapes(encodedDeclaration.slice(0, separator))
+      .trim().toLowerCase()
+    let value = decodeCssEscapes(encodedDeclaration.slice(separator + 1))
+      .trim().toLowerCase()
     const important = /!\s*important\s*$/i.test(value)
     value = value.replace(/!\s*important\s*$/i, '').trim()
     if (!isValidSuppressionDeclaration(property, value)) {
