@@ -82,7 +82,10 @@ def test_photon_wrapper_preflights_credentials_before_image_mutation() -> None:
         in wrapper
     )
     assert "'-SensitiveBuildDirectory', $childSensitiveBuildDirectory" in wrapper
-    assert "'SensitiveBuildDirectory', 'OutputCleanupClaimPath', 'PreparedIsoPath'" in wrapper
+    assert "'SensitiveBuildDirectory', 'OutputCleanupClaimPath'," in wrapper
+    assert "'BuilderAddressReservationPath', 'PreparedIsoPath'" in wrapper
+    assert "'pending-releases'" in wrapper
+    assert "Complete-AtlasoBuilderAddressReservationHandoff" in wrapper
     assert "-SensitiveBuildDirectory $SensitiveBuildDirectory" in wrapper
     assert "[System.IO.Directory]::Delete($resolvedRoot, $true)" in wrapper
     assert "photon-image-build-cleanup.json" in wrapper
@@ -167,6 +170,23 @@ def test_photon_wrapper_preflights_credentials_before_image_mutation() -> None:
     assert "CREATE_BREAKAWAY_FROM_JOB" in runner
     assert "Start-AtlasoWorkstationUiBreakawayProcess" not in runner
     assert "-ExpectedRootPath $credentialRoot" in wrapper
+    assert "Remove-Item -LiteralPath $childBuilderAddressReservationPath -Force" in wrapper
+    assert "-ReservationHandoffPath $resolvedBuilderAddressReservationPath" in wrapper
+    assert "was not paired with its durable release handoff" in wrapper
+    assert "-ProcessTreeTerminationProven" in wrapper
+    assert "SkipNetworkCheck suppresses topology preparation, not allocator safety" in wrapper
+    assert "$requiresBuilderReservation = -not $ValidateOnly -and -not $PrepareIsoOnly" in wrapper
+    assert "BuilderStaticIp must not be empty for a VMware Photon image build." in wrapper
+    skipped_check_branch = wrapper.index("elseif ($requiresBuilderReservation) {")
+    reservation_branch = wrapper.index("\nif ($requiresBuilderReservation) {", skipped_check_branch + 1)
+    skipped_check_defaults = wrapper[skipped_check_branch:reservation_branch]
+    assert "$BuilderStaticNetmask = $management.Mask" in skipped_check_defaults
+    assert "$BuilderStaticGateway = $managementGateway" in skipped_check_defaults
+    assert "$BuilderStaticDns = @($managementGateway)" in skipped_check_defaults
+    assert "Get-Ipv4CidrFromSubnetOffset `" in skipped_check_defaults
+    assert "$FinalMgmtAddress = 'dhcp'" in skipped_check_defaults
+    assert "$FinalMgmtGateway = $managementGateway" in skipped_check_defaults
+    assert "(@($BuilderStaticGateway) + $managementHostAddresses)" in wrapper
     assert "Cleanup marker root does not match the exact task-created Photon root." in wrapper
     assert "$Job.TerminateAndWait(10000)" in runner
     assert "$Job.CompleteAndWait(10000)" in runner
