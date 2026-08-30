@@ -208,6 +208,21 @@ function findCssDeclarationSeparator (value) {
   return -1
 }
 
+function extractCssImportant (value) {
+  for (let index = value.length - 1; index >= 0; index -= 1) {
+    if (value[index] !== '!') continue
+    let precedingBackslashes = 0
+    for (let cursor = index - 1; cursor >= 0 && value[cursor] === '\\'; cursor -= 1) {
+      precedingBackslashes += 1
+    }
+    if (precedingBackslashes % 2 !== 0) continue
+    if (decodeCssEscapes(value.slice(index + 1)).trim().toLowerCase() === 'important') {
+      return { value: value.slice(0, index).trimEnd(), important: true }
+    }
+  }
+  return { value, important: false }
+}
+
 function hasHiddenAttributes (attributes) {
   const parsedAttributes = new Map()
   const attributePattern = /(?:^|\s)([^\s"'=<>`/]+)(?:\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'=<>`]+)))?/g
@@ -228,10 +243,11 @@ function hasHiddenAttributes (attributes) {
     }
     const property = decodeCssEscapes(encodedDeclaration.slice(0, separator))
       .trim().toLowerCase()
-    let value = decodeCssEscapes(encodedDeclaration.slice(separator + 1))
-      .trim().toLowerCase()
-    const important = /!\s*important\s*$/i.test(value)
-    value = value.replace(/!\s*important\s*$/i, '').trim()
+    const encodedImportance = extractCssImportant(
+      encodedDeclaration.slice(separator + 1).trim()
+    )
+    let value = decodeCssEscapes(encodedImportance.value).trim().toLowerCase()
+    const important = encodedImportance.important
     if (!isValidSuppressionDeclaration(property, value)) {
       continue
     }
@@ -360,12 +376,16 @@ function updateHtmlSuppression (content, inlineContext = false) {
     }
     const attributes = match.groups.attributes
     const suppression = hasHiddenAttributes(attributes)
-    if (!match.groups.selfClosing || !voidTags.has(tag)) {
+    const foreign = tag === 'svg' || tag === 'math' || Boolean(
+      htmlStack.length && htmlStack[htmlStack.length - 1].foreign
+    )
+    if (!match.groups.selfClosing || (!voidTags.has(tag) && !foreign)) {
       htmlStack.push({
         tag,
         irreversible: suppressedTags.has(tag) || suppression.irreversible,
         visibility: suppression.visibility,
-        inline: inlineContext
+        inline: inlineContext,
+        foreign
       })
     }
   }
