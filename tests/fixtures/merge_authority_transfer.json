@@ -1030,6 +1030,28 @@
       ]
     },
     {
+      "name": "long-conditional-named-withdrawal",
+      "default_merge_authority": true,
+      "instructions": [
+        {
+          "text": "Implement the change, but do not merge.",
+          "add_holds": [
+            "do not merge"
+          ]
+        },
+        {
+          "text": "If the maintainer approves the final updated validation report, the do not merge hold is withdrawn.",
+          "add_holds": [
+            "do not merge"
+          ]
+        }
+      ],
+      "generated": "Preserve the explicit do not merge instruction.",
+      "expected_holds": [
+        "do not merge"
+      ]
+    },
+    {
       "name": "long-conditional-standalone-permission",
       "default_merge_authority": true,
       "instructions": [

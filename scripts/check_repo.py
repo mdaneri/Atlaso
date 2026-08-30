@@ -587,7 +587,9 @@ AUTO_MERGE_ONLY_PHRASES = (
 DEFAULT_MERGE_AUTHORITY_NEGATIONS = re.compile(
     r"(?:(?:do not|don't|don’t|never|must not|should not|cannot|can't|can’t|not)"
     r"(?:\s+\w+){0,6}|(?:lacks?|has no|have no|without)|"
-    r"(?:skip|avoid|omit|decline|refrain(?:\s+from)?)(?:\s+\w+){0,3})\s*$"
+    r"(?:skip|avoid|omit|decline|refrain(?:\s+from)?|"
+    r"hold off(?:\s+on)?|defer|delay|postpone|pause)"
+    r"(?:\s+\w+){0,3})\s*$"
 )
 DEFAULT_MERGE_AUTHORITY_TRAILING_NEGATIONS = re.compile(
     r"^\s*(?:(?:does|do|is|are|must|should|can|may|will|would)\s+"
@@ -953,6 +955,22 @@ def merge_hold_directions(
     normalized = "; ".join(task_clauses)
     if not normalized:
         return {}
+    conditional_named_withdrawals: set[str] = set()
+    for clause in MERGE_AUTHORITY_TASK_CLAUSE_BOUNDARY.split(normalized):
+        for marker in MERGE_HOLD_WITHDRAWAL_MARKERS:
+            marker_offset = clause.find(marker)
+            while marker_offset >= 0:
+                prefix = clause[:marker_offset]
+                if MERGE_HOLD_WITHDRAWAL_NONCURRENT_PREFIX.search(prefix):
+                    conditional_named_withdrawals.update(
+                        hold
+                        for hold, patterns in EXPLICIT_MERGE_HOLD_PATTERNS.items()
+                        if any(
+                            0 <= clause.find(pattern) < marker_offset
+                            for pattern in patterns
+                        )
+                    )
+                marker_offset = clause.find(marker, marker_offset + 1)
     shared_withdrawals: set[str] = set()
     coarse_segments = (
         segment.strip()
@@ -1089,6 +1107,8 @@ def merge_hold_directions(
             break
     for hold in shared_withdrawals:
         directions[hold] = "remove"
+    for hold in conditional_named_withdrawals:
+        directions[hold] = "add"
     return directions
 
 

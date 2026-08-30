@@ -276,6 +276,11 @@ def test_generated_authority_rejects_imperative_denial() -> None:
         "Omit the guarded squash merge.",
         "Decline the guarded squash merge.",
         "Refrain from the guarded squash merge.",
+        "Hold off on the guarded squash merge.",
+        "Defer the guarded squash merge.",
+        "Delay the guarded squash merge.",
+        "Postpone the guarded squash merge.",
+        "Pause the guarded squash merge.",
     ):
         assert not has_affirmative_default_merge_authority(instruction)
 
