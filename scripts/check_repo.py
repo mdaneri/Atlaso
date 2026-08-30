@@ -688,7 +688,8 @@ DEFAULT_MERGE_AUTHORITY_STOP_WORK = re.compile(
 )
 DEFAULT_MERGE_AUTHORITY_NEGATED_MUTATION = re.compile(
     r"(?:^|[;.!?]\s*)(?:please\s+)?(?:do not|don't|don’t|must not)\s+"
-    r"(?:\w+\s+){0,3}(?:add|remove|create|build|refactor)\b[^;.!?]*"
+    r"(?:\w+\s+){0,3}(?:implement|fix|patch|resolve|solve|deliver|update|"
+    r"change|modify|edit|add|remove|create|build|refactor)\b[^;.!?]*"
 )
 DEFAULT_MERGE_AUTHORITY_SOURCE_MARKERS = re.compile(
     r"\b(?:implement|implementation|fix|patch|resolve|solve|deliver|update|change|"
@@ -716,7 +717,8 @@ MERGE_AUTHORITY_COARSE_BOUNDARY = re.compile(r"(?:[;,.!?]+|\s+but\s+)")
 MERGE_HOLD_DISCUSSION_CONTEXT = re.compile(
     r"\b(?:explain(?:ed|ing)?|document(?:ed|ing)?|discuss(?:ed|ing)?|"
     r"describe(?:d|s|ing)?|mention(?:ed|ing)?|refer(?:red|ring)?|"
-    r"test(?:ed|ing)?|plan(?:ned|ning)?)\b"
+    r"test(?:ed|ing)?|plan(?:ned|ning)?|consider(?:ed|ing|ation)?|"
+    r"contemplat(?:e|ed|ing|ion))\b"
 )
 DEFAULT_MERGE_AUTHORITY_ACTION_BOUNDARY = re.compile(
     r"(?:[;,.!?]+|\s+(?:and|then|but)\s+)"

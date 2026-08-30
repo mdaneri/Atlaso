@@ -805,6 +805,17 @@
       "expected_holds": []
     },
     {
+      "name": "pronoun-mutation-denial-review-ineligible",
+      "default_merge_authority": false,
+      "instructions": [
+        {
+          "text": "Review the implementation; do not modify it."
+        }
+      ],
+      "generated": "Review the implementation and report findings.",
+      "expected_holds": []
+    },
+    {
       "name": "implementation-then-review-eligible",
       "default_merge_authority": true,
       "instructions": [

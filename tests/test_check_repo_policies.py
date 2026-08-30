@@ -242,6 +242,9 @@ def test_source_authority_excludes_patch_review() -> None:
         ("Perform a code review of the implementation and report findings.",)
     )
     assert not source_has_default_merge_authority(
+        ("Review the implementation; do not modify it.",)
+    )
+    assert not source_has_default_merge_authority(
         ("Do not add any code; review the implementation and report findings.",)
     )
 
@@ -318,6 +321,9 @@ def test_generated_authority_rejects_imperative_denial() -> None:
 
     assert not has_affirmative_default_merge_authority(
         "Plan the guarded squash merge, but do not execute it."
+    )
+    assert not has_affirmative_default_merge_authority(
+        "Consider the guarded squash merge."
     )
 
 
