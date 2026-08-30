@@ -619,6 +619,7 @@ DEFAULT_MERGE_AUTHORITY_COORDINATED_NO_WORK = re.compile(
 MERGE_AUTHORITY_INSTRUCTION_BOUNDARY = re.compile(
     r"(?:[;,.!?]+|\s+(?:but|and)\s+)"
 )
+MERGE_AUTHORITY_COARSE_BOUNDARY = re.compile(r"(?:[;,.!?]+|\s+but\s+)")
 MERGE_HOLD_DISCUSSION_CONTEXT = re.compile(
     r"\b(?:explain(?:ed|ing)?|document(?:ed|ing)?|discuss(?:ed|ing)?|"
     r"describe(?:d|s|ing)?|mention(?:ed|ing)?|refer(?:red|ring)?)\b"
@@ -767,6 +768,36 @@ def merge_hold_directions(
     normalized = " ".join(text.casefold().split())
     for phrase in AUTO_MERGE_ONLY_PHRASES:
         normalized = normalized.replace(phrase, "keep github auto-merge disabled")
+    shared_withdrawals: set[str] = set()
+    coarse_segments = (
+        segment.strip()
+        for segment in MERGE_AUTHORITY_COARSE_BOUNDARY.split(normalized)
+        if segment.strip()
+    )
+    for coarse_segment in coarse_segments:
+        for marker in MERGE_HOLD_WITHDRAWAL_MARKERS:
+            marker_offset = coarse_segment.find(marker)
+            while marker_offset >= 0:
+                prefix = coarse_segment[max(0, marker_offset - 24) : marker_offset]
+                suffix = coarse_segment[
+                    marker_offset + len(marker) : marker_offset + len(marker) + 40
+                ]
+                if (
+                    MERGE_HOLD_WITHDRAWAL_NEGATIONS.search(prefix) is None
+                    and MERGE_HOLD_WITHDRAWAL_NONCURRENT_PREFIX.search(prefix) is None
+                    and MERGE_HOLD_WITHDRAWAL_NONCURRENT_SUFFIX.search(suffix) is None
+                ):
+                    mentioned_holds = {
+                        hold
+                        for hold, patterns in EXPLICIT_MERGE_HOLD_PATTERNS.items()
+                        if any(
+                            0 <= coarse_segment.find(pattern) < marker_offset
+                            for pattern in patterns
+                        )
+                    }
+                    if len(mentioned_holds) > 1:
+                        shared_withdrawals.update(mentioned_holds)
+                marker_offset = coarse_segment.find(marker, marker_offset + 1)
     # Coordinating conjunctions begin a new instruction segment so a withdrawal
     # attached to one named hold cannot reverse a different hold later in the
     # same sentence.
@@ -832,6 +863,8 @@ def merge_hold_directions(
                 directions.setdefault(hold, "remove")
             break
         permission_offset = normalized.find("may merge now", permission_offset + 1)
+    for hold in shared_withdrawals:
+        directions[hold] = "remove"
     return directions
 
 

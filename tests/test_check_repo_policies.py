@@ -1059,6 +1059,50 @@ def test_merge_authority_transfer_applies_standalone_merge_permission(
     assert check_merge_authority_transfer_fixtures(tmp_path) == []
 
 
+def test_merge_authority_transfer_applies_coordinated_hold_withdrawal(
+    tmp_path: Path,
+) -> None:
+    """Verify one withdrawal suffix removes every hold in its coordinated list.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
+    path = tmp_path / MERGE_AUTHORITY_TRANSFER_FIXTURE_PATH
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        json.dumps(
+            {
+                "cases": [
+                    {
+                        "name": "coordinated hold withdrawal",
+                        "default_merge_authority": True,
+                        "instructions": [
+                            {
+                                "text": (
+                                    "Implement the change, but do not merge and leave "
+                                    "the pull request open."
+                                ),
+                                "add_holds": ["do not merge", "leave open"],
+                            },
+                            {
+                                "text": (
+                                    "The do not merge and leave open holds are withdrawn."
+                                ),
+                                "remove_holds": ["do not merge", "leave open"],
+                            },
+                        ],
+                        "generated": "Continue through guarded squash merge.",
+                        "expected_holds": [],
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    assert check_merge_authority_transfer_fixtures(tmp_path) == []
+
+
 def test_merge_authority_transfer_ignores_quoted_hold_discussion(
     tmp_path: Path,
 ) -> None:
