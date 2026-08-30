@@ -235,7 +235,7 @@ def _run_selector(
 
     Args:
         environment: Isolated selector environment.
-        arguments: Optional selector command-line arguments.
+        *arguments: Optional selector command-line arguments.
     """
 
     return subprocess.run(

@@ -1856,11 +1856,21 @@ def apply_customization(config: dict[str, object], *, dry_run: bool = False) -> 
     stage_reporter = publish_first_boot_stage if config["normal_test_vm"] else None
 
     def run_layer(label: str, operation: Callable[[], None]) -> None:
-        """Run one initialization layer with normal-test-VM stage reporting."""
+        """Run one initialization layer with normal-test-VM stage reporting.
+
+        Args:
+            label: Human-readable layer name published for normal test VMs.
+            operation: Initialization operation to execute.
+        """
         run_initialization_layer(label, operation, stage_reporter=stage_reporter)
 
     def run_final_layer(label: str, operation: Callable[[], None]) -> None:
-        """Run one finalization layer with normal-test-VM stage reporting."""
+        """Run one finalization layer with normal-test-VM stage reporting.
+
+        Args:
+            label: Human-readable layer name published for normal test VMs.
+            operation: Finalization operation to execute.
+        """
         run_finalization_layer(label, operation, stage_reporter=stage_reporter)
 
     run_layer("management network", lambda: write_networkd_config(config))
