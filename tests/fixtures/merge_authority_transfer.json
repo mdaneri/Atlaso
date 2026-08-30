@@ -1968,6 +1968,33 @@
       ],
       "generated": "Preserve default merge authority and complete the guarded merge when eligible.",
       "expected_holds": []
+    },
+    {
+      "name": "bare-wait-before-merging-is-preserved",
+      "default_merge_authority": true,
+      "instructions": [
+        {
+          "text": "Implement issue #602, but wait before merging.",
+          "add_holds": [
+            "do not merge"
+          ]
+        }
+      ],
+      "generated": "Wait before merging after pull-request delivery.",
+      "expected_holds": [
+        "do not merge"
+      ]
+    },
+    {
+      "name": "repository-repair-grants-authority",
+      "default_merge_authority": true,
+      "instructions": [
+        {
+          "text": "Repair the parser in scripts/check_repo.py."
+        }
+      ],
+      "generated": "Preserve default merge authority and complete the guarded merge when eligible.",
+      "expected_holds": []
     }
   ]
 }

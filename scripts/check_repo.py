@@ -500,6 +500,7 @@ EXPLICIT_MERGE_HOLD_PATTERNS = {
         "pause before merging",
         "refrain from merging",
         "refrain from the merge",
+        "wait before merging",
     ),
     "leave open": (
         "leave open",
@@ -743,7 +744,7 @@ DEFAULT_MERGE_AUTHORITY_NEGATED_MUTATION = re.compile(
     r"\b[^;.!?]*"
 )
 DEFAULT_MERGE_AUTHORITY_SOURCE_MARKERS = re.compile(
-    r"\b(?:implement|fix|patch|resolve|solve|deliver|refactor)\b|"
+    r"\b(?:implement|fix|patch|resolve|solve|deliver|refactor|repair)\b|"
     r"\bcomplete\s+(?:the\s+)?implementation\b|"
     r"\b(?:update|change|modify|edit|add|remove|create|build|"
     r"prepare|open|submit|revert|roll back)\s+"

@@ -124,6 +124,7 @@ def test_merge_hold_directions_recognizes_merge_deferral() -> None:
         "Implement issue #602, but hold off on merging.",
         "Implement issue #602, but defer the merge.",
         "Implement issue #602, but refrain from merging.",
+        "Implement issue #602, but wait before merging.",
     ):
         assert merge_hold_directions(instruction) == {"do not merge": "add"}
     assert merge_hold_directions(
@@ -437,6 +438,7 @@ def test_source_authority_keeps_workflow_policy_subject_eligible() -> None:
         "Revert the change introduced by PR #602.",
         "Roll back the change introduced by PR #602.",
         "Refactor the parser in scripts/check_repo.py.",
+        "Repair the parser in scripts/check_repo.py.",
     ):
         assert source_has_default_merge_authority((instruction,))
 
