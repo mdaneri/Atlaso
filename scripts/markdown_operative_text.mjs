@@ -274,7 +274,7 @@ function resolveCssVariables (value, customProperties, seen = new Set()) {
   return resolved
 }
 
-function hasHiddenAttributes (attributes) {
+function hasHiddenAttributes (attributes, inheritedCustomProperties = new Map()) {
   const parsedAttributes = new Map()
   const attributePattern = /(?:^|\s)([^\s"'=<>`/]+)(?:\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'=<>`]+)))?/g
   for (const match of attributes.matchAll(attributePattern)) {
@@ -317,9 +317,10 @@ function hasHiddenAttributes (attributes) {
       declarations.set(property, { value, important })
     }
   }
-  const customProperties = new Map(
-    [...declarations].filter(([property]) => property.startsWith('--'))
-  )
+  const customProperties = new Map(inheritedCustomProperties)
+  for (const [property, declaration] of declarations) {
+    if (property.startsWith('--')) customProperties.set(property, declaration)
+  }
   for (const property of ['display', 'visibility', 'content-visibility', 'opacity']) {
     const declaration = declarations.get(property)
     if (!declaration?.value.includes('var(')) continue
@@ -338,7 +339,8 @@ function hasHiddenAttributes (attributes) {
       declarations.get('content-visibility')?.value === 'hidden' ||
       (parseOpacityValue(declarations.get('opacity')?.value || '') ?? 1) <= 0
     ),
-    visibility: declarations.get('visibility')?.value || null
+    visibility: declarations.get('visibility')?.value || null,
+    customProperties
   }
 }
 
@@ -457,7 +459,10 @@ function updateHtmlSuppression (content, inlineContext = false) {
       }
     }
     const attributes = match.groups.attributes
-    const suppression = hasHiddenAttributes(attributes)
+    const inheritedCustomProperties = htmlStack.length
+      ? htmlStack[htmlStack.length - 1].customProperties
+      : new Map()
+    const suppression = hasHiddenAttributes(attributes, inheritedCustomProperties)
     const foreign = tag === 'svg' || tag === 'math' || Boolean(
       htmlStack.length && htmlStack[htmlStack.length - 1].foreign
     )
@@ -467,7 +472,8 @@ function updateHtmlSuppression (content, inlineContext = false) {
         irreversible: suppressedTags.has(tag) || suppression.irreversible,
         visibility: suppression.visibility,
         inline: inlineContext,
-        foreign
+        foreign,
+        customProperties: suppression.customProperties
       })
     }
   }
