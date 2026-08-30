@@ -1256,6 +1256,8 @@ def test_agent_policy_gate_rejects_missing_maintainer_break_glass_contract(
         f"policy ~~~~{prohibition}~~ remains",
         f"~~retired~~~~~{prohibition}~~",
         f"~~retired.~~{prohibition}~~",
+        f"~~retired$~~{prohibition}~~",
+        f"]~~~~retired~~~~active~~{prohibition}~~",
     )
     for replacement in nonoperative_replacements:
         for relative_path in required_entry_points:

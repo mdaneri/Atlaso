@@ -2339,17 +2339,12 @@ def strip_markdown_deleted_content(text: str) -> str:
         else trailing_text
     )
     without_html_deletions = "".join(visible_parts)
-    markdown_parts: list[str] = []
+    delimiters: list[tuple[int, int, bool, bool, int]] = []
     cursor = 0
-    in_deletion = False
     while cursor < len(without_html_deletions):
         if without_html_deletions[cursor] == "\\" and cursor + 1 < len(
             without_html_deletions
         ):
-            escaped = without_html_deletions[cursor : cursor + 2]
-            markdown_parts.append(
-                re.sub(r"[^\r\n]", "", escaped) if in_deletion else escaped
-            )
             cursor += 2
             continue
         if without_html_deletions[cursor] == "`":
@@ -2362,12 +2357,6 @@ def strip_markdown_deleted_content(text: str) -> str:
             delimiter = without_html_deletions[cursor:run_end]
             closing = without_html_deletions.find(delimiter, run_end)
             span_end = closing + len(delimiter) if closing >= 0 else run_end
-            code_span = without_html_deletions[cursor:span_end]
-            markdown_parts.append(
-                re.sub(r"[^\r\n]", "", code_span)
-                if in_deletion
-                else code_span
-            )
             cursor = span_end
             continue
         if without_html_deletions.startswith("~~", cursor):
@@ -2387,10 +2376,12 @@ def strip_markdown_deleted_content(text: str) -> str:
             previous_is_whitespace = not previous or previous.isspace()
             following_is_whitespace = not following or following.isspace()
             previous_is_punctuation = bool(
-                previous and unicodedata.category(previous).startswith("P")
+                previous
+                and unicodedata.category(previous).startswith(("P", "S"))
             )
             following_is_punctuation = bool(
-                following and unicodedata.category(following).startswith("P")
+                following
+                and unicodedata.category(following).startswith(("P", "S"))
             )
             can_open = not following_is_whitespace and (
                 not following_is_punctuation
@@ -2402,26 +2393,65 @@ def strip_markdown_deleted_content(text: str) -> str:
                 or following_is_whitespace
                 or following_is_punctuation
             )
-            if in_deletion and can_close:
-                in_deletion = False
-                tilde_run = tilde_run[2:]
-            if not in_deletion and len(tilde_run) >= 2 and can_open:
-                # A longer run leaves its leading tildes literal and uses the
-                # final pair as the opening delimiter. Residual tildes after
-                # a closing pair are evaluated the same way so one run can
-                # close one deleted span and open the next.
-                markdown_parts.append(tilde_run[:-2])
-                in_deletion = True
-                cursor = run_end
-                continue
-            markdown_parts.append("" if in_deletion else tilde_run)
+            # Markdown-it represents every pair in a run as an independent
+            # delimiter and leaves an odd leading tilde literal. Pairing the
+            # complete delimiter stream is necessary because one run can
+            # close or open more than one nested deleted span.
+            pair_start = cursor + len(tilde_run) % 2
+            for marker_start in range(pair_start, run_end, 2):
+                delimiters.append(
+                    (marker_start, marker_start + 2, can_open, can_close, cursor)
+                )
             cursor = run_end
             continue
-        character = without_html_deletions[cursor]
-        markdown_parts.append(
-            "" if in_deletion and character not in "\r\n" else character
-        )
         cursor += 1
+
+    matched_closers: list[int | None] = [None] * len(delimiters)
+    openers: list[int] = []
+    for delimiter_index, delimiter in enumerate(delimiters):
+        _, _, can_open, can_close, run_start = delimiter
+        matched = False
+        if can_close:
+            for opener_position in range(len(openers) - 1, -1, -1):
+                opener_index = openers[opener_position]
+                if delimiters[opener_index][4] == run_start:
+                    continue
+                matched_closers[opener_index] = delimiter_index
+                del openers[opener_position]
+                matched = True
+                break
+        if not matched and can_open:
+            openers.append(delimiter_index)
+
+    deletion_intervals = sorted(
+        (
+            delimiters[opener_index][0],
+            delimiters[closer_index][1],
+        )
+        for opener_index, closer_index in enumerate(matched_closers)
+        if closer_index is not None
+    )
+    merged_intervals: list[tuple[int, int]] = []
+    for interval_start, interval_end in deletion_intervals:
+        if merged_intervals and interval_start <= merged_intervals[-1][1]:
+            previous_start, previous_end = merged_intervals[-1]
+            merged_intervals[-1] = (previous_start, max(previous_end, interval_end))
+        else:
+            merged_intervals.append((interval_start, interval_end))
+
+    markdown_parts: list[str] = []
+    cursor = 0
+    for interval_start, interval_end in merged_intervals:
+        markdown_parts.append(without_html_deletions[cursor:interval_start])
+        markdown_parts.append(
+            re.sub(
+                r"[^\r\n]",
+                "",
+                without_html_deletions[interval_start:interval_end],
+            )
+        )
+        cursor = interval_end
+    markdown_parts.append(without_html_deletions[cursor:])
     return "".join(markdown_parts)
 
 
