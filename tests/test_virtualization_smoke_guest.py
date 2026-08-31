@@ -40,7 +40,7 @@ def test_smoke_dependency_input_matches_runtime_and_shared_release_pin() -> None
     ]
 
     assert third_party == {"paramiko"}
-    assert declarations == ["cffi==2.1.0", "paramiko>=3.5.0"]
+    assert declarations == ["cffi==2.1.1", "paramiko>=3.5.0"]
 
 
 def test_smoke_lock_matches_shared_release_tool_versions() -> None:
