@@ -27,7 +27,6 @@ from atlaso.app.services.appliance_settings import (
     management_ui_context,
     normalize_fqdn,
     normalize_multiline_values,
-    web_terminal_interfaces_from_json,
     web_terminal_interfaces_to_json,
 )
 
@@ -138,7 +137,7 @@ def build_router(dependencies: SettingsApiDependencies) -> SettingsApiRouter:
         if "web_terminal_enabled" in supplied_fields:
             assert payload.web_terminal_enabled is not None
             desired.web_terminal_enabled = payload.web_terminal_enabled
-        if supplied_fields & {"web_terminal_enabled", "web_terminal_interfaces"}:
+        if "web_terminal_interfaces" in supplied_fields:
             interfaces = (
                 db.execute(select(PhysicalInterface).order_by(PhysicalInterface.name))
                 .scalars()
@@ -154,13 +153,8 @@ def build_router(dependencies: SettingsApiDependencies) -> SettingsApiRouter:
                 .all()
             )
             management = management_ui_context(interfaces, vlans)
-            if "web_terminal_interfaces" in supplied_fields:
-                assert payload.web_terminal_interfaces is not None
-                requested_terminal_interfaces = list(payload.web_terminal_interfaces)
-            else:
-                requested_terminal_interfaces = web_terminal_interfaces_from_json(
-                    desired.web_terminal_interfaces_json
-                )
+            assert payload.web_terminal_interfaces is not None
+            requested_terminal_interfaces = list(payload.web_terminal_interfaces)
             if desired.web_terminal_enabled and management.get("name"):
                 requested_terminal_interfaces = [
                     management["name"],

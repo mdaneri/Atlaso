@@ -215,6 +215,39 @@ def test_settings_api_mixed_partial_patch_preserves_omitted_fields(client):
     assert payload["browser_session_idle_timeout_minutes"] == 45
 
 
+def test_settings_api_enablement_patch_preserves_terminal_interface_selection(client):
+    """Derived management selection must not become persisted caller state.
+
+    Args:
+        client: HTTP test client used to exercise the Atlaso application.
+    """
+    from sqlalchemy import select
+
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import ApplianceSettings
+
+    with SessionLocal() as db:
+        settings = db.execute(select(ApplianceSettings)).scalar_one()
+        settings.web_terminal_enabled = False
+        settings.web_terminal_interfaces_json = '["custom-terminal"]'
+        db.commit()
+
+    token, _metadata = create_token(client, scopes=["admin:all", "read:dashboard"])
+    response = client.patch(
+        "/api/v1/settings",
+        headers={"Authorization": f"Bearer {token}"},
+        json={"web_terminal_enabled": True},
+    )
+
+    assert response.status_code == 200, response.text
+    assert response.json()["web_terminal_enabled"] is True
+    assert response.json()["web_terminal_interfaces"] == ["eth0", "custom-terminal"]
+    with SessionLocal() as db:
+        settings = db.execute(select(ApplianceSettings)).scalar_one()
+        assert settings.web_terminal_enabled is True
+        assert settings.web_terminal_interfaces_json == '["custom-terminal"]'
+
+
 def test_settings_api_omitted_or_unchanged_fqdn_skips_domain_reconciliation(
     client, monkeypatch
 ):
