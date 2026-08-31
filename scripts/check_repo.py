@@ -964,9 +964,10 @@ DEFAULT_MERGE_AUTHORITY_SOURCE_MARKERS = re.compile(
     r"(?:(?:the|this|that|an?|new|existing)\s+)?"
     r"(?:[a-z0-9_.-]+[\\/])*[a-z_][a-z0-9_.-]*\.[a-z0-9]{1,12}\b|"
     r"\bwork on (?:an? )?(?:existing )?(?:ordinary )?(?:pull request|pr)\b|"
-    r"\b(?:address|resolve|apply|implement)\s+(?:review\s+)?feedback\s+"
-    r"(?:on|for)\s+(?:an?\s+)?(?:existing\s+)?(?:ordinary\s+)?"
-    r"(?:pull request|pr)\b|"
+    r"\b(?:address|resolve|apply|implement)\s+(?:the\s+)?"
+    r"(?:review\s+)?feedback\b"
+    r"(?:\s+(?:on|for)\s+(?:an?\s+)?(?:existing\s+)?(?:ordinary\s+)?"
+    r"(?:pull request|pr)\b)?|"
     r"pull[- ]request delivery|guarded[- ]squash merge|"
     r"task-owned pull request|ordinary same-repository"
 )
@@ -1161,10 +1162,13 @@ MERGE_RESUMABLE_GATE_CONDITION = re.compile(
     r"release[- ]jobs?)\b"
 )
 MERGE_RESUMABLE_GATE_FIRST = re.compile(
-    r"\b(?:wait\s+for|await)\s+"
+    r"\b(?:wait\s+(?:for|until)|await)\s+"
     r"(?:(?:the|an?)\s+)?(?:(?:[a-z][a-z0-9_-]*\s+){0,2})?"
     r"(?P<gate>ci|tests?|checks?|validation|builds?|review|deployments?|"
-    r"release[- ]jobs?)\s+before\s+(?:merging|(?:you|i|we)\s+merge)\b"
+    r"release[- ]jobs?)"
+    r"(?:\s+(?:to\s+)?(?:pass(?:es)?|succeed(?:s)?|complete(?:s)?|"
+    r"finish(?:es)?|clear(?:s)?))?\s+"
+    r"before\s+(?:merging|(?:you|i|we)\s+merge)\b"
 )
 MERGE_RESUMABLE_GATE_NEGATION_PREFIX = re.compile(
     r"\b(?:do not|don't|don’t|must not|should not|need not|never)\s*$"

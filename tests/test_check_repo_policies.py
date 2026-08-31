@@ -1080,6 +1080,12 @@ def test_merge_hold_directions_recognizes_wait_for_ci_condition() -> None:
     assert merge_hold_directions(
         "Implement issue #602, but wait for CI to pass before merging."
     ) == {}
+    assert resumable_merge_gates(
+        "Implement issue #602, but wait for CI to pass before merging."
+    ) == ("ci",)
+    assert resumable_merge_gates(
+        "Implement issue #602, but wait until tests pass before merging."
+    ) == ("test",)
 
 
 def test_merge_hold_directions_recognizes_plain_approval_condition() -> None:
@@ -1426,6 +1432,9 @@ def test_source_authority_keeps_workflow_policy_subject_eligible() -> None:
     )
     assert source_has_default_merge_authority(
         ("Update the documentation for external fork workflows.",)
+    )
+    assert source_has_default_merge_authority(
+        ("Please review this PR and address the feedback.",)
     )
     for instruction in (
         "Update README.md.",

@@ -3589,6 +3589,17 @@
       ],
       "generated": "Report the decision context without implementing or merging.",
       "expected_holds": []
+    },
+    {
+      "name": "review-pr-and-address-feedback-is-implementation",
+      "default_merge_authority": true,
+      "instructions": [
+        {
+          "text": "Please review this PR and address the feedback."
+        }
+      ],
+      "generated": "Complete the guarded merge when every required gate passes.",
+      "expected_holds": []
     }
   ]
 }
