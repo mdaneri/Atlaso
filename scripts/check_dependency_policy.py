@@ -151,12 +151,30 @@ def _yaml_plain_scalar(
         index: Zero-based index of the mapping key line.
         key: Mapping key expected on the current line.
     """
-    value = _yaml_scalar(lines[index], key)
-    if value is None or value.startswith(("|", ">")):
-        return value, index + 1
     line = lines[index]
     line_indent = len(line) - len(line.lstrip())
     key_indent = line_indent + (2 if re.match(r"\s*-\s+", line) else 0)
+    value = _yaml_scalar(line, key)
+    source_match = re.fullmatch(
+        rf"\s*(?:-\s+)?{re.escape(key)}:\s*(.*?)\s*",
+        line,
+    )
+    source = source_match.group(1).strip() if source_match else ""
+    if value is None and source.startswith(("'", '"')):
+        cursor = index + 1
+        parts = [source]
+        while cursor < len(lines):
+            candidate = lines[cursor]
+            candidate_indent = len(candidate) - len(candidate.lstrip())
+            if candidate.strip() and candidate_indent <= key_indent:
+                break
+            if candidate.strip():
+                parts.append(candidate.strip())
+            cursor += 1
+        value = _yaml_scalar(f"{key}: {' '.join(parts)}", key)
+        return value, cursor
+    if value is None or value.startswith(("|", ">")):
+        return value, index + 1
     parts = [value] if value else []
     cursor = index + 1
     while cursor < len(lines):
