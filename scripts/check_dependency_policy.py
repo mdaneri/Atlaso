@@ -455,9 +455,14 @@ def _workflow_checkout_sources(
             else next(
                 (
                     value
-                    for candidate in lines[step_index:step_end]
-                    if len(candidate) - len(candidate.lstrip()) == step_indent + 2
-                    and (value := _yaml_scalar(candidate, "if")) is not None
+                    for candidate_index in range(step_index, step_end)
+                    if len(lines[candidate_index])
+                    - len(lines[candidate_index].lstrip())
+                    == step_indent + 2
+                    and (
+                        value := _yaml_plain_scalar(lines, candidate_index, "if")[0]
+                    )
+                    is not None
                 ),
                 "",
             )
@@ -471,10 +476,14 @@ def _workflow_checkout_sources(
             else next(
                 (
                     value
-                    for candidate in lines[step_index:step_end]
-                    if len(candidate) - len(candidate.lstrip()) == step_indent + 2
+                    for candidate_index in range(step_index, step_end)
+                    if len(lines[candidate_index])
+                    - len(lines[candidate_index].lstrip())
+                    == step_indent + 2
                     and (
-                        value := _yaml_scalar(candidate, "continue-on-error")
+                        value := _yaml_plain_scalar(
+                            lines, candidate_index, "continue-on-error"
+                        )[0]
                     )
                     is not None
                 ),
@@ -930,9 +939,10 @@ def _workflow_step_working_directory(lines: list[str], index: int) -> str:
         if candidate.strip() and candidate_indent <= step_indent:
             step_end = candidate_index
             break
-    for candidate in lines[step_index:step_end]:
+    for candidate_index in range(step_index, step_end):
+        candidate = lines[candidate_index]
         candidate_indent = len(candidate) - len(candidate.lstrip())
-        value = _yaml_scalar(candidate, "working-directory")
+        value = _yaml_plain_scalar(lines, candidate_index, "working-directory")[0]
         if value is not None and candidate_indent == step_indent + 2:
             return value.strip()
     return ""
@@ -964,9 +974,10 @@ def _workflow_step_condition(lines: list[str], index: int) -> str:
         if candidate.strip() and candidate_indent <= step_indent:
             step_end = candidate_index
             break
-    for candidate in lines[step_index:step_end]:
+    for candidate_index in range(step_index, step_end):
+        candidate = lines[candidate_index]
         candidate_indent = len(candidate) - len(candidate.lstrip())
-        value = _yaml_scalar(candidate, "if")
+        value = _yaml_plain_scalar(lines, candidate_index, "if")[0]
         if value is not None and candidate_indent == step_indent + 2:
             return value.strip()
     return ""
@@ -992,7 +1003,8 @@ def _workflow_job_working_directory(lines: list[str], index: int) -> str:
             break
     defaults_indent = -1
     run_indent = -1
-    for candidate in lines[job_scope + 1 : job_end]:
+    for candidate_index in range(job_scope + 1, job_end):
+        candidate = lines[candidate_index]
         candidate_indent = len(candidate) - len(candidate.lstrip())
         if candidate.strip() == "defaults:" and candidate_indent == job_indent + 2:
             defaults_indent = candidate_indent
@@ -1001,7 +1013,7 @@ def _workflow_job_working_directory(lines: list[str], index: int) -> str:
         if defaults_indent >= 0 and candidate.strip() == "run:" and candidate_indent == defaults_indent + 2:
             run_indent = candidate_indent
             continue
-        value = _yaml_scalar(candidate, "working-directory")
+        value = _yaml_plain_scalar(lines, candidate_index, "working-directory")[0]
         if value is not None and run_indent >= 0 and candidate_indent == run_indent + 2:
             return value.strip()
     return ""
@@ -1015,7 +1027,7 @@ def _workflow_default_working_directory(lines: list[str]) -> str:
     """
     defaults_indent = -1
     run_indent = -1
-    for candidate in lines:
+    for candidate_index, candidate in enumerate(lines):
         candidate_indent = len(candidate) - len(candidate.lstrip())
         if candidate.strip() == "defaults:" and candidate_indent == 0:
             defaults_indent = 0
@@ -1024,7 +1036,7 @@ def _workflow_default_working_directory(lines: list[str]) -> str:
         if defaults_indent >= 0 and candidate.strip() == "run:" and candidate_indent == 2:
             run_indent = candidate_indent
             continue
-        value = _yaml_scalar(candidate, "working-directory")
+        value = _yaml_plain_scalar(lines, candidate_index, "working-directory")[0]
         if value is not None and run_indent >= 0 and candidate_indent == 4:
             return value.strip()
         if candidate.strip() and candidate_indent == 0 and candidate.strip() != "defaults:":

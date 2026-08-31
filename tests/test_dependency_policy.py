@@ -526,6 +526,39 @@ def test_dependency_policy_rejects_conditional_checkout_replacement(
     )
 
 
+def test_dependency_policy_rejects_continued_checkout_condition(
+    tmp_path: Path,
+) -> None:
+    """Verify a continued checkout condition cannot hide a skipped replacement.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
+    write_valid_policy(tmp_path)
+    workflow = tmp_path / ".github" / "workflows" / "release.yml"
+    workflow.parent.mkdir(parents=True, exist_ok=True)
+    workflow.write_text(
+        """jobs:
+  conditional:
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          repository: attacker/other
+      - uses: actions/checkout@v7
+        if:
+          ${{ false }}
+      - run: python -m pip install -r requirements-release-tools.lock
+""",
+        encoding="utf-8",
+    )
+
+    assert any(
+        "root workflow requirement uses conditional checkout metadata: "
+        "requirements-release-tools.lock" in error
+        for error in validate(tmp_path)
+    )
+
+
 def test_dependency_policy_accepts_matching_checkout_condition(
     tmp_path: Path,
 ) -> None:
@@ -1556,6 +1589,39 @@ def test_dependency_policy_honors_step_working_directory(
           path: external
       - run: python -m pip install -r requirements-release-tools.lock
         working-directory: external
+""",
+        encoding="utf-8",
+    )
+
+    assert any(
+        "checkout-prefixed workflow requirement is not sourced from Atlaso: "
+        "requirements-release-tools.lock" in error
+        for error in validate(tmp_path)
+    )
+
+
+def test_dependency_policy_honors_continued_step_working_directory(
+    tmp_path: Path,
+) -> None:
+    """Verify a continued step working directory selects its checkout source.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
+    write_valid_policy(tmp_path)
+    workflow = tmp_path / ".github" / "workflows" / "release.yml"
+    workflow.parent.mkdir(parents=True, exist_ok=True)
+    workflow.write_text(
+        """jobs:
+  external:
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          repository: attacker/other
+          path: external
+      - run: python -m pip install -r requirements-release-tools.lock
+        working-directory:
+          external
 """,
         encoding="utf-8",
     )
