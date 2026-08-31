@@ -715,6 +715,18 @@ def test_merge_hold_directions_scopes_numbered_pr_permission() -> None:
         "I don't approve of merging PR #620.",
         active_pull_request=620,
     ) == {"do not merge": "add"}
+    for instruction in (
+        "Do not merge PR #621, or PR #620.",
+        "Do not merge PR #621 and PR #620.",
+    ):
+        assert merge_hold_directions(
+            instruction,
+            active_pull_request=620,
+        ) == {"do not merge": "add"}
+        assert merge_hold_directions(
+            instruction,
+            active_pull_request=622,
+        ) == {}
     assert merge_hold_directions(
         "You may merge PR #621.",
         active_holds=("do not merge",),
@@ -1182,6 +1194,12 @@ def test_merge_hold_directions_recognizes_plain_approval_condition() -> None:
     assert merge_hold_directions(
         "Implement issue #602, but wait for maintainer authorization before merging."
     ) == {"wait for approval": "add"}
+    for instruction in (
+        "Implement issue #602, but wait for reviewer approval before merging.",
+        "Implement issue #602, but wait for Alice's approval before merging.",
+        "Implement issue #602, but wait for security team approval before merging.",
+    ):
+        assert merge_hold_directions(instruction) == {"wait for approval": "add"}
     assert merge_hold_directions(
         "Implement issue #602, but merge only after the code owner approves."
     ) == {"wait for approval": "add"}

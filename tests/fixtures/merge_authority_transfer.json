@@ -3769,6 +3769,42 @@
       ]
     },
     {
+      "name": "named-reviewer-wait-is-an-approval-hold",
+      "default_merge_authority": true,
+      "instructions": [
+        {
+          "text": "Implement issue #602, but wait for security team approval before merging.",
+          "add_holds": [
+            "wait for approval"
+          ]
+        }
+      ],
+      "generated": "Preserve the explicit wait for approval instruction.",
+      "expected_holds": [
+        "wait for approval"
+      ]
+    },
+    {
+      "name": "mixed-numbered-pr-target-list-preserves-active-hold",
+      "default_merge_authority": true,
+      "active_pull_request": 620,
+      "instructions": [
+        {
+          "text": "Implement issue #602 and deliver PR #620."
+        },
+        {
+          "text": "Do not merge PR #621, or PR #620.",
+          "add_holds": [
+            "do not merge"
+          ]
+        }
+      ],
+      "generated": "Preserve the explicit do not merge instruction for PR #620.",
+      "expected_holds": [
+        "do not merge"
+      ]
+    },
+    {
       "name": "apply-requested-changes-is-implementation",
       "default_merge_authority": true,
       "instructions": [

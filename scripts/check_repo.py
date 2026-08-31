@@ -1005,7 +1005,9 @@ DEFAULT_MERGE_AUTHORITY_COORDINATED_NO_WORK = re.compile(
     r"rename|delete|replace|make|add|remove|create|build|refactor)){1,}"
 )
 MERGE_AUTHORITY_INSTRUCTION_BOUNDARY = re.compile(
-    r"(?:[;,.!?]+|\s+(?:but|and)\s+)"
+    r"(?:[;.!?]+|"
+    r",(?!\s*(?:(?:and|or)\s+)?(?:pull[- ]request|pr|issue)\s*#\d+)|"
+    r"\s+(?:but|and)\s+(?!(?:pull[- ]request|pr|issue)\s*#\d+))"
 )
 MERGE_AUTHORITY_COARSE_BOUNDARY = re.compile(r"(?:[;,.!?]+|\s+but\s+)")
 MERGE_HOLD_DISCUSSION_CONTEXT = re.compile(
@@ -1095,7 +1097,8 @@ MERGE_HOLD_NONAUTHORITATIVE_SOURCE_CONTEXT = re.compile(
 )
 MERGE_AUTHORITY_TASK_CLAUSE_BOUNDARY = re.compile(r"[;.?!]+")
 MERGE_AUTHORITY_COORDINATED_CLAUSE_BOUNDARY = re.compile(
-    r",\s+(?:but|and)\s+|\s+but\s+"
+    r",\s+(?:but|and)\s+(?!(?:pull[- ]request|pr|issue)\s*#\d+)|"
+    r"\s+but\s+(?!(?:pull[- ]request|pr|issue)\s*#\d+)"
 )
 MERGE_HOLD_STANDALONE_PERMISSION = re.compile(
     r"\b(?:(?P<imperative>merge now|(?:please\s+)?merge\s+"
@@ -1162,10 +1165,10 @@ MERGE_HOLD_APPROVAL_BEFORE_MERGING = re.compile(
     r"(?:get|obtain|require|need|wait\s+for)\s+"
     r"(?:(?:the\s+)?(?:user|maintainer|(?:[a-z][a-z0-9_-]*\s+)?owner)"
     r"(?:'s|’s)?\s+|(?:my|our|your)\s+)?(?:sign[- ]off|go[- ]ahead)|"
-    r"wait (?:for|until)\s+(?:(?:the\s+)?"
-    r"(?:user|maintainer|(?:[a-z][a-z0-9_-]*\s+)?owner)\s+to\s+approve|"
-    r"(?:(?:the\s+)?(?:user|maintainer|(?:[a-z][a-z0-9_-]*\s+)?owner)"
-    r"(?:'s|’s)?\s+|(?:my|our|your)\s+)?"
+    r"wait (?:for|until)\s+(?:(?:(?:the\s+)?"
+    r"(?:[a-z][a-z0-9_-]*(?:'s|’s)?\s+){1,3}|me\s+|us\s+)to\s+approve|"
+    r"(?:(?:the|my|our|your)\s+)?"
+    r"(?:[a-z][a-z0-9_-]*(?:'s|’s)?\s+){0,3}"
     r"(?:approval|permission|authorization))|"
     r"(?:(?:you|i|we)\s+)?(?:get|obtain|require|need)\s+(?:(?:the\s+)?"
     r"(?:user|maintainer|(?:[a-z][a-z0-9_-]*\s+)?owner)"
