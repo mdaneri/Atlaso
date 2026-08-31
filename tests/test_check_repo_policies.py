@@ -1369,6 +1369,7 @@ def test_agent_policy_gate_rejects_missing_maintainer_break_glass_contract(
         f"<span inert>{prohibition}</span>",
         f'<span style="display:none;display:block\\!important">{prohibition}</span>',
         f'<span style="--state:none;display:var(--state)">{prohibition}</span>',
+        f'<span style="--hide:opacity(0);filter:var(--hide)">{prohibition}</span>',
         f'<span style="--State:none;display:var(--State)">{prohibition}</span>',
         f'<span style="--State:none;display:VAR(--State)">{prohibition}</span>',
         f'<span style="--state:var(--state);display:var(--state,none)">'
@@ -1574,6 +1575,7 @@ def test_agent_policy_gate_rejects_missing_maintainer_break_glass_contract(
         f'<span style="transform:matrix(0,0,0,0,0,0);transform:matrix(1,0,0,1,0,0)">'
         f"{prohibition}</span>",
         f'<span style="filter:opacity(0);filter:none">{prohibition}</span>',
+        f'<span style="--hide:none;filter:var(--hide)">{prohibition}</span>',
         f'<span style="display:n/**/one">{prohibition}</span>',
         f'<span style="display:none;display:initial">{prohibition}</span>',
         f'<span style="display:none;display:unset">{prohibition}</span>',

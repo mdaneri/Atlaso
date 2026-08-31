@@ -694,7 +694,7 @@ function hasHiddenAttributes (attributes, inheritedCustomProperties = new Map(),
       customProperties.set(property, declaration)
     }
   }
-  for (const property of ['display', 'visibility', 'content-visibility', 'opacity', 'font-size', 'transform', 'clip-path', 'color']) {
+  for (const property of ['display', 'visibility', 'content-visibility', 'opacity', 'filter', 'font-size', 'transform', 'clip-path', 'color']) {
     const declaration = declarations.get(property)
     if (!declaration || !hasCssVariable(declaration.value)) continue
     const resolved = resolveCssVariables(declaration.value, customProperties)
