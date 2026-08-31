@@ -217,6 +217,11 @@ function isValidSuppressionDeclaration (property, value) {
   if (property === 'opacity') {
     return parseOpacityValue(value) !== null
   }
+  if (property === 'font-size') {
+    return /^(?:xx-small|x-small|small|medium|large|x-large|xx-large|xxx-large|larger|smaller|math)$/.test(value) ||
+      /^[+]?(?:\d+(?:\.\d*)?|\.\d+)(?:%|[a-z]+)?$/.test(value) ||
+      /^(?:calc|min|max|clamp)\(.+\)$/.test(value)
+  }
   if (property === 'color') {
     return value === 'transparent' || value === 'currentcolor' ||
       cssNamedColors.has(value) ||
@@ -268,6 +273,28 @@ function isTransparentColor (value) {
   }
   if (alphaValue === null) return false
   return (parseOpacityValue(alphaValue) ?? 1) <= 0
+}
+
+function classifyFontSize (value) {
+  if (/^(?:inherit|unset|revert|revert-layer)$/.test(value)) return 'inherit'
+  if (/^(?:larger|smaller)$/.test(value)) return 'relative'
+  if (/^(?:xx-small|x-small|small|medium|large|x-large|xx-large|xxx-large|math)$/.test(value)) {
+    return 'visible'
+  }
+  const numeric = value.match(
+    /^([+]?(?:\d+(?:\.\d*)?|\.\d+))(?:([a-z]+)|(%))?$/
+  )
+  if (numeric) {
+    const amount = Number.parseFloat(numeric[1])
+    if (amount === 0) return 'zero'
+    if (numeric[3] || ['em', 'ex', 'ch', 'cap', 'ic', 'lh'].includes(numeric[2])) {
+      return 'relative'
+    }
+    return 'visible'
+  }
+  const calculated = parseOpacityValue(value)
+  if (calculated === null) return 'inherit'
+  return calculated === 0 ? 'zero' : 'visible'
 }
 
 function stripCssComments (value) {
@@ -432,7 +459,7 @@ function hasHiddenAttributes (attributes, inheritedCustomProperties = new Map(),
       customProperties.set(property, declaration)
     }
   }
-  for (const property of ['display', 'visibility', 'content-visibility', 'opacity', 'color']) {
+  for (const property of ['display', 'visibility', 'content-visibility', 'opacity', 'font-size', 'color']) {
     const declaration = declarations.get(property)
     if (!declaration || !hasCssVariable(declaration.value)) continue
     const resolved = resolveCssVariables(declaration.value, customProperties)
@@ -453,6 +480,7 @@ function hasHiddenAttributes (attributes, inheritedCustomProperties = new Map(),
       (parseOpacityValue(declarations.get('opacity')?.value || '') ?? 1) <= 0
     ),
     visibility: declarations.get('visibility')?.value || null,
+    fontSize: declarations.get('font-size')?.value || null,
     color: declarations.get('color')?.value || null,
     customProperties,
     parsedAttributes
@@ -552,6 +580,12 @@ function isHtmlSuppressed () {
     }
   }
   if (visibilityHidden) return true
+  for (let index = htmlStack.length - 1; index >= 0; index -= 1) {
+    if (!htmlStack[index].fontSize) continue
+    const state = classifyFontSize(htmlStack[index].fontSize)
+    if (state === 'zero') return true
+    if (state === 'visible') break
+  }
   for (let index = htmlStack.length - 1; index >= 0; index -= 1) {
     if (htmlStack[index].color) {
       if (/^(?:inherit|unset|revert|revert-layer|currentcolor)$/.test(htmlStack[index].color)) {
@@ -655,6 +689,7 @@ function updateHtmlSuppression (content, inlineContext = false) {
         summarySeen: false,
         summaryOwner,
         visibility: suppression.visibility,
+        fontSize: suppression.fontSize,
         color: suppression.color,
         inline: inlineContext,
         foreign,
