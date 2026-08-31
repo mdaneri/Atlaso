@@ -425,6 +425,10 @@ def _workflow_checkout_sources(
             if flow_step is not None and "uses" in flow_step
             else _yaml_plain_scalar(lines, index, "uses")[0]
         )
+        if _is_alias_value(action):
+            job_scope = _workflow_job_scope(lines, index)
+            dynamic_checkouts.setdefault(job_scope, []).append(index + 1)
+            continue
         if action is None or not re.fullmatch(r"actions/checkout@[^\s]+", action):
             continue
         job_scope = _workflow_job_scope(lines, index)
@@ -817,6 +821,16 @@ def _segment_requirement_paths(segment: str) -> list[str]:
     """
     tokens = _shell_tokens(segment)
     if not tokens:
+        return []
+    for eval_index, token in enumerate(tokens):
+        launcher = token.replace("\\", "/").rsplit("/", maxsplit=1)[-1].lower()
+        if launcher != "eval":
+            continue
+        command_index = eval_index + 1
+        if command_index < len(tokens) and tokens[command_index] == "--":
+            command_index += 1
+        if command_index < len(tokens):
+            return _segment_requirement_paths(" ".join(tokens[command_index:]))
         return []
     for shell_index, token in enumerate(tokens):
         launcher = token.replace("\\", "/").rsplit("/", maxsplit=1)[-1].lower()
