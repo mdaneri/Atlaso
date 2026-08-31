@@ -127,8 +127,9 @@ legacy global DHCP binding fields are retained for compatibility but do not cons
 
 `PATCH /api/v1/settings` is a partial desired-state update. Send only the properties that should change; Atlaso
 preserves every omitted appliance setting. Explicit `false` values remain valid for switches, and an empty
-`external_dns_servers` or `web_terminal_interfaces` list clears that collection. `null` is not a clearing form for
-this operation and returns `422`; omit the property instead.
+`external_dns_servers` list clears that collection. An empty `web_terminal_interfaces` list clears additional Web
+Terminal bindings; while Web Terminal is enabled, Atlaso retains its mandatory management listener. `null` is not a
+clearing form for this operation and returns `422`; omit the property instead.
 
 Changing `appliance_fqdn` reconciles factory-derived service identities and app-owned DNS records only when the
 property is present and its normalized value differs from the saved FQDN. Other settings PATCH requests do not trigger

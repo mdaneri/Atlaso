@@ -62,6 +62,11 @@ def test_settings_update_openapi_fields_are_omittable_but_non_nullable():
         "title": "Api Token Max Lifetime Days",
         "type": "integer",
     }
+    assert schema["properties"]["web_terminal_interfaces"]["description"] == (
+        "Ordered optional Web Terminal interface bindings. Omit the property to preserve them; "
+        "submit an empty list to clear additional bindings. While Web Terminal is enabled, Atlaso "
+        "retains the mandatory management listener. Null is not accepted."
+    )
 
 
 def test_settings_api_updates_root_ssh_desired_state(client):
@@ -201,7 +206,11 @@ def test_settings_api_mixed_partial_patch_preserves_omitted_fields(client):
     response = client.patch(
         "/api/v1/settings",
         headers={"Authorization": f"Bearer {token}"},
-        json={"root_ssh_enabled": False, "external_dns_servers": []},
+        json={
+            "web_terminal_interfaces": [],
+            "root_ssh_enabled": False,
+            "external_dns_servers": [],
+        },
     )
 
     assert response.status_code == 200, response.text
@@ -209,10 +218,13 @@ def test_settings_api_mixed_partial_patch_preserves_omitted_fields(client):
     assert payload["appliance_fqdn"] == "custom.example.internal"
     assert payload["management_https_enabled"] is True
     assert payload["web_terminal_enabled"] is True
-    assert payload["web_terminal_interfaces"] == ["eth0", "custom-terminal"]
+    assert payload["web_terminal_interfaces"] == ["eth0"]
     assert payload["root_ssh_enabled"] is False
     assert payload["external_dns_servers"] == []
     assert payload["browser_session_idle_timeout_minutes"] == 45
+    with SessionLocal() as db:
+        settings = db.execute(select(ApplianceSettings)).scalar_one()
+        assert settings.web_terminal_interfaces_json == '["eth0"]'
 
 
 def test_settings_api_enablement_patch_preserves_terminal_interface_selection(client):

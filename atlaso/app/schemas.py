@@ -2347,8 +2347,8 @@ class SettingsResponse(BaseModel):
         management_https_cert_available: Whether management https cert available is enabled for this
             settings resource.
         web_terminal_enabled: Whether web terminal enabled is enabled for this settings resource.
-        web_terminal_interfaces: Ordered collection of web terminal interfaces values represented by
-            this settings schema.
+        web_terminal_interfaces: Ordered optional Web Terminal interface bindings; the management
+            listener remains mandatory while Web Terminal is enabled.
         root_ssh_enabled: Whether root ssh enabled is enabled for this settings resource.
         browser_session_idle_timeout_minutes: Maximum browser inactivity before Atlaso expires the session.
         api_token_max_lifetime_days: Maximum lifetime allowed for newly issued API tokens.
@@ -2423,7 +2423,7 @@ class SettingsUpdate(BaseModel):
     appliance_fqdn: Annotated[str | SkipJsonSchema[None], Field(description='Requested appliance FQDN. Omit it to preserve the current value; null is not accepted.')] = Field(default=None, min_length=1, max_length=180)
     management_https_enabled: Annotated[bool | SkipJsonSchema[None], Field(description='Whether management HTTPS is enabled in desired state. Omit it to preserve the current value; null is not accepted.')] = None
     web_terminal_enabled: Annotated[bool | SkipJsonSchema[None], Field(description='Whether Web Terminal is enabled in desired state. Omit it to preserve the current value; null is not accepted.')] = None
-    web_terminal_interfaces: Annotated[list[str] | SkipJsonSchema[None], Field(description='Ordered Web Terminal interface selection. Omit it to preserve the current selection; submit an empty list to clear it; null is not accepted.')] = None
+    web_terminal_interfaces: Annotated[list[str] | SkipJsonSchema[None], Field(description='Ordered optional Web Terminal interface bindings. Omit the property to preserve them; submit an empty list to clear additional bindings. While Web Terminal is enabled, Atlaso retains the mandatory management listener. Null is not accepted.')] = None
     root_ssh_enabled: Annotated[bool | SkipJsonSchema[None], Field(description='Whether root SSH login is enabled in desired state. Omit it to preserve the current value; null is not accepted.')] = None
     browser_session_idle_timeout_minutes: Annotated[Annotated[int, Field(ge=5, le=1440)] | SkipJsonSchema[None], Field(description='Maximum period of authenticated browser inactivity, in minutes, before Atlaso expires the session on its next protected request. Omit it to preserve the current value; null is not accepted.')] = None
     api_token_max_lifetime_days: Annotated[Annotated[int, Field(ge=1, le=365)] | SkipJsonSchema[None], Field(description='Maximum lifetime, in days, applied to newly issued API bearer tokens; existing tokens are unchanged. Omit it to preserve the current value; null is not accepted.')] = None
