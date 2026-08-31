@@ -49,6 +49,12 @@ shorten the upload-time cutoff to obtain a newer dependency, including for a sec
 satisfies the input declarations, change the input constraint through a reviewed dependency update or wait until the
 required release reaches seven full days.
 
+Protected appliance, promotion, Inventory Linux, and virtualization publication jobs intentionally run without a
+writable Actions cache scope. Their `actions/setup-python` steps therefore do not enable the built-in pip cache, because
+that option always registers a post-job cache save. This cache-free setup does not relax dependency integrity: every
+release-tool and appliance dependency installation continues to consume the checked-in hash-locked requirements files.
+Ordinary CI jobs may continue to use dependency caching under their separate execution permissions.
+
 ## Validate the result
 
 Run:
