@@ -894,6 +894,7 @@ else {
     $outerCleanupOutputDirectory = Assert-AtlasoVmwareBuilderOutputDirectory `
         -OutputDirectory $outerCleanupOutputDirectory `
         -Identity $builderIdentity
+    $outerCleanupOutputExistedBeforeChild = Test-Path -LiteralPath $outerCleanupOutputDirectory
     $preparedIsoLeaf = if ($PSBoundParameters.ContainsKey('PreparedIsoPath') -and
         -not [string]::IsNullOrWhiteSpace($PreparedIsoPath)) {
         [System.IO.Path]::GetFileName($PreparedIsoPath)

@@ -3148,6 +3148,15 @@ def test_vmware_gui_builder_repairs_stale_rows_before_ui_startup() -> None:
         "if (-not $Headless -and -not $ValidateOnly) {", 0, gui_launch
     )
     repair = wrapper.index("Repair-AtlasoWorkstationStaleRegistrations `", gui_guard)
+    output_assertion = wrapper.index(
+        "$outerCleanupOutputDirectory = Assert-AtlasoVmwareBuilderOutputDirectory `"
+    )
+    output_snapshot = wrapper.index(
+        "$outerCleanupOutputExistedBeforeChild = Test-Path", output_assertion
+    )
+    output_snapshot_use = wrapper.index(
+        "if ($outerCleanupOutputExistedBeforeChild", output_snapshot
+    )
     keep_existing_guard = wrapper.index(
         "if (-not $KeepExistingOutput) {", gui_guard, repair
     )
@@ -3178,7 +3187,16 @@ def test_vmware_gui_builder_repairs_stale_rows_before_ui_startup() -> None:
     full_cleanup = wrapper.index("Remove-AtlasoWorkstationArtifactRoot `", child_cleanup)
 
     assert wrapper.count("Repair-AtlasoWorkstationStaleRegistrations `") == 1
-    assert gui_guard < keep_existing_guard < repair < gui_launch < child_start
+    assert (
+        output_assertion
+        < output_snapshot
+        < gui_guard
+        < output_snapshot_use
+        < keep_existing_guard
+        < repair
+        < gui_launch
+        < child_start
+    )
     assert (
         termination_proven
         < durable_cleanup_claim
