@@ -754,10 +754,50 @@ def test_dependency_policy_preserves_folded_scalar_command_boundaries(
         )
 
 
-def test_dependency_policy_rejects_conditional_directory_state(
+def test_dependency_policy_rejects_nondeterministic_directory_state(
     tmp_path: Path,
 ) -> None:
-    """Verify conditional directory actions fail closed for later requirements.
+    """Verify controlled directory actions fail closed for later requirements.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
+    write_valid_policy(tmp_path)
+    (tmp_path / "requirements-ad-hoc.lock").write_text(
+        "placeholder\n", encoding="utf-8"
+    )
+    workflow = tmp_path / ".github" / "workflows" / "release.yml"
+    workflow.parent.mkdir(parents=True, exist_ok=True)
+    invocations = (
+        "pushd external || popd; python -m pip install -r requirements-release-tools.lock",
+        "cd . & python -m pip install -r requirements-ad-hoc.lock",
+        "cd . | python -m pip install -r requirements-ad-hoc.lock",
+    )
+    for invocation in invocations:
+        workflow.write_text(
+            f"""jobs:
+  external:
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          repository: attacker/other
+          path: external
+      - run: {invocation}
+""",
+            encoding="utf-8",
+        )
+
+        assert any(
+            "workflow working directory must be a literal repository path: "
+            "${{ unsupported-shell-directory-control }}" in error
+            for error in validate(tmp_path)
+        )
+
+
+def test_dependency_policy_rejects_nonliteral_checkout_path(
+    tmp_path: Path,
+) -> None:
+    """Verify a dynamic checkout destination cannot replace root metadata.
 
     Args:
         tmp_path: Temporary directory provided by pytest for isolated filesystem state.
@@ -767,20 +807,22 @@ def test_dependency_policy_rejects_conditional_directory_state(
     workflow.parent.mkdir(parents=True, exist_ok=True)
     workflow.write_text(
         """jobs:
-  external:
+  dynamic:
     steps:
       - uses: actions/checkout@v7
         with:
           repository: attacker/other
-          path: external
-      - run: pushd external || popd; python -m pip install -r requirements-release-tools.lock
+      - uses: actions/checkout@v7
+        with:
+          path: ${{ env.TRUSTED_PATH }}
+      - run: python -m pip install -r requirements-release-tools.lock
 """,
         encoding="utf-8",
     )
 
     assert any(
-        "workflow working directory must be a literal repository path: "
-        "${{ unsupported-conditional-directory }}" in error
+        "workflow requirement uses nonliteral checkout path metadata: "
+        "requirements-release-tools.lock" in error
         for error in validate(tmp_path)
     )
 

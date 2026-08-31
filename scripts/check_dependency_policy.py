@@ -166,6 +166,7 @@ def _workflow_checkout_sources(
 ) -> tuple[
     dict[tuple[int, str], list[tuple[int, CheckoutSource]]],
     dict[int, list[tuple[int, CheckoutSource]]],
+    dict[int, list[int]],
 ]:
     """Return checkout destinations and root replacements grouped by job.
 
@@ -174,6 +175,7 @@ def _workflow_checkout_sources(
     """
     checkout_paths: dict[tuple[int, str], list[tuple[int, CheckoutSource]]] = {}
     root_checkouts: dict[int, list[tuple[int, CheckoutSource]]] = {}
+    dynamic_checkouts: dict[int, list[int]] = {}
     for index, line in enumerate(lines):
         action = _yaml_scalar(line, "uses")
         if action is None or not re.fullmatch(r"actions/checkout@[^\s]+", action):
@@ -216,6 +218,7 @@ def _workflow_checkout_sources(
             "false",
         )
         checkout_path = ""
+        dynamic_path = False
         repository = "${{ github.repository }}"
         ref = ""
         with_indent = -1
@@ -233,11 +236,14 @@ def _workflow_checkout_sources(
                 continue
             if candidate_indent != with_indent + 2:
                 continue
-            path_value = _yaml_scalar(candidate, "path")
-            if path_value is not None and re.fullmatch(
-                r"[A-Za-z0-9._/-]+", path_value
-            ):
-                checkout_path = PurePosixPath(path_value).as_posix()
+            if re.match(r"\s*path\s*:", candidate):
+                path_value = _yaml_scalar(candidate, "path")
+                if path_value is not None and re.fullmatch(
+                    r"[A-Za-z0-9._/-]+", path_value
+                ):
+                    checkout_path = PurePosixPath(path_value).as_posix()
+                else:
+                    dynamic_path = True
             repository_value = _yaml_scalar(candidate, "repository")
             if repository_value is not None:
                 repository = repository_value.strip()
@@ -250,13 +256,15 @@ def _workflow_checkout_sources(
             condition,
             continue_on_error.strip().lower() != "false",
         )
-        if checkout_path and checkout_path != ".":
+        if dynamic_path:
+            dynamic_checkouts.setdefault(job_scope, []).append(index + 1)
+        elif checkout_path and checkout_path != ".":
             checkout_paths.setdefault((job_scope, checkout_path), []).append(
                 (index + 1, source)
             )
         else:
             root_checkouts.setdefault(job_scope, []).append((index + 1, source))
-    return checkout_paths, root_checkouts
+    return checkout_paths, root_checkouts, dynamic_checkouts
 
 
 def _continued_commands(lines: list[tuple[int, str]]) -> list[tuple[int, str]]:
@@ -324,13 +332,13 @@ def _folded_commands(lines: list[tuple[int, str]]) -> list[tuple[int, str]]:
 
 
 def _shell_command_segments(command: str) -> tuple[list[str], bool]:
-    """Split shell commands and identify conditional separators.
+    """Split shell commands and identify stateful control separators.
 
     Args:
         command: Shell or PowerShell command text.
     """
     segments: list[str] = []
-    conditional = False
+    stateful_control = False
     part: list[str] = []
     quote = ""
     index = 0
@@ -357,9 +365,10 @@ def _shell_command_segments(command: str) -> tuple[list[str], bool]:
             separator_length = 1
         elif not quote and command[index : index + 2] in {"&&", "||"}:
             separator_length = 2
-            conditional = True
-        elif not quote and character == "|":
+            stateful_control = True
+        elif not quote and character in {"&", "|"}:
             separator_length = 1
+            stateful_control = True
         if separator_length:
             segment = "".join(part).strip()
             if segment:
@@ -372,7 +381,7 @@ def _shell_command_segments(command: str) -> tuple[list[str], bool]:
     segment = "".join(part).strip()
     if segment:
         segments.append(segment)
-    return segments, conditional
+    return segments, stateful_control
 
 
 def _shell_tokens(segment: str) -> list[str]:
@@ -720,12 +729,12 @@ def _workflow_requirement_paths(lines: list[str]) -> list[tuple[int, str, str]]:
             active_scope = run_scope
             active_directory = working_directory
             directory_stack = []
-        segments, conditional = _shell_command_segments(command)
-        conditional_directory = conditional and any(
+        segments, stateful_control = _shell_command_segments(command)
+        uncertain_directory = stateful_control and any(
             _segment_directory_action(segment) is not None for segment in segments
         )
-        if conditional_directory:
-            active_directory = "${{ unsupported-conditional-directory }}"
+        if uncertain_directory:
+            active_directory = "${{ unsupported-shell-directory-control }}"
             directory_stack = []
         for segment in segments:
             if _segment_uses_shell_grouping(segment):
@@ -735,7 +744,7 @@ def _workflow_requirement_paths(lines: list[str]) -> list[tuple[int, str, str]]:
                 active_directory = "${{ unsupported-shell-grouping }}"
             directory_action = _segment_directory_action(segment)
             if directory_action is not None:
-                if conditional_directory:
+                if uncertain_directory:
                     continue
                 action, directory_change = directory_action
                 if action == "pop":
@@ -776,7 +785,9 @@ def _validate_workflow_locks(root: Path, policy_paths: set[str]) -> list[str]:
             errors.append(f"{workflow.relative_to(root)}: workflow is unreadable")
             continue
         lines = text.splitlines()
-        checkout_paths, root_checkouts = _workflow_checkout_sources(lines)
+        checkout_paths, root_checkouts, dynamic_checkouts = (
+            _workflow_checkout_sources(lines)
+        )
         for line_number, reference, working_directory in _workflow_requirement_paths(lines):
             normalized = reference.replace("\\", "/")
             relative = PurePosixPath(normalized)
@@ -809,6 +820,16 @@ def _validate_workflow_locks(root: Path, policy_paths: set[str]) -> list[str]:
             tracked_path = root.joinpath(*relative.parts)
             job_scope = _workflow_job_scope(lines, line_number - 1)
             command_condition = _workflow_step_condition(lines, line_number - 1)
+            if any(
+                checkout_line < line_number
+                for checkout_line in dynamic_checkouts.get(job_scope, [])
+            ):
+                errors.append(
+                    f"{workflow.relative_to(root)}:{line_number}: workflow "
+                    "requirement uses nonliteral checkout path metadata: "
+                    f"{reference}"
+                )
+                continue
             checkout_source = next(
                 (
                     source
