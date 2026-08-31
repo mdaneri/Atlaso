@@ -25,6 +25,7 @@ from atlaso.app.schemas import (
 )
 from atlaso.app.security import Identity, require_scope
 from atlaso.app.services.network_boot import cleanup_network_boot_upload
+from atlaso.app.services.routes_wan import save_routing_enabled_state
 from atlaso.app.services.service_registry import SERVICE_STATE_IDS
 
 Endpoint = Callable[..., Any]
@@ -143,6 +144,11 @@ def build_router(dependencies: OperationsApiDependencies) -> OperationsApiRouter
             )
         if action not in {"start", "stop", "restart", "enable", "disable"}:
             raise HTTPException(status_code=422, detail="Unsupported service action")
+        if service == "routing" and action in {"start", "stop", "restart"}:
+            raise HTTPException(
+                status_code=422,
+                detail="Routing runtime changes require Appliance Apply",
+            )
         row = db.execute(
             select(ServiceState).where(ServiceState.service == service)
         ).scalar_one_or_none()
@@ -154,12 +160,16 @@ def build_router(dependencies: OperationsApiDependencies) -> OperationsApiRouter
                 get_dns_settings_row(db).enabled = True
             elif service == "dhcp":
                 get_dhcp_settings_row(db).enabled = True
+            elif service == "routing":
+                save_routing_enabled_state(db, enabled=True)
         elif action == "disable":
             row.enabled = False
             if service == "dns":
                 get_dns_settings_row(db).enabled = False
             elif service == "dhcp":
                 get_dhcp_settings_row(db).enabled = False
+            elif service == "routing":
+                save_routing_enabled_state(db, enabled=False)
         elif action in {"start", "restart"}:
             row.running = True
         elif action == "stop":

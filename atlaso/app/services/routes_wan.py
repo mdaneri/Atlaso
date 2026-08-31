@@ -195,6 +195,26 @@ def save_routes_wan_settings(
     )
 
 
+def save_routing_enabled_state(
+    db: Session,
+    *,
+    enabled: bool,
+) -> RoutesWanSettings:
+    """Update only the global Routing desired-state switch.
+
+    Args:
+        db: Active database session.
+        enabled: Whether Atlaso lab routing is desired.
+    """
+    current = ensure_routes_wan_settings(db)
+    return save_routes_wan_settings(
+        db,
+        routing_enabled=enabled,
+        nat_enabled=current.nat_enabled,
+        wan_simulation_enabled=current.wan_simulation_enabled,
+    )
+
+
 def canonical_route_destination(value: str) -> str:
     """Return the canonical representation of a route destination CIDR.
 

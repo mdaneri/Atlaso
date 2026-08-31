@@ -188,6 +188,10 @@ also include read-only `effective_nat_enabled`, which is true only when Routing 
 audited and saves desired state only; it preserves every route, routing permission, NAT rule, WAN policy, and assignment
 until the `wan` Appliance Apply unit runs.
 
+The generic Services `enable` and `disable` operations for `routing` update the same saved `routing_enabled` value.
+Services `start`, `stop`, and `restart` operations reject `routing` with HTTP 422 because runtime forwarding changes
+must use the `wan` Appliance Apply unit.
+
 Legacy `/api/v1/dns/apply`, `/api/v1/dhcp/apply`, and `/api/v1/firewall/apply` routes remain available for compatibility
 but are intentionally absent from Swagger because they predate the reviewed global workflow. New clients must save
 desired state and use `/ui/management/appliance-apply`; do not build new automation around the legacy direct-apply routes.

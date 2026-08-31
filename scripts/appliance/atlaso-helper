@@ -8883,11 +8883,7 @@ def _wan_config_errors(path: Path) -> list[str]:
         if not route.get("gateway", ""):
             errors.append(f"Default route {canonical_destination} requires a next-hop gateway.")
 
-    desired_routes_for_validation = (
-        parsed["routes"]
-        if routing_enabled or wan_simulation_enabled
-        else []
-    )
+    desired_routes_for_validation = parsed["routes"] if routing_enabled else []
     desired_route_ids = {id(route) for route in desired_routes_for_validation}
     for route in [*desired_routes_for_validation, *parsed["removed_routes"]]:
         desired_route = id(route) in desired_route_ids
@@ -8965,6 +8961,23 @@ def _wan_config_errors(path: Path) -> list[str]:
         policy_name = route.get("wan_policy", "")
         if policy_name and policy_name not in policies:
             errors.append(f"Route {destination or '<missing>'} references missing WAN policy {policy_name}.")
+    if wan_simulation_enabled and not routing_enabled:
+        for route in parsed["routes"]:
+            if not _wan_bool(route.get("enabled", ""), default=True):
+                continue
+            policy_name = route.get("wan_policy", "")
+            if not policy_name:
+                continue
+            interface_name = route.get("interface", "")
+            if interface_name not in targets:
+                errors.append(
+                    "WAN policy assignment references missing target "
+                    f"{interface_name or '<missing>'}."
+                )
+            if policy_name not in policies:
+                errors.append(
+                    f"WAN policy assignment references missing policy {policy_name}."
+                )
     for route in parsed["removed_main_defaults"]:
         destination = route.get("destination_cidr", "")
         destination_network = None

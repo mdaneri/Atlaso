@@ -16782,6 +16782,56 @@ def test_services_dns_dhcp_actions_update_desired_settings(client):
         assert db.execute(select(DhcpSettings)).scalar_one().enabled is False
 
 
+def test_services_routing_actions_update_global_desired_state(client):
+    """Keep Services Routing controls synchronized with Appliance Apply intent.
+
+    Args:
+        client: HTTP test client used to exercise the Atlaso application.
+    """
+    from sqlalchemy import select
+
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import ServiceState
+    from atlaso.app.services.routes_wan import ensure_routes_wan_settings
+
+    token = create_api_token(client, ["read:services", "write:services"])
+    enabled = client.post(
+        "/api/v1/services/routing/enable",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert enabled.status_code == 200
+    blocked_start = client.post(
+        "/api/v1/services/routing/start",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert blocked_start.status_code == 422
+    assert blocked_start.json()["detail"] == "Routing runtime changes require Appliance Apply"
+
+    with SessionLocal() as db:
+        settings = ensure_routes_wan_settings(db)
+        service = db.execute(
+            select(ServiceState).where(ServiceState.service == "routing")
+        ).scalar_one()
+        assert settings.routing_enabled is True
+        assert service.enabled is True
+        assert service.running is False
+
+    login(client)
+    page = client.get("/services")
+    csrf = page.text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
+    disabled = client.post("/services/routing/disable", data={"csrf": csrf})
+    assert disabled.status_code == 200
+
+    with SessionLocal() as db:
+        settings = ensure_routes_wan_settings(db)
+        service = db.execute(
+            select(ServiceState).where(ServiceState.service == "routing")
+        ).scalar_one()
+        assert settings.routing_enabled is False
+        assert service.enabled is False
+        assert service.running is False
+
+
 def test_services_live_dns_dhcp_runtime_uses_dnsmasq_systemd(client, monkeypatch):
     """Verify that services live dns dhcp runtime uses dnsmasq systemd.
 

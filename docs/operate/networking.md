@@ -209,6 +209,9 @@ inactive-row errors do not block Appliance Apply until that feature is enabled a
 
 Saving a switch or any resource does not change Photon. Review the rendered configuration and submit the global
 **Routes & WAN Simulation** unit through Appliance Apply when the complete desired state is ready.
+The Routing row on the Services page and local console changes the same saved **Routing enabled** switch. Direct
+Routing start, stop, and restart actions are unavailable because runtime forwarding changes only through Appliance
+Apply.
 
 ### Add or edit a VLAN interface
 

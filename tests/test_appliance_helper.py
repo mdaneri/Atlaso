@@ -5762,12 +5762,40 @@ def test_wan_feature_switch_runtime_matrix(
     assert (["sysctl", "-w", f"net.ipv6.conf.all.forwarding={1 if routing_enabled else 0}"] in commands)
     assert any(command[:4] == ["tc", "qdisc", "replace", "dev"] for command in commands) is qdisc_active
     assert any(command[:4] == ["tc", "qdisc", "del", "dev"] for command in commands) is (not qdisc_active)
-
     settings = helper._wan_feature_settings(parsed)
     nat_config = helper._render_wan_nat_config(
         parsed["nat_rules"] if settings["effective_nat_enabled"] else []
     )
     assert ('masquerade comment "SiteA outbound WAN"' in nat_config) is nat_active
+
+
+def test_wan_only_simulation_ignores_dormant_route_path_errors(tmp_path):
+    """Validate only the netem assignment when Routing is globally off.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
+    helper = load_helper_module()
+    config_path = tmp_path / "wan-only-simulation.conf"
+    config_path.write_text(
+        "\n".join(
+            [
+                "[feature_settings]",
+                "routing_enabled=false",
+                "nat_enabled=false",
+                "wan_simulation_enabled=true",
+                "",
+                wan_config_text().replace(
+                    "  gateway=",
+                    "  gateway=198.51.100.1",
+                    1,
+                ),
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    assert helper._wan_config_errors(config_path) == []
 
 
 def esxi_pxe_manifest(http_root: Path, *, enabled: bool = True, stale_id: int = 99, iso_root: Path | None = None) -> dict:
