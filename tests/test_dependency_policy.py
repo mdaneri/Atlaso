@@ -855,6 +855,58 @@ def test_dependency_policy_parses_flow_style_run_step(tmp_path: Path) -> None:
     )
 
 
+def test_dependency_policy_rejects_alias_valued_run_step(tmp_path: Path) -> None:
+    """Verify alias-valued run fields cannot bypass lock policy.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
+    write_valid_policy(tmp_path)
+    (tmp_path / "requirements-ad-hoc.lock").write_text("placeholder\n", encoding="utf-8")
+    workflow = tmp_path / ".github" / "workflows" / "release.yml"
+    workflow.parent.mkdir(parents=True, exist_ok=True)
+    workflow.write_text(
+        """jobs:
+  alias:
+    steps:
+      - run: &install "python -m pip install -r requirements-ad-hoc.lock"
+      - run: *install
+""",
+        encoding="utf-8",
+    )
+
+    assert any(
+        "run command uses YAML alias and cannot be policy validated: *install" in error
+        for error in validate(tmp_path)
+    )
+
+
+def test_dependency_policy_rejects_alias_valued_flow_style_run_step(tmp_path: Path) -> None:
+    """Verify flow-style alias-valued run fields cannot bypass lock policy.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
+    write_valid_policy(tmp_path)
+    (tmp_path / "requirements-ad-hoc.lock").write_text("placeholder\n", encoding="utf-8")
+    workflow = tmp_path / ".github" / "workflows" / "release.yml"
+    workflow.parent.mkdir(parents=True, exist_ok=True)
+    workflow.write_text(
+        """jobs:
+  flow:
+    steps:
+      - {run: &install "python -m pip install -r requirements-ad-hoc.lock"}
+      - {run: *install}
+""",
+        encoding="utf-8",
+    )
+
+    assert any(
+        "run command uses YAML alias and cannot be policy validated: *install" in error
+        for error in validate(tmp_path)
+    )
+
+
 def test_dependency_policy_parses_flow_style_checkout_inputs(
     tmp_path: Path,
 ) -> None:

@@ -29,6 +29,8 @@ PIP_MODULE_RE = re.compile(
     r"pip(?:\d+(?:\.\d+)*)?(?:\.__main__)?", re.IGNORECASE
 )
 RUN_RE = re.compile(r"^(?P<indent>\s*)(?:-\s+)?run:\s*(?P<value>.*)$")
+ALIAS_RE = re.compile(r"\*[A-Za-z_][A-Za-z0-9_.-]*")
+UNSUPPORTED_RUN_ALIAS_PREFIX = "unsupported-run-alias:"
 TRUSTED_ATLASO_REFS = {
     "",
     "${{ github.workflow_sha }}",
@@ -308,6 +310,11 @@ def _yaml_value_text(value: object, unsupported: str) -> str:
     if isinstance(value, str):
         return value.strip()
     return unsupported
+
+
+def _is_alias_value(value: str | object) -> bool:
+    """Return whether a YAML value is a bare alias reference."""
+    return isinstance(value, str) and bool(ALIAS_RE.fullmatch(value))
 
 
 def _workflow_job_scope(lines: list[str], index: int) -> int:
@@ -902,6 +909,26 @@ def _workflow_run_commands(lines: list[str]) -> list[tuple[int, str, str, int]]:
         if flow_step is not None and "run" in flow_step:
             line_number = index + 1
             run_value = flow_step["run"]
+            if _is_alias_value(run_value):
+                flow_directory = flow_step.get("working-directory")
+                working_directory = (
+                    _yaml_value_text(
+                        flow_directory,
+                        "${{ unsupported-flow-working-directory }}",
+                    )
+                    if flow_directory is not None
+                    else _workflow_effective_working_directory(lines, index)
+                )
+                commands.append(
+                    (
+                        line_number,
+                        f"{UNSUPPORTED_RUN_ALIAS_PREFIX}{run_value}",
+                        working_directory,
+                        index,
+                    )
+                )
+                index += 1
+                continue
             if isinstance(run_value, str):
                 flow_directory = flow_step.get("working-directory")
                 working_directory = (
@@ -930,6 +957,18 @@ def _workflow_run_commands(lines: list[str]) -> list[tuple[int, str, str, int]]:
         value = _yaml_scalar(lines[index], "run")
         if value is None:
             value = match.group("value").strip()
+        if _is_alias_value(value):
+            working_directory = _workflow_effective_working_directory(lines, index)
+            commands.append(
+                (
+                    line_number,
+                    f"{UNSUPPORTED_RUN_ALIAS_PREFIX}{value}",
+                    working_directory,
+                    index,
+                )
+            )
+            index += 1
+            continue
         run_indent = len(match.group("indent"))
         if value and not value.startswith(("|", ">")):
             working_directory = _workflow_effective_working_directory(lines, index)
@@ -985,6 +1024,15 @@ def _workflow_requirement_paths(lines: list[str]) -> list[tuple[int, str, str]]:
             active_scope = run_scope
             active_directory = working_directory
             directory_stack = []
+        if command.startswith(UNSUPPORTED_RUN_ALIAS_PREFIX):
+            references.append(
+                (
+                    line_number,
+                    command,
+                    working_directory,
+                )
+            )
+            continue
         segments, stateful_control = _shell_command_segments(command)
         uncertain_directory = stateful_control and any(
             _segment_directory_action(segment) is not None for segment in segments
@@ -1045,6 +1093,13 @@ def _validate_workflow_locks(root: Path, policy_paths: set[str]) -> list[str]:
             _workflow_checkout_sources(lines)
         )
         for line_number, reference, working_directory in _workflow_requirement_paths(lines):
+            if reference.startswith(UNSUPPORTED_RUN_ALIAS_PREFIX):
+                alias = reference.removeprefix(UNSUPPORTED_RUN_ALIAS_PREFIX)
+                errors.append(
+                    f"{workflow.relative_to(root)}:{line_number}: run command uses "
+                    f"YAML alias and cannot be policy validated: {alias}"
+                )
+                continue
             normalized = reference.replace("\\", "/")
             relative = PurePosixPath(normalized)
             if relative.is_absolute() or ".." in relative.parts or not relative.parts:
