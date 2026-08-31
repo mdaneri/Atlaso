@@ -288,7 +288,17 @@ function Assert-AtlasoVmwareBuilderOwnershipManifest {
     }
     foreach ($entry in $expected.GetEnumerator()) {
         $property = $manifest.PSObject.Properties[$entry.Key]
-        if ($null -eq $property -or [string]$property.Value -cne [string]$entry.Value) {
+        if ($null -eq $property) {
+            throw "Builder identity manifest does not match expected $($entry.Key)."
+        }
+        # Windows paths are case-insensitive, while every non-path ownership field remains ordinal.
+        $comparison = if ($entry.Key -ceq 'output_directory') {
+            [StringComparison]::OrdinalIgnoreCase
+        }
+        else {
+            [StringComparison]::Ordinal
+        }
+        if (-not [string]::Equals([string]$property.Value, [string]$entry.Value, $comparison)) {
             throw "Builder identity manifest does not match expected $($entry.Key)."
         }
     }

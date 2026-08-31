@@ -110,6 +110,14 @@ $null = Assert-AtlasoVmwareBuilderIdentityManifest `
     -Path $manifestPath `
     -OutputDirectory $taskOutput `
     -Identity $task
+$casedTaskOutput = Join-Path (Split-Path -Parent $taskOutput).ToUpperInvariant() $task.Name
+if ($casedTaskOutput -ceq $taskOutput) {
+    throw 'The ownership-manifest casing regression fixture did not change the output path spelling.'
+}
+$null = Assert-AtlasoVmwareBuilderIdentityManifest `
+    -Path $manifestPath `
+    -OutputDirectory $casedTaskOutput `
+    -Identity $task
 
 $nextTask = New-AtlasoVmwareBuilderIdentity `
     -PullRequestNumber 653 `
