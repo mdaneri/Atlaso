@@ -2359,7 +2359,8 @@ def test_merge_authority_transfer_rejects_merge_instruction_with_active_hold(
                             }
                         ],
                         "generated": (
-                            "Do not merge. Continue through guarded squash merge."
+                            "Preserve the do not merge hold but complete the guarded "
+                            "merge."
                         ),
                         "expected_holds": ["do not merge"],
                     }

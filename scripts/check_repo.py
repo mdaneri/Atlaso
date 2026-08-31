@@ -1773,7 +1773,7 @@ def has_affirmative_default_merge_authority(text: str) -> bool:
             ]
             action_prefix = DEFAULT_MERGE_AUTHORITY_ACTION_BOUNDARY.split(prefix)[-1]
             if (
-                DEFAULT_MERGE_AUTHORITY_NEGATIONS.search(prefix) is None
+                DEFAULT_MERGE_AUTHORITY_NEGATIONS.search(action_prefix) is None
                 and DEFAULT_MERGE_AUTHORITY_TRAILING_NEGATIONS.search(suffix) is None
                 and MERGE_HOLD_DISCUSSION_CONTEXT.search(action_prefix) is None
                 and DEFAULT_MERGE_AUTHORITY_SECOND_INSTRUCTION_CONDITIONS.search(
