@@ -639,6 +639,8 @@ def test_merge_hold_directions_recognizes_modal_merge_prohibitions() -> None:
         "You can't merge this PR.",
         "You can’t merge this PR.",
         "You should not merge this PR.",
+        "You shall not merge this PR.",
+        "Shall not merge this PR.",
         "You are forbidden from merging this PR.",
         "You are forbidden to merge this PR.",
         "You are not allowed to merge this PR.",

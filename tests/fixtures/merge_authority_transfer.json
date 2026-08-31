@@ -2433,6 +2433,12 @@
           ]
         },
         {
+          "text": "You shall not merge this PR.",
+          "add_holds": [
+            "do not merge"
+          ]
+        },
+        {
           "text": "You are forbidden from merging this PR.",
           "add_holds": [
             "do not merge"
