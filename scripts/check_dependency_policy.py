@@ -282,6 +282,33 @@ def _continued_commands(lines: list[tuple[int, str]]) -> list[tuple[int, str]]:
     return commands
 
 
+def _folded_commands(lines: list[tuple[int, str]]) -> list[tuple[int, str]]:
+    """Return blank-separated commands from a folded YAML scalar.
+
+    Args:
+        lines: Workflow line numbers and folded scalar text.
+    """
+    commands: list[tuple[int, str]] = []
+    paragraph: list[tuple[int, str]] = []
+    for line_number, line in lines:
+        if not line.strip():
+            if paragraph:
+                commands.append(
+                    (
+                        paragraph[0][0],
+                        " ".join(text.strip() for _, text in paragraph),
+                    )
+                )
+                paragraph = []
+            continue
+        paragraph.append((line_number, line))
+    if paragraph:
+        commands.append(
+            (paragraph[0][0], " ".join(text.strip() for _, text in paragraph))
+        )
+    return commands
+
+
 def _shell_command_segments(command: str) -> list[str]:
     """Split shell commands only at unquoted command separators.
 
@@ -639,15 +666,14 @@ def _workflow_run_commands(lines: list[str]) -> list[tuple[int, str, str, int]]:
             block.append((index + 1, candidate))
             index += 1
         if value.startswith(">"):
-            if block:
-                command_line = block[0][0]
+            for command_line, command in _folded_commands(block):
                 working_directory = _workflow_effective_working_directory(
                     lines, command_line - 1
                 )
                 commands.append(
                     (
                         command_line,
-                        " ".join(line.strip() for _, line in block),
+                        command,
                         working_directory,
                         line_number,
                     )

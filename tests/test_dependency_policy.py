@@ -713,6 +713,40 @@ def test_dependency_policy_tracks_multiline_shell_directory_change(
     )
 
 
+def test_dependency_policy_preserves_folded_scalar_command_boundaries(
+    tmp_path: Path,
+) -> None:
+    """Verify blank lines in folded run scalars retain shell state boundaries.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
+    write_valid_policy(tmp_path)
+    workflow = tmp_path / ".github" / "workflows" / "release.yml"
+    workflow.parent.mkdir(parents=True, exist_ok=True)
+    workflow.write_text(
+        """jobs:
+  external:
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          repository: attacker/other
+          path: external
+      - run: >
+          cd external
+
+          python -m pip install -r requirements-release-tools.lock
+""",
+        encoding="utf-8",
+    )
+
+    assert any(
+        "checkout-prefixed workflow requirement is not sourced from Atlaso: "
+        "requirements-release-tools.lock" in error
+        for error in validate(tmp_path)
+    )
+
+
 def test_dependency_policy_rejects_grouped_shell_requirement_resolution(
     tmp_path: Path,
 ) -> None:
