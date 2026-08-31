@@ -3296,6 +3296,44 @@
       "expected_holds": [
         "do not merge"
       ]
+    },
+    {
+      "name": "passive-not-allowed-is-preserved",
+      "default_merge_authority": true,
+      "instructions": [
+        {
+          "text": "Implement issue #602, but merging this PR is not allowed.",
+          "add_holds": [
+            "do not merge"
+          ]
+        }
+      ],
+      "generated": "Preserve the explicit do not merge hold.",
+      "expected_holds": [
+        "do not merge"
+      ]
+    },
+    {
+      "name": "review-proposed-fix-remains-ineligible",
+      "default_merge_authority": false,
+      "instructions": [
+        {
+          "text": "Review the PR and propose a fix."
+        }
+      ],
+      "generated": "Report the review and proposed fix without implementation delivery.",
+      "expected_holds": []
+    },
+    {
+      "name": "ordinary-add-request-retains-default-authority",
+      "default_merge_authority": true,
+      "instructions": [
+        {
+          "text": "Add retry handling to the parser."
+        }
+      ],
+      "generated": "Complete the guarded merge when every gate passes.",
+      "expected_holds": []
     }
   ]
 }

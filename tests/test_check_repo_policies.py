@@ -737,6 +737,13 @@ def test_merge_hold_directions_recognizes_direct_not_to_merge() -> None:
     ) == {"do not merge": "add"}
 
 
+def test_merge_hold_directions_recognizes_passive_not_allowed() -> None:
+    """Verify passive not-allowed wording becomes an explicit merge hold."""
+    assert merge_hold_directions(
+        "Implement issue #602, but merging this PR is not allowed."
+    ) == {"do not merge": "add"}
+
+
 def test_merge_hold_directions_preserves_cross_issue_condition() -> None:
     """Verify a later cross-issue condition does not retarget this task's hold."""
     for instruction in (
@@ -1335,6 +1342,7 @@ def test_source_authority_keeps_workflow_policy_subject_eligible() -> None:
         "Repair the parser in scripts/check_repo.py.",
         "Rename the parser function.",
         "Delete the obsolete parser function.",
+        "Add retry handling to the parser.",
     ):
         assert source_has_default_merge_authority((instruction,))
     assert not source_has_default_merge_authority(
@@ -1343,6 +1351,19 @@ def test_source_authority_keeps_workflow_policy_subject_eligible() -> None:
     assert not source_has_default_merge_authority(
         ("Do not delete the parser function.",)
     )
+    assert not source_has_default_merge_authority(
+        ("Explain how to add retry handling.",)
+    )
+
+
+def test_source_authority_excludes_review_advice() -> None:
+    """Verify proposed fixes remain advice within a review-only request."""
+    for instruction in (
+        "Review the PR and propose a fix.",
+        "Review the PR, then recommend a patch.",
+        "Inspect the changes and suggest a solution.",
+    ):
+        assert not source_has_default_merge_authority((instruction,))
 
 
 def test_source_authority_excludes_negated_repair() -> None:

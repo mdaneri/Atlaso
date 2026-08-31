@@ -711,7 +711,7 @@ MERGE_HOLD_MODAL_PROHIBITION = re.compile(
     r"i\s+(?:do\s+not|don't|don’t)\s+approve\s+(?:of\s+)?merging"
     r"(?:\s+(?:(?:this|the)\s+)?(?:pull request|pr))?|"
     r"merging(?:\s+(?:(?:this|the)\s+)?(?:pull request|pr))?\s+"
-    r"(?:is|was|remains?)\s+(?:prohibited|forbidden|disallowed)|"
+    r"(?:is|was|remains?)\s+(?:prohibited|forbidden|disallowed|not\s+allowed)|"
     r"(?:(?:my|your|our|the)\s+)?(?:permission|authorization|authority)\s+"
     r"to\s+merge(?:\s+(?:(?:this|the)\s+)?(?:pull request|pr))?\s+"
     r"(?:is|was|has\s+been)\s+(?:revoked|rescinded|withdrawn)|"
@@ -912,11 +912,16 @@ DEFAULT_MERGE_AUTHORITY_EXPLANATORY_FIX = re.compile(
     r"\b(?:describe|explain|outline|summarize|document)\s+"
     r"(?:how|what|whether)\b[^.!?]{0,80}"
     r"\b(?:implement|fix|patch|resolve|solve|change|modify|edit|rename|delete|"
-    r"replace)\b[^.!?]*"
+    r"replace|add)\b[^.!?]*"
+)
+DEFAULT_MERGE_AUTHORITY_REVIEW_ADVICE = re.compile(
+    r"\b(?:review|inspect|check|analyze|assess|evaluate)\b[^.!?]{0,100}"
+    r"\b(?:propose|recommend|suggest)\s+"
+    r"(?:(?:an?|the)\s+)?(?:fix|patch|change|solution)\b[^.!?]*"
 )
 DEFAULT_MERGE_AUTHORITY_SOURCE_MARKERS = re.compile(
     r"\b(?:implement|fix|patch|resolve|solve|deliver|refactor|repair|rename|"
-    r"delete|replace)\b|"
+    r"delete|replace|add)\b|"
     r"\bcomplete\s+(?:the\s+)?implementation\b|"
     r"\b(?:update|change|modify|edit|add|remove|create|build|"
     r"prepare|open|submit|revert|roll back)\s+"
@@ -1882,6 +1887,8 @@ def source_has_default_merge_authority(instructions: tuple[str, ...]) -> bool:
             DEFAULT_MERGE_AUTHORITY_SOURCE_EXCLUSIONS.finditer(normalized)
         ) + tuple(
             DEFAULT_MERGE_AUTHORITY_EXPLANATORY_FIX.finditer(normalized)
+        ) + tuple(
+            DEFAULT_MERGE_AUTHORITY_REVIEW_ADVICE.finditer(normalized)
         ) + tuple(
             DEFAULT_MERGE_AUTHORITY_INTERROGATIVE_REVIEW.finditer(normalized)
         ) + tuple(
