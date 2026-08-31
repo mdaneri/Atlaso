@@ -99,6 +99,16 @@ foreach ($invalid in @(0, -1)) {
 
 $taskOutput = Join-Path (Join-Path $OutputDirectory 'fresh-parent') $task.Name
 $manifestPath = Get-AtlasoVmwareBuilderIdentityManifestPath -OutputDirectory $taskOutput
+foreach ($separator in @(
+        [System.IO.Path]::DirectorySeparatorChar,
+        [System.IO.Path]::AltDirectorySeparatorChar
+    )) {
+    $separatedManifestPath = Get-AtlasoVmwareBuilderIdentityManifestPath `
+        -OutputDirectory ($taskOutput + $separator)
+    if ($separatedManifestPath -cne $manifestPath) {
+        throw 'A trailing output-directory separator moved the ownership manifest inside the output root.'
+    }
+}
 $firstOutputClaim = Enter-AtlasoVmwareBuilderOutputClaim `
     -OutputDirectory $taskOutput `
     -Identity $task

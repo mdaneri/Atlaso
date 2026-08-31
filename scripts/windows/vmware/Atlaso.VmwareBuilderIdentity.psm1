@@ -131,6 +131,13 @@ function Get-AtlasoVmwareBuilderIdentityManifestPath {
     param([Parameter(Mandatory = $true)][string]$OutputDirectory)
 
     $resolvedOutput = [System.IO.Path]::GetFullPath($OutputDirectory)
+    $filesystemRoot = [System.IO.Path]::GetPathRoot($resolvedOutput)
+    if ($resolvedOutput.Length -gt $filesystemRoot.Length) {
+        $resolvedOutput = $resolvedOutput.TrimEnd(
+            [System.IO.Path]::DirectorySeparatorChar,
+            [System.IO.Path]::AltDirectorySeparatorChar
+        )
+    }
     return "$resolvedOutput.builder-identity.json"
 }
 
