@@ -28,6 +28,10 @@ const transformFunctions = new Set([
   'rotatez', 'scale', 'scale3d', 'scalex', 'scaley', 'scalez', 'skew', 'skewx',
   'skewy', 'translate', 'translate3d', 'translatex', 'translatey', 'translatez'
 ])
+const filterFunctions = new Set([
+  'blur', 'brightness', 'contrast', 'drop-shadow', 'grayscale', 'hue-rotate',
+  'invert', 'opacity', 'saturate', 'sepia', 'url'
+])
 const fontSizeUnits = new Set([
   'cap', 'ch', 'cm', 'cqb', 'cqh', 'cqi', 'cqmax', 'cqmin', 'cqw', 'dvb', 'dvh',
   'dvi', 'dvmax', 'dvmin', 'dvw', 'em', 'ex', 'ic', 'in', 'lh', 'lvb', 'lvh',
@@ -246,6 +250,15 @@ function isValidSuppressionDeclaration (property, value) {
   if (property === 'opacity') {
     return parseOpacityValue(value) !== null
   }
+  if (property === 'filter') {
+    const functions = parseCssFunctions(value)
+    return value === 'none' || Boolean(
+      functions && functions.every(item => (
+        filterFunctions.has(item.name) && item.body.trim() &&
+        (item.name !== 'opacity' || parseOpacityValue(item.body.trim()) !== null)
+      ))
+    )
+  }
   if (property === 'font-size') {
     return isValidFontSize(value)
   }
@@ -395,6 +408,15 @@ function hasZeroScaleTransform (value) {
     }
   }
   return false
+}
+
+function hasZeroOpacityFilter (value) {
+  if (!value || value === 'none') return false
+  const functions = parseCssFunctions(value) || []
+  return functions.some(item => (
+    item.name === 'opacity' &&
+    (parseOpacityValue(item.body.trim()) ?? 1) <= 0
+  ))
 }
 
 function hasFullyClippingPath (value) {
@@ -637,6 +659,7 @@ function hasHiddenAttributes (attributes, inheritedCustomProperties = new Map(),
       declarations.get('display')?.value === 'none' ||
       declarations.get('content-visibility')?.value === 'hidden' ||
       (parseOpacityValue(declarations.get('opacity')?.value || '') ?? 1) <= 0 ||
+      hasZeroOpacityFilter(declarations.get('filter')?.value || '') ||
       hasZeroScaleTransform(declarations.get('transform')?.value || '') ||
       hasFullyClippingPath(declarations.get('clip-path')?.value || '')
     ),
@@ -773,6 +796,7 @@ function isTableFosteredText (content) {
 function updateHtmlSuppression (content, inlineContext = false) {
   const tagPattern = /<(?<closing>\/)?(?<tag>[A-Za-z][A-Za-z0-9-]*)\b(?<attributes>(?:[^<>"']|"[^"]*"|'[^']*')*?)(?<selfClosing>\/)?\s*>/g
   const parseableContent = content.replace(/<!--[\s\S]*?(?:-->|$)/g, '')
+  let renderedBreak = false
   for (const match of parseableContent.matchAll(tagPattern)) {
     const tag = match.groups.tag.toLowerCase()
     const rawTextTag = htmlStack.length && htmlStack[htmlStack.length - 1].tag
@@ -836,6 +860,9 @@ function updateHtmlSuppression (content, inlineContext = false) {
       summaryOwner = parent
     }
     const suppression = hasHiddenAttributes(attributes, inheritedCustomProperties, tag)
+    if (tag === 'br' && !isHtmlSuppressed() && !suppression.irreversible) {
+      renderedBreak = true
+    }
     const parentNamespace = parent?.foreignNamespace || null
     const parentIsHtmlIntegration = (
       parentNamespace === 'svg' && svgHtmlIntegrationTags.has(parent.tag)
@@ -885,6 +912,7 @@ function updateHtmlSuppression (content, inlineContext = false) {
       htmlStack.push(entry)
     }
   }
+  return renderedBreak
 }
 
 function processHtmlBlock (content) {
@@ -902,7 +930,9 @@ function processHtmlBlock (content) {
       output.push(unescapeAll(textContent))
     }
     if (/^<\/?[A-Za-z]/.test(match[0])) {
-      updateHtmlSuppression(match[0])
+      if (updateHtmlSuppression(match[0]) && !blockquoteDepth) {
+        output.push('\n')
+      }
     }
     cursor = match.index + match[0].length
   }
@@ -927,7 +957,9 @@ function processInline (children) {
       continue
     }
     if (token.type === 'html_inline') {
-      updateHtmlSuppression(token.content, true)
+      if (updateHtmlSuppression(token.content, true) && !blockquoteDepth && !deletionDepth) {
+        output.push('\n')
+      }
       continue
     }
     if (blockquoteDepth || deletionDepth || isHtmlSuppressed()) {

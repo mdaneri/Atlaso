@@ -1341,6 +1341,7 @@ def test_agent_policy_gate_rejects_missing_maintainer_break_glass_contract(
         f'<span style="display:none;--x:foo\\;display:block">{prohibition}</span>',
         f'<span style="display:none" style="display:block">{prohibition}</span>',
         f'<span style="opacity:0">{prohibition}</span>',
+        f'<span style="filter:opacity(0)">{prohibition}</span>',
         f'<span style="opacity:calc(1 - 1)">{prohibition}</span>',
         f'<span style="opacity:0e0">{prohibition}</span>',
         f'<span style="font-size:0">{prohibition}</span>',
@@ -1553,6 +1554,7 @@ def test_agent_policy_gate_rejects_missing_maintainer_break_glass_contract(
         f"{prohibition}</span>",
         f'<span style="transform:scale(0);transform:scale(calc(1))">'
         f"{prohibition}</span>",
+        f'<span style="filter:opacity(0);filter:none">{prohibition}</span>',
         f'<span style="display:n/**/one">{prohibition}</span>',
         f'<span style="display:none;display:initial">{prohibition}</span>',
         f'<span style="display:none;display:unset">{prohibition}</span>',
@@ -3704,6 +3706,37 @@ def test_agent_policy_gate_preserves_policy_after_void_html(tmp_path: Path) -> N
             )
 
             assert check_agent_policy_gate(tmp_path) == []
+
+
+def test_agent_policy_gate_preserves_word_boundary_at_rendered_break(
+    tmp_path: Path,
+) -> None:
+    """Verify rendered break elements separate adjacent operative words.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
+    marker = "automation must never use or request a ruleset or administrative bypass"
+    required_entry_points = (
+        Path("AGENTS.md"),
+        Path("CONTRIBUTING.md"),
+        Path(".github/copilot-instructions.md"),
+        Path(".github/pull_request_template.md"),
+        Path("SECURITY.md"),
+        Path("docs/contribute/agent-policies.md"),
+        Path("docs/reference/full-technical-reference.md"),
+    )
+    replacement = marker.replace("ruleset or", "ruleset<br>or", 1)
+    for relative_path in required_entry_points:
+        write_policy_files(tmp_path)
+        path = tmp_path / relative_path
+        text = path.read_text(encoding="utf-8")
+        path.write_text(
+            text.replace(marker, replacement, 1),
+            encoding="utf-8",
+        )
+
+        assert check_agent_policy_gate(tmp_path) == []
 
 
 def test_agent_policy_gate_ignores_indented_cleanup_markers(tmp_path: Path) -> None:
