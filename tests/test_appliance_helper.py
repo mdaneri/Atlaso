@@ -5718,6 +5718,11 @@ def test_wan_feature_switch_runtime_matrix(
     commands: list[list[str]] = []
 
     def fake_run(command: list[str]) -> subprocess.CompletedProcess[str]:
+        """Record one forwarding command.
+
+        Args:
+            command: Exact helper command being modeled.
+        """
         commands.append(command)
         return subprocess.CompletedProcess(command, 0, "", "")
 

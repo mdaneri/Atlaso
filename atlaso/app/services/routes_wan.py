@@ -65,7 +65,11 @@ class RoutesWanSettings:
 
 
 def _setting_bool(value: str | None) -> bool:
-    """Parse a persisted setting boolean using the repository's safe values."""
+    """Parse a persisted setting boolean using the repository's safe values.
+
+    Args:
+        value: Persisted setting value to interpret.
+    """
     return str(value or "").strip().lower() in {"1", "true", "yes", "on"}
 
 
@@ -74,6 +78,9 @@ def infer_routes_wan_settings(db: Session) -> RoutesWanSettings:
 
     This is used only when one or more global settings are absent. Disabled or
     unused rows intentionally do not activate a feature.
+
+    Args:
+        db: Active database session containing legacy desired state.
     """
     enabled_routes = db.execute(select(Route).where(Route.enabled.is_(True))).scalars().all()
     enabled_routing_rule = db.execute(
@@ -159,7 +166,14 @@ def save_routes_wan_settings(
     nat_enabled: bool,
     wan_simulation_enabled: bool,
 ) -> RoutesWanSettings:
-    """Persist global desired state without applying host networking changes."""
+    """Persist global desired state without applying host networking changes.
+
+    Args:
+        db: Active database session.
+        routing_enabled: Whether Atlaso lab routing is desired.
+        nat_enabled: Whether Atlaso IPv4 masquerade is desired.
+        wan_simulation_enabled: Whether Atlaso WAN impairment is desired.
+    """
     ensure_routes_wan_settings(db)
     values = {
         ROUTING_ENABLED_SETTING_KEY: routing_enabled,

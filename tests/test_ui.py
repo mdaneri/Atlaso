@@ -7988,6 +7988,11 @@ def test_esxi_kickstarts_round_trip_in_settings_archive(client, monkeypatch, tmp
         custom_variable_definitions,
         save_custom_variable_definition,
     )
+    from atlaso.app.services.routes_wan import (
+        NAT_ENABLED_SETTING_KEY,
+        ROUTING_ENABLED_SETTING_KEY,
+        WAN_SIMULATION_ENABLED_SETTING_KEY,
+    )
 
     iso_root = tmp_path / "installer-isos"
     iso_root.mkdir()
@@ -8050,6 +8055,9 @@ def test_esxi_kickstarts_round_trip_in_settings_archive(client, monkeypatch, tmp
             "value": '[{"default_value":"firstdisk","description":"Preferred installation disk","id":"install_disk","name":"install_disk"}]',
         },
         {"key": NTP_NTS_RESTORATION_SETTING_KEY, "value": "complete"},
+        {"key": NAT_ENABLED_SETTING_KEY, "value": "false"},
+        {"key": ROUTING_ENABLED_SETTING_KEY, "value": "false"},
+        {"key": WAN_SIMULATION_ENABLED_SETTING_KEY, "value": "false"},
     ]
 
     with SessionLocal() as db:
@@ -8602,7 +8610,7 @@ def test_backup_restore_factory_reset_replaces_database_and_baselines_runtime(cl
         assert db.execute(select(Schedule)).scalars().all() == []
         assert db.execute(select(AuditEvent)).scalars().all() == []
         services = {service.service: service for service in db.execute(select(ServiceState)).scalars()}
-        assert services["routing"].running and services["routing"].enabled
+        assert not services["routing"].running and not services["routing"].enabled
         assert services["firewall"].running and services["firewall"].enabled
         assert services["auth"].running and services["auth"].enabled
         optional = [service for key, service in services.items() if key not in {"routing", "firewall", "auth"}]

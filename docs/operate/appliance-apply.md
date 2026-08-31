@@ -53,18 +53,13 @@ flowchart LR
     G --> H[Verify appliance state]
 ```
 
-Atlaso groups related settings into apply units. For example, DNS and DHCP share one `DNS/DHCP (dnsmasq)` unit because
-they use the same generated configuration and service reload. A change can affect several units; Web Terminal listener
-changes commonly require **Appliance Settings**, **Public Services**, and **Firewall** together. A static
-management-to-access role conversion that migrates a gateway also selects **Routes & WAN Simulation** with Network and
-runs both through the protected management handoff; its prior WAN config is the rollback source. A Routes & WAN-only
-submission that changes a default mirrored for an effective flagged management listener starts the same protected
-handoff. Every bundled WAN unit executes from its captured snapshot before Atlaso commits its baseline.
+Atlaso groups related settings into apply units. DNS and DHCP share one `DNS/DHCP (dnsmasq)` unit. Web Terminal changes
+can require **Appliance Settings**, **Public Services**, and **Firewall**. A management-to-access conversion with a
+gateway change also selects **Routes & WAN Simulation** with Network and uses the protected handoff. A WAN-only change
+to a mirrored management default uses the same handoff. Each WAN unit executes from its captured snapshot.
 
-The Routes & WAN unit also owns the global Routing, NAT, and WAN Simulation switches. Turning a switch off is an
-applicable cleanup change: Apply removes the corresponding Atlaso-owned runtime routes/rules and forwarding, NAT
-rules, or qdiscs while preserving the saved resource rows. NAT reports **suspended** and remains unapplied whenever
-its saved switch is on but Routing is off.
+The Routes & WAN unit owns the global Routing, NAT, and WAN Simulation switches. Turning one off makes Apply remove its
+Atlaso-owned runtime state while preserving saved rows. NAT reports **suspended** when NAT is on but Routing is off.
 
 ## Review pending changes
 
@@ -199,6 +194,6 @@ prevents a queued task from applying state that the administrator did not inspec
 
 ## Complete technical contents
 
-No original section was removed.
-See the [Appliance Apply technical reference](../reference/appliance-apply-technical.md) for backend ownership, unit
-contracts, staging, helper execution, baselines, recovery, and interface expectations.
+No original section was removed. See the
+[Appliance Apply technical reference](../reference/appliance-apply-technical.md) for backend ownership, unit contracts,
+staging, helper execution, baselines, recovery, and interface expectations.
