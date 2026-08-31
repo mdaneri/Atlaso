@@ -814,8 +814,10 @@ Terminal order:
   malformed, closed, fork-owned, branch-mismatched, commit-mismatched, ambiguous, generic, and differently owned
   identities before provider or target-filesystem mutation. A retained task output is replaceable only when its sibling
   manifest proves the same repository, pull request, branch, canonical name, and suffix; after checked cleanup, advance
-  the manifest to the newly verified head. Retained reuse still requires the exact source commit. Clone and export
-  require exact builder provenance. Low-level OVF export accepts only an explicit proven source VMX. Never propagate
+  the manifest to the newly verified head. Retained reuse still requires the exact source commit. Hold an OS-enforced
+  exclusive sibling-file claim from ownership admission through cleanup, Packer completion, and provenance publication
+  so concurrent builders cannot adopt or mutate the same canonical output. Clone and export require exact builder
+  provenance. Low-level OVF export accepts only an explicit proven source VMX. Never propagate
   transient PR identity into OVF/OVA product naming, deployed-appliance names, canonical release filenames, or
   immutable release assets.
 

@@ -1627,6 +1627,8 @@ $packerVariables = @{
 }
 
 $packerBuildInvoker = $null
+$builderOutputClaim = $null
+try {
 if (-not $ValidateOnly -and -not $PrepareIsoOnly) {
     $resolvedVmrunPath = Resolve-WorkstationVmrunPath -Path $VmrunPath
     # Network preparation can outlive the prior proof, so refresh task or
@@ -1640,6 +1642,12 @@ if (-not $ValidateOnly -and -not $PrepareIsoOnly) {
         -ReleaseVersion $ReleaseVersion `
         -ReleaseSourceCommit $ReleaseSourceCommit `
         -ReleaseWorkflowRunId $ReleaseWorkflowRunId
+    # Hold an OS-enforced exclusive file handle from ownership admission through
+    # cleanup, Packer, and provenance so parallel builds cannot both pass a
+    # point-in-time absence check and adopt the same canonical output.
+    $builderOutputClaim = Enter-AtlasoVmwareBuilderOutputClaim `
+        -OutputDirectory $workstationOutputDirectory `
+        -Identity $builderIdentity
     if (-not $builderManifestExists) {
         $outputAppearedBeforeOwnershipClaim = Test-Path -LiteralPath $workstationOutputDirectory
         $manifestAppearedBeforeOwnershipClaim = Test-Path `
@@ -1827,4 +1835,10 @@ if (-not $ValidateOnly -and -not $PrepareIsoOnly) {
         -VmName $VmName `
         -RepoRoot $repoRoot `
         -BuilderIdentity $builderIdentity
+}
+}
+finally {
+    if ($null -ne $builderOutputClaim) {
+        $builderOutputClaim.Dispose()
+    }
 }

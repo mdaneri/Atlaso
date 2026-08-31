@@ -1720,13 +1720,19 @@ def test_vmware_packer_requires_proven_task_or_release_builder_identity() -> Non
     manifest_write = wrapper.index(
         "Write-AtlasoVmwareBuilderIdentityManifest `", output_boundary
     )
+    output_claim = wrapper.index(
+        "Enter-AtlasoVmwareBuilderOutputClaim `", remote_output_recheck
+    )
+    claim_release = wrapper.index("$builderOutputClaim.Dispose()", manifest_write)
     assert (
         output_boundary
         < remote_output_recheck
+        < output_claim
         < output_absence_recheck
         < concurrent_output_refusal
         < manifest_write
         < cleanup
+        < claim_release
     )
     parent_output = wrapper.index(
         "$outerCleanupOutputDirectory = Resolve-WorkstationOutputDirectory `"

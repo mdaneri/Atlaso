@@ -136,6 +136,43 @@ function Get-AtlasoVmwareBuilderIdentityManifestPath {
 
 <#
 .SYNOPSIS
+Acquire the exclusive process-lifetime claim for one canonical builder output.
+
+.PARAMETER OutputDirectory
+Canonical builder output directory protected by the claim.
+
+.PARAMETER Identity
+Validated task or release builder identity that owns the output scope.
+#>
+function Enter-AtlasoVmwareBuilderOutputClaim {
+    [CmdletBinding()]
+    [OutputType([System.IO.FileStream])]
+    param(
+        [Parameter(Mandatory = $true)][string]$OutputDirectory,
+        [Parameter(Mandatory = $true)][psobject]$Identity
+    )
+
+    $resolvedOutput = Assert-AtlasoVmwareBuilderOutputDirectory `
+        -OutputDirectory $OutputDirectory `
+        -Identity $Identity
+    $manifestPath = Get-AtlasoVmwareBuilderIdentityManifestPath -OutputDirectory $resolvedOutput
+    $claimPath = "$manifestPath.lock"
+    [void][System.IO.Directory]::CreateDirectory((Split-Path -Parent $claimPath))
+    try {
+        return [System.IO.FileStream]::new(
+            $claimPath,
+            [System.IO.FileMode]::OpenOrCreate,
+            [System.IO.FileAccess]::ReadWrite,
+            [System.IO.FileShare]::None
+        )
+    }
+    catch [System.IO.IOException] {
+        throw "Another Photon builder already holds the exclusive output claim: $resolvedOutput"
+    }
+}
+
+<#
+.SYNOPSIS
 Require an output directory to end with the canonical builder name.
 
 .PARAMETER OutputDirectory
@@ -376,6 +413,7 @@ Export-ModuleMember -Function @(
     'Assert-AtlasoVmwareBuilderOwnershipManifest',
     'Assert-AtlasoVmwareBuilderOutputDirectory',
     'Assert-AtlasoVmwareBuilderVmx',
+    'Enter-AtlasoVmwareBuilderOutputClaim',
     'Get-AtlasoVmwareBuilderIdentityManifestPath',
     'New-AtlasoVmwareBuilderIdentity',
     'Write-AtlasoVmwareBuilderIdentityManifest'

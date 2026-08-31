@@ -99,6 +99,29 @@ foreach ($invalid in @(0, -1)) {
 
 $taskOutput = Join-Path (Join-Path $OutputDirectory 'fresh-parent') $task.Name
 $manifestPath = Get-AtlasoVmwareBuilderIdentityManifestPath -OutputDirectory $taskOutput
+$firstOutputClaim = Enter-AtlasoVmwareBuilderOutputClaim `
+    -OutputDirectory $taskOutput `
+    -Identity $task
+try {
+    try {
+        $unexpectedOutputClaim = Enter-AtlasoVmwareBuilderOutputClaim `
+            -OutputDirectory $taskOutput `
+            -Identity $task
+        $unexpectedOutputClaim.Dispose()
+        throw 'A concurrent builder acquired the already-claimed canonical output.'
+    }
+    catch {
+        if ($_.Exception.Message -eq 'A concurrent builder acquired the already-claimed canonical output.') { throw }
+        if ($_.Exception.Message -notlike 'Another Photon builder already holds the exclusive output claim:*') { throw }
+    }
+}
+finally {
+    $firstOutputClaim.Dispose()
+}
+$releasedOutputClaim = Enter-AtlasoVmwareBuilderOutputClaim `
+    -OutputDirectory $taskOutput `
+    -Identity $task
+$releasedOutputClaim.Dispose()
 Write-AtlasoVmwareBuilderIdentityManifest `
     -Path $manifestPath `
     -OutputDirectory $taskOutput `
