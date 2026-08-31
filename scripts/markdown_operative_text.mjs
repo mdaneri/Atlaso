@@ -23,6 +23,11 @@ const formattingTags = new Set([
 const svgHtmlIntegrationTags = new Set(['desc', 'foreignobject', 'title'])
 const mathHtmlIntegrationTags = new Set(['mi', 'mn', 'mo', 'ms', 'mtext'])
 const mathHtmlIntegrationExceptions = new Set(['malignmark', 'mglyph'])
+const transformFunctions = new Set([
+  'matrix', 'matrix3d', 'perspective', 'rotate', 'rotate3d', 'rotatex', 'rotatey',
+  'rotatez', 'scale', 'scale3d', 'scalex', 'scaley', 'scalez', 'skew', 'skewx',
+  'skewy', 'translate', 'translate3d', 'translatex', 'translatey', 'translatez'
+])
 const tableContextChildren = new Map([
   ['table', new Set(['caption', 'colgroup', 'script', 'style', 'tbody', 'template', 'tfoot', 'thead'])],
   ['colgroup', new Set(['col', 'template'])],
@@ -231,7 +236,10 @@ function isValidSuppressionDeclaration (property, value) {
       /^(?:calc|min|max|clamp)\(.+\)$/.test(value)
   }
   if (property === 'transform') {
-    return value === 'none' || /^(?:(?:matrix|matrix3d|perspective|rotate|rotate3d|rotatex|rotatey|rotatez|scale|scale3d|scalex|scaley|scalez|skew|skewx|skewy|translate|translate3d|translatex|translatey|translatez)\([^()]*(?:\([^()]*\)[^()]*)*\)\s*)+$/i.test(value)
+    const functions = parseCssFunctions(value)
+    return value === 'none' || Boolean(
+      functions && functions.every(item => transformFunctions.has(item.name))
+    )
   }
   if (property === 'color') {
     return value === 'transparent' || value === 'currentcolor' ||
@@ -321,22 +329,64 @@ function classifyFontSize (value) {
 
 function hasZeroScaleTransform (value) {
   if (!value || value === 'none') return false
-  const scalePattern = /(scale|scale3d|scalex|scaley)\(([^()]*)\)/gi
-  for (const match of value.matchAll(scalePattern)) {
-    const argumentsList = splitCssFunctionArguments(match[2])
-      .flatMap(argument => argument.split(/\s+/))
-      .filter(Boolean)
+  const functions = parseCssFunctions(value) || []
+  for (const item of functions) {
+    if (!['scale', 'scale3d', 'scalex', 'scaley'].includes(item.name)) continue
+    const argumentsList = splitCssComponentValues(item.body)
     const values = argumentsList.map(parseOpacityValue)
     if (values.some(item => item === null)) continue
-    if (match[1].toLowerCase() === 'scale') {
+    if (item.name === 'scale') {
       if (values[0] === 0 || values[1] === 0) return true
-    } else if (match[1].toLowerCase() === 'scale3d') {
+    } else if (item.name === 'scale3d') {
       if (values[0] === 0 || values[1] === 0) return true
     } else if (values[0] === 0) {
       return true
     }
   }
   return false
+}
+
+function parseCssFunctions (value) {
+  const functions = []
+  let cursor = 0
+  while (cursor < value.length) {
+    while (/\s/.test(value[cursor] || '')) cursor += 1
+    if (cursor >= value.length) break
+    const functionStart = value.slice(cursor).match(/^([a-z][a-z0-9-]*)\s*\(/i)
+    if (!functionStart) return null
+    const openingParenthesis = cursor + functionStart[0].lastIndexOf('(')
+    let depth = 1
+    let end = openingParenthesis + 1
+    for (; end < value.length && depth > 0; end += 1) {
+      if (value[end] === '(') depth += 1
+      if (value[end] === ')') depth -= 1
+    }
+    if (depth !== 0) return null
+    functions.push({
+      name: functionStart[1].toLowerCase(),
+      body: value.slice(openingParenthesis + 1, end - 1)
+    })
+    cursor = end
+  }
+  return functions.length ? functions : null
+}
+
+function splitCssComponentValues (value) {
+  const values = []
+  let current = ''
+  let depth = 0
+  for (const character of value) {
+    if (character === '(') depth += 1
+    if (character === ')') depth = Math.max(0, depth - 1)
+    if (depth === 0 && (character === ',' || /\s/.test(character))) {
+      if (current.trim()) values.push(current.trim())
+      current = ''
+    } else {
+      current += character
+    }
+  }
+  if (current.trim()) values.push(current.trim())
+  return values
 }
 
 function stripCssComments (value) {
