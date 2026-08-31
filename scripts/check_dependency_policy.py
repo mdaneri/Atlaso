@@ -289,33 +289,48 @@ def _folded_commands(lines: list[tuple[int, str]]) -> list[tuple[int, str]]:
         lines: Workflow line numbers and folded scalar text.
     """
     commands: list[tuple[int, str]] = []
+    base_indent = min(
+        (
+            len(line) - len(line.lstrip())
+            for _, line in lines
+            if line.strip()
+        ),
+        default=0,
+    )
     paragraph: list[tuple[int, str]] = []
+
+    def flush_paragraph() -> None:
+        if paragraph:
+            commands.append(
+                (
+                    paragraph[0][0],
+                    " ".join(text.strip() for _, text in paragraph),
+                )
+            )
+            paragraph.clear()
+
     for line_number, line in lines:
         if not line.strip():
-            if paragraph:
-                commands.append(
-                    (
-                        paragraph[0][0],
-                        " ".join(text.strip() for _, text in paragraph),
-                    )
-                )
-                paragraph = []
+            flush_paragraph()
+            continue
+        indent = len(line) - len(line.lstrip())
+        if indent > base_indent:
+            flush_paragraph()
+            commands.append((line_number, line.strip()))
             continue
         paragraph.append((line_number, line))
-    if paragraph:
-        commands.append(
-            (paragraph[0][0], " ".join(text.strip() for _, text in paragraph))
-        )
+    flush_paragraph()
     return commands
 
 
-def _shell_command_segments(command: str) -> list[str]:
-    """Split shell commands only at unquoted command separators.
+def _shell_command_segments(command: str) -> tuple[list[str], bool]:
+    """Split shell commands and identify conditional separators.
 
     Args:
         command: Shell or PowerShell command text.
     """
     segments: list[str] = []
+    conditional = False
     part: list[str] = []
     quote = ""
     index = 0
@@ -342,6 +357,7 @@ def _shell_command_segments(command: str) -> list[str]:
             separator_length = 1
         elif not quote and command[index : index + 2] in {"&&", "||"}:
             separator_length = 2
+            conditional = True
         elif not quote and character == "|":
             separator_length = 1
         if separator_length:
@@ -356,7 +372,7 @@ def _shell_command_segments(command: str) -> list[str]:
     segment = "".join(part).strip()
     if segment:
         segments.append(segment)
-    return segments
+    return segments, conditional
 
 
 def _shell_tokens(segment: str) -> list[str]:
@@ -704,7 +720,14 @@ def _workflow_requirement_paths(lines: list[str]) -> list[tuple[int, str, str]]:
             active_scope = run_scope
             active_directory = working_directory
             directory_stack = []
-        for segment in _shell_command_segments(command):
+        segments, conditional = _shell_command_segments(command)
+        conditional_directory = conditional and any(
+            _segment_directory_action(segment) is not None for segment in segments
+        )
+        if conditional_directory:
+            active_directory = "${{ unsupported-conditional-directory }}"
+            directory_stack = []
+        for segment in segments:
             if _segment_uses_shell_grouping(segment):
                 # Grouped commands have their own directory lifetime. Reject any
                 # later requirement in this run scope instead of trusting a
@@ -712,6 +735,8 @@ def _workflow_requirement_paths(lines: list[str]) -> list[tuple[int, str, str]]:
                 active_directory = "${{ unsupported-shell-grouping }}"
             directory_action = _segment_directory_action(segment)
             if directory_action is not None:
+                if conditional_directory:
+                    continue
                 action, directory_change = directory_action
                 if action == "pop":
                     if directory_stack:

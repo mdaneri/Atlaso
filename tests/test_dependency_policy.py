@@ -655,8 +655,8 @@ def test_dependency_policy_tracks_shell_directory_changes(tmp_path: Path) -> Non
     workflow = tmp_path / ".github" / "workflows" / "release.yml"
     workflow.parent.mkdir(parents=True, exist_ok=True)
     invocations = (
-        "cd external && python -m pip install -r requirements-release-tools.lock",
-        "pushd external > /dev/null && python -m pip install -r requirements-release-tools.lock",
+        "cd external; python -m pip install -r requirements-release-tools.lock",
+        "pushd external > /dev/null; python -m pip install -r requirements-release-tools.lock",
         "Set-Location external; python -m pip install -r requirements-release-tools.lock",
     )
     for invocation in invocations:
@@ -724,6 +724,47 @@ def test_dependency_policy_preserves_folded_scalar_command_boundaries(
     write_valid_policy(tmp_path)
     workflow = tmp_path / ".github" / "workflows" / "release.yml"
     workflow.parent.mkdir(parents=True, exist_ok=True)
+    folded_bodies = (
+        """          cd external
+
+          python -m pip install -r requirements-release-tools.lock
+""",
+        """          cd external
+            python -m pip install -r requirements-release-tools.lock
+""",
+    )
+    for folded_body in folded_bodies:
+        workflow.write_text(
+            f"""jobs:
+  external:
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          repository: attacker/other
+          path: external
+      - run: >
+{folded_body}""",
+            encoding="utf-8",
+        )
+
+        assert any(
+            "checkout-prefixed workflow requirement is not sourced from Atlaso: "
+            "requirements-release-tools.lock" in error
+            for error in validate(tmp_path)
+        )
+
+
+def test_dependency_policy_rejects_conditional_directory_state(
+    tmp_path: Path,
+) -> None:
+    """Verify conditional directory actions fail closed for later requirements.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
+    write_valid_policy(tmp_path)
+    workflow = tmp_path / ".github" / "workflows" / "release.yml"
+    workflow.parent.mkdir(parents=True, exist_ok=True)
     workflow.write_text(
         """jobs:
   external:
@@ -732,17 +773,14 @@ def test_dependency_policy_preserves_folded_scalar_command_boundaries(
         with:
           repository: attacker/other
           path: external
-      - run: >
-          cd external
-
-          python -m pip install -r requirements-release-tools.lock
+      - run: pushd external || popd; python -m pip install -r requirements-release-tools.lock
 """,
         encoding="utf-8",
     )
 
     assert any(
-        "checkout-prefixed workflow requirement is not sourced from Atlaso: "
-        "requirements-release-tools.lock" in error
+        "workflow working directory must be a literal repository path: "
+        "${{ unsupported-conditional-directory }}" in error
         for error in validate(tmp_path)
     )
 
