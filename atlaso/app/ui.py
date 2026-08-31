@@ -7770,6 +7770,8 @@ def create_vcf_generated_dns_records(
     component_keys: list[str],
     hostnames: list[str],
     actor: str,
+    expected_created: list[dict[str, str]] | None = None,
+    expected_skipped: list[dict[str, str]] | None = None,
 ) -> tuple[list[dict[str, str]], list[dict[str, str]], list[str]]:
     """Create vcf generated dns records.
 
@@ -7784,6 +7786,8 @@ def create_vcf_generated_dns_records(
         component_keys: Catalog component keys submitted by the caller.
         hostnames: Reviewed hostname labels paired with the submitted component keys.
         actor: Authenticated identity attributed to the audit record.
+        expected_created: Exact reviewed allocation required before mutation.
+        expected_skipped: Exact reviewed existing-record set required before mutation.
 
     Returns:
         The created vcf generated dns records.
@@ -7801,6 +7805,14 @@ def create_vcf_generated_dns_records(
     )
     if errors:
         return [], skipped, errors
+    if (
+        expected_created is not None
+        and expected_skipped is not None
+        and (created != expected_created or skipped != expected_skipped)
+    ):
+        return [], skipped, [
+            "Generated FQDN allocation changed since Populate. Select Populate and review the current plan again."
+        ]
     for row in created:
         record_type = row["record_type"]
         db.add(

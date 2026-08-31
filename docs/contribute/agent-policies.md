@@ -1539,8 +1539,9 @@ Terminal order:
   changes preserve deliberate overrides for retained components, and clearing the pattern restores catalog hostnames.
   Keep compact rows free of redundant visible input labels while providing each hostname input an accessible component-
   specific name. Require an explicit non-mutating Populate step that displays planned allocations and enables creation
-  only for the exact signed, time-limited actor and input revision; any deployment, domain, address, pattern, or hostname
-  change must clear that revision and require Populate again.
+  only for the exact signed, time-limited actor, input revision, and allocation plan; any deployment, domain, address,
+  pattern, or hostname change must clear that revision and require Populate again. Recompute current DNS and DHCP
+  availability at creation and reject drift from the signed allocation instead of silently changing reviewed results.
   Submit the exact component-keyed mapping to creation and deletion, reject missing, duplicate, unknown, out-of-catalog,
   empty, or malformed entries, and derive and validate every FQDN on the server before writing any records.
 - VCF Installer OVA deployment must treat the destination `OvfManager.ParseDescriptor` result as authoritative for

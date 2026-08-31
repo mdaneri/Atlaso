@@ -157,23 +157,32 @@ def _vcf_fqdn_input_revision(
     }
 
 
-def _vcf_fqdn_population_token(**revision: object) -> str:
-    """Sign one exact populated VCF FQDN input revision."""
-    return _vcf_fqdn_population_serializer().dumps(revision)
+def _vcf_fqdn_population_token(
+    *,
+    inputs: dict[str, object],
+    planned: list[dict[str, str]],
+    skipped: list[dict[str, str]],
+) -> str:
+    """Sign one exact populated VCF FQDN input and allocation revision."""
+    return _vcf_fqdn_population_serializer().dumps(
+        {"inputs": inputs, "planned": planned, "skipped": skipped}
+    )
 
 
-def _vcf_fqdn_population_matches(token: str, **revision: object) -> bool:
-    """Return whether a bounded token matches the exact submitted revision."""
+def _vcf_fqdn_population_payload(token: str) -> dict[str, object] | None:
+    """Return a verified bounded population payload when structurally valid."""
     if not token:
-        return False
+        return None
     try:
         populated = _vcf_fqdn_population_serializer().loads(
             token,
             max_age=VCF_FQDN_POPULATION_MAX_AGE_SECONDS,
         )
     except (BadSignature, SignatureExpired):
-        return False
-    return populated == revision
+        return None
+    if not isinstance(populated, dict):
+        return None
+    return populated
 
 
 @dataclass(frozen=True)
@@ -1779,7 +1788,11 @@ def build_router(dependencies: VcfWorkflowsUiDependencies) -> VcfWorkflowsUiRout
                 "status": "populated",
                 "planned": planned,
                 "skipped": skipped,
-                "populated_revision": _vcf_fqdn_population_token(**revision),
+                "populated_revision": _vcf_fqdn_population_token(
+                    inputs=revision,
+                    planned=planned,
+                    skipped=skipped,
+                ),
             }
         )
 
@@ -1833,7 +1846,15 @@ def build_router(dependencies: VcfWorkflowsUiDependencies) -> VcfWorkflowsUiRout
             component_keys=component_keys,
             hostnames=hostnames,
         )
-        if not _vcf_fqdn_population_matches(populated_revision, **revision):
+        population = _vcf_fqdn_population_payload(populated_revision)
+        planned = population.get("planned") if population else None
+        skipped_plan = population.get("skipped") if population else None
+        if (
+            population is None
+            or population.get("inputs") != revision
+            or not isinstance(planned, list)
+            or not isinstance(skipped_plan, list)
+        ):
             errors = [
                 "Select Populate and review the current generated FQDN plan before creating DNS records."
             ]
@@ -1870,6 +1891,8 @@ def build_router(dependencies: VcfWorkflowsUiDependencies) -> VcfWorkflowsUiRout
             component_keys=component_keys,
             hostnames=hostnames,
             actor=identity.username,
+            expected_created=planned,
+            expected_skipped=skipped_plan,
         )
         if request.headers.get("X-Atlaso-VCF-Helper") == "1":
             return JSONResponse(

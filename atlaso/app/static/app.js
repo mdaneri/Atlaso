@@ -12315,6 +12315,24 @@ function vcfFqdnAddressFor(fqdn, payload = {}) {
   return "";
 }
 
+function vcfFqdnCompletionAddressFor(fqdn, payload = {}) {
+  const created = Array.isArray(payload.created) ? payload.created : [];
+  const skipped = Array.isArray(payload.skipped) ? payload.skipped : [];
+  const existing = vcfFqdnExistingData();
+  const createdRow = created.find((row) => row.fqdn === fqdn);
+  if (createdRow?.address) {
+    return createdRow.address;
+  }
+  const skippedRow = skipped.find((row) => row.fqdn === fqdn);
+  if (skippedRow?.address) {
+    return skippedRow.address;
+  }
+  const existingAddresses = existing.addressRecords[fqdn];
+  return Array.isArray(existingAddresses) && existingAddresses.length
+    ? existingAddresses.join(", ")
+    : "";
+}
+
 function vcfFqdnIsPopulated() {
   const revision = document.querySelector("[data-vcf-fqdn-populated-revision]");
   return revision instanceof HTMLInputElement && Boolean(revision.value);
@@ -12358,7 +12376,7 @@ function vcfFqdnHasAnyAddress(payload = {}) {
 
 function vcfFqdnRowsHaveAddresses(payload = {}) {
   const fqdns = vcfFqdnCurrentFqdns();
-  return fqdns.length > 0 && fqdns.every((fqdn) => Boolean(vcfFqdnAddressFor(fqdn, payload)));
+  return fqdns.length > 0 && fqdns.every((fqdn) => Boolean(vcfFqdnCompletionAddressFor(fqdn, payload)));
 }
 
 function updateVcfFqdnActions(payload = {}) {
@@ -12464,7 +12482,8 @@ function renderVcfFqdnRows(payload = {}) {
       hostnameError.textContent = validationError;
       hostnameError.classList.toggle("hidden", !validationError);
       fqdnCell.textContent = fqdn;
-      statusCell.textContent = validationError ? "hostname needs attention" : vcfFqdnRowStatus(fqdn, payload);
+      const statusPayload = vcfFqdnIsPopulated() ? payload : {};
+      statusCell.textContent = validationError ? "hostname needs attention" : vcfFqdnRowStatus(fqdn, statusPayload);
       statusCell.classList.toggle(
         "muted",
         Boolean(validationError)
@@ -12474,13 +12493,13 @@ function renderVcfFqdnRows(payload = {}) {
     };
     hostnameInput.addEventListener("input", () => {
       vcfFqdnHostnameState.set(component.host, { value: hostnameInput.value, overridden: true });
-      form?.dispatchEvent(new Event("atlaso:vcf-fqdn-invalidate"));
+      form?.dispatchEvent(new CustomEvent("atlaso:vcf-fqdn-invalidate", { detail: { preserveRows: true } }));
     });
     hostnameInput.addEventListener("change", () => {
       const normalized = hostnameInput.value.trim().toLowerCase();
       hostnameInput.value = normalized;
       vcfFqdnHostnameState.set(component.host, { value: normalized, overridden: true });
-      form?.dispatchEvent(new Event("atlaso:vcf-fqdn-invalidate"));
+      form?.dispatchEvent(new CustomEvent("atlaso:vcf-fqdn-invalidate", { detail: { preserveRows: true } }));
     });
     row.atlasoUpdateVcfFqdnRow = updateRow;
     hostnameCell.append(componentInput, hostnameInput, hostnameError);
@@ -12526,15 +12545,22 @@ function initializeVcfFqdnGenerator() {
   const startAddress = form.querySelector("[data-vcf-fqdn-start-ipv4]");
   let currentPayload = {};
   vcfFqdnSeedHostnameStateFromRows();
-  const invalidatePopulation = () => {
+  const invalidatePopulation = ({ preserveRows = false } = {}) => {
     currentPayload = {};
     if (populatedRevision instanceof HTMLInputElement) {
       populatedRevision.value = "";
     }
     setVcfFqdnMessage("[data-vcf-fqdn-result]", [], "success");
-    renderVcfFqdnRows(currentPayload);
+    if (preserveRows) {
+      refreshVcfFqdnRenderedRows();
+      updateVcfFqdnActions(currentPayload);
+    } else {
+      renderVcfFqdnRows(currentPayload);
+    }
   };
-  form.addEventListener("atlaso:vcf-fqdn-invalidate", invalidatePopulation);
+  form.addEventListener("atlaso:vcf-fqdn-invalidate", (event) => {
+    invalidatePopulation({ preserveRows: event instanceof CustomEvent && event.detail?.preserveRows === true });
+  });
   document.querySelectorAll("[data-vcf-fqdn-modal-open]").forEach((button) => {
     if (!(button instanceof HTMLButtonElement)) {
       return;

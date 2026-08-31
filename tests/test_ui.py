@@ -18103,6 +18103,61 @@ def test_vcf_helper_population_is_non_mutating_and_binds_exact_review(client):
         assert db.scalar(select(func.count()).select_from(DnsRecord)) == before
 
 
+def test_vcf_helper_create_rejects_allocation_drift_after_population(client):
+    """Verify Create cannot mutate a plan whose address availability changed.
+
+    Args:
+        client: HTTP test client used to exercise the Atlaso application.
+    """
+    from sqlalchemy import select
+
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import DnsRecord
+
+    login(client)
+    page = client.get("/vcf-helper")
+    csrf = page.text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
+    form_data = {
+        **vcf_hostname_form_data(prefix="drift-"),
+        "domain": "atlaso.internal",
+        "prefix": "drift-",
+        "suffix": "",
+        "start_ipv4": "192.168.217.10/24",
+        "csrf": csrf,
+    }
+    populated = client.post(
+        "/vcf-helper/generated-fqdns/populate",
+        data=form_data,
+        headers={"X-Atlaso-VCF-Helper": "1"},
+    )
+    assert populated.status_code == 200
+    assert populated.json()["planned"][0]["address"] == "192.168.217.10"
+
+    with SessionLocal() as db:
+        db.add(
+            DnsRecord(
+                hostname="concurrent.atlaso.internal",
+                record_type="A",
+                address="192.168.217.10",
+                description="concurrent allocation",
+                enabled=True,
+            )
+        )
+        db.commit()
+
+    response = client.post(
+        "/vcf-helper/generated-fqdns",
+        data={**form_data, "populated_revision": populated.json()["populated_revision"]},
+        headers={"X-Atlaso-VCF-Helper": "1"},
+    )
+
+    assert response.status_code == 422
+    assert "allocation changed since Populate" in response.text
+    with SessionLocal() as db:
+        assert db.execute(
+            select(DnsRecord).where(DnsRecord.hostname == "drift-vc01.atlaso.internal")
+        ).scalar_one_or_none() is None
+
 def test_vcf_helper_vvf_target_generates_subset(client):
     """Verify that vcf helper vvf target generates subset.
 

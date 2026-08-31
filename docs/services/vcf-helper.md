@@ -152,7 +152,8 @@ hostname inputs use their component descriptions as accessible names without rep
 row. **Create DNS records** remains disabled until Populate succeeds. Changing the deployment, domain, address range,
 prefix, suffix, or any reviewed hostname invalidates that populated revision and requires Populate again. Atlaso binds
 creation to the exact signed, time-limited populated inputs so a stale or changed browser submission cannot bypass the
-review.
+review. Create also recomputes current DNS and DHCP availability and rejects the request when its allocations or skips
+no longer match the signed plan, requiring Populate again instead of silently changing reviewed addresses.
 
 Creating records then requires confirmation. The modal remains open after creation so assigned addresses can be
 reviewed. When every displayed FQDN has an A or AAAA address, the primary action changes to `Done`; `Done` closes the

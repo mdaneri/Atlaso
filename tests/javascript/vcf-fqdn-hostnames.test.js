@@ -160,6 +160,28 @@ test("VCF creation stays disabled until Populate returns an exact review revisio
   assert.match(appSource, /populatedRevision\.value = String\(payload\.populated_revision \|\| ""\)/);
   assert.match(appSource, /const payload = await submitRequest\(`\$\{form\.action\}\/populate`, "populated"\)/);
   assert.match(appSource, /populatedRevision\.value = ""/);
-  assert.match(appSource, /form\.addEventListener\("atlaso:vcf-fqdn-invalidate", invalidatePopulation\)/);
+  assert.match(appSource, /form\.addEventListener\("atlaso:vcf-fqdn-invalidate", \(event\) =>/);
   assert.match(appSource, /!vcfFqdnRowsAreValid\(\) \|\| !vcfFqdnIsPopulated\(\)/);
+});
+
+test("VCF planned addresses preview without masquerading as completed creation", () => {
+  const context = vm.createContext({ Array, Boolean });
+  vm.runInContext(
+    `function vcfFqdnExistingData() { return { addressRecords: {} }; }
+     function vcfFqdnCurrentFqdns() { return ["vc01.example.internal"]; }
+     ${functionSource("vcfFqdnCompletionAddressFor")}
+     ${functionSource("vcfFqdnRowsHaveAddresses")}
+     globalThis.complete = vcfFqdnRowsHaveAddresses;`,
+    context,
+  );
+  const planned = [{ fqdn: "vc01.example.internal", address: "192.168.50.10" }];
+  const created = [{ fqdn: "vc01.example.internal", address: "192.168.50.10" }];
+  assert.equal(context.complete({ planned }), false);
+  assert.equal(context.complete({ created }), true);
+});
+
+test("VCF hostname review invalidation preserves the focused row", () => {
+  assert.match(appSource, /detail: \{ preserveRows: true \}/);
+  assert.match(appSource, /if \(preserveRows\) \{\s*refreshVcfFqdnRenderedRows\(\)/);
+  assert.match(appSource, /const statusPayload = vcfFqdnIsPopulated\(\) \? payload : \{\}/);
 });
