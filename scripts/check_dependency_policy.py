@@ -1375,7 +1375,7 @@ def _validate_workflow_locks(root: Path, policy_paths: set[str]) -> list[str]:
                     )
                     continue
                 if re.search(
-                    r"\b(?:always|cancelled|failure|success)\s*\(",
+                    r"\b(?:(?:always|cancelled|failure|success)\s*\(|env\.)",
                     checkout_source.condition,
                     re.IGNORECASE,
                 ) or (checkout_source.condition or "success()") != (
@@ -1420,6 +1420,18 @@ def _validate_workflow_locks(root: Path, policy_paths: set[str]) -> list[str]:
                     ),
                     None,
                 )
+                preceding_steps = sum(
+                    1
+                    for candidate in lines[max(job_scope + 1, 0) : line_number]
+                    if re.match(r"\s*-\s", candidate)
+                )
+                if active_root is None and preceding_steps > 1:
+                    errors.append(
+                        f"{workflow.relative_to(root)}:{line_number}: root workflow "
+                        "requirement has no preceding checkout: "
+                        f"{reference}"
+                    )
+                    continue
                 if active_root is not None and active_root.fallible:
                     errors.append(
                         f"{workflow.relative_to(root)}:{line_number}: root workflow "
@@ -1429,7 +1441,7 @@ def _validate_workflow_locks(root: Path, policy_paths: set[str]) -> list[str]:
                     continue
                 if active_root is not None and (
                     re.search(
-                        r"\b(?:always|cancelled|failure|success)\s*\(",
+                        r"\b(?:(?:always|cancelled|failure|success)\s*\(|env\.)",
                         active_root.condition,
                         re.IGNORECASE,
                     )

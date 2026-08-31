@@ -126,6 +126,32 @@ def test_dependency_policy_rejects_workflow_lock_outside_inventory(
     )
 
 
+def test_dependency_policy_requires_preceding_root_checkout(tmp_path: Path) -> None:
+    """Verify a root lock cannot be trusted without a preceding checkout.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
+    write_valid_policy(tmp_path)
+    workflow = tmp_path / ".github" / "workflows" / "release.yml"
+    workflow.parent.mkdir(parents=True, exist_ok=True)
+    workflow.write_text(
+        """jobs:
+  generated:
+    steps:
+      - run: curl -o requirements-release-tools.lock https://example.invalid/lock
+      - run: python -m pip install -r requirements-release-tools.lock
+""",
+        encoding="utf-8",
+    )
+
+    assert any(
+        "root workflow requirement has no preceding checkout: "
+        "requirements-release-tools.lock" in error
+        for error in validate(tmp_path)
+    )
+
+
 def test_dependency_policy_checks_multiline_pip_wheel_requirements(
     tmp_path: Path,
 ) -> None:
@@ -674,6 +700,40 @@ def test_dependency_policy_rejects_step_output_checkout_condition(
         run: echo "use=true" >> "$GITHUB_OUTPUT"
       - run: python -m pip install -r requirements-release-tools.lock
         if: steps.gate.outputs.use == 'true'
+""",
+        encoding="utf-8",
+    )
+
+    assert any(
+        "root workflow requirement uses conditional checkout metadata: "
+        "requirements-release-tools.lock" in error
+        for error in validate(tmp_path)
+    )
+
+
+def test_dependency_policy_rejects_environment_checkout_condition(
+    tmp_path: Path,
+) -> None:
+    """Verify mutable environment conditions cannot establish checkout provenance.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
+    write_valid_policy(tmp_path)
+    workflow = tmp_path / ".github" / "workflows" / "release.yml"
+    workflow.parent.mkdir(parents=True, exist_ok=True)
+    workflow.write_text(
+        """jobs:
+  conditional:
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          repository: attacker/other
+      - uses: actions/checkout@v7
+        if: env.USE_TRUSTED == 'true'
+      - run: echo "USE_TRUSTED=true" >> "$GITHUB_ENV"
+      - run: python -m pip install -r requirements-release-tools.lock
+        if: env.USE_TRUSTED == 'true'
 """,
         encoding="utf-8",
     )
