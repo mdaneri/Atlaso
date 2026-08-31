@@ -2384,7 +2384,13 @@ def strip_markdown_deleted_content(text: str) -> str:
         *,
         can_split_word: bool,
     ) -> tuple[bool, bool]:
-        """Return Markdown opening and closing eligibility for a delimiter run."""
+        """Return Markdown opening and closing eligibility for a delimiter run.
+
+        Args:
+            run_start: Inclusive start offset of the delimiter run.
+            run_end: Exclusive end offset of the delimiter run.
+            can_split_word: Whether the delimiter can open or close inside a word.
+        """
         previous = without_html_deletions[run_start - 1] if run_start else ""
         following = (
             without_html_deletions[run_end]
@@ -2418,7 +2424,12 @@ def strip_markdown_deleted_content(text: str) -> str:
         return can_open, can_close
 
     def matching_backtick_end(run_start: int, run_end: int) -> int:
-        """Return the end of an exact-length closing backtick run, if any."""
+        """Return the end of an exact-length closing backtick run, if any.
+
+        Args:
+            run_start: Inclusive start offset of the opening backtick run.
+            run_end: Exclusive end offset of the opening backtick run.
+        """
         delimiter_length = run_end - run_start
         search_cursor = run_end
         while True:
@@ -2449,7 +2460,12 @@ def strip_markdown_deleted_content(text: str) -> str:
     }
 
     def has_complete_link_suffix(opening_bracket: int, closing_bracket: int) -> bool:
-        """Return whether a link label is followed by a complete destination."""
+        """Return whether a link label is followed by a complete destination.
+
+        Args:
+            opening_bracket: Offset of the link label's opening bracket.
+            closing_bracket: Offset of the link label's closing bracket.
+        """
         suffix_start = closing_bracket + 1
         if suffix_start >= len(without_html_deletions):
             return False

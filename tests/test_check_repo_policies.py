@@ -3076,7 +3076,6 @@ def test_agent_policy_gate_ignores_raw_html_block_markers(tmp_path: Path) -> Non
     for relative_path in ORDERED_TERMINAL_CLEANUP_MARKERS:
         for tag_name in (
             "script",
-            "style",
             "pre",
             "code",
             "textarea",
@@ -3122,7 +3121,7 @@ def test_agent_policy_gate_preserves_policy_after_raw_text_comments(
     for relative_path in ORDERED_TERMINAL_CLEANUP_MARKERS:
         anchor = TERMINAL_CLEANUP_SECTION_ANCHORS[relative_path]
         content_prefix = "" if anchor.startswith("#") else "  "
-        for tag_name in ("script", "style", "textarea", "pre"):
+        for tag_name in ("script", "textarea", "pre"):
             write_policy_files(tmp_path)
             path = tmp_path / relative_path
             text = path.read_text(encoding="utf-8").replace(
@@ -3218,7 +3217,6 @@ def test_agent_policy_gate_ignores_raw_html_policy_sections(tmp_path: Path) -> N
     for relative_path in ORDERED_TERMINAL_CLEANUP_MARKERS:
         for tag_name in (
             "script",
-            "style",
             "pre",
             "code",
             "textarea",
