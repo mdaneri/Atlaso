@@ -741,8 +741,19 @@ def _shell_command_segments(command: str) -> tuple[list[str], bool]:
             index += 2
             continue
         if character == "`" and quote != "'" and index + 1 < len(command):
-            part.append(command[index + 1])
-            index += 2
+            cursor = index + 1
+            while cursor < len(command):
+                if command[cursor] == "\\" and cursor + 1 < len(command):
+                    cursor += 2
+                    continue
+                if command[cursor] == "`":
+                    part.extend(command[index : cursor + 1])
+                    index = cursor + 1
+                    break
+                cursor += 1
+            else:
+                part.append(command[index + 1])
+                index += 2
             continue
         if character in {"'", '"'}:
             if not quote:
@@ -864,7 +875,7 @@ def _segment_directory_action(segment: str) -> tuple[str, str] | None:
 
 
 def _shell_command_substitutions(segment: str) -> list[str]:
-    """Return executable ``$()`` bodies outside single-quoted shell text.
+    """Return executable modern and legacy command-substitution bodies.
 
     Args:
         segment: Shell command segment to inspect.
@@ -883,6 +894,20 @@ def _shell_command_substitutions(segment: str) -> list[str]:
             elif quote == character:
                 quote = ""
             index += 1
+            continue
+        if quote != "'" and character == "`":
+            cursor = index + 1
+            while cursor < len(segment):
+                if segment[cursor] == "\\" and cursor + 1 < len(segment):
+                    cursor += 2
+                    continue
+                if segment[cursor] == "`":
+                    substitutions.append(segment[index + 1 : cursor])
+                    index = cursor + 1
+                    break
+                cursor += 1
+            else:
+                return substitutions
             continue
         if quote != "'" and segment[index : index + 2] == "$(":
             depth = 1
