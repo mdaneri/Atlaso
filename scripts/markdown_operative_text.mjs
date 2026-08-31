@@ -942,6 +942,9 @@ function updateHtmlSuppression (content, inlineContext = false) {
     const presentationDisplay = decodeHtmlAttributeEntities(
       suppression.parsedAttributes.get('display') || ''
     ).trim().toLowerCase()
+    const presentationVisibility = decodeHtmlAttributeEntities(
+      suppression.parsedAttributes.get('visibility') || ''
+    ).trim().toLowerCase()
     if (!selfClosing || (!voidTags.has(tag) && !foreign)) {
       const entry = {
         tag,
@@ -951,7 +954,11 @@ function updateHtmlSuppression (content, inlineContext = false) {
         closedDetails: tag === 'details' && !suppression.parsedAttributes.has('open'),
         summarySeen: false,
         summaryOwner,
-        visibility: suppression.visibility,
+        visibility: suppression.visibility || (
+          foreign && /^(?:visible|hidden|collapse)$/.test(presentationVisibility)
+            ? presentationVisibility
+            : null
+        ),
         fontSize: suppression.fontSize,
         color: suppression.color,
         inline: inlineContext,
