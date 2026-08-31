@@ -583,6 +583,18 @@ def test_merge_hold_directions_accepts_passive_withdrawal() -> None:
     ) == {"do not merge": "remove"}
 
 
+def test_merge_hold_directions_accepts_no_hold_declarations() -> None:
+    """Verify direct declarations that a hold is absent withdraw it."""
+    for instruction in (
+        "The do not merge hold does not apply.",
+        "There is no do not merge hold.",
+    ):
+        assert merge_hold_directions(
+            instruction,
+            active_holds=("do not merge",),
+        ) == {"do not merge": "remove"}
+
+
 def test_merge_hold_directions_recognizes_owner_approval() -> None:
     """Verify possessive approval wording remains an explicit hold."""
     assert merge_hold_directions(
@@ -739,6 +751,15 @@ def test_merge_hold_directions_recognizes_direct_not_to_merge() -> None:
     assert merge_hold_directions(
         "Implement issue #602, but you are not to merge this PR."
     ) == {"do not merge": "add"}
+
+
+def test_merge_hold_directions_recognizes_qualified_merge_prohibition() -> None:
+    """Verify a prohibition that qualifies the merge action becomes a hold."""
+    for instruction in (
+        "Implement issue #602, but do not complete the merge.",
+        "Implement issue #602, but do not proceed with the merge.",
+    ):
+        assert merge_hold_directions(instruction) == {"do not merge": "add"}
 
 
 def test_merge_hold_directions_recognizes_passive_not_allowed() -> None:
@@ -1397,6 +1418,7 @@ def test_source_authority_excludes_implementation_questions() -> None:
         "Should we fix this?",
         "Should we add retry handling?",
         "Could you replace the parser?",
+        "Do we need to fix this?",
     ):
         assert not source_has_default_merge_authority((instruction,))
 

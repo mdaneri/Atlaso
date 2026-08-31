@@ -643,6 +643,10 @@ MERGE_HOLD_WITHDRAWAL_MARKERS = (
     "cancel the",
     "cancel ",
     "no longer applies",
+    "does not apply",
+    "there is no",
+    "there's no",
+    "there’s no",
     "no longer need to",
     "rescinded",
     "revoked",
@@ -692,6 +696,8 @@ AUTO_MERGE_ONLY_PATTERN = re.compile(
 MERGE_HOLD_MODAL_PROHIBITION = re.compile(
     r"\b(?:(?:you\s+)?(?:(?:must|may|can|should|shall)\s+not|cannot|can't|can’t)"
     r"\s+merge|"
+    r"(?:do\s+not|don't|don’t|must\s+not|should\s+not)\s+"
+    r"(?:complete|proceed\s+with)\s+(?:the\s+)?merge|"
     r"you\s+(?:are|'re|’re)\s+not\s+to\s+merge|"
     r"you\s+(?:(?:are\s+not|aren't|aren’t|isn't|isn’t)\s+"
     r"(?:allowed|authorized|permitted)\s+to\s+merge|"
@@ -870,6 +876,9 @@ DEFAULT_MERGE_AUTHORITY_INTERROGATIVE_REVIEW = re.compile(
     r"(?:^|[;.!?]\s*)(?:should|can|could|would|will)\s+"
     r"(?:i|we|you)\s+(?:implement|fix|patch|resolve|solve|change|modify|edit|"
     r"rename|delete|replace|add|remove|create|build|repair)\b[^?]*\?|"
+    r"(?:^|[;.!?]\s*)(?:do|does|did)\s+(?:i|we|you)\s+need\s+to\s+"
+    r"(?:implement|fix|patch|resolve|solve|change|modify|edit|rename|delete|"
+    r"replace|add|remove|create|build|repair)\b[^?]*\?|"
     r"(?:^|[;.!?]\s*)how\s+(?:do|should|can|could|would)\s+"
     r"(?:i|we|you)\s+(?:implement|fix|patch|resolve|solve)\b[^?]*\?|"
     r"(?:^|[;.!?]\s*)what\s+(?:is|are)\s+(?:needed|required)\s+to\s+"

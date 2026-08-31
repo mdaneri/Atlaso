@@ -3424,6 +3424,53 @@
       "expected_holds": [
         "do not merge"
       ]
+    },
+    {
+      "name": "qualified-merge-prohibition-is-preserved",
+      "default_merge_authority": true,
+      "instructions": [
+        {
+          "text": "Implement issue #602, but do not complete the merge.",
+          "add_holds": [
+            "do not merge"
+          ]
+        }
+      ],
+      "generated": "Preserve the explicit do not merge hold.",
+      "expected_holds": [
+        "do not merge"
+      ]
+    },
+    {
+      "name": "need-to-fix-question-remains-ineligible",
+      "default_merge_authority": false,
+      "instructions": [
+        {
+          "text": "Do we need to fix this?"
+        }
+      ],
+      "generated": "Answer the implementation question without changing or merging the pull request.",
+      "expected_holds": []
+    },
+    {
+      "name": "no-hold-declaration-withdraws-hold",
+      "default_merge_authority": true,
+      "instructions": [
+        {
+          "text": "Implement issue #602, but do not merge this PR.",
+          "add_holds": [
+            "do not merge"
+          ]
+        },
+        {
+          "text": "The do not merge hold does not apply.",
+          "remove_holds": [
+            "do not merge"
+          ]
+        }
+      ],
+      "generated": "Complete the guarded merge when every gate passes.",
+      "expected_holds": []
     }
   ]
 }
