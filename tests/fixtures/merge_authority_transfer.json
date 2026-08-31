@@ -3739,6 +3739,47 @@
       "expected_holds": []
     },
     {
+      "name": "conjunctive-resumable-gates-can-be-withdrawn",
+      "default_merge_authority": true,
+      "instructions": [
+        {
+          "text": "Implement issue #602, but wait for CI and tests before merging."
+        },
+        {
+          "text": "Do not wait for CI and tests before merging."
+        }
+      ],
+      "generated": "Complete the guarded merge when every required gate passes.",
+      "expected_holds": []
+    },
+    {
+      "name": "permission-wait-is-an-approval-hold",
+      "default_merge_authority": true,
+      "instructions": [
+        {
+          "text": "Implement issue #602, but wait for my permission before merging.",
+          "add_holds": [
+            "wait for approval"
+          ]
+        }
+      ],
+      "generated": "Preserve the explicit wait for approval instruction.",
+      "expected_holds": [
+        "wait for approval"
+      ]
+    },
+    {
+      "name": "apply-requested-changes-is-implementation",
+      "default_merge_authority": true,
+      "instructions": [
+        {
+          "text": "Please apply the requested changes."
+        }
+      ],
+      "generated": "Complete the guarded merge when every required gate passes.",
+      "expected_holds": []
+    },
+    {
       "name": "keep-branch-unmerged-is-preserved",
       "default_merge_authority": true,
       "instructions": [

@@ -740,10 +740,13 @@ MERGE_HOLD_MODAL_PROHIBITION = re.compile(
 DEFAULT_MERGE_AUTHORITY_NEGATIONS = re.compile(
     r"(?:(?:do not|don't|don’t|never|must not|should not|cannot|can't|can’t|not)"
     r"(?:\s+\w+){0,6}|(?:lacks?|has no|have no|without)(?:\s+\w+){0,4}|"
-    r"(?:(?:there\s+(?:is|was)|there's|there’s)\s+no\s+need|"
+    r"(?:(?:there\s+(?:is|was)|there's|there’s)\s+no\s+"
+    r"(?:need|requirement|obligation)|"
     r"(?:i|we|you|it|this\s+task|the\s+task)\s+"
     r"(?:(?:do|does|did)\s+not|don't|don’t|doesn't|doesn’t|didn't|didn’t)\s+need|"
-    r"(?:it\s+)?(?:is|was)\s+not\s+necessary)\s+to|"
+    r"(?:it\s+)?(?:is|was)\s+not\s+(?:necessary|required)|"
+    r"(?:i|we|you|it|this\s+task|the\s+task)\s+"
+    r"(?:am|is|are|was|were)\s+not\s+(?:required|obligated))\s+to|"
     r"(?:there\s+is|there's|there’s)\s+no\s+"
     r"(?:authority|authorization|permission|approval)\s+to|"
     r"(?:skip|avoid|omit|decline|refrain(?:\s+from)?|"
@@ -987,6 +990,8 @@ DEFAULT_MERGE_AUTHORITY_SOURCE_MARKERS = re.compile(
     r"(?:review\s+)?feedback\b"
     r"(?:\s+(?:on|for)\s+(?:an?\s+)?(?:existing\s+)?(?:ordinary\s+)?"
     r"(?:pull request|pr)\b)?|"
+    r"\bapply\s+(?:the\s+)?requested\s+"
+    r"(?:changes?|updates?|fix(?:es)?|patch)\b|"
     r"pull[- ]request delivery|guarded[- ]squash merge|"
     r"task-owned pull request|ordinary same-repository"
 )
@@ -1160,7 +1165,8 @@ MERGE_HOLD_APPROVAL_BEFORE_MERGING = re.compile(
     r"wait (?:for|until)\s+(?:(?:the\s+)?"
     r"(?:user|maintainer|(?:[a-z][a-z0-9_-]*\s+)?owner)\s+to\s+approve|"
     r"(?:(?:the\s+)?(?:user|maintainer|(?:[a-z][a-z0-9_-]*\s+)?owner)"
-    r"(?:'s|’s)?\s+)?approval)|"
+    r"(?:'s|’s)?\s+|(?:my|our|your)\s+)?"
+    r"(?:approval|permission|authorization))|"
     r"(?:(?:you|i|we)\s+)?(?:get|obtain|require|need)\s+(?:(?:the\s+)?"
     r"(?:user|maintainer|(?:[a-z][a-z0-9_-]*\s+)?owner)"
     r"(?:'s|’s)?\s+|(?:my|our|your)\s+)?"
@@ -2039,6 +2045,9 @@ def resumable_merge_gate_directions(
         *MERGE_RESUMABLE_GATE_CONDITION_LIST.finditer(normalized),
         *MERGE_RESUMABLE_GATE_FIRST_LIST.finditer(normalized),
     )
+    conjunction_spans = tuple(
+        (match.start(), match.end()) for match in conjunction_matches
+    )
     for match in conjunction_matches:
         if _is_hold_discussion(normalized, match.start()) or _hold_targets_other_task(
             normalized,
@@ -2048,6 +2057,12 @@ def resumable_merge_gate_directions(
             active_issue=active_issue,
         ):
             continue
+        prefix = normalized[max(0, match.start() - 40) : match.start()]
+        direction = (
+            "remove"
+            if MERGE_RESUMABLE_GATE_NEGATION_PREFIX.search(prefix) is not None
+            else "add"
+        )
         for gate_index, gate in enumerate(
             MERGE_RESUMABLE_GATE_CONJUNCTION_SEPARATOR.split(match.group("gates"))
         ):
@@ -2055,11 +2070,13 @@ def resumable_merge_gate_directions(
             events.append(
                 (
                     match.start() + gate_index,
-                    "add",
+                    direction,
                     _canonical_resumable_merge_gate(gate),
                 )
             )
     for match in MERGE_RESUMABLE_GATE_CONDITION.finditer(normalized):
+        if any(start <= match.start() < end for start, end in conjunction_spans):
+            continue
         if _is_hold_discussion(normalized, match.start()) or _hold_targets_other_task(
             normalized,
             match.start(),
@@ -2090,6 +2107,8 @@ def resumable_merge_gate_directions(
             )
         )
     for match in MERGE_RESUMABLE_GATE_FIRST.finditer(normalized):
+        if any(start <= match.start() < end for start, end in conjunction_spans):
+            continue
         if _is_hold_discussion(normalized, match.start()) or _hold_targets_other_task(
             normalized,
             match.start(),

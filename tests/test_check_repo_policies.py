@@ -1029,6 +1029,9 @@ def test_merge_hold_directions_ignores_pr_only_resumable_gate() -> None:
     assert resumable_merge_gate_directions(
         "Merge after CI, tests, and deployment."
     ) == {"ci": "add", "test": "add", "deployment": "add"}
+    assert resumable_merge_gate_directions(
+        "Do not wait for CI and tests before merging."
+    ) == {"ci": "remove", "test": "remove"}
 
 
 def test_merge_hold_directions_ignores_negated_hold_reports() -> None:
@@ -1174,6 +1177,12 @@ def test_merge_hold_directions_recognizes_plain_approval_condition() -> None:
         "Implement issue #602, but wait for approval to merge."
     ) == {"wait for approval": "add"}
     assert merge_hold_directions(
+        "Implement issue #602, but wait for my permission before merging."
+    ) == {"wait for approval": "add"}
+    assert merge_hold_directions(
+        "Implement issue #602, but wait for maintainer authorization before merging."
+    ) == {"wait for approval": "add"}
+    assert merge_hold_directions(
         "Implement issue #602, but merge only after the code owner approves."
     ) == {"wait for approval": "add"}
     assert merge_hold_directions(
@@ -1241,6 +1250,8 @@ def test_generated_merge_decision_questions_are_not_affirmative() -> None:
     """Verify decision-only prompts do not manufacture merge authority."""
     for instruction in (
         "There is no need to complete the guarded merge.",
+        "There is no requirement to complete the guarded merge.",
+        "We are not obligated to complete the guarded merge.",
         "We do not need to complete the guarded merge.",
         "It is not necessary to complete the guarded merge.",
     ):
@@ -1526,6 +1537,7 @@ def test_source_authority_keeps_workflow_policy_subject_eligible() -> None:
     )
     for instruction in (
         "Please make the requested changes.",
+        "Please apply the requested changes.",
         "Please remove the obsolete code.",
         "Please update the README.",
     ):
@@ -3019,32 +3031,34 @@ def test_merge_authority_transfer_rejects_generated_no_need_denial(
     """
     path = tmp_path / MERGE_AUTHORITY_TRANSFER_FIXTURE_PATH
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(
-        json.dumps(
-            {
-                "cases": [
-                    {
-                        "name": "generated no-need denial",
-                        "default_merge_authority": True,
-                        "instructions": [{"text": "Implement issue #602."}],
-                        "generated": (
-                            "There is no need to complete the guarded merge."
-                        ),
-                        "expected_holds": [],
-                    }
-                ]
-            }
-        ),
-        encoding="utf-8",
-    )
+    for generated in (
+        "There is no need to complete the guarded merge.",
+        "There is no requirement to complete the guarded merge.",
+    ):
+        path.write_text(
+            json.dumps(
+                {
+                    "cases": [
+                        {
+                            "name": "generated necessity denial",
+                            "default_merge_authority": True,
+                            "instructions": [{"text": "Implement issue #602."}],
+                            "generated": generated,
+                            "expected_holds": [],
+                        }
+                    ]
+                }
+            ),
+            encoding="utf-8",
+        )
 
-    findings = check_merge_authority_transfer_fixtures(tmp_path)
+        findings = check_merge_authority_transfer_fixtures(tmp_path)
 
-    assert len(findings) == 1
-    assert findings[0].message == (
-        "merge authority fixture generated no-need denial omits affirmative "
-        "default authority"
-    )
+        assert len(findings) == 1
+        assert findings[0].message == (
+            "merge authority fixture generated necessity denial omits affirmative "
+            "default authority"
+        )
 
 
 def test_merge_authority_transfer_rejects_quoted_generated_authority_denial(
