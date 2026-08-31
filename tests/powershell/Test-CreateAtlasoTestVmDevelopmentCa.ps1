@@ -498,6 +498,35 @@ if ($wrapperSource.IndexOf('-Action Validate', [System.StringComparison]::Ordina
     $wrapperSource.IndexOf("'prepare-networks.ps1'", [System.StringComparison]::Ordinal)) {
     throw 'Development CA validation must precede network preparation.'
 }
+$trustReadbackCertificate = [System.Security.Cryptography.X509Certificates.X509Certificate2]::CreateFromPem(
+    [System.IO.File]::ReadAllText($publicCertificatePath)
+)
+try {
+    $trustReadbackFingerprint = [Convert]::ToHexString(
+        [System.Security.Cryptography.SHA256]::HashData($trustReadbackCertificate.RawData)
+    )
+    $script:trustReadbackCount = 0
+    $certificateReader = {
+        $script:trustReadbackCount += 1
+        if ($script:trustReadbackCount -ge 2) {
+            return $trustReadbackCertificate
+        }
+        return @()
+    }
+    $delayAction = { param([int]$Milliseconds) }
+    $trustedAfterRetry = Wait-AtlasoDevelopmentRootCaTrustReadback `
+        -ExpectedFingerprint $trustReadbackFingerprint `
+        -TimeoutSeconds 1 `
+        -PollMilliseconds 1 `
+        -CertificateReader $certificateReader `
+        -DelayAction $delayAction
+    if (-not $trustedAfterRetry -or $script:trustReadbackCount -ne 2) {
+        throw 'Development root trust readback did not tolerate one stale provider result.'
+    }
+}
+finally {
+    $trustReadbackCertificate.Dispose()
+}
 foreach ($mutationMarker in @("'remove-atlaso-vm.ps1'", "'create-atlaso-vm.ps1'")) {
     if ($wrapperSource.IndexOf('-Action Validate', [System.StringComparison]::Ordinal) -gt
         $wrapperSource.LastIndexOf($mutationMarker, [System.StringComparison]::Ordinal)) {
@@ -507,6 +536,9 @@ foreach ($mutationMarker in @("'remove-atlaso-vm.ps1'", "'create-atlaso-vm.ps1'"
 if ($wrapperSource -notmatch "certutil\.exe -f -user -addstore Root" -or
     $wrapperSource -match "certutil\.exe -user -delstore Root") {
     throw 'Windows trust must add the exact root idempotently without subject-wide deletion.'
+}
+if ($wrapperSource -notmatch 'Wait-AtlasoDevelopmentRootCaTrustReadback') {
+    throw 'Windows trust import must use the bounded exact provider-readback retry.'
 }
 if ($wrapperSource -notmatch "Wait-AtlasoWorkstationDevelopmentRootCaPrivateKeyScrub" -or
     $wrapperSource -notmatch "Automatic rollback also failed") {

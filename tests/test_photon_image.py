@@ -1685,21 +1685,27 @@ def test_vmware_packer_requires_proven_task_or_release_builder_identity() -> Non
     assert "Get-AtlasoVmwareBuilderIdentityManifestPath" in wrapper
     assert "Assert-AtlasoVmwareBuilderIdentityManifest" in wrapper
     assert "Assert-AtlasoVmwareBuilderVmx" in wrapper
+    assert "function Assert-AtlasoBuilderIdentityCurrent" in wrapper
+    assert "Resolve-AtlasoReleaseBuilderIdentity `" in wrapper
+    assert wrapper.count("$null = Assert-AtlasoBuilderIdentityCurrent `") == 6
+    assert wrapper.count("-ReleaseBuilder:$ReleaseBuilder `") >= 6
     build_invocation = wrapper.index("Invoke-AtlasoPhotonImageBuild `")
     assert (
         "-OutputDirectory $workstationOutputDirectory `"
         in wrapper[build_invocation:]
     )
-    owner_recheck = wrapper.index("Assert-AtlasoVmwareBuilderOwnershipManifest `")
+    output_boundary = wrapper.index(
+        "$resolvedVmrunPath = Resolve-WorkstationVmrunPath -Path $VmrunPath"
+    )
+    owner_recheck = wrapper.index(
+        "Assert-AtlasoVmwareBuilderOwnershipManifest `", output_boundary
+    )
     cleanup = wrapper.index("Remove-AtlasoWorkstationArtifactRoot `", owner_recheck)
     manifest_refresh = wrapper.index("-ReplaceSameOwner", cleanup)
     exact_recheck = wrapper.index("Assert-AtlasoVmwareBuilderIdentityManifest `", cleanup)
     assert owner_recheck < cleanup < manifest_refresh < exact_recheck
-    output_boundary = wrapper.index(
-        "$resolvedVmrunPath = Resolve-WorkstationVmrunPath -Path $VmrunPath"
-    )
     remote_output_recheck = wrapper.index(
-        "Assert-AtlasoTaskBuilderIdentityCurrent `", output_boundary
+        "Assert-AtlasoBuilderIdentityCurrent `", output_boundary
     )
     manifest_write = wrapper.index(
         "Write-AtlasoVmwareBuilderIdentityManifest `", output_boundary
@@ -1716,7 +1722,17 @@ def test_vmware_packer_requires_proven_task_or_release_builder_identity() -> Non
         "Repair-AtlasoWorkstationStaleRegistrations `", parent_output
     )
     parent_remote_recheck = wrapper.index(
-        "Assert-AtlasoTaskBuilderIdentityCurrent `", parent_output_assertion
+        "Assert-AtlasoBuilderIdentityCurrent `", parent_output_assertion
+    )
+    parent_manifest_path = wrapper.index(
+        "$outerBuilderManifestPath = Get-AtlasoVmwareBuilderIdentityManifestPath `",
+        parent_remote_recheck,
+    )
+    parent_ownership_recheck = wrapper.index(
+        "Assert-AtlasoVmwareBuilderOwnershipManifest `", parent_manifest_path
+    )
+    parent_vmx_recheck = wrapper.index(
+        "Assert-AtlasoVmwareBuilderVmx `", parent_ownership_recheck
     )
     parent_workstation_launch = wrapper.index(
         "Initialize-AtlasoWorkstationGui -VmrunPath $parentVmrunPath", parent_output
@@ -1725,6 +1741,9 @@ def test_vmware_packer_requires_proven_task_or_release_builder_identity() -> Non
         parent_output
         < parent_output_assertion
         < parent_remote_recheck
+        < parent_manifest_path
+        < parent_ownership_recheck
+        < parent_vmx_recheck
         < registration_repair
         < parent_workstation_launch
     )
@@ -1732,26 +1751,26 @@ def test_vmware_packer_requires_proven_task_or_release_builder_identity() -> Non
         "$preferredBuilderAddress = if ($builderIpWasPassed)"
     )
     reservation_recheck = wrapper.index(
-        "Assert-AtlasoTaskBuilderIdentityCurrent `", reservation_inputs
+        "Assert-AtlasoBuilderIdentityCurrent `", reservation_inputs
     )
     reservation_admission = wrapper.index(
         "Enter-AtlasoVmwareBuilderAddressReservation `", reservation_inputs
     )
     assert reservation_inputs < reservation_recheck < reservation_admission
-    final_pr_recheck = wrapper.index(
-        "if (-not $ReleaseBuilder -and -not $ValidateOnly -and -not $PrepareIsoOnly)"
-    )
     packer_invocation = wrapper.index("Invoke-AtlasoPhotonImageBuild `")
-    assert final_pr_recheck < packer_invocation
+    prebuild_recheck = wrapper.rindex(
+        "Assert-AtlasoBuilderIdentityCurrent `", 0, packer_invocation
+    )
+    assert prebuild_recheck < packer_invocation
     callback = wrapper.index("$packerBuildInvoker = {")
     callback_recheck = wrapper.index(
-        "Assert-AtlasoTaskBuilderIdentityCurrent `", callback
+        "Assert-AtlasoBuilderIdentityCurrent `", callback
     )
     monitored_packer = wrapper.index("Invoke-AtlasoMonitoredPackerBuild `", callback)
     assert callback < callback_recheck < monitored_packer < packer_invocation
     build_completion = wrapper.index("-PrepareIsoOnly:$PrepareIsoOnly", packer_invocation)
     provenance_recheck = wrapper.index(
-        "Assert-AtlasoTaskBuilderIdentityCurrent `", build_completion
+        "Assert-AtlasoBuilderIdentityCurrent `", build_completion
     )
     provenance_write = wrapper.index(
         "Write-AtlasoVmwareBuildProvenance `", build_completion
@@ -2123,6 +2142,8 @@ def test_create_atlaso_vmware_test_vm_wrapper_uses_common_helpers():
     assert "Cert:\\CurrentUser\\Root" in script
     assert "certutil.exe -user -delstore Root" not in script
     assert "certutil.exe -f -user -addstore Root $rootCerPath" in script
+    assert "Wait-AtlasoDevelopmentRootCaTrustReadback" in script
+    assert "Test-AtlasoDevelopmentRootCaTrusted" in script
     assert "-NoStart is not supported for normal test VMs" in script
     assert "if (($waitForIpEnabled -or $TrustRootCa) -and $readinessIdentity)" in script
     assert "-ExpectedHostname $FirstBootFqdn" in script

@@ -385,6 +385,61 @@ function Resolve-AtlasoReleaseBuilderIdentity {
 
 <#
 .SYNOPSIS
+Revalidate the selected task or release builder identity at a mutation boundary.
+.PARAMETER RepositoryRoot
+Atlaso checkout whose identity must remain current and clean.
+.PARAMETER ExpectedIdentity
+Previously verified task or release builder identity.
+.PARAMETER PullRequestNumber
+Exact same-repository pull request selected for a task build.
+.PARAMETER CollisionSuffix
+Optional collision-safe suffix for a task build.
+.PARAMETER ReleaseBuilder
+Select release identity revalidation instead of pull-request revalidation.
+.PARAMETER ReleaseVersion
+Strict synchronized version for a protected release builder.
+.PARAMETER ReleaseSourceCommit
+Exact source commit for a protected release builder.
+.PARAMETER ReleaseWorkflowRunId
+Optional workflow run ID distinguishing the release builder.
+#>
+function Assert-AtlasoBuilderIdentityCurrent {
+    param(
+        [Parameter(Mandatory = $true)][string]$RepositoryRoot,
+        [Parameter(Mandatory = $true)][object]$ExpectedIdentity,
+        [int]$PullRequestNumber = 0,
+        [string]$CollisionSuffix = '',
+        [switch]$ReleaseBuilder,
+        [string]$ReleaseVersion = '',
+        [string]$ReleaseSourceCommit = '',
+        [long]$ReleaseWorkflowRunId = 0
+    )
+
+    if (-not $ReleaseBuilder) {
+        $currentIdentity = Assert-AtlasoTaskBuilderIdentityCurrent `
+            -RepositoryRoot $RepositoryRoot `
+            -PullRequestNumber $PullRequestNumber `
+            -CollisionSuffix $CollisionSuffix `
+            -ExpectedIdentity $ExpectedIdentity
+        return $currentIdentity
+    }
+    $currentIdentity = Resolve-AtlasoReleaseBuilderIdentity `
+        -RepositoryRoot $RepositoryRoot `
+        -ReleaseVersion $ReleaseVersion `
+        -ReleaseSourceCommit $ReleaseSourceCommit `
+        -ReleaseWorkflowRunId $ReleaseWorkflowRunId
+    if ([string]$currentIdentity.Kind -cne [string]$ExpectedIdentity.Kind -or
+        [string]$currentIdentity.Name -cne [string]$ExpectedIdentity.Name -or
+        [string]$currentIdentity.ReleaseVersion -cne [string]$ExpectedIdentity.ReleaseVersion -or
+        [string]$currentIdentity.SourceCommit -cne [string]$ExpectedIdentity.SourceCommit -or
+        [long]$currentIdentity.WorkflowRunId -ne [long]$ExpectedIdentity.WorkflowRunId) {
+        throw 'The protected release builder identity changed before a destructive or provider boundary.'
+    }
+    return $currentIdentity
+}
+
+<#
+.SYNOPSIS
 Remove a proven-inactive Photon root and durably retire its marker.
 
 .PARAMETER MarkerPath
@@ -842,14 +897,41 @@ else {
     }
     $childPreparedIsoPath = Join-Path (Join-Path $childSensitiveBuildDirectory 'kickstart') $preparedIsoLeaf
     if (-not $Headless -and -not $ValidateOnly) {
-        if (-not $ReleaseBuilder) {
-            # Credential retrieval can outlive the initial PR proof. Refresh it
-            # before the parent repairs registrations or launches Workstation.
-            $null = Assert-AtlasoTaskBuilderIdentityCurrent `
-                -RepositoryRoot $repoRoot `
-                -PullRequestNumber $PullRequestNumber `
-                -CollisionSuffix $CollisionSuffix `
-                -ExpectedIdentity $builderIdentity
+        # Credential retrieval can outlive the initial identity proof. Refresh
+        # task or release state before the parent mutates VMware provider state.
+        $null = Assert-AtlasoBuilderIdentityCurrent `
+            -RepositoryRoot $repoRoot `
+            -ExpectedIdentity $builderIdentity `
+            -PullRequestNumber $PullRequestNumber `
+            -CollisionSuffix $CollisionSuffix `
+            -ReleaseBuilder:$ReleaseBuilder `
+            -ReleaseVersion $ReleaseVersion `
+            -ReleaseSourceCommit $ReleaseSourceCommit `
+            -ReleaseWorkflowRunId $ReleaseWorkflowRunId
+        $outerBuilderManifestPath = Get-AtlasoVmwareBuilderIdentityManifestPath `
+            -OutputDirectory $outerCleanupOutputDirectory
+        $outerBuilderManifestExists = Test-Path -LiteralPath $outerBuilderManifestPath -PathType Leaf
+        if ($outerCleanupOutputExistedBeforeChild -and -not $outerBuilderManifestExists) {
+            throw "Refusing parent-side VMware mutation without the retained builder ownership manifest: $outerCleanupOutputDirectory"
+        }
+        if ($outerBuilderManifestExists) {
+            $null = Assert-AtlasoVmwareBuilderOwnershipManifest `
+                -Path $outerBuilderManifestPath `
+                -OutputDirectory $outerCleanupOutputDirectory `
+                -Identity $builderIdentity
+            if ($KeepExistingOutput) {
+                $null = Assert-AtlasoVmwareBuilderIdentityManifest `
+                    -Path $outerBuilderManifestPath `
+                    -OutputDirectory $outerCleanupOutputDirectory `
+                    -Identity $builderIdentity
+            }
+        }
+        $outerBuilderVmx = Join-Path $outerCleanupOutputDirectory "$VmName.vmx"
+        if (Test-Path -LiteralPath $outerBuilderVmx -PathType Leaf) {
+            $null = Assert-AtlasoVmwareBuilderVmx `
+                -VmxPath $outerBuilderVmx `
+                -OutputDirectory $outerCleanupOutputDirectory `
+                -Identity $builderIdentity
         }
         $parentVmrunPath = Resolve-WorkstationVmrunPath -Path $VmrunPath
         if (-not $KeepExistingOutput) {
@@ -1472,15 +1554,17 @@ if ($requiresBuilderReservation) {
         @()
     }
     $preferredBuilderAddress = if ($builderIpWasPassed) { $builderParts[0] } else { '' }
-    if (-not $ReleaseBuilder) {
-        # Network discovery can outlive every earlier PR proof. Refresh it at
-        # the final boundary before reservation state is durably admitted.
-        $null = Assert-AtlasoTaskBuilderIdentityCurrent `
-            -RepositoryRoot $repoRoot `
-            -PullRequestNumber $PullRequestNumber `
-            -CollisionSuffix $CollisionSuffix `
-            -ExpectedIdentity $builderIdentity
-    }
+    # Network discovery can outlive every earlier identity proof. Refresh task
+    # or release state before reservation data is durably admitted.
+    $null = Assert-AtlasoBuilderIdentityCurrent `
+        -RepositoryRoot $repoRoot `
+        -ExpectedIdentity $builderIdentity `
+        -PullRequestNumber $PullRequestNumber `
+        -CollisionSuffix $CollisionSuffix `
+        -ReleaseBuilder:$ReleaseBuilder `
+        -ReleaseVersion $ReleaseVersion `
+        -ReleaseSourceCommit $ReleaseSourceCommit `
+        -ReleaseWorkflowRunId $ReleaseWorkflowRunId
     $builderReservation = Enter-AtlasoVmwareBuilderAddressReservation `
         -NetworkName $VmnetName `
         -Subnet $reservationSubnet `
@@ -1537,15 +1621,17 @@ $packerVariables = @{
 $packerBuildInvoker = $null
 if (-not $ValidateOnly -and -not $PrepareIsoOnly) {
     $resolvedVmrunPath = Resolve-WorkstationVmrunPath -Path $VmrunPath
-    if (-not $ReleaseBuilder) {
-        # Credential retrieval and network preparation can outlive the earlier
-        # proof, so refresh remote ownership immediately before output mutation.
-        $null = Assert-AtlasoTaskBuilderIdentityCurrent `
-            -RepositoryRoot $repoRoot `
-            -PullRequestNumber $PullRequestNumber `
-            -CollisionSuffix $CollisionSuffix `
-            -ExpectedIdentity $builderIdentity
-    }
+    # Network preparation can outlive the prior proof, so refresh task or
+    # release identity immediately before manifest and output mutation.
+    $null = Assert-AtlasoBuilderIdentityCurrent `
+        -RepositoryRoot $repoRoot `
+        -ExpectedIdentity $builderIdentity `
+        -PullRequestNumber $PullRequestNumber `
+        -CollisionSuffix $CollisionSuffix `
+        -ReleaseBuilder:$ReleaseBuilder `
+        -ReleaseVersion $ReleaseVersion `
+        -ReleaseSourceCommit $ReleaseSourceCommit `
+        -ReleaseWorkflowRunId $ReleaseWorkflowRunId
     if (-not $builderManifestExists) {
         Write-AtlasoVmwareBuilderIdentityManifest `
             -Path $builderIdentityManifestPath `
@@ -1628,15 +1714,17 @@ if (-not $ValidateOnly -and -not $PrepareIsoOnly) {
                 -ProcessLauncher $requireExistingUi
         }
         $packerPath = (Get-Command packer -ErrorAction Stop).Source
-        if (-not $ReleaseBuilder) {
-            # ISO preparation and Packer initialization happen outside this
-            # callback, so refresh ownership at the final provider boundary.
-            $null = Assert-AtlasoTaskBuilderIdentityCurrent `
-                -RepositoryRoot $repoRoot `
-                -PullRequestNumber $PullRequestNumber `
-                -CollisionSuffix $CollisionSuffix `
-                -ExpectedIdentity $builderIdentity
-        }
+        # ISO preparation and Packer initialization happen outside this
+        # callback, so refresh identity at the final provider boundary.
+        $null = Assert-AtlasoBuilderIdentityCurrent `
+            -RepositoryRoot $repoRoot `
+            -ExpectedIdentity $builderIdentity `
+            -PullRequestNumber $PullRequestNumber `
+            -CollisionSuffix $CollisionSuffix `
+            -ReleaseBuilder:$ReleaseBuilder `
+            -ReleaseVersion $ReleaseVersion `
+            -ReleaseSourceCommit $ReleaseSourceCommit `
+            -ReleaseWorkflowRunId $ReleaseWorkflowRunId
         Invoke-AtlasoMonitoredPackerBuild `
             -PackerPath $packerPath `
             -Arguments $PackerArguments `
@@ -1651,12 +1739,16 @@ if (-not $ValidateOnly -and -not $PrepareIsoOnly) {
     }.GetNewClosure()
 }
 
-if (-not $ReleaseBuilder -and -not $ValidateOnly -and -not $PrepareIsoOnly) {
-    $null = Assert-AtlasoTaskBuilderIdentityCurrent `
+if (-not $ValidateOnly -and -not $PrepareIsoOnly) {
+    $null = Assert-AtlasoBuilderIdentityCurrent `
         -RepositoryRoot $repoRoot `
+        -ExpectedIdentity $builderIdentity `
         -PullRequestNumber $PullRequestNumber `
         -CollisionSuffix $CollisionSuffix `
-        -ExpectedIdentity $builderIdentity
+        -ReleaseBuilder:$ReleaseBuilder `
+        -ReleaseVersion $ReleaseVersion `
+        -ReleaseSourceCommit $ReleaseSourceCommit `
+        -ReleaseWorkflowRunId $ReleaseWorkflowRunId
 }
 
 Invoke-AtlasoPhotonImageBuild `
@@ -1696,14 +1788,18 @@ Invoke-AtlasoPhotonImageBuild `
     -ValidateOnly:$ValidateOnly `
     -PrepareIsoOnly:$PrepareIsoOnly
 
-if (-not $ReleaseBuilder -and -not $ValidateOnly -and -not $PrepareIsoOnly) {
+if (-not $ValidateOnly -and -not $PrepareIsoOnly) {
     # A Packer build can outlive every pre-launch ownership proof. Refresh the
-    # remote PR identity before the completed artifact gains provenance.
-    $null = Assert-AtlasoTaskBuilderIdentityCurrent `
+    # task or release identity before the completed artifact gains provenance.
+    $null = Assert-AtlasoBuilderIdentityCurrent `
         -RepositoryRoot $repoRoot `
+        -ExpectedIdentity $builderIdentity `
         -PullRequestNumber $PullRequestNumber `
         -CollisionSuffix $CollisionSuffix `
-        -ExpectedIdentity $builderIdentity
+        -ReleaseBuilder:$ReleaseBuilder `
+        -ReleaseVersion $ReleaseVersion `
+        -ReleaseSourceCommit $ReleaseSourceCommit `
+        -ReleaseWorkflowRunId $ReleaseWorkflowRunId
 }
 
 if (-not $ValidateOnly -and -not $PrepareIsoOnly) {
