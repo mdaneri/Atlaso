@@ -2487,6 +2487,18 @@
           ]
         },
         {
+          "text": "I withdraw your permission to merge this PR.",
+          "add_holds": [
+            "do not merge"
+          ]
+        },
+        {
+          "text": "I rescind your authorization to merge this PR.",
+          "add_holds": [
+            "do not merge"
+          ]
+        },
+        {
           "text": "You are not allowed to merge this PR.",
           "add_holds": [
             "do not merge"

@@ -679,7 +679,10 @@ MERGE_HOLD_MODAL_PROHIBITION = re.compile(
     r"(?:from\s+merging|to\s+merge)|"
     r"(?:(?:my|your|our|the)\s+)?(?:permission|authorization|authority)\s+"
     r"to\s+merge(?:\s+(?:(?:this|the)\s+)?(?:pull request|pr))?\s+"
-    r"(?:is|was|has\s+been)\s+(?:revoked|rescinded|withdrawn))\b"
+    r"(?:is|was|has\s+been)\s+(?:revoked|rescinded|withdrawn)|"
+    r"i\s+(?:withdraw|revoke|rescind)\s+"
+    r"(?:(?:my|your|our|the)\s+)?(?:permission|authorization|authority)\s+"
+    r"to\s+merge(?:\s+(?:(?:this|the)\s+)?(?:pull request|pr))?)\b"
 )
 DEFAULT_MERGE_AUTHORITY_NEGATIONS = re.compile(
     r"(?:(?:do not|don't|don’t|never|must not|should not|cannot|can't|can’t|not)"
@@ -693,9 +696,12 @@ DEFAULT_MERGE_AUTHORITY_NEGATIONS = re.compile(
 DEFAULT_MERGE_AUTHORITY_TRAILING_NEGATIONS = re.compile(
     r"^\s*(?:[\u0022\u0027\u0060\u2019\u201d]\s*)?"
     r"(?:[,;]\s*)?(?:(?:but|and)\s+)?"
-    r"(?:(?:does|do|is|are|must|should|can|may|will|would)\s+"
+    r"(?:(?:does|do|is|are|must|should|can|may|will|would|has|have|had|"
+    r"was|were)\s+"
     r"(?:not|never)|doesn't|doesn’t|isn't|isn’t|aren't|aren’t|"
     r"cannot|can't|can’t|won't|won’t|wouldn't|wouldn’t|"
+    r"hasn't|hasn’t|haven't|haven’t|hadn't|hadn’t|wasn't|wasn’t|"
+    r"weren't|weren’t|"
     r"(?:is|are|remains?|be)\s+(?:forbidden|disallowed|prohibited))\b"
 )
 DEFAULT_MERGE_AUTHORITY_SECOND_INSTRUCTION_CONDITIONS = re.compile(

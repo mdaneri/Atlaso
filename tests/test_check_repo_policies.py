@@ -660,6 +660,9 @@ def test_merge_hold_directions_recognizes_modal_merge_prohibitions() -> None:
         "Your permission to merge this PR is revoked.",
         "My authorization to merge the pull request was rescinded.",
         "The authority to merge this PR has been withdrawn.",
+        "I withdraw your permission to merge this PR.",
+        "I rescind your authorization to merge this PR.",
+        "I revoke the authority to merge this PR.",
     ):
         assert merge_hold_directions(instruction) == {"do not merge": "add"}
 
@@ -1306,6 +1309,15 @@ def test_generated_authority_rejects_imperative_denial() -> None:
     assert not has_affirmative_default_merge_authority(
         "Ask whether to complete the guarded merge."
     )
+    for denial in (
+        "has not been approved",
+        "was not approved",
+        "hasn't been authorized",
+        "wasn’t permitted",
+    ):
+        assert not has_affirmative_default_merge_authority(
+            f"The request to complete the guarded merge {denial}."
+        )
 
 
 def test_generated_permission_cannot_withdraw_source_hold(tmp_path: Path) -> None:
