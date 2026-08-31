@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import configparser
+import hashlib
 import os
 import stat
 import tempfile
@@ -23,6 +24,9 @@ CANONICAL_METADATA_URL = (
     "photon_updates_5.0_x86_64/repodata/repomd.xml"
 )
 CANONICAL_GPG_KEY_URI = "file:///etc/pki/rpm-gpg/VMWARE-RPM-GPG-KEY-4096"
+EXPECTED_GPG_KEY_SHA256 = (
+    "88b2e118c08f0a7c2acc172ac9b8557a30677ffaff5060d304697bee75028bc7"
+)
 LEGACY_GPG_KEY_URIS = (
     "file:///etc/pki/rpm-gpg/VMWARE-RPM-GPG-KEY "
     "file:///etc/pki/rpm-gpg/VMWARE-RPM-GPG-KEY-4096"
@@ -146,6 +150,17 @@ def _validate_repository(parser: configparser.ConfigParser, gpg_key_path: Path) 
             "Photon updates repository must use the approved 4096-bit RPM signing key."
         )
     _require_regular_trusted_file(gpg_key_path, "Photon RPM signing key")
+    digest = hashlib.sha256()
+    try:
+        with gpg_key_path.open("rb") as stream:
+            for block in iter(lambda: stream.read(64 * 1024), b""):
+                digest.update(block)
+    except OSError as exc:
+        raise PhotonRepositoryError("Photon RPM signing key is unreadable.") from exc
+    if digest.hexdigest() != EXPECTED_GPG_KEY_SHA256:
+        raise PhotonRepositoryError(
+            "Photon RPM signing key does not match the pinned upstream identity."
+        )
 
 
 def _canonical_repository_text() -> str:

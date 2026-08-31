@@ -13,6 +13,7 @@ from urllib.request import Request
 import pytest
 
 SCRIPT = Path("image/common/scripts/configure_photon_repositories.py")
+PINNED_GPG_KEY = Path("image/common/photon-rpm-gpg/VMWARE-RPM-GPG-KEY-4096")
 
 
 def load_configurator() -> ModuleType:
@@ -111,7 +112,6 @@ def test_legacy_ga_updates_repository_is_canonicalized_before_refresh(
 
     configurator = load_configurator()
     repository = tmp_path / "photon-updates.repo"
-    gpg_key = tmp_path / "VMWARE-RPM-GPG-KEY-4096"
     write_repository(
         repository,
         baseurl=(
@@ -123,7 +123,6 @@ def test_legacy_ga_updates_repository_is_canonicalized_before_refresh(
             "file:///etc/pki/rpm-gpg/VMWARE-RPM-GPG-KEY-4096"
         ),
     )
-    gpg_key.write_text("public key fixture\n", encoding="utf-8")
     observed: dict[str, str | int] = {}
 
     def open_metadata(request: Request, *, timeout: int) -> MetadataResponse:
@@ -132,7 +131,7 @@ def test_legacy_ga_updates_repository_is_canonicalized_before_refresh(
         return MetadataResponse(configurator.CANONICAL_METADATA_URL)
 
     assert configurator.configure_photon_updates_repository(
-        repository, gpg_key, open_metadata
+        repository, PINNED_GPG_KEY, open_metadata
     )
     canonical = repository.read_text(encoding="utf-8")
     assert f"baseurl={configurator.CANONICAL_BASEURL}\n" in canonical
@@ -189,14 +188,12 @@ def test_untrusted_repository_configuration_fails_closed(
 
     configurator = load_configurator()
     repository = tmp_path / "photon-updates.repo"
-    gpg_key = tmp_path / "VMWARE-RPM-GPG-KEY-4096"
     write_repository(repository, baseurl=baseurl, gpgcheck=gpgcheck)
-    gpg_key.write_text("public key fixture\n", encoding="utf-8")
 
     with pytest.raises(configurator.PhotonRepositoryError, match=message):
         configurator.configure_photon_updates_repository(
             repository,
-            gpg_key,
+            PINNED_GPG_KEY,
             lambda *_args, **_kwargs: pytest.fail("probe must not run"),
         )
 
@@ -212,14 +209,12 @@ def test_unreachable_canonical_metadata_fails_before_repository_rewrite(
 
     configurator = load_configurator()
     repository = tmp_path / "photon-updates.repo"
-    gpg_key = tmp_path / "VMWARE-RPM-GPG-KEY-4096"
     legacy = (
         "https://packages.vmware.com/photon/updates/$releasever/"
         "photon_updates_$releasever_$basearch"
     )
     write_repository(repository, baseurl=legacy)
     original = repository.read_bytes()
-    gpg_key.write_text("public key fixture\n", encoding="utf-8")
 
     def fail_probe(*_args: object, **_kwargs: object) -> MetadataResponse:
         raise URLError("offline")
@@ -229,6 +224,30 @@ def test_unreachable_canonical_metadata_fails_before_repository_rewrite(
         match="Canonical Photon 5 updates metadata is unreachable",
     ):
         configurator.configure_photon_updates_repository(
-            repository, gpg_key, fail_probe
+            repository, PINNED_GPG_KEY, fail_probe
         )
     assert repository.read_bytes() == original
+
+
+def test_substituted_signing_key_fails_before_repository_probe(tmp_path: Path) -> None:
+    """Reject a regular, permission-safe file with the wrong key identity.
+
+    Args:
+        tmp_path: Pytest-provided isolated filesystem root.
+    """
+
+    configurator = load_configurator()
+    repository = tmp_path / "photon-updates.repo"
+    substituted_key = tmp_path / "VMWARE-RPM-GPG-KEY-4096"
+    write_repository(repository, baseurl=configurator.CANONICAL_BASEURL)
+    substituted_key.write_text("substituted public key\n", encoding="utf-8")
+
+    with pytest.raises(
+        configurator.PhotonRepositoryError,
+        match="does not match the pinned upstream identity",
+    ):
+        configurator.configure_photon_updates_repository(
+            repository,
+            substituted_key,
+            lambda *_args, **_kwargs: pytest.fail("probe must not run"),
+        )
