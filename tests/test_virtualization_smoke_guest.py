@@ -18,8 +18,8 @@ HOST_KEY = "ssh-ed25519 " + base64.b64encode(
 ).decode()
 
 
-def test_smoke_dependency_input_matches_the_only_third_party_import() -> None:
-    """Keep the smoke lock narrower than the credential-bridge dependency set."""
+def test_smoke_dependency_input_matches_runtime_and_shared_release_pin() -> None:
+    """Keep the smoke lock narrow while aligning its shared release dependency."""
     root = Path(__file__).resolve().parents[1]
     source = (root / "scripts/virtualization/smoke_guest_ssh.py").read_text(
         encoding="utf-8"
@@ -40,7 +40,36 @@ def test_smoke_dependency_input_matches_the_only_third_party_import() -> None:
     ]
 
     assert third_party == {"paramiko"}
-    assert declarations == ["paramiko>=3.5.0"]
+    assert declarations == ["cffi==2.1.0", "paramiko>=3.5.0"]
+
+
+def test_smoke_lock_matches_shared_release_tool_versions() -> None:
+    """Prevent sequential candidate installs from replacing shared packages."""
+    root = Path(__file__).resolve().parents[1]
+
+    def lock_versions(path: Path) -> dict[str, str]:
+        """Return exact package versions from one generated lock.
+
+        Args:
+            path: Generated lock file to inspect.
+        """
+        versions: dict[str, str] = {}
+        for line in path.read_text(encoding="utf-8").splitlines():
+            name, separator, remainder = line.partition("==")
+            if separator and name and not name[0].isspace():
+                versions[name.lower()] = remainder.split(maxsplit=1)[0]
+        return versions
+
+    release_versions = lock_versions(root / "requirements-release-tools.lock")
+    smoke_versions = lock_versions(root / "requirements-virtualization-smoke.lock")
+    shared = release_versions.keys() & smoke_versions.keys()
+
+    assert shared
+    assert {
+        package: (release_versions[package], smoke_versions[package])
+        for package in shared
+        if release_versions[package] != smoke_versions[package]
+    } == {}
 
 
 class _FakeChannel:

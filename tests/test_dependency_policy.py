@@ -311,7 +311,7 @@ def test_dependency_policy_recognizes_prefixed_python_pip_invocations(
             "workflow requirement lock is outside the generated dependency policy "
             "inventory: requirements-ad-hoc.lock" in error
             for error in validate(tmp_path)
-        )
+        ), invocation
 
 
 def test_dependency_policy_checks_nested_shell_pip_command(tmp_path: Path) -> None:
@@ -378,6 +378,31 @@ def test_dependency_policy_checks_eval_pip_command(tmp_path: Path) -> None:
         "inventory: requirements-ad-hoc.lock" in error
         for error in validate(tmp_path)
     )
+
+
+def test_dependency_policy_checks_invoke_expression_pip_command(
+    tmp_path: Path,
+) -> None:
+    """Verify PowerShell expression launchers cannot hide a requirement install.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
+    write_valid_policy(tmp_path)
+    (tmp_path / "requirements-ad-hoc.lock").write_text("placeholder\n", encoding="utf-8")
+    workflow = tmp_path / ".github" / "workflows" / "release.yml"
+    workflow.parent.mkdir(parents=True, exist_ok=True)
+    for launcher in ("Invoke-Expression", "iex"):
+        workflow.write_text(
+            f"run: {launcher} 'python -m pip install -r requirements-ad-hoc.lock'\n",
+            encoding="utf-8",
+        )
+
+        assert any(
+            "workflow requirement lock is outside the generated dependency policy "
+            "inventory: requirements-ad-hoc.lock" in error
+            for error in validate(tmp_path)
+        )
 
 
 def test_dependency_policy_checks_powershell_command_string(tmp_path: Path) -> None:
@@ -849,6 +874,30 @@ def test_dependency_policy_decodes_quoted_run_scalars(tmp_path: Path) -> None:
             "inventory: requirements-ad-hoc.lock" in error
             for error in validate(tmp_path)
         )
+
+
+def test_dependency_policy_decodes_escaped_block_run_key(tmp_path: Path) -> None:
+    """Verify escaped block-style YAML keys are matched semantically.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
+    write_valid_policy(tmp_path)
+    (tmp_path / "requirements-ad-hoc.lock").write_text(
+        "placeholder\n", encoding="utf-8"
+    )
+    workflow = tmp_path / ".github" / "workflows" / "release.yml"
+    workflow.parent.mkdir(parents=True, exist_ok=True)
+    workflow.write_text(
+        '- "r\\u0075n": python -m pip install -r requirements-ad-hoc.lock\n',
+        encoding="utf-8",
+    )
+
+    assert any(
+        "workflow requirement lock is outside the generated dependency policy "
+        "inventory: requirements-ad-hoc.lock" in error
+        for error in validate(tmp_path)
+    )
 
 
 def test_dependency_policy_rejects_untrusted_atlaso_checkout_ref(

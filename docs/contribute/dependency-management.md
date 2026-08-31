@@ -50,6 +50,10 @@ shorten the upload-time cutoff to obtain a newer dependency, including for a sec
 satisfies the input declarations, change the input constraint through a reviewed dependency update or wait until the
 required release reaches seven full days.
 
+The Windows candidate job installs the release-tools and virtualization-smoke locks into one interpreter. Their input
+manifests therefore pin shared runtime packages compatibly so the second installation cannot replace part of the
+already validated release-tool environment.
+
 Protected appliance, promotion, Inventory Linux, and virtualization publication jobs intentionally run without a
 writable Actions cache scope. Their `actions/setup-python` steps therefore do not enable the built-in pip cache, because
 that option always registers a post-job cache save. This cache-free setup does not relax dependency integrity: every

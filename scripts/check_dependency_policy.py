@@ -30,9 +30,6 @@ PIP_MODULE_RE = re.compile(
 )
 SHELL_LAUNCHERS = {"bash", "dash", "ksh", "sh", "zsh"}
 POWERSHELL_LAUNCHERS = {"powershell", "powershell.exe", "pwsh", "pwsh.exe"}
-RUN_RE = re.compile(
-    r"^(?P<indent>\s*)(?:-\s+)?(?:run|'run'|\"run\")\s*:\s*(?P<value>.*)$"
-)
 ALIAS_RE = re.compile(r"\*[A-Za-z_][A-Za-z0-9_.-]*")
 UNSUPPORTED_RUN_ALIAS_PREFIX = "unsupported-run-alias:"
 TRUSTED_ATLASO_REFS = {
@@ -115,6 +112,23 @@ LOCK_POLICIES = (
 )
 
 
+def _yaml_mapping_value_source(line: str, key: str) -> str | None:
+    """Return raw block-mapping value text for a semantically matching key.
+
+    Args:
+        line: YAML source line.
+        key: Decoded mapping key expected on the line.
+    """
+    match = re.fullmatch(
+        r"\s*(?:-\s+)?(?P<key>'(?:''|[^'])*'|\"(?:\\.|[^\"\\])*\"|[^:\s]+)"
+        r"\s*:\s*(?P<value>.*?)\s*",
+        line,
+    )
+    if not match or _yaml_inline_scalar(match.group("key")) != key:
+        return None
+    return match.group("value").strip()
+
+
 def _yaml_scalar(line: str, key: str) -> str | None:
     """Return a simple YAML scalar with optional quotes and comment removed.
 
@@ -122,11 +136,9 @@ def _yaml_scalar(line: str, key: str) -> str | None:
         line: YAML source line.
         key: Mapping key expected on the line.
     """
-    key_pattern = rf"(?:{re.escape(key)}|'{re.escape(key)}'|\"{re.escape(key)}\")"
-    match = re.fullmatch(rf"\s*(?:-\s+)?{key_pattern}\s*:\s*(.*?)\s*", line)
-    if not match:
+    value = _yaml_mapping_value_source(line, key)
+    if value is None:
         return None
-    value = match.group(1).strip()
     if value.startswith("'"):
         quoted = re.fullmatch(r"'((?:''|[^'])*)'(?:\s+#.*)?", value)
         if not quoted:
@@ -160,11 +172,7 @@ def _yaml_plain_scalar(
     line_indent = len(line) - len(line.lstrip())
     key_indent = line_indent + (2 if re.match(r"\s*-\s+", line) else 0)
     value = _yaml_scalar(line, key)
-    key_pattern = rf"(?:{re.escape(key)}|'{re.escape(key)}'|\"{re.escape(key)}\")"
-    source_match = re.fullmatch(
-        rf"\s*(?:-\s+)?{key_pattern}\s*:\s*(.*?)\s*", line
-    )
-    source = source_match.group(1).strip() if source_match else ""
+    source = _yaml_mapping_value_source(line, key) or ""
     if value is None and source.startswith(("'", '"')):
         cursor = index + 1
         parts = [source]
@@ -923,7 +931,7 @@ def _segment_requirement_paths(segment: str) -> list[str]:
         return nested_paths
     for eval_index, token in enumerate(tokens):
         launcher = token.replace("\\", "/").rsplit("/", maxsplit=1)[-1].lower()
-        if launcher != "eval":
+        if launcher not in {"eval", "iex", "invoke-expression"}:
             continue
         command_index = eval_index + 1
         if command_index < len(tokens) and tokens[command_index] == "--":
@@ -1217,14 +1225,13 @@ def _workflow_run_commands(lines: list[str]) -> list[tuple[int, str, str, int]]:
                         )
             index += 1
             continue
-        match = RUN_RE.match(lines[index])
-        if not match:
-            index += 1
-            continue
         line_number = index + 1
         value, next_index = _yaml_plain_scalar(lines, index, "run")
         if value is None:
-            value = match.group("value").strip()
+            value = _yaml_mapping_value_source(lines[index], "run")
+            if value is None:
+                index += 1
+                continue
             next_index = index + 1
         if _is_alias_value(value):
             working_directory = _workflow_effective_working_directory(lines, index)
@@ -1238,7 +1245,7 @@ def _workflow_run_commands(lines: list[str]) -> list[tuple[int, str, str, int]]:
             )
             index += 1
             continue
-        run_indent = len(match.group("indent"))
+        run_indent = len(lines[index]) - len(lines[index].lstrip())
         if value and not value.startswith(("|", ">")):
             working_directory = _workflow_effective_working_directory(lines, index)
             commands.append((line_number, value, working_directory, index))
