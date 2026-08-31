@@ -2542,6 +2542,37 @@
       ]
     },
     {
+      "name": "ci-qualified-prohibition-is-resumable",
+      "default_merge_authority": true,
+      "instructions": [
+        {
+          "text": "Implement issue #602, but do not merge until CI passes."
+        }
+      ],
+      "generated": "Complete the guarded merge after CI passes.",
+      "expected_holds": []
+    },
+    {
+      "name": "granted-approval-withdraws-wait-hold",
+      "default_merge_authority": true,
+      "instructions": [
+        {
+          "text": "Implement issue #602, but wait for my approval before merging.",
+          "add_holds": [
+            "wait for approval"
+          ]
+        },
+        {
+          "text": "You have my approval to merge this PR.",
+          "remove_holds": [
+            "wait for approval"
+          ]
+        }
+      ],
+      "generated": "Complete the guarded merge when eligible.",
+      "expected_holds": []
+    },
+    {
       "name": "gerund-passive-approval-requirement-is-preserved",
       "default_merge_authority": true,
       "instructions": [

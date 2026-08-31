@@ -958,7 +958,8 @@ MERGE_HOLD_STANDALONE_PERMISSION = re.compile(
     r"(?:\s+(?:(?:this|the)\s+)?(?:pull request|pr))?(?:\s+now)?|"
     r"i\s+authorize\s+you\s+to\s+merge"
     r"(?:\s+(?:(?:this|the)\s+)?(?:pull request|pr))?|"
-    r"you\s+have\s+(?:permission|authorization)\s+to\s+merge"
+    r"you\s+have\s+(?:(?:my|our|your)\s+)?"
+    r"(?:permission|authorization|approval)\s+to\s+merge"
     r"(?:\s+(?:(?:this|the)\s+)?(?:pull request|pr))?|"
     r"go ahead and merge|"
     r"proceed (?:with the merge|with merging|to merge)(?: now)?)\b"
@@ -1009,7 +1010,8 @@ MERGE_HOLD_WITHOUT_APPROVAL = re.compile(
     r"(?:(?:my|our|your|the|maintainer|owner|code owner)\s+)?approval\b"
 )
 MERGE_HOLD_RESUMABLE_GATE_SUFFIX = re.compile(
-    r"^\s+(?:after|when|if|once)\s+(?:ci|tests?|checks?|validation|builds?|"
+    r"^\s+(?:after|when|if|once|until)\s+"
+    r"(?:ci|tests?|checks?|validation|builds?|"
     r"(?:(?:[a-z][a-z0-9_-]*\s+){0,2}review))\b"
 )
 MERGE_HOLD_NON_PR_OBJECT = re.compile(
@@ -1313,7 +1315,7 @@ def _is_resumable_gate_scoped_disposition(
         offset: Character offset where the phrase begins.
         pattern: Exact hold phrase matched in the segment.
     """
-    if hold != "pr only":
+    if hold not in {"do not merge", "pr only"}:
         return False
     suffix = segment[offset + len(pattern) :]
     return MERGE_HOLD_RESUMABLE_GATE_SUFFIX.search(suffix) is not None

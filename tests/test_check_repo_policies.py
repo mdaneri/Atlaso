@@ -722,6 +722,10 @@ def test_merge_hold_directions_recognizes_direct_authorization() -> None:
         "I authorize you to merge this PR.",
         active_holds=("do not merge",),
     ) == {"do not merge": "remove"}
+    assert merge_hold_directions(
+        "You have my approval to merge this PR.",
+        active_holds=("wait for approval",),
+    ) == {"wait for approval": "remove"}
 
 
 def test_merge_hold_directions_recognizes_direct_merge_imperatives() -> None:
@@ -760,6 +764,9 @@ def test_merge_hold_directions_ignores_pr_only_resumable_gate() -> None:
     """Verify a PR object followed by a CI gate is not a permanent PR-only hold."""
     assert merge_hold_directions(
         "Implement issue #602, but merge this PR only after CI passes."
+    ) == {}
+    assert merge_hold_directions(
+        "Implement issue #602, but do not merge until CI passes."
     ) == {}
 
 
