@@ -752,7 +752,9 @@ The following cross-cutting boundaries always apply:
   keep it identical across Packer `vm_name`, Workstation `displayName`, output directory, VMX filename/path, address
   reservation, startup diagnostics, ownership manifest, provenance, cleanup scope, and reported evidence. Multiple
   builders for one pull request retain the PR segment and use sanitized suffixes. Protected release builders instead
-  use the deterministic version-and-commit identity produced by that helper, optionally extended by workflow run ID.
+  use the deterministic version-and-commit identity produced by that helper, optionally extended by workflow run ID,
+  only after independently proving the exact reachable protected-main commit, immutable software-release tag, complete
+  non-draft release asset set, and successful main push CI.
   Require the sibling ownership manifest before replacing a retained output. A task manifest may advance to a newer
   exact head only when repository, pull request, branch, canonical name, and suffix still match; retained reuse requires
   the exact commit. Require schema-v3 builder provenance before clone or export. Never rename, adopt, reuse, redeploy,

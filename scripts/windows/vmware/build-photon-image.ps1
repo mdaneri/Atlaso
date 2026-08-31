@@ -380,6 +380,83 @@ function Resolve-AtlasoReleaseBuilderIdentity {
     if ($LASTEXITCODE -ne 0 -or $version -cne $ReleaseVersion) {
         throw 'The protected release builder version does not match synchronized repository metadata.'
     }
+    $gh = Get-Command gh -ErrorAction SilentlyContinue
+    if (-not $gh) {
+        throw 'GitHub CLI is required to prove the protected release builder source.'
+    }
+    $originUrl = ([string](& git -C $RepositoryRoot remote get-url origin)).Trim()
+    if ($LASTEXITCODE -ne 0) {
+        throw 'Could not resolve the exact origin remote for the protected release builder.'
+    }
+    $originMatch = [regex]::Match(
+        $originUrl,
+        '^(?:https://github\.com/|ssh://git@github\.com/|git@github\.com:)(?<repository>[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+?)(?:\.git)?$'
+    )
+    if (-not $originMatch.Success) {
+        throw 'The protected release builder origin must be one unambiguous GitHub repository URL.'
+    }
+    $repository = $originMatch.Groups['repository'].Value
+    $canonicalRepository = ([string](& $gh.Source repo view $repository `
+            --json nameWithOwner --jq '.nameWithOwner')).Trim()
+    if ($LASTEXITCODE -ne 0 -or
+        $canonicalRepository -notmatch '^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$' -or
+        -not $canonicalRepository.Equals($repository, [StringComparison]::OrdinalIgnoreCase)) {
+        throw 'GitHub returned a repository identity that differs from the protected release checkout.'
+    }
+    & git -C $RepositoryRoot fetch origin main --no-tags
+    if ($LASTEXITCODE -ne 0) {
+        throw 'Could not refresh protected main for release-builder verification.'
+    }
+    & git -C $RepositoryRoot merge-base --is-ancestor $ReleaseSourceCommit origin/main
+    if ($LASTEXITCODE -ne 0) {
+        throw 'The protected release builder source is not reachable from current origin/main.'
+    }
+    $softwareTag = "v$ReleaseVersion"
+    $tagCommit = ([string](& $gh.Source api `
+            "repos/$canonicalRepository/commits/$softwareTag" --jq '.sha')).Trim()
+    if ($LASTEXITCODE -ne 0 -or $tagCommit -cne $ReleaseSourceCommit) {
+        throw "The protected release tag $softwareTag does not identify exact checkout HEAD."
+    }
+    $releaseJson = [string](& $gh.Source release view $softwareTag `
+        --repo $canonicalRepository `
+        --json 'tagName,isDraft,isPrerelease,assets')
+    if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($releaseJson)) {
+        throw "Could not verify the protected software Release $softwareTag."
+    }
+    try {
+        $release = $releaseJson | ConvertFrom-Json
+    }
+    catch {
+        throw "GitHub returned invalid protected software Release evidence for $softwareTag."
+    }
+    if ([string]$release.tagName -cne $softwareTag -or
+        [bool]$release.isDraft -or [bool]$release.isPrerelease) {
+        throw "The protected software Release $softwareTag is missing or misclassified."
+    }
+    $assetNames = @($release.assets | ForEach-Object { [string]$_.name })
+    foreach ($requiredAsset in @(
+            "atlaso-appliance-$ReleaseVersion.tar.gz",
+            'release-manifest.json',
+            'release-manifest.json.sig'
+        )) {
+        if ($requiredAsset -notin $assetNames) {
+            throw "The protected software Release $softwareTag is missing $requiredAsset."
+        }
+    }
+    $successfulRunText = [string](& $gh.Source api --method GET `
+        "repos/$canonicalRepository/actions/workflows/ci.yml/runs" `
+        -f "head_sha=$ReleaseSourceCommit" `
+        -f 'branch=main' `
+        -f 'event=push' `
+        -f 'status=success' `
+        -f 'per_page=100' `
+        --jq '.total_count')
+    $successfulRuns = 0
+    if ($LASTEXITCODE -ne 0 -or
+        -not [int]::TryParse($successfulRunText.Trim(), [ref]$successfulRuns) -or
+        $successfulRuns -lt 1) {
+        throw 'The protected release builder source has no successful main push CI run.'
+    }
     $releaseIdentityArguments = @{
         ReleaseVersion = $ReleaseVersion
         SourceCommit   = $ReleaseSourceCommit
