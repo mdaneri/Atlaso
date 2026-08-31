@@ -279,8 +279,9 @@ function resolveCssVariables (value, customProperties, seen = new Set()) {
   let resolved = ''
   let cursor = 0
   while (cursor < value.length) {
-    const start = value.indexOf('var(', cursor)
-    if (start < 0) return resolved + value.slice(cursor)
+    const relativeStart = value.slice(cursor).search(/var\(/i)
+    if (relativeStart < 0) return resolved + value.slice(cursor)
+    const start = cursor + relativeStart
     resolved += value.slice(cursor, start)
     let depth = 1
     let end = start + 4
@@ -307,6 +308,10 @@ function resolveCssVariables (value, customProperties, seen = new Set()) {
     cursor = end
   }
   return resolved
+}
+
+function hasCssVariable (value) {
+  return /var\(/i.test(value)
 }
 
 function hasHiddenAttributes (attributes, inheritedCustomProperties = new Map(), tag = '') {
@@ -336,14 +341,14 @@ function hasHiddenAttributes (attributes, inheritedCustomProperties = new Map(),
       encodedDeclaration.slice(separator + 1).trim()
     )
     let value = decodeCssEscapes(encodedImportance.value).trim()
-    if (!property.startsWith('--') && !value.includes('var(')) {
+    if (!property.startsWith('--') && !hasCssVariable(value)) {
       value = value.toLowerCase()
     }
     const important = encodedImportance.important
     if (
       !property.startsWith('--') &&
       !isValidSuppressionDeclaration(property, value) &&
-      !value.includes('var(')
+      !hasCssVariable(value)
     ) {
       continue
     }
@@ -364,7 +369,7 @@ function hasHiddenAttributes (attributes, inheritedCustomProperties = new Map(),
   }
   for (const property of ['display', 'visibility', 'content-visibility', 'opacity', 'color']) {
     const declaration = declarations.get(property)
-    if (!declaration?.value.includes('var(')) continue
+    if (!declaration || !hasCssVariable(declaration.value)) continue
     const resolved = resolveCssVariables(declaration.value, customProperties)
     const normalizedResolved = resolved?.toLowerCase() ?? null
     declaration.value = normalizedResolved !== null && isValidSuppressionDeclaration(property, normalizedResolved)
