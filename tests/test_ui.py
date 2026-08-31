@@ -42,6 +42,25 @@ def vcf_hostname_form_data(
     }
 
 
+def populated_vcf_form_data(client, data: dict[str, object]) -> dict[str, object]:
+    """Populate and return an exact VCF FQDN creation form revision.
+
+    Args:
+        client: HTTP test client used to exercise the Atlaso application.
+        data: Complete candidate form data including CSRF.
+
+    Returns:
+        The form data with the server-signed populated revision.
+    """
+    response = client.post(
+        "/vcf-helper/generated-fqdns/populate",
+        data=data,
+        headers={"X-Atlaso-VCF-Helper": "1"},
+    )
+    assert response.status_code == 200, response.text
+    return {**data, "populated_revision": response.json()["populated_revision"]}
+
+
 def create_api_token(client, scopes):
     """Create api token.
 
@@ -1065,7 +1084,7 @@ def test_pwa_manifest_service_worker_and_offline_shell(client):
     assert "ATLASO_CACHE" in service_worker.text
     assert "atlaso-management-pwa-v" in service_worker.text
     assert "ATLASO_CACHE_PREFIX" in service_worker.text
-    assert 'const ATLASO_CACHE = `${ATLASO_CACHE_PREFIX}296`;' in service_worker.text
+    assert 'const ATLASO_CACHE = `${ATLASO_CACHE_PREFIX}299`;' in service_worker.text
     assert 'fetch(asset, { cache: "reload" })' in service_worker.text
     assert "Required precache request failed" in service_worker.text
     assert "key.startsWith(ATLASO_CACHE_PREFIX)" in service_worker.text
@@ -1081,11 +1100,11 @@ def test_pwa_manifest_service_worker_and_offline_shell(client):
     assert 'accept.includes("text/html")' in service_worker.text
     assert '!hasDownloadLikePath(url)' in service_worker.text
     assert "/static/vendor/monaco/atlaso-monaco.min.js?v=atlaso-monaco-20260806-7" in service_worker.text
-    assert "/static/app.css?v=issues-515-519-10-605-1" in service_worker.text
+    assert "/static/app.css?v=issues-515-519-10-605-1-662-663-1" in service_worker.text
     assert "/static/ui-patterns.js?v=atlaso-ui-foundation-20260726-10" in service_worker.text
     assert "/static/appliance-apply-polling.js?v=issue-420-6" in service_worker.text
     assert "/static/ui-routes.js?v=issue-287-1" in service_worker.text
-    assert "/static/app.js?v=issues-515-519-12-513-328-1-595-6-605-1" in service_worker.text
+    assert "/static/app.js?v=issues-515-519-12-513-328-1-595-6-605-1-606-607-1-662-663-3" in service_worker.text
     assert "/static/terminal.js?v=issue-287-2" in service_worker.text
     assert "/static/pwa.js?v=issue-287-2" in service_worker.text
     assert "vcfdt-configuration-248-20260807-14" not in service_worker.text
@@ -1111,7 +1130,7 @@ def test_pwa_manifest_service_worker_and_offline_shell(client):
     )
     assert offline_stylesheet is not None
     assert offline_stylesheet.group(1) == (
-        "/static/app.css?v=issues-515-519-10-605-1"
+        "/static/app.css?v=issues-515-519-10-605-1-662-663-1"
     )
     assert f'"{offline_stylesheet.group(1)}"' in service_worker.text
 
@@ -17355,6 +17374,12 @@ def test_vcf_helper_page_renders_domain_dropdown(client):
     assert "Hostname" in response.text
     assert response.text.count('name="component_key"') == 17
     assert response.text.count('name="hostname"') == 17
+    assert 'name="populated_revision"' in response.text
+    assert 'formaction="/ui/management/vcf-helper/generated-fqdns/populate" data-vcf-fqdn-populate>Populate</button>' in response.text
+    assert 'data-vcf-fqdn-submit disabled>Create DNS records</button>' in response.text
+    assert "#vcf-fqdn-modal:not([open]) { display: block" in response.text
+    assert 'aria-label="Hostname for vCenter"' in response.text
+    assert '<label class="sr-only" for="vcf-fqdn-hostname-vc01">' not in response.text
     assert 'aria-describedby="vcf-fqdn-hostname-error-vc01"' in response.text
     assert 'data-vcf-fqdn-value>vc01.atlaso.internal</td>' in response.text
     assert "Assigned IPv4" not in response.text
@@ -17362,6 +17387,8 @@ def test_vcf_helper_page_renders_domain_dropdown(client):
     assert "Delete generated records" in response.text
     app_js = Path("atlaso/app/static/app.js").read_text()
     assert "[data-vcf-fqdn-target]" in app_js
+    assert '`${form.action}/populate`' in app_js
+    assert 'populatedRevision.value = ""' in app_js
     assert 'submit.textContent = complete ? "Done" : "Create DNS records"' in app_js
     assert 'modal.close("done")' in app_js
     assert "const vcfFqdnHostnameState = new Map()" in app_js
@@ -17839,14 +17866,14 @@ def test_vcf_helper_generates_dns_records_with_component_descriptions(client):
     csrf = page.text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
     response = client.post(
         "/vcf-helper/generated-fqdns",
-        data={
+        data=populated_vcf_form_data(client, {
             **vcf_hostname_form_data(),
             "domain": "atlaso.internal",
             "prefix": "",
             "suffix": "",
             "start_ipv4": "192.168.210.10/24",
             "csrf": csrf,
-        },
+        }),
         headers={"X-Atlaso-VCF-Helper": "1"},
     )
 
@@ -17891,14 +17918,14 @@ def test_vcf_helper_uses_reviewed_hostname_override_and_persists_exact_ownership
     mapping = vcf_hostname_form_data(prefix="lab-", suffix="-mgmt", overrides={"vc01": "  Custom-VC  "})
     response = client.post(
         "/vcf-helper/generated-fqdns",
-        data={
+        data=populated_vcf_form_data(client, {
             **mapping,
             "domain": "atlaso.internal",
             "prefix": "lab-",
             "suffix": "-mgmt",
             "start_ipv4": "192.168.212.10/24",
             "csrf": csrf,
-        },
+        }),
         headers={"X-Atlaso-VCF-Helper": "1"},
     )
 
@@ -17950,7 +17977,7 @@ def test_vcf_helper_rejects_invalid_component_hostname_mappings_transactionally(
     with SessionLocal() as db:
         before = db.scalar(select(func.count()).select_from(DnsRecord))
     response = client.post(
-        "/vcf-helper/generated-fqdns",
+        "/vcf-helper/generated-fqdns/populate",
         data={
             **mapping,
             "domain": "atlaso.internal",
@@ -17978,7 +18005,7 @@ def test_vcf_helper_rejects_components_outside_the_selected_catalog(client):
     page = client.get("/vcf-helper")
     csrf = page.text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
     response = client.post(
-        "/vcf-helper/generated-fqdns",
+        "/vcf-helper/generated-fqdns/populate",
         data={
             **vcf_hostname_form_data(prefix="vvf-"),
             "target": "vvf-9.1",
@@ -17995,8 +18022,8 @@ def test_vcf_helper_rejects_components_outside_the_selected_catalog(client):
     assert "component key nsx01 is not part of VVF 9.1" in response.text
 
 
-def test_vcf_helper_no_javascript_fallback_preserves_reviewed_hostname_results(client):
-    """Verify ordinary form submission retains edited FQDNs and result addresses.
+def test_vcf_helper_no_javascript_fallback_requires_population(client):
+    """Verify ordinary form submission cannot bypass the populated review gate.
 
     Args:
         client: HTTP test client used to exercise the Atlaso application.
@@ -18016,12 +18043,181 @@ def test_vcf_helper_no_javascript_fallback_preserves_reviewed_hostname_results(c
         },
     )
 
-    assert response.status_code == 200
-    assert "Reviewed generated FQDN results" in response.text
-    assert "fallback-vcenter.atlaso.internal — 192.168.215.10 created" in response.text
+    assert response.status_code == 422
+    assert "Select Populate and review the current generated FQDN plan" in response.text
     assert 'value="fallback-vcenter"' in response.text
     assert "fallback-vcenter.atlaso.internal</td>" in response.text
 
+
+def test_vcf_helper_no_javascript_fallback_populates_then_creates(client):
+    """Verify the native form renders a signed review before creating records.
+
+    Args:
+        client: HTTP test client used to exercise the Atlaso application.
+    """
+    from sqlalchemy import func, select
+
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import DnsRecord
+
+    login(client)
+    page = client.get("/vcf-helper")
+    csrf = page.text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
+    form_data = {
+        **vcf_hostname_form_data(
+            prefix="fallback-",
+            overrides={"vc01": "  FALLBACK-VCENTER  "},
+        ),
+        "domain": "atlaso.internal",
+        "prefix": "fallback-",
+        "suffix": "",
+        "start_ipv4": "192.168.215.10/24",
+        "csrf": csrf,
+    }
+    with SessionLocal() as db:
+        before = db.scalar(select(func.count()).select_from(DnsRecord))
+
+    populated = client.post(
+        "/vcf-helper/generated-fqdns/populate",
+        data=form_data,
+    )
+
+    assert populated.status_code == 200
+    assert (
+        '<dialog id="vcf-fqdn-modal" class="confirm-modal wide-modal '
+        'vcf-fqdn-modal" aria-labelledby="vcf-fqdn-modal-title" open>'
+        in populated.text
+    )
+    assert "192.168.215.10</td>" in populated.text
+    assert 'value="fallback-vcenter"' in populated.text
+    assert "data-vcf-fqdn-submit>Create DNS records</button>" in populated.text
+    revision = populated.text.split('name="populated_revision" value="', 1)[1].split(
+        '"', 1
+    )[0]
+    assert revision
+    with SessionLocal() as db:
+        assert db.scalar(select(func.count()).select_from(DnsRecord)) == before
+
+    created = client.post(
+        "/vcf-helper/generated-fqdns",
+        data={**form_data, "populated_revision": revision},
+    )
+
+    assert created.status_code == 200
+    assert "Created 17 DNS records" in created.text
+    with SessionLocal() as db:
+        assert db.scalar(select(func.count()).select_from(DnsRecord)) == before + 17
+
+
+def test_vcf_helper_population_is_non_mutating_and_binds_exact_review(client):
+    """Verify Populate previews without mutation and rejects a changed create form.
+
+    Args:
+        client: HTTP test client used to exercise the Atlaso application.
+    """
+    from sqlalchemy import func, select
+
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import DnsRecord
+
+    login(client)
+    page = client.get("/vcf-helper")
+    csrf = page.text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
+    form_data = {
+        **vcf_hostname_form_data(prefix="review-"),
+        "domain": "atlaso.internal",
+        "prefix": "review-",
+        "suffix": "",
+        "start_ipv4": "192.168.216.10/24",
+        "csrf": csrf,
+    }
+    with SessionLocal() as db:
+        before = db.scalar(select(func.count()).select_from(DnsRecord))
+
+    populated = client.post(
+        "/vcf-helper/generated-fqdns/populate",
+        data=form_data,
+        headers={"X-Atlaso-VCF-Helper": "1"},
+    )
+
+    assert populated.status_code == 200
+    assert populated.json()["status"] == "populated"
+    assert populated.json()["planned"][0]["address"] == "192.168.216.10"
+    assert populated.json()["populated_revision"]
+    with SessionLocal() as db:
+        assert db.scalar(select(func.count()).select_from(DnsRecord)) == before
+
+    changed_data = {
+        **form_data,
+        "start_ipv4": "192.168.216.20/24",
+        "populated_revision": populated.json()["populated_revision"],
+    }
+    rejected = client.post(
+        "/vcf-helper/generated-fqdns",
+        data=changed_data,
+        headers={"X-Atlaso-VCF-Helper": "1"},
+    )
+
+    assert rejected.status_code == 422
+    assert "Select Populate and review the current generated FQDN plan" in rejected.text
+    with SessionLocal() as db:
+        assert db.scalar(select(func.count()).select_from(DnsRecord)) == before
+
+
+def test_vcf_helper_create_rejects_allocation_drift_after_population(client):
+    """Verify Create cannot mutate a plan whose address availability changed.
+
+    Args:
+        client: HTTP test client used to exercise the Atlaso application.
+    """
+    from sqlalchemy import select
+
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import DnsRecord
+
+    login(client)
+    page = client.get("/vcf-helper")
+    csrf = page.text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
+    form_data = {
+        **vcf_hostname_form_data(prefix="drift-"),
+        "domain": "atlaso.internal",
+        "prefix": "drift-",
+        "suffix": "",
+        "start_ipv4": "192.168.217.10/24",
+        "csrf": csrf,
+    }
+    populated = client.post(
+        "/vcf-helper/generated-fqdns/populate",
+        data=form_data,
+        headers={"X-Atlaso-VCF-Helper": "1"},
+    )
+    assert populated.status_code == 200
+    assert populated.json()["planned"][0]["address"] == "192.168.217.10"
+
+    with SessionLocal() as db:
+        db.add(
+            DnsRecord(
+                hostname="concurrent.atlaso.internal",
+                record_type="A",
+                address="192.168.217.10",
+                description="concurrent allocation",
+                enabled=True,
+            )
+        )
+        db.commit()
+
+    response = client.post(
+        "/vcf-helper/generated-fqdns",
+        data={**form_data, "populated_revision": populated.json()["populated_revision"]},
+        headers={"X-Atlaso-VCF-Helper": "1"},
+    )
+
+    assert response.status_code == 422
+    assert "allocation changed since Populate" in response.text
+    with SessionLocal() as db:
+        assert db.execute(
+            select(DnsRecord).where(DnsRecord.hostname == "drift-vc01.atlaso.internal")
+        ).scalar_one_or_none() is None
 
 def test_vcf_helper_vvf_target_generates_subset(client):
     """Verify that vcf helper vvf target generates subset.
@@ -18039,7 +18235,7 @@ def test_vcf_helper_vvf_target_generates_subset(client):
     csrf = page.text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
     response = client.post(
         "/vcf-helper/generated-fqdns",
-        data={
+        data=populated_vcf_form_data(client, {
             **vcf_hostname_form_data(target="vvf-9.1", prefix="vvf"),
             "target": "vvf-9.1",
             "domain": "atlaso.internal",
@@ -18047,7 +18243,7 @@ def test_vcf_helper_vvf_target_generates_subset(client):
             "suffix": "",
             "start_ipv4": "192.168.211.10/24",
             "csrf": csrf,
-        },
+        }),
         headers={"X-Atlaso-VCF-Helper": "1"},
     )
 
@@ -18133,14 +18329,14 @@ def test_vcf_helper_prefix_suffix_and_ip_collision_skips(client):
     csrf = page.text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
     response = client.post(
         "/vcf-helper/generated-fqdns",
-        data={
+        data=populated_vcf_form_data(client, {
             **vcf_hostname_form_data(prefix="p", suffix="a"),
             "domain": "atlaso.internal",
             "prefix": "p",
             "suffix": "a",
             "start_ipv4": "192.168.220.10/24",
             "csrf": csrf,
-        },
+        }),
         headers={"X-Atlaso-VCF-Helper": "1"},
     )
 
@@ -18180,14 +18376,14 @@ def test_vcf_helper_ipv6_generation_creates_aaaa_records_and_skips_collisions(cl
     csrf = page.text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
     response = client.post(
         "/vcf-helper/generated-fqdns",
-        data={
+        data=populated_vcf_form_data(client, {
             **vcf_hostname_form_data(prefix="v6"),
             "domain": "atlaso.internal",
             "prefix": "v6",
             "suffix": "",
             "start_ipv4": "2001:db8:240::10/64",
             "csrf": csrf,
-        },
+        }),
         headers={"X-Atlaso-VCF-Helper": "1"},
     )
 
@@ -18226,7 +18422,7 @@ def test_vcf_helper_insufficient_addresses_creates_nothing(client):
     page = client.get("/vcf-helper")
     csrf = page.text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
     response = client.post(
-        "/vcf-helper/generated-fqdns",
+        "/vcf-helper/generated-fqdns/populate",
         data={
             **vcf_hostname_form_data(prefix="edge"),
             "domain": "atlaso.internal",
@@ -18264,7 +18460,7 @@ def test_vcf_helper_insufficient_ipv6_addresses_creates_nothing(client):
     page = client.get("/vcf-helper")
     csrf = page.text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
     response = client.post(
-        "/vcf-helper/generated-fqdns",
+        "/vcf-helper/generated-fqdns/populate",
         data={
             **vcf_hostname_form_data(prefix="edge6"),
             "domain": "atlaso.internal",
@@ -18302,7 +18498,7 @@ def test_vcf_helper_rejects_network_or_broadcast_start_address(client):
     page = client.get("/vcf-helper")
     csrf = page.text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
     response = client.post(
-        "/vcf-helper/generated-fqdns",
+        "/vcf-helper/generated-fqdns/populate",
         data={
             **vcf_hostname_form_data(prefix="boundary"),
             "domain": "atlaso.internal",
@@ -18348,14 +18544,14 @@ def test_vcf_helper_delete_removes_owned_records_and_preserves_skipped_existing(
     csrf = page.text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
     created = client.post(
         "/vcf-helper/generated-fqdns",
-        data={
+        data=populated_vcf_form_data(client, {
             **vcf_hostname_form_data(prefix="del"),
             "domain": "atlaso.internal",
             "prefix": "del",
             "suffix": "",
             "start_ipv4": "192.168.231.10/24",
             "csrf": csrf,
-        },
+        }),
         headers={"X-Atlaso-VCF-Helper": "1"},
     )
     assert created.status_code == 200
@@ -18402,7 +18598,7 @@ def test_vcf_helper_delete_vvf_target_removes_only_subset(client):
     csrf = page.text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
     created = client.post(
         "/vcf-helper/generated-fqdns",
-        data={
+        data=populated_vcf_form_data(client, {
             **vcf_hostname_form_data(prefix="vdel"),
             "target": "vcf-9.1",
             "domain": "atlaso.internal",
@@ -18410,7 +18606,7 @@ def test_vcf_helper_delete_vvf_target_removes_only_subset(client):
             "suffix": "",
             "start_ipv4": "192.168.233.10/24",
             "csrf": csrf,
-        },
+        }),
         headers={"X-Atlaso-VCF-Helper": "1"},
     )
     assert created.status_code == 200

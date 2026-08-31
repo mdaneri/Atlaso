@@ -603,6 +603,9 @@ def test_merge_hold_directions_recognizes_owner_approval() -> None:
     assert merge_hold_directions(
         "Implement issue #602, but wait for approval from the maintainer before merging."
     ) == {"wait for approval": "add"}
+    assert merge_hold_directions(
+        "Fix this issue, but get my permission before merging."
+    ) == {"wait for approval": "add"}
 
 
 def test_merge_hold_directions_recognizes_first_person_approval() -> None:
@@ -717,6 +720,18 @@ def test_merge_hold_directions_scopes_numbered_pr_permission() -> None:
         "You may merge pull-request #621.",
         active_holds=("do not merge",),
         active_pull_request=620,
+    ) == {}
+
+
+def test_merge_hold_directions_checks_every_numbered_pr_target() -> None:
+    """Verify one active PR among multiple targets keeps the instruction in scope."""
+    assert merge_hold_directions(
+        "Do not merge PR #620 or PR #621.",
+        active_pull_request=621,
+    ) == {"do not merge": "add"}
+    assert merge_hold_directions(
+        "Do not merge PR #620 or PR #621.",
+        active_pull_request=622,
     ) == {}
 
 
@@ -952,6 +967,12 @@ def test_merge_hold_directions_ignores_pr_only_resumable_gate() -> None:
     assert resumable_merge_gates(
         "The release job passed; merge now."
     ) == ()
+    assert resumable_merge_gates(
+        "Implement a feature to merge records after validation."
+    ) == ()
+    assert resumable_merge_gates(
+        "Merge this PR after validation."
+    ) == ("validation",)
 
 
 def test_merge_hold_directions_withdraws_object_qualified_leave_open() -> None:
@@ -1458,6 +1479,12 @@ def test_source_authority_excludes_ineligible_delivery_scopes() -> None:
     )
     assert not source_has_default_merge_authority(
         ("Fix issue #602 on your fork.",)
+    )
+    assert source_has_default_merge_authority(
+        ("Implement the change, but do not use an external fork.",)
+    )
+    assert source_has_default_merge_authority(
+        ("Implement the change without private remediation.",)
     )
 
 

@@ -379,6 +379,10 @@ Terminal order:
   bottom, include a clear `+ Add record here` affordance, and expose destructive actions through a context/menu action
   rather than inline clutter. New-record placeholder rows should show and enable only the required identity field until
   that value is filled; default/generated cells stay visually blank and locked to avoid implying a complete row exists.
+  A main-column desktop record grid may expand to the remaining viewport height when it recalculates from its actual
+  position on window and panel resize, keeps a practical minimum, and returns to the compact bounded CSS height for
+  narrow, hidden, or zero-width layouts. Preserve grid-contained horizontal overflow and identical empty, single-row,
+  many-row, and bottom-add-row behavior.
 - Use tab groups when two editing modes solve the same job. Do not show single-record forms, bulk import, and raw/config
   editors all at once if tabs can make the workflow clearer.
 - Use tag editors for one-or-more selections such as interfaces, addresses, networks, domains, or labels. Tag editors
@@ -1546,6 +1550,11 @@ Terminal order:
 - Domain choices must come from managed DNS zones. Prefix and suffix are optional defaulting fragments. Keep one
   editable reviewed hostname label per selected catalog component; pattern changes update untouched defaults, catalog
   changes preserve deliberate overrides for retained components, and clearing the pattern restores catalog hostnames.
+  Keep compact rows free of redundant visible input labels while providing each hostname input an accessible component-
+  specific name. Require an explicit non-mutating Populate step that displays planned allocations and enables creation
+  only for the exact signed, time-limited actor, input revision, and allocation plan; any deployment, domain, address,
+  pattern, or hostname change must clear that revision and require Populate again. Recompute current DNS and DHCP
+  availability at creation and reject drift from the signed allocation instead of silently changing reviewed results.
   Submit the exact component-keyed mapping to creation and deletion, reject missing, duplicate, unknown, out-of-catalog,
   empty, or malformed entries, and derive and validate every FQDN on the server before writing any records.
 - VCF Installer OVA deployment must treat the destination `OvfManager.ParseDescriptor` result as authoritative for

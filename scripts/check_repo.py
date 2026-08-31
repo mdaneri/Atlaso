@@ -856,6 +856,11 @@ DEFAULT_MERGE_AUTHORITY_WORKFLOW_RECLASSIFICATION = re.compile(
     r"(?:^|[;.!?]\s*)make\s+(?:(?:the|this)\s+)?"
     r"(?:(?:pull request|pr)\s+)?(?:an?\s+)?draft\s*(?:pull request|pr)?\b"
 )
+DEFAULT_MERGE_AUTHORITY_NEGATED_WORKFLOW = re.compile(
+    r"\b(?:do\s+not|don't|don’t|never|must\s+not|without)\s+"
+    r"[^.!?]{0,50}\b(?:external\s+fork|fork|draft(?:\s+(?:pull request|pr))?|"
+    r"private\s+(?:vulnerability|advisory|remediation))\b"
+)
 DEFAULT_MERGE_AUTHORITY_DIRECT_REVIEW = re.compile(
     r"(?:review|inspect|check|test|summarize|describe|explain|report|"
     r"verif(?:y|ication)|validat(?:e|ion)|"
@@ -1118,7 +1123,8 @@ MERGE_HOLD_APPROVAL_BEFORE_MERGING = re.compile(
     r"(?:'s|’s)?\s+)?approval)|"
     r"(?:(?:you|i|we)\s+)?(?:get|obtain|require|need)\s+(?:(?:the\s+)?"
     r"(?:user|maintainer|(?:[a-z][a-z0-9_-]*\s+)?owner)"
-    r"(?:'s|’s)?\s+|(?:my|our|your)\s+)?approval)\b"
+    r"(?:'s|’s)?\s+|(?:my|our|your)\s+)?"
+    r"(?:approval|permission|authorization))\b"
     r"[^.!?]{0,40}\bbefore merging\b"
 )
 MERGE_HOLD_WITHOUT_APPROVAL = re.compile(
@@ -1157,6 +1163,10 @@ MERGE_RESUMABLE_GATE_DISPOSITION_PREFIX = re.compile(
     r"guarded[- ]squash merge|guarded merge|"
     r"(?:leave|keep)\s+(?:(?:this|the)\s+)?(?:pull request|pr)\s+open|"
     r"(?:pull request|pr)\s+only)\b"
+)
+MERGE_RESUMABLE_GATE_ALLOWED_MERGE_BRIDGE = re.compile(
+    r"\s*(?:(?:(?:this|the)\s+)?"
+    r"(?:pull request|pr|branch|change|commit)|it)?\s*(?:only\s*)?"
 )
 MERGE_HOLD_NON_PR_OBJECT = re.compile(
     r"^\s+(?!(?:(?:this|the)\s+)?(?:pull request|pr)\b|it\b|"
@@ -1368,37 +1378,51 @@ def _hold_targets_other_task(
         )
         # A following PR number is the permission or hold's direct object. When
         # absent, the nearest preceding number identifies a leading task scope.
-        direct_reference = MERGE_HOLD_NUMBERED_PR_REFERENCE.search(
-            direct_object_context
+        direct_references = tuple(
+            MERGE_HOLD_NUMBERED_PR_REFERENCE.finditer(direct_object_context)
         )
         if explicit_active_target is not None and (
-            direct_reference is None
-            or explicit_active_target.start() < direct_reference.start()
+            not direct_references
+            or explicit_active_target.start() < direct_references[0].start()
         ):
             return False
-        if direct_reference is not None:
+        if direct_references:
             gate_context = direct_object_context[
-                len(pattern) : direct_reference.start()
+                len(pattern) : direct_references[0].start()
             ]
             if re.search(r"\b(?:until|before|after|while)\s*$", gate_context):
                 return False
-            return int(direct_reference.group(1)) != active_pull_request
+            return all(
+                int(reference.group(1)) != active_pull_request
+                for reference in direct_references
+            )
         prefix_references = tuple(MERGE_HOLD_NUMBERED_PR_REFERENCE.finditer(prefix))
         if prefix_references:
-            return int(prefix_references[-1].group(1)) != active_pull_request
+            return all(
+                int(reference.group(1)) != active_pull_request
+                for reference in prefix_references
+            )
     if active_issue is not None:
         direct_issue_context = segment[offset : offset + len(pattern) + 80]
-        direct_reference = MERGE_HOLD_NUMBERED_ISSUE_REFERENCE.search(
-            direct_issue_context
+        direct_references = tuple(
+            MERGE_HOLD_NUMBERED_ISSUE_REFERENCE.finditer(direct_issue_context)
         )
-        if direct_reference is not None:
-            gate_context = direct_issue_context[len(pattern) : direct_reference.start()]
+        if direct_references:
+            gate_context = direct_issue_context[
+                len(pattern) : direct_references[0].start()
+            ]
             if re.search(r"\b(?:until|before|after|while)\s*$", gate_context):
                 return False
-            return int(direct_reference.group(1)) != active_issue
+            return all(
+                int(reference.group(1)) != active_issue
+                for reference in direct_references
+            )
         prefix_references = tuple(MERGE_HOLD_NUMBERED_ISSUE_REFERENCE.finditer(prefix))
         if prefix_references:
-            return int(prefix_references[-1].group(1)) != active_issue
+            return all(
+                int(reference.group(1)) != active_issue
+                for reference in prefix_references
+            )
     return (
         MERGE_HOLD_OTHER_TASK_PREFIX.search(prefix) is not None
         or MERGE_HOLD_OTHER_TASK_SUFFIX.search(suffix) is not None
@@ -1912,14 +1936,26 @@ def resumable_merge_gate_directions(text: str) -> dict[str, str]:
     events: list[tuple[int, str, str]] = []
     for match in MERGE_RESUMABLE_GATE_CONDITION.finditer(normalized):
         prefix = normalized[max(0, match.start() - 100) : match.start()]
-        if MERGE_RESUMABLE_GATE_DISPOSITION_PREFIX.search(prefix) is not None:
-            events.append(
-                (
-                    match.start(),
-                    "add",
-                    _canonical_resumable_merge_gate(match.group("gate")),
-                )
+        dispositions = tuple(
+            MERGE_RESUMABLE_GATE_DISPOSITION_PREFIX.finditer(prefix)
+        )
+        if not dispositions:
+            continue
+        disposition = dispositions[-1]
+        if disposition.group(0) in {"merge", "merging"} and (
+            MERGE_RESUMABLE_GATE_ALLOWED_MERGE_BRIDGE.fullmatch(
+                prefix[disposition.end() :]
             )
+            is None
+        ):
+            continue
+        events.append(
+            (
+                match.start(),
+                "add",
+                _canonical_resumable_merge_gate(match.group("gate")),
+            )
+        )
     events.extend(
         (
             match.start(),
@@ -1964,6 +2000,20 @@ def source_has_default_merge_authority(instructions: tuple[str, ...]) -> bool:
     eligible = False
     for instruction in instructions:
         normalized = " ".join(instruction.casefold().split())
+        negated_workflows = tuple(
+            DEFAULT_MERGE_AUTHORITY_NEGATED_WORKFLOW.finditer(normalized)
+        )
+        workflow_exclusions = tuple(
+            exclusion
+            for exclusion in DEFAULT_MERGE_AUTHORITY_WORKFLOW_EXCLUSIONS.finditer(
+                normalized
+            )
+            if not any(
+                negation.start() < exclusion.end()
+                and exclusion.start() < negation.end()
+                for negation in negated_workflows
+            )
+        )
         exclusion_matches = tuple(
             DEFAULT_MERGE_AUTHORITY_SOURCE_EXCLUSIONS.finditer(normalized)
         ) + tuple(
@@ -1984,9 +2034,7 @@ def source_has_default_merge_authority(instructions: tuple[str, ...]) -> bool:
             DEFAULT_MERGE_AUTHORITY_POST_STOP_STATUS.finditer(normalized)
         ) + tuple(
             DEFAULT_MERGE_AUTHORITY_NEGATED_MUTATION.finditer(normalized)
-        ) + tuple(
-            DEFAULT_MERGE_AUTHORITY_WORKFLOW_EXCLUSIONS.finditer(normalized)
-        ) + tuple(
+        ) + workflow_exclusions + tuple(
             DEFAULT_MERGE_AUTHORITY_WORKFLOW_RECLASSIFICATION.finditer(normalized)
         )
         source_markers = tuple(

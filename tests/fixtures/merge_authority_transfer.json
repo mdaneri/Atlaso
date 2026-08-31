@@ -3496,6 +3496,61 @@
       ],
       "generated": "Complete the guarded merge now that every gate has passed.",
       "expected_holds": []
+    },
+    {
+      "name": "permission-before-merging-is-preserved",
+      "default_merge_authority": true,
+      "instructions": [
+        {
+          "text": "Fix this issue, but get my permission before merging.",
+          "add_holds": [
+            "wait for approval"
+          ]
+        }
+      ],
+      "generated": "Preserve the explicit wait for approval instruction.",
+      "expected_holds": [
+        "wait for approval"
+      ]
+    },
+    {
+      "name": "multiple-pr-targets-include-active-pr",
+      "default_merge_authority": true,
+      "active_pull_request": 621,
+      "instructions": [
+        {
+          "text": "Implement issue #602, but do not merge PR #620 or PR #621.",
+          "add_holds": [
+            "do not merge"
+          ]
+        }
+      ],
+      "generated": "Preserve the explicit do not merge hold for PR #621.",
+      "expected_holds": [
+        "do not merge"
+      ]
+    },
+    {
+      "name": "application-merge-validation-is-not-delivery-gate",
+      "default_merge_authority": true,
+      "instructions": [
+        {
+          "text": "Implement a feature to merge records after validation."
+        }
+      ],
+      "generated": "Complete the guarded merge when every delivery gate passes.",
+      "expected_holds": []
+    },
+    {
+      "name": "negated-external-fork-remains-eligible",
+      "default_merge_authority": true,
+      "instructions": [
+        {
+          "text": "Implement the change, but do not use an external fork."
+        }
+      ],
+      "generated": "Complete the guarded merge in the same repository.",
+      "expected_holds": []
     }
   ]
 }
