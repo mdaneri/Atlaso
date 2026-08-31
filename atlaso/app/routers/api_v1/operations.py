@@ -25,6 +25,7 @@ from atlaso.app.schemas import (
 )
 from atlaso.app.security import Identity, require_scope
 from atlaso.app.services.network_boot import cleanup_network_boot_upload
+from atlaso.app.services.network_objects import acquire_network_objects_write_lock
 from atlaso.app.services.routes_wan import save_routing_enabled_state
 from atlaso.app.services.service_registry import SERVICE_STATE_IDS
 
@@ -149,6 +150,8 @@ def build_router(dependencies: OperationsApiDependencies) -> OperationsApiRouter
                 status_code=422,
                 detail="Routing runtime changes require Appliance Apply",
             )
+        if service == "routing" and action in {"enable", "disable"}:
+            acquire_network_objects_write_lock(db)
         row = db.execute(
             select(ServiceState).where(ServiceState.service == service)
         ).scalar_one_or_none()

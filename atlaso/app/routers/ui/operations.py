@@ -27,6 +27,7 @@ from atlaso.app.services.esxi_pxe import (
     esxi_pxe_boot_settings,
     esxi_pxe_service_state_from_boot,
 )
+from atlaso.app.services.network_objects import acquire_network_objects_write_lock
 from atlaso.app.services.routes_wan import save_routing_enabled_state
 from atlaso.app.services.service_registry import (
     SERVICE_STATE_IDS,
@@ -382,11 +383,6 @@ def build_router(dependencies: OperationsUiDependencies) -> OperationsUiRouter:
             raise HTTPException(
                 status_code=404, detail="Service is not approved for control"
             )
-        row = db.execute(
-            select(ServiceState).where(ServiceState.service == service)
-        ).scalar_one_or_none()
-        if not row:
-            raise HTTPException(status_code=404, detail="Service not found")
         if action not in {"start", "stop", "restart", "enable", "disable"}:
             raise HTTPException(status_code=422, detail="Unsupported service action")
         if service == "routing" and action in {"start", "stop", "restart"}:
@@ -394,6 +390,13 @@ def build_router(dependencies: OperationsUiDependencies) -> OperationsUiRouter:
                 status_code=422,
                 detail="Routing runtime changes require Appliance Apply",
             )
+        if service == "routing" and action in {"enable", "disable"}:
+            acquire_network_objects_write_lock(db)
+        row = db.execute(
+            select(ServiceState).where(ServiceState.service == service)
+        ).scalar_one_or_none()
+        if not row:
+            raise HTTPException(status_code=404, detail="Service not found")
         if action == "enable":
             row.enabled = True
             if service == "dns":

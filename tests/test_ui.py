@@ -16782,17 +16782,41 @@ def test_services_dns_dhcp_actions_update_desired_settings(client):
         assert db.execute(select(DhcpSettings)).scalar_one().enabled is False
 
 
-def test_services_routing_actions_update_global_desired_state(client):
+def test_services_routing_actions_update_global_desired_state(client, monkeypatch):
     """Keep Services Routing controls synchronized with Appliance Apply intent.
 
     Args:
         client: HTTP test client used to exercise the Atlaso application.
+        monkeypatch: Pytest fixture used to observe shared writer-lock ordering.
     """
     from sqlalchemy import select
 
+    import atlaso.app.routers.api_v1.operations as api_operations
+    import atlaso.app.routers.ui.operations as ui_operations
     from atlaso.app.database import SessionLocal
     from atlaso.app.models import ServiceState
     from atlaso.app.services.routes_wan import ensure_routes_wan_settings
+
+    lock_events: list[str] = []
+
+    def assert_lock_before_routing_query(db, *, transport: str) -> None:
+        """Record that the shared lock precedes the transport's Routing lookup."""
+        assert not any(
+            isinstance(row, ServiceState) and row.service == "routing"
+            for row in db.identity_map.values()
+        )
+        lock_events.append(transport)
+
+    monkeypatch.setattr(
+        api_operations,
+        "acquire_network_objects_write_lock",
+        lambda db: assert_lock_before_routing_query(db, transport="api"),
+    )
+    monkeypatch.setattr(
+        ui_operations,
+        "acquire_network_objects_write_lock",
+        lambda db: assert_lock_before_routing_query(db, transport="ui"),
+    )
 
     token = create_api_token(client, ["read:services", "write:services"])
     enabled = client.post(
@@ -16800,6 +16824,7 @@ def test_services_routing_actions_update_global_desired_state(client):
         headers={"Authorization": f"Bearer {token}"},
     )
     assert enabled.status_code == 200
+    assert lock_events == ["api"]
     blocked_start = client.post(
         "/api/v1/services/routing/start",
         headers={"Authorization": f"Bearer {token}"},
@@ -16821,6 +16846,7 @@ def test_services_routing_actions_update_global_desired_state(client):
     csrf = page.text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
     disabled = client.post("/services/routing/disable", data={"csrf": csrf})
     assert disabled.status_code == 200
+    assert lock_events == ["api", "ui"]
 
     with SessionLocal() as db:
         settings = ensure_routes_wan_settings(db)
@@ -16830,6 +16856,41 @@ def test_services_routing_actions_update_global_desired_state(client):
         assert settings.routing_enabled is False
         assert service.enabled is False
         assert service.running is False
+
+
+def test_seed_preserves_unconfigured_routing_until_appliance_apply(client):
+    """Keep restored Routing runtime state unconfigured across startup seeding.
+
+    Args:
+        client: HTTP test client used to initialize the isolated database.
+    """
+    from sqlalchemy import select
+
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import ServiceState
+    from atlaso.app.seed import seed_initial_data
+    from atlaso.app.services.routes_wan import (
+        ensure_routes_wan_settings,
+        save_routing_enabled_state,
+    )
+
+    with SessionLocal() as db:
+        save_routing_enabled_state(db, enabled=True)
+        service = db.execute(
+            select(ServiceState).where(ServiceState.service == "routing")
+        ).scalar_one()
+        service.enabled = False
+        service.running = False
+        service.health = "unconfigured"
+        db.commit()
+
+        seed_initial_data(db, include_examples=False)
+        db.refresh(service)
+
+        assert ensure_routes_wan_settings(db).routing_enabled is True
+        assert service.enabled is False
+        assert service.running is False
+        assert service.health == "unconfigured"
 
 
 def test_services_live_dns_dhcp_runtime_uses_dnsmasq_systemd(client, monkeypatch):

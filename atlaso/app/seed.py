@@ -414,6 +414,8 @@ def seed_initial_data(
                 initial_state["health"] = "healthy" if routes_wan_settings.routing_enabled else "disabled"
             db.add(ServiceState(**initial_state))
         elif service_state["service"] == "routing":
+            if existing_service.health == "unconfigured":
+                continue
             existing_service.enabled = routes_wan_settings.routing_enabled
             db.add(existing_service)
         elif service_state["service"] in {"ntpd", "repository", "vcf-backups"}:
