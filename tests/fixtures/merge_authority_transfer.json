@@ -3225,6 +3225,77 @@
       ],
       "generated": "Complete the guarded merge when every gate passes.",
       "expected_holds": []
+    },
+    {
+      "name": "unnumbered-cross-pr-condition-is-preserved",
+      "default_merge_authority": true,
+      "instructions": [
+        {
+          "text": "Implement issue #602, but do not merge until another PR is merged.",
+          "add_holds": [
+            "do not merge"
+          ]
+        }
+      ],
+      "generated": "Preserve the explicit do not merge hold.",
+      "expected_holds": [
+        "do not merge"
+      ]
+    },
+    {
+      "name": "reported-agent-hold-is-ignored",
+      "default_merge_authority": true,
+      "instructions": [
+        {
+          "text": "Implement issue #602."
+        },
+        {
+          "text": "The agent said do not merge this PR."
+        }
+      ],
+      "generated": "Complete the guarded merge when every gate passes.",
+      "expected_holds": []
+    },
+    {
+      "name": "rename-request-retains-default-authority",
+      "default_merge_authority": true,
+      "instructions": [
+        {
+          "text": "Rename the parser function."
+        }
+      ],
+      "generated": "Complete the guarded merge when every gate passes.",
+      "expected_holds": []
+    },
+    {
+      "name": "later-change-to-draft-is-ineligible",
+      "default_merge_authority": false,
+      "instructions": [
+        {
+          "text": "Implement issue #602."
+        },
+        {
+          "text": "Change this PR to a draft."
+        }
+      ],
+      "generated": "Keep the pull request in the requested draft workflow.",
+      "expected_holds": []
+    },
+    {
+      "name": "direct-not-to-merge-is-preserved",
+      "default_merge_authority": true,
+      "instructions": [
+        {
+          "text": "Implement issue #602, but you are not to merge this PR.",
+          "add_holds": [
+            "do not merge"
+          ]
+        }
+      ],
+      "generated": "Preserve the explicit do not merge hold.",
+      "expected_holds": [
+        "do not merge"
+      ]
     }
   ]
 }

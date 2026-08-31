@@ -692,6 +692,7 @@ AUTO_MERGE_ONLY_PATTERN = re.compile(
 MERGE_HOLD_MODAL_PROHIBITION = re.compile(
     r"\b(?:(?:you\s+)?(?:(?:must|may|can|should|shall)\s+not|cannot|can't|can’t)"
     r"\s+merge|"
+    r"you\s+(?:are|'re|’re)\s+not\s+to\s+merge|"
     r"you\s+(?:(?:are\s+not|aren't|aren’t|isn't|isn’t)\s+"
     r"(?:allowed|authorized|permitted)\s+to\s+merge|"
     r"are\s+forbidden\s+from\s+merging)|"
@@ -766,6 +767,10 @@ DEFAULT_MERGE_AUTHORITY_PERMISSION_QUESTION = re.compile(
     r"(?:am|are|is)\s+(?:i|we|(?:(?:the|this)\s+)?(?:heartbeat|handoff|"
     r"delegation|delegating\s+agent|agent|task))\s+"
     r"(?:authorized|permitted|allowed)\s+to|"
+    r"(?:is|was)\s+it\s+(?:permissible|allowed|authorized)\s+for\s+"
+    r"(?:(?:the|this)\s+)?(?:heartbeat|handoff|delegation|"
+    r"delegating\s+agent|agent|task)\s+to|"
+    r"(?:does|did)\s+(?:permission|authorization|authority)\s+exist\s+to|"
     r"should\s+(?:(?:the|this)\s+)?(?:heartbeat|handoff|delegation|"
     r"delegating\s+agent|agent|task)\b[^?]{0,100}\?)(?=\s|[.!?]|$)"
 )
@@ -785,7 +790,7 @@ DEFAULT_MERGE_AUTHORITY_SOURCE_EXCLUSIONS = re.compile(
     r"only\s+review\b[^;.!?]*|"
     r"report findings only|"
     r"\bplan(?:ning)?\s+(?:an?\s+)?(?:fix|patch|implementation|change|"
-    r"update|solution)\b|"
+    r"update|solution|rename|deletion|replacement)\b|"
     r"(?:do not|don't|don’t|must not|without)\s+"
     r"(?:\w+\s+){0,3}(?:implement|fix|patch|resolve|solve|deliver|"
     r"(?:updat|chang|modif|edit|mak)\w*\s+(?:any\s+)?"
@@ -799,7 +804,8 @@ DEFAULT_MERGE_AUTHORITY_SOURCE_EXCLUSIONS = re.compile(
     r"\b(?:implement|chang|modif|edit|mak)|"
     r"(?:please\s+)?(?:investigate|analyze|assess|diagnose|inspect|evaluate)\s+"
     r"(?:how|what|whether)\b[^.!?]{0,80}\b"
-    r"(?:implement|fix|patch|resolve|solve|change|modify|edit)\b|"
+    r"(?:implement|fix|patch|resolve|solve|change|modify|edit|rename|delete|"
+    r"replace)\b|"
     r"(?:open(?:ing)?|create|submit|prepare|deliver|leave|keep)\s+"
     r"(?:(?:an?|the|this)\s+)?draft (?:pull request|pr)|"
     r"(?:open(?:ing)?|create|submit|prepare|deliver|leave|keep)\s+"
@@ -832,7 +838,7 @@ DEFAULT_MERGE_AUTHORITY_WORKFLOW_RECLASSIFICATION = re.compile(
     r"(?:work|task|implementation|branch|pull request|pr)\s+(?:to|onto)\s+"
     r"(?:(?:(?:my|your|our|their|his|her|the|an?)|"
     r"[a-z][a-z0-9_-]*(?:'s|’s))\s+)?(?:external\s+)?fork\b|"
-    r"(?:^|[;.!?]\s*)(?:convert|mark|move)\s+"
+    r"(?:^|[;.!?]\s*)(?:change|convert|mark|move)\s+"
     r"(?:(?:the|this)\s+)?(?:pull request|pr)\s+(?:to|as)\s+"
     r"(?:an?\s+)?draft\b|"
     r"(?:^|[;.!?]\s*)make\s+(?:(?:the|this)\s+)?"
@@ -898,17 +904,19 @@ DEFAULT_MERGE_AUTHORITY_NEGATED_MUTATION = re.compile(
     r"(?:please\s+)?(?:do not|don't|don’t|must not)\s+"
     r"(?!leave\s+(?:(?:this|the)\s+)?(?:pull request|pr)\s+open\b)"
     r"(?:\w+\s+){0,3}(?:implement|fix|patch|resolve|solve|deliver|open|submit|"
-    r"prepare|update|change|modify|edit|add|remove|create|build|refactor|repair|"
-    r"commit|push)"
+    r"prepare|update|change|modify|edit|rename|delete|replace|add|remove|create|"
+    r"build|refactor|repair|commit|push)"
     r"\b[^;.!?]*"
 )
 DEFAULT_MERGE_AUTHORITY_EXPLANATORY_FIX = re.compile(
     r"\b(?:describe|explain|outline|summarize|document)\s+"
     r"(?:how|what|whether)\b[^.!?]{0,80}"
-    r"\b(?:implement|fix|patch|resolve|solve|change|modify|edit)\b[^.!?]*"
+    r"\b(?:implement|fix|patch|resolve|solve|change|modify|edit|rename|delete|"
+    r"replace)\b[^.!?]*"
 )
 DEFAULT_MERGE_AUTHORITY_SOURCE_MARKERS = re.compile(
-    r"\b(?:implement|fix|patch|resolve|solve|deliver|refactor|repair)\b|"
+    r"\b(?:implement|fix|patch|resolve|solve|deliver|refactor|repair|rename|"
+    r"delete|replace)\b|"
     r"\bcomplete\s+(?:the\s+)?implementation\b|"
     r"\b(?:update|change|modify|edit|add|remove|create|build|"
     r"prepare|open|submit|revert|roll back)\s+"
@@ -927,11 +935,11 @@ DEFAULT_MERGE_AUTHORITY_SOURCE_MARKERS = re.compile(
 DEFAULT_MERGE_AUTHORITY_COORDINATED_NO_WORK = re.compile(
     r"\b(?:do not|don't|don’t|must not|without)\s+"
     r"(?:\w+\s+){0,3}"
-    r"(?:implement|fix|patch|resolve|solve|deliver|update|change|modify|edit|make|"
-    r"add|remove|create|build|refactor)"
+    r"(?:implement|fix|patch|resolve|solve|deliver|update|change|modify|edit|"
+    r"rename|delete|replace|make|add|remove|create|build|refactor)"
     r"(?:\s*(?:,\s*(?:(?:and|or)\s+)?|\s+(?:and|or)\s+)"
-    r"(?:implement|fix|patch|resolve|solve|deliver|update|change|modify|edit|make|"
-    r"add|remove|create|build|refactor)){1,}"
+    r"(?:implement|fix|patch|resolve|solve|deliver|update|change|modify|edit|"
+    r"rename|delete|replace|make|add|remove|create|build|refactor)){1,}"
 )
 MERGE_AUTHORITY_INSTRUCTION_BOUNDARY = re.compile(
     r"(?:[;,.!?]+|\s+(?:but|and)\s+)"
@@ -1011,9 +1019,11 @@ MERGE_HOLD_NEGATED_PERMISSION_REPORT_CONTEXT = re.compile(
 MERGE_HOLD_NONAUTHORITATIVE_SOURCE_CONTEXT = re.compile(
     r"(?:\baccording\s+to\s+(?:(?:the|a)\s+)?"
     r"(?:task\s+handoff|handoff|task[- ]note|policy|stale\s+memory|memory|"
-    r"heartbeat|delegated\s+prompt)\b|"
+    r"heartbeat|delegated\s+prompt|agent|automation)\b|"
     r"\b(?:task\s+handoff|handoff|task[- ]note|policy|stale\s+memory|memory|"
-    r"heartbeat|delegated\s+prompt)\s+(?:said|says|reported|states?|claims?)\b)"
+    r"heartbeat|delegated\s+prompt|(?:(?:the|an?)\s+)?agent|"
+    r"(?:(?:the|an?)\s+)?automation)\s+"
+    r"(?:said|says|reported|states?|claims?)\b)"
 )
 MERGE_AUTHORITY_TASK_CLAUSE_BOUNDARY = re.compile(r"[;.?!]+")
 MERGE_AUTHORITY_COORDINATED_CLAUSE_BOUNDARY = re.compile(
@@ -1474,8 +1484,18 @@ def merge_hold_directions(
                 )
                 is not None
             )
+            has_gate_before_reference = (
+                other_task_reference is not None
+                and re.search(
+                    r"\b(?:until|before|after)\s*$",
+                    clause[: other_task_reference.start()],
+                )
+                is not None
+            )
             if clause and (
-                other_task_reference is None or has_active_target_before_reference
+                other_task_reference is None
+                or has_active_target_before_reference
+                or has_gate_before_reference
             ):
                 task_clauses.append(clause)
     normalized = "; ".join(task_clauses)

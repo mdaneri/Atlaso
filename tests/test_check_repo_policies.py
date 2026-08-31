@@ -724,6 +724,17 @@ def test_merge_hold_directions_preserves_cross_pr_condition() -> None:
         "Do not merge PR #621.",
         active_pull_request=620,
     ) == {}
+    assert merge_hold_directions(
+        "Do not merge until another PR is merged."
+    ) == {"do not merge": "add"}
+    assert merge_hold_directions("Do not merge another PR.") == {}
+
+
+def test_merge_hold_directions_recognizes_direct_not_to_merge() -> None:
+    """Verify a direct not-to-merge prohibition becomes an explicit hold."""
+    assert merge_hold_directions(
+        "Implement issue #602, but you are not to merge this PR."
+    ) == {"do not merge": "add"}
 
 
 def test_merge_hold_directions_preserves_cross_issue_condition() -> None:
@@ -779,6 +790,7 @@ def test_merge_hold_directions_ignores_reported_permission() -> None:
         "I cannot say you may merge this PR.",
         active_holds=("do not merge",),
     ) == {}
+    assert merge_hold_directions("The agent said do not merge this PR.") == {}
     assert merge_hold_directions(
         "According to the task handoff, you may merge this PR.",
         active_holds=("do not merge",),
@@ -1297,6 +1309,12 @@ def test_generated_authority_rejects_general_permission_questions() -> None:
     assert not has_affirmative_default_merge_authority(
         "Can you complete the guarded merge?"
     )
+    assert not has_affirmative_default_merge_authority(
+        "Is it permissible for the heartbeat to complete the guarded merge?"
+    )
+    assert not has_affirmative_default_merge_authority(
+        "Does permission exist to complete the guarded merge?"
+    )
 
 
 def test_source_authority_keeps_workflow_policy_subject_eligible() -> None:
@@ -1315,8 +1333,16 @@ def test_source_authority_keeps_workflow_policy_subject_eligible() -> None:
         "Roll back the change introduced by PR #602.",
         "Refactor the parser in scripts/check_repo.py.",
         "Repair the parser in scripts/check_repo.py.",
+        "Rename the parser function.",
+        "Delete the obsolete parser function.",
     ):
         assert source_has_default_merge_authority((instruction,))
+    assert not source_has_default_merge_authority(
+        ("Explain how to rename the parser function.",)
+    )
+    assert not source_has_default_merge_authority(
+        ("Do not delete the parser function.",)
+    )
 
 
 def test_source_authority_excludes_negated_repair() -> None:
@@ -1370,6 +1396,7 @@ def test_source_authority_honors_workflow_reclassification() -> None:
         "Push the branch to my fork instead.",
         "Transfer the PR to mdaneri's fork.",
         "Convert the pull request to draft.",
+        "Change this PR to a draft.",
         "Make this a draft PR.",
     ):
         assert not source_has_default_merge_authority(
@@ -2570,6 +2597,25 @@ def test_merge_authority_transfer_rejects_generated_permission_question(
                         "instructions": [{"text": "Implement issue #602."}],
                         "generated": "Can I complete the guarded merge?",
                         "expected_holds": [],
+                    },
+                    {
+                        "name": "generated permissibility question",
+                        "default_merge_authority": True,
+                        "instructions": [{"text": "Implement issue #602."}],
+                        "generated": (
+                            "Is it permissible for the heartbeat to complete the "
+                            "guarded merge?"
+                        ),
+                        "expected_holds": [],
+                    },
+                    {
+                        "name": "generated existential permission question",
+                        "default_merge_authority": True,
+                        "instructions": [{"text": "Implement issue #602."}],
+                        "generated": (
+                            "Does permission exist to complete the guarded merge?"
+                        ),
+                        "expected_holds": [],
                     }
                 ]
             }
@@ -2579,11 +2625,14 @@ def test_merge_authority_transfer_rejects_generated_permission_question(
 
     findings = check_merge_authority_transfer_fixtures(tmp_path)
 
-    assert len(findings) == 1
-    assert findings[0].message == (
+    assert [finding.message for finding in findings] == [
         "merge authority fixture generated permission question omits affirmative "
-        "default authority"
-    )
+        "default authority",
+        "merge authority fixture generated permissibility question omits affirmative "
+        "default authority",
+        "merge authority fixture generated existential permission question omits "
+        "affirmative default authority",
+    ]
 
 
 def test_merge_authority_transfer_applies_structured_hold_withdrawal(
