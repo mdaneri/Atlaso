@@ -3113,6 +3113,57 @@
       "expected_holds": [
         "do not merge"
       ]
+    },
+    {
+      "name": "actor-wait-before-merge-is-preserved",
+      "default_merge_authority": true,
+      "instructions": [
+        {
+          "text": "Implement issue #602, but wait for the maintainer before merging.",
+          "add_holds": [
+            "wait for approval"
+          ]
+        }
+      ],
+      "generated": "Preserve the explicit wait for approval instruction.",
+      "expected_holds": [
+        "wait for approval"
+      ]
+    },
+    {
+      "name": "implicit-current-pr-cross-issue-gate-is-preserved",
+      "default_merge_authority": true,
+      "active_issue": 602,
+      "instructions": [
+        {
+          "text": "Implement issue #602 and deliver the pull request."
+        },
+        {
+          "text": "Do not merge until issue #603 is resolved.",
+          "add_holds": [
+            "do not merge"
+          ]
+        }
+      ],
+      "generated": "Preserve the do not merge hold for issue #602.",
+      "expected_holds": [
+        "do not merge"
+      ]
+    },
+    {
+      "name": "direct-other-issue-hold-remains-scoped-away",
+      "default_merge_authority": true,
+      "active_issue": 602,
+      "instructions": [
+        {
+          "text": "Implement issue #602 and deliver the pull request."
+        },
+        {
+          "text": "Do not merge issue #603."
+        }
+      ],
+      "generated": "Complete the guarded merge for issue #602 when eligible.",
+      "expected_holds": []
     }
   ]
 }

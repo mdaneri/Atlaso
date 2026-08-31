@@ -725,6 +725,23 @@ def test_merge_hold_directions_preserves_cross_pr_condition() -> None:
     ) == {}
 
 
+def test_merge_hold_directions_preserves_cross_issue_condition() -> None:
+    """Verify a later cross-issue condition does not retarget this task's hold."""
+    for instruction in (
+        "Do not merge until issue #603 is resolved.",
+        "Do not merge before issue #603 is resolved.",
+        "Do not merge after issue #603 is closed.",
+    ):
+        assert merge_hold_directions(
+            instruction,
+            active_issue=602,
+        ) == {"do not merge": "add"}
+    assert merge_hold_directions(
+        "Do not merge issue #603.",
+        active_issue=602,
+    ) == {}
+
+
 def test_merge_hold_directions_scopes_numbered_issue_permission() -> None:
     """Verify permission for another issue cannot withdraw this task's hold."""
     assert merge_hold_directions(
@@ -953,6 +970,12 @@ def test_merge_hold_directions_recognizes_plain_approval_condition() -> None:
     ) == {"wait for approval": "add"}
     assert merge_hold_directions(
         "Implement issue #602, but wait for the maintainer to approve before merging."
+    ) == {"wait for approval": "add"}
+    assert merge_hold_directions(
+        "Implement issue #602, but wait for me before merging."
+    ) == {"wait for approval": "add"}
+    assert merge_hold_directions(
+        "Implement issue #602, but wait for the maintainer before merging."
     ) == {"wait for approval": "add"}
     assert merge_hold_directions(
         "Implement issue #602, but wait for approval before deploying to staging."

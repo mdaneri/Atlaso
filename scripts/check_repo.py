@@ -1051,9 +1051,11 @@ MERGE_HOLD_APPROVAL_CONDITION_FIRST = re.compile(
     r"(?:\s+(?:(?:this|the)\s+)?(?:pull request|pr))?)\b"
 )
 MERGE_HOLD_ACTOR_APPROVAL_WAIT = re.compile(
-    r"\bwait\s+(?:for|until)\s+(?:(?:the\s+)?"
-    r"(?:user|maintainer|(?:[a-z][a-z0-9_-]*\s+)?owner)\s+to\s+approve|"
-    r"(?:me|us)\s+to\s+approve)\b"
+    r"\b(?:wait\s+(?:for|until)\s+(?:(?:the\s+)?"
+    r"(?:user|maintainer|(?:[a-z][a-z0-9_-]*\s+)?owner)|me|us)\s+to\s+approve|"
+    r"wait\s+for\s+(?:(?:the\s+)?"
+    r"(?:user|maintainer|(?:[a-z][a-z0-9_-]*\s+)?owner)|me|us)\s+"
+    r"before\s+merging)\b"
 )
 MERGE_HOLD_APPROVAL_BOUNDED_DISPOSITION = re.compile(
     r"\b(?:(?:do not|don't|don’t|never)\s+merge"
@@ -1318,10 +1320,14 @@ def _hold_targets_other_task(
         if prefix_references:
             return int(prefix_references[-1].group(1)) != active_pull_request
     if active_issue is not None:
+        direct_issue_context = segment[offset : offset + len(pattern) + 80]
         direct_reference = MERGE_HOLD_NUMBERED_ISSUE_REFERENCE.search(
-            segment[offset : offset + len(pattern) + 80]
+            direct_issue_context
         )
         if direct_reference is not None:
+            gate_context = direct_issue_context[len(pattern) : direct_reference.start()]
+            if re.search(r"\b(?:until|before|after)\s*$", gate_context):
+                return False
             return int(direct_reference.group(1)) != active_issue
         prefix_references = tuple(MERGE_HOLD_NUMBERED_ISSUE_REFERENCE.finditer(prefix))
         if prefix_references:
