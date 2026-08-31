@@ -953,6 +953,9 @@ DEFAULT_MERGE_AUTHORITY_SOURCE_MARKERS = re.compile(
     r"scripts?|modules?|packages?|workflows?|polic(?:y|ies)|checkers?|fixtures?|"
     r"features?|behavio(?:u)?r|support|pages?|guides?|configuration|config|"
     r"api|ui|issue(?:s)?(?:\s+#\d+)?|pull request|pr)\b|"
+    r"\b(?:update|change|modify|edit|add|remove|create|build)\s+"
+    r"(?:(?:the|this|that|an?|new|existing)\s+)?"
+    r"(?:[a-z0-9_.-]+[\\/])*[a-z_][a-z0-9_.-]*\.[a-z0-9]{1,12}\b|"
     r"\bwork on (?:an? )?(?:existing )?(?:ordinary )?(?:pull request|pr)\b|"
     r"\b(?:address|resolve|apply|implement)\s+(?:review\s+)?feedback\s+"
     r"(?:on|for)\s+(?:an?\s+)?(?:existing\s+)?(?:ordinary\s+)?"
@@ -979,6 +982,11 @@ MERGE_HOLD_DISCUSSION_CONTEXT = re.compile(
     r"test(?:ed|ing)?|plan(?:ned|ning)?|consider(?:ed|ing|ation)?|"
     r"contemplat(?:e|ed|ing|ion)|ask(?:ed|ing)?|"
     r"determin(?:e|ed|ing|ation)|decid(?:e|ed|ing))\b"
+)
+MERGE_HOLD_NEGATED_DIRECTIVE_REPORT_CONTEXT = re.compile(
+    r"\b(?:(?:the\s+)?(?:user|maintainer|owner)|(?:i|we))\s+"
+    r"(?:(?:did|do|does|has|have)\s+not|never)\s+"
+    r"(?:say|ask|request|instruct|direct|require)\b[^.!?]{0,60}$"
 )
 MERGE_HOLD_DIRECT_REQUEST_CONTEXT = re.compile(
     r"\b(?:i|we)\s+(?:ask|request)\s+that\s+(?:you\s+)?$"
@@ -1150,6 +1158,9 @@ MERGE_RESUMABLE_GATE_FIRST = re.compile(
     r"(?:(?:the|an?)\s+)?(?:(?:[a-z][a-z0-9_-]*\s+){0,2})?"
     r"(?P<gate>ci|tests?|checks?|validation|builds?|review|deployments?|"
     r"release[- ]jobs?)\s+before\s+(?:merging|(?:you|i|we)\s+merge)\b"
+)
+MERGE_RESUMABLE_GATE_NEGATION_PREFIX = re.compile(
+    r"\b(?:do not|don't|don’t|must not|should not|need not|never)\s*$"
 )
 MERGE_RESUMABLE_GATE_RESOLUTION = re.compile(
     r"\b(?:(?:the|an?)\s+)?(?:(?:[a-z][a-z0-9_-]*\s+){0,2})?"
@@ -1335,6 +1346,7 @@ def _is_hold_discussion(segment: str, offset: int) -> bool:
         MERGE_HOLD_DISCUSSION_CONTEXT.search(prefix) is not None
         or MERGE_HOLD_CONDITIONAL_CONTEXT.search(prefix) is not None
         or MERGE_HOLD_NONAUTHORITATIVE_SOURCE_CONTEXT.search(prefix) is not None
+        or MERGE_HOLD_NEGATED_DIRECTIVE_REPORT_CONTEXT.search(prefix) is not None
     )
 
 
@@ -1956,14 +1968,20 @@ def resumable_merge_gate_directions(text: str) -> dict[str, str]:
                 _canonical_resumable_merge_gate(match.group("gate")),
             )
         )
-    events.extend(
-        (
-            match.start(),
-            "add",
-            _canonical_resumable_merge_gate(match.group("gate")),
+    for match in MERGE_RESUMABLE_GATE_FIRST.finditer(normalized):
+        prefix = normalized[max(0, match.start() - 40) : match.start()]
+        direction = (
+            "remove"
+            if MERGE_RESUMABLE_GATE_NEGATION_PREFIX.search(prefix) is not None
+            else "add"
         )
-        for match in MERGE_RESUMABLE_GATE_FIRST.finditer(normalized)
-    )
+        events.append(
+            (
+                match.start(),
+                direction,
+                _canonical_resumable_merge_gate(match.group("gate")),
+            )
+        )
     events.extend(
         (
             match.start(),

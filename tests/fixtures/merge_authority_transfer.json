@@ -3551,6 +3551,17 @@
       ],
       "generated": "Complete the guarded merge in the same repository.",
       "expected_holds": []
+    },
+    {
+      "name": "file-targeted-documentation-update-is-eligible",
+      "default_merge_authority": true,
+      "instructions": [
+        {
+          "text": "Update README.md and edit docs/contribute/agent-policies.md."
+        }
+      ],
+      "generated": "Complete the guarded merge when every required gate passes.",
+      "expected_holds": []
     }
   ]
 }

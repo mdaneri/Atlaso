@@ -45,6 +45,7 @@ from scripts.check_repo import (
     has_affirmative_default_merge_authority,
     is_checkable,
     merge_hold_directions,
+    resumable_merge_gate_directions,
     resumable_merge_gates,
     source_has_default_merge_authority,
 )
@@ -973,6 +974,17 @@ def test_merge_hold_directions_ignores_pr_only_resumable_gate() -> None:
     assert resumable_merge_gates(
         "Merge this PR after validation."
     ) == ("validation",)
+    assert resumable_merge_gate_directions(
+        "Do not wait for CI before merging; preserve default merge authority."
+    ) == {"ci": "remove"}
+
+
+def test_merge_hold_directions_ignores_negated_hold_reports() -> None:
+    """Verify a report denying hold provenance does not preserve the hold."""
+    assert merge_hold_directions(
+        "The user did not say do not merge this PR.",
+        active_holds=("do not merge",),
+    ) == {}
 
 
 def test_merge_hold_directions_withdraws_object_qualified_leave_open() -> None:
@@ -1405,6 +1417,13 @@ def test_source_authority_keeps_workflow_policy_subject_eligible() -> None:
     assert source_has_default_merge_authority(
         ("Update the documentation for external fork workflows.",)
     )
+    for instruction in (
+        "Update README.md.",
+        "Edit CONTRIBUTING.md.",
+        "Modify pyproject.toml.",
+        "Change docs/contribute/agent-policies.md.",
+    ):
+        assert source_has_default_merge_authority((instruction,))
     for instruction in (
         "Prepare a pull request for issue #602.",
         "Open a pull request for issue #602.",
@@ -2575,6 +2594,92 @@ def test_merge_authority_transfer_rejects_dropped_resumable_gate(
     assert findings[0].message == (
         "merge authority fixture dropped release gate drops a resumable merge "
         "gate: release job"
+    )
+
+
+def test_merge_authority_transfer_rejects_negated_resumable_gate(
+    tmp_path: Path,
+) -> None:
+    """Verify generated text cannot negate a source-side CI gate.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
+    path = tmp_path / MERGE_AUTHORITY_TRANSFER_FIXTURE_PATH
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        json.dumps(
+            {
+                "cases": [
+                    {
+                        "name": "negated CI gate",
+                        "default_merge_authority": True,
+                        "instructions": [
+                            {
+                                "text": (
+                                    "Implement issue #602, but wait for CI before "
+                                    "merging."
+                                )
+                            }
+                        ],
+                        "generated": (
+                            "Do not wait for CI before merging; preserve default "
+                            "merge authority."
+                        ),
+                        "expected_holds": [],
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    findings = check_merge_authority_transfer_fixtures(tmp_path)
+
+    assert len(findings) == 1
+    assert findings[0].message == (
+        "merge authority fixture negated CI gate drops a resumable merge gate: ci"
+    )
+
+
+def test_merge_authority_transfer_rejects_negated_hold_report(
+    tmp_path: Path,
+) -> None:
+    """Verify generated text cannot deny an active source hold.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
+    path = tmp_path / MERGE_AUTHORITY_TRANSFER_FIXTURE_PATH
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        json.dumps(
+            {
+                "cases": [
+                    {
+                        "name": "negated hold report",
+                        "default_merge_authority": True,
+                        "instructions": [
+                            {
+                                "text": "Implement issue #602, but do not merge.",
+                                "add_holds": ["do not merge"],
+                            }
+                        ],
+                        "generated": "The user did not say do not merge this PR.",
+                        "expected_holds": ["do not merge"],
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    findings = check_merge_authority_transfer_fixtures(tmp_path)
+
+    assert len(findings) == 1
+    assert findings[0].message == (
+        "merge authority fixture negated hold report drops an explicit hold: "
+        "do not merge"
     )
 
 
