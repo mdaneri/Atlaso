@@ -1472,6 +1472,15 @@ if ($requiresBuilderReservation) {
         @()
     }
     $preferredBuilderAddress = if ($builderIpWasPassed) { $builderParts[0] } else { '' }
+    if (-not $ReleaseBuilder) {
+        # Network discovery can outlive every earlier PR proof. Refresh it at
+        # the final boundary before reservation state is durably admitted.
+        $null = Assert-AtlasoTaskBuilderIdentityCurrent `
+            -RepositoryRoot $repoRoot `
+            -PullRequestNumber $PullRequestNumber `
+            -CollisionSuffix $CollisionSuffix `
+            -ExpectedIdentity $builderIdentity
+    }
     $builderReservation = Enter-AtlasoVmwareBuilderAddressReservation `
         -NetworkName $VmnetName `
         -Subnet $reservationSubnet `

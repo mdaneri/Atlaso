@@ -1728,6 +1728,16 @@ def test_vmware_packer_requires_proven_task_or_release_builder_identity() -> Non
         < registration_repair
         < parent_workstation_launch
     )
+    reservation_inputs = wrapper.index(
+        "$preferredBuilderAddress = if ($builderIpWasPassed)"
+    )
+    reservation_recheck = wrapper.index(
+        "Assert-AtlasoTaskBuilderIdentityCurrent `", reservation_inputs
+    )
+    reservation_admission = wrapper.index(
+        "Enter-AtlasoVmwareBuilderAddressReservation `", reservation_inputs
+    )
+    assert reservation_inputs < reservation_recheck < reservation_admission
     final_pr_recheck = wrapper.index(
         "if (-not $ReleaseBuilder -and -not $ValidateOnly -and -not $PrepareIsoOnly)"
     )
