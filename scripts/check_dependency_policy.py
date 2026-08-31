@@ -386,14 +386,24 @@ def _segment_requirement_paths(segment: str) -> list[str]:
         if PIP_LAUNCHER_RE.fullmatch(launcher):
             pip_index = index
             break
-        if (
-            PYTHON_LAUNCHER_RE.fullmatch(launcher)
-            and index + 2 < len(tokens)
-            and tokens[index + 1] == "-m"
-            and PIP_MODULE_RE.fullmatch(tokens[index + 2])
-        ):
-            pip_index = index + 2
-            break
+        if PYTHON_LAUNCHER_RE.fullmatch(launcher):
+            option_index = index + 1
+            while option_index < len(tokens):
+                option = tokens[option_index]
+                if option == "-m":
+                    if (
+                        option_index + 1 < len(tokens)
+                        and PIP_MODULE_RE.fullmatch(tokens[option_index + 1])
+                    ):
+                        pip_index = option_index + 1
+                    break
+                if option in {"-", "--", "-c"} or not option.startswith("-"):
+                    break
+                if option in {"-W", "-X", "--check-hash-based-pycs"}:
+                    option_index += 1
+                option_index += 1
+            if pip_index >= 0:
+                break
     if pip_index < 0 or pip_index + 1 >= len(tokens):
         return []
 

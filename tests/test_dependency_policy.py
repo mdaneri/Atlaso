@@ -170,6 +170,7 @@ def test_dependency_policy_recognizes_prefixed_python_pip_invocations(
     invocations = (
         "python3.14 -m pip install -r requirements-ad-hoc.lock",
         "python -m pip.__main__ install -r requirements-ad-hoc.lock",
+        "python -I -m pip.__main__ install -r requirements-ad-hoc.lock",
         "python -m 'pip' install -r requirements-ad-hoc.lock",
         'python -m "pip.__main__" install -r requirements-ad-hoc.lock',
         "'python' -m 'pip' install -r requirements-ad-hoc.lock",
