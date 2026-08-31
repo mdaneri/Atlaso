@@ -713,7 +713,7 @@ def test_dependency_policy_tracks_multiline_shell_directory_change(
     )
 
 
-def test_dependency_policy_rejects_subshell_requirement_resolution(
+def test_dependency_policy_rejects_grouped_shell_requirement_resolution(
     tmp_path: Path,
 ) -> None:
     """Verify grouped shell directory state fails closed for requirements.
@@ -724,8 +724,9 @@ def test_dependency_policy_rejects_subshell_requirement_resolution(
     write_valid_policy(tmp_path)
     workflow = tmp_path / ".github" / "workflows" / "release.yml"
     workflow.parent.mkdir(parents=True, exist_ok=True)
-    workflow.write_text(
-        """jobs:
+    for opening, closing in (("(", ")"), ("{", "}")):
+        workflow.write_text(
+            f"""jobs:
   external:
     steps:
       - uses: actions/checkout@v7
@@ -733,18 +734,18 @@ def test_dependency_policy_rejects_subshell_requirement_resolution(
           repository: attacker/other
           path: external
       - run: |
-          ( cd external
+          {opening} cd external
             python -m pip install -r requirements-release-tools.lock
-          )
+          {closing}
 """,
-        encoding="utf-8",
-    )
+            encoding="utf-8",
+        )
 
-    assert any(
-        "workflow working directory must be a literal repository path: "
-        "${{ unsupported-shell-subshell }}" in error
-        for error in validate(tmp_path)
-    )
+        assert any(
+            "workflow working directory must be a literal repository path: "
+            "${{ unsupported-shell-grouping }}" in error
+            for error in validate(tmp_path)
+        )
 
 
 def test_dependency_policy_restores_shell_directory_stack(tmp_path: Path) -> None:
