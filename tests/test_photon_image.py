@@ -1976,6 +1976,8 @@ def test_create_atlaso_vmware_test_vm_wrapper_uses_common_helpers():
     assert "Cert:\\CurrentUser\\Root" in script
     assert "certutil.exe -user -delstore Root" not in script
     assert "certutil.exe -f -user -addstore Root $rootCerPath" in script
+    assert "Wait-AtlasoDevelopmentRootCaTrustReadback" in script
+    assert "Test-AtlasoDevelopmentRootCaTrusted" in script
     assert "-NoStart is not supported for normal test VMs" in script
     assert "if (($waitForIpEnabled -or $TrustRootCa) -and $readinessIdentity)" in script
     assert "-ExpectedHostname $FirstBootFqdn" in script
