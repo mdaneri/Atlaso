@@ -451,6 +451,30 @@ def test_dependency_policy_checks_powershell_command_string(tmp_path: Path) -> N
         )
 
 
+def test_dependency_policy_checks_cmd_command_string(tmp_path: Path) -> None:
+    """Verify cmd.exe command strings cannot hide a requirement install.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
+    write_valid_policy(tmp_path)
+    (tmp_path / "requirements-ad-hoc.lock").write_text("placeholder\n", encoding="utf-8")
+    workflow = tmp_path / ".github" / "workflows" / "release.yml"
+    workflow.parent.mkdir(parents=True, exist_ok=True)
+    for launcher, option in (("cmd", "/c"), ("cmd.exe", "/k")):
+        workflow.write_text(
+            f'run: {launcher} {option} "python -m pip install '
+            '-r requirements-ad-hoc.lock"\n',
+            encoding="utf-8",
+        )
+
+        assert any(
+            "workflow requirement lock is outside the generated dependency policy "
+            "inventory: requirements-ad-hoc.lock" in error
+            for error in validate(tmp_path)
+        )
+
+
 def test_dependency_policy_recognizes_attached_short_requirement_argument(
     tmp_path: Path,
 ) -> None:

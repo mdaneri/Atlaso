@@ -29,6 +29,7 @@ PIP_MODULE_RE = re.compile(
     r"pip(?:\d+(?:\.\d+)*)?(?:\.__main__)?", re.IGNORECASE
 )
 SHELL_LAUNCHERS = {"bash", "dash", "ksh", "sh", "zsh"}
+CMD_LAUNCHERS = {"cmd", "cmd.exe"}
 POWERSHELL_LAUNCHERS = {"powershell", "powershell.exe", "pwsh", "pwsh.exe"}
 ALIAS_RE = re.compile(r"\*[A-Za-z_][A-Za-z0-9_.-]*")
 UNSUPPORTED_RUN_ALIAS_PREFIX = "unsupported-run-alias:"
@@ -982,6 +983,20 @@ def _segment_requirement_paths(segment: str) -> list[str]:
                     )
                 return nested_paths
             if not option.startswith("-"):
+                break
+    for shell_index, token in enumerate(tokens):
+        launcher = token.replace("\\", "/").rsplit("/", maxsplit=1)[-1].lower()
+        if launcher not in CMD_LAUNCHERS:
+            continue
+        for option_index in range(shell_index + 1, len(tokens)):
+            option = tokens[option_index].lower()
+            if option in {"/c", "/k"}:
+                if option_index + 1 < len(tokens):
+                    return nested_paths + _segment_requirement_paths(
+                        " ".join(tokens[option_index + 1 :])
+                    )
+                return nested_paths
+            if not option.startswith("/"):
                 break
     for shell_index, token in enumerate(tokens):
         launcher = token.replace("\\", "/").rsplit("/", maxsplit=1)[-1].lower()
