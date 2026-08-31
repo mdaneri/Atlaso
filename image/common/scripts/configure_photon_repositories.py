@@ -8,11 +8,11 @@ import configparser
 import hashlib
 import os
 import stat
+import subprocess
 import tempfile
-import urllib.request
 import xml.etree.ElementTree as ET
 from pathlib import Path
-from typing import Any, Callable, ContextManager
+from typing import Callable
 
 REPOSITORY_SECTION = "photon-updates"
 CANONICAL_BASEURL = (
@@ -37,6 +37,7 @@ LEGACY_GPG_KEY_URIS = (
 DEFAULT_REPOSITORY_PATH = Path("/etc/yum.repos.d/photon-updates.repo")
 DEFAULT_GPG_KEY_PATH = Path("/etc/pki/rpm-gpg/VMWARE-RPM-GPG-KEY-4096")
 PROBE_TIMEOUT_SECONDS = 30
+PROBE_PROCESS_GRACE_SECONDS = 5
 MAX_METADATA_BYTES = 2 * 1024 * 1024
 TRUSTED_EXISTING_BASEURLS = {
     CANONICAL_BASEURL,
@@ -226,38 +227,64 @@ def _write_repository_atomic(
 
 
 def probe_repository_metadata(
-    opener: Callable[..., ContextManager[Any]] = urllib.request.urlopen,
+    runner: Callable[..., subprocess.CompletedProcess[str]] = subprocess.run,
 ) -> None:
     """Require bounded valid metadata from the canonical Photon repository.
 
     Args:
-        opener: HTTPS opener, injectable for focused tests.
+        runner: Process runner, injectable for focused tests.
 
     Raises:
         PhotonRepositoryError: The canonical endpoint is unreachable, redirects
             elsewhere, is oversized, or does not contain repository metadata.
     """
 
-    request = urllib.request.Request(
-        CANONICAL_METADATA_URL,
-        headers={"User-Agent": "Atlaso-Photon-Image-Builder/1"},
-    )
-    try:
-        with opener(request, timeout=PROBE_TIMEOUT_SECONDS) as response:
-            status = response.getcode()
-            effective_url = response.geturl()
-            payload = response.read(MAX_METADATA_BYTES + 1)
-    except Exception as exc:
+    with tempfile.TemporaryDirectory(prefix="atlaso-photon-repository-") as temporary:
+        payload_path = Path(temporary) / "repomd.xml"
+        command = [
+            "curl",
+            "--fail",
+            "--silent",
+            "--show-error",
+            "--proto",
+            "=https",
+            "--proto-redir",
+            "=https",
+            "--connect-timeout",
+            str(PROBE_TIMEOUT_SECONDS),
+            "--max-time",
+            str(PROBE_TIMEOUT_SECONDS),
+            "--max-filesize",
+            str(MAX_METADATA_BYTES),
+            "--user-agent",
+            "Atlaso-Photon-Image-Builder/1",
+            "--output",
+            str(payload_path),
+            "--write-out",
+            "%{http_code}\n%{url_effective}",
+            CANONICAL_METADATA_URL,
+        ]
+        try:
+            completed = runner(
+                command,
+                check=False,
+                capture_output=True,
+                text=True,
+                timeout=PROBE_TIMEOUT_SECONDS + PROBE_PROCESS_GRACE_SECONDS,
+            )
+            probe_result = completed.stdout.splitlines()
+            payload = payload_path.read_bytes()
+        except (OSError, subprocess.SubprocessError) as exc:
+            raise PhotonRepositoryError(
+                "Canonical Photon 5 updates metadata is unreachable."
+            ) from exc
+    if completed.returncode != 0:
         raise PhotonRepositoryError(
             "Canonical Photon 5 updates metadata is unreachable."
-        ) from exc
-    if status != 200 or effective_url != CANONICAL_METADATA_URL:
+        )
+    if probe_result != ["200", CANONICAL_METADATA_URL]:
         raise PhotonRepositoryError(
             "Canonical Photon 5 updates metadata did not return the approved endpoint."
-        )
-    if len(payload) > MAX_METADATA_BYTES:
-        raise PhotonRepositoryError(
-            "Photon repository metadata exceeds the safety limit."
         )
     try:
         root = ET.fromstring(payload)
@@ -272,14 +299,14 @@ def probe_repository_metadata(
 def configure_photon_updates_repository(
     repository_path: Path = DEFAULT_REPOSITORY_PATH,
     gpg_key_path: Path = DEFAULT_GPG_KEY_PATH,
-    opener: Callable[..., ContextManager[Any]] = urllib.request.urlopen,
+    runner: Callable[..., subprocess.CompletedProcess[str]] = subprocess.run,
 ) -> bool:
     """Validate, probe, and canonicalize the Photon updates repository.
 
     Args:
         repository_path: Stock Photon updates repository file.
         gpg_key_path: Installed Photon 4096-bit RPM signing key.
-        opener: HTTPS opener, injectable for focused tests.
+        runner: Process runner, injectable for focused tests.
 
     Returns:
         ``True`` when the repository file changed, otherwise ``False``.
@@ -290,7 +317,7 @@ def configure_photon_updates_repository(
     )
     parser = _read_repository(repository_path)
     _validate_repository(parser, gpg_key_path)
-    probe_repository_metadata(opener)
+    probe_repository_metadata(runner)
     canonical = _canonical_repository_text()
     return _write_repository_atomic(repository_path, canonical, metadata)
 

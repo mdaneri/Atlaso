@@ -3,12 +3,11 @@
 from __future__ import annotations
 
 import importlib.util
+import subprocess
 import sys
 from pathlib import Path
 from types import ModuleType
-from typing import Literal
-from urllib.error import URLError
-from urllib.request import Request
+from typing import Any
 
 import pytest
 
@@ -33,50 +32,6 @@ def load_configurator() -> ModuleType:
     sys.modules[spec.name] = module
     spec.loader.exec_module(module)
     return module
-
-
-class MetadataResponse:
-    """Provide a bounded successful HTTPS response for focused tests."""
-
-    status = 200
-
-    def __init__(self, url: str):
-        """Store the canonical response URL.
-
-        Args:
-            url: Effective canonical repository metadata URL.
-        """
-
-        self.url = url
-
-    def __enter__(self) -> MetadataResponse:
-        """Return this response from a context manager."""
-
-        return self
-
-    def __exit__(self, *_args: object) -> Literal[False]:
-        """Leave the response context without suppressing failures."""
-
-        return False
-
-    def getcode(self) -> int:
-        """Return the successful HTTP response status."""
-
-        return self.status
-
-    def geturl(self) -> str:
-        """Return the effective canonical URL."""
-
-        return self.url
-
-    def read(self, _limit: int) -> bytes:
-        """Return minimal valid RPM repository metadata.
-
-        Args:
-            _limit: Maximum bytes requested by the configurator.
-        """
-
-        return b'<repomd xmlns="http://linux.duke.edu/metadata/repo" />'
 
 
 def write_repository(
@@ -131,13 +86,24 @@ def test_legacy_ga_updates_repository_is_canonicalized_before_refresh(
     )
     observed: dict[str, str | int] = {}
 
-    def open_metadata(request: Request, *, timeout: int) -> MetadataResponse:
-        observed["url"] = request.full_url
-        observed["timeout"] = timeout
-        return MetadataResponse(configurator.CANONICAL_METADATA_URL)
+    def run_probe(command: list[str], **kwargs: Any) -> subprocess.CompletedProcess[str]:
+        payload = Path(command[command.index("--output") + 1])
+        payload.write_text(
+            '<repomd xmlns="http://linux.duke.edu/metadata/repo" />',
+            encoding="utf-8",
+        )
+        observed["url"] = command[-1]
+        observed["curl_timeout"] = command[command.index("--max-time") + 1]
+        observed["process_timeout"] = kwargs["timeout"]
+        return subprocess.CompletedProcess(
+            command,
+            0,
+            stdout=f"200\n{configurator.CANONICAL_METADATA_URL}",
+            stderr="",
+        )
 
     assert configurator.configure_photon_updates_repository(
-        repository, PINNED_GPG_KEY, open_metadata
+        repository, PINNED_GPG_KEY, run_probe
     )
     canonical = repository.read_text(encoding="utf-8")
     assert f"baseurl={configurator.CANONICAL_BASEURL}\n" in canonical
@@ -146,7 +112,11 @@ def test_legacy_ga_updates_repository_is_canonicalized_before_refresh(
     assert "packages.vmware.com" not in canonical
     assert observed == {
         "url": configurator.CANONICAL_METADATA_URL,
-        "timeout": configurator.PROBE_TIMEOUT_SECONDS,
+        "curl_timeout": str(configurator.PROBE_TIMEOUT_SECONDS),
+        "process_timeout": (
+            configurator.PROBE_TIMEOUT_SECONDS
+            + configurator.PROBE_PROCESS_GRACE_SECONDS
+        ),
     }
 
 
@@ -233,8 +203,8 @@ def test_unreachable_canonical_metadata_fails_before_repository_rewrite(
     write_repository(repository, baseurl=legacy)
     original = repository.read_bytes()
 
-    def fail_probe(*_args: object, **_kwargs: object) -> MetadataResponse:
-        raise URLError("offline")
+    def fail_probe(*_args: object, **_kwargs: object) -> subprocess.CompletedProcess[str]:
+        raise subprocess.TimeoutExpired("curl", configurator.PROBE_TIMEOUT_SECONDS)
 
     with pytest.raises(
         configurator.PhotonRepositoryError,
