@@ -14,6 +14,12 @@ import pytest
 
 SCRIPT = Path("image/common/scripts/configure_photon_repositories.py")
 PINNED_GPG_KEY = Path("image/common/photon-rpm-gpg/VMWARE-RPM-GPG-KEY-4096")
+PINNED_SOURCE_KEY_SHA256 = (
+    "88b2e118c08f0a7c2acc172ac9b8557a30677ffaff5060d304697bee75028bc7"
+)
+PINNED_GA_INSTALLED_KEY_SHA256 = (
+    "8f4cb443e17f533a78c72f1f7f7d7e1b739622bb8c2d2ac8444ac3fcf85e8307"
+)
 
 
 def load_configurator() -> ModuleType:
@@ -141,6 +147,17 @@ def test_legacy_ga_updates_repository_is_canonicalized_before_refresh(
     assert observed == {
         "url": configurator.CANONICAL_METADATA_URL,
         "timeout": configurator.PROBE_TIMEOUT_SECONDS,
+    }
+
+
+def test_trusts_upstream_source_and_ga_installed_key_serializations() -> None:
+    """Pin both approved byte representations of the same Photon signing key."""
+
+    configurator = load_configurator()
+
+    assert configurator.TRUSTED_GPG_KEY_SHA256S == {
+        PINNED_SOURCE_KEY_SHA256,
+        PINNED_GA_INSTALLED_KEY_SHA256,
     }
 
 

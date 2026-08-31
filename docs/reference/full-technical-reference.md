@@ -280,7 +280,8 @@ Packer-prefixed lines without hiding actionable failures. Successful zero-status
 for reported repository errors rather than loaded into memory as a whole.
 
 Before the first metadata refresh, the shared provisioner accepts only the stock Photon 5 updates repository layouts,
-requires `gpgcheck=1` plus the repository-pinned digest of the installed 4096-bit Photon RPM signing key, and replaces
+requires `gpgcheck=1` plus a repository-pinned byte serialization of the installed 4096-bit Photon RPM signing key,
+and replaces
 the retired GA URL with Photon's
 current `packages.broadcom.com/photon/$releasever/...` layout. It fetches a bounded `repomd.xml` document from that exact
 canonical HTTPS endpoint before changing the repository file. An unrecognized source, weakened signature setting,

@@ -122,7 +122,8 @@ normalized, bounded output tail; a zero-status transcript that reports a TDNF er
 to fatal exit status 1. The zero-status error scan streams the transcript line by line so long successful transactions
 do not require another full in-memory copy after TDNF exits.
 Before that first refresh, the shared provisioner validates the stock Photon 5 updates definition, `gpgcheck=1`, and
-the repository-pinned digest of its installed 4096-bit RPM signing key, then probes bounded metadata from the exact current
+one of the repository-pinned byte serializations of its installed 4096-bit RPM signing key. It then probes bounded
+metadata from the exact current
 `packages.broadcom.com/photon/$releasever/...` endpoint, and atomically replaces the retired GA repository layout.
 Unexpected sources, disabled GPG checks, missing or substituted key material, redirects, unreachable metadata, and
 malformed metadata all fail the build before TDNF runs.

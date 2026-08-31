@@ -24,9 +24,12 @@ CANONICAL_METADATA_URL = (
     "photon_updates_5.0_x86_64/repodata/repomd.xml"
 )
 CANONICAL_GPG_KEY_URI = "file:///etc/pki/rpm-gpg/VMWARE-RPM-GPG-KEY-4096"
-EXPECTED_GPG_KEY_SHA256 = (
-    "88b2e118c08f0a7c2acc172ac9b8557a30677ffaff5060d304697bee75028bc7"
-)
+TRUSTED_GPG_KEY_SHA256S = {
+    # Armored source shipped by the upstream photon-repos package sources.
+    "88b2e118c08f0a7c2acc172ac9b8557a30677ffaff5060d304697bee75028bc7",
+    # Serialization installed by the pinned Photon 5 GA ISO.
+    "8f4cb443e17f533a78c72f1f7f7d7e1b739622bb8c2d2ac8444ac3fcf85e8307",
+}
 LEGACY_GPG_KEY_URIS = (
     "file:///etc/pki/rpm-gpg/VMWARE-RPM-GPG-KEY "
     "file:///etc/pki/rpm-gpg/VMWARE-RPM-GPG-KEY-4096"
@@ -157,7 +160,7 @@ def _validate_repository(parser: configparser.ConfigParser, gpg_key_path: Path) 
                 digest.update(block)
     except OSError as exc:
         raise PhotonRepositoryError("Photon RPM signing key is unreadable.") from exc
-    if digest.hexdigest() != EXPECTED_GPG_KEY_SHA256:
+    if digest.hexdigest() not in TRUSTED_GPG_KEY_SHA256S:
         raise PhotonRepositoryError(
             "Photon RPM signing key does not match the pinned upstream identity."
         )
