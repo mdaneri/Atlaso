@@ -481,6 +481,71 @@ def _powershell_profile_target(disk: Path, filesystem: str) -> str:
     return f"{executable.parent.as_posix()}/profile.ps1"
 
 
+def _powershell_profile_layout_metadata(
+    disk: Path, filesystem: str
+) -> dict[str, tuple[int, int, int] | None]:
+    """Return no-follow metadata for every supported global profile path.
+
+    Args:
+        disk: Read-only Photon payload disk.
+        filesystem: Guest filesystem mounted as root.
+    """
+
+    commands = [f"mount-ro {filesystem} /"]
+    for path in POWERSHELL_PROFILE_TARGETS:
+        commands.extend(
+            (
+                f"echo ATLASO-POWERSHELL-PROFILE:{path}",
+                f"-lstatns {path}",
+                f"echo ATLASO-POWERSHELL-PROFILE-END:{path}",
+            )
+        )
+    lines = _guestfish(disk, commands)
+    records: dict[str, tuple[int, int, int] | None] = {}
+    current = ""
+    fields: dict[str, int] = {}
+    required = {"st_mode", "st_uid", "st_gid"}
+    for line in lines:
+        if line.startswith("ATLASO-POWERSHELL-PROFILE:"):
+            current = line.removeprefix("ATLASO-POWERSHELL-PROFILE:")
+            if current not in POWERSHELL_PROFILE_TARGETS or current in records:
+                raise SystemExit("PowerShell global profile layout could not be verified")
+            fields = {}
+            continue
+        if line.startswith("ATLASO-POWERSHELL-PROFILE-END:"):
+            ended = line.removeprefix("ATLASO-POWERSHELL-PROFILE-END:")
+            if not current or ended != current or set(fields) not in (set(), required):
+                raise SystemExit("PowerShell global profile layout could not be verified")
+            records[current] = (
+                (fields["st_mode"], fields["st_uid"], fields["st_gid"])
+                if fields
+                else None
+            )
+            current = ""
+            fields = {}
+            continue
+        key, separator, value = line.partition(":")
+        canonical_key = {
+            "mode": "st_mode",
+            "uid": "st_uid",
+            "gid": "st_gid",
+            "st_mode": "st_mode",
+            "st_uid": "st_uid",
+            "st_gid": "st_gid",
+        }.get(key)
+        if not current or separator != ":" or canonical_key is None:
+            continue
+        try:
+            fields[canonical_key] = int(value.strip(), 0)
+        except ValueError as exc:
+            raise SystemExit(
+                "PowerShell global profile layout could not be verified"
+            ) from exc
+    if current or set(records) != set(POWERSHELL_PROFILE_TARGETS):
+        raise SystemExit("PowerShell global profile layout could not be verified")
+    return records
+
+
 def _verify_deployed_system_content(
     asset_root: Path, source_commit: str, repo_root: Path
 ) -> int:
@@ -496,21 +561,11 @@ def _verify_deployed_system_content(
         raise SystemExit("source commit must be a full lowercase Git SHA")
     payloads = _payload_vmdks(asset_root)
     filesystems = {role: _filesystem(disk) for role, disk in payloads.items()}
-    profile_presence = _guestfish(
-        payloads["photon_os"],
-        [
-            f"mount-ro {filesystems['photon_os']} /",
-            *(f"is-file {path}" for path in POWERSHELL_PROFILE_TARGETS),
-        ],
+    profile_metadata = _powershell_profile_layout_metadata(
+        payloads["photon_os"], filesystems["photon_os"]
     )
-    if len(profile_presence) != len(POWERSHELL_PROFILE_TARGETS):
-        raise SystemExit("PowerShell global profile layout could not be verified")
     profile_targets = [
-        path
-        for path, present in zip(
-            POWERSHELL_PROFILE_TARGETS, profile_presence, strict=True
-        )
-        if present == "true"
+        path for path, metadata in profile_metadata.items() if metadata is not None
     ]
     if len(profile_targets) != 1:
         raise SystemExit(

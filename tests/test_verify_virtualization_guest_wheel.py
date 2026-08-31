@@ -63,6 +63,38 @@ def _powershell_profile_output(commands: list[str], target: str) -> list[str] | 
     return [f"{PurePosixPath(target).parent.as_posix()}/pwsh"]
 
 
+def _powershell_profile_layout_output(
+    commands: list[str],
+    present: dict[str, tuple[int, int, int]],
+) -> list[str] | None:
+    """Return guestfish-shaped optional no-follow profile metadata.
+
+    Args:
+        commands: Guestfish commands issued by the verifier.
+        present: Path-specific mode, uid, and gid records for existing objects.
+    """
+
+    if not any(
+        command.startswith("echo ATLASO-POWERSHELL-PROFILE:")
+        for command in commands
+    ):
+        return None
+    lines: list[str] = []
+    for command in commands:
+        if command.startswith("echo ATLASO-POWERSHELL-PROFILE:"):
+            lines.append(command.removeprefix("echo "))
+        elif command.startswith("-lstatns "):
+            path = command.removeprefix("-lstatns ")
+            if path in present:
+                mode, uid, gid = present[path]
+                lines.extend(
+                    (f"st_mode: {mode}", f"st_uid: {uid}", f"st_gid: {gid}")
+                )
+        elif command.startswith("echo ATLASO-POWERSHELL-PROFILE-END:"):
+            lines.append(command.removeprefix("echo "))
+    return lines
+
+
 @pytest.fixture
 def bypass_system_content(monkeypatch: pytest.MonkeyPatch) -> None:
     """Keep wheel-focused tests scoped to their existing guest archives.
@@ -627,11 +659,18 @@ def test_rejects_altered_non_wheel_system_content(
         """
         if commands == ["list-filesystems"]:
             return ["/dev/sda: ext4"]
-        if any(command.startswith("is-file ") for command in commands):
-            return [
-                "true" if path == "/usr/share/powershell/profile.ps1" else "false"
-                for path in verifier.POWERSHELL_PROFILE_TARGETS
-            ]
+        profile_layout = _powershell_profile_layout_output(
+            commands,
+            {
+                "/usr/share/powershell/profile.ps1": (
+                    stat.S_IFREG | 0o644,
+                    0,
+                    0,
+                )
+            },
+        )
+        if profile_layout is not None:
+            return profile_layout
         if commands[-1] == "ls /etc/atlaso/update-trust.d":
             names = ["atlaso-release-test.pem"]
             if extra_trust_key:
@@ -720,11 +759,12 @@ def test_verifies_every_release_refreshed_non_wheel_file(
         """
         if commands == ["list-filesystems"]:
             return ["/dev/sda: ext4"]
-        if any(command.startswith("is-file ") for command in commands):
-            return [
-                "true" if path == powershell_profile_target else "false"
-                for path in verifier.POWERSHELL_PROFILE_TARGETS
-            ]
+        profile_layout = _powershell_profile_layout_output(
+            commands,
+            {powershell_profile_target: (stat.S_IFREG | 0o644, 0, 0)},
+        )
+        if profile_layout is not None:
+            return profile_layout
         if commands[-1] == "ls /etc/atlaso/update-trust.d":
             return ["atlaso-release-test.pem"]
         powershell_profile = _powershell_profile_output(
@@ -762,6 +802,55 @@ def test_verifies_every_release_refreshed_non_wheel_file(
         for parent in PurePosixPath(path).parents
     )
     assert metadata_queries == expected_metadata
+
+
+def test_rejects_dangling_symlink_in_inactive_powershell_profile_layout(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A dangling inactive profile symlink blocks protected publication.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest.
+        monkeypatch: Pytest fixture used to isolate guest reads.
+    """
+
+    assets = tmp_path / "assets"
+    _assets(assets)
+    current = "/usr/share/powershell/profile.ps1"
+    legacy = "/opt/microsoft/powershell/7/profile.ps1"
+    observed_commands: list[str] = []
+
+    def fake_guestfish(_disk: Path, commands: list[str]) -> list[str]:
+        """Return one regular profile and one dangling symlink.
+
+        Args:
+            _disk: Unused virtual-disk path.
+            commands: Guestfish command sequence.
+        """
+
+        observed_commands.extend(commands)
+        if commands == ["list-filesystems"]:
+            return ["/dev/sda: ext4"]
+        profile_layout = _powershell_profile_layout_output(
+            commands,
+            {
+                current: (stat.S_IFREG | 0o644, 0, 0),
+                legacy: (stat.S_IFLNK | 0o777, 0, 0),
+            },
+        )
+        if profile_layout is not None:
+            return profile_layout
+        raise AssertionError(f"unexpected guestfish commands: {commands}")
+
+    monkeypatch.setattr(verifier, "_guestfish", fake_guestfish)
+    with pytest.raises(
+        SystemExit,
+        match="PowerShell global profile must exist in exactly one supported layout",
+    ):
+        verifier._verify_deployed_system_content(assets, SOURCE_COMMIT, tmp_path)
+    assert f"-lstatns {current}" in observed_commands
+    assert f"-lstatns {legacy}" in observed_commands
 
 
 @pytest.mark.parametrize(
