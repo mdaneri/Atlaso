@@ -778,6 +778,16 @@ def _segment_directory_action(segment: str) -> tuple[str, str] | None:
     tokens = _shell_tokens(segment)
     while tokens and tokens[0] == "&":
         tokens.pop(0)
+    if (
+        tokens
+        and tokens[0].replace("\\", "/").rsplit("/", maxsplit=1)[-1].lower()
+        == "command"
+    ):
+        tokens.pop(0)
+        while tokens and tokens[0].startswith("-"):
+            option = tokens.pop(0)
+            if option == "--":
+                break
     if not tokens:
         return None
     command = tokens[0].replace("\\", "/").rsplit("/", maxsplit=1)[-1].lower()

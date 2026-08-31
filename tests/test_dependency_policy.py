@@ -819,6 +819,39 @@ def test_dependency_policy_tracks_shell_directory_changes(tmp_path: Path) -> Non
         )
 
 
+def test_dependency_policy_tracks_command_wrapped_directory_change(
+    tmp_path: Path,
+) -> None:
+    """Verify the Bash command builtin cannot hide a directory change.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
+    write_valid_policy(tmp_path)
+    workflow = tmp_path / ".github" / "workflows" / "release.yml"
+    workflow.parent.mkdir(parents=True, exist_ok=True)
+    workflow.write_text(
+        """jobs:
+  external:
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          repository: attacker/other
+          path: external
+      - run: |
+          command cd external
+          python -m pip install -r requirements-release-tools.lock
+""",
+        encoding="utf-8",
+    )
+
+    assert any(
+        "checkout-prefixed workflow requirement is not sourced from Atlaso: "
+        "requirements-release-tools.lock" in error
+        for error in validate(tmp_path)
+    )
+
+
 def test_dependency_policy_tracks_multiline_shell_directory_change(
     tmp_path: Path,
 ) -> None:
