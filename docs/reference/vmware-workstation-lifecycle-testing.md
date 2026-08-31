@@ -493,6 +493,22 @@ address, or neighbor entry owned by another running VM fails closed with the rel
 identity evidence. The wrapper re-lists the running inventory and rechecks the target address immediately before
 returning; a concurrent VM start, stop, or target-address change retries the complete proof.
 
+The development-signer scrub deliberately stops the VM, removes the powered-off VMX assignment, and restarts the exact
+clone. VMware discards runtime guest-info during that power cycle. On the applied-marker boot, a normal test VM therefore
+republishes its current hostname and regenerated Ed25519 host key from inside the guest before dependent services start.
+The durable marker's explicit `normal_test_vm` value owns this behavior; ordinary appliances never enter the test-only
+identity channel. Publication failure keeps the customizer failed and prevents identity-bound readiness from trusting
+stale or host-synthesized evidence.
+
+Address ownership and guest initialization are reported as separate readiness layers. Once a stable VMX, MAC, Tools
+address, running inventory, and Windows neighbor tuple has been proven, an absent guest-published hostname no longer
+falls through to the generic address-discovery timeout. The failure retains that non-secret ownership tuple, shows the
+injected and observed hostname state, and includes only the last allowlisted bounded first-boot stage when the guest
+published one. A missing or unknown stage is reported as unavailable; arbitrary guest-info is never echoed. This means
+the guest did not establish complete identity evidence, even when HTTPS happens to answer independently. Inspect the
+exact clone's local console and first-boot service state, and rebuild an outdated or unfixed source appliance before
+redeploying. Do not weaken or bypass the hostname gate merely because SSH, HTTPS, or an address is reachable.
+
 Recover from that failure through the exact clone's local console: stop the named conflicting VM, or give the clone a
 unique applied static address. A temporary DHCP reservation is acceptable only when it is bound to the exact target MAC
 shown by the failure. Then rerun `get-atlaso-vm-ip.ps1` with the exact VMX and the original `-ExpectedHostname`, or
