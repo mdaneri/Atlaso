@@ -11,6 +11,7 @@ const output = []
 let blockquoteDepth = 0
 let deletionDepth = 0
 let headingPrefix = ''
+let embeddedStylePresent = false
 const htmlStack = []
 
 const suppressedTags = new Set(['datalist', 'del', 's', 'strike', 'iframe', 'noscript', 'script', 'style', 'pre', 'textarea', 'template', 'title'])
@@ -241,6 +242,9 @@ function isValidSuppressionDeclaration (property, value) {
       functions && functions.every(item => transformFunctions.has(item.name))
     )
   }
+  if (property === 'clip-path') {
+    return value === 'none' || /^(?:url|inset|circle|ellipse|polygon|path|rect|xywh)\(.+\)$/.test(value)
+  }
   if (property === 'color') {
     return value === 'transparent' || value === 'currentcolor' ||
       cssNamedColors.has(value) ||
@@ -344,6 +348,20 @@ function hasZeroScaleTransform (value) {
     }
   }
   return false
+}
+
+function hasFullyClippingPath (value) {
+  const inset = value.match(/^inset\((.*)\)$/)
+  if (!inset) return false
+  const offsets = splitCssComponentValues(inset[1].split(/\bround\b/i, 1)[0])
+  if (offsets.length < 1 || offsets.length > 4) return false
+  const percentages = offsets.map(item => {
+    const match = item.match(/^([+-]?(?:\d+(?:\.\d*)?|\.\d+))%$/)
+    return match ? Number.parseFloat(match[1]) : null
+  })
+  if (percentages.some(item => item === null)) return false
+  const [top, right = top, bottom = top, left = right] = percentages
+  return top + bottom >= 100 || left + right >= 100
 }
 
 function parseCssFunctions (value) {
@@ -552,7 +570,7 @@ function hasHiddenAttributes (attributes, inheritedCustomProperties = new Map(),
       customProperties.set(property, declaration)
     }
   }
-  for (const property of ['display', 'visibility', 'content-visibility', 'opacity', 'font-size', 'transform', 'color']) {
+  for (const property of ['display', 'visibility', 'content-visibility', 'opacity', 'font-size', 'transform', 'clip-path', 'color']) {
     const declaration = declarations.get(property)
     if (!declaration || !hasCssVariable(declaration.value)) continue
     const resolved = resolveCssVariables(declaration.value, customProperties)
@@ -572,7 +590,8 @@ function hasHiddenAttributes (attributes, inheritedCustomProperties = new Map(),
       declarations.get('display')?.value === 'none' ||
       declarations.get('content-visibility')?.value === 'hidden' ||
       (parseOpacityValue(declarations.get('opacity')?.value || '') ?? 1) <= 0 ||
-      hasZeroScaleTransform(declarations.get('transform')?.value || '')
+      hasZeroScaleTransform(declarations.get('transform')?.value || '') ||
+      hasFullyClippingPath(declarations.get('clip-path')?.value || '')
     ),
     visibility: declarations.get('visibility')?.value || null,
     fontSize: declarations.get('font-size')?.value || null,
@@ -732,6 +751,7 @@ function updateHtmlSuppression (content, inlineContext = false) {
       }
       continue
     }
+    if (tag === 'style') embeddedStylePresent = true
     if (paragraphClosingTags.has(tag)) {
       for (let index = htmlStack.length - 1; index >= 0; index -= 1) {
         if (htmlStack[index].tag === 'p') {
@@ -903,4 +923,4 @@ for (const token of tokens) {
   }
 }
 
-process.stdout.write(output.join(''))
+process.stdout.write(embeddedStylePresent ? '' : output.join(''))

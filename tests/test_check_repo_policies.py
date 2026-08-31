@@ -1348,12 +1348,15 @@ def test_agent_policy_gate_rejects_missing_maintainer_break_glass_contract(
         f'<span style="font-size:0e0">{prohibition}</span>',
         f'<span style="transform:scale(0)">{prohibition}</span>',
         f'<span style="transform:scale(calc(0))">{prohibition}</span>',
+        f'<span style="clip-path:inset(50%)">{prohibition}</span>',
         f'<span style="font-size:0"><span style="font-size:1em">'
         f"{prohibition}</span></span>",
         f"<b hidden>retired\n\n{prohibition}",
         f'<span style="display:none;display\\:block">{prohibition}</span>',
         f"<iframe>{prohibition}</iframe>",
         f"<div popover>{prohibition}</div>",
+        f'<style>.retired {{ display: none }}</style>'
+        f'<span class="retired">{prohibition}</span>',
         f"<datalist>{prohibition}</datalist>",
         f"<noscript>{prohibition}</noscript>",
         f'<span aria-hidden="tr&#117;e">{prohibition}</span>',
