@@ -348,8 +348,8 @@ def _shell_tokens(segment: str) -> list[str]:
         return []
 
 
-def _segment_directory_change(segment: str) -> str | None:
-    """Return a shell directory change performed by one command segment.
+def _segment_directory_action(segment: str) -> tuple[str, str] | None:
+    """Return a shell directory-stack action performed by one command segment.
 
     Args:
         segment: Command text with outer separators already removed.
@@ -360,14 +360,21 @@ def _segment_directory_change(segment: str) -> str | None:
     if not tokens:
         return None
     command = tokens[0].replace("\\", "/").rsplit("/", maxsplit=1)[-1].lower()
+    if command == "popd":
+        return ("pop", "")
     if command in {"cd", "pushd"}:
         arguments = [token for token in tokens[1:] if token != "--"]
-        return arguments[0] if arguments else ""
+        return ("push" if command == "pushd" else "change", arguments[0] if arguments else "")
+    if command == "pop-location":
+        return ("pop", "")
     if command in {"set-location", "push-location"}:
         arguments = tokens[1:]
         if arguments[:1] in (["-Path"], ["-LiteralPath"]):
             arguments = arguments[1:]
-        return arguments[0] if arguments else ""
+        return (
+            "push" if command == "push-location" else "change",
+            arguments[0] if arguments else "",
+        )
     return None
 
 
@@ -629,13 +636,22 @@ def _workflow_requirement_paths(lines: list[str]) -> list[tuple[int, str, str]]:
     references: list[tuple[int, str, str]] = []
     active_scope = -1
     active_directory = ""
+    directory_stack: list[str] = []
     for line_number, command, working_directory, run_scope in _workflow_run_commands(lines):
         if run_scope != active_scope:
             active_scope = run_scope
             active_directory = working_directory
+            directory_stack = []
         for segment in _shell_command_segments(command):
-            directory_change = _segment_directory_change(segment)
-            if directory_change is not None:
+            directory_action = _segment_directory_action(segment)
+            if directory_action is not None:
+                action, directory_change = directory_action
+                if action == "pop":
+                    if directory_stack:
+                        active_directory = directory_stack.pop()
+                    continue
+                if action == "push":
+                    directory_stack.append(active_directory)
                 change_path = PurePosixPath(directory_change.replace("\\", "/"))
                 if active_directory and not change_path.is_absolute():
                     active_directory = (

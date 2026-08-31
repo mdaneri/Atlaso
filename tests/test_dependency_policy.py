@@ -711,6 +711,42 @@ def test_dependency_policy_tracks_multiline_shell_directory_change(
     )
 
 
+def test_dependency_policy_restores_shell_directory_stack(tmp_path: Path) -> None:
+    """Verify pop operations restore the source used for later requirements.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
+    write_valid_policy(tmp_path)
+    workflow = tmp_path / ".github" / "workflows" / "release.yml"
+    workflow.parent.mkdir(parents=True, exist_ok=True)
+    invocations = (
+        "pushd tooling; popd; python -m pip install -r requirements-release-tools.lock",
+        "Push-Location tooling; Pop-Location; python -m pip install -r requirements-release-tools.lock",
+    )
+    for invocation in invocations:
+        workflow.write_text(
+            f"""jobs:
+  external:
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          repository: attacker/other
+      - uses: actions/checkout@v7
+        with:
+          path: tooling
+      - run: {invocation}
+""",
+            encoding="utf-8",
+        )
+
+        assert any(
+            "root workflow requirement is not sourced from Atlaso: "
+            "requirements-release-tools.lock" in error
+            for error in validate(tmp_path)
+        )
+
+
 def test_dependency_policy_treats_dot_checkout_path_as_root(
     tmp_path: Path,
 ) -> None:
