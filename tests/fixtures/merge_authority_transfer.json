@@ -2560,6 +2560,22 @@
       ]
     },
     {
+      "name": "permission-based-merge-hold-is-preserved",
+      "default_merge_authority": true,
+      "instructions": [
+        {
+          "text": "Implement issue #602, but do not merge without my permission.",
+          "add_holds": [
+            "wait for approval"
+          ]
+        }
+      ],
+      "generated": "Wait for approval before merging.",
+      "expected_holds": [
+        "wait for approval"
+      ]
+    },
+    {
       "name": "actor-qualified-approval-wait-is-preserved",
       "default_merge_authority": true,
       "instructions": [

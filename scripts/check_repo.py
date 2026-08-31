@@ -1014,7 +1014,8 @@ MERGE_HOLD_APPROVAL_BEFORE_MERGING = re.compile(
 MERGE_HOLD_WITHOUT_APPROVAL = re.compile(
     r"\b(?:do not|don't|don’t|must not)\s+merge"
     r"(?:\s+(?:(?:this|the)\s+)?(?:pull request|pr))?\s+without\s+"
-    r"(?:(?:my|our|your|the|maintainer|owner|code owner)\s+)?approval\b"
+    r"(?:(?:my|our|your|the|maintainer|owner|code owner)\s+)?"
+    r"(?:approval|permission|authorization)\b"
 )
 MERGE_HOLD_RESUMABLE_GATE_SUFFIX = re.compile(
     r"^\s+(?:after|when|if|once|until)\s+"

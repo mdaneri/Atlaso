@@ -764,6 +764,12 @@ def test_merge_hold_directions_recognizes_approval_needed() -> None:
     assert merge_hold_directions(
         "Implement issue #602, but wait for the maintainer to approve."
     ) == {"wait for approval": "add"}
+    assert merge_hold_directions(
+        "Implement issue #602, but do not merge without my permission."
+    ) == {"wait for approval": "add"}
+    assert merge_hold_directions(
+        "Implement issue #602, but do not merge without authorization."
+    ) == {"wait for approval": "add"}
 
 
 def test_merge_hold_directions_ignores_pr_only_resumable_gate() -> None:
