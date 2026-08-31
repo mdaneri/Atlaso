@@ -1342,13 +1342,16 @@ def test_agent_policy_gate_rejects_missing_maintainer_break_glass_contract(
         f'<span style="display:none" style="display:block">{prohibition}</span>',
         f'<span style="opacity:0">{prohibition}</span>',
         f'<span style="filter:opacity(0)">{prohibition}</span>',
+        f'<span style="filter:opacity(0);filter:blur(foo)">{prohibition}</span>',
         f'<span style="opacity:calc(1 - 1)">{prohibition}</span>',
         f'<span style="opacity:0e0">{prohibition}</span>',
         f'<span style="font-size:0">{prohibition}</span>',
         f'<span style="font:0 sans-serif">{prohibition}</span>',
+        f'<span style="font-size:0;font:12px/foo Arial">{prohibition}</span>',
         f'<span style="font-size:0;font:foo">{prohibition}</span>',
         f'<span style="font-size:calc(0px)">{prohibition}</span>',
         f'<span style="font-size:calc(0cqw)">{prohibition}</span>',
+        f'<span style="font-size:0;font-size:calc(foo)">{prohibition}</span>',
         f'<span style="font-size:0e0">{prohibition}</span>',
         f'<span style="transform:scale(0)">{prohibition}</span>',
         f'<span style="transform:scale(calc(0))">{prohibition}</span>',
@@ -1580,8 +1583,10 @@ def test_agent_policy_gate_rejects_missing_maintainer_break_glass_contract(
         f'<span style="font-size:0"><span style="font-size:12px">'
         f"{prohibition}</span></span>",
         f'<span style="font-size:0;font:12px sans-serif">{prohibition}</span>',
+        f'<span style="font-size:0;font:12px/1.5 Arial">{prohibition}</span>',
         f'<span style="font-size:0"><span style="font-size:calc(12px)">'
         f"{prohibition}</span></span>",
+        f'<span style="font-size:0;font-size:calc(12px)">{prohibition}</span>',
         f'<span style="font-size:0"><span style="font-size:calc(12cqw)">'
         f"{prohibition}</span></span>",
         f'<span style="font-size:0"><span style="font-size:initial">'
@@ -1596,6 +1601,7 @@ def test_agent_policy_gate_rejects_missing_maintainer_break_glass_contract(
         f'<span style="transform:matrix(0,0,0,0,0,0);transform:matrix(1,0,0,1,0,0)">'
         f"{prohibition}</span>",
         f'<span style="filter:opacity(0);filter:none">{prohibition}</span>',
+        f'<span style="filter:opacity(0);filter:blur(1px)">{prohibition}</span>',
         f'<span style="clip-path:circle(0);clip-path:circle(50%)">'
         f"{prohibition}</span>",
         f'<span style="--hide:none;filter:var(--hide)">{prohibition}</span>',

@@ -260,10 +260,7 @@ function isValidSuppressionDeclaration (property, value) {
   if (property === 'filter') {
     const functions = parseCssFunctions(value)
     return value === 'none' || Boolean(
-      functions && functions.every(item => (
-        filterFunctions.has(item.name) && item.body.trim() &&
-        (item.name !== 'opacity' || parseOpacityValue(item.body.trim()) !== null)
-      ))
+      functions && functions.every(isValidFilterFunction)
     )
   }
   if (property === 'font-size') {
@@ -318,7 +315,32 @@ function isValidFontSize (value) {
     if (!numeric[2]) return Number.parseFloat(numeric[1]) === 0
     return fontSizeUnits.has(numeric[2])
   }
-  return /^(?:calc|min|max|clamp)\(.+\)$/.test(value)
+  const normalized = normalizeFontSizeCalculation(value)
+  return normalized !== null && parseOpacityValue(normalized.value) !== null
+}
+
+function normalizeFontSizeCalculation (value) {
+  if (!/^(?:calc|min|max|clamp)\(.+\)$/.test(value)) return null
+  const units = new Set()
+  let invalidUnit = false
+  const normalized = value.replace(
+    /([+]?(?:\d+(?:\.\d*)?|\.\d+)(?:e[+-]?\d+)?)(%|[a-z]+)\b/gi,
+    (match, amount, unit) => {
+      const normalizedUnit = unit.toLowerCase()
+      if (normalizedUnit !== '%' && !fontSizeUnits.has(normalizedUnit)) {
+        invalidUnit = true
+        return match
+      }
+      if (Number.parseFloat(amount) !== 0) units.add(normalizedUnit)
+      return amount
+    }
+  )
+  if (invalidUnit) return null
+  const identifiers = normalized.match(/[a-z][a-z0-9-]*/g) || []
+  if (!identifiers.every(identifier => ['calc', 'clamp', 'max', 'min'].includes(identifier))) {
+    return null
+  }
+  return { value: normalized, units }
 }
 
 function splitCssShorthandTokens (value) {
@@ -369,11 +391,21 @@ function fontShorthandSize (value) {
     if (!isValidFontSize(tokens[index])) continue
     let familyStart = index + 1
     if (tokens[familyStart] === '/') {
+      if (!isValidLineHeight(tokens[familyStart + 1])) return null
       familyStart += 2
     }
     return familyStart < tokens.length ? tokens[index] : null
   }
   return null
+}
+
+function isValidLineHeight (value) {
+  if (!value) return false
+  if (value === 'normal') return true
+  const numeric = parseOpacityValue(value)
+  if (numeric !== null) return numeric >= 0
+  if (!isValidTransformLength(value)) return false
+  return !/^-/.test(value)
 }
 
 function isValidTransformCalculation (value, allowedUnits) {
@@ -462,6 +494,25 @@ function isValidTransformFunction (item) {
     return values.length === 1 && isValidTransformLength(values[0])
   }
   return values.length === 1 && isValidTransformLength(values[0], false)
+}
+
+function isValidFilterFunction (item) {
+  if (!filterFunctions.has(item.name)) return false
+  const values = splitCssComponentValues(item.body)
+  if (item.name === 'url') return item.body.trim().length > 0
+  if (item.name === 'blur') {
+    return values.length === 1 && isValidTransformLength(values[0], false)
+  }
+  if (item.name === 'hue-rotate') {
+    return values.length === 1 && isValidTransformAngle(values[0])
+  }
+  if (item.name === 'drop-shadow') {
+    const lengths = values.filter(value => !isValidColorValue(value))
+    const colors = values.filter(isValidColorValue)
+    return colors.length <= 1 && lengths.length >= 2 && lengths.length <= 3 &&
+      lengths.every(value => isValidTransformLength(value, false))
+  }
+  return values.length === 1 && isValidTransformNumber(values[0], true)
 }
 
 function isValidFunctionalColor (value) {
@@ -568,19 +619,12 @@ function classifyFontSize (value) {
     }
     return 'visible'
   }
-  const units = new Set()
-  const normalizedCalculation = value.replace(
-    /([+]?(?:\d+(?:\.\d*)?|\.\d+)(?:e[+-]?\d+)?)([a-z]+)\b/gi,
-    (match, amount, unit) => {
-      if (!fontSizeUnits.has(unit.toLowerCase())) return match
-      if (Number.parseFloat(amount) !== 0) units.add(unit.toLowerCase())
-      return amount
-    }
-  )
-  if (units.size > 1 || (units.size > 0 && normalizedCalculation.includes('%'))) {
+  const normalizedCalculation = normalizeFontSizeCalculation(value)
+  if (normalizedCalculation === null) return 'inherit'
+  if (normalizedCalculation.units.size > 1) {
     return 'inherit'
   }
-  const calculated = parseOpacityValue(normalizedCalculation)
+  const calculated = parseOpacityValue(normalizedCalculation.value)
   if (calculated === null) return 'inherit'
   return calculated === 0 ? 'zero' : 'visible'
 }
