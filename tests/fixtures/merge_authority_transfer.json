@@ -3785,6 +3785,33 @@
       ]
     },
     {
+      "name": "sign-off-is-an-approval-hold",
+      "default_merge_authority": true,
+      "instructions": [
+        {
+          "text": "Implement issue #602, but merge only with my sign-off.",
+          "add_holds": [
+            "wait for approval"
+          ]
+        }
+      ],
+      "generated": "Preserve the explicit wait for approval instruction.",
+      "expected_holds": [
+        "wait for approval"
+      ]
+    },
+    {
+      "name": "advisory-fix-question-is-ineligible",
+      "default_merge_authority": false,
+      "instructions": [
+        {
+          "text": "Can you suggest how to fix issue #602?"
+        }
+      ],
+      "generated": "Explain possible fixes without implementing or merging.",
+      "expected_holds": []
+    },
+    {
       "name": "mixed-numbered-pr-target-list-preserves-active-hold",
       "default_merge_authority": true,
       "active_pull_request": 620,

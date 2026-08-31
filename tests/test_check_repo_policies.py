@@ -1200,6 +1200,9 @@ def test_merge_hold_directions_recognizes_plain_approval_condition() -> None:
         "Implement issue #602, but wait for security team approval before merging.",
     ):
         assert merge_hold_directions(instruction) == {"wait for approval": "add"}
+    assert merge_hold_directions("Merge only with my sign-off.") == {
+        "wait for approval": "add"
+    }
     assert merge_hold_directions(
         "Implement issue #602, but merge only after the code owner approves."
     ) == {"wait for approval": "add"}
@@ -1597,6 +1600,7 @@ def test_source_authority_excludes_review_advice() -> None:
         "Review the PR and propose a fix.",
         "Review the PR, then recommend a patch.",
         "Inspect the changes and suggest a solution.",
+        "Can you suggest how to fix issue #602?",
     ):
         assert not source_has_default_merge_authority((instruction,))
 

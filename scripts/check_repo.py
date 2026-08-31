@@ -896,7 +896,8 @@ DEFAULT_MERGE_AUTHORITY_DIRECT_REVIEW = re.compile(
 )
 DEFAULT_MERGE_AUTHORITY_INTERROGATIVE_REVIEW = re.compile(
     r"(?:^|[;.!?]\s*)(?:can|could|would|will)\s+you\s+"
-    r"(?:explain|describe|assess|evaluate|tell)\b[^?]*\?|"
+    r"(?:explain|describe|assess|evaluate|tell|suggest|recommend|propose)"
+    r"\b[^?]*\?|"
     r"(?:^|[;.!?]\s*)(?:is|are|was|were|does|do|did)\s+"
     r"(?:(?:the|this|that|an?)\s+)?"
     r"(?:implementation|fix|patch|changes?|code|pull request|pr)\b[^?]*\?|"
@@ -1127,7 +1128,8 @@ MERGE_HOLD_APPROVAL_CONDITION = re.compile(
 MERGE_HOLD_PERMISSION_QUALIFIED_MERGE = re.compile(
     r"\b(?:only\s+merge(?:\s+(?:(?:this|the)\s+)?(?:pull request|pr))?|"
     r"merge(?:\s+(?:(?:this|the)\s+)?(?:pull request|pr))?\s+only)\s+"
-    r"with\s+(?:(?:my|our|your)\s+)?(?:approval|permission|authorization)\b"
+    r"with\s+(?:(?:my|our|your)\s+)?"
+    r"(?:approval|permission|authorization|sign[- ]off|go[- ]ahead)\b"
 )
 MERGE_HOLD_APPROVAL_CONDITION_FIRST = re.compile(
     r"\b(?:(?:only\s+)?(?:with\s+(?:(?:my|our|your)\s+approval|"
