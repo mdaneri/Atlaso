@@ -29,7 +29,9 @@ PIP_MODULE_RE = re.compile(
     r"pip(?:\d+(?:\.\d+)*)?(?:\.__main__)?", re.IGNORECASE
 )
 SHELL_LAUNCHERS = {"bash", "dash", "ksh", "sh", "zsh"}
-RUN_RE = re.compile(r"^(?P<indent>\s*)(?:-\s+)?run:\s*(?P<value>.*)$")
+RUN_RE = re.compile(
+    r"^(?P<indent>\s*)(?:-\s+)?(?:run|'run'|\"run\"):\s*(?P<value>.*)$"
+)
 ALIAS_RE = re.compile(r"\*[A-Za-z_][A-Za-z0-9_.-]*")
 UNSUPPORTED_RUN_ALIAS_PREFIX = "unsupported-run-alias:"
 TRUSTED_ATLASO_REFS = {
@@ -119,7 +121,8 @@ def _yaml_scalar(line: str, key: str) -> str | None:
         line: YAML source line.
         key: Mapping key expected on the line.
     """
-    match = re.fullmatch(rf"\s*(?:-\s+)?{re.escape(key)}:\s*(.*?)\s*", line)
+    key_pattern = rf"(?:{re.escape(key)}|'{re.escape(key)}'|\"{re.escape(key)}\")"
+    match = re.fullmatch(rf"\s*(?:-\s+)?{key_pattern}:\s*(.*?)\s*", line)
     if not match:
         return None
     value = match.group(1).strip()
@@ -156,10 +159,8 @@ def _yaml_plain_scalar(
     line_indent = len(line) - len(line.lstrip())
     key_indent = line_indent + (2 if re.match(r"\s*-\s+", line) else 0)
     value = _yaml_scalar(line, key)
-    source_match = re.fullmatch(
-        rf"\s*(?:-\s+)?{re.escape(key)}:\s*(.*?)\s*",
-        line,
-    )
+    key_pattern = rf"(?:{re.escape(key)}|'{re.escape(key)}'|\"{re.escape(key)}\")"
+    source_match = re.fullmatch(rf"\s*(?:-\s+)?{key_pattern}:\s*(.*?)\s*", line)
     source = source_match.group(1).strip() if source_match else ""
     if value is None and source.startswith(("'", '"')):
         cursor = index + 1
@@ -778,10 +779,9 @@ def _segment_directory_action(segment: str) -> tuple[str, str] | None:
     tokens = _shell_tokens(segment)
     while tokens and tokens[0] == "&":
         tokens.pop(0)
-    if (
-        tokens
-        and tokens[0].replace("\\", "/").rsplit("/", maxsplit=1)[-1].lower()
-        == "command"
+    if tokens and (
+        tokens[0].replace("\\", "/").rsplit("/", maxsplit=1)[-1].lower()
+        in {"builtin", "command"}
     ):
         tokens.pop(0)
         while tokens and tokens[0].startswith("-"):
