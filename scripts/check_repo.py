@@ -707,6 +707,10 @@ MERGE_HOLD_MODAL_PROHIBITION = re.compile(
     r"i\s+no\s+longer\s+(?:authorize|permit)\s+"
     r"you\s+to\s+merge|i\s+(?:forbid|prohibit)\s+you\s+"
     r"(?:from\s+merging|to\s+merge)|"
+    r"i\s+(?:do\s+not|don't|don’t)\s+approve\s+(?:of\s+)?merging"
+    r"(?:\s+(?:(?:this|the)\s+)?(?:pull request|pr))?|"
+    r"merging(?:\s+(?:(?:this|the)\s+)?(?:pull request|pr))?\s+"
+    r"(?:is|was|remains?)\s+(?:prohibited|forbidden|disallowed)|"
     r"(?:(?:my|your|our|the)\s+)?(?:permission|authorization|authority)\s+"
     r"to\s+merge(?:\s+(?:(?:this|the)\s+)?(?:pull request|pr))?\s+"
     r"(?:is|was|has\s+been)\s+(?:revoked|rescinded|withdrawn)|"
@@ -751,9 +755,11 @@ DEFAULT_MERGE_AUTHORITY_DECISION_ONLY = re.compile(r"\bwhether\s+to\b")
 DEFAULT_MERGE_AUTHORITY_PERMISSION_QUESTION = re.compile(
     r"\b(?:(?:do|would)\s+you\s+(?:want|like)\s+(?:me|us)\s+to|"
     r"should\s+(?:i|we)|(?:can|could|may)\s+"
-    r"(?:i|we|(?:(?:the|this)\s+)?(?:heartbeat|handoff|delegation|"
+    r"(?:i|we|you|(?:(?:the|this)\s+)?(?:heartbeat|handoff|delegation|"
     r"delegating\s+agent|agent|task))|"
-    r"do\s+(?:i|we)\s+have\s+(?:authority|authorization|permission)\s+to|"
+    r"(?:do|does)\s+(?:i|we|you|(?:(?:the|this)\s+)?(?:heartbeat|handoff|"
+    r"delegation|delegating\s+agent|agent|task))\s+have\s+"
+    r"(?:authority|authorization|permission)\s+to|"
     r"(?:has|have)\s+(?:i|we|(?:(?:the|this)\s+)?(?:heartbeat|handoff|"
     r"delegation|delegating\s+agent|agent|task))\s+been\s+"
     r"(?:authorized|permitted|allowed)\s+to|"
@@ -1302,6 +1308,11 @@ def _hold_targets_other_task(
         ):
             return False
         if direct_reference is not None:
+            gate_context = direct_object_context[
+                len(pattern) : direct_reference.start()
+            ]
+            if re.search(r"\b(?:until|before|after)\s*$", gate_context):
+                return False
             return int(direct_reference.group(1)) != active_pull_request
         prefix_references = tuple(MERGE_HOLD_NUMBERED_PR_REFERENCE.finditer(prefix))
         if prefix_references:

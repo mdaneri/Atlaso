@@ -3061,6 +3061,58 @@
       ],
       "generated": "Continue the discussion without implementation or merge delivery.",
       "expected_holds": []
+    },
+    {
+      "name": "passive-merge-prohibition-is-preserved",
+      "default_merge_authority": true,
+      "instructions": [
+        {
+          "text": "Implement issue #602, but merging this PR is prohibited.",
+          "add_holds": [
+            "do not merge"
+          ]
+        }
+      ],
+      "generated": "Preserve the do not merge hold.",
+      "expected_holds": [
+        "do not merge"
+      ]
+    },
+    {
+      "name": "implicit-current-pr-cross-pr-gate-is-preserved",
+      "default_merge_authority": true,
+      "active_pull_request": 620,
+      "instructions": [
+        {
+          "text": "Implement issue #602 and deliver PR #620."
+        },
+        {
+          "text": "Do not merge until PR #621 is merged.",
+          "add_holds": [
+            "do not merge"
+          ]
+        }
+      ],
+      "generated": "Preserve the do not merge hold for PR #620.",
+      "expected_holds": [
+        "do not merge"
+      ]
+    },
+    {
+      "name": "direct-merge-disapproval-is-preserved",
+      "default_merge_authority": true,
+      "instructions": [
+        {
+          "text": "Implement issue #602, but I do not approve merging this PR.",
+          "add_holds": [
+            "do not merge"
+          ]
+        }
+      ],
+      "generated": "Preserve the do not merge hold.",
+      "expected_holds": [
+        "do not merge"
+      ]
     }
   ]
 }

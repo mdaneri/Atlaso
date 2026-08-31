@@ -673,6 +673,11 @@ def test_merge_hold_directions_recognizes_modal_merge_prohibitions() -> None:
         "I forbid you to merge this PR.",
         "I prohibit you from merging this PR.",
         "I prohibit you to merge this PR.",
+        "I do not approve merging this PR.",
+        "I don't approve of merging this PR.",
+        "Merging this PR is prohibited.",
+        "Merging the pull request remains forbidden.",
+        "Merging is disallowed.",
         "Your permission to merge this PR is revoked.",
         "My authorization to merge the pull request was rescinded.",
         "The authority to merge this PR has been withdrawn.",
@@ -704,10 +709,20 @@ def test_merge_hold_directions_scopes_numbered_pr_permission() -> None:
 
 def test_merge_hold_directions_preserves_cross_pr_condition() -> None:
     """Verify a later cross-PR condition does not retarget an explicit this-PR hold."""
-    assert merge_hold_directions(
+    for instruction in (
         "Do not merge this PR until PR #621 is merged.",
+        "Do not merge until PR #621 is merged.",
+        "Do not merge before PR #621 is merged.",
+        "Do not merge after PR #621 is closed.",
+    ):
+        assert merge_hold_directions(
+            instruction,
+            active_pull_request=620,
+        ) == {"do not merge": "add"}
+    assert merge_hold_directions(
+        "Do not merge PR #621.",
         active_pull_request=620,
-    ) == {"do not merge": "add"}
+    ) == {}
 
 
 def test_merge_hold_directions_scopes_numbered_issue_permission() -> None:
@@ -1235,6 +1250,12 @@ def test_generated_authority_rejects_general_permission_questions() -> None:
     )
     assert not has_affirmative_default_merge_authority(
         "Are we authorized to complete the guarded merge?"
+    )
+    assert not has_affirmative_default_merge_authority(
+        "Does the heartbeat have permission to complete the guarded merge?"
+    )
+    assert not has_affirmative_default_merge_authority(
+        "Can you complete the guarded merge?"
     )
 
 
