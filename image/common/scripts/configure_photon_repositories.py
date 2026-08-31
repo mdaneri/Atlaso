@@ -60,6 +60,29 @@ class PhotonRepositoryError(RuntimeError):
     """Raised when the Photon repository trust boundary cannot be proven."""
 
 
+def _probe_file_size_limit() -> Callable[[], None] | None:
+    """Return a POSIX child hook that caps repository metadata output.
+
+    Returns:
+        A pre-exec hook on POSIX, or ``None`` where ``RLIMIT_FSIZE`` is not
+        available. The post-download size check remains mandatory everywhere.
+    """
+
+    if os.name != "posix":
+        return None
+    import resource
+
+    def limit_output() -> None:
+        set_limit = getattr(resource, "set" + "rlimit")
+        file_size_limit = getattr(resource, "RLIMIT_" + "FSIZE")
+        set_limit(
+            file_size_limit,
+            (MAX_METADATA_BYTES, MAX_METADATA_BYTES),
+        )
+
+    return limit_output
+
+
 def _require_regular_trusted_file(path: Path, description: str) -> os.stat_result:
     """Return metadata for a safe existing repository trust file.
 
@@ -269,11 +292,18 @@ def probe_repository_metadata(
                 command,
                 check=False,
                 capture_output=True,
+                preexec_fn=_probe_file_size_limit(),
                 text=True,
                 timeout=PROBE_TIMEOUT_SECONDS + PROBE_PROCESS_GRACE_SECONDS,
             )
             probe_result = completed.stdout.splitlines()
+            if payload_path.stat().st_size > MAX_METADATA_BYTES:
+                raise PhotonRepositoryError(
+                    "Photon repository metadata exceeds the safety limit."
+                )
             payload = payload_path.read_bytes()
+        except PhotonRepositoryError:
+            raise
         except (OSError, subprocess.SubprocessError) as exc:
             raise PhotonRepositoryError(
                 "Canonical Photon 5 updates metadata is unreachable."

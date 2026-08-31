@@ -216,6 +216,39 @@ def test_unreachable_canonical_metadata_fails_before_repository_rewrite(
     assert repository.read_bytes() == original
 
 
+def test_oversized_metadata_fails_before_payload_read(tmp_path: Path) -> None:
+    """Reject an unknown-length payload independently of curl's size support.
+
+    Args:
+        tmp_path: Pytest-provided isolated filesystem root.
+    """
+
+    configurator = load_configurator()
+    repository = tmp_path / "photon-updates.repo"
+    write_repository(repository, baseurl=configurator.CANONICAL_BASEURL)
+
+    def oversized_probe(
+        command: list[str], **_kwargs: Any
+    ) -> subprocess.CompletedProcess[str]:
+        payload = Path(command[command.index("--output") + 1])
+        with payload.open("wb") as stream:
+            stream.truncate(configurator.MAX_METADATA_BYTES + 1)
+        return subprocess.CompletedProcess(
+            command,
+            0,
+            stdout=f"200\n{configurator.CANONICAL_METADATA_URL}",
+            stderr="",
+        )
+
+    with pytest.raises(
+        configurator.PhotonRepositoryError,
+        match="metadata exceeds the safety limit",
+    ):
+        configurator.configure_photon_updates_repository(
+            repository, PINNED_GPG_KEY, oversized_probe
+        )
+
+
 def test_substituted_signing_key_fails_before_repository_probe(tmp_path: Path) -> None:
     """Reject a regular, permission-safe file with the wrong key identity.
 
