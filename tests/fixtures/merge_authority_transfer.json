@@ -3600,6 +3600,22 @@
       ],
       "generated": "Complete the guarded merge when every required gate passes.",
       "expected_holds": []
+    },
+    {
+      "name": "causally-qualified-do-not-merge-is-preserved",
+      "default_merge_authority": true,
+      "instructions": [
+        {
+          "text": "Implement issue #602, but do not merge due to failing tests.",
+          "add_holds": [
+            "do not merge"
+          ]
+        }
+      ],
+      "generated": "Preserve the explicit do not merge hold due to failing tests.",
+      "expected_holds": [
+        "do not merge"
+      ]
     }
   ]
 }
