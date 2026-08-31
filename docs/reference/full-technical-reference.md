@@ -467,9 +467,12 @@ explicitly asked to work on. A separate merge instruction is not required. An ex
 merge**, **leave the pull request open**, **pull request only**, or **wait for approval** overrides that authority until
 the user or maintainer withdraws it. Forks, drafts, review-only or diagnostic work, and private vulnerability
 remediation are excluded. An authorized direct agent merge requires both an expected-head guard and the active
-ruleset's strict up-to-date required checks to bind the validated base; agents do not use an administrative bypass and
-fail closed without invoking `gh pr merge` when a merge queue is required. Repository auto-merge remains a separate
-explicit maintainer choice per pull request. A `main` push runs
+ruleset's strict up-to-date required checks to bind the validated base. Agents, delegated agents, workflows, and other
+automation must never use or request a ruleset or administrative bypass and fail closed without invoking `gh pr merge`
+when a merge queue is required. The human-maintainer break-glass authority cannot be delegated to automation and
+follows the canonical
+[maintainer override policy](https://github.com/mdaneri/Atlaso/blob/main/CONTRIBUTING.md#maintainer-override--break-glass).
+Repository auto-merge remains a separate explicit maintainer choice per pull request. A `main` push runs
 `update-auto-merge-prs.yml`, which uses GitHub's update-branch API only for open, same-repository, non-draft pull requests
 that have auto-merge enabled and report `BEHIND`. Each request includes the observed head SHA, so a concurrent contributor
 push causes GitHub to reject the stale update instead of merging over it. Forks, conflicted branches, and pull requests
