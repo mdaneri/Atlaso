@@ -3164,6 +3164,17 @@
       ],
       "generated": "Complete the guarded merge for issue #602 when eligible.",
       "expected_holds": []
+    },
+    {
+      "name": "pending-release-job-gate-is-preserved",
+      "default_merge_authority": true,
+      "instructions": [
+        {
+          "text": "Implement issue #602, but leave this PR open pending the release job."
+        }
+      ],
+      "generated": "Complete the guarded merge after the release job succeeds.",
+      "expected_holds": []
     }
   ]
 }

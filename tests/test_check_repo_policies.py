@@ -45,6 +45,7 @@ from scripts.check_repo import (
     has_affirmative_default_merge_authority,
     is_checkable,
     merge_hold_directions,
+    resumable_merge_gates,
     source_has_default_merge_authority,
 )
 
@@ -876,6 +877,12 @@ def test_merge_hold_directions_ignores_pr_only_resumable_gate() -> None:
     assert merge_hold_directions(
         "Implement issue #602, but keep this PR open until CI passes."
     ) == {}
+    assert merge_hold_directions(
+        "Implement issue #602, but leave this PR open pending the release job."
+    ) == {}
+    assert resumable_merge_gates(
+        "Implement issue #602, but leave this PR open pending the release job."
+    ) == ("release job",)
 
 
 def test_merge_hold_directions_withdraws_object_qualified_leave_open() -> None:
@@ -2376,6 +2383,49 @@ def test_merge_authority_transfer_rejects_merge_instruction_with_active_hold(
     assert findings[0].message == (
         "merge authority fixture contradictory active hold asserts merge authority "
         "while an explicit hold is active"
+    )
+
+
+def test_merge_authority_transfer_rejects_dropped_resumable_gate(
+    tmp_path: Path,
+) -> None:
+    """Verify generated text cannot discard a source-side external merge gate.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
+    path = tmp_path / MERGE_AUTHORITY_TRANSFER_FIXTURE_PATH
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        json.dumps(
+            {
+                "cases": [
+                    {
+                        "name": "dropped release gate",
+                        "default_merge_authority": True,
+                        "instructions": [
+                            {
+                                "text": (
+                                    "Implement issue #602, but leave this PR open "
+                                    "pending the release job."
+                                )
+                            }
+                        ],
+                        "generated": "Complete the guarded merge.",
+                        "expected_holds": [],
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    findings = check_merge_authority_transfer_fixtures(tmp_path)
+
+    assert len(findings) == 1
+    assert findings[0].message == (
+        "merge authority fixture dropped release gate drops a resumable merge "
+        "gate: release job"
     )
 
 

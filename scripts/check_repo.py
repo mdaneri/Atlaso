@@ -1087,15 +1087,28 @@ MERGE_HOLD_WITHOUT_APPROVAL = re.compile(
     r"(?:approval|permission|authorization)\b"
 )
 MERGE_HOLD_RESUMABLE_GATE_SUFFIX = re.compile(
-    r"^\s+(?:after|when|if|once|until)\s+"
+    r"^\s+(?:after|when|if|once|until|pending)\s+"
     r"(?:(?:the|an?)\s+)?(?:ci|tests?|checks?|validation|builds?|"
     r"(?:(?:[a-z][a-z0-9_-]*\s+){0,2}"
     r"(?:review|deployments?|release[- ]jobs?)))\b"
+)
+MERGE_RESUMABLE_GATE_CONDITION = re.compile(
+    r"\b(?:after|when|if|once|until|pending)\s+"
+    r"(?:(?:the|an?)\s+)?(?:(?:[a-z][a-z0-9_-]*\s+){0,2})?"
+    r"(?P<gate>ci|tests?|checks?|validation|builds?|review|deployments?|"
+    r"release[- ]jobs?)\b"
+)
+MERGE_RESUMABLE_GATE_DISPOSITION_PREFIX = re.compile(
+    r"\b(?:merge(?!\s+(?:hold|instruction|directive)s?\b)|merging|"
+    r"guarded[- ]squash merge|guarded merge|"
+    r"(?:leave|keep)\s+(?:(?:this|the)\s+)?(?:pull request|pr)\s+open|"
+    r"(?:pull request|pr)\s+only)\b"
 )
 MERGE_HOLD_NON_PR_OBJECT = re.compile(
     r"^\s+(?!(?:(?:this|the)\s+)?(?:pull request|pr)\b|it\b|"
     r"(?:(?:this|the)\s+)?(?:branch|change|commit)\b|"
     r"(?:hold|instruction|directive)s?\b|until\b|before\b|after\b|unless\b|"
+    r"pending\b|"
     r"because\b|while\b|when\b|yet\b|now\b|automatically\b|"
     r"into\s+(?:(?:the\s+)?(?:main|master|default|target|base)\s+branch|"
     r"main|master)\b|"
@@ -1796,6 +1809,38 @@ def has_affirmative_default_merge_authority(text: str) -> bool:
     return False
 
 
+def resumable_merge_gates(text: str) -> tuple[str, ...]:
+    """Return canonical merge-gate conditions attached to PR disposition.
+
+    Args:
+        text: Source or generated task text to inspect.
+    """
+    normalized = " ".join(text.casefold().split())
+    gates: list[str] = []
+    for match in MERGE_RESUMABLE_GATE_CONDITION.finditer(normalized):
+        prefix = normalized[max(0, match.start() - 100) : match.start()]
+        if MERGE_RESUMABLE_GATE_DISPOSITION_PREFIX.search(prefix) is None:
+            continue
+        gate = match.group("gate").replace("-", " ")
+        canonical = next(
+            name
+            for stem, name in (
+                ("ci", "ci"),
+                ("test", "test"),
+                ("check", "check"),
+                ("validation", "validation"),
+                ("build", "build"),
+                ("review", "review"),
+                ("deployment", "deployment"),
+                ("release job", "release job"),
+            )
+            if gate.startswith(stem)
+        )
+        if canonical not in gates:
+            gates.append(canonical)
+    return tuple(gates)
+
+
 def source_has_default_merge_authority(instructions: tuple[str, ...]) -> bool:
     """Derive whether current source instructions describe eligible implementation.
 
@@ -2037,6 +2082,14 @@ def check_merge_authority_transfer_fixtures(root: Path) -> list[Finding]:
             )
             continue
         source_holds_tuple = tuple(source_holds)
+        source_gates = tuple(
+            dict.fromkeys(
+                gate
+                for instruction_text in source_instruction_texts
+                for gate in resumable_merge_gates(instruction_text)
+            )
+        )
+        generated_gates = resumable_merge_gates(generated)
         generated_directions = merge_hold_directions(
             generated,
             active_holds=source_holds_tuple,
@@ -2102,6 +2155,17 @@ def check_merge_authority_transfer_fixtures(root: Path) -> list[Finding]:
                 Finding(
                     path,
                     f"merge authority fixture {name} drops an explicit hold: {', '.join(omitted)}",
+                )
+            )
+        omitted_gates = tuple(
+            gate for gate in source_gates if gate not in generated_gates
+        )
+        if omitted_gates:
+            findings.append(
+                Finding(
+                    path,
+                    f"merge authority fixture {name} drops a resumable merge gate: "
+                    f"{', '.join(omitted_gates)}",
                 )
             )
         if expected and has_affirmative_default_merge_authority(generated):
