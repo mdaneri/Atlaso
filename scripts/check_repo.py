@@ -1224,11 +1224,21 @@ def _hold_targets_other_task(
     prefix = segment[max(0, offset - 80) : offset]
     suffix = segment[offset + len(pattern) : offset + len(pattern) + 80]
     if active_pull_request is not None:
+        direct_object_context = segment[offset : offset + len(pattern) + 40]
+        explicit_active_target = re.search(
+            r"\bthis\s+(?:pull request|pr|branch|change|commit)\b",
+            direct_object_context,
+        )
         # A following PR number is the permission or hold's direct object. When
         # absent, the nearest preceding number identifies a leading task scope.
         direct_reference = MERGE_HOLD_NUMBERED_PR_REFERENCE.search(
-            segment[offset : offset + len(pattern) + 80]
+            direct_object_context
         )
+        if explicit_active_target is not None and (
+            direct_reference is None
+            or explicit_active_target.start() < direct_reference.start()
+        ):
+            return False
         if direct_reference is not None:
             return int(direct_reference.group(1)) != active_pull_request
         prefix_references = tuple(MERGE_HOLD_NUMBERED_PR_REFERENCE.finditer(prefix))

@@ -673,6 +673,14 @@ def test_merge_hold_directions_scopes_numbered_pr_permission() -> None:
     ) == {}
 
 
+def test_merge_hold_directions_preserves_cross_pr_condition() -> None:
+    """Verify a later cross-PR condition does not retarget an explicit this-PR hold."""
+    assert merge_hold_directions(
+        "Do not merge this PR until PR #621 is merged.",
+        active_pull_request=620,
+    ) == {"do not merge": "add"}
+
+
 def test_merge_hold_directions_scopes_numbered_issue_permission() -> None:
     """Verify permission for another issue cannot withdraw this task's hold."""
     assert merge_hold_directions(

@@ -2560,6 +2560,26 @@
       ]
     },
     {
+      "name": "cross-pr-condition-preserves-this-pr-hold",
+      "default_merge_authority": true,
+      "active_pull_request": 620,
+      "instructions": [
+        {
+          "text": "Implement issue #602 and deliver PR #620."
+        },
+        {
+          "text": "Do not merge this PR until PR #621 is merged.",
+          "add_holds": [
+            "do not merge"
+          ]
+        }
+      ],
+      "generated": "Preserve the do not merge hold for PR #620.",
+      "expected_holds": [
+        "do not merge"
+      ]
+    },
+    {
       "name": "permission-based-merge-hold-is-preserved",
       "default_merge_authority": true,
       "instructions": [
