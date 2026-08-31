@@ -2431,6 +2431,18 @@
           "add_holds": [
             "do not merge"
           ]
+        },
+        {
+          "text": "You are not authorized to merge this PR.",
+          "add_holds": [
+            "do not merge"
+          ]
+        },
+        {
+          "text": "You do not have permission to merge this PR.",
+          "add_holds": [
+            "do not merge"
+          ]
         }
       ],
       "generated": "Do not merge this pull request.",

@@ -666,7 +666,9 @@ AUTO_MERGE_ONLY_PATTERN = re.compile(
 )
 MERGE_HOLD_MODAL_PROHIBITION = re.compile(
     r"\b(?:(?:you\s+)?(?:(?:must|may|can|should)\s+not|cannot)\s+merge|"
-    r"you\s+are\s+(?:forbidden\s+from\s+merging|not\s+allowed\s+to\s+merge))\b"
+    r"you\s+are\s+(?:forbidden\s+from\s+merging|not\s+(?:allowed|authorized)\s+"
+    r"to\s+merge)|you\s+do\s+not\s+have\s+(?:permission|authorization)\s+"
+    r"to\s+merge)\b"
 )
 DEFAULT_MERGE_AUTHORITY_NEGATIONS = re.compile(
     r"(?:(?:do not|don't|don’t|never|must not|should not|cannot|can't|can’t|not)"
