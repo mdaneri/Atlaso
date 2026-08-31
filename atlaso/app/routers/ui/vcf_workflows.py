@@ -143,7 +143,22 @@ def _vcf_fqdn_input_revision(
     component_keys: list[str],
     hostnames: list[str],
 ) -> dict[str, object]:
-    """Return the exact browser inputs bound to one populated review."""
+    """Return the normalized browser inputs bound to one populated review.
+
+    Args:
+        actor: Authenticated operator who requested the review.
+        target: Selected deployment catalog.
+        domain: Managed DNS domain selected for generated records.
+        prefix: Optional generated-hostname prefix.
+        suffix: Optional generated-hostname suffix.
+        start_ipv4: Starting IPv4 or IPv6 CIDR.
+        network_prefix: Legacy separate network prefix.
+        component_keys: Immutable catalog component keys.
+        hostnames: Reviewed hostname labels paired with component keys.
+
+    Returns:
+        Exact normalized inputs included in the signed population revision.
+    """
     return {
         "actor": actor,
         "target": target,
@@ -153,7 +168,7 @@ def _vcf_fqdn_input_revision(
         "start_ipv4": start_ipv4,
         "network_prefix": network_prefix,
         "component_keys": list(component_keys),
-        "hostnames": list(hostnames),
+        "hostnames": [hostname.strip().lower() for hostname in hostnames],
     }
 
 
@@ -163,14 +178,30 @@ def _vcf_fqdn_population_token(
     planned: list[dict[str, str]],
     skipped: list[dict[str, str]],
 ) -> str:
-    """Sign one exact populated VCF FQDN input and allocation revision."""
+    """Sign one exact populated VCF FQDN input and allocation revision.
+
+    Args:
+        inputs: Normalized browser inputs being reviewed.
+        planned: Missing records and their proposed addresses.
+        skipped: Existing records preserved by the plan.
+
+    Returns:
+        Time-limited signed population revision.
+    """
     return _vcf_fqdn_population_serializer().dumps(
         {"inputs": inputs, "planned": planned, "skipped": skipped}
     )
 
 
 def _vcf_fqdn_population_payload(token: str) -> dict[str, object] | None:
-    """Return a verified bounded population payload when structurally valid."""
+    """Return a verified bounded population payload when structurally valid.
+
+    Args:
+        token: Signed population revision submitted by the browser.
+
+    Returns:
+        Verified population payload, or ``None`` when invalid or expired.
+    """
     if not token:
         return None
     try:

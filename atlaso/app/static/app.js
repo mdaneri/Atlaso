@@ -12371,7 +12371,7 @@ function refreshVcfFqdnRenderedRows() {
 }
 
 function vcfFqdnHasAnyAddress(payload = {}) {
-  return vcfFqdnCurrentFqdns().some((fqdn) => Boolean(vcfFqdnAddressFor(fqdn, payload)));
+  return vcfFqdnCurrentFqdns().some((fqdn) => Boolean(vcfFqdnCompletionAddressFor(fqdn, payload)));
 }
 
 function vcfFqdnRowsHaveAddresses(payload = {}) {

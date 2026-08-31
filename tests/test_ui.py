@@ -1084,7 +1084,7 @@ def test_pwa_manifest_service_worker_and_offline_shell(client):
     assert "ATLASO_CACHE" in service_worker.text
     assert "atlaso-management-pwa-v" in service_worker.text
     assert "ATLASO_CACHE_PREFIX" in service_worker.text
-    assert 'const ATLASO_CACHE = `${ATLASO_CACHE_PREFIX}297`;' in service_worker.text
+    assert 'const ATLASO_CACHE = `${ATLASO_CACHE_PREFIX}298`;' in service_worker.text
     assert 'fetch(asset, { cache: "reload" })' in service_worker.text
     assert "Required precache request failed" in service_worker.text
     assert "key.startsWith(ATLASO_CACHE_PREFIX)" in service_worker.text
@@ -1104,7 +1104,7 @@ def test_pwa_manifest_service_worker_and_offline_shell(client):
     assert "/static/ui-patterns.js?v=atlaso-ui-foundation-20260726-10" in service_worker.text
     assert "/static/appliance-apply-polling.js?v=issue-420-6" in service_worker.text
     assert "/static/ui-routes.js?v=issue-287-1" in service_worker.text
-    assert "/static/app.js?v=issues-515-519-12-513-328-1-595-6-605-1-606-607-1-662-663-1" in service_worker.text
+    assert "/static/app.js?v=issues-515-519-12-513-328-1-595-6-605-1-606-607-1-662-663-2" in service_worker.text
     assert "/static/terminal.js?v=issue-287-2" in service_worker.text
     assert "/static/pwa.js?v=issue-287-2" in service_worker.text
     assert "vcfdt-configuration-248-20260807-14" not in service_worker.text
@@ -18064,7 +18064,10 @@ def test_vcf_helper_no_javascript_fallback_populates_then_creates(client):
     page = client.get("/vcf-helper")
     csrf = page.text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
     form_data = {
-        **vcf_hostname_form_data(prefix="fallback-"),
+        **vcf_hostname_form_data(
+            prefix="fallback-",
+            overrides={"vc01": "  FALLBACK-VCENTER  "},
+        ),
         "domain": "atlaso.internal",
         "prefix": "fallback-",
         "suffix": "",
@@ -18086,6 +18089,7 @@ def test_vcf_helper_no_javascript_fallback_populates_then_creates(client):
         in populated.text
     )
     assert "192.168.215.10</td>" in populated.text
+    assert 'value="fallback-vcenter"' in populated.text
     assert "data-vcf-fqdn-submit>Create DNS records</button>" in populated.text
     revision = populated.text.split('name="populated_revision" value="', 1)[1].split(
         '"', 1

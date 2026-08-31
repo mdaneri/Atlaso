@@ -172,14 +172,18 @@ test("VCF planned addresses preview without masquerading as completed creation",
     `function vcfFqdnExistingData() { return { addressRecords: {} }; }
      function vcfFqdnCurrentFqdns() { return ["vc01.example.internal"]; }
      ${functionSource("vcfFqdnCompletionAddressFor")}
+     ${functionSource("vcfFqdnHasAnyAddress")}
      ${functionSource("vcfFqdnRowsHaveAddresses")}
-     globalThis.complete = vcfFqdnRowsHaveAddresses;`,
+     globalThis.complete = vcfFqdnRowsHaveAddresses;
+     globalThis.deletable = vcfFqdnHasAnyAddress;`,
     context,
   );
   const planned = [{ fqdn: "vc01.example.internal", address: "192.168.50.10" }];
   const created = [{ fqdn: "vc01.example.internal", address: "192.168.50.10" }];
   assert.equal(context.complete({ planned }), false);
+  assert.equal(context.deletable({ planned }), false);
   assert.equal(context.complete({ created }), true);
+  assert.equal(context.deletable({ created }), true);
 });
 
 test("VCF hostname review invalidation preserves the focused row", () => {

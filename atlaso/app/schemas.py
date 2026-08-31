@@ -13,6 +13,7 @@ from pydantic import (
     field_validator,
     model_validator,
 )
+from pydantic.json_schema import SkipJsonSchema
 
 
 class ProblemDetails(BaseModel):
@@ -2346,8 +2347,8 @@ class SettingsResponse(BaseModel):
         management_https_cert_available: Whether management https cert available is enabled for this
             settings resource.
         web_terminal_enabled: Whether web terminal enabled is enabled for this settings resource.
-        web_terminal_interfaces: Ordered collection of web terminal interfaces values represented by
-            this settings schema.
+        web_terminal_interfaces: Ordered optional Web Terminal interface bindings; the management
+            listener remains mandatory while Web Terminal is enabled.
         root_ssh_enabled: Whether root ssh enabled is enabled for this settings resource.
         browser_session_idle_timeout_minutes: Maximum browser inactivity before Atlaso expires the session.
         api_token_max_lifetime_days: Maximum lifetime allowed for newly issued API tokens.
@@ -2390,8 +2391,18 @@ class SettingsResponse(BaseModel):
     config_preview: Annotated[str, Field(description='Redacted rendered configuration preview for operator review; secret values are never included.')]
 
 
+def _remove_omission_defaults_from_schema(schema: dict[str, Any]) -> None:
+    """Keep internal PATCH omission markers out of the public OpenAPI contract.
+
+    Args:
+        schema: Generated JSON schema to sanitize in place.
+    """
+    for property_schema in schema.get("properties", {}).values():
+        property_schema.pop("default", None)
+
+
 class SettingsUpdate(BaseModel):
-    """Fields accepted when updating or operating on a settings resource.
+    """Optional fields accepted when partially updating appliance settings.
 
     Attributes:
         appliance_fqdn: Requested appliance fqdn value for this settings resource.
@@ -2407,14 +2418,30 @@ class SettingsUpdate(BaseModel):
             settings schema.
     """
 
-    appliance_fqdn: Annotated[str, Field(description='Requested appliance fqdn value for this settings resource.')] = Field(default="core.atlaso.internal", min_length=1, max_length=180)
-    management_https_enabled: Annotated[bool, Field(description='Whether management https enabled is enabled for this settings resource.')] = False
-    web_terminal_enabled: Annotated[bool, Field(description='Whether web terminal enabled is enabled for this settings resource.')] = False
-    web_terminal_interfaces: Annotated[list[str], Field(description='Ordered collection of web terminal interfaces values represented by this settings schema.')] = Field(default_factory=list)
-    root_ssh_enabled: Annotated[bool, Field(description='Whether root ssh enabled is enabled for this settings resource.')] = False
-    browser_session_idle_timeout_minutes: Annotated[int, Field(description='Maximum period of authenticated browser inactivity, in minutes, before Atlaso expires the session on its next protected request.')] = Field(default=30, ge=5, le=1440)
-    api_token_max_lifetime_days: Annotated[int, Field(description='Maximum lifetime, in days, applied to newly issued API bearer tokens; existing tokens are unchanged.')] = Field(default=90, ge=1, le=365)
-    external_dns_servers: Annotated[list[str], Field(description='Ordered collection of external dns servers values represented by this settings schema.')] = Field(default_factory=lambda: ["1.1.1.1", "9.9.9.9"])
+    model_config = ConfigDict(json_schema_extra=_remove_omission_defaults_from_schema)
+
+    appliance_fqdn: Annotated[str | SkipJsonSchema[None], Field(description='Requested appliance FQDN. Omit it to preserve the current value; null is not accepted.')] = Field(default=None, min_length=1, max_length=180)
+    management_https_enabled: Annotated[bool | SkipJsonSchema[None], Field(description='Whether management HTTPS is enabled in desired state. Omit it to preserve the current value; null is not accepted.')] = None
+    web_terminal_enabled: Annotated[bool | SkipJsonSchema[None], Field(description='Whether Web Terminal is enabled in desired state. Omit it to preserve the current value; null is not accepted.')] = None
+    web_terminal_interfaces: Annotated[list[str] | SkipJsonSchema[None], Field(description='Ordered optional Web Terminal interface bindings. Omit the property to preserve them; submit an empty list to clear additional bindings. While Web Terminal is enabled, Atlaso retains the mandatory management listener. Null is not accepted.')] = None
+    root_ssh_enabled: Annotated[bool | SkipJsonSchema[None], Field(description='Whether root SSH login is enabled in desired state. Omit it to preserve the current value; null is not accepted.')] = None
+    browser_session_idle_timeout_minutes: Annotated[Annotated[int, Field(ge=5, le=1440)] | SkipJsonSchema[None], Field(description='Maximum period of authenticated browser inactivity, in minutes, before Atlaso expires the session on its next protected request. Omit it to preserve the current value; null is not accepted.')] = None
+    api_token_max_lifetime_days: Annotated[Annotated[int, Field(ge=1, le=365)] | SkipJsonSchema[None], Field(description='Maximum lifetime, in days, applied to newly issued API bearer tokens; existing tokens are unchanged. Omit it to preserve the current value; null is not accepted.')] = None
+    external_dns_servers: Annotated[list[str] | SkipJsonSchema[None], Field(description='Ordered external DNS server values. Omit the property to preserve the current servers; submit an empty list to clear them; null is not accepted.')] = None
+
+    @model_validator(mode="after")
+    def reject_explicit_nulls(self) -> "SettingsUpdate":
+        """Reject null because every Settings field uses omission to preserve state."""
+        explicit_nulls = sorted(
+            field_name
+            for field_name in self.model_fields_set
+            if getattr(self, field_name) is None
+        )
+        if explicit_nulls:
+            raise ValueError(
+                f"{', '.join(explicit_nulls)} must be omitted instead of set to null."
+            )
+        return self
 
 
 class OidcProviderSettingsUpdate(BaseModel):
