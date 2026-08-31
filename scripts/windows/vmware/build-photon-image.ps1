@@ -1065,13 +1065,36 @@ else {
                         (Test-Path -LiteralPath $childOutputCleanupClaimPath -PathType Leaf))
                 )) {
                 if (Test-Path -LiteralPath $outerCleanupOutputDirectory) {
-                    $cleanupVmrunPath = Resolve-WorkstationVmrunPath -Path $VmrunPath
-                    Write-Host 'The outer image deadline selected checked VMware artifact cleanup.'
-                    Remove-AtlasoWorkstationArtifactRoot `
-                        -VmrunPath $cleanupVmrunPath `
-                        -ExpectedRemovalRoot $outerCleanupOutputDirectory `
-                        -RemovalRoot $outerCleanupOutputDirectory `
-                        -Confirm:$false
+                    $parentOutputClaim = $null
+                    try {
+                        # The child releases its claim only after proven whole-tree
+                        # termination. Revalidate identity, then reacquire the same
+                        # exclusive output before parent-side timeout cleanup.
+                        $null = Assert-AtlasoBuilderIdentityCurrent `
+                            -RepositoryRoot $repoRoot `
+                            -ExpectedIdentity $builderIdentity `
+                            -PullRequestNumber $PullRequestNumber `
+                            -CollisionSuffix $CollisionSuffix `
+                            -ReleaseBuilder:$ReleaseBuilder `
+                            -ReleaseVersion $ReleaseVersion `
+                            -ReleaseSourceCommit $ReleaseSourceCommit `
+                            -ReleaseWorkflowRunId $ReleaseWorkflowRunId
+                        $parentOutputClaim = Enter-AtlasoVmwareBuilderOutputClaim `
+                            -OutputDirectory $outerCleanupOutputDirectory `
+                            -Identity $builderIdentity
+                        $cleanupVmrunPath = Resolve-WorkstationVmrunPath -Path $VmrunPath
+                        Write-Host 'The outer image deadline selected checked VMware artifact cleanup.'
+                        Remove-AtlasoWorkstationArtifactRoot `
+                            -VmrunPath $cleanupVmrunPath `
+                            -ExpectedRemovalRoot $outerCleanupOutputDirectory `
+                            -RemovalRoot $outerCleanupOutputDirectory `
+                            -Confirm:$false
+                    }
+                    finally {
+                        if ($null -ne $parentOutputClaim) {
+                            $parentOutputClaim.Dispose()
+                        }
+                    }
                 }
             }
             throw

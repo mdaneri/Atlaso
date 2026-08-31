@@ -1691,7 +1691,7 @@ def test_vmware_packer_requires_proven_task_or_release_builder_identity() -> Non
         "$releaseIdentityArguments['WorkflowRunId'] = $ReleaseWorkflowRunId"
     ) == 2
     assert "-WorkflowRunId $ReleaseWorkflowRunId" not in wrapper
-    assert wrapper.count("$null = Assert-AtlasoBuilderIdentityCurrent `") == 6
+    assert wrapper.count("$null = Assert-AtlasoBuilderIdentityCurrent `") == 7
     assert wrapper.count("-ReleaseBuilder:$ReleaseBuilder `") >= 6
     build_invocation = wrapper.index("Invoke-AtlasoPhotonImageBuild `")
     assert (
@@ -3146,6 +3146,21 @@ def test_vmware_gui_builder_repairs_stale_rows_before_ui_startup() -> None:
         "if (-not $KeepExistingOutput) {", gui_guard, repair
     )
     child_start = wrapper.index("-Action 'The isolated VMware Photon image build'")
+    termination_proven = wrapper.index(
+        "$_.Exception.Data['AtlasoProcessTreeTerminationProven']", child_start
+    )
+    parent_timeout_recheck = wrapper.index(
+        "Assert-AtlasoBuilderIdentityCurrent `", termination_proven
+    )
+    parent_output_claim = wrapper.index(
+        "Enter-AtlasoVmwareBuilderOutputClaim `", parent_timeout_recheck
+    )
+    parent_timeout_cleanup = wrapper.index(
+        "Remove-AtlasoWorkstationArtifactRoot `", parent_output_claim
+    )
+    parent_claim_release = wrapper.index(
+        "$parentOutputClaim.Dispose()", parent_timeout_cleanup
+    )
     parent_return = wrapper.index("    return\n}", child_start)
     child_cleanup = wrapper.index(
         "if (-not $ValidateOnly -and -not $PrepareIsoOnly) {", parent_return
@@ -3154,5 +3169,12 @@ def test_vmware_gui_builder_repairs_stale_rows_before_ui_startup() -> None:
 
     assert wrapper.count("Repair-AtlasoWorkstationStaleRegistrations `") == 1
     assert gui_guard < keep_existing_guard < repair < gui_launch < child_start
+    assert (
+        termination_proven
+        < parent_timeout_recheck
+        < parent_output_claim
+        < parent_timeout_cleanup
+        < parent_claim_release
+    )
     assert child_start < parent_return < child_cleanup < full_cleanup
     assert "-ScopeRoot $outerCleanupOutputDirectory" in wrapper[repair:gui_launch]

@@ -1385,6 +1385,9 @@ before removing the remaining root. A filesystem-identity snapshot blocks remova
 entries is recreated or replaced during cleanup. Provider and recursive-removal failures preserve remaining artifacts
 and prevent Packer from starting.
 
+If the bounded child reaches its deadline, the parent performs output cleanup only after proving whole-tree termination,
+revalidating the task or release identity, and reacquiring the same exclusive claim for the full cleanup interval.
+
 Unrelated Workstation library state is not validated and cannot block normal Atlaso cleanup. With the Workstation UI
 closed, a narrow fallback removes only a well-formed Atlaso-scoped registration whose VMX is already missing; unrelated
 missing, malformed, or inconsistent registrations remain unchanged.
