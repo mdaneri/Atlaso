@@ -78,6 +78,2125 @@ def test_dependency_policy_accepts_all_generated_locks(tmp_path: Path) -> None:
     assert validate(tmp_path) == []
 
 
+def test_dependency_policy_rejects_missing_workflow_requirement_lock(
+    tmp_path: Path,
+) -> None:
+    """Verify that workflows cannot reference a missing requirement lock.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
+    write_valid_policy(tmp_path)
+    workflow = tmp_path / ".github" / "workflows" / "release.yml"
+    workflow.parent.mkdir(parents=True, exist_ok=True)
+    workflow.write_text(
+        "run: python -m pip install --require-hashes "
+        "--requirement requirements-deployment.lock\n",
+        encoding="utf-8",
+    )
+
+    normalized_errors = [error.replace("\\", "/") for error in validate(tmp_path)]
+    assert (
+        ".github/workflows/release.yml:1: workflow requirement path is missing: "
+        "requirements-deployment.lock"
+    ) in normalized_errors
+
+
+def test_dependency_policy_rejects_workflow_lock_outside_inventory(
+    tmp_path: Path,
+) -> None:
+    """Verify that an existing ad hoc workflow lock is not sufficient.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
+    write_valid_policy(tmp_path)
+    (tmp_path / "requirements-ad-hoc.lock").write_text("placeholder\n", encoding="utf-8")
+    workflow = tmp_path / ".github" / "workflows" / "release.yml"
+    workflow.parent.mkdir(parents=True, exist_ok=True)
+    workflow.write_text(
+        "run: python -m pip install -r requirements-ad-hoc.lock\n",
+        encoding="utf-8",
+    )
+
+    assert any(
+        "workflow requirement lock is outside the generated dependency policy inventory: "
+        "requirements-ad-hoc.lock" in error
+        for error in validate(tmp_path)
+    )
+
+
+def test_dependency_policy_requires_preceding_root_checkout(tmp_path: Path) -> None:
+    """Verify a root lock cannot be trusted without a preceding checkout.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
+    write_valid_policy(tmp_path)
+    workflow = tmp_path / ".github" / "workflows" / "release.yml"
+    workflow.parent.mkdir(parents=True, exist_ok=True)
+    workflow.write_text(
+        """jobs:
+  generated:
+    steps:
+      - run: curl -o requirements-release-tools.lock https://example.invalid/lock
+      - run: python -m pip install -r requirements-release-tools.lock
+""",
+        encoding="utf-8",
+    )
+
+    assert any(
+        "root workflow requirement has no preceding checkout: "
+        "requirements-release-tools.lock" in error
+        for error in validate(tmp_path)
+    )
+
+
+def test_dependency_policy_checks_multiline_pip_wheel_requirements(
+    tmp_path: Path,
+) -> None:
+    """Verify non-install pip commands and continuation lines use policy locks.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
+    write_valid_policy(tmp_path)
+    (tmp_path / "requirements-ad-hoc.lock").write_text("placeholder\n", encoding="utf-8")
+    workflow = tmp_path / ".github" / "workflows" / "release.yml"
+    workflow.parent.mkdir(parents=True, exist_ok=True)
+    workflow.write_text(
+        """steps:
+  - run: |
+      python -m pip wheel \\
+        --no-deps \\
+        --requirement requirements-ad-hoc.lock
+""",
+        encoding="utf-8",
+    )
+
+    assert any(
+        "workflow requirement lock is outside the generated dependency policy inventory: "
+        "requirements-ad-hoc.lock" in error
+        for error in validate(tmp_path)
+    )
+
+
+def test_dependency_policy_ignores_continuation_marker_in_shell_comment(
+    tmp_path: Path,
+) -> None:
+    """Verify a comment marker cannot hide a later external requirement.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
+    write_valid_policy(tmp_path)
+    workflow = tmp_path / ".github" / "workflows" / "release.yml"
+    workflow.parent.mkdir(parents=True, exist_ok=True)
+    workflow.write_text(
+        """jobs:
+  external:
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          repository: attacker/other
+          path: external
+      - run: |
+          cd external # comment \\
+          python -m pip install -r requirements-release-tools.lock
+""",
+        encoding="utf-8",
+    )
+
+    assert any(
+        "checkout-prefixed workflow requirement is not sourced from Atlaso: "
+        "requirements-release-tools.lock" in error
+        for error in validate(tmp_path)
+    )
+
+
+def test_dependency_policy_checks_continued_plain_run_scalar(
+    tmp_path: Path,
+) -> None:
+    """Verify a continued plain run scalar cannot hide a requirement.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
+    write_valid_policy(tmp_path)
+    (tmp_path / "requirements-ad-hoc.lock").write_text("placeholder\n", encoding="utf-8")
+    workflow = tmp_path / ".github" / "workflows" / "release.yml"
+    workflow.parent.mkdir(parents=True, exist_ok=True)
+    workflow.write_text(
+        """jobs:
+  continued:
+    steps:
+      - run: python -m pip install
+          -r requirements-ad-hoc.lock
+""",
+        encoding="utf-8",
+    )
+
+    assert any(
+        "workflow requirement lock is outside the generated dependency policy "
+        "inventory: requirements-ad-hoc.lock" in error
+        for error in validate(tmp_path)
+    )
+
+
+def test_dependency_policy_checks_continued_quoted_run_scalar(
+    tmp_path: Path,
+) -> None:
+    """Verify a continued quoted run scalar cannot hide a requirement.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
+    write_valid_policy(tmp_path)
+    (tmp_path / "requirements-ad-hoc.lock").write_text("placeholder\n", encoding="utf-8")
+    workflow = tmp_path / ".github" / "workflows" / "release.yml"
+    workflow.parent.mkdir(parents=True, exist_ok=True)
+    for quote in ('"', "'"):
+        workflow.write_text(
+            f"""jobs:
+  continued:
+    steps:
+      - run: {quote}python -m pip install
+          -r requirements-ad-hoc.lock{quote}
+""",
+            encoding="utf-8",
+        )
+
+        assert any(
+            "workflow requirement lock is outside the generated dependency policy "
+            "inventory: requirements-ad-hoc.lock" in error
+            for error in validate(tmp_path)
+        )
+
+
+def test_dependency_policy_recognizes_prefixed_python_pip_invocations(
+    tmp_path: Path,
+) -> None:
+    """Verify valid Python launch prefixes cannot bypass workflow lock policy.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
+    write_valid_policy(tmp_path)
+    (tmp_path / "requirements-ad-hoc.lock").write_text("placeholder\n", encoding="utf-8")
+    workflow = tmp_path / ".github" / "workflows" / "release.yml"
+    workflow.parent.mkdir(parents=True, exist_ok=True)
+    invocations = (
+        "python3.14 -m pip install -r requirements-ad-hoc.lock",
+        "python -m pip.__main__ install -r requirements-ad-hoc.lock",
+        "python -I -m pip.__main__ install -r requirements-ad-hoc.lock",
+        "python -mpip install -r requirements-ad-hoc.lock",
+        "python -mpip.__main__ install -r requirements-ad-hoc.lock",
+        "python -m 'pip' install -r requirements-ad-hoc.lock",
+        'python -m "pip.__main__" install -r requirements-ad-hoc.lock',
+        "'python' -m 'pip' install -r requirements-ad-hoc.lock",
+        '"python3.14" -m "pip.__main__" install -r requirements-ad-hoc.lock',
+        "'pip' install -r requirements-ad-hoc.lock",
+        "pip.exe install -r requirements-ad-hoc.lock",
+        "'pip.exe' install -r requirements-ad-hoc.lock",
+        "./venv/bin/pip install -r requirements-ad-hoc.lock",
+        "./venv/bin/python -m pip install -r requirements-ad-hoc.lock",
+        "C:\\venv\\Scripts\\pip.exe install -r requirements-ad-hoc.lock",
+        "PIP_CONFIG_FILE=/dev/null python -m pip install -r requirements-ad-hoc.lock",
+        "& python -m pip install -r requirements-ad-hoc.lock",
+    )
+    for invocation in invocations:
+        workflow.write_text(f"run: {invocation}\n", encoding="utf-8")
+
+        assert any(
+            "workflow requirement lock is outside the generated dependency policy "
+            "inventory: requirements-ad-hoc.lock" in error
+            for error in validate(tmp_path)
+        ), invocation
+
+
+def test_dependency_policy_checks_nested_shell_pip_command(tmp_path: Path) -> None:
+    """Verify a known shell command string cannot hide a requirement.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
+    write_valid_policy(tmp_path)
+    (tmp_path / "requirements-ad-hoc.lock").write_text("placeholder\n", encoding="utf-8")
+    workflow = tmp_path / ".github" / "workflows" / "release.yml"
+    workflow.parent.mkdir(parents=True, exist_ok=True)
+    workflow.write_text(
+        'run: bash -c "python -m pip install -r requirements-ad-hoc.lock"\n',
+        encoding="utf-8",
+    )
+
+    assert any(
+        "workflow requirement lock is outside the generated dependency policy "
+        "inventory: requirements-ad-hoc.lock" in error
+        for error in validate(tmp_path)
+    )
+
+
+def test_dependency_policy_checks_quoted_command_substitution(tmp_path: Path) -> None:
+    """Verify quoted Bash command substitution cannot hide a requirement.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
+    write_valid_policy(tmp_path)
+    (tmp_path / "requirements-ad-hoc.lock").write_text("placeholder\n", encoding="utf-8")
+    workflow = tmp_path / ".github" / "workflows" / "release.yml"
+    workflow.parent.mkdir(parents=True, exist_ok=True)
+    workflow.write_text(
+        'run: echo "$(python -m pip install -r requirements-ad-hoc.lock)"\n',
+        encoding="utf-8",
+    )
+
+    assert any(
+        "workflow requirement lock is outside the generated dependency policy "
+        "inventory: requirements-ad-hoc.lock" in error
+        for error in validate(tmp_path)
+    )
+
+
+def test_dependency_policy_checks_legacy_command_substitution(tmp_path: Path) -> None:
+    """Verify legacy Bash command substitution cannot hide a requirement.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
+    write_valid_policy(tmp_path)
+    (tmp_path / "requirements-ad-hoc.lock").write_text("placeholder\n", encoding="utf-8")
+    workflow = tmp_path / ".github" / "workflows" / "release.yml"
+    workflow.parent.mkdir(parents=True, exist_ok=True)
+    workflow.write_text(
+        'run: echo "`python -m pip install -r requirements-ad-hoc.lock`"\n',
+        encoding="utf-8",
+    )
+
+    assert any(
+        "workflow requirement lock is outside the generated dependency policy "
+        "inventory: requirements-ad-hoc.lock" in error
+        for error in validate(tmp_path)
+    )
+
+
+def test_dependency_policy_checks_eval_pip_command(tmp_path: Path) -> None:
+    """Verify Bash eval cannot hide a requirement install.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
+    write_valid_policy(tmp_path)
+    (tmp_path / "requirements-ad-hoc.lock").write_text("placeholder\n", encoding="utf-8")
+    workflow = tmp_path / ".github" / "workflows" / "release.yml"
+    workflow.parent.mkdir(parents=True, exist_ok=True)
+    workflow.write_text(
+        "run: eval -- 'python -m pip install -r requirements-ad-hoc.lock'\n",
+        encoding="utf-8",
+    )
+
+    assert any(
+        "workflow requirement lock is outside the generated dependency policy "
+        "inventory: requirements-ad-hoc.lock" in error
+        for error in validate(tmp_path)
+    )
+
+
+def test_dependency_policy_checks_invoke_expression_pip_command(
+    tmp_path: Path,
+) -> None:
+    """Verify PowerShell expression launchers cannot hide a requirement install.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
+    write_valid_policy(tmp_path)
+    (tmp_path / "requirements-ad-hoc.lock").write_text("placeholder\n", encoding="utf-8")
+    workflow = tmp_path / ".github" / "workflows" / "release.yml"
+    workflow.parent.mkdir(parents=True, exist_ok=True)
+    for launcher in ("Invoke-Expression", "iex"):
+        workflow.write_text(
+            f"run: {launcher} 'python -m pip install -r requirements-ad-hoc.lock'\n",
+            encoding="utf-8",
+        )
+
+        assert any(
+            "workflow requirement lock is outside the generated dependency policy "
+            "inventory: requirements-ad-hoc.lock" in error
+            for error in validate(tmp_path)
+        )
+
+
+def test_dependency_policy_checks_powershell_command_string(tmp_path: Path) -> None:
+    """Verify PowerShell command launchers cannot hide a requirement install.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
+    write_valid_policy(tmp_path)
+    (tmp_path / "requirements-ad-hoc.lock").write_text("placeholder\n", encoding="utf-8")
+    workflow = tmp_path / ".github" / "workflows" / "release.yml"
+    workflow.parent.mkdir(parents=True, exist_ok=True)
+
+    for launcher in ("pwsh -Command", "powershell.exe -c"):
+        workflow.write_text(
+            f'run: {launcher} "python -m pip install -r requirements-ad-hoc.lock"\n',
+            encoding="utf-8",
+        )
+
+        assert any(
+            "workflow requirement lock is outside the generated dependency policy "
+            "inventory: requirements-ad-hoc.lock" in error
+            for error in validate(tmp_path)
+        )
+
+
+def test_dependency_policy_checks_cmd_command_string(tmp_path: Path) -> None:
+    """Verify cmd.exe command strings cannot hide a requirement install.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
+    write_valid_policy(tmp_path)
+    (tmp_path / "requirements-ad-hoc.lock").write_text("placeholder\n", encoding="utf-8")
+    workflow = tmp_path / ".github" / "workflows" / "release.yml"
+    workflow.parent.mkdir(parents=True, exist_ok=True)
+    for launcher, option in (("cmd", "/c"), ("cmd.exe", "/k")):
+        workflow.write_text(
+            f'run: {launcher} {option} "python -m pip install '
+            '-r requirements-ad-hoc.lock"\n',
+            encoding="utf-8",
+        )
+
+        assert any(
+            "workflow requirement lock is outside the generated dependency policy "
+            "inventory: requirements-ad-hoc.lock" in error
+            for error in validate(tmp_path)
+        )
+
+
+def test_dependency_policy_recognizes_attached_short_requirement_argument(
+    tmp_path: Path,
+) -> None:
+    """Verify pip's attached short requirement option cannot bypass policy.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
+    write_valid_policy(tmp_path)
+    (tmp_path / "requirements-ad-hoc.lock").write_text("placeholder\n", encoding="utf-8")
+    workflow = tmp_path / ".github" / "workflows" / "release.yml"
+    workflow.parent.mkdir(parents=True, exist_ok=True)
+    workflow.write_text(
+        "run: python -m pip install -rrequirements-ad-hoc.lock\n",
+        encoding="utf-8",
+    )
+
+    assert any(
+        "workflow requirement lock is outside the generated dependency policy inventory: "
+        "requirements-ad-hoc.lock" in error
+        for error in validate(tmp_path)
+    )
+
+
+def test_dependency_policy_recognizes_clustered_short_requirement_argument(
+    tmp_path: Path,
+) -> None:
+    """Verify clustered pip short options cannot hide a requirement.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
+    write_valid_policy(tmp_path)
+    (tmp_path / "requirements-ad-hoc.lock").write_text("placeholder\n", encoding="utf-8")
+    workflow = tmp_path / ".github" / "workflows" / "release.yml"
+    workflow.parent.mkdir(parents=True, exist_ok=True)
+    for option in ("-qr requirements-ad-hoc.lock", "-qrrequirements-ad-hoc.lock"):
+        workflow.write_text(
+            f"run: python -m pip install {option}\n",
+            encoding="utf-8",
+        )
+
+        assert any(
+            "workflow requirement lock is outside the generated dependency policy "
+            "inventory: requirements-ad-hoc.lock" in error
+            for error in validate(tmp_path)
+        )
+
+
+def test_dependency_policy_preserves_equals_in_attached_short_requirement_argument(
+    tmp_path: Path,
+) -> None:
+    """Verify an equals-prefixed attached short option keeps pip's filename.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
+    write_valid_policy(tmp_path)
+    (tmp_path / "=requirements-release-tools.lock").write_text(
+        "placeholder\n", encoding="utf-8"
+    )
+    workflow = tmp_path / ".github" / "workflows" / "release.yml"
+    workflow.parent.mkdir(parents=True, exist_ok=True)
+    workflow.write_text(
+        "run: python -m pip install -r=requirements-release-tools.lock\n",
+        encoding="utf-8",
+    )
+
+    assert any(
+        "workflow requirement lock is outside the generated dependency policy inventory: "
+        "=requirements-release-tools.lock" in error
+        for error in validate(tmp_path)
+    )
+
+
+def test_dependency_policy_rejects_external_checkout_requirement_lock(
+    tmp_path: Path,
+) -> None:
+    """Verify checkout prefixes cannot map external locks onto Atlaso inventory.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
+    write_valid_policy(tmp_path)
+    workflow = tmp_path / ".github" / "workflows" / "release.yml"
+    workflow.parent.mkdir(parents=True, exist_ok=True)
+    workflow.write_text(
+        """steps:
+  - uses: actions/checkout@v7
+    with:
+      repository: attacker/other
+      path: external
+  - run: python -m pip install -r external/requirements-release-tools.lock
+""",
+        encoding="utf-8",
+    )
+
+    assert any(
+        "checkout-prefixed workflow requirement is not sourced from Atlaso: "
+        "external/requirements-release-tools.lock" in error
+        for error in validate(tmp_path)
+    )
+
+
+def test_dependency_policy_limits_checkout_inputs_to_with_mapping(
+    tmp_path: Path,
+) -> None:
+    """Verify nested step mappings cannot overwrite checkout inputs.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
+    write_valid_policy(tmp_path)
+    workflow = tmp_path / ".github" / "workflows" / "release.yml"
+    workflow.parent.mkdir(parents=True, exist_ok=True)
+    workflow.write_text(
+        """jobs:
+  external:
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          repository: attacker/other
+        env:
+          repository: mdaneri/Atlaso
+      - run: python -m pip install -r requirements-release-tools.lock
+""",
+        encoding="utf-8",
+    )
+
+    assert any(
+        "root workflow requirement is not sourced from Atlaso: "
+        "requirements-release-tools.lock" in error
+        for error in validate(tmp_path)
+    )
+
+
+def test_dependency_policy_tokenizes_escaped_requirement_flag(
+    tmp_path: Path,
+) -> None:
+    """Verify shell escapes are removed before requirement flag matching.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
+    write_valid_policy(tmp_path)
+    (tmp_path / "requirements-ad-hoc.lock").write_text(
+        "placeholder\n", encoding="utf-8"
+    )
+    workflow = tmp_path / ".github" / "workflows" / "release.yml"
+    workflow.parent.mkdir(parents=True, exist_ok=True)
+    workflow.write_text(
+        "run: python -m pip install \\-r requirements-ad-hoc.lock\n",
+        encoding="utf-8",
+    )
+
+    assert any(
+        "workflow requirement lock is outside the generated dependency policy "
+        "inventory: requirements-ad-hoc.lock" in error
+        for error in validate(tmp_path)
+    )
+
+
+def test_dependency_policy_rejects_conditional_checkout_replacement(
+    tmp_path: Path,
+) -> None:
+    """Verify a skipped checkout cannot replace the active external root.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
+    write_valid_policy(tmp_path)
+    workflow = tmp_path / ".github" / "workflows" / "release.yml"
+    workflow.parent.mkdir(parents=True, exist_ok=True)
+    workflow.write_text(
+        """jobs:
+  conditional:
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          repository: attacker/other
+      - uses: actions/checkout@v7
+        if: ${{ false }}
+      - run: python -m pip install -r requirements-release-tools.lock
+""",
+        encoding="utf-8",
+    )
+
+    assert any(
+        "root workflow requirement uses conditional checkout metadata: "
+        "requirements-release-tools.lock" in error
+        for error in validate(tmp_path)
+    )
+
+
+def test_dependency_policy_rejects_continued_checkout_condition(
+    tmp_path: Path,
+) -> None:
+    """Verify a continued checkout condition cannot hide a skipped replacement.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
+    write_valid_policy(tmp_path)
+    workflow = tmp_path / ".github" / "workflows" / "release.yml"
+    workflow.parent.mkdir(parents=True, exist_ok=True)
+    workflow.write_text(
+        """jobs:
+  conditional:
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          repository: attacker/other
+      - uses: actions/checkout@v7
+        if:
+          ${{ false }}
+      - run: python -m pip install -r requirements-release-tools.lock
+""",
+        encoding="utf-8",
+    )
+
+    assert any(
+        "root workflow requirement uses conditional checkout metadata: "
+        "requirements-release-tools.lock" in error
+        for error in validate(tmp_path)
+    )
+
+
+def test_dependency_policy_models_implicit_checkout_success_condition(
+    tmp_path: Path,
+) -> None:
+    """Verify an implicit success check cannot hide a skipped root replacement.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
+    write_valid_policy(tmp_path)
+    workflow = tmp_path / ".github" / "workflows" / "release.yml"
+    workflow.parent.mkdir(parents=True, exist_ok=True)
+    workflow.write_text(
+        """jobs:
+  conditional:
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          repository: attacker/other
+      - run: exit 1
+      - uses: actions/checkout@v7
+      - run: python -m pip install -r requirements-release-tools.lock
+        if: ${{ always() }}
+""",
+        encoding="utf-8",
+    )
+
+    assert any(
+        "root workflow requirement uses conditional checkout metadata: "
+        "requirements-release-tools.lock" in error
+        for error in validate(tmp_path)
+    )
+
+
+def test_dependency_policy_rejects_time_varying_checkout_condition(
+    tmp_path: Path,
+) -> None:
+    """Verify matching status expressions cannot establish checkout provenance.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
+    write_valid_policy(tmp_path)
+    workflow = tmp_path / ".github" / "workflows" / "release.yml"
+    workflow.parent.mkdir(parents=True, exist_ok=True)
+    workflow.write_text(
+        """jobs:
+  conditional:
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          repository: attacker/other
+      - uses: actions/checkout@v7
+        if: ${{ failure() }}
+      - run: exit 1
+      - run: python -m pip install -r requirements-release-tools.lock
+        if: ${{ failure() }}
+""",
+        encoding="utf-8",
+    )
+
+    assert any(
+        "root workflow requirement uses conditional checkout metadata: "
+        "requirements-release-tools.lock" in error
+        for error in validate(tmp_path)
+    )
+
+
+def test_dependency_policy_rejects_step_output_checkout_condition(
+    tmp_path: Path,
+) -> None:
+    """Verify mutable step output conditions cannot establish checkout provenance.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
+    write_valid_policy(tmp_path)
+    workflow = tmp_path / ".github" / "workflows" / "release.yml"
+    workflow.parent.mkdir(parents=True, exist_ok=True)
+    workflow.write_text(
+        """jobs:
+  conditional:
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          repository: attacker/other
+      - uses: actions/checkout@v7
+        if: steps.gate.outputs.use == 'true'
+      - id: gate
+        run: echo "use=true" >> "$GITHUB_OUTPUT"
+      - run: python -m pip install -r requirements-release-tools.lock
+        if: steps.gate.outputs.use == 'true'
+""",
+        encoding="utf-8",
+    )
+
+    assert any(
+        "root workflow requirement uses conditional checkout metadata: "
+        "requirements-release-tools.lock" in error
+        for error in validate(tmp_path)
+    )
+
+
+def test_dependency_policy_rejects_environment_checkout_condition(
+    tmp_path: Path,
+) -> None:
+    """Verify mutable environment conditions cannot establish checkout provenance.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
+    write_valid_policy(tmp_path)
+    workflow = tmp_path / ".github" / "workflows" / "release.yml"
+    workflow.parent.mkdir(parents=True, exist_ok=True)
+    workflow.write_text(
+        """jobs:
+  conditional:
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          repository: attacker/other
+      - uses: actions/checkout@v7
+        if: env.USE_TRUSTED == 'true'
+      - run: echo "USE_TRUSTED=true" >> "$GITHUB_ENV"
+      - run: python -m pip install -r requirements-release-tools.lock
+        if: env.USE_TRUSTED == 'true'
+""",
+        encoding="utf-8",
+    )
+
+    assert any(
+        "root workflow requirement uses conditional checkout metadata: "
+        "requirements-release-tools.lock" in error
+        for error in validate(tmp_path)
+    )
+
+
+def test_dependency_policy_accepts_matching_checkout_condition(
+    tmp_path: Path,
+) -> None:
+    """Verify identical checkout and pip conditions share source metadata.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
+    write_valid_policy(tmp_path)
+    workflow = tmp_path / ".github" / "workflows" / "release.yml"
+    workflow.parent.mkdir(parents=True, exist_ok=True)
+    workflow.write_text(
+        """jobs:
+  conditional:
+    steps:
+      - uses: actions/checkout@v7
+        if: github.event_name == 'workflow_dispatch'
+      - run: python -m pip install -r requirements-release-tools.lock
+        if: github.event_name == 'workflow_dispatch'
+""",
+        encoding="utf-8",
+    )
+
+    assert validate(tmp_path) == []
+
+
+def test_dependency_policy_rejects_fallible_checkout_replacement(
+    tmp_path: Path,
+) -> None:
+    """Verify a continued checkout cannot become trusted source metadata.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
+    write_valid_policy(tmp_path)
+    workflow = tmp_path / ".github" / "workflows" / "release.yml"
+    workflow.parent.mkdir(parents=True, exist_ok=True)
+    workflow.write_text(
+        """jobs:
+  fallible:
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          repository: attacker/other
+      - uses: actions/checkout@v7
+        continue-on-error: true
+      - run: python -m pip install -r requirements-release-tools.lock
+""",
+        encoding="utf-8",
+    )
+
+    assert any(
+        "root workflow requirement uses fallible checkout metadata: "
+        "requirements-release-tools.lock" in error
+        for error in validate(tmp_path)
+    )
+
+
+def test_dependency_policy_decodes_quoted_run_scalars(tmp_path: Path) -> None:
+    """Verify quoted run scalars are decoded before command tokenization.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
+    write_valid_policy(tmp_path)
+    (tmp_path / "requirements-ad-hoc.lock").write_text(
+        "placeholder\n", encoding="utf-8"
+    )
+    workflow = tmp_path / ".github" / "workflows" / "release.yml"
+    workflow.parent.mkdir(parents=True, exist_ok=True)
+    invocations = (
+        "run: 'python -m pip install -r requirements-ad-hoc.lock'\n",
+        'run: "python -m pip install -r requirements-ad-hoc.lock"\n',
+    )
+    for invocation in invocations:
+        workflow.write_text(invocation, encoding="utf-8")
+
+        assert any(
+            "workflow requirement lock is outside the generated dependency policy "
+            "inventory: requirements-ad-hoc.lock" in error
+            for error in validate(tmp_path)
+        )
+
+
+def test_dependency_policy_decodes_escaped_block_run_key(tmp_path: Path) -> None:
+    """Verify escaped block-style YAML keys are matched semantically.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
+    write_valid_policy(tmp_path)
+    (tmp_path / "requirements-ad-hoc.lock").write_text(
+        "placeholder\n", encoding="utf-8"
+    )
+    workflow = tmp_path / ".github" / "workflows" / "release.yml"
+    workflow.parent.mkdir(parents=True, exist_ok=True)
+    workflow.write_text(
+        '- "r\\u0075n": python -m pip install -r requirements-ad-hoc.lock\n',
+        encoding="utf-8",
+    )
+
+    assert any(
+        "workflow requirement lock is outside the generated dependency policy "
+        "inventory: requirements-ad-hoc.lock" in error
+        for error in validate(tmp_path)
+    )
+
+
+def test_dependency_policy_rejects_untrusted_atlaso_checkout_ref(
+    tmp_path: Path,
+) -> None:
+    """Verify arbitrary same-repository refs cannot provide policy locks.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
+    write_valid_policy(tmp_path)
+    workflow = tmp_path / ".github" / "workflows" / "release.yml"
+    workflow.parent.mkdir(parents=True, exist_ok=True)
+    workflow.write_text(
+        """steps:
+  - uses: actions/checkout@v7
+    with:
+      ref: feature/untrusted-lock
+      path: candidate
+  - run: python -m pip install -r candidate/requirements-release-tools.lock
+""",
+        encoding="utf-8",
+    )
+
+    assert any(
+        "checkout-prefixed workflow requirement uses an untrusted Atlaso ref: "
+        "candidate/requirements-release-tools.lock" in error
+        for error in validate(tmp_path)
+    )
+
+
+def test_dependency_policy_rejects_continued_checkout_ref_scalar(
+    tmp_path: Path,
+) -> None:
+    """Verify a continued checkout ref retains its untrusted source metadata.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
+    write_valid_policy(tmp_path)
+    workflow = tmp_path / ".github" / "workflows" / "release.yml"
+    workflow.parent.mkdir(parents=True, exist_ok=True)
+    workflow.write_text(
+        """steps:
+  - uses: actions/checkout@v7
+    with:
+      ref:
+        feature/untrusted-lock
+      path: candidate
+  - run: python -m pip install -r candidate/requirements-release-tools.lock
+""",
+        encoding="utf-8",
+    )
+
+    assert any(
+        "checkout-prefixed workflow requirement uses an untrusted Atlaso ref: "
+        "candidate/requirements-release-tools.lock" in error
+        for error in validate(tmp_path)
+    )
+
+
+def test_dependency_policy_accepts_lock_from_checkout_destination(
+    tmp_path: Path,
+) -> None:
+    """Verify checkout-prefixed target-source locks resolve to tracked inputs.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
+    write_valid_policy(tmp_path)
+    workflow = tmp_path / ".github" / "workflows" / "wheel.yml"
+    workflow.parent.mkdir(parents=True, exist_ok=True)
+    workflow.write_text(
+        """steps:
+  - uses: actions/checkout@v7
+    with:
+      ref: ${{ steps.target.outputs.commit }}
+      path: target-source
+  - run: python -m pip install --require-hashes -r target-source/requirements-release-tools.lock
+""",
+        encoding="utf-8",
+    )
+
+    assert validate(tmp_path) == []
+
+
+def test_dependency_policy_rejects_external_root_checkout_lock(
+    tmp_path: Path,
+) -> None:
+    """Verify an external root checkout cannot supply an Atlaso-named lock.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
+    write_valid_policy(tmp_path)
+    workflow = tmp_path / ".github" / "workflows" / "release.yml"
+    workflow.parent.mkdir(parents=True, exist_ok=True)
+    workflow.write_text(
+        """jobs:
+  external:
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          repository: attacker/other
+      - run: python -m pip install -r requirements-release-tools.lock
+""",
+        encoding="utf-8",
+    )
+
+    assert any(
+        "root workflow requirement is not sourced from Atlaso: "
+        "requirements-release-tools.lock" in error
+        for error in validate(tmp_path)
+    )
+
+
+def test_dependency_policy_recognizes_quoted_checkout_action(
+    tmp_path: Path,
+) -> None:
+    """Verify quoted checkout action scalars still identify external roots.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
+    write_valid_policy(tmp_path)
+    workflow = tmp_path / ".github" / "workflows" / "release.yml"
+    workflow.parent.mkdir(parents=True, exist_ok=True)
+    workflow.write_text(
+        """jobs:
+  external:
+    steps:
+      - uses: 'actions/checkout@v7'
+        with:
+          repository: attacker/other
+      - run: python -m pip install -r requirements-release-tools.lock
+""",
+        encoding="utf-8",
+    )
+
+    assert any(
+        "root workflow requirement is not sourced from Atlaso: "
+        "requirements-release-tools.lock" in error
+        for error in validate(tmp_path)
+    )
+
+
+def test_dependency_policy_recognizes_checkout_action_comment(
+    tmp_path: Path,
+) -> None:
+    """Verify an inline YAML comment does not hide an external checkout.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
+    write_valid_policy(tmp_path)
+    workflow = tmp_path / ".github" / "workflows" / "release.yml"
+    workflow.parent.mkdir(parents=True, exist_ok=True)
+    workflow.write_text(
+        """jobs:
+  external:
+    steps:
+      - uses: actions/checkout@v7 # source
+        with:
+          repository: attacker/other
+      - run: python -m pip install -r requirements-release-tools.lock
+""",
+        encoding="utf-8",
+    )
+
+    assert any(
+        "root workflow requirement is not sourced from Atlaso: "
+        "requirements-release-tools.lock" in error
+        for error in validate(tmp_path)
+    )
+
+
+def test_dependency_policy_respects_quoted_shell_separators(
+    tmp_path: Path,
+) -> None:
+    """Verify command separators inside quotes do not truncate pip arguments.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
+    write_valid_policy(tmp_path)
+    (tmp_path / "requirements-ad-hoc.lock").write_text(
+        "placeholder\n", encoding="utf-8"
+    )
+    workflow = tmp_path / ".github" / "workflows" / "release.yml"
+    workflow.parent.mkdir(parents=True, exist_ok=True)
+    workflow.write_text(
+        'run: python -m pip install -C "flag=a;b" -r requirements-ad-hoc.lock\n',
+        encoding="utf-8",
+    )
+
+    assert any(
+        "workflow requirement lock is outside the generated dependency policy "
+        "inventory: requirements-ad-hoc.lock" in error
+        for error in validate(tmp_path)
+    )
+
+
+def test_dependency_policy_respects_powershell_escaped_separators(
+    tmp_path: Path,
+) -> None:
+    """Verify PowerShell-escaped separators do not truncate pip arguments.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
+    write_valid_policy(tmp_path)
+    (tmp_path / "requirements-ad-hoc.lock").write_text(
+        "placeholder\n", encoding="utf-8"
+    )
+    workflow = tmp_path / ".github" / "workflows" / "release.yml"
+    workflow.parent.mkdir(parents=True, exist_ok=True)
+    workflow.write_text(
+        "run: python -m pip install -C flag=a`;b -r requirements-ad-hoc.lock\n",
+        encoding="utf-8",
+    )
+
+    assert any(
+        "workflow requirement lock is outside the generated dependency policy "
+        "inventory: requirements-ad-hoc.lock" in error
+        for error in validate(tmp_path)
+    )
+
+
+def test_dependency_policy_tracks_shell_directory_changes(tmp_path: Path) -> None:
+    """Verify shell directory changes affect later requirement resolution.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
+    write_valid_policy(tmp_path)
+    workflow = tmp_path / ".github" / "workflows" / "release.yml"
+    workflow.parent.mkdir(parents=True, exist_ok=True)
+    invocations = (
+        "cd external; python -m pip install -r requirements-release-tools.lock",
+        "pushd external > /dev/null; python -m pip install -r requirements-release-tools.lock",
+        "Set-Location external; python -m pip install -r requirements-release-tools.lock",
+    )
+    for invocation in invocations:
+        workflow.write_text(
+            f"""jobs:
+  external:
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          repository: attacker/other
+          path: external
+      - run: {invocation}
+""",
+            encoding="utf-8",
+        )
+
+        assert any(
+            "checkout-prefixed workflow requirement is not sourced from Atlaso: "
+            "requirements-release-tools.lock" in error
+            for error in validate(tmp_path)
+        )
+
+
+def test_dependency_policy_tracks_command_wrapped_directory_change(
+    tmp_path: Path,
+) -> None:
+    """Verify the Bash command builtin cannot hide a directory change.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
+    write_valid_policy(tmp_path)
+    workflow = tmp_path / ".github" / "workflows" / "release.yml"
+    workflow.parent.mkdir(parents=True, exist_ok=True)
+    workflow.write_text(
+        """jobs:
+  external:
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          repository: attacker/other
+          path: external
+      - run: |
+          command cd external
+          python -m pip install -r requirements-release-tools.lock
+""",
+        encoding="utf-8",
+    )
+
+    assert any(
+        "checkout-prefixed workflow requirement is not sourced from Atlaso: "
+        "requirements-release-tools.lock" in error
+        for error in validate(tmp_path)
+    )
+
+
+def test_dependency_policy_rejects_cdpath_directory_resolution(
+    tmp_path: Path,
+) -> None:
+    """Verify CDPATH cannot redirect a modeled directory change.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
+    write_valid_policy(tmp_path)
+    workflow = tmp_path / ".github" / "workflows" / "release.yml"
+    workflow.parent.mkdir(parents=True, exist_ok=True)
+    workflow.write_text(
+        """env:
+  CDPATH: attacker
+jobs:
+  external:
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          repository: attacker/other
+          path: attacker/repo
+      - uses: actions/checkout@v7
+        with:
+          path: repo
+      - run: |
+          cd repo
+          python -m pip install -r requirements-release-tools.lock
+""",
+        encoding="utf-8",
+    )
+
+    assert any(
+        "workflow working directory must be a literal repository path: "
+        "${{ unsupported-cdpath-directory }}" in error
+        for error in validate(tmp_path)
+    )
+
+
+def test_dependency_policy_tracks_builtin_wrapped_directory_change(
+    tmp_path: Path,
+) -> None:
+    """Verify the Bash builtin launcher cannot hide a directory change.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
+    write_valid_policy(tmp_path)
+    workflow = tmp_path / ".github" / "workflows" / "release.yml"
+    workflow.parent.mkdir(parents=True, exist_ok=True)
+    workflow.write_text(
+        """jobs:
+  external:
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          repository: attacker/other
+          path: external
+      - run: |
+          builtin cd external
+          python -m pip install -r requirements-release-tools.lock
+""",
+        encoding="utf-8",
+    )
+
+    assert any(
+        "checkout-prefixed workflow requirement is not sourced from Atlaso: "
+        "requirements-release-tools.lock" in error
+        for error in validate(tmp_path)
+    )
+
+
+def test_dependency_policy_recognizes_quoted_run_mapping_key(tmp_path: Path) -> None:
+    """Verify quoted YAML mapping keys cannot hide a requirement install.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
+    write_valid_policy(tmp_path)
+    (tmp_path / "requirements-ad-hoc.lock").write_text("placeholder\n", encoding="utf-8")
+    workflow = tmp_path / ".github" / "workflows" / "release.yml"
+    workflow.parent.mkdir(parents=True, exist_ok=True)
+
+    for key in ("'run'", '\"run\"'):
+        workflow.write_text(
+            "jobs:\n"
+            "  policy:\n"
+            "    steps:\n"
+            f"      - {key}: python -m pip install -r requirements-ad-hoc.lock\n",
+            encoding="utf-8",
+        )
+
+        assert any(
+            "workflow requirement lock is outside the generated dependency policy "
+            "inventory: "
+            "requirements-ad-hoc.lock" in error
+            for error in validate(tmp_path)
+        )
+
+
+def test_dependency_policy_recognizes_space_before_run_colon(tmp_path: Path) -> None:
+    """Verify YAML key spacing cannot hide a requirement install.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
+    write_valid_policy(tmp_path)
+    (tmp_path / "requirements-ad-hoc.lock").write_text("placeholder\n", encoding="utf-8")
+    workflow = tmp_path / ".github" / "workflows" / "release.yml"
+    workflow.parent.mkdir(parents=True, exist_ok=True)
+    workflow.write_text(
+        "- run : python -m pip install -r requirements-ad-hoc.lock\n",
+        encoding="utf-8",
+    )
+
+    assert any(
+        "workflow requirement lock is outside the generated dependency policy "
+        "inventory: requirements-ad-hoc.lock" in error
+        for error in validate(tmp_path)
+    )
+
+
+def test_dependency_policy_tracks_multiline_shell_directory_change(
+    tmp_path: Path,
+) -> None:
+    """Verify directory state persists across lines of one run block.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
+    write_valid_policy(tmp_path)
+    workflow = tmp_path / ".github" / "workflows" / "release.yml"
+    workflow.parent.mkdir(parents=True, exist_ok=True)
+    workflow.write_text(
+        """jobs:
+  external:
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          repository: attacker/other
+          path: external
+      - run: |
+          cd external
+          python -m pip install -r requirements-release-tools.lock
+""",
+        encoding="utf-8",
+    )
+
+    assert any(
+        "checkout-prefixed workflow requirement is not sourced from Atlaso: "
+        "requirements-release-tools.lock" in error
+        for error in validate(tmp_path)
+    )
+
+
+def test_dependency_policy_preserves_folded_scalar_command_boundaries(
+    tmp_path: Path,
+) -> None:
+    """Verify blank lines in folded run scalars retain shell state boundaries.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
+    write_valid_policy(tmp_path)
+    workflow = tmp_path / ".github" / "workflows" / "release.yml"
+    workflow.parent.mkdir(parents=True, exist_ok=True)
+    folded_bodies = (
+        """          cd external
+
+          python -m pip install -r requirements-release-tools.lock
+""",
+        """          cd external
+            python -m pip install -r requirements-release-tools.lock
+""",
+    )
+    for folded_body in folded_bodies:
+        workflow.write_text(
+            f"""jobs:
+  external:
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          repository: attacker/other
+          path: external
+      - run: >
+{folded_body}""",
+            encoding="utf-8",
+        )
+
+        assert any(
+            "checkout-prefixed workflow requirement is not sourced from Atlaso: "
+            "requirements-release-tools.lock" in error
+            for error in validate(tmp_path)
+        )
+
+
+def test_dependency_policy_rejects_nondeterministic_directory_state(
+    tmp_path: Path,
+) -> None:
+    """Verify controlled directory actions fail closed for later requirements.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
+    write_valid_policy(tmp_path)
+    (tmp_path / "requirements-ad-hoc.lock").write_text(
+        "placeholder\n", encoding="utf-8"
+    )
+    workflow = tmp_path / ".github" / "workflows" / "release.yml"
+    workflow.parent.mkdir(parents=True, exist_ok=True)
+    invocations = (
+        "pushd external || popd; python -m pip install -r requirements-release-tools.lock",
+        "cd . & python -m pip install -r requirements-ad-hoc.lock",
+        "cd . | python -m pip install -r requirements-ad-hoc.lock",
+    )
+    for invocation in invocations:
+        workflow.write_text(
+            f"""jobs:
+  external:
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          repository: attacker/other
+          path: external
+      - run: {invocation}
+""",
+            encoding="utf-8",
+        )
+
+        assert any(
+            "workflow working directory must be a literal repository path: "
+            "${{ unsupported-shell-directory-control }}" in error
+            for error in validate(tmp_path)
+        )
+
+
+def test_dependency_policy_rejects_nonliteral_checkout_path(
+    tmp_path: Path,
+) -> None:
+    """Verify a dynamic checkout destination cannot replace root metadata.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
+    write_valid_policy(tmp_path)
+    workflow = tmp_path / ".github" / "workflows" / "release.yml"
+    workflow.parent.mkdir(parents=True, exist_ok=True)
+    workflow.write_text(
+        """jobs:
+  dynamic:
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          repository: attacker/other
+      - uses: actions/checkout@v7
+        with:
+          path: ${{ env.TRUSTED_PATH }}
+      - run: python -m pip install -r requirements-release-tools.lock
+""",
+        encoding="utf-8",
+    )
+
+    assert any(
+        "workflow requirement uses nonliteral checkout path metadata: "
+        "requirements-release-tools.lock" in error
+        for error in validate(tmp_path)
+    )
+
+
+def test_dependency_policy_parses_flow_style_run_step(tmp_path: Path) -> None:
+    """Verify a compact flow-style run step cannot bypass lock policy.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
+    write_valid_policy(tmp_path)
+    (tmp_path / "requirements-ad-hoc.lock").write_text(
+        "placeholder\n", encoding="utf-8"
+    )
+    workflow = tmp_path / ".github" / "workflows" / "release.yml"
+    workflow.parent.mkdir(parents=True, exist_ok=True)
+    workflow.write_text(
+        """jobs:
+  flow:
+    steps:
+      - {run: "python -m pip install -r requirements-ad-hoc.lock"}
+""",
+        encoding="utf-8",
+    )
+
+    assert any(
+        "workflow requirement lock is outside the generated dependency policy "
+        "inventory: requirements-ad-hoc.lock" in error
+        for error in validate(tmp_path)
+    )
+
+
+def test_dependency_policy_preserves_flow_run_physical_line(tmp_path: Path) -> None:
+    """Verify decoded flow-scalar newlines cannot change checkout ordering.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
+    write_valid_policy(tmp_path)
+    workflow = tmp_path / ".github" / "workflows" / "release.yml"
+    workflow.parent.mkdir(parents=True, exist_ok=True)
+    workflow.write_text(
+        """steps:
+  - uses: actions/checkout@v7
+    with:
+      repository: attacker/other
+  - {run: "\\n\\npython -m pip install -r requirements-release-tools.lock"}
+  - uses: actions/checkout@v7
+""",
+        encoding="utf-8",
+    )
+
+    assert any(
+        "root workflow requirement is not sourced from Atlaso: "
+        "requirements-release-tools.lock" in error
+        for error in validate(tmp_path)
+    )
+
+
+def test_dependency_policy_parses_commented_flow_style_run_step(
+    tmp_path: Path,
+) -> None:
+    """Verify a trailing comment cannot hide a flow-style requirement.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
+    write_valid_policy(tmp_path)
+    (tmp_path / "requirements-ad-hoc.lock").write_text("placeholder\n", encoding="utf-8")
+    workflow = tmp_path / ".github" / "workflows" / "release.yml"
+    workflow.parent.mkdir(parents=True, exist_ok=True)
+    workflow.write_text(
+        "- {run: \"python -m pip install -r requirements-ad-hoc.lock\"} # install\n",
+        encoding="utf-8",
+    )
+
+    assert any(
+        "workflow requirement lock is outside the generated dependency policy "
+        "inventory: requirements-ad-hoc.lock" in error
+        for error in validate(tmp_path)
+    )
+
+
+def test_dependency_policy_rejects_multiline_flow_style_step(tmp_path: Path) -> None:
+    """Verify a multiline flow collection cannot bypass workflow lock policy.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
+    write_valid_policy(tmp_path)
+    (tmp_path / "requirements-ad-hoc.lock").write_text("placeholder\n", encoding="utf-8")
+    workflow = tmp_path / ".github" / "workflows" / "release.yml"
+    workflow.parent.mkdir(parents=True, exist_ok=True)
+    workflow.write_text(
+        """steps:
+  - {run: python -m pip install -r requirements-ad-hoc.lock,
+     shell: bash}
+""",
+        encoding="utf-8",
+    )
+
+    assert any(
+        "multiline or invalid flow-style step cannot be policy validated" in error
+        for error in validate(tmp_path)
+    )
+
+
+def test_dependency_policy_rejects_flow_style_step_sequence(tmp_path: Path) -> None:
+    """Verify a flow-style steps sequence cannot bypass workflow lock policy.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
+    write_valid_policy(tmp_path)
+    (tmp_path / "requirements-ad-hoc.lock").write_text("placeholder\n", encoding="utf-8")
+    workflow = tmp_path / ".github" / "workflows" / "release.yml"
+    workflow.parent.mkdir(parents=True, exist_ok=True)
+    workflow.write_text(
+        "steps: [{uses: actions/checkout@v7}, "
+        "{run: python -m pip install -r requirements-ad-hoc.lock}]\n",
+        encoding="utf-8",
+    )
+
+    assert any(
+        "multiline or invalid flow-style step cannot be policy validated" in error
+        for error in validate(tmp_path)
+    )
+
+
+def test_dependency_policy_rejects_alias_valued_run_step(tmp_path: Path) -> None:
+    """Verify alias-valued run fields cannot bypass lock policy.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
+    write_valid_policy(tmp_path)
+    (tmp_path / "requirements-ad-hoc.lock").write_text("placeholder\n", encoding="utf-8")
+    workflow = tmp_path / ".github" / "workflows" / "release.yml"
+    workflow.parent.mkdir(parents=True, exist_ok=True)
+    workflow.write_text(
+        """jobs:
+  alias:
+    steps:
+      - run: &install "python -m pip install -r requirements-ad-hoc.lock"
+      - run: *install
+""",
+        encoding="utf-8",
+    )
+
+    assert any(
+        "run command uses YAML alias and cannot be policy validated: *install" in error
+        for error in validate(tmp_path)
+    )
+
+
+def test_dependency_policy_rejects_alias_valued_flow_style_run_step(tmp_path: Path) -> None:
+    """Verify flow-style alias-valued run fields cannot bypass lock policy.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
+    write_valid_policy(tmp_path)
+    (tmp_path / "requirements-ad-hoc.lock").write_text("placeholder\n", encoding="utf-8")
+    workflow = tmp_path / ".github" / "workflows" / "release.yml"
+    workflow.parent.mkdir(parents=True, exist_ok=True)
+    workflow.write_text(
+        """jobs:
+  flow:
+    steps:
+      - {run: &install "python -m pip install -r requirements-ad-hoc.lock"}
+      - {run: *install}
+""",
+        encoding="utf-8",
+    )
+
+    assert any(
+        "run command uses YAML alias and cannot be policy validated: *install" in error
+        for error in validate(tmp_path)
+    )
+
+
+def test_dependency_policy_rejects_alias_valued_checkout_step(tmp_path: Path) -> None:
+    """Verify an aliased checkout step cannot bypass lock source policy.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
+    write_valid_policy(tmp_path)
+    workflow = tmp_path / ".github" / "workflows" / "release.yml"
+    workflow.parent.mkdir(parents=True, exist_ok=True)
+    workflow.write_text(
+        """jobs:
+  source:
+    steps:
+      - &external
+        uses: actions/checkout@v7
+        with:
+          repository: attacker/other
+  target:
+    steps:
+      - *external
+      - run: python -m pip install -r requirements-release-tools.lock
+""",
+        encoding="utf-8",
+    )
+
+    assert any(
+        "workflow requirement uses nonliteral checkout path metadata: "
+        "requirements-release-tools.lock" in error
+        for error in validate(tmp_path)
+    )
+
+
+def test_dependency_policy_rejects_alias_valued_checkout_action(tmp_path: Path) -> None:
+    """Verify an aliased uses value cannot bypass checkout source policy.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
+    write_valid_policy(tmp_path)
+    workflow = tmp_path / ".github" / "workflows" / "release.yml"
+    workflow.parent.mkdir(parents=True, exist_ok=True)
+    workflow.write_text(
+        """env:
+  CHECKOUT: &checkout actions/checkout@v7
+jobs:
+  alias:
+    steps:
+      - uses: *checkout
+        with:
+          repository: attacker/other
+      - run: python -m pip install -r requirements-release-tools.lock
+""",
+        encoding="utf-8",
+    )
+
+    assert any(
+        "workflow requirement uses nonliteral checkout path metadata: "
+        "requirements-release-tools.lock" in error
+        for error in validate(tmp_path)
+    )
+
+
+def test_dependency_policy_rejects_anchor_declared_checkout_action(
+    tmp_path: Path,
+) -> None:
+    """Verify an anchored uses declaration cannot bypass checkout source policy.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
+    write_valid_policy(tmp_path)
+    workflow = tmp_path / ".github" / "workflows" / "release.yml"
+    workflow.parent.mkdir(parents=True, exist_ok=True)
+    workflow.write_text(
+        """jobs:
+  anchor:
+    steps:
+      - uses: &checkout actions/checkout@v7
+        with:
+          repository: attacker/other
+      - run: python -m pip install -r requirements-release-tools.lock
+""",
+        encoding="utf-8",
+    )
+
+    assert any(
+        "workflow requirement uses nonliteral checkout path metadata: "
+        "requirements-release-tools.lock" in error
+        for error in validate(tmp_path)
+    )
+
+
+def test_dependency_policy_resolves_continued_checkout_action_scalar(
+    tmp_path: Path,
+) -> None:
+    """Verify a continued checkout action retains its external source.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
+    write_valid_policy(tmp_path)
+    workflow = tmp_path / ".github" / "workflows" / "release.yml"
+    workflow.parent.mkdir(parents=True, exist_ok=True)
+    workflow.write_text(
+        """jobs:
+  continued:
+    steps:
+      - uses:
+          actions/checkout@v7
+        with:
+          repository: attacker/other
+      - run: python -m pip install -r requirements-release-tools.lock
+""",
+        encoding="utf-8",
+    )
+
+    assert any(
+        "root workflow requirement is not sourced from Atlaso: "
+        "requirements-release-tools.lock" in error
+        for error in validate(tmp_path)
+    )
+
+
+def test_dependency_policy_parses_flow_style_checkout_inputs(
+    tmp_path: Path,
+) -> None:
+    """Verify compact checkout inputs retain their external source metadata.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
+    write_valid_policy(tmp_path)
+    workflow = tmp_path / ".github" / "workflows" / "release.yml"
+    workflow.parent.mkdir(parents=True, exist_ok=True)
+    checkout_steps = (
+        """      - uses: actions/checkout@v7
+        with: {repository: attacker/other}
+""",
+        """      - {uses: actions/checkout@v7, with: {repository: attacker/other}}
+""",
+    )
+    for checkout_step in checkout_steps:
+        workflow.write_text(
+            f"""jobs:
+  flow:
+    steps:
+{checkout_step}      - run: python -m pip install -r requirements-release-tools.lock
+""",
+            encoding="utf-8",
+        )
+
+        assert any(
+            "root workflow requirement is not sourced from Atlaso: "
+            "requirements-release-tools.lock" in error
+            for error in validate(tmp_path)
+        )
+
+
+def test_dependency_policy_rejects_grouped_shell_requirement_resolution(
+    tmp_path: Path,
+) -> None:
+    """Verify grouped shell directory state fails closed for requirements.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
+    write_valid_policy(tmp_path)
+    workflow = tmp_path / ".github" / "workflows" / "release.yml"
+    workflow.parent.mkdir(parents=True, exist_ok=True)
+    for opening, closing in (("(", ")"), ("{", "}")):
+        workflow.write_text(
+            f"""jobs:
+  external:
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          repository: attacker/other
+          path: external
+      - run: |
+          {opening} cd external
+            python -m pip install -r requirements-release-tools.lock
+          {closing}
+""",
+            encoding="utf-8",
+        )
+
+        assert any(
+            "workflow working directory must be a literal repository path: "
+            "${{ unsupported-shell-grouping }}" in error
+            for error in validate(tmp_path)
+        )
+
+
+def test_dependency_policy_restores_shell_directory_stack(tmp_path: Path) -> None:
+    """Verify pop operations restore the source used for later requirements.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
+    write_valid_policy(tmp_path)
+    workflow = tmp_path / ".github" / "workflows" / "release.yml"
+    workflow.parent.mkdir(parents=True, exist_ok=True)
+    invocations = (
+        "pushd tooling; popd; python -m pip install -r requirements-release-tools.lock",
+        "Push-Location tooling; Pop-Location; python -m pip install -r requirements-release-tools.lock",
+    )
+    for invocation in invocations:
+        workflow.write_text(
+            f"""jobs:
+  external:
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          repository: attacker/other
+      - uses: actions/checkout@v7
+        with:
+          path: tooling
+      - run: {invocation}
+""",
+            encoding="utf-8",
+        )
+
+        assert any(
+            "root workflow requirement is not sourced from Atlaso: "
+            "requirements-release-tools.lock" in error
+            for error in validate(tmp_path)
+        )
+
+
+def test_dependency_policy_treats_dot_checkout_path_as_root(
+    tmp_path: Path,
+) -> None:
+    """Verify an explicit dot checkout path replaces the workspace root.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
+    write_valid_policy(tmp_path)
+    workflow = tmp_path / ".github" / "workflows" / "release.yml"
+    workflow.parent.mkdir(parents=True, exist_ok=True)
+    workflow.write_text(
+        """jobs:
+  external:
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          repository: attacker/other
+          path: .
+      - run: python -m pip install -r requirements-release-tools.lock
+""",
+        encoding="utf-8",
+    )
+
+    assert any(
+        "root workflow requirement is not sourced from Atlaso: "
+        "requirements-release-tools.lock" in error
+        for error in validate(tmp_path)
+    )
+
+
+def test_dependency_policy_rejects_untrusted_atlaso_root_checkout_ref(
+    tmp_path: Path,
+) -> None:
+    """Verify an arbitrary Atlaso root ref cannot supply policy locks.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
+    write_valid_policy(tmp_path)
+    workflow = tmp_path / ".github" / "workflows" / "release.yml"
+    workflow.parent.mkdir(parents=True, exist_ok=True)
+    workflow.write_text(
+        """jobs:
+  candidate:
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: feature/untrusted-lock
+      - run: python -m pip install -r requirements-release-tools.lock
+""",
+        encoding="utf-8",
+    )
+
+    assert any(
+        "root workflow requirement uses an untrusted Atlaso ref: "
+        "requirements-release-tools.lock" in error
+        for error in validate(tmp_path)
+    )
+
+
+def test_dependency_policy_scopes_root_checkouts_to_their_jobs(
+    tmp_path: Path,
+) -> None:
+    """Verify one job's external checkout does not taint another job.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
+    write_valid_policy(tmp_path)
+    workflow = tmp_path / ".github" / "workflows" / "release.yml"
+    workflow.parent.mkdir(parents=True, exist_ok=True)
+    workflow.write_text(
+        """jobs:
+  external:
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          repository: attacker/other
+  atlaso:
+    steps:
+      - uses: actions/checkout@v7
+      - run: python -m pip install -r requirements-release-tools.lock
+""",
+        encoding="utf-8",
+    )
+
+    assert validate(tmp_path) == []
+
+
+def test_dependency_policy_honors_step_working_directory(
+    tmp_path: Path,
+) -> None:
+    """Verify a step working directory selects the checkout supplying its lock.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
+    write_valid_policy(tmp_path)
+    workflow = tmp_path / ".github" / "workflows" / "release.yml"
+    workflow.parent.mkdir(parents=True, exist_ok=True)
+    workflow.write_text(
+        """jobs:
+  external:
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          repository: attacker/other
+          path: external
+      - run: python -m pip install -r requirements-release-tools.lock
+        working-directory: external
+""",
+        encoding="utf-8",
+    )
+
+    assert any(
+        "checkout-prefixed workflow requirement is not sourced from Atlaso: "
+        "requirements-release-tools.lock" in error
+        for error in validate(tmp_path)
+    )
+
+
+def test_dependency_policy_honors_continued_step_working_directory(
+    tmp_path: Path,
+) -> None:
+    """Verify a continued step working directory selects its checkout source.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
+    write_valid_policy(tmp_path)
+    workflow = tmp_path / ".github" / "workflows" / "release.yml"
+    workflow.parent.mkdir(parents=True, exist_ok=True)
+    workflow.write_text(
+        """jobs:
+  external:
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          repository: attacker/other
+          path: external
+      - run: python -m pip install -r requirements-release-tools.lock
+        working-directory:
+          external
+""",
+        encoding="utf-8",
+    )
+
+    assert any(
+        "checkout-prefixed workflow requirement is not sourced from Atlaso: "
+        "requirements-release-tools.lock" in error
+        for error in validate(tmp_path)
+    )
+
+
+def test_dependency_policy_honors_job_default_working_directory(
+    tmp_path: Path,
+) -> None:
+    """Verify a job's default working directory applies to run steps.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
+    write_valid_policy(tmp_path)
+    workflow = tmp_path / ".github" / "workflows" / "release.yml"
+    workflow.parent.mkdir(parents=True, exist_ok=True)
+    workflow.write_text(
+        """jobs:
+  external:
+    defaults:
+      run:
+        working-directory: external
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          repository: attacker/other
+          path: external
+      - run: python -m pip install -r requirements-release-tools.lock
+""",
+        encoding="utf-8",
+    )
+
+    assert any(
+        "checkout-prefixed workflow requirement is not sourced from Atlaso: "
+        "requirements-release-tools.lock" in error
+        for error in validate(tmp_path)
+    )
+
+
+def test_dependency_policy_honors_workflow_default_working_directory(
+    tmp_path: Path,
+) -> None:
+    """Verify the workflow default working directory applies after job defaults.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
+    write_valid_policy(tmp_path)
+    workflow = tmp_path / ".github" / "workflows" / "release.yml"
+    workflow.parent.mkdir(parents=True, exist_ok=True)
+    workflow.write_text(
+        """defaults:
+  run:
+    working-directory: external
+jobs:
+  external:
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          repository: attacker/other
+          path: external
+      - run: python -m pip install -r requirements-release-tools.lock
+""",
+        encoding="utf-8",
+    )
+
+    assert any(
+        "checkout-prefixed workflow requirement is not sourced from Atlaso: "
+        "requirements-release-tools.lock" in error
+        for error in validate(tmp_path)
+    )
+
+
+def test_dependency_policy_uses_checkout_destination_history(
+    tmp_path: Path,
+) -> None:
+    """Verify each command uses the latest preceding destination checkout.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
+    write_valid_policy(tmp_path)
+    workflow = tmp_path / ".github" / "workflows" / "release.yml"
+    workflow.parent.mkdir(parents=True, exist_ok=True)
+    workflow.write_text(
+        """jobs:
+  reused:
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          repository: attacker/other
+          path: tooling
+      - run: python -m pip install -r tooling/requirements-release-tools.lock
+      - uses: actions/checkout@v7
+        with:
+          path: tooling
+""",
+        encoding="utf-8",
+    )
+
+    assert any(
+        "checkout-prefixed workflow requirement is not sourced from Atlaso: "
+        "tooling/requirements-release-tools.lock" in error
+        for error in validate(tmp_path)
+    )
+
+
+def test_dependency_policy_rejects_dynamic_working_directory(
+    tmp_path: Path,
+) -> None:
+    """Verify unresolved working-directory expressions fail closed.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
+    write_valid_policy(tmp_path)
+    workflow = tmp_path / ".github" / "workflows" / "release.yml"
+    workflow.parent.mkdir(parents=True, exist_ok=True)
+    workflow.write_text(
+        """steps:
+  - run: python -m pip install -r requirements-release-tools.lock
+    working-directory: ${{ matrix.source }}
+""",
+        encoding="utf-8",
+    )
+
+    assert any(
+        "workflow working directory must be a literal repository path: "
+        "${{ matrix.source }}" in error
+        for error in validate(tmp_path)
+    )
+
+
 def test_dependency_policy_rejects_missing_dependabot_cooldown(
     tmp_path: Path,
 ) -> None:
@@ -173,6 +2292,13 @@ def test_lock_compiler_applies_upload_cutoff_to_every_target() -> None:
         assert "--no-emit-index-url" in command
         assert f"--output-file={target.output}" in command
         assert ("--allow-unsafe" in command) is target.allow_unsafe
+
+
+def test_lock_policy_and_generation_inventories_match() -> None:
+    """Verify every policy lock is generated and every generated lock is governed."""
+    assert {policy.path for policy in LOCK_POLICIES} == {
+        target.output for target in LOCK_TARGETS
+    }
 
 
 def test_lock_compiler_adds_upgrade_only_when_requested() -> None:

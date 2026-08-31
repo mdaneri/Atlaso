@@ -339,6 +339,8 @@ The primary Windows producer is a maintainer workstation, not a permanent GitHub
 successful software-release SHA, run:
 
 ```powershell
+python -m pip install --require-hashes --requirement requirements-virtualization-smoke.lock
+
 ./scripts/windows/vmware/export-ovf.ps1 -Prerelease `
   -PrereleaseIdentifier rc.1 `
   -StagingRoot 'D:\Atlaso-Releases' `
@@ -395,6 +397,10 @@ the disposable runner must still complete its local 1Password authorization and 
 
 The workstation requires PowerShell 7.4 or newer, VMware Workstation, Packer, OVF Tool, Hyper-V, `qemu-img`, and two
 operator-owned virtual switches. The Proxmox and KVM runners require the host tools listed in their import sections.
+The optional Windows producer workflow performs the same CPython 3.14 smoke-runtime installation before candidate
+production. The generated, seven-day, hash-verified smoke lock is separate from
+`requirements-onepassword-deploy.lock`: the latter belongs to the bounded CPython 3.10 through 3.13 1Password
+credential bridge and includes SDK dependencies the smoke helper neither imports nor needs.
 Every smoke identity and storage
 namespace is invocation-scoped: VMware generates a disposable per-run password, Proxmox serializes each VMID import,
 passes it to OVF Tool through a runner-only temporary configuration file instead of process arguments, and deletes that

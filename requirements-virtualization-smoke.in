@@ -1,0 +1,5 @@
+# VMware and Hyper-V release smoke SSH validation on CPython 3.14.
+# Keep the shared CFFI runtime aligned with the release-tools lock installed
+# into the same Windows candidate environment.
+cffi==2.1.0
+paramiko>=3.5.0
