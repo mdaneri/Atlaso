@@ -30,6 +30,11 @@ and keeps the DNS suffix in the supporting line. Each domain places its direct e
 records in Atlaso's
 database while excluding that zone from rendered dnsmasq desired state; at least one domain must remain enabled.
 
+On wide desktop layouts, each selected domain's records grid expands to the remaining main-column viewport height so
+larger record sets can be reviewed with less page scrolling. Atlaso recalculates the available height when the window or
+main panel changes size. Narrow and hidden layouts retain the compact bounded grid height, horizontal overflow remains
+inside the grid, and the shared bottom **Add DNS record** row remains available for empty, single-row, and larger zones.
+
 ## Local and authoritative modes
 
 With **Authoritative** off, each managed domain renders as `local=/domain/`. Atlaso answers known local records and

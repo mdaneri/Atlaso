@@ -150,6 +150,16 @@ test("VCF hostname validation accepts one normalized DNS label and rejects unsaf
 test("VCF hostname rows submit immutable component keys beside reviewed values", () => {
   assert.match(appSource, /componentInput\.name = "component_key"/);
   assert.match(appSource, /hostnameInput\.name = "hostname"/);
+  assert.match(appSource, /hostnameInput\.setAttribute\("aria-label", `Hostname for \$\{component\.description \|\| component\.host\}`\)/);
   assert.match(appSource, /hostnameInput\.setAttribute\("aria-invalid", validationError \? "true" : "false"\)/);
   assert.match(appSource, /new FormData\(form\)/);
+});
+
+test("VCF creation stays disabled until Populate returns an exact review revision", () => {
+  assert.match(appSource, /const populateButton = form\.querySelector\("\[data-vcf-fqdn-populate\]"\)/);
+  assert.match(appSource, /populatedRevision\.value = String\(payload\.populated_revision \|\| ""\)/);
+  assert.match(appSource, /const payload = await submitRequest\(`\$\{form\.action\}\/populate`, "populated"\)/);
+  assert.match(appSource, /populatedRevision\.value = ""/);
+  assert.match(appSource, /form\.addEventListener\("atlaso:vcf-fqdn-invalidate", invalidatePopulation\)/);
+  assert.match(appSource, /!vcfFqdnRowsAreValid\(\) \|\| !vcfFqdnIsPopulated\(\)/);
 });

@@ -129,6 +129,7 @@
 <dialog id="vcf-fqdn-modal" class="confirm-modal wide-modal vcf-fqdn-modal" aria-labelledby="vcf-fqdn-modal-title">
   <form class="confirm-modal-panel form-stack" action="{{ management_ui_root }}/vcf-helper/generated-fqdns" method="post" data-vcf-fqdn-form>
     <input type="hidden" name="csrf" value="{{ csrf_token }}">
+    <input type="hidden" name="populated_revision" value="" data-vcf-fqdn-populated-revision>
     <div class="confirm-modal-body">
       <p class="kicker">VCF Helper</p>
       <h2 id="vcf-fqdn-modal-title">Pre-fill Generated FQDNs</h2>
@@ -188,7 +189,6 @@
               <td>{{ row.description }}</td>
               <td>
                 <input type="hidden" name="component_key" value="{{ row.host }}">
-                <label class="sr-only" for="vcf-fqdn-hostname-{{ row.host }}">Hostname for {{ row.description }}</label>
                 <input
                   id="vcf-fqdn-hostname-{{ row.host }}"
                   class="compact-input"
@@ -196,6 +196,7 @@
                   value="{{ row.host_label }}"
                   autocomplete="off"
                   spellcheck="false"
+                  aria-label="Hostname for {{ row.description }}"
                   aria-describedby="vcf-fqdn-hostname-error-{{ row.host }}"
                   data-vcf-fqdn-hostname="{{ row.host }}"
                 >
@@ -203,7 +204,7 @@
               </td>
               <td data-vcf-fqdn-value>{{ row.fqdn }}</td>
               {% set existing_addresses = vcf_helper_existing_address_records.get(row.fqdn, []) %}
-              <td data-vcf-fqdn-status{% if not existing_addresses %} class="muted"{% endif %}>{{ existing_addresses|join(", ") if existing_addresses else ("existing record skipped" if row.fqdn in vcf_helper_existing_fqdns else "allocated on confirm") }}</td>
+              <td data-vcf-fqdn-status{% if not existing_addresses %} class="muted"{% endif %}>{{ existing_addresses|join(", ") if existing_addresses else ("existing record skipped" if row.fqdn in vcf_helper_existing_fqdns else "select Populate to review") }}</td>
             </tr>
           {% endfor %}
         </tbody>
@@ -212,7 +213,8 @@
     <div class="confirm-modal-actions">
       <button class="button danger" type="button" data-vcf-fqdn-delete>Delete generated records</button>
       <button class="button ghost" value="cancel" type="button" data-vcf-fqdn-modal-cancel>Cancel</button>
-      <button class="button primary" type="submit" data-vcf-fqdn-submit>Create DNS records</button>
+      <button class="button secondary" type="button" data-vcf-fqdn-populate>Populate</button>
+      <button class="button primary" type="submit" data-vcf-fqdn-submit disabled>Create DNS records</button>
     </div>
   </form>
 </dialog>

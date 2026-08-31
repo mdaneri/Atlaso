@@ -147,8 +147,16 @@ Atlaso normalizes reviewed hostnames to lowercase and accepts exactly one DNS la
 appear exactly once, and two components cannot use the same reviewed hostname. The server derives each FQDN from the
 reviewed label and selected managed domain; it never trusts a browser-generated FQDN.
 
-Creating records requires confirmation. The modal remains open after creation so assigned addresses can be reviewed.
-When every displayed FQDN has an A or AAAA address, the primary action changes to `Done`; `Done` closes the modal.
+Select **Populate** to allocate and display the proposed A or AAAA addresses without changing DNS desired state. The
+hostname inputs use their component descriptions as accessible names without repeating visible labels in every compact
+row. **Create DNS records** remains disabled until Populate succeeds. Changing the deployment, domain, address range,
+prefix, suffix, or any reviewed hostname invalidates that populated revision and requires Populate again. Atlaso binds
+creation to the exact signed, time-limited populated inputs so a stale or changed browser submission cannot bypass the
+review.
+
+Creating records then requires confirmation. The modal remains open after creation so assigned addresses can be
+reviewed. When every displayed FQDN has an A or AAAA address, the primary action changes to `Done`; `Done` closes the
+modal.
 
 ## Deployment Catalogs
 
@@ -208,6 +216,7 @@ match the current catalog.
 ## Routes And Responses
 
 - `GET /ui/management/vcf-helper` renders the helper page.
+- `POST /ui/management/vcf-helper/generated-fqdns/populate` validates and previews allocation without mutation.
 - `POST /ui/management/vcf-helper/generated-fqdns` validates and creates missing records.
 - `POST /ui/management/vcf-helper/generated-fqdns/delete` deletes matching helper-owned records.
 - `POST /ui/management/vcf-helper/sddc-manager/inventory` confirms TLS and discovers vSphere inventory.

@@ -25,6 +25,7 @@ from fastapi import (
     UploadFile,
 )
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response
+from itsdangerous import BadSignature, SignatureExpired, URLSafeTimedSerializer
 from sqlalchemy import desc, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, selectinload
@@ -119,6 +120,60 @@ from atlaso.app.services.vcf_trust import (
 from atlaso.app.ui_routes import MANAGEMENT_UI_ROOT
 
 Endpoint = Callable[..., Any]
+VCF_FQDN_POPULATION_MAX_AGE_SECONDS = 15 * 60
+
+
+def _vcf_fqdn_population_serializer() -> URLSafeTimedSerializer:
+    """Return the signer used for bounded VCF FQDN review revisions."""
+    return URLSafeTimedSerializer(
+        get_settings().secret_key,
+        salt="atlaso-vcf-fqdn-population-v1",
+    )
+
+
+def _vcf_fqdn_input_revision(
+    *,
+    actor: str,
+    target: str,
+    domain: str,
+    prefix: str,
+    suffix: str,
+    start_ipv4: str,
+    network_prefix: str,
+    component_keys: list[str],
+    hostnames: list[str],
+) -> dict[str, object]:
+    """Return the exact browser inputs bound to one populated review."""
+    return {
+        "actor": actor,
+        "target": target,
+        "domain": domain,
+        "prefix": prefix,
+        "suffix": suffix,
+        "start_ipv4": start_ipv4,
+        "network_prefix": network_prefix,
+        "component_keys": list(component_keys),
+        "hostnames": list(hostnames),
+    }
+
+
+def _vcf_fqdn_population_token(**revision: object) -> str:
+    """Sign one exact populated VCF FQDN input revision."""
+    return _vcf_fqdn_population_serializer().dumps(revision)
+
+
+def _vcf_fqdn_population_matches(token: str, **revision: object) -> bool:
+    """Return whether a bounded token matches the exact submitted revision."""
+    if not token:
+        return False
+    try:
+        populated = _vcf_fqdn_population_serializer().loads(
+            token,
+            max_age=VCF_FQDN_POPULATION_MAX_AGE_SECONDS,
+        )
+    except (BadSignature, SignatureExpired):
+        return False
+    return populated == revision
 
 
 @dataclass(frozen=True)
@@ -139,6 +194,7 @@ class VcfWorkflowsUiDependencies:
     appliance_apply_status: Endpoint
     confirmed_tls_fingerprint: Endpoint
     create_vcf_generated_dns_records: Endpoint
+    allocate_vcf_generated_records: Endpoint
     delete_vcf_generated_dns_records: Endpoint
     disable_default_vcf_backup_user_when_service_off: Endpoint
     disable_default_vcf_depot_user_when_service_off: Endpoint
@@ -226,6 +282,7 @@ def build_router(dependencies: VcfWorkflowsUiDependencies) -> VcfWorkflowsUiRout
     appliance_apply_status = dependencies.appliance_apply_status
     _confirmed_tls_fingerprint = dependencies.confirmed_tls_fingerprint
     create_vcf_generated_dns_records = dependencies.create_vcf_generated_dns_records
+    allocate_vcf_generated_records = dependencies.allocate_vcf_generated_records
     delete_vcf_generated_dns_records = dependencies.delete_vcf_generated_dns_records
     disable_default_vcf_backup_user_when_service_off = (
         dependencies.disable_default_vcf_backup_user_when_service_off
@@ -1653,6 +1710,79 @@ def build_router(dependencies: VcfWorkflowsUiDependencies) -> VcfWorkflowsUiRout
             )
         return RedirectResponse(f"/tasks?job_id={job.id}", status_code=303)
 
+    @router.post("/vcf-helper/generated-fqdns/populate", response_model=None)
+    def populate_vcf_fqdns_from_ui(
+        request: Request,
+        target: str = Form(VCF_HELPER_DEFAULT_TARGET),
+        domain: str = Form(...),
+        prefix: str = Form(""),
+        suffix: str = Form(""),
+        start_ipv4: str = Form(...),
+        network_prefix: str = Form(""),
+        component_key: list[str] | None = Form(None),
+        hostname: list[str] | None = Form(None),
+        csrf: str = Form(...),
+        identity: Identity = Depends(require_session_identity),
+        db: Session = Depends(get_db),
+    ) -> JSONResponse:
+        """Validate and stage one non-mutating generated-FQDN review.
+
+        Args:
+            request: Incoming HTTP request.
+            target: Selected deployment catalog.
+            domain: Managed DNS domain selected for generated records.
+            prefix: Optional generated-hostname prefix.
+            suffix: Optional generated-hostname suffix.
+            start_ipv4: Starting IPv4 or IPv6 CIDR.
+            network_prefix: Legacy separate network prefix.
+            component_key: Immutable catalog component keys.
+            hostname: Reviewed hostname labels paired with component keys.
+            csrf: Validated CSRF token authorizing the request.
+            identity: Authenticated identity staging the review.
+            db: Active database session.
+
+        Returns:
+            A non-mutating allocation preview and exact signed input revision.
+        """
+        verify_csrf(request, csrf)
+        component_keys = component_key or []
+        hostnames = hostname or []
+        planned, skipped, errors = allocate_vcf_generated_records(
+            db,
+            target=target,
+            domain=domain,
+            prefix=prefix,
+            suffix=suffix,
+            start_ipv4=start_ipv4,
+            network_prefix=network_prefix,
+            component_keys=component_keys,
+            hostnames=hostnames,
+        )
+        if errors:
+            return JSONResponse(
+                {"status": "error", "planned": [], "skipped": skipped, "errors": errors},
+                status_code=422,
+            )
+        revision = _vcf_fqdn_input_revision(
+            actor=identity.username,
+            target=target,
+            domain=domain,
+            prefix=prefix,
+            suffix=suffix,
+            start_ipv4=start_ipv4,
+            network_prefix=network_prefix,
+            component_keys=component_keys,
+            hostnames=hostnames,
+        )
+        return JSONResponse(
+            {
+                "status": "populated",
+                "planned": planned,
+                "skipped": skipped,
+                "populated_revision": _vcf_fqdn_population_token(**revision),
+            }
+        )
+
     @router.post("/vcf-helper/generated-fqdns", response_model=None)
     def generate_vcf_fqdns_from_ui(
         request: Request,
@@ -1664,6 +1794,7 @@ def build_router(dependencies: VcfWorkflowsUiDependencies) -> VcfWorkflowsUiRout
         network_prefix: str = Form(""),
         component_key: list[str] | None = Form(None),
         hostname: list[str] | None = Form(None),
+        populated_revision: str = Form(""),
         csrf: str = Form(...),
         identity: Identity = Depends(require_session_identity),
         db: Session = Depends(get_db),
@@ -1680,6 +1811,7 @@ def build_router(dependencies: VcfWorkflowsUiDependencies) -> VcfWorkflowsUiRout
             network_prefix: Network prefix supplied by the caller.
             component_key: Catalog component keys submitted by the caller.
             hostname: Reviewed hostname labels paired with the submitted component keys.
+            populated_revision: Signed exact input revision returned by Populate.
             csrf: Validated CSRF token authorizing the request.
             identity: Authenticated identity authorizing the request.
             db: Active database session.
@@ -1688,6 +1820,45 @@ def build_router(dependencies: VcfWorkflowsUiDependencies) -> VcfWorkflowsUiRout
             The endpoint response.
         """
         verify_csrf(request, csrf)
+        component_keys = component_key or []
+        hostnames = hostname or []
+        revision = _vcf_fqdn_input_revision(
+            actor=identity.username,
+            target=target,
+            domain=domain,
+            prefix=prefix,
+            suffix=suffix,
+            start_ipv4=start_ipv4,
+            network_prefix=network_prefix,
+            component_keys=component_keys,
+            hostnames=hostnames,
+        )
+        if not _vcf_fqdn_population_matches(populated_revision, **revision):
+            errors = [
+                "Select Populate and review the current generated FQDN plan before creating DNS records."
+            ]
+            if request.headers.get("X-Atlaso-VCF-Helper") == "1":
+                return JSONResponse(
+                    {"status": "error", "created": [], "skipped": [], "errors": errors},
+                    status_code=422,
+                )
+            page_context = vcf_submitted_fqdn_page_context(
+                db,
+                identity,
+                target=target,
+                domain=domain,
+                prefix=prefix,
+                suffix=suffix,
+                start_ipv4=start_ipv4,
+                component_keys=component_keys,
+                hostnames=hostnames,
+            )
+            return render(
+                request,
+                "vcf_helper.html",
+                {**page_context, "vcf_helper_errors": errors},
+                status_code=422,
+            )
         created, skipped, errors = create_vcf_generated_dns_records(
             db,
             target=target,
@@ -1696,8 +1867,8 @@ def build_router(dependencies: VcfWorkflowsUiDependencies) -> VcfWorkflowsUiRout
             suffix=suffix,
             start_ipv4=start_ipv4,
             network_prefix=network_prefix,
-            component_keys=component_key or [],
-            hostnames=hostname or [],
+            component_keys=component_keys,
+            hostnames=hostnames,
             actor=identity.username,
         )
         if request.headers.get("X-Atlaso-VCF-Helper") == "1":
@@ -1718,8 +1889,8 @@ def build_router(dependencies: VcfWorkflowsUiDependencies) -> VcfWorkflowsUiRout
             prefix=prefix,
             suffix=suffix,
             start_ipv4=start_ipv4,
-            component_keys=component_key or [],
-            hostnames=hostname or [],
+            component_keys=component_keys,
+            hostnames=hostnames,
         )
         if errors:
             return render(
@@ -3891,6 +4062,7 @@ def build_router(dependencies: VcfWorkflowsUiDependencies) -> VcfWorkflowsUiRout
             "vcf_trust_page": vcf_trust_page,
             "inspect_vcf_trust_target_from_ui": inspect_vcf_trust_target_from_ui,
             "trust_vcf_root_ca_from_ui": trust_vcf_root_ca_from_ui,
+            "populate_vcf_fqdns_from_ui": populate_vcf_fqdns_from_ui,
             "generate_vcf_fqdns_from_ui": generate_vcf_fqdns_from_ui,
             "delete_vcf_fqdns_from_ui": delete_vcf_fqdns_from_ui,
             "vcf_offline_depot_page": vcf_offline_depot_page,
