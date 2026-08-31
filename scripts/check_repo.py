@@ -704,7 +704,9 @@ MERGE_HOLD_MODAL_PROHIBITION = re.compile(
     r"to\s+merge|(?:you|(?:(?:the|this)\s+)?(?:agent|task|heartbeat|handoff))\s+"
     r"lacks?\s+(?:permission|authorization|authority|approval)\s+"
     r"to\s+merge|i\s+(?:do\s+not|don't|don’t)\s+(?:authorize|permit)\s+"
-    r"you\s+to\s+merge|i\s+(?:have\s+not|haven't|haven’t)\s+"
+    r"you\s+to\s+merge|i\s+(?:will\s+not|won't|won’t|would\s+not|"
+    r"wouldn't|wouldn’t)\s+allow\s+you\s+to\s+merge|"
+    r"i\s+(?:have\s+not|haven't|haven’t)\s+"
     r"(?:authorized|permitted)\s+you\s+to\s+merge|"
     r"i\s+no\s+longer\s+(?:authorize|permit)\s+"
     r"you\s+to\s+merge|i\s+(?:forbid|prohibit)\s+you\s+"
@@ -724,7 +726,7 @@ DEFAULT_MERGE_AUTHORITY_NEGATIONS = re.compile(
     r"(?:(?:do not|don't|don’t|never|must not|should not|cannot|can't|can’t|not)"
     r"(?:\s+\w+){0,6}|(?:lacks?|has no|have no|without)(?:\s+\w+){0,4}|"
     r"(?:there\s+is|there's|there’s)\s+no\s+"
-    r"(?:authority|authorization|permission)\s+to|"
+    r"(?:authority|authorization|permission|approval)\s+to|"
     r"(?:skip|avoid|omit|decline|refrain(?:\s+from)?|"
     r"hold off(?:\s+on)?|defer|delay|postpone|pause)"
     r"(?:\s+\w+){0,3})\s*$"
@@ -761,7 +763,7 @@ DEFAULT_MERGE_AUTHORITY_PERMISSION_QUESTION = re.compile(
     r"delegating\s+agent|agent|task))|"
     r"(?:do|does)\s+(?:i|we|you|(?:(?:the|this)\s+)?(?:heartbeat|handoff|"
     r"delegation|delegating\s+agent|agent|task))\s+have\s+"
-    r"(?:authority|authorization|permission)\s+to|"
+    r"(?:authority|authorization|permission|approval)\s+to|"
     r"(?:has|have)\s+(?:i|we|(?:(?:the|this)\s+)?(?:heartbeat|handoff|"
     r"delegation|delegating\s+agent|agent|task))\s+been\s+"
     r"(?:authorized|permitted|allowed)\s+to|"
@@ -1356,7 +1358,7 @@ def _hold_targets_other_task(
             gate_context = direct_object_context[
                 len(pattern) : direct_reference.start()
             ]
-            if re.search(r"\b(?:until|before|after)\s*$", gate_context):
+            if re.search(r"\b(?:until|before|after|while)\s*$", gate_context):
                 return False
             return int(direct_reference.group(1)) != active_pull_request
         prefix_references = tuple(MERGE_HOLD_NUMBERED_PR_REFERENCE.finditer(prefix))
@@ -1369,7 +1371,7 @@ def _hold_targets_other_task(
         )
         if direct_reference is not None:
             gate_context = direct_issue_context[len(pattern) : direct_reference.start()]
-            if re.search(r"\b(?:until|before|after)\s*$", gate_context):
+            if re.search(r"\b(?:until|before|after|while)\s*$", gate_context):
                 return False
             return int(direct_reference.group(1)) != active_issue
         prefix_references = tuple(MERGE_HOLD_NUMBERED_ISSUE_REFERENCE.finditer(prefix))

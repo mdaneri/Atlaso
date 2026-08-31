@@ -3391,6 +3391,39 @@
       "expected_holds": [
         "do not merge"
       ]
+    },
+    {
+      "name": "while-numbered-issue-condition-is-preserved",
+      "default_merge_authority": true,
+      "active_issue": 602,
+      "instructions": [
+        {
+          "text": "Implement issue #602, but do not merge while issue #603 is open.",
+          "add_holds": [
+            "do not merge"
+          ]
+        }
+      ],
+      "generated": "Preserve the explicit do not merge hold for issue #602.",
+      "expected_holds": [
+        "do not merge"
+      ]
+    },
+    {
+      "name": "refusal-to-allow-is-preserved",
+      "default_merge_authority": true,
+      "instructions": [
+        {
+          "text": "Implement issue #602, but I will not allow you to merge this PR.",
+          "add_holds": [
+            "do not merge"
+          ]
+        }
+      ],
+      "generated": "Preserve the explicit do not merge hold.",
+      "expected_holds": [
+        "do not merge"
+      ]
     }
   ]
 }

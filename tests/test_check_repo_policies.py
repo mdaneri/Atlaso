@@ -715,6 +715,7 @@ def test_merge_hold_directions_preserves_cross_pr_condition() -> None:
         "Do not merge until PR #621 is merged.",
         "Do not merge before PR #621 is merged.",
         "Do not merge after PR #621 is closed.",
+        "Do not merge while PR #621 is open.",
     ):
         assert merge_hold_directions(
             instruction,
@@ -754,12 +755,20 @@ def test_merge_hold_directions_recognizes_approval_denial() -> None:
     ) == {"do not merge": "add"}
 
 
+def test_merge_hold_directions_recognizes_refusal_to_allow() -> None:
+    """Verify a direct refusal to allow merging becomes an explicit hold."""
+    assert merge_hold_directions(
+        "Implement issue #602, but I will not allow you to merge this PR."
+    ) == {"do not merge": "add"}
+
+
 def test_merge_hold_directions_preserves_cross_issue_condition() -> None:
     """Verify a later cross-issue condition does not retarget this task's hold."""
     for instruction in (
         "Do not merge until issue #603 is resolved.",
         "Do not merge before issue #603 is resolved.",
         "Do not merge after issue #603 is closed.",
+        "Do not merge while issue #603 is open.",
     ):
         assert merge_hold_directions(
             instruction,
@@ -1334,6 +1343,9 @@ def test_generated_authority_rejects_general_permission_questions() -> None:
     )
     assert not has_affirmative_default_merge_authority(
         "Are you authorized to complete the guarded merge?"
+    )
+    assert not has_affirmative_default_merge_authority(
+        "Do I have approval to complete the guarded merge?"
     )
 
 
@@ -2670,6 +2682,15 @@ def test_merge_authority_transfer_rejects_generated_permission_question(
                             "Are you authorized to complete the guarded merge?"
                         ),
                         "expected_holds": [],
+                    },
+                    {
+                        "name": "generated approval question",
+                        "default_merge_authority": True,
+                        "instructions": [{"text": "Implement issue #602."}],
+                        "generated": (
+                            "Do I have approval to complete the guarded merge?"
+                        ),
+                        "expected_holds": [],
                     }
                 ]
             }
@@ -2688,6 +2709,8 @@ def test_merge_authority_transfer_rejects_generated_permission_question(
         "affirmative default authority",
         "merge authority fixture generated second-person authorization question "
         "omits affirmative default authority",
+        "merge authority fixture generated approval question omits affirmative "
+        "default authority",
     ]
 
 
