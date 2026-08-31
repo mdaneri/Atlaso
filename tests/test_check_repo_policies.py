@@ -636,6 +636,7 @@ def test_merge_hold_directions_recognizes_modal_merge_prohibitions() -> None:
         "You must not merge this PR.",
         "You may not merge this PR.",
         "You cannot merge this PR.",
+        "You should not merge this PR.",
         "You are forbidden from merging this PR.",
         "You are not allowed to merge this PR.",
     ):
@@ -699,6 +700,10 @@ def test_merge_hold_directions_ignores_reported_permission() -> None:
     ) == {}
     assert merge_hold_directions(
         "According to the task handoff, you may merge this PR.",
+        active_holds=("do not merge",),
+    ) == {}
+    assert merge_hold_directions(
+        "You may merge this PR, according to the task handoff.",
         active_holds=("do not merge",),
     ) == {}
 
@@ -1051,6 +1056,16 @@ def test_source_authority_excludes_diagnostic_how_to_questions() -> None:
     )
     assert not source_has_default_merge_authority(
         ("Please investigate how to fix issue #602.",)
+    )
+    assert not source_has_default_merge_authority(
+        ("We discussed how to fix issue #602.",)
+    )
+
+
+def test_generated_authority_rejects_general_permission_questions() -> None:
+    """Verify general merge-authority questions are not affirmative delivery."""
+    assert not has_affirmative_default_merge_authority(
+        "Do we have authority to complete the guarded merge?"
     )
 
 

@@ -653,7 +653,7 @@ AUTO_MERGE_ONLY_PATTERN = re.compile(
     r")\b"
 )
 MERGE_HOLD_MODAL_PROHIBITION = re.compile(
-    r"\b(?:(?:you\s+)?(?:(?:must|may|can)\s+not|cannot)\s+merge|"
+    r"\b(?:(?:you\s+)?(?:(?:must|may|can|should)\s+not|cannot)\s+merge|"
     r"you\s+are\s+(?:forbidden\s+from\s+merging|not\s+allowed\s+to\s+merge))\b"
 )
 DEFAULT_MERGE_AUTHORITY_NEGATIONS = re.compile(
@@ -689,7 +689,8 @@ DEFAULT_MERGE_AUTHORITY_CONDITIONAL_REQUEST = re.compile(
 DEFAULT_MERGE_AUTHORITY_DECISION_ONLY = re.compile(r"\bwhether\s+to\b")
 DEFAULT_MERGE_AUTHORITY_PERMISSION_QUESTION = re.compile(
     r"\b(?:(?:do|would)\s+you\s+(?:want|like)\s+(?:me|us)\s+to|"
-    r"should\s+(?:i|we)|(?:can|could|may)\s+(?:i|we))\b"
+    r"should\s+(?:i|we)|(?:can|could|may)\s+(?:i|we)|"
+    r"do\s+(?:i|we)\s+have\s+(?:authority|authorization|permission)\s+to)\b"
 )
 DEFAULT_MERGE_AUTHORITY_PROMPT_MARKERS = (
     "preserve default merge authority",
@@ -774,6 +775,12 @@ DEFAULT_MERGE_AUTHORITY_INTERROGATIVE_REVIEW = re.compile(
     r"(?:i|we|you)\s+(?:implement|fix|patch|resolve|solve)\b[^?]*\?|"
     r"(?:^|[;.!?]\s*)what\s+(?:is|are)\s+(?:needed|required)\s+to\s+"
     r"(?:implement|fix|patch|resolve|solve)\b[^?]*\?"
+)
+DEFAULT_MERGE_AUTHORITY_REPORTED_DISCUSSION = re.compile(
+    r"\b(?:(?:i|we|they|the\s+(?:user|maintainer|owner|team))\s+"
+    r"(?:discussed|considered|contemplated|explored|talked\s+about)|"
+    r"(?:i|we|they)\s+had\s+(?:a\s+)?discussion\s+about)\b"
+    r"[^.!?]{0,80}\b(?:implement|fix|patch|resolve|solve|change|modify|edit)\b"
 )
 DEFAULT_MERGE_AUTHORITY_SUPERSEDING_REVIEW_PREFIX = re.compile(
     r"(?:^|[;.!?]\s*)(?:instead,?|switch to|move to|change to)\s*$"
@@ -1544,6 +1551,7 @@ def merge_hold_directions(
             and MERGE_HOLD_INTERROGATIVE_PERMISSION_CONTEXT.search(prefix) is None
             and MERGE_HOLD_NEGATED_PERMISSION_REPORT_CONTEXT.search(prefix) is None
             and MERGE_HOLD_NONAUTHORITATIVE_SOURCE_CONTEXT.search(prefix) is None
+            and MERGE_HOLD_NONAUTHORITATIVE_SOURCE_CONTEXT.search(suffix) is None
             and not _hold_targets_non_pr_object(
                 "", normalized, permission_offset, permission
             )
@@ -1615,6 +1623,8 @@ def source_has_default_merge_authority(instructions: tuple[str, ...]) -> bool:
             DEFAULT_MERGE_AUTHORITY_SOURCE_EXCLUSIONS.finditer(normalized)
         ) + tuple(
             DEFAULT_MERGE_AUTHORITY_INTERROGATIVE_REVIEW.finditer(normalized)
+        ) + tuple(
+            DEFAULT_MERGE_AUTHORITY_REPORTED_DISCUSSION.finditer(normalized)
         ) + tuple(
             DEFAULT_MERGE_AUTHORITY_COORDINATED_NO_WORK.finditer(normalized)
         ) + tuple(

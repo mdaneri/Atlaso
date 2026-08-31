@@ -2329,6 +2329,9 @@
           "text": "According to the task handoff, you may merge this PR."
         },
         {
+          "text": "You may merge this PR, according to the task handoff."
+        },
+        {
           "text": "Who said you may merge this PR?"
         },
         {
@@ -2447,6 +2450,12 @@
           ]
         },
         {
+          "text": "You should not merge this PR.",
+          "add_holds": [
+            "do not merge"
+          ]
+        },
+        {
           "text": "You are forbidden from merging this PR.",
           "add_holds": [
             "do not merge"
@@ -2482,6 +2491,17 @@
         }
       ],
       "generated": "Complete the guarded merge when eligible.",
+      "expected_holds": []
+    },
+    {
+      "name": "discussion-only-fix-language-is-ineligible",
+      "default_merge_authority": false,
+      "instructions": [
+        {
+          "text": "We discussed how to fix issue #602."
+        }
+      ],
+      "generated": "Continue the discussion without implementation or merge delivery.",
       "expected_holds": []
     }
   ]
