@@ -625,6 +625,18 @@ MERGE_HOLD_WITHDRAWAL_MARKERS = (
     "do not leave open",
     "don't leave open",
     "don’t leave open",
+    "do not leave this pr open",
+    "do not leave the pr open",
+    "do not leave this pull request open",
+    "do not leave the pull request open",
+    "don't leave this pr open",
+    "don't leave the pr open",
+    "don't leave this pull request open",
+    "don't leave the pull request open",
+    "don’t leave this pr open",
+    "don’t leave the pr open",
+    "don’t leave this pull request open",
+    "don’t leave the pull request open",
     "do not wait for approval",
     "don't wait for approval",
     "don’t wait for approval",
@@ -732,11 +744,14 @@ DEFAULT_MERGE_AUTHORITY_SOURCE_EXCLUSIONS = re.compile(
 DEFAULT_MERGE_AUTHORITY_WORKFLOW_EXCLUSIONS = re.compile(
     r"(?:perform|follow|conduct|undertake|use)\s+(?:the\s+)?"
     r"private (?:vulnerability|advisory|remediation)\b|"
+    r"(?:fix|patch|resolve|remediate|address)\s+"
+    r"(?:(?:this|the|an?)\s+)?(?:security\s+)?vulnerabilit(?:y|ies)\b|"
     r"(?:fix|patch|resolve|change|modify|edit|work on)\s+"
     r"(?:(?:an?|the|this|existing)\s+)?draft (?:pull request|pr)\b|"
     r"(?:implement|fix|patch|resolve|solve|deliver|change|modify|edit|work on)"
     r"\b[^.!?]{0,60}\b(?:external fork|"
-    r"(?:from|in|on|inside|within) (?:an? )?(?:external )?fork|"
+    r"(?:from|in|on|inside|within)\s+"
+    r"(?:(?:an?|the|this|my|your|our|their)\s+)?(?:external\s+)?fork|"
     r"(?:on|in|against) (?:(?:an?|the|this|existing) )?"
     r"draft (?:pull request|pr)\b|"
     r"private (?:vulnerability|advisory|remediation))\b"
@@ -787,7 +802,7 @@ DEFAULT_MERGE_AUTHORITY_SUPERSEDING_REVIEW_PREFIX = re.compile(
 )
 DEFAULT_MERGE_AUTHORITY_SUPERSEDING_REVIEW_MARKER = re.compile(r"\binstead\b")
 DEFAULT_MERGE_AUTHORITY_STOP_WORK = re.compile(
-    r"(?:^|[;.!?]\s*)(?:please\s+)?(?:"
+    r"(?:^|[;.!?]\s*|,\s*(?:but|and)\s+|\s+but\s+)(?:please\s+)?(?:"
     r"(?:stop|cancel|cease|end)\s+"
     r"(?:(?:all|further|this|the)\s+)?(?:work(?:ing)?|implementation|task)|"
     r"(?:cancel|end)\s+(?:this|that|the)\s+request)\b"
@@ -812,6 +827,7 @@ DEFAULT_MERGE_AUTHORITY_POST_STOP_STATUS = re.compile(
 DEFAULT_MERGE_AUTHORITY_NEGATED_MUTATION = re.compile(
     r"(?:^|[;.!?]\s*|,\s*(?:but|and)\s+|\s+but\s+)"
     r"(?:please\s+)?(?:do not|don't|don’t|must not)\s+"
+    r"(?!leave\s+(?:(?:this|the)\s+)?(?:pull request|pr)\s+open\b)"
     r"(?:\w+\s+){0,3}(?:implement|fix|patch|resolve|solve|deliver|open|submit|"
     r"prepare|update|change|modify|edit|add|remove|create|build|refactor|repair|"
     r"commit|push)"
@@ -928,7 +944,9 @@ MERGE_AUTHORITY_COORDINATED_CLAUSE_BOUNDARY = re.compile(
     r",\s+(?:but|and)\s+|\s+but\s+"
 )
 MERGE_HOLD_STANDALONE_PERMISSION = re.compile(
-    r"\b(?:merge now|you\s+(?:may|can)\s+merge"
+    r"\b(?:merge now|(?:please\s+)?merge\s+"
+    r"(?:(?:this|the)\s+)?(?:pull request|pr)(?:\s+now)?|"
+    r"you\s+(?:may|can)\s+merge"
     r"(?:\s+(?:(?:this|the)\s+)?(?:pull request|pr))?(?:\s+now)?|"
     r"i\s+authorize\s+you\s+to\s+merge"
     r"(?:\s+(?:(?:this|the)\s+)?(?:pull request|pr))?|"
@@ -961,9 +979,10 @@ MERGE_HOLD_APPROVAL_BEFORE_MERGING = re.compile(
     r"(?:user|maintainer|(?:[a-z][a-z0-9_-]*\s+)?owner)\s+to\s+approve|"
     r"(?:(?:the\s+)?(?:user|maintainer|(?:[a-z][a-z0-9_-]*\s+)?owner)"
     r"(?:'s|’s)?\s+)?approval)|"
-    r"(?:get|obtain|require)\s+(?:(?:the\s+)?"
+    r"(?:(?:you|i|we)\s+)?(?:get|obtain|require|need)\s+(?:(?:the\s+)?"
     r"(?:user|maintainer|(?:[a-z][a-z0-9_-]*\s+)?owner)"
-    r"(?:'s|’s)?\s+)?approval)\b[^.!?]{0,40}\bbefore merging\b"
+    r"(?:'s|’s)?\s+|(?:my|our|your)\s+)?approval)\b"
+    r"[^.!?]{0,40}\bbefore merging\b"
 )
 MERGE_HOLD_WITHOUT_APPROVAL = re.compile(
     r"\b(?:do not|don't|don’t|must not)\s+merge"
@@ -1581,6 +1600,9 @@ def has_affirmative_default_merge_authority(text: str) -> bool:
                 is None
                 and DEFAULT_MERGE_AUTHORITY_DECISION_ONLY.search(context) is None
                 and DEFAULT_MERGE_AUTHORITY_PERMISSION_QUESTION.search(context)
+                is None
+                and MERGE_HOLD_REPORTED_PERMISSION_CONTEXT.search(context) is None
+                and MERGE_HOLD_NONAUTHORITATIVE_SOURCE_CONTEXT.search(context)
                 is None
             ):
                 return True

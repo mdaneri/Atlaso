@@ -714,6 +714,30 @@ def test_merge_hold_directions_recognizes_direct_authorization() -> None:
         "I authorize you to merge this PR.",
         active_holds=("do not merge",),
     ) == {"do not merge": "remove"}
+
+
+def test_merge_hold_directions_recognizes_direct_merge_imperatives() -> None:
+    """Verify direct merge commands explicitly withdraw a current hold."""
+    assert merge_hold_directions(
+        "Merge this PR now.", active_holds=("do not merge",)
+    ) == {"do not merge": "remove"}
+    assert merge_hold_directions(
+        "Please merge this pull request.", active_holds=("do not merge",)
+    ) == {"do not merge": "remove"}
+
+
+def test_merge_hold_directions_recognizes_approval_needed() -> None:
+    """Verify approval-needed wording remains an explicit resumable hold."""
+    assert merge_hold_directions(
+        "Implement issue #602, but you need my approval before merging."
+    ) == {"wait for approval": "add"}
+
+
+def test_merge_hold_directions_withdraws_object_qualified_leave_open() -> None:
+    """Verify object-qualified negation withdraws the current leave-open hold."""
+    assert merge_hold_directions(
+        "Do not leave this PR open.", active_holds=("leave open",)
+    ) == {"leave open": "remove"}
     assert merge_hold_directions(
         "You have permission to merge this PR.",
         active_holds=("do not merge",),
@@ -1077,6 +1101,9 @@ def test_generated_authority_rejects_general_permission_questions() -> None:
     assert not has_affirmative_default_merge_authority(
         "Do we have authority to complete the guarded merge?"
     )
+    assert not has_affirmative_default_merge_authority(
+        "The previous agent said to complete the guarded merge."
+    )
 
 
 def test_source_authority_keeps_workflow_policy_subject_eligible() -> None:
@@ -1114,6 +1141,22 @@ def test_source_authority_excludes_ineligible_delivery_scopes() -> None:
     )
     assert not source_has_default_merge_authority(("Fix draft PR #602.",))
     assert not source_has_default_merge_authority(("Fix the draft PR #602.",))
+    assert not source_has_default_merge_authority(
+        ("Fix this security vulnerability.",)
+    )
+    assert not source_has_default_merge_authority(
+        ("Implement issue #602 in my fork.",)
+    )
+    assert not source_has_default_merge_authority(
+        ("Fix issue #602 on your fork.",)
+    )
+
+
+def test_source_authority_honors_coordinated_cancellation() -> None:
+    """Verify same-instruction cancellation revokes implementation eligibility."""
+    assert not source_has_default_merge_authority(
+        ("Implement issue #602, but cancel this request.",)
+    )
 
 
 def test_source_authority_honors_workflow_reclassification() -> None:

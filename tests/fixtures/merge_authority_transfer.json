@@ -1771,7 +1771,7 @@
       "expected_holds": []
     },
     {
-      "name": "direct-merge-imperative-withdraws-hold",
+      "name": "direct-merge-now-withdraws-hold",
       "default_merge_authority": true,
       "instructions": [
         {
@@ -2450,6 +2450,95 @@
         },
         {
           "text": "I authorize you to merge this PR.",
+          "remove_holds": [
+            "do not merge"
+          ]
+        }
+      ],
+      "generated": "Complete the guarded merge when eligible.",
+      "expected_holds": []
+    },
+    {
+      "name": "coordinated-cancellation-is-ineligible",
+      "default_merge_authority": false,
+      "instructions": [
+        {
+          "text": "Implement issue #602, but cancel this request."
+        }
+      ],
+      "generated": "Stop the cancelled request without pull-request delivery or merge.",
+      "expected_holds": []
+    },
+    {
+      "name": "approval-needed-is-preserved",
+      "default_merge_authority": true,
+      "instructions": [
+        {
+          "text": "Implement issue #602, but you need my approval before merging.",
+          "add_holds": [
+            "wait for approval"
+          ]
+        }
+      ],
+      "generated": "Wait for approval before merging.",
+      "expected_holds": [
+        "wait for approval"
+      ]
+    },
+    {
+      "name": "security-vulnerability-work-is-ineligible",
+      "default_merge_authority": false,
+      "instructions": [
+        {
+          "text": "Fix this security vulnerability."
+        }
+      ],
+      "generated": "Use the private vulnerability-remediation workflow without ordinary merge controls.",
+      "expected_holds": []
+    },
+    {
+      "name": "possessive-fork-scope-is-ineligible",
+      "default_merge_authority": false,
+      "instructions": [
+        {
+          "text": "Implement issue #602 in my fork."
+        }
+      ],
+      "generated": "Do not use ordinary same-repository guarded merge controls for the fork.",
+      "expected_holds": []
+    },
+    {
+      "name": "object-qualified-leave-open-withdrawal",
+      "default_merge_authority": true,
+      "instructions": [
+        {
+          "text": "Implement issue #602, but leave this PR open.",
+          "add_holds": [
+            "leave open"
+          ]
+        },
+        {
+          "text": "Do not leave this PR open.",
+          "remove_holds": [
+            "leave open"
+          ]
+        }
+      ],
+      "generated": "Complete the guarded merge when eligible.",
+      "expected_holds": []
+    },
+    {
+      "name": "direct-merge-imperative-withdraws-hold",
+      "default_merge_authority": true,
+      "instructions": [
+        {
+          "text": "Implement issue #602, but do not merge this PR.",
+          "add_holds": [
+            "do not merge"
+          ]
+        },
+        {
+          "text": "Merge this PR now.",
           "remove_holds": [
             "do not merge"
           ]
