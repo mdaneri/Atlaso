@@ -740,6 +740,10 @@ MERGE_HOLD_MODAL_PROHIBITION = re.compile(
 DEFAULT_MERGE_AUTHORITY_NEGATIONS = re.compile(
     r"(?:(?:do not|don't|don’t|never|must not|should not|cannot|can't|can’t|not)"
     r"(?:\s+\w+){0,6}|(?:lacks?|has no|have no|without)(?:\s+\w+){0,4}|"
+    r"(?:(?:there\s+(?:is|was)|there's|there’s)\s+no\s+need|"
+    r"(?:i|we|you|it|this\s+task|the\s+task)\s+"
+    r"(?:(?:do|does|did)\s+not|don't|don’t|doesn't|doesn’t|didn't|didn’t)\s+need|"
+    r"(?:it\s+)?(?:is|was)\s+not\s+necessary)\s+to|"
     r"(?:there\s+is|there's|there’s)\s+no\s+"
     r"(?:authority|authorization|permission|approval)\s+to|"
     r"(?:skip|avoid|omit|decline|refrain(?:\s+from)?|"

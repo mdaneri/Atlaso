@@ -1222,6 +1222,12 @@ def test_merge_hold_directions_keeps_active_task_after_unrelated_clause() -> Non
 
 def test_generated_merge_decision_questions_are_not_affirmative() -> None:
     """Verify decision-only prompts do not manufacture merge authority."""
+    for instruction in (
+        "There is no need to complete the guarded merge.",
+        "We do not need to complete the guarded merge.",
+        "It is not necessary to complete the guarded merge.",
+    ):
+        assert not has_affirmative_default_merge_authority(instruction)
     assert not has_affirmative_default_merge_authority(
         "Determine whether to complete the guarded merge."
     )
@@ -2982,6 +2988,44 @@ def test_merge_authority_transfer_rejects_generated_authority_denial(
     assert len(findings) == 1
     assert findings[0].message == (
         "merge authority fixture generated authority denial omits affirmative "
+        "default authority"
+    )
+
+
+def test_merge_authority_transfer_rejects_generated_no_need_denial(
+    tmp_path: Path,
+) -> None:
+    """Verify a generated necessity denial cannot satisfy default authority.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
+    path = tmp_path / MERGE_AUTHORITY_TRANSFER_FIXTURE_PATH
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        json.dumps(
+            {
+                "cases": [
+                    {
+                        "name": "generated no-need denial",
+                        "default_merge_authority": True,
+                        "instructions": [{"text": "Implement issue #602."}],
+                        "generated": (
+                            "There is no need to complete the guarded merge."
+                        ),
+                        "expected_holds": [],
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    findings = check_merge_authority_transfer_fixtures(tmp_path)
+
+    assert len(findings) == 1
+    assert findings[0].message == (
+        "merge authority fixture generated no-need denial omits affirmative "
         "default authority"
     )
 
