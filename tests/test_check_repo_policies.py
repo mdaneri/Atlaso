@@ -636,6 +636,8 @@ def test_merge_hold_directions_recognizes_modal_merge_prohibitions() -> None:
         "You must not merge this PR.",
         "You may not merge this PR.",
         "You cannot merge this PR.",
+        "You can't merge this PR.",
+        "You can’t merge this PR.",
         "You should not merge this PR.",
         "You are forbidden from merging this PR.",
         "You are not allowed to merge this PR.",
@@ -1149,6 +1151,9 @@ def test_source_authority_excludes_ineligible_delivery_scopes() -> None:
     )
     assert not source_has_default_merge_authority(("Fix draft PR #602.",))
     assert not source_has_default_merge_authority(("Fix the draft PR #602.",))
+    assert not source_has_default_merge_authority(
+        ("Implement issue #602, but leave this PR in draft.",)
+    )
     assert not source_has_default_merge_authority(
         ("Fix this security vulnerability.",)
     )

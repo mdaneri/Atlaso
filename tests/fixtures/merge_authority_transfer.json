@@ -2415,6 +2415,18 @@
           ]
         },
         {
+          "text": "You can't merge this PR.",
+          "add_holds": [
+            "do not merge"
+          ]
+        },
+        {
+          "text": "You can’t merge this PR.",
+          "add_holds": [
+            "do not merge"
+          ]
+        },
+        {
           "text": "You should not merge this PR.",
           "add_holds": [
             "do not merge"
@@ -2504,6 +2516,17 @@
       "expected_holds": [
         "wait for approval"
       ]
+    },
+    {
+      "name": "leave-pr-in-draft-is-ineligible",
+      "default_merge_authority": false,
+      "instructions": [
+        {
+          "text": "Implement issue #602, but leave this PR in draft."
+        }
+      ],
+      "generated": "Keep the pull request in draft without guarded merge delivery.",
+      "expected_holds": []
     },
     {
       "name": "coordinated-cancellation-is-ineligible",

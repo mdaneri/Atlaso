@@ -665,7 +665,8 @@ AUTO_MERGE_ONLY_PATTERN = re.compile(
     r")\b"
 )
 MERGE_HOLD_MODAL_PROHIBITION = re.compile(
-    r"\b(?:(?:you\s+)?(?:(?:must|may|can|should)\s+not|cannot)\s+merge|"
+    r"\b(?:(?:you\s+)?(?:(?:must|may|can|should)\s+not|cannot|can't|can’t)"
+    r"\s+merge|"
     r"you\s+are\s+(?:forbidden\s+from\s+merging|not\s+(?:allowed|authorized)\s+"
     r"to\s+merge)|you\s+do\s+not\s+have\s+(?:permission|authorization)\s+"
     r"to\s+merge)\b"
@@ -741,7 +742,9 @@ DEFAULT_MERGE_AUTHORITY_SOURCE_EXCLUSIONS = re.compile(
     r"(?:(?:an?|the|this)\s+)?draft (?:pull request|pr)|"
     r"(?:open(?:ing)?|create|submit|prepare|deliver|leave|keep)\s+"
     r"(?:(?:an?|the|this)\s+)?(?:pull request|pr)"
-    r"[^.!?]{0,20}\bas (?:an? )?draft\b)"
+    r"[^.!?]{0,20}\bas (?:an? )?draft\b|"
+    r"(?:leave|keep|remain)\s+(?:(?:this|the)\s+)?(?:pull request|pr)\s+"
+    r"(?:in|as)\s+(?:an?\s+)?draft\b)"
 )
 DEFAULT_MERGE_AUTHORITY_WORKFLOW_EXCLUSIONS = re.compile(
     r"(?:perform|follow|conduct|undertake|use)\s+(?:the\s+)?"
