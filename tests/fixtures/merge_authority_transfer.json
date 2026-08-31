@@ -2469,6 +2469,24 @@
           ]
         },
         {
+          "text": "Your permission to merge this PR is revoked.",
+          "add_holds": [
+            "do not merge"
+          ]
+        },
+        {
+          "text": "The authorization to merge this PR has been rescinded.",
+          "add_holds": [
+            "do not merge"
+          ]
+        },
+        {
+          "text": "My authority to merge this PR was withdrawn.",
+          "add_holds": [
+            "do not merge"
+          ]
+        },
+        {
           "text": "You are not allowed to merge this PR.",
           "add_holds": [
             "do not merge"

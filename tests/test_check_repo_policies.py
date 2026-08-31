@@ -657,6 +657,9 @@ def test_merge_hold_directions_recognizes_modal_merge_prohibitions() -> None:
         "I forbid you to merge this PR.",
         "I prohibit you from merging this PR.",
         "I prohibit you to merge this PR.",
+        "Your permission to merge this PR is revoked.",
+        "My authorization to merge the pull request was rescinded.",
+        "The authority to merge this PR has been withdrawn.",
     ):
         assert merge_hold_directions(instruction) == {"do not merge": "add"}
 
@@ -988,6 +991,9 @@ def test_generated_merge_decision_questions_are_not_affirmative() -> None:
     for subject in ("heartbeat", "handoff", "delegation", "agent", "task"):
         assert not has_affirmative_default_merge_authority(
             f"Should the {subject} complete the guarded merge?"
+        )
+        assert not has_affirmative_default_merge_authority(
+            f"Is the {subject} authorized to complete the guarded merge?"
         )
 
 

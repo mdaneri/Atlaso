@@ -676,7 +676,10 @@ MERGE_HOLD_MODAL_PROHIBITION = re.compile(
     r"to\s+merge|i\s+(?:do\s+not|don't|don’t)\s+(?:authorize|permit)\s+"
     r"you\s+to\s+merge|i\s+no\s+longer\s+(?:authorize|permit)\s+"
     r"you\s+to\s+merge|i\s+(?:forbid|prohibit)\s+you\s+"
-    r"(?:from\s+merging|to\s+merge))\b"
+    r"(?:from\s+merging|to\s+merge)|"
+    r"(?:(?:my|your|our|the)\s+)?(?:permission|authorization|authority)\s+"
+    r"to\s+merge(?:\s+(?:(?:this|the)\s+)?(?:pull request|pr))?\s+"
+    r"(?:is|was|has\s+been)\s+(?:revoked|rescinded|withdrawn))\b"
 )
 DEFAULT_MERGE_AUTHORITY_NEGATIONS = re.compile(
     r"(?:(?:do not|don't|don’t|never|must not|should not|cannot|can't|can’t|not)"
@@ -713,7 +716,9 @@ DEFAULT_MERGE_AUTHORITY_PERMISSION_QUESTION = re.compile(
     r"\b(?:(?:do|would)\s+you\s+(?:want|like)\s+(?:me|us)\s+to|"
     r"should\s+(?:i|we)|(?:can|could|may)\s+(?:i|we)|"
     r"do\s+(?:i|we)\s+have\s+(?:authority|authorization|permission)\s+to|"
-    r"(?:am|are|is)\s+(?:i|we)\s+(?:authorized|permitted|allowed)\s+to|"
+    r"(?:am|are|is)\s+(?:i|we|(?:(?:the|this)\s+)?(?:heartbeat|handoff|"
+    r"delegation|delegating\s+agent|agent|task))\s+"
+    r"(?:authorized|permitted|allowed)\s+to|"
     r"should\s+(?:(?:the|this)\s+)?(?:heartbeat|handoff|delegation|"
     r"delegating\s+agent|agent|task)\b[^?]{0,100}\?)(?=\s|[.!?]|$)"
 )
