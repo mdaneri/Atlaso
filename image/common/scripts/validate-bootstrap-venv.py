@@ -14,7 +14,14 @@ VERSION_PATTERN = re.compile(r"^[0-9]+\.[0-9]+\.[0-9]+$")
 
 
 def _display(value: object) -> str:
-    """Return one bounded, escaped diagnostic value."""
+    """Return one bounded, escaped diagnostic value.
+
+    Args:
+        value: Diagnostic value to sanitize and bound.
+
+    Returns:
+        JSON-escaped diagnostic text.
+    """
     text = str(value)
     if len(text) > 512:
         text = f"{text[:509]}..."
@@ -22,7 +29,16 @@ def _display(value: object) -> str:
 
 
 def _fail(label: str, actual: object, expected: Path) -> int:
-    """Report one sanitized identity mismatch."""
+    """Report one sanitized identity mismatch.
+
+    Args:
+        label: Short identity category used in the diagnostic.
+        actual: Observed identity value.
+        expected: Required physical path identity.
+
+    Returns:
+        The fail-closed status code.
+    """
     print(
         f"Atlaso bootstrap {label} identity mismatch: "
         f"actual={_display(actual)} expected={_display(expected)}",
@@ -32,7 +48,16 @@ def _fail(label: str, actual: object, expected: Path) -> int:
 
 
 def _resolve(path: Path, label: str, expected: Path) -> tuple[Path | None, int]:
-    """Resolve an existing path or emit a bounded failure."""
+    """Resolve an existing path or emit a bounded failure.
+
+    Args:
+        path: Filesystem path to resolve strictly.
+        label: Short identity category used on failure.
+        expected: Required physical path identity.
+
+    Returns:
+        The resolved path and success status, or ``None`` and status 2.
+    """
     try:
         return path.resolve(strict=True), 0
     except (OSError, RuntimeError):
@@ -40,7 +65,16 @@ def _resolve(path: Path, label: str, expected: Path) -> tuple[Path | None, int]:
 
 
 def validate(atlaso_home: Path, version: str, purelib: Path) -> tuple[int, Path | None]:
-    """Validate compatibility links and return the physical purelib path."""
+    """Validate compatibility links and return the physical purelib path.
+
+    Args:
+        atlaso_home: Physical Atlaso installation root.
+        version: Strict bootstrap release version.
+        purelib: Interpreter-reported purelib path to validate.
+
+    Returns:
+        The validation status and resolved physical purelib path when valid.
+    """
     if not VERSION_PATTERN.fullmatch(version):
         print("Atlaso bootstrap version is not strict X.Y.Z metadata.", file=sys.stderr)
         return 2, None

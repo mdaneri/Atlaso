@@ -18,7 +18,15 @@ QEMU_BUILDER = Path("image/common/scripts/build-qemu-guest-agent-rpm.sh")
 def _make_bootstrap_layout(
     tmp_path: Path, version: str = "0.9.254"
 ) -> tuple[Path, Path]:
-    """Create the supported two-link bootstrap virtualenv layout."""
+    """Create the supported two-link bootstrap virtualenv layout.
+
+    Args:
+        tmp_path: Temporary root for the isolated layout.
+        version: Bootstrap release version to create.
+
+    Returns:
+        The Atlaso home and physical purelib paths.
+    """
     home = tmp_path / "opt" / "atlaso"
     purelib = (
         home
@@ -43,7 +51,16 @@ def _make_bootstrap_layout(
 
 
 def _run_venv_validator(home: Path, version: str, purelib: Path) -> subprocess.CompletedProcess[str]:
-    """Run the bootstrap identity validator with isolated paths."""
+    """Run the bootstrap identity validator with isolated paths.
+
+    Args:
+        home: Isolated Atlaso home path.
+        version: Expected bootstrap release version.
+        purelib: Logical or physical purelib path to validate.
+
+    Returns:
+        The completed validator subprocess.
+    """
     return subprocess.run(
         [
             sys.executable,
@@ -62,7 +79,11 @@ def _run_venv_validator(home: Path, version: str, purelib: Path) -> subprocess.C
 
 
 def test_bootstrap_venv_validator_accepts_supported_two_link_chain(tmp_path: Path) -> None:
-    """The compatibility paths may resolve to the exact physical release environment."""
+    """The compatibility paths may resolve to the exact physical release environment.
+
+    Args:
+        tmp_path: Temporary root for the isolated layout.
+    """
     home, physical_purelib = _make_bootstrap_layout(tmp_path)
 
     result = _run_venv_validator(
@@ -77,7 +98,12 @@ def test_bootstrap_venv_validator_accepts_supported_two_link_chain(tmp_path: Pat
 def test_bootstrap_venv_validator_rejects_invalid_link_chains(
     tmp_path: Path, failure: str
 ) -> None:
-    """Broken, wrong-version, and escaping compatibility links fail closed."""
+    """Broken, wrong-version, and escaping compatibility links fail closed.
+
+    Args:
+        tmp_path: Temporary root for the isolated layout.
+        failure: Invalid compatibility-link scenario to exercise.
+    """
     home, _ = _make_bootstrap_layout(tmp_path)
     compatibility_venv = home / ".venv"
     logical_purelib = compatibility_venv / "lib" / "python3.14" / "site-packages"
@@ -117,7 +143,11 @@ def test_bootstrap_venv_validator_rejects_invalid_link_chains(
 
 
 def test_bootstrap_venv_validator_rejects_escaping_purelib(tmp_path: Path) -> None:
-    """The supported purelib directory itself cannot redirect outside the physical venv."""
+    """The supported purelib directory itself cannot redirect outside the physical venv.
+
+    Args:
+        tmp_path: Temporary root for the isolated layout.
+    """
     home, physical_purelib = _make_bootstrap_layout(tmp_path)
     escaped = tmp_path / "escaped-site-packages"
     escaped.mkdir()
@@ -133,19 +163,29 @@ def test_bootstrap_venv_validator_rejects_escaping_purelib(tmp_path: Path) -> No
 
 
 def _write_executable(path: Path, content: str) -> None:
-    """Write one executable test command."""
+    """Write one executable test command.
+
+    Args:
+        path: Destination command path.
+        content: Complete executable content.
+    """
     path.write_text(content, encoding="utf-8", newline="\n")
     path.chmod(path.stat().st_mode | stat.S_IXUSR)
 
 
 @pytest.mark.skipif(os.name == "nt", reason="POSIX shell builder test")
 def test_qemu_builder_overrides_preserved_communicator_home(tmp_path: Path) -> None:
-    """QEMU mkvenv uses a private root-build HOME/cache and preserves pip indexes."""
+    """QEMU mkvenv uses a private root-build HOME/cache and preserves pip indexes.
+
+    Args:
+        tmp_path: Temporary root for fake commands, output, and evidence.
+    """
     command_dir = tmp_path / "commands"
     command_dir.mkdir()
-    real_stat = shutil.which("stat")
-    real_install = shutil.which("install")
-    shell = shutil.which("sh")
+    system_path = os.defpath
+    real_stat = shutil.which("stat", path=system_path)
+    real_install = shutil.which("install", path=system_path)
+    shell = shutil.which("sh", path=system_path)
     assert real_stat and real_install and shell
 
     _write_executable(command_dir / "id", "#!/bin/sh\nprintf '0\\n'\n")
@@ -226,7 +266,7 @@ def test_qemu_builder_overrides_preserved_communicator_home(tmp_path: Path) -> N
     environment = os.environ.copy()
     environment.update(
         {
-            "PATH": f"{command_dir}{os.pathsep}{environment['PATH']}",
+            "PATH": f"{command_dir}{os.pathsep}{system_path}",
             "HOME": "/home/atlaso-build",
             "PIP_CACHE_DIR": "/home/atlaso-build/.cache/pip",
             "PIP_INDEX_URL": "https://index.example.invalid/simple",
