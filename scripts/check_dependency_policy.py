@@ -29,6 +29,7 @@ PIP_MODULE_RE = re.compile(
     r"pip(?:\d+(?:\.\d+)*)?(?:\.__main__)?", re.IGNORECASE
 )
 SHELL_LAUNCHERS = {"bash", "dash", "ksh", "sh", "zsh"}
+POWERSHELL_LAUNCHERS = {"powershell", "powershell.exe", "pwsh", "pwsh.exe"}
 RUN_RE = re.compile(
     r"^(?P<indent>\s*)(?:-\s+)?(?:run|'run'|\"run\"):\s*(?P<value>.*)$"
 )
@@ -858,6 +859,20 @@ def _segment_requirement_paths(segment: str) -> list[str]:
                 return []
             if not option.startswith("-"):
                 break
+    for shell_index, token in enumerate(tokens):
+        launcher = token.replace("\\", "/").rsplit("/", maxsplit=1)[-1].lower()
+        if launcher not in POWERSHELL_LAUNCHERS:
+            continue
+        for option_index in range(shell_index + 1, len(tokens)):
+            option = tokens[option_index].lower()
+            if option in {"-c", "-command", "-commandwithargs"}:
+                if option_index + 1 < len(tokens):
+                    return _segment_requirement_paths(
+                        " ".join(tokens[option_index + 1 :])
+                    )
+                return []
+            if not option.startswith("-"):
+                break
     pip_index = -1
     for index, token in enumerate(tokens):
         launcher = token.replace("\\", "/").rsplit("/", maxsplit=1)[-1]
@@ -1323,7 +1338,9 @@ def _validate_workflow_locks(root: Path, policy_paths: set[str]) -> list[str]:
                         f"{reference}"
                     )
                     continue
-                if checkout_source.condition and checkout_source.condition != command_condition:
+                if (checkout_source.condition or "success()") != (
+                    command_condition or "success()"
+                ):
                     errors.append(
                         f"{workflow.relative_to(root)}:{line_number}: checkout-prefixed "
                         "workflow requirement uses conditional checkout metadata: "
@@ -1370,11 +1387,9 @@ def _validate_workflow_locks(root: Path, policy_paths: set[str]) -> list[str]:
                         f"{reference}"
                     )
                     continue
-                if (
-                    active_root is not None
-                    and active_root.condition
-                    and active_root.condition != command_condition
-                ):
+                if active_root is not None and (
+                    active_root.condition or "success()"
+                ) != (command_condition or "success()"):
                     errors.append(
                         f"{workflow.relative_to(root)}:{line_number}: root workflow "
                         "requirement uses conditional checkout metadata: "

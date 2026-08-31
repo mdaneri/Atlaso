@@ -332,6 +332,30 @@ def test_dependency_policy_checks_eval_pip_command(tmp_path: Path) -> None:
     )
 
 
+def test_dependency_policy_checks_powershell_command_string(tmp_path: Path) -> None:
+    """Verify PowerShell command launchers cannot hide a requirement install.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
+    write_valid_policy(tmp_path)
+    (tmp_path / "requirements-ad-hoc.lock").write_text("placeholder\n", encoding="utf-8")
+    workflow = tmp_path / ".github" / "workflows" / "release.yml"
+    workflow.parent.mkdir(parents=True, exist_ok=True)
+
+    for launcher in ("pwsh -Command", "powershell.exe -c"):
+        workflow.write_text(
+            f'run: {launcher} "python -m pip install -r requirements-ad-hoc.lock"\n',
+            encoding="utf-8",
+        )
+
+        assert any(
+            "workflow requirement lock is outside the generated dependency policy "
+            "inventory: requirements-ad-hoc.lock" in error
+            for error in validate(tmp_path)
+        )
+
+
 def test_dependency_policy_recognizes_attached_short_requirement_argument(
     tmp_path: Path,
 ) -> None:
@@ -548,6 +572,39 @@ def test_dependency_policy_rejects_continued_checkout_condition(
         if:
           ${{ false }}
       - run: python -m pip install -r requirements-release-tools.lock
+""",
+        encoding="utf-8",
+    )
+
+    assert any(
+        "root workflow requirement uses conditional checkout metadata: "
+        "requirements-release-tools.lock" in error
+        for error in validate(tmp_path)
+    )
+
+
+def test_dependency_policy_models_implicit_checkout_success_condition(
+    tmp_path: Path,
+) -> None:
+    """Verify an implicit success check cannot hide a skipped root replacement.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
+    write_valid_policy(tmp_path)
+    workflow = tmp_path / ".github" / "workflows" / "release.yml"
+    workflow.parent.mkdir(parents=True, exist_ok=True)
+    workflow.write_text(
+        """jobs:
+  conditional:
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          repository: attacker/other
+      - run: exit 1
+      - uses: actions/checkout@v7
+      - run: python -m pip install -r requirements-release-tools.lock
+        if: ${{ always() }}
 """,
         encoding="utf-8",
     )
