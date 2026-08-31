@@ -527,6 +527,10 @@ EXPLICIT_MERGE_HOLD_PATTERNS = {
         "don't merge",
         "don’t merge",
         "never merge",
+        "do not squash merge",
+        "don't squash merge",
+        "don’t squash merge",
+        "never squash merge",
         "hold off on merging",
         "hold off on the merge",
         "defer merging",
@@ -779,6 +783,8 @@ DEFAULT_MERGE_AUTHORITY_PERMISSION_QUESTION = re.compile(
     r"(?:is|was)\s+it\s+(?:permissible|allowed|authorized)\s+for\s+"
     r"(?:(?:the|this)\s+)?(?:heartbeat|handoff|delegation|"
     r"delegating\s+agent|agent|task)\s+to|"
+    r"(?:is|was)\s+there\s+"
+    r"(?:authority|authorization|permission|approval)\s+to|"
     r"(?:does|did)\s+(?:permission|authorization|authority)\s+exist\s+to|"
     r"should\s+(?:(?:the|this)\s+)?(?:heartbeat|handoff|delegation|"
     r"delegating\s+agent|agent|task)\b[^?]{0,100}\?)(?=\s|[.!?]|$)"
@@ -880,20 +886,21 @@ DEFAULT_MERGE_AUTHORITY_INTERROGATIVE_REVIEW = re.compile(
     r"(?:implementation|fix|patch|changes?|code|pull request|pr)\b[^?]*\?|"
     r"(?:^|[;.!?]\s*)(?:should|can|could|would|will)\s+"
     r"(?:i|we|you)\s+(?:implement|fix|patch|resolve|solve|change|modify|edit|"
-    r"rename|delete|replace|add|remove|create|build|repair)\b[^?]*\?|"
+    r"rename|delete|replace|add|remove|create|build|repair|refactor)\b[^?]*\?|"
     r"(?:^|[;.!?]\s*)(?:do|does|did)\s+(?:i|we|you)\s+need\s+to\s+"
     r"(?:implement|fix|patch|resolve|solve|change|modify|edit|rename|delete|"
-    r"replace|add|remove|create|build|repair)\b[^?]*\?|"
+    r"replace|add|remove|create|build|repair|refactor)\b[^?]*\?|"
     r"(?:^|[;.!?]\s*)how\s+(?:do|should|can|could|would)\s+"
-    r"(?:i|we|you)\s+(?:implement|fix|patch|resolve|solve)\b[^?]*\?|"
+    r"(?:i|we|you)\s+(?:implement|fix|patch|resolve|solve|refactor)\b[^?]*\?|"
     r"(?:^|[;.!?]\s*)what\s+(?:is|are)\s+(?:needed|required)\s+to\s+"
-    r"(?:implement|fix|patch|resolve|solve)\b[^?]*\?"
+    r"(?:implement|fix|patch|resolve|solve|refactor)\b[^?]*\?"
 )
 DEFAULT_MERGE_AUTHORITY_REPORTED_DISCUSSION = re.compile(
     r"\b(?:(?:i|we|they|the\s+(?:user|maintainer|owner|team))\s+"
     r"(?:discussed|considered|contemplated|explored|talked\s+about)|"
     r"(?:i|we|they)\s+had\s+(?:a\s+)?discussion\s+about)\b"
-    r"[^.!?]{0,80}\b(?:implement|fix|patch|resolve|solve|change|modify|edit)\b"
+    r"[^.!?]{0,80}\b(?:implement|fix|patch|resolve|solve|change|modify|edit|"
+    r"refactor)\b"
 )
 DEFAULT_MERGE_AUTHORITY_SUPERSEDING_REVIEW_PREFIX = re.compile(
     r"(?:^|[;.!?]\s*)(?:instead,?|switch to|move to|change to)\s*$"

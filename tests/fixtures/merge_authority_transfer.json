@@ -3562,6 +3562,33 @@
       ],
       "generated": "Complete the guarded merge when every required gate passes.",
       "expected_holds": []
+    },
+    {
+      "name": "do-not-squash-merge-is-an-explicit-hold",
+      "default_merge_authority": true,
+      "instructions": [
+        {
+          "text": "Implement issue #602, but do not squash merge this PR.",
+          "add_holds": [
+            "do not merge"
+          ]
+        }
+      ],
+      "generated": "Preserve the explicit do not merge hold.",
+      "expected_holds": [
+        "do not merge"
+      ]
+    },
+    {
+      "name": "refactor-decision-question-is-not-implementation",
+      "default_merge_authority": false,
+      "instructions": [
+        {
+          "text": "Should we refactor the parser?"
+        }
+      ],
+      "generated": "Report the decision context without implementing or merging.",
+      "expected_holds": []
     }
   ]
 }

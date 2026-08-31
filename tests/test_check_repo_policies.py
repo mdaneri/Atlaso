@@ -893,6 +893,13 @@ def test_merge_hold_directions_recognizes_direct_merge_imperatives() -> None:
     ) == {}
 
 
+def test_merge_hold_directions_preserves_squash_merge_prohibition() -> None:
+    """Verify the only authorized merge method cannot be explicitly prohibited."""
+    assert merge_hold_directions("Do not squash merge this PR.") == {
+        "do not merge": "add"
+    }
+
+
 def test_merge_hold_directions_recognizes_approval_needed() -> None:
     """Verify approval-needed wording remains an explicit resumable hold."""
     assert merge_hold_directions(
@@ -1390,6 +1397,9 @@ def test_generated_authority_rejects_general_permission_questions() -> None:
         "Are we authorized to complete the guarded merge?"
     )
     assert not has_affirmative_default_merge_authority(
+        "Is there approval to complete the guarded merge?"
+    )
+    assert not has_affirmative_default_merge_authority(
         "Does the heartbeat have permission to complete the guarded merge?"
     )
     assert not has_affirmative_default_merge_authority(
@@ -1465,6 +1475,7 @@ def test_source_authority_excludes_implementation_questions() -> None:
         "Should we add retry handling?",
         "Could you replace the parser?",
         "Do we need to fix this?",
+        "Should we refactor the parser?",
     ):
         assert not source_has_default_merge_authority((instruction,))
 
@@ -2835,6 +2846,15 @@ def test_merge_authority_transfer_rejects_generated_permission_question(
                         "expected_holds": [],
                     },
                     {
+                        "name": "generated existential approval question",
+                        "default_merge_authority": True,
+                        "instructions": [{"text": "Implement issue #602."}],
+                        "generated": (
+                            "Is there approval to complete the guarded merge?"
+                        ),
+                        "expected_holds": [],
+                    },
+                    {
                         "name": "generated second-person authorization question",
                         "default_merge_authority": True,
                         "instructions": [{"text": "Implement issue #602."}],
@@ -2866,6 +2886,8 @@ def test_merge_authority_transfer_rejects_generated_permission_question(
         "merge authority fixture generated permissibility question omits affirmative "
         "default authority",
         "merge authority fixture generated existential permission question omits "
+        "affirmative default authority",
+        "merge authority fixture generated existential approval question omits "
         "affirmative default authority",
         "merge authority fixture generated second-person authorization question "
         "omits affirmative default authority",
