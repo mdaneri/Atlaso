@@ -1,6 +1,6 @@
 [project]
 name = "atlaso"
-version = "0.9.271"
+version = "0.9.272"
 description = "Atlaso supports POC, lab, and test environments by simplifying deployment, maintenance, and validation."
 readme = "README.md"
 license = "MIT"
@@ -35,6 +35,7 @@ dev = [
   "httpx>=0.27.2",
   "httpx2>=2.5.0",
   "markdown==3.10.3",
+  "markdown-it-py==4.0.0",
   "pre-commit>=4.2.0",
   "pyyaml==6.0.3",
   "pymdown-extensions==11.0.1",

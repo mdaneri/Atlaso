@@ -15,14 +15,19 @@ import shutil
 import subprocess
 import sys
 import tomllib
+import unicodedata
 from dataclasses import dataclass
+from functools import lru_cache
 from html import unescape
 from pathlib import Path
 from urllib.parse import unquote
 
 import yaml
+from markdown_it import MarkdownIt
+from markdown_it.token import Token
 
 ROOT = Path(__file__).resolve().parents[1]
+MARKDOWN_OPERATIVE_TEXT_HELPER = ROOT / "scripts" / "markdown_operative_text.mjs"
 
 SKIP_PARTS = {
     ".git",
@@ -173,6 +178,17 @@ DEFAULT_MERGE_AUTHORITY_SHARED_MARKERS = (
     "remains disabled",
 )
 
+MAINTAINER_BREAK_GLASS_SHARED_MARKERS = (
+    "human-maintainer break-glass authority",
+    "automation must never use or request a ruleset or administrative bypass",
+    "cannot be delegated to automation",
+)
+
+MAINTAINER_BREAK_GLASS_OPERATIVE_MARKERS = (
+    *MAINTAINER_BREAK_GLASS_SHARED_MARKERS,
+    "### Maintainer override / break-glass",
+)
+
 REQUIRED_POLICY_MARKERS = {
     Path("AGENTS.md"): (
         "## Mandatory Agent Startup Gate",
@@ -212,6 +228,7 @@ REQUIRED_POLICY_MARKERS = {
         "### Default merge authorization",
         "default merge authority",
         "explicit merge hold",
+        *MAINTAINER_BREAK_GLASS_SHARED_MARKERS,
         "strict up-to-date required checks",
         "no merge queue is required",
         "--match-head-commit <head-sha>",
@@ -249,6 +266,9 @@ REQUIRED_POLICY_MARKERS = {
         "### Default merge authorization",
         "default merge authority",
         "explicit merge hold",
+        "### Maintainer override / break-glass",
+        "canonical maintainer override policy",
+        *MAINTAINER_BREAK_GLASS_SHARED_MARKERS,
         "strict up-to-date required checks",
         "no required merge queue",
         "AtlasoUiPatterns.createGrid",
@@ -286,6 +306,7 @@ REQUIRED_POLICY_MARKERS = {
         "Default merge authorization",
         "default merge authority",
         "explicit merge hold",
+        *MAINTAINER_BREAK_GLASS_SHARED_MARKERS,
         "strict up-to-date required checks",
         "when a merge queue is required",
         "evidence-backed unrelated problem",
@@ -317,6 +338,7 @@ REQUIRED_POLICY_MARKERS = {
         "coordinated disclosure",
         "advisory-side maintainer review",
         "complete Python test suite locally",
+        *MAINTAINER_BREAK_GLASS_SHARED_MARKERS,
     ),
     Path("docs/contribute/agent-policies.md"): (
         "# Detailed agent policies",
@@ -347,6 +369,7 @@ REQUIRED_POLICY_MARKERS = {
         "### Default merge authorization",
         "default merge authority",
         "explicit merge hold",
+        *MAINTAINER_BREAK_GLASS_SHARED_MARKERS,
         "strict up-to-date required checks",
         "no required merge queue",
         "### Completed task cleanup",
@@ -374,6 +397,7 @@ REQUIRED_POLICY_MARKERS = {
         "Default merge authorization",
         "default merge authority",
         "explicit merge hold",
+        *MAINTAINER_BREAK_GLASS_SHARED_MARKERS,
         "strict up-to-date required checks",
         "no merge queue is required",
         "Evidence-backed issues discovered outside",
@@ -409,6 +433,7 @@ REQUIRED_POLICY_MARKERS = {
     Path("docs/reference/full-technical-reference.md"): (
         "default merge authority",
         "explicit merge hold",
+        *MAINTAINER_BREAK_GLASS_SHARED_MARKERS,
         "strict up-to-date required checks",
         "when a merge queue is required",
         "`non_task_owned_remote_branch_preserved`",
@@ -677,7 +702,9 @@ MERGE_HOLD_MODAL_PROHIBITION = re.compile(
     r"to\s+merge|(?:you|(?:(?:the|this)\s+)?(?:agent|task|heartbeat|handoff))\s+"
     r"lacks?\s+(?:permission|authorization|authority)\s+"
     r"to\s+merge|i\s+(?:do\s+not|don't|don’t)\s+(?:authorize|permit)\s+"
-    r"you\s+to\s+merge|i\s+no\s+longer\s+(?:authorize|permit)\s+"
+    r"you\s+to\s+merge|i\s+(?:have\s+not|haven't|haven’t)\s+"
+    r"(?:authorized|permitted)\s+you\s+to\s+merge|"
+    r"i\s+no\s+longer\s+(?:authorize|permit)\s+"
     r"you\s+to\s+merge|i\s+(?:forbid|prohibit)\s+you\s+"
     r"(?:from\s+merging|to\s+merge)|"
     r"(?:(?:my|your|our|the)\s+)?(?:permission|authorization|authority)\s+"
@@ -999,8 +1026,8 @@ MERGE_HOLD_APPROVAL_CONDITION = re.compile(
     r"(?:after|when|if|once|until|unless|before)\s+"
     r"(?:(?:i|we|(?:the\s+)?maintainer|"
     r"(?:the\s+)?(?:[a-z][a-z0-9_-]*\s+)?owner)\s+"
-    r"(?:approves?|(?:gives?|grants?)\s+(?:permission|authorization))|"
-    r"approved|(?:permission|authorization)\s+is\s+(?:given|granted))\b"
+    r"(?:approves?|(?:gives?|grants?)\s+(?:approval|permission|authorization))|"
+    r"approved|(?:approval|permission|authorization)\s+is\s+(?:given|granted))\b"
 )
 MERGE_HOLD_PERMISSION_QUALIFIED_MERGE = re.compile(
     r"\b(?:only\s+merge(?:\s+(?:(?:this|the)\s+)?(?:pull request|pr))?|"
@@ -1222,6 +1249,7 @@ def _is_hold_discussion(segment: str, offset: int) -> bool:
     return (
         MERGE_HOLD_DISCUSSION_CONTEXT.search(prefix) is not None
         or MERGE_HOLD_CONDITIONAL_CONTEXT.search(prefix) is not None
+        or MERGE_HOLD_NONAUTHORITATIVE_SOURCE_CONTEXT.search(prefix) is not None
     )
 
 
@@ -2514,7 +2542,22 @@ def check_agent_policy_gate(root: Path) -> list[Finding]:
             findings.append(Finding(path, "required agent policy entry point is missing or unreadable"))
             continue
         assert text is not None
-        missing_required_markers = tuple(marker for marker in markers if marker not in text)
+        operative_text = strip_markdown_nonoperative_content(text)
+        markdown_operative_text = render_markdown_operative_text(text)
+        normalized_text = " ".join(text.split())
+        normalized_markdown_operative_text = " ".join(
+            markdown_operative_text.split()
+        )
+        missing_required_markers = tuple(
+            marker
+            for marker in markers
+            if (
+                marker not in markdown_operative_text
+                and marker not in normalized_markdown_operative_text
+                if marker in MAINTAINER_BREAK_GLASS_OPERATIVE_MARKERS
+                else marker not in text and marker not in normalized_text
+            )
+        )
         for marker in missing_required_markers:
             findings.append(
                 Finding(path, f"required agent policy marker is missing: {marker}")
@@ -3845,6 +3888,509 @@ def complete_reference_title(text: str, *, require_separator: bool) -> bool:
     return False
 
 
+@lru_cache(maxsize=128)
+def render_markdown_operative_text(text: str) -> str:
+    """Render Markdown to visible policy text using the pinned parser.
+
+    Args:
+        text: Markdown source whose operative prose must be inspected.
+    """
+    def serialize_token(token: Token) -> dict[str, object]:
+        """Return the token fields consumed by the JavaScript visibility helper.
+
+        Args:
+            token: Parsed Markdown token to serialize for the helper process.
+        """
+        return {
+            "type": token.type,
+            "tag": token.tag,
+            "content": token.content,
+            "children": (
+                [serialize_token(child) for child in token.children]
+                if token.children
+                else None
+            ),
+        }
+
+    markdown = MarkdownIt("commonmark", {"html": True}).enable("strikethrough")
+    entity_references = set(
+        re.findall(
+            r"&(?:#[xX][0-9A-Fa-f]+|#[0-9]+|[A-Za-z][A-Za-z0-9]+);?",
+            text,
+        )
+    )
+    serialized_tokens = json.dumps(
+        {
+            "tokens": [serialize_token(token) for token in markdown.parse(text)],
+            "entities": {
+                entity: unescape(entity)
+                for entity in entity_references
+                if unescape(entity) != entity
+            },
+        }
+    )
+    try:
+        result = subprocess.run(
+            ["node", str(MARKDOWN_OPERATIVE_TEXT_HELPER)],
+            input=serialized_tokens,
+            capture_output=True,
+            check=False,
+            encoding="utf-8",
+        )
+    except OSError as exc:
+        raise RuntimeError(
+            "Node.js is required to validate rendered Markdown policy text"
+        ) from exc
+    if result.returncode != 0:
+        detail = result.stderr.strip() or f"exit code {result.returncode}"
+        raise RuntimeError(f"Markdown policy rendering failed: {detail}")
+    return result.stdout
+
+
+def strip_markdown_deleted_content(text: str) -> str:
+    """Replace rendered-as-deleted Markdown and HTML spans with whitespace.
+
+    Args:
+        text: Markdown source whose active policy prose must be inspected.
+    """
+    html_deletion_tag_pattern = re.compile(
+        r'''<(?P<closing>/)?(?P<tag>del|s|strike)\b'''
+        r'''(?:[^<>"']|"[^"]*"|'[^']*')*>''',
+        flags=re.IGNORECASE,
+    )
+    deletion_stack: list[str] = []
+    visible_parts: list[str] = []
+    cursor = 0
+    for match in html_deletion_tag_pattern.finditer(text):
+        preceding_text = text[cursor : match.start()]
+        visible_parts.append(
+            re.sub(r"[^\r\n]", "", preceding_text)
+            if deletion_stack
+            else preceding_text
+        )
+        visible_parts.append(re.sub(r"[^\r\n]", "", match.group(0)))
+        tag_name = match.group("tag").lower()
+        if match.group("closing"):
+            for index in range(len(deletion_stack) - 1, -1, -1):
+                if deletion_stack[index] == tag_name:
+                    del deletion_stack[index]
+                    break
+        else:
+            # HTML ignores the self-closing flag on non-void deletion elements,
+            # so ``<del/>`` remains open until a matching end tag appears.
+            deletion_stack.append(tag_name)
+        cursor = match.end()
+    trailing_text = text[cursor:]
+    visible_parts.append(
+        re.sub(r"[^\r\n]", "", trailing_text)
+        if deletion_stack
+        else trailing_text
+    )
+    without_html_deletions = "".join(visible_parts)
+    delimiters: list[
+        tuple[int, int, bool, bool, str, int, int, tuple[int, ...]]
+    ] = []
+
+    def delimiter_flanking(
+        run_start: int,
+        run_end: int,
+        *,
+        can_split_word: bool,
+    ) -> tuple[bool, bool]:
+        """Return Markdown opening and closing eligibility for a delimiter run.
+
+        Args:
+            run_start: Inclusive start offset of the delimiter run.
+            run_end: Exclusive end offset of the delimiter run.
+            can_split_word: Whether the delimiter can open or close inside a word.
+        """
+        previous = without_html_deletions[run_start - 1] if run_start else ""
+        following = (
+            without_html_deletions[run_end]
+            if run_end < len(without_html_deletions)
+            else ""
+        )
+        previous_is_whitespace = not previous or previous.isspace()
+        following_is_whitespace = not following or following.isspace()
+        previous_is_punctuation = bool(
+            previous and unicodedata.category(previous).startswith(("P", "S"))
+        )
+        following_is_punctuation = bool(
+            following and unicodedata.category(following).startswith(("P", "S"))
+        )
+        left_flanking = not following_is_whitespace and (
+            not following_is_punctuation
+            or previous_is_whitespace
+            or previous_is_punctuation
+        )
+        right_flanking = not previous_is_whitespace and (
+            not previous_is_punctuation
+            or following_is_whitespace
+            or following_is_punctuation
+        )
+        can_open = left_flanking and (
+            can_split_word or not right_flanking or previous_is_punctuation
+        )
+        can_close = right_flanking and (
+            can_split_word or not left_flanking or following_is_punctuation
+        )
+        return can_open, can_close
+
+    def matching_backtick_end(run_start: int, run_end: int) -> int:
+        """Return the end of an exact-length closing backtick run, if any.
+
+        Args:
+            run_start: Inclusive start offset of the opening backtick run.
+            run_end: Exclusive end offset of the opening backtick run.
+        """
+        delimiter_length = run_end - run_start
+        search_cursor = run_end
+        while True:
+            next_run = without_html_deletions.find("`", search_cursor)
+            if next_run < 0:
+                return run_end
+            next_run_end = next_run
+            while (
+                next_run_end < len(without_html_deletions)
+                and without_html_deletions[next_run_end] == "`"
+            ):
+                next_run_end += 1
+            if next_run_end - next_run == delimiter_length:
+                return next_run_end
+            search_cursor = next_run_end
+
+    link_intervals: list[tuple[int, int, int]] = []
+    link_stack: list[tuple[int, int]] = []
+    link_cursor = 0
+    next_link_id = 0
+    reference_definitions = {
+        re.sub(r"\s+", " ", match.group("label")).strip().casefold()
+        for match in re.finditer(
+            r"(?m)^ {0,3}\[(?P<label>[^\]\r\n]+)\]:[ \t]+"
+            r"(?:<[^<>\r\n]+>|[^\s<>]+)",
+            without_html_deletions,
+        )
+    }
+
+    def has_complete_link_suffix(opening_bracket: int, closing_bracket: int) -> bool:
+        """Return whether a link label is followed by a complete destination.
+
+        Args:
+            opening_bracket: Offset of the link label's opening bracket.
+            closing_bracket: Offset of the link label's closing bracket.
+        """
+        suffix_start = closing_bracket + 1
+        if suffix_start >= len(without_html_deletions):
+            return False
+        suffix_marker = without_html_deletions[suffix_start]
+        if suffix_marker == "[":
+            reference_end = suffix_start + 1
+            while reference_end < len(without_html_deletions):
+                if without_html_deletions[reference_end] == "\\":
+                    reference_end += 2
+                    continue
+                if without_html_deletions[reference_end] == "]":
+                    reference_label = without_html_deletions[
+                        suffix_start + 1 : reference_end
+                    ]
+                    if not reference_label:
+                        reference_label = without_html_deletions[
+                            opening_bracket + 1 : closing_bracket
+                        ]
+                    normalized_label = re.sub(
+                        r"\s+", " ", reference_label
+                    ).strip().casefold()
+                    return normalized_label in reference_definitions
+                reference_end += 1
+            return False
+        if suffix_marker != "(":
+            return False
+        destination_cursor = suffix_start + 1
+        while (
+            destination_cursor < len(without_html_deletions)
+            and without_html_deletions[destination_cursor].isspace()
+        ):
+            destination_cursor += 1
+        if destination_cursor >= len(without_html_deletions):
+            return False
+        if without_html_deletions[destination_cursor] == ")":
+            return True
+        if without_html_deletions[destination_cursor] == "<":
+            destination_cursor += 1
+            while destination_cursor < len(without_html_deletions):
+                character = without_html_deletions[destination_cursor]
+                if character == "\\":
+                    destination_cursor += 2
+                    continue
+                if character in {"<", "\r", "\n"}:
+                    return False
+                if character == ">":
+                    destination_cursor += 1
+                    break
+                destination_cursor += 1
+            else:
+                return False
+        else:
+            nested_parentheses = 0
+            destination_start = destination_cursor
+            while destination_cursor < len(without_html_deletions):
+                character = without_html_deletions[destination_cursor]
+                if character == "\\":
+                    destination_cursor += 2
+                    continue
+                if character.isspace() or ord(character) < 0x20:
+                    break
+                if character == "(":
+                    nested_parentheses += 1
+                    if nested_parentheses > 32:
+                        return False
+                elif character == ")":
+                    if nested_parentheses == 0:
+                        return destination_cursor > destination_start
+                    nested_parentheses -= 1
+                destination_cursor += 1
+            if destination_cursor == destination_start or nested_parentheses:
+                return False
+        while (
+            destination_cursor < len(without_html_deletions)
+            and without_html_deletions[destination_cursor].isspace()
+        ):
+            destination_cursor += 1
+        if destination_cursor >= len(without_html_deletions):
+            return False
+        title_opener = without_html_deletions[destination_cursor]
+        if title_opener in {'"', "'", "("}:
+            title_closer = ")" if title_opener == "(" else title_opener
+            destination_cursor += 1
+            while destination_cursor < len(without_html_deletions):
+                character = without_html_deletions[destination_cursor]
+                if character == "\\":
+                    destination_cursor += 2
+                    continue
+                if character in {"\r", "\n"}:
+                    return False
+                if title_opener == "(" and character == "(":
+                    return False
+                if character == title_closer:
+                    destination_cursor += 1
+                    break
+                destination_cursor += 1
+            else:
+                return False
+            while (
+                destination_cursor < len(without_html_deletions)
+                and without_html_deletions[destination_cursor].isspace()
+            ):
+                destination_cursor += 1
+        return (
+            destination_cursor < len(without_html_deletions)
+            and without_html_deletions[destination_cursor] == ")"
+        )
+
+    while link_cursor < len(without_html_deletions):
+        if without_html_deletions[link_cursor] == "\\" and (
+            link_cursor + 1 < len(without_html_deletions)
+        ):
+            link_cursor += 2
+            continue
+        if without_html_deletions[link_cursor] == "`":
+            run_end = link_cursor
+            while (
+                run_end < len(without_html_deletions)
+                and without_html_deletions[run_end] == "`"
+            ):
+                run_end += 1
+            link_cursor = matching_backtick_end(link_cursor, run_end)
+            continue
+        if without_html_deletions[link_cursor] == "[":
+            link_stack.append((link_cursor, next_link_id))
+            next_link_id += 1
+        elif without_html_deletions[link_cursor] == "]" and link_stack:
+            opening, link_id = link_stack.pop()
+            if has_complete_link_suffix(opening, link_cursor):
+                link_intervals.append((opening + 1, link_cursor, link_id))
+        link_cursor += 1
+
+    cursor = 0
+    while cursor < len(without_html_deletions):
+        if without_html_deletions[cursor] == "\\" and cursor + 1 < len(
+            without_html_deletions
+        ):
+            cursor += 2
+            continue
+        if without_html_deletions[cursor] == "`":
+            run_end = cursor
+            while (
+                run_end < len(without_html_deletions)
+                and without_html_deletions[run_end] == "`"
+            ):
+                run_end += 1
+            cursor = matching_backtick_end(cursor, run_end)
+            continue
+        if without_html_deletions[cursor] in {"*", "_"}:
+            marker = without_html_deletions[cursor]
+            run_end = cursor + 1
+            while (
+                run_end < len(without_html_deletions)
+                and without_html_deletions[run_end] == marker
+            ):
+                run_end += 1
+            can_open, can_close = delimiter_flanking(
+                cursor,
+                run_end,
+                can_split_word=marker == "*",
+            )
+            run_length = run_end - cursor
+            for marker_start in range(cursor, run_end):
+                delimiters.append(
+                    (
+                        marker_start,
+                        marker_start + 1,
+                        can_open,
+                        can_close,
+                        marker,
+                        cursor,
+                        run_length,
+                        tuple(
+                            link_id
+                            for link_start, link_end, link_id in link_intervals
+                            if link_start <= marker_start < link_end
+                        ),
+                    )
+                )
+            cursor = run_end
+            continue
+        if without_html_deletions.startswith("~~", cursor):
+            run_end = cursor + 2
+            while (
+                run_end < len(without_html_deletions)
+                and without_html_deletions[run_end] == "~"
+            ):
+                run_end += 1
+            tilde_run = without_html_deletions[cursor:run_end]
+            can_open, can_close = delimiter_flanking(
+                cursor,
+                run_end,
+                can_split_word=True,
+            )
+            # Markdown-it represents every pair in a run as an independent
+            # delimiter and leaves an odd leading tilde literal. Pairing the
+            # complete delimiter stream is necessary because one run can
+            # close or open more than one nested deleted span.
+            pair_start = cursor + len(tilde_run) % 2
+            for marker_start in range(pair_start, run_end, 2):
+                delimiters.append(
+                    (
+                        marker_start,
+                        marker_start + 2,
+                        can_open,
+                        can_close,
+                        "~",
+                        cursor,
+                        0,
+                        tuple(
+                            link_id
+                            for link_start, link_end, link_id in link_intervals
+                            if link_start <= marker_start < link_end
+                        ),
+                    )
+                )
+            cursor = run_end
+            continue
+        cursor += 1
+
+    matched_closers = [-1] * len(delimiters)
+    scope_groups: dict[tuple[int, ...], list[int]] = {}
+    for delimiter_index, delimiter in enumerate(delimiters):
+        scope_groups.setdefault(delimiter[7], []).append(delimiter_index)
+    for scope_indices in scope_groups.values():
+        mutable_open = [delimiters[index][2] for index in scope_indices]
+        mutable_close = [delimiters[index][3] for index in scope_indices]
+        jumps: list[int] = []
+        openers_bottom: dict[str, list[int]] = {}
+        header_index = 0
+        last_run_start: int | None = None
+        for closer_index, global_closer_index in enumerate(scope_indices):
+            delimiter = delimiters[global_closer_index]
+            _, _, _, _, marker, run_start, length, _ = delimiter
+            jumps.append(0)
+            if last_run_start != run_start:
+                header_index = closer_index
+            last_run_start = run_start
+            if not mutable_close[closer_index]:
+                continue
+            bottoms = openers_bottom.setdefault(marker, [-1] * 6)
+            bottom_slot = (3 if mutable_open[closer_index] else 0) + length % 3
+            minimum_opener = bottoms[bottom_slot]
+            opener_index = header_index - jumps[header_index] - 1
+            new_minimum = opener_index
+            while opener_index > minimum_opener:
+                global_opener_index = scope_indices[opener_index]
+                opener = delimiters[global_opener_index]
+                if (
+                    opener[4] == marker
+                    and mutable_open[opener_index]
+                    and matched_closers[global_opener_index] < 0
+                ):
+                    odd_match = False
+                    if mutable_close[opener_index] or mutable_open[closer_index]:
+                        if (opener[6] + length) % 3 == 0 and (
+                            opener[6] % 3 != 0 or length % 3 != 0
+                        ):
+                            odd_match = True
+                    if not odd_match:
+                        last_jump = (
+                            jumps[opener_index - 1] + 1
+                            if opener_index > 0
+                            and not mutable_open[opener_index - 1]
+                            else 0
+                        )
+                        jumps[closer_index] = (
+                            closer_index - opener_index + last_jump
+                        )
+                        jumps[opener_index] = last_jump
+                        mutable_open[closer_index] = False
+                        matched_closers[global_opener_index] = global_closer_index
+                        mutable_close[opener_index] = False
+                        new_minimum = -1
+                        last_run_start = None
+                        break
+                opener_index -= jumps[opener_index] + 1
+            if new_minimum != -1:
+                bottoms[bottom_slot] = new_minimum
+
+    deletion_intervals = sorted(
+        (
+            delimiters[opener_index][0],
+            delimiters[closer_index][1],
+        )
+        for opener_index, closer_index in enumerate(matched_closers)
+        if closer_index >= 0 and delimiters[opener_index][4] == "~"
+    )
+    merged_intervals: list[tuple[int, int]] = []
+    for interval_start, interval_end in deletion_intervals:
+        if merged_intervals and interval_start <= merged_intervals[-1][1]:
+            previous_start, previous_end = merged_intervals[-1]
+            merged_intervals[-1] = (previous_start, max(previous_end, interval_end))
+        else:
+            merged_intervals.append((interval_start, interval_end))
+
+    markdown_parts: list[str] = []
+    cursor = 0
+    for interval_start, interval_end in merged_intervals:
+        markdown_parts.append(without_html_deletions[cursor:interval_start])
+        markdown_parts.append(
+            re.sub(
+                r"[^\r\n]",
+                "",
+                without_html_deletions[interval_start:interval_end],
+            )
+        )
+        cursor = interval_end
+    markdown_parts.append(without_html_deletions[cursor:])
+    return "".join(markdown_parts)
+
+
 def strip_markdown_nonoperative_content(text: str) -> str:
     """Replace non-rendered Markdown content with blank lines.
 
@@ -3879,6 +4425,9 @@ def strip_markdown_nonoperative_content(text: str) -> str:
     )
     without_raw_html_blocks = strip_markdown_hidden_html_containers(
         without_raw_html_blocks,
+    )
+    without_raw_html_blocks = strip_markdown_deleted_content(
+        without_raw_html_blocks
     )
     html_block_interrupt_lines = {
         index

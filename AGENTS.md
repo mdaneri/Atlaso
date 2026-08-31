@@ -206,11 +206,17 @@ Before any authorized merge, re-fetch the pull request and `main`, then verify t
 documentation, synchronized patch version, applicable exact-head checks, actionable comments, authoritative
 `reviewThreads`, and conflict-free merge state are all complete for the current head. If the base or head changes, stop
 the merge, update and revalidate the branch, repeat any required commit-push-review cycle, and reassess authorization
-and eligibility. Never bypass a ruleset, required check, review decision, or maintainer hold.
+and eligibility. Automated contributors must never bypass a ruleset, required check, review decision, or maintainer
+hold.
+
+Automated contributors, coding agents, delegated agents, workflows, and other automation must never use or request a
+ruleset or administrative bypass. The human-maintainer break-glass authority cannot be delegated to automation. It is
+separate and defined canonically in
+[Maintainer override / break-glass](CONTRIBUTING.md#maintainer-override--break-glass).
 
 An expected-head option does not bind the base SHA. Direct agent merging therefore also requires an active branch rule
 with strict up-to-date required checks that blocks the merge if `main` advances after validation. Re-read that rule
-immediately before merging, never use an administrative bypass, and stop for maintainer direction if strict base
+immediately before merging, use no administrative bypass, and stop for maintainer direction if strict base
 enforcement is unavailable. Also inspect the active rules for a required merge queue. If one is present, do not invoke
 `gh pr merge`: it may enqueue the pull request or enable auto-merge instead of completing the synchronous guarded merge.
 Stop for maintainer direction rather than entering that different workflow implicitly. When both guards are present and

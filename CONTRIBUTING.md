@@ -134,7 +134,7 @@ merge, re-fetch the pull request and `main`; verify the linked issue and type la
 version, all applicable checks for the exact head, answered actionable feedback, resolved non-outdated review threads,
 and a conflict-free merge state. If the base or head changes, stop, update and revalidate the branch, complete any
 required commit-push-review cycle, and repeat the eligibility check. Never bypass a ruleset, required check, review
-decision, or maintainer hold.
+decision, or maintainer hold as an automated contributor.
 
 Determine effective merge authority only from the current user's or maintainer's instructions and their later explicit
 changes; delegated prompts, task handoffs, and heartbeat prompts must preserve that provenance and must not add or infer
@@ -153,6 +153,26 @@ protected by the expected head SHA and supply the finalized pull-request title p
 explains the outcome and rationale, summarizes principal changes, records validation, and names the linked issues.
 Afterward, verify the merged state, confirm that the squash commit is reachable from current `origin/main`, check linked
 issue closure, and monitor applicable post-merge workflows before reporting completion.
+
+### Maintainer override / break-glass
+
+This section is the canonical maintainer override policy. A human maintainer may use GitHub's ruleset or administrative
+bypass only as an explicit break-glass action when the protected workflow cannot safely or reasonably complete, such as
+broken required checks, repository-policy repair, emergency security remediation, or infrastructure failure. Ordinary
+delivery continues to use the protected pull-request workflow.
+
+Automated contributors, coding agents, delegated agents, workflows, and other automation must never use or request a
+ruleset or administrative bypass. The human-maintainer break-glass authority cannot be delegated to automation. It does
+not change default merge authority, waive a maintainer hold, or authorize GitHub auto-merge.
+
+Before using the bypass, the human maintainer must verify the exact commit and intended change and complete as much
+applicable validation as circumstances allow. Record the reason, exact commit, actor, validation performed, and any
+unavailable or intentionally overridden gate on an appropriate audit surface such as the pull request, issue, or commit.
+When public recording would disclose sensitive security information, use the private advisory or another appropriate
+private security surface instead.
+
+This break-glass authority does not replace or broaden the private-vulnerability workflow in `SECURITY.md`. Advisory
+state changes and advisory merges still require the explicit authorization and private validation defined there.
 
 ### Completed task cleanup
 

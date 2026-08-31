@@ -8,6 +8,7 @@ from scripts.check_repo import (
     DEFAULT_MERGE_AUTHORITY_SECTION_MARKERS,
     LEGACY_TABULATOR_MARKER,
     LOCAL_TASK_BRANCH_ABSENT_MARKER,
+    MAINTAINER_BREAK_GLASS_SHARED_MARKERS,
     MERGE_AUTHORITY_TRANSFER_FIXTURE_PATH,
     NON_TASK_OWNED_CHECKOUT_PRESERVED_MARKER,
     NON_TASK_OWNED_REMOTE_BRANCH_PRESERVED_MARKER,
@@ -663,6 +664,9 @@ def test_merge_hold_directions_recognizes_modal_merge_prohibitions() -> None:
         "The agent lacks authority to merge this PR.",
         "I do not authorize you to merge this PR.",
         "I don’t permit you to merge this PR.",
+        "I have not authorized you to merge this PR.",
+        "I haven't permitted you to merge this PR.",
+        "I haven’t authorized you to merge this PR.",
         "I no longer authorize you to merge this PR.",
         "I no longer permit you to merge this PR.",
         "I forbid you from merging this PR.",
@@ -797,6 +801,15 @@ def test_merge_hold_directions_recognizes_approval_needed() -> None:
     assert merge_hold_directions(
         "Implement issue #602, but merge after I grant authorization."
     ) == {"wait for approval": "add"}
+    assert merge_hold_directions(
+        "Implement issue #602, but only merge if I grant approval."
+    ) == {"wait for approval": "add"}
+
+
+def test_merge_hold_directions_ignores_nonauthoritative_handoff_hold() -> None:
+    """Verify reported handoff wording cannot add a current-source hold."""
+    assert merge_hold_directions("The task handoff says do not merge this PR.") == {}
+    assert merge_hold_directions("The heartbeat says leave this PR open.") == {}
     assert merge_hold_directions(
         "Implement issue #602, but only with my approval may you merge this PR."
     ) == {"wait for approval": "add"}
@@ -4888,6 +4901,599 @@ def test_agent_policy_gate_rejects_missing_default_merge_authority_contract(
         )
 
 
+def test_agent_policy_gate_rejects_missing_maintainer_break_glass_contract(
+    tmp_path: Path,
+) -> None:
+    """Verify policy surfaces preserve the complete automation prohibition.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
+    required_entry_points = (
+        Path("AGENTS.md"),
+        Path("CONTRIBUTING.md"),
+        Path(".github/copilot-instructions.md"),
+        Path(".github/pull_request_template.md"),
+        Path("SECURITY.md"),
+        Path("docs/contribute/agent-policies.md"),
+        Path("docs/reference/full-technical-reference.md"),
+    )
+
+    for marker in MAINTAINER_BREAK_GLASS_SHARED_MARKERS:
+        for relative_path in required_entry_points:
+            write_policy_files(tmp_path)
+            path = tmp_path / relative_path
+            original = path.read_text(encoding="utf-8")
+            assert marker in original
+            path.write_text(
+                original.replace(marker, "", 1),
+                encoding="utf-8",
+            )
+
+            findings = check_agent_policy_gate(tmp_path)
+
+            assert len(findings) == 1
+            assert findings[0].path == path
+            assert findings[0].message == (
+                f"required agent policy marker is missing: {marker}"
+            )
+
+    canonical_heading = "### Maintainer override / break-glass"
+    write_policy_files(tmp_path)
+    contributing = tmp_path / "CONTRIBUTING.md"
+    contributing.write_text(
+        contributing.read_text(encoding="utf-8").replace(
+            canonical_heading,
+            f"<!-- {canonical_heading} -->",
+            1,
+        ),
+        encoding="utf-8",
+    )
+    findings = check_agent_policy_gate(tmp_path)
+    assert any(
+        finding.path == contributing
+        and finding.message
+        == f"required agent policy marker is missing: {canonical_heading}"
+        for finding in findings
+    )
+
+    prohibition = (
+        "automation must never use or request a ruleset or administrative bypass"
+    )
+    for relative_path in required_entry_points:
+        write_policy_files(tmp_path)
+        path = tmp_path / relative_path
+        original = path.read_text(encoding="utf-8")
+        assert prohibition in original
+        path.write_text(
+            original.replace(
+                prohibition,
+                "automation may use or request a ruleset or administrative bypass",
+                1,
+            ),
+            encoding="utf-8",
+        )
+
+        findings = check_agent_policy_gate(tmp_path)
+
+        assert len(findings) == 1
+        assert findings[0].path == path
+        assert findings[0].message == (
+            f"required agent policy marker is missing: {prohibition}"
+        )
+
+    nonoperative_replacements = (
+        f"<!-- {prohibition} -->",
+        f"```text\n{prohibition}\n```",
+        f"<del>{prohibition}</del>",
+        f"<s>{prohibition}</s>",
+        f"<strike>{prohibition}</strike>",
+        f"<del><del>retired</del> {prohibition}</del>",
+        f"<s><s>retired</s> {prohibition}</s>",
+        f"<strike><strike>retired</strike> {prohibition}</strike>",
+        f"<del><s>retired</del> {prohibition}</s>",
+        f"<s><strike>retired</s> {prohibition}</strike>",
+        f"<del/>retired {prohibition}</del>",
+        f"<s/>retired {prohibition}</s>",
+        f"<strike/>retired {prohibition}</strike>",
+        f"~~{prohibition}~~",
+        f"~~retired `~~` {prohibition}~~",
+        f"policy ~~~~{prohibition}~~ remains",
+        f"~~retired~~~~~{prohibition}~~",
+        f"~~retired.~~{prohibition}~~",
+        f"~~retired$~~{prohibition}~~",
+        f"]~~~~retired~~~~active~~{prohibition}~~",
+        f"~~{prohibition} *foo~~",
+        f"~~_{prohibition}~~_",
+        f"~~[{prohibition}~~](",
+        f"~~[{prohibition}~~](<bad<>)",
+        f"~~[{prohibition}~~][missing]",
+        f"~~[{prohibition}~~](x (bad(foo)))",
+        f"~~[{prohibition}~~][x]\n\n[x]: (bad",
+        f"[`~~{prohibition}`~~`",
+        f"<template>{prohibition}</template>",
+        f"<span style=display:none>{prohibition}</span>",
+    )
+    for replacement in nonoperative_replacements:
+        for relative_path in required_entry_points:
+            write_policy_files(tmp_path)
+            path = tmp_path / relative_path
+            original = path.read_text(encoding="utf-8")
+            assert prohibition in original
+            path.write_text(
+                original.replace(prohibition, replacement, 1),
+                encoding="utf-8",
+            )
+
+            findings = check_agent_policy_gate(tmp_path)
+
+            assert len(findings) == 1
+            assert findings[0].path == path
+            assert findings[0].message == (
+                f"required agent policy marker is missing: {prohibition}"
+            )
+
+    unequal_backtick_replacement = f"``~~{prohibition}~~```"
+    for relative_path in required_entry_points:
+        write_policy_files(tmp_path)
+        path = tmp_path / relative_path
+        original = path.read_text(encoding="utf-8")
+        assert prohibition in original
+        path.write_text(
+            original.replace(prohibition, unequal_backtick_replacement, 1),
+            encoding="utf-8",
+        )
+
+        findings = check_agent_policy_gate(tmp_path)
+
+        assert any(
+            finding.path == path
+            and finding.message
+            == f"required agent policy marker is missing: {prohibition}"
+            for finding in findings
+        )
+
+    complex_html_replacements = (
+        f"<span hidden/>{prohibition}</span>",
+        f"<div><!-- {prohibition} --></div>",
+        f"<span hidden><span>retired</span>{prohibition}</span>",
+        f"<span hidden><script></span></script>{prohibition}</span>",
+        f'<span style="display:/* comment */none">{prohibition}</span>',
+        f'<span style="display&#58;none">{prohibition}</span>',
+        f"<title>{prohibition}</title>",
+        f'<span style="display:n\\6f ne">{prohibition}</span>',
+        f'<span style="display:none; --x:\'; display:block;\'">{prohibition}</span>',
+        f'<span style="display&#58none">{prohibition}</span>',
+        f'<span style="display:none;--x:foo\\;display:block">{prohibition}</span>',
+        f'<span style="display:none" style="display:block">{prohibition}</span>',
+        f'<span style="opacity:0">{prohibition}</span>',
+        f'<span style="filter:opacity(0)">{prohibition}</span>',
+        f'<span style="filter:opacity(0);filter:blur(foo)">{prohibition}</span>',
+        f'<span style="opacity:calc(1 - 1)">{prohibition}</span>',
+        f'<span style="opacity:0e0">{prohibition}</span>',
+        f'<span style="font-size:0">{prohibition}</span>',
+        f'<span style="font:0 sans-serif">{prohibition}</span>',
+        f'<span style="font-size:0;font:12px/foo Arial">{prohibition}</span>',
+        f'<span style="font-size:0;font:foo">{prohibition}</span>',
+        f'<span style="font-size:calc(0px)">{prohibition}</span>',
+        f'<span style="font-size:calc(0cqw)">{prohibition}</span>',
+        f'<span style="font-size:0;font-size:calc(foo)">{prohibition}</span>',
+        f'<span style="font-size:0e0">{prohibition}</span>',
+        f'<span style="transform:scale(0)">{prohibition}</span>',
+        f'<span style="transform:scale(calc(0))">{prohibition}</span>',
+        f'<span style="transform:scale(0);transform:translate(foo)">'
+        f"{prohibition}</span>",
+        f'<span style="transform:matrix(0,0,0,0,0,0)">{prohibition}</span>',
+        f'<span style="transform:matrix3d(0,0,0,0,0,0,0,0,0,0,1,0,0,0,0,1)">'
+        f"{prohibition}</span>",
+        f'<span style="clip-path:inset(50%)">{prohibition}</span>',
+        f'<span style="clip-path:circle(0)">{prohibition}</span>',
+        f'<span style="clip-path:ellipse(50% 0)">{prohibition}</span>',
+        f'<span style="font-size:0"><span style="font-size:1em">'
+        f"{prohibition}</span></span>",
+        f'<span style="font-size:0"><span style="font-size:12foo">'
+        f"{prohibition}</span></span>",
+        f"<b hidden>retired\n\n{prohibition}",
+        f'<span style="display:none;display\\:block">{prohibition}</span>',
+        f"<iframe>{prohibition}</iframe>",
+        f"<div popover>{prohibition}</div>",
+        f'<style>.retired {{ display: none }}</style>'
+        f'<span class="retired">{prohibition}</span>',
+        f"<datalist>{prohibition}</datalist>",
+        f"<noscript>{prohibition}</noscript>",
+        f'<span aria-hidden="tr&#117;e">{prohibition}</span>',
+        f"<span inert>{prohibition}</span>",
+        f'<span style="display:none;display:block\\!important">{prohibition}</span>',
+        f'<span style="--state:none;display:var(--state)">{prohibition}</span>',
+        f'<span style="--hide:opacity(0);filter:var(--hide)">{prohibition}</span>',
+        f'<span style="--State:none;display:var(--State)">{prohibition}</span>',
+        f'<span style="--State:none;display:VAR(--State)">{prohibition}</span>',
+        f'<span style="--state:var(--state);display:var(--state,none)">'
+        f"{prohibition}</span>",
+        f'<span style="--state:none"><span style="display:var(--state)">'
+        f'{prohibition}</span></span>',
+        f'<span hidden>retired<!-- </span> -->{prohibition}</span>',
+        f'<span style="--state:initial;display:var(--state,none)">'
+        f'{prohibition}</span>',
+        f'<span style="color:transparent">{prohibition}</span>',
+        f'<span style="color:#0000">{prohibition}</span>',
+        f'<span style="color:#00000000">{prohibition}</span>',
+        f"<dialog>{prohibition}</dialog>",
+        f"<details><summary>Example</summary>{prohibition}</details>",
+        f'<details title=" open "><summary>Example</summary>'
+        f"{prohibition}</details>",
+        f'<span style="color:transparent"><span style="color:#00000">'
+        f"{prohibition}</span></span>",
+        f'<span style="color:transparent"><span style="color:rgb(foo)">'
+        f"{prohibition}</span></span>",
+        f'<span style="color:transparent"><span style="color:color(foo)">'
+        f"{prohibition}</span></span>",
+        f"<canvas>{prohibition}</canvas>",
+        f"<audio>{prohibition}</audio>",
+        f"<video>{prohibition}</video>",
+        f'<span style="color:rgb(0 0 0 / 0e0)">{prohibition}</span>',
+        f'<span style="color:rgb(0 0 0 / calc(0))">{prohibition}</span>',
+        f'<span style="color:light-dark(transparent, transparent)">'
+        f"{prohibition}</span>",
+        f'<span style="color:color-mix(in srgb, transparent, transparent)">'
+        f"{prohibition}</span>",
+        f"<svg><foreignObject><span hidden/>{prohibition}</span>"
+        "</foreignObject></svg>",
+        f'<svg><text display="none">{prohibition}</text></svg>',
+        f'<svg><text visibility="hidden">{prohibition}</text></svg>',
+        f'<svg><text opacity="0">{prohibition}</text></svg>',
+        f'<svg><defs><text>{prohibition}</text></defs></svg>',
+        f'<svg><symbol><text>{prohibition}</text></symbol></svg>',
+        f'<svg><text fill="none">{prohibition}</text></svg>',
+        f'<svg><text fill-opacity="0">{prohibition}</text></svg>',
+        f'<svg><text fill="none" stroke="red" stroke-opacity="0">'
+        f"{prohibition}</text></svg>",
+        f"<math><mtext><span hidden/>{prohibition}</span></mtext></math>",
+    )
+    for replacement in complex_html_replacements:
+        for relative_path in required_entry_points:
+            write_policy_files(tmp_path)
+            path = tmp_path / relative_path
+            original = path.read_text(encoding="utf-8")
+            assert prohibition in original
+            path.write_text(
+                original.replace(prohibition, replacement, 1),
+                encoding="utf-8",
+            )
+
+            findings = check_agent_policy_gate(tmp_path)
+
+            assert any(
+                finding.path == path
+                and finding.message
+                == f"required agent policy marker is missing: {prohibition}"
+                for finding in findings
+            )
+
+    operative_replacement = f"_~~{prohibition}_~~~~"
+    for relative_path in required_entry_points:
+        write_policy_files(tmp_path)
+        path = tmp_path / relative_path
+        original = path.read_text(encoding="utf-8")
+        assert prohibition in original
+        path.write_text(
+            original.replace(prohibition, operative_replacement, 1),
+            encoding="utf-8",
+        )
+
+        assert check_agent_policy_gate(tmp_path) == []
+
+    operative_link_replacement = f"~~[{prohibition}~~](x)"
+    for relative_path in required_entry_points:
+        write_policy_files(tmp_path)
+        path = tmp_path / relative_path
+        original = path.read_text(encoding="utf-8")
+        assert prohibition in original
+        path.write_text(
+            original.replace(prohibition, operative_link_replacement, 1),
+            encoding="utf-8",
+        )
+
+        assert check_agent_policy_gate(tmp_path) == []
+
+    visible_inline_code_replacement = prohibition.replace(
+        "ruleset",
+        "`ruleset`",
+    )
+    for relative_path in required_entry_points:
+        write_policy_files(tmp_path)
+        path = tmp_path / relative_path
+        original = path.read_text(encoding="utf-8")
+        assert prohibition in original
+        path.write_text(
+            original.replace(prohibition, visible_inline_code_replacement, 1),
+            encoding="utf-8",
+        )
+
+        assert check_agent_policy_gate(tmp_path) == []
+
+    operative_html_replacement = f"\n\n<div>\n{prohibition}\n</div>\n\n"
+    for relative_path in required_entry_points:
+        write_policy_files(tmp_path)
+        path = tmp_path / relative_path
+        original = path.read_text(encoding="utf-8")
+        assert prohibition in original
+        path.write_text(
+            original.replace(prohibition, operative_html_replacement, 1),
+            encoding="utf-8",
+        )
+
+        assert check_agent_policy_gate(tmp_path) == []
+
+    visible_entity_replacement = (
+        "\n\n<div>\n"
+        f"{prohibition.replace(' or administrative', ' &#111;r administrative')}"
+        "\n</div>\n\n"
+    )
+    for relative_path in required_entry_points:
+        write_policy_files(tmp_path)
+        path = tmp_path / relative_path
+        original = path.read_text(encoding="utf-8")
+        assert prohibition in original
+        path.write_text(
+            original.replace(prohibition, visible_entity_replacement, 1),
+            encoding="utf-8",
+        )
+
+        assert check_agent_policy_gate(tmp_path) == []
+
+    visible_attribute_replacement = (
+        f'<span title="temporarily hidden text">{prohibition}</span>'
+    )
+    for relative_path in required_entry_points:
+        write_policy_files(tmp_path)
+        path = tmp_path / relative_path
+        original = path.read_text(encoding="utf-8")
+        assert prohibition in original
+        path.write_text(
+            original.replace(prohibition, visible_attribute_replacement, 1),
+            encoding="utf-8",
+        )
+
+        assert check_agent_policy_gate(tmp_path) == []
+
+    visible_unclosed_inline_replacement = (
+        f"<span hidden>retired\n\n{prohibition}"
+    )
+    for relative_path in required_entry_points:
+        write_policy_files(tmp_path)
+        path = tmp_path / relative_path
+        original = path.read_text(encoding="utf-8")
+        assert prohibition in original
+        path.write_text(
+            original.replace(prohibition, visible_unclosed_inline_replacement, 1),
+            encoding="utf-8",
+        )
+
+        findings = check_agent_policy_gate(tmp_path)
+        assert not any(
+            finding.path == path
+            and finding.message
+            == f"required agent policy marker is missing: {prohibition}"
+            for finding in findings
+        )
+
+    visible_cascade_replacement = (
+        f'<span style="display:none;display:block">{prohibition}</span>'
+    )
+    for relative_path in required_entry_points:
+        write_policy_files(tmp_path)
+        path = tmp_path / relative_path
+        original = path.read_text(encoding="utf-8")
+        assert prohibition in original
+        path.write_text(
+            original.replace(prohibition, visible_cascade_replacement, 1),
+            encoding="utf-8",
+        )
+
+        assert check_agent_policy_gate(tmp_path) == []
+
+    visible_nested_html_replacements = (
+        f'<span style="display:none; --x:\"/*\"; display:block; --y:\"*/\"">'
+        f"{prohibition}</span>",
+        f'<span style="visibility:hidden"><span style="visibility:visible">'
+        f"{prohibition}</span></span>",
+        f'<span style="color:transparent"><span style="color:red">'
+        f"{prohibition}</span></span>",
+        f'<span style="color:transparent"><span style="color:pink">'
+        f"{prohibition}</span></span>",
+        f'<span style="color:transparent"><span style="color:color(srgb 1 0 0)">'
+        f"{prohibition}</span></span>",
+        f'<span style="color:transparent"><span style="color:light-dark(red, blue)">'
+        f"{prohibition}</span></span>",
+        f'<span style="color:transparent"><span '
+        f'style="color:color-mix(in srgb, red, blue)">{prohibition}</span></span>',
+        f'<span style="font-size:0"><span style="font-size:12px">'
+        f"{prohibition}</span></span>",
+        f'<span style="font-size:0;font:12px sans-serif">{prohibition}</span>',
+        f'<span style="font-size:0;font:12px/1.5 Arial">{prohibition}</span>',
+        f'<span style="font-size:0"><span style="font-size:calc(12px)">'
+        f"{prohibition}</span></span>",
+        f'<span style="font-size:0;font-size:calc(12px)">{prohibition}</span>',
+        f'<span style="font-size:0"><span style="font-size:calc(12cqw)">'
+        f"{prohibition}</span></span>",
+        f'<span style="font-size:0"><span style="font-size:initial">'
+        f"{prohibition}</span></span>",
+        f'<span style="display:none;display:table-cell">{prohibition}</span>',
+        f'<span style="display:none;display:inline flow-root">'
+        f"{prohibition}</span>",
+        f'<span style="transform:scale(0);transform:scale(calc(1))">'
+        f"{prohibition}</span>",
+        f'<span style="transform:scale(0);transform:translate(1px)">'
+        f"{prohibition}</span>",
+        f'<span style="transform:matrix(0,0,0,0,0,0);transform:matrix(1,0,0,1,0,0)">'
+        f"{prohibition}</span>",
+        f'<span style="filter:opacity(0);filter:none">{prohibition}</span>',
+        f'<span style="filter:opacity(0);filter:blur(1px)">{prohibition}</span>',
+        f'<span style="clip-path:circle(0);clip-path:circle(50%)">'
+        f"{prohibition}</span>",
+        f'<span style="--hide:none;filter:var(--hide)">{prohibition}</span>',
+        f'<span style="display:n/**/one">{prohibition}</span>',
+        f'<span style="display:none;display:initial">{prohibition}</span>',
+        f'<span style="display:none;display:unset">{prohibition}</span>',
+        f'<svg hidden/>{prohibition}',
+        f'<svg><text visibility="hidden" style="visibility:visible">'
+        f"{prohibition}</text></svg>",
+        f'<svg><text opacity="0" style="opacity:1">{prohibition}</text></svg>',
+        f'<svg><text display="none" style="display:block">{prohibition}</text></svg>',
+        f'<svg><text fill="none" style="fill:red">{prohibition}</text></svg>',
+        f'<svg><text fill="none" stroke="red">{prohibition}</text></svg>',
+        f'<span style="opacity:calc(1-1)">{prohibition}</span>',
+        f"<span style=display:none/>{prohibition}</span>",
+    )
+    for replacement in visible_nested_html_replacements:
+        for relative_path in required_entry_points:
+            write_policy_files(tmp_path)
+            path = tmp_path / relative_path
+            original = path.read_text(encoding="utf-8")
+            assert prohibition in original
+            path.write_text(
+                original.replace(prohibition, replacement, 1),
+                encoding="utf-8",
+            )
+
+            assert check_agent_policy_gate(tmp_path) == []
+
+    visible_recovered_container_replacement = (
+        f"<div><span hidden>retired</div>{prohibition}"
+    )
+    for relative_path in required_entry_points:
+        write_policy_files(tmp_path)
+        path = tmp_path / relative_path
+        original = path.read_text(encoding="utf-8")
+        assert prohibition in original
+        path.write_text(
+            original.replace(
+                prohibition,
+                visible_recovered_container_replacement,
+                1,
+            ),
+            encoding="utf-8",
+        )
+
+        findings = check_agent_policy_gate(tmp_path)
+        assert not any(
+            finding.path == path
+            and finding.message
+            == f"required agent policy marker is missing: {prohibition}"
+            for finding in findings
+        )
+
+    visible_foster_parented_replacement = (
+        f"<table hidden><div>{prohibition}</div></table>"
+    )
+    for relative_path in required_entry_points:
+        write_policy_files(tmp_path)
+        path = tmp_path / relative_path
+        original = path.read_text(encoding="utf-8")
+        assert prohibition in original
+        path.write_text(
+            original.replace(prohibition, visible_foster_parented_replacement, 1),
+            encoding="utf-8",
+        )
+
+        findings = check_agent_policy_gate(tmp_path)
+        assert not any(
+            finding.path == path
+            and finding.message
+            == f"required agent policy marker is missing: {prohibition}"
+            for finding in findings
+        )
+
+    visible_parser_recovery_replacements = (
+        f"<table hidden>{prohibition}</table>",
+        f"<span><mark hidden>retired</span>{prohibition}",
+    )
+    for replacement in visible_parser_recovery_replacements:
+        for relative_path in required_entry_points:
+            write_policy_files(tmp_path)
+            path = tmp_path / relative_path
+            original = path.read_text(encoding="utf-8")
+            assert prohibition in original
+            path.write_text(
+                original.replace(prohibition, replacement, 1),
+                encoding="utf-8",
+            )
+
+            findings = check_agent_policy_gate(tmp_path)
+            assert not any(
+                finding.path == path
+                and finding.message
+                == f"required agent policy marker is missing: {prohibition}"
+                for finding in findings
+            )
+
+    visible_open_dialog_replacement = f"<dialog open>{prohibition}</dialog>"
+    for relative_path in required_entry_points:
+        write_policy_files(tmp_path)
+        path = tmp_path / relative_path
+        original = path.read_text(encoding="utf-8")
+        assert prohibition in original
+        path.write_text(
+            original.replace(prohibition, visible_open_dialog_replacement, 1),
+            encoding="utf-8",
+        )
+
+        findings = check_agent_policy_gate(tmp_path)
+        assert not any(
+            finding.path == path
+            and finding.message
+            == f"required agent policy marker is missing: {prohibition}"
+            for finding in findings
+        )
+
+    visible_details_replacements = (
+        f"<details open>{prohibition}</details>",
+        f"<details><summary>{prohibition}</summary>retired</details>",
+    )
+    for replacement in visible_details_replacements:
+        for relative_path in required_entry_points:
+            write_policy_files(tmp_path)
+            path = tmp_path / relative_path
+            original = path.read_text(encoding="utf-8")
+            assert prohibition in original
+            path.write_text(
+                original.replace(prohibition, replacement, 1),
+                encoding="utf-8",
+            )
+
+            findings = check_agent_policy_gate(tmp_path)
+            assert not any(
+                finding.path == path
+                and finding.message
+                == f"required agent policy marker is missing: {prohibition}"
+                for finding in findings
+            )
+
+    visible_optional_end_tag_replacements = (
+        f'<p hidden>retired<p>{prohibition}</p>',
+        f'<p hidden>retired<div>{prohibition}</div>',
+    )
+    for replacement in visible_optional_end_tag_replacements:
+        for relative_path in required_entry_points:
+            write_policy_files(tmp_path)
+            path = tmp_path / relative_path
+            original = path.read_text(encoding="utf-8")
+            assert prohibition in original
+            path.write_text(
+                original.replace(prohibition, replacement, 1),
+                encoding="utf-8",
+            )
+
+            findings = check_agent_policy_gate(tmp_path)
+            assert not any(
+                finding.path == path
+                and finding.message
+                == f"required agent policy marker is missing: {prohibition}"
+                for finding in findings
+            )
+
+
 def test_agent_policy_gate_rejects_missing_unrelated_issue_tracking(
     tmp_path: Path,
 ) -> None:
@@ -6256,7 +6862,6 @@ def test_agent_policy_gate_ignores_raw_html_block_markers(tmp_path: Path) -> Non
     for relative_path in ORDERED_TERMINAL_CLEANUP_MARKERS:
         for tag_name in (
             "script",
-            "style",
             "pre",
             "code",
             "textarea",
@@ -6302,7 +6907,7 @@ def test_agent_policy_gate_preserves_policy_after_raw_text_comments(
     for relative_path in ORDERED_TERMINAL_CLEANUP_MARKERS:
         anchor = TERMINAL_CLEANUP_SECTION_ANCHORS[relative_path]
         content_prefix = "" if anchor.startswith("#") else "  "
-        for tag_name in ("script", "style", "textarea", "pre"):
+        for tag_name in ("script", "textarea", "pre"):
             write_policy_files(tmp_path)
             path = tmp_path / relative_path
             text = path.read_text(encoding="utf-8").replace(
@@ -6398,7 +7003,6 @@ def test_agent_policy_gate_ignores_raw_html_policy_sections(tmp_path: Path) -> N
     for relative_path in ORDERED_TERMINAL_CLEANUP_MARKERS:
         for tag_name in (
             "script",
-            "style",
             "pre",
             "code",
             "textarea",
@@ -6886,6 +7490,37 @@ def test_agent_policy_gate_preserves_policy_after_void_html(tmp_path: Path) -> N
             )
 
             assert check_agent_policy_gate(tmp_path) == []
+
+
+def test_agent_policy_gate_preserves_word_boundary_at_rendered_break(
+    tmp_path: Path,
+) -> None:
+    """Verify rendered break elements separate adjacent operative words.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
+    marker = "automation must never use or request a ruleset or administrative bypass"
+    required_entry_points = (
+        Path("AGENTS.md"),
+        Path("CONTRIBUTING.md"),
+        Path(".github/copilot-instructions.md"),
+        Path(".github/pull_request_template.md"),
+        Path("SECURITY.md"),
+        Path("docs/contribute/agent-policies.md"),
+        Path("docs/reference/full-technical-reference.md"),
+    )
+    replacement = marker.replace("ruleset or", "ruleset<br>or", 1)
+    for relative_path in required_entry_points:
+        write_policy_files(tmp_path)
+        path = tmp_path / relative_path
+        text = path.read_text(encoding="utf-8")
+        path.write_text(
+            text.replace(marker, replacement, 1),
+            encoding="utf-8",
+        )
+
+        assert check_agent_policy_gate(tmp_path) == []
 
 
 def test_agent_policy_gate_ignores_indented_cleanup_markers(tmp_path: Path) -> None:

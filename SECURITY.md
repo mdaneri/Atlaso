@@ -72,6 +72,11 @@ authorized. Do not publish, close, merge, or otherwise change advisory state. Ex
 required for any of those actions. GitHub does not enforce the target branch's protection rules in this workflow, so
 maintainer review and the recorded local validation are mandatory before an authorized advisory merge.
 
+The human-maintainer break-glass authority cannot be delegated to automation and does not replace or broaden this
+private workflow. Automated contributors, coding agents, delegated agents, workflows, and other automation must never
+use or request a ruleset or administrative bypass. Advisory state changes and advisory merges remain subject to the
+explicit private authorization, review, and validation requirements above.
+
 When one patch resolves multiple private findings, keep every cross-reference on private surfaces and choose one
 advisory's temporary private fork as the patch workspace. After coordinated disclosure, create sanitized public
 tracking or release documentation only when a maintainer explicitly approves it.

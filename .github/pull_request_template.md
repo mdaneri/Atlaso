@@ -54,10 +54,11 @@ surfaces.
   from stale memory, historical policy, another task, or agent-authored wording. Any invented hold was corrected rather
   than propagated. A merge-ready default-authority task continued through guarded merge without
   a second merge instruction. GitHub auto-merge remains disabled unless explicitly selected. Before any authorized
-  squash merge,
-  strict up-to-date required checks that bind the base, an expected-head guard
-  without administrative bypass, and confirmation that no merge queue is required were checked; or this pull request is
-  outside that policy.
+  squash merge, strict up-to-date required checks that bind the base, an expected-head guard, and confirmation that no
+  merge queue is required were checked. Agents and automation must never use or request a
+  ruleset or administrative bypass; human-maintainer break-glass authority follows the canonical
+  [Maintainer override policy](../CONTRIBUTING.md#maintainer-override--break-glass) and cannot be delegated to automation.
+  If this pull request is outside that policy, the reason is recorded above.
 - [ ] After any authorized merge and remaining post-merge activity, the originating task will send a `cleanup-ready`
   handoff and remain incomplete until `remote_branch_absent`, `worktree_removed`, and `task_title_done` occur in order;
   an existing remote ref will be deleted only with an atomic expected-SHA lease such as

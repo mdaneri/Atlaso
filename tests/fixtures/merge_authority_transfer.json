@@ -2581,6 +2581,18 @@
           "add_holds": [
             "do not merge"
           ]
+        },
+        {
+          "text": "I have not authorized you to merge this PR.",
+          "add_holds": [
+            "do not merge"
+          ]
+        },
+        {
+          "text": "I haven’t permitted you to merge this PR.",
+          "add_holds": [
+            "do not merge"
+          ]
         }
       ],
       "generated": "Do not merge this pull request.",
@@ -2838,6 +2850,36 @@
       "expected_holds": [
         "wait for approval"
       ]
+    },
+    {
+      "name": "approval-grant-condition-is-preserved",
+      "default_merge_authority": true,
+      "instructions": [
+        {
+          "text": "Implement issue #602, but only merge if I grant approval.",
+          "add_holds": [
+            "wait for approval"
+          ]
+        }
+      ],
+      "generated": "Wait for approval before merging.",
+      "expected_holds": [
+        "wait for approval"
+      ]
+    },
+    {
+      "name": "reported-handoff-hold-is-ignored",
+      "default_merge_authority": true,
+      "instructions": [
+        {
+          "text": "Implement issue #602."
+        },
+        {
+          "text": "The task handoff says do not merge this PR."
+        }
+      ],
+      "generated": "Complete the guarded merge and post-merge verification.",
+      "expected_holds": []
     },
     {
       "name": "direct-pr-approval-clears-wait-hold",
