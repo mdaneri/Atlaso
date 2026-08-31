@@ -1346,9 +1346,12 @@ def test_agent_policy_gate_rejects_missing_maintainer_break_glass_contract(
         f'<span style="opacity:0e0">{prohibition}</span>',
         f'<span style="font-size:0">{prohibition}</span>',
         f'<span style="font-size:calc(0px)">{prohibition}</span>',
+        f'<span style="font-size:calc(0cqw)">{prohibition}</span>',
         f'<span style="font-size:0e0">{prohibition}</span>',
         f'<span style="transform:scale(0)">{prohibition}</span>',
         f'<span style="transform:scale(calc(0))">{prohibition}</span>',
+        f'<span style="transform:scale(0);transform:translate(foo)">'
+        f"{prohibition}</span>",
         f'<span style="transform:matrix(0,0,0,0,0,0)">{prohibition}</span>',
         f'<span style="transform:matrix3d(0,0,0,0,0,0,0,0,0,0,1,0,0,0,0,1)">'
         f"{prohibition}</span>",
@@ -1399,6 +1402,10 @@ def test_agent_policy_gate_rejects_missing_maintainer_break_glass_contract(
         f"<video>{prohibition}</video>",
         f'<span style="color:rgb(0 0 0 / 0e0)">{prohibition}</span>',
         f'<span style="color:rgb(0 0 0 / calc(0))">{prohibition}</span>',
+        f'<span style="color:light-dark(transparent, transparent)">'
+        f"{prohibition}</span>",
+        f'<span style="color:color-mix(in srgb, transparent, transparent)">'
+        f"{prohibition}</span>",
         f"<svg><foreignObject><span hidden/>{prohibition}</span>"
         "</foreignObject></svg>",
         f'<svg><text display="none">{prohibition}</text></svg>',
@@ -1568,12 +1575,16 @@ def test_agent_policy_gate_rejects_missing_maintainer_break_glass_contract(
         f"{prohibition}</span></span>",
         f'<span style="font-size:0"><span style="font-size:calc(12px)">'
         f"{prohibition}</span></span>",
+        f'<span style="font-size:0"><span style="font-size:calc(12cqw)">'
+        f"{prohibition}</span></span>",
         f'<span style="font-size:0"><span style="font-size:initial">'
         f"{prohibition}</span></span>",
         f'<span style="display:none;display:table-cell">{prohibition}</span>',
         f'<span style="display:none;display:inline flow-root">'
         f"{prohibition}</span>",
         f'<span style="transform:scale(0);transform:scale(calc(1))">'
+        f"{prohibition}</span>",
+        f'<span style="transform:scale(0);transform:translate(1px)">'
         f"{prohibition}</span>",
         f'<span style="transform:matrix(0,0,0,0,0,0);transform:matrix(1,0,0,1,0,0)">'
         f"{prohibition}</span>",

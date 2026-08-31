@@ -265,7 +265,7 @@ function isValidSuppressionDeclaration (property, value) {
   if (property === 'transform') {
     const functions = parseCssFunctions(value)
     return value === 'none' || Boolean(
-      functions && functions.every(item => transformFunctions.has(item.name))
+      functions && functions.every(isValidTransformFunction)
     )
   }
   if (property === 'clip-path') {
@@ -312,6 +312,94 @@ function isValidFontSize (value) {
     return fontSizeUnits.has(numeric[2])
   }
   return /^(?:calc|min|max|clamp)\(.+\)$/.test(value)
+}
+
+function isValidTransformCalculation (value, allowedUnits) {
+  if (!/^(?:calc|min|max|clamp)\(.+\)$/.test(value) || !/\d/.test(value)) return false
+  const identifiers = value.match(/[a-z][a-z0-9-]*/g) || []
+  return identifiers.every(identifier => (
+    ['calc', 'clamp', 'max', 'min'].includes(identifier) ||
+    allowedUnits.has(identifier)
+  ))
+}
+
+function isValidTransformNumber (value, allowPercentage = false) {
+  if (!allowPercentage && value.includes('%')) return false
+  return parseOpacityValue(value) !== null
+}
+
+function isValidTransformLength (value, allowPercentage = true) {
+  if (!allowPercentage && value.includes('%')) return false
+  const numeric = value.match(
+    /^([+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:e[+-]?\d+)?)(%|[a-z]+)?$/
+  )
+  if (numeric) {
+    if (numeric[2] === '%') return allowPercentage
+    if (!numeric[2]) return Number.parseFloat(numeric[1]) === 0
+    return fontSizeUnits.has(numeric[2])
+  }
+  const units = new Set(fontSizeUnits)
+  if (allowPercentage) units.add('%')
+  return isValidTransformCalculation(value, units)
+}
+
+function isValidTransformAngle (value) {
+  if (/^[+-]?0(?:\.0+)?(?:e[+-]?\d+)?$/.test(value)) return true
+  if (/^[+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:e[+-]?\d+)?(?:deg|grad|rad|turn)$/.test(value)) {
+    return true
+  }
+  return isValidTransformCalculation(value, new Set(['deg', 'grad', 'rad', 'turn']))
+}
+
+function isValidTransformFunction (item) {
+  if (!transformFunctions.has(item.name)) return false
+  const values = splitCssComponentValues(item.body)
+  const allNumbers = expected => (
+    values.length === expected && values.every(value => isValidTransformNumber(value))
+  )
+  if (item.name === 'matrix') return allNumbers(6)
+  if (item.name === 'matrix3d') return allNumbers(16)
+  if (item.name === 'perspective') {
+    return values.length === 1 && isValidTransformLength(values[0], false)
+  }
+  if (['rotate', 'rotatex', 'rotatey', 'rotatez'].includes(item.name)) {
+    return values.length === 1 && isValidTransformAngle(values[0])
+  }
+  if (item.name === 'rotate3d') {
+    return values.length === 4 &&
+      values.slice(0, 3).every(value => isValidTransformNumber(value)) &&
+      isValidTransformAngle(values[3])
+  }
+  if (item.name === 'scale') {
+    return values.length >= 1 && values.length <= 2 &&
+      values.every(value => isValidTransformNumber(value, true))
+  }
+  if (item.name === 'scale3d') {
+    return values.length === 3 &&
+      values.every(value => isValidTransformNumber(value, true))
+  }
+  if (['scalex', 'scaley', 'scalez'].includes(item.name)) {
+    return values.length === 1 && isValidTransformNumber(values[0], true)
+  }
+  if (item.name === 'skew') {
+    return values.length >= 1 && values.length <= 2 && values.every(isValidTransformAngle)
+  }
+  if (['skewx', 'skewy'].includes(item.name)) {
+    return values.length === 1 && isValidTransformAngle(values[0])
+  }
+  if (item.name === 'translate') {
+    return values.length >= 1 && values.length <= 2 &&
+      values.every(value => isValidTransformLength(value))
+  }
+  if (item.name === 'translate3d') {
+    return values.length === 3 &&
+      values.slice(0, 2).every(value => isValidTransformLength(value)) &&
+      isValidTransformLength(values[2], false)
+  }
+  if (['translatex', 'translatey'].includes(item.name)) {
+    return values.length === 1 && isValidTransformLength(values[0])
+  }
+  return values.length === 1 && isValidTransformLength(values[0], false)
 }
 
 function isValidFunctionalColor (value) {
@@ -370,6 +458,19 @@ function isTransparentColor (value) {
   const openingParenthesis = value.indexOf('(')
   if (openingParenthesis < 0 || !value.endsWith(')')) return false
   const body = value.slice(openingParenthesis + 1, -1)
+  const functionName = value.slice(0, openingParenthesis)
+  if (functionName === 'light-dark') {
+    const colors = splitCssFunctionArguments(body)
+    return colors.length === 2 && colors.every(isTransparentColor)
+  }
+  if (functionName === 'color-mix') {
+    const components = splitCssFunctionArguments(body)
+    return components.length === 3 && components.slice(1).every(component => (
+      isTransparentColor(
+        component.replace(/\s+[+]?(?:\d+(?:\.\d*)?|\.\d+)%$/, '')
+      )
+    ))
+  }
   let depth = 0
   let slash = -1
   const commas = []
@@ -407,8 +508,9 @@ function classifyFontSize (value) {
   }
   const units = new Set()
   const normalizedCalculation = value.replace(
-    /([+]?(?:\d+(?:\.\d*)?|\.\d+)(?:e[+-]?\d+)?)(cap|ch|cm|em|ex|ic|in|lh|mm|pc|pt|px|q|rem|rlh|vb|vh|vi|vmax|vmin|vw)\b/gi,
-    (_, amount, unit) => {
+    /([+]?(?:\d+(?:\.\d*)?|\.\d+)(?:e[+-]?\d+)?)([a-z]+)\b/gi,
+    (match, amount, unit) => {
+      if (!fontSizeUnits.has(unit.toLowerCase())) return match
       if (Number.parseFloat(amount) !== 0) units.add(unit.toLowerCase())
       return amount
     }
