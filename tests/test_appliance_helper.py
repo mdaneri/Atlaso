@@ -6831,7 +6831,12 @@ def test_wan_helper_installs_flagged_management_default_in_main_table(tmp_path):
     helper = load_helper_module()
     config_path = tmp_path / "flagged-management-default.conf"
     config_path.write_text(
-        """[targets]
+        """[feature_settings]
+routing_enabled=false
+nat_enabled=false
+wan_simulation_enabled=false
+
+[targets]
 target=eth0
   kind=physical
   role=access
@@ -6864,6 +6869,7 @@ route=0.0.0.0/0
         f"/usr/sbin/{command}" if command in {"ip", "tc"} else None
     )
 
+    assert helper._wan_config_errors(config_path) == []
     assert helper._apply_wan_routes_and_qdiscs(parsed) == 0
     assert [
         "ip",
@@ -6877,6 +6883,24 @@ route=0.0.0.0/0
         "metric",
         "100",
     ] in commands
+    assert not any(
+        command[:3] == ["ip", "route", "replace"]
+        and command[-2:] == ["table", "200"]
+        for command in commands
+    )
+
+    off_link_path = tmp_path / "flagged-management-default-off-link.conf"
+    off_link_path.write_text(
+        config_path.read_text(encoding="utf-8").replace(
+            "gateway=192.0.2.1",
+            "gateway=198.51.100.1",
+        ),
+        encoding="utf-8",
+    )
+    assert any(
+        "gateway 198.51.100.1 is not on-link for WAN target eth0" in error
+        for error in helper._wan_config_errors(off_link_path)
+    )
 
 
 def test_wan_helper_retires_previous_flagged_management_default(tmp_path):

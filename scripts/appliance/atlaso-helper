@@ -8803,6 +8803,29 @@ def _wan_feature_settings(
     }
 
 
+def _wan_route_is_active_management_default(
+    route: dict[str, str],
+    targets: dict[str, dict[str, str]],
+) -> bool:
+    """Return whether a saved route remains active for management reachability.
+
+    Args:
+        route: Parsed saved route intent.
+        targets: Parsed WAN targets keyed by interface name.
+    """
+    if not _wan_bool(route.get("enabled", ""), default=True):
+        return False
+    if not _wan_bool(
+        targets.get(route.get("interface", ""), {}).get("management_ui", "false")
+    ):
+        return False
+    try:
+        destination = ip_network(route.get("destination_cidr", ""), strict=False)
+    except ValueError:
+        return False
+    return destination.prefixlen == 0
+
+
 def _wan_config_errors(path: Path) -> list[str]:
     """Perform WAN config errors.
 
@@ -8863,8 +8886,14 @@ def _wan_config_errors(path: Path) -> list[str]:
         domain = target.get("routing_domain", "lab")
         if domain not in {"management", "lab"}:
             errors.append(f"WAN target {name or '<missing>'} routing domain must be management or lab.")
+    desired_routes_for_validation = [
+        route
+        for route in parsed["routes"]
+        if routing_enabled
+        or _wan_route_is_active_management_default(route, targets)
+    ]
     default_route_destinations: dict[int, str] = {}
-    for route in parsed["routes"] if routing_enabled else []:
+    for route in desired_routes_for_validation:
         destination = route.get("destination_cidr", "")
         try:
             destination_network = ip_network(destination, strict=False)
@@ -8884,7 +8913,6 @@ def _wan_config_errors(path: Path) -> list[str]:
         if not route.get("gateway", ""):
             errors.append(f"Default route {canonical_destination} requires a next-hop gateway.")
 
-    desired_routes_for_validation = parsed["routes"] if routing_enabled else []
     desired_route_ids = {id(route) for route in desired_routes_for_validation}
     for route in [*desired_routes_for_validation, *parsed["removed_routes"]]:
         desired_route = id(route) in desired_route_ids

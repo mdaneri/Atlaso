@@ -5459,7 +5459,17 @@ def routes_wan_context(db: Session) -> dict:
         nat_enabled=False,
         wan_simulation_enabled=True,
     )
+    management_validation_errors = validate_wan_state(
+        *validation_args,
+        management_target_names={
+            target["name"] for target in targets if target.get("management_ui")
+        },
+        routing_enabled=False,
+        nat_enabled=False,
+        wan_simulation_enabled=False,
+    )
     validation_errors = [
+        *management_validation_errors,
         *(
             routing_validation_errors
             if feature_settings.routing_enabled

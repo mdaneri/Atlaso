@@ -108,6 +108,42 @@ def test_disabled_features_do_not_surface_inactive_row_validation_errors():
     )
 
 
+def test_disabled_routing_still_validates_active_management_default():
+    """Validate a protected host default while ignoring dormant lab routes."""
+    dormant_route = Route(
+        destination_cidr="10.20.0.0/24",
+        gateway="198.51.100.1",
+        interface_name="eth2",
+        metric=100,
+        enabled=True,
+    )
+    management_default = Route(
+        destination_cidr="0.0.0.0/0",
+        gateway="198.51.100.1",
+        interface_name="eth1",
+        metric=100,
+        enabled=True,
+    )
+
+    errors = validate_wan_state(
+        [dormant_route, management_default],
+        [],
+        {"eth1", "eth2"},
+        route_target_cidrs={
+            "eth1": ("192.0.2.10/24", None),
+            "eth2": ("203.0.113.10/24", None),
+        },
+        management_target_names={"eth1"},
+        routing_enabled=False,
+        nat_enabled=False,
+        wan_simulation_enabled=False,
+    )
+
+    assert errors == [
+        "Route 0.0.0.0/0: Route gateway 198.51.100.1 is not on-link for the selected target's configured IPv4 CIDR."
+    ]
+
+
 def test_fresh_settings_default_off_and_legacy_rows_infer_once(client):
     """Reconcile missing upgrade keys from effective legacy rows only once.
 
@@ -249,6 +285,38 @@ def test_flagged_management_default_route_also_preserves_host_default():
     assert mirrored_management_default_routes(config) == {
         ("0.0.0.0/0", "eth1", "192.0.2.1", "90")
     }
+
+
+def test_disabled_routing_preview_keeps_flagged_management_host_default():
+    """Render the protected main-table mutation independently of lab Routing."""
+    route = Route(
+        destination_cidr="0.0.0.0/0",
+        gateway="192.0.2.1",
+        interface_name="eth1",
+        metric=90,
+        enabled=True,
+    )
+    config = render_wan_config(
+        [route],
+        targets=[
+            {
+                "name": "eth1",
+                "kind": "physical",
+                "role": "access",
+                "ip_cidr": "192.0.2.10/24",
+                "routing_domain": "lab",
+                "route_allowed": True,
+                "management_ui": True,
+            }
+        ],
+        settings=RoutesWanSettings(False, False, False),
+    )
+
+    assert "ip route replace 0.0.0.0/0 via 192.0.2.1 dev eth1 metric 90 table 200" not in config
+    assert (
+        "ip route replace 0.0.0.0/0 via 192.0.2.1 dev eth1 metric 90"
+        "  # flagged-management host default"
+    ) in config
 
 
 def test_flagged_management_default_cleanup_uses_last_applied_mirroring():

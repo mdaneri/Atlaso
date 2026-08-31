@@ -503,6 +503,7 @@ def validate_wan_state(
     routing_rules: list[RoutingRule] | None = None,
     routing_target_names: set[str] | None = None,
     route_target_cidrs: dict[str, Iterable[str | None]] | None = None,
+    management_target_names: set[str] | None = None,
     routing_enabled: bool = True,
     nat_enabled: bool = True,
     wan_simulation_enabled: bool = True,
@@ -519,6 +520,7 @@ def validate_wan_state(
         routing_rules: Routing rules supplied by the caller.
         routing_target_names: Routing target names supplied by the caller.
         route_target_cidrs: Configured target CIDRs used to validate route next hops.
+        management_target_names: Targets whose enabled defaults remain active for management reachability.
         routing_enabled: Validate routing resources when globally active.
         nat_enabled: Validate NAT resources when effectively active.
         wan_simulation_enabled: Validate WAN policy resources when globally active.
@@ -528,36 +530,44 @@ def validate_wan_state(
     """
     errors: list[str] = []
     policy_ids = {policy.id for policy in policies}
-    if routing_enabled:
-        default_families: set[int] = set()
-        for route in routes:
-            try:
-                destination_network = ip_network(route.destination_cidr, strict=False)
-            except ValueError:
+    management_target_names = management_target_names or set()
+    default_families: set[int] = set()
+    for route in routes:
+        try:
+            destination_network = ip_network(route.destination_cidr, strict=False)
+        except ValueError:
+            if routing_enabled:
                 errors.append(f"Route {route.destination_cidr} is not a valid destination CIDR.")
-                destination_network = None
-            if destination_network and destination_network.prefixlen == 0:
-                if destination_network.version in default_families:
-                    errors.append(f"Only one IPv{destination_network.version} default route can be configured.")
-                default_families.add(destination_network.version)
-                if not route.gateway:
-                    errors.append(f"Default IPv{destination_network.version} route {route.destination_cidr} requires a gateway.")
-            if route.gateway:
-                try:
-                    gateway_address = ip_address(route.gateway)
-                except ValueError:
-                    errors.append(f"Gateway {route.gateway} for {route.destination_cidr} is not a valid IP address.")
-                    gateway_address = None
-                if destination_network and gateway_address and gateway_address.version != destination_network.version:
-                    errors.append(f"Gateway {route.gateway} for {route.destination_cidr} must use the same IP family as the destination.")
-                elif gateway_address and route_target_cidrs and route.interface_name in route_target_cidrs:
-                    target_error = route_gateway_target_error(route.gateway, route_target_cidrs[route.interface_name])
-                    if target_error:
-                        errors.append(f"Route {route.destination_cidr}: {target_error}")
-            if route.enabled and route.interface_name not in target_names:
-                errors.append(f"Route {route.destination_cidr} uses {route.interface_name}, which is not an access interface or VLAN target.")
-            if route.metric < 0:
-                errors.append(f"Route {route.destination_cidr} has a negative metric.")
+            continue
+        management_default_active = bool(
+            route.enabled
+            and destination_network.prefixlen == 0
+            and route.interface_name in management_target_names
+        )
+        if not routing_enabled and not management_default_active:
+            continue
+        if destination_network.prefixlen == 0:
+            if destination_network.version in default_families:
+                errors.append(f"Only one IPv{destination_network.version} default route can be configured.")
+            default_families.add(destination_network.version)
+            if not route.gateway:
+                errors.append(f"Default IPv{destination_network.version} route {route.destination_cidr} requires a gateway.")
+        if route.gateway:
+            try:
+                gateway_address = ip_address(route.gateway)
+            except ValueError:
+                errors.append(f"Gateway {route.gateway} for {route.destination_cidr} is not a valid IP address.")
+                gateway_address = None
+            if gateway_address and gateway_address.version != destination_network.version:
+                errors.append(f"Gateway {route.gateway} for {route.destination_cidr} must use the same IP family as the destination.")
+            elif gateway_address and route_target_cidrs and route.interface_name in route_target_cidrs:
+                target_error = route_gateway_target_error(route.gateway, route_target_cidrs[route.interface_name])
+                if target_error:
+                    errors.append(f"Route {route.destination_cidr}: {target_error}")
+        if route.enabled and route.interface_name not in target_names:
+            errors.append(f"Route {route.destination_cidr} uses {route.interface_name}, which is not an access interface or VLAN target.")
+        if route.metric < 0:
+            errors.append(f"Route {route.destination_cidr} has a negative metric.")
 
     if wan_simulation_enabled:
         for route in routes:
@@ -1017,7 +1027,13 @@ def render_wan_config(
         route_effective = route.enabled and settings.routing_enabled
         if not route_effective:
             lines.append(f"ip {route_family}route del {destination_cidr} dev {route.interface_name} table {LAB_ROUTE_TABLE_ID}  # disabled desired route")
-            if (not route.enabled) and (management_ui_default or previously_mirrored_default):
+            if route.enabled and management_ui_default:
+                main_command = ["ip", "-6", "route", "replace", destination_cidr] if destination.version == 6 else ["ip", "route", "replace", destination_cidr]
+                if route.gateway:
+                    main_command.extend(["via", route.gateway])
+                main_command.extend(["dev", route.interface_name, "metric", str(route.metric)])
+                lines.append(" ".join(main_command) + "  # flagged-management host default")
+            elif (not route.enabled) and (management_ui_default or previously_mirrored_default):
                 lines.append(
                     f"ip {route_family}route del {destination_cidr} dev {route.interface_name}"
                     "  # disabled flagged-management default"
