@@ -669,6 +669,7 @@ MERGE_HOLD_MODAL_PROHIBITION = re.compile(
     r"\s+merge|"
     r"you\s+(?:(?:are\s+not|aren't|aren’t|isn't|isn’t)\s+"
     r"(?:allowed|authorized)\s+to\s+merge|are\s+forbidden\s+from\s+merging)|"
+    r"you\s+are\s+forbidden\s+to\s+merge|"
     r"you(?:'re|’re)\s+not\s+(?:allowed|authorized)\s+to\s+merge|"
     r"you\s+do\s+not\s+have\s+(?:permission|authorization)\s+"
     r"to\s+merge)\b"
@@ -1011,8 +1012,9 @@ MERGE_HOLD_WITHOUT_APPROVAL = re.compile(
 )
 MERGE_HOLD_RESUMABLE_GATE_SUFFIX = re.compile(
     r"^\s+(?:after|when|if|once|until)\s+"
-    r"(?:ci|tests?|checks?|validation|builds?|"
-    r"(?:(?:[a-z][a-z0-9_-]*\s+){0,2}review))\b"
+    r"(?:(?:the|an?)\s+)?(?:ci|tests?|checks?|validation|builds?|"
+    r"(?:(?:[a-z][a-z0-9_-]*\s+){0,2}"
+    r"(?:review|deployments?|release[- ]jobs?)))\b"
 )
 MERGE_HOLD_NON_PR_OBJECT = re.compile(
     r"^\s+(?!(?:(?:this|the)\s+)?(?:pull request|pr)\b|it\b|"

@@ -2439,6 +2439,12 @@
           ]
         },
         {
+          "text": "You are forbidden to merge this PR.",
+          "add_holds": [
+            "do not merge"
+          ]
+        },
+        {
           "text": "You are not allowed to merge this PR.",
           "add_holds": [
             "do not merge"
@@ -2540,6 +2546,17 @@
       "expected_holds": [
         "wait for approval"
       ]
+    },
+    {
+      "name": "deployment-qualified-prohibition-is-resumable",
+      "default_merge_authority": true,
+      "instructions": [
+        {
+          "text": "Implement issue #602, but do not merge until the staging deployment succeeds."
+        }
+      ],
+      "generated": "Complete the guarded merge after the staging deployment succeeds.",
+      "expected_holds": []
     },
     {
       "name": "ci-qualified-prohibition-is-resumable",
