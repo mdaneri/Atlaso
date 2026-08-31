@@ -292,7 +292,18 @@ function classifyFontSize (value) {
     }
     return 'visible'
   }
-  const calculated = parseOpacityValue(value)
+  const units = new Set()
+  const normalizedCalculation = value.replace(
+    /([+]?(?:\d+(?:\.\d*)?|\.\d+))(cap|ch|cm|em|ex|ic|in|lh|mm|pc|pt|px|q|rem|rlh|vb|vh|vi|vmax|vmin|vw)\b/gi,
+    (_, amount, unit) => {
+      if (Number.parseFloat(amount) !== 0) units.add(unit.toLowerCase())
+      return amount
+    }
+  )
+  if (units.size > 1 || (units.size > 0 && normalizedCalculation.includes('%'))) {
+    return 'inherit'
+  }
+  const calculated = parseOpacityValue(normalizedCalculation)
   if (calculated === null) return 'inherit'
   return calculated === 0 ? 'zero' : 'visible'
 }
