@@ -232,7 +232,7 @@ function isValidSuppressionDeclaration (property, value) {
   }
   if (property === 'font-size') {
     return /^(?:xx-small|x-small|small|medium|large|x-large|xx-large|xxx-large|larger|smaller|math)$/.test(value) ||
-      /^[+]?(?:\d+(?:\.\d*)?|\.\d+)(?:%|[a-z]+)?$/.test(value) ||
+      /^[+]?(?:\d+(?:\.\d*)?|\.\d+)(?:e[+-]?\d+)?(?:%|[a-z]+)?$/.test(value) ||
       /^(?:calc|min|max|clamp)\(.+\)$/.test(value)
   }
   if (property === 'transform') {
@@ -301,7 +301,7 @@ function classifyFontSize (value) {
     return 'visible'
   }
   const numeric = value.match(
-    /^([+]?(?:\d+(?:\.\d*)?|\.\d+))(?:([a-z]+)|(%))?$/
+    /^([+]?(?:\d+(?:\.\d*)?|\.\d+)(?:e[+-]?\d+)?)(?:([a-z]+)|(%))?$/
   )
   if (numeric) {
     const amount = Number.parseFloat(numeric[1])
@@ -313,7 +313,7 @@ function classifyFontSize (value) {
   }
   const units = new Set()
   const normalizedCalculation = value.replace(
-    /([+]?(?:\d+(?:\.\d*)?|\.\d+))(cap|ch|cm|em|ex|ic|in|lh|mm|pc|pt|px|q|rem|rlh|vb|vh|vi|vmax|vmin|vw)\b/gi,
+    /([+]?(?:\d+(?:\.\d*)?|\.\d+)(?:e[+-]?\d+)?)(cap|ch|cm|em|ex|ic|in|lh|mm|pc|pt|px|q|rem|rlh|vb|vh|vi|vmax|vmin|vw)\b/gi,
     (_, amount, unit) => {
       if (Number.parseFloat(amount) !== 0) units.add(unit.toLowerCase())
       return amount
@@ -411,6 +411,7 @@ function stripCssComments (value) {
     }
     if (character === '/' && value[index + 1] === '*') {
       const end = value.indexOf('*/', index + 2)
+      outputValue += ' '
       index = end < 0 ? value.length : end + 1
       continue
     }
@@ -564,6 +565,7 @@ function hasHiddenAttributes (attributes, inheritedCustomProperties = new Map(),
     irreversible: (
       parsedAttributes.has('hidden') ||
       parsedAttributes.has('inert') ||
+      parsedAttributes.has('popover') ||
       (tag === 'dialog' && !parsedAttributes.has('open')) ||
       decodeHtmlAttributeEntities(parsedAttributes.get('aria-hidden') || '')
         .toLowerCase() === 'true' ||
@@ -697,6 +699,11 @@ function isHtmlSuppressed () {
   return false
 }
 
+function isTableFosteredText (content) {
+  if (!content.trim() || !htmlStack.length) return false
+  return tableContextChildren.has(htmlStack[htmlStack.length - 1].tag)
+}
+
 function updateHtmlSuppression (content, inlineContext = false) {
   const tagPattern = /<(?<closing>\/)?(?<tag>[A-Za-z][A-Za-z0-9-]*)\b(?<attributes>(?:[^<>"']|"[^"]*"|'[^']*')*?)(?<selfClosing>\/)?\s*>/g
   const parseableContent = content.replace(/<!--[\s\S]*?(?:-->|$)/g, '')
@@ -712,7 +719,10 @@ function updateHtmlSuppression (content, inlineContext = false) {
     if (match.groups.closing) {
       for (let index = htmlStack.length - 1; index >= 0; index -= 1) {
         if (htmlStack[index].tag === tag) {
-          if (paragraphClosingTags.has(tag)) {
+          const hasNonFormattingDescendant = htmlStack
+            .slice(index + 1)
+            .some(entry => !formattingTags.has(entry.tag))
+          if (paragraphClosingTags.has(tag) || hasNonFormattingDescendant) {
             htmlStack.splice(index)
           } else {
             htmlStack.splice(index, 1)
@@ -817,16 +827,24 @@ function processHtmlBlock (content) {
   const tagPattern = /<!--[\s\S]*?(?:-->|$)|<![^>]*>|<\?[\s\S]*?(?:\?>|$)|<\/?[A-Za-z][A-Za-z0-9-]*\b(?:[^<>"']|"[^"]*"|'[^']*')*?\/?\s*>/g
   let cursor = 0
   for (const match of content.matchAll(tagPattern)) {
-    if (!blockquoteDepth && !isHtmlSuppressed()) {
-      output.push(markdown.utils.unescapeAll(content.slice(cursor, match.index)))
+    const textContent = content.slice(cursor, match.index)
+    if (
+      !blockquoteDepth &&
+      (!isHtmlSuppressed() || isTableFosteredText(textContent))
+    ) {
+      output.push(markdown.utils.unescapeAll(textContent))
     }
     if (/^<\/?[A-Za-z]/.test(match[0])) {
       updateHtmlSuppression(match[0])
     }
     cursor = match.index + match[0].length
   }
-  if (!blockquoteDepth && !isHtmlSuppressed()) {
-    output.push(markdown.utils.unescapeAll(content.slice(cursor)))
+  const trailingContent = content.slice(cursor)
+  if (
+    !blockquoteDepth &&
+    (!isHtmlSuppressed() || isTableFosteredText(trailingContent))
+  ) {
+    output.push(markdown.utils.unescapeAll(trailingContent))
   }
   output.push('\n')
 }

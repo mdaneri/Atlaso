@@ -1345,6 +1345,7 @@ def test_agent_policy_gate_rejects_missing_maintainer_break_glass_contract(
         f'<span style="opacity:0e0">{prohibition}</span>',
         f'<span style="font-size:0">{prohibition}</span>',
         f'<span style="font-size:calc(0px)">{prohibition}</span>',
+        f'<span style="font-size:0e0">{prohibition}</span>',
         f'<span style="transform:scale(0)">{prohibition}</span>',
         f'<span style="transform:scale(calc(0))">{prohibition}</span>',
         f'<span style="font-size:0"><span style="font-size:1em">'
@@ -1352,6 +1353,7 @@ def test_agent_policy_gate_rejects_missing_maintainer_break_glass_contract(
         f"<b hidden>retired\n\n{prohibition}",
         f'<span style="display:none;display\\:block">{prohibition}</span>',
         f"<iframe>{prohibition}</iframe>",
+        f"<div popover>{prohibition}</div>",
         f"<datalist>{prohibition}</datalist>",
         f"<noscript>{prohibition}</noscript>",
         f'<span aria-hidden="tr&#117;e">{prohibition}</span>',
@@ -1544,6 +1546,7 @@ def test_agent_policy_gate_rejects_missing_maintainer_break_glass_contract(
         f'<span style="display:none;display:table-cell">{prohibition}</span>',
         f'<span style="transform:scale(0);transform:scale(calc(1))">'
         f"{prohibition}</span>",
+        f'<span style="display:n/**/one">{prohibition}</span>',
         f'<span style="display:none;display:initial">{prohibition}</span>',
         f'<span style="display:none;display:unset">{prohibition}</span>',
         f'<svg hidden/>{prohibition}',
@@ -1608,6 +1611,29 @@ def test_agent_policy_gate_rejects_missing_maintainer_break_glass_contract(
             == f"required agent policy marker is missing: {prohibition}"
             for finding in findings
         )
+
+    visible_parser_recovery_replacements = (
+        f"<table hidden>{prohibition}</table>",
+        f"<span><mark hidden>retired</span>{prohibition}",
+    )
+    for replacement in visible_parser_recovery_replacements:
+        for relative_path in required_entry_points:
+            write_policy_files(tmp_path)
+            path = tmp_path / relative_path
+            original = path.read_text(encoding="utf-8")
+            assert prohibition in original
+            path.write_text(
+                original.replace(prohibition, replacement, 1),
+                encoding="utf-8",
+            )
+
+            findings = check_agent_policy_gate(tmp_path)
+            assert not any(
+                finding.path == path
+                and finding.message
+                == f"required agent policy marker is missing: {prohibition}"
+                for finding in findings
+            )
 
     visible_open_dialog_replacement = f"<dialog open>{prohibition}</dialog>"
     for relative_path in required_entry_points:
