@@ -2518,6 +2518,22 @@
       ]
     },
     {
+      "name": "condition-first-approval-is-preserved",
+      "default_merge_authority": true,
+      "instructions": [
+        {
+          "text": "Implement issue #602, but only with my approval may you merge this PR.",
+          "add_holds": [
+            "wait for approval"
+          ]
+        }
+      ],
+      "generated": "Wait for approval before merging.",
+      "expected_holds": [
+        "wait for approval"
+      ]
+    },
+    {
       "name": "leave-pr-in-draft-is-ineligible",
       "default_merge_authority": false,
       "instructions": [

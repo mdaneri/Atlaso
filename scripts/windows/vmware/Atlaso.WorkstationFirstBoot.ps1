@@ -25,10 +25,126 @@ function Initialize-AtlasoWorkstationProcessJobType {
 using System;
 using System.ComponentModel;
 using System.Diagnostics;
+using System.IO;
 using System.Runtime.InteropServices;
+using System.Text;
+using System.Threading;
+using System.Threading.Tasks;
 
 namespace Atlaso
 {
+    public sealed class WorkstationProcessStreams : IDisposable
+    {
+        private readonly StreamReader standardOutput;
+        private readonly StreamReader standardError;
+        private readonly StringBuilder output = new StringBuilder();
+        private readonly StringBuilder error = new StringBuilder();
+        private readonly object outputLock = new object();
+        private readonly object errorLock = new object();
+        private readonly CancellationTokenSource cancellation = new CancellationTokenSource();
+        private readonly Task outputTask;
+        private readonly Task errorTask;
+
+        public WorkstationProcessStreams(Process process)
+        {
+            standardOutput = process.StandardOutput;
+            standardError = process.StandardError;
+            outputTask = CopyAsync(standardOutput, output, outputLock, cancellation.Token);
+            errorTask = CopyAsync(standardError, error, errorLock, cancellation.Token);
+        }
+
+        private static async Task CopyAsync(
+            StreamReader reader,
+            StringBuilder destination,
+            object syncRoot,
+            CancellationToken cancellationToken)
+        {
+            char[] buffer = new char[4096];
+            try
+            {
+                while (true)
+                {
+                    int count = await reader.ReadAsync(buffer.AsMemory(), cancellationToken).ConfigureAwait(false);
+                    if (count == 0)
+                    {
+                        return;
+                    }
+                    lock (syncRoot)
+                    {
+                        destination.Append(buffer, 0, count);
+                    }
+                }
+            }
+            catch (ObjectDisposedException)
+            {
+                if (!cancellationToken.IsCancellationRequested)
+                {
+                    throw;
+                }
+                // The bounded caller closes a descendant-held stream after its
+                // drain deadline. Bytes copied before closure remain available.
+            }
+            catch (IOException)
+            {
+                if (!cancellationToken.IsCancellationRequested)
+                {
+                    throw;
+                }
+                // Closing the Windows pipe can surface as an I/O failure on the
+                // asynchronous reader; already copied diagnostics remain valid.
+            }
+            catch (OperationCanceledException)
+            {
+                if (!cancellationToken.IsCancellationRequested)
+                {
+                    throw;
+                }
+                // A descendant-held pipe reached its explicit drain deadline.
+            }
+        }
+
+        public bool WaitForCompletion(int timeoutMilliseconds)
+        {
+            return Task.WaitAll(new[] { outputTask, errorTask }, timeoutMilliseconds);
+        }
+
+        public void CloseAndWait(int timeoutMilliseconds)
+        {
+            cancellation.Cancel();
+            standardOutput.Dispose();
+            standardError.Dispose();
+            if (!Task.WaitAll(new[] { outputTask, errorTask }, timeoutMilliseconds))
+            {
+                throw new TimeoutException("Redirected process streams remained active after closure.");
+            }
+        }
+
+        public string GetOutput()
+        {
+            lock (outputLock)
+            {
+                return output.ToString();
+            }
+        }
+
+        public string GetError()
+        {
+            lock (errorLock)
+            {
+                return error.ToString();
+            }
+        }
+
+        public void Dispose()
+        {
+            cancellation.Cancel();
+            standardOutput.Dispose();
+            standardError.Dispose();
+            cancellation.Dispose();
+            GC.SuppressFinalize(this);
+        }
+    }
+
     public sealed class WorkstationProcessJob : IDisposable
     {
         private const uint JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE = 0x00002000;
@@ -518,6 +634,7 @@ Positive deadline for the external process.
 
 .PARAMETER Action
 Safe action description used in failure messages.
+
 #>
 function Invoke-AtlasoBoundedProcess {
     param(
@@ -527,6 +644,7 @@ function Invoke-AtlasoBoundedProcess {
         [Parameter(Mandatory = $true)][string]$Action
     )
 
+    Initialize-AtlasoWorkstationProcessJobType
     $startInfo = [System.Diagnostics.ProcessStartInfo]::new()
     $startInfo.FileName = $FilePath
     $startInfo.UseShellExecute = $false
@@ -537,14 +655,15 @@ function Invoke-AtlasoBoundedProcess {
     }
     $process = [System.Diagnostics.Process]::new()
     $process.StartInfo = $startInfo
+    $streams = $null
     try {
         if (-not $process.Start()) {
             throw "$Action could not be started."
         }
-        # Drain both streams asynchronously so a verbose child cannot block
-        # before the bounded wait has an opportunity to terminate its tree.
-        $standardOutput = $process.StandardOutput.ReadToEndAsync()
-        $standardError = $process.StandardError.ReadToEndAsync()
+        # Drain both streams concurrently and retain each copied chunk. A
+        # descendant-held writer can then be closed at a bounded deadline
+        # without discarding diagnostics that already reached this process.
+        $streams = [Atlaso.WorkstationProcessStreams]::new($process)
         if (-not $process.WaitForExit($TimeoutSeconds * 1000)) {
             try {
                 $process.Kill($true)
@@ -562,14 +681,36 @@ function Invoke-AtlasoBoundedProcess {
             }
             throw "$Action exceeded its $TimeoutSeconds-second deadline."
         }
-        $output = $standardOutput.GetAwaiter().GetResult()
-        $null = $standardError.GetAwaiter().GetResult()
+        $streamTimeoutMilliseconds = [Math]::Min($TimeoutSeconds * 1000, 10000)
+        if (-not $streams.WaitForCompletion($streamTimeoutMilliseconds)) {
+            try {
+                $streams.CloseAndWait($streamTimeoutMilliseconds)
+            }
+            catch {
+                $streamFailure = [System.InvalidOperationException]::new(
+                    "$Action exited but redirected-stream completion could not be proven.",
+                    $_.Exception
+                )
+                $streamFailure.Data['AtlasoProcessTreeTerminationUnproven'] = $true
+                throw $streamFailure
+            }
+            $streamFailure = [System.InvalidOperationException]::new(
+                "$Action exited but a descendant retained redirected output handles."
+            )
+            $streamFailure.Data['AtlasoProcessTreeTerminationUnproven'] = $true
+            throw $streamFailure
+        }
+        $output = $streams.GetOutput()
+        $null = $streams.GetError()
         if ($process.ExitCode -ne 0) {
             throw "$Action failed with exit code $($process.ExitCode)."
         }
         return $output
     }
     finally {
+        if ($streams) {
+            $streams.Dispose()
+        }
         $process.Dispose()
     }
 }

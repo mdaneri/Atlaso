@@ -741,6 +741,9 @@ def test_merge_hold_directions_recognizes_approval_needed() -> None:
     assert merge_hold_directions(
         "Implement issue #602, but please merge this PR after I approve."
     ) == {"wait for approval": "add"}
+    assert merge_hold_directions(
+        "Implement issue #602, but only with my approval may you merge this PR."
+    ) == {"wait for approval": "add"}
 
 
 def test_merge_hold_directions_withdraws_object_qualified_leave_open() -> None:
