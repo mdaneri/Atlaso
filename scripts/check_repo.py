@@ -951,6 +951,10 @@ DEFAULT_MERGE_AUTHORITY_NEGATED_MUTATION = re.compile(
     r"build|refactor|repair|commit|push)"
     r"\b[^;.!?]*"
 )
+DEFAULT_MERGE_AUTHORITY_TASK_NEGATED_MUTATION = re.compile(
+    r"\b(?:implement|fix|patch|resolve|solve|deliver|repair|commit|push)\b|"
+    r"\b(?:open|submit|prepare|create)\b[^;.!?]*\b(?:pull request|pr)\b"
+)
 DEFAULT_MERGE_AUTHORITY_EXPLANATORY_FIX = re.compile(
     r"\b(?:describe|explain|outline|summarize|document)\s+"
     r"(?:how|what|whether)\b[^.!?]{0,80}"
@@ -1164,6 +1168,10 @@ MERGE_HOLD_APPROVAL_BEFORE_MERGING = re.compile(
     r"[^.!?]{0,40}\b(?:before merging|to merge"
     r"(?:\s+(?:(?:this|the)\s+)?(?:pull request|pr))?)\b"
 )
+MERGE_HOLD_NEGATED_APPROVAL_REQUIREMENT = re.compile(
+    r"\b(?:no\s+longer|do\s+not|don't|don’t|does\s+not|doesn't|doesn’t|"
+    r"did\s+not|didn't|didn’t)\s*$"
+)
 MERGE_HOLD_WITHOUT_APPROVAL = re.compile(
     r"\b(?:do not|don't|don’t|must not)\s+merge"
     r"(?:\s+(?:(?:this|the)\s+)?(?:pull request|pr))?\s+without\s+"
@@ -1189,6 +1197,29 @@ MERGE_RESUMABLE_GATE_FIRST = re.compile(
     r"(?P<gate>(?:(?:[a-z][a-z0-9_-]*\s+){0,2})?"
     r"(?:ci|tests?|checks?|validation|builds?|review|deployments?|"
     r"release[- ]jobs?))"
+    r"(?:\s+(?:to\s+)?(?:pass(?:es)?|succeed(?:s)?|complete(?:s)?|"
+    r"finish(?:es)?|clear(?:s)?))?\s+"
+    r"before\s+(?:merging|(?:you|i|we)\s+merge)\b"
+)
+MERGE_RESUMABLE_GATE_CONJUNCTION_TERM = (
+    r"(?:(?:[a-z][a-z0-9_-]*\s+){0,2})?"
+    r"(?:ci|tests?|checks?|validation|builds?|review|deployments?|"
+    r"release[- ]jobs?)"
+)
+MERGE_RESUMABLE_GATE_CONJUNCTION_SEPARATOR = re.compile(
+    r"\s*(?:,\s*(?:(?:and|or)\s+)?|\s+(?:and|or)\s+)"
+)
+MERGE_RESUMABLE_GATE_CONDITION_LIST = re.compile(
+    rf"\b(?:after|when|if|once|until|pending)\s+"
+    rf"(?:(?:the|an?)\s+)?(?P<gates>{MERGE_RESUMABLE_GATE_CONJUNCTION_TERM}"
+    rf"(?:\s*(?:,\s*(?:(?:and|or)\s+)?|\s+(?:and|or)\s+)"
+    rf"(?:(?:the|an?)\s+)?{MERGE_RESUMABLE_GATE_CONJUNCTION_TERM})+)\b"
+)
+MERGE_RESUMABLE_GATE_FIRST_LIST = re.compile(
+    rf"\b(?:wait\s+(?:for|until)|await)\s+"
+    rf"(?:(?:the|an?)\s+)?(?P<gates>{MERGE_RESUMABLE_GATE_CONJUNCTION_TERM}"
+    rf"(?:\s*(?:,\s*(?:(?:and|or)\s+)?|\s+(?:and|or)\s+)"
+    rf"(?:(?:the|an?)\s+)?{MERGE_RESUMABLE_GATE_CONJUNCTION_TERM})+)"
     r"(?:\s+(?:to\s+)?(?:pass(?:es)?|succeed(?:s)?|complete(?:s)?|"
     r"finish(?:es)?|clear(?:s)?))?\s+"
     r"before\s+(?:merging|(?:you|i|we)\s+merge)\b"
@@ -1837,7 +1868,11 @@ def merge_hold_directions(
             directions["wait for approval"] = "add"
     for condition_match in MERGE_HOLD_APPROVAL_BEFORE_MERGING.finditer(normalized):
         condition = condition_match.group(0)
-        if not _is_hold_discussion(
+        condition_prefix = _task_clause_prefix(normalized, condition_match.start())
+        if MERGE_HOLD_NEGATED_APPROVAL_REQUIREMENT.search(condition_prefix):
+            if "wait for approval" in active_holds:
+                directions["wait for approval"] = "remove"
+        elif not _is_hold_discussion(
             normalized, condition_match.start()
         ) and not _hold_targets_other_task(
             normalized,
@@ -2000,6 +2035,30 @@ def resumable_merge_gate_directions(
     """
     normalized = " ".join(text.casefold().split())
     events: list[tuple[int, str, str]] = []
+    conjunction_matches = (
+        *MERGE_RESUMABLE_GATE_CONDITION_LIST.finditer(normalized),
+        *MERGE_RESUMABLE_GATE_FIRST_LIST.finditer(normalized),
+    )
+    for match in conjunction_matches:
+        if _is_hold_discussion(normalized, match.start()) or _hold_targets_other_task(
+            normalized,
+            match.start(),
+            match.group(0),
+            active_pull_request=active_pull_request,
+            active_issue=active_issue,
+        ):
+            continue
+        for gate_index, gate in enumerate(
+            MERGE_RESUMABLE_GATE_CONJUNCTION_SEPARATOR.split(match.group("gates"))
+        ):
+            gate = re.sub(r"^(?:the|an?)\s+", "", gate.strip())
+            events.append(
+                (
+                    match.start() + gate_index,
+                    "add",
+                    _canonical_resumable_merge_gate(gate),
+                )
+            )
     for match in MERGE_RESUMABLE_GATE_CONDITION.finditer(normalized):
         if _is_hold_discussion(normalized, match.start()) or _hold_targets_other_task(
             normalized,
@@ -2121,6 +2180,9 @@ def source_has_default_merge_authority(instructions: tuple[str, ...]) -> bool:
                 for negation in negated_workflows
             )
         )
+        negated_mutations = tuple(
+            DEFAULT_MERGE_AUTHORITY_NEGATED_MUTATION.finditer(normalized)
+        )
         exclusion_matches = tuple(
             DEFAULT_MERGE_AUTHORITY_SOURCE_EXCLUSIONS.finditer(normalized)
         ) + tuple(
@@ -2139,9 +2201,7 @@ def source_has_default_merge_authority(instructions: tuple[str, ...]) -> bool:
             DEFAULT_MERGE_AUTHORITY_POST_STOP_SUMMARY.finditer(normalized)
         ) + tuple(
             DEFAULT_MERGE_AUTHORITY_POST_STOP_STATUS.finditer(normalized)
-        ) + tuple(
-            DEFAULT_MERGE_AUTHORITY_NEGATED_MUTATION.finditer(normalized)
-        ) + workflow_exclusions + tuple(
+        ) + negated_mutations + workflow_exclusions + tuple(
             DEFAULT_MERGE_AUTHORITY_WORKFLOW_RECLASSIFICATION.finditer(normalized)
         )
         source_markers = tuple(
@@ -2174,9 +2234,16 @@ def source_has_default_merge_authority(instructions: tuple[str, ...]) -> bool:
             )
         )
         exclusion_matches += direct_review_matches
+        authority_revoking_exclusions = tuple(
+            match
+            for match in exclusion_matches
+            if match not in negated_mutations
+            or DEFAULT_MERGE_AUTHORITY_TASK_NEGATED_MUTATION.search(match.group(0))
+            is not None
+        )
         events = [
             (match.start(), 0, False)
-            for match in exclusion_matches
+            for match in authority_revoking_exclusions
         ]
         events.extend(
             (match.start(), 1, True)

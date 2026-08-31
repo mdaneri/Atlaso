@@ -3717,6 +3717,28 @@
       "expected_holds": []
     },
     {
+      "name": "scoped-mutation-exclusion-preserves-authority",
+      "default_merge_authority": true,
+      "instructions": [
+        {
+          "text": "Implement issue #602, but do not change the documentation."
+        }
+      ],
+      "generated": "Complete the guarded merge when every required gate passes.",
+      "expected_holds": []
+    },
+    {
+      "name": "conjunctive-resumable-gates-are-preserved",
+      "default_merge_authority": true,
+      "instructions": [
+        {
+          "text": "Implement issue #602, but wait for security review and deployment before merging."
+        }
+      ],
+      "generated": "Complete the guarded merge after security review and deployment.",
+      "expected_holds": []
+    },
+    {
       "name": "keep-branch-unmerged-is-preserved",
       "default_merge_authority": true,
       "instructions": [

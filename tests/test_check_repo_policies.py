@@ -1023,6 +1023,12 @@ def test_merge_hold_directions_ignores_pr_only_resumable_gate() -> None:
     assert resumable_merge_gate_directions(
         "Wait for tests before merging PR #621.", active_pull_request=621
     ) == {"test": "add"}
+    assert resumable_merge_gate_directions(
+        "Wait for security review and deployment before merging."
+    ) == {"security review": "add", "deployment": "add"}
+    assert resumable_merge_gate_directions(
+        "Merge after CI, tests, and deployment."
+    ) == {"ci": "add", "test": "add", "deployment": "add"}
 
 
 def test_merge_hold_directions_ignores_negated_hold_reports() -> None:
@@ -1201,6 +1207,17 @@ def test_source_authority_excludes_no_commit_or_push_delivery() -> None:
     assert not source_has_default_merge_authority(
         ("Implement issue #602, but do not commit any changes.",)
     )
+
+
+def test_source_authority_preserves_scoped_mutation_restrictions() -> None:
+    """Verify a narrow mutation exclusion does not revoke task authority."""
+    assert source_has_default_merge_authority(
+        ("Implement issue #602, but do not change the documentation.",)
+    )
+    assert source_has_default_merge_authority(
+        ("Implement issue #602.", "Do not modify README.md.")
+    )
+    assert not source_has_default_merge_authority(("Do not modify README.md.",))
 
 
 def test_object_qualified_auto_merge_denial_is_not_a_manual_hold() -> None:
@@ -3733,6 +3750,55 @@ def test_merge_authority_transfer_recognizes_no_longer_need_withdrawal(
     )
 
     assert check_merge_authority_transfer_fixtures(tmp_path) == []
+
+
+def test_merge_authority_transfer_recognizes_negated_approval_requirement(
+    tmp_path: Path,
+) -> None:
+    """Verify necessity negation removes an active approval hold.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
+    path = tmp_path / MERGE_AUTHORITY_TRANSFER_FIXTURE_PATH
+    path.parent.mkdir(parents=True, exist_ok=True)
+    for withdrawal in (
+        "You no longer need my approval to merge this PR.",
+        "You do not need my approval to merge this PR.",
+    ):
+        assert merge_hold_directions(
+            withdrawal,
+            active_holds=("wait for approval",),
+        ) == {"wait for approval": "remove"}
+        path.write_text(
+            json.dumps(
+                {
+                    "cases": [
+                        {
+                            "name": "negated approval requirement",
+                            "default_merge_authority": True,
+                            "instructions": [
+                                {
+                                    "text": (
+                                        "Implement the change, but wait for approval."
+                                    ),
+                                    "add_holds": ["wait for approval"],
+                                },
+                                {
+                                    "text": withdrawal,
+                                    "remove_holds": ["wait for approval"],
+                                },
+                            ],
+                            "generated": "Continue through guarded squash merge.",
+                            "expected_holds": [],
+                        }
+                    ]
+                }
+            ),
+            encoding="utf-8",
+        )
+
+        assert check_merge_authority_transfer_fixtures(tmp_path) == []
 
 
 def test_merge_authority_transfer_rejects_mislabeled_hold_removal(
