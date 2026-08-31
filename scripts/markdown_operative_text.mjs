@@ -13,7 +13,7 @@ let deletionDepth = 0
 let headingPrefix = ''
 const htmlStack = []
 
-const suppressedTags = new Set(['del', 's', 'strike', 'iframe', 'noscript', 'script', 'style', 'pre', 'textarea', 'template', 'title'])
+const suppressedTags = new Set(['datalist', 'del', 's', 'strike', 'iframe', 'noscript', 'script', 'style', 'pre', 'textarea', 'template', 'title'])
 const voidTags = new Set(['area', 'base', 'br', 'col', 'embed', 'hr', 'img', 'input', 'link', 'meta', 'param', 'source', 'track', 'wbr'])
 const rawTextTags = new Set(['iframe', 'script', 'style', 'textarea', 'title'])
 const formattingTags = new Set([
