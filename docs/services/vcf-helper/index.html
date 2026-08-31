@@ -3873,8 +3873,21 @@ catalog hostname.</p>
 1 to 63 letters, numbers, or hyphens and cannot begin or end with a hyphen. Every component in the selected catalog must
 appear exactly once, and two components cannot use the same reviewed hostname. The server derives each FQDN from the
 reviewed label and selected managed domain; it never trusts a browser-generated FQDN.</p>
-<p>Creating records requires confirmation. The modal remains open after creation so assigned addresses can be reviewed.
-When every displayed FQDN has an A or AAAA address, the primary action changes to <code>Done</code>; <code>Done</code> closes the modal.</p>
+<p>Select <strong>Populate</strong> to allocate and display the proposed A or AAAA addresses without changing DNS desired state. The
+hostname inputs use their component descriptions as accessible names without repeating visible labels in every compact
+row. <strong>Create DNS records</strong> remains disabled until Populate succeeds. Changing the deployment, domain, address range,
+prefix, suffix, or any reviewed hostname invalidates that populated revision and requires Populate again. Atlaso binds
+creation to the exact signed, time-limited populated inputs so a stale or changed browser submission cannot bypass the
+review. Create also recomputes current DNS and DHCP availability and rejects the request when its allocations or skips
+no longer match the signed plan, requiring Populate again instead of silently changing reviewed addresses.
+If inputs change while a Populate request is still running, Atlaso discards that superseded response and requires a
+fresh Populate instead of displaying or enabling an obsolete plan.
+Without JavaScript, Populate submits the same inputs to a server-rendered review stage. That response displays the
+planned allocation, carries the signed revision, and enables Create DNS records for the reviewed values.
+Planned rows remain incomplete even if the page was rendered with an address that was removed before Populate.</p>
+<p>Creating records then requires confirmation. The modal remains open after creation so assigned addresses can be
+reviewed. When every displayed FQDN has an A or AAAA address, the primary action changes to <code>Done</code>; <code>Done</code> closes the
+modal.</p>
 <h2 id="deployment-catalogs">Deployment Catalogs<a class="headerlink" href="#deployment-catalogs" title="Permanent link">&para;</a></h2>
 <p>The catalog is versioned so later VCF and VVF releases can define different component sets without changing existing
 selections.</p>
@@ -4010,14 +4023,17 @@ anycast address and is not allocatable.</p>
 <p>New records use the catalog component description, such as <code>vCenter</code> or <code>VCF Automation</code>, as the DNS record description.
 Helper ownership is stored separately in structured record metadata with source <code>vcf_helper</code>, the immutable catalog
 component key, and the reviewed generated hostname label.</p>
-<p><code>Delete generated records</code> is enabled only when at least one displayed FQDN has an A or AAAA address. Deletion requires
-confirmation and submits the same exact component-to-hostname mapping used by creation. Atlaso removes a record only
+<p><code>Delete generated records</code> is enabled only when at least one displayed FQDN has a currently persisted A or AAAA
+address; proposed Populate addresses and stale page snapshots alone never enable deletion. Deletion requires
+confirmation and submits the same exact
+component-to-hostname mapping used by creation. Atlaso removes a record only
 when its FQDN and helper metadata prove ownership for that submitted component and reviewed hostname. Unrelated,
 manually created, mismatched, and legacy description-only records are preserved even when their names or descriptions
 match the current catalog.</p>
 <h2 id="routes-and-responses">Routes And Responses<a class="headerlink" href="#routes-and-responses" title="Permanent link">&para;</a></h2>
 <ul>
 <li><code>GET /ui/management/vcf-helper</code> renders the helper page.</li>
+<li><code>POST /ui/management/vcf-helper/generated-fqdns/populate</code> validates and previews allocation without mutation.</li>
 <li><code>POST /ui/management/vcf-helper/generated-fqdns</code> validates and creates missing records.</li>
 <li><code>POST /ui/management/vcf-helper/generated-fqdns/delete</code> deletes matching helper-owned records.</li>
 <li><code>POST /ui/management/vcf-helper/sddc-manager/inventory</code> confirms TLS and discovers vSphere inventory.</li>

@@ -3758,6 +3758,10 @@ and keeps the DNS suffix in the supporting line. Each domain places its direct e
 <strong>Records</strong>, <strong>Import Hosts</strong>, and <strong>Import Zone File</strong> tab row. Disabling a domain retains the domain and all scoped
 records in Atlaso's
 database while excluding that zone from rendered dnsmasq desired state; at least one domain must remain enabled.</p>
+<p>On wide desktop layouts, each selected domain's records grid expands to the remaining main-column viewport height so
+larger record sets can be reviewed with less page scrolling. Atlaso recalculates the available height when the window or
+main panel changes size. Narrow and hidden layouts retain the compact bounded grid height, horizontal overflow remains
+inside the grid, and the shared bottom <strong>Add DNS record</strong> row remains available for empty, single-row, and larger zones.</p>
 <h2 id="local-and-authoritative-modes">Local and authoritative modes<a class="headerlink" href="#local-and-authoritative-modes" title="Permanent link">&para;</a></h2>
 <p>With <strong>Authoritative</strong> off, each managed domain renders as <code>local=/domain/</code>. Atlaso answers known local records and
 forwards other queries to the configured upstream or conditional forwarders. Existing newline-delimited <code>domain</code> API
