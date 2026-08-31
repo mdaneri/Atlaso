@@ -1207,6 +1207,18 @@ def _workflow_run_commands(lines: list[str]) -> list[tuple[int, str, str, int]]:
     commands: list[tuple[int, str, str, int]] = []
     index = 0
     while index < len(lines):
+        steps_value = _yaml_mapping_value_source(lines[index], "steps")
+        if steps_value is not None and steps_value.startswith("["):
+            commands.append(
+                (
+                    index + 1,
+                    f"{UNSUPPORTED_FLOW_STEP_PREFIX}{lines[index].strip()}",
+                    "",
+                    index,
+                )
+            )
+            index += 1
+            continue
         flow_step = _yaml_flow_step(lines[index])
         if flow_step is not None and "run" in flow_step:
             line_number = index + 1
