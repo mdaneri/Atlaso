@@ -2595,6 +2595,74 @@ function Find-LatestApplianceVmx {
 
 <#
 .SYNOPSIS
+Test for the exact Atlaso development root in current-user trust.
+
+.PARAMETER ExpectedFingerprint
+Uppercase SHA-256 fingerprint derived from the expected certificate raw bytes.
+
+.PARAMETER CertificateReader
+Operation that returns the current-user Trusted Root certificates.
+#>
+function Test-AtlasoDevelopmentRootCaTrusted {
+    param(
+        [Parameter(Mandatory = $true)][string]$ExpectedFingerprint,
+        [scriptblock]$CertificateReader = { @(Get-ChildItem Cert:\CurrentUser\Root) }
+    )
+
+    return [bool](@(& $CertificateReader) | Where-Object {
+            [Convert]::ToHexString(
+                [System.Security.Cryptography.SHA256]::HashData($_.RawData)
+            ) -eq $ExpectedFingerprint
+        } | Select-Object -First 1)
+}
+
+<#
+.SYNOPSIS
+Wait for an exact Atlaso development root trust readback.
+
+.PARAMETER ExpectedFingerprint
+Uppercase SHA-256 fingerprint derived from the expected certificate raw bytes.
+
+.PARAMETER TimeoutSeconds
+Maximum time allowed for the current-user certificate provider to expose the import.
+
+.PARAMETER PollMilliseconds
+Delay between exact current-user certificate-store readbacks.
+
+.PARAMETER CertificateReader
+Operation that returns the current-user Trusted Root certificates.
+
+.PARAMETER DelayAction
+Operation that waits for the requested number of milliseconds.
+#>
+function Wait-AtlasoDevelopmentRootCaTrustReadback {
+    param(
+        [Parameter(Mandatory = $true)][string]$ExpectedFingerprint,
+        [ValidateRange(1, 60)][int]$TimeoutSeconds = 10,
+        [ValidateRange(1, 1000)][int]$PollMilliseconds = 250,
+        [scriptblock]$CertificateReader = { @(Get-ChildItem Cert:\CurrentUser\Root) },
+        [scriptblock]$DelayAction = { param([int]$Milliseconds) Start-Sleep -Milliseconds $Milliseconds }
+    )
+
+    $deadline = [DateTime]::UtcNow.AddSeconds($TimeoutSeconds)
+    do {
+        if (Test-AtlasoDevelopmentRootCaTrusted `
+                -ExpectedFingerprint $ExpectedFingerprint `
+                -CertificateReader $CertificateReader) {
+            return $true
+        }
+        $remainingMilliseconds = [int][Math]::Ceiling(($deadline - [DateTime]::UtcNow).TotalMilliseconds)
+        if ($remainingMilliseconds -gt 0) {
+            # certutil can finish before the PowerShell certificate provider refreshes its current-process view.
+            & $DelayAction ([Math]::Min($PollMilliseconds, $remainingMilliseconds))
+        }
+    } while ([DateTime]::UtcNow -lt $deadline)
+
+    return $false
+}
+
+<#
+.SYNOPSIS
 Wait for and verify the shared Atlaso development root CA.
 
 .PARAMETER IpAddress
@@ -2682,11 +2750,7 @@ function Install-ApplianceRootCa {
         }
         Write-Host "Verified Atlaso development root CA fingerprint: $expectedFingerprint"
 
-        $alreadyTrusted = [bool](Get-ChildItem Cert:\CurrentUser\Root | Where-Object {
-                [Convert]::ToHexString(
-                    [System.Security.Cryptography.SHA256]::HashData($_.RawData)
-                ) -eq $expectedFingerprint
-            } | Select-Object -First 1)
+        $alreadyTrusted = Test-AtlasoDevelopmentRootCaTrusted -ExpectedFingerprint $expectedFingerprint
         if ($TrustRootCa -and -not $alreadyTrusted) {
             $rootCerPath = [System.IO.Path]::Combine($tempRoot, "atlaso-$temporaryToken-development-root-ca.cer")
             [System.IO.File]::WriteAllBytes(
@@ -2698,11 +2762,8 @@ function Install-ApplianceRootCa {
                 if ($LASTEXITCODE -ne 0) {
                     throw 'Failed to import the Atlaso development root CA into the current-user Trusted Root store.'
                 }
-                $alreadyTrusted = [bool](Get-ChildItem Cert:\CurrentUser\Root | Where-Object {
-                        [Convert]::ToHexString(
-                            [System.Security.Cryptography.SHA256]::HashData($_.RawData)
-                        ) -eq $expectedFingerprint
-                    } | Select-Object -First 1)
+                $alreadyTrusted = Wait-AtlasoDevelopmentRootCaTrustReadback `
+                    -ExpectedFingerprint $expectedFingerprint
                 if (-not $alreadyTrusted) {
                     throw 'The Atlaso development root CA import completed without an exact Trusted Root readback.'
                 }

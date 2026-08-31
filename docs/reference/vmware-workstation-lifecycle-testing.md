@@ -523,7 +523,9 @@ handoff and again after reboot.
 Credential overrides must be at least 12 characters, contain no leading, trailing, tab, carriage-return, or newline
 whitespace, and contain only XML-representable characters so the OVF value round-trips unchanged.
 `-TrustRootCa` waits for the first-boot CA endpoint, removes partial downloads best-effort between retries, validates the
-self-signed Atlaso root CA, and imports it into the current-user Trusted Root store. The temporary-file cleanup remains
+self-signed Atlaso root CA, and imports it into the current-user Trusted Root store. After a successful import, the
+wrapper retries the exact raw-certificate readback for a bounded interval so a stale in-process certificate-provider
+view does not report a false failure. The temporary-file cleanup remains
 idempotent for missing files and safely handles dotted user-profile directories and valid DOS 8.3 short paths, so a
 cleanup race or path alias cannot stop the readiness retry loop. Use `-TimeoutSeconds` to change the secret-child, IP,
 and CA deadlines; rollback mutates the VM only after staging and start child-tree termination is proven. It also keeps
