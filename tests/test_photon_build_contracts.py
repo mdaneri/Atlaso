@@ -11,7 +11,6 @@ from pathlib import Path
 
 import pytest
 
-
 VENV_VALIDATOR = Path("image/common/scripts/validate-bootstrap-venv.py")
 QEMU_BUILDER = Path("image/common/scripts/build-qemu-guest-agent-rpm.sh")
 
