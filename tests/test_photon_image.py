@@ -1689,7 +1689,11 @@ def test_vmware_packer_requires_proven_task_or_release_builder_identity() -> Non
     assert "Resolve-AtlasoReleaseBuilderIdentity `" in wrapper
     assert '"repos/$canonicalRepository/commits/$softwareTag"' in wrapper
     assert "--json 'tagName,isDraft,isPrerelease,assets'" in wrapper
+    assert '"atlaso-third-party-notices-$ReleaseVersion.md"' in wrapper
     assert "'release-manifest.json.sig'" in wrapper
+    assert "$assetNames.Count -ne $expectedAssetNames.Count" in wrapper
+    assert "$_ -cnotin $assetNames" in wrapper
+    assert "$_ -cnotin $expectedAssetNames" in wrapper
     assert "merge-base --is-ancestor $ReleaseSourceCommit origin/main" in wrapper
     assert '"head_sha=$ReleaseSourceCommit"' in wrapper
     assert "'branch=main'" in wrapper

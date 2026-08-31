@@ -434,14 +434,16 @@ function Resolve-AtlasoReleaseBuilderIdentity {
         throw "The protected software Release $softwareTag is missing or misclassified."
     }
     $assetNames = @($release.assets | ForEach-Object { [string]$_.name })
-    foreach ($requiredAsset in @(
-            "atlaso-appliance-$ReleaseVersion.tar.gz",
-            'release-manifest.json',
-            'release-manifest.json.sig'
-        )) {
-        if ($requiredAsset -notin $assetNames) {
-            throw "The protected software Release $softwareTag is missing $requiredAsset."
-        }
+    $expectedAssetNames = @(
+        "atlaso-appliance-$ReleaseVersion.tar.gz",
+        "atlaso-third-party-notices-$ReleaseVersion.md",
+        'release-manifest.json',
+        'release-manifest.json.sig'
+    )
+    if ($assetNames.Count -ne $expectedAssetNames.Count -or
+        @($expectedAssetNames | Where-Object { $_ -cnotin $assetNames }).Count -ne 0 -or
+        @($assetNames | Where-Object { $_ -cnotin $expectedAssetNames }).Count -ne 0) {
+        throw "The protected software Release $softwareTag does not contain the exact canonical asset set."
     }
     $successfulRunText = [string](& $gh.Source api --method GET `
         "repos/$canonicalRepository/actions/workflows/ci.yml/runs" `
