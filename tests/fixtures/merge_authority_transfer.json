@@ -3632,6 +3632,59 @@
       "expected_holds": [
         "wait for approval"
       ]
+    },
+    {
+      "name": "ask-before-merging-is-approval-hold",
+      "default_merge_authority": true,
+      "instructions": [
+        {
+          "text": "Implement issue #602, but ask me before merging.",
+          "add_holds": [
+            "wait for approval"
+          ]
+        }
+      ],
+      "generated": "Preserve the explicit wait for approval instruction.",
+      "expected_holds": [
+        "wait for approval"
+      ]
+    },
+    {
+      "name": "ordinary-requested-changes-are-implementation",
+      "default_merge_authority": true,
+      "instructions": [
+        {
+          "text": "Please make the requested changes and update the README."
+        }
+      ],
+      "generated": "Complete the guarded merge when every required gate passes.",
+      "expected_holds": []
+    },
+    {
+      "name": "qualified-security-review-is-preserved",
+      "default_merge_authority": true,
+      "instructions": [
+        {
+          "text": "Implement issue #602, but wait for security review before merging."
+        }
+      ],
+      "generated": "Complete the guarded merge after security review passes.",
+      "expected_holds": []
+    },
+    {
+      "name": "other-pr-gate-resolution-does-not-clear-active-gate",
+      "default_merge_authority": true,
+      "active_pull_request": 630,
+      "instructions": [
+        {
+          "text": "Implement issue #602, but wait for tests before merging."
+        },
+        {
+          "text": "PR #621 tests passed."
+        }
+      ],
+      "generated": "Complete the guarded merge after tests pass.",
+      "expected_holds": []
     }
   ]
 }

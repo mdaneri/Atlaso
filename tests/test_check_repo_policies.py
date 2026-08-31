@@ -911,6 +911,13 @@ def test_merge_hold_directions_recognizes_approval_needed() -> None:
     assert merge_hold_directions(
         "Implement issue #602, but authorization is required to merge the PR."
     ) == {"wait for approval": "add"}
+    for instruction in (
+        "Implement issue #602, but ask me before merging.",
+        "Implement issue #602, but check with the maintainer before merging.",
+        "Implement issue #602, but get my sign-off before merging.",
+        "Implement issue #602, but obtain our go-ahead before merging.",
+    ):
+        assert merge_hold_directions(instruction) == {"wait for approval": "add"}
     assert merge_hold_directions(
         "Implement issue #602, but please merge this PR after I approve."
     ) == {"wait for approval": "add"}
@@ -990,6 +997,18 @@ def test_merge_hold_directions_ignores_pr_only_resumable_gate() -> None:
     assert resumable_merge_gate_directions(
         "Do not wait for CI before merging; preserve default merge authority."
     ) == {"ci": "remove"}
+    assert resumable_merge_gates(
+        "Wait for security review before merging."
+    ) == ("security review",)
+    assert resumable_merge_gates(
+        "Wait for maintainer review before merging."
+    ) == ("maintainer review",)
+    assert resumable_merge_gate_directions(
+        "PR #621 tests passed.", active_pull_request=630
+    ) == {}
+    assert resumable_merge_gate_directions(
+        "PR #621 tests passed.", active_pull_request=621
+    ) == {"test": "remove"}
 
 
 def test_merge_hold_directions_ignores_negated_hold_reports() -> None:
@@ -1458,6 +1477,12 @@ def test_source_authority_keeps_workflow_policy_subject_eligible() -> None:
     assert source_has_default_merge_authority(
         ("Please review this PR and address the feedback.",)
     )
+    for instruction in (
+        "Please make the requested changes.",
+        "Please remove the obsolete code.",
+        "Please update the README.",
+    ):
+        assert source_has_default_merge_authority((instruction,))
     for instruction in (
         "Update README.md.",
         "Edit CONTRIBUTING.md.",
@@ -2722,6 +2747,97 @@ def test_merge_authority_transfer_rejects_negated_hold_report(
     assert findings[0].message == (
         "merge authority fixture negated hold report drops an explicit hold: "
         "do not merge"
+    )
+
+
+def test_merge_authority_transfer_keeps_gate_after_other_pr_resolution(
+    tmp_path: Path,
+) -> None:
+    """Verify another PR's success cannot clear the active task's gate.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
+    path = tmp_path / MERGE_AUTHORITY_TRANSFER_FIXTURE_PATH
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        json.dumps(
+            {
+                "cases": [
+                    {
+                        "name": "other PR test resolution",
+                        "default_merge_authority": True,
+                        "active_pull_request": 630,
+                        "instructions": [
+                            {
+                                "text": (
+                                    "Implement issue #602, but wait for tests before "
+                                    "merging."
+                                )
+                            },
+                            {"text": "PR #621 tests passed."},
+                        ],
+                        "generated": "Complete the guarded merge.",
+                        "expected_holds": [],
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    findings = check_merge_authority_transfer_fixtures(tmp_path)
+
+    assert len(findings) == 1
+    assert findings[0].message == (
+        "merge authority fixture other PR test resolution drops a resumable "
+        "merge gate: test"
+    )
+
+
+def test_merge_authority_transfer_rejects_replaced_gate_qualifier(
+    tmp_path: Path,
+) -> None:
+    """Verify generated text cannot substitute another qualified reviewer.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
+    path = tmp_path / MERGE_AUTHORITY_TRANSFER_FIXTURE_PATH
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        json.dumps(
+            {
+                "cases": [
+                    {
+                        "name": "replaced review qualifier",
+                        "default_merge_authority": True,
+                        "instructions": [
+                            {
+                                "text": (
+                                    "Implement issue #602, but wait for security "
+                                    "review before merging."
+                                )
+                            }
+                        ],
+                        "generated": (
+                            "Complete the guarded merge after maintainer review "
+                            "passes."
+                        ),
+                        "expected_holds": [],
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    findings = check_merge_authority_transfer_fixtures(tmp_path)
+
+    assert len(findings) == 1
+    assert findings[0].message == (
+        "merge authority fixture replaced review qualifier drops a resumable "
+        "merge gate: security review"
     )
 
 

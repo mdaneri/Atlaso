@@ -957,13 +957,15 @@ DEFAULT_MERGE_AUTHORITY_SOURCE_MARKERS = re.compile(
     r"\b(?:implement|fix|patch|resolve|solve|deliver|refactor|repair|rename|"
     r"delete|replace|add)\b|"
     r"\bcomplete\s+(?:the\s+)?implementation\b|"
-    r"\b(?:update|change|modify|edit|add|remove|create|build|"
+    r"\b(?:update|change|modify|edit|add|remove|create|build|make|"
     r"prepare|open|submit|revert|roll back)\s+"
     r"(?:(?:the|this|that|an?|new|existing)\s+)?"
+    r"(?:(?:requested|obsolete|existing|current|affected|relevant|necessary|"
+    r"corresponding)\s+)?"
     r"(?:code|changes?|implementation|documentation|docs?|tests?|files?|repository|repo|"
     r"scripts?|modules?|packages?|workflows?|polic(?:y|ies)|checkers?|fixtures?|"
     r"features?|behavio(?:u)?r|support|pages?|guides?|configuration|config|"
-    r"api|ui|issue(?:s)?(?:\s+#\d+)?|pull request|pr)\b|"
+    r"api|ui|readme(?:\.md)?|issue(?:s)?(?:\s+#\d+)?|pull request|pr)\b|"
     r"\b(?:update|change|modify|edit|add|remove|create|build)\s+"
     r"(?:(?:the|this|that|an?|new|existing)\s+)?"
     r"(?:[a-z0-9_.-]+[\\/])*[a-z_][a-z0-9_.-]*\.[a-z0-9]{1,12}\b|"
@@ -1137,7 +1139,12 @@ MERGE_HOLD_APPROVAL_BOUNDED_DISPOSITION = re.compile(
     r"(?:[a-z][a-z0-9_-]*\s+)?owner)(?:'s|’s)?\s+)?approval)\b"
 )
 MERGE_HOLD_APPROVAL_BEFORE_MERGING = re.compile(
-    r"\b(?:wait (?:for|until)\s+(?:(?:the\s+)?"
+    r"\b(?:(?:ask|check\s+with)\s+(?:(?:the\s+)?"
+    r"(?:user|maintainer|(?:[a-z][a-z0-9_-]*\s+)?owner)|me|us)|"
+    r"(?:get|obtain|require|need|wait\s+for)\s+"
+    r"(?:(?:the\s+)?(?:user|maintainer|(?:[a-z][a-z0-9_-]*\s+)?owner)"
+    r"(?:'s|’s)?\s+|(?:my|our|your)\s+)?(?:sign[- ]off|go[- ]ahead)|"
+    r"wait (?:for|until)\s+(?:(?:the\s+)?"
     r"(?:user|maintainer|(?:[a-z][a-z0-9_-]*\s+)?owner)\s+to\s+approve|"
     r"(?:(?:the\s+)?(?:user|maintainer|(?:[a-z][a-z0-9_-]*\s+)?owner)"
     r"(?:'s|’s)?\s+)?approval)|"
@@ -1162,15 +1169,17 @@ MERGE_HOLD_RESUMABLE_GATE_SUFFIX = re.compile(
 )
 MERGE_RESUMABLE_GATE_CONDITION = re.compile(
     r"\b(?:after|when|if|once|until|pending)\s+"
-    r"(?:(?:the|an?)\s+)?(?:(?:[a-z][a-z0-9_-]*\s+){0,2})?"
-    r"(?P<gate>ci|tests?|checks?|validation|builds?|review|deployments?|"
-    r"release[- ]jobs?)\b"
+    r"(?:(?:the|an?)\s+)?"
+    r"(?P<gate>(?:(?:[a-z][a-z0-9_-]*\s+){0,2})?"
+    r"(?:ci|tests?|checks?|validation|builds?|review|deployments?|"
+    r"release[- ]jobs?))\b"
 )
 MERGE_RESUMABLE_GATE_FIRST = re.compile(
     r"\b(?:wait\s+(?:for|until)|await)\s+"
-    r"(?:(?:the|an?)\s+)?(?:(?:[a-z][a-z0-9_-]*\s+){0,2})?"
-    r"(?P<gate>ci|tests?|checks?|validation|builds?|review|deployments?|"
-    r"release[- ]jobs?)"
+    r"(?:(?:the|an?)\s+)?"
+    r"(?P<gate>(?:(?:[a-z][a-z0-9_-]*\s+){0,2})?"
+    r"(?:ci|tests?|checks?|validation|builds?|review|deployments?|"
+    r"release[- ]jobs?))"
     r"(?:\s+(?:to\s+)?(?:pass(?:es)?|succeed(?:s)?|complete(?:s)?|"
     r"finish(?:es)?|clear(?:s)?))?\s+"
     r"before\s+(?:merging|(?:you|i|we)\s+merge)\b"
@@ -1179,9 +1188,10 @@ MERGE_RESUMABLE_GATE_NEGATION_PREFIX = re.compile(
     r"\b(?:do not|don't|don’t|must not|should not|need not|never)\s*$"
 )
 MERGE_RESUMABLE_GATE_RESOLUTION = re.compile(
-    r"\b(?:(?:the|an?)\s+)?(?:(?:[a-z][a-z0-9_-]*\s+){0,2})?"
-    r"(?P<gate>ci|tests?|checks?|validation|builds?|review|deployments?|"
-    r"release[- ]jobs?)\s+"
+    r"\b(?:(?:the|an?)\s+)?"
+    r"(?P<gate>(?:(?:[a-z][a-z0-9_-]*\s+){0,2})?"
+    r"(?:ci|tests?|checks?|validation|builds?|review|deployments?|"
+    r"release[- ]jobs?))\s+"
     r"(?:(?:has|have|is|are)\s+)?"
     r"(?:passed|succeeded|successful|completed|complete|finished|cleared)\b"
 )
@@ -1935,8 +1945,17 @@ def _canonical_resumable_merge_gate(gate: str) -> str:
     Returns:
         Canonical resumable gate name.
     """
-    normalized = gate.replace("-", " ")
-    return next(
+    normalized = " ".join(gate.replace("-", " ").split())
+    match = re.fullmatch(
+        r"(?:(?P<qualifier>(?:[a-z][a-z0-9_]*\s+){1,2}))?"
+        r"(?P<kind>ci|tests?|checks?|validation|builds?|review|deployments?|"
+        r"release jobs?)",
+        normalized,
+    )
+    if match is None:
+        raise ValueError(f"unsupported resumable merge gate: {gate}")
+    kind = match.group("kind")
+    canonical_kind = next(
         name
         for stem, name in (
             ("ci", "ci"),
@@ -1948,15 +1967,24 @@ def _canonical_resumable_merge_gate(gate: str) -> str:
             ("deployment", "deployment"),
             ("release job", "release job"),
         )
-        if normalized.startswith(stem)
+        if kind.startswith(stem)
     )
+    qualifier = (match.group("qualifier") or "").strip()
+    return " ".join(part for part in (qualifier, canonical_kind) if part)
 
 
-def resumable_merge_gate_directions(text: str) -> dict[str, str]:
+def resumable_merge_gate_directions(
+    text: str,
+    *,
+    active_pull_request: int | None = None,
+    active_issue: int | None = None,
+) -> dict[str, str]:
     """Return ordered add/remove directions for resumable merge gates.
 
     Args:
         text: Source or generated task text to inspect.
+        active_pull_request: Pull request owned by the active task, when known.
+        active_issue: Issue owned by the active task, when known.
 
     Returns:
         Final add or remove direction for each gate mentioned in the text.
@@ -1999,29 +2027,48 @@ def resumable_merge_gate_directions(text: str) -> dict[str, str]:
                 _canonical_resumable_merge_gate(match.group("gate")),
             )
         )
-    events.extend(
-        (
+    for match in MERGE_RESUMABLE_GATE_RESOLUTION.finditer(normalized):
+        if _is_hold_discussion(normalized, match.start()) or _hold_targets_other_task(
+            normalized,
             match.start(),
-            "remove",
-            _canonical_resumable_merge_gate(match.group("gate")),
+            match.group(0),
+            active_pull_request=active_pull_request,
+            active_issue=active_issue,
+        ):
+            continue
+        events.append(
+            (
+                match.start(),
+                "remove",
+                _canonical_resumable_merge_gate(match.group("gate")),
+            )
         )
-        for match in MERGE_RESUMABLE_GATE_RESOLUTION.finditer(normalized)
-    )
     directions: dict[str, str] = {}
     for _, direction, gate in sorted(events):
         directions[gate] = direction
     return directions
 
 
-def resumable_merge_gates(text: str) -> tuple[str, ...]:
+def resumable_merge_gates(
+    text: str,
+    *,
+    active_pull_request: int | None = None,
+    active_issue: int | None = None,
+) -> tuple[str, ...]:
     """Return active canonical merge-gate conditions in task text.
 
     Args:
         text: Source or generated task text to inspect.
+        active_pull_request: Pull request owned by the active task, when known.
+        active_issue: Issue owned by the active task, when known.
     """
     return tuple(
         gate
-        for gate, direction in resumable_merge_gate_directions(text).items()
+        for gate, direction in resumable_merge_gate_directions(
+            text,
+            active_pull_request=active_pull_request,
+            active_issue=active_issue,
+        ).items()
         if direction == "add"
     )
 
@@ -2286,7 +2333,9 @@ def check_merge_authority_transfer_fixtures(root: Path) -> list[Finding]:
         source_gates_list: list[str] = []
         for instruction_text in source_instruction_texts:
             for gate, direction in resumable_merge_gate_directions(
-                instruction_text
+                instruction_text,
+                active_pull_request=active_pull_request,
+                active_issue=active_issue,
             ).items():
                 if direction == "remove":
                     source_gates_list = [
@@ -2297,7 +2346,11 @@ def check_merge_authority_transfer_fixtures(root: Path) -> list[Finding]:
                 elif gate not in source_gates_list:
                     source_gates_list.append(gate)
         source_gates = tuple(source_gates_list)
-        generated_gates = resumable_merge_gates(generated)
+        generated_gates = resumable_merge_gates(
+            generated,
+            active_pull_request=active_pull_request,
+            active_issue=active_issue,
+        )
         generated_directions = merge_hold_directions(
             generated,
             active_holds=source_holds_tuple,
