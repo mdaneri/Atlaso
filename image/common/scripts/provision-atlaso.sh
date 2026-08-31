@@ -365,6 +365,7 @@ run_tdnf "Photon appliance package installation" \
 # sudo -E preserves Packer's communicator HOME. Establish the root-owned pip
 # contract before QEMU configure can invoke mkvenv, while retaining only the
 # explicitly configured index values passed through the Atlaso build inputs.
+unset PIP_INDEX_URL PIP_EXTRA_INDEX_URL PIP_CONFIG_FILE
 install -d -o root -g root -m 0755 "$PIP_CACHE_DIR"
 write_pip_config /etc/pip.conf
 export HOME=/root
