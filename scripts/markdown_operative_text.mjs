@@ -29,6 +29,13 @@ const transformFunctions = new Set([
   'rotatez', 'scale', 'scale3d', 'scalex', 'scaley', 'scalez', 'skew', 'skewx',
   'skewy', 'translate', 'translate3d', 'translatex', 'translatey', 'translatez'
 ])
+const fontSizeUnits = new Set([
+  'cap', 'ch', 'cm', 'cqb', 'cqh', 'cqi', 'cqmax', 'cqmin', 'cqw', 'dvb', 'dvh',
+  'dvi', 'dvmax', 'dvmin', 'dvw', 'em', 'ex', 'ic', 'in', 'lh', 'lvb', 'lvh',
+  'lvi', 'lvmax', 'lvmin', 'lvw', 'mm', 'pc', 'pt', 'px', 'q', 'rem', 'rlh',
+  'svb', 'svh', 'svi', 'svmax', 'svmin', 'svw', 'vb', 'vh', 'vi', 'vmax',
+  'vmin', 'vw'
+])
 const tableContextChildren = new Map([
   ['table', new Set(['caption', 'colgroup', 'script', 'style', 'tbody', 'template', 'tfoot', 'thead'])],
   ['colgroup', new Set(['col', 'template'])],
@@ -220,7 +227,7 @@ function isValidSuppressionDeclaration (property, value) {
     return true
   }
   if (property === 'display') {
-    return /^(?:none|inline|block|run-in|flow|flow-root|flex|grid|ruby|list-item|contents|inline-block|inline-table|inline-flex|inline-grid|table|table-row-group|table-header-group|table-footer-group|table-row|table-cell|table-column-group|table-column|table-caption|ruby-base|ruby-text|ruby-base-container|ruby-text-container)$/.test(value)
+    return isValidDisplayValue(value)
   }
   if (property === 'visibility') {
     return /^(?:visible|hidden|collapse)$/.test(value)
@@ -232,9 +239,7 @@ function isValidSuppressionDeclaration (property, value) {
     return parseOpacityValue(value) !== null
   }
   if (property === 'font-size') {
-    return /^(?:xx-small|x-small|small|medium|large|x-large|xx-large|xxx-large|larger|smaller|math)$/.test(value) ||
-      /^[+]?(?:\d+(?:\.\d*)?|\.\d+)(?:e[+-]?\d+)?(?:%|[a-z]+)?$/.test(value) ||
-      /^(?:calc|min|max|clamp)\(.+\)$/.test(value)
+    return isValidFontSize(value)
   }
   if (property === 'transform') {
     const functions = parseCssFunctions(value)
@@ -252,6 +257,40 @@ function isValidSuppressionDeclaration (property, value) {
       isValidFunctionalColor(value)
   }
   return true
+}
+
+function isValidDisplayValue (value) {
+  const singleValues = new Set([
+    'none', 'contents', 'block', 'inline', 'run-in', 'flow', 'flow-root', 'flex',
+    'grid', 'ruby', 'list-item', 'inline-block', 'inline-table', 'inline-flex',
+    'inline-grid', 'table', 'table-row-group', 'table-header-group',
+    'table-footer-group', 'table-row', 'table-cell', 'table-column-group',
+    'table-column', 'table-caption', 'ruby-base', 'ruby-text',
+    'ruby-base-container', 'ruby-text-container'
+  ])
+  if (singleValues.has(value)) return true
+  const tokens = value.split(/\s+/)
+  const outside = tokens.filter(token => ['block', 'inline', 'run-in'].includes(token))
+  const inside = tokens.filter(token => ['flow', 'flow-root', 'table', 'flex', 'grid', 'ruby'].includes(token))
+  const listItems = tokens.filter(token => token === 'list-item')
+  if (outside.length > 1 || inside.length !== 1 || listItems.length > 1) return false
+  if (outside.length + inside.length + listItems.length !== tokens.length) return false
+  return listItems.length === 0 || ['flow', 'flow-root'].includes(inside[0])
+}
+
+function isValidFontSize (value) {
+  if (/^(?:xx-small|x-small|small|medium|large|x-large|xx-large|xxx-large|larger|smaller|math)$/.test(value)) {
+    return true
+  }
+  const numeric = value.match(
+    /^([+]?(?:\d+(?:\.\d*)?|\.\d+)(?:e[+-]?\d+)?)(%|[a-z]+)?$/
+  )
+  if (numeric) {
+    if (numeric[2] === '%') return true
+    if (!numeric[2]) return Number.parseFloat(numeric[1]) === 0
+    return fontSizeUnits.has(numeric[2])
+  }
+  return /^(?:calc|min|max|clamp)\(.+\)$/.test(value)
 }
 
 function isValidFunctionalColor (value) {
