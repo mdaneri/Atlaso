@@ -672,7 +672,8 @@ MERGE_HOLD_MODAL_PROHIBITION = re.compile(
     r"are\s+forbidden\s+from\s+merging)|"
     r"you\s+are\s+forbidden\s+to\s+merge|"
     r"you(?:'re|’re)\s+not\s+(?:allowed|authorized|permitted)\s+to\s+merge|"
-    r"you\s+do\s+not\s+have\s+(?:permission|authorization)\s+"
+    r"you\s+(?:do\s+not|don't|don’t)\s+have\s+"
+    r"(?:permission|authorization|authority)\s+"
     r"to\s+merge|(?:you|(?:(?:the|this)\s+)?(?:agent|task|heartbeat|handoff))\s+"
     r"lacks?\s+(?:permission|authorization|authority)\s+"
     r"to\s+merge|i\s+(?:do\s+not|don't|don’t)\s+(?:authorize|permit)\s+"
@@ -722,7 +723,9 @@ DEFAULT_MERGE_AUTHORITY_CONDITIONAL_REQUEST = re.compile(
 DEFAULT_MERGE_AUTHORITY_DECISION_ONLY = re.compile(r"\bwhether\s+to\b")
 DEFAULT_MERGE_AUTHORITY_PERMISSION_QUESTION = re.compile(
     r"\b(?:(?:do|would)\s+you\s+(?:want|like)\s+(?:me|us)\s+to|"
-    r"should\s+(?:i|we)|(?:can|could|may)\s+(?:i|we)|"
+    r"should\s+(?:i|we)|(?:can|could|may)\s+"
+    r"(?:i|we|(?:(?:the|this)\s+)?(?:heartbeat|handoff|delegation|"
+    r"delegating\s+agent|agent|task))|"
     r"do\s+(?:i|we)\s+have\s+(?:authority|authorization|permission)\s+to|"
     r"(?:am|are|is)\s+(?:i|we|(?:(?:the|this)\s+)?(?:heartbeat|handoff|"
     r"delegation|delegating\s+agent|agent|task))\s+"

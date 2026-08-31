@@ -649,6 +649,9 @@ def test_merge_hold_directions_recognizes_modal_merge_prohibitions() -> None:
         "You're not allowed to merge this PR.",
         "You’re not authorized to merge this PR.",
         "You do not have permission to merge this PR.",
+        "You don't have permission to merge this PR.",
+        "You don’t have authorization to merge this PR.",
+        "You don't have authority to merge this PR.",
         "You lack permission to merge this PR.",
         "You lack authorization to merge this PR.",
         "The agent lacks authority to merge this PR.",
@@ -1000,6 +1003,12 @@ def test_generated_merge_decision_questions_are_not_affirmative() -> None:
         )
         assert not has_affirmative_default_merge_authority(
             f"Is the {subject} authorized to complete the guarded merge?"
+        )
+        assert not has_affirmative_default_merge_authority(
+            f"Can the {subject} complete the guarded merge?"
+        )
+        assert not has_affirmative_default_merge_authority(
+            f"Could the {subject} complete the guarded merge?"
         )
 
 
