@@ -61,6 +61,11 @@ runs both through the protected management handoff; its prior WAN config is the 
 submission that changes a default mirrored for an effective flagged management listener starts the same protected
 handoff. Every bundled WAN unit executes from its captured snapshot before Atlaso commits its baseline.
 
+The Routes & WAN unit also owns the global Routing, NAT, and WAN Simulation switches. Turning a switch off is an
+applicable cleanup change: Apply removes the corresponding Atlaso-owned runtime routes/rules and forwarding, NAT
+rules, or qdiscs while preserving the saved resource rows. NAT reports **suspended** and remains unapplied whenever
+its saved switch is on but Routing is off.
+
 ## Review pending changes
 
 1. Finish editing the desired state on the relevant service pages.

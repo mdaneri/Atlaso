@@ -200,7 +200,14 @@ The **WAN Policies** wizard groups delay/capacity settings separately from packe
 policy to a Static Route identifies its target interface or VLAN; WAN Simulation v1 impairs all traffic on that target,
 not only traffic matching the route destination.
 
-Saving any of these resources does not change Photon. Review the rendered configuration and submit the global
+The **Routing & WAN Settings** card controls the three global activation boundaries. **Routing enabled** owns Atlaso
+lab routes, routing permissions, and both IPv4 and IPv6 packet forwarding. **NAT enabled** owns the Atlaso IPv4
+masquerade table only while Routing is also enabled; when Routing is off, NAT remains selected and visibly
+**suspended**. **WAN Simulation enabled** independently owns the saved `tc/netem` assignments. Fresh installs and
+factory reset start with all three switches off. Disabling a feature preserves every saved row and assignment, and
+inactive-row errors do not block Appliance Apply until that feature is enabled again.
+
+Saving a switch or any resource does not change Photon. Review the rendered configuration and submit the global
 **Routes & WAN Simulation** unit through Appliance Apply when the complete desired state is ready.
 
 ### Add or edit a VLAN interface
@@ -276,13 +283,13 @@ These captures show responsive layouts and useful operational states referenced 
 
 ### Routes and WAN simulation
 
-![Atlaso Routes and WAN Simulation page in the clean-appliance desktop viewport.](../assets/screenshots/routes-wan-clean-desktop.webp)
+![Atlaso Routes and WAN Simulation showing disabled routing, a checked but unavailable NAT switch, and the suspended status.](../assets/screenshots/routes-wan-clean-desktop.webp)
 
-*Figure: Routes and WAN Simulation in the verified clean-appliance desktop state.*
+*Figure: Routes and WAN Simulation with global routing disabled and the saved NAT choice visibly suspended.*
 
-![Atlaso Routes and WAN Simulation page in the clean-appliance responsive viewport.](../assets/screenshots/routes-wan-clean-responsive.webp)
+![Atlaso Routes and WAN Simulation showing disabled routing, a checked but unavailable NAT switch, and the suspended status.](../assets/screenshots/routes-wan-clean-responsive.webp)
 
-*Figure: Routes and WAN Simulation in the verified clean-appliance responsive state.*
+*Figure: Routes and WAN Simulation with global routing disabled and the saved NAT choice visibly suspended.*
 
 ### VLAN interfaces
 

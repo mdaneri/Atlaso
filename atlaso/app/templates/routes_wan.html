@@ -254,11 +254,53 @@
   <aside class="side-stack">
     {% include "partials/appliance_apply_status.html" %}
 
-    <div class="panel">
+    <div class="panel" data-routes-wan-settings-card>
+      <div class="panel-head">
+        <div>
+          <h2>Routing &amp; WAN Settings</h2>
+          <p class="muted">Save global desired state here, then use Appliance Apply to change Photon networking.</p>
+        </div>
+      </div>
+      <form
+        class="form-stack"
+        action="{{ management_ui_root }}/routes-wan/settings"
+        method="post"
+        data-routes-wan-can-write="{{ 'true' if routes_wan_can_write else 'false' }}"
+        {% if routes_wan_can_write %}data-autosave-form data-autosave-status-id="routes-wan-settings-autosave-status"{% endif %}
+      >
+        <input type="hidden" name="csrf" value="{{ csrf_token }}">
+        <label class="switch-field">
+          <span class="field-label"><span>Routing enabled</span><button class="help-icon" type="button" data-help="Controls Atlaso lab routes, routing permissions, and IPv4/IPv6 packet forwarding. Management reachability remains protected separately.">i</button></span>
+          <input class="switch-input" type="checkbox" name="routing_enabled" aria-label="Routing enabled" {{ "checked" if routes_wan_settings.routing_enabled else "" }} {{ "disabled" if not routes_wan_can_write else "" }}>
+          <span class="switch-track" aria-hidden="true"></span>
+          <span class="routes-wan-setting-state" data-routes-wan-feature-state="routing"><span class="status-pill {{ 'warn' if routes_wan_feature_status.routing == 'needs attention' else 'good' if routes_wan_feature_status.routing == 'valid' else 'muted' }}">{{ routes_wan_feature_status.routing }}</span></span>
+        </label>
+        <label class="switch-field">
+          <span class="field-label"><span>NAT enabled</span><button class="help-icon" type="button" data-help="Controls saved Atlaso IPv4 masquerade rules. NAT remains selected but is suspended whenever Routing is disabled.">i</button></span>
+          <input class="switch-input" type="checkbox" name="nat_enabled" aria-label="NAT enabled" {{ "checked" if routes_wan_settings.nat_enabled else "" }} {{ "disabled" if not routes_wan_can_write or not routes_wan_settings.routing_enabled else "" }}>
+          <span class="switch-track" aria-hidden="true"></span>
+          <span class="routes-wan-setting-state" data-routes-wan-feature-state="nat"><span class="status-pill {{ 'warn' if routes_wan_feature_status.nat in ['suspended', 'needs attention'] else 'good' if routes_wan_feature_status.nat == 'valid' else 'muted' }}">{{ routes_wan_feature_status.nat }}</span>{% if routes_wan_feature_status.nat == "suspended" %}<small class="field-hint" data-routes-wan-suspended-hint role="status">Suspended until Routing is enabled.</small>{% endif %}</span>
+        </label>
+        <label class="switch-field">
+          <span class="field-label"><span>WAN Simulation enabled</span><button class="help-icon" type="button" data-help="Controls interface-level tc/netem state independently of packet forwarding. Saved policies and assignments remain available while disabled.">i</button></span>
+          <input class="switch-input" type="checkbox" name="wan_simulation_enabled" aria-label="WAN Simulation enabled" {{ "checked" if routes_wan_settings.wan_simulation_enabled else "" }} {{ "disabled" if not routes_wan_can_write else "" }}>
+          <span class="switch-track" aria-hidden="true"></span>
+          <span class="routes-wan-setting-state" data-routes-wan-feature-state="wan_simulation"><span class="status-pill {{ 'warn' if routes_wan_feature_status.wan_simulation == 'needs attention' else 'good' if routes_wan_feature_status.wan_simulation == 'valid' else 'muted' }}">{{ routes_wan_feature_status.wan_simulation }}</span></span>
+        </label>
+        {% if routes_wan_can_write %}
+          <p id="routes-wan-settings-autosave-status" class="autosave-status" aria-live="polite">Changes save automatically.</p>
+        {% else %}
+          <p class="muted">Read-only state. Routes and WAN write permissions are required to change these settings.</p>
+        {% endif %}
+      </form>
+    </div>
+
+    <div class="panel" data-routes-wan-validation>
       <div class="panel-head">
         <h2>Validation</h2>
-        <span class="status-pill {{ 'good' if not wan_validation_errors else 'warn' }}">{{ "valid" if not wan_validation_errors else "needs attention" }}</span>
+        <span class="status-pill {{ 'good' if not wan_validation_errors else 'warn' }}" data-routes-wan-validation-status>{{ "valid" if not wan_validation_errors else "needs attention" }}</span>
       </div>
+      <div data-routes-wan-validation-content>
       {% if wan_validation_errors %}
         <div class="alert error">
           {% for error in wan_validation_errors %}
@@ -268,13 +310,14 @@
       {% else %}
         <p class="muted">The desired route and WAN simulation state passes Atlaso validation.</p>
       {% endif %}
+      </div>
       {% set preview_label = "route config" %}
       {% set preview_path = wan_config_path %}
       {% set preview_path_attr = "" %}
       {% set preview_title = "Routes and WAN rendered config" %}
       {% set preview_button_label = "config" %}
       {% set preview_text = wan_config_preview %}
-      {% set preview_data_attr = "" %}
+      {% set preview_data_attr = "data-routes-wan-config-preview" %}
       {% include "partials/config_preview_action.html" %}
     </div>
   </aside>

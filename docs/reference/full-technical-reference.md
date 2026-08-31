@@ -844,7 +844,11 @@ there is no destination NAT or port forwarding, and the outbound interface must 
 impairment is roadmap work tracked in `docs/routing-wan-roadmap.md`; v1 exposes only interface/VLAN-level impairment.
 The browser labels path records **Static Routes** and forwarding rules **Routing Permissions**. All four resource grids
 use the shared reviewed add/edit wizard structure, while persisted Enabled state remains directly editable and generated
-route-role permissions remain read-only. Every edit remains desired state until the global `wan` apply unit is submitted.
+route-role permissions remain read-only. The right-rail **Routing & WAN Settings** card saves three independent global
+switches. Fresh and factory state is off. Routing gates lab routes, rules, and IPv4/IPv6 forwarding; NAT is effective
+only with Routing; WAN Simulation independently gates `tc/netem`. Disabling a feature preserves every SQLite row and
+assignment while the helper clears its runtime state. Every edit remains desired state until the global `wan` apply
+unit is submitted.
 
 DNS and DHCP share one `DNS/DHCP (dnsmasq)` apply unit because they render and reload the same dnsmasq config. The
 Services page shows DNS and DHCP as separate desired-state rows, but their runtime status comes from the shared

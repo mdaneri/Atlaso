@@ -1,15 +1,193 @@
 """Test routes wan behavior."""
 
-from atlaso.app.models import NatRule, Route, RoutingRule
+from atlaso.app.models import NatRule, Route, RoutingRule, Setting, WanPolicy
 from atlaso.app.services.routes_wan import (
+    ROUTES_WAN_SETTING_KEYS,
+    RoutesWanSettings,
     canonical_route_destination,
     default_route_family,
+    ensure_routes_wan_settings,
     mirrored_management_default_routes,
     render_wan_config,
     route_to_dict,
+    save_routes_wan_settings,
     validate_nat_source,
     validate_wan_state,
 )
+
+
+def test_feature_settings_render_full_saved_intent_with_effective_gates():
+    """Keep saved rows in the config while rendering only effective behavior."""
+    policy = WanPolicy(name="Slow WAN", enabled=True, latency_ms=100)
+    policy.id = 9
+    route = Route(
+        destination_cidr="10.20.0.0/24",
+        interface_name="eth1",
+        metric=100,
+        enabled=True,
+        wan_policy_id=9,
+    )
+    nat = NatRule(
+        name="Lab NAT",
+        source="10.20.0.0/24",
+        outbound_interface="eth1",
+        enabled=True,
+    )
+
+    config = render_wan_config(
+        [route],
+        [policy],
+        [nat],
+        targets=[
+            {
+                "name": "eth1",
+                "kind": "physical",
+                "role": "access",
+                "ip_cidr": "192.0.2.10/24",
+                "routing_domain": "lab",
+                "route_allowed": True,
+            }
+        ],
+        settings=RoutesWanSettings(
+            routing_enabled=False,
+            nat_enabled=True,
+            wan_simulation_enabled=True,
+        ),
+    )
+
+    assert "routing_enabled=false" in config
+    assert "nat_enabled=true" in config
+    assert "effective_nat_enabled=false" in config
+    assert "wan_simulation_enabled=true" in config
+    assert "route=10.20.0.0/24" in config
+    assert "nat=Lab NAT" in config
+    assert "policy=Slow WAN" in config
+    assert "ip route replace 10.20.0.0/24" not in config
+    assert "masquerade comment \"Lab NAT\"" not in config
+    assert "tc qdisc replace dev eth1 root netem delay 100ms" in config
+    assert "net.ipv4.ip_forward=0" in config
+    assert "net.ipv6.conf.all.forwarding=0" in config
+
+
+def test_disabled_features_do_not_surface_inactive_row_validation_errors():
+    """Do not block Apply on invalid resources whose global feature is off."""
+    invalid_route = Route(
+        destination_cidr="not-a-network",
+        interface_name="missing",
+        metric=-1,
+        enabled=True,
+    )
+    invalid_nat = NatRule(
+        name="",
+        source="not-a-network",
+        outbound_interface="missing",
+        priority=-1,
+        enabled=True,
+    )
+    invalid_policy = WanPolicy(name="", latency_ms=-1, jitter_ms=-1, enabled=True)
+
+    assert validate_wan_state(
+        [invalid_route],
+        [invalid_policy],
+        set(),
+        [invalid_nat],
+        set(),
+        routing_enabled=False,
+        nat_enabled=False,
+        wan_simulation_enabled=False,
+    ) == []
+    assert validate_wan_state(
+        [invalid_route],
+        [invalid_policy],
+        set(),
+        [invalid_nat],
+        set(),
+        routing_enabled=True,
+        nat_enabled=True,
+        wan_simulation_enabled=True,
+    )
+
+
+def test_fresh_settings_default_off_and_legacy_rows_infer_once(client):
+    """Reconcile missing upgrade keys from effective legacy rows only once.
+
+    Args:
+        client: HTTP test client providing the isolated application database.
+    """
+    from sqlalchemy import delete, select
+
+    from atlaso.app.database import SessionLocal
+
+    with SessionLocal() as db:
+        fresh = ensure_routes_wan_settings(db)
+        assert fresh == RoutesWanSettings(False, False, False)
+
+        db.execute(delete(Setting).where(Setting.key.in_(ROUTES_WAN_SETTING_KEYS)))
+        route = db.execute(select(Route).order_by(Route.id)).scalars().first()
+        nat = db.execute(select(NatRule).order_by(NatRule.id)).scalars().first()
+        policy = db.execute(select(WanPolicy).order_by(WanPolicy.id)).scalars().first()
+        assert route is not None and nat is not None and policy is not None
+        route.enabled = True
+        route.wan_policy_id = policy.id
+        policy.enabled = True
+        nat.enabled = True
+        db.flush()
+
+        inferred = ensure_routes_wan_settings(db)
+        assert inferred == RoutesWanSettings(True, True, True)
+        route.enabled = False
+        nat.enabled = False
+        policy.enabled = False
+        db.flush()
+
+        assert ensure_routes_wan_settings(db) == inferred
+
+
+def test_settings_archives_round_trip_explicit_and_infer_legacy_switches(client):
+    """Round-trip current switches and derive them for an archive without keys.
+
+    Args:
+        client: HTTP test client providing the isolated application database.
+    """
+    from sqlalchemy import delete
+
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.services.settings_archive import (
+        export_settings_archive,
+        factory_reset_desired_state,
+        restore_settings_archive,
+    )
+
+    with SessionLocal() as db:
+        save_routes_wan_settings(
+            db,
+            routing_enabled=True,
+            nat_enabled=False,
+            wan_simulation_enabled=True,
+        )
+        db.commit()
+        current_archive = export_settings_archive(db, actor="test")
+        archived_keys = {
+            row["key"]
+            for row in current_archive["data"]["settings"]
+        }
+        assert ROUTES_WAN_SETTING_KEYS <= archived_keys
+
+        db.execute(delete(Setting).where(Setting.key.in_(ROUTES_WAN_SETTING_KEYS)))
+        db.commit()
+        legacy_archive = export_settings_archive(db, actor="test")
+        assert not ROUTES_WAN_SETTING_KEYS.intersection(
+            {row["key"] for row in legacy_archive["data"]["settings"]}
+        )
+
+        factory_reset_desired_state(db)
+        assert ensure_routes_wan_settings(db) == RoutesWanSettings(False, False, False)
+        restore_settings_archive(db, current_archive)
+        assert ensure_routes_wan_settings(db) == RoutesWanSettings(True, False, True)
+
+        factory_reset_desired_state(db)
+        restore_settings_archive(db, legacy_archive)
+        assert ensure_routes_wan_settings(db) == RoutesWanSettings(True, True, True)
 
 
 def test_default_route_helpers_and_renderer_use_canonical_semantics():

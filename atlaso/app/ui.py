@@ -498,6 +498,7 @@ from atlaso.app.services.routes_wan import (
     WAN_MODES,
     canonical_route_destination,
     default_route_family,
+    ensure_routes_wan_settings,
     generated_route_role_rules,
     mirrored_management_default_routes,
     nat_rule_to_dict,
@@ -5425,7 +5426,8 @@ def routes_wan_context(db: Session) -> dict:
     }
     nat_targets = wan_nat_targets_from_route_targets(targets)
     source_groups = firewall_source_group_state_for_db(db)["groups"]
-    validation_errors = validate_wan_state(
+    feature_settings = ensure_routes_wan_settings(db)
+    validation_args = (
         routes,
         policies,
         {target["name"] for target in targets},
@@ -5439,7 +5441,75 @@ def routes_wan_context(db: Session) -> dict:
             for target in targets
         },
     )
-    config_preview = render_wan_config(routes, policies, nat_rules, all_targets, routing_rules, source_groups=source_groups)
+    routing_validation_errors = validate_wan_state(
+        *validation_args,
+        routing_enabled=True,
+        nat_enabled=False,
+        wan_simulation_enabled=False,
+    )
+    nat_validation_errors = validate_wan_state(
+        *validation_args,
+        routing_enabled=False,
+        nat_enabled=True,
+        wan_simulation_enabled=False,
+    )
+    wan_simulation_validation_errors = validate_wan_state(
+        *validation_args,
+        routing_enabled=False,
+        nat_enabled=False,
+        wan_simulation_enabled=True,
+    )
+    validation_errors = [
+        *(
+            routing_validation_errors
+            if feature_settings.routing_enabled
+            else []
+        ),
+        *(
+            nat_validation_errors
+            if feature_settings.effective_nat_enabled
+            else []
+        ),
+        *(
+            wan_simulation_validation_errors
+            if feature_settings.wan_simulation_enabled
+            else []
+        ),
+    ]
+    feature_status = {
+        "routing": (
+            "needs attention"
+            if feature_settings.routing_enabled and routing_validation_errors
+            else "valid"
+            if feature_settings.routing_enabled
+            else "disabled"
+        ),
+        "nat": (
+            "suspended"
+            if feature_settings.nat_enabled and not feature_settings.routing_enabled
+            else "needs attention"
+            if feature_settings.effective_nat_enabled and nat_validation_errors
+            else "valid"
+            if feature_settings.effective_nat_enabled
+            else "disabled"
+        ),
+        "wan_simulation": (
+            "needs attention"
+            if feature_settings.wan_simulation_enabled and wan_simulation_validation_errors
+            else "valid"
+            if feature_settings.wan_simulation_enabled
+            else "disabled"
+        ),
+    }
+    config_preview = render_wan_config(
+        routes,
+        policies,
+        nat_rules,
+        all_targets,
+        routing_rules,
+        source_groups=source_groups,
+        settings=feature_settings,
+    )
     return {
         "routes": routes,
         "policies": policies,
@@ -5462,6 +5532,11 @@ def routes_wan_context(db: Session) -> dict:
         "wan_config_path": WAN_CONFIG_PATH,
         "wan_config_preview": config_preview,
         "wan_validation_errors": validation_errors,
+        "routes_wan_settings": feature_settings,
+        "routes_wan_feature_status": feature_status,
+        "routing_validation_errors": routing_validation_errors,
+        "nat_validation_errors": nat_validation_errors,
+        "wan_simulation_validation_errors": wan_simulation_validation_errors,
     }
 
 
@@ -10718,6 +10793,7 @@ def appliance_apply_units(db: Session, *, reconcile: bool = True) -> list[dict[s
         removed_routes=wan_removed_routes,
         source_groups=wan["wan_source_groups"],
         previous_config_preview=str((wan_baseline or {}).get("config_preview") or ""),
+        settings=wan["routes_wan_settings"],
     )
     wan_summary = [
         f"{len(wan['routes'])} routes",
@@ -13534,6 +13610,18 @@ def execute_appliance_apply_unit(
         applied_at = utcnow()
         for provider in context["vsphere_key_providers"]:
             provider.applied_at = applied_at
+    if unit_id == "wan" and succeeded and not any(result.dry_run for result in results):
+        if db is None:
+            raise RuntimeError("A database session is required to finalize a Routes and WAN apply.")
+        routing_service = db.execute(
+            select(ServiceState).where(ServiceState.service == "routing")
+        ).scalar_one_or_none()
+        if routing_service is not None:
+            routing_enabled = context["routes_wan_settings"].routing_enabled
+            routing_service.enabled = routing_enabled
+            routing_service.running = routing_enabled
+            routing_service.health = "healthy" if routing_enabled else "disabled"
+            db.add(routing_service)
     if (
         unit_id == "ldap"
         and context["ldap_settings"].enabled

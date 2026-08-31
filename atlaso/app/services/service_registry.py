@@ -1,7 +1,7 @@
 """Implement service registry service behavior."""
 
 SERVICE_STATE_DEFAULTS = [
-    {"service": "routing", "display_name": "Routing", "running": True, "enabled": True, "health": "healthy"},
+    {"service": "routing", "display_name": "Routing", "running": False, "enabled": False, "health": "disabled"},
     {"service": "firewall", "display_name": "Firewall", "running": True, "enabled": True, "health": "healthy"},
     {"service": "dns", "display_name": "DNS", "running": False, "enabled": False, "health": "disabled"},
     {"service": "dhcp", "display_name": "DHCP", "running": False, "enabled": False, "health": "disabled"},

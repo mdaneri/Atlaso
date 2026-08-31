@@ -174,7 +174,9 @@ from atlaso.app.services.oidc import (
     validate_redirect_uri_list,
 )
 from atlaso.app.services.routes_wan import (
+    ROUTES_WAN_SETTING_KEYS,
     canonical_route_destination,
+    ensure_routes_wan_settings,
     validate_nat_source,
     validate_wan_state,
 )
@@ -214,6 +216,7 @@ SAFE_SETTING_KEYS = {
     FIREWALL_SOURCE_GROUPS_SETTING_KEY,
     LOCAL_USERS_PASSWORD_POLICY_KEY,
     NTP_NTS_RESTORATION_SETTING_KEY,
+    *ROUTES_WAN_SETTING_KEYS,
 }
 
 SCALAR_TABLES = {
@@ -1563,6 +1566,10 @@ def _restore_settings_archive_data(db: Session, data: dict[str, Any]) -> dict[st
     counts["automation_scripts"] = _restore_automation_scripts(db, data.get("automation_scripts", []))
     counts["schedules"] = _restore_schedules(db, data.get("schedules", []))
     counts["settings"] = _insert_rows(db, Setting, [row for row in data.get("settings", []) if row.get("key") in SAFE_SETTING_KEYS])
+    ensure_routes_wan_settings(db)
+    counts["settings"] = len(
+        db.execute(select(Setting).where(Setting.key.in_(SAFE_SETTING_KEYS))).scalars().all()
+    )
     reconcile_factory_service_identities(db)
     _disable_startup_example_seed(db)
     return counts
@@ -3778,6 +3785,12 @@ def _validate_archive_relationships(data: dict[str, list[dict[str, Any]]]) -> No
         ):
             raise ValueError(
                 "The settings archive NTPsec NTS restoration marker is invalid."
+            )
+        if setting_key in ROUTES_WAN_SETTING_KEYS and str(
+            row.get("value") or ""
+        ).strip().lower() not in {"true", "false"}:
+            raise ValueError(
+                f"The settings archive Routes and WAN switch {setting_key} must be true or false."
             )
         setting_keys.add(setting_key)
 

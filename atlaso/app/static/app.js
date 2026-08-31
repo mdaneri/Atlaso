@@ -7353,6 +7353,96 @@ function routesWanResponseMessage(text, fallback) {
   return plainText || fallback;
 }
 
+function routesWanFeaturePillClass(status) {
+  if (status === "valid") return "good";
+  if (status === "suspended" || status === "needs attention") return "warn";
+  return "muted";
+}
+
+function updateRoutesWanSettingsState(payload = {}, root = document) {
+  const statuses = payload.feature_status || {};
+  ["routing", "nat", "wan_simulation"].forEach((feature) => {
+    const state = root.querySelector(`[data-routes-wan-feature-state="${feature}"]`);
+    const status = typeof statuses[feature] === "string" ? statuses[feature] : "disabled";
+    const pill = state?.querySelector(".status-pill");
+    if (pill instanceof HTMLElement) {
+      pill.textContent = status;
+      pill.className = `status-pill ${routesWanFeaturePillClass(status)}`;
+    }
+    if (feature !== "nat" || !(state instanceof HTMLElement)) return;
+    const existingHint = state.querySelector("[data-routes-wan-suspended-hint]");
+    if (status === "suspended" && !(existingHint instanceof HTMLElement)) {
+      const hint = document.createElement("small");
+      hint.className = "field-hint";
+      hint.setAttribute("data-routes-wan-suspended-hint", "");
+      hint.setAttribute("role", "status");
+      hint.textContent = "Suspended until Routing is enabled.";
+      state.append(hint);
+    } else if (status !== "suspended") {
+      existingHint?.remove();
+    }
+  });
+
+  const validationPanel = root.querySelector("[data-routes-wan-validation]");
+  const validationStatus = validationPanel?.querySelector("[data-routes-wan-validation-status]");
+  const validationContent = validationPanel?.querySelector("[data-routes-wan-validation-content]");
+  const errors = Array.isArray(payload.validation_errors) ? payload.validation_errors : [];
+  if (validationStatus instanceof HTMLElement) {
+    validationStatus.textContent = errors.length ? "needs attention" : "valid";
+    validationStatus.className = `status-pill ${errors.length ? "warn" : "good"}`;
+  }
+  if (validationContent instanceof HTMLElement) {
+    validationContent.innerHTML = "";
+    if (errors.length) {
+      const errorBox = document.createElement("div");
+      errorBox.className = "alert error";
+      errors.forEach((error) => {
+        const row = document.createElement("div");
+        row.textContent = error;
+        errorBox.append(row);
+      });
+      validationContent.append(errorBox);
+    } else {
+      const message = document.createElement("p");
+      message.className = "muted";
+      message.textContent = "The desired route and WAN simulation state passes Atlaso validation.";
+      validationContent.append(message);
+    }
+  }
+  const configPreview = validationPanel?.querySelector("[data-routes-wan-config-preview]");
+  if (configPreview instanceof HTMLElement && typeof payload.config_preview === "string") {
+    configPreview.textContent = payload.config_preview;
+    highlightConfigPreviewElement(configPreview);
+  }
+  const settingsForm = root.querySelector(`form[action="${managementUiPath("/routes-wan/settings")}"]`);
+  const natInput = settingsForm?.querySelector('input[name="nat_enabled"]');
+  if (natInput instanceof HTMLInputElement && settingsForm.dataset.routesWanCanWrite === "true") {
+    natInput.disabled = !Boolean(payload.routing_enabled);
+  }
+}
+
+function initializeRoutesWanSettings(root = document) {
+  root.querySelectorAll(`form[action="${managementUiPath("/routes-wan/settings")}"]`).forEach((form) => {
+    if (!(form instanceof HTMLFormElement)) return;
+    if (form.dataset.routesWanSettingsInitialized === "1") return;
+    form.dataset.routesWanSettingsInitialized = "1";
+    const routingInput = form.querySelector('input[name="routing_enabled"]');
+    const natInput = form.querySelector('input[name="nat_enabled"]');
+    if (
+      routingInput instanceof HTMLInputElement
+      && natInput instanceof HTMLInputElement
+      && form.dataset.routesWanCanWrite === "true"
+    ) {
+      routingInput.addEventListener("change", () => {
+        natInput.disabled = !routingInput.checked;
+      });
+    }
+    form.addEventListener("atlaso:autosave-success", (event) => {
+      updateRoutesWanSettingsState(event.detail || {}, root);
+    });
+  });
+}
+
 function rememberRoutesWanTab(targetId) {
   try {
     window.localStorage.setItem("atlaso:routes-wan:active-tab", targetId);
@@ -11760,6 +11850,9 @@ function initializeSwitchFields(root = document) {
     field.addEventListener("click", (event) => {
       const target = event.target;
       if (!(target instanceof HTMLElement) || target === input || target.closest(".help-icon")) {
+        return;
+      }
+      if (input.disabled) {
         return;
       }
       event.preventDefault();
@@ -23206,6 +23299,7 @@ document.addEventListener("DOMContentLoaded", initializeRoutesWanRoutingTable);
 document.addEventListener("DOMContentLoaded", initializeRoutesWanNatTable);
 document.addEventListener("DOMContentLoaded", initializeRoutesWanPoliciesTable);
 document.addEventListener("DOMContentLoaded", initializeRoutesWanWizards);
+document.addEventListener("DOMContentLoaded", () => initializeRoutesWanSettings());
 document.addEventListener("DOMContentLoaded", initializeSourceGroupWizardReturnFlow);
 document.addEventListener("DOMContentLoaded", initializePhysicalInterfacesTable);
 document.addEventListener("DOMContentLoaded", initializeApiTokensTable);

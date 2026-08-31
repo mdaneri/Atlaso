@@ -67,6 +67,7 @@ from atlaso.app.services.ntp import (
     dump_ntp_upstream_sources,
     ntp_upstream_sources,
 )
+from atlaso.app.services.routes_wan import ensure_routes_wan_settings
 from atlaso.app.services.service_dns_defaults import (
     factory_service_hostname,
     reconcile_factory_service_identities,
@@ -204,6 +205,7 @@ def seed_initial_data(
         commit: Commit seeded rows and emit post-commit restoration audit when true.
     """
     ntp_defaults_restored = False
+    fresh_install = db.execute(select(User.id).limit(1)).first() is None
     ensure_appliance_instance_id(db)
     reconciled_network_roles = reconcile_legacy_network_roles_once(db)
     if include_examples:
@@ -393,6 +395,11 @@ def seed_initial_data(
             )
         )
 
+    routes_wan_settings = ensure_routes_wan_settings(
+        db,
+        force_disabled=factory_defaults or fresh_install,
+    )
+
     for retired_service in db.execute(select(ServiceState).where(ServiceState.service.in_(RETIRED_SERVICE_IDS))).scalars().all():
         db.delete(retired_service)
     vcf_backup_settings = db.execute(select(VcfBackupSettings)).scalar_one_or_none()
@@ -400,7 +407,15 @@ def seed_initial_data(
     for service_state in SERVICE_STATE_DEFAULTS:
         existing_service = db.execute(select(ServiceState).where(ServiceState.service == service_state["service"])).scalar_one_or_none()
         if existing_service is None:
-            db.add(ServiceState(**service_state))
+            initial_state = dict(service_state)
+            if service_state["service"] == "routing":
+                initial_state["enabled"] = routes_wan_settings.routing_enabled
+                initial_state["running"] = routes_wan_settings.routing_enabled
+                initial_state["health"] = "healthy" if routes_wan_settings.routing_enabled else "disabled"
+            db.add(ServiceState(**initial_state))
+        elif service_state["service"] == "routing":
+            existing_service.enabled = routes_wan_settings.routing_enabled
+            db.add(existing_service)
         elif service_state["service"] in {"ntpd", "repository", "vcf-backups"}:
             existing_service.display_name = service_state["display_name"]
             existing_service.detail = service_state["detail"]

@@ -5667,6 +5667,104 @@ def wan_config_text(
     )
 
 
+@pytest.mark.parametrize(
+    ("routing_enabled", "nat_enabled", "simulation_enabled", "route_active", "nat_active", "qdisc_active"),
+    [
+        (False, False, False, False, False, False),
+        (True, False, False, True, False, False),
+        (False, True, False, False, False, False),
+        (False, False, True, False, False, True),
+        (True, True, True, True, True, True),
+    ],
+)
+def test_wan_feature_switch_runtime_matrix(
+    monkeypatch,
+    tmp_path,
+    routing_enabled,
+    nat_enabled,
+    simulation_enabled,
+    route_active,
+    nat_active,
+    qdisc_active,
+):
+    """Gate routes, NAT, forwarding, and netem independently.
+
+    Args:
+        monkeypatch: Pytest fixture used to replace dependencies for the test.
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+        routing_enabled: Saved global routing state for the scenario.
+        nat_enabled: Saved global NAT state for the scenario.
+        simulation_enabled: Saved global WAN Simulation state for the scenario.
+        route_active: Whether lab routes should be applied.
+        nat_active: Whether NAT rules should be rendered.
+        qdisc_active: Whether the assigned qdisc should be applied.
+    """
+    helper = load_helper_module()
+    config_path = tmp_path / "atlaso-wan.conf"
+    config_path.write_text(
+        "\n".join(
+            [
+                "[feature_settings]",
+                f"routing_enabled={'true' if routing_enabled else 'false'}",
+                f"nat_enabled={'true' if nat_enabled else 'false'}",
+                f"wan_simulation_enabled={'true' if simulation_enabled else 'false'}",
+                "",
+                wan_config_text(),
+            ]
+        ),
+        encoding="utf-8",
+    )
+    parsed = helper._parse_wan_config(config_path)
+    commands: list[list[str]] = []
+
+    def fake_run(command: list[str]) -> subprocess.CompletedProcess[str]:
+        commands.append(command)
+        return subprocess.CompletedProcess(command, 0, "", "")
+
+    monkeypatch.setattr(helper, "WAN_SYSCTL_PATH", tmp_path / "90-atlaso-routing-wan.conf")
+    monkeypatch.setattr(helper.shutil, "which", lambda command: f"/usr/sbin/{command}")
+    monkeypatch.setattr(helper, "_run", fake_run)
+
+    assert helper._apply_wan_forwarding(parsed) == 0
+    assert helper._apply_wan_target_routes(parsed) == 0
+    assert helper._apply_wan_routes_and_qdiscs(parsed) == 0
+
+    route_replace = [
+        "ip",
+        "route",
+        "replace",
+        "10.20.0.0/24",
+        "dev",
+        "eth1.20",
+        "metric",
+        "120",
+        "table",
+        "200",
+    ]
+    route_delete = [
+        "ip",
+        "route",
+        "del",
+        "10.20.0.0/24",
+        "dev",
+        "eth1.20",
+        "table",
+        "200",
+    ]
+    assert (route_replace in commands) is route_active
+    assert (route_delete in commands) is (not route_active)
+    assert (["sysctl", "-w", f"net.ipv4.ip_forward={1 if routing_enabled else 0}"] in commands)
+    assert (["sysctl", "-w", f"net.ipv6.conf.all.forwarding={1 if routing_enabled else 0}"] in commands)
+    assert any(command[:4] == ["tc", "qdisc", "replace", "dev"] for command in commands) is qdisc_active
+    assert any(command[:4] == ["tc", "qdisc", "del", "dev"] for command in commands) is (not qdisc_active)
+
+    settings = helper._wan_feature_settings(parsed)
+    nat_config = helper._render_wan_nat_config(
+        parsed["nat_rules"] if settings["effective_nat_enabled"] else []
+    )
+    assert ('masquerade comment "SiteA outbound WAN"' in nat_config) is nat_active
+
+
 def esxi_pxe_manifest(http_root: Path, *, enabled: bool = True, stale_id: int = 99, iso_root: Path | None = None) -> dict:
     """Return esxi pxe manifest.
 
@@ -6475,6 +6573,7 @@ def test_wan_helper_validates_routes_nat_and_netem(tmp_path):
     assert helper._wan_config_errors(config_path) == []
     nat_config = helper._render_wan_nat_config(helper._parse_wan_config(config_path)["nat_rules"])
     assert "table ip atlaso_nat" in nat_config
+    assert "flush table ip atlaso_nat" in nat_config
     assert 'ip saddr 192.168.50.0/24 oifname "eth1.20" masquerade' in nat_config
 
 
@@ -8055,7 +8154,9 @@ def test_wan_helper_apply_routes_nat_and_netem(monkeypatch, tmp_path):
     assert "wan restore --real" in replay_service_path.read_text(encoding="utf-8")
     assert "restore" in helper.COMMANDS["wan"]
     assert ["systemctl", "enable", "atlaso-wan.service"] in commands
-    assert sysctl_path.read_text(encoding="utf-8") == "net.ipv4.ip_forward = 1\n"
+    assert sysctl_path.read_text(encoding="utf-8") == (
+        "net.ipv4.ip_forward = 1\nnet.ipv6.conf.all.forwarding = 1\n"
+    )
 
 
 def test_automation_helper_gives_powershell_private_writable_xdg_home(monkeypatch, tmp_path):

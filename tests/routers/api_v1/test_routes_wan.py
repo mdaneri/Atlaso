@@ -3,6 +3,108 @@
 from tests.routers.api_v1.helpers import create_token
 
 
+def test_routes_wan_settings_require_both_scopes_and_preserve_rows(client):
+    """Save global feature intent while preserving all Routes and WAN rows.
+
+    Args:
+        client: HTTP test client used to exercise the Atlaso application.
+    """
+    from sqlalchemy import func, select
+
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import AuditEvent, NatRule, Route, WanPolicy
+
+    read_routes_token, _ = create_token(client, scopes=["read:routes"])
+    denied = client.get(
+        "/api/v1/routes-wan/settings",
+        headers={"Authorization": f"Bearer {read_routes_token}"},
+    )
+    assert denied.status_code == 403
+    assert "read:wan" in denied.text
+
+    token, _ = create_token(
+        client,
+        scopes=["read:routes", "read:wan", "write:routes", "write:wan"],
+    )
+    headers = {"Authorization": f"Bearer {token}"}
+    initial = client.get("/api/v1/routes-wan/settings", headers=headers)
+    assert initial.status_code == 200
+    assert initial.json() == {
+        "routing_enabled": False,
+        "nat_enabled": False,
+        "wan_simulation_enabled": False,
+        "effective_nat_enabled": False,
+    }
+
+    with SessionLocal() as db:
+        before = (
+            db.scalar(select(func.count(Route.id))),
+            db.scalar(select(func.count(NatRule.id))),
+            db.scalar(select(func.count(WanPolicy.id))),
+        )
+
+    suspended = client.put(
+        "/api/v1/routes-wan/settings",
+        headers=headers,
+        json={
+            "routing_enabled": False,
+            "nat_enabled": True,
+            "wan_simulation_enabled": True,
+        },
+    )
+    assert suspended.status_code == 200, suspended.text
+    assert suspended.json()["nat_enabled"] is True
+    assert suspended.json()["effective_nat_enabled"] is False
+
+    enabled = client.put(
+        "/api/v1/routes-wan/settings",
+        headers=headers,
+        json={
+            "routing_enabled": True,
+            "nat_enabled": True,
+            "wan_simulation_enabled": True,
+        },
+    )
+    assert enabled.status_code == 200, enabled.text
+    assert enabled.json()["effective_nat_enabled"] is True
+
+    with SessionLocal() as db:
+        after = (
+            db.scalar(select(func.count(Route.id))),
+            db.scalar(select(func.count(NatRule.id))),
+            db.scalar(select(func.count(WanPolicy.id))),
+        )
+        assert after == before
+        assert db.scalar(
+            select(func.count(AuditEvent.id)).where(
+                AuditEvent.action == "update_routes_wan_settings"
+            )
+        ) == 2
+
+
+def test_routes_wan_settings_put_requires_both_write_scopes(client):
+    """Reject a settings mutation when either write scope is absent.
+
+    Args:
+        client: HTTP test client used to exercise the Atlaso application.
+    """
+    token, _ = create_token(
+        client,
+        scopes=["read:routes", "read:wan", "write:routes"],
+    )
+    response = client.put(
+        "/api/v1/routes-wan/settings",
+        headers={"Authorization": f"Bearer {token}"},
+        json={
+            "routing_enabled": True,
+            "nat_enabled": False,
+            "wan_simulation_enabled": False,
+        },
+    )
+    assert response.status_code == 403
+    assert "write:wan" in response.text
+
+
 def test_sufficient_scopes_allow_wan_policy_creation_and_audit(client):
     """Verify that sufficient scopes allow wan policy creation and audit.
 

@@ -182,6 +182,12 @@ accepted the
 desired state, not that the corresponding service is already applied. Follow returned job identifiers through the Jobs
 or Tasks interfaces and verify terminal results.
 
+`GET /api/v1/routes-wan/settings` requires both `read:routes` and `read:wan`. `PUT` on the same path requires both
+`write:routes` and `write:wan` and replaces `routing_enabled`, `nat_enabled`, and `wan_simulation_enabled`. Responses
+also include read-only `effective_nat_enabled`, which is true only when Routing and NAT are both enabled. The update is
+audited and saves desired state only; it preserves every route, routing permission, NAT rule, WAN policy, and assignment
+until the `wan` Appliance Apply unit runs.
+
 Legacy `/api/v1/dns/apply`, `/api/v1/dhcp/apply`, and `/api/v1/firewall/apply` routes remain available for compatibility
 but are intentionally absent from Swagger because they predate the reviewed global workflow. New clients must save
 desired state and use `/ui/management/appliance-apply`; do not build new automation around the legacy direct-apply routes.
