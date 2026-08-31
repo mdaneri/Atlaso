@@ -1687,6 +1687,10 @@ def test_vmware_packer_requires_proven_task_or_release_builder_identity() -> Non
     assert "Assert-AtlasoVmwareBuilderVmx" in wrapper
     assert "function Assert-AtlasoBuilderIdentityCurrent" in wrapper
     assert "Resolve-AtlasoReleaseBuilderIdentity `" in wrapper
+    assert wrapper.count(
+        "$releaseIdentityArguments['WorkflowRunId'] = $ReleaseWorkflowRunId"
+    ) == 2
+    assert "-WorkflowRunId $ReleaseWorkflowRunId" not in wrapper
     assert wrapper.count("$null = Assert-AtlasoBuilderIdentityCurrent `") == 6
     assert wrapper.count("-ReleaseBuilder:$ReleaseBuilder `") >= 6
     build_invocation = wrapper.index("Invoke-AtlasoPhotonImageBuild `")

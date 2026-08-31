@@ -377,10 +377,14 @@ function Resolve-AtlasoReleaseBuilderIdentity {
     if ($LASTEXITCODE -ne 0 -or $version -cne $ReleaseVersion) {
         throw 'The protected release builder version does not match synchronized repository metadata.'
     }
-    return New-AtlasoVmwareBuilderIdentity `
-        -ReleaseVersion $ReleaseVersion `
-        -SourceCommit $ReleaseSourceCommit `
-        -WorkflowRunId $ReleaseWorkflowRunId
+    $releaseIdentityArguments = @{
+        ReleaseVersion = $ReleaseVersion
+        SourceCommit   = $ReleaseSourceCommit
+    }
+    if ($ReleaseWorkflowRunId -gt 0) {
+        $releaseIdentityArguments['WorkflowRunId'] = $ReleaseWorkflowRunId
+    }
+    return New-AtlasoVmwareBuilderIdentity @releaseIdentityArguments
 }
 
 <#
@@ -677,10 +681,14 @@ $builderIdentity = if ($ReleaseBuilder) {
             $VerifiedSourceCommit -cne $ReleaseSourceCommit -or $trackedChanges.Count -ne 0) {
             throw 'The isolated child release identity no longer matches exact checkout HEAD.'
         }
-        New-AtlasoVmwareBuilderIdentity `
-            -ReleaseVersion $ReleaseVersion `
-            -SourceCommit $ReleaseSourceCommit `
-            -WorkflowRunId $ReleaseWorkflowRunId
+        $releaseIdentityArguments = @{
+            ReleaseVersion = $ReleaseVersion
+            SourceCommit   = $ReleaseSourceCommit
+        }
+        if ($ReleaseWorkflowRunId -gt 0) {
+            $releaseIdentityArguments['WorkflowRunId'] = $ReleaseWorkflowRunId
+        }
+        New-AtlasoVmwareBuilderIdentity @releaseIdentityArguments
     }
     else {
         Resolve-AtlasoReleaseBuilderIdentity `
