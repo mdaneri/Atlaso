@@ -820,7 +820,8 @@ Terminal order:
   bounded parent must revalidate identity and reacquire that exact claim through any timeout cleanup. Clone and export
   require exact builder provenance. Low-level OVF export accepts only an explicit proven source VMX. Never propagate
   transient PR identity into OVF/OVA product naming, deployed-appliance names, canonical release filenames, or
-  immutable release assets.
+  immutable release assets. Before manifest or OVA generation, normalize and read back both the OVF `VirtualSystem`
+  identifier and its `Name` as the requested canonical product name.
 
 - Every task-owned VMware test VM used for pull-request validation has one canonical identity:
   `Atlaso-PR-<number>-<purpose>[-<collision-safe-suffix>]`. Require the exact positive pull-request number and sanitize

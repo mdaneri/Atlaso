@@ -1371,7 +1371,9 @@ wrapper derives `Atlaso-PR-<number>-Photon-Builder-VMware[-<collision-safe-suffi
 Packer VM, output-directory leaf, VMX, temporary address reservation, diagnostics, sibling ownership manifest,
 schema-v3 provenance, cleanup scope, and reported evidence. Use `-CollisionSuffix` for another builder owned by the
 same pull request. Protected release production uses a separate deterministic version-and-commit builder identity.
-Neither identity changes the canonical exported product or release asset names.
+Neither identity changes the canonical exported product or release asset names. The exporter rewrites both the OVF
+`VirtualSystem` identifier and its `Name` to the requested canonical product name, then reads them back before
+regenerating the manifest or packaging the OVA; transient PR and source-commit identities remain build-time provenance.
 
 Before a forced Workstation rebuild deletes the output directory, the wrapper first requires the sibling manifest to
 prove the same repository, pull request, branch, canonical name, and suffix. After checked cleanup, it advances the
