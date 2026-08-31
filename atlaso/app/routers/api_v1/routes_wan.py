@@ -728,8 +728,28 @@ def build_router(dependencies: RoutesWanApiDependencies) -> RoutesWanApiRouter:
             identity: Authenticated identity authorizing the operation.
             db: Active database session used by the operation.
         """
-        routes = db.execute(select(Route).where(Route.wan_policy_id.is_not(None))).scalars().all()
-        nat_rules = db.execute(select(NatRule).where(NatRule.enabled.is_(True))).scalars().all()
+        settings = ensure_routes_wan_settings(db)
+        routes = []
+        if settings.wan_simulation_enabled:
+            routes = (
+                db.execute(
+                    select(Route)
+                    .join(WanPolicy)
+                    .where(
+                        Route.enabled.is_(True),
+                        WanPolicy.enabled.is_(True),
+                    )
+                )
+                .scalars()
+                .all()
+            )
+        nat_rules = []
+        if settings.effective_nat_enabled:
+            nat_rules = (
+                db.execute(select(NatRule).where(NatRule.enabled.is_(True)))
+                .scalars()
+                .all()
+            )
         return WanStatusResponse(
             active_policy_count=len(routes),
             managed_interfaces=sorted({route.interface_name for route in routes} | {rule.outbound_interface for rule in nat_rules}),

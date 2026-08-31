@@ -850,7 +850,8 @@ only with Routing; WAN Simulation independently gates `tc/netem`. Disabling a fe
 assignment while the helper clears its runtime state. Every edit remains desired state until the global `wan` apply
 unit is submitted. The Services and local-console Routing row mirrors the saved Routing switch. Services enable and
 disable actions update that desired state; direct Routing start, stop, and restart actions are rejected because only
-Appliance Apply may mutate forwarding runtime state.
+Appliance Apply may mutate forwarding runtime state. The WAN status API likewise counts only globally active, enabled
+WAN assignments and effective NAT interfaces instead of preserved inactive rows.
 
 DNS and DHCP share one `DNS/DHCP (dnsmasq)` apply unit because they render and reload the same dnsmasq config. The
 Services page shows DNS and DHCP as separate desired-state rows, but their runtime status comes from the shared

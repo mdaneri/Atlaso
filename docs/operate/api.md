@@ -192,6 +192,10 @@ The generic Services `enable` and `disable` operations for `routing` update the 
 Services `start`, `stop`, and `restart` operations reject `routing` with HTTP 422 because runtime forwarding changes
 must use the `wan` Appliance Apply unit.
 
+`GET /api/v1/wan/status` reports active policy assignments only while WAN Simulation is enabled. Its managed-interface
+list includes enabled NAT rules only while both Routing and NAT are enabled, so preserved inactive rows are not reported
+as active runtime intent.
+
 Legacy `/api/v1/dns/apply`, `/api/v1/dhcp/apply`, and `/api/v1/firewall/apply` routes remain available for compatibility
 but are intentionally absent from Swagger because they predate the reviewed global workflow. New clients must save
 desired state and use `/ui/management/appliance-apply`; do not build new automation around the legacy direct-apply routes.

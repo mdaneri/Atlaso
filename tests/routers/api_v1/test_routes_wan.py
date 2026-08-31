@@ -105,6 +105,83 @@ def test_routes_wan_settings_put_requires_both_write_scopes(client):
     assert "write:wan" in response.text
 
 
+def test_wan_status_reports_only_effective_feature_state(client):
+    """Exclude preserved NAT and policy rows while their feature is inactive.
+
+    Args:
+        client: HTTP test client used to exercise the Atlaso application.
+    """
+    from sqlalchemy import delete
+
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import NatRule, Route, WanPolicy
+    from atlaso.app.services.routes_wan import save_routes_wan_settings
+
+    with SessionLocal() as db:
+        db.execute(delete(Route))
+        db.execute(delete(NatRule))
+        db.execute(delete(WanPolicy))
+        policy = WanPolicy(name="Status WAN", enabled=True, latency_ms=25)
+        db.add(policy)
+        db.flush()
+        db.add(
+            Route(
+                destination_cidr="203.0.113.0/24",
+                interface_name="eth1.20",
+                enabled=True,
+                wan_policy_id=policy.id,
+            )
+        )
+        db.add(
+            NatRule(
+                name="Status NAT",
+                source="192.168.20.0/24",
+                outbound_interface="eth2",
+                enabled=True,
+            )
+        )
+        save_routes_wan_settings(
+            db,
+            routing_enabled=False,
+            nat_enabled=True,
+            wan_simulation_enabled=False,
+        )
+        db.commit()
+
+    token, _ = create_token(client, scopes=["read:wan"])
+    headers = {"Authorization": f"Bearer {token}"}
+    disabled = client.get("/api/v1/wan/status", headers=headers)
+    assert disabled.status_code == 200
+    assert disabled.json()["active_policy_count"] == 0
+    assert disabled.json()["managed_interfaces"] == []
+
+    with SessionLocal() as db:
+        save_routes_wan_settings(
+            db,
+            routing_enabled=False,
+            nat_enabled=True,
+            wan_simulation_enabled=True,
+        )
+        db.commit()
+
+    simulation_only = client.get("/api/v1/wan/status", headers=headers)
+    assert simulation_only.json()["active_policy_count"] == 1
+    assert simulation_only.json()["managed_interfaces"] == ["eth1.20"]
+
+    with SessionLocal() as db:
+        save_routes_wan_settings(
+            db,
+            routing_enabled=True,
+            nat_enabled=True,
+            wan_simulation_enabled=True,
+        )
+        db.commit()
+
+    all_enabled = client.get("/api/v1/wan/status", headers=headers)
+    assert all_enabled.json()["active_policy_count"] == 1
+    assert all_enabled.json()["managed_interfaces"] == ["eth1.20", "eth2"]
+
+
 def test_sufficient_scopes_allow_wan_policy_creation_and_audit(client):
     """Verify that sufficient scopes allow wan policy creation and audit.
 
