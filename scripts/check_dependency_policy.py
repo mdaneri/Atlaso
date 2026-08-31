@@ -139,6 +139,37 @@ def _yaml_scalar(line: str, key: str) -> str | None:
     return re.split(r"\s+#", value, maxsplit=1)[0].rstrip()
 
 
+def _yaml_plain_scalar(
+    lines: list[str],
+    index: int,
+    key: str,
+) -> tuple[str | None, int]:
+    """Return a complete plain scalar and the next unread line.
+
+    Args:
+        lines: YAML source lines.
+        index: Zero-based index of the mapping key line.
+        key: Mapping key expected on the current line.
+    """
+    value = _yaml_scalar(lines[index], key)
+    if value is None or value.startswith(("|", ">")):
+        return value, index + 1
+    line = lines[index]
+    line_indent = len(line) - len(line.lstrip())
+    key_indent = line_indent + (2 if re.match(r"\s*-\s+", line) else 0)
+    parts = [value] if value else []
+    cursor = index + 1
+    while cursor < len(lines):
+        candidate = lines[cursor]
+        candidate_indent = len(candidate) - len(candidate.lstrip())
+        if candidate.strip() and candidate_indent <= key_indent:
+            break
+        if candidate.strip():
+            parts.append(candidate.strip())
+        cursor += 1
+    return " ".join(parts), cursor
+
+
 def _flow_parts(value: str) -> list[str] | None:
     """Split a flow-mapping body at top-level commas.
 
@@ -372,7 +403,7 @@ def _workflow_checkout_sources(
         action = (
             _yaml_value_text(flow_step.get("uses"), "")
             if flow_step is not None and "uses" in flow_step
-            else _yaml_scalar(line, "uses")
+            else _yaml_plain_scalar(lines, index, "uses")[0]
         )
         if action is None or not re.fullmatch(r"actions/checkout@[^\s]+", action):
             continue
@@ -970,9 +1001,10 @@ def _workflow_run_commands(lines: list[str]) -> list[tuple[int, str, str, int]]:
             index += 1
             continue
         line_number = index + 1
-        value = _yaml_scalar(lines[index], "run")
+        value, next_index = _yaml_plain_scalar(lines, index, "run")
         if value is None:
             value = match.group("value").strip()
+            next_index = index + 1
         if _is_alias_value(value):
             working_directory = _workflow_effective_working_directory(lines, index)
             commands.append(
@@ -989,7 +1021,7 @@ def _workflow_run_commands(lines: list[str]) -> list[tuple[int, str, str, int]]:
         if value and not value.startswith(("|", ">")):
             working_directory = _workflow_effective_working_directory(lines, index)
             commands.append((line_number, value, working_directory, index))
-            index += 1
+            index = next_index
             continue
 
         block: list[tuple[int, str]] = []

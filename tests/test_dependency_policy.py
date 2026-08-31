@@ -155,6 +155,35 @@ def test_dependency_policy_checks_multiline_pip_wheel_requirements(
     )
 
 
+def test_dependency_policy_checks_continued_plain_run_scalar(
+    tmp_path: Path,
+) -> None:
+    """Verify a continued plain run scalar cannot hide a requirement.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
+    write_valid_policy(tmp_path)
+    (tmp_path / "requirements-ad-hoc.lock").write_text("placeholder\n", encoding="utf-8")
+    workflow = tmp_path / ".github" / "workflows" / "release.yml"
+    workflow.parent.mkdir(parents=True, exist_ok=True)
+    workflow.write_text(
+        """jobs:
+  continued:
+    steps:
+      - run: python -m pip install
+          -r requirements-ad-hoc.lock
+""",
+        encoding="utf-8",
+    )
+
+    assert any(
+        "workflow requirement lock is outside the generated dependency policy "
+        "inventory: requirements-ad-hoc.lock" in error
+        for error in validate(tmp_path)
+    )
+
+
 def test_dependency_policy_recognizes_prefixed_python_pip_invocations(
     tmp_path: Path,
 ) -> None:
@@ -958,6 +987,37 @@ def test_dependency_policy_rejects_alias_valued_checkout_step(tmp_path: Path) ->
 
     assert any(
         "workflow requirement uses nonliteral checkout path metadata: "
+        "requirements-release-tools.lock" in error
+        for error in validate(tmp_path)
+    )
+
+
+def test_dependency_policy_resolves_continued_checkout_action_scalar(
+    tmp_path: Path,
+) -> None:
+    """Verify a continued checkout action retains its external source.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
+    write_valid_policy(tmp_path)
+    workflow = tmp_path / ".github" / "workflows" / "release.yml"
+    workflow.parent.mkdir(parents=True, exist_ok=True)
+    workflow.write_text(
+        """jobs:
+  continued:
+    steps:
+      - uses:
+          actions/checkout@v7
+        with:
+          repository: attacker/other
+      - run: python -m pip install -r requirements-release-tools.lock
+""",
+        encoding="utf-8",
+    )
+
+    assert any(
+        "root workflow requirement is not sourced from Atlaso: "
         "requirements-release-tools.lock" in error
         for error in validate(tmp_path)
     )
