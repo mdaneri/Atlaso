@@ -7191,34 +7191,31 @@
         "type": "object"
       },
       "SettingsUpdate": {
-        "description": "Fields accepted when updating or operating on a settings resource.\n\nAttributes:\n    appliance_fqdn: Requested appliance fqdn value for this settings resource.\n    management_https_enabled: Whether management https enabled is enabled for this settings\n        resource.\n    web_terminal_enabled: Whether web terminal enabled is enabled for this settings resource.\n    web_terminal_interfaces: Ordered collection of web terminal interfaces values represented by\n        this settings schema.\n    root_ssh_enabled: Whether root ssh enabled is enabled for this settings resource.\n    browser_session_idle_timeout_minutes: Maximum browser inactivity before Atlaso expires the session.\n    api_token_max_lifetime_days: Maximum lifetime allowed for newly issued API tokens.\n    external_dns_servers: Ordered collection of external dns servers values represented by this\n        settings schema.",
+        "description": "Optional fields accepted when partially updating appliance settings.\n\nAttributes:\n    appliance_fqdn: Requested appliance fqdn value for this settings resource.\n    management_https_enabled: Whether management https enabled is enabled for this settings\n        resource.\n    web_terminal_enabled: Whether web terminal enabled is enabled for this settings resource.\n    web_terminal_interfaces: Ordered collection of web terminal interfaces values represented by\n        this settings schema.\n    root_ssh_enabled: Whether root ssh enabled is enabled for this settings resource.\n    browser_session_idle_timeout_minutes: Maximum browser inactivity before Atlaso expires the session.\n    api_token_max_lifetime_days: Maximum lifetime allowed for newly issued API tokens.\n    external_dns_servers: Ordered collection of external dns servers values represented by this\n        settings schema.",
         "properties": {
           "api_token_max_lifetime_days": {
-            "default": 90,
-            "description": "Maximum lifetime, in days, applied to newly issued API bearer tokens; existing tokens are unchanged.",
+            "description": "Maximum lifetime, in days, applied to newly issued API bearer tokens; existing tokens are unchanged. Omit it to preserve the current value; null is not accepted.",
             "maximum": 365.0,
             "minimum": 1.0,
             "title": "Api Token Max Lifetime Days",
             "type": "integer"
           },
           "appliance_fqdn": {
-            "default": "core.atlaso.internal",
-            "description": "Requested appliance fqdn value for this settings resource.",
+            "description": "Requested appliance FQDN. Omit it to preserve the current value; null is not accepted.",
             "maxLength": 180,
             "minLength": 1,
             "title": "Appliance Fqdn",
             "type": "string"
           },
           "browser_session_idle_timeout_minutes": {
-            "default": 30,
-            "description": "Maximum period of authenticated browser inactivity, in minutes, before Atlaso expires the session on its next protected request.",
+            "description": "Maximum period of authenticated browser inactivity, in minutes, before Atlaso expires the session on its next protected request. Omit it to preserve the current value; null is not accepted.",
             "maximum": 1440.0,
             "minimum": 5.0,
             "title": "Browser Session Idle Timeout Minutes",
             "type": "integer"
           },
           "external_dns_servers": {
-            "description": "Ordered collection of external dns servers values represented by this settings schema.",
+            "description": "Ordered external DNS server values. Omit the property to preserve the current servers; submit an empty list to clear them; null is not accepted.",
             "items": {
               "type": "string"
             },
@@ -7226,25 +7223,22 @@
             "type": "array"
           },
           "management_https_enabled": {
-            "default": false,
-            "description": "Whether management https enabled is enabled for this settings resource.",
+            "description": "Whether management HTTPS is enabled in desired state. Omit it to preserve the current value; null is not accepted.",
             "title": "Management Https Enabled",
             "type": "boolean"
           },
           "root_ssh_enabled": {
-            "default": false,
-            "description": "Whether root ssh enabled is enabled for this settings resource.",
+            "description": "Whether root SSH login is enabled in desired state. Omit it to preserve the current value; null is not accepted.",
             "title": "Root Ssh Enabled",
             "type": "boolean"
           },
           "web_terminal_enabled": {
-            "default": false,
-            "description": "Whether web terminal enabled is enabled for this settings resource.",
+            "description": "Whether Web Terminal is enabled in desired state. Omit it to preserve the current value; null is not accepted.",
             "title": "Web Terminal Enabled",
             "type": "boolean"
           },
           "web_terminal_interfaces": {
-            "description": "Ordered collection of web terminal interfaces values represented by this settings schema.",
+            "description": "Ordered Web Terminal interface selection. Omit it to preserve the current selection; submit an empty list to clear it; null is not accepted.",
             "items": {
               "type": "string"
             },
@@ -17189,7 +17183,7 @@
         ]
       },
       "patch": {
-        "description": "Update Settings.\n\nRequires the `admin:all` API scope. The operation updates saved Atlaso state and does not bypass\nthe documented global Appliance Apply or service lifecycle boundary.",
+        "description": "Update Settings.\n\nRequires the `admin:all` API scope. The operation updates only properties present in the request,\npreserves every omitted property, and does not bypass the documented global Appliance Apply or\nservice lifecycle boundary.",
         "operationId": "updateSettings",
         "requestBody": {
           "content": {

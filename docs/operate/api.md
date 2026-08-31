@@ -123,6 +123,18 @@ every enabled scope retain their host offset in the uniquely matching rebased sc
 reservation DNS records in the same transaction and rejects ambiguous moves. When real scope rows exist, inactive
 legacy global DHCP binding fields are retained for compatibility but do not constrain interface edits.
 
+### Update appliance settings partially
+
+`PATCH /api/v1/settings` is a partial desired-state update. Send only the properties that should change; Atlaso
+preserves every omitted appliance setting. Explicit `false` values remain valid for switches, and an empty
+`external_dns_servers` or `web_terminal_interfaces` list clears that collection. `null` is not a clearing form for
+this operation and returns `422`; omit the property instead.
+
+Changing `appliance_fqdn` reconciles factory-derived service identities and app-owned DNS records only when the
+property is present and its normalized value differs from the saved FQDN. Other settings PATCH requests do not trigger
+that domain reconciliation. These API edits save desired state only, except for the documented immediate authentication
+lifetime policies. Review resulting changes and use global Appliance Apply for host enforcement.
+
 ## Scopes and authorization
 
 Each Swagger operation describes its required Atlaso scope or authentication posture. A token can call only operations
