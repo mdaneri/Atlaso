@@ -293,16 +293,20 @@ function resolveCssVariables (value, customProperties, seen = new Set()) {
     const argumentsList = splitCssFunctionArguments(value.slice(start + 4, end - 1))
     const name = argumentsList.shift()?.trim()
     if (!name?.startsWith('--')) return null
+    const fallback = argumentsList.length ? argumentsList.join(',').trim() : null
     let replacement = customProperties.get(name)?.value
     if (replacement === undefined || seen.has(name)) {
-      replacement = argumentsList.length ? argumentsList.join(',').trim() : null
+      replacement = fallback
     }
     if (replacement === null) return null
-    const replacementResolved = resolveCssVariables(
+    let replacementResolved = resolveCssVariables(
       replacement,
       customProperties,
       new Set([...seen, name])
     )
+    if (replacementResolved === null && fallback !== null && replacement !== fallback) {
+      replacementResolved = resolveCssVariables(fallback, customProperties, seen)
+    }
     if (replacementResolved === null) return null
     resolved += replacementResolved
     cursor = end
