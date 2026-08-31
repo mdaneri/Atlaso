@@ -1727,6 +1727,14 @@ def test_vmware_packer_requires_proven_task_or_release_builder_identity() -> Non
     )
     monitored_packer = wrapper.index("Invoke-AtlasoMonitoredPackerBuild `", callback)
     assert callback < callback_recheck < monitored_packer < packer_invocation
+    build_completion = wrapper.index("-PrepareIsoOnly:$PrepareIsoOnly", packer_invocation)
+    provenance_recheck = wrapper.index(
+        "Assert-AtlasoTaskBuilderIdentityCurrent `", build_completion
+    )
+    provenance_write = wrapper.index(
+        "Write-AtlasoVmwareBuildProvenance `", build_completion
+    )
+    assert build_completion < provenance_recheck < provenance_write
     assert "Refusing to reuse or clean a Photon builder output" in wrapper
     assert "Atlaso-Photon-Builder-VMware" not in wrapper
     assert "New-AtlasoVmwareBuilderIdentity" in release

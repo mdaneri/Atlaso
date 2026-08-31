@@ -30,9 +30,10 @@ The wrapper regenerates:
 - `requirements-appliance-bootstrap.lock`;
 - `requirements-appliance.lock`;
 - `requirements-docs.lock`;
-- `requirements-static-analysis.lock`; and
-- `requirements-release-tools.lock`; and
-- `requirements-onepassword-deploy.lock`.
+- `requirements-static-analysis.lock`;
+- `requirements-release-tools.lock`;
+- `requirements-onepassword-deploy.lock`; and
+- `requirements-virtualization-smoke.lock`.
 
 Every resolver invocation includes `--uploaded-prior-to=P7D` and `--generate-hashes`. Locks that need pip's unsafe
 bootstrap tools retain `--allow-unsafe`, and the wrapper refreshes the declaration fingerprint embedded in
@@ -48,6 +49,10 @@ Do not edit generated pins, hashes, generation-command headers, or the appliance
 shorten the upload-time cutoff to obtain a newer dependency, including for a security update. If no eligible version
 satisfies the input declarations, change the input constraint through a reviewed dependency update or wait until the
 required release reaches seven full days.
+
+The Windows candidate job installs the release-tools and virtualization-smoke locks into one interpreter. Their input
+manifests therefore pin shared runtime packages compatibly so the second installation cannot replace part of the
+already validated release-tool environment.
 
 Protected appliance, promotion, Inventory Linux, and virtualization publication jobs intentionally run without a
 writable Actions cache scope. Their `actions/setup-python` steps therefore do not enable the built-in pip cache, because
@@ -68,5 +73,15 @@ git diff --check
 ```
 
 `check_dependency_policy.py` verifies the Dependabot cooldown, Python 3.14 lock headers, seven-day resolver cutoff,
-expected input manifests, exact pins, and SHA-256 hashes across all generated locks. The appliance check separately
-verifies direct dependency coverage, bootstrap equality, and the declaration fingerprint.
+expected input manifests, exact pins, and SHA-256 hashes across all generated locks. It also rejects workflow
+`--requirement` or `-r` paths that do not resolve to a tracked lock in both the generation and minimum-age policy
+inventories. That workflow check follows ordered checkout destinations, each job's active workspace-root checkout, and
+step, job-default, or workflow-default working directories, rejecting external repositories and untrusted Atlaso
+revisions instead of
+validating a same-named lock from the review checkout. Dynamic or escaping working directories fail closed.
+The small allowlist of dynamic checkout revisions is limited to the canonical workflows whose admission jobs already
+prove the supplied commit is the successful `main` release target. This retains commit-bound build-tool pins for
+byte-identical replay builds while publisher scripts remain on protected `main`. The appliance check separately verifies
+direct dependency
+coverage, bootstrap equality, and the
+declaration fingerprint.

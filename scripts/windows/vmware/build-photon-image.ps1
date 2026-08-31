@@ -1678,6 +1678,16 @@ Invoke-AtlasoPhotonImageBuild `
     -ValidateOnly:$ValidateOnly `
     -PrepareIsoOnly:$PrepareIsoOnly
 
+if (-not $ReleaseBuilder -and -not $ValidateOnly -and -not $PrepareIsoOnly) {
+    # A Packer build can outlive every pre-launch ownership proof. Refresh the
+    # remote PR identity before the completed artifact gains provenance.
+    $null = Assert-AtlasoTaskBuilderIdentityCurrent `
+        -RepositoryRoot $repoRoot `
+        -PullRequestNumber $PullRequestNumber `
+        -CollisionSuffix $CollisionSuffix `
+        -ExpectedIdentity $builderIdentity
+}
+
 if (-not $ValidateOnly -and -not $PrepareIsoOnly) {
     $null = Assert-AtlasoVmwareBuilderIdentityManifest `
         -Path $builderIdentityManifestPath `
