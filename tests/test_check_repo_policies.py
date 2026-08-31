@@ -643,6 +643,7 @@ def test_merge_hold_directions_recognizes_modal_merge_prohibitions() -> None:
         "You are forbidden to merge this PR.",
         "You are not allowed to merge this PR.",
         "You are not authorized to merge this PR.",
+        "You are not permitted to merge this PR.",
         "You aren't allowed to merge this PR.",
         "You isn’t authorized to merge this PR.",
         "You're not allowed to merge this PR.",
@@ -790,6 +791,9 @@ def test_merge_hold_directions_ignores_pr_only_resumable_gate() -> None:
     ) == {}
     assert merge_hold_directions(
         "Implement issue #602, but do not merge until the staging deployment succeeds."
+    ) == {}
+    assert merge_hold_directions(
+        "Implement issue #602, but keep this PR open until CI passes."
     ) == {}
 
 

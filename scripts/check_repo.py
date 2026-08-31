@@ -668,9 +668,10 @@ MERGE_HOLD_MODAL_PROHIBITION = re.compile(
     r"\b(?:(?:you\s+)?(?:(?:must|may|can|should)\s+not|cannot|can't|can’t)"
     r"\s+merge|"
     r"you\s+(?:(?:are\s+not|aren't|aren’t|isn't|isn’t)\s+"
-    r"(?:allowed|authorized)\s+to\s+merge|are\s+forbidden\s+from\s+merging)|"
+    r"(?:allowed|authorized|permitted)\s+to\s+merge|"
+    r"are\s+forbidden\s+from\s+merging)|"
     r"you\s+are\s+forbidden\s+to\s+merge|"
-    r"you(?:'re|’re)\s+not\s+(?:allowed|authorized)\s+to\s+merge|"
+    r"you(?:'re|’re)\s+not\s+(?:allowed|authorized|permitted)\s+to\s+merge|"
     r"you\s+do\s+not\s+have\s+(?:permission|authorization)\s+"
     r"to\s+merge|i\s+(?:do\s+not|don't|don’t)\s+(?:authorize|permit)\s+"
     r"you\s+to\s+merge)\b"
@@ -1334,7 +1335,7 @@ def _is_resumable_gate_scoped_disposition(
         offset: Character offset where the phrase begins.
         pattern: Exact hold phrase matched in the segment.
     """
-    if hold not in {"do not merge", "pr only"}:
+    if hold not in {"do not merge", "leave open", "pr only"}:
         return False
     suffix = segment[offset + len(pattern) :]
     return MERGE_HOLD_RESUMABLE_GATE_SUFFIX.search(suffix) is not None

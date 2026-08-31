@@ -2457,6 +2457,12 @@
           ]
         },
         {
+          "text": "You are not permitted to merge this PR.",
+          "add_holds": [
+            "do not merge"
+          ]
+        },
+        {
           "text": "You aren't allowed to merge this PR.",
           "add_holds": [
             "do not merge"
@@ -2558,6 +2564,17 @@
       "expected_holds": [
         "wait for approval"
       ]
+    },
+    {
+      "name": "ci-qualified-leave-open-is-resumable",
+      "default_merge_authority": true,
+      "instructions": [
+        {
+          "text": "Implement issue #602, but keep this PR open until CI passes."
+        }
+      ],
+      "generated": "Complete the guarded merge after CI passes.",
+      "expected_holds": []
     },
     {
       "name": "cross-pr-condition-preserves-this-pr-hold",
