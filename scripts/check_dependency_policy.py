@@ -854,15 +854,73 @@ def _segment_directory_action(segment: str) -> tuple[str, str] | None:
     return None
 
 
+def _shell_command_substitutions(segment: str) -> list[str]:
+    """Return executable ``$()`` bodies outside single-quoted shell text.
+
+    Args:
+        segment: Shell command segment to inspect.
+    """
+    substitutions: list[str] = []
+    quote = ""
+    index = 0
+    while index < len(segment):
+        character = segment[index]
+        if character == "\\" and quote != "'" and index + 1 < len(segment):
+            index += 2
+            continue
+        if character in {"'", '"'}:
+            if not quote:
+                quote = character
+            elif quote == character:
+                quote = ""
+            index += 1
+            continue
+        if quote != "'" and segment[index : index + 2] == "$(":
+            depth = 1
+            cursor = index + 2
+            inner_quote = ""
+            while cursor < len(segment) and depth:
+                inner = segment[cursor]
+                if inner == "\\" and inner_quote != "'" and cursor + 1 < len(segment):
+                    cursor += 2
+                    continue
+                if inner in {"'", '"'}:
+                    if not inner_quote:
+                        inner_quote = inner
+                    elif inner_quote == inner:
+                        inner_quote = ""
+                elif not inner_quote and segment[cursor : cursor + 2] == "$(":
+                    depth += 1
+                    cursor += 2
+                    continue
+                elif not inner_quote and inner == ")":
+                    depth -= 1
+                    if not depth:
+                        substitutions.append(segment[index + 2 : cursor])
+                        index = cursor + 1
+                        break
+                cursor += 1
+            else:
+                return substitutions
+            continue
+        index += 1
+    return substitutions
+
+
 def _segment_requirement_paths(segment: str) -> list[str]:
     """Return requirement paths from one quote-aware shell command segment.
 
     Args:
         segment: Command text with outer separators already removed.
     """
+    nested_paths = [
+        path
+        for substitution in _shell_command_substitutions(segment)
+        for path in _segment_requirement_paths(substitution)
+    ]
     tokens = _shell_tokens(segment)
     if not tokens:
-        return []
+        return nested_paths
     for eval_index, token in enumerate(tokens):
         launcher = token.replace("\\", "/").rsplit("/", maxsplit=1)[-1].lower()
         if launcher != "eval":
@@ -871,8 +929,10 @@ def _segment_requirement_paths(segment: str) -> list[str]:
         if command_index < len(tokens) and tokens[command_index] == "--":
             command_index += 1
         if command_index < len(tokens):
-            return _segment_requirement_paths(" ".join(tokens[command_index:]))
-        return []
+            return nested_paths + _segment_requirement_paths(
+                " ".join(tokens[command_index:])
+            )
+        return nested_paths
     for shell_index, token in enumerate(tokens):
         launcher = token.replace("\\", "/").rsplit("/", maxsplit=1)[-1].lower()
         if launcher not in SHELL_LAUNCHERS:
@@ -883,8 +943,10 @@ def _segment_requirement_paths(segment: str) -> list[str]:
                 break
             if option.startswith("-") and "c" in option.lstrip("-"):
                 if option_index + 1 < len(tokens):
-                    return _segment_requirement_paths(tokens[option_index + 1])
-                return []
+                    return nested_paths + _segment_requirement_paths(
+                        tokens[option_index + 1]
+                    )
+                return nested_paths
             if not option.startswith("-"):
                 break
     for shell_index, token in enumerate(tokens):
@@ -895,10 +957,10 @@ def _segment_requirement_paths(segment: str) -> list[str]:
             option = tokens[option_index].lower()
             if option in {"-c", "-command", "-commandwithargs"}:
                 if option_index + 1 < len(tokens):
-                    return _segment_requirement_paths(
+                    return nested_paths + _segment_requirement_paths(
                         " ".join(tokens[option_index + 1 :])
                     )
-                return []
+                return nested_paths
             if not option.startswith("-"):
                 break
     pip_index = -1
@@ -930,7 +992,7 @@ def _segment_requirement_paths(segment: str) -> list[str]:
             if pip_index >= 0:
                 break
     if pip_index < 0 or pip_index + 1 >= len(tokens):
-        return []
+        return nested_paths
 
     paths: list[str] = []
     arguments = tokens[pip_index + 2 :]
@@ -956,7 +1018,7 @@ def _segment_requirement_paths(segment: str) -> list[str]:
                     index += 2
                     continue
         index += 1
-    return paths
+    return nested_paths + paths
 
 
 def _workflow_step_working_directory(lines: list[str], index: int) -> str:
