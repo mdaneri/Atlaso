@@ -292,7 +292,7 @@ def _yaml_flow_step(line: str) -> dict[str, object] | None:
     Args:
         line: Workflow source line.
     """
-    match = re.match(r"\s*-\s*(\{.*\})\s*$", line)
+    match = re.match(r"\s*-\s*(\{.*\})\s*(?:#.*)?$", line)
     if not match:
         return None
     return _yaml_flow_mapping(match.group(1))
@@ -361,6 +361,13 @@ def _workflow_checkout_sources(
     root_checkouts: dict[int, list[tuple[int, CheckoutSource]]] = {}
     dynamic_checkouts: dict[int, list[int]] = {}
     for index, line in enumerate(lines):
+        if re.fullmatch(
+            rf"\s*-\s+{ALIAS_RE.pattern}\s*(?:#.*)?",
+            line,
+        ):
+            job_scope = _workflow_job_scope(lines, index)
+            dynamic_checkouts.setdefault(job_scope, []).append(index + 1)
+            continue
         flow_step = _yaml_flow_step(line)
         action = (
             _yaml_value_text(flow_step.get("uses"), "")

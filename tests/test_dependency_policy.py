@@ -855,6 +855,30 @@ def test_dependency_policy_parses_flow_style_run_step(tmp_path: Path) -> None:
     )
 
 
+def test_dependency_policy_parses_commented_flow_style_run_step(
+    tmp_path: Path,
+) -> None:
+    """Verify a trailing comment cannot hide a flow-style requirement.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
+    write_valid_policy(tmp_path)
+    (tmp_path / "requirements-ad-hoc.lock").write_text("placeholder\n", encoding="utf-8")
+    workflow = tmp_path / ".github" / "workflows" / "release.yml"
+    workflow.parent.mkdir(parents=True, exist_ok=True)
+    workflow.write_text(
+        "- {run: \"python -m pip install -r requirements-ad-hoc.lock\"} # install\n",
+        encoding="utf-8",
+    )
+
+    assert any(
+        "workflow requirement lock is outside the generated dependency policy "
+        "inventory: requirements-ad-hoc.lock" in error
+        for error in validate(tmp_path)
+    )
+
+
 def test_dependency_policy_rejects_alias_valued_run_step(tmp_path: Path) -> None:
     """Verify alias-valued run fields cannot bypass lock policy.
 
@@ -903,6 +927,38 @@ def test_dependency_policy_rejects_alias_valued_flow_style_run_step(tmp_path: Pa
 
     assert any(
         "run command uses YAML alias and cannot be policy validated: *install" in error
+        for error in validate(tmp_path)
+    )
+
+
+def test_dependency_policy_rejects_alias_valued_checkout_step(tmp_path: Path) -> None:
+    """Verify an aliased checkout step cannot bypass lock source policy.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
+    write_valid_policy(tmp_path)
+    workflow = tmp_path / ".github" / "workflows" / "release.yml"
+    workflow.parent.mkdir(parents=True, exist_ok=True)
+    workflow.write_text(
+        """jobs:
+  source:
+    steps:
+      - &external
+        uses: actions/checkout@v7
+        with:
+          repository: attacker/other
+  target:
+    steps:
+      - *external
+      - run: python -m pip install -r requirements-release-tools.lock
+""",
+        encoding="utf-8",
+    )
+
+    assert any(
+        "workflow requirement uses nonliteral checkout path metadata: "
+        "requirements-release-tools.lock" in error
         for error in validate(tmp_path)
     )
 
