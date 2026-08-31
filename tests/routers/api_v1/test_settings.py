@@ -21,6 +21,54 @@ def test_settings_api_router_owns_exact_transport_set():
     ]
 
 
+def test_settings_update_openapi_fields_are_omittable_but_non_nullable():
+    """Describe PATCH omission without advertising null as an accepted value."""
+    from atlaso.app.main import app
+
+    schema = app.openapi()["components"]["schemas"]["SettingsUpdate"]
+    assert "required" not in schema
+    assert set(schema["properties"]) == {
+        "appliance_fqdn",
+        "management_https_enabled",
+        "web_terminal_enabled",
+        "web_terminal_interfaces",
+        "root_ssh_enabled",
+        "browser_session_idle_timeout_minutes",
+        "api_token_max_lifetime_days",
+        "external_dns_servers",
+    }
+    for property_schema in schema["properties"].values():
+        assert "default" not in property_schema
+        assert {"type": "null"} not in property_schema.get("anyOf", [])
+    assert schema["properties"]["browser_session_idle_timeout_minutes"] == {
+        "description": (
+            "Maximum period of authenticated browser inactivity, in minutes, "
+            "before Atlaso expires the session on its next protected request. "
+            "Omit it to preserve the current value; null is not accepted."
+        ),
+        "maximum": 1440,
+        "minimum": 5,
+        "title": "Browser Session Idle Timeout Minutes",
+        "type": "integer",
+    }
+    assert schema["properties"]["api_token_max_lifetime_days"] == {
+        "description": (
+            "Maximum lifetime, in days, applied to newly issued API bearer tokens; "
+            "existing tokens are unchanged. Omit it to preserve the current value; "
+            "null is not accepted."
+        ),
+        "maximum": 365,
+        "minimum": 1,
+        "title": "Api Token Max Lifetime Days",
+        "type": "integer",
+    }
+    assert schema["properties"]["web_terminal_interfaces"]["description"] == (
+        "Ordered optional Web Terminal interface bindings. Omit the property to preserve them; "
+        "submit an empty list to clear additional bindings. While Web Terminal is enabled, Atlaso "
+        "retains the mandatory management listener. Null is not accepted."
+    )
+
+
 def test_settings_api_updates_root_ssh_desired_state(client):
     """Verify that settings api updates root ssh desired state.
 
@@ -78,6 +126,202 @@ def test_settings_api_preserves_omitted_authentication_lifetimes(client):
         settings = db.execute(select(ApplianceSettings)).scalar_one()
         assert settings.browser_session_idle_timeout_minutes == 45
         assert settings.api_token_max_lifetime_days == 120
+
+
+def test_settings_api_lifetime_patch_preserves_operational_settings(client):
+    """A lifetime-only PATCH must not reset unrelated appliance desired state.
+
+    Args:
+        client: HTTP test client used to exercise the Atlaso application.
+    """
+    from sqlalchemy import select
+
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import ApplianceSettings
+
+    with SessionLocal() as db:
+        settings = db.execute(select(ApplianceSettings)).scalar_one()
+        settings.fqdn = "custom.example.internal"
+        settings.management_https_enabled = True
+        settings.web_terminal_enabled = True
+        settings.web_terminal_interfaces_json = '["custom-terminal"]'
+        settings.root_ssh_enabled = True
+        settings.external_dns_servers = "192.0.2.53"
+        db.commit()
+
+    token, _metadata = create_token(client, scopes=["admin:all", "read:dashboard"])
+    response = client.patch(
+        "/api/v1/settings",
+        headers={"Authorization": f"Bearer {token}"},
+        json={
+            "browser_session_idle_timeout_minutes": 45,
+            "api_token_max_lifetime_days": 120,
+        },
+    )
+
+    assert response.status_code == 200, response.text
+    payload = response.json()
+    assert payload["appliance_fqdn"] == "custom.example.internal"
+    assert payload["management_https_enabled"] is True
+    assert payload["web_terminal_enabled"] is True
+    assert payload["web_terminal_interfaces"] == ["eth0", "custom-terminal"]
+    assert payload["root_ssh_enabled"] is True
+    assert payload["external_dns_servers"] == ["192.0.2.53"]
+    assert payload["browser_session_idle_timeout_minutes"] == 45
+    assert payload["api_token_max_lifetime_days"] == 120
+
+    with SessionLocal() as db:
+        settings = db.execute(select(ApplianceSettings)).scalar_one()
+        assert settings.fqdn == "custom.example.internal"
+        assert settings.management_https_enabled is True
+        assert settings.web_terminal_enabled is True
+        assert settings.web_terminal_interfaces_json == '["custom-terminal"]'
+        assert settings.root_ssh_enabled is True
+        assert settings.external_dns_servers == "192.0.2.53"
+
+
+def test_settings_api_mixed_partial_patch_preserves_omitted_fields(client):
+    """Explicit false and empty values retain their PATCH meanings.
+
+    Args:
+        client: HTTP test client used to exercise the Atlaso application.
+    """
+    from sqlalchemy import select
+
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import ApplianceSettings
+
+    with SessionLocal() as db:
+        settings = db.execute(select(ApplianceSettings)).scalar_one()
+        settings.fqdn = "custom.example.internal"
+        settings.management_https_enabled = True
+        settings.web_terminal_enabled = True
+        settings.web_terminal_interfaces_json = '["custom-terminal"]'
+        settings.root_ssh_enabled = True
+        settings.external_dns_servers = "192.0.2.53"
+        settings.browser_session_idle_timeout_minutes = 45
+        db.commit()
+
+    token, _metadata = create_token(client, scopes=["admin:all", "read:dashboard"])
+    response = client.patch(
+        "/api/v1/settings",
+        headers={"Authorization": f"Bearer {token}"},
+        json={
+            "web_terminal_interfaces": [],
+            "root_ssh_enabled": False,
+            "external_dns_servers": [],
+        },
+    )
+
+    assert response.status_code == 200, response.text
+    payload = response.json()
+    assert payload["appliance_fqdn"] == "custom.example.internal"
+    assert payload["management_https_enabled"] is True
+    assert payload["web_terminal_enabled"] is True
+    assert payload["web_terminal_interfaces"] == ["eth0"]
+    assert payload["root_ssh_enabled"] is False
+    assert payload["external_dns_servers"] == []
+    assert payload["browser_session_idle_timeout_minutes"] == 45
+    with SessionLocal() as db:
+        settings = db.execute(select(ApplianceSettings)).scalar_one()
+        assert settings.web_terminal_interfaces_json == '["eth0"]'
+
+
+def test_settings_api_enablement_patch_preserves_terminal_interface_selection(client):
+    """Derived management selection must not become persisted caller state.
+
+    Args:
+        client: HTTP test client used to exercise the Atlaso application.
+    """
+    from sqlalchemy import select
+
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import ApplianceSettings
+
+    with SessionLocal() as db:
+        settings = db.execute(select(ApplianceSettings)).scalar_one()
+        settings.web_terminal_enabled = False
+        settings.web_terminal_interfaces_json = '["custom-terminal"]'
+        db.commit()
+
+    token, _metadata = create_token(client, scopes=["admin:all", "read:dashboard"])
+    response = client.patch(
+        "/api/v1/settings",
+        headers={"Authorization": f"Bearer {token}"},
+        json={"web_terminal_enabled": True},
+    )
+
+    assert response.status_code == 200, response.text
+    assert response.json()["web_terminal_enabled"] is True
+    assert response.json()["web_terminal_interfaces"] == ["eth0", "custom-terminal"]
+    with SessionLocal() as db:
+        settings = db.execute(select(ApplianceSettings)).scalar_one()
+        assert settings.web_terminal_enabled is True
+        assert settings.web_terminal_interfaces_json == '["custom-terminal"]'
+
+
+def test_settings_api_omitted_or_unchanged_fqdn_skips_domain_reconciliation(
+    client, monkeypatch
+):
+    """Reconcile domain-coupled state only for a supplied, changed FQDN.
+
+    Args:
+        client: HTTP test client used to exercise the Atlaso application.
+        monkeypatch: Pytest fixture used to observe reconciliation boundaries.
+    """
+    from atlaso.app import ui as ui_module
+
+    calls: list[str] = []
+    monkeypatch.setattr(
+        ui_module,
+        "reconcile_factory_service_identities",
+        lambda *args, **kwargs: calls.append("identities") or [],
+    )
+    monkeypatch.setattr(
+        ui_module,
+        "ensure_dns_for_appliance_settings",
+        lambda *args, **kwargs: calls.append("dns") or None,
+    )
+    monkeypatch.setattr(
+        ui_module,
+        "refresh_interface_service_dns_aliases",
+        lambda *args, **kwargs: calls.append("aliases") or [],
+    )
+
+    token, _metadata = create_token(client, scopes=["admin:all", "read:dashboard"])
+    headers = {"Authorization": f"Bearer {token}"}
+    omitted = client.patch(
+        "/api/v1/settings",
+        headers=headers,
+        json={"root_ssh_enabled": True},
+    )
+    unchanged = client.patch(
+        "/api/v1/settings",
+        headers=headers,
+        json={"appliance_fqdn": "CORE.ATLASO.INTERNAL."},
+    )
+
+    assert omitted.status_code == 200, omitted.text
+    assert unchanged.status_code == 200, unchanged.text
+    assert calls == []
+
+
+def test_settings_api_rejects_explicit_null_patch_values(client):
+    """Null must not replace omission for fields that do not support clearing.
+
+    Args:
+        client: HTTP test client used to exercise the Atlaso application.
+    """
+    token, _metadata = create_token(client, scopes=["admin:all", "read:dashboard"])
+
+    response = client.patch(
+        "/api/v1/settings",
+        headers={"Authorization": f"Bearer {token}"},
+        json={"management_https_enabled": None},
+    )
+
+    assert response.status_code == 422, response.text
+    assert response.json()["error_code"] == "VALIDATION_ERROR"
 
 
 def test_settings_api_reconciles_factory_service_identities(client, monkeypatch):
