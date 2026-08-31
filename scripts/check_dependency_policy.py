@@ -1117,8 +1117,8 @@ def _workflow_run_commands(lines: list[str]) -> list[tuple[int, str, str, int]]:
                     else _workflow_effective_working_directory(lines, index)
                 )
                 flow_lines = [
-                    (line_number + offset, command_line)
-                    for offset, command_line in enumerate(run_value.splitlines())
+                    (line_number, command_line)
+                    for command_line in run_value.splitlines()
                 ]
                 for command_line, command in _continued_commands(flow_lines):
                     if command:
@@ -1198,6 +1198,10 @@ def _workflow_requirement_paths(lines: list[str]) -> list[tuple[int, str, str]]:
     active_scope = -1
     active_directory = ""
     directory_stack: list[str] = []
+    cdpath_declared = any(
+        re.search(r"(?:^\s*|[{,]\s*)['\"]?CDPATH['\"]?\s*:", line)
+        for line in lines
+    )
     for line_number, command, working_directory, run_scope in _workflow_run_commands(lines):
         if run_scope != active_scope:
             active_scope = run_scope
@@ -1228,6 +1232,10 @@ def _workflow_requirement_paths(lines: list[str]) -> list[tuple[int, str, str]]:
             directory_action = _segment_directory_action(segment)
             if directory_action is not None:
                 if uncertain_directory:
+                    continue
+                if cdpath_declared:
+                    active_directory = "${{ unsupported-cdpath-directory }}"
+                    directory_stack = []
                     continue
                 action, directory_change = directory_action
                 if action == "pop":
@@ -1338,7 +1346,11 @@ def _validate_workflow_locks(root: Path, policy_paths: set[str]) -> list[str]:
                         f"{reference}"
                     )
                     continue
-                if (checkout_source.condition or "success()") != (
+                if re.search(
+                    r"\b(?:always|cancelled|failure|success)\s*\(",
+                    checkout_source.condition,
+                    re.IGNORECASE,
+                ) or (checkout_source.condition or "success()") != (
                     command_condition or "success()"
                 ):
                     errors.append(
@@ -1388,8 +1400,14 @@ def _validate_workflow_locks(root: Path, policy_paths: set[str]) -> list[str]:
                     )
                     continue
                 if active_root is not None and (
-                    active_root.condition or "success()"
-                ) != (command_condition or "success()"):
+                    re.search(
+                        r"\b(?:always|cancelled|failure|success)\s*\(",
+                        active_root.condition,
+                        re.IGNORECASE,
+                    )
+                    or (active_root.condition or "success()")
+                    != (command_condition or "success()")
+                ):
                     errors.append(
                         f"{workflow.relative_to(root)}:{line_number}: root workflow "
                         "requirement uses conditional checkout metadata: "
