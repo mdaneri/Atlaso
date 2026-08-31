@@ -1687,6 +1687,12 @@ def test_vmware_packer_requires_proven_task_or_release_builder_identity() -> Non
     assert "Assert-AtlasoVmwareBuilderVmx" in wrapper
     assert "function Assert-AtlasoBuilderIdentityCurrent" in wrapper
     assert "Resolve-AtlasoReleaseBuilderIdentity `" in wrapper
+    recovery = wrapper.index(
+        "Invoke-AtlasoPhotonBuildCleanupRecovery -MarkerPath $cleanupMarkerPath"
+    )
+    identity_admission = wrapper.index("$builderIdentity = if ($ReleaseBuilder) {")
+    credential_access = wrapper.index("$needsOnePasswordDefaults =")
+    assert recovery < identity_admission < credential_access
     assert wrapper.count(
         "$releaseIdentityArguments['WorkflowRunId'] = $ReleaseWorkflowRunId"
     ) == 2
@@ -3149,6 +3155,10 @@ def test_vmware_gui_builder_repairs_stale_rows_before_ui_startup() -> None:
     termination_proven = wrapper.index(
         "$_.Exception.Data['AtlasoProcessTreeTerminationProven']", child_start
     )
+    durable_cleanup_claim = wrapper.index(
+        "Test-Path -LiteralPath $childOutputCleanupClaimPath -PathType Leaf",
+        termination_proven,
+    )
     parent_timeout_recheck = wrapper.index(
         "Assert-AtlasoBuilderIdentityCurrent `", termination_proven
     )
@@ -3171,6 +3181,7 @@ def test_vmware_gui_builder_repairs_stale_rows_before_ui_startup() -> None:
     assert gui_guard < keep_existing_guard < repair < gui_launch < child_start
     assert (
         termination_proven
+        < durable_cleanup_claim
         < parent_timeout_recheck
         < parent_output_claim
         < parent_timeout_cleanup
@@ -3178,3 +3189,4 @@ def test_vmware_gui_builder_repairs_stale_rows_before_ui_startup() -> None:
     )
     assert child_start < parent_return < child_cleanup < full_cleanup
     assert "-ScopeRoot $outerCleanupOutputDirectory" in wrapper[repair:gui_launch]
+    assert "-not $outerCleanupOutputExistedBeforeChild -or" not in wrapper

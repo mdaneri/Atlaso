@@ -230,12 +230,14 @@ child unwraps values for kickstart and Packer serialization. All plaintext kicks
 variable artifacts live under that exact task-owned root. The parent creates the child suspended, assigns its Windows
 process job, and resumes it only after every future Packer or plugin descendant is bound to that job. Both ordinary
 child exit and deadline termination require job accounting to report zero active processes. A proven deadline then
-applies checked exact-output cleanup when the selected policy owns replacement output and removes and verifies the
+applies checked exact-output cleanup only when the child durably claimed that cleanup scope, including for an initially
+absent output, and removes and verifies the
 sensitive root even when the child could not run its own cleanup. The default six-hour deadline is configurable through
 `-ImageBuildTimeoutSeconds`.
 An unproven whole-tree termination retains that root and a non-secret checkout-local ownership marker. Same-boot
 invocations fail closed; after Windows restarts, the changed boot identity proves the prior tree inactive and recovery
-removes the exact root followed by its marker before new credential or image work. Ordinary completion requires the
+removes the exact root followed by its marker before current task or release identity validation, new credential access,
+or image work. Ordinary completion requires the
 reloaded marker root to equal the in-memory task-created root before recursive removal.
 The shared SDK bridge uses the same boot-bound ownership. Marker bytes and atomic publication are write-through durable
 before plaintext consumption. After root deletion, the parent flushes directory metadata through the root parent's

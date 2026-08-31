@@ -818,7 +818,8 @@ Terminal order:
   the manifest to the newly verified head. Retained reuse still requires the exact source commit. Hold an OS-enforced
   exclusive sibling-file claim from ownership admission through cleanup, Packer completion, and provenance publication
   so concurrent builders cannot adopt or mutate the same canonical output. After proven child-tree termination, the
-  bounded parent must revalidate identity and reacquire that exact claim through any timeout cleanup. Clone and export
+  bounded parent may perform timeout cleanup only when the child durably recorded its cleanup claim, including for an
+  initially absent output; it must then revalidate identity and reacquire that exact claim through cleanup. Clone and export
   require exact builder provenance. Low-level OVF export accepts only an explicit proven source VMX. Never propagate
   transient PR identity into OVF/OVA product naming, deployed-appliance names, canonical release filenames, or
   immutable release assets. Before manifest or OVA generation, normalize and read back both the OVF `VirtualSystem`
@@ -1097,8 +1098,10 @@ Terminal order:
   plaintext-consuming image workflow in a separately bounded PowerShell child; the parent may pass only current-user
   DPAPI ciphertext. Place every plaintext kickstart, remastered ISO, and Packer variable artifact inside the exact
   task-owned child root, and require the parent to remove and verify that root after ordinary exit or whole-tree
-  termination so a killed child cannot bypass sensitive cleanup. If whole-tree termination is unproven, retain the
-  exact root plus a non-secret cleanup marker, block same-boot reuse, and permit exact-root cleanup only after a changed
+  termination so a killed child cannot bypass sensitive cleanup. Run boot-bound cleanup-marker and pending-reservation
+  recovery before validating the identity for a new task or release build, because a closed or advanced PR must not
+  strand prior sensitive state. If whole-tree termination is unproven, retain the exact root plus a non-secret cleanup
+  marker, block same-boot reuse, and permit exact-root cleanup only after a changed
   Windows boot identity proves the prior tree inactive; remove the marker only after root absence is verified. Apply
   the same boot-bound recovery ownership to the shared SDK credential bridge. Durably publish each marker with
   write-through file and rename semantics before starting a child that can consume plaintext, then durably transition

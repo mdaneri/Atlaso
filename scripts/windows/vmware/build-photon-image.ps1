@@ -669,6 +669,39 @@ if (-not $CredentialChild -and (
     )) {
     throw 'Verified builder identity fields are internal and may be supplied only to the isolated child.'
 }
+$builderReservationStateRoot = Join-Path (
+    [Environment]::GetFolderPath('LocalApplicationData')
+) 'Atlaso\vmware-builder-addresses'
+$builderReservationPendingRoot = Join-Path $builderReservationStateRoot 'pending-releases'
+$cleanupMarkerPath = Join-Path $repoRoot '.atlaso-local\photon-image-build-cleanup.json'
+if (-not $CredentialChild) {
+    # Recovery is bound to the prior boot and durable marker, not the requested
+    # new build. Run it before a closed or advanced PR can block cleanup of the
+    # retained sensitive root or address reservation.
+    Invoke-AtlasoPhotonBuildCleanupRecovery -MarkerPath $cleanupMarkerPath
+    [void][System.IO.Directory]::CreateDirectory($builderReservationPendingRoot)
+    $pendingReservationHandoffs = @(
+        Get-ChildItem -LiteralPath $builderReservationPendingRoot `
+            -Filter 'builder-address-reservation-*.json' `
+            -File `
+            -ErrorAction Stop
+    )
+    if ($pendingReservationHandoffs.Count -gt 0) {
+        $recoveryVmrunPath = Resolve-WorkstationVmrunPath -Path $VmrunPath
+        foreach ($handoff in $pendingReservationHandoffs) {
+            try {
+                Complete-AtlasoBuilderAddressReservationHandoff `
+                    -Path $handoff.FullName `
+                    -VmrunPath $recoveryVmrunPath `
+                    -StateRoot $builderReservationStateRoot
+                Write-Host "Released prior VMware builder-address handoff $($handoff.Name)."
+            }
+            catch {
+                Write-Warning "Retained prior VMware builder-address handoff $($handoff.Name): $($_.Exception.Message)"
+            }
+        }
+    }
+}
 $builderIdentity = if ($ReleaseBuilder) {
     if ([string]::IsNullOrWhiteSpace($ReleaseVersion) -or
         $ReleaseSourceCommit -notmatch '^[0-9a-f]{40}$') {
@@ -724,11 +757,6 @@ else {
     }
 }
 $VmName = [string]$builderIdentity.Name
-$builderReservationStateRoot = Join-Path (
-    [Environment]::GetFolderPath('LocalApplicationData')
-) 'Atlaso\vmware-builder-addresses'
-$builderReservationPendingRoot = Join-Path $builderReservationStateRoot 'pending-releases'
-$cleanupMarkerPath = Join-Path $repoRoot '.atlaso-local\photon-image-build-cleanup.json'
 if ($CredentialChild) {
     if ($SshPassword -or $BootstrapAdminPassword -or
         [string]::IsNullOrWhiteSpace($CredentialBundlePath) -or
@@ -821,32 +849,6 @@ if ($CredentialChild) {
     }
 }
 else {
-    # Recovery precedes new credential access or image mutation. A changed boot
-    # identity is the fail-closed proof that an untracked descendant cannot
-    # recreate credential-bearing files after absence verification.
-    Invoke-AtlasoPhotonBuildCleanupRecovery -MarkerPath $cleanupMarkerPath
-    [void][System.IO.Directory]::CreateDirectory($builderReservationPendingRoot)
-    $pendingReservationHandoffs = @(
-        Get-ChildItem -LiteralPath $builderReservationPendingRoot `
-            -Filter 'builder-address-reservation-*.json' `
-            -File `
-            -ErrorAction Stop
-    )
-    if ($pendingReservationHandoffs.Count -gt 0) {
-        $recoveryVmrunPath = Resolve-WorkstationVmrunPath -Path $VmrunPath
-        foreach ($handoff in $pendingReservationHandoffs) {
-            try {
-                Complete-AtlasoBuilderAddressReservationHandoff `
-                    -Path $handoff.FullName `
-                    -VmrunPath $recoveryVmrunPath `
-                    -StateRoot $builderReservationStateRoot
-                Write-Host "Released prior VMware builder-address handoff $($handoff.Name)."
-            }
-            catch {
-                Write-Warning "Retained prior VMware builder-address handoff $($handoff.Name): $($_.Exception.Message)"
-            }
-        }
-    }
     $needsOnePasswordDefaults = $null -eq $SshPassword -or $null -eq $BootstrapAdminPassword
     $resolvedEnvironmentId = ''
     if ($needsOnePasswordDefaults) {
@@ -892,7 +894,6 @@ else {
     $outerCleanupOutputDirectory = Assert-AtlasoVmwareBuilderOutputDirectory `
         -OutputDirectory $outerCleanupOutputDirectory `
         -Identity $builderIdentity
-    $outerCleanupOutputExistedBeforeChild = Test-Path -LiteralPath $outerCleanupOutputDirectory
     $preparedIsoLeaf = if ($PSBoundParameters.ContainsKey('PreparedIsoPath') -and
         -not [string]::IsNullOrWhiteSpace($PreparedIsoPath)) {
         [System.IO.Path]::GetFileName($PreparedIsoPath)
@@ -1060,9 +1061,8 @@ else {
             }
             if ($_.Exception.Data['AtlasoProcessTreeTerminationProven'] -and
                 $PackerOnError -eq 'cleanup' -and (
-                    -not $outerCleanupOutputExistedBeforeChild -or
-                    (-not $KeepExistingOutput -and
-                        (Test-Path -LiteralPath $childOutputCleanupClaimPath -PathType Leaf))
+                    -not $KeepExistingOutput -and
+                    (Test-Path -LiteralPath $childOutputCleanupClaimPath -PathType Leaf)
                 )) {
                 if (Test-Path -LiteralPath $outerCleanupOutputDirectory) {
                     $parentOutputClaim = $null
