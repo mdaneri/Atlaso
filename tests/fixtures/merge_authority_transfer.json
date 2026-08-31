@@ -3687,6 +3687,21 @@
       "expected_holds": []
     },
     {
+      "name": "other-pr-gate-addition-is-ignored",
+      "default_merge_authority": true,
+      "active_pull_request": 620,
+      "instructions": [
+        {
+          "text": "Implement issue #602."
+        },
+        {
+          "text": "Wait for tests before merging PR #621."
+        }
+      ],
+      "generated": "Complete the guarded merge when every required gate passes.",
+      "expected_holds": []
+    },
+    {
       "name": "keep-branch-unmerged-is-preserved",
       "default_merge_authority": true,
       "instructions": [

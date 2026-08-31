@@ -1009,6 +1009,12 @@ def test_merge_hold_directions_ignores_pr_only_resumable_gate() -> None:
     assert resumable_merge_gate_directions(
         "PR #621 tests passed.", active_pull_request=621
     ) == {"test": "remove"}
+    assert resumable_merge_gate_directions(
+        "Wait for tests before merging PR #621.", active_pull_request=630
+    ) == {}
+    assert resumable_merge_gate_directions(
+        "Wait for tests before merging PR #621.", active_pull_request=621
+    ) == {"test": "add"}
 
 
 def test_merge_hold_directions_ignores_negated_hold_reports() -> None:
@@ -2580,11 +2586,16 @@ def test_merge_authority_transfer_rejects_dropped_heartbeat_hold(
 
     findings = check_merge_authority_transfer_fixtures(tmp_path)
 
-    assert len(findings) == 1
-    assert findings[0].message == (
-        "merge authority fixture dropped heartbeat hold drops an explicit hold: "
-        "wait for approval"
-    )
+    assert [finding.message for finding in findings] == [
+        (
+            "merge authority fixture dropped heartbeat hold drops an explicit hold: "
+            "wait for approval"
+        ),
+        (
+            "merge authority fixture dropped heartbeat hold invents a resumable "
+            "merge gate: check"
+        ),
+    ]
 
 
 def test_merge_authority_transfer_rejects_merge_instruction_with_active_hold(
@@ -2844,10 +2855,53 @@ def test_merge_authority_transfer_rejects_replaced_gate_qualifier(
 
     findings = check_merge_authority_transfer_fixtures(tmp_path)
 
+    assert [finding.message for finding in findings] == [
+        (
+            "merge authority fixture replaced review qualifier drops a resumable "
+            "merge gate: security review"
+        ),
+        (
+            "merge authority fixture replaced review qualifier invents a resumable "
+            "merge gate: maintainer review"
+        ),
+    ]
+
+
+def test_merge_authority_transfer_rejects_invented_resumable_gate(
+    tmp_path: Path,
+) -> None:
+    """Verify generated prompts cannot add a source-absent merge gate.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
+    path = tmp_path / MERGE_AUTHORITY_TRANSFER_FIXTURE_PATH
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        json.dumps(
+            {
+                "cases": [
+                    {
+                        "name": "invented CI gate",
+                        "default_merge_authority": True,
+                        "instructions": [{"text": "Implement issue #602."}],
+                        "generated": (
+                            "Wait for CI before merging. Preserve default merge "
+                            "authority and complete the guarded merge."
+                        ),
+                        "expected_holds": [],
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    findings = check_merge_authority_transfer_fixtures(tmp_path)
+
     assert len(findings) == 1
     assert findings[0].message == (
-        "merge authority fixture replaced review qualifier drops a resumable "
-        "merge gate: security review"
+        "merge authority fixture invented CI gate invents a resumable merge gate: ci"
     )
 
 

@@ -1998,6 +1998,14 @@ def resumable_merge_gate_directions(
     normalized = " ".join(text.casefold().split())
     events: list[tuple[int, str, str]] = []
     for match in MERGE_RESUMABLE_GATE_CONDITION.finditer(normalized):
+        if _is_hold_discussion(normalized, match.start()) or _hold_targets_other_task(
+            normalized,
+            match.start(),
+            match.group(0),
+            active_pull_request=active_pull_request,
+            active_issue=active_issue,
+        ):
+            continue
         prefix = normalized[max(0, match.start() - 100) : match.start()]
         dispositions = tuple(
             MERGE_RESUMABLE_GATE_DISPOSITION_PREFIX.finditer(prefix)
@@ -2020,6 +2028,14 @@ def resumable_merge_gate_directions(
             )
         )
     for match in MERGE_RESUMABLE_GATE_FIRST.finditer(normalized):
+        if _is_hold_discussion(normalized, match.start()) or _hold_targets_other_task(
+            normalized,
+            match.start(),
+            match.group(0),
+            active_pull_request=active_pull_request,
+            active_issue=active_issue,
+        ):
+            continue
         prefix = normalized[max(0, match.start() - 40) : match.start()]
         direction = (
             "remove"
@@ -2433,6 +2449,17 @@ def check_merge_authority_transfer_fixtures(root: Path) -> list[Finding]:
                     path,
                     f"merge authority fixture {name} drops a resumable merge gate: "
                     f"{', '.join(omitted_gates)}",
+                )
+            )
+        invented_gates = tuple(
+            gate for gate in generated_gates if gate not in source_gates
+        )
+        if invented_gates:
+            findings.append(
+                Finding(
+                    path,
+                    f"merge authority fixture {name} invents a resumable merge "
+                    f"gate: {', '.join(invented_gates)}",
                 )
             )
         if expected and has_affirmative_default_merge_authority(generated):
