@@ -190,9 +190,27 @@ function isValidSuppressionDeclaration (property, value) {
   if (property === 'color') {
     return /^(?:transparent|currentcolor|black|silver|gray|white|maroon|red|purple|fuchsia|green|lime|olive|yellow|navy|blue|teal|aqua|orange|rebeccapurple)$/.test(value) ||
       /^#(?:[0-9a-f]{3}|[0-9a-f]{4}|[0-9a-f]{6}|[0-9a-f]{8})$/.test(value) ||
-      /^(?:rgb|rgba|hsl|hsla|hwb|lab|lch|oklab|oklch|color|color-mix|light-dark)\(.+\)$/.test(value)
+      isValidFunctionalColor(value)
   }
   return true
+}
+
+function isValidFunctionalColor (value) {
+  const functional = value.match(
+    /^(rgb|rgba|hsl|hsla|hwb|lab|lch|oklab|oklch|color|color-mix|light-dark)\((.+)\)$/
+  )
+  if (!functional) return false
+  if (!/^(?:rgb|rgba|hsl|hsla|hwb|lab|lch|oklab|oklch)$/.test(functional[1])) {
+    return true
+  }
+  const allowedIdentifiers = new Set([
+    'a', 'alpha', 'b', 'calc', 'clamp', 'deg', 'e', 'from', 'g', 'grad',
+    'h', 'l', 'max', 'min', 'none', 'r', 'rad', 's', 'turn', 'w', 'x', 'y', 'z'
+  ])
+  const identifiers = functional[2].match(/[a-z]+/g) || []
+  return identifiers.every(identifier => allowedIdentifiers.has(identifier)) && (
+    /\d/.test(functional[2]) || identifiers.includes('from')
+  )
 }
 
 function isTransparentColor (value) {
@@ -393,7 +411,8 @@ function hasHiddenAttributes (attributes, inheritedCustomProperties = new Map(),
     ),
     visibility: declarations.get('visibility')?.value || null,
     color: declarations.get('color')?.value || null,
-    customProperties
+    customProperties,
+    parsedAttributes
   }
 }
 
@@ -552,7 +571,6 @@ function updateHtmlSuppression (content, inlineContext = false) {
     const inheritedCustomProperties = htmlStack.length
       ? htmlStack[htmlStack.length - 1].customProperties
       : new Map()
-    const suppression = hasHiddenAttributes(attributes, inheritedCustomProperties, tag)
     const parent = htmlStack.length ? htmlStack[htmlStack.length - 1] : null
     let summaryOwner = null
     if (tag === 'summary' && parent?.closedDetails && !parent.summarySeen) {
@@ -563,11 +581,17 @@ function updateHtmlSuppression (content, inlineContext = false) {
     const foreign = tag === 'svg' || tag === 'math' || (
       parentForeign && !svgHtmlIntegrationTags.has(parent.tag)
     )
+    const suppression = hasHiddenAttributes(attributes, inheritedCustomProperties, tag)
+    const presentationDisplay = decodeHtmlAttributeEntities(
+      suppression.parsedAttributes.get('display') || ''
+    ).trim().toLowerCase()
     if (!selfClosing || (!voidTags.has(tag) && !foreign)) {
       const entry = {
         tag,
-        irreversible: suppressedTags.has(tag) || suppression.irreversible,
-        closedDetails: tag === 'details' && !/\sopen(?:\s|=|$)/i.test(attributes),
+        irreversible: suppressedTags.has(tag) || suppression.irreversible || (
+          foreign && presentationDisplay === 'none'
+        ),
+        closedDetails: tag === 'details' && !suppression.parsedAttributes.has('open'),
         summarySeen: false,
         summaryOwner,
         visibility: suppression.visibility,
