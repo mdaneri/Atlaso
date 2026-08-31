@@ -1255,6 +1255,107 @@ if [ ! -x "$python" ]; then
     exit 2
 fi
 
+preflight_powershell_layouts() {
+    pwsh_path="$(command -v pwsh || true)"
+    if [ -z "$pwsh_path" ]; then
+        return
+    fi
+    if ! powershell_binary="$(readlink -f "$pwsh_path")" || [ -z "$powershell_binary" ]; then
+        echo "PowerShell executable could not be resolved through a canonical path." >&2
+        exit 2
+    fi
+    powershell_home="$(dirname "$powershell_binary")"
+    case "$powershell_home" in
+        /usr/share/powershell)
+            powershell_ancestors="/ /usr /usr/share /usr/share/powershell"
+            inactive_powershell_home="/opt/microsoft/powershell/7"
+            inactive_powershell_ancestors="/ /opt /opt/microsoft /opt/microsoft/powershell /opt/microsoft/powershell/7"
+            ;;
+        /opt/microsoft/powershell/7)
+            powershell_ancestors="/ /opt /opt/microsoft /opt/microsoft/powershell /opt/microsoft/powershell/7"
+            inactive_powershell_home="/usr/share/powershell"
+            inactive_powershell_ancestors="/ /usr /usr/share /usr/share/powershell"
+            ;;
+        *)
+            echo "PowerShell resolved to an unsupported global profile directory: $powershell_home" >&2
+            exit 2
+            ;;
+    esac
+    powershell_binary_metadata="$(stat -c '%u:%g:%a' "$powershell_binary")"
+    old_ifs="$IFS"
+    IFS=:
+    set -- $powershell_binary_metadata
+    IFS="$old_ifs"
+    if [ ! -f "$powershell_binary" ] || [ "$1" != "0" ] || [ "$2" != "0" ] || \
+        [ $((0$3 & 0022)) -ne 0 ] || [ $((0$3 & 0111)) -eq 0 ]; then
+        echo "PowerShell executable must be root-owned, executable, and non-writable by group or other: $powershell_binary" >&2
+        exit 2
+    fi
+    for powershell_directory in $powershell_ancestors; do
+        if [ -L "$powershell_directory" ] || [ ! -d "$powershell_directory" ]; then
+            echo "PowerShell profile directory must be a canonical directory: $powershell_directory" >&2
+            exit 2
+        fi
+        powershell_metadata="$(stat -c '%u:%g:%a' "$powershell_directory")"
+        old_ifs="$IFS"
+        IFS=:
+        set -- $powershell_metadata
+        IFS="$old_ifs"
+        if [ "$1" != "0" ] || [ "$2" != "0" ]; then
+            echo "PowerShell profile directory must be owned by root: $powershell_directory" >&2
+            exit 2
+        fi
+        if [ $((0$3 & 0022)) -ne 0 ]; then
+            echo "PowerShell profile directory must not be writable by group or other: $powershell_directory" >&2
+            exit 2
+        fi
+    done
+    powershell_profile="$powershell_home/profile.ps1"
+    if [ -L "$powershell_profile" ] || { [ -e "$powershell_profile" ] && [ ! -f "$powershell_profile" ]; }; then
+        echo "PowerShell global profile path must be a regular file or absent: $powershell_profile" >&2
+        exit 2
+    fi
+    inactive_powershell_profile="$inactive_powershell_home/profile.ps1"
+    if [ -L "$inactive_powershell_profile" ] || [ -e "$inactive_powershell_profile" ]; then
+        for powershell_directory in $inactive_powershell_ancestors; do
+            if [ -L "$powershell_directory" ] || [ ! -d "$powershell_directory" ]; then
+                echo "PowerShell profile directory must be a canonical directory: $powershell_directory" >&2
+                exit 2
+            fi
+            powershell_metadata="$(stat -c '%u:%g:%a' "$powershell_directory")"
+            old_ifs="$IFS"
+            IFS=:
+            set -- $powershell_metadata
+            IFS="$old_ifs"
+            if [ "$1" != "0" ] || [ "$2" != "0" ]; then
+                echo "PowerShell profile directory must be owned by root: $powershell_directory" >&2
+                exit 2
+            fi
+            if [ $((0$3 & 0022)) -ne 0 ]; then
+                echo "PowerShell profile directory must not be writable by group or other: $powershell_directory" >&2
+                exit 2
+            fi
+        done
+        if [ -L "$inactive_powershell_profile" ] || [ ! -f "$inactive_powershell_profile" ] || \
+            [ "$(stat -c '%u:%g:%a' "$inactive_powershell_profile")" != "0:0:644" ] || \
+            ! cmp -s -- "$inactive_powershell_profile" - <<'ATLASO_EXPECTED_GLOBAL_POWERSHELL_PROFILE'
+<#
+.SYNOPSIS
+Loads the Atlaso vault helpers into PowerShell sessions.
+#>
+. '/opt/atlaso/bin/atlaso-vault-profile.ps1'
+ATLASO_EXPECTED_GLOBAL_POWERSHELL_PROFILE
+        then
+            echo "Inactive PowerShell global profile is not Atlaso-owned: $inactive_powershell_profile" >&2
+            exit 2
+        fi
+    fi
+}
+
+# Validate every supported PowerShell path before package or service mutation.
+# Re-run immediately before profile installation to retain the same trust boundary.
+preflight_powershell_layouts
+
 if ! command -v gpg >/dev/null 2>&1; then
     if ! command -v tdnf >/dev/null 2>&1; then
         echo "GnuPG is required for signed Network Boot media and tdnf is unavailable." >&2
@@ -1432,6 +1533,7 @@ fi
 install -d -o root -g root -m 0755 /usr/local/bin
 ln -sfn "$venv/bin/atlaso-vault" /usr/local/bin/atlaso-vault
 ln -sfn "$venv/bin/atlaso-vault" /usr/bin/atlaso-vault
+preflight_powershell_layouts
 pwsh_path="$(command -v pwsh || true)"
 if [ -n "$pwsh_path" ]; then
     powershell_binary="$(readlink -f "$pwsh_path")"

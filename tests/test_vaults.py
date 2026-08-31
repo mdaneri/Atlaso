@@ -678,6 +678,40 @@ def test_vmware_wheel_deploy_exposes_fail_closed_vault_shell_commands():
     assert 'cmp -s -- "$inactive_powershell_profile" "$powershell_profile"' in deploy
     assert 'rm -f -- "$inactive_powershell_profile"' in deploy
     assert "Inactive PowerShell global profile is not Atlaso-owned" in deploy
+    preflight_definition = deploy.index("preflight_powershell_layouts() {")
+    preflight_comment = deploy.index(
+        "# Validate every supported PowerShell path before package or service mutation."
+    )
+    preflight_body = deploy[preflight_definition:preflight_comment]
+    assert "/usr/share/powershell)" in preflight_body
+    assert "/opt/microsoft/powershell/7)" in preflight_body
+    assert "PowerShell executable must be root-owned, executable" in preflight_body
+    assert "PowerShell profile directory must be a canonical directory" in preflight_body
+    assert "PowerShell profile directory must be owned by root" in preflight_body
+    assert "PowerShell profile directory must not be writable" in preflight_body
+    assert "PowerShell global profile path must be a regular file or absent" in preflight_body
+    assert "Inactive PowerShell global profile is not Atlaso-owned" in preflight_body
+    assert deploy.count("preflight_powershell_layouts") == 3
+    first_preflight_call = deploy.index("preflight_powershell_layouts", preflight_comment)
+    dependency_install = deploy.index(
+        '"$python" -m pip install --force-reinstall --no-compile --no-deps '
+        '"$runtime_dependency_path"'
+    )
+    wheel_install = deploy.index(
+        '"$python" -m pip install --force-reinstall --no-compile --no-deps "$wheel"'
+    )
+    service_stop = deploy.index(
+        "systemctl stop atlaso-worker.service atlaso.service"
+    )
+    second_preflight_call = deploy.index(
+        "preflight_powershell_layouts", first_preflight_call + 1
+    )
+    profile_install = deploy.index(
+        'powershell_profile_temporary="$(mktemp '
+        '"$powershell_home/.atlaso-profile.XXXXXX")"'
+    )
+    assert first_preflight_call < dependency_install < wheel_install < service_stop
+    assert service_stop < second_preflight_call < profile_install
     assert "ATLASO_GLOBAL_POWERSHELL_PROFILE" in deploy
     assert ". '/opt/atlaso/bin/atlaso-vault-profile.ps1'" in deploy
     delimiter = "<<'ATLASO_GLOBAL_POWERSHELL_PROFILE'\n"
