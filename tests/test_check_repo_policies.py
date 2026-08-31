@@ -1373,9 +1373,11 @@ def test_agent_policy_gate_rejects_missing_maintainer_break_glass_contract(
         f'<span style="color:transparent"><span style="color:rgb(foo)">'
         f"{prohibition}</span></span>",
         f'<span style="color:rgb(0 0 0 / 0e0)">{prohibition}</span>',
+        f'<span style="color:rgb(0 0 0 / calc(0))">{prohibition}</span>',
         f"<svg><foreignObject><span hidden/>{prohibition}</span>"
         "</foreignObject></svg>",
         f'<svg><text display="none">{prohibition}</text></svg>',
+        f"<math><mtext><span hidden/>{prohibition}</span></mtext></math>",
     )
     for replacement in complex_html_replacements:
         for relative_path in required_entry_points:
@@ -1526,6 +1528,8 @@ def test_agent_policy_gate_rejects_missing_maintainer_break_glass_contract(
         f'<span style="visibility:hidden"><span style="visibility:visible">'
         f"{prohibition}</span></span>",
         f'<span style="color:transparent"><span style="color:red">'
+        f"{prohibition}</span></span>",
+        f'<span style="color:transparent"><span style="color:pink">'
         f"{prohibition}</span></span>",
         f'<span style="display:none;display:initial">{prohibition}</span>',
         f'<span style="display:none;display:unset">{prohibition}</span>',

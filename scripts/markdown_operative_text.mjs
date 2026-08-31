@@ -21,6 +21,36 @@ const formattingTags = new Set([
   'strike', 'strong', 'tt', 'u'
 ])
 const svgHtmlIntegrationTags = new Set(['desc', 'foreignobject', 'title'])
+const mathHtmlIntegrationTags = new Set(['mi', 'mn', 'mo', 'ms', 'mtext'])
+const mathHtmlIntegrationExceptions = new Set(['malignmark', 'mglyph'])
+const cssNamedColors = new Set([
+  'aliceblue', 'antiquewhite', 'aqua', 'aquamarine', 'azure', 'beige', 'bisque',
+  'black', 'blanchedalmond', 'blue', 'blueviolet', 'brown', 'burlywood',
+  'cadetblue', 'chartreuse', 'chocolate', 'coral', 'cornflowerblue', 'cornsilk',
+  'crimson', 'cyan', 'darkblue', 'darkcyan', 'darkgoldenrod', 'darkgray',
+  'darkgreen', 'darkgrey', 'darkkhaki', 'darkmagenta', 'darkolivegreen',
+  'darkorange', 'darkorchid', 'darkred', 'darksalmon', 'darkseagreen',
+  'darkslateblue', 'darkslategray', 'darkslategrey', 'darkturquoise', 'darkviolet',
+  'deeppink', 'deepskyblue', 'dimgray', 'dimgrey', 'dodgerblue', 'firebrick',
+  'floralwhite', 'forestgreen', 'fuchsia', 'gainsboro', 'ghostwhite', 'gold',
+  'goldenrod', 'gray', 'green', 'greenyellow', 'grey', 'honeydew', 'hotpink',
+  'indianred', 'indigo', 'ivory', 'khaki', 'lavender', 'lavenderblush',
+  'lawngreen', 'lemonchiffon', 'lightblue', 'lightcoral', 'lightcyan',
+  'lightgoldenrodyellow', 'lightgray', 'lightgreen', 'lightgrey', 'lightpink',
+  'lightsalmon', 'lightseagreen', 'lightskyblue', 'lightslategray',
+  'lightslategrey', 'lightsteelblue', 'lightyellow', 'lime', 'limegreen', 'linen',
+  'magenta', 'maroon', 'mediumaquamarine', 'mediumblue', 'mediumorchid',
+  'mediumpurple', 'mediumseagreen', 'mediumslateblue', 'mediumspringgreen',
+  'mediumturquoise', 'mediumvioletred', 'midnightblue', 'mintcream', 'mistyrose',
+  'moccasin', 'navajowhite', 'navy', 'oldlace', 'olive', 'olivedrab', 'orange',
+  'orangered', 'orchid', 'palegoldenrod', 'palegreen', 'paleturquoise',
+  'palevioletred', 'papayawhip', 'peachpuff', 'peru', 'pink', 'plum',
+  'powderblue', 'purple', 'rebeccapurple', 'red', 'rosybrown', 'royalblue',
+  'saddlebrown', 'salmon', 'sandybrown', 'seagreen', 'seashell', 'sienna',
+  'silver', 'skyblue', 'slateblue', 'slategray', 'slategrey', 'snow',
+  'springgreen', 'steelblue', 'tan', 'teal', 'thistle', 'tomato', 'turquoise',
+  'violet', 'wheat', 'white', 'whitesmoke', 'yellow', 'yellowgreen'
+])
 const optionalEndTagClosures = new Map([
   ['p', new Set(['p'])],
   ['li', new Set(['li'])],
@@ -188,7 +218,8 @@ function isValidSuppressionDeclaration (property, value) {
     return parseOpacityValue(value) !== null
   }
   if (property === 'color') {
-    return /^(?:transparent|currentcolor|black|silver|gray|white|maroon|red|purple|fuchsia|green|lime|olive|yellow|navy|blue|teal|aqua|orange|rebeccapurple)$/.test(value) ||
+    return value === 'transparent' || value === 'currentcolor' ||
+      cssNamedColors.has(value) ||
       /^#(?:[0-9a-f]{3}|[0-9a-f]{4}|[0-9a-f]{6}|[0-9a-f]{8})$/.test(value) ||
       isValidFunctionalColor(value)
   }
@@ -219,12 +250,24 @@ function isTransparentColor (value) {
   if (hexadecimal) {
     return Number.parseInt(hexadecimal[1] || hexadecimal[2], 16) === 0
   }
-  const alpha = value.match(
-    /(?:,|\/)\s*([+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:e[+-]?\d+)?)(%?)\s*\)$/i
-  )
-  if (!alpha) return false
-  const numericAlpha = Number.parseFloat(alpha[1])
-  return numericAlpha <= 0
+  const openingParenthesis = value.indexOf('(')
+  if (openingParenthesis < 0 || !value.endsWith(')')) return false
+  const body = value.slice(openingParenthesis + 1, -1)
+  let depth = 0
+  let slash = -1
+  const commas = []
+  for (let index = 0; index < body.length; index += 1) {
+    if (body[index] === '(') depth += 1
+    if (body[index] === ')') depth = Math.max(0, depth - 1)
+    if (depth === 0 && body[index] === '/') slash = index
+    if (depth === 0 && body[index] === ',') commas.push(index)
+  }
+  let alphaValue = slash >= 0 ? body.slice(slash + 1).trim() : null
+  if (alphaValue === null && commas.length === 3) {
+    alphaValue = body.slice(commas[2] + 1).trim()
+  }
+  if (alphaValue === null) return false
+  return (parseOpacityValue(alphaValue) ?? 1) <= 0
 }
 
 function stripCssComments (value) {
@@ -577,11 +620,28 @@ function updateHtmlSuppression (content, inlineContext = false) {
       parent.summarySeen = true
       summaryOwner = parent
     }
-    const parentForeign = Boolean(parent?.foreign)
-    const foreign = tag === 'svg' || tag === 'math' || (
-      parentForeign && !svgHtmlIntegrationTags.has(parent.tag)
-    )
     const suppression = hasHiddenAttributes(attributes, inheritedCustomProperties, tag)
+    const parentNamespace = parent?.foreignNamespace || null
+    const parentIsHtmlIntegration = (
+      parentNamespace === 'svg' && svgHtmlIntegrationTags.has(parent.tag)
+    ) || (
+      parentNamespace === 'math' && (
+        parent.annotationHtmlIntegration || (
+          mathHtmlIntegrationTags.has(parent.tag) &&
+          !mathHtmlIntegrationExceptions.has(tag)
+        )
+      )
+    )
+    let foreignNamespace = null
+    if (tag === 'svg') foreignNamespace = 'svg'
+    else if (tag === 'math') foreignNamespace = 'math'
+    else if (parentNamespace && !parentIsHtmlIntegration) {
+      foreignNamespace = parentNamespace
+    }
+    const foreign = foreignNamespace !== null
+    const encoding = decodeHtmlAttributeEntities(
+      suppression.parsedAttributes.get('encoding') || ''
+    ).trim().toLowerCase()
     const presentationDisplay = decodeHtmlAttributeEntities(
       suppression.parsedAttributes.get('display') || ''
     ).trim().toLowerCase()
@@ -598,6 +658,11 @@ function updateHtmlSuppression (content, inlineContext = false) {
         color: suppression.color,
         inline: inlineContext,
         foreign,
+        foreignNamespace,
+        annotationHtmlIntegration: (
+          foreignNamespace === 'math' && tag === 'annotation-xml' &&
+          ['text/html', 'application/xhtml+xml'].includes(encoding)
+        ),
         customProperties: suppression.customProperties
       }
       htmlStack.push(entry)
