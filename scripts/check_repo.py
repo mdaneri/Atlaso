@@ -852,6 +852,11 @@ MERGE_HOLD_CONDITIONAL_CLAUSE_COMMA = re.compile(
 MERGE_HOLD_CONDITIONAL_CONTEXT = re.compile(
     r"\b(?:if|when|once|after|unless)\b[^.!?]{0,100}$"
 )
+MERGE_HOLD_COMPLETED_ACTION_CONTEXT = re.compile(
+    r"\bafter\s+(?:i|we|(?:the\s+)?(?:user|maintainer|owner))\s+"
+    r"(?:(?:reviewed|checked|examined|inspected|confirmed|decided|evaluated|"
+    r"assessed|read|saw|received|completed|finished)\b[^.!?]{0,80})$"
+)
 DEFAULT_MERGE_AUTHORITY_ACTION_BOUNDARY = re.compile(
     r"(?:[;,.!?]+|\s+(?:and|then|but)\s+)"
 )
@@ -881,6 +886,12 @@ MERGE_HOLD_NUMBERED_ISSUE_REFERENCE = re.compile(r"\bissue\s*#(\d+)\b")
 MERGE_HOLD_REPORTED_PERMISSION_CONTEXT = re.compile(
     r"\b(?:previous|prior|earlier|former|historical|stale)\b"
     r"[^.!?]{0,80}\b(?:claimed|said|reported|stated|suggested|wrote|asserted)\b"
+)
+MERGE_HOLD_INTERROGATIVE_PERMISSION_CONTEXT = re.compile(
+    r"(?:\b(?:who|what|why|when|where|how)\b[^.!?]{0,80}"
+    r"\b(?:said|says?|told|claimed|asked)\b|"
+    r"\b(?:did|does|do|would|could|has|have|is|are|was|were)\b"
+    r"[^.!?]{0,80}\b(?:said|say|tell|claim|authorize|permit)\b)"
 )
 MERGE_AUTHORITY_TASK_CLAUSE_BOUNDARY = re.compile(r"[;.?!]+")
 MERGE_AUTHORITY_COORDINATED_CLAUSE_BOUNDARY = re.compile(
@@ -1091,6 +1102,7 @@ def _is_hold_discussion(segment: str, offset: int) -> bool:
     if (
         MERGE_HOLD_DIRECT_REQUEST_CONTEXT.search(prefix) is not None
         or MERGE_HOLD_DIRECT_DECISION_CONTEXT.search(prefix) is not None
+        or MERGE_HOLD_COMPLETED_ACTION_CONTEXT.search(prefix) is not None
     ):
         return False
     return (
@@ -1497,6 +1509,10 @@ def merge_hold_directions(
             MERGE_HOLD_WITHDRAWAL_NONCURRENT_PREFIX.search(prefix) is None
             and MERGE_HOLD_WITHDRAWAL_NONCURRENT_SUFFIX.search(suffix) is None
             and MERGE_HOLD_REPORTED_PERMISSION_CONTEXT.search(prefix) is None
+            and MERGE_HOLD_INTERROGATIVE_PERMISSION_CONTEXT.search(prefix) is None
+            and not _hold_targets_non_pr_object(
+                "", normalized, permission_offset, permission
+            )
             and not _hold_targets_other_task(
                 normalized,
                 permission_offset,

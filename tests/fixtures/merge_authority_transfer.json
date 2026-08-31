@@ -2324,6 +2324,24 @@
         },
         {
           "text": "The previous agent claimed you may merge this PR."
+        },
+        {
+          "text": "Who said you may merge this PR?"
+        },
+        {
+          "text": "Did the maintainer say you can merge this PR?"
+        },
+        {
+          "text": "You can merge the configuration now."
+        },
+        {
+          "text": "You may merge the database migration."
+        },
+        {
+          "text": "After I reviewed the status, do not merge this PR.",
+          "add_holds": [
+            "do not merge"
+          ]
         }
       ],
       "generated": "For PR #620, preserve the do not merge hold.",

@@ -669,6 +669,33 @@ def test_merge_hold_directions_ignores_reported_permission() -> None:
         "The previous agent claimed you may merge this PR.",
         active_holds=("do not merge",),
     ) == {}
+    assert merge_hold_directions(
+        "Who said you may merge this PR?",
+        active_holds=("do not merge",),
+    ) == {}
+    assert merge_hold_directions(
+        "Did the maintainer say you can merge this PR?",
+        active_holds=("do not merge",),
+    ) == {}
+
+
+def test_merge_hold_directions_ignores_non_pr_merge_permission() -> None:
+    """Verify application-level merge permission cannot withdraw a PR hold."""
+    assert merge_hold_directions(
+        "You can merge the configuration now.",
+        active_holds=("do not merge",),
+    ) == {}
+    assert merge_hold_directions(
+        "You may merge the database migration.",
+        active_holds=("do not merge",),
+    ) == {}
+
+
+def test_merge_hold_directions_preserves_completed_action_hold() -> None:
+    """Verify a completed-action lead-in retains its current explicit hold."""
+    assert merge_hold_directions(
+        "After I reviewed the status, do not merge this PR."
+    ) == {"do not merge": "add"}
 
 
 def test_merge_hold_directions_ignores_conditional_future_hold() -> None:
