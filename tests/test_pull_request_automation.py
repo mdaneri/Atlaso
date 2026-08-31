@@ -49,6 +49,24 @@ def test_trusted_ci_publishes_revalidated_required_statuses() -> None:
     assert "actions/checkout" not in finish_job
 
 
+def test_python_ci_installs_pinned_markdown_dependencies_before_pytest() -> None:
+    """Keep Markdown policy tests backed by the locked npm dependency tree."""
+    workflow = (ROOT / ".github" / "workflows" / "ci.yml").read_text(
+        encoding="utf-8"
+    )
+    python_job = workflow.split("  python-tests:", maxsplit=1)[1].split(
+        "  trusted-contexts-finish:", maxsplit=1
+    )[0]
+
+    setup_node = python_job.index("      - uses: actions/setup-node@v7")
+    npm_install = python_job.index("      - run: npm ci")
+    pytest = python_job.index("      - run: python -m pytest")
+
+    assert "          node-version: '22'" in python_job
+    assert "          cache: npm" in python_job
+    assert setup_node < npm_install < pytest
+
+
 def test_packer_ci_authenticates_plugins_without_exposing_fork_tokens() -> None:
     """Verify scoped Packer authentication and the tokenless fork fallback."""
     workflow = (ROOT / ".github" / "workflows" / "ci.yml").read_text(
