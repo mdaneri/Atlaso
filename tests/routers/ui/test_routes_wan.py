@@ -114,6 +114,7 @@ def test_routes_wan_settings_autosave_reports_suspended_nat(client):
     refreshed = client.get("/routes-wan")
     assert "Suspended until Routing is enabled." in refreshed.text
     assert 'name="nat_enabled" aria-label="NAT enabled" checked disabled' in refreshed.text
+    assert 'name="nat_enabled" value="on" data-routes-wan-nat-fallback' in refreshed.text
 
     simulation_response = client.post(
         "/routes-wan/settings",
@@ -129,6 +130,7 @@ def test_routes_wan_settings_autosave_reports_suspended_nat(client):
         "/routes-wan/settings",
         data={
             "routing_enabled": "on",
+            "nat_enabled": "on",
             "wan_simulation_enabled": "on",
             "csrf": csrf,
         },
@@ -144,6 +146,20 @@ def test_routes_wan_settings_autosave_reports_suspended_nat(client):
         assert settings.routing_enabled is True
         assert settings.nat_enabled is True
         assert settings.effective_nat_enabled is True
+
+    simultaneous_disable = client.post(
+        "/routes-wan/settings",
+        headers={"X-Atlaso-Autosave": "1"},
+        data={
+            "nat_enabled": "off",
+            "wan_simulation_enabled": "on",
+            "csrf": csrf,
+        },
+    )
+    assert simultaneous_disable.status_code == 200
+    assert simultaneous_disable.json()["routing_enabled"] is False
+    assert simultaneous_disable.json()["nat_enabled"] is False
+    assert simultaneous_disable.json()["effective_nat_enabled"] is False
 
 
 def test_routes_wan_default_route_add_edit_validation_and_semantic_readback(client):

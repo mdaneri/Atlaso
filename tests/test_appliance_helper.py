@@ -5769,6 +5769,26 @@ def test_wan_feature_switch_runtime_matrix(
     assert ('masquerade comment "SiteA outbound WAN"' in nat_config) is nat_active
 
 
+def test_legacy_wan_nat_inference_keeps_routing_enabled():
+    """Keep forwarding active for a legacy NAT-only configuration."""
+    helper = load_helper_module()
+    settings = helper._wan_feature_settings(
+        {
+            "routes": [],
+            "routing_rules": [],
+            "nat_rules": [{"enabled": "true"}],
+            "wan_policies": [],
+        }
+    )
+
+    assert settings == {
+        "routing_enabled": True,
+        "nat_enabled": True,
+        "effective_nat_enabled": True,
+        "wan_simulation_enabled": False,
+    }
+
+
 def test_wan_only_simulation_ignores_dormant_route_path_errors(tmp_path):
     """Validate only the netem assignment when Routing is globally off.
 

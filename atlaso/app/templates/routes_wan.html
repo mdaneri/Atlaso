@@ -269,6 +269,7 @@
         {% if routes_wan_can_write %}data-autosave-form data-autosave-status-id="routes-wan-settings-autosave-status"{% endif %}
       >
         <input type="hidden" name="csrf" value="{{ csrf_token }}">
+        <input type="hidden" name="nat_enabled" value="{{ 'on' if routes_wan_settings.nat_enabled and not routes_wan_settings.routing_enabled else 'off' }}" data-routes-wan-nat-fallback>
         <label class="switch-field">
           <span class="field-label"><span>Routing enabled</span><button class="help-icon" type="button" data-help="Controls Atlaso lab routes, routing permissions, and IPv4/IPv6 packet forwarding. Management reachability remains protected separately.">i</button></span>
           <input class="switch-input" type="checkbox" name="routing_enabled" aria-label="Routing enabled" {{ "checked" if routes_wan_settings.routing_enabled else "" }} {{ "disabled" if not routes_wan_can_write else "" }}>

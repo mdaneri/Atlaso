@@ -8784,6 +8784,7 @@ def _wan_feature_settings(
             _wan_bool(rule.get("enabled", ""), default=True)
             for rule in parsed["nat_rules"]
         )
+        routing_enabled = routing_enabled or nat_enabled
         enabled_policies = {
             policy.get("name", "")
             for policy in parsed["wan_policies"]

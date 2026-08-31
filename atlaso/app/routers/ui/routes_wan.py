@@ -134,13 +134,11 @@ def build_router(dependencies: RoutesWanUiDependencies) -> RoutesWanUiRouter:
         current_settings = ensure_routes_wan_settings(db)
         next_routing_enabled = routing_enabled == "on"
         next_nat_enabled = (
-            current_settings.nat_enabled
-            if nat_enabled is None
-            and (
-                not current_settings.routing_enabled
-                or not next_routing_enabled
-            )
-            else nat_enabled == "on"
+            nat_enabled == "on"
+            if nat_enabled in {"on", "off"}
+            else current_settings.nat_enabled
+            if not current_settings.routing_enabled or not next_routing_enabled
+            else False
         )
         settings = save_routes_wan_settings(
             db,

@@ -7428,12 +7428,19 @@ function initializeRoutesWanSettings(root = document) {
     form.dataset.routesWanSettingsInitialized = "1";
     const routingInput = form.querySelector('input[name="routing_enabled"]');
     const natInput = form.querySelector('input[name="nat_enabled"]');
+    const natFallbackInput = form.querySelector("[data-routes-wan-nat-fallback]");
     if (
       routingInput instanceof HTMLInputElement
       && natInput instanceof HTMLInputElement
+      && natFallbackInput instanceof HTMLInputElement
       && form.dataset.routesWanCanWrite === "true"
     ) {
+      const syncNatFallback = () => {
+        natFallbackInput.value = natInput.checked ? "on" : "off";
+      };
+      natInput.addEventListener("change", syncNatFallback);
       routingInput.addEventListener("change", () => {
+        syncNatFallback();
         natInput.disabled = !routingInput.checked;
       });
     }

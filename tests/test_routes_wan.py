@@ -127,10 +127,17 @@ def test_fresh_settings_default_off_and_legacy_rows_infer_once(client):
         nat = db.execute(select(NatRule).order_by(NatRule.id)).scalars().first()
         policy = db.execute(select(WanPolicy).order_by(WanPolicy.id)).scalars().first()
         assert route is not None and nat is not None and policy is not None
-        route.enabled = True
-        route.wan_policy_id = policy.id
+        route.enabled = False
         policy.enabled = True
         nat.enabled = True
+        db.flush()
+
+        nat_only = ensure_routes_wan_settings(db)
+        assert nat_only == RoutesWanSettings(True, True, False)
+
+        db.execute(delete(Setting).where(Setting.key.in_(ROUTES_WAN_SETTING_KEYS)))
+        route.enabled = True
+        route.wan_policy_id = policy.id
         db.flush()
 
         inferred = ensure_routes_wan_settings(db)

@@ -38,6 +38,8 @@ test("Routes and WAN settings subscribe to autosave and refresh rendered state",
   assert.match(initializer, /atlaso:autosave-success/);
   assert.match(initializer, /updateRoutesWanSettingsState/);
   assert.match(initializer, /natInput\.disabled = !routingInput\.checked/);
+  assert.match(initializer, /natFallbackInput\.value = natInput\.checked \? "on" : "off"/);
+  assert.match(initializer, /routingInput\.addEventListener\("change", \(\) => \{\s+syncNatFallback\(\)/);
   assert.match(updater, /data-routes-wan-feature-state/);
   assert.match(updater, /data-routes-wan-validation-status/);
   assert.match(updater, /data-routes-wan-config-preview/);

@@ -115,7 +115,12 @@ def infer_routes_wan_settings(db: Session) -> RoutesWanSettings:
         route.wan_policy_id in enabled_policy_ids for route in enabled_routes if route.wan_policy_id is not None
     )
     return RoutesWanSettings(
-        routing_enabled=bool(enabled_routes) or enabled_routing_rule or generated_routing_required,
+        routing_enabled=(
+            bool(enabled_routes)
+            or enabled_routing_rule
+            or generated_routing_required
+            or enabled_nat_rule
+        ),
         nat_enabled=enabled_nat_rule,
         wan_simulation_enabled=wan_simulation_required,
     )
