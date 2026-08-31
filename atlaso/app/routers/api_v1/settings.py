@@ -111,8 +111,9 @@ def build_router(dependencies: SettingsApiDependencies) -> SettingsApiRouter:
     ) -> SettingsResponse:
         """Update Settings.
 
-        Requires the `admin:all` API scope. The operation updates saved Atlaso state and does not bypass
-        the documented global Appliance Apply or service lifecycle boundary.
+        Requires the `admin:all` API scope. The operation updates only properties present in the request,
+        preserves every omitted property, and does not bypass the documented global Appliance Apply or
+        service lifecycle boundary.
 
         Args:
             payload: Validated request or task payload consumed by the operation.
@@ -121,65 +122,98 @@ def build_router(dependencies: SettingsApiDependencies) -> SettingsApiRouter:
             settings: Current Atlaso settings used to configure the operation.
         """
         desired = get_appliance_settings(db)
+        supplied_fields = payload.model_fields_set
         previous_fqdn = desired.fqdn
-        desired.fqdn = normalize_fqdn(payload.appliance_fqdn)
-        desired.management_https_enabled = payload.management_https_enabled
-        desired.web_terminal_enabled = payload.web_terminal_enabled
-        interfaces = (
-            db.execute(select(PhysicalInterface).order_by(PhysicalInterface.name))
-            .scalars()
-            .all()
-        )
-        vlans = (
-            db.execute(
-                select(VlanInterface).order_by(
-                    VlanInterface.parent_interface, VlanInterface.vlan_id
-                )
+        fqdn_changed = False
+        if "appliance_fqdn" in supplied_fields:
+            assert payload.appliance_fqdn is not None
+            requested_fqdn = normalize_fqdn(payload.appliance_fqdn)
+            if requested_fqdn != previous_fqdn:
+                desired.fqdn = requested_fqdn
+                fqdn_changed = True
+        if "management_https_enabled" in supplied_fields:
+            assert payload.management_https_enabled is not None
+            desired.management_https_enabled = payload.management_https_enabled
+        if "web_terminal_enabled" in supplied_fields:
+            assert payload.web_terminal_enabled is not None
+            desired.web_terminal_enabled = payload.web_terminal_enabled
+        if "web_terminal_interfaces" in supplied_fields:
+            interfaces = (
+                db.execute(select(PhysicalInterface).order_by(PhysicalInterface.name))
+                .scalars()
+                .all()
             )
-            .scalars()
-            .all()
-        )
-        management = management_ui_context(interfaces, vlans)
-        requested_terminal_interfaces = list(payload.web_terminal_interfaces)
-        if desired.web_terminal_enabled and management.get("name"):
-            requested_terminal_interfaces = [
-                management["name"],
-                *[
-                    name
-                    for name in requested_terminal_interfaces
-                    if name != management["name"]
-                ],
-            ]
-        desired.web_terminal_interfaces_json = web_terminal_interfaces_to_json(
-            requested_terminal_interfaces
-        )
-        desired.root_ssh_enabled = payload.root_ssh_enabled
+            vlans = (
+                db.execute(
+                    select(VlanInterface).order_by(
+                        VlanInterface.parent_interface, VlanInterface.vlan_id
+                    )
+                )
+                .scalars()
+                .all()
+            )
+            management = management_ui_context(interfaces, vlans)
+            assert payload.web_terminal_interfaces is not None
+            requested_terminal_interfaces = list(payload.web_terminal_interfaces)
+            if desired.web_terminal_enabled and management.get("name"):
+                requested_terminal_interfaces = [
+                    management["name"],
+                    *[
+                        name
+                        for name in requested_terminal_interfaces
+                        if name != management["name"]
+                    ],
+                ]
+            desired.web_terminal_interfaces_json = web_terminal_interfaces_to_json(
+                requested_terminal_interfaces
+            )
+        if "root_ssh_enabled" in supplied_fields:
+            assert payload.root_ssh_enabled is not None
+            desired.root_ssh_enabled = payload.root_ssh_enabled
         if "browser_session_idle_timeout_minutes" in payload.model_fields_set:
+            assert payload.browser_session_idle_timeout_minutes is not None
             desired.browser_session_idle_timeout_minutes = (
                 payload.browser_session_idle_timeout_minutes
             )
         if "api_token_max_lifetime_days" in payload.model_fields_set:
+            assert payload.api_token_max_lifetime_days is not None
             desired.api_token_max_lifetime_days = payload.api_token_max_lifetime_days
-        desired.external_dns_servers = normalize_multiline_values(
-            "\n".join(payload.external_dns_servers)
-        )
-        desired.config_path = APPLIANCE_SETTINGS_STAGED_CONFIG_PATH
-        desired.updated_at = utcnow()
-        reconciled_service_identities = reconcile_factory_service_identities(
-            db,
-            previous_appliance_fqdn=previous_fqdn,
-        )
-        appliance_dns_action = ensure_dns_for_appliance_settings(
-            db,
-            desired,
-            previous_fqdn=previous_fqdn,
-            actor=None,
-        )
+        if "external_dns_servers" in supplied_fields:
+            assert payload.external_dns_servers is not None
+            desired.external_dns_servers = normalize_multiline_values(
+                "\n".join(payload.external_dns_servers)
+            )
+        if supplied_fields:
+            desired.config_path = APPLIANCE_SETTINGS_STAGED_CONFIG_PATH
+            desired.updated_at = utcnow()
+        reconciled_service_identities: list[str] = []
+        appliance_dns_action: str | None = None
         reconciled_service_aliases: list[str] = []
-        if reconciled_service_identities:
-            reconciled_service_aliases = reconcile_service_dns_aliases(db, actor=None)
+        if fqdn_changed:
+            reconciled_service_identities = reconcile_factory_service_identities(
+                db,
+                previous_appliance_fqdn=previous_fqdn,
+            )
+            appliance_dns_action = ensure_dns_for_appliance_settings(
+                db,
+                desired,
+                previous_fqdn=previous_fqdn,
+                actor=None,
+            )
+            if reconciled_service_identities:
+                reconciled_service_aliases = reconcile_service_dns_aliases(
+                    db, actor=None
+                )
         ca_settings = db.execute(select(CaSettings)).scalar_one_or_none()
-        if desired.management_https_enabled and ca_settings and ca_settings.enabled:
+        ca_reconciliation_required = fqdn_changed or (
+            "management_https_enabled" in supplied_fields
+        )
+        if (
+            ca_reconciliation_required
+            and desired.management_https_enabled
+            and ca_settings
+            and ca_settings.enabled
+        ):
             ca_state_errors = ensure_ca_state(db, commit=False)
             if ca_state_errors:
                 db.rollback()
