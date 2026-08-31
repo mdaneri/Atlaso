@@ -727,6 +727,9 @@ DEFAULT_MERGE_AUTHORITY_PERMISSION_QUESTION = re.compile(
     r"(?:i|we|(?:(?:the|this)\s+)?(?:heartbeat|handoff|delegation|"
     r"delegating\s+agent|agent|task))|"
     r"do\s+(?:i|we)\s+have\s+(?:authority|authorization|permission)\s+to|"
+    r"(?:has|have)\s+(?:i|we|(?:(?:the|this)\s+)?(?:heartbeat|handoff|"
+    r"delegation|delegating\s+agent|agent|task))\s+been\s+"
+    r"(?:authorized|permitted|allowed)\s+to|"
     r"(?:am|are|is)\s+(?:i|we|(?:(?:the|this)\s+)?(?:heartbeat|handoff|"
     r"delegation|delegating\s+agent|agent|task))\s+"
     r"(?:authorized|permitted|allowed)\s+to|"
@@ -986,6 +989,7 @@ MERGE_HOLD_STANDALONE_PERMISSION = re.compile(
     r"you\s+have\s+(?:(?:my|our|your)\s+)?"
     r"(?:permission|authorization|approval)\s+to\s+merge"
     r"(?:\s+(?:(?:this|the)\s+)?(?:pull request|pr))?|"
+    r"(?P<approval>i\s+approve\s+(?:(?:this|the)\s+)?(?:pull request|pr))|"
     r"go ahead and merge|"
     r"proceed (?:with the merge|with merging|to merge)(?: now)?)\b"
 )
@@ -997,6 +1001,11 @@ MERGE_HOLD_APPROVAL_CONDITION = re.compile(
     r"(?:the\s+)?(?:[a-z][a-z0-9_-]*\s+)?owner)\s+"
     r"(?:approves?|(?:gives?|grants?)\s+(?:permission|authorization))|"
     r"approved|(?:permission|authorization)\s+is\s+(?:given|granted))\b"
+)
+MERGE_HOLD_PERMISSION_QUALIFIED_MERGE = re.compile(
+    r"\b(?:only\s+merge(?:\s+(?:(?:this|the)\s+)?(?:pull request|pr))?|"
+    r"merge(?:\s+(?:(?:this|the)\s+)?(?:pull request|pr))?\s+only)\s+"
+    r"with\s+(?:(?:my|our|your)\s+)?(?:approval|permission|authorization)\b"
 )
 MERGE_HOLD_APPROVAL_CONDITION_FIRST = re.compile(
     r"\b(?:(?:only\s+)?(?:with\s+(?:(?:my|our|your)\s+approval|"
@@ -1582,6 +1591,18 @@ def merge_hold_directions(
             active_issue=active_issue,
         ):
             directions["wait for approval"] = "add"
+    for condition_match in MERGE_HOLD_PERMISSION_QUALIFIED_MERGE.finditer(normalized):
+        condition = condition_match.group(0)
+        if not _is_hold_discussion(
+            normalized, condition_match.start()
+        ) and not _hold_targets_other_task(
+            normalized,
+            condition_match.start(),
+            condition,
+            active_pull_request=active_pull_request,
+            active_issue=active_issue,
+        ):
+            directions["wait for approval"] = "add"
     for condition_match in MERGE_HOLD_APPROVAL_CONDITION_FIRST.finditer(normalized):
         condition = condition_match.group(0)
         if not _is_hold_discussion(
@@ -1676,8 +1697,12 @@ def merge_hold_directions(
                 active_issue=active_issue,
             )
         ):
-            for hold in active_holds:
-                directions[hold] = "remove"
+            if permission_match.group("approval") is not None:
+                if "wait for approval" in active_holds:
+                    directions["wait for approval"] = "remove"
+            else:
+                for hold in active_holds:
+                    directions[hold] = "remove"
             break
     for hold in shared_withdrawals:
         directions[hold] = "remove"

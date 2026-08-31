@@ -628,6 +628,10 @@ def test_merge_hold_directions_recognizes_equivalent_permission() -> None:
     assert merge_hold_directions(
         "You cannot merge now.", active_holds=("do not merge",)
     ) == {"do not merge": "add"}
+    assert merge_hold_directions(
+        "I approve this PR.",
+        active_holds=("do not merge", "wait for approval"),
+    ) == {"wait for approval": "remove"}
 
 
 def test_merge_hold_directions_recognizes_modal_merge_prohibitions() -> None:
@@ -780,6 +784,12 @@ def test_merge_hold_directions_recognizes_approval_needed() -> None:
     ) == {"wait for approval": "add"}
     assert merge_hold_directions(
         "Implement issue #602, but please merge this PR after I approve."
+    ) == {"wait for approval": "add"}
+    assert merge_hold_directions(
+        "Implement issue #602, but only merge with my permission."
+    ) == {"wait for approval": "add"}
+    assert merge_hold_directions(
+        "Implement issue #602, but merge this PR only with my authorization."
     ) == {"wait for approval": "add"}
     assert merge_hold_directions(
         "Implement issue #602, but only merge after I give permission."
@@ -1011,6 +1021,9 @@ def test_generated_merge_decision_questions_are_not_affirmative() -> None:
         )
         assert not has_affirmative_default_merge_authority(
             f"Could the {subject} complete the guarded merge?"
+        )
+        assert not has_affirmative_default_merge_authority(
+            f"Has the {subject} been authorized to complete the guarded merge?"
         )
 
 

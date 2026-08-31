@@ -2824,6 +2824,42 @@
       ]
     },
     {
+      "name": "permission-qualified-merge-is-preserved",
+      "default_merge_authority": true,
+      "instructions": [
+        {
+          "text": "Implement issue #602, but only merge with my permission.",
+          "add_holds": [
+            "wait for approval"
+          ]
+        }
+      ],
+      "generated": "Wait for approval before merging.",
+      "expected_holds": [
+        "wait for approval"
+      ]
+    },
+    {
+      "name": "direct-pr-approval-clears-wait-hold",
+      "default_merge_authority": true,
+      "instructions": [
+        {
+          "text": "Implement issue #602, but wait for approval before merging.",
+          "add_holds": [
+            "wait for approval"
+          ]
+        },
+        {
+          "text": "I approve this PR.",
+          "remove_holds": [
+            "wait for approval"
+          ]
+        }
+      ],
+      "generated": "Complete the guarded merge and post-merge verification.",
+      "expected_holds": []
+    },
+    {
       "name": "leave-pr-in-draft-is-ineligible",
       "default_merge_authority": false,
       "instructions": [
