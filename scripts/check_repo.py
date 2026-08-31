@@ -23,6 +23,8 @@ from pathlib import Path
 from urllib.parse import unquote
 
 import yaml
+from markdown_it import MarkdownIt
+from markdown_it.token import Token
 
 ROOT = Path(__file__).resolve().parents[1]
 MARKDOWN_OPERATIVE_TEXT_HELPER = ROOT / "scripts" / "markdown_operative_text.mjs"
@@ -2316,10 +2318,44 @@ def render_markdown_operative_text(text: str) -> str:
     Args:
         text: Markdown source whose operative prose must be inspected.
     """
+    def serialize_token(token: Token) -> dict[str, object]:
+        """Return the token fields consumed by the JavaScript visibility helper.
+
+        Args:
+            token: Parsed Markdown token to serialize for the helper process.
+        """
+        return {
+            "type": token.type,
+            "tag": token.tag,
+            "content": token.content,
+            "children": (
+                [serialize_token(child) for child in token.children]
+                if token.children
+                else None
+            ),
+        }
+
+    markdown = MarkdownIt("commonmark", {"html": True}).enable("strikethrough")
+    entity_references = set(
+        re.findall(
+            r"&(?:#[xX][0-9A-Fa-f]+|#[0-9]+|[A-Za-z][A-Za-z0-9]+);?",
+            text,
+        )
+    )
+    serialized_tokens = json.dumps(
+        {
+            "tokens": [serialize_token(token) for token in markdown.parse(text)],
+            "entities": {
+                entity: unescape(entity)
+                for entity in entity_references
+                if unescape(entity) != entity
+            },
+        }
+    )
     try:
         result = subprocess.run(
             ["node", str(MARKDOWN_OPERATIVE_TEXT_HELPER)],
-            input=text,
+            input=serialized_tokens,
             capture_output=True,
             check=False,
             encoding="utf-8",

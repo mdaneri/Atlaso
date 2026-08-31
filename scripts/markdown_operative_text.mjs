@@ -2,11 +2,10 @@
 /** Render Markdown into visible policy prose while excluding quoted or retired text. */
 
 import fs from 'node:fs'
-import MarkdownIt from 'markdown-it'
 
-const source = fs.readFileSync(0, 'utf8')
-const markdown = new MarkdownIt({ html: true })
-const tokens = markdown.parse(source, {})
+const payload = JSON.parse(fs.readFileSync(0, 'utf8'))
+const tokens = payload.tokens
+const entityDecodings = payload.entities
 const output = []
 let blockquoteDepth = 0
 let deletionDepth = 0
@@ -44,6 +43,15 @@ const tableContextChildren = new Map([
   ['thead', new Set(['script', 'style', 'template', 'tr'])],
   ['tr', new Set(['script', 'style', 'td', 'template', 'th'])]
 ])
+
+function unescapeAll (value) {
+  return value
+    .replace(/\\([!"#$%&'()*+,\-./:;<=>?@[\]^_`{|}~])/g, '$1')
+    .replace(
+      /&(?:#[xX][0-9A-Fa-f]+|#[0-9]+|[A-Za-z][A-Za-z0-9]+);?/g,
+      entity => entityDecodings[entity] ?? entity
+    )
+}
 const cssNamedColors = new Set([
   'aliceblue', 'antiquewhite', 'aqua', 'aquamarine', 'azure', 'beige', 'bisque',
   'black', 'blanchedalmond', 'blue', 'blueviolet', 'brown', 'burlywood',
@@ -652,7 +660,7 @@ function decodeHtmlAttributeEntities (value) {
   )
   return numericDecoded.replace(
     /&[A-Za-z][A-Za-z0-9]+;?/g,
-    entity => markdown.utils.unescapeAll(entity)
+    entity => unescapeAll(entity)
   )
 }
 
@@ -891,7 +899,7 @@ function processHtmlBlock (content) {
       !blockquoteDepth &&
       (!isHtmlSuppressed() || isTableFosteredText(textContent))
     ) {
-      output.push(markdown.utils.unescapeAll(textContent))
+      output.push(unescapeAll(textContent))
     }
     if (/^<\/?[A-Za-z]/.test(match[0])) {
       updateHtmlSuppression(match[0])
@@ -903,7 +911,7 @@ function processHtmlBlock (content) {
     !blockquoteDepth &&
     (!isHtmlSuppressed() || isTableFosteredText(trailingContent))
   ) {
-    output.push(markdown.utils.unescapeAll(trailingContent))
+    output.push(unescapeAll(trailingContent))
   }
   output.push('\n')
 }
