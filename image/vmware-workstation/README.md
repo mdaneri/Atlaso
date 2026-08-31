@@ -597,6 +597,19 @@ or the neighbor entry maps to another running VM's MAC, the wrapper stops before
 the relevant conflicting identity evidence. Immediately before returning readiness, it re-lists the running inventory
 and rechecks the target address; a concurrent VM start, stop, or target-address change restarts the proof.
 
+The required development-signer cleanup power-cycles the exact clone after encrypted import so the host can scrub the
+powered-off VMX. Because VMware runtime guest-info does not survive that stop/start, the applied-marker boot republishes
+the normal test VM's current hostname and regenerated Ed25519 host key from inside the guest. The durable marker's
+explicit normal-test flag limits this reboot behavior to the test-only identity channel; ordinary appliances do not
+publish it. A republish failure keeps readiness closed rather than trusting host-generated or stale evidence.
+
+The wrapper reports a guest-initialization timeout separately after it has proved the stable VMX, MAC, Tools address,
+running inventory, and Windows neighbor tuple. That diagnostic includes the injected hostname, whether the guest
+published a hostname, and the last allowlisted bounded first-boot stage when available; it does not relabel the failure
+as an address-discovery timeout or print arbitrary guest-info. An address or reachable SSH or HTTPS endpoint is not
+complete identity-bound readiness. Use the exact clone's local console to inspect first boot, and rebuild an outdated or
+unfixed source image before redeploying. The hostname and HTTPS/application gates remain mandatory.
+
 For recovery, leave the failed clone running only while using its local console, then either stop the named conflicting
 VM or assign the clone a unique management address. A task-specific DHCP reservation must target the exact MAC printed
 in the failure; a static address must be changed and applied from the clone's console before retrying readiness. Re-run

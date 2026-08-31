@@ -986,6 +986,39 @@ def redacted_summary(config: dict[str, object]) -> dict[str, object]:
     }
 
 
+def republish_applied_normal_test_vm_identity() -> None:
+    """Republish reboot-volatile normal-test identity from a durable marker.
+
+    Raises:
+        OvfCustomizationError: If the applied marker is unreadable or identity
+            publication cannot complete.
+    """
+    try:
+        marker = json.loads(MARKER_PATH.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise OvfCustomizationError("The applied VMware customization marker is unreadable") from exc
+    if not isinstance(marker, dict):
+        raise OvfCustomizationError("The applied VMware customization marker is malformed")
+    if marker.get("normal_test_vm") is not True:
+        return
+
+    # The host must power-cycle a normal test VM to scrub its shared signer from
+    # the powered-off VMX. VMware runtimeConfig values do not survive that cycle,
+    # so the guest must re-establish its own non-secret identity evidence instead
+    # of letting the host synthesize or trust stale hostname and host-key values.
+    run_initialization_layer(
+        "SSH host key",
+        publish_test_vm_ssh_host_key,
+        stage_reporter=publish_first_boot_stage,
+    )
+    run_initialization_layer(
+        "test VM hostname",
+        publish_test_vm_hostname,
+        stage_reporter=publish_first_boot_stage,
+    )
+    publish_first_boot_stage("vmware-customization-complete")
+
+
 def try_read_ovf_environment() -> tuple[bool, str]:
     """Return whether VMware Tools answered and the current OVF environment."""
     commands = [
@@ -1977,7 +2010,15 @@ def main(argv: list[str] | None = None) -> int:
             return result
 
     if MARKER_PATH.exists() and not args.dry_run:
+        # Applied-state credential scrubbing remains the first operation. A
+        # reused source may carry newly injected plaintext OVF properties, and
+        # identity republishing must never delay their removal.
         scrub_applied_ovf_environment()
+        try:
+            republish_applied_normal_test_vm_identity()
+        except OvfCustomizationError as exc:
+            log(f"VMware OVF customization could not republish normal test VM identity: {exc}")
+            return 2
         complete_first_boot_initialization()
         log("VMware OVF customization already applied; leaving appliance state unchanged.")
         return 0
