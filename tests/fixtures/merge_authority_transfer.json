@@ -2548,6 +2548,22 @@
       ]
     },
     {
+      "name": "actor-qualified-approval-wait-is-preserved",
+      "default_merge_authority": true,
+      "instructions": [
+        {
+          "text": "Implement issue #602, but wait for the maintainer to approve.",
+          "add_holds": [
+            "wait for approval"
+          ]
+        }
+      ],
+      "generated": "Wait for maintainer approval before merging.",
+      "expected_holds": [
+        "wait for approval"
+      ]
+    },
+    {
       "name": "deployment-qualified-prohibition-is-resumable",
       "default_merge_authority": true,
       "instructions": [

@@ -982,6 +982,11 @@ MERGE_HOLD_APPROVAL_CONDITION_FIRST = re.compile(
     r"(?:(?:you|i|we)\s+merge|merging)"
     r"(?:\s+(?:(?:this|the)\s+)?(?:pull request|pr))?)\b"
 )
+MERGE_HOLD_ACTOR_APPROVAL_WAIT = re.compile(
+    r"\bwait\s+(?:for|until)\s+(?:(?:the\s+)?"
+    r"(?:user|maintainer|(?:[a-z][a-z0-9_-]*\s+)?owner)\s+to\s+approve|"
+    r"(?:me|us)\s+to\s+approve)\b"
+)
 MERGE_HOLD_APPROVAL_BOUNDED_DISPOSITION = re.compile(
     r"\b(?:(?:do not|don't|don’t|never)\s+merge"
     r"(?:\s+(?:(?:this|the)\s+)?(?:pull request|pr))?|"
@@ -1541,6 +1546,18 @@ def merge_hold_directions(
         ):
             directions["wait for approval"] = "add"
     for condition_match in MERGE_HOLD_APPROVAL_CONDITION_FIRST.finditer(normalized):
+        condition = condition_match.group(0)
+        if not _is_hold_discussion(
+            normalized, condition_match.start()
+        ) and not _hold_targets_other_task(
+            normalized,
+            condition_match.start(),
+            condition,
+            active_pull_request=active_pull_request,
+            active_issue=active_issue,
+        ):
+            directions["wait for approval"] = "add"
+    for condition_match in MERGE_HOLD_ACTOR_APPROVAL_WAIT.finditer(normalized):
         condition = condition_match.group(0)
         if not _is_hold_discussion(
             normalized, condition_match.start()
