@@ -10,8 +10,6 @@ import sys
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 
-import yaml  # type: ignore[import-untyped]
-
 ROOT = Path(__file__).resolve().parents[1]
 MINIMUM_AGE_DAYS = 7
 UPLOAD_CUTOFF = f"P{MINIMUM_AGE_DAYS}D"
@@ -139,22 +137,150 @@ def _yaml_scalar(line: str, key: str) -> str | None:
     return re.split(r"\s+#", value, maxsplit=1)[0].rstrip()
 
 
+def _flow_parts(value: str) -> list[str] | None:
+    """Split a flow-mapping body at top-level commas.
+
+    Args:
+        value: Flow-mapping text without its outer braces.
+    """
+    parts: list[str] = []
+    part: list[str] = []
+    quote = ""
+    depth = 0
+    index = 0
+    while index < len(value):
+        character = value[index]
+        if quote == '"' and character == "\\" and index + 1 < len(value):
+            part.extend((character, value[index + 1]))
+            index += 2
+            continue
+        if character in {"'", '"'}:
+            if not quote:
+                quote = character
+            elif quote == character:
+                if quote == "'" and index + 1 < len(value) and value[index + 1] == "'":
+                    part.extend((character, value[index + 1]))
+                    index += 2
+                    continue
+                quote = ""
+            part.append(character)
+            index += 1
+            continue
+        if not quote and character in "{[(":
+            depth += 1
+        elif not quote and character in "}])":
+            depth -= 1
+            if depth < 0:
+                return None
+        if not quote and depth == 0 and character == ",":
+            if not "".join(part).strip():
+                return None
+            parts.append("".join(part).strip())
+            part = []
+            index += 1
+            continue
+        part.append(character)
+        index += 1
+    if quote or depth:
+        return None
+    final = "".join(part).strip()
+    if final:
+        parts.append(final)
+    elif parts:
+        return None
+    return parts
+
+
+def _flow_key_value(item: str) -> tuple[str, str] | None:
+    """Split one flow-mapping item at its top-level colon.
+
+    Args:
+        item: One comma-delimited flow-mapping item.
+    """
+    quote = ""
+    depth = 0
+    index = 0
+    while index < len(item):
+        character = item[index]
+        if quote == '"' and character == "\\" and index + 1 < len(item):
+            index += 2
+            continue
+        if character in {"'", '"'}:
+            if not quote:
+                quote = character
+            elif quote == character:
+                if quote == "'" and index + 1 < len(item) and item[index + 1] == "'":
+                    index += 2
+                    continue
+                quote = ""
+            index += 1
+            continue
+        if not quote and character in "{[(":
+            depth += 1
+        elif not quote and character in "}])":
+            depth -= 1
+            if depth < 0:
+                return None
+        elif not quote and depth == 0 and character == ":":
+            key = item[:index].strip()
+            if not key:
+                return None
+            return key, item[index + 1 :].strip()
+        index += 1
+    return None
+
+
+def _yaml_inline_scalar(value: str) -> object:
+    """Decode the scalar subset used by workflow flow mappings.
+
+    Args:
+        value: Inline YAML scalar source.
+    """
+    value = value.strip()
+    if value.startswith("'"):
+        quoted = re.fullmatch(r"'((?:''|[^'])*)'", value)
+        return quoted.group(1).replace("''", "'") if quoted else value
+    if value.startswith('"'):
+        try:
+            decoded = json.loads(value)
+        except json.JSONDecodeError:
+            return value
+        return decoded if isinstance(decoded, str) else value
+    if value.lower() in {"true", "false"}:
+        return value.lower() == "true"
+    if value.lower() in {"null", "~"}:
+        return None
+    return value
+
+
 def _yaml_flow_mapping(value: str) -> dict[str, object] | None:
-    """Return a semantic flow-style YAML mapping.
+    """Return a semantic flow-style YAML mapping without dependencies.
 
     Args:
         value: YAML source expected to contain one flow mapping.
     """
-    if not value.strip().startswith("{"):
+    value = value.strip()
+    if not value.startswith("{") or not value.endswith("}"):
         return None
-    try:
-        parsed = yaml.safe_load(value)
-    except yaml.YAMLError:
+    parts = _flow_parts(value[1:-1])
+    if parts is None:
         return None
-    if not isinstance(parsed, dict) or not all(
-        isinstance(key, str) for key in parsed
-    ):
-        return None
+    parsed: dict[str, object] = {}
+    for item in parts:
+        pair = _flow_key_value(item)
+        if pair is None:
+            return None
+        key_source, value_source = pair
+        key = _yaml_inline_scalar(key_source)
+        if not isinstance(key, str):
+            return None
+        if value_source.startswith("{"):
+            nested = _yaml_flow_mapping(value_source)
+            if nested is None:
+                return None
+            parsed[key] = nested
+        else:
+            parsed[key] = _yaml_inline_scalar(value_source)
     return parsed
 
 
@@ -164,20 +290,10 @@ def _yaml_flow_step(line: str) -> dict[str, object] | None:
     Args:
         line: Workflow source line.
     """
-    if not re.match(r"\s*-\s*\{", line):
+    match = re.match(r"\s*-\s*(\{.*\})\s*$", line)
+    if not match:
         return None
-    try:
-        parsed = yaml.safe_load(line.strip())
-    except yaml.YAMLError:
-        return None
-    if (
-        not isinstance(parsed, list)
-        or len(parsed) != 1
-        or not isinstance(parsed[0], dict)
-        or not all(isinstance(key, str) for key in parsed[0])
-    ):
-        return None
-    return parsed[0]
+    return _yaml_flow_mapping(match.group(1))
 
 
 def _yaml_value_text(value: object, unsupported: str) -> str:
