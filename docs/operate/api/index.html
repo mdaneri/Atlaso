@@ -1368,6 +1368,17 @@
   
 </li>
         
+          <li class="md-nav__item">
+  <a href="#update-appliance-settings-partially" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Update appliance settings partially
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
       </ul>
     </nav>
   
@@ -3510,6 +3521,17 @@
   
 </li>
         
+          <li class="md-nav__item">
+  <a href="#update-appliance-settings-partially" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Update appliance settings partially
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
       </ul>
     </nav>
   
@@ -3801,6 +3823,16 @@ address. Interface edits update only blank or stale derived values. Enabled rese
 every enabled scope retain their host offset in the uniquely matching rebased scope; Atlaso updates app-owned
 reservation DNS records in the same transaction and rejects ambiguous moves. When real scope rows exist, inactive
 legacy global DHCP binding fields are retained for compatibility but do not constrain interface edits.</p>
+<h3 id="update-appliance-settings-partially">Update appliance settings partially<a class="headerlink" href="#update-appliance-settings-partially" title="Permanent link">&para;</a></h3>
+<p><code>PATCH /api/v1/settings</code> is a partial desired-state update. Send only the properties that should change; Atlaso
+preserves every omitted appliance setting. Explicit <code>false</code> values remain valid for switches, and an empty
+<code>external_dns_servers</code> list clears that collection. An empty <code>web_terminal_interfaces</code> list clears additional Web
+Terminal bindings; while Web Terminal is enabled, Atlaso retains its mandatory management listener. <code>null</code> is not a
+clearing form for this operation and returns <code>422</code>; omit the property instead.</p>
+<p>Changing <code>appliance_fqdn</code> reconciles factory-derived service identities and app-owned DNS records only when the
+property is present and its normalized value differs from the saved FQDN. Other settings PATCH requests do not trigger
+that domain reconciliation. These API edits save desired state only, except for the documented immediate authentication
+lifetime policies. Review resulting changes and use global Appliance Apply for host enforcement.</p>
 <h2 id="scopes-and-authorization">Scopes and authorization<a class="headerlink" href="#scopes-and-authorization" title="Permanent link">&para;</a></h2>
 <p>Each Swagger operation describes its required Atlaso scope or authentication posture. A token can call only operations
 covered by its scopes; prefer a read-only token when the client does not mutate desired state. A valid token with
