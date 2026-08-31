@@ -424,6 +424,31 @@ function hasZeroScaleTransform (value) {
   if (!value || value === 'none') return false
   const functions = parseCssFunctions(value) || []
   for (const item of functions) {
+    if (item.name === 'matrix') {
+      const values = splitCssComponentValues(item.body).map(parseOpacityValue)
+      if (values.length === 6 && values.every(value => value !== null)) {
+        if (values[0] * values[3] - values[1] * values[2] === 0) return true
+      }
+      continue
+    }
+    if (item.name === 'matrix3d') {
+      const values = splitCssComponentValues(item.body).map(parseOpacityValue)
+      if (values.length !== 16 || values.some(value => value === null)) continue
+      if (values.every(value => value === 0)) return true
+      const originW = values[15]
+      const xW = values[3] + originW
+      const yW = values[7] + originW
+      if (originW === 0 || xW === 0 || yW === 0) continue
+      const originX = values[12] / originW
+      const originY = values[13] / originW
+      const xX = (values[0] + values[12]) / xW
+      const xY = (values[1] + values[13]) / xW
+      const yX = (values[4] + values[12]) / yW
+      const yY = (values[5] + values[13]) / yW
+      if ((xX - originX) * (yY - originY) -
+          (xY - originY) * (yX - originX) === 0) return true
+      continue
+    }
     if (!['scale', 'scale3d', 'scalex', 'scaley'].includes(item.name)) continue
     const argumentsList = splitCssComponentValues(item.body)
     const values = argumentsList.map(parseOpacityValue)
