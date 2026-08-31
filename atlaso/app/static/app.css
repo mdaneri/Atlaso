@@ -3278,8 +3278,13 @@ textarea {
 }
 
 .dns-records-table {
+  height: clamp(280px, 42vh, 420px);
   width: 100%;
   max-width: 100%;
+}
+
+.dns-main-panel {
+  overflow-x: hidden;
 }
 
 .dns-records-table .tabulator-tableholder {

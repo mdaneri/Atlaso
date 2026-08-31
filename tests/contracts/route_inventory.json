@@ -5422,9 +5422,21 @@
     "methods": [
       "POST"
     ],
-    "name": "generate_vcf_fqdns_from_ui",
+    "name": "populate_vcf_fqdns_from_ui",
     "operation_id": null,
     "order": 451,
+    "path": "/ui/management/vcf-helper/generated-fqdns/populate",
+    "plane": "ui_management"
+  },
+  {
+    "include_in_schema": false,
+    "kind": "http",
+    "methods": [
+      "POST"
+    ],
+    "name": "generate_vcf_fqdns_from_ui",
+    "operation_id": null,
+    "order": 452,
     "path": "/ui/management/vcf-helper/generated-fqdns",
     "plane": "ui_management"
   },
@@ -5436,7 +5448,7 @@
     ],
     "name": "delete_vcf_fqdns_from_ui",
     "operation_id": null,
-    "order": 452,
+    "order": 453,
     "path": "/ui/management/vcf-helper/generated-fqdns/delete",
     "plane": "ui_management"
   },
@@ -5448,7 +5460,7 @@
     ],
     "name": "vcf_offline_depot_page",
     "operation_id": null,
-    "order": 453,
+    "order": 454,
     "path": "/ui/management/vcf-offline-depot",
     "plane": "ui_management"
   },
@@ -5460,7 +5472,7 @@
     ],
     "name": "vcf_offline_depot_task_log_page",
     "operation_id": null,
-    "order": 454,
+    "order": 455,
     "path": "/ui/management/vcf-offline-depot/tasks/{job_id}/log",
     "plane": "ui_management"
   },
@@ -5472,7 +5484,7 @@
     ],
     "name": "vcf_offline_depot_task_status",
     "operation_id": null,
-    "order": 455,
+    "order": 456,
     "path": "/ui/management/vcf-offline-depot/tasks/status",
     "plane": "ui_management"
   },
@@ -5484,7 +5496,7 @@
     ],
     "name": "update_vcf_offline_depot_settings_from_ui",
     "operation_id": null,
-    "order": 456,
+    "order": 457,
     "path": "/ui/management/vcf-offline-depot/settings",
     "plane": "ui_management"
   },
@@ -5496,7 +5508,7 @@
     ],
     "name": "upload_vcf_depot_tool_package_from_ui",
     "operation_id": null,
-    "order": 457,
+    "order": 458,
     "path": "/ui/management/vcf-offline-depot/tool-package",
     "plane": "ui_management"
   },
@@ -5508,7 +5520,7 @@
     ],
     "name": "reset_vcf_depot_tool_from_ui",
     "operation_id": null,
-    "order": 458,
+    "order": 459,
     "path": "/ui/management/vcf-offline-depot/tool/reset",
     "plane": "ui_management"
   },
@@ -5520,7 +5532,7 @@
     ],
     "name": "paste_vcf_depot_credential_from_ui",
     "operation_id": null,
-    "order": 459,
+    "order": 460,
     "path": "/ui/management/vcf-offline-depot/credentials",
     "plane": "ui_management"
   },
@@ -5532,7 +5544,7 @@
     ],
     "name": "paste_vcf_depot_download_token_from_ui",
     "operation_id": null,
-    "order": 460,
+    "order": 461,
     "path": "/ui/management/vcf-offline-depot/download-token",
     "plane": "ui_management"
   },
@@ -5544,7 +5556,7 @@
     ],
     "name": "paste_vcf_depot_activation_code_from_ui",
     "operation_id": null,
-    "order": 461,
+    "order": 462,
     "path": "/ui/management/vcf-offline-depot/activation-code",
     "plane": "ui_management"
   },
@@ -5556,7 +5568,7 @@
     ],
     "name": "save_vcf_depot_tool_configuration_from_ui",
     "operation_id": null,
-    "order": 462,
+    "order": 463,
     "path": "/ui/management/vcf-offline-depot/tool-configuration",
     "plane": "ui_management"
   },
@@ -5568,7 +5580,7 @@
     ],
     "name": "save_vcf_depot_application_properties_from_ui",
     "operation_id": null,
-    "order": 463,
+    "order": 464,
     "path": "/ui/management/vcf-offline-depot/application-properties",
     "plane": "ui_management"
   },
@@ -5580,7 +5592,7 @@
     ],
     "name": "generate_vcf_depot_software_depot_id_from_ui",
     "operation_id": null,
-    "order": 464,
+    "order": 465,
     "path": "/ui/management/vcf-offline-depot/software-depot-id/generate",
     "plane": "ui_management"
   },
@@ -5592,7 +5604,7 @@
     ],
     "name": "preview_vcf_depot_profile_from_ui",
     "operation_id": null,
-    "order": 465,
+    "order": 466,
     "path": "/ui/management/vcf-offline-depot/profiles/{profile_id}/preview",
     "plane": "ui_management"
   },
@@ -5604,7 +5616,7 @@
     ],
     "name": "create_vcf_depot_profile_from_ui",
     "operation_id": null,
-    "order": 466,
+    "order": 467,
     "path": "/ui/management/vcf-offline-depot/profiles",
     "plane": "ui_management"
   },
@@ -5616,7 +5628,7 @@
     ],
     "name": "edit_vcf_depot_profile_from_ui",
     "operation_id": null,
-    "order": 467,
+    "order": 468,
     "path": "/ui/management/vcf-offline-depot/profiles/{profile_id}/edit",
     "plane": "ui_management"
   },
@@ -5628,7 +5640,7 @@
     ],
     "name": "start_vcf_depot_profile_download_from_ui",
     "operation_id": null,
-    "order": 468,
+    "order": 469,
     "path": "/ui/management/vcf-offline-depot/profiles/{profile_id}/download",
     "plane": "ui_management"
   },
@@ -5640,7 +5652,7 @@
     ],
     "name": "delete_vcf_depot_profile_from_ui",
     "operation_id": null,
-    "order": 469,
+    "order": 470,
     "path": "/ui/management/vcf-offline-depot/profiles/{profile_id}/delete",
     "plane": "ui_management"
   },
@@ -5652,7 +5664,7 @@
     ],
     "name": "vcf_private_registry_page",
     "operation_id": null,
-    "order": 470,
+    "order": 471,
     "path": "/ui/management/vcf-private-registry",
     "plane": "ui_management"
   },
@@ -5664,7 +5676,7 @@
     ],
     "name": "update_vcf_private_registry_settings_from_ui",
     "operation_id": null,
-    "order": 471,
+    "order": 472,
     "path": "/ui/management/vcf-private-registry/settings",
     "plane": "ui_management"
   },
@@ -5676,7 +5688,7 @@
     ],
     "name": "create_vcf_registry_bundle_from_ui",
     "operation_id": null,
-    "order": 472,
+    "order": 473,
     "path": "/ui/management/vcf-private-registry/bundles",
     "plane": "ui_management"
   },
@@ -5688,7 +5700,7 @@
     ],
     "name": "edit_vcf_registry_bundle_from_ui",
     "operation_id": null,
-    "order": 473,
+    "order": 474,
     "path": "/ui/management/vcf-private-registry/bundles/{bundle_id}/edit",
     "plane": "ui_management"
   },
@@ -5700,7 +5712,7 @@
     ],
     "name": "delete_vcf_registry_bundle_from_ui",
     "operation_id": null,
-    "order": 474,
+    "order": 475,
     "path": "/ui/management/vcf-private-registry/bundles/{bundle_id}/delete",
     "plane": "ui_management"
   },
@@ -5712,7 +5724,7 @@
     ],
     "name": "vcf_backups_page",
     "operation_id": null,
-    "order": 475,
+    "order": 476,
     "path": "/ui/management/vcf-backups",
     "plane": "ui_management"
   },
@@ -5724,7 +5736,7 @@
     ],
     "name": "update_vcf_backup_settings_from_ui",
     "operation_id": null,
-    "order": 476,
+    "order": 477,
     "path": "/ui/management/vcf-backups/settings",
     "plane": "ui_management"
   },
@@ -5736,7 +5748,7 @@
     ],
     "name": "esx_storage_page",
     "operation_id": null,
-    "order": 477,
+    "order": 478,
     "path": "/ui/management/esx-storage",
     "plane": "ui_management"
   },
@@ -5748,7 +5760,7 @@
     ],
     "name": "update_esx_storage_settings_from_ui",
     "operation_id": null,
-    "order": 478,
+    "order": 479,
     "path": "/ui/management/esx-storage/settings",
     "plane": "ui_management"
   },
@@ -5760,7 +5772,7 @@
     ],
     "name": "create_esx_storage_volume_from_ui",
     "operation_id": null,
-    "order": 479,
+    "order": 480,
     "path": "/ui/management/esx-storage/volumes",
     "plane": "ui_management"
   },
@@ -5772,7 +5784,7 @@
     ],
     "name": "create_esx_nfs_share_from_ui",
     "operation_id": null,
-    "order": 480,
+    "order": 481,
     "path": "/ui/management/esx-storage/shares",
     "plane": "ui_management"
   },
@@ -5784,7 +5796,7 @@
     ],
     "name": "update_esx_nfs_share_from_ui",
     "operation_id": null,
-    "order": 481,
+    "order": 482,
     "path": "/ui/management/esx-storage/shares/{share_id}",
     "plane": "ui_management"
   },
@@ -5796,7 +5808,7 @@
     ],
     "name": "delete_esx_nfs_share_from_ui",
     "operation_id": null,
-    "order": 482,
+    "order": 483,
     "path": "/ui/management/esx-storage/shares/{share_id}/delete",
     "plane": "ui_management"
   },
@@ -5808,7 +5820,7 @@
     ],
     "name": "authentication",
     "operation_id": null,
-    "order": 483,
+    "order": 484,
     "path": "/ui/management/authentication",
     "plane": "ui_management"
   },
@@ -5820,7 +5832,7 @@
     ],
     "name": "openid_connect",
     "operation_id": null,
-    "order": 484,
+    "order": 485,
     "path": "/ui/management/openid-connect",
     "plane": "ui_management"
   },
@@ -5832,7 +5844,7 @@
     ],
     "name": "update_oidc_provider_from_ui",
     "operation_id": null,
-    "order": 485,
+    "order": 486,
     "path": "/ui/management/authentication/oidc/provider",
     "plane": "ui_management"
   },
@@ -5844,7 +5856,7 @@
     ],
     "name": "create_oidc_client_from_ui",
     "operation_id": null,
-    "order": 486,
+    "order": 487,
     "path": "/ui/management/authentication/oidc/clients",
     "plane": "ui_management"
   },
@@ -5856,7 +5868,7 @@
     ],
     "name": "update_oidc_client_from_ui",
     "operation_id": null,
-    "order": 487,
+    "order": 488,
     "path": "/ui/management/authentication/oidc/clients/{client_record_id}/edit",
     "plane": "ui_management"
   },
@@ -5868,7 +5880,7 @@
     ],
     "name": "export_oidc_client_integration_from_ui",
     "operation_id": null,
-    "order": 488,
+    "order": 489,
     "path": "/ui/management/authentication/oidc/clients/{client_record_id}/integration-export",
     "plane": "ui_management"
   },
@@ -5880,7 +5892,7 @@
     ],
     "name": "create_oidc_group_mapping_from_ui",
     "operation_id": null,
-    "order": 489,
+    "order": 490,
     "path": "/ui/management/authentication/oidc/group-mappings",
     "plane": "ui_management"
   },
@@ -5892,7 +5904,7 @@
     ],
     "name": "update_oidc_group_mapping_from_ui",
     "operation_id": null,
-    "order": 490,
+    "order": 491,
     "path": "/ui/management/authentication/oidc/group-mappings/{mapping_id}/edit",
     "plane": "ui_management"
   },
@@ -5904,7 +5916,7 @@
     ],
     "name": "delete_oidc_group_mapping_from_ui",
     "operation_id": null,
-    "order": 491,
+    "order": 492,
     "path": "/ui/management/authentication/oidc/group-mappings/{mapping_id}/delete",
     "plane": "ui_management"
   },
@@ -5916,7 +5928,7 @@
     ],
     "name": "rotate_oidc_client_secret_from_ui",
     "operation_id": null,
-    "order": 492,
+    "order": 493,
     "path": "/ui/management/authentication/oidc/clients/{client_record_id}/rotate-secret",
     "plane": "ui_management"
   },
@@ -5928,7 +5940,7 @@
     ],
     "name": "delete_oidc_client_from_ui",
     "operation_id": null,
-    "order": 493,
+    "order": 494,
     "path": "/ui/management/authentication/oidc/clients/{client_record_id}/delete",
     "plane": "ui_management"
   },
@@ -5940,7 +5952,7 @@
     ],
     "name": "create_oidc_signing_key_from_ui",
     "operation_id": null,
-    "order": 494,
+    "order": 495,
     "path": "/ui/management/authentication/oidc/signing-keys",
     "plane": "ui_management"
   },
@@ -5952,7 +5964,7 @@
     ],
     "name": "delete_retired_oidc_signing_key_from_ui",
     "operation_id": null,
-    "order": 495,
+    "order": 496,
     "path": "/ui/management/authentication/oidc/signing-keys/{key_id}/delete",
     "plane": "ui_management"
   },
@@ -5964,7 +5976,7 @@
     ],
     "name": "create_token_from_ui",
     "operation_id": null,
-    "order": 496,
+    "order": 497,
     "path": "/ui/management/authentication/api-tokens",
     "plane": "ui_management"
   },
@@ -5976,7 +5988,7 @@
     ],
     "name": "revoke_token_from_ui",
     "operation_id": null,
-    "order": 497,
+    "order": 498,
     "path": "/ui/management/authentication/api-tokens/{token_id}/revoke",
     "plane": "ui_management"
   },
@@ -5988,7 +6000,7 @@
     ],
     "name": "users_page",
     "operation_id": null,
-    "order": 498,
+    "order": 499,
     "path": "/ui/management/users",
     "plane": "ui_management"
   },
@@ -6000,7 +6012,7 @@
     ],
     "name": "users_status",
     "operation_id": null,
-    "order": 499,
+    "order": 500,
     "path": "/ui/management/users/status",
     "plane": "ui_management"
   },
@@ -6012,7 +6024,7 @@
     ],
     "name": "update_users_password_policy",
     "operation_id": null,
-    "order": 500,
+    "order": 501,
     "path": "/ui/management/users/password-policy",
     "plane": "ui_management"
   },
@@ -6024,7 +6036,7 @@
     ],
     "name": "create_user_from_ui",
     "operation_id": null,
-    "order": 501,
+    "order": 502,
     "path": "/ui/management/users",
     "plane": "ui_management"
   },
@@ -6036,7 +6048,7 @@
     ],
     "name": "update_user_from_ui",
     "operation_id": null,
-    "order": 502,
+    "order": 503,
     "path": "/ui/management/users/{user_id}/edit",
     "plane": "ui_management"
   },
@@ -6048,7 +6060,7 @@
     ],
     "name": "disable_user_from_ui",
     "operation_id": null,
-    "order": 503,
+    "order": 504,
     "path": "/ui/management/users/{user_id}/disable",
     "plane": "ui_management"
   },
@@ -6060,7 +6072,7 @@
     ],
     "name": "request_user_os_unlock_from_ui",
     "operation_id": null,
-    "order": 504,
+    "order": 505,
     "path": "/ui/management/users/{user_id}/unlock",
     "plane": "ui_management"
   },
@@ -6072,7 +6084,7 @@
     ],
     "name": "delete_user_from_ui",
     "operation_id": null,
-    "order": 505,
+    "order": 506,
     "path": "/ui/management/users/{user_id}/delete",
     "plane": "ui_management"
   },
@@ -6084,7 +6096,7 @@
     ],
     "name": "reset_user_password_from_ui",
     "operation_id": null,
-    "order": 506,
+    "order": 507,
     "path": "/ui/management/users/{user_id}/password",
     "plane": "ui_management"
   },
@@ -6096,7 +6108,7 @@
     ],
     "name": "legacy_ldap_users_redirect",
     "operation_id": null,
-    "order": 507,
+    "order": 508,
     "path": "/ui/management/ldap-users",
     "plane": "ui_management"
   },
@@ -6108,7 +6120,7 @@
     ],
     "name": "service_action_from_ui",
     "operation_id": null,
-    "order": 508,
+    "order": 509,
     "path": "/ui/management/services/{service}/{action}",
     "plane": "ui_management"
   },
@@ -6120,7 +6132,7 @@
     ],
     "name": "service_logs_from_ui",
     "operation_id": null,
-    "order": 509,
+    "order": 510,
     "path": "/ui/management/services/{service}/logs",
     "plane": "ui_management"
   },
@@ -6132,7 +6144,7 @@
     ],
     "name": "services",
     "operation_id": null,
-    "order": 510,
+    "order": 511,
     "path": "/ui/management/services",
     "plane": "ui_management"
   },
@@ -6144,7 +6156,7 @@
     ],
     "name": "logs_page",
     "operation_id": null,
-    "order": 511,
+    "order": 512,
     "path": "/ui/management/logs",
     "plane": "ui_management"
   },
@@ -6156,7 +6168,7 @@
     ],
     "name": "logs_data",
     "operation_id": null,
-    "order": 512,
+    "order": 513,
     "path": "/ui/management/logs/data",
     "plane": "ui_management"
   },
@@ -6168,7 +6180,7 @@
     ],
     "name": "tasks_page",
     "operation_id": null,
-    "order": 513,
+    "order": 514,
     "path": "/ui/management/tasks",
     "plane": "ui_management"
   },
@@ -6180,7 +6192,7 @@
     ],
     "name": "tasks_status",
     "operation_id": null,
-    "order": 514,
+    "order": 515,
     "path": "/ui/management/tasks/status",
     "plane": "ui_management"
   },
@@ -6192,7 +6204,7 @@
     ],
     "name": "task_status",
     "operation_id": null,
-    "order": 515,
+    "order": 516,
     "path": "/ui/management/tasks/{job_id}/status",
     "plane": "ui_management"
   },
@@ -6204,7 +6216,7 @@
     ],
     "name": "task_log",
     "operation_id": null,
-    "order": 516,
+    "order": 517,
     "path": "/ui/management/tasks/{job_id}/log",
     "plane": "ui_management"
   },
@@ -6216,7 +6228,7 @@
     ],
     "name": "cancel_task_from_ui",
     "operation_id": null,
-    "order": 517,
+    "order": 518,
     "path": "/ui/management/tasks/{job_id}/cancel",
     "plane": "ui_management"
   },
@@ -6228,7 +6240,7 @@
     ],
     "name": "audit_log",
     "operation_id": null,
-    "order": 518,
+    "order": 519,
     "path": "/ui/management/audit-log",
     "plane": "ui_management"
   },
@@ -6240,7 +6252,7 @@
     ],
     "name": "esxi_pxe_page",
     "operation_id": null,
-    "order": 519,
+    "order": 520,
     "path": "/ui/management/esxi-pxe",
     "plane": "ui_management"
   },
@@ -6252,7 +6264,7 @@
     ],
     "name": "network_boot_page",
     "operation_id": null,
-    "order": 520,
+    "order": 521,
     "path": "/ui/management/network-boot",
     "plane": "ui_management"
   },
@@ -6264,7 +6276,7 @@
     ],
     "name": "update_esxi_pxe_boot_settings_from_ui",
     "operation_id": null,
-    "order": 521,
+    "order": 522,
     "path": "/ui/management/esxi-pxe/boot-settings",
     "plane": "ui_management"
   },
@@ -6276,7 +6288,7 @@
     ],
     "name": "create_esxi_kickstart_from_ui",
     "operation_id": null,
-    "order": 522,
+    "order": 523,
     "path": "/ui/management/esxi-pxe/kickstarts",
     "plane": "ui_management"
   },
@@ -6288,7 +6300,7 @@
     ],
     "name": "upload_esxi_kickstart_from_ui",
     "operation_id": null,
-    "order": 523,
+    "order": 524,
     "path": "/ui/management/esxi-pxe/kickstarts/upload",
     "plane": "ui_management"
   },
@@ -6300,7 +6312,7 @@
     ],
     "name": "update_esxi_kickstart_from_ui",
     "operation_id": null,
-    "order": 524,
+    "order": 525,
     "path": "/ui/management/esxi-pxe/kickstarts/{kickstart_id}",
     "plane": "ui_management"
   },
@@ -6312,7 +6324,7 @@
     ],
     "name": "duplicate_esxi_kickstart_from_ui",
     "operation_id": null,
-    "order": 525,
+    "order": 526,
     "path": "/ui/management/esxi-pxe/kickstarts/{kickstart_id}/duplicate",
     "plane": "ui_management"
   },
@@ -6324,7 +6336,7 @@
     ],
     "name": "delete_esxi_kickstart_from_ui",
     "operation_id": null,
-    "order": 526,
+    "order": 527,
     "path": "/ui/management/esxi-pxe/kickstarts/{kickstart_id}/delete",
     "plane": "ui_management"
   },
@@ -6336,7 +6348,7 @@
     ],
     "name": "validate_esxi_kickstart_from_ui",
     "operation_id": null,
-    "order": 527,
+    "order": 528,
     "path": "/ui/management/esxi-pxe/kickstarts/{kickstart_id}/validate",
     "plane": "ui_management"
   },
@@ -6348,7 +6360,7 @@
     ],
     "name": "download_esxi_kickstart_from_ui",
     "operation_id": null,
-    "order": 528,
+    "order": 529,
     "path": "/ui/management/esxi-pxe/kickstarts/{kickstart_id}/download",
     "plane": "ui_management"
   },
@@ -6360,7 +6372,7 @@
     ],
     "name": "create_esxi_custom_variable_from_ui",
     "operation_id": null,
-    "order": 529,
+    "order": 530,
     "path": "/ui/management/esxi-pxe/custom-variables",
     "plane": "ui_management"
   },
@@ -6372,7 +6384,7 @@
     ],
     "name": "update_esxi_custom_variable_from_ui",
     "operation_id": null,
-    "order": 530,
+    "order": 531,
     "path": "/ui/management/esxi-pxe/custom-variables/{variable_name}",
     "plane": "ui_management"
   },
@@ -6384,7 +6396,7 @@
     ],
     "name": "delete_esxi_custom_variable_from_ui",
     "operation_id": null,
-    "order": 531,
+    "order": 532,
     "path": "/ui/management/esxi-pxe/custom-variables/{variable_name}/delete",
     "plane": "ui_management"
   },
@@ -6396,7 +6408,7 @@
     ],
     "name": "upload_esxi_installer_iso_from_ui",
     "operation_id": null,
-    "order": 532,
+    "order": 533,
     "path": "/ui/management/esxi-pxe/isos/upload",
     "plane": "ui_management"
   },
@@ -6408,7 +6420,7 @@
     ],
     "name": "delete_esxi_installer_iso_from_ui",
     "operation_id": null,
-    "order": 533,
+    "order": 534,
     "path": "/ui/management/esxi-pxe/isos/delete",
     "plane": "ui_management"
   },
@@ -6420,7 +6432,7 @@
     ],
     "name": "import_esxi_kickstart_filesystem_copy",
     "operation_id": null,
-    "order": 534,
+    "order": 535,
     "path": "/ui/management/esxi-pxe/kickstarts/{kickstart_id}/import-filesystem",
     "plane": "ui_management"
   },
@@ -6432,7 +6444,7 @@
     ],
     "name": "create_esxi_pxe_host_from_ui",
     "operation_id": null,
-    "order": 535,
+    "order": 536,
     "path": "/ui/management/esxi-pxe/hosts",
     "plane": "ui_management"
   },
@@ -6444,7 +6456,7 @@
     ],
     "name": "update_esxi_pxe_host_from_ui",
     "operation_id": null,
-    "order": 536,
+    "order": 537,
     "path": "/ui/management/esxi-pxe/hosts/{host_id}",
     "plane": "ui_management"
   },
@@ -6456,7 +6468,7 @@
     ],
     "name": "update_esxi_pxe_default_host_from_ui",
     "operation_id": null,
-    "order": 537,
+    "order": 538,
     "path": "/ui/management/esxi-pxe/default-host",
     "plane": "ui_management"
   },
@@ -6468,7 +6480,7 @@
     ],
     "name": "delete_esxi_pxe_host_from_ui",
     "operation_id": null,
-    "order": 538,
+    "order": 539,
     "path": "/ui/management/esxi-pxe/hosts/{host_id}/delete",
     "plane": "ui_management"
   },
@@ -6480,7 +6492,7 @@
     ],
     "name": "backup_restore_page",
     "operation_id": null,
-    "order": 539,
+    "order": 540,
     "path": "/ui/management/backup-restore",
     "plane": "ui_management"
   },
@@ -6492,7 +6504,7 @@
     ],
     "name": "export_backup_restore_archive",
     "operation_id": null,
-    "order": 540,
+    "order": 541,
     "path": "/ui/management/backup-restore/export",
     "plane": "ui_management"
   },
@@ -6504,7 +6516,7 @@
     ],
     "name": "restore_backup_restore_archive",
     "operation_id": null,
-    "order": 541,
+    "order": 542,
     "path": "/ui/management/backup-restore/restore",
     "plane": "ui_management"
   },
@@ -6516,7 +6528,7 @@
     ],
     "name": "factory_reset_backup_restore",
     "operation_id": null,
-    "order": 542,
+    "order": 543,
     "path": "/ui/management/backup-restore/factory-reset",
     "plane": "ui_management"
   },
@@ -6528,7 +6540,7 @@
     ],
     "name": "settings_page",
     "operation_id": null,
-    "order": 543,
+    "order": 544,
     "path": "/ui/management/settings",
     "plane": "ui_management"
   },
@@ -6540,7 +6552,7 @@
     ],
     "name": "update_settings_from_ui",
     "operation_id": null,
-    "order": 544,
+    "order": 545,
     "path": "/ui/management/settings",
     "plane": "ui_management"
   },
@@ -6552,7 +6564,7 @@
     ],
     "name": "update_authentication_lifetimes_from_ui",
     "operation_id": null,
-    "order": 545,
+    "order": 546,
     "path": "/ui/management/settings/authentication-lifetimes",
     "plane": "ui_management"
   },
@@ -6564,7 +6576,7 @@
     ],
     "name": "update_vmware_ceip_from_ui",
     "operation_id": null,
-    "order": 546,
+    "order": 547,
     "path": "/ui/management/settings/vmware-ceip",
     "plane": "ui_management"
   },
@@ -6576,7 +6588,7 @@
     ],
     "name": "update_logging_settings_from_ui",
     "operation_id": null,
-    "order": 547,
+    "order": 548,
     "path": "/ui/management/settings/logging",
     "plane": "ui_management"
   },
@@ -6588,7 +6600,7 @@
     ],
     "name": "placeholder_page",
     "operation_id": null,
-    "order": 548,
+    "order": 549,
     "path": "/ui/management/{page}",
     "plane": "ui_management"
   }

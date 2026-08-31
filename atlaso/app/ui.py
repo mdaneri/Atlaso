@@ -7770,6 +7770,8 @@ def create_vcf_generated_dns_records(
     component_keys: list[str],
     hostnames: list[str],
     actor: str,
+    expected_created: list[dict[str, str]] | None = None,
+    expected_skipped: list[dict[str, str]] | None = None,
 ) -> tuple[list[dict[str, str]], list[dict[str, str]], list[str]]:
     """Create vcf generated dns records.
 
@@ -7784,6 +7786,8 @@ def create_vcf_generated_dns_records(
         component_keys: Catalog component keys submitted by the caller.
         hostnames: Reviewed hostname labels paired with the submitted component keys.
         actor: Authenticated identity attributed to the audit record.
+        expected_created: Exact reviewed allocation required before mutation.
+        expected_skipped: Exact reviewed existing-record set required before mutation.
 
     Returns:
         The created vcf generated dns records.
@@ -7801,6 +7805,14 @@ def create_vcf_generated_dns_records(
     )
     if errors:
         return [], skipped, errors
+    if (
+        expected_created is not None
+        and expected_skipped is not None
+        and (created != expected_created or skipped != expected_skipped)
+    ):
+        return [], skipped, [
+            "Generated FQDN allocation changed since Populate. Select Populate and review the current plan again."
+        ]
     for row in created:
         record_type = row["record_type"]
         db.add(
@@ -16620,6 +16632,7 @@ _vcf_workflows_ui = build_vcf_workflows_ui_router(
         appliance_apply_client_status=appliance_apply_client_status,
         appliance_apply_status=appliance_apply_status,
         confirmed_tls_fingerprint=lambda *args, **kwargs: _confirmed_tls_fingerprint(*args, **kwargs),
+        allocate_vcf_generated_records=allocate_vcf_generated_records,
         create_vcf_generated_dns_records=create_vcf_generated_dns_records,
         delete_vcf_generated_dns_records=delete_vcf_generated_dns_records,
         disable_default_vcf_backup_user_when_service_off=disable_default_vcf_backup_user_when_service_off,
@@ -16697,6 +16710,7 @@ vcf_offline_depot_target_task_status = _vcf_workflows_ui.endpoints["vcf_offline_
 vcf_trust_page = _vcf_workflows_ui.endpoints["vcf_trust_page"]
 inspect_vcf_trust_target_from_ui = _vcf_workflows_ui.endpoints["inspect_vcf_trust_target_from_ui"]
 trust_vcf_root_ca_from_ui = _vcf_workflows_ui.endpoints["trust_vcf_root_ca_from_ui"]
+populate_vcf_fqdns_from_ui = _vcf_workflows_ui.endpoints["populate_vcf_fqdns_from_ui"]
 generate_vcf_fqdns_from_ui = _vcf_workflows_ui.endpoints["generate_vcf_fqdns_from_ui"]
 delete_vcf_fqdns_from_ui = _vcf_workflows_ui.endpoints["delete_vcf_fqdns_from_ui"]
 vcf_offline_depot_page = _vcf_workflows_ui.endpoints["vcf_offline_depot_page"]
