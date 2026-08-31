@@ -160,8 +160,8 @@ function Assert-AtlasoVmwarePayloadProvenance {
     catch {
         throw "VMware build provenance is invalid: $($_.Exception.Message)"
     }
-    if ($provenance.schema_version -ne 2) {
-        throw 'VMware build provenance does not contain verified payload-disk roles.'
+    if ($provenance.schema_version -ne 3) {
+        throw 'VMware build provenance does not contain verified builder identity and payload-disk roles.'
     }
     if ([string]$provenance.source_commit -notmatch '^[0-9a-f]{40}$' -or
         $null -eq $provenance.tracked_source_dirty) {
@@ -172,6 +172,57 @@ function Assert-AtlasoVmwarePayloadProvenance {
     }
     if ($RequireCleanSource -and [bool]$provenance.tracked_source_dirty) {
         throw 'VMware build provenance records a dirty tracked source tree.'
+    }
+    $identity = $provenance.builder_identity
+    $vmxStem = [System.IO.Path]::GetFileNameWithoutExtension($vmx.Name)
+    $outputLeaf = [System.IO.Path]::GetFileName($vmx.DirectoryName.TrimEnd(
+            [System.IO.Path]::DirectorySeparatorChar,
+            [System.IO.Path]::AltDirectorySeparatorChar
+        ))
+    if ($null -eq $identity -or $identity.schema_version -ne 1 -or
+        [string]$identity.name -cne $vmxStem -or [string]$identity.name -cne $outputLeaf -or
+        [string]$identity.source_commit -cne [string]$provenance.source_commit -or
+        (Get-AtlasoVmxValue -Path $vmx.FullName -Key 'displayName') -cne [string]$identity.name) {
+        throw 'VMware build provenance does not bind the output directory, VMX filename, displayName, and source commit to one builder identity.'
+    }
+    if ([string]$identity.kind -ceq 'pull_request') {
+        $expectedTaskName = "Atlaso-PR-$([int]$identity.pull_request_number)-Photon-Builder-VMware"
+        if (-not [string]::IsNullOrWhiteSpace([string]$identity.collision_suffix)) {
+            $expectedTaskName = "$expectedTaskName-$([string]$identity.collision_suffix)"
+        }
+        if ([int]$identity.pull_request_number -le 0 -or
+            [string]$identity.repository -notmatch '^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$' -or
+            [string]$identity.source_branch -notmatch '^(?![./])(?!.*\.\.)(?!.*//)[A-Za-z0-9._/-]+(?<![./])$' -or
+            [string]$identity.collision_suffix -notmatch '^(?:|[a-z0-9]+(?:-[a-z0-9]+)*)$' -or
+            [string]$identity.name -cne $expectedTaskName -or
+            -not [string]::IsNullOrWhiteSpace([string]$identity.release_version) -or
+            [long]$identity.workflow_run_id -ne 0) {
+            throw 'VMware task-builder provenance contains an invalid pull-request ownership identity.'
+        }
+    }
+    elseif ([string]$identity.kind -ceq 'release') {
+        $version = [string]$identity.release_version
+        $expectedReleaseName = if ($version -match '^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$') {
+            "Atlaso-Release-v$($version -replace '\.', '-')-$(([string]$identity.source_commit).Substring(0, 12))-Photon-Builder-VMware"
+        }
+        else {
+            ''
+        }
+        if ([long]$identity.workflow_run_id -gt 0) {
+            $expectedReleaseName = "$expectedReleaseName-run-$([long]$identity.workflow_run_id)"
+        }
+        if ([string]::IsNullOrWhiteSpace($expectedReleaseName) -or
+            [string]$identity.name -cne $expectedReleaseName -or
+            [int]$identity.pull_request_number -ne 0 -or
+            -not [string]::IsNullOrWhiteSpace([string]$identity.repository) -or
+            -not [string]::IsNullOrWhiteSpace([string]$identity.source_branch) -or
+            -not [string]::IsNullOrWhiteSpace([string]$identity.collision_suffix) -or
+            [long]$identity.workflow_run_id -lt 0) {
+            throw 'VMware release-builder provenance contains an invalid version-and-commit ownership identity.'
+        }
+    }
+    else {
+        throw 'VMware build provenance contains an unsupported builder identity kind.'
     }
     if ($provenance.vmx.name -ne $vmx.Name -or
         [long]$provenance.vmx.bytes -ne $vmx.Length -or
@@ -230,17 +281,19 @@ function Update-AtlasoVmwarePayloadProvenance {
     catch {
         throw "VMware build provenance cannot be refreshed: $($_.Exception.Message)"
     }
-    if ($previous.schema_version -ne 2 -or
+    if ($previous.schema_version -ne 3 -or
         [string]$previous.source_commit -notmatch '^[0-9a-f]{40}$' -or
-        $null -eq $previous.tracked_source_dirty) {
+        $null -eq $previous.tracked_source_dirty -or
+        $null -eq $previous.builder_identity) {
         throw 'VMware build provenance cannot be refreshed because its source identity is invalid.'
     }
 
     $payloadLayout = @(Get-AtlasoVmwarePayloadLayout -VmxPath $vmx.FullName -RequireExactlyTwoVmdks)
     $provenance = [ordered]@{
-        schema_version                   = 2
+        schema_version                   = 3
         source_commit                    = [string]$previous.source_commit
         tracked_source_dirty             = [bool]$previous.tracked_source_dirty
+        builder_identity                 = $previous.builder_identity
         payload_state                    = 'software-deployed'
         deployment_source_name           = $source.Name
         deployment_source_sha256         = (Get-FileHash -LiteralPath $source.FullName -Algorithm SHA256).Hash.ToLowerInvariant()

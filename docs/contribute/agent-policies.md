@@ -799,6 +799,19 @@ Terminal order:
 
 ## Photon VM Debugging Notes
 
+- Task-owned Photon/Packer VMware builders use the exact open same-repository pull request whose head branch and commit
+  match the checkout. The shared builder-identity helper derives
+  `Atlaso-PR-<number>-Photon-Builder-VMware[-<collision-safe-suffix>]`; the same exact value owns Packer `vm_name`,
+  Workstation `displayName`, the output-directory leaf, VMX filename/path, temporary-address reservation, startup
+  diagnostics, sibling ownership manifest, schema-v3 provenance, cleanup target, and reported evidence. A second
+  builder for one pull request uses a sanitized suffix without losing the PR segment. Protected release builders use
+  the helper's deterministic version-and-commit identity, optionally extended by workflow run ID. Reject missing,
+  malformed, closed, fork-owned, branch-mismatched, commit-mismatched, ambiguous, generic, and differently owned
+  identities before provider or target-filesystem mutation. A retained output is replaceable only with its exact
+  sibling ownership manifest; clone and export require its exact builder provenance. Low-level OVF export accepts only
+  an explicit proven source VMX. Never propagate transient PR identity into OVF/OVA product naming, deployed-appliance
+  names, canonical release filenames, or immutable release assets.
+
 - Every task-owned VMware test VM used for pull-request validation has one canonical identity:
   `Atlaso-PR-<number>-<purpose>[-<collision-safe-suffix>]`. Require the exact positive pull-request number and sanitize
   the short purpose and optional suffix through `Atlaso.VmwareTestIdentity.psm1`. The same identity owns the Workstation

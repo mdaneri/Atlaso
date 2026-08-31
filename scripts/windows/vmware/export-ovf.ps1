@@ -3,7 +3,7 @@
 Export a VMware VMX into a validated Atlaso OVF/OVA package.
 
 .PARAMETER SourceVmxPath
-Path to the source VMX used for ovftool export.
+Explicit path to the proven task- or release-owned source VMX used for ovftool export.
 .PARAMETER OutputDirectory
 Directory to hold generated OVF artifacts.
 .PARAMETER Name
@@ -70,7 +70,7 @@ Allow replacement of the exact approved output directory.
 )]
 [CmdletBinding()]
 param(
-    [string]$SourceVmxPath = 'image/vmware-workstation/output/atlaso-photon-vmware-workstation/Atlaso-Photon-Builder-VMware.vmx',
+    [string]$SourceVmxPath = '',
     [string]$OutputDirectory = '',
     [string]$Name = 'Atlaso-Photon',
     [string]$OvfToolPath = '',
@@ -1713,6 +1713,9 @@ function Get-OvfDescriptorPath {
     return $ovfFiles[0].FullName
 }
 
+if ([string]::IsNullOrWhiteSpace($SourceVmxPath)) {
+    throw 'Low-level OVF export requires an explicit -SourceVmxPath with verified builder provenance.'
+}
 $resolvedSourceVmx = (Resolve-Path -LiteralPath $SourceVmxPath).Path
 $releaseTag = ''
 $buildProvenance = $null

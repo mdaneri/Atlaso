@@ -151,10 +151,17 @@ Build the Workstation appliance with:
 ```powershell
 pwsh -ExecutionPolicy Bypass `
   -File scripts/windows/vmware/build-photon-image.ps1 `
+  -PullRequestNumber <number> `
   -IsoUrl "<photon-iso-url-or-path>" `
   -IsoChecksum "<packer-checksum>" `
   -EnableRealSystemAdapters
 ```
+
+The task build begins only after that pull request exists. Its same-repository head branch and commit must exactly
+match the checkout. The wrapper derives `Atlaso-PR-<number>-Photon-Builder-VMware[-<collision-safe-suffix>]` and keeps
+that identity aligned across the Packer VM, output/VMX, builder-address reservation, diagnostics, ownership manifest,
+schema-v3 provenance, cleanup, and evidence. Use `-CollisionSuffix` for another builder owned by the same pull request;
+never reuse the legacy generic builder for lifecycle acceptance.
 
 For a previously downloaded ISO, pass either its local filesystem path or an empty-authority `file:///` URI. The
 wrapper verifies that exact file against `-IsoChecksum` before any remastering and does not route it through the HTTP

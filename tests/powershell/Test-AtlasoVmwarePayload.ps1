@@ -63,6 +63,7 @@ function Write-TestVmx {
     )
 
     $content = @(
+        "displayName = `"$([System.IO.Path]::GetFileNameWithoutExtension($Path))`"",
         'scsi0.virtualdev = "pvscsi"',
         'scsi0:0.present = "TRUE"',
         "scsi0:0.filename = `"$UnitZero`"",
@@ -88,7 +89,7 @@ function Write-TestProvenance {
     param(
         [Parameter(Mandatory = $true)][string]$VmxPath,
         [Parameter(Mandatory = $true)]$Layout,
-        [int]$SchemaVersion = 2,
+        [int]$SchemaVersion = 3,
         [switch]$ReverseRoles
     )
 
@@ -111,6 +112,18 @@ function Write-TestProvenance {
         schema_version       = $SchemaVersion
         source_commit        = ('a' * 40)
         tracked_source_dirty = $false
+        builder_identity     = [ordered]@{
+            schema_version      = 1
+            kind                = 'pull_request'
+            name                = $vmx.BaseName
+            repository          = 'mdaneri/Atlaso'
+            pull_request_number = 653
+            source_branch       = 'enhancement/653-pr-photon-builder-identity'
+            source_commit       = ('a' * 40)
+            collision_suffix    = ''
+            release_version     = ''
+            workflow_run_id     = 0
+        }
         vmx                  = [ordered]@{
             name   = $vmx.Name
             bytes  = $vmx.Length
@@ -127,10 +140,12 @@ function Write-TestProvenance {
     return $path
 }
 
+$builderName = 'Atlaso-PR-653-Photon-Builder-VMware'
+$OutputDirectory = Join-Path $OutputDirectory $builderName
 New-Item -ItemType Directory -Force -Path $OutputDirectory | Out-Null
 $osDisk = Join-Path $OutputDirectory 'photon.vmdk'
 $systemDisk = Join-Path $OutputDirectory 'atlaso-system.vmdk'
-$vmxPath = Join-Path $OutputDirectory 'atlaso.vmx'
+$vmxPath = Join-Path $OutputDirectory "$builderName.vmx"
 Write-TestVmdk -Path $osDisk -CapacityBytes 40GB
 Write-TestVmdk -Path $systemDisk -CapacityBytes 20GB
 Write-TestVmx -Path $vmxPath -UnitZero 'photon.vmdk' -UnitOne 'atlaso-system.vmdk'
@@ -210,13 +225,13 @@ catch {
 
 Write-TestVmx -Path $vmxPath -UnitZero 'photon.vmdk' -UnitOne 'atlaso-system.vmdk'
 $layout = @(Get-AtlasoVmwarePayloadLayout -VmxPath $vmxPath -RequireExactlyTwoVmdks)
-$legacyPath = Write-TestProvenance -VmxPath $vmxPath -Layout $layout -SchemaVersion 1
+$legacyPath = Write-TestProvenance -VmxPath $vmxPath -Layout $layout -SchemaVersion 2
 try {
     $null = Assert-AtlasoVmwarePayloadProvenance -VmxPath $vmxPath -ProvenancePath $legacyPath
     throw 'Legacy VMware provenance without verified payload roles was accepted.'
 }
 catch {
-    if ($_.Exception.Message -notlike '*does not contain verified payload-disk roles*') {
+    if ($_.Exception.Message -notlike '*does not contain verified builder identity and payload-disk roles*') {
         throw
     }
 }

@@ -740,6 +740,17 @@ The following cross-cutting boundaries always apply:
   normally only after inactive-VM completion. Exclude every IPv4 address on the selected bridged host interface, and never
   let skipped topology preparation bypass read-only DHCP-state discovery. The completed appliance still uses management
   DHCP by default.
+- Every task-owned Photon/Packer VMware builder requires the exact open same-repository pull request whose head branch
+  and commit equal the checkout. Derive one canonical
+  `Atlaso-PR-<number>-Photon-Builder-VMware[-<collision-safe-suffix>]` identity through the shared builder helper and
+  keep it identical across Packer `vm_name`, Workstation `displayName`, output directory, VMX filename/path, address
+  reservation, startup diagnostics, ownership manifest, provenance, cleanup scope, and reported evidence. Multiple
+  builders for one pull request retain the PR segment and use sanitized suffixes. Protected release builders instead
+  use the deterministic version-and-commit identity produced by that helper, optionally extended by workflow run ID.
+  Require the exact sibling ownership manifest before replacing a retained output and schema-v3 builder provenance
+  before clone or export. Never rename, adopt, reuse, redeploy, or delete a legacy generic or differently owned builder.
+  OVF export requires an explicit proven source VMX; exported product identity, deployed-appliance names, and immutable
+  release asset names remain canonical and never inherit a transient pull-request number.
 - Validate live appliance readiness through `/openapi.json`, not VMware Tools IP discovery or service color alone.
 - A successful tty1 management-network correction must explicitly apply Network and Firewall from the corrected state,
   retry unfinished first-boot HTTPS before applying Appliance Settings, validate nginx before reload, ensure nginx and

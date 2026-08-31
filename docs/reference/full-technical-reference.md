@@ -1354,11 +1354,21 @@ Build the image with:
 ```powershell
 pwsh -ExecutionPolicy Bypass `
   -File scripts/windows/vmware/build-photon-image.ps1 `
+  -PullRequestNumber <number> `
   -IsoUrl "<photon-iso-url-or-path>" `
   -IsoChecksum "<packer-checksum>"
 ```
 
-Before a forced Workstation rebuild deletes the output directory, the wrapper routes the complete output root through
+The pull request must be open in the same repository and its head branch and commit must equal the checkout. The
+wrapper derives `Atlaso-PR-<number>-Photon-Builder-VMware[-<collision-safe-suffix>]` and binds that exact name to the
+Packer VM, output-directory leaf, VMX, temporary address reservation, diagnostics, sibling ownership manifest,
+schema-v3 provenance, cleanup scope, and reported evidence. Use `-CollisionSuffix` for another builder owned by the
+same pull request. Protected release production uses a separate deterministic version-and-commit builder identity.
+Neither identity changes the canonical exported product or release asset names.
+
+Before a forced Workstation rebuild deletes the output directory, the wrapper first requires the exact sibling
+builder-ownership manifest. It never adopts a legacy generic or differently owned output. The wrapper then routes the
+complete output root through
 the checked VMware cleanup module. It validates the exact non-reparse-point Atlaso root, discovers only descendant VMX
 files, stops running targets, protects external VMDKs, and uses checked `vmrun deleteVM` for existing registered targets
 before removing the remaining root. A filesystem-identity snapshot blocks removal when the root or one of its surviving
@@ -1374,8 +1384,10 @@ Photon root/build password remains separate from the Atlaso web bootstrap admini
 
 The Workstation Packer template creates a 40 GiB OS disk and a sparse 20 GiB `ATLASO_SYSTEM` disk. Final provisioning
 removes build-only compiler packages, clears package/download caches and staged sources, trims the filesystems,
-and leaves Packer compaction enabled. OVF export preserves both payload VMDKs and adds empty 500 GiB depot and backup
-definitions at SCSI units 2 and 3. `export-ovf.ps1 -Release` derives the stable `vX.Y.Z` tag, while `-Prerelease`
+and leaves Packer compaction enabled. Low-level OVF export requires an explicit source VMX whose output path,
+`displayName`, source commit, and builder identity agree with schema-v3 provenance. It preserves both payload VMDKs and
+adds empty 500 GiB depot and backup definitions at SCSI units 2 and 3. `export-ovf.ps1 -Release` derives the stable
+`vX.Y.Z` tag, while `-Prerelease`
 requires exactly one annotated `vX.Y.Z-<prerelease>` tag at the clean checkout commit. Both modes derive the destination
 repository, require an existing published non-draft GitHub Release with the matching classification, and preflight and
 upload the OVF assets with GitHub CLI without creating or reclassifying the release. The combined OVA uploads only when

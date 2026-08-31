@@ -1628,13 +1628,60 @@ def test_vmware_packer_build_uses_two_compacted_payload_disks():
     assert "Atlaso.VmwarePayload.psm1" in wrapper
     assert "Write-AtlasoVmwareBuildProvenance" in wrapper
     assert "tracked_source_dirty" in wrapper
-    assert "schema_version       = 2" in wrapper
+    assert "schema_version       = 3" in wrapper
+    assert "builder_identity" in wrapper
     assert "payload_disks" in wrapper
     assert "Get-AtlasoVmwarePayloadLayout" in wrapper
     payload_module = Path("scripts/windows/vmware/Atlaso.VmwarePayload.psm1").read_text(
         encoding="utf-8"
     )
     assert "Get-FileHash -LiteralPath $vmx.FullName -Algorithm SHA256" in payload_module
+
+
+def test_vmware_packer_requires_proven_task_or_release_builder_identity() -> None:
+    """Packer, wrapper, release, cleanup, and docs share one builder identity."""
+    template = Path("image/vmware-workstation/atlaso-photon.pkr.hcl").read_text(
+        encoding="utf-8"
+    )
+    wrapper = Path("scripts/windows/vmware/build-photon-image.ps1").read_text(
+        encoding="utf-8"
+    )
+    release = Path(
+        "scripts/windows/virtualization/Atlaso.VirtualizationRelease.psm1"
+    ).read_text(encoding="utf-8")
+    policy = Path("AGENTS.md").read_text(encoding="utf-8")
+    detailed_policy = Path("docs/contribute/agent-policies.md").read_text(
+        encoding="utf-8"
+    )
+
+    assert 'variable "vm_name" {' in template
+    assert 'default = "Atlaso-Photon-Builder-VMware"' not in template
+    assert "PR-[1-9][0-9]*-Photon-Builder-VMware" in template
+    assert "Release-v[0-9]+-[0-9]+-[0-9]+-[0-9a-f]{12}" in template
+    assert 'replace(var.output_directory, "\\\\", "/")' in template
+    assert "/Atlaso-(PR-[1-9][0-9]*-Photon-Builder-VMware" in template
+    assert "basename(replace(var.output_directory" in template
+    assert "== var.vm_name" in template
+    assert "Resolve-AtlasoTaskBuilderIdentity" in wrapper
+    assert "repos/$repository/pulls/$PullRequestNumber" in wrapper
+    assert "head_repository" in wrapper
+    assert "head_branch" in wrapper
+    assert "head_commit" in wrapper
+    assert "status --short --untracked-files=no" in wrapper
+    assert "Get-AtlasoVmwareBuilderIdentityManifestPath" in wrapper
+    assert "Assert-AtlasoVmwareBuilderIdentityManifest" in wrapper
+    assert "Assert-AtlasoVmwareBuilderVmx" in wrapper
+    manifest_recheck = wrapper.index("Assert-AtlasoVmwareBuilderIdentityManifest `")
+    cleanup = wrapper.index("Remove-AtlasoWorkstationArtifactRoot `", manifest_recheck)
+    assert manifest_recheck < cleanup
+    assert "Refusing to reuse or clean a Photon builder output" in wrapper
+    assert "Atlaso-Photon-Builder-VMware" not in wrapper
+    assert "New-AtlasoVmwareBuilderIdentity" in release
+    assert "'-ReleaseVersion', $identity.Version" in release
+    assert "'-ReleaseSourceCommit', $identity.Commit" in release
+    canonical = "Atlaso-PR-<number>-Photon-Builder-VMware"
+    assert canonical in policy
+    assert canonical in detailed_policy
 
 
 def test_vmware_payload_layout_and_provenance_fail_closed(tmp_path: Path) -> None:
@@ -1666,6 +1713,37 @@ def test_vmware_payload_layout_and_provenance_fail_closed(tmp_path: Path) -> Non
     )
     assert result.returncode == 0, result.stdout + result.stderr
     assert "Atlaso VMware payload layout and provenance tests passed." in result.stdout
+
+
+def test_vmware_builder_identity_and_ownership_fail_closed(tmp_path: Path) -> None:
+    """Task, release, manifest, output, and VMX identities stay canonical.
+
+    Args:
+        tmp_path: Pytest-provided isolated output directory.
+    """
+    pwsh = shutil.which("pwsh")
+    if pwsh is None:
+        pytest.skip("PowerShell 7 is required")
+
+    result = subprocess.run(
+        [
+            pwsh,
+            "-NoLogo",
+            "-NoProfile",
+            "-NonInteractive",
+            "-File",
+            "tests/powershell/Test-AtlasoVmwareBuilderIdentity.ps1",
+            "-RepositoryRoot",
+            str(Path.cwd()),
+            "-OutputDirectory",
+            str(tmp_path / "vmware-builder-identity"),
+        ],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "Atlaso VMware builder identity tests passed." in result.stdout
 
 
 def test_photon_kickstart_uses_deterministic_build_time_sshd_service():
@@ -2080,7 +2158,9 @@ def test_create_atlaso_vmware_test_vm_wrapper_uses_common_helpers():
     assert "Using VMware services network $ServiceVmnetName" in build_script
     assert "prepare-networks.ps1" in build_script
     assert "Resolve-WorkstationVmrunPath -Path $VmrunPath" in build_script
-    assert "Resolve-WorkstationOutputDirectory -PackerDirectory $PackerDirectory -OutputDirectory $OutputDirectory" in build_script
+    assert "Resolve-WorkstationOutputDirectory `" in build_script
+    assert "-OutputDirectory $OutputDirectory `" in build_script
+    assert "-VmName $VmName" in build_script
     assert "Atlaso.WorkstationCleanup.psm1" in build_script
     assert "Remove-AtlasoWorkstationArtifactRoot" in build_script
     assert "Repair-AtlasoWorkstationStaleRegistrations" in build_script

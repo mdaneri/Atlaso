@@ -341,6 +341,9 @@ successful software-release SHA, run:
 The command verifies and extracts the exact published software bundle, builds the canonical VMware template, derives
 Hyper-V from that OVA, runs both Windows smokes, creates the annotated tag before the draft Release, uploads without
 clobbering, and waits for the exact newly dispatched hosted-finalizer run to succeed before verifying publication.
+The intermediate VMware builder uses a deterministic version-and-source-commit identity and records that identity in
+its output manifest and schema-v3 provenance. The exporter consumes that exact proven VMX while retaining the canonical
+`atlaso-vX.Y.Z` OVA/product and release filenames; release output never inherits a pull-request number.
 Keep `StagingRoot` until stable verification; cleanup is a separate explicit operator action. The three 1Password
 selectors are required so both the fresh image build and exact wheel deployment use the same approved credential
 source; the values are forwarded to the existing isolated SDK bridges and are never uploaded as evidence. A

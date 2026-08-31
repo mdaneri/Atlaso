@@ -43,8 +43,24 @@ Internal task-owned directory containing all plaintext image-build artifacts.
 Internal durable marker proving the isolated child claimed a pre-existing output root.
 .PARAMETER BuilderAddressReservationPath
 Internal non-secret handoff for the exact temporary address reservation.
-.PARAMETER VmName
-Builder virtual-machine name.
+.PARAMETER PullRequestNumber
+Exact positive same-repository pull request that owns a task build.
+.PARAMETER CollisionSuffix
+Optional collision-safe suffix for multiple builders owned by one pull request.
+.PARAMETER ReleaseBuilder
+Select the protected version-and-commit-bound release builder identity.
+.PARAMETER ReleaseVersion
+Strict synchronized version for a protected release builder.
+.PARAMETER ReleaseSourceCommit
+Exact source commit for a protected release builder.
+.PARAMETER ReleaseWorkflowRunId
+Optional workflow run ID that further distinguishes a release builder.
+.PARAMETER VerifiedRepository
+Internal exact same-repository identity proven by the parent process.
+.PARAMETER VerifiedSourceBranch
+Internal exact pull-request head branch proven by the parent process.
+.PARAMETER VerifiedSourceCommit
+Internal exact source commit proven by the parent process.
 .PARAMETER OutputDirectory
 Artifact output directory.
 .PARAMETER SshHost
@@ -154,7 +170,17 @@ param(
     [string]$SensitiveBuildDirectory = '',
     [string]$OutputCleanupClaimPath = '',
     [string]$BuilderAddressReservationPath = '',
-    [string]$VmName = 'Atlaso-Photon-Builder-VMware',
+    [ValidateRange(1, 2147483647)]
+    [int]$PullRequestNumber = 0,
+    [string]$CollisionSuffix = '',
+    [switch]$ReleaseBuilder,
+    [string]$ReleaseVersion = '',
+    [string]$ReleaseSourceCommit = '',
+    [ValidateRange(1, [long]::MaxValue)]
+    [long]$ReleaseWorkflowRunId = 0,
+    [string]$VerifiedRepository = '',
+    [string]$VerifiedSourceBranch = '',
+    [string]$VerifiedSourceCommit = '',
     [string]$OutputDirectory = '',
     [string]$SshHost = '',
     [string]$SharedSourceDirectory = '',
@@ -208,6 +234,117 @@ Import-Module (Join-Path $PSScriptRoot 'Atlaso.WorkstationCleanup.psm1') -Force
 Import-Module (Join-Path $PSScriptRoot 'Atlaso.VmwarePayload.psm1') -Force
 Import-Module (Join-Path $PSScriptRoot 'Atlaso.WorkstationBuildMonitor.psm1') -Force
 Import-Module (Join-Path $PSScriptRoot 'Atlaso.WorkstationBuilderAddress.psm1') -Force
+Import-Module (Join-Path $PSScriptRoot 'Atlaso.VmwareBuilderIdentity.psm1') -Force
+
+<#
+.SYNOPSIS
+Resolve and verify the exact same-repository pull request for a task build.
+.PARAMETER RepositoryRoot
+Atlaso checkout whose branch and remote repository must own the pull request.
+.PARAMETER PullRequestNumber
+Exact positive pull-request number selected by the caller.
+.PARAMETER CollisionSuffix
+Optional sanitized suffix for another builder owned by the pull request.
+#>
+function Resolve-AtlasoTaskBuilderIdentity {
+    param(
+        [Parameter(Mandatory = $true)][string]$RepositoryRoot,
+        [Parameter(Mandatory = $true)][ValidateRange(1, 2147483647)][int]$PullRequestNumber,
+        [string]$CollisionSuffix = ''
+    )
+
+    $branch = [string](& git -C $RepositoryRoot branch --show-current)
+    $commit = [string](& git -C $RepositoryRoot rev-parse HEAD)
+    if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($branch) -or
+        $commit.Trim() -notmatch '^[0-9a-f]{40}$') {
+        throw 'A task-owned Photon builder requires one checked-out branch and exact source commit.'
+    }
+    $branch = $branch.Trim()
+    $commit = $commit.Trim()
+    $trackedChanges = @(& git -C $RepositoryRoot status --short --untracked-files=no)
+    if ($LASTEXITCODE -ne 0 -or $trackedChanges.Count -ne 0) {
+        throw 'A task-owned Photon builder requires a clean tracked checkout at the exact pull-request head.'
+    }
+
+    $gh = Get-Command gh -ErrorAction SilentlyContinue
+    if (-not $gh) {
+        throw 'GitHub CLI is required to prove the task-owned Photon builder pull-request identity.'
+    }
+    $originUrl = ([string](& git -C $RepositoryRoot remote get-url origin)).Trim()
+    if ($LASTEXITCODE -ne 0) {
+        throw 'Could not resolve the exact origin remote for the Photon builder checkout.'
+    }
+    $originMatch = [regex]::Match(
+        $originUrl,
+        '^(?:https://github\.com/|ssh://git@github\.com/|git@github\.com:)(?<repository>[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+?)(?:\.git)?$'
+    )
+    if (-not $originMatch.Success) {
+        throw 'The Photon builder origin must be one unambiguous GitHub repository URL.'
+    }
+    $repository = $originMatch.Groups['repository'].Value
+    $pullJson = [string](& $gh.Source api "repos/$repository/pulls/$PullRequestNumber" `
+        --jq '{number:.number,state:.state,head_repository:.head.repo.full_name,head_branch:.head.ref,head_commit:.head.sha}')
+    if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($pullJson)) {
+        throw "Could not verify pull request #$PullRequestNumber for repository $repository."
+    }
+    try {
+        $pull = $pullJson | ConvertFrom-Json
+    }
+    catch {
+        throw "GitHub returned invalid identity evidence for pull request #$PullRequestNumber."
+    }
+    if ([int]$pull.number -ne $PullRequestNumber -or [string]$pull.state -cne 'open' -or
+        [string]$pull.head_repository -cne $repository -or
+        [string]$pull.head_branch -cne $branch -or
+        [string]$pull.head_commit -cne $commit) {
+        throw "Pull request #$PullRequestNumber is not the open same-repository owner of branch '$branch' at commit $commit."
+    }
+    return New-AtlasoVmwareBuilderIdentity `
+        -PullRequestNumber $PullRequestNumber `
+        -CollisionSuffix $CollisionSuffix `
+        -Repository $repository `
+        -SourceBranch $branch `
+        -SourceCommit $commit
+}
+
+<#
+.SYNOPSIS
+Resolve and verify the protected release builder identity.
+.PARAMETER RepositoryRoot
+Atlaso checkout whose version and commit are verified.
+.PARAMETER ReleaseVersion
+Strict synchronized release version.
+.PARAMETER ReleaseSourceCommit
+Exact release source commit.
+.PARAMETER ReleaseWorkflowRunId
+Optional workflow run ID that further distinguishes the builder.
+#>
+function Resolve-AtlasoReleaseBuilderIdentity {
+    param(
+        [Parameter(Mandatory = $true)][string]$RepositoryRoot,
+        [Parameter(Mandatory = $true)][string]$ReleaseVersion,
+        [Parameter(Mandatory = $true)][string]$ReleaseSourceCommit,
+        [long]$ReleaseWorkflowRunId = 0
+    )
+
+    $head = ([string](& git -C $RepositoryRoot rev-parse HEAD)).Trim()
+    if ($LASTEXITCODE -ne 0 -or $head -notmatch '^[0-9a-f]{40}$' -or
+        $ReleaseSourceCommit -cne $head) {
+        throw 'The protected release builder source commit does not match exact checkout HEAD.'
+    }
+    $trackedChanges = @(& git -C $RepositoryRoot status --short --untracked-files=no)
+    if ($LASTEXITCODE -ne 0 -or $trackedChanges.Count -ne 0) {
+        throw 'A protected release builder requires a clean tracked checkout at exact HEAD.'
+    }
+    $version = ([string](& python (Join-Path $RepositoryRoot 'scripts/version.py') get --root $RepositoryRoot)).Trim()
+    if ($LASTEXITCODE -ne 0 -or $version -cne $ReleaseVersion) {
+        throw 'The protected release builder version does not match synchronized repository metadata.'
+    }
+    return New-AtlasoVmwareBuilderIdentity `
+        -ReleaseVersion $ReleaseVersion `
+        -SourceCommit $ReleaseSourceCommit `
+        -WorkflowRunId $ReleaseWorkflowRunId
+}
 
 <#
 .SYNOPSIS
@@ -360,15 +497,18 @@ Resolve the guarded VMware build output directory.
 VMware Packer template directory.
 .PARAMETER OutputDirectory
 Optional explicit artifact directory.
+.PARAMETER VmName
+Canonical task- or release-owned builder name used as the default output leaf.
 #>
 function Resolve-WorkstationOutputDirectory {
     param(
         [Parameter(Mandatory = $true)][string]$PackerDirectory,
-        [string]$OutputDirectory
+        [string]$OutputDirectory,
+        [Parameter(Mandatory = $true)][string]$VmName
     )
 
     $effectiveOutput = if ([string]::IsNullOrWhiteSpace($OutputDirectory)) {
-        Join-Path $PackerDirectory 'output\atlaso-photon-vmware-workstation'
+        Join-Path (Join-Path $PackerDirectory 'output') $VmName
     } elseif ([System.IO.Path]::IsPathRooted($OutputDirectory)) {
         $OutputDirectory
     } else {
@@ -420,6 +560,70 @@ function Complete-AtlasoBuilderAddressReservationHandoff {
 }
 
 $repoRoot = (Resolve-Path -LiteralPath (Join-Path $PSScriptRoot '..\..\..')).Path
+$identityModeInvalid = ($ReleaseBuilder -and $PullRequestNumber -gt 0) -or
+    (-not $ReleaseBuilder -and $PullRequestNumber -le 0) -or
+    ($ReleaseBuilder -and -not [string]::IsNullOrWhiteSpace($CollisionSuffix))
+if ($identityModeInvalid) {
+    throw 'Select exactly one Photon builder identity: -PullRequestNumber for a task build, or -ReleaseBuilder with release version and commit inputs.'
+}
+if (-not $CredentialChild -and (
+        -not [string]::IsNullOrWhiteSpace($VerifiedRepository) -or
+        -not [string]::IsNullOrWhiteSpace($VerifiedSourceBranch) -or
+        -not [string]::IsNullOrWhiteSpace($VerifiedSourceCommit)
+    )) {
+    throw 'Verified builder identity fields are internal and may be supplied only to the isolated child.'
+}
+$builderIdentity = if ($ReleaseBuilder) {
+    if ([string]::IsNullOrWhiteSpace($ReleaseVersion) -or
+        $ReleaseSourceCommit -notmatch '^[0-9a-f]{40}$') {
+        throw 'A protected release builder requires -ReleaseVersion and exact -ReleaseSourceCommit.'
+    }
+    if ($CredentialChild) {
+        $currentHead = ([string](& git -C $repoRoot rev-parse HEAD)).Trim()
+        $trackedChanges = @(& git -C $repoRoot status --short --untracked-files=no)
+        if ($LASTEXITCODE -ne 0 -or $currentHead -cne $ReleaseSourceCommit -or
+            $VerifiedSourceCommit -cne $ReleaseSourceCommit -or $trackedChanges.Count -ne 0) {
+            throw 'The isolated child release identity no longer matches exact checkout HEAD.'
+        }
+        New-AtlasoVmwareBuilderIdentity `
+            -ReleaseVersion $ReleaseVersion `
+            -SourceCommit $ReleaseSourceCommit `
+            -WorkflowRunId $ReleaseWorkflowRunId
+    }
+    else {
+        Resolve-AtlasoReleaseBuilderIdentity `
+            -RepositoryRoot $repoRoot `
+            -ReleaseVersion $ReleaseVersion `
+            -ReleaseSourceCommit $ReleaseSourceCommit `
+            -ReleaseWorkflowRunId $ReleaseWorkflowRunId
+    }
+}
+else {
+    if ($CredentialChild) {
+        $currentBranch = ([string](& git -C $repoRoot branch --show-current)).Trim()
+        $currentHead = ([string](& git -C $repoRoot rev-parse HEAD)).Trim()
+        $trackedChanges = @(& git -C $repoRoot status --short --untracked-files=no)
+        if ($LASTEXITCODE -ne 0 -or
+            $VerifiedRepository -notmatch '^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$' -or
+            $VerifiedSourceBranch -cne $currentBranch -or
+            $VerifiedSourceCommit -cne $currentHead -or $trackedChanges.Count -ne 0) {
+            throw 'The isolated child task identity no longer matches the proven repository branch and commit.'
+        }
+        New-AtlasoVmwareBuilderIdentity `
+            -PullRequestNumber $PullRequestNumber `
+            -CollisionSuffix $CollisionSuffix `
+            -Repository $VerifiedRepository `
+            -SourceBranch $VerifiedSourceBranch `
+            -SourceCommit $VerifiedSourceCommit
+    }
+    else {
+        Resolve-AtlasoTaskBuilderIdentity `
+            -RepositoryRoot $repoRoot `
+            -PullRequestNumber $PullRequestNumber `
+            -CollisionSuffix $CollisionSuffix
+    }
+}
+$VmName = [string]$builderIdentity.Name
 $builderReservationStateRoot = Join-Path (
     [Environment]::GetFolderPath('LocalApplicationData')
 ) 'Atlaso\vmware-builder-addresses'
@@ -583,7 +787,8 @@ else {
     }
     $outerCleanupOutputDirectory = Resolve-WorkstationOutputDirectory `
         -PackerDirectory $outerCleanupPackerDirectory `
-        -OutputDirectory $OutputDirectory
+        -OutputDirectory $OutputDirectory `
+        -VmName $VmName
     $outerCleanupOutputExistedBeforeChild = Test-Path -LiteralPath $outerCleanupOutputDirectory
     $preparedIsoLeaf = if ($PSBoundParameters.ContainsKey('PreparedIsoPath') -and
         -not [string]::IsNullOrWhiteSpace($PreparedIsoPath)) {
@@ -650,6 +855,16 @@ else {
             '-BuilderAddressReservationPath', $childBuilderAddressReservationPath,
             '-PreparedIsoPath', $childPreparedIsoPath
         )
+        if ($ReleaseBuilder) {
+            $childArguments += @('-VerifiedSourceCommit', $builderIdentity.SourceCommit)
+        }
+        else {
+            $childArguments += @(
+                '-VerifiedRepository', $builderIdentity.Repository,
+                '-VerifiedSourceBranch', $builderIdentity.SourceBranch,
+                '-VerifiedSourceCommit', $builderIdentity.SourceCommit
+            )
+        }
         $excludedParameters = @(
             'SshPassword', 'BootstrapAdminPassword',
             'OnePasswordEnvironmentId', 'EnvironmentIdFile',
@@ -658,7 +873,8 @@ else {
             'CredentialBundlePath', 'CredentialChild',
             'BuilderStaticDnsJson', 'BuilderStaticDnsBound',
             'SensitiveBuildDirectory', 'OutputCleanupClaimPath',
-            'BuilderAddressReservationPath', 'PreparedIsoPath'
+            'BuilderAddressReservationPath', 'PreparedIsoPath',
+            'VerifiedRepository', 'VerifiedSourceBranch', 'VerifiedSourceCommit'
         )
         foreach ($entry in $PSBoundParameters.GetEnumerator()) {
             if ($entry.Key -in $excludedParameters) {
@@ -908,15 +1124,22 @@ Completed Packer artifact directory.
 Expected VMX base name.
 .PARAMETER RepoRoot
 Source repository root.
+.PARAMETER BuilderIdentity
+Validated task or release identity bound to the output and VMX.
 #>
 function Write-AtlasoVmwareBuildProvenance {
     param(
         [Parameter(Mandatory = $true)][string]$OutputDirectory,
         [Parameter(Mandatory = $true)][string]$VmName,
-        [Parameter(Mandatory = $true)][string]$RepoRoot
+        [Parameter(Mandatory = $true)][string]$RepoRoot,
+        [Parameter(Mandatory = $true)][psobject]$BuilderIdentity
     )
 
-    $vmx = Get-Item -LiteralPath (Join-Path $OutputDirectory "$VmName.vmx") -ErrorAction Stop
+    $resolvedVmx = Assert-AtlasoVmwareBuilderVmx `
+        -VmxPath (Join-Path $OutputDirectory "$VmName.vmx") `
+        -OutputDirectory $OutputDirectory `
+        -Identity $BuilderIdentity
+    $vmx = Get-Item -LiteralPath $resolvedVmx -ErrorAction Stop
     $payloadLayout = @(Get-AtlasoVmwarePayloadLayout -VmxPath $vmx.FullName -RequireExactlyTwoVmdks)
     $sourceCommit = [string](& git -C $RepoRoot rev-parse HEAD)
     if ($LASTEXITCODE -ne 0 -or $sourceCommit.Trim() -notmatch '^[0-9a-f]{40}$') {
@@ -927,9 +1150,21 @@ function Write-AtlasoVmwareBuildProvenance {
         throw 'Could not inspect tracked source changes for VMware image provenance.'
     }
     $provenance = [ordered]@{
-        schema_version       = 2
+        schema_version       = 3
         source_commit        = $sourceCommit.Trim()
         tracked_source_dirty = $trackedChanges.Count -ne 0
+        builder_identity     = [ordered]@{
+            schema_version      = 1
+            kind                = [string]$BuilderIdentity.Kind
+            name                = [string]$BuilderIdentity.Name
+            repository          = [string]$BuilderIdentity.Repository
+            pull_request_number = [int]$BuilderIdentity.PullRequestNumber
+            source_branch       = [string]$BuilderIdentity.SourceBranch
+            source_commit       = [string]$BuilderIdentity.SourceCommit
+            collision_suffix    = [string]$BuilderIdentity.CollisionSuffix
+            release_version     = [string]$BuilderIdentity.ReleaseVersion
+            workflow_run_id     = [long]$BuilderIdentity.WorkflowRunId
+        }
         vmx                  = [ordered]@{
             name   = $vmx.Name
             bytes  = $vmx.Length
@@ -1044,7 +1279,33 @@ function Get-WorkstationManagementNetwork {
 if ([string]::IsNullOrWhiteSpace($PackerDirectory)) {
     $PackerDirectory = Join-Path $PSScriptRoot '..\..\..\image\vmware-workstation'
 }
-$workstationOutputDirectory = Resolve-WorkstationOutputDirectory -PackerDirectory $PackerDirectory -OutputDirectory $OutputDirectory
+$workstationOutputDirectory = Resolve-WorkstationOutputDirectory `
+    -PackerDirectory $PackerDirectory `
+    -OutputDirectory $OutputDirectory `
+    -VmName $VmName
+$workstationOutputDirectory = Assert-AtlasoVmwareBuilderOutputDirectory `
+    -OutputDirectory $workstationOutputDirectory `
+    -Identity $builderIdentity
+$builderIdentityManifestPath = Get-AtlasoVmwareBuilderIdentityManifestPath `
+    -OutputDirectory $workstationOutputDirectory
+$builderOutputExists = Test-Path -LiteralPath $workstationOutputDirectory
+$builderManifestExists = Test-Path -LiteralPath $builderIdentityManifestPath -PathType Leaf
+if ($builderOutputExists -and -not $builderManifestExists) {
+    throw "Refusing to reuse or clean a Photon builder output without its exact ownership manifest: $workstationOutputDirectory"
+}
+if ($builderManifestExists) {
+    $null = Assert-AtlasoVmwareBuilderIdentityManifest `
+        -Path $builderIdentityManifestPath `
+        -OutputDirectory $workstationOutputDirectory `
+        -Identity $builderIdentity
+}
+$existingBuilderVmx = Join-Path $workstationOutputDirectory "$VmName.vmx"
+if (Test-Path -LiteralPath $existingBuilderVmx -PathType Leaf) {
+    $null = Assert-AtlasoVmwareBuilderVmx `
+        -VmxPath $existingBuilderVmx `
+        -OutputDirectory $workstationOutputDirectory `
+        -Identity $builderIdentity
+}
 
 $VmnetName = ConvertTo-WorkstationVmnetName -Name $VmnetName -ParameterName 'VmnetName'
 $ServiceVmnetName = ConvertTo-WorkstationVmnetName -Name $ServiceVmnetName -ParameterName 'ServiceVmnetName'
@@ -1218,7 +1479,18 @@ $packerVariables = @{
 $packerBuildInvoker = $null
 if (-not $ValidateOnly -and -not $PrepareIsoOnly) {
     $resolvedVmrunPath = Resolve-WorkstationVmrunPath -Path $VmrunPath
+    if (-not $builderManifestExists) {
+        Write-AtlasoVmwareBuilderIdentityManifest `
+            -Path $builderIdentityManifestPath `
+            -OutputDirectory $workstationOutputDirectory `
+            -Identity $builderIdentity
+        $builderManifestExists = $true
+    }
     if (-not $KeepExistingOutput) {
+        $null = Assert-AtlasoVmwareBuilderIdentityManifest `
+            -Path $builderIdentityManifestPath `
+            -OutputDirectory $workstationOutputDirectory `
+            -Identity $builderIdentity
         # Claim a pre-existing output only after all network preparation has
         # completed and immediately before checked removal begins. The bounded
         # parent may finish that exact removal after proven child termination.
@@ -1231,6 +1503,16 @@ if (-not $ValidateOnly -and -not $PrepareIsoOnly) {
             -ExpectedRemovalRoot $workstationOutputDirectory `
             -RemovalRoot $workstationOutputDirectory `
             -Confirm:$false
+        $null = Assert-AtlasoVmwareBuilderIdentityManifest `
+            -Path $builderIdentityManifestPath `
+            -OutputDirectory $workstationOutputDirectory `
+            -Identity $builderIdentity
+    }
+    else {
+        $null = Assert-AtlasoVmwareBuilderIdentityManifest `
+            -Path $builderIdentityManifestPath `
+            -OutputDirectory $workstationOutputDirectory `
+            -Identity $builderIdentity
     }
     $builderAddress = if (-not [string]::IsNullOrWhiteSpace($SshHost)) {
         $SshHost
@@ -1326,8 +1608,13 @@ Invoke-AtlasoPhotonImageBuild `
     -PrepareIsoOnly:$PrepareIsoOnly
 
 if (-not $ValidateOnly -and -not $PrepareIsoOnly) {
+    $null = Assert-AtlasoVmwareBuilderIdentityManifest `
+        -Path $builderIdentityManifestPath `
+        -OutputDirectory $workstationOutputDirectory `
+        -Identity $builderIdentity
     Write-AtlasoVmwareBuildProvenance `
         -OutputDirectory $workstationOutputDirectory `
         -VmName $VmName `
-        -RepoRoot $repoRoot
+        -RepoRoot $repoRoot `
+        -BuilderIdentity $builderIdentity
 }
