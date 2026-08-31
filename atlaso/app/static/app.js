@@ -656,14 +656,40 @@ function clearTableError() {
   element.classList.add("hidden");
 }
 
+function dnsRecordsGridHeight(tableElement, viewportWidth = window.innerWidth, viewportHeight = window.innerHeight) {
+  if (!(tableElement instanceof HTMLElement) || viewportWidth <= 1100 || tableElement.closest("[hidden]")) {
+    return null;
+  }
+  const rect = tableElement.getBoundingClientRect();
+  if (rect.width <= 0) {
+    return null;
+  }
+  const availableHeight = Math.floor(viewportHeight - Math.max(0, rect.top) - 24);
+  return Math.max(300, availableHeight);
+}
+
+function resizeDnsRecordsTableElement(tableElement) {
+  const height = dnsRecordsGridHeight(tableElement);
+  const nextHeight = height === null ? "" : `${height}px`;
+  if (tableElement.style.height === nextHeight) {
+    return false;
+  }
+  tableElement.style.height = nextHeight;
+  return true;
+}
+
 function redrawDnsRecordTables(root = document) {
   if (!(root instanceof Document || root instanceof HTMLElement)) {
     return;
   }
   window.requestAnimationFrame(() => {
-    root.querySelectorAll(".dns-records-table").forEach((tableElement) => {
+    const tableElements = root instanceof HTMLElement && root.matches(".dns-records-table")
+      ? [root]
+      : root.querySelectorAll(".dns-records-table");
+    tableElements.forEach((tableElement) => {
       const table = atlasoDnsRecordTables.get(tableElement);
       if (table && typeof table.redraw === "function") {
+        resizeDnsRecordsTableElement(tableElement);
         table.redraw(true);
       }
     });
@@ -10229,7 +10255,7 @@ function initializeDnsRecordsTableElement(tableElement) {
       data: records,
       index: "id",
       layout: "fitColumns",
-      height: "420px",
+      height: "100%",
       rowHeight: 28,
       placeholder: "No DNS records configured.",
       reactiveData: false,
@@ -10310,6 +10336,16 @@ function initializeDnsRecordsTableElement(tableElement) {
     if (table) {
       atlasoDnsRecordTables.set(tableElement, table);
       redrawDnsRecordTables(tableElement);
+      let resizeFrame = 0;
+      const scheduleResize = () => {
+        window.cancelAnimationFrame(resizeFrame);
+        resizeFrame = window.requestAnimationFrame(() => redrawDnsRecordTables(tableElement));
+      };
+      window.addEventListener("resize", scheduleResize);
+      if (typeof ResizeObserver !== "undefined") {
+        const resizeObserver = new ResizeObserver(scheduleResize);
+        resizeObserver.observe(tableElement.closest(".dns-main-panel") || tableElement);
+      }
     }
   } catch (error) {
     showTableError(error instanceof Error ? error.message : "Tabulator could not render. Showing the fallback table.");
@@ -12256,9 +12292,14 @@ function vcfFqdnForComponent(component, domain) {
 }
 
 function vcfFqdnAddressFor(fqdn, payload = {}) {
+  const planned = Array.isArray(payload.planned) ? payload.planned : [];
   const created = Array.isArray(payload.created) ? payload.created : [];
   const skipped = Array.isArray(payload.skipped) ? payload.skipped : [];
   const existing = vcfFqdnExistingData();
+  const plannedRow = planned.find((row) => row.fqdn === fqdn);
+  if (plannedRow?.address) {
+    return plannedRow.address;
+  }
   const createdRow = created.find((row) => row.fqdn === fqdn);
   if (createdRow?.address) {
     return createdRow.address;
@@ -12272,6 +12313,33 @@ function vcfFqdnAddressFor(fqdn, payload = {}) {
     return existingAddresses.join(", ");
   }
   return "";
+}
+
+function vcfFqdnCompletionAddressFor(fqdn, payload = {}) {
+  const planned = Array.isArray(payload.planned) ? payload.planned : [];
+  const created = Array.isArray(payload.created) ? payload.created : [];
+  const skipped = Array.isArray(payload.skipped) ? payload.skipped : [];
+  const existing = vcfFqdnExistingData();
+  if (planned.some((row) => row.fqdn === fqdn)) {
+    return "";
+  }
+  const createdRow = created.find((row) => row.fqdn === fqdn);
+  if (createdRow?.address) {
+    return createdRow.address;
+  }
+  const skippedRow = skipped.find((row) => row.fqdn === fqdn);
+  if (skippedRow?.address) {
+    return skippedRow.address;
+  }
+  const existingAddresses = existing.addressRecords[fqdn];
+  return Array.isArray(existingAddresses) && existingAddresses.length
+    ? existingAddresses.join(", ")
+    : "";
+}
+
+function vcfFqdnIsPopulated() {
+  const revision = document.querySelector("[data-vcf-fqdn-populated-revision]");
+  return revision instanceof HTMLInputElement && Boolean(revision.value);
 }
 
 function vcfFqdnCurrentFqdns() {
@@ -12307,12 +12375,12 @@ function refreshVcfFqdnRenderedRows() {
 }
 
 function vcfFqdnHasAnyAddress(payload = {}) {
-  return vcfFqdnCurrentFqdns().some((fqdn) => Boolean(vcfFqdnAddressFor(fqdn, payload)));
+  return vcfFqdnCurrentFqdns().some((fqdn) => Boolean(vcfFqdnCompletionAddressFor(fqdn, payload)));
 }
 
 function vcfFqdnRowsHaveAddresses(payload = {}) {
   const fqdns = vcfFqdnCurrentFqdns();
-  return fqdns.length > 0 && fqdns.every((fqdn) => Boolean(vcfFqdnAddressFor(fqdn, payload)));
+  return fqdns.length > 0 && fqdns.every((fqdn) => Boolean(vcfFqdnCompletionAddressFor(fqdn, payload)));
 }
 
 function updateVcfFqdnActions(payload = {}) {
@@ -12323,7 +12391,7 @@ function updateVcfFqdnActions(payload = {}) {
   if (submit instanceof HTMLButtonElement) {
     submit.textContent = complete ? "Done" : "Create DNS records";
     submit.dataset.complete = complete ? "1" : "0";
-    submit.disabled = !vcfFqdnRowsAreValid();
+    submit.disabled = !complete && (!vcfFqdnRowsAreValid() || !vcfFqdnIsPopulated());
   }
   if (cancelButton instanceof HTMLButtonElement) {
     cancelButton.hidden = complete;
@@ -12363,11 +12431,12 @@ function vcfFqdnRowStatus(fqdn, payload = {}) {
   if (skippedRow || existing.fqdns.includes(fqdn)) {
     return "existing record skipped";
   }
-  return "allocated on confirm";
+  return vcfFqdnIsPopulated() ? "ready to create" : "select Populate to review";
 }
 
 function renderVcfFqdnRows(payload = {}) {
   const rows = vcfFqdnRowsElement();
+  const form = document.querySelector("[data-vcf-fqdn-form]");
   const domain = document.querySelector("[data-vcf-fqdn-domain]");
   const target = document.querySelector("[data-vcf-fqdn-target]");
   if (!rows || !(domain instanceof HTMLSelectElement) || !(target instanceof HTMLSelectElement)) {
@@ -12383,7 +12452,6 @@ function renderVcfFqdnRows(payload = {}) {
     const fqdnCell = document.createElement("td");
     const statusCell = document.createElement("td");
     const componentInput = document.createElement("input");
-    const hostnameLabel = document.createElement("label");
     const hostnameInput = document.createElement("input");
     const hostnameError = document.createElement("small");
     const inputId = `vcf-fqdn-hostname-${component.host}`;
@@ -12392,9 +12460,6 @@ function renderVcfFqdnRows(payload = {}) {
     componentInput.type = "hidden";
     componentInput.name = "component_key";
     componentInput.value = component.host;
-    hostnameLabel.className = "sr-only";
-    hostnameLabel.htmlFor = inputId;
-    hostnameLabel.textContent = `Hostname for ${component.description || component.host}`;
     hostnameInput.id = inputId;
     hostnameInput.className = "compact-input";
     hostnameInput.name = "hostname";
@@ -12402,6 +12467,7 @@ function renderVcfFqdnRows(payload = {}) {
     hostnameInput.autocomplete = "off";
     hostnameInput.spellcheck = false;
     hostnameInput.dataset.vcfFqdnHostname = component.host;
+    hostnameInput.setAttribute("aria-label", `Hostname for ${component.description || component.host}`);
     hostnameInput.setAttribute("aria-describedby", errorId);
     hostnameError.id = errorId;
     hostnameError.className = "field-error hidden";
@@ -12420,26 +12486,27 @@ function renderVcfFqdnRows(payload = {}) {
       hostnameError.textContent = validationError;
       hostnameError.classList.toggle("hidden", !validationError);
       fqdnCell.textContent = fqdn;
-      statusCell.textContent = validationError ? "hostname needs attention" : vcfFqdnRowStatus(fqdn, payload);
+      const statusPayload = vcfFqdnIsPopulated() ? payload : {};
+      statusCell.textContent = validationError ? "hostname needs attention" : vcfFqdnRowStatus(fqdn, statusPayload);
       statusCell.classList.toggle(
         "muted",
-        Boolean(validationError) || statusCell.textContent === "existing record skipped" || statusCell.textContent === "allocated on confirm",
+        Boolean(validationError)
+          || statusCell.textContent === "existing record skipped"
+          || statusCell.textContent === "select Populate to review",
       );
     };
     hostnameInput.addEventListener("input", () => {
       vcfFqdnHostnameState.set(component.host, { value: hostnameInput.value, overridden: true });
-      refreshVcfFqdnRenderedRows();
-      updateVcfFqdnActions(payload);
+      form?.dispatchEvent(new CustomEvent("atlaso:vcf-fqdn-invalidate", { detail: { preserveRows: true } }));
     });
     hostnameInput.addEventListener("change", () => {
       const normalized = hostnameInput.value.trim().toLowerCase();
       hostnameInput.value = normalized;
       vcfFqdnHostnameState.set(component.host, { value: normalized, overridden: true });
-      refreshVcfFqdnRenderedRows();
-      updateVcfFqdnActions(payload);
+      form?.dispatchEvent(new CustomEvent("atlaso:vcf-fqdn-invalidate", { detail: { preserveRows: true } }));
     });
     row.atlasoUpdateVcfFqdnRow = updateRow;
-    hostnameCell.append(componentInput, hostnameLabel, hostnameInput, hostnameError);
+    hostnameCell.append(componentInput, hostnameInput, hostnameError);
     row.append(componentCell, hostnameCell, fqdnCell, statusCell);
     rows.append(row);
     updateRow();
@@ -12471,23 +12538,43 @@ function initializeVcfFqdnGenerator() {
     return;
   }
   const submit = form.querySelector("[data-vcf-fqdn-submit]");
+  const populateButton = form.querySelector("[data-vcf-fqdn-populate]");
+  const populatedRevision = form.querySelector("[data-vcf-fqdn-populated-revision]");
   const deleteButton = form.querySelector("[data-vcf-fqdn-delete]");
   const clearButton = form.querySelector("[data-vcf-fqdn-clear]");
   const target = form.querySelector("[data-vcf-fqdn-target]");
   const prefix = form.querySelector("[data-vcf-fqdn-prefix]");
   const suffix = form.querySelector("[data-vcf-fqdn-suffix]");
   const domain = form.querySelector("[data-vcf-fqdn-domain]");
-  let currentPayload = {};
+  const startAddress = form.querySelector("[data-vcf-fqdn-start-ipv4]");
+  const populationRows = form.querySelector("[data-vcf-fqdn-rows]");
+  let currentPayload = JSON.parse(populationRows?.dataset.population || "{}");
+  let populationGeneration = 0;
   vcfFqdnSeedHostnameStateFromRows();
+  const invalidatePopulation = ({ preserveRows = false } = {}) => {
+    populationGeneration += 1;
+    currentPayload = {};
+    if (populatedRevision instanceof HTMLInputElement) {
+      populatedRevision.value = "";
+    }
+    setVcfFqdnMessage("[data-vcf-fqdn-result]", [], "success");
+    if (preserveRows) {
+      refreshVcfFqdnRenderedRows();
+      updateVcfFqdnActions(currentPayload);
+    } else {
+      renderVcfFqdnRows(currentPayload);
+    }
+  };
+  form.addEventListener("atlaso:vcf-fqdn-invalidate", (event) => {
+    invalidatePopulation({ preserveRows: event instanceof CustomEvent && event.detail?.preserveRows === true });
+  });
   document.querySelectorAll("[data-vcf-fqdn-modal-open]").forEach((button) => {
     if (!(button instanceof HTMLButtonElement)) {
       return;
     }
     button.addEventListener("click", () => {
-      currentPayload = {};
       setVcfFqdnMessage("[data-vcf-fqdn-errors]", []);
-      setVcfFqdnMessage("[data-vcf-fqdn-result]", [], "success");
-      renderVcfFqdnRows(currentPayload);
+      invalidatePopulation();
       modal.showModal();
     });
   });
@@ -12498,8 +12585,7 @@ function initializeVcfFqdnGenerator() {
   });
   if (target instanceof HTMLSelectElement) {
     target.addEventListener("change", () => {
-      currentPayload = {};
-      renderVcfFqdnRows(currentPayload);
+      invalidatePopulation();
     });
   }
   [prefix, suffix].forEach((control) => {
@@ -12507,16 +12593,17 @@ function initializeVcfFqdnGenerator() {
       return;
     }
     control.addEventListener("input", () => {
-      currentPayload = {};
       vcfFqdnEnsureHostnameState({ refreshDefaults: true });
-      renderVcfFqdnRows(currentPayload);
+      invalidatePopulation();
     });
   });
   if (domain instanceof HTMLSelectElement) {
     domain.addEventListener("change", () => {
-      currentPayload = {};
-      renderVcfFqdnRows(currentPayload);
+      invalidatePopulation();
     });
+  }
+  if (startAddress instanceof HTMLInputElement) {
+    startAddress.addEventListener("input", invalidatePopulation);
   }
   if (clearButton instanceof HTMLButtonElement) {
     clearButton.addEventListener("click", () => {
@@ -12527,8 +12614,7 @@ function initializeVcfFqdnGenerator() {
         suffix.value = "";
       }
       vcfFqdnHostnameState.clear();
-      currentPayload = {};
-      renderVcfFqdnRows(currentPayload);
+      invalidatePopulation();
     });
   }
   const setActionsDisabled = (disabled) => {
@@ -12537,6 +12623,9 @@ function initializeVcfFqdnGenerator() {
     }
     if (deleteButton instanceof HTMLButtonElement) {
       deleteButton.disabled = disabled;
+    }
+    if (populateButton instanceof HTMLButtonElement) {
+      populateButton.disabled = disabled;
     }
   };
   const submitRequest = async (url, action) => {
@@ -12566,11 +12655,52 @@ function initializeVcfFqdnGenerator() {
       updateVcfFqdnActions(currentPayload);
     }
   };
+  if (populateButton instanceof HTMLButtonElement) {
+    populateButton.addEventListener("click", async (event) => {
+      event.preventDefault();
+      if (!vcfFqdnRowsAreValid()) {
+        setVcfFqdnMessage("[data-vcf-fqdn-errors]", "Review every hostname and remove duplicates before populating the generated FQDN plan.");
+        invalidatePopulation();
+        return;
+      }
+      const requestGeneration = populationGeneration;
+      const payload = await submitRequest(`${form.action}/populate`, "populated");
+      if (!payload) {
+        invalidatePopulation();
+        return;
+      }
+      if (requestGeneration !== populationGeneration) {
+        setVcfFqdnMessage(
+          "[data-vcf-fqdn-errors]",
+          "Generated FQDN inputs changed while Populate was running. Select Populate again to review the current plan.",
+        );
+        return;
+      }
+      if (populatedRevision instanceof HTMLInputElement) {
+        populatedRevision.value = String(payload.populated_revision || "");
+      }
+      currentPayload = { planned: payload.planned || [], skipped: payload.skipped || [] };
+      renderVcfFqdnRows(currentPayload);
+      const plannedCount = Array.isArray(payload.planned) ? payload.planned.length : 0;
+      const skippedCount = Array.isArray(payload.skipped) ? payload.skipped.length : 0;
+      setVcfFqdnMessage(
+        "[data-vcf-fqdn-result]",
+        `Populated ${plannedCount} records${skippedCount ? `; ${skippedCount} existing records will be skipped` : ""}. Review the generated FQDNs and assigned IPs before creating DNS records.`,
+        "success",
+      );
+      updateVcfFqdnActions(currentPayload);
+    });
+  }
   form.addEventListener("submit", async (event) => {
     event.preventDefault();
     if (submit instanceof HTMLButtonElement && submit.dataset.complete === "1") {
       modal.close("done");
       window.location.reload();
+      return;
+    }
+    if (!vcfFqdnIsPopulated()) {
+      setVcfFqdnMessage("[data-vcf-fqdn-errors]", "Select Populate and review the current generated FQDN plan before creating DNS records.");
+      updateVcfFqdnActions(currentPayload);
       return;
     }
     const selectedDomain = form.querySelector("[data-vcf-fqdn-domain]");
