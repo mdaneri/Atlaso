@@ -3517,9 +3517,10 @@ Dependabot cooldowns do not cover every transitive selection and do not delay se
 <li><code>requirements-appliance-bootstrap.lock</code>;</li>
 <li><code>requirements-appliance.lock</code>;</li>
 <li><code>requirements-docs.lock</code>;</li>
-<li><code>requirements-static-analysis.lock</code>; and</li>
-<li><code>requirements-release-tools.lock</code>; and</li>
-<li><code>requirements-onepassword-deploy.lock</code>.</li>
+<li><code>requirements-static-analysis.lock</code>;</li>
+<li><code>requirements-release-tools.lock</code>;</li>
+<li><code>requirements-onepassword-deploy.lock</code>; and</li>
+<li><code>requirements-virtualization-smoke.lock</code>.</li>
 </ul>
 <p>Every resolver invocation includes <code>--uploaded-prior-to=P7D</code> and <code>--generate-hashes</code>. Locks that need pip's unsafe
 bootstrap tools retain <code>--allow-unsafe</code>, and the wrapper refreshes the declaration fingerprint embedded in
@@ -3533,6 +3534,9 @@ must not embed credentials, and must provide complete upload-time metadata or co
 shorten the upload-time cutoff to obtain a newer dependency, including for a security update. If no eligible version
 satisfies the input declarations, change the input constraint through a reviewed dependency update or wait until the
 required release reaches seven full days.</p>
+<p>The Windows candidate job installs the release-tools and virtualization-smoke locks into one interpreter. Their input
+manifests therefore pin shared runtime packages compatibly so the second installation cannot replace part of the
+already validated release-tool environment.</p>
 <p>Protected appliance, promotion, Inventory Linux, and virtualization publication jobs intentionally run without a
 writable Actions cache scope. Their <code>actions/setup-python</code> steps therefore do not enable the built-in pip cache, because
 that option always registers a post-job cache save. This cache-free setup does not relax dependency integrity: every
@@ -3547,8 +3551,18 @@ Ordinary CI jobs may continue to use dependency caching under their separate exe
 </span><span id="__span-1-5"><a id="__codelineno-1-5" name="__codelineno-1-5" href="#__codelineno-1-5"></a><span class="n">git</span> <span class="nb">diff </span><span class="p">-</span><span class="n">-check</span>
 </span></code></pre></div>
 <p><code>check_dependency_policy.py</code> verifies the Dependabot cooldown, Python 3.14 lock headers, seven-day resolver cutoff,
-expected input manifests, exact pins, and SHA-256 hashes across all generated locks. The appliance check separately
-verifies direct dependency coverage, bootstrap equality, and the declaration fingerprint.</p>
+expected input manifests, exact pins, and SHA-256 hashes across all generated locks. It also rejects workflow
+<code>--requirement</code> or <code>-r</code> paths that do not resolve to a tracked lock in both the generation and minimum-age policy
+inventories. That workflow check follows ordered checkout destinations, each job's active workspace-root checkout, and
+step, job-default, or workflow-default working directories, rejecting external repositories and untrusted Atlaso
+revisions instead of
+validating a same-named lock from the review checkout. Dynamic or escaping working directories fail closed.
+The small allowlist of dynamic checkout revisions is limited to the canonical workflows whose admission jobs already
+prove the supplied commit is the successful <code>main</code> release target. This retains commit-bound build-tool pins for
+byte-identical replay builds while publisher scripts remain on protected <code>main</code>. The appliance check separately verifies
+direct dependency
+coverage, bootstrap equality, and the
+declaration fingerprint.</p>
 
 
 

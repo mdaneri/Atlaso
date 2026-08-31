@@ -3915,14 +3915,16 @@ and storage owned by that import attempt, correct the host prerequisite, and run
 <h2 id="protected-release-runners">Protected release runners<a class="headerlink" href="#protected-release-runners" title="Permanent link">&para;</a></h2>
 <p>The primary Windows producer is a maintainer workstation, not a permanent GitHub runner. From a clean checkout of the
 successful software-release SHA, run:</p>
-<div class="language-powershell highlight"><pre><span></span><code><span id="__span-4-1"><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a><span class="p">./</span><span class="n">scripts</span><span class="p">/</span><span class="n">windows</span><span class="p">/</span><span class="n">vmware</span><span class="p">/</span><span class="nb">export-ovf</span><span class="p">.</span><span class="n">ps1</span> <span class="n">-Prerelease</span> <span class="p">`</span>
-</span><span id="__span-4-2"><a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a>  <span class="n">-PrereleaseIdentifier</span> <span class="n">rc</span><span class="p">.</span><span class="n">1</span> <span class="p">`</span>
-</span><span id="__span-4-3"><a id="__codelineno-4-3" name="__codelineno-4-3" href="#__codelineno-4-3"></a>  <span class="n">-StagingRoot</span> <span class="s1">&#39;D:\Atlaso-Releases&#39;</span> <span class="p">`</span>
-</span><span id="__span-4-4"><a id="__codelineno-4-4" name="__codelineno-4-4" href="#__codelineno-4-4"></a>  <span class="n">-ManagementSwitch</span> <span class="s1">&#39;Atlaso Management&#39;</span> <span class="p">`</span>
-</span><span id="__span-4-5"><a id="__codelineno-4-5" name="__codelineno-4-5" href="#__codelineno-4-5"></a>  <span class="n">-ServiceSwitch</span> <span class="s1">&#39;Atlaso Services&#39;</span> <span class="p">`</span>
-</span><span id="__span-4-6"><a id="__codelineno-4-6" name="__codelineno-4-6" href="#__codelineno-4-6"></a>  <span class="n">-OnePasswordEnvironmentId</span> <span class="s1">&#39;&lt;atlaso-environment-id&gt;&#39;</span> <span class="p">`</span>
-</span><span id="__span-4-7"><a id="__codelineno-4-7" name="__codelineno-4-7" href="#__codelineno-4-7"></a>  <span class="n">-OnePasswordAccount</span> <span class="s1">&#39;&lt;account-name-or-id&gt;&#39;</span> <span class="p">`</span>
-</span><span id="__span-4-8"><a id="__codelineno-4-8" name="__codelineno-4-8" href="#__codelineno-4-8"></a>  <span class="n">-OnePasswordPython</span> <span class="s1">&#39;&lt;path-to-python-3.13.exe&gt;&#39;</span>
+<div class="language-powershell highlight"><pre><span></span><code><span id="__span-4-1"><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a><span class="n">python</span> <span class="n">-m</span> <span class="n">pip</span> <span class="n">install</span> <span class="p">-</span><span class="n">-require-hashes</span> <span class="p">-</span><span class="n">-requirement</span> <span class="n">requirements-virtualization-smoke</span><span class="p">.</span><span class="n">lock</span>
+</span><span id="__span-4-2"><a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a>
+</span><span id="__span-4-3"><a id="__codelineno-4-3" name="__codelineno-4-3" href="#__codelineno-4-3"></a><span class="p">./</span><span class="n">scripts</span><span class="p">/</span><span class="n">windows</span><span class="p">/</span><span class="n">vmware</span><span class="p">/</span><span class="nb">export-ovf</span><span class="p">.</span><span class="n">ps1</span> <span class="n">-Prerelease</span> <span class="p">`</span>
+</span><span id="__span-4-4"><a id="__codelineno-4-4" name="__codelineno-4-4" href="#__codelineno-4-4"></a>  <span class="n">-PrereleaseIdentifier</span> <span class="n">rc</span><span class="p">.</span><span class="n">1</span> <span class="p">`</span>
+</span><span id="__span-4-5"><a id="__codelineno-4-5" name="__codelineno-4-5" href="#__codelineno-4-5"></a>  <span class="n">-StagingRoot</span> <span class="s1">&#39;D:\Atlaso-Releases&#39;</span> <span class="p">`</span>
+</span><span id="__span-4-6"><a id="__codelineno-4-6" name="__codelineno-4-6" href="#__codelineno-4-6"></a>  <span class="n">-ManagementSwitch</span> <span class="s1">&#39;Atlaso Management&#39;</span> <span class="p">`</span>
+</span><span id="__span-4-7"><a id="__codelineno-4-7" name="__codelineno-4-7" href="#__codelineno-4-7"></a>  <span class="n">-ServiceSwitch</span> <span class="s1">&#39;Atlaso Services&#39;</span> <span class="p">`</span>
+</span><span id="__span-4-8"><a id="__codelineno-4-8" name="__codelineno-4-8" href="#__codelineno-4-8"></a>  <span class="n">-OnePasswordEnvironmentId</span> <span class="s1">&#39;&lt;atlaso-environment-id&gt;&#39;</span> <span class="p">`</span>
+</span><span id="__span-4-9"><a id="__codelineno-4-9" name="__codelineno-4-9" href="#__codelineno-4-9"></a>  <span class="n">-OnePasswordAccount</span> <span class="s1">&#39;&lt;account-name-or-id&gt;&#39;</span> <span class="p">`</span>
+</span><span id="__span-4-10"><a id="__codelineno-4-10" name="__codelineno-4-10" href="#__codelineno-4-10"></a>  <span class="n">-OnePasswordPython</span> <span class="s1">&#39;&lt;path-to-python-3.13.exe&gt;&#39;</span>
 </span></code></pre></div>
 <p>The command verifies and extracts the exact published software bundle, builds the canonical VMware template, derives
 Hyper-V from that OVA, runs both Windows smokes, creates the annotated tag before the draft Release, uploads without
@@ -3965,6 +3967,10 @@ For the optional ephemeral-Windows workflow, also define <code>ATLASO_ONEPASSWOR
 the disposable runner must still complete its local 1Password authorization and receives no signing key.</p>
 <p>The workstation requires PowerShell 7.4 or newer, VMware Workstation, Packer, OVF Tool, Hyper-V, <code>qemu-img</code>, and two
 operator-owned virtual switches. The Proxmox and KVM runners require the host tools listed in their import sections.
+The optional Windows producer workflow performs the same CPython 3.14 smoke-runtime installation before candidate
+production. The generated, seven-day, hash-verified smoke lock is separate from
+<code>requirements-onepassword-deploy.lock</code>: the latter belongs to the bounded CPython 3.10 through 3.13 1Password
+credential bridge and includes SDK dependencies the smoke helper neither imports nor needs.
 Every smoke identity and storage
 namespace is invocation-scoped: VMware generates a disposable per-run password, Proxmox serializes each VMID import,
 passes it to OVF Tool through a runner-only temporary configuration file instead of process arguments, and deletes that
