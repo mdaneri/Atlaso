@@ -13,7 +13,7 @@ let headingPrefix = ''
 let embeddedStylePresent = false
 const htmlStack = []
 
-const suppressedTags = new Set(['canvas', 'datalist', 'del', 's', 'strike', 'iframe', 'noscript', 'script', 'style', 'pre', 'textarea', 'template', 'title'])
+const suppressedTags = new Set(['audio', 'canvas', 'datalist', 'del', 's', 'strike', 'iframe', 'noscript', 'script', 'style', 'pre', 'textarea', 'template', 'title', 'video'])
 const voidTags = new Set(['area', 'base', 'br', 'col', 'embed', 'hr', 'img', 'input', 'link', 'meta', 'param', 'source', 'track', 'wbr'])
 const rawTextTags = new Set(['iframe', 'script', 'style', 'textarea', 'title'])
 const formattingTags = new Set([
@@ -388,7 +388,8 @@ function isTransparentColor (value) {
 }
 
 function classifyFontSize (value) {
-  if (/^(?:inherit|unset|revert|revert-layer)$/.test(value)) return 'inherit'
+  if (/^(?:initial|revert|revert-layer)$/.test(value)) return 'visible'
+  if (/^(?:inherit|unset)$/.test(value)) return 'inherit'
   if (/^(?:larger|smaller)$/.test(value)) return 'relative'
   if (/^(?:xx-small|x-small|small|medium|large|x-large|xx-large|xxx-large|math)$/.test(value)) {
     return 'visible'
