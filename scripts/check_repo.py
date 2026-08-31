@@ -785,6 +785,10 @@ DEFAULT_MERGE_AUTHORITY_PERMISSION_QUESTION = re.compile(
     r"delegating\s+agent|agent|task)\s+to|"
     r"(?:is|was)\s+there\s+"
     r"(?:authority|authorization|permission|approval)\s+to|"
+    r"(?:is|was)\s+(?:authority|authorization|permission|approval)\s+"
+    r"(?:granted|given|provided)\s+to|"
+    r"(?:has|had)\s+(?:authority|authorization|permission|approval)\s+"
+    r"been\s+(?:granted|given|provided)\s+to|"
     r"(?:does|did)\s+(?:permission|authorization|authority)\s+exist\s+to|"
     r"should\s+(?:(?:the|this)\s+)?(?:heartbeat|handoff|delegation|"
     r"delegating\s+agent|agent|task)\b[^?]{0,100}\?)(?=\s|[.!?]|$)"
@@ -1108,8 +1112,8 @@ MERGE_HOLD_APPROVAL_CONDITION_FIRST = re.compile(
     r"after\s+(?:i|we|(?:the\s+)?(?:user|maintainer|owner))\s+approves?)\s+"
     r"(?:may|can|should)\s+(?:you|i|we)\s+merge"
     r"(?:\s+(?:(?:this|the)\s+)?(?:pull request|pr))?|"
-    r"approval\s+is\s+(?:required|needed)\s+before\s+"
-    r"(?:(?:you|i|we)\s+merge|merging)"
+    r"(?:approval|permission|authorization)\s+is\s+(?:required|needed)\s+"
+    r"(?:before\s+(?:(?:you|i|we)\s+merge|merging)|to\s+merge)"
     r"(?:\s+(?:(?:this|the)\s+)?(?:pull request|pr))?)\b"
 )
 MERGE_HOLD_ACTOR_APPROVAL_WAIT = re.compile(
@@ -1141,7 +1145,8 @@ MERGE_HOLD_APPROVAL_BEFORE_MERGING = re.compile(
     r"(?:user|maintainer|(?:[a-z][a-z0-9_-]*\s+)?owner)"
     r"(?:'s|’s)?\s+|(?:my|our|your)\s+)?"
     r"(?:approval|permission|authorization))\b"
-    r"[^.!?]{0,40}\bbefore merging\b"
+    r"[^.!?]{0,40}\b(?:before merging|to merge"
+    r"(?:\s+(?:(?:this|the)\s+)?(?:pull request|pr))?)\b"
 )
 MERGE_HOLD_WITHOUT_APPROVAL = re.compile(
     r"\b(?:do not|don't|don’t|must not)\s+merge"

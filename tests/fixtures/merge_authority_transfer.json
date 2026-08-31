@@ -3616,6 +3616,22 @@
       "expected_holds": [
         "do not merge"
       ]
+    },
+    {
+      "name": "approval-required-to-merge-is-preserved",
+      "default_merge_authority": true,
+      "instructions": [
+        {
+          "text": "Implement issue #602, but you need my approval to merge this PR.",
+          "add_holds": [
+            "wait for approval"
+          ]
+        }
+      ],
+      "generated": "Preserve the explicit wait for approval instruction.",
+      "expected_holds": [
+        "wait for approval"
+      ]
     }
   ]
 }

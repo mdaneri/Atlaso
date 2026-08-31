@@ -906,6 +906,12 @@ def test_merge_hold_directions_recognizes_approval_needed() -> None:
         "Implement issue #602, but you need my approval before merging."
     ) == {"wait for approval": "add"}
     assert merge_hold_directions(
+        "Implement issue #602, but you need my approval to merge this PR."
+    ) == {"wait for approval": "add"}
+    assert merge_hold_directions(
+        "Implement issue #602, but authorization is required to merge the PR."
+    ) == {"wait for approval": "add"}
+    assert merge_hold_directions(
         "Implement issue #602, but please merge this PR after I approve."
     ) == {"wait for approval": "add"}
     assert merge_hold_directions(
@@ -1414,6 +1420,12 @@ def test_generated_authority_rejects_general_permission_questions() -> None:
     )
     assert not has_affirmative_default_merge_authority(
         "Is there approval to complete the guarded merge?"
+    )
+    assert not has_affirmative_default_merge_authority(
+        "Is approval granted to complete the guarded merge?"
+    )
+    assert not has_affirmative_default_merge_authority(
+        "Has approval been granted to complete the guarded merge?"
     )
     assert not has_affirmative_default_merge_authority(
         "Does the heartbeat have permission to complete the guarded merge?"
@@ -2874,6 +2886,24 @@ def test_merge_authority_transfer_rejects_generated_permission_question(
                         "expected_holds": [],
                     },
                     {
+                        "name": "generated passive approval question",
+                        "default_merge_authority": True,
+                        "instructions": [{"text": "Implement issue #602."}],
+                        "generated": (
+                            "Is approval granted to complete the guarded merge?"
+                        ),
+                        "expected_holds": [],
+                    },
+                    {
+                        "name": "generated passive approval-status question",
+                        "default_merge_authority": True,
+                        "instructions": [{"text": "Implement issue #602."}],
+                        "generated": (
+                            "Has approval been granted to complete the guarded merge?"
+                        ),
+                        "expected_holds": [],
+                    },
+                    {
                         "name": "generated second-person authorization question",
                         "default_merge_authority": True,
                         "instructions": [{"text": "Implement issue #602."}],
@@ -2907,6 +2937,10 @@ def test_merge_authority_transfer_rejects_generated_permission_question(
         "merge authority fixture generated existential permission question omits "
         "affirmative default authority",
         "merge authority fixture generated existential approval question omits "
+        "affirmative default authority",
+        "merge authority fixture generated passive approval question omits "
+        "affirmative default authority",
+        "merge authority fixture generated passive approval-status question omits "
         "affirmative default authority",
         "merge authority fixture generated second-person authorization question "
         "omits affirmative default authority",
