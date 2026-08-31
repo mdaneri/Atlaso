@@ -155,6 +155,39 @@ def test_dependency_policy_checks_multiline_pip_wheel_requirements(
     )
 
 
+def test_dependency_policy_ignores_continuation_marker_in_shell_comment(
+    tmp_path: Path,
+) -> None:
+    """Verify a comment marker cannot hide a later external requirement.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
+    write_valid_policy(tmp_path)
+    workflow = tmp_path / ".github" / "workflows" / "release.yml"
+    workflow.parent.mkdir(parents=True, exist_ok=True)
+    workflow.write_text(
+        """jobs:
+  external:
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          repository: attacker/other
+          path: external
+      - run: |
+          cd external # comment \\
+          python -m pip install -r requirements-release-tools.lock
+""",
+        encoding="utf-8",
+    )
+
+    assert any(
+        "checkout-prefixed workflow requirement is not sourced from Atlaso: "
+        "requirements-release-tools.lock" in error
+        for error in validate(tmp_path)
+    )
+
+
 def test_dependency_policy_checks_continued_plain_run_scalar(
     tmp_path: Path,
 ) -> None:

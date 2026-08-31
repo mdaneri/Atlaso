@@ -569,6 +569,41 @@ def _workflow_checkout_sources(
     return checkout_paths, root_checkouts, dynamic_checkouts
 
 
+def _shell_line_content(line: str) -> tuple[str, str]:
+    """Return executable line content and its active continuation marker.
+
+    Args:
+        line: One shell or PowerShell source line.
+    """
+    quote = ""
+    index = 0
+    comment_index = len(line)
+    while index < len(line):
+        character = line[index]
+        if character in {"\\", "`"} and quote != "'" and index + 1 < len(line):
+            index += 2
+            continue
+        if character in {"'", '"'}:
+            if not quote:
+                quote = character
+            elif quote == character:
+                quote = ""
+        elif (
+            character == "#"
+            and not quote
+            and (index == 0 or line[index - 1].isspace())
+        ):
+            comment_index = index
+            break
+        index += 1
+    content = line[:comment_index].rstrip()
+    if not content or content[-1] not in {"\\", "`"} or quote == "'":
+        return content, ""
+    marker = content[-1]
+    marker_count = len(content) - len(content.rstrip(marker))
+    return content, marker if marker_count % 2 else ""
+
+
 def _continued_commands(lines: list[tuple[int, str]]) -> list[tuple[int, str]]:
     """Join shell and PowerShell continuation lines into logical commands.
 
@@ -579,11 +614,11 @@ def _continued_commands(lines: list[tuple[int, str]]) -> list[tuple[int, str]]:
     start_line = 0
     parts: list[str] = []
     for line_number, line in lines:
-        stripped = line.strip()
+        content, marker = _shell_line_content(line.strip())
         if not parts:
             start_line = line_number
-        continued = stripped.endswith(("\\", "`"))
-        parts.append(stripped[:-1].rstrip() if continued else stripped)
+        continued = bool(marker)
+        parts.append(content[:-1].rstrip() if continued else content)
         if not continued:
             commands.append((start_line, " ".join(parts)))
             parts = []
