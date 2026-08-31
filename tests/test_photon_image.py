@@ -1715,7 +1715,19 @@ def test_vmware_packer_requires_proven_task_or_release_builder_identity() -> Non
     registration_repair = wrapper.index(
         "Repair-AtlasoWorkstationStaleRegistrations `", parent_output
     )
-    assert parent_output < parent_output_assertion < registration_repair
+    parent_remote_recheck = wrapper.index(
+        "Assert-AtlasoTaskBuilderIdentityCurrent `", parent_output_assertion
+    )
+    parent_workstation_launch = wrapper.index(
+        "Initialize-AtlasoWorkstationGui -VmrunPath $parentVmrunPath", parent_output
+    )
+    assert (
+        parent_output
+        < parent_output_assertion
+        < parent_remote_recheck
+        < registration_repair
+        < parent_workstation_launch
+    )
     final_pr_recheck = wrapper.index(
         "if (-not $ReleaseBuilder -and -not $ValidateOnly -and -not $PrepareIsoOnly)"
     )

@@ -842,6 +842,15 @@ else {
     }
     $childPreparedIsoPath = Join-Path (Join-Path $childSensitiveBuildDirectory 'kickstart') $preparedIsoLeaf
     if (-not $Headless -and -not $ValidateOnly) {
+        if (-not $ReleaseBuilder) {
+            # Credential retrieval can outlive the initial PR proof. Refresh it
+            # before the parent repairs registrations or launches Workstation.
+            $null = Assert-AtlasoTaskBuilderIdentityCurrent `
+                -RepositoryRoot $repoRoot `
+                -PullRequestNumber $PullRequestNumber `
+                -CollisionSuffix $CollisionSuffix `
+                -ExpectedIdentity $builderIdentity
+        }
         $parentVmrunPath = Resolve-WorkstationVmrunPath -Path $VmrunPath
         if (-not $KeepExistingOutput) {
             # Stale library repair requires Workstation to be closed. Repair
