@@ -827,6 +827,69 @@ def test_dependency_policy_rejects_nonliteral_checkout_path(
     )
 
 
+def test_dependency_policy_parses_flow_style_run_step(tmp_path: Path) -> None:
+    """Verify a compact flow-style run step cannot bypass lock policy.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
+    write_valid_policy(tmp_path)
+    (tmp_path / "requirements-ad-hoc.lock").write_text(
+        "placeholder\n", encoding="utf-8"
+    )
+    workflow = tmp_path / ".github" / "workflows" / "release.yml"
+    workflow.parent.mkdir(parents=True, exist_ok=True)
+    workflow.write_text(
+        """jobs:
+  flow:
+    steps:
+      - {run: "python -m pip install -r requirements-ad-hoc.lock"}
+""",
+        encoding="utf-8",
+    )
+
+    assert any(
+        "workflow requirement lock is outside the generated dependency policy "
+        "inventory: requirements-ad-hoc.lock" in error
+        for error in validate(tmp_path)
+    )
+
+
+def test_dependency_policy_parses_flow_style_checkout_inputs(
+    tmp_path: Path,
+) -> None:
+    """Verify compact checkout inputs retain their external source metadata.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
+    write_valid_policy(tmp_path)
+    workflow = tmp_path / ".github" / "workflows" / "release.yml"
+    workflow.parent.mkdir(parents=True, exist_ok=True)
+    checkout_steps = (
+        """      - uses: actions/checkout@v7
+        with: {repository: attacker/other}
+""",
+        """      - {uses: actions/checkout@v7, with: {repository: attacker/other}}
+""",
+    )
+    for checkout_step in checkout_steps:
+        workflow.write_text(
+            f"""jobs:
+  flow:
+    steps:
+{checkout_step}      - run: python -m pip install -r requirements-release-tools.lock
+""",
+            encoding="utf-8",
+        )
+
+        assert any(
+            "root workflow requirement is not sourced from Atlaso: "
+            "requirements-release-tools.lock" in error
+            for error in validate(tmp_path)
+        )
+
+
 def test_dependency_policy_rejects_grouped_shell_requirement_resolution(
     tmp_path: Path,
 ) -> None:

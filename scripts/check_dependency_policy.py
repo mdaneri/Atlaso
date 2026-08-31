@@ -10,6 +10,8 @@ import sys
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 
+import yaml  # type: ignore[import-untyped]
+
 ROOT = Path(__file__).resolve().parents[1]
 MINIMUM_AGE_DAYS = 7
 UPLOAD_CUTOFF = f"P{MINIMUM_AGE_DAYS}D"
@@ -137,6 +139,61 @@ def _yaml_scalar(line: str, key: str) -> str | None:
     return re.split(r"\s+#", value, maxsplit=1)[0].rstrip()
 
 
+def _yaml_flow_mapping(value: str) -> dict[str, object] | None:
+    """Return a semantic flow-style YAML mapping.
+
+    Args:
+        value: YAML source expected to contain one flow mapping.
+    """
+    if not value.strip().startswith("{"):
+        return None
+    try:
+        parsed = yaml.safe_load(value)
+    except yaml.YAMLError:
+        return None
+    if not isinstance(parsed, dict) or not all(
+        isinstance(key, str) for key in parsed
+    ):
+        return None
+    return parsed
+
+
+def _yaml_flow_step(line: str) -> dict[str, object] | None:
+    """Return a semantic single-line flow-style workflow step.
+
+    Args:
+        line: Workflow source line.
+    """
+    if not re.match(r"\s*-\s*\{", line):
+        return None
+    try:
+        parsed = yaml.safe_load(line.strip())
+    except yaml.YAMLError:
+        return None
+    if (
+        not isinstance(parsed, list)
+        or len(parsed) != 1
+        or not isinstance(parsed[0], dict)
+        or not all(isinstance(key, str) for key in parsed[0])
+    ):
+        return None
+    return parsed[0]
+
+
+def _yaml_value_text(value: object, unsupported: str) -> str:
+    """Return a scalar value as workflow source metadata.
+
+    Args:
+        value: Parsed YAML value.
+        unsupported: Fail-closed marker for non-scalar values.
+    """
+    if isinstance(value, bool):
+        return str(value).lower()
+    if isinstance(value, str):
+        return value.strip()
+    return unsupported
+
+
 def _workflow_job_scope(lines: list[str], index: int) -> int:
     """Return the line index that identifies the enclosing workflow job.
 
@@ -177,7 +234,12 @@ def _workflow_checkout_sources(
     root_checkouts: dict[int, list[tuple[int, CheckoutSource]]] = {}
     dynamic_checkouts: dict[int, list[int]] = {}
     for index, line in enumerate(lines):
-        action = _yaml_scalar(line, "uses")
+        flow_step = _yaml_flow_step(line)
+        action = (
+            _yaml_value_text(flow_step.get("uses"), "")
+            if flow_step is not None and "uses" in flow_step
+            else _yaml_scalar(line, "uses")
+        )
         if action is None or not re.fullmatch(r"actions/checkout@[^\s]+", action):
             continue
         job_scope = _workflow_job_scope(lines, index)
@@ -196,39 +258,90 @@ def _workflow_checkout_sources(
             if candidate.strip() and candidate_indent <= step_indent:
                 step_end = candidate_index
                 break
-        condition = next(
-            (
-                value
-                for candidate in lines[step_index:step_end]
-                if len(candidate) - len(candidate.lstrip()) == step_indent + 2
-                and (value := _yaml_scalar(candidate, "if")) is not None
-            ),
-            "",
+        condition = (
+            _yaml_value_text(flow_step.get("if"), "${{ unsupported-flow-if }}")
+            if flow_step is not None and "if" in flow_step
+            else next(
+                (
+                    value
+                    for candidate in lines[step_index:step_end]
+                    if len(candidate) - len(candidate.lstrip()) == step_indent + 2
+                    and (value := _yaml_scalar(candidate, "if")) is not None
+                ),
+                "",
+            )
         )
-        continue_on_error = next(
-            (
-                value
-                for candidate in lines[step_index:step_end]
-                if len(candidate) - len(candidate.lstrip()) == step_indent + 2
-                and (
-                    value := _yaml_scalar(candidate, "continue-on-error")
-                )
-                is not None
-            ),
-            "false",
+        continue_on_error = (
+            _yaml_value_text(
+                flow_step.get("continue-on-error"),
+                "${{ unsupported-flow-continue-on-error }}",
+            )
+            if flow_step is not None and "continue-on-error" in flow_step
+            else next(
+                (
+                    value
+                    for candidate in lines[step_index:step_end]
+                    if len(candidate) - len(candidate.lstrip()) == step_indent + 2
+                    and (
+                        value := _yaml_scalar(candidate, "continue-on-error")
+                    )
+                    is not None
+                ),
+                "false",
+            )
         )
         checkout_path = ""
         dynamic_path = False
         repository = "${{ github.repository }}"
         ref = ""
+
+        def apply_checkout_inputs(inputs: dict[str, object]) -> None:
+            nonlocal checkout_path, dynamic_path, repository, ref
+            if "path" in inputs:
+                path_value = inputs["path"]
+                if isinstance(path_value, str) and re.fullmatch(
+                    r"[A-Za-z0-9._/-]+", path_value
+                ):
+                    checkout_path = PurePosixPath(path_value).as_posix()
+                else:
+                    dynamic_path = True
+            if "repository" in inputs:
+                repository = _yaml_value_text(
+                    inputs["repository"], "${{ unsupported-flow-repository }}"
+                )
+            if "ref" in inputs:
+                ref = _yaml_value_text(
+                    inputs["ref"], "${{ unsupported-flow-ref }}"
+                )
+
+        if flow_step is not None and "with" in flow_step:
+            flow_inputs = flow_step["with"]
+            if isinstance(flow_inputs, dict) and all(
+                isinstance(key, str) for key in flow_inputs
+            ):
+                apply_checkout_inputs(flow_inputs)
+            else:
+                dynamic_path = True
+                repository = "${{ unsupported-flow-with }}"
         with_indent = -1
         for candidate in lines[index + 1 : step_end]:
             candidate_indent = len(candidate) - len(candidate.lstrip())
             if candidate.strip() and candidate_indent <= step_indent:
                 break
-            if candidate.strip() == "with:" and candidate_indent == step_indent + 2:
-                with_indent = candidate_indent
-                continue
+            if candidate_indent == step_indent + 2:
+                with_value = _yaml_scalar(candidate, "with")
+                if with_value is not None:
+                    if with_value:
+                        flow_inputs = _yaml_flow_mapping(with_value)
+                        if flow_inputs is not None:
+                            apply_checkout_inputs(flow_inputs)
+                        else:
+                            dynamic_path = True
+                            repository = "${{ unsupported-flow-with }}"
+                        with_indent = -1
+                    else:
+                        with_indent = candidate_indent
+                    continue
             if with_indent < 0:
                 continue
             if candidate.strip() and candidate_indent <= with_indent:
@@ -558,6 +671,9 @@ def _workflow_step_condition(lines: list[str], index: int) -> str:
         lines: Workflow source lines.
         index: Zero-based line index within the step.
     """
+    flow_step = _yaml_flow_step(lines[index])
+    if flow_step is not None and "if" in flow_step:
+        return _yaml_value_text(flow_step["if"], "${{ unsupported-flow-if }}")
     line_indent = len(lines[index]) - len(lines[index].lstrip())
     step_index = index
     for candidate_index in range(index, -1, -1):
@@ -666,6 +782,30 @@ def _workflow_run_commands(lines: list[str]) -> list[tuple[int, str, str, int]]:
     commands: list[tuple[int, str, str, int]] = []
     index = 0
     while index < len(lines):
+        flow_step = _yaml_flow_step(lines[index])
+        if flow_step is not None and "run" in flow_step:
+            line_number = index + 1
+            run_value = flow_step["run"]
+            if isinstance(run_value, str):
+                flow_directory = flow_step.get("working-directory")
+                working_directory = (
+                    _yaml_value_text(
+                        flow_directory, "${{ unsupported-flow-working-directory }}"
+                    )
+                    if flow_directory is not None
+                    else _workflow_effective_working_directory(lines, index)
+                )
+                flow_lines = [
+                    (line_number + offset, command_line)
+                    for offset, command_line in enumerate(run_value.splitlines())
+                ]
+                for command_line, command in _continued_commands(flow_lines):
+                    if command:
+                        commands.append(
+                            (command_line, command, working_directory, index)
+                        )
+            index += 1
+            continue
         match = RUN_RE.match(lines[index])
         if not match:
             index += 1
