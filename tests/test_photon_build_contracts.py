@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import os
-import shutil
 import stat
 import subprocess
 import sys
@@ -173,6 +172,26 @@ def _write_executable(path: Path, content: str) -> None:
     path.chmod(path.stat().st_mode | stat.S_IXUSR)
 
 
+def _resolve_posix_command(command: str) -> str:
+    """Resolve a command without relying on mutable process-global ``shutil`` state.
+
+    Args:
+        command: Command name to resolve through the standard POSIX search path.
+
+    Returns:
+        Absolute path reported by the POSIX shell.
+    """
+    shell = "/bin/sh"
+    result = subprocess.run(
+        [shell, "-c", 'command -v -- "$1"', "sh", command],
+        check=True,
+        capture_output=True,
+        env={"PATH": os.defpath},
+        text=True,
+    )
+    return result.stdout.strip()
+
+
 @pytest.mark.skipif(os.name == "nt", reason="POSIX shell builder test")
 def test_qemu_builder_overrides_preserved_communicator_home(tmp_path: Path) -> None:
     """QEMU mkvenv uses a private root-build HOME/cache and preserves pip indexes.
@@ -183,9 +202,9 @@ def test_qemu_builder_overrides_preserved_communicator_home(tmp_path: Path) -> N
     command_dir = tmp_path / "commands"
     command_dir.mkdir()
     system_path = os.defpath
-    real_stat = shutil.which("stat", path=system_path)
-    real_install = shutil.which("install", path=system_path)
-    shell = shutil.which("sh", path=system_path)
+    real_stat = _resolve_posix_command("stat")
+    real_install = _resolve_posix_command("install")
+    shell = _resolve_posix_command("sh")
     assert real_stat and real_install and shell
 
     _write_executable(command_dir / "id", "#!/bin/sh\nprintf '0\\n'\n")
