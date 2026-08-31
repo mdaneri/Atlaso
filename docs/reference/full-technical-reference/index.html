@@ -4500,6 +4500,9 @@ dispatch can publish these statuses; manual dispatch remains diagnostic. Trusted
 pull-request runs use separate concurrency groups, preventing a delayed diagnostic run from canceling the trusted
 publisher. This bridge is required because GitHub does not associate an ordinary <code>workflow_dispatch</code> check suite with
 the pull request even when it runs on the same commit.</p>
+<p>The Python test job installs the exact npm dependency tree from <code>package-lock.json</code> before running pytest. Repository
+policy tests invoke the shared Markdown rendering helper, so their <code>markdown-it</code> runtime must be available inside the
+isolated Python job rather than depending on setup performed by the separate repository-checks job.</p>
 <p>The application update build continues to append <code>+g&lt;commit&gt;</code> metadata to wheel versions. A merged pull request does not
 create a Git tag, GitHub release, or changelog entry; those remain deliberate release-management actions.</p>
 <p>Run from PowerShell 7 using the WSL development virtualenv:</p>
