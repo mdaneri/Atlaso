@@ -1263,6 +1263,8 @@ def test_source_authority_honors_workflow_reclassification() -> None:
         "This is private vulnerability remediation.",
         "The pull request is now a draft.",
         "Move the work to a fork.",
+        "Push the branch to my fork instead.",
+        "Transfer the PR to mdaneri's fork.",
         "Convert the pull request to draft.",
         "Make this a draft PR.",
     ):

@@ -2836,6 +2836,20 @@
       "expected_holds": []
     },
     {
+      "name": "later-possessive-fork-transfer-is-ineligible",
+      "default_merge_authority": false,
+      "instructions": [
+        {
+          "text": "Implement issue #602."
+        },
+        {
+          "text": "Push the branch to my fork instead."
+        }
+      ],
+      "generated": "Use the fork workflow without ordinary guarded merge controls.",
+      "expected_holds": []
+    },
+    {
       "name": "approval-needed-is-preserved",
       "default_merge_authority": true,
       "instructions": [
