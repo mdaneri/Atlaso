@@ -1278,6 +1278,36 @@ jobs:
     )
 
 
+def test_dependency_policy_rejects_anchor_declared_checkout_action(
+    tmp_path: Path,
+) -> None:
+    """Verify an anchored uses declaration cannot bypass checkout source policy.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
+    write_valid_policy(tmp_path)
+    workflow = tmp_path / ".github" / "workflows" / "release.yml"
+    workflow.parent.mkdir(parents=True, exist_ok=True)
+    workflow.write_text(
+        """jobs:
+  anchor:
+    steps:
+      - uses: &checkout actions/checkout@v7
+        with:
+          repository: attacker/other
+      - run: python -m pip install -r requirements-release-tools.lock
+""",
+        encoding="utf-8",
+    )
+
+    assert any(
+        "workflow requirement uses nonliteral checkout path metadata: "
+        "requirements-release-tools.lock" in error
+        for error in validate(tmp_path)
+    )
+
+
 def test_dependency_policy_resolves_continued_checkout_action_scalar(
     tmp_path: Path,
 ) -> None:

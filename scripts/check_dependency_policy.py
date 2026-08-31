@@ -425,7 +425,9 @@ def _workflow_checkout_sources(
             if flow_step is not None and "uses" in flow_step
             else _yaml_plain_scalar(lines, index, "uses")[0]
         )
-        if _is_alias_value(action):
+        if _is_alias_value(action) or (
+            isinstance(action, str) and action.startswith("&")
+        ):
             job_scope = _workflow_job_scope(lines, index)
             dynamic_checkouts.setdefault(job_scope, []).append(index + 1)
             continue
