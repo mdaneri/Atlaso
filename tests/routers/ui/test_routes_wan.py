@@ -125,6 +125,26 @@ def test_routes_wan_settings_autosave_reports_suspended_nat(client):
     assert simulation_response.json()["effective_nat_enabled"] is False
     assert simulation_response.json()["wan_simulation_enabled"] is True
 
+    no_javascript_enable = client.post(
+        "/routes-wan/settings",
+        data={
+            "routing_enabled": "on",
+            "wan_simulation_enabled": "on",
+            "csrf": csrf,
+        },
+        follow_redirects=False,
+    )
+    assert no_javascript_enable.status_code == 303
+
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.services.routes_wan import ensure_routes_wan_settings
+
+    with SessionLocal() as db:
+        settings = ensure_routes_wan_settings(db)
+        assert settings.routing_enabled is True
+        assert settings.nat_enabled is True
+        assert settings.effective_nat_enabled is True
+
 
 def test_routes_wan_default_route_add_edit_validation_and_semantic_readback(client):
     """Exercise the explicit default path and its server-owned invariants.

@@ -132,10 +132,20 @@ def build_router(dependencies: RoutesWanUiDependencies) -> RoutesWanUiRouter:
             raise HTTPException(status_code=403, detail="Routes and WAN write permissions are required")
         acquire_network_objects_write_lock(db)
         current_settings = ensure_routes_wan_settings(db)
+        next_routing_enabled = routing_enabled == "on"
+        next_nat_enabled = (
+            current_settings.nat_enabled
+            if nat_enabled is None
+            and (
+                not current_settings.routing_enabled
+                or not next_routing_enabled
+            )
+            else nat_enabled == "on"
+        )
         settings = save_routes_wan_settings(
             db,
-            routing_enabled=routing_enabled == "on",
-            nat_enabled=(nat_enabled == "on" if routing_enabled == "on" else current_settings.nat_enabled),
+            routing_enabled=next_routing_enabled,
+            nat_enabled=next_nat_enabled,
             wan_simulation_enabled=wan_simulation_enabled == "on",
         )
         service_state = db.execute(
