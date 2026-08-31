@@ -13,7 +13,7 @@ let headingPrefix = ''
 let embeddedStylePresent = false
 const htmlStack = []
 
-const suppressedTags = new Set(['datalist', 'del', 's', 'strike', 'iframe', 'noscript', 'script', 'style', 'pre', 'textarea', 'template', 'title'])
+const suppressedTags = new Set(['canvas', 'datalist', 'del', 's', 'strike', 'iframe', 'noscript', 'script', 'style', 'pre', 'textarea', 'template', 'title'])
 const voidTags = new Set(['area', 'base', 'br', 'col', 'embed', 'hr', 'img', 'input', 'link', 'meta', 'param', 'source', 'track', 'wbr'])
 const rawTextTags = new Set(['iframe', 'script', 'style', 'textarea', 'title'])
 const formattingTags = new Set([
@@ -319,8 +319,30 @@ function isValidFunctionalColor (value) {
     /^(rgb|rgba|hsl|hsla|hwb|lab|lch|oklab|oklch|color|color-mix|light-dark)\((.+)\)$/
   )
   if (!functional) return false
-  if (!/^(?:rgb|rgba|hsl|hsla|hwb|lab|lch|oklab|oklch)$/.test(functional[1])) {
-    return true
+  if (functional[1] === 'color') {
+    const components = splitCssComponentValues(functional[2])
+    const colorSpaces = new Set([
+      'a98-rgb', 'display-p3', 'prophoto-rgb', 'rec2020', 'srgb', 'srgb-linear',
+      'xyz', 'xyz-d50', 'xyz-d65'
+    ])
+    if (!colorSpaces.has(components[0]) || components.length < 4) return false
+    return components.slice(1).every(component => (
+      component === '/' || component === 'none' ||
+      parseOpacityValue(component) !== null
+    ))
+  }
+  if (functional[1] === 'light-dark') {
+    const colors = splitCssFunctionArguments(functional[2])
+    return colors.length === 2 && colors.every(isValidColorValue)
+  }
+  if (functional[1] === 'color-mix') {
+    const components = splitCssFunctionArguments(functional[2])
+    if (components.length !== 3 || !/^in\s+[a-z0-9-]+(?:\s+(?:shorter|longer|increasing|decreasing)\s+hue)?$/.test(components[0])) {
+      return false
+    }
+    return components.slice(1).every(component => (
+      isValidColorValue(component.replace(/\s+[+]?(?:\d+(?:\.\d*)?|\.\d+)%$/, ''))
+    ))
   }
   const allowedIdentifiers = new Set([
     'a', 'alpha', 'b', 'calc', 'clamp', 'deg', 'e', 'from', 'g', 'grad',
@@ -330,6 +352,13 @@ function isValidFunctionalColor (value) {
   return identifiers.every(identifier => allowedIdentifiers.has(identifier)) && (
     /\d/.test(functional[2]) || identifiers.includes('from')
   )
+}
+
+function isValidColorValue (value) {
+  return value === 'transparent' || value === 'currentcolor' ||
+    cssNamedColors.has(value) ||
+    /^#(?:[0-9a-f]{3}|[0-9a-f]{4}|[0-9a-f]{6}|[0-9a-f]{8})$/.test(value) ||
+    isValidFunctionalColor(value)
 }
 
 function isTransparentColor (value) {

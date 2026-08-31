@@ -1386,6 +1386,9 @@ def test_agent_policy_gate_rejects_missing_maintainer_break_glass_contract(
         f"{prohibition}</span></span>",
         f'<span style="color:transparent"><span style="color:rgb(foo)">'
         f"{prohibition}</span></span>",
+        f'<span style="color:transparent"><span style="color:color(foo)">'
+        f"{prohibition}</span></span>",
+        f"<canvas>{prohibition}</canvas>",
         f'<span style="color:rgb(0 0 0 / 0e0)">{prohibition}</span>',
         f'<span style="color:rgb(0 0 0 / calc(0))">{prohibition}</span>',
         f"<svg><foreignObject><span hidden/>{prohibition}</span>"
@@ -1545,6 +1548,12 @@ def test_agent_policy_gate_rejects_missing_maintainer_break_glass_contract(
         f"{prohibition}</span></span>",
         f'<span style="color:transparent"><span style="color:pink">'
         f"{prohibition}</span></span>",
+        f'<span style="color:transparent"><span style="color:color(srgb 1 0 0)">'
+        f"{prohibition}</span></span>",
+        f'<span style="color:transparent"><span style="color:light-dark(red, blue)">'
+        f"{prohibition}</span></span>",
+        f'<span style="color:transparent"><span '
+        f'style="color:color-mix(in srgb, red, blue)">{prohibition}</span></span>',
         f'<span style="font-size:0"><span style="font-size:12px">'
         f"{prohibition}</span></span>",
         f'<span style="font-size:0"><span style="font-size:calc(12px)">'
