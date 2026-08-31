@@ -3685,6 +3685,22 @@
       ],
       "generated": "Complete the guarded merge after tests pass.",
       "expected_holds": []
+    },
+    {
+      "name": "keep-branch-unmerged-is-preserved",
+      "default_merge_authority": true,
+      "instructions": [
+        {
+          "text": "Implement issue #602, but keep this branch unmerged.",
+          "add_holds": [
+            "leave open"
+          ]
+        }
+      ],
+      "generated": "Preserve the explicit leave open hold.",
+      "expected_holds": [
+        "leave open"
+      ]
     }
   ]
 }

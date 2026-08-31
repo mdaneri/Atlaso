@@ -558,6 +558,12 @@ EXPLICIT_MERGE_HOLD_PATTERNS = {
         "keep this pull request unmerged",
         "keep the pr unmerged",
         "keep this pr unmerged",
+        "keep the branch unmerged",
+        "keep this branch unmerged",
+        "keep branch unmerged",
+        "leave the branch unmerged",
+        "leave this branch unmerged",
+        "leave branch unmerged",
     ),
     "pr only": (
         "pull request only",

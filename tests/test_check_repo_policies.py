@@ -1110,6 +1110,16 @@ def test_merge_hold_directions_recognizes_hyphenated_pull_request_holds() -> Non
     }
 
 
+def test_merge_hold_directions_recognizes_branch_unmerged_holds() -> None:
+    """Verify branch-scoped unmerged wording preserves a leave-open hold."""
+    for instruction in (
+        "Keep this branch unmerged.",
+        "Keep the branch unmerged.",
+        "Leave this branch unmerged.",
+    ):
+        assert merge_hold_directions(instruction) == {"leave open": "add"}
+
+
 def test_merge_hold_directions_recognizes_wait_for_ci_condition() -> None:
     """Verify waiting for CI remains a resumable gate, not a permanent hold."""
     assert merge_hold_directions(
