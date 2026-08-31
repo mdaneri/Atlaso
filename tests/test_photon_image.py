@@ -1670,6 +1670,8 @@ def test_vmware_packer_requires_proven_task_or_release_builder_identity() -> Non
     assert "head_repository" in wrapper
     assert "head_branch" in wrapper
     assert "head_commit" in wrapper
+    assert "[string]$pull.head_repository -ine $repository" in wrapper
+    assert "-Repository $canonicalRepository" in wrapper
     assert "status --short --untracked-files=no" in wrapper
     assert "git check-ref-format --branch" in identity_module
     assert "Get-AtlasoVmwareBuilderIdentityManifestPath" in wrapper
@@ -1685,6 +1687,22 @@ def test_vmware_packer_requires_proven_task_or_release_builder_identity() -> Non
     manifest_refresh = wrapper.index("-ReplaceSameOwner", cleanup)
     exact_recheck = wrapper.index("Assert-AtlasoVmwareBuilderIdentityManifest `", cleanup)
     assert owner_recheck < cleanup < manifest_refresh < exact_recheck
+    parent_output = wrapper.index(
+        "$outerCleanupOutputDirectory = Resolve-WorkstationOutputDirectory `"
+    )
+    parent_output_assertion = wrapper.index(
+        "$outerCleanupOutputDirectory = Assert-AtlasoVmwareBuilderOutputDirectory `",
+        parent_output,
+    )
+    registration_repair = wrapper.index(
+        "Repair-AtlasoWorkstationStaleRegistrations `", parent_output
+    )
+    assert parent_output < parent_output_assertion < registration_repair
+    final_pr_recheck = wrapper.index(
+        "if (-not $ReleaseBuilder -and -not $ValidateOnly -and -not $PrepareIsoOnly)"
+    )
+    packer_invocation = wrapper.index("Invoke-AtlasoPhotonImageBuild `")
+    assert final_pr_recheck < packer_invocation
     assert "Refusing to reuse or clean a Photon builder output" in wrapper
     assert "Atlaso-Photon-Builder-VMware" not in wrapper
     assert "New-AtlasoVmwareBuilderIdentity" in release

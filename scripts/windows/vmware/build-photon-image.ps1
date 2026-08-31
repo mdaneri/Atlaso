@@ -294,15 +294,19 @@ function Resolve-AtlasoTaskBuilderIdentity {
         throw "GitHub returned invalid identity evidence for pull request #$PullRequestNumber."
     }
     if ([int]$pull.number -ne $PullRequestNumber -or [string]$pull.state -cne 'open' -or
-        [string]$pull.head_repository -cne $repository -or
+        [string]$pull.head_repository -ine $repository -or
         [string]$pull.head_branch -cne $branch -or
         [string]$pull.head_commit -cne $commit) {
         throw "Pull request #$PullRequestNumber is not the open same-repository owner of branch '$branch' at commit $commit."
     }
+    $canonicalRepository = [string]$pull.head_repository
+    if ($canonicalRepository -notmatch '^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$') {
+        throw "Pull request #$PullRequestNumber returned an invalid canonical repository identity."
+    }
     return New-AtlasoVmwareBuilderIdentity `
         -PullRequestNumber $PullRequestNumber `
         -CollisionSuffix $CollisionSuffix `
-        -Repository $repository `
+        -Repository $canonicalRepository `
         -SourceBranch $branch `
         -SourceCommit $commit
 }
@@ -789,6 +793,9 @@ else {
         -PackerDirectory $outerCleanupPackerDirectory `
         -OutputDirectory $OutputDirectory `
         -VmName $VmName
+    $outerCleanupOutputDirectory = Assert-AtlasoVmwareBuilderOutputDirectory `
+        -OutputDirectory $outerCleanupOutputDirectory `
+        -Identity $builderIdentity
     $outerCleanupOutputExistedBeforeChild = Test-Path -LiteralPath $outerCleanupOutputDirectory
     $preparedIsoLeaf = if ($PSBoundParameters.ContainsKey('PreparedIsoPath') -and
         -not [string]::IsNullOrWhiteSpace($PreparedIsoPath)) {
@@ -1573,6 +1580,19 @@ if (-not $ValidateOnly -and -not $PrepareIsoOnly) {
             -PackerOnError $PackerOnError `
             -TimeoutHandler $timeoutHandler
     }.GetNewClosure()
+}
+
+if (-not $ReleaseBuilder -and -not $ValidateOnly -and -not $PrepareIsoOnly) {
+    $finalTaskIdentity = Resolve-AtlasoTaskBuilderIdentity `
+        -RepositoryRoot $repoRoot `
+        -PullRequestNumber $PullRequestNumber `
+        -CollisionSuffix $CollisionSuffix
+    if ([string]$finalTaskIdentity.Name -cne [string]$builderIdentity.Name -or
+        [string]$finalTaskIdentity.Repository -cne [string]$builderIdentity.Repository -or
+        [string]$finalTaskIdentity.SourceBranch -cne [string]$builderIdentity.SourceBranch -or
+        [string]$finalTaskIdentity.SourceCommit -cne [string]$builderIdentity.SourceCommit) {
+        throw 'The task-owned Photon builder identity changed before the final Packer boundary.'
+    }
 }
 
 Invoke-AtlasoPhotonImageBuild `
