@@ -1671,6 +1671,11 @@ def test_vmware_packer_requires_proven_task_or_release_builder_identity() -> Non
     assert "Get-AtlasoVmwareBuilderIdentityManifestPath" in wrapper
     assert "Assert-AtlasoVmwareBuilderIdentityManifest" in wrapper
     assert "Assert-AtlasoVmwareBuilderVmx" in wrapper
+    build_invocation = wrapper.index("Invoke-AtlasoPhotonImageBuild `")
+    assert (
+        "-OutputDirectory $workstationOutputDirectory `"
+        in wrapper[build_invocation:]
+    )
     manifest_recheck = wrapper.index("Assert-AtlasoVmwareBuilderIdentityManifest `")
     cleanup = wrapper.index("Remove-AtlasoWorkstationArtifactRoot `", manifest_recheck)
     assert manifest_recheck < cleanup

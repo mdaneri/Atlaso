@@ -1577,7 +1577,7 @@ Invoke-AtlasoPhotonImageBuild `
     -SshPassword $SshPassword `
     -BootstrapAdminPassword $BootstrapAdminPassword `
     -VmName $VmName `
-    -OutputDirectory $OutputDirectory `
+    -OutputDirectory $workstationOutputDirectory `
     -SshHost $SshHost `
     -SharedSourceDirectory $SharedSourceDirectory `
     -BuilderStaticIp $BuilderStaticIp `
