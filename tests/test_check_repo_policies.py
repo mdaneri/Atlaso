@@ -506,7 +506,7 @@ def test_merge_hold_directions_preserves_branch_targeted_hold() -> None:
 
 
 def test_merge_hold_directions_recognizes_merge_deferral() -> None:
-    """Verify explicit source-side merge deferrals remain task holds."""
+    """Verify explicit deferrals are holds while CI gates remain resumable."""
     for instruction in (
         "Implement issue #602, but hold off on merging.",
         "Implement issue #602, but defer the merge.",
@@ -516,10 +516,10 @@ def test_merge_hold_directions_recognizes_merge_deferral() -> None:
         assert merge_hold_directions(instruction) == {"do not merge": "add"}
     assert merge_hold_directions(
         "Implement issue #602, but merge only after CI passes."
-    ) == {"do not merge": "add"}
+    ) == {}
     assert merge_hold_directions(
         "Implement issue #602, but only merge after CI passes."
-    ) == {"do not merge": "add"}
+    ) == {}
 
 
 def test_merge_hold_directions_recognizes_never_merge() -> None:
@@ -788,10 +788,10 @@ def test_merge_hold_directions_recognizes_hyphenated_pull_request_holds() -> Non
 
 
 def test_merge_hold_directions_recognizes_wait_for_ci_condition() -> None:
-    """Verify waiting for CI before merge remains an explicit hold."""
+    """Verify waiting for CI remains a resumable gate, not a permanent hold."""
     assert merge_hold_directions(
         "Implement issue #602, but wait for CI to pass before merging."
-    ) == {"do not merge": "add"}
+    ) == {}
 
 
 def test_merge_hold_directions_recognizes_plain_approval_condition() -> None:
@@ -822,16 +822,26 @@ def test_merge_hold_directions_recognizes_plain_approval_condition() -> None:
     ) == {"wait for approval": "add"}
     assert merge_hold_directions(
         "Implement issue #602, but merge after CI passes."
-    ) == {"do not merge": "add"}
+    ) == {}
     assert merge_hold_directions(
         "Implement issue #602, but wait for security review before merging."
-    ) == {"do not merge": "add"}
+    ) == {}
     assert merge_hold_directions(
         "Implement issue #602, but merge only after security review passes."
-    ) == {"do not merge": "add"}
+    ) == {}
     assert merge_hold_directions(
         "Implement issue #602, but merge only after QA review passes."
-    ) == {"do not merge": "add"}
+    ) == {}
+
+
+def test_source_authority_excludes_no_commit_or_push_delivery() -> None:
+    """Verify implementation requests that forbid delivery remain ineligible."""
+    assert not source_has_default_merge_authority(
+        ("Implement issue #602, but do not push any changes.",)
+    )
+    assert not source_has_default_merge_authority(
+        ("Implement issue #602, but do not commit any changes.",)
+    )
 
 
 def test_object_qualified_auto_merge_denial_is_not_a_manual_hold() -> None:

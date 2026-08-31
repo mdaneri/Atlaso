@@ -261,32 +261,22 @@
       "default_merge_authority": true,
       "instructions": [
         {
-          "text": "Implement issue #602, but merge only after CI passes.",
-          "add_holds": [
-            "do not merge"
-          ]
+          "text": "Implement issue #602, but merge only after CI passes."
         }
       ],
-      "generated": "Preserve the explicit merge only after CI passes instruction.",
-      "expected_holds": [
-        "do not merge"
-      ]
+      "generated": "Complete the guarded merge after CI passes.",
+      "expected_holds": []
     },
     {
       "name": "explicit-only-merge-after-ci-passes",
       "default_merge_authority": true,
       "instructions": [
         {
-          "text": "Implement issue #602, but only merge after CI passes.",
-          "add_holds": [
-            "do not merge"
-          ]
+          "text": "Implement issue #602, but only merge after CI passes."
         }
       ],
-      "generated": "Preserve the explicit only merge after CI passes instruction.",
-      "expected_holds": [
-        "do not merge"
-      ]
+      "generated": "Complete the guarded merge after CI passes.",
+      "expected_holds": []
     },
     {
       "name": "qualified-explicit-do-not-merge",
@@ -1547,16 +1537,11 @@
       "default_merge_authority": true,
       "instructions": [
         {
-          "text": "Implement issue #602, but wait for CI to pass before merging.",
-          "add_holds": [
-            "do not merge"
-          ]
+          "text": "Implement issue #602, but wait for CI to pass before merging."
         }
       ],
-      "generated": "Wait for CI to pass before merging; do not perform the guarded merge yet.",
-      "expected_holds": [
-        "do not merge"
-      ]
+      "generated": "Complete the guarded merge after CI passes.",
+      "expected_holds": []
     },
     {
       "name": "stop-work-status-remains-ineligible",
@@ -1610,16 +1595,11 @@
       "default_merge_authority": true,
       "instructions": [
         {
-          "text": "Implement issue #602, but merge after CI passes.",
-          "add_holds": [
-            "do not merge"
-          ]
+          "text": "Implement issue #602, but merge after CI passes."
         }
       ],
-      "generated": "Wait for CI to pass before merging; do not complete the guarded merge yet.",
-      "expected_holds": [
-        "do not merge"
-      ]
+      "generated": "Complete the guarded merge after CI passes.",
+      "expected_holds": []
     },
     {
       "name": "plain-maintainer-approval-condition-is-preserved",
@@ -1653,32 +1633,22 @@
       "default_merge_authority": true,
       "instructions": [
         {
-          "text": "Implement issue #602, but wait for security review before merging.",
-          "add_holds": [
-            "do not merge"
-          ]
+          "text": "Implement issue #602, but wait for security review before merging."
         }
       ],
-      "generated": "Wait for security review before merging; do not complete the guarded merge yet.",
-      "expected_holds": [
-        "do not merge"
-      ]
+      "generated": "Complete the guarded merge after security review passes.",
+      "expected_holds": []
     },
     {
       "name": "merge-after-security-review-is-preserved",
       "default_merge_authority": true,
       "instructions": [
         {
-          "text": "Implement issue #602, but merge only after security review passes.",
-          "add_holds": [
-            "do not merge"
-          ]
+          "text": "Implement issue #602, but merge only after security review passes."
         }
       ],
-      "generated": "Wait for security review before merging; do not complete the guarded merge yet.",
-      "expected_holds": [
-        "do not merge"
-      ]
+      "generated": "Complete the guarded merge after security review passes.",
+      "expected_holds": []
     },
     {
       "name": "coordinated-no-pr-request-is-ineligible",
@@ -1767,16 +1737,11 @@
       "default_merge_authority": true,
       "instructions": [
         {
-          "text": "Implement issue #602, but merge only after QA review passes.",
-          "add_holds": [
-            "do not merge"
-          ]
+          "text": "Implement issue #602, but merge only after QA review passes."
         }
       ],
-      "generated": "Wait for QA review before merging; do not complete the guarded merge yet.",
-      "expected_holds": [
-        "do not merge"
-      ]
+      "generated": "Complete the guarded merge after QA review passes.",
+      "expected_holds": []
     },
     {
       "name": "approval-to-merge-is-preserved",
@@ -2491,6 +2456,17 @@
         }
       ],
       "generated": "Complete the guarded merge when eligible.",
+      "expected_holds": []
+    },
+    {
+      "name": "no-push-implementation-is-ineligible",
+      "default_merge_authority": false,
+      "instructions": [
+        {
+          "text": "Implement issue #602, but do not push any changes."
+        }
+      ],
+      "generated": "Stop before commit, push, pull-request delivery, or guarded merge.",
       "expected_holds": []
     },
     {

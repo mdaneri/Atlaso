@@ -813,7 +813,8 @@ DEFAULT_MERGE_AUTHORITY_NEGATED_MUTATION = re.compile(
     r"(?:^|[;.!?]\s*|,\s*(?:but|and)\s+|\s+but\s+)"
     r"(?:please\s+)?(?:do not|don't|don’t|must not)\s+"
     r"(?:\w+\s+){0,3}(?:implement|fix|patch|resolve|solve|deliver|open|submit|"
-    r"prepare|update|change|modify|edit|add|remove|create|build|refactor|repair)"
+    r"prepare|update|change|modify|edit|add|remove|create|build|refactor|repair|"
+    r"commit|push)"
     r"\b[^;.!?]*"
 )
 DEFAULT_MERGE_AUTHORITY_SOURCE_MARKERS = re.compile(
@@ -935,17 +936,6 @@ MERGE_HOLD_STANDALONE_PERMISSION = re.compile(
     r"(?:\s+(?:(?:this|the)\s+)?(?:pull request|pr))?|"
     r"go ahead and merge|"
     r"proceed (?:with the merge|with merging|to merge)(?: now)?)\b"
-)
-MERGE_HOLD_NONAPPROVAL_CONDITION = re.compile(
-    r"\b(?:(?:merge(?: only)?|only merge) (?:after|when|if|once)\s+"
-    r"(?:ci|tests?|checks?|validation|builds?|"
-    r"(?:(?:[a-z][a-z0-9_-]*\s+){0,2}review))\b[^.!?]{0,40}"
-    r"\b(?:pass(?:es|ed)?|succeed(?:s|ed)?|complete(?:s|d)?)|"
-    r"wait (?:for|until)\s+(?:ci|tests?|checks?|validation|builds?)\b"
-    r"[^.!?]{0,40}\b(?:pass|succeed|complete)(?:es|s|d)?\b"
-    r"[^.!?]{0,40}\bbefore merging|"
-    r"wait (?:for|until)\s+[^.!?]{0,40}\breview\b"
-    r"[^.!?]{0,40}\bbefore merging)\b"
 )
 MERGE_HOLD_APPROVAL_CONDITION = re.compile(
     r"\b(?:merge(?: only)?|only merge)\s+"
@@ -1473,18 +1463,6 @@ def merge_hold_directions(
             directions[hold] = (
                 hold_directions.pop() if len(hold_directions) == 1 else None
             )
-    for condition_match in MERGE_HOLD_NONAPPROVAL_CONDITION.finditer(normalized):
-        condition = condition_match.group(0)
-        if not _is_hold_discussion(
-            normalized, condition_match.start()
-        ) and not _hold_targets_other_task(
-            normalized,
-            condition_match.start(),
-            condition,
-            active_pull_request=active_pull_request,
-            active_issue=active_issue,
-        ):
-            directions["do not merge"] = "add"
     for condition_match in MERGE_HOLD_APPROVAL_CONDITION.finditer(normalized):
         condition = condition_match.group(0)
         if not _is_hold_discussion(
