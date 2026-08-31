@@ -16800,7 +16800,12 @@ def test_services_routing_actions_update_global_desired_state(client, monkeypatc
     lock_events: list[str] = []
 
     def assert_lock_before_routing_query(db, *, transport: str) -> None:
-        """Record that the shared lock precedes the transport's Routing lookup."""
+        """Record that the shared lock precedes the transport's Routing lookup.
+
+        Args:
+            db: Active database session inspected before the service query.
+            transport: API or UI transport invoking the shared lock.
+        """
         assert not any(
             isinstance(row, ServiceState) and row.service == "routing"
             for row in db.identity_map.values()
