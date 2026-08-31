@@ -1541,6 +1541,30 @@ def test_dependency_policy_parses_commented_flow_style_run_step(
     )
 
 
+def test_dependency_policy_rejects_multiline_flow_style_step(tmp_path: Path) -> None:
+    """Verify a multiline flow collection cannot bypass workflow lock policy.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
+    write_valid_policy(tmp_path)
+    (tmp_path / "requirements-ad-hoc.lock").write_text("placeholder\n", encoding="utf-8")
+    workflow = tmp_path / ".github" / "workflows" / "release.yml"
+    workflow.parent.mkdir(parents=True, exist_ok=True)
+    workflow.write_text(
+        """steps:
+  - {run: python -m pip install -r requirements-ad-hoc.lock,
+     shell: bash}
+""",
+        encoding="utf-8",
+    )
+
+    assert any(
+        "multiline or invalid flow-style step cannot be policy validated" in error
+        for error in validate(tmp_path)
+    )
+
+
 def test_dependency_policy_rejects_alias_valued_run_step(tmp_path: Path) -> None:
     """Verify alias-valued run fields cannot bypass lock policy.
 

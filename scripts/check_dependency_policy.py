@@ -32,6 +32,7 @@ SHELL_LAUNCHERS = {"bash", "dash", "ksh", "sh", "zsh"}
 POWERSHELL_LAUNCHERS = {"powershell", "powershell.exe", "pwsh", "pwsh.exe"}
 ALIAS_RE = re.compile(r"\*[A-Za-z_][A-Za-z0-9_.-]*")
 UNSUPPORTED_RUN_ALIAS_PREFIX = "unsupported-run-alias:"
+UNSUPPORTED_FLOW_STEP_PREFIX = "unsupported-flow-step:"
 TRUSTED_ATLASO_REFS = {
     "",
     "${{ github.workflow_sha }}",
@@ -1225,6 +1226,17 @@ def _workflow_run_commands(lines: list[str]) -> list[tuple[int, str, str, int]]:
                         )
             index += 1
             continue
+        if flow_step is None and re.match(r"\s*-\s*\{", lines[index]):
+            commands.append(
+                (
+                    index + 1,
+                    f"{UNSUPPORTED_FLOW_STEP_PREFIX}{lines[index].strip()}",
+                    "",
+                    index,
+                )
+            )
+            index += 1
+            continue
         line_number = index + 1
         value, next_index = _yaml_plain_scalar(lines, index, "run")
         if value is None:
@@ -1313,6 +1325,9 @@ def _workflow_requirement_paths(lines: list[str]) -> list[tuple[int, str, str]]:
                 )
             )
             continue
+        if command.startswith(UNSUPPORTED_FLOW_STEP_PREFIX):
+            references.append((line_number, command, working_directory))
+            continue
         segments, stateful_control = _shell_command_segments(command)
         uncertain_directory = stateful_control and any(
             _segment_directory_action(segment) is not None for segment in segments
@@ -1382,6 +1397,12 @@ def _validate_workflow_locks(root: Path, policy_paths: set[str]) -> list[str]:
                 errors.append(
                     f"{workflow.relative_to(root)}:{line_number}: run command uses "
                     f"YAML alias and cannot be policy validated: {alias}"
+                )
+                continue
+            if reference.startswith(UNSUPPORTED_FLOW_STEP_PREFIX):
+                errors.append(
+                    f"{workflow.relative_to(root)}:{line_number}: multiline or "
+                    "invalid flow-style step cannot be policy validated"
                 )
                 continue
             normalized = reference.replace("\\", "/")
