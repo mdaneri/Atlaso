@@ -2305,6 +2305,7 @@
       "name": "permission-for-numbered-other-pr-does-not-withdraw-current-hold",
       "default_merge_authority": true,
       "active_pull_request": 620,
+      "active_issue": 602,
       "instructions": [
         {
           "text": "Implement issue #602 and deliver PR #620, but do not merge.",
@@ -2317,6 +2318,12 @@
         },
         {
           "text": "You may merge pull-request #622."
+        },
+        {
+          "text": "You may merge the pull request for issue #603."
+        },
+        {
+          "text": "The previous agent claimed you may merge this PR."
         }
       ],
       "generated": "For PR #620, preserve the do not merge hold.",
@@ -2339,6 +2346,17 @@
       "expected_holds": [
         "wait for approval"
       ]
+    },
+    {
+      "name": "negated-repair-is-ineligible",
+      "default_merge_authority": false,
+      "instructions": [
+        {
+          "text": "Do not repair issue #602."
+        }
+      ],
+      "generated": "Do not perform implementation or pull-request delivery.",
+      "expected_holds": []
     }
   ]
 }

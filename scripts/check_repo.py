@@ -786,7 +786,7 @@ DEFAULT_MERGE_AUTHORITY_NEGATED_MUTATION = re.compile(
     r"(?:^|[;.!?]\s*|,\s*(?:but|and)\s+|\s+but\s+)"
     r"(?:please\s+)?(?:do not|don't|don’t|must not)\s+"
     r"(?:\w+\s+){0,3}(?:implement|fix|patch|resolve|solve|deliver|open|submit|"
-    r"prepare|update|change|modify|edit|add|remove|create|build|refactor)"
+    r"prepare|update|change|modify|edit|add|remove|create|build|refactor|repair)"
     r"\b[^;.!?]*"
 )
 DEFAULT_MERGE_AUTHORITY_SOURCE_MARKERS = re.compile(
@@ -856,6 +856,11 @@ MERGE_HOLD_OTHER_TASK_TRAILING_CLAUSE = re.compile(
 )
 MERGE_HOLD_NUMBERED_PR_REFERENCE = re.compile(
     r"\b(?:pull[- ]request|pr)\s*#(\d+)\b"
+)
+MERGE_HOLD_NUMBERED_ISSUE_REFERENCE = re.compile(r"\bissue\s*#(\d+)\b")
+MERGE_HOLD_REPORTED_PERMISSION_CONTEXT = re.compile(
+    r"\b(?:previous|prior|earlier|former|historical|stale)\b"
+    r"[^.!?]{0,80}\b(?:claimed|said|reported|stated|suggested|wrote|asserted)\b"
 )
 MERGE_AUTHORITY_TASK_CLAUSE_BOUNDARY = re.compile(r"[;.?!]+")
 MERGE_AUTHORITY_COORDINATED_CLAUSE_BOUNDARY = re.compile(
@@ -1090,6 +1095,7 @@ def _hold_targets_other_task(
     pattern: str,
     *,
     active_pull_request: int | None = None,
+    active_issue: int | None = None,
 ) -> bool:
     """Return whether a hold phrase explicitly targets a different task.
 
@@ -1098,6 +1104,7 @@ def _hold_targets_other_task(
         offset: Character offset where the hold phrase begins.
         pattern: Exact hold phrase matched in the segment.
         active_pull_request: Pull request owned by the active task, when known.
+        active_issue: Issue owned by the active task, when known.
     """
     prefix = segment[max(0, offset - 80) : offset]
     suffix = segment[offset + len(pattern) : offset + len(pattern) + 80]
@@ -1112,6 +1119,15 @@ def _hold_targets_other_task(
         prefix_references = tuple(MERGE_HOLD_NUMBERED_PR_REFERENCE.finditer(prefix))
         if prefix_references:
             return int(prefix_references[-1].group(1)) != active_pull_request
+    if active_issue is not None:
+        direct_reference = MERGE_HOLD_NUMBERED_ISSUE_REFERENCE.search(
+            segment[offset : offset + len(pattern) + 80]
+        )
+        if direct_reference is not None:
+            return int(direct_reference.group(1)) != active_issue
+        prefix_references = tuple(MERGE_HOLD_NUMBERED_ISSUE_REFERENCE.finditer(prefix))
+        if prefix_references:
+            return int(prefix_references[-1].group(1)) != active_issue
     return (
         MERGE_HOLD_OTHER_TASK_PREFIX.search(prefix) is not None
         or MERGE_HOLD_OTHER_TASK_SUFFIX.search(suffix) is not None
@@ -1187,6 +1203,7 @@ def merge_hold_directions(
     *,
     active_holds: tuple[str, ...] = (),
     active_pull_request: int | None = None,
+    active_issue: int | None = None,
 ) -> dict[str, str | None]:
     """Classify each mentioned hold as an addition or explicit withdrawal.
 
@@ -1194,6 +1211,7 @@ def merge_hold_directions(
         text: One current user or maintainer instruction to classify.
         active_holds: Holds active before this instruction is evaluated.
         active_pull_request: Pull request owned by the active task, when known.
+        active_issue: Issue owned by the active task, when known.
     """
     normalized = " ".join(text.casefold().split())
     normalized = AUTO_MERGE_ONLY_PATTERN.sub(
@@ -1283,6 +1301,7 @@ def merge_hold_directions(
                                 hold_offset,
                                 pattern,
                                 active_pull_request=active_pull_request,
+                                active_issue=active_issue,
                             )
                             for pattern in patterns
                         )
@@ -1313,6 +1332,7 @@ def merge_hold_directions(
                         pattern_offset,
                         pattern,
                         active_pull_request=active_pull_request,
+                        active_issue=active_issue,
                     ) and not _hold_targets_non_pr_object(
                         hold, segment, pattern_offset, pattern
                     ) and not _is_approval_scoped_disposition(
@@ -1387,6 +1407,7 @@ def merge_hold_directions(
             condition_match.start(),
             condition,
             active_pull_request=active_pull_request,
+            active_issue=active_issue,
         ):
             directions["do not merge"] = "add"
     for condition_match in MERGE_HOLD_APPROVAL_CONDITION.finditer(normalized):
@@ -1398,6 +1419,7 @@ def merge_hold_directions(
             condition_match.start(),
             condition,
             active_pull_request=active_pull_request,
+            active_issue=active_issue,
         ):
             directions["wait for approval"] = "add"
     for condition_match in MERGE_HOLD_APPROVAL_BOUNDED_DISPOSITION.finditer(
@@ -1411,6 +1433,7 @@ def merge_hold_directions(
             condition_match.start(),
             condition,
             active_pull_request=active_pull_request,
+            active_issue=active_issue,
         ):
             directions["wait for approval"] = "add"
     for condition_match in MERGE_HOLD_APPROVAL_BEFORE_MERGING.finditer(normalized):
@@ -1422,6 +1445,7 @@ def merge_hold_directions(
             condition_match.start(),
             condition,
             active_pull_request=active_pull_request,
+            active_issue=active_issue,
         ):
             directions["wait for approval"] = "add"
     for condition_match in MERGE_HOLD_WITHOUT_APPROVAL.finditer(normalized):
@@ -1433,6 +1457,7 @@ def merge_hold_directions(
             condition_match.start(),
             condition,
             active_pull_request=active_pull_request,
+            active_issue=active_issue,
         ):
             directions["wait for approval"] = "add"
     for permission_match in MERGE_HOLD_STANDALONE_PERMISSION.finditer(normalized):
@@ -1447,11 +1472,13 @@ def merge_hold_directions(
             and
             MERGE_HOLD_WITHDRAWAL_NONCURRENT_PREFIX.search(prefix) is None
             and MERGE_HOLD_WITHDRAWAL_NONCURRENT_SUFFIX.search(suffix) is None
+            and MERGE_HOLD_REPORTED_PERMISSION_CONTEXT.search(prefix) is None
             and not _hold_targets_other_task(
                 normalized,
                 permission_offset,
                 permission,
                 active_pull_request=active_pull_request,
+                active_issue=active_issue,
             )
         ):
             for hold in active_holds:
@@ -1616,6 +1643,7 @@ def check_merge_authority_transfer_fixtures(root: Path) -> list[Finding]:
         expected_holds = case.get("expected_holds")
         default_merge_authority = case.get("default_merge_authority")
         active_pull_request = case.get("active_pull_request")
+        active_issue = case.get("active_issue")
         if (
             not isinstance(name, str)
             or not name.strip()
@@ -1631,6 +1659,14 @@ def check_merge_authority_transfer_fixtures(root: Path) -> list[Finding]:
                     not isinstance(active_pull_request, int)
                     or isinstance(active_pull_request, bool)
                     or active_pull_request <= 0
+                )
+            )
+            or (
+                active_issue is not None
+                and (
+                    not isinstance(active_issue, int)
+                    or isinstance(active_issue, bool)
+                    or active_issue <= 0
                 )
             )
         ):
@@ -1685,6 +1721,7 @@ def check_merge_authority_transfer_fixtures(root: Path) -> list[Finding]:
                 instruction_text,
                 active_holds=tuple(source_holds),
                 active_pull_request=active_pull_request,
+                active_issue=active_issue,
             )
             derived_additions = {
                 hold for hold, direction in directions.items() if direction == "add"
@@ -1734,6 +1771,7 @@ def check_merge_authority_transfer_fixtures(root: Path) -> list[Finding]:
             generated,
             active_holds=source_holds_tuple,
             active_pull_request=active_pull_request,
+            active_issue=active_issue,
         )
         ambiguous_generated = tuple(
             hold

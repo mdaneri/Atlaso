@@ -272,6 +272,28 @@ def test_merge_hold_directions_scopes_numbered_pr_permission() -> None:
     ) == {}
 
 
+def test_merge_hold_directions_scopes_numbered_issue_permission() -> None:
+    """Verify permission for another issue cannot withdraw this task's hold."""
+    assert merge_hold_directions(
+        "You may merge the pull request for issue #603.",
+        active_holds=("do not merge",),
+        active_issue=602,
+    ) == {}
+    assert merge_hold_directions(
+        "You may merge the pull request for issue #602.",
+        active_holds=("do not merge",),
+        active_issue=602,
+    ) == {"do not merge": "remove"}
+
+
+def test_merge_hold_directions_ignores_reported_permission() -> None:
+    """Verify historical agent claims cannot withdraw a current hold."""
+    assert merge_hold_directions(
+        "The previous agent claimed you may merge this PR.",
+        active_holds=("do not merge",),
+    ) == {}
+
+
 def test_merge_hold_directions_preserves_long_conditional_permission() -> None:
     """Verify a long conditional prefix cannot withdraw an active hold."""
     assert merge_hold_directions(
@@ -581,6 +603,11 @@ def test_source_authority_keeps_workflow_policy_subject_eligible() -> None:
         "Repair the parser in scripts/check_repo.py.",
     ):
         assert source_has_default_merge_authority((instruction,))
+
+
+def test_source_authority_excludes_negated_repair() -> None:
+    """Verify an explicit repair denial does not grant implementation authority."""
+    assert not source_has_default_merge_authority(("Do not repair issue #602.",))
 
 
 def test_source_authority_excludes_ineligible_delivery_scopes() -> None:
