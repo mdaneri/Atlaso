@@ -1406,6 +1406,7 @@ def test_release_workflows_use_successful_main_sha_and_promote_without_rebuildin
     assert "python tooling/scripts/wheel_artifact.py create" in wheel_publication
     assert "--source-root target-source" in wheel_publication
     assert "target-source/requirements-release-tools.lock" in wheel_publication
+    assert "tooling/requirements-release-tools.lock" not in wheel_publication
     assert 'git -C target-source show -s --format=%cI "$WHEEL_SHA"' in wheel_publication
     assert "date --utc" not in wheel_publication
     assert "--source-ci-run-id" in wheel_publication
@@ -1630,6 +1631,10 @@ def test_release_workflows_use_successful_main_sha_and_promote_without_rebuildin
     assert "contents: write" not in windows_job
     assert "RELEASE_SIGNING_PRIVATE_KEY" not in windows_job
     assert "-CandidateOnly" in windows_job
+    assert (
+        "python -m pip install --require-hashes --requirement "
+        "requirements-virtualization-smoke.lock"
+    ) in windows_job
     assert "ref: ${{ inputs.release_sha }}" not in windows_candidate
     assert "ref: ${{ needs.admit.outputs.release_sha }}" in windows_job
     assert windows_candidate.count("ref: refs/heads/main") == 2
