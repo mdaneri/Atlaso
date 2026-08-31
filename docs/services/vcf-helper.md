@@ -154,6 +154,8 @@ prefix, suffix, or any reviewed hostname invalidates that populated revision and
 creation to the exact signed, time-limited populated inputs so a stale or changed browser submission cannot bypass the
 review. Create also recomputes current DNS and DHCP availability and rejects the request when its allocations or skips
 no longer match the signed plan, requiring Populate again instead of silently changing reviewed addresses.
+If inputs change while a Populate request is still running, Atlaso discards that superseded response and requires a
+fresh Populate instead of displaying or enabling an obsolete plan.
 
 Creating records then requires confirmation. The modal remains open after creation so assigned addresses can be
 reviewed. When every displayed FQDN has an A or AAAA address, the primary action changes to `Done`; `Done` closes the

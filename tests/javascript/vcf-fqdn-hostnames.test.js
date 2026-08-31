@@ -185,3 +185,11 @@ test("VCF hostname review invalidation preserves the focused row", () => {
   assert.match(appSource, /if \(preserveRows\) \{\s*refreshVcfFqdnRenderedRows\(\)/);
   assert.match(appSource, /const statusPayload = vcfFqdnIsPopulated\(\) \? payload : \{\}/);
 });
+
+test("VCF Populate discards responses superseded by later input", () => {
+  assert.match(appSource, /let populationGeneration = 0/);
+  assert.match(appSource, /populationGeneration \+= 1/);
+  assert.match(appSource, /const requestGeneration = populationGeneration/);
+  assert.match(appSource, /if \(requestGeneration !== populationGeneration\)/);
+  assert.match(appSource, /inputs changed while Populate was running/);
+});

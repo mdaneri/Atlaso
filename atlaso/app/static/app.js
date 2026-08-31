@@ -12544,8 +12544,10 @@ function initializeVcfFqdnGenerator() {
   const domain = form.querySelector("[data-vcf-fqdn-domain]");
   const startAddress = form.querySelector("[data-vcf-fqdn-start-ipv4]");
   let currentPayload = {};
+  let populationGeneration = 0;
   vcfFqdnSeedHostnameStateFromRows();
   const invalidatePopulation = ({ preserveRows = false } = {}) => {
+    populationGeneration += 1;
     currentPayload = {};
     if (populatedRevision instanceof HTMLInputElement) {
       populatedRevision.value = "";
@@ -12655,9 +12657,17 @@ function initializeVcfFqdnGenerator() {
         invalidatePopulation();
         return;
       }
+      const requestGeneration = populationGeneration;
       const payload = await submitRequest(`${form.action}/populate`, "populated");
       if (!payload) {
         invalidatePopulation();
+        return;
+      }
+      if (requestGeneration !== populationGeneration) {
+        setVcfFqdnMessage(
+          "[data-vcf-fqdn-errors]",
+          "Generated FQDN inputs changed while Populate was running. Select Populate again to review the current plan.",
+        );
         return;
       }
       if (populatedRevision instanceof HTMLInputElement) {
