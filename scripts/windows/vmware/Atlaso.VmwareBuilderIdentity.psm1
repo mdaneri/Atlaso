@@ -150,13 +150,19 @@ Canonical builder output directory protected by the claim.
 
 .PARAMETER Identity
 Validated task or release builder identity that owns the output scope.
+
+.PARAMETER ClaimGeneration
+Optional invocation-specific generation written durably while the exclusive
+claim is held. A later claimant replaces this value before it can mutate the
+same output.
 #>
 function Enter-AtlasoVmwareBuilderOutputClaim {
     [CmdletBinding()]
     [OutputType([System.IO.FileStream])]
     param(
         [Parameter(Mandatory = $true)][string]$OutputDirectory,
-        [Parameter(Mandatory = $true)][psobject]$Identity
+        [Parameter(Mandatory = $true)][psobject]$Identity,
+        [ValidatePattern('^[0-9a-f]{32}$')][string]$ClaimGeneration = ''
     )
 
     $resolvedOutput = Assert-AtlasoVmwareBuilderOutputDirectory `
@@ -165,8 +171,9 @@ function Enter-AtlasoVmwareBuilderOutputClaim {
     $manifestPath = Get-AtlasoVmwareBuilderIdentityManifestPath -OutputDirectory $resolvedOutput
     $claimPath = "$manifestPath.lock"
     [void][System.IO.Directory]::CreateDirectory((Split-Path -Parent $claimPath))
+    $claim = $null
     try {
-        return [System.IO.FileStream]::new(
+        $claim = [System.IO.FileStream]::new(
             $claimPath,
             [System.IO.FileMode]::OpenOrCreate,
             [System.IO.FileAccess]::ReadWrite,
@@ -175,6 +182,76 @@ function Enter-AtlasoVmwareBuilderOutputClaim {
     }
     catch [System.IO.IOException] {
         throw "Another Photon builder already holds the exclusive output claim: $resolvedOutput"
+    }
+    if (-not [string]::IsNullOrWhiteSpace($ClaimGeneration)) {
+        try {
+            $generationBytes = [System.Text.Encoding]::ASCII.GetBytes($ClaimGeneration)
+            $claim.SetLength(0)
+            $claim.Position = 0
+            $claim.Write($generationBytes, 0, $generationBytes.Length)
+            $claim.Flush($true)
+            $claim.Position = 0
+        }
+        catch {
+            $claim.Dispose()
+            throw "Could not persist the Photon builder output-claim generation: $resolvedOutput"
+        }
+    }
+    return $claim
+}
+
+<#
+.SYNOPSIS
+Require an exclusive output claim to retain one invocation generation.
+
+.PARAMETER Claim
+Open exclusive output-claim handle returned by Enter-AtlasoVmwareBuilderOutputClaim.
+
+.PARAMETER ExpectedGeneration
+Invocation-specific lowercase hexadecimal generation expected in the claim.
+#>
+function Assert-AtlasoVmwareBuilderOutputClaimGeneration {
+    [CmdletBinding()]
+    [OutputType([string])]
+    param(
+        [Parameter(Mandatory = $true)][System.IO.FileStream]$Claim,
+        [Parameter(Mandatory = $true)]
+        [ValidatePattern('^[0-9a-f]{32}$')][string]$ExpectedGeneration
+    )
+
+    if (-not $Claim.CanRead -or -not $Claim.CanWrite) {
+        throw 'The Photon builder output claim is not an active exclusive read/write handle.'
+    }
+    $originalPosition = $Claim.Position
+    try {
+        if ($Claim.Length -ne 32) {
+            throw 'The Photon builder output claim does not contain a valid invocation generation.'
+        }
+        $Claim.Position = 0
+        $generationBytes = [byte[]]::new(32)
+        $generationLength = 0
+        while ($generationLength -lt $generationBytes.Length) {
+            $readLength = $Claim.Read(
+                $generationBytes,
+                $generationLength,
+                $generationBytes.Length - $generationLength
+            )
+            if ($readLength -eq 0) {
+                break
+            }
+            $generationLength += $readLength
+        }
+        if ($generationLength -ne $generationBytes.Length) {
+            throw 'The Photon builder output claim generation could not be read completely.'
+        }
+        $actualGeneration = [System.Text.Encoding]::ASCII.GetString($generationBytes)
+        if ($actualGeneration -cne $ExpectedGeneration) {
+            throw 'The Photon builder output claim generation changed after the isolated child released it.'
+        }
+        return $actualGeneration
+    }
+    finally {
+        $Claim.Position = [Math]::Min($originalPosition, $Claim.Length)
     }
 }
 
@@ -419,6 +496,7 @@ Export-ModuleMember -Function @(
     'Assert-AtlasoVmwareBuilderIdentityManifest',
     'Assert-AtlasoVmwareBuilderOwnershipManifest',
     'Assert-AtlasoVmwareBuilderOutputDirectory',
+    'Assert-AtlasoVmwareBuilderOutputClaimGeneration',
     'Assert-AtlasoVmwareBuilderVmx',
     'Enter-AtlasoVmwareBuilderOutputClaim',
     'Get-AtlasoVmwareBuilderIdentityManifestPath',

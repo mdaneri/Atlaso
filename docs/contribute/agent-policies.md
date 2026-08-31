@@ -825,7 +825,9 @@ Terminal order:
   visible parent must hold the same exclusive output claim across its retained manifest and VMX checks, Workstation
   inventory repair, and UI launch, then release it before starting the isolated child. The bounded parent may perform
   timeout cleanup only when the child durably recorded its cleanup claim, including for an
-  initially absent output; it must then revalidate identity and reacquire that exact claim through cleanup. Clone and export
+  initially absent output. Every claimant must durably replace the sibling claim's invocation generation while holding
+  it; the parent must then revalidate identity, reacquire the claim, and require the child's exact generation before
+  cleanup so an intervening completed or failed build blocks deletion. Clone and export
   require exact builder provenance. Low-level OVF export accepts only an explicit proven source VMX. Never propagate
   transient PR identity into OVF/OVA product naming, deployed-appliance names, canonical release filenames, or
   immutable release assets. Before manifest or OVA generation, normalize and read back both the OVF `VirtualSystem`

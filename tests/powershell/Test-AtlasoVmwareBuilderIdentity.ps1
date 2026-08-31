@@ -109,10 +109,16 @@ foreach ($separator in @(
         throw 'A trailing output-directory separator moved the ownership manifest inside the output root.'
     }
 }
+$firstClaimGeneration = '11111111111111111111111111111111'
+$secondClaimGeneration = '22222222222222222222222222222222'
 $firstOutputClaim = Enter-AtlasoVmwareBuilderOutputClaim `
     -OutputDirectory $taskOutput `
-    -Identity $task
+    -Identity $task `
+    -ClaimGeneration $firstClaimGeneration
 try {
+    $null = Assert-AtlasoVmwareBuilderOutputClaimGeneration `
+        -Claim $firstOutputClaim `
+        -ExpectedGeneration $firstClaimGeneration
     try {
         $unexpectedOutputClaim = Enter-AtlasoVmwareBuilderOutputClaim `
             -OutputDirectory $taskOutput `
@@ -130,8 +136,34 @@ finally {
 }
 $releasedOutputClaim = Enter-AtlasoVmwareBuilderOutputClaim `
     -OutputDirectory $taskOutput `
-    -Identity $task
+    -Identity $task `
+    -ClaimGeneration $secondClaimGeneration
 $releasedOutputClaim.Dispose()
+$reacquiredOutputClaim = Enter-AtlasoVmwareBuilderOutputClaim `
+    -OutputDirectory $taskOutput `
+    -Identity $task
+try {
+    $null = Assert-AtlasoVmwareBuilderOutputClaimGeneration `
+        -Claim $reacquiredOutputClaim `
+        -ExpectedGeneration $secondClaimGeneration
+    try {
+        $null = Assert-AtlasoVmwareBuilderOutputClaimGeneration `
+            -Claim $reacquiredOutputClaim `
+            -ExpectedGeneration $firstClaimGeneration
+        throw 'An obsolete output-claim generation was accepted after an intervening claimant.'
+    }
+    catch {
+        if ($_.Exception.Message -eq 'An obsolete output-claim generation was accepted after an intervening claimant.') {
+            throw
+        }
+        if ($_.Exception.Message -cne 'The Photon builder output claim generation changed after the isolated child released it.') {
+            throw
+        }
+    }
+}
+finally {
+    $reacquiredOutputClaim.Dispose()
+}
 Write-AtlasoVmwareBuilderIdentityManifest `
     -Path $manifestPath `
     -OutputDirectory $taskOutput `

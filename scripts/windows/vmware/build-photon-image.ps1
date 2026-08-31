@@ -41,6 +41,8 @@ Internal marker preserving whether the caller explicitly bound the builder DNS a
 Internal task-owned directory containing all plaintext image-build artifacts.
 .PARAMETER OutputCleanupClaimPath
 Internal durable marker proving the isolated child claimed a pre-existing output root.
+.PARAMETER OutputClaimGeneration
+Internal invocation-specific generation bound to the exclusive output claim.
 .PARAMETER BuilderAddressReservationPath
 Internal non-secret handoff for the exact temporary address reservation.
 .PARAMETER PullRequestNumber
@@ -169,6 +171,7 @@ param(
     [switch]$BuilderStaticDnsBound,
     [string]$SensitiveBuildDirectory = '',
     [string]$OutputCleanupClaimPath = '',
+    [string]$OutputClaimGeneration = '',
     [string]$BuilderAddressReservationPath = '',
     [ValidateRange(1, 2147483647)]
     [int]$PullRequestNumber = 0,
@@ -798,6 +801,9 @@ if ($CredentialChild) {
         (Split-Path -Leaf $resolvedOutputCleanupClaimPath) -cne 'output-cleanup-claimed.json') {
         throw 'The isolated Photon output-cleanup claim path is unavailable or invalid.'
     }
+    if ($OutputClaimGeneration -notmatch '^[0-9a-f]{32}$') {
+        throw 'The isolated Photon output-claim generation is unavailable or invalid.'
+    }
     if ([string]::IsNullOrWhiteSpace($resolvedBuilderAddressReservationPath) -or
         -not (Split-Path -Parent $resolvedBuilderAddressReservationPath).Equals(
             [System.IO.Path]::GetFullPath($builderReservationPendingRoot),
@@ -878,6 +884,7 @@ else {
     $childCredentialBundlePath = Join-Path $credentialRoot 'credentials.json'
     $childSensitiveBuildDirectory = Join-Path $credentialRoot 'sensitive-build'
     $childOutputCleanupClaimPath = Join-Path $credentialRoot 'output-cleanup-claimed.json'
+    $childOutputClaimGeneration = [guid]::NewGuid().ToString('N')
     $childBuilderAddressReservationPath = Join-Path $builderReservationPendingRoot (
         "builder-address-reservation-$([guid]::NewGuid().ToString('N')).json"
     )
@@ -923,7 +930,8 @@ else {
             # against another build using the same canonical identity.
             $parentRepairOutputClaim = Enter-AtlasoVmwareBuilderOutputClaim `
                 -OutputDirectory $outerCleanupOutputDirectory `
-                -Identity $builderIdentity
+                -Identity $builderIdentity `
+                -ClaimGeneration $childOutputClaimGeneration
             $outerCleanupOutputExistedBeforeChild = Test-Path -LiteralPath $outerCleanupOutputDirectory
         $outerBuilderManifestPath = Get-AtlasoVmwareBuilderIdentityManifestPath `
             -OutputDirectory $outerCleanupOutputDirectory
@@ -1006,6 +1014,7 @@ else {
             '-CredentialBundlePath', $childCredentialBundlePath,
             '-SensitiveBuildDirectory', $childSensitiveBuildDirectory,
             '-OutputCleanupClaimPath', $childOutputCleanupClaimPath,
+            '-OutputClaimGeneration', $childOutputClaimGeneration,
             '-BuilderAddressReservationPath', $childBuilderAddressReservationPath,
             '-PreparedIsoPath', $childPreparedIsoPath
         )
@@ -1027,6 +1036,7 @@ else {
             'CredentialBundlePath', 'CredentialChild',
             'BuilderStaticDnsJson', 'BuilderStaticDnsBound',
             'SensitiveBuildDirectory', 'OutputCleanupClaimPath',
+            'OutputClaimGeneration',
             'BuilderAddressReservationPath', 'PreparedIsoPath',
             'VerifiedRepository', 'VerifiedSourceBranch', 'VerifiedSourceCommit'
         )
@@ -1081,9 +1091,20 @@ else {
                 if (Test-Path -LiteralPath $outerCleanupOutputDirectory) {
                     $parentOutputClaim = $null
                     try {
+                        $timeoutCleanupClaim = Get-Content `
+                            -LiteralPath $childOutputCleanupClaimPath `
+                            -Raw | ConvertFrom-Json
+                        if ([int]$timeoutCleanupClaim.Schema -ne 2 -or
+                            [string]$timeoutCleanupClaim.ClaimGeneration -cne $childOutputClaimGeneration -or
+                            -not ([string]$timeoutCleanupClaim.OutputPath).Equals(
+                                $outerCleanupOutputDirectory,
+                                [StringComparison]::OrdinalIgnoreCase
+                            )) {
+                            throw 'The isolated child output-cleanup claim does not match this build invocation.'
+                        }
                         # The child releases its claim only after proven whole-tree
-                        # termination. Revalidate identity, then reacquire the same
-                        # exclusive output before parent-side timeout cleanup.
+                        # termination. Revalidate identity, reacquire the output,
+                        # and reject any intervening claimant generation before cleanup.
                         $null = Assert-AtlasoBuilderIdentityCurrent `
                             -RepositoryRoot $repoRoot `
                             -ExpectedIdentity $builderIdentity `
@@ -1096,6 +1117,9 @@ else {
                         $parentOutputClaim = Enter-AtlasoVmwareBuilderOutputClaim `
                             -OutputDirectory $outerCleanupOutputDirectory `
                             -Identity $builderIdentity
+                        $null = Assert-AtlasoVmwareBuilderOutputClaimGeneration `
+                            -Claim $parentOutputClaim `
+                            -ExpectedGeneration $childOutputClaimGeneration
                         $cleanupVmrunPath = Resolve-WorkstationVmrunPath -Path $VmrunPath
                         Write-Host 'The outer image deadline selected checked VMware artifact cleanup.'
                         Remove-AtlasoWorkstationArtifactRoot `
@@ -1684,7 +1708,8 @@ if (-not $ValidateOnly -and -not $PrepareIsoOnly) {
     # point-in-time absence check and adopt the same canonical output.
     $builderOutputClaim = Enter-AtlasoVmwareBuilderOutputClaim `
         -OutputDirectory $workstationOutputDirectory `
-        -Identity $builderIdentity
+        -Identity $builderIdentity `
+        -ClaimGeneration $OutputClaimGeneration
     if (-not $builderManifestExists) {
         $outputAppearedBeforeOwnershipClaim = Test-Path -LiteralPath $workstationOutputDirectory
         $manifestAppearedBeforeOwnershipClaim = Test-Path `
@@ -1708,8 +1733,9 @@ if (-not $ValidateOnly -and -not $PrepareIsoOnly) {
         # completed and immediately before checked removal begins. The bounded
         # parent may finish that exact removal after proven child termination.
         Write-AtlasoDurableJsonFile -Path $resolvedOutputCleanupClaimPath -Payload ([ordered]@{
-            Schema = 1
-            OutputPath = $workstationOutputDirectory
+            Schema          = 2
+            OutputPath      = $workstationOutputDirectory
+            ClaimGeneration = $OutputClaimGeneration
         })
         Remove-AtlasoWorkstationArtifactRoot `
             -VmrunPath $resolvedVmrunPath `

@@ -1383,7 +1383,9 @@ Before a forced Workstation rebuild deletes the output directory, the wrapper fi
 prove the same repository, pull request, branch, canonical name, and suffix. After checked cleanup, it advances the
 manifest to the newly verified exact head; retained reuse still requires the exact commit. It never adopts a legacy,
 differently owned, or concurrently active output: an exclusive sibling-file claim spans ownership admission, checked
-cleanup, Packer, and provenance publication for the canonical output. The wrapper then routes the complete output root
+cleanup, Packer, and provenance publication for the canonical output. Each claimant durably replaces the claim's
+invocation generation; timeout cleanup reacquires the claim and requires the terminated child's exact generation, so
+any intervening builder blocks deletion. The wrapper then routes the complete output root
 through
 the checked VMware cleanup module. It validates the exact non-reparse-point Atlaso root, discovers only descendant VMX
 files, stops running targets, protects external VMDKs, and uses checked `vmrun deleteVM` for existing registered targets

@@ -3174,6 +3174,10 @@ def test_vmware_gui_builder_repairs_stale_rows_before_ui_startup() -> None:
         "Test-Path -LiteralPath $childOutputCleanupClaimPath -PathType Leaf",
         termination_proven,
     )
+    durable_cleanup_generation = wrapper.index(
+        "[string]$timeoutCleanupClaim.ClaimGeneration -cne",
+        durable_cleanup_claim,
+    )
     parent_timeout_recheck = wrapper.index(
         "Assert-AtlasoBuilderIdentityCurrent `", termination_proven
     )
@@ -3182,6 +3186,9 @@ def test_vmware_gui_builder_repairs_stale_rows_before_ui_startup() -> None:
     )
     parent_timeout_cleanup = wrapper.index(
         "Remove-AtlasoWorkstationArtifactRoot `", parent_output_claim
+    )
+    parent_generation_check = wrapper.index(
+        "Assert-AtlasoVmwareBuilderOutputClaimGeneration `", parent_output_claim
     )
     parent_claim_release = wrapper.index(
         "$parentOutputClaim.Dispose()", parent_timeout_cleanup
@@ -3208,11 +3215,15 @@ def test_vmware_gui_builder_repairs_stale_rows_before_ui_startup() -> None:
     assert (
         termination_proven
         < durable_cleanup_claim
+        < durable_cleanup_generation
         < parent_timeout_recheck
         < parent_output_claim
+        < parent_generation_check
         < parent_timeout_cleanup
         < parent_claim_release
     )
     assert child_start < parent_return < child_cleanup < full_cleanup
     assert "-ScopeRoot $outerCleanupOutputDirectory" in wrapper[repair:gui_launch]
     assert "-not $outerCleanupOutputExistedBeforeChild -or" not in wrapper
+    assert "-ClaimGeneration $OutputClaimGeneration" in wrapper
+    assert "ClaimGeneration = $OutputClaimGeneration" in wrapper
