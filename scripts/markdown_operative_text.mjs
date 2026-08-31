@@ -314,6 +314,61 @@ function isValidFontSize (value) {
   return /^(?:calc|min|max|clamp)\(.+\)$/.test(value)
 }
 
+function splitCssShorthandTokens (value) {
+  const tokens = []
+  let current = ''
+  let depth = 0
+  let quote = null
+  for (let index = 0; index < value.length; index += 1) {
+    const character = value[index]
+    if (quote) {
+      current += character
+      if (character === '\\' && index + 1 < value.length) {
+        current += value[index + 1]
+        index += 1
+      } else if (character === quote) {
+        quote = null
+      }
+      continue
+    }
+    if (character === '"' || character === "'") {
+      quote = character
+      current += character
+      continue
+    }
+    if (character === '(') depth += 1
+    if (character === ')') depth = Math.max(0, depth - 1)
+    if (depth === 0 && (character === '/' || /\s/.test(character))) {
+      if (current.trim()) tokens.push(current.trim())
+      current = ''
+      if (character === '/') tokens.push('/')
+    } else {
+      current += character
+    }
+  }
+  if (quote || depth !== 0) return null
+  if (current.trim()) tokens.push(current.trim())
+  return tokens
+}
+
+function fontShorthandSize (value) {
+  if (/^(?:initial|inherit|unset|revert|revert-layer)$/.test(value)) return value
+  if (/^(?:caption|icon|menu|message-box|small-caption|status-bar)$/.test(value)) {
+    return 'medium'
+  }
+  const tokens = splitCssShorthandTokens(value)
+  if (!tokens) return null
+  for (let index = 0; index < tokens.length; index += 1) {
+    if (!isValidFontSize(tokens[index])) continue
+    let familyStart = index + 1
+    if (tokens[familyStart] === '/') {
+      familyStart += 2
+    }
+    return familyStart < tokens.length ? tokens[index] : null
+  }
+  return null
+}
+
 function isValidTransformCalculation (value, allowedUnits) {
   if (!/^(?:calc|min|max|clamp)\(.+\)$/.test(value) || !/\d/.test(value)) return false
   const identifiers = value.match(/[a-z][a-z0-9-]*/g) || []
@@ -776,7 +831,7 @@ function hasHiddenAttributes (attributes, inheritedCustomProperties = new Map(),
     }
     const decodedProperty = decodeCssEscapes(encodedDeclaration.slice(0, separator))
       .trim()
-    const property = decodedProperty.startsWith('--')
+    let property = decodedProperty.startsWith('--')
       ? decodedProperty
       : decodedProperty.toLowerCase()
     const encodedImportance = extractCssImportant(
@@ -787,6 +842,12 @@ function hasHiddenAttributes (attributes, inheritedCustomProperties = new Map(),
       value = value.toLowerCase()
     }
     const important = encodedImportance.important
+    if (property === 'font' && !hasCssVariable(value)) {
+      const shorthandSize = fontShorthandSize(value)
+      if (shorthandSize === null) continue
+      property = 'font-size'
+      value = shorthandSize
+    }
     if (
       !property.startsWith('--') &&
       !isValidSuppressionDeclaration(property, value) &&
