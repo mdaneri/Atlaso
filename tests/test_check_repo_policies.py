@@ -651,6 +651,8 @@ def test_merge_hold_directions_recognizes_modal_merge_prohibitions() -> None:
         "You do not have permission to merge this PR.",
         "I do not authorize you to merge this PR.",
         "I don’t permit you to merge this PR.",
+        "I no longer authorize you to merge this PR.",
+        "I no longer permit you to merge this PR.",
         "I forbid you from merging this PR.",
         "I forbid you to merge this PR.",
         "I prohibit you from merging this PR.",
@@ -764,6 +766,12 @@ def test_merge_hold_directions_recognizes_approval_needed() -> None:
     ) == {"wait for approval": "add"}
     assert merge_hold_directions(
         "Implement issue #602, but please merge this PR after I approve."
+    ) == {"wait for approval": "add"}
+    assert merge_hold_directions(
+        "Implement issue #602, but only merge after I give permission."
+    ) == {"wait for approval": "add"}
+    assert merge_hold_directions(
+        "Implement issue #602, but merge after I grant authorization."
     ) == {"wait for approval": "add"}
     assert merge_hold_directions(
         "Implement issue #602, but only with my approval may you merge this PR."

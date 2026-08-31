@@ -674,6 +674,7 @@ MERGE_HOLD_MODAL_PROHIBITION = re.compile(
     r"you(?:'re|’re)\s+not\s+(?:allowed|authorized|permitted)\s+to\s+merge|"
     r"you\s+do\s+not\s+have\s+(?:permission|authorization)\s+"
     r"to\s+merge|i\s+(?:do\s+not|don't|don’t)\s+(?:authorize|permit)\s+"
+    r"you\s+to\s+merge|i\s+no\s+longer\s+(?:authorize|permit)\s+"
     r"you\s+to\s+merge|i\s+(?:forbid|prohibit)\s+you\s+"
     r"(?:from\s+merging|to\s+merge))\b"
 )
@@ -975,7 +976,9 @@ MERGE_HOLD_APPROVAL_CONDITION = re.compile(
     r"(?:\s+(?:(?:this|the)\s+)?(?:pull request|pr))?\s+"
     r"(?:after|when|if|once|until|unless|before)\s+"
     r"(?:(?:i|we|(?:the\s+)?maintainer|"
-    r"(?:the\s+)?(?:[a-z][a-z0-9_-]*\s+)?owner)\s+approves?|approved)\b"
+    r"(?:the\s+)?(?:[a-z][a-z0-9_-]*\s+)?owner)\s+"
+    r"(?:approves?|(?:gives?|grants?)\s+(?:permission|authorization))|"
+    r"approved|(?:permission|authorization)\s+is\s+(?:given|granted))\b"
 )
 MERGE_HOLD_APPROVAL_CONDITION_FIRST = re.compile(
     r"\b(?:(?:only\s+)?(?:with\s+(?:(?:my|our|your)\s+approval|"
