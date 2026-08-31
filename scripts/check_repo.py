@@ -674,7 +674,8 @@ MERGE_HOLD_MODAL_PROHIBITION = re.compile(
     r"you(?:'re|’re)\s+not\s+(?:allowed|authorized|permitted)\s+to\s+merge|"
     r"you\s+do\s+not\s+have\s+(?:permission|authorization)\s+"
     r"to\s+merge|i\s+(?:do\s+not|don't|don’t)\s+(?:authorize|permit)\s+"
-    r"you\s+to\s+merge)\b"
+    r"you\s+to\s+merge|i\s+(?:forbid|prohibit)\s+you\s+"
+    r"(?:from\s+merging|to\s+merge))\b"
 )
 DEFAULT_MERGE_AUTHORITY_NEGATIONS = re.compile(
     r"(?:(?:do not|don't|don’t|never|must not|should not|cannot|can't|can’t|not)"
@@ -711,7 +712,9 @@ DEFAULT_MERGE_AUTHORITY_PERMISSION_QUESTION = re.compile(
     r"\b(?:(?:do|would)\s+you\s+(?:want|like)\s+(?:me|us)\s+to|"
     r"should\s+(?:i|we)|(?:can|could|may)\s+(?:i|we)|"
     r"do\s+(?:i|we)\s+have\s+(?:authority|authorization|permission)\s+to|"
-    r"(?:am|are|is)\s+(?:i|we)\s+(?:authorized|permitted|allowed)\s+to)\b"
+    r"(?:am|are|is)\s+(?:i|we)\s+(?:authorized|permitted|allowed)\s+to|"
+    r"should\s+(?:(?:the|this)\s+)?(?:heartbeat|handoff|delegation|"
+    r"delegating\s+agent|agent|task)\b[^?]{0,100}\?)(?=\s|[.!?]|$)"
 )
 DEFAULT_MERGE_AUTHORITY_PROMPT_MARKERS = (
     "preserve default merge authority",
@@ -814,23 +817,23 @@ DEFAULT_MERGE_AUTHORITY_SUPERSEDING_REVIEW_PREFIX = re.compile(
 DEFAULT_MERGE_AUTHORITY_SUPERSEDING_REVIEW_MARKER = re.compile(r"\binstead\b")
 DEFAULT_MERGE_AUTHORITY_STOP_WORK = re.compile(
     r"(?:^|[;.!?]\s*|,\s*(?:but|and)\s+|\s+but\s+)(?:please\s+)?(?:"
-    r"(?:stop|cancel|cease|end)\s+"
+    r"(?:stop|cancel|cease|end|abort)\s+"
     r"(?:(?:all|further|this|the)\s+)?(?:work(?:ing)?|implementation|task)|"
-    r"(?:cancel|end)\s+(?:this|that|the)\s+request)\b"
+    r"(?:cancel|end|abort)\s+(?:this|that|the)\s+request)\b"
     r"(?![^;.!?]*\b(?:if|unless|when|once|after|before)\b)[^;.!?]*"
 )
 DEFAULT_MERGE_AUTHORITY_POST_STOP_SUMMARY = re.compile(
     r"(?:^|[;.!?]\s*)(?:please\s+)?(?:"
-    r"(?:stop|cancel|cease|end)\s+"
+    r"(?:stop|cancel|cease|end|abort)\s+"
     r"(?:(?:all|further|this|the)\s+)?(?:work(?:ing)?|implementation|task)|"
-    r"(?:cancel|end)\s+(?:this|that|the)\s+request)\b"
+    r"(?:cancel|end|abort)\s+(?:this|that|the)\s+request)\b"
     r"[^.!?]*[.!?]\s*(?:summarize|describe|explain|report|document)\b[^.!?]*"
 )
 DEFAULT_MERGE_AUTHORITY_POST_STOP_STATUS = re.compile(
     r"(?:^|[;.!?]\s*)(?:please\s+)?(?:"
-    r"(?:stop|cancel|cease|end)\s+"
+    r"(?:stop|cancel|cease|end|abort)\s+"
     r"(?:(?:all|further|this|the)\s+)?(?:work(?:ing)?|implementation|task)|"
-    r"(?:cancel|end)\s+(?:this|that|the)\s+request)\b"
+    r"(?:cancel|end|abort)\s+(?:this|that|the)\s+request)\b"
     r"[^.!?]*[.!?]\s*(?:(?:the|this|that)\s+)?"
     r"(?:implementation|work|task|change|patch|fix)\s+"
     r"(?:is|isn't|isn’t|is not|remains?|was|wasn't|wasn’t|was not)\b[^.!?]*"

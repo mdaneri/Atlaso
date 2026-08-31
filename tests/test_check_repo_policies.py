@@ -651,6 +651,10 @@ def test_merge_hold_directions_recognizes_modal_merge_prohibitions() -> None:
         "You do not have permission to merge this PR.",
         "I do not authorize you to merge this PR.",
         "I don’t permit you to merge this PR.",
+        "I forbid you from merging this PR.",
+        "I forbid you to merge this PR.",
+        "I prohibit you from merging this PR.",
+        "I prohibit you to merge this PR.",
     ):
         assert merge_hold_directions(instruction) == {"do not merge": "add"}
 
@@ -973,6 +977,10 @@ def test_generated_merge_decision_questions_are_not_affirmative() -> None:
     assert not has_affirmative_default_merge_authority(
         "Do you want me to complete the guarded merge?"
     )
+    for subject in ("heartbeat", "handoff", "delegation", "agent", "task"):
+        assert not has_affirmative_default_merge_authority(
+            f"Should the {subject} complete the guarded merge?"
+        )
 
 
 def test_source_authority_excludes_patch_review() -> None:
@@ -1226,6 +1234,9 @@ def test_source_authority_honors_coordinated_cancellation() -> None:
     """Verify same-instruction cancellation revokes implementation eligibility."""
     assert not source_has_default_merge_authority(
         ("Implement issue #602, but cancel this request.",)
+    )
+    assert not source_has_default_merge_authority(
+        ("Implement issue #602.", "Abort the task.")
     )
 
 

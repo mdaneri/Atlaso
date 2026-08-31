@@ -2445,6 +2445,18 @@
           ]
         },
         {
+          "text": "I forbid you from merging this PR.",
+          "add_holds": [
+            "do not merge"
+          ]
+        },
+        {
+          "text": "I prohibit you to merge this PR.",
+          "add_holds": [
+            "do not merge"
+          ]
+        },
+        {
           "text": "You are not allowed to merge this PR.",
           "add_holds": [
             "do not merge"
@@ -2749,6 +2761,20 @@
         }
       ],
       "generated": "Stop the cancelled request without pull-request delivery or merge.",
+      "expected_holds": []
+    },
+    {
+      "name": "later-abort-is-ineligible",
+      "default_merge_authority": false,
+      "instructions": [
+        {
+          "text": "Implement issue #602."
+        },
+        {
+          "text": "Abort the task."
+        }
+      ],
+      "generated": "Stop the aborted task without pull-request delivery or merge.",
       "expected_holds": []
     },
     {
