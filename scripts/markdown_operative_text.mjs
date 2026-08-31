@@ -732,6 +732,7 @@ function hasHiddenAttributes (attributes, inheritedCustomProperties = new Map(),
       hasFullyClippingPath(declarations.get('clip-path')?.value || '')
     ),
     visibility: declarations.get('visibility')?.value || null,
+    opacity: declarations.get('opacity')?.value || null,
     fontSize: declarations.get('font-size')?.value || null,
     color: declarations.get('color')?.value || null,
     customProperties,
@@ -958,11 +959,17 @@ function updateHtmlSuppression (content, inlineContext = false) {
     const presentationVisibility = decodeHtmlAttributeEntities(
       suppression.parsedAttributes.get('visibility') || ''
     ).trim().toLowerCase()
+    const presentationOpacity = decodeHtmlAttributeEntities(
+      suppression.parsedAttributes.get('opacity') || ''
+    ).trim().toLowerCase()
     if (!selfClosing || (!voidTags.has(tag) && !foreign)) {
       const entry = {
         tag,
         irreversible: suppressedTags.has(tag) || suppression.irreversible || (
           foreign && presentationDisplay === 'none'
+        ) || (
+          foreign &&
+          (parseOpacityValue(suppression.opacity ?? presentationOpacity) ?? 1) <= 0
         ),
         closedDetails: tag === 'details' && !suppression.parsedAttributes.has('open'),
         summarySeen: false,
