@@ -28,6 +28,7 @@ PIP_LAUNCHER_RE = re.compile(
 PIP_MODULE_RE = re.compile(
     r"pip(?:\d+(?:\.\d+)*)?(?:\.__main__)?", re.IGNORECASE
 )
+SHELL_LAUNCHERS = {"bash", "dash", "ksh", "sh", "zsh"}
 RUN_RE = re.compile(r"^(?P<indent>\s*)(?:-\s+)?run:\s*(?P<value>.*)$")
 ALIAS_RE = re.compile(r"\*[A-Za-z_][A-Za-z0-9_.-]*")
 UNSUPPORTED_RUN_ALIAS_PREFIX = "unsupported-run-alias:"
@@ -772,6 +773,20 @@ def _segment_requirement_paths(segment: str) -> list[str]:
     tokens = _shell_tokens(segment)
     if not tokens:
         return []
+    for shell_index, token in enumerate(tokens):
+        launcher = token.replace("\\", "/").rsplit("/", maxsplit=1)[-1].lower()
+        if launcher not in SHELL_LAUNCHERS:
+            continue
+        for option_index in range(shell_index + 1, len(tokens)):
+            option = tokens[option_index]
+            if option == "--":
+                break
+            if option.startswith("-") and "c" in option.lstrip("-"):
+                if option_index + 1 < len(tokens):
+                    return _segment_requirement_paths(tokens[option_index + 1])
+                return []
+            if not option.startswith("-"):
+                break
     pip_index = -1
     for index, token in enumerate(tokens):
         launcher = token.replace("\\", "/").rsplit("/", maxsplit=1)[-1]
@@ -815,8 +830,17 @@ def _segment_requirement_paths(segment: str) -> list[str]:
                 continue
         elif argument.startswith("--requirement="):
             paths.append(argument.removeprefix("--requirement="))
-        elif argument.startswith("-r") and len(argument) > 2:
-            paths.append(argument[2:])
+        elif argument.startswith("-") and not argument.startswith("--"):
+            cluster = argument[1:]
+            requirement_index = cluster.find("r")
+            if requirement_index >= 0:
+                attached = cluster[requirement_index + 1 :]
+                if attached:
+                    paths.append(attached)
+                elif index + 1 < len(arguments):
+                    paths.append(arguments[index + 1])
+                    index += 2
+                    continue
         index += 1
     return paths
 
