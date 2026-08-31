@@ -17375,8 +17375,9 @@ def test_vcf_helper_page_renders_domain_dropdown(client):
     assert response.text.count('name="component_key"') == 17
     assert response.text.count('name="hostname"') == 17
     assert 'name="populated_revision"' in response.text
-    assert 'data-vcf-fqdn-populate>Populate</button>' in response.text
+    assert 'formaction="/ui/management/vcf-helper/generated-fqdns/populate" data-vcf-fqdn-populate>Populate</button>' in response.text
     assert 'data-vcf-fqdn-submit disabled>Create DNS records</button>' in response.text
+    assert "#vcf-fqdn-modal:not([open]) { display: block" in response.text
     assert 'aria-label="Hostname for vCenter"' in response.text
     assert '<label class="sr-only" for="vcf-fqdn-hostname-vc01">' not in response.text
     assert 'aria-describedby="vcf-fqdn-hostname-error-vc01"' in response.text
@@ -18046,6 +18047,62 @@ def test_vcf_helper_no_javascript_fallback_requires_population(client):
     assert "Select Populate and review the current generated FQDN plan" in response.text
     assert 'value="fallback-vcenter"' in response.text
     assert "fallback-vcenter.atlaso.internal</td>" in response.text
+
+
+def test_vcf_helper_no_javascript_fallback_populates_then_creates(client):
+    """Verify the native form renders a signed review before creating records.
+
+    Args:
+        client: HTTP test client used to exercise the Atlaso application.
+    """
+    from sqlalchemy import func, select
+
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import DnsRecord
+
+    login(client)
+    page = client.get("/vcf-helper")
+    csrf = page.text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
+    form_data = {
+        **vcf_hostname_form_data(prefix="fallback-"),
+        "domain": "atlaso.internal",
+        "prefix": "fallback-",
+        "suffix": "",
+        "start_ipv4": "192.168.215.10/24",
+        "csrf": csrf,
+    }
+    with SessionLocal() as db:
+        before = db.scalar(select(func.count()).select_from(DnsRecord))
+
+    populated = client.post(
+        "/vcf-helper/generated-fqdns/populate",
+        data=form_data,
+    )
+
+    assert populated.status_code == 200
+    assert (
+        '<dialog id="vcf-fqdn-modal" class="confirm-modal wide-modal '
+        'vcf-fqdn-modal" aria-labelledby="vcf-fqdn-modal-title" open>'
+        in populated.text
+    )
+    assert "192.168.215.10</td>" in populated.text
+    assert "data-vcf-fqdn-submit>Create DNS records</button>" in populated.text
+    revision = populated.text.split('name="populated_revision" value="', 1)[1].split(
+        '"', 1
+    )[0]
+    assert revision
+    with SessionLocal() as db:
+        assert db.scalar(select(func.count()).select_from(DnsRecord)) == before
+
+    created = client.post(
+        "/vcf-helper/generated-fqdns",
+        data={**form_data, "populated_revision": revision},
+    )
+
+    assert created.status_code == 200
+    assert "Created 17 DNS records" in created.text
+    with SessionLocal() as db:
+        assert db.scalar(select(func.count()).select_from(DnsRecord)) == before + 17
 
 
 def test_vcf_helper_population_is_non_mutating_and_binds_exact_review(client):

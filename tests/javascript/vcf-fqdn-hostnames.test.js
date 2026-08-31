@@ -157,6 +157,8 @@ test("VCF hostname rows submit immutable component keys beside reviewed values",
 
 test("VCF creation stays disabled until Populate returns an exact review revision", () => {
   assert.match(appSource, /const populateButton = form\.querySelector\("\[data-vcf-fqdn-populate\]"\)/);
+  assert.match(appSource, /let currentPayload = JSON\.parse\(populationRows\?\.dataset\.population \|\| "\{\}"\)/);
+  assert.match(appSource, /populateButton\.addEventListener\("click", async \(event\) => \{\s*event\.preventDefault\(\)/);
   assert.match(appSource, /populatedRevision\.value = String\(payload\.populated_revision \|\| ""\)/);
   assert.match(appSource, /const payload = await submitRequest\(`\$\{form\.action\}\/populate`, "populated"\)/);
   assert.match(appSource, /populatedRevision\.value = ""/);

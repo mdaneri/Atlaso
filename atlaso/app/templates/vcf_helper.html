@@ -125,11 +125,12 @@
 {% include "partials/vcf_ldap_modal.html" %}
 {% include "partials/vcf_vault_import_modal.html" %}
 <script id="vcf-vault-credential-options" type="application/json">{{ vcf_vault_credential_options | tojson }}</script>
+<noscript><style>#vcf-fqdn-modal:not([open]) { display: block; position: static; width: min(100%, 70rem); margin: 1rem auto; }</style></noscript>
 
-<dialog id="vcf-fqdn-modal" class="confirm-modal wide-modal vcf-fqdn-modal" aria-labelledby="vcf-fqdn-modal-title">
+<dialog id="vcf-fqdn-modal" class="confirm-modal wide-modal vcf-fqdn-modal" aria-labelledby="vcf-fqdn-modal-title"{% if vcf_fqdn_auto_open %} open{% endif %}>
   <form class="confirm-modal-panel form-stack" action="{{ management_ui_root }}/vcf-helper/generated-fqdns" method="post" data-vcf-fqdn-form>
     <input type="hidden" name="csrf" value="{{ csrf_token }}">
-    <input type="hidden" name="populated_revision" value="" data-vcf-fqdn-populated-revision>
+    <input type="hidden" name="populated_revision" value="{{ vcf_helper_populated_revision }}" data-vcf-fqdn-populated-revision>
     <div class="confirm-modal-body">
       <p class="kicker">VCF Helper</p>
       <h2 id="vcf-fqdn-modal-title">Pre-fill Generated FQDNs</h2>
@@ -183,6 +184,7 @@
           data-target-components='{{ vcf_helper_target_components | tojson }}'
           data-existing-fqdns='{{ vcf_helper_existing_fqdns | tojson }}'
           data-existing-address-records='{{ vcf_helper_existing_address_records | tojson }}'
+          data-population='{{ vcf_helper_population | tojson }}'
         >
           {% for row in vcf_helper_rows %}
             <tr data-vcf-fqdn-row="{{ row.host }}">
@@ -204,7 +206,8 @@
               </td>
               <td data-vcf-fqdn-value>{{ row.fqdn }}</td>
               {% set existing_addresses = vcf_helper_existing_address_records.get(row.fqdn, []) %}
-              <td data-vcf-fqdn-status{% if not existing_addresses %} class="muted"{% endif %}>{{ existing_addresses|join(", ") if existing_addresses else ("existing record skipped" if row.fqdn in vcf_helper_existing_fqdns else "select Populate to review") }}</td>
+              {% set reviewed_addresses = vcf_helper_review_address_records.get(row.fqdn, []) %}
+              <td data-vcf-fqdn-status{% if not reviewed_addresses and not existing_addresses %} class="muted"{% endif %}>{{ reviewed_addresses|join(", ") if reviewed_addresses else (existing_addresses|join(", ") if existing_addresses else ("existing record skipped" if row.fqdn in vcf_helper_existing_fqdns else "select Populate to review")) }}</td>
             </tr>
           {% endfor %}
         </tbody>
@@ -213,8 +216,8 @@
     <div class="confirm-modal-actions">
       <button class="button danger" type="button" data-vcf-fqdn-delete>Delete generated records</button>
       <button class="button ghost" value="cancel" type="button" data-vcf-fqdn-modal-cancel>Cancel</button>
-      <button class="button secondary" type="button" data-vcf-fqdn-populate>Populate</button>
-      <button class="button primary" type="submit" data-vcf-fqdn-submit disabled>Create DNS records</button>
+      <button class="button secondary" type="submit" formaction="{{ management_ui_root }}/vcf-helper/generated-fqdns/populate" data-vcf-fqdn-populate>Populate</button>
+      <button class="button primary" type="submit" data-vcf-fqdn-submit{% if not vcf_helper_populated_revision %} disabled{% endif %}>Create DNS records</button>
     </div>
   </form>
 </dialog>

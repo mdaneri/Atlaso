@@ -156,6 +156,8 @@ review. Create also recomputes current DNS and DHCP availability and rejects the
 no longer match the signed plan, requiring Populate again instead of silently changing reviewed addresses.
 If inputs change while a Populate request is still running, Atlaso discards that superseded response and requires a
 fresh Populate instead of displaying or enabling an obsolete plan.
+Without JavaScript, Populate submits the same inputs to a server-rendered review stage. That response displays the
+planned allocation, carries the signed revision, and enables Create DNS records for the reviewed values.
 
 Creating records then requires confirmation. The modal remains open after creation so assigned addresses can be
 reviewed. When every displayed FQDN has an A or AAAA address, the primary action changes to `Done`; `Done` closes the

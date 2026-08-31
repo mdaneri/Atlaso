@@ -477,6 +477,10 @@ def build_router(dependencies: VcfWorkflowsUiDependencies) -> VcfWorkflowsUiRout
             "vcf_trust_auto_open": vcf_trust_auto_open,
             "ldap_vcf_auto_open": ldap_vcf_auto_open,
             "ldap_generate_auto_open": ldap_generate_auto_open,
+            "vcf_fqdn_auto_open": False,
+            "vcf_helper_populated_revision": "",
+            "vcf_helper_population": {},
+            "vcf_helper_review_address_records": {},
             "appliance_apply_status": dnsmasq_apply_status(db, dns_context),
             **(extra or {}),
         }
@@ -1733,7 +1737,7 @@ def build_router(dependencies: VcfWorkflowsUiDependencies) -> VcfWorkflowsUiRout
         csrf: str = Form(...),
         identity: Identity = Depends(require_session_identity),
         db: Session = Depends(get_db),
-    ) -> JSONResponse:
+    ) -> JSONResponse | HTMLResponse:
         """Validate and stage one non-mutating generated-FQDN review.
 
         Args:
@@ -1767,9 +1771,37 @@ def build_router(dependencies: VcfWorkflowsUiDependencies) -> VcfWorkflowsUiRout
             component_keys=component_keys,
             hostnames=hostnames,
         )
-        if errors:
+        fetch_response = request.headers.get("X-Atlaso-VCF-Helper") == "1"
+        if errors and fetch_response:
             return JSONResponse(
                 {"status": "error", "planned": [], "skipped": skipped, "errors": errors},
+                status_code=422,
+            )
+        page_context = (
+            None
+            if fetch_response
+            else vcf_submitted_fqdn_page_context(
+                db,
+                identity,
+                target=target,
+                domain=domain,
+                prefix=prefix,
+                suffix=suffix,
+                start_ipv4=start_ipv4,
+                component_keys=component_keys,
+                hostnames=hostnames,
+            )
+        )
+        if errors:
+            assert page_context is not None
+            return render(
+                request,
+                "vcf_helper.html",
+                {
+                    **page_context,
+                    "vcf_fqdn_auto_open": True,
+                    "vcf_helper_errors": errors,
+                },
                 status_code=422,
             )
         revision = _vcf_fqdn_input_revision(
@@ -1783,17 +1815,38 @@ def build_router(dependencies: VcfWorkflowsUiDependencies) -> VcfWorkflowsUiRout
             component_keys=component_keys,
             hostnames=hostnames,
         )
-        return JSONResponse(
+        populated_revision = _vcf_fqdn_population_token(
+            inputs=revision,
+            planned=planned,
+            skipped=skipped,
+        )
+        population = {
+            "status": "populated",
+            "planned": planned,
+            "skipped": skipped,
+            "populated_revision": populated_revision,
+        }
+        if fetch_response:
+            return JSONResponse(population)
+        assert page_context is not None
+        review_address_records = {
+            str(row.get("fqdn") or ""): [str(row.get("address") or "")]
+            for row in [*planned, *skipped]
+            if row.get("fqdn") and row.get("address")
+        }
+        return render(
+            request,
+            "vcf_helper.html",
             {
-                "status": "populated",
-                "planned": planned,
-                "skipped": skipped,
-                "populated_revision": _vcf_fqdn_population_token(
-                    inputs=revision,
-                    planned=planned,
-                    skipped=skipped,
-                ),
-            }
+                **page_context,
+                "vcf_fqdn_auto_open": True,
+                "vcf_helper_populated_revision": populated_revision,
+                "vcf_helper_population": {
+                    "planned": planned,
+                    "skipped": skipped,
+                },
+                "vcf_helper_review_address_records": review_address_records,
+            },
         )
 
     @router.post("/vcf-helper/generated-fqdns", response_model=None)

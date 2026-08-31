@@ -12543,7 +12543,8 @@ function initializeVcfFqdnGenerator() {
   const suffix = form.querySelector("[data-vcf-fqdn-suffix]");
   const domain = form.querySelector("[data-vcf-fqdn-domain]");
   const startAddress = form.querySelector("[data-vcf-fqdn-start-ipv4]");
-  let currentPayload = {};
+  const populationRows = form.querySelector("[data-vcf-fqdn-rows]");
+  let currentPayload = JSON.parse(populationRows?.dataset.population || "{}");
   let populationGeneration = 0;
   vcfFqdnSeedHostnameStateFromRows();
   const invalidatePopulation = ({ preserveRows = false } = {}) => {
@@ -12651,7 +12652,8 @@ function initializeVcfFqdnGenerator() {
     }
   };
   if (populateButton instanceof HTMLButtonElement) {
-    populateButton.addEventListener("click", async () => {
+    populateButton.addEventListener("click", async (event) => {
+      event.preventDefault();
       if (!vcfFqdnRowsAreValid()) {
         setVcfFqdnMessage("[data-vcf-fqdn-errors]", "Review every hostname and remove duplicates before populating the generated FQDN plan.");
         invalidatePopulation();
