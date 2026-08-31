@@ -2384,6 +2384,36 @@
       ],
       "generated": "Do not perform implementation or pull-request delivery.",
       "expected_holds": []
+    },
+    {
+      "name": "hyphenated-pull-request-holds-are-preserved",
+      "default_merge_authority": true,
+      "instructions": [
+        {
+          "text": "Implement issue #602, but do not merge this pull-request.",
+          "add_holds": [
+            "do not merge"
+          ]
+        },
+        {
+          "text": "Keep this pull-request open.",
+          "add_holds": [
+            "leave open"
+          ]
+        },
+        {
+          "text": "Only submit this pull-request.",
+          "add_holds": [
+            "pr only"
+          ]
+        }
+      ],
+      "generated": "Do not merge this pull-request; keep this pull-request open; pull-request only.",
+      "expected_holds": [
+        "do not merge",
+        "leave open",
+        "pr only"
+      ]
     }
   ]
 }

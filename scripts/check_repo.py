@@ -534,18 +534,22 @@ EXPLICIT_MERGE_HOLD_PATTERNS = {
         "pull request only",
         "pr only",
         "only open the pull request",
+        "only open this pull request",
         "only open a pull request",
         "only open a pr",
         "only open an pr",
         "only create the pull request",
+        "only create this pull request",
         "only create a pull request",
         "only create a pr",
         "only create an pr",
         "only submit the pull request",
+        "only submit this pull request",
         "only submit a pull request",
         "only submit a pr",
         "only submit an pr",
         "only prepare the pull request",
+        "only prepare this pull request",
         "only prepare a pull request",
         "only prepare a pr",
         "only prepare an pr",
@@ -1083,6 +1087,7 @@ def explicit_merge_holds(text: str) -> tuple[str, ...]:
         text: Current user or maintainer instruction text to inspect.
     """
     normalized = " ".join(text.casefold().split())
+    normalized = normalized.replace("pull-request", "pull request")
     normalized = AUTO_MERGE_ONLY_PATTERN.sub(
         "keep github auto-merge disabled", normalized
     )
@@ -1251,6 +1256,7 @@ def merge_hold_directions(
         active_issue: Issue owned by the active task, when known.
     """
     normalized = " ".join(text.casefold().split())
+    normalized = normalized.replace("pull-request", "pull request")
     normalized = AUTO_MERGE_ONLY_PATTERN.sub(
         "keep github auto-merge disabled", normalized
     )

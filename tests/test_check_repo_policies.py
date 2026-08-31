@@ -733,6 +733,19 @@ def test_merge_hold_directions_recognizes_this_pull_request_hold() -> None:
     ) == {"leave open": "add"}
 
 
+def test_merge_hold_directions_recognizes_hyphenated_pull_request_holds() -> None:
+    """Verify common hyphenated pull-request wording preserves every hold type."""
+    assert merge_hold_directions("Do not merge this pull-request.") == {
+        "do not merge": "add"
+    }
+    assert merge_hold_directions("Keep this pull-request open.") == {
+        "leave open": "add"
+    }
+    assert merge_hold_directions("Only submit this pull-request.") == {
+        "pr only": "add"
+    }
+
+
 def test_merge_hold_directions_recognizes_wait_for_ci_condition() -> None:
     """Verify waiting for CI before merge remains an explicit hold."""
     assert merge_hold_directions(
