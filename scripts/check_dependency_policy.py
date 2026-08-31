@@ -348,6 +348,33 @@ def _shell_tokens(segment: str) -> list[str]:
         return []
 
 
+def _segment_uses_subshell(segment: str) -> bool:
+    """Return whether a segment contains unquoted shell grouping syntax.
+
+    Args:
+        segment: Command text with outer separators already removed.
+    """
+    quote = ""
+    index = 0
+    while index < len(segment):
+        character = segment[index]
+        if character == "\\" and quote != "'" and index + 1 < len(segment):
+            index += 2
+            continue
+        if character == "`" and quote != "'" and index + 1 < len(segment):
+            index += 2
+            continue
+        if character in {"'", '"'}:
+            if not quote:
+                quote = character
+            elif quote == character:
+                quote = ""
+        elif not quote and character in {"(", ")"}:
+            return True
+        index += 1
+    return False
+
+
 def _segment_directory_action(segment: str) -> tuple[str, str] | None:
     """Return a shell directory-stack action performed by one command segment.
 
@@ -403,6 +430,10 @@ def _segment_requirement_paths(segment: str) -> list[str]:
                         and PIP_MODULE_RE.fullmatch(tokens[option_index + 1])
                     ):
                         pip_index = option_index + 1
+                    break
+                if option.startswith("-m") and len(option) > 2:
+                    if PIP_MODULE_RE.fullmatch(option[2:]):
+                        pip_index = option_index
                     break
                 if option in {"-", "--", "-c"} or not option.startswith("-"):
                     break
@@ -643,6 +674,11 @@ def _workflow_requirement_paths(lines: list[str]) -> list[tuple[int, str, str]]:
             active_directory = working_directory
             directory_stack = []
         for segment in _shell_command_segments(command):
+            if _segment_uses_subshell(segment):
+                # Grouped commands have their own directory lifetime. Reject any
+                # later requirement in this run scope instead of trusting a
+                # partial shell-state interpretation.
+                active_directory = "${{ unsupported-shell-subshell }}"
             directory_action = _segment_directory_action(segment)
             if directory_action is not None:
                 action, directory_change = directory_action
