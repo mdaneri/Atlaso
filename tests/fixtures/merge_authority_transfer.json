@@ -3175,6 +3175,56 @@
       ],
       "generated": "Complete the guarded merge after the release job succeeds.",
       "expected_holds": []
+    },
+    {
+      "name": "explanatory-fix-review-remains-ineligible",
+      "default_merge_authority": false,
+      "instructions": [
+        {
+          "text": "Review the PR; describe how to fix it."
+        }
+      ],
+      "generated": "Report the review findings and explanatory fix guidance without implementation or merge delivery.",
+      "expected_holds": []
+    },
+    {
+      "name": "discussion-preamble-hold-is-preserved",
+      "default_merge_authority": true,
+      "instructions": [
+        {
+          "text": "Implement issue #602."
+        },
+        {
+          "text": "After discussing it, do not merge this PR.",
+          "add_holds": [
+            "do not merge"
+          ]
+        }
+      ],
+      "generated": "Preserve the explicit do not merge hold.",
+      "expected_holds": [
+        "do not merge"
+      ]
+    },
+    {
+      "name": "approve-the-merge-withdraws-approval-hold",
+      "default_merge_authority": true,
+      "instructions": [
+        {
+          "text": "Implement issue #602, but wait for my approval before merging.",
+          "add_holds": [
+            "wait for approval"
+          ]
+        },
+        {
+          "text": "I approve the merge.",
+          "remove_holds": [
+            "wait for approval"
+          ]
+        }
+      ],
+      "generated": "Complete the guarded merge when every gate passes.",
+      "expected_holds": []
     }
   ]
 }

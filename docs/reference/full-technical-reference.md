@@ -1512,8 +1512,10 @@ First boot encrypts the signer with the VM's unique
 `ATLASO_SECRETS_KEY`, deletes staging, and issues a unique
 `appliance:https` leaf for that VM's FQDN/IP. Default waiting
 requires the downloaded root fingerprint to match the checked-in certificate; use `-WaitForIp:$false` to opt out.
-`-TrustRootCa` changes Windows trust only when that exact certificate is not already trusted, while `-NoStart` is
-rejected so the signer cannot remain in a powered-off VMX. Rotate the development root by updating the repository PEM
+`-TrustRootCa` changes Windows trust only when that exact certificate is not already trusted. A successful import uses
+a bounded exact raw-certificate readback retry to tolerate stale in-process provider visibility without weakening the
+trust match. `-NoStart` is rejected so the signer cannot remain in a powered-off VMX. Rotate the development root by
+updating the repository PEM
 and concealed 1Password key together and redeploying every normal test VM; never reuse it outside local testing.
 
 After startup, the wrapper reads the VM's public

@@ -799,6 +799,10 @@ def test_merge_hold_directions_recognizes_direct_authorization() -> None:
         "You have my approval to merge this PR.",
         active_holds=("wait for approval",),
     ) == {"wait for approval": "remove"}
+    assert merge_hold_directions(
+        "I approve the merge.",
+        active_holds=("wait for approval",),
+    ) == {"wait for approval": "remove"}
 
 
 def test_merge_hold_directions_recognizes_direct_merge_imperatives() -> None:
@@ -916,6 +920,9 @@ def test_merge_hold_directions_preserves_completed_action_hold() -> None:
     """Verify a completed-action lead-in retains its current explicit hold."""
     assert merge_hold_directions(
         "After I reviewed the status, do not merge this PR."
+    ) == {"do not merge": "add"}
+    assert merge_hold_directions(
+        "After discussing it, do not merge this PR."
     ) == {"do not merge": "add"}
 
 
@@ -1267,6 +1274,9 @@ def test_source_authority_excludes_diagnostic_how_to_questions() -> None:
     )
     assert not source_has_default_merge_authority(
         ("We discussed how to fix issue #602.",)
+    )
+    assert not source_has_default_merge_authority(
+        ("Review the PR; describe how to fix it.",)
     )
 
 

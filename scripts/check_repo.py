@@ -902,6 +902,11 @@ DEFAULT_MERGE_AUTHORITY_NEGATED_MUTATION = re.compile(
     r"commit|push)"
     r"\b[^;.!?]*"
 )
+DEFAULT_MERGE_AUTHORITY_EXPLANATORY_FIX = re.compile(
+    r"\b(?:describe|explain|outline|summarize|document)\s+"
+    r"(?:how|what|whether)\b[^.!?]{0,80}"
+    r"\b(?:implement|fix|patch|resolve|solve|change|modify|edit)\b[^.!?]*"
+)
 DEFAULT_MERGE_AUTHORITY_SOURCE_MARKERS = re.compile(
     r"\b(?:implement|fix|patch|resolve|solve|deliver|refactor|repair)\b|"
     r"\bcomplete\s+(?:the\s+)?implementation\b|"
@@ -954,9 +959,11 @@ MERGE_HOLD_CONDITIONAL_CONTEXT = re.compile(
     r"\b(?:if|when|once|after|unless)\b[^.!?]{0,100}$"
 )
 MERGE_HOLD_COMPLETED_ACTION_CONTEXT = re.compile(
-    r"\bafter\s+(?:i|we|(?:the\s+)?(?:user|maintainer|owner))\s+"
-    r"(?:(?:reviewed|checked|examined|inspected|confirmed|decided|evaluated|"
-    r"assessed|read|saw|received|completed|finished)\b[^.!?]{0,80})$"
+    r"\bafter\s+(?:(?:i|we|(?:the\s+)?(?:user|maintainer|owner))\s+"
+    r"(?:reviewed|checked|examined|inspected|confirmed|decided|evaluated|"
+    r"assessed|read|saw|received|completed|finished)|"
+    r"(?:discussing|reviewing|checking|examining|inspecting|confirming|"
+    r"evaluating|assessing)\b)[^.!?]{0,80}$"
 )
 DEFAULT_MERGE_AUTHORITY_ACTION_BOUNDARY = re.compile(
     r"(?:[;,.!?]+|\s+(?:and|then|but)\s+)"
@@ -1022,7 +1029,8 @@ MERGE_HOLD_STANDALONE_PERMISSION = re.compile(
     r"you\s+have\s+(?:(?:my|our|your)\s+)?"
     r"(?:permission|authorization|approval)\s+to\s+merge"
     r"(?:\s+(?:(?:this|the)\s+)?(?:pull request|pr))?|"
-    r"(?P<approval>i\s+approve\s+(?:(?:this|the)\s+)?(?:pull request|pr))|"
+    r"(?P<approval>i\s+approve\s+(?:(?:(?:this|the)\s+)?"
+    r"(?:pull request|pr)|the\s+merge))|"
     r"go ahead and merge|"
     r"proceed (?:with the merge|with merging|to merge)(?: now)?)\b"
 )
@@ -1852,6 +1860,8 @@ def source_has_default_merge_authority(instructions: tuple[str, ...]) -> bool:
         normalized = " ".join(instruction.casefold().split())
         exclusion_matches = tuple(
             DEFAULT_MERGE_AUTHORITY_SOURCE_EXCLUSIONS.finditer(normalized)
+        ) + tuple(
+            DEFAULT_MERGE_AUTHORITY_EXPLANATORY_FIX.finditer(normalized)
         ) + tuple(
             DEFAULT_MERGE_AUTHORITY_INTERROGATIVE_REVIEW.finditer(normalized)
         ) + tuple(
