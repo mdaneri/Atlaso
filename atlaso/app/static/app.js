@@ -12316,9 +12316,13 @@ function vcfFqdnAddressFor(fqdn, payload = {}) {
 }
 
 function vcfFqdnCompletionAddressFor(fqdn, payload = {}) {
+  const planned = Array.isArray(payload.planned) ? payload.planned : [];
   const created = Array.isArray(payload.created) ? payload.created : [];
   const skipped = Array.isArray(payload.skipped) ? payload.skipped : [];
   const existing = vcfFqdnExistingData();
+  if (planned.some((row) => row.fqdn === fqdn)) {
+    return "";
+  }
   const createdRow = created.find((row) => row.fqdn === fqdn);
   if (createdRow?.address) {
     return createdRow.address;

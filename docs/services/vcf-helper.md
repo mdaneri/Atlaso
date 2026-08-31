@@ -158,6 +158,7 @@ If inputs change while a Populate request is still running, Atlaso discards that
 fresh Populate instead of displaying or enabling an obsolete plan.
 Without JavaScript, Populate submits the same inputs to a server-rendered review stage. That response displays the
 planned allocation, carries the signed revision, and enables Create DNS records for the reviewed values.
+Planned rows remain incomplete even if the page was rendered with an address that was removed before Populate.
 
 Creating records then requires confirmation. The modal remains open after creation so assigned addresses can be
 reviewed. When every displayed FQDN has an A or AAAA address, the primary action changes to `Done`; `Done` closes the
@@ -212,8 +213,9 @@ New records use the catalog component description, such as `vCenter` or `VCF Aut
 Helper ownership is stored separately in structured record metadata with source `vcf_helper`, the immutable catalog
 component key, and the reviewed generated hostname label.
 
-`Delete generated records` is enabled only when at least one displayed FQDN has a persisted A or AAAA address; proposed
-Populate addresses alone never enable deletion. Deletion requires confirmation and submits the same exact
+`Delete generated records` is enabled only when at least one displayed FQDN has a currently persisted A or AAAA
+address; proposed Populate addresses and stale page snapshots alone never enable deletion. Deletion requires
+confirmation and submits the same exact
 component-to-hostname mapping used by creation. Atlaso removes a record only
 when its FQDN and helper metadata prove ownership for that submitted component and reviewed hostname. Unrelated,
 manually created, mismatched, and legacy description-only records are preserved even when their names or descriptions

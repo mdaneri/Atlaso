@@ -169,13 +169,17 @@ test("VCF creation stays disabled until Populate returns an exact review revisio
 test("VCF planned addresses preview without masquerading as completed creation", () => {
   const context = vm.createContext({ Array, Boolean });
   vm.runInContext(
-    `function vcfFqdnExistingData() { return { addressRecords: {} }; }
-     function vcfFqdnCurrentFqdns() { return ["vc01.example.internal"]; }
+    `let currentFqdns = ["vc01.example.internal"];
+     function vcfFqdnExistingData() {
+       return { addressRecords: { "vc01.example.internal": ["192.168.50.9"] } };
+     }
+     function vcfFqdnCurrentFqdns() { return currentFqdns; }
      ${functionSource("vcfFqdnCompletionAddressFor")}
      ${functionSource("vcfFqdnHasAnyAddress")}
      ${functionSource("vcfFqdnRowsHaveAddresses")}
      globalThis.complete = vcfFqdnRowsHaveAddresses;
-     globalThis.deletable = vcfFqdnHasAnyAddress;`,
+     globalThis.deletable = vcfFqdnHasAnyAddress;
+     globalThis.setCurrentFqdns = (values) => { currentFqdns = values; };`,
     context,
   );
   const planned = [{ fqdn: "vc01.example.internal", address: "192.168.50.10" }];
@@ -184,6 +188,12 @@ test("VCF planned addresses preview without masquerading as completed creation",
   assert.equal(context.deletable({ planned }), false);
   assert.equal(context.complete({ created }), true);
   assert.equal(context.deletable({ created }), true);
+
+  context.setCurrentFqdns(["vc01.example.internal", "nsx01.example.internal"]);
+  assert.equal(context.complete({
+    planned,
+    skipped: [{ fqdn: "nsx01.example.internal", address: "192.168.50.11" }],
+  }), false);
 });
 
 test("VCF hostname review invalidation preserves the focused row", () => {
