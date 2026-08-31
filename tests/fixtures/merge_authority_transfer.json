@@ -3115,6 +3115,21 @@
       ]
     },
     {
+      "name": "other-pr-merge-disapproval-is-ignored",
+      "default_merge_authority": true,
+      "active_pull_request": 620,
+      "instructions": [
+        {
+          "text": "Implement issue #602 and deliver PR #620."
+        },
+        {
+          "text": "I don't approve of merging PR #999."
+        }
+      ],
+      "generated": "Complete the guarded merge for PR #620 when every gate passes.",
+      "expected_holds": []
+    },
+    {
       "name": "actor-wait-before-merge-is-preserved",
       "default_merge_authority": true,
       "instructions": [

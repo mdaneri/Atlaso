@@ -708,6 +708,14 @@ def test_merge_hold_directions_recognizes_modal_merge_prohibitions() -> None:
 def test_merge_hold_directions_scopes_numbered_pr_permission() -> None:
     """Verify permission for another numbered PR cannot withdraw this task's hold."""
     assert merge_hold_directions(
+        "I don't approve of merging PR #999.",
+        active_pull_request=620,
+    ) == {}
+    assert merge_hold_directions(
+        "I don't approve of merging PR #620.",
+        active_pull_request=620,
+    ) == {"do not merge": "add"}
+    assert merge_hold_directions(
         "You may merge PR #621.",
         active_holds=("do not merge",),
         active_pull_request=620,
