@@ -898,7 +898,7 @@ MERGE_AUTHORITY_COORDINATED_CLAUSE_BOUNDARY = re.compile(
     r",\s+(?:but|and)\s+|\s+but\s+"
 )
 MERGE_HOLD_STANDALONE_PERMISSION = re.compile(
-    r"\b(?:merge now|(?:you\s+)?(?:may|can)\s+merge"
+    r"\b(?:merge now|you\s+(?:may|can)\s+merge"
     r"(?:\s+(?:(?:this|the)\s+)?(?:pull request|pr))?(?:\s+now)?|"
     r"go ahead and merge|"
     r"proceed (?:with the merge|with merging|to merge)(?: now)?)\b"
@@ -952,6 +952,8 @@ MERGE_HOLD_NON_PR_OBJECT = re.compile(
     r"(?:(?:this|the)\s+)?(?:branch|change|commit)\b|"
     r"(?:hold|instruction|directive)s?\b|until\b|before\b|after\b|unless\b|"
     r"because\b|while\b|when\b|yet\b|now\b|automatically\b|"
+    r"into\s+(?:(?:the\s+)?(?:main|master|default|target|base)\s+branch|"
+    r"main|master)\b|"
     r"(?:to|for)\s+(?:merge|merging)\b|"
     r"for\s+issue(?:\s+#\d+)?\b|"
     r"from\s+(?:(?:the)\s+)?(?:maintainer|owner|me|us|you)\b|"

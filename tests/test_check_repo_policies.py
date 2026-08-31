@@ -689,12 +689,23 @@ def test_merge_hold_directions_ignores_non_pr_merge_permission() -> None:
         "You may merge the database migration.",
         active_holds=("do not merge",),
     ) == {}
+    assert merge_hold_directions(
+        "Only maintainers may merge this PR.",
+        active_holds=("do not merge",),
+    ) == {}
 
 
 def test_merge_hold_directions_preserves_completed_action_hold() -> None:
     """Verify a completed-action lead-in retains its current explicit hold."""
     assert merge_hold_directions(
         "After I reviewed the status, do not merge this PR."
+    ) == {"do not merge": "add"}
+
+
+def test_merge_hold_directions_preserves_merge_destination_hold() -> None:
+    """Verify a named code-merge destination remains a pull-request hold."""
+    assert merge_hold_directions(
+        "Implement issue #602, but do not merge into main."
     ) == {"do not merge": "add"}
 
 

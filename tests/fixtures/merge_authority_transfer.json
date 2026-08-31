@@ -2338,7 +2338,16 @@
           "text": "You may merge the database migration."
         },
         {
+          "text": "Only maintainers may merge this PR."
+        },
+        {
           "text": "After I reviewed the status, do not merge this PR.",
+          "add_holds": [
+            "do not merge"
+          ]
+        },
+        {
+          "text": "Implement issue #602, but do not merge into main.",
           "add_holds": [
             "do not merge"
           ]
