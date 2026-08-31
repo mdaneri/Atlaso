@@ -510,18 +510,11 @@ verify_bootstrap_powercli() {
 verify_bootstrap_powercli
 
 install_powershell_profile() {
-  POWERSHELL_HOME="$(dirname "$(readlink -f "$(command -v pwsh)")")"
-  case "$POWERSHELL_HOME" in
-    /opt/microsoft/powershell/7 | /usr/share/powershell) ;;
-    *)
-      echo "PowerShell resolved to an unsupported global profile directory: $POWERSHELL_HOME" >&2
-      exit 2
-      ;;
-  esac
-  # Re-resolve the package-owned runtime home after every mutating Photon update.
-  install -o root -g root -m 0644 \
-    "$ATLASO_HOME/image/common/powershell/profile.ps1" \
-    "$POWERSHELL_HOME/profile.ps1"
+  # Re-resolve and validate the package-owned runtime home after every mutating
+  # Photon update before atomically replacing the complete Atlaso-owned profile.
+  python3 "$ATLASO_HOME/scripts/appliance/atlaso_install_powershell_profile.py" \
+    --pwsh-path "$(command -v pwsh)" \
+    --profile-source "$ATLASO_HOME/bin/atlaso-powershell-profile.ps1"
 }
 
 default_boot_kernel() {
@@ -646,6 +639,12 @@ ln -sfn "$ATLASO_HOME/.venv/bin/atlaso-vault" /usr/bin/atlaso-vault
 install -o root -g root -m 0644 \
   "$ATLASO_HOME/image/common/powershell/atlaso-vault-profile.ps1" \
   "$ATLASO_HOME/bin/atlaso-vault-profile.ps1"
+# Promote the repository profile into the already root-owned runtime directory
+# before the privileged installer reads it. Packer uploads repository content as
+# its communicator user, so the immutable destination must not trust that owner.
+install -o root -g root -m 0644 \
+  "$ATLASO_HOME/image/common/powershell/profile.ps1" \
+  "$ATLASO_HOME/bin/atlaso-powershell-profile.ps1"
 # The complete global profile is Atlaso-owned so producer state cannot inject commands.
 install_powershell_profile
 "$ATLASO_HOME/.venv/bin/python" "$ATLASO_HOME/scripts/check_photon_compatibility.py"
