@@ -23,6 +23,10 @@ const formattingTags = new Set([
 const svgHtmlIntegrationTags = new Set(['desc', 'foreignobject', 'title'])
 const mathHtmlIntegrationTags = new Set(['mi', 'mn', 'mo', 'ms', 'mtext'])
 const mathHtmlIntegrationExceptions = new Set(['malignmark', 'mglyph'])
+const svgNonRenderingTags = new Set([
+  'clippath', 'defs', 'desc', 'filter', 'lineargradient', 'marker', 'mask',
+  'metadata', 'pattern', 'radialgradient', 'symbol'
+])
 const transformFunctions = new Set([
   'matrix', 'matrix3d', 'perspective', 'rotate', 'rotate3d', 'rotatex', 'rotatey',
   'rotatez', 'scale', 'scale3d', 'scalex', 'scaley', 'scalez', 'skew', 'skewx',
@@ -1261,6 +1265,8 @@ function updateHtmlSuppression (content, inlineContext = false) {
         tag,
         irreversible: suppressedTags.has(tag) || suppression.irreversible || (
           foreign && (suppression.display ?? presentationDisplay) === 'none'
+        ) || (
+          foreignNamespace === 'svg' && svgNonRenderingTags.has(tag)
         ) || (
           foreign &&
           (parseOpacityValue(suppression.opacity ?? presentationOpacity) ?? 1) <= 0
