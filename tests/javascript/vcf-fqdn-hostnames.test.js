@@ -150,6 +150,62 @@ test("VCF hostname validation accepts one normalized DNS label and rejects unsaf
 test("VCF hostname rows submit immutable component keys beside reviewed values", () => {
   assert.match(appSource, /componentInput\.name = "component_key"/);
   assert.match(appSource, /hostnameInput\.name = "hostname"/);
+  assert.match(appSource, /hostnameInput\.setAttribute\("aria-label", `Hostname for \$\{component\.description \|\| component\.host\}`\)/);
   assert.match(appSource, /hostnameInput\.setAttribute\("aria-invalid", validationError \? "true" : "false"\)/);
   assert.match(appSource, /new FormData\(form\)/);
+});
+
+test("VCF creation stays disabled until Populate returns an exact review revision", () => {
+  assert.match(appSource, /const populateButton = form\.querySelector\("\[data-vcf-fqdn-populate\]"\)/);
+  assert.match(appSource, /let currentPayload = JSON\.parse\(populationRows\?\.dataset\.population \|\| "\{\}"\)/);
+  assert.match(appSource, /populateButton\.addEventListener\("click", async \(event\) => \{\s*event\.preventDefault\(\)/);
+  assert.match(appSource, /populatedRevision\.value = String\(payload\.populated_revision \|\| ""\)/);
+  assert.match(appSource, /const payload = await submitRequest\(`\$\{form\.action\}\/populate`, "populated"\)/);
+  assert.match(appSource, /populatedRevision\.value = ""/);
+  assert.match(appSource, /form\.addEventListener\("atlaso:vcf-fqdn-invalidate", \(event\) =>/);
+  assert.match(appSource, /!vcfFqdnRowsAreValid\(\) \|\| !vcfFqdnIsPopulated\(\)/);
+});
+
+test("VCF planned addresses preview without masquerading as completed creation", () => {
+  const context = vm.createContext({ Array, Boolean });
+  vm.runInContext(
+    `let currentFqdns = ["vc01.example.internal"];
+     function vcfFqdnExistingData() {
+       return { addressRecords: { "vc01.example.internal": ["192.168.50.9"] } };
+     }
+     function vcfFqdnCurrentFqdns() { return currentFqdns; }
+     ${functionSource("vcfFqdnCompletionAddressFor")}
+     ${functionSource("vcfFqdnHasAnyAddress")}
+     ${functionSource("vcfFqdnRowsHaveAddresses")}
+     globalThis.complete = vcfFqdnRowsHaveAddresses;
+     globalThis.deletable = vcfFqdnHasAnyAddress;
+     globalThis.setCurrentFqdns = (values) => { currentFqdns = values; };`,
+    context,
+  );
+  const planned = [{ fqdn: "vc01.example.internal", address: "192.168.50.10" }];
+  const created = [{ fqdn: "vc01.example.internal", address: "192.168.50.10" }];
+  assert.equal(context.complete({ planned }), false);
+  assert.equal(context.deletable({ planned }), false);
+  assert.equal(context.complete({ created }), true);
+  assert.equal(context.deletable({ created }), true);
+
+  context.setCurrentFqdns(["vc01.example.internal", "nsx01.example.internal"]);
+  assert.equal(context.complete({
+    planned,
+    skipped: [{ fqdn: "nsx01.example.internal", address: "192.168.50.11" }],
+  }), false);
+});
+
+test("VCF hostname review invalidation preserves the focused row", () => {
+  assert.match(appSource, /detail: \{ preserveRows: true \}/);
+  assert.match(appSource, /if \(preserveRows\) \{\s*refreshVcfFqdnRenderedRows\(\)/);
+  assert.match(appSource, /const statusPayload = vcfFqdnIsPopulated\(\) \? payload : \{\}/);
+});
+
+test("VCF Populate discards responses superseded by later input", () => {
+  assert.match(appSource, /let populationGeneration = 0/);
+  assert.match(appSource, /populationGeneration \+= 1/);
+  assert.match(appSource, /const requestGeneration = populationGeneration/);
+  assert.match(appSource, /if \(requestGeneration !== populationGeneration\)/);
+  assert.match(appSource, /inputs changed while Populate was running/);
 });

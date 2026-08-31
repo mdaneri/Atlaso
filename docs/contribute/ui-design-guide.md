@@ -97,6 +97,12 @@ Every Tabulator collection must:
   values beyond recognition; and
 - preserve backend contracts, authorization checks, CSRF/session protections, and desired-state boundaries.
 
+When a primary grid is the main content of a wide desktop panel, size it from the grid's actual viewport position to
+the available viewport bottom and recalculate on window and panel resize. Retain a practical minimum height. Clear that
+dynamic height for narrow, zero-width, or hidden layouts so the compact CSS fallback governs responsive tabs and panels.
+Keep horizontal overflow inside the grid shell and preserve the same add-row, empty, single-row, and many-row behavior
+at every height.
+
 ### Direct editing
 
 Use direct editing only when each field can be understood and validated without a sequence of dependent choices.
