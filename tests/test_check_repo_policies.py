@@ -726,12 +726,18 @@ def test_merge_hold_directions_recognizes_direct_merge_imperatives() -> None:
     assert merge_hold_directions(
         "Please merge this pull request.", active_holds=("do not merge",)
     ) == {"do not merge": "remove"}
+    assert merge_hold_directions(
+        "We are not ready to merge this PR.", active_holds=("do not merge",)
+    ) == {}
 
 
 def test_merge_hold_directions_recognizes_approval_needed() -> None:
     """Verify approval-needed wording remains an explicit resumable hold."""
     assert merge_hold_directions(
         "Implement issue #602, but you need my approval before merging."
+    ) == {"wait for approval": "add"}
+    assert merge_hold_directions(
+        "Implement issue #602, but please merge this PR after I approve."
     ) == {"wait for approval": "add"}
 
 

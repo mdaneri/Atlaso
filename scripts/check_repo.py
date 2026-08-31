@@ -946,8 +946,8 @@ MERGE_AUTHORITY_COORDINATED_CLAUSE_BOUNDARY = re.compile(
     r",\s+(?:but|and)\s+|\s+but\s+"
 )
 MERGE_HOLD_STANDALONE_PERMISSION = re.compile(
-    r"\b(?:merge now|(?:please\s+)?merge\s+"
-    r"(?:(?:this|the)\s+)?(?:pull request|pr)(?:\s+now)?|"
+    r"\b(?:(?P<imperative>merge now|(?:please\s+)?merge\s+"
+    r"(?:(?:this|the)\s+)?(?:pull request|pr)(?:\s+now)?)|"
     r"you\s+(?:may|can)\s+merge"
     r"(?:\s+(?:(?:this|the)\s+)?(?:pull request|pr))?(?:\s+now)?|"
     r"i\s+authorize\s+you\s+to\s+merge"
@@ -958,7 +958,8 @@ MERGE_HOLD_STANDALONE_PERMISSION = re.compile(
     r"proceed (?:with the merge|with merging|to merge)(?: now)?)\b"
 )
 MERGE_HOLD_APPROVAL_CONDITION = re.compile(
-    r"\b(?:merge(?: only)?|only merge)\s+"
+    r"\b(?:merge(?: only)?|only merge)"
+    r"(?:\s+(?:(?:this|the)\s+)?(?:pull request|pr))?\s+"
     r"(?:after|when|if|once|until|unless|before)\s+"
     r"(?:(?:i|we|(?:the\s+)?maintainer|"
     r"(?:the\s+)?(?:[a-z][a-z0-9_-]*\s+)?owner)\s+approves?|approved)\b"
@@ -1551,6 +1552,10 @@ def merge_hold_directions(
             and MERGE_HOLD_NEGATED_PERMISSION_REPORT_CONTEXT.search(prefix) is None
             and MERGE_HOLD_NONAUTHORITATIVE_SOURCE_CONTEXT.search(prefix) is None
             and MERGE_HOLD_NONAUTHORITATIVE_SOURCE_CONTEXT.search(suffix) is None
+            and (
+                permission_match.group("imperative") is None
+                or not prefix.strip()
+            )
             and not _hold_targets_non_pr_object(
                 "", normalized, permission_offset, permission
             )

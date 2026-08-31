@@ -2471,6 +2471,41 @@
       "expected_holds": []
     },
     {
+      "name": "nonpermission-infinitive-preserves-current-hold",
+      "default_merge_authority": true,
+      "instructions": [
+        {
+          "text": "Implement issue #602, but do not merge this PR.",
+          "add_holds": [
+            "do not merge"
+          ]
+        },
+        {
+          "text": "We are not ready to merge this PR."
+        }
+      ],
+      "generated": "Preserve the do not merge hold.",
+      "expected_holds": [
+        "do not merge"
+      ]
+    },
+    {
+      "name": "approval-condition-after-pr-object-is-preserved",
+      "default_merge_authority": true,
+      "instructions": [
+        {
+          "text": "Implement issue #602, but please merge this PR after I approve.",
+          "add_holds": [
+            "wait for approval"
+          ]
+        }
+      ],
+      "generated": "Wait for approval before merging.",
+      "expected_holds": [
+        "wait for approval"
+      ]
+    },
+    {
       "name": "coordinated-cancellation-is-ineligible",
       "default_merge_authority": false,
       "instructions": [
