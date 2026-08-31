@@ -313,7 +313,11 @@ def _yaml_value_text(value: object, unsupported: str) -> str:
 
 
 def _is_alias_value(value: str | object) -> bool:
-    """Return whether a YAML value is a bare alias reference."""
+    """Return whether a YAML value is a bare alias reference.
+
+    Args:
+        value: Parsed or source YAML value to inspect.
+    """
     return isinstance(value, str) and bool(ALIAS_RE.fullmatch(value))
 
 
@@ -419,6 +423,11 @@ def _workflow_checkout_sources(
         ref = ""
 
         def apply_checkout_inputs(inputs: dict[str, object]) -> None:
+            """Apply parsed checkout inputs to the current source record.
+
+            Args:
+                inputs: Semantic checkout input values from the workflow step.
+            """
             nonlocal checkout_path, dynamic_path, repository, ref
             if "path" in inputs:
                 path_value = inputs["path"]
