@@ -1139,6 +1139,19 @@ MERGE_RESUMABLE_GATE_CONDITION = re.compile(
     r"(?P<gate>ci|tests?|checks?|validation|builds?|review|deployments?|"
     r"release[- ]jobs?)\b"
 )
+MERGE_RESUMABLE_GATE_FIRST = re.compile(
+    r"\b(?:wait\s+for|await)\s+"
+    r"(?:(?:the|an?)\s+)?(?:(?:[a-z][a-z0-9_-]*\s+){0,2})?"
+    r"(?P<gate>ci|tests?|checks?|validation|builds?|review|deployments?|"
+    r"release[- ]jobs?)\s+before\s+(?:merging|(?:you|i|we)\s+merge)\b"
+)
+MERGE_RESUMABLE_GATE_RESOLUTION = re.compile(
+    r"\b(?:(?:the|an?)\s+)?(?:(?:[a-z][a-z0-9_-]*\s+){0,2})?"
+    r"(?P<gate>ci|tests?|checks?|validation|builds?|review|deployments?|"
+    r"release[- ]jobs?)\s+"
+    r"(?:(?:has|have|is|are)\s+)?"
+    r"(?:passed|succeeded|successful|completed|complete|finished|cleared)\b"
+)
 MERGE_RESUMABLE_GATE_DISPOSITION_PREFIX = re.compile(
     r"\b(?:merge(?!\s+(?:hold|instruction|directive)s?\b)|merging|"
     r"guarded[- ]squash merge|guarded merge|"
@@ -1860,36 +1873,86 @@ def has_affirmative_default_merge_authority(text: str) -> bool:
     return False
 
 
+def _canonical_resumable_merge_gate(gate: str) -> str:
+    """Return the canonical name for one resumable merge gate.
+
+    Args:
+        gate: Raw gate text captured from an instruction.
+
+    Returns:
+        Canonical resumable gate name.
+    """
+    normalized = gate.replace("-", " ")
+    return next(
+        name
+        for stem, name in (
+            ("ci", "ci"),
+            ("test", "test"),
+            ("check", "check"),
+            ("validation", "validation"),
+            ("build", "build"),
+            ("review", "review"),
+            ("deployment", "deployment"),
+            ("release job", "release job"),
+        )
+        if normalized.startswith(stem)
+    )
+
+
+def resumable_merge_gate_directions(text: str) -> dict[str, str]:
+    """Return ordered add/remove directions for resumable merge gates.
+
+    Args:
+        text: Source or generated task text to inspect.
+
+    Returns:
+        Final add or remove direction for each gate mentioned in the text.
+    """
+    normalized = " ".join(text.casefold().split())
+    events: list[tuple[int, str, str]] = []
+    for match in MERGE_RESUMABLE_GATE_CONDITION.finditer(normalized):
+        prefix = normalized[max(0, match.start() - 100) : match.start()]
+        if MERGE_RESUMABLE_GATE_DISPOSITION_PREFIX.search(prefix) is not None:
+            events.append(
+                (
+                    match.start(),
+                    "add",
+                    _canonical_resumable_merge_gate(match.group("gate")),
+                )
+            )
+    events.extend(
+        (
+            match.start(),
+            "add",
+            _canonical_resumable_merge_gate(match.group("gate")),
+        )
+        for match in MERGE_RESUMABLE_GATE_FIRST.finditer(normalized)
+    )
+    events.extend(
+        (
+            match.start(),
+            "remove",
+            _canonical_resumable_merge_gate(match.group("gate")),
+        )
+        for match in MERGE_RESUMABLE_GATE_RESOLUTION.finditer(normalized)
+    )
+    directions: dict[str, str] = {}
+    for _, direction, gate in sorted(events):
+        directions[gate] = direction
+    return directions
+
+
 def resumable_merge_gates(text: str) -> tuple[str, ...]:
-    """Return canonical merge-gate conditions attached to PR disposition.
+    """Return active canonical merge-gate conditions in task text.
 
     Args:
         text: Source or generated task text to inspect.
     """
-    normalized = " ".join(text.casefold().split())
-    gates: list[str] = []
-    for match in MERGE_RESUMABLE_GATE_CONDITION.finditer(normalized):
-        prefix = normalized[max(0, match.start() - 100) : match.start()]
-        if MERGE_RESUMABLE_GATE_DISPOSITION_PREFIX.search(prefix) is None:
-            continue
-        gate = match.group("gate").replace("-", " ")
-        canonical = next(
-            name
-            for stem, name in (
-                ("ci", "ci"),
-                ("test", "test"),
-                ("check", "check"),
-                ("validation", "validation"),
-                ("build", "build"),
-                ("review", "review"),
-                ("deployment", "deployment"),
-                ("release job", "release job"),
-            )
-            if gate.startswith(stem)
-        )
-        if canonical not in gates:
-            gates.append(canonical)
-    return tuple(gates)
+    return tuple(
+        gate
+        for gate, direction in resumable_merge_gate_directions(text).items()
+        if direction == "add"
+    )
 
 
 def source_has_default_merge_authority(instructions: tuple[str, ...]) -> bool:
@@ -2137,13 +2200,20 @@ def check_merge_authority_transfer_fixtures(root: Path) -> list[Finding]:
             )
             continue
         source_holds_tuple = tuple(source_holds)
-        source_gates = tuple(
-            dict.fromkeys(
-                gate
-                for instruction_text in source_instruction_texts
-                for gate in resumable_merge_gates(instruction_text)
-            )
-        )
+        source_gates_list: list[str] = []
+        for instruction_text in source_instruction_texts:
+            for gate, direction in resumable_merge_gate_directions(
+                instruction_text
+            ).items():
+                if direction == "remove":
+                    source_gates_list = [
+                        active_gate
+                        for active_gate in source_gates_list
+                        if active_gate != gate
+                    ]
+                elif gate not in source_gates_list:
+                    source_gates_list.append(gate)
+        source_gates = tuple(source_gates_list)
         generated_gates = resumable_merge_gates(generated)
         generated_directions = merge_hold_directions(
             generated,

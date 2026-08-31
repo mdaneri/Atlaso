@@ -3471,6 +3471,31 @@
       ],
       "generated": "Complete the guarded merge when every gate passes.",
       "expected_holds": []
+    },
+    {
+      "name": "gate-first-wait-is-preserved",
+      "default_merge_authority": true,
+      "instructions": [
+        {
+          "text": "Implement issue #602, but wait for the release job before merging."
+        }
+      ],
+      "generated": "Complete the guarded merge after the release job succeeds.",
+      "expected_holds": []
+    },
+    {
+      "name": "satisfied-resumable-gate-is-cleared",
+      "default_merge_authority": true,
+      "instructions": [
+        {
+          "text": "Implement issue #602, but leave this PR open pending the release job."
+        },
+        {
+          "text": "The release job passed; merge now."
+        }
+      ],
+      "generated": "Complete the guarded merge now that every gate has passed.",
+      "expected_holds": []
     }
   ]
 }

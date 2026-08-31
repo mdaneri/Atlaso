@@ -946,6 +946,12 @@ def test_merge_hold_directions_ignores_pr_only_resumable_gate() -> None:
     assert resumable_merge_gates(
         "Implement issue #602, but leave this PR open pending the release job."
     ) == ("release job",)
+    assert resumable_merge_gates(
+        "Implement issue #602, but wait for the release job before merging."
+    ) == ("release job",)
+    assert resumable_merge_gates(
+        "The release job passed; merge now."
+    ) == ()
 
 
 def test_merge_hold_directions_withdraws_object_qualified_leave_open() -> None:
