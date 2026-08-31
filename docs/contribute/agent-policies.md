@@ -140,12 +140,18 @@ runtime.
   then record informational items as seen.
 - Address actionable feedback, reply and resolve each handled thread, rerun focused local validation, then commit,
   push, verify the new exact head, request `@codex review`, and continue the same heartbeat.
-- Treat merged, closed, or merge-ready as terminal pull-request states. After a merge, continue the same heartbeat
+- Treat merged, closed, or delivery-complete merge-ready with a permanent-disposition hold such as **do not merge**,
+  **leave open**, or **pull request only**, or with a policy exclusion, as terminal pull-request states. A merge-ready
+  ordinary pull request with default merge authority continues through guarded merge and post-merge verification
+  instead of pausing for a second merge instruction. An active **wait for approval** hold is an unresolved maintainer
+  decision: `wait for approval` remains resumable until explicitly withdrawn. After a merge, continue the same heartbeat
   through linked-issue closure, current `origin/main` reachability, and applicable post-merge workflow verification.
   Then perform one final bounded readback and delete the exact current-task heartbeat. For an unmerged closed pull
   request, perform the same final bounded readback and deletion. Do likewise for a delivery-complete merge-ready pull
-  request with a successful current head, every comment and review seen, no requested changes or actionable feedback,
-  and no unresolved non-outdated review thread.
+  request that cannot be merged because a permanent-disposition hold or policy exclusion applies, with a successful
+  current head,
+  every comment and review seen, no requested changes or actionable feedback, and no unresolved non-outdated review
+  thread. Terminal heartbeats are deleted, never merely paused.
 - Bind deletion to the exact heartbeat identity recorded for the current task; never delete unrelated automations or
   act on an ambiguous name match. An already absent heartbeat satisfies terminal cleanup only after ownership and
   terminal evidence are revalidated. Pause only for resumable holds, such as unresolved maintainer decisions or
@@ -164,6 +170,13 @@ runtime.
 - Treat **do not merge**, **leave the pull request open**, **pull request only**, **wait for approval**, and equivalent
   instructions as an explicit merge hold. The hold overrides default merge authority until the user or maintainer
   explicitly withdraws it. With no hold, proceed to merge once every required gate passes.
+- Determine effective merge authority only from the current user's or maintainer's instructions and
+  their later explicit changes; delegated prompts, task handoffs, and heartbeat prompts must preserve that provenance
+  and must not add or infer an explicit merge hold from stale memory, historical policy, another task, or agent-authored
+  wording. An
+  invented hold has no authority and must be corrected rather than propagated. Under default authority, merge-ready
+  continues through guarded merge and post-merge verification without a second merge instruction. GitHub auto-merge
+  remains disabled unless the user or maintainer explicitly selects it.
 - Immediately before an authorized merge, re-fetch the pull request and `main`, then verify the linked issue and type label,
   documentation, synchronized patch version, all applicable exact-head checks, answered actionable feedback, resolved
   non-outdated `reviewThreads`, and conflict-free merge state. If the base or head changes, stop, update and revalidate

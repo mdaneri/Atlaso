@@ -475,7 +475,12 @@ and similar requests grant default merge authority, including for an existing or
 explicitly asked to work on. A separate merge instruction is not required. An explicit merge hold such as **do not
 merge**, **leave the pull request open**, **pull request only**, or **wait for approval** overrides that authority until
 the user or maintainer withdraws it. Forks, drafts, review-only or diagnostic work, and private vulnerability
-remediation are excluded. An authorized direct agent merge requires both an expected-head guard and the active
+remediation are excluded. Effective authority comes only from the current user's or maintainer's instructions and later
+explicit changes; delegated prompts, task handoffs, and heartbeat prompts must preserve that provenance and must not
+add or infer a hold from stale memory, historical policy, another task, or agent-authored wording. An invented hold is
+corrected rather than propagated. Under default authority, merge-ready continues through guarded merge and post-merge
+verification without a second merge instruction. GitHub auto-merge remains disabled unless explicitly selected. An
+authorized direct agent merge requires both an expected-head guard and the active
 ruleset's strict up-to-date required checks to bind the validated base. Agents, delegated agents, workflows, and other
 automation must never use or request a ruleset or administrative bypass and fail closed without invoking `gh pr merge`
 when a merge queue is required. The human-maintainer break-glass authority cannot be delegated to automation and
