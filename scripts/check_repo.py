@@ -652,6 +652,9 @@ AUTO_MERGE_ONLY_PATTERN = re.compile(
     r"automatically\s+merge(?:\s+(?:(?:this|the)\s+)?(?:pull request|pr))?"
     r")\b"
 )
+MERGE_HOLD_MODAL_PROHIBITION = re.compile(
+    r"\b(?:you\s+)?(?:(?:must|may|can)\s+not|cannot)\s+merge\b"
+)
 DEFAULT_MERGE_AUTHORITY_NEGATIONS = re.compile(
     r"(?:(?:do not|don't|don’t|never|must not|should not|cannot|can't|can’t|not)"
     r"(?:\s+\w+){0,6}|(?:lacks?|has no|have no|without)(?:\s+\w+){0,4}|"
@@ -897,6 +900,13 @@ MERGE_HOLD_INTERROGATIVE_PERMISSION_CONTEXT = re.compile(
     r"\b(?:did|does|do|would|could|has|have|is|are|was|were)\b"
     r"[^.!?]{0,80}\b(?:said|say|tell|claim|authorize|permit)\b)"
 )
+MERGE_HOLD_NEGATED_PERMISSION_REPORT_CONTEXT = re.compile(
+    r"(?:\b(?:no\s+one|nobody)\s+"
+    r"(?:said|claimed|reported|stated|suggested|wrote|asserted)\b|"
+    r"\b(?:i|we|(?:the\s+)?(?:user|maintainer|owner))\s+"
+    r"(?:cannot|can't|can’t|did\s+not|didn't|didn’t|never)\s+"
+    r"(?:say|claim|report|state|suggest|write|assert)\b)"
+)
 MERGE_AUTHORITY_TASK_CLAUSE_BOUNDARY = re.compile(r"[;.?!]+")
 MERGE_AUTHORITY_COORDINATED_CLAUSE_BOUNDARY = re.compile(
     r",\s+(?:but|and)\s+|\s+but\s+"
@@ -1088,6 +1098,7 @@ def explicit_merge_holds(text: str) -> tuple[str, ...]:
     """
     normalized = " ".join(text.casefold().split())
     normalized = normalized.replace("pull-request", "pull request")
+    normalized = MERGE_HOLD_MODAL_PROHIBITION.sub("do not merge", normalized)
     normalized = AUTO_MERGE_ONLY_PATTERN.sub(
         "keep github auto-merge disabled", normalized
     )
@@ -1257,6 +1268,7 @@ def merge_hold_directions(
     """
     normalized = " ".join(text.casefold().split())
     normalized = normalized.replace("pull-request", "pull request")
+    normalized = MERGE_HOLD_MODAL_PROHIBITION.sub("do not merge", normalized)
     normalized = AUTO_MERGE_ONLY_PATTERN.sub(
         "keep github auto-merge disabled", normalized
     )
@@ -1518,6 +1530,7 @@ def merge_hold_directions(
             and MERGE_HOLD_WITHDRAWAL_NONCURRENT_SUFFIX.search(suffix) is None
             and MERGE_HOLD_REPORTED_PERMISSION_CONTEXT.search(prefix) is None
             and MERGE_HOLD_INTERROGATIVE_PERMISSION_CONTEXT.search(prefix) is None
+            and MERGE_HOLD_NEGATED_PERMISSION_REPORT_CONTEXT.search(prefix) is None
             and not _hold_targets_non_pr_object(
                 "", normalized, permission_offset, permission
             )

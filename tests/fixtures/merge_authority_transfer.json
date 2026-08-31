@@ -2332,6 +2332,12 @@
           "text": "Did the maintainer say you can merge this PR?"
         },
         {
+          "text": "No one said you may merge this PR."
+        },
+        {
+          "text": "I cannot say you may merge this PR."
+        },
+        {
           "text": "You can merge the configuration now."
         },
         {
@@ -2413,6 +2419,34 @@
         "do not merge",
         "leave open",
         "pr only"
+      ]
+    },
+    {
+      "name": "modal-merge-prohibitions-are-preserved",
+      "default_merge_authority": true,
+      "instructions": [
+        {
+          "text": "Implement issue #602, but you must not merge this PR.",
+          "add_holds": [
+            "do not merge"
+          ]
+        },
+        {
+          "text": "You may not merge this PR.",
+          "add_holds": [
+            "do not merge"
+          ]
+        },
+        {
+          "text": "You cannot merge this PR.",
+          "add_holds": [
+            "do not merge"
+          ]
+        }
+      ],
+      "generated": "Do not merge this pull request.",
+      "expected_holds": [
+        "do not merge"
       ]
     }
   ]

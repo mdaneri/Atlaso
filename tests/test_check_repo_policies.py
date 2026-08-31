@@ -627,7 +627,17 @@ def test_merge_hold_directions_recognizes_equivalent_permission() -> None:
     ) == {"do not merge": "add"}
     assert merge_hold_directions(
         "You cannot merge now.", active_holds=("do not merge",)
-    ) == {}
+    ) == {"do not merge": "add"}
+
+
+def test_merge_hold_directions_recognizes_modal_merge_prohibitions() -> None:
+    """Verify modal denials remain explicit pull-request merge holds."""
+    for instruction in (
+        "You must not merge this PR.",
+        "You may not merge this PR.",
+        "You cannot merge this PR.",
+    ):
+        assert merge_hold_directions(instruction) == {"do not merge": "add"}
 
 
 def test_merge_hold_directions_scopes_numbered_pr_permission() -> None:
@@ -675,6 +685,14 @@ def test_merge_hold_directions_ignores_reported_permission() -> None:
     ) == {}
     assert merge_hold_directions(
         "Did the maintainer say you can merge this PR?",
+        active_holds=("do not merge",),
+    ) == {}
+    assert merge_hold_directions(
+        "No one said you may merge this PR.",
+        active_holds=("do not merge",),
+    ) == {}
+    assert merge_hold_directions(
+        "I cannot say you may merge this PR.",
         active_holds=("do not merge",),
     ) == {}
 
