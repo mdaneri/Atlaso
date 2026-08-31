@@ -518,7 +518,8 @@ def _workflow_checkout_sources(
                 dynamic_path = True
                 repository = "${{ unsupported-flow-with }}"
         with_indent = -1
-        for candidate in lines[index + 1 : step_end]:
+        for candidate_index in range(index + 1, step_end):
+            candidate = lines[candidate_index]
             candidate_indent = len(candidate) - len(candidate.lstrip())
             if candidate.strip() and candidate_indent <= step_indent:
                 break
@@ -543,18 +544,18 @@ def _workflow_checkout_sources(
                 continue
             if candidate_indent != with_indent + 2:
                 continue
-            if re.match(r"\s*path\s*:", candidate):
-                path_value = _yaml_scalar(candidate, "path")
-                if path_value is not None and re.fullmatch(
-                    r"[A-Za-z0-9._/-]+", path_value
-                ):
+            path_value = _yaml_plain_scalar(lines, candidate_index, "path")[0]
+            if path_value is not None:
+                if re.fullmatch(r"[A-Za-z0-9._/-]+", path_value):
                     checkout_path = PurePosixPath(path_value).as_posix()
                 else:
                     dynamic_path = True
-            repository_value = _yaml_scalar(candidate, "repository")
+            repository_value = _yaml_plain_scalar(
+                lines, candidate_index, "repository"
+            )[0]
             if repository_value is not None:
                 repository = repository_value.strip()
-            ref_value = _yaml_scalar(candidate, "ref")
+            ref_value = _yaml_plain_scalar(lines, candidate_index, "ref")[0]
             if ref_value is not None:
                 ref = ref_value.strip()
         source = CheckoutSource(

@@ -639,6 +639,36 @@ def test_dependency_policy_rejects_untrusted_atlaso_checkout_ref(
     )
 
 
+def test_dependency_policy_rejects_continued_checkout_ref_scalar(
+    tmp_path: Path,
+) -> None:
+    """Verify a continued checkout ref retains its untrusted source metadata.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
+    write_valid_policy(tmp_path)
+    workflow = tmp_path / ".github" / "workflows" / "release.yml"
+    workflow.parent.mkdir(parents=True, exist_ok=True)
+    workflow.write_text(
+        """steps:
+  - uses: actions/checkout@v7
+    with:
+      ref:
+        feature/untrusted-lock
+      path: candidate
+  - run: python -m pip install -r candidate/requirements-release-tools.lock
+""",
+        encoding="utf-8",
+    )
+
+    assert any(
+        "checkout-prefixed workflow requirement uses an untrusted Atlaso ref: "
+        "candidate/requirements-release-tools.lock" in error
+        for error in validate(tmp_path)
+    )
+
+
 def test_dependency_policy_accepts_lock_from_checkout_destination(
     tmp_path: Path,
 ) -> None:
