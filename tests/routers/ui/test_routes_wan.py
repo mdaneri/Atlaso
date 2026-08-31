@@ -162,6 +162,51 @@ def test_routes_wan_settings_autosave_reports_suspended_nat(client):
     assert simultaneous_disable.json()["effective_nat_enabled"] is False
 
 
+def test_routes_wan_settings_autosave_preserves_unconfigured_routing_service(client):
+    """Keep restored Routing runtime state unchanged until Appliance Apply.
+
+    Args:
+        client: HTTP test client used to exercise the Atlaso application.
+    """
+    from sqlalchemy import select
+
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import ServiceState
+
+    login(client)
+    page = client.get("/routes-wan")
+    csrf = page.text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
+    with SessionLocal() as db:
+        service = db.execute(
+            select(ServiceState).where(ServiceState.service == "routing")
+        ).scalar_one()
+        service.enabled = False
+        service.running = False
+        service.health = "unconfigured"
+        db.commit()
+
+    response = client.post(
+        "/routes-wan/settings",
+        headers={"X-Atlaso-Autosave": "1"},
+        data={
+            "routing_enabled": "on",
+            "nat_enabled": "on",
+            "wan_simulation_enabled": "on",
+            "csrf": csrf,
+        },
+    )
+
+    assert response.status_code == 200, response.text
+    assert response.json()["routing_enabled"] is True
+    with SessionLocal() as db:
+        service = db.execute(
+            select(ServiceState).where(ServiceState.service == "routing")
+        ).scalar_one()
+        assert service.enabled is False
+        assert service.running is False
+        assert service.health == "unconfigured"
+
+
 def test_routes_wan_default_route_add_edit_validation_and_semantic_readback(client):
     """Exercise the explicit default path and its server-owned invariants.
 

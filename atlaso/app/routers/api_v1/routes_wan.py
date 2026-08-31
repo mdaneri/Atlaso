@@ -130,7 +130,7 @@ def build_router(dependencies: RoutesWanApiDependencies) -> RoutesWanApiRouter:
         service_state = db.execute(
             select(ServiceState).where(ServiceState.service == "routing")
         ).scalar_one_or_none()
-        if service_state is not None:
+        if service_state is not None and service_state.health != "unconfigured":
             service_state.enabled = settings.routing_enabled
             db.add(service_state)
         db.commit()

@@ -105,6 +105,51 @@ def test_routes_wan_settings_put_requires_both_write_scopes(client):
     assert "write:wan" in response.text
 
 
+def test_routes_wan_settings_put_preserves_unconfigured_routing_service(client):
+    """Keep restored Routing runtime state unchanged until Appliance Apply.
+
+    Args:
+        client: HTTP test client used to exercise the Atlaso application.
+    """
+    from sqlalchemy import select
+
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import ServiceState
+
+    with SessionLocal() as db:
+        service = db.execute(
+            select(ServiceState).where(ServiceState.service == "routing")
+        ).scalar_one()
+        service.enabled = False
+        service.running = False
+        service.health = "unconfigured"
+        db.commit()
+
+    token, _ = create_token(
+        client,
+        scopes=["read:routes", "read:wan", "write:routes", "write:wan"],
+    )
+    response = client.put(
+        "/api/v1/routes-wan/settings",
+        headers={"Authorization": f"Bearer {token}"},
+        json={
+            "routing_enabled": True,
+            "nat_enabled": True,
+            "wan_simulation_enabled": True,
+        },
+    )
+
+    assert response.status_code == 200, response.text
+    assert response.json()["routing_enabled"] is True
+    with SessionLocal() as db:
+        service = db.execute(
+            select(ServiceState).where(ServiceState.service == "routing")
+        ).scalar_one()
+        assert service.enabled is False
+        assert service.running is False
+        assert service.health == "unconfigured"
+
+
 def test_wan_status_reports_only_effective_feature_state(client):
     """Exclude preserved NAT and policy rows while their feature is inactive.
 
