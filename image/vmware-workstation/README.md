@@ -121,6 +121,11 @@ through Packer. Successful operations report their duration. Failures preserve a
 normalized, bounded output tail; a zero-status transcript that reports a TDNF error or disabled repository is promoted
 to fatal exit status 1. The zero-status error scan streams the transcript line by line so long successful transactions
 do not require another full in-memory copy after TDNF exits.
+Before that first refresh, the shared provisioner validates the stock Photon 5 updates definition and its installed
+4096-bit RPM signing key, probes bounded metadata from the exact current
+`packages.broadcom.com/photon/$releasever/...` endpoint, and atomically replaces the retired GA repository layout.
+Unexpected sources, disabled GPG checks, missing key material, redirects, unreachable metadata, and malformed metadata
+all fail the build before TDNF runs.
 Photon 5.0 packages the C and C++ compiler front ends together as `gcc`. The image requests and later removes that one
 build-only package; it does not request the unavailable `gcc-c++` name used by distributions that split the front ends.
 It also treats `binutils` and `linux-api-headers` as build-only because Photon packages the assembler, linker, and Linux
