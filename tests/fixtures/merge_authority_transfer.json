@@ -2463,6 +2463,18 @@
           ]
         },
         {
+          "text": "You're not allowed to merge this PR.",
+          "add_holds": [
+            "do not merge"
+          ]
+        },
+        {
+          "text": "You’re not authorized to merge this PR.",
+          "add_holds": [
+            "do not merge"
+          ]
+        },
+        {
           "text": "You do not have permission to merge this PR.",
           "add_holds": [
             "do not merge"
@@ -2528,6 +2540,33 @@
       "expected_holds": [
         "wait for approval"
       ]
+    },
+    {
+      "name": "gerund-passive-approval-requirement-is-preserved",
+      "default_merge_authority": true,
+      "instructions": [
+        {
+          "text": "Implement issue #602, but approval is required before merging this PR.",
+          "add_holds": [
+            "wait for approval"
+          ]
+        }
+      ],
+      "generated": "Wait for approval before merging.",
+      "expected_holds": [
+        "wait for approval"
+      ]
+    },
+    {
+      "name": "pr-object-before-ci-gate-is-resumable",
+      "default_merge_authority": true,
+      "instructions": [
+        {
+          "text": "Implement issue #602, but merge this PR only after CI passes."
+        }
+      ],
+      "generated": "Complete the guarded merge after CI passes.",
+      "expected_holds": []
     },
     {
       "name": "passive-approval-requirement-is-preserved",

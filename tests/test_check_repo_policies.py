@@ -644,6 +644,8 @@ def test_merge_hold_directions_recognizes_modal_merge_prohibitions() -> None:
         "You are not authorized to merge this PR.",
         "You aren't allowed to merge this PR.",
         "You isn’t authorized to merge this PR.",
+        "You're not allowed to merge this PR.",
+        "You’re not authorized to merge this PR.",
         "You do not have permission to merge this PR.",
     ):
         assert merge_hold_directions(instruction) == {"do not merge": "add"}
@@ -749,6 +751,16 @@ def test_merge_hold_directions_recognizes_approval_needed() -> None:
     assert merge_hold_directions(
         "Implement issue #602, but approval is required before you merge this PR."
     ) == {"wait for approval": "add"}
+    assert merge_hold_directions(
+        "Implement issue #602, but approval is required before merging this PR."
+    ) == {"wait for approval": "add"}
+
+
+def test_merge_hold_directions_ignores_pr_only_resumable_gate() -> None:
+    """Verify a PR object followed by a CI gate is not a permanent PR-only hold."""
+    assert merge_hold_directions(
+        "Implement issue #602, but merge this PR only after CI passes."
+    ) == {}
 
 
 def test_merge_hold_directions_withdraws_object_qualified_leave_open() -> None:

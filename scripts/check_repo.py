@@ -669,6 +669,7 @@ MERGE_HOLD_MODAL_PROHIBITION = re.compile(
     r"\s+merge|"
     r"you\s+(?:(?:are\s+not|aren't|aren’t|isn't|isn’t)\s+"
     r"(?:allowed|authorized)\s+to\s+merge|are\s+forbidden\s+from\s+merging)|"
+    r"you(?:'re|’re)\s+not\s+(?:allowed|authorized)\s+to\s+merge|"
     r"you\s+do\s+not\s+have\s+(?:permission|authorization)\s+"
     r"to\s+merge)\b"
 )
@@ -975,7 +976,8 @@ MERGE_HOLD_APPROVAL_CONDITION_FIRST = re.compile(
     r"after\s+(?:i|we|(?:the\s+)?(?:user|maintainer|owner))\s+approves?)\s+"
     r"(?:may|can|should)\s+(?:you|i|we)\s+merge"
     r"(?:\s+(?:(?:this|the)\s+)?(?:pull request|pr))?|"
-    r"approval\s+is\s+(?:required|needed)\s+before\s+(?:you|i|we)\s+merge"
+    r"approval\s+is\s+(?:required|needed)\s+before\s+"
+    r"(?:(?:you|i|we)\s+merge|merging)"
     r"(?:\s+(?:(?:this|the)\s+)?(?:pull request|pr))?)\b"
 )
 MERGE_HOLD_APPROVAL_BOUNDED_DISPOSITION = re.compile(
@@ -1005,6 +1007,10 @@ MERGE_HOLD_WITHOUT_APPROVAL = re.compile(
     r"\b(?:do not|don't|don’t|must not)\s+merge"
     r"(?:\s+(?:(?:this|the)\s+)?(?:pull request|pr))?\s+without\s+"
     r"(?:(?:my|our|your|the|maintainer|owner|code owner)\s+)?approval\b"
+)
+MERGE_HOLD_RESUMABLE_GATE_SUFFIX = re.compile(
+    r"^\s+(?:after|when|if|once)\s+(?:ci|tests?|checks?|validation|builds?|"
+    r"(?:(?:[a-z][a-z0-9_-]*\s+){0,2}review))\b"
 )
 MERGE_HOLD_NON_PR_OBJECT = re.compile(
     r"^\s+(?!(?:(?:this|the)\s+)?(?:pull request|pr)\b|it\b|"
@@ -1296,6 +1302,23 @@ def _is_approval_scoped_disposition(
     return any(match.start() < hold_end and offset < match.end() for match in approval_matches)
 
 
+def _is_resumable_gate_scoped_disposition(
+    hold: str, segment: str, offset: int, pattern: str
+) -> bool:
+    """Return whether a PR-only substring is followed by a resumable gate.
+
+    Args:
+        hold: Canonical hold represented by the matched phrase.
+        segment: Current instruction segment containing the phrase.
+        offset: Character offset where the phrase begins.
+        pattern: Exact hold phrase matched in the segment.
+    """
+    if hold != "pr only":
+        return False
+    suffix = segment[offset + len(pattern) :]
+    return MERGE_HOLD_RESUMABLE_GATE_SUFFIX.search(suffix) is not None
+
+
 def merge_hold_directions(
     text: str,
     *,
@@ -1437,6 +1460,8 @@ def merge_hold_directions(
                     ) and not _hold_targets_non_pr_object(
                         hold, segment, pattern_offset, pattern
                     ) and not _is_approval_scoped_disposition(
+                        hold, segment, pattern_offset, pattern
+                    ) and not _is_resumable_gate_scoped_disposition(
                         hold, segment, pattern_offset, pattern
                     ):
                         has_directive_occurrence = True
