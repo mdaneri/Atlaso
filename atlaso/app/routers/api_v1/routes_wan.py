@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from ipaddress import ip_address, ip_network
 from typing import Annotated, Any, cast
@@ -729,7 +729,7 @@ def build_router(dependencies: RoutesWanApiDependencies) -> RoutesWanApiRouter:
             db: Active database session used by the operation.
         """
         settings = ensure_routes_wan_settings(db)
-        routes = []
+        routes: Sequence[Route] = ()
         if settings.wan_simulation_enabled:
             routes = (
                 db.execute(
@@ -743,7 +743,7 @@ def build_router(dependencies: RoutesWanApiDependencies) -> RoutesWanApiRouter:
                 .scalars()
                 .all()
             )
-        nat_rules = []
+        nat_rules: Sequence[NatRule] = ()
         if settings.effective_nat_enabled:
             nat_rules = (
                 db.execute(select(NatRule).where(NatRule.enabled.is_(True)))
