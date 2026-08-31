@@ -54,7 +54,6 @@ function New-AtlasoVmwareBuilderIdentity {
         [string]$Repository,
 
         [Parameter(Mandatory = $true, ParameterSetName = 'PullRequest')]
-        [ValidatePattern('^(?![./])(?!.*\.\.)(?!.*//)[A-Za-z0-9._/-]+(?<![./])$')]
         [string]$SourceBranch,
 
         [Parameter(Mandatory = $true, ParameterSetName = 'PullRequest')]
@@ -72,6 +71,10 @@ function New-AtlasoVmwareBuilderIdentity {
     )
 
     if ($PSCmdlet.ParameterSetName -eq 'PullRequest') {
+        $null = & git check-ref-format --branch $SourceBranch 2>$null
+        if ($LASTEXITCODE -ne 0) {
+            throw "SourceBranch is not one valid Git branch name: $SourceBranch"
+        }
         # Reuse the #634 grammar for positive PR numbers and sanitized suffixes,
         # while retaining the operator-facing Photon builder purpose casing.
         $baseIdentity = New-AtlasoVmwareTestIdentity `
@@ -167,13 +170,18 @@ Canonical output directory owned by the identity.
 
 .PARAMETER Identity
 Validated task or release builder identity.
+
+.PARAMETER ReplaceSameOwner
+Replace an older source-commit binding only after the existing manifest proves
+the same canonical task or release owner.
 #>
 function Write-AtlasoVmwareBuilderIdentityManifest {
     [CmdletBinding()]
     param(
         [Parameter(Mandatory = $true)][string]$Path,
         [Parameter(Mandatory = $true)][string]$OutputDirectory,
-        [Parameter(Mandatory = $true)][psobject]$Identity
+        [Parameter(Mandatory = $true)][psobject]$Identity,
+        [switch]$ReplaceSameOwner
     )
 
     $resolvedOutput = Assert-AtlasoVmwareBuilderOutputDirectory `
@@ -198,11 +206,19 @@ function Write-AtlasoVmwareBuilderIdentityManifest {
         workflow_run_id     = [long]$Identity.WorkflowRunId
     }
     if (Test-Path -LiteralPath $resolvedPath -PathType Leaf) {
-        $null = Assert-AtlasoVmwareBuilderIdentityManifest `
+        $existing = Assert-AtlasoVmwareBuilderOwnershipManifest `
             -Path $resolvedPath `
             -OutputDirectory $resolvedOutput `
             -Identity $Identity
-        return
+        if ([string]$existing.source_commit -ceq [string]$Identity.SourceCommit) {
+            return
+        }
+        if (-not $ReplaceSameOwner) {
+            throw 'Builder identity manifest belongs to the same owner but a different source commit.'
+        }
+        if ([string]$Identity.Kind -cne 'pull_request') {
+            throw 'Only a same-owner pull-request manifest may advance to a newer exact source commit.'
+        }
     }
     $manifestParent = Split-Path -Parent $resolvedPath
     [void][System.IO.Directory]::CreateDirectory($manifestParent)
@@ -213,7 +229,7 @@ function Write-AtlasoVmwareBuilderIdentityManifest {
             (($payload | ConvertTo-Json -Depth 4) + "`n"),
             [System.Text.UTF8Encoding]::new($false)
         )
-        Move-Item -LiteralPath $temporaryPath -Destination $resolvedPath
+        [System.IO.File]::Move($temporaryPath, $resolvedPath, $true)
     }
     finally {
         if (Test-Path -LiteralPath $temporaryPath) {
@@ -224,7 +240,7 @@ function Write-AtlasoVmwareBuilderIdentityManifest {
 
 <#
 .SYNOPSIS
-Verify one builder ownership manifest against an expected identity and output.
+Verify one builder ownership manifest against its stable task or release owner.
 
 .PARAMETER Path
 Exact sibling manifest path to validate.
@@ -235,7 +251,7 @@ Canonical builder output directory.
 .PARAMETER Identity
 Expected validated builder identity.
 #>
-function Assert-AtlasoVmwareBuilderIdentityManifest {
+function Assert-AtlasoVmwareBuilderOwnershipManifest {
     [CmdletBinding()]
     [OutputType([pscustomobject])]
     param(
@@ -266,7 +282,6 @@ function Assert-AtlasoVmwareBuilderIdentityManifest {
         repository          = [string]$Identity.Repository
         pull_request_number = [int]$Identity.PullRequestNumber
         source_branch       = [string]$Identity.SourceBranch
-        source_commit       = [string]$Identity.SourceCommit
         collision_suffix    = [string]$Identity.CollisionSuffix
         release_version     = [string]$Identity.ReleaseVersion
         workflow_run_id     = [long]$Identity.WorkflowRunId
@@ -276,6 +291,41 @@ function Assert-AtlasoVmwareBuilderIdentityManifest {
         if ($null -eq $property -or [string]$property.Value -cne [string]$entry.Value) {
             throw "Builder identity manifest does not match expected $($entry.Key)."
         }
+    }
+    if ([string]$manifest.source_commit -notmatch '^[0-9a-f]{40}$') {
+        throw 'Builder identity manifest contains an invalid source commit.'
+    }
+    return $manifest
+}
+
+<#
+.SYNOPSIS
+Verify one builder ownership manifest against an exact identity and output.
+
+.PARAMETER Path
+Exact sibling manifest path to validate.
+
+.PARAMETER OutputDirectory
+Canonical builder output directory.
+
+.PARAMETER Identity
+Expected validated builder identity, including its exact source commit.
+#>
+function Assert-AtlasoVmwareBuilderIdentityManifest {
+    [CmdletBinding()]
+    [OutputType([pscustomobject])]
+    param(
+        [Parameter(Mandatory = $true)][string]$Path,
+        [Parameter(Mandatory = $true)][string]$OutputDirectory,
+        [Parameter(Mandatory = $true)][psobject]$Identity
+    )
+
+    $manifest = Assert-AtlasoVmwareBuilderOwnershipManifest `
+        -Path $Path `
+        -OutputDirectory $OutputDirectory `
+        -Identity $Identity
+    if ([string]$manifest.source_commit -cne [string]$Identity.SourceCommit) {
+        throw 'Builder identity manifest does not match the exact expected source_commit.'
     }
     return $manifest
 }
@@ -313,6 +363,7 @@ function Assert-AtlasoVmwareBuilderVmx {
 
 Export-ModuleMember -Function @(
     'Assert-AtlasoVmwareBuilderIdentityManifest',
+    'Assert-AtlasoVmwareBuilderOwnershipManifest',
     'Assert-AtlasoVmwareBuilderOutputDirectory',
     'Assert-AtlasoVmwareBuilderVmx',
     'Get-AtlasoVmwareBuilderIdentityManifestPath',

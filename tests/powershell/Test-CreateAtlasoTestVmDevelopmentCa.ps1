@@ -45,6 +45,12 @@ $wrapperSource = Get-Content -LiteralPath $wrapperPath -Raw
 $firstBootSource = Get-Content -LiteralPath (
     Join-Path $RepositoryRoot 'scripts\windows\vmware\Atlaso.WorkstationFirstBoot.ps1'
 ) -Raw
+if (($firstBootSource | Select-String -Pattern (
+            'catch \((ObjectDisposedException|IOException|OperationCanceledException)\)\s*' +
+            '\{\s*if \(!cancellationToken\.IsCancellationRequested\)\s*\{\s*throw;'
+        ) -AllMatches).Matches.Count -ne 3) {
+    throw 'Redirected-stream closure exceptions must fail closed before explicit cancellation.'
+}
 
 $missingEnvironmentIdRoot = Join-Path ([System.IO.Path]::GetTempPath()) (
     "atlaso-missing-environment-id-$([guid]::NewGuid().ToString('N'))"
@@ -283,6 +289,189 @@ finally {
     Remove-Item -LiteralPath $boundedProcessRoot -Recurse -Force -ErrorAction SilentlyContinue
 }
 
+$boundedStreamRoot = Join-Path ([System.IO.Path]::GetTempPath()) (
+    "atlaso-bounded-stream-$([guid]::NewGuid().ToString('N'))"
+)
+$retainedPipeChildPid = 0
+try {
+    New-Item -ItemType Directory -Path $boundedStreamRoot | Out-Null
+    $powerShellPath = (Get-Process -Id $PID).Path
+    $diagnosticPath = Join-Path $boundedStreamRoot 'diagnostic.ps1'
+    [System.IO.File]::WriteAllText(
+        $diagnosticPath,
+        "[Console]::Out.Write('preserved diagnostic'); [Console]::Error.Write('sanitized error')",
+        [System.Text.UTF8Encoding]::new($false)
+    )
+    $diagnosticOutput = Invoke-AtlasoBoundedProcess `
+        -FilePath $powerShellPath `
+        -ArgumentList @('-NoLogo', '-NoProfile', '-NonInteractive', '-File', $diagnosticPath) `
+        -TimeoutSeconds 2 `
+        -Action 'Bounded diagnostic preservation regression'
+    if ($diagnosticOutput -cne 'preserved diagnostic') {
+        throw 'The bounded process helper truncated or changed available diagnostics.'
+    }
+
+    $retainedPipeChildPath = Join-Path $boundedStreamRoot 'retained-pipe-child.ps1'
+    $retainedPipeParentPath = Join-Path $boundedStreamRoot 'retained-pipe-parent.ps1'
+    $retainedPipeChildPidPath = Join-Path $boundedStreamRoot 'retained-pipe-child.pid'
+    $retainedPipeLauncherPath = Join-Path $boundedStreamRoot 'RetainedPipeLauncher.cs'
+    $escapedPowerShellPath = $powerShellPath.Replace("'", "''")
+    $escapedChildPath = $retainedPipeChildPath.Replace("'", "''")
+    $escapedChildPidPath = $retainedPipeChildPidPath.Replace("'", "''")
+    $escapedLauncherPath = $retainedPipeLauncherPath.Replace("'", "''")
+    [System.IO.File]::WriteAllText(
+        $retainedPipeLauncherPath,
+        @'
+using System;
+using System.ComponentModel;
+using System.Runtime.InteropServices;
+using System.Text;
+
+public static class RetainedPipeLauncher
+{
+    [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
+    private struct StartupInformation
+    {
+        public uint Size;
+        public string Reserved;
+        public string Desktop;
+        public string Title;
+        public uint X;
+        public uint Y;
+        public uint XSize;
+        public uint YSize;
+        public uint XCountChars;
+        public uint YCountChars;
+        public uint FillAttribute;
+        public uint Flags;
+        public ushort ShowWindow;
+        public ushort Reserved2;
+        public IntPtr Reserved2Pointer;
+        public IntPtr StandardInput;
+        public IntPtr StandardOutput;
+        public IntPtr StandardError;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct ProcessInformation
+    {
+        public IntPtr Process;
+        public IntPtr Thread;
+        public uint ProcessId;
+        public uint ThreadId;
+    }
+
+    [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+    private static extern bool CreateProcess(
+        string applicationName,
+        StringBuilder commandLine,
+        IntPtr processAttributes,
+        IntPtr threadAttributes,
+        bool inheritHandles,
+        uint creationFlags,
+        IntPtr environment,
+        string currentDirectory,
+        ref StartupInformation startupInformation,
+        out ProcessInformation processInformation);
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    private static extern bool CloseHandle(IntPtr handle);
+
+    public static int Start(string commandLine)
+    {
+        StartupInformation startup = new StartupInformation();
+        startup.Size = (uint)Marshal.SizeOf(typeof(StartupInformation));
+        ProcessInformation process;
+        if (!CreateProcess(
+            null,
+            new StringBuilder(commandLine),
+            IntPtr.Zero,
+            IntPtr.Zero,
+            true,
+            0,
+            IntPtr.Zero,
+            null,
+            ref startup,
+            out process))
+        {
+            throw new Win32Exception(Marshal.GetLastWin32Error());
+        }
+        CloseHandle(process.Thread);
+        CloseHandle(process.Process);
+        return (int)process.ProcessId;
+    }
+}
+'@,
+        [System.Text.UTF8Encoding]::new($false)
+    )
+    [System.IO.File]::WriteAllText(
+        $retainedPipeChildPath,
+        'Start-Sleep -Seconds 30',
+        [System.Text.UTF8Encoding]::new($false)
+    )
+    [System.IO.File]::WriteAllText(
+        $retainedPipeParentPath,
+        @"
+[Console]::Out.WriteLine('diagnostic before detach')
+[Console]::Out.Flush()
+Add-Type -Path '$escapedLauncherPath'
+`$commandLine = '"$escapedPowerShellPath" -NoLogo -NoProfile -NonInteractive -File "$escapedChildPath"'
+`$childPid = [RetainedPipeLauncher]::Start(`$commandLine)
+[System.IO.File]::WriteAllText('$escapedChildPidPath', [string]`$childPid)
+"@,
+        [System.Text.UTF8Encoding]::new($false)
+    )
+    $streamDeadline = [System.Diagnostics.Stopwatch]::StartNew()
+    $retainedPipeError = $null
+    try {
+        # Leave enough time for the synthetic PowerShell parent to compile
+        # its native launcher before measuring the independent stream drain.
+        Invoke-AtlasoBoundedProcess `
+            -FilePath $powerShellPath `
+            -ArgumentList @(
+                '-NoLogo', '-NoProfile', '-NonInteractive', '-File', $retainedPipeParentPath
+            ) `
+            -TimeoutSeconds 2 `
+            -Action 'Descendant-held redirected-stream regression' | Out-Null
+    }
+    catch {
+        $retainedPipeError = $_.Exception
+    }
+    $streamDeadline.Stop()
+    if (-not $retainedPipeError -or
+        $retainedPipeError.Message -cne (
+            'Descendant-held redirected-stream regression exited but a descendant retained redirected output handles.'
+        ) -or
+        $retainedPipeError.Data['AtlasoProcessTreeTerminationUnproven'] -ne $true -or
+        $streamDeadline.Elapsed.TotalSeconds -gt 5) {
+        throw "A descendant-held redirected stream did not fail closed within its bounded completion deadline. Error='$($retainedPipeError.Message)'; proven='$($retainedPipeError.Data['AtlasoProcessTreeTerminationUnproven'])'; elapsed='$([Math]::Round($streamDeadline.Elapsed.TotalSeconds, 2))'."
+    }
+    if (-not (Test-Path -LiteralPath $retainedPipeChildPidPath -PathType Leaf)) {
+        throw 'The redirected-stream regression did not start its detached descendant.'
+    }
+    $retainedPipeChildPid = [int][System.IO.File]::ReadAllText($retainedPipeChildPidPath)
+    if (-not (Get-Process -Id $retainedPipeChildPid -ErrorAction SilentlyContinue)) {
+        throw 'The redirected-stream regression did not retain the intended detached descendant.'
+    }
+}
+finally {
+    if ($retainedPipeChildPid -gt 0) {
+        Stop-Process -Id $retainedPipeChildPid -Force -ErrorAction SilentlyContinue
+    }
+    Remove-Item -LiteralPath $boundedStreamRoot -Recurse -Force -ErrorAction SilentlyContinue
+}
+
+$startVmSource = Get-Content -LiteralPath (
+    Join-Path $RepositoryRoot 'scripts\windows\vmware\start-atlaso-vm.ps1'
+) -Raw
+if ($startVmSource -notmatch '\[ValidateSet\(''gui'', ''nogui''\)\]' -or
+    $startVmSource -notmatch 'bool inheritHandles' -or
+    $startVmSource -notmatch 'ref startup,\s+out process' -or
+    $startVmSource -notmatch 'public uint FillAttribute;\s+public uint Flags;\s+public ushort ShowWindow;' -or
+    $startVmSource -notmatch '@\(''-T'', ''ws'', ''start'', \$resolvedVmxPath, \$Mode\)' -or
+    $startVmSource -match '&\s+\$resolvedVmrun') {
+    throw 'GUI and headless VM starts must use the non-redirecting vmrun launcher contract.'
+}
 $childPath = Join-Path $RepositoryRoot 'scripts\windows\vmware\Invoke-AtlasoDevelopmentCaSecret.ps1'
 $publicCertificatePath = Join-Path $RepositoryRoot (
     'image\vmware-workstation\development-trust\atlaso-development-root-ca.pem'

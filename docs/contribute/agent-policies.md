@@ -807,10 +807,12 @@ Terminal order:
   builder for one pull request uses a sanitized suffix without losing the PR segment. Protected release builders use
   the helper's deterministic version-and-commit identity, optionally extended by workflow run ID. Reject missing,
   malformed, closed, fork-owned, branch-mismatched, commit-mismatched, ambiguous, generic, and differently owned
-  identities before provider or target-filesystem mutation. A retained output is replaceable only with its exact
-  sibling ownership manifest; clone and export require its exact builder provenance. Low-level OVF export accepts only
-  an explicit proven source VMX. Never propagate transient PR identity into OVF/OVA product naming, deployed-appliance
-  names, canonical release filenames, or immutable release assets.
+  identities before provider or target-filesystem mutation. A retained task output is replaceable only when its sibling
+  manifest proves the same repository, pull request, branch, canonical name, and suffix; after checked cleanup, advance
+  the manifest to the newly verified head. Retained reuse still requires the exact source commit. Clone and export
+  require exact builder provenance. Low-level OVF export accepts only an explicit proven source VMX. Never propagate
+  transient PR identity into OVF/OVA product naming, deployed-appliance names, canonical release filenames, or
+  immutable release assets.
 
 - Every task-owned VMware test VM used for pull-request validation has one canonical identity:
   `Atlaso-PR-<number>-<purpose>[-<collision-safe-suffix>]`. Require the exact positive pull-request number and sanitize

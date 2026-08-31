@@ -1646,6 +1646,9 @@ def test_vmware_packer_requires_proven_task_or_release_builder_identity() -> Non
     wrapper = Path("scripts/windows/vmware/build-photon-image.ps1").read_text(
         encoding="utf-8"
     )
+    identity_module = Path(
+        "scripts/windows/vmware/Atlaso.VmwareBuilderIdentity.psm1"
+    ).read_text(encoding="utf-8")
     release = Path(
         "scripts/windows/virtualization/Atlaso.VirtualizationRelease.psm1"
     ).read_text(encoding="utf-8")
@@ -1668,6 +1671,7 @@ def test_vmware_packer_requires_proven_task_or_release_builder_identity() -> Non
     assert "head_branch" in wrapper
     assert "head_commit" in wrapper
     assert "status --short --untracked-files=no" in wrapper
+    assert "git check-ref-format --branch" in identity_module
     assert "Get-AtlasoVmwareBuilderIdentityManifestPath" in wrapper
     assert "Assert-AtlasoVmwareBuilderIdentityManifest" in wrapper
     assert "Assert-AtlasoVmwareBuilderVmx" in wrapper
@@ -1676,9 +1680,11 @@ def test_vmware_packer_requires_proven_task_or_release_builder_identity() -> Non
         "-OutputDirectory $workstationOutputDirectory `"
         in wrapper[build_invocation:]
     )
-    manifest_recheck = wrapper.index("Assert-AtlasoVmwareBuilderIdentityManifest `")
-    cleanup = wrapper.index("Remove-AtlasoWorkstationArtifactRoot `", manifest_recheck)
-    assert manifest_recheck < cleanup
+    owner_recheck = wrapper.index("Assert-AtlasoVmwareBuilderOwnershipManifest `")
+    cleanup = wrapper.index("Remove-AtlasoWorkstationArtifactRoot `", owner_recheck)
+    manifest_refresh = wrapper.index("-ReplaceSameOwner", cleanup)
+    exact_recheck = wrapper.index("Assert-AtlasoVmwareBuilderIdentityManifest `", cleanup)
+    assert owner_recheck < cleanup < manifest_refresh < exact_recheck
     assert "Refusing to reuse or clean a Photon builder output" in wrapper
     assert "Atlaso-Photon-Builder-VMware" not in wrapper
     assert "New-AtlasoVmwareBuilderIdentity" in release

@@ -30,6 +30,28 @@ if ($task.Name -cne 'Atlaso-PR-653-Photon-Builder-VMware-run-02' -or
     throw 'Task-owned Photon builder identity was not canonical.'
 }
 
+foreach ($branchName in @('feature/foo+bar', 'feature/fix@two', 'feature/foo=bar')) {
+    $validBranch = New-AtlasoVmwareBuilderIdentity `
+        -PullRequestNumber 653 `
+        -Repository 'mdaneri/Atlaso' `
+        -SourceBranch $branchName `
+        -SourceCommit $commit
+    if ($validBranch.SourceBranch -cne $branchName) {
+        throw "Valid Git branch name was not preserved: $branchName"
+    }
+}
+try {
+    $null = New-AtlasoVmwareBuilderIdentity `
+        -PullRequestNumber 653 `
+        -Repository 'mdaneri/Atlaso' `
+        -SourceBranch 'feature/bad..branch' `
+        -SourceCommit $commit
+    throw 'An invalid Git branch name was accepted.'
+}
+catch {
+    if ($_.Exception.Message -eq 'An invalid Git branch name was accepted.') { throw }
+}
+
 $release = New-AtlasoVmwareBuilderIdentity `
     -ReleaseVersion '0.9.250' `
     -SourceCommit $commit `
@@ -37,6 +59,28 @@ $release = New-AtlasoVmwareBuilderIdentity `
 if ($release.Name -cne 'Atlaso-Release-v0-9-250-aaaaaaaaaaaa-Photon-Builder-VMware-run-12345' -or
     $release.Kind -cne 'release') {
     throw 'Release-owned Photon builder identity was not canonical.'
+}
+
+$releaseOutput = Join-Path (Join-Path $OutputDirectory 'release-parent') $release.Name
+$releaseManifest = Get-AtlasoVmwareBuilderIdentityManifestPath -OutputDirectory $releaseOutput
+Write-AtlasoVmwareBuilderIdentityManifest `
+    -Path $releaseManifest `
+    -OutputDirectory $releaseOutput `
+    -Identity $release
+$nextRelease = New-AtlasoVmwareBuilderIdentity `
+    -ReleaseVersion '0.9.250' `
+    -SourceCommit (('a' * 12) + ('b' * 28)) `
+    -WorkflowRunId 12345
+try {
+    Write-AtlasoVmwareBuilderIdentityManifest `
+        -Path $releaseManifest `
+        -OutputDirectory $releaseOutput `
+        -Identity $nextRelease `
+        -ReplaceSameOwner
+    throw 'A release manifest advanced to a different full source commit.'
+}
+catch {
+    if ($_.Exception.Message -eq 'A release manifest advanced to a different full source commit.') { throw }
 }
 
 foreach ($invalid in @(0, -1)) {
@@ -66,6 +110,55 @@ $null = Assert-AtlasoVmwareBuilderIdentityManifest `
     -Path $manifestPath `
     -OutputDirectory $taskOutput `
     -Identity $task
+
+$nextTask = New-AtlasoVmwareBuilderIdentity `
+    -PullRequestNumber 653 `
+    -CollisionSuffix 'Run 02' `
+    -Repository 'mdaneri/Atlaso' `
+    -SourceBranch 'enhancement/653-pr-photon-builder-identity' `
+    -SourceCommit ('b' * 40)
+$null = Assert-AtlasoVmwareBuilderOwnershipManifest `
+    -Path $manifestPath `
+    -OutputDirectory $taskOutput `
+    -Identity $nextTask
+try {
+    $null = Assert-AtlasoVmwareBuilderIdentityManifest `
+        -Path $manifestPath `
+        -OutputDirectory $taskOutput `
+        -Identity $nextTask
+    throw 'A same-owner manifest was accepted for retained reuse at a different commit.'
+}
+catch {
+    if ($_.Exception.Message -eq 'A same-owner manifest was accepted for retained reuse at a different commit.') {
+        throw
+    }
+}
+Write-AtlasoVmwareBuilderIdentityManifest `
+    -Path $manifestPath `
+    -OutputDirectory $taskOutput `
+    -Identity $nextTask `
+    -ReplaceSameOwner
+$null = Assert-AtlasoVmwareBuilderIdentityManifest `
+    -Path $manifestPath `
+    -OutputDirectory $taskOutput `
+    -Identity $nextTask
+
+$differentRepository = New-AtlasoVmwareBuilderIdentity `
+    -PullRequestNumber 653 `
+    -CollisionSuffix 'Run 02' `
+    -Repository 'other/Atlaso' `
+    -SourceBranch 'enhancement/653-pr-photon-builder-identity' `
+    -SourceCommit ('c' * 40)
+try {
+    $null = Assert-AtlasoVmwareBuilderOwnershipManifest `
+        -Path $manifestPath `
+        -OutputDirectory $taskOutput `
+        -Identity $differentRepository
+    throw 'A differently owned repository manifest was accepted for replacement.'
+}
+catch {
+    if ($_.Exception.Message -eq 'A differently owned repository manifest was accepted for replacement.') { throw }
+}
 
 try {
     $null = Assert-AtlasoVmwareBuilderIdentityManifest `

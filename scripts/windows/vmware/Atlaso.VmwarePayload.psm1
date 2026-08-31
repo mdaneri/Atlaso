@@ -186,13 +186,15 @@ function Assert-AtlasoVmwarePayloadProvenance {
         throw 'VMware build provenance does not bind the output directory, VMX filename, displayName, and source commit to one builder identity.'
     }
     if ([string]$identity.kind -ceq 'pull_request') {
+        $null = & git check-ref-format --branch ([string]$identity.source_branch) 2>$null
+        $sourceBranchIsValid = $LASTEXITCODE -eq 0
         $expectedTaskName = "Atlaso-PR-$([int]$identity.pull_request_number)-Photon-Builder-VMware"
         if (-not [string]::IsNullOrWhiteSpace([string]$identity.collision_suffix)) {
             $expectedTaskName = "$expectedTaskName-$([string]$identity.collision_suffix)"
         }
         if ([int]$identity.pull_request_number -le 0 -or
             [string]$identity.repository -notmatch '^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$' -or
-            [string]$identity.source_branch -notmatch '^(?![./])(?!.*\.\.)(?!.*//)[A-Za-z0-9._/-]+(?<![./])$' -or
+            -not $sourceBranchIsValid -or
             [string]$identity.collision_suffix -notmatch '^(?:|[a-z0-9]+(?:-[a-z0-9]+)*)$' -or
             [string]$identity.name -cne $expectedTaskName -or
             -not [string]::IsNullOrWhiteSpace([string]$identity.release_version) -or

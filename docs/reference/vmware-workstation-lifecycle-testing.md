@@ -469,6 +469,14 @@ before network preparation, redeploy cleanup, data-disk reset, or cloning. `-Wha
 caller-controlled environment, logs, output, markers, evidence, documentation, or GitHub surfaces. The wrapper commits
 durable child-active recovery state before the VMX staging child starts. If whole-tree termination cannot be proven,
 later cleanup or redeploy remains blocked until a new host boot proves that child is gone.
+
+GUI and headless starts use a short-lived launcher that starts `vmrun` without redirected standard streams. This keeps
+the launcher's bounded diagnostics available while preventing the detached Workstation UI or `vmware-vmx.exe` process
+from retaining the parent wrapper's output pipes. The root-process wait and redirected-stream drain each have a finite
+deadline. If an unexpected descendant retains a writer, the operation fails closed with the durable child-active marker
+intact; do not stop an otherwise healthy, exactly owned VM merely to release a pipe. Rerun the supported wrapper so its
+identity-bound recovery can advance the exact marker. Never edit the marker or VMX manually, and do not reuse, stop, or
+remove a VM whose PR-numbered display name and absolute VMX ownership cannot be proven.
 It also resolves the current Windows user's existing `.ssh/id_ed25519.pub` before any network preparation, cleanup, or
 VM creation, installs that Ed25519 public key for `admin`, and adds a separate test-only passwordless-sudo rule. Pass
 `-SshPublicKeyPath <path>` to select another existing Ed25519 public key, or `-SkipSshKeyProvisioning` to retain

@@ -1366,9 +1366,10 @@ schema-v3 provenance, cleanup scope, and reported evidence. Use `-CollisionSuffi
 same pull request. Protected release production uses a separate deterministic version-and-commit builder identity.
 Neither identity changes the canonical exported product or release asset names.
 
-Before a forced Workstation rebuild deletes the output directory, the wrapper first requires the exact sibling
-builder-ownership manifest. It never adopts a legacy generic or differently owned output. The wrapper then routes the
-complete output root through
+Before a forced Workstation rebuild deletes the output directory, the wrapper first requires the sibling manifest to
+prove the same repository, pull request, branch, canonical name, and suffix. After checked cleanup, it advances the
+manifest to the newly verified exact head; retained reuse still requires the exact commit. It never adopts a legacy
+generic or differently owned output. The wrapper then routes the complete output root through
 the checked VMware cleanup module. It validates the exact non-reparse-point Atlaso root, discovers only descendant VMX
 files, stops running targets, protects external VMDKs, and uses checked `vmrun deleteVM` for existing registered targets
 before removing the remaining root. A filesystem-identity snapshot blocks removal when the root or one of its surviving

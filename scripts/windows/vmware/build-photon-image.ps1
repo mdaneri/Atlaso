@@ -1294,7 +1294,7 @@ if ($builderOutputExists -and -not $builderManifestExists) {
     throw "Refusing to reuse or clean a Photon builder output without its exact ownership manifest: $workstationOutputDirectory"
 }
 if ($builderManifestExists) {
-    $null = Assert-AtlasoVmwareBuilderIdentityManifest `
+    $null = Assert-AtlasoVmwareBuilderOwnershipManifest `
         -Path $builderIdentityManifestPath `
         -OutputDirectory $workstationOutputDirectory `
         -Identity $builderIdentity
@@ -1487,7 +1487,7 @@ if (-not $ValidateOnly -and -not $PrepareIsoOnly) {
         $builderManifestExists = $true
     }
     if (-not $KeepExistingOutput) {
-        $null = Assert-AtlasoVmwareBuilderIdentityManifest `
+        $null = Assert-AtlasoVmwareBuilderOwnershipManifest `
             -Path $builderIdentityManifestPath `
             -OutputDirectory $workstationOutputDirectory `
             -Identity $builderIdentity
@@ -1503,6 +1503,11 @@ if (-not $ValidateOnly -and -not $PrepareIsoOnly) {
             -ExpectedRemovalRoot $workstationOutputDirectory `
             -RemovalRoot $workstationOutputDirectory `
             -Confirm:$false
+        Write-AtlasoVmwareBuilderIdentityManifest `
+            -Path $builderIdentityManifestPath `
+            -OutputDirectory $workstationOutputDirectory `
+            -Identity $builderIdentity `
+            -ReplaceSameOwner
         $null = Assert-AtlasoVmwareBuilderIdentityManifest `
             -Path $builderIdentityManifestPath `
             -OutputDirectory $workstationOutputDirectory `
