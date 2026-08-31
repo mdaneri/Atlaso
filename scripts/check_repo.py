@@ -653,7 +653,8 @@ AUTO_MERGE_ONLY_PATTERN = re.compile(
     r")\b"
 )
 MERGE_HOLD_MODAL_PROHIBITION = re.compile(
-    r"\b(?:you\s+)?(?:(?:must|may|can)\s+not|cannot)\s+merge\b"
+    r"\b(?:(?:you\s+)?(?:(?:must|may|can)\s+not|cannot)\s+merge|"
+    r"you\s+are\s+(?:forbidden\s+from\s+merging|not\s+allowed\s+to\s+merge))\b"
 )
 DEFAULT_MERGE_AUTHORITY_NEGATIONS = re.compile(
     r"(?:(?:do not|don't|don’t|never|must not|should not|cannot|can't|can’t|not)"
@@ -907,6 +908,13 @@ MERGE_HOLD_NEGATED_PERMISSION_REPORT_CONTEXT = re.compile(
     r"(?:cannot|can't|can’t|did\s+not|didn't|didn’t|never)\s+"
     r"(?:say|claim|report|state|suggest|write|assert)\b)"
 )
+MERGE_HOLD_NONAUTHORITATIVE_SOURCE_CONTEXT = re.compile(
+    r"(?:\baccording\s+to\s+(?:(?:the|a)\s+)?"
+    r"(?:task\s+handoff|handoff|task[- ]note|policy|stale\s+memory|memory|"
+    r"heartbeat|delegated\s+prompt)\b|"
+    r"\b(?:task\s+handoff|handoff|task[- ]note|policy|stale\s+memory|memory|"
+    r"heartbeat|delegated\s+prompt)\s+(?:said|says|reported|states?|claims?)\b)"
+)
 MERGE_AUTHORITY_TASK_CLAUSE_BOUNDARY = re.compile(r"[;.?!]+")
 MERGE_AUTHORITY_COORDINATED_CLAUSE_BOUNDARY = re.compile(
     r",\s+(?:but|and)\s+|\s+but\s+"
@@ -914,6 +922,10 @@ MERGE_AUTHORITY_COORDINATED_CLAUSE_BOUNDARY = re.compile(
 MERGE_HOLD_STANDALONE_PERMISSION = re.compile(
     r"\b(?:merge now|you\s+(?:may|can)\s+merge"
     r"(?:\s+(?:(?:this|the)\s+)?(?:pull request|pr))?(?:\s+now)?|"
+    r"i\s+authorize\s+you\s+to\s+merge"
+    r"(?:\s+(?:(?:this|the)\s+)?(?:pull request|pr))?|"
+    r"you\s+have\s+(?:permission|authorization)\s+to\s+merge"
+    r"(?:\s+(?:(?:this|the)\s+)?(?:pull request|pr))?|"
     r"go ahead and merge|"
     r"proceed (?:with the merge|with merging|to merge)(?: now)?)\b"
 )
@@ -1531,6 +1543,7 @@ def merge_hold_directions(
             and MERGE_HOLD_REPORTED_PERMISSION_CONTEXT.search(prefix) is None
             and MERGE_HOLD_INTERROGATIVE_PERMISSION_CONTEXT.search(prefix) is None
             and MERGE_HOLD_NEGATED_PERMISSION_REPORT_CONTEXT.search(prefix) is None
+            and MERGE_HOLD_NONAUTHORITATIVE_SOURCE_CONTEXT.search(prefix) is None
             and not _hold_targets_non_pr_object(
                 "", normalized, permission_offset, permission
             )

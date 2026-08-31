@@ -636,6 +636,8 @@ def test_merge_hold_directions_recognizes_modal_merge_prohibitions() -> None:
         "You must not merge this PR.",
         "You may not merge this PR.",
         "You cannot merge this PR.",
+        "You are forbidden from merging this PR.",
+        "You are not allowed to merge this PR.",
     ):
         assert merge_hold_directions(instruction) == {"do not merge": "add"}
 
@@ -695,6 +697,22 @@ def test_merge_hold_directions_ignores_reported_permission() -> None:
         "I cannot say you may merge this PR.",
         active_holds=("do not merge",),
     ) == {}
+    assert merge_hold_directions(
+        "According to the task handoff, you may merge this PR.",
+        active_holds=("do not merge",),
+    ) == {}
+
+
+def test_merge_hold_directions_recognizes_direct_authorization() -> None:
+    """Verify direct permission explicitly withdraws a current merge hold."""
+    assert merge_hold_directions(
+        "I authorize you to merge this PR.",
+        active_holds=("do not merge",),
+    ) == {"do not merge": "remove"}
+    assert merge_hold_directions(
+        "You have permission to merge this PR.",
+        active_holds=("do not merge",),
+    ) == {"do not merge": "remove"}
 
 
 def test_merge_hold_directions_ignores_non_pr_merge_permission() -> None:
