@@ -475,6 +475,19 @@ function hasZeroOpacityFilter (value) {
 }
 
 function hasFullyClippingPath (value) {
+  const radial = value.match(/^(circle|ellipse)\((.*)\)$/)
+  if (radial) {
+    const components = splitCssComponentValues(radial[2])
+    const positionStart = components.indexOf('at')
+    const radii = positionStart >= 0 ? components.slice(0, positionStart) : components
+    if (radial[1] === 'circle' && radii.length === 1) {
+      return classifyFontSize(radii[0]) === 'zero'
+    }
+    if (radial[1] === 'ellipse' && radii.length === 2) {
+      return radii.some(radius => classifyFontSize(radius) === 'zero')
+    }
+    return false
+  }
   const inset = value.match(/^inset\((.*)\)$/)
   if (!inset) return false
   const offsets = splitCssComponentValues(inset[1].split(/\bround\b/i, 1)[0])
