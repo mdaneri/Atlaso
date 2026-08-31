@@ -1389,6 +1389,9 @@ before removing the remaining root. A filesystem-identity snapshot blocks remova
 entries is recreated or replaced during cleanup. Provider and recursive-removal failures preserve remaining artifacts
 and prevent Packer from starting.
 
+Before a visible build repairs Workstation inventory or launches the UI, its parent holds that same exclusive claim
+across the retained manifest and VMX checks and releases it before starting the isolated child.
+
 If the bounded child reaches its deadline, the parent performs output cleanup only after proving whole-tree termination,
 revalidating the task or release identity, and reacquiring the same exclusive claim for the full cleanup interval.
 

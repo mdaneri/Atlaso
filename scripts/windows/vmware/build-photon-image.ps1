@@ -894,7 +894,6 @@ else {
     $outerCleanupOutputDirectory = Assert-AtlasoVmwareBuilderOutputDirectory `
         -OutputDirectory $outerCleanupOutputDirectory `
         -Identity $builderIdentity
-    $outerCleanupOutputExistedBeforeChild = Test-Path -LiteralPath $outerCleanupOutputDirectory
     $preparedIsoLeaf = if ($PSBoundParameters.ContainsKey('PreparedIsoPath') -and
         -not [string]::IsNullOrWhiteSpace($PreparedIsoPath)) {
         [System.IO.Path]::GetFileName($PreparedIsoPath)
@@ -918,6 +917,14 @@ else {
             -ReleaseVersion $ReleaseVersion `
             -ReleaseSourceCommit $ReleaseSourceCommit `
             -ReleaseWorkflowRunId $ReleaseWorkflowRunId
+        $parentRepairOutputClaim = $null
+        try {
+            # Stabilize the output, sibling manifest, VMX, and provider repair
+            # against another build using the same canonical identity.
+            $parentRepairOutputClaim = Enter-AtlasoVmwareBuilderOutputClaim `
+                -OutputDirectory $outerCleanupOutputDirectory `
+                -Identity $builderIdentity
+            $outerCleanupOutputExistedBeforeChild = Test-Path -LiteralPath $outerCleanupOutputDirectory
         $outerBuilderManifestPath = Get-AtlasoVmwareBuilderIdentityManifestPath `
             -OutputDirectory $outerCleanupOutputDirectory
         $outerBuilderManifestExists = Test-Path -LiteralPath $outerBuilderManifestPath -PathType Leaf
@@ -955,6 +962,12 @@ else {
         # This parent is outside the sensitive Windows job and owns the only
         # permitted Workstation UI launch; descendants receive no breakaway right.
         $null = Initialize-AtlasoWorkstationGui -VmrunPath $parentVmrunPath
+        }
+        finally {
+            if ($null -ne $parentRepairOutputClaim) {
+                $parentRepairOutputClaim.Dispose()
+            }
+        }
     }
     [void][System.IO.Directory]::CreateDirectory($credentialRoot)
     $cleanupMarkerDirectory = Split-Path -Parent $cleanupMarkerPath

@@ -818,7 +818,9 @@ Terminal order:
   the manifest to the newly verified head. Retained reuse still requires the exact source commit. Hold an OS-enforced
   exclusive sibling-file claim from ownership admission through cleanup, Packer completion, and provenance publication
   so concurrent builders cannot adopt or mutate the same canonical output. After proven child-tree termination, the
-  bounded parent may perform timeout cleanup only when the child durably recorded its cleanup claim, including for an
+  visible parent must hold the same exclusive output claim across its retained manifest and VMX checks, Workstation
+  inventory repair, and UI launch, then release it before starting the isolated child. The bounded parent may perform
+  timeout cleanup only when the child durably recorded its cleanup claim, including for an
   initially absent output; it must then revalidate identity and reacquire that exact claim through cleanup. Clone and export
   require exact builder provenance. Low-level OVF export accepts only an explicit proven source VMX. Never propagate
   transient PR identity into OVF/OVA product naming, deployed-appliance names, canonical release filenames, or

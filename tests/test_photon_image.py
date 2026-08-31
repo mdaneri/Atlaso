@@ -3154,11 +3154,17 @@ def test_vmware_gui_builder_repairs_stale_rows_before_ui_startup() -> None:
     output_snapshot = wrapper.index(
         "$outerCleanupOutputExistedBeforeChild = Test-Path", output_assertion
     )
+    parent_repair_claim = wrapper.index(
+        "Enter-AtlasoVmwareBuilderOutputClaim `", gui_guard
+    )
     output_snapshot_use = wrapper.index(
         "if ($outerCleanupOutputExistedBeforeChild", output_snapshot
     )
     keep_existing_guard = wrapper.index(
         "if (-not $KeepExistingOutput) {", gui_guard, repair
+    )
+    parent_repair_claim_release = wrapper.index(
+        "$parentRepairOutputClaim.Dispose()", gui_launch
     )
     child_start = wrapper.index("-Action 'The isolated VMware Photon image build'")
     termination_proven = wrapper.index(
@@ -3189,12 +3195,14 @@ def test_vmware_gui_builder_repairs_stale_rows_before_ui_startup() -> None:
     assert wrapper.count("Repair-AtlasoWorkstationStaleRegistrations `") == 1
     assert (
         output_assertion
-        < output_snapshot
         < gui_guard
+        < parent_repair_claim
+        < output_snapshot
         < output_snapshot_use
         < keep_existing_guard
         < repair
         < gui_launch
+        < parent_repair_claim_release
         < child_start
     )
     assert (
