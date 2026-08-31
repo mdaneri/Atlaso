@@ -673,6 +673,8 @@ MERGE_HOLD_MODAL_PROHIBITION = re.compile(
     r"you\s+are\s+forbidden\s+to\s+merge|"
     r"you(?:'re|’re)\s+not\s+(?:allowed|authorized|permitted)\s+to\s+merge|"
     r"you\s+do\s+not\s+have\s+(?:permission|authorization)\s+"
+    r"to\s+merge|(?:you|(?:(?:the|this)\s+)?(?:agent|task|heartbeat|handoff))\s+"
+    r"lacks?\s+(?:permission|authorization|authority)\s+"
     r"to\s+merge|i\s+(?:do\s+not|don't|don’t)\s+(?:authorize|permit)\s+"
     r"you\s+to\s+merge|i\s+no\s+longer\s+(?:authorize|permit)\s+"
     r"you\s+to\s+merge|i\s+(?:forbid|prohibit)\s+you\s+"
@@ -853,7 +855,7 @@ DEFAULT_MERGE_AUTHORITY_POST_STOP_STATUS = re.compile(
     r"(?:is|isn't|isn’t|is not|remains?|was|wasn't|wasn’t|was not)\b[^.!?]*"
 )
 DEFAULT_MERGE_AUTHORITY_NEGATED_MUTATION = re.compile(
-    r"(?:^|[;.!?]\s*|,\s*(?:but|and)\s+|\s+but\s+)"
+    r"(?:^|[;.!?]\s*|,\s*(?:but|and)\s+|\s+(?:but|and)\s+)"
     r"(?:please\s+)?(?:do not|don't|don’t|must not)\s+"
     r"(?!leave\s+(?:(?:this|the)\s+)?(?:pull request|pr)\s+open\b)"
     r"(?:\w+\s+){0,3}(?:implement|fix|patch|resolve|solve|deliver|open|submit|"

@@ -2547,6 +2547,12 @@
           ]
         },
         {
+          "text": "You lack permission to merge this PR.",
+          "add_holds": [
+            "do not merge"
+          ]
+        },
+        {
           "text": "I do not authorize you to merge this PR.",
           "add_holds": [
             "do not merge"
@@ -2847,6 +2853,17 @@
         }
       ],
       "generated": "Use the fork workflow without ordinary guarded merge controls.",
+      "expected_holds": []
+    },
+    {
+      "name": "conjunction-led-no-pr-review-is-ineligible",
+      "default_merge_authority": false,
+      "instructions": [
+        {
+          "text": "Review the changes and do not create a pull request."
+        }
+      ],
+      "generated": "Report the review findings without pull-request delivery or merge.",
       "expected_holds": []
     },
     {
