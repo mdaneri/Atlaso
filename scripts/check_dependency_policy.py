@@ -31,7 +31,7 @@ PIP_MODULE_RE = re.compile(
 SHELL_LAUNCHERS = {"bash", "dash", "ksh", "sh", "zsh"}
 POWERSHELL_LAUNCHERS = {"powershell", "powershell.exe", "pwsh", "pwsh.exe"}
 RUN_RE = re.compile(
-    r"^(?P<indent>\s*)(?:-\s+)?(?:run|'run'|\"run\"):\s*(?P<value>.*)$"
+    r"^(?P<indent>\s*)(?:-\s+)?(?:run|'run'|\"run\")\s*:\s*(?P<value>.*)$"
 )
 ALIAS_RE = re.compile(r"\*[A-Za-z_][A-Za-z0-9_.-]*")
 UNSUPPORTED_RUN_ALIAS_PREFIX = "unsupported-run-alias:"
@@ -123,7 +123,7 @@ def _yaml_scalar(line: str, key: str) -> str | None:
         key: Mapping key expected on the line.
     """
     key_pattern = rf"(?:{re.escape(key)}|'{re.escape(key)}'|\"{re.escape(key)}\")"
-    match = re.fullmatch(rf"\s*(?:-\s+)?{key_pattern}:\s*(.*?)\s*", line)
+    match = re.fullmatch(rf"\s*(?:-\s+)?{key_pattern}\s*:\s*(.*?)\s*", line)
     if not match:
         return None
     value = match.group(1).strip()
@@ -161,7 +161,9 @@ def _yaml_plain_scalar(
     key_indent = line_indent + (2 if re.match(r"\s*-\s+", line) else 0)
     value = _yaml_scalar(line, key)
     key_pattern = rf"(?:{re.escape(key)}|'{re.escape(key)}'|\"{re.escape(key)}\")"
-    source_match = re.fullmatch(rf"\s*(?:-\s+)?{key_pattern}:\s*(.*?)\s*", line)
+    source_match = re.fullmatch(
+        rf"\s*(?:-\s+)?{key_pattern}\s*:\s*(.*?)\s*", line
+    )
     source = source_match.group(1).strip() if source_match else ""
     if value is None and source.startswith(("'", '"')):
         cursor = index + 1
@@ -397,6 +399,30 @@ def _workflow_job_scope(lines: list[str], index: int) -> int:
     return -1
 
 
+def _condition_uses_unavailable_step(
+    lines: list[str],
+    index: int,
+    condition: str,
+) -> bool:
+    """Return whether a condition reads output from a step not yet completed.
+
+    Args:
+        lines: Workflow source lines.
+        index: Zero-based index of the conditioned step.
+        condition: Semantic step condition text.
+    """
+    referenced = set(re.findall(r"\bsteps\.([A-Za-z_][A-Za-z0-9_-]*)\.", condition))
+    if not referenced:
+        return False
+    job_scope = _workflow_job_scope(lines, index)
+    available: set[str] = set()
+    for candidate_index in range(max(job_scope + 1, 0), index):
+        step_id = _yaml_plain_scalar(lines, candidate_index, "id")[0]
+        if step_id and re.fullmatch(r"[A-Za-z_][A-Za-z0-9_-]*", step_id):
+            available.add(step_id)
+    return not referenced.issubset(available)
+
+
 def _workflow_checkout_sources(
     lines: list[str],
 ) -> tuple[
@@ -468,6 +494,8 @@ def _workflow_checkout_sources(
                 "",
             )
         )
+        if _condition_uses_unavailable_step(lines, step_index, condition):
+            condition = "${{ unsupported-future-step-condition }}"
         continue_on_error = (
             _yaml_value_text(
                 flow_step.get("continue-on-error"),
