@@ -87,6 +87,13 @@ def test_legacy_ga_updates_repository_is_canonicalized_before_refresh(
     observed: dict[str, str | int] = {}
 
     def run_probe(command: list[str], **kwargs: Any) -> subprocess.CompletedProcess[str]:
+        """Emulate a successful bounded curl probe.
+
+        Args:
+            command: Curl command assembled by the repository configurator.
+            **kwargs: Subprocess options supplied by the configurator.
+        """
+
         payload = Path(command[command.index("--output") + 1])
         payload.write_text(
             '<repomd xmlns="http://linux.duke.edu/metadata/repo" />',
@@ -204,6 +211,13 @@ def test_unreachable_canonical_metadata_fails_before_repository_rewrite(
     original = repository.read_bytes()
 
     def fail_probe(*_args: object, **_kwargs: object) -> subprocess.CompletedProcess[str]:
+        """Emulate a probe that exceeds its deadline.
+
+        Args:
+            *_args: Positional probe arguments supplied by the configurator.
+            **_kwargs: Keyword probe arguments supplied by the configurator.
+        """
+
         raise subprocess.TimeoutExpired("curl", configurator.PROBE_TIMEOUT_SECONDS)
 
     with pytest.raises(
@@ -230,6 +244,13 @@ def test_oversized_metadata_fails_before_payload_read(tmp_path: Path) -> None:
     def oversized_probe(
         command: list[str], **_kwargs: Any
     ) -> subprocess.CompletedProcess[str]:
+        """Emulate a successful response whose payload exceeds the hard limit.
+
+        Args:
+            command: Curl command assembled by the repository configurator.
+            **_kwargs: Subprocess options supplied by the configurator.
+        """
+
         payload = Path(command[command.index("--output") + 1])
         with payload.open("wb") as stream:
             stream.truncate(configurator.MAX_METADATA_BYTES + 1)
