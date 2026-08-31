@@ -648,6 +648,8 @@ def test_merge_hold_directions_recognizes_modal_merge_prohibitions() -> None:
         "You're not allowed to merge this PR.",
         "You’re not authorized to merge this PR.",
         "You do not have permission to merge this PR.",
+        "I do not authorize you to merge this PR.",
+        "I don’t permit you to merge this PR.",
     ):
         assert merge_hold_directions(instruction) == {"do not merge": "add"}
 

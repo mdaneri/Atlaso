@@ -672,7 +672,8 @@ MERGE_HOLD_MODAL_PROHIBITION = re.compile(
     r"you\s+are\s+forbidden\s+to\s+merge|"
     r"you(?:'re|’re)\s+not\s+(?:allowed|authorized)\s+to\s+merge|"
     r"you\s+do\s+not\s+have\s+(?:permission|authorization)\s+"
-    r"to\s+merge)\b"
+    r"to\s+merge|i\s+(?:do\s+not|don't|don’t)\s+(?:authorize|permit)\s+"
+    r"you\s+to\s+merge)\b"
 )
 DEFAULT_MERGE_AUTHORITY_NEGATIONS = re.compile(
     r"(?:(?:do not|don't|don’t|never|must not|should not|cannot|can't|can’t|not)"
