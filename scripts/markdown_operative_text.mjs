@@ -23,6 +23,14 @@ const formattingTags = new Set([
 const svgHtmlIntegrationTags = new Set(['desc', 'foreignobject', 'title'])
 const mathHtmlIntegrationTags = new Set(['mi', 'mn', 'mo', 'ms', 'mtext'])
 const mathHtmlIntegrationExceptions = new Set(['malignmark', 'mglyph'])
+const tableContextChildren = new Map([
+  ['table', new Set(['caption', 'colgroup', 'script', 'style', 'tbody', 'template', 'tfoot', 'thead'])],
+  ['colgroup', new Set(['col', 'template'])],
+  ['tbody', new Set(['script', 'style', 'template', 'tr'])],
+  ['tfoot', new Set(['script', 'style', 'template', 'tr'])],
+  ['thead', new Set(['script', 'style', 'template', 'tr'])],
+  ['tr', new Set(['script', 'style', 'td', 'template', 'th'])]
+])
 const cssNamedColors = new Set([
   'aliceblue', 'antiquewhite', 'aqua', 'aquamarine', 'azure', 'beige', 'bisque',
   'black', 'blanchedalmond', 'blue', 'blueviolet', 'brown', 'burlywood',
@@ -206,7 +214,7 @@ function isValidSuppressionDeclaration (property, value) {
     return true
   }
   if (property === 'display') {
-    return /^(?:none|inline|block|inline-block|flow-root|flex|inline-flex|grid|inline-grid|table|list-item|contents)$/.test(value)
+    return /^(?:none|inline|block|run-in|flow|flow-root|flex|grid|ruby|list-item|contents|inline-block|inline-table|inline-flex|inline-grid|table|table-row-group|table-header-group|table-footer-group|table-row|table-cell|table-column-group|table-column|table-caption|ruby-base|ruby-text|ruby-base-container|ruby-text-container)$/.test(value)
   }
   if (property === 'visibility') {
     return /^(?:visible|hidden|collapse)$/.test(value)
@@ -221,6 +229,9 @@ function isValidSuppressionDeclaration (property, value) {
     return /^(?:xx-small|x-small|small|medium|large|x-large|xx-large|xxx-large|larger|smaller|math)$/.test(value) ||
       /^[+]?(?:\d+(?:\.\d*)?|\.\d+)(?:%|[a-z]+)?$/.test(value) ||
       /^(?:calc|min|max|clamp)\(.+\)$/.test(value)
+  }
+  if (property === 'transform') {
+    return value === 'none' || /^(?:(?:matrix|matrix3d|perspective|rotate|rotate3d|rotatex|rotatey|rotatez|scale|scale3d|scalex|scaley|scalez|skew|skewx|skewy|translate|translate3d|translatex|translatey|translatez)\([^()]*(?:\([^()]*\)[^()]*)*\)\s*)+$/i.test(value)
   }
   if (property === 'color') {
     return value === 'transparent' || value === 'currentcolor' ||
@@ -306,6 +317,26 @@ function classifyFontSize (value) {
   const calculated = parseOpacityValue(normalizedCalculation)
   if (calculated === null) return 'inherit'
   return calculated === 0 ? 'zero' : 'visible'
+}
+
+function hasZeroScaleTransform (value) {
+  if (!value || value === 'none') return false
+  const scalePattern = /(scale|scale3d|scalex|scaley)\(([^()]*)\)/gi
+  for (const match of value.matchAll(scalePattern)) {
+    const argumentsList = splitCssFunctionArguments(match[2])
+      .flatMap(argument => argument.split(/\s+/))
+      .filter(Boolean)
+    const values = argumentsList.map(parseOpacityValue)
+    if (values.some(item => item === null)) continue
+    if (match[1].toLowerCase() === 'scale') {
+      if (values[0] === 0 || values[1] === 0) return true
+    } else if (match[1].toLowerCase() === 'scale3d') {
+      if (values[0] === 0 || values[1] === 0) return true
+    } else if (values[0] === 0) {
+      return true
+    }
+  }
+  return false
 }
 
 function stripCssComments (value) {
@@ -470,7 +501,7 @@ function hasHiddenAttributes (attributes, inheritedCustomProperties = new Map(),
       customProperties.set(property, declaration)
     }
   }
-  for (const property of ['display', 'visibility', 'content-visibility', 'opacity', 'font-size', 'color']) {
+  for (const property of ['display', 'visibility', 'content-visibility', 'opacity', 'font-size', 'transform', 'color']) {
     const declaration = declarations.get(property)
     if (!declaration || !hasCssVariable(declaration.value)) continue
     const resolved = resolveCssVariables(declaration.value, customProperties)
@@ -488,7 +519,8 @@ function hasHiddenAttributes (attributes, inheritedCustomProperties = new Map(),
         .toLowerCase() === 'true' ||
       declarations.get('display')?.value === 'none' ||
       declarations.get('content-visibility')?.value === 'hidden' ||
-      (parseOpacityValue(declarations.get('opacity')?.value || '') ?? 1) <= 0
+      (parseOpacityValue(declarations.get('opacity')?.value || '') ?? 1) <= 0 ||
+      hasZeroScaleTransform(declarations.get('transform')?.value || '')
     ),
     visibility: declarations.get('visibility')?.value || null,
     fontSize: declarations.get('font-size')?.value || null,
@@ -569,40 +601,47 @@ function decodeCssEscapes (value) {
 }
 
 function isHtmlSuppressed () {
-  if (htmlStack.some(entry => entry.irreversible)) {
+  let effectiveStack = htmlStack
+  for (let index = htmlStack.length - 1; index >= 0; index -= 1) {
+    if (htmlStack[index].fostered) {
+      effectiveStack = htmlStack.slice(index)
+      break
+    }
+  }
+  if (effectiveStack.some(entry => entry.irreversible)) {
     return true
   }
-  for (const entry of htmlStack) {
+  for (const entry of effectiveStack) {
     if (
       entry.closedDetails &&
-      !htmlStack.some(candidate => candidate.summaryOwner === entry)
+      !effectiveStack.some(candidate => candidate.summaryOwner === entry)
     ) {
       return true
     }
   }
   let visibilityHidden = false
-  for (let index = htmlStack.length - 1; index >= 0; index -= 1) {
-    if (htmlStack[index].visibility) {
-      if (/^(?:inherit|unset|revert|revert-layer)$/.test(htmlStack[index].visibility)) {
+  for (let index = effectiveStack.length - 1; index >= 0; index -= 1) {
+    if (effectiveStack[index].visibility) {
+      if (/^(?:inherit|unset|revert|revert-layer)$/.test(effectiveStack[index].visibility)) {
         continue
       }
-      visibilityHidden = ['hidden', 'collapse'].includes(htmlStack[index].visibility)
+      visibilityHidden = ['hidden', 'collapse'].includes(effectiveStack[index].visibility)
       break
     }
   }
   if (visibilityHidden) return true
-  for (let index = htmlStack.length - 1; index >= 0; index -= 1) {
-    if (!htmlStack[index].fontSize) continue
-    const state = classifyFontSize(htmlStack[index].fontSize)
+  for (let index = effectiveStack.length - 1; index >= 0; index -= 1) {
+    if (!effectiveStack[index].fontSize) continue
+    const state = classifyFontSize(effectiveStack[index].fontSize)
     if (state === 'zero') return true
     if (state === 'visible') break
   }
-  for (let index = htmlStack.length - 1; index >= 0; index -= 1) {
-    if (htmlStack[index].color) {
-      if (/^(?:inherit|unset|revert|revert-layer|currentcolor)$/.test(htmlStack[index].color)) {
+  for (let index = effectiveStack.length - 1; index >= 0; index -= 1) {
+    if (effectiveStack[index].color) {
+      if (/^(?:inherit|unset|revert|revert-layer|currentcolor)$/.test(effectiveStack[index].color)) {
         continue
       }
-      return isTransparentColor(htmlStack[index].color)
+      return isTransparentColor(effectiveStack[index].color)
     }
   }
   return false
@@ -660,6 +699,10 @@ function updateHtmlSuppression (content, inlineContext = false) {
       ? htmlStack[htmlStack.length - 1].customProperties
       : new Map()
     const parent = htmlStack.length ? htmlStack[htmlStack.length - 1] : null
+    const fostered = Boolean(
+      parent && tableContextChildren.has(parent.tag) &&
+      !tableContextChildren.get(parent.tag).has(tag)
+    )
     let summaryOwner = null
     if (tag === 'summary' && parent?.closedDetails && !parent.summarySeen) {
       parent.summarySeen = true
@@ -709,6 +752,7 @@ function updateHtmlSuppression (content, inlineContext = false) {
           foreignNamespace === 'math' && tag === 'annotation-xml' &&
           ['text/html', 'application/xhtml+xml'].includes(encoding)
         ),
+        fostered,
         customProperties: suppression.customProperties
       }
       htmlStack.push(entry)
