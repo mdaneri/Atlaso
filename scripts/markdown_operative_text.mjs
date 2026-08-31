@@ -250,6 +250,13 @@ function isValidSuppressionDeclaration (property, value) {
   if (property === 'opacity') {
     return parseOpacityValue(value) !== null
   }
+  if (property === 'fill-opacity' || property === 'stroke-opacity') {
+    return parseOpacityValue(value) !== null
+  }
+  if (property === 'fill' || property === 'stroke') {
+    return value === 'none' || value === 'context-fill' || value === 'context-stroke' ||
+      isValidColorValue(value) || /^url\(.+\)(?:\s+.+)?$/.test(value)
+  }
   if (property === 'filter') {
     const functions = parseCssFunctions(value)
     return value === 'none' || Boolean(
@@ -870,7 +877,7 @@ function hasHiddenAttributes (attributes, inheritedCustomProperties = new Map(),
       customProperties.set(property, declaration)
     }
   }
-  for (const property of ['display', 'visibility', 'content-visibility', 'opacity', 'filter', 'font-size', 'transform', 'clip-path', 'color']) {
+  for (const property of ['display', 'visibility', 'content-visibility', 'opacity', 'filter', 'font-size', 'transform', 'clip-path', 'color', 'fill', 'fill-opacity', 'stroke', 'stroke-opacity']) {
     const declaration = declarations.get(property)
     if (!declaration || !hasCssVariable(declaration.value)) continue
     const resolved = resolveCssVariables(declaration.value, customProperties)
@@ -894,10 +901,15 @@ function hasHiddenAttributes (attributes, inheritedCustomProperties = new Map(),
       hasZeroScaleTransform(declarations.get('transform')?.value || '') ||
       hasFullyClippingPath(declarations.get('clip-path')?.value || '')
     ),
+    display: declarations.get('display')?.value || null,
     visibility: declarations.get('visibility')?.value || null,
     opacity: declarations.get('opacity')?.value || null,
     fontSize: declarations.get('font-size')?.value || null,
     color: declarations.get('color')?.value || null,
+    fill: declarations.get('fill')?.value || null,
+    fillOpacity: declarations.get('fill-opacity')?.value || null,
+    stroke: declarations.get('stroke')?.value || null,
+    strokeOpacity: declarations.get('stroke-opacity')?.value || null,
     customProperties,
     parsedAttributes
   }
@@ -1017,7 +1029,33 @@ function isHtmlSuppressed () {
       return isTransparentColor(effectiveStack[index].color)
     }
   }
+  const activeEntry = effectiveStack[effectiveStack.length - 1]
+  if (activeEntry?.svgTextContext) {
+    const fillVisible = activeEntry.fill !== 'none' &&
+      (parseOpacityValue(activeEntry.fillOpacity) ?? 1) > 0 &&
+      !isTransparentColor(activeEntry.fill)
+    const strokeVisible = activeEntry.stroke !== 'none' &&
+      (parseOpacityValue(activeEntry.strokeOpacity) ?? 1) > 0 &&
+      !isTransparentColor(activeEntry.stroke)
+    if (!fillVisible && !strokeVisible) return true
+  }
   return false
+}
+
+function resolveSvgPresentationValue (
+  inlineValue,
+  presentationValue,
+  property,
+  inheritedValue,
+  initialValue
+) {
+  let value = inlineValue
+  if (value === null && isValidSuppressionDeclaration(property, presentationValue)) {
+    value = presentationValue
+  }
+  if (value === null || /^(?:inherit|unset)$/.test(value)) return inheritedValue
+  if (/^(?:initial|revert|revert-layer)$/.test(value)) return initialValue
+  return value
 }
 
 function isTableFosteredText (content) {
@@ -1125,11 +1163,60 @@ function updateHtmlSuppression (content, inlineContext = false) {
     const presentationOpacity = decodeHtmlAttributeEntities(
       suppression.parsedAttributes.get('opacity') || ''
     ).trim().toLowerCase()
+    const presentationFill = decodeHtmlAttributeEntities(
+      suppression.parsedAttributes.get('fill') || ''
+    ).trim().toLowerCase()
+    const presentationFillOpacity = decodeHtmlAttributeEntities(
+      suppression.parsedAttributes.get('fill-opacity') || ''
+    ).trim().toLowerCase()
+    const presentationStroke = decodeHtmlAttributeEntities(
+      suppression.parsedAttributes.get('stroke') || ''
+    ).trim().toLowerCase()
+    const presentationStrokeOpacity = decodeHtmlAttributeEntities(
+      suppression.parsedAttributes.get('stroke-opacity') || ''
+    ).trim().toLowerCase()
+    const svgPaintContext = foreignNamespace === 'svg'
+    const fill = svgPaintContext
+      ? resolveSvgPresentationValue(
+          suppression.fill,
+          presentationFill,
+          'fill',
+          parent?.fill ?? 'black',
+          'black'
+        )
+      : null
+    const fillOpacity = svgPaintContext
+      ? resolveSvgPresentationValue(
+          suppression.fillOpacity,
+          presentationFillOpacity,
+          'fill-opacity',
+          parent?.fillOpacity ?? '1',
+          '1'
+        )
+      : null
+    const stroke = svgPaintContext
+      ? resolveSvgPresentationValue(
+          suppression.stroke,
+          presentationStroke,
+          'stroke',
+          parent?.stroke ?? 'none',
+          'none'
+        )
+      : null
+    const strokeOpacity = svgPaintContext
+      ? resolveSvgPresentationValue(
+          suppression.strokeOpacity,
+          presentationStrokeOpacity,
+          'stroke-opacity',
+          parent?.strokeOpacity ?? '1',
+          '1'
+        )
+      : null
     if (!selfClosing || (!voidTags.has(tag) && !foreign)) {
       const entry = {
         tag,
         irreversible: suppressedTags.has(tag) || suppression.irreversible || (
-          foreign && presentationDisplay === 'none'
+          foreign && (suppression.display ?? presentationDisplay) === 'none'
         ) || (
           foreign &&
           (parseOpacityValue(suppression.opacity ?? presentationOpacity) ?? 1) <= 0
@@ -1144,6 +1231,13 @@ function updateHtmlSuppression (content, inlineContext = false) {
         ),
         fontSize: suppression.fontSize,
         color: suppression.color,
+        fill,
+        fillOpacity,
+        stroke,
+        strokeOpacity,
+        svgTextContext: foreignNamespace === 'svg' && (
+          tag === 'text' || parent?.svgTextContext
+        ),
         inline: inlineContext,
         foreign,
         foreignNamespace,

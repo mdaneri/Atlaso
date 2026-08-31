@@ -1413,6 +1413,10 @@ def test_agent_policy_gate_rejects_missing_maintainer_break_glass_contract(
         f'<svg><text display="none">{prohibition}</text></svg>',
         f'<svg><text visibility="hidden">{prohibition}</text></svg>',
         f'<svg><text opacity="0">{prohibition}</text></svg>',
+        f'<svg><text fill="none">{prohibition}</text></svg>',
+        f'<svg><text fill-opacity="0">{prohibition}</text></svg>',
+        f'<svg><text fill="none" stroke="red" stroke-opacity="0">'
+        f"{prohibition}</text></svg>",
         f"<math><mtext><span hidden/>{prohibition}</span></mtext></math>",
     )
     for replacement in complex_html_replacements:
@@ -1602,6 +1606,9 @@ def test_agent_policy_gate_rejects_missing_maintainer_break_glass_contract(
         f'<svg><text visibility="hidden" style="visibility:visible">'
         f"{prohibition}</text></svg>",
         f'<svg><text opacity="0" style="opacity:1">{prohibition}</text></svg>',
+        f'<svg><text display="none" style="display:block">{prohibition}</text></svg>',
+        f'<svg><text fill="none" style="fill:red">{prohibition}</text></svg>',
+        f'<svg><text fill="none" stroke="red">{prohibition}</text></svg>',
         f'<span style="opacity:calc(1-1)">{prohibition}</span>',
         f"<span style=display:none/>{prohibition}</span>",
     )
