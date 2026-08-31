@@ -1711,10 +1711,23 @@ def test_vmware_packer_requires_proven_task_or_release_builder_identity() -> Non
     remote_output_recheck = wrapper.index(
         "Assert-AtlasoBuilderIdentityCurrent `", output_boundary
     )
+    output_absence_recheck = wrapper.index(
+        "$outputAppearedBeforeOwnershipClaim = Test-Path", remote_output_recheck
+    )
+    concurrent_output_refusal = wrapper.index(
+        "refusing to claim or clean concurrent artifacts", output_absence_recheck
+    )
     manifest_write = wrapper.index(
         "Write-AtlasoVmwareBuilderIdentityManifest `", output_boundary
     )
-    assert output_boundary < remote_output_recheck < manifest_write < cleanup
+    assert (
+        output_boundary
+        < remote_output_recheck
+        < output_absence_recheck
+        < concurrent_output_refusal
+        < manifest_write
+        < cleanup
+    )
     parent_output = wrapper.index(
         "$outerCleanupOutputDirectory = Resolve-WorkstationOutputDirectory `"
     )

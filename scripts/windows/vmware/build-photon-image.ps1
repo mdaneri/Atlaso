@@ -1641,6 +1641,13 @@ if (-not $ValidateOnly -and -not $PrepareIsoOnly) {
         -ReleaseSourceCommit $ReleaseSourceCommit `
         -ReleaseWorkflowRunId $ReleaseWorkflowRunId
     if (-not $builderManifestExists) {
+        $outputAppearedBeforeOwnershipClaim = Test-Path -LiteralPath $workstationOutputDirectory
+        $manifestAppearedBeforeOwnershipClaim = Test-Path `
+            -LiteralPath $builderIdentityManifestPath `
+            -PathType Leaf
+        if ($outputAppearedBeforeOwnershipClaim -or $manifestAppearedBeforeOwnershipClaim) {
+            throw 'The Photon builder output or manifest appeared after initial ownership validation; refusing to claim or clean concurrent artifacts.'
+        }
         Write-AtlasoVmwareBuilderIdentityManifest `
             -Path $builderIdentityManifestPath `
             -OutputDirectory $workstationOutputDirectory `
