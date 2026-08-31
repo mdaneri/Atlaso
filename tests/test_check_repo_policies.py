@@ -727,6 +727,9 @@ def test_merge_hold_directions_preserves_cross_pr_condition() -> None:
     assert merge_hold_directions(
         "Do not merge until another PR is merged."
     ) == {"do not merge": "add"}
+    assert merge_hold_directions(
+        "Do not merge while another PR is open."
+    ) == {"do not merge": "add"}
     assert merge_hold_directions("Do not merge another PR.") == {}
 
 
@@ -741,6 +744,13 @@ def test_merge_hold_directions_recognizes_passive_not_allowed() -> None:
     """Verify passive not-allowed wording becomes an explicit merge hold."""
     assert merge_hold_directions(
         "Implement issue #602, but merging this PR is not allowed."
+    ) == {"do not merge": "add"}
+
+
+def test_merge_hold_directions_recognizes_approval_denial() -> None:
+    """Verify a direct denial of approval becomes an explicit merge hold."""
+    assert merge_hold_directions(
+        "Implement issue #602, but you do not have my approval to merge this PR."
     ) == {"do not merge": "add"}
 
 
@@ -1322,6 +1332,9 @@ def test_generated_authority_rejects_general_permission_questions() -> None:
     assert not has_affirmative_default_merge_authority(
         "Does permission exist to complete the guarded merge?"
     )
+    assert not has_affirmative_default_merge_authority(
+        "Are you authorized to complete the guarded merge?"
+    )
 
 
 def test_source_authority_keeps_workflow_policy_subject_eligible() -> None:
@@ -1362,6 +1375,16 @@ def test_source_authority_excludes_review_advice() -> None:
         "Review the PR and propose a fix.",
         "Review the PR, then recommend a patch.",
         "Inspect the changes and suggest a solution.",
+    ):
+        assert not source_has_default_merge_authority((instruction,))
+
+
+def test_source_authority_excludes_implementation_questions() -> None:
+    """Verify mutation questions request a decision rather than implementation."""
+    for instruction in (
+        "Should we fix this?",
+        "Should we add retry handling?",
+        "Could you replace the parser?",
     ):
         assert not source_has_default_merge_authority((instruction,))
 
@@ -1418,6 +1441,7 @@ def test_source_authority_honors_workflow_reclassification() -> None:
         "Transfer the PR to mdaneri's fork.",
         "Convert the pull request to draft.",
         "Change this PR to a draft.",
+        "The pull request is now from an external fork.",
         "Make this a draft PR.",
     ):
         assert not source_has_default_merge_authority(
@@ -2637,6 +2661,15 @@ def test_merge_authority_transfer_rejects_generated_permission_question(
                             "Does permission exist to complete the guarded merge?"
                         ),
                         "expected_holds": [],
+                    },
+                    {
+                        "name": "generated second-person authorization question",
+                        "default_merge_authority": True,
+                        "instructions": [{"text": "Implement issue #602."}],
+                        "generated": (
+                            "Are you authorized to complete the guarded merge?"
+                        ),
+                        "expected_holds": [],
                     }
                 ]
             }
@@ -2653,6 +2686,8 @@ def test_merge_authority_transfer_rejects_generated_permission_question(
         "default authority",
         "merge authority fixture generated existential permission question omits "
         "affirmative default authority",
+        "merge authority fixture generated second-person authorization question "
+        "omits affirmative default authority",
     ]
 
 

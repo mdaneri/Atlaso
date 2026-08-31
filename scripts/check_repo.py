@@ -699,9 +699,10 @@ MERGE_HOLD_MODAL_PROHIBITION = re.compile(
     r"you\s+are\s+forbidden\s+to\s+merge|"
     r"you(?:'re|’re)\s+not\s+(?:allowed|authorized|permitted)\s+to\s+merge|"
     r"you\s+(?:do\s+not|don't|don’t)\s+have\s+"
-    r"(?:permission|authorization|authority)\s+"
+    r"(?:(?:my|the|your|our)\s+)?"
+    r"(?:permission|authorization|authority|approval)\s+"
     r"to\s+merge|(?:you|(?:(?:the|this)\s+)?(?:agent|task|heartbeat|handoff))\s+"
-    r"lacks?\s+(?:permission|authorization|authority)\s+"
+    r"lacks?\s+(?:permission|authorization|authority|approval)\s+"
     r"to\s+merge|i\s+(?:do\s+not|don't|don’t)\s+(?:authorize|permit)\s+"
     r"you\s+to\s+merge|i\s+(?:have\s+not|haven't|haven’t)\s+"
     r"(?:authorized|permitted)\s+you\s+to\s+merge|"
@@ -764,7 +765,7 @@ DEFAULT_MERGE_AUTHORITY_PERMISSION_QUESTION = re.compile(
     r"(?:has|have)\s+(?:i|we|(?:(?:the|this)\s+)?(?:heartbeat|handoff|"
     r"delegation|delegating\s+agent|agent|task))\s+been\s+"
     r"(?:authorized|permitted|allowed)\s+to|"
-    r"(?:am|are|is)\s+(?:i|we|(?:(?:the|this)\s+)?(?:heartbeat|handoff|"
+    r"(?:am|are|is)\s+(?:i|we|you|(?:(?:the|this)\s+)?(?:heartbeat|handoff|"
     r"delegation|delegating\s+agent|agent|task))\s+"
     r"(?:authorized|permitted|allowed)\s+to|"
     r"(?:is|was)\s+it\s+(?:permissible|allowed|authorized)\s+for\s+"
@@ -834,6 +835,9 @@ DEFAULT_MERGE_AUTHORITY_WORKFLOW_RECLASSIFICATION = re.compile(
     r"(?:now\s+)?private (?:vulnerability|advisory|remediation)\b|"
     r"(?:^|[;.!?]\s*)(?:the|this)\s+(?:pull request|pr)\s+is\s+"
     r"(?:now\s+)?(?:an?\s+)?draft\b|"
+    r"(?:^|[;.!?]\s*)(?:the|this)\s+(?:pull request|pr)\s+is\s+"
+    r"(?:now\s+)?from\s+"
+    r"(?:(?:an?|the|my|your|our|their)\s+)?(?:external\s+)?fork\b|"
     r"(?:^|[;.!?]\s*)(?:move|push|transfer)\s+(?:the\s+)?"
     r"(?:work|task|implementation|branch|pull request|pr)\s+(?:to|onto)\s+"
     r"(?:(?:(?:my|your|our|their|his|her|the|an?)|"
@@ -861,6 +865,9 @@ DEFAULT_MERGE_AUTHORITY_INTERROGATIVE_REVIEW = re.compile(
     r"(?:^|[;.!?]\s*)(?:is|are|was|were|does|do|did)\s+"
     r"(?:(?:the|this|that|an?)\s+)?"
     r"(?:implementation|fix|patch|changes?|code|pull request|pr)\b[^?]*\?|"
+    r"(?:^|[;.!?]\s*)(?:should|can|could|would|will)\s+"
+    r"(?:i|we|you)\s+(?:implement|fix|patch|resolve|solve|change|modify|edit|"
+    r"rename|delete|replace|add|remove|create|build|repair)\b[^?]*\?|"
     r"(?:^|[;.!?]\s*)how\s+(?:do|should|can|could|would)\s+"
     r"(?:i|we|you)\s+(?:implement|fix|patch|resolve|solve)\b[^?]*\?|"
     r"(?:^|[;.!?]\s*)what\s+(?:is|are)\s+(?:needed|required)\s+to\s+"
@@ -1492,7 +1499,7 @@ def merge_hold_directions(
             has_gate_before_reference = (
                 other_task_reference is not None
                 and re.search(
-                    r"\b(?:until|before|after)\s*$",
+                    r"\b(?:until|before|after|while)\s*$",
                     clause[: other_task_reference.start()],
                 )
                 is not None

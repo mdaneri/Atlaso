@@ -3334,6 +3334,63 @@
       ],
       "generated": "Complete the guarded merge when every gate passes.",
       "expected_holds": []
+    },
+    {
+      "name": "approval-denial-is-preserved",
+      "default_merge_authority": true,
+      "instructions": [
+        {
+          "text": "Implement issue #602, but you do not have my approval to merge this PR.",
+          "add_holds": [
+            "do not merge"
+          ]
+        }
+      ],
+      "generated": "Preserve the explicit do not merge hold.",
+      "expected_holds": [
+        "do not merge"
+      ]
+    },
+    {
+      "name": "implementation-question-remains-ineligible",
+      "default_merge_authority": false,
+      "instructions": [
+        {
+          "text": "Should we add retry handling?"
+        }
+      ],
+      "generated": "Answer the implementation question without changing or merging the pull request.",
+      "expected_holds": []
+    },
+    {
+      "name": "declarative-external-fork-reclassification",
+      "default_merge_authority": false,
+      "instructions": [
+        {
+          "text": "Implement issue #602."
+        },
+        {
+          "text": "The pull request is now from an external fork."
+        }
+      ],
+      "generated": "Preserve the external-fork workflow without an ordinary guarded merge.",
+      "expected_holds": []
+    },
+    {
+      "name": "while-another-pr-condition-is-preserved",
+      "default_merge_authority": true,
+      "instructions": [
+        {
+          "text": "Implement issue #602, but do not merge while another PR is open.",
+          "add_holds": [
+            "do not merge"
+          ]
+        }
+      ],
+      "generated": "Preserve the explicit do not merge hold.",
+      "expected_holds": [
+        "do not merge"
+      ]
     }
   ]
 }
