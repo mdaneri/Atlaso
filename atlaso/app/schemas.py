@@ -2392,7 +2392,11 @@ class SettingsResponse(BaseModel):
 
 
 def _remove_omission_defaults_from_schema(schema: dict[str, Any]) -> None:
-    """Keep internal PATCH omission markers out of the public OpenAPI contract."""
+    """Keep internal PATCH omission markers out of the public OpenAPI contract.
+
+    Args:
+        schema: Generated JSON schema to sanitize in place.
+    """
     for property_schema in schema.get("properties", {}).values():
         property_schema.pop("default", None)
 
