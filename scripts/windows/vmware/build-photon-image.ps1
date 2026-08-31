@@ -313,6 +313,39 @@ function Resolve-AtlasoTaskBuilderIdentity {
 
 <#
 .SYNOPSIS
+Revalidate that the task-owned builder identity still owns the exact open pull request.
+.PARAMETER RepositoryRoot
+Atlaso checkout whose current branch and commit must still own the pull request.
+.PARAMETER PullRequestNumber
+Exact positive pull-request number selected by the caller.
+.PARAMETER CollisionSuffix
+Optional sanitized suffix for another builder owned by the pull request.
+.PARAMETER ExpectedIdentity
+Previously verified builder identity that must remain unchanged.
+#>
+function Assert-AtlasoTaskBuilderIdentityCurrent {
+    param(
+        [Parameter(Mandatory = $true)][string]$RepositoryRoot,
+        [Parameter(Mandatory = $true)][ValidateRange(1, 2147483647)][int]$PullRequestNumber,
+        [string]$CollisionSuffix = '',
+        [Parameter(Mandatory = $true)][object]$ExpectedIdentity
+    )
+
+    $currentIdentity = Resolve-AtlasoTaskBuilderIdentity `
+        -RepositoryRoot $RepositoryRoot `
+        -PullRequestNumber $PullRequestNumber `
+        -CollisionSuffix $CollisionSuffix
+    if ([string]$currentIdentity.Name -cne [string]$ExpectedIdentity.Name -or
+        [string]$currentIdentity.Repository -cne [string]$ExpectedIdentity.Repository -or
+        [string]$currentIdentity.SourceBranch -cne [string]$ExpectedIdentity.SourceBranch -or
+        [string]$currentIdentity.SourceCommit -cne [string]$ExpectedIdentity.SourceCommit) {
+        throw 'The task-owned Photon builder identity changed before a destructive or provider boundary.'
+    }
+    return $currentIdentity
+}
+
+<#
+.SYNOPSIS
 Resolve and verify the protected release builder identity.
 .PARAMETER RepositoryRoot
 Atlaso checkout whose version and commit are verified.
@@ -1486,6 +1519,15 @@ $packerVariables = @{
 $packerBuildInvoker = $null
 if (-not $ValidateOnly -and -not $PrepareIsoOnly) {
     $resolvedVmrunPath = Resolve-WorkstationVmrunPath -Path $VmrunPath
+    if (-not $ReleaseBuilder) {
+        # Credential retrieval and network preparation can outlive the earlier
+        # proof, so refresh remote ownership immediately before output mutation.
+        $null = Assert-AtlasoTaskBuilderIdentityCurrent `
+            -RepositoryRoot $repoRoot `
+            -PullRequestNumber $PullRequestNumber `
+            -CollisionSuffix $CollisionSuffix `
+            -ExpectedIdentity $builderIdentity
+    }
     if (-not $builderManifestExists) {
         Write-AtlasoVmwareBuilderIdentityManifest `
             -Path $builderIdentityManifestPath `
@@ -1568,6 +1610,15 @@ if (-not $ValidateOnly -and -not $PrepareIsoOnly) {
                 -ProcessLauncher $requireExistingUi
         }
         $packerPath = (Get-Command packer -ErrorAction Stop).Source
+        if (-not $ReleaseBuilder) {
+            # ISO preparation and Packer initialization happen outside this
+            # callback, so refresh ownership at the final provider boundary.
+            $null = Assert-AtlasoTaskBuilderIdentityCurrent `
+                -RepositoryRoot $repoRoot `
+                -PullRequestNumber $PullRequestNumber `
+                -CollisionSuffix $CollisionSuffix `
+                -ExpectedIdentity $builderIdentity
+        }
         Invoke-AtlasoMonitoredPackerBuild `
             -PackerPath $packerPath `
             -Arguments $PackerArguments `
@@ -1583,16 +1634,11 @@ if (-not $ValidateOnly -and -not $PrepareIsoOnly) {
 }
 
 if (-not $ReleaseBuilder -and -not $ValidateOnly -and -not $PrepareIsoOnly) {
-    $finalTaskIdentity = Resolve-AtlasoTaskBuilderIdentity `
+    $null = Assert-AtlasoTaskBuilderIdentityCurrent `
         -RepositoryRoot $repoRoot `
         -PullRequestNumber $PullRequestNumber `
-        -CollisionSuffix $CollisionSuffix
-    if ([string]$finalTaskIdentity.Name -cne [string]$builderIdentity.Name -or
-        [string]$finalTaskIdentity.Repository -cne [string]$builderIdentity.Repository -or
-        [string]$finalTaskIdentity.SourceBranch -cne [string]$builderIdentity.SourceBranch -or
-        [string]$finalTaskIdentity.SourceCommit -cne [string]$builderIdentity.SourceCommit) {
-        throw 'The task-owned Photon builder identity changed before the final Packer boundary.'
-    }
+        -CollisionSuffix $CollisionSuffix `
+        -ExpectedIdentity $builderIdentity
 }
 
 Invoke-AtlasoPhotonImageBuild `

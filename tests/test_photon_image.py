@@ -1687,6 +1687,16 @@ def test_vmware_packer_requires_proven_task_or_release_builder_identity() -> Non
     manifest_refresh = wrapper.index("-ReplaceSameOwner", cleanup)
     exact_recheck = wrapper.index("Assert-AtlasoVmwareBuilderIdentityManifest `", cleanup)
     assert owner_recheck < cleanup < manifest_refresh < exact_recheck
+    output_boundary = wrapper.index(
+        "$resolvedVmrunPath = Resolve-WorkstationVmrunPath -Path $VmrunPath"
+    )
+    remote_output_recheck = wrapper.index(
+        "Assert-AtlasoTaskBuilderIdentityCurrent `", output_boundary
+    )
+    manifest_write = wrapper.index(
+        "Write-AtlasoVmwareBuilderIdentityManifest `", output_boundary
+    )
+    assert output_boundary < remote_output_recheck < manifest_write < cleanup
     parent_output = wrapper.index(
         "$outerCleanupOutputDirectory = Resolve-WorkstationOutputDirectory `"
     )
@@ -1703,6 +1713,12 @@ def test_vmware_packer_requires_proven_task_or_release_builder_identity() -> Non
     )
     packer_invocation = wrapper.index("Invoke-AtlasoPhotonImageBuild `")
     assert final_pr_recheck < packer_invocation
+    callback = wrapper.index("$packerBuildInvoker = {")
+    callback_recheck = wrapper.index(
+        "Assert-AtlasoTaskBuilderIdentityCurrent `", callback
+    )
+    monitored_packer = wrapper.index("Invoke-AtlasoMonitoredPackerBuild `", callback)
+    assert callback < callback_recheck < monitored_packer < packer_invocation
     assert "Refusing to reuse or clean a Photon builder output" in wrapper
     assert "Atlaso-Photon-Builder-VMware" not in wrapper
     assert "New-AtlasoVmwareBuilderIdentity" in release
