@@ -642,6 +642,8 @@ def test_merge_hold_directions_recognizes_modal_merge_prohibitions() -> None:
         "You are forbidden from merging this PR.",
         "You are not allowed to merge this PR.",
         "You are not authorized to merge this PR.",
+        "You aren't allowed to merge this PR.",
+        "You isn’t authorized to merge this PR.",
         "You do not have permission to merge this PR.",
     ):
         assert merge_hold_directions(instruction) == {"do not merge": "add"}
@@ -743,6 +745,9 @@ def test_merge_hold_directions_recognizes_approval_needed() -> None:
     ) == {"wait for approval": "add"}
     assert merge_hold_directions(
         "Implement issue #602, but only with my approval may you merge this PR."
+    ) == {"wait for approval": "add"}
+    assert merge_hold_directions(
+        "Implement issue #602, but approval is required before you merge this PR."
     ) == {"wait for approval": "add"}
 
 
@@ -1116,6 +1121,9 @@ def test_generated_authority_rejects_general_permission_questions() -> None:
     )
     assert not has_affirmative_default_merge_authority(
         "The previous agent said to complete the guarded merge."
+    )
+    assert not has_affirmative_default_merge_authority(
+        "Are we authorized to complete the guarded merge?"
     )
 
 

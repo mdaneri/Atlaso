@@ -2451,6 +2451,18 @@
           ]
         },
         {
+          "text": "You aren't allowed to merge this PR.",
+          "add_holds": [
+            "do not merge"
+          ]
+        },
+        {
+          "text": "You isn’t authorized to merge this PR.",
+          "add_holds": [
+            "do not merge"
+          ]
+        },
+        {
           "text": "You do not have permission to merge this PR.",
           "add_holds": [
             "do not merge"
@@ -2507,6 +2519,22 @@
       "instructions": [
         {
           "text": "Implement issue #602, but please merge this PR after I approve.",
+          "add_holds": [
+            "wait for approval"
+          ]
+        }
+      ],
+      "generated": "Wait for approval before merging.",
+      "expected_holds": [
+        "wait for approval"
+      ]
+    },
+    {
+      "name": "passive-approval-requirement-is-preserved",
+      "default_merge_authority": true,
+      "instructions": [
+        {
+          "text": "Implement issue #602, but approval is required before you merge this PR.",
           "add_holds": [
             "wait for approval"
           ]

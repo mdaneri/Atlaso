@@ -667,8 +667,9 @@ AUTO_MERGE_ONLY_PATTERN = re.compile(
 MERGE_HOLD_MODAL_PROHIBITION = re.compile(
     r"\b(?:(?:you\s+)?(?:(?:must|may|can|should)\s+not|cannot|can't|can’t)"
     r"\s+merge|"
-    r"you\s+are\s+(?:forbidden\s+from\s+merging|not\s+(?:allowed|authorized)\s+"
-    r"to\s+merge)|you\s+do\s+not\s+have\s+(?:permission|authorization)\s+"
+    r"you\s+(?:(?:are\s+not|aren't|aren’t|isn't|isn’t)\s+"
+    r"(?:allowed|authorized)\s+to\s+merge|are\s+forbidden\s+from\s+merging)|"
+    r"you\s+do\s+not\s+have\s+(?:permission|authorization)\s+"
     r"to\s+merge)\b"
 )
 DEFAULT_MERGE_AUTHORITY_NEGATIONS = re.compile(
@@ -705,7 +706,8 @@ DEFAULT_MERGE_AUTHORITY_DECISION_ONLY = re.compile(r"\bwhether\s+to\b")
 DEFAULT_MERGE_AUTHORITY_PERMISSION_QUESTION = re.compile(
     r"\b(?:(?:do|would)\s+you\s+(?:want|like)\s+(?:me|us)\s+to|"
     r"should\s+(?:i|we)|(?:can|could|may)\s+(?:i|we)|"
-    r"do\s+(?:i|we)\s+have\s+(?:authority|authorization|permission)\s+to)\b"
+    r"do\s+(?:i|we)\s+have\s+(?:authority|authorization|permission)\s+to|"
+    r"(?:am|are|is)\s+(?:i|we)\s+(?:authorized|permitted|allowed)\s+to)\b"
 )
 DEFAULT_MERGE_AUTHORITY_PROMPT_MARKERS = (
     "preserve default merge authority",
@@ -968,11 +970,13 @@ MERGE_HOLD_APPROVAL_CONDITION = re.compile(
     r"(?:the\s+)?(?:[a-z][a-z0-9_-]*\s+)?owner)\s+approves?|approved)\b"
 )
 MERGE_HOLD_APPROVAL_CONDITION_FIRST = re.compile(
-    r"\b(?:only\s+)?(?:with\s+(?:(?:my|our|your)\s+approval|"
+    r"\b(?:(?:only\s+)?(?:with\s+(?:(?:my|our|your)\s+approval|"
     r"(?:(?:the\s+)?(?:user|maintainer|owner)(?:'s|’s)?)\s+approval)|"
     r"after\s+(?:i|we|(?:the\s+)?(?:user|maintainer|owner))\s+approves?)\s+"
     r"(?:may|can|should)\s+(?:you|i|we)\s+merge"
-    r"(?:\s+(?:(?:this|the)\s+)?(?:pull request|pr))?\b"
+    r"(?:\s+(?:(?:this|the)\s+)?(?:pull request|pr))?|"
+    r"approval\s+is\s+(?:required|needed)\s+before\s+(?:you|i|we)\s+merge"
+    r"(?:\s+(?:(?:this|the)\s+)?(?:pull request|pr))?)\b"
 )
 MERGE_HOLD_APPROVAL_BOUNDED_DISPOSITION = re.compile(
     r"\b(?:(?:do not|don't|don’t|never)\s+merge"
