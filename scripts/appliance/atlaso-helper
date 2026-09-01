@@ -19343,7 +19343,12 @@ def _factory_reset_state_payload() -> dict:
 
 
 def _environment_file_open_quote(value: str, initial_quote: str = "") -> str:
-    """Return the quote context left open after one physical line."""
+    """Return the quote context left open after one physical line.
+
+    Args:
+        value: Physical EnvironmentFile line content to inspect.
+        initial_quote: Quote context inherited from the preceding line.
+    """
     quote = initial_quote
     escaped = False
     for character in value:
@@ -19367,9 +19372,38 @@ def _environment_file_open_quote(value: str, initial_quote: str = "") -> str:
 
 
 def _environment_file_unquoted_continues(value: str) -> bool:
-    """Return whether an unquoted physical line escapes its newline."""
+    """Return whether an unquoted physical line escapes its newline.
+
+    Args:
+        value: Physical EnvironmentFile line content to inspect.
+    """
     trailing_backslashes = len(value) - len(value.rstrip("\\"))
     return trailing_backslashes % 2 == 1
+
+
+def _decode_double_quoted_environment_value(value: str) -> str:
+    """Decode the supported systemd escapes inside one double-quoted value.
+
+    Args:
+        value: EnvironmentFile value after its matching outer quotes are removed.
+    """
+    decoded: list[str] = []
+    index = 0
+    while index < len(value):
+        character = value[index]
+        if character == '"':
+            raise ValueError(
+                "ATLASO_DATABASE_URL uses unsupported concatenated EnvironmentFile quotes."
+            )
+        if character == "\\" and index + 1 < len(value):
+            following = value[index + 1]
+            if following in {'"', "\\", "`", "$"}:
+                decoded.append(following)
+                index += 2
+                continue
+        decoded.append(character)
+        index += 1
+    return "".join(decoded)
 
 
 def _installed_atlaso_database_url() -> str:
@@ -19436,7 +19470,7 @@ def _installed_atlaso_database_url() -> str:
                 "ATLASO_DATABASE_URL uses an unsupported multiline EnvironmentFile value."
             )
         database_url = database_url[1:-1]
-    if database_url_quote and database_url_quote in database_url:
+    if database_url_quote == "'" and database_url_quote in database_url:
         raise ValueError(
             "ATLASO_DATABASE_URL uses unsupported concatenated EnvironmentFile quotes."
         )
@@ -19446,6 +19480,8 @@ def _installed_atlaso_database_url() -> str:
         )
     if database_url_quote == "'":
         return database_url
+    if database_url_quote == '"':
+        return _decode_double_quoted_environment_value(database_url)
     if "\\" in database_url:
         raise ValueError(
             "ATLASO_DATABASE_URL uses unsupported EnvironmentFile escape syntax."
