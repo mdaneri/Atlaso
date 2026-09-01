@@ -2148,15 +2148,15 @@ else {
         }
         if (-not $processTreeTerminationUnproven) {
             $reservationReleaseError = $null
-            Assert-AtlasoBuilderHandoffRootIdentity `
-                -BuildStateRoot $resolvedBuildStateRoot `
-                -HandoffStateRoot $builderReservationHandoffStateRoot `
-                -PendingRoot $builderReservationPendingRoot `
-                -StateIdentity ([string]$builderHandoffRootIdentity.StateIdentity) `
-                -PendingIdentity ([string]$builderHandoffRootIdentity.PendingIdentity)
-            if (Test-Path -LiteralPath $childBuilderAddressReservationPath -PathType Leaf) {
-                if (-not $reservationReleaseBlocked) {
-                    try {
+            if (-not $reservationReleaseBlocked) {
+                try {
+                    Assert-AtlasoBuilderHandoffRootIdentity `
+                        -BuildStateRoot $resolvedBuildStateRoot `
+                        -HandoffStateRoot $builderReservationHandoffStateRoot `
+                        -PendingRoot $builderReservationPendingRoot `
+                        -StateIdentity ([string]$builderHandoffRootIdentity.StateIdentity) `
+                        -PendingIdentity ([string]$builderHandoffRootIdentity.PendingIdentity)
+                    if (Test-Path -LiteralPath $childBuilderAddressReservationPath -PathType Leaf) {
                         Assert-AtlasoBuilderHandoffRootIdentity `
                             -BuildStateRoot $resolvedBuildStateRoot `
                             -HandoffStateRoot $builderReservationHandoffStateRoot `
@@ -2181,9 +2181,9 @@ else {
                             throw 'The released VMware builder-address handoff could not be removed.'
                         }
                     }
-                    catch {
-                        $reservationReleaseError = $_
-                    }
+                }
+                catch {
+                    $reservationReleaseError = $_
                 }
             }
             $cleanupMarker = Get-Content -LiteralPath $cleanupMarkerPath -Raw -ErrorAction Stop |

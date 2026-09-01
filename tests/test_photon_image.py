@@ -3364,7 +3364,28 @@ def test_vmware_gui_builder_repairs_stale_rows_before_ui_startup() -> None:
     reservation_release = wrapper.index(
         "Exit-AtlasoVmwareBuilderAddressReservation `", reservation_gate
     )
-    assert parent_timeout_cleanup < reservation_blocked < reservation_gate < reservation_release
+    handoff_identity = wrapper.index(
+        "Assert-AtlasoBuilderHandoffRootIdentity `", reservation_gate
+    )
+    reservation_error_capture = wrapper.index(
+        "$reservationReleaseError = $_", handoff_identity
+    )
+    sensitive_cleanup = wrapper.index(
+        "Complete-AtlasoPhotonBuildCleanup `", reservation_error_capture
+    )
+    reservation_error_throw = wrapper.index(
+        "if ($null -ne $reservationReleaseError)", sensitive_cleanup
+    )
+    assert (
+        parent_timeout_cleanup
+        < reservation_blocked
+        < reservation_gate
+        < handoff_identity
+        < reservation_release
+        < reservation_error_capture
+        < sensitive_cleanup
+        < reservation_error_throw
+    )
     assert "-ClaimGeneration $OutputClaimGeneration" in wrapper
     assert "ClaimGeneration = $OutputClaimGeneration" in wrapper
 
