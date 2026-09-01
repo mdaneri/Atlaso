@@ -756,6 +756,8 @@ Validated marker payload owning the exact root.
 
 .PARAMETER ExpectedRootPath
 Exact task-created root that the marker must still own.
+.PARAMETER ExpectedRootIdentity
+Pinned filesystem identity of the exact task-created root.
 .PARAMETER AllowedParentRoot
 Exact reparse-free parent that must still contain the cleanup root.
 #>
@@ -764,16 +766,26 @@ function Complete-AtlasoPhotonBuildCleanup {
         [Parameter(Mandatory = $true)][string]$MarkerPath,
         [Parameter(Mandatory = $true)][object]$Marker,
         [Parameter(Mandatory = $true)][string]$ExpectedRootPath,
+        [Parameter(Mandatory = $true)][string]$ExpectedRootIdentity,
         [Parameter(Mandatory = $true)][string]$AllowedParentRoot
     )
 
     $markerProperties = @($Marker.PSObject.Properties.Name)
-    if ($markerProperties.Count -ne 4 -or
-        'Schema' -notin $markerProperties -or
-        'RootPath' -notin $markerProperties -or
-        'BootIdentity' -notin $markerProperties -or
-        'Phase' -notin $markerProperties -or
-        $Marker.Schema -ne 1 -or
+    $currentMarker = $markerProperties.Count -eq 5 -and
+        'Schema' -in $markerProperties -and
+        'RootPath' -in $markerProperties -and
+        'RootIdentity' -in $markerProperties -and
+        'BootIdentity' -in $markerProperties -and
+        'Phase' -in $markerProperties -and
+        $Marker.Schema -eq 2
+    $legacyTerminalMarker = $markerProperties.Count -eq 4 -and
+        'Schema' -in $markerProperties -and
+        'RootPath' -in $markerProperties -and
+        'BootIdentity' -in $markerProperties -and
+        'Phase' -in $markerProperties -and
+        $Marker.Schema -eq 1 -and
+        $Marker.Phase -in @('root-absent', 'retired')
+    if ((-not $currentMarker -and -not $legacyTerminalMarker) -or
         $Marker.Phase -notin @('active', 'root-absent', 'retired')) {
         throw 'Invalid cleanup marker schema.'
     }
@@ -784,31 +796,73 @@ function Complete-AtlasoPhotonBuildCleanup {
         $rootLeaf -notmatch '^atlaso-photon-build-credentials-[0-9a-f]{32}$') {
         throw 'Cleanup marker root does not match the exact task-created Photon root.'
     }
+    if ($currentMarker -and (
+            [string]::IsNullOrWhiteSpace([string]$Marker.RootIdentity) -or
+            [string]$Marker.RootIdentity -cne $ExpectedRootIdentity
+        )) {
+        throw 'Cleanup marker identity does not match the exact task-created Photon root.'
+    }
     # Recovery admission can outlive its ancestry proof. Recheck the complete
     # parent/root chain immediately before any recursive filesystem operation.
     Assert-AtlasoStrictDescendantPath `
         -ParentPath $AllowedParentRoot `
         -ChildPath $resolvedRoot `
         -FailureMessage 'Photon cleanup root escaped its admitted parent'
-    if (Test-Path -LiteralPath $resolvedRoot) {
+    $matchingIdentityRoots = @(
+        if ($currentMarker) {
+            Get-ChildItem -LiteralPath $AllowedParentRoot -Directory -Force -ErrorAction Stop |
+                Where-Object { -not ($_.Attributes -band [System.IO.FileAttributes]::ReparsePoint) } |
+                Where-Object {
+                    (Get-AtlasoPathIdentity -Path $_.FullName -Description 'Photon cleanup candidate') -ceq
+                        $ExpectedRootIdentity
+                } |
+                ForEach-Object { [System.IO.Path]::GetFullPath($_.FullName) }
+        }
+    )
+    if ($Marker.Phase -ceq 'active' -and (
+            $matchingIdentityRoots.Count -ne 1 -or
+            -not $matchingIdentityRoots[0].Equals($resolvedRoot, [StringComparison]::OrdinalIgnoreCase)
+        )) {
+        throw 'Photon cleanup root identity moved or changed; artifacts and marker were preserved.'
+    }
+    if ($Marker.Phase -ceq 'active') {
         $rootItem = Get-Item -LiteralPath $resolvedRoot -Force -ErrorAction Stop
         if ($rootItem.Attributes -band [System.IO.FileAttributes]::ReparsePoint) {
             throw 'Invalid cleanup root type.'
+        }
+        if ((Get-AtlasoPathIdentity -Path $resolvedRoot -Description 'Photon cleanup root') -cne
+            $ExpectedRootIdentity) {
+            throw 'Photon cleanup root identity changed immediately before deletion.'
         }
         $snapshotRoot = Join-Path $resolvedRoot 'sensitive-build\source'
         if (Test-Path -LiteralPath $snapshotRoot -PathType Container) {
             Unprotect-AtlasoSourceSnapshot -Root $snapshotRoot
         }
+        if ((Get-AtlasoPathIdentity -Path $resolvedRoot -Description 'Photon cleanup root') -cne
+            $ExpectedRootIdentity) {
+            throw 'Photon cleanup root identity changed immediately before deletion.'
+        }
         [System.IO.Directory]::Delete($resolvedRoot, $true)
+        if (Test-Path -LiteralPath $resolvedRoot) {
+            throw 'Retained Photon credential artifact cleanup did not complete.'
+        }
+        # Flush the parent on the sensitive root's own volume before a marker on a
+        # different volume is allowed to claim that the deletion is durable.
+        Sync-AtlasoDirectoryMetadata -DirectoryPath (Split-Path -Parent $resolvedRoot)
+        $Marker.Phase = 'root-absent'
+        Write-AtlasoDurableJsonFile -Path $MarkerPath -Payload $Marker -Replace
     }
-    if (Test-Path -LiteralPath $resolvedRoot) {
-        throw 'Retained Photon credential artifact cleanup did not complete.'
+    if ((Test-Path -LiteralPath $resolvedRoot) -or
+        ($currentMarker -and @(
+                Get-ChildItem -LiteralPath $AllowedParentRoot -Directory -Force -ErrorAction Stop |
+                    Where-Object { -not ($_.Attributes -band [System.IO.FileAttributes]::ReparsePoint) } |
+                    Where-Object {
+                        (Get-AtlasoPathIdentity -Path $_.FullName -Description 'Photon cleanup candidate') -ceq
+                            $ExpectedRootIdentity
+                    }
+            ).Count -ne 0)) {
+        throw 'Retained Photon credential artifact identity is still present.'
     }
-    # Flush the parent on the sensitive root's own volume before a marker on a
-    # different volume is allowed to claim that the deletion is durable.
-    Sync-AtlasoDirectoryMetadata -DirectoryPath (Split-Path -Parent $resolvedRoot)
-    $Marker.Phase = 'root-absent'
-    Write-AtlasoDurableJsonFile -Path $MarkerPath -Payload $Marker -Replace
     $Marker.Phase = 'retired'
     Write-AtlasoDurableJsonFile -Path $MarkerPath -Payload $Marker -Replace
     Remove-Item -LiteralPath $MarkerPath -Force -ErrorAction Stop
@@ -838,12 +892,21 @@ function Invoke-AtlasoPhotonBuildCleanupRecovery {
     try {
         $marker = Get-Content -LiteralPath $MarkerPath -Raw -ErrorAction Stop | ConvertFrom-Json
         $markerProperties = @($marker.PSObject.Properties.Name)
-        if ($markerProperties.Count -ne 4 -or
-            'Schema' -notin $markerProperties -or
-            'RootPath' -notin $markerProperties -or
-            'BootIdentity' -notin $markerProperties -or
-            'Phase' -notin $markerProperties -or
-            $marker.Schema -ne 1) {
+        $currentMarker = $markerProperties.Count -eq 5 -and
+            'Schema' -in $markerProperties -and
+            'RootPath' -in $markerProperties -and
+            'RootIdentity' -in $markerProperties -and
+            'BootIdentity' -in $markerProperties -and
+            'Phase' -in $markerProperties -and
+            $marker.Schema -eq 2
+        $legacyTerminalMarker = $markerProperties.Count -eq 4 -and
+            'Schema' -in $markerProperties -and
+            'RootPath' -in $markerProperties -and
+            'BootIdentity' -in $markerProperties -and
+            'Phase' -in $markerProperties -and
+            $marker.Schema -eq 1 -and
+            $marker.Phase -in @('root-absent', 'retired')
+        if (-not $currentMarker -and -not $legacyTerminalMarker) {
             throw 'Invalid cleanup marker schema.'
         }
         $resolvedRoot = [System.IO.Path]::GetFullPath([string]$marker.RootPath)
@@ -869,10 +932,17 @@ function Invoke-AtlasoPhotonBuildCleanupRecovery {
             [string]$marker.BootIdentity -ceq (Get-AtlasoWindowsBootIdentity)) {
             throw 'A Windows restart is required before retained Photon credential artifacts can be cleaned safely.'
         }
+        $expectedRootIdentity = if ($currentMarker) {
+            [string]$marker.RootIdentity
+        }
+        else {
+            'legacy-terminal'
+        }
         Complete-AtlasoPhotonBuildCleanup `
             -MarkerPath $MarkerPath `
             -Marker $marker `
             -ExpectedRootPath $resolvedRoot `
+            -ExpectedRootIdentity $expectedRootIdentity `
             -AllowedParentRoot $admitted[0]
     }
     catch {
@@ -1577,8 +1647,9 @@ else {
     $cleanupMarkerDirectory = Split-Path -Parent $cleanupMarkerPath
     [void][System.IO.Directory]::CreateDirectory($cleanupMarkerDirectory)
     $cleanupMarkerPayload = [ordered]@{
-        Schema       = 1
+        Schema       = 2
         RootPath     = [System.IO.Path]::GetFullPath($credentialRoot)
+        RootIdentity = [string]$credentialRootIdentity.RootIdentity
         BootIdentity = Get-AtlasoWindowsBootIdentity
         Phase        = 'active'
     }
@@ -1836,6 +1907,7 @@ else {
                 -MarkerPath $cleanupMarkerPath `
                 -Marker $cleanupMarker `
                 -ExpectedRootPath $credentialRoot `
+                -ExpectedRootIdentity ([string]$credentialRootIdentity.RootIdentity) `
                 -AllowedParentRoot $credentialStateRoot
             if ($null -ne $reservationReleaseError) {
                 throw "The VMware builder address reservation was retained: $($reservationReleaseError.Exception.Message)"

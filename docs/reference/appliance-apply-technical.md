@@ -396,10 +396,14 @@ Wizard submission and direct Enabled changes update desired state only;
 they never invoke this helper or apply unit directly. Generated route-role permissions remain read-only.
 
 Through `atlaso-helper wan validate|apply`, the helper validates staged routes, routing rules, NAT rules, WAN targets,
-and netem policy values. Apply installs `/etc/atlaso/nftables.d/atlaso-nat.nft`, enables `net.ipv4.ip_forward=1` only
-when enabled lab routing or NAT requires forwarding, applies source policy rules with `ip rule`, applies the NAT table
-with `nft`, applies static routes with `ip route replace ... table 200`, and applies or clears `tc qdisc` netem state on
-route targets with assigned policies. Removed route deletion is staged only when a route existed in the selected unit's
+and netem policy values only for their active global feature. The staged `[feature_settings]` section carries
+`routing_enabled`, `nat_enabled`, and `wan_simulation_enabled` while retaining every saved resource row. Routing on
+sets `net.ipv4.ip_forward=1` and `net.ipv6.conf.all.forwarding=1`; Routing off sets both to `0`, removes Atlaso lab
+routes and rules, and leaves protected management table `100` behavior intact. NAT is effective only when Routing and
+NAT are both on; every other combination flushes Atlaso's NAT rules without changing saved intent. WAN Simulation
+independently applies or removes root `tc/netem` qdiscs. Apply installs
+`/etc/atlaso/nftables.d/atlaso-nat.nft`, applies source policy rules with `ip rule`, and applies static routes with
+`ip route replace ... table 200`. Removed route deletion is staged only when a route existed in the selected unit's
 last-applied baseline and is absent from current desired state. Management is never a route, NAT, or routing-permission
 target, and the Firewall unit generates explicit management-to-lab and lab-to-management forward drops.
 The same validator and apply path are reused when WAN joins a protected management handoff; this is not a second host

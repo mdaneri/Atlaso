@@ -217,7 +217,10 @@ If Windows cannot prove whole-tree termination, the wrapper retains the root plu
 marker and fails closed. Restart Windows and rerun the wrapper; the changed boot identity proves the prior tree is
 inactive, allowing exact-root cleanup and marker removal before any new credential access or image mutation.
 Immediately before recursive recovery deletion, the wrapper revalidates the complete admitted parent and cleanup-root
-ancestry and refuses any junction, symbolic link, or other reparse point introduced after marker admission.
+ancestry and refuses any junction, symbolic link, or other reparse point introduced after marker admission. The marker
+also persists the root's opaque filesystem identity. Ordinary and post-restart cleanup require that exact identity at
+the admitted path immediately before recursive deletion; a renamed root or replacement directory preserves both
+artifacts and the cleanup evidence and fails closed.
 The shared SDK bridge uses the same boot-bound recovery rule. Both marker types are write-through flushed and
 atomically renamed before a plaintext child starts. After root removal, the wrapper flushes deletion metadata through
 the root parent's Windows directory handle on that same volume before it durably records root absence and a retired

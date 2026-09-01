@@ -68,6 +68,20 @@ if ($cleanupFunction.Count -ne 1) {
     throw 'Expected exactly one Photon cleanup completion function.'
 }
 . ([scriptblock]::Create($cleanupFunction[0].Extent.Text))
+$cleanupRecoveryFunction = @(
+    $ast.FindAll(
+        {
+            param($node)
+            $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and
+            $node.Name -ceq 'Invoke-AtlasoPhotonBuildCleanupRecovery'
+        },
+        $true
+    )
+)
+if ($cleanupRecoveryFunction.Count -ne 1) {
+    throw 'Expected exactly one Photon cleanup recovery function.'
+}
+. ([scriptblock]::Create($cleanupRecoveryFunction[0].Extent.Text))
 $credentialInitializer = @(
     $ast.FindAll(
         {
@@ -194,8 +208,9 @@ try {
     [System.IO.File]::WriteAllText($sentinelPath, 'preserve')
     $cleanupRoot = Join-Path $junctionParent $cleanupLeaf
     $cleanupMarker = [pscustomobject][ordered]@{
-        Schema       = 1
+        Schema       = 2
         RootPath     = $cleanupRoot
+        RootIdentity = 'junction-test-identity'
         BootIdentity = '1'
         Phase        = 'active'
     }
@@ -205,6 +220,7 @@ try {
             -MarkerPath (Join-Path $fixtureRoot 'junction-cleanup-marker.json') `
             -Marker $cleanupMarker `
             -ExpectedRootPath $cleanupRoot `
+            -ExpectedRootIdentity 'junction-test-identity' `
             -AllowedParentRoot $junctionParent
     }
     catch {
@@ -213,6 +229,77 @@ try {
     if ($junctionError -notmatch 'reparse point' -or
         -not (Test-Path -LiteralPath $sentinelPath -PathType Leaf)) {
         throw 'Photon cleanup did not preserve a root redirected through a replaced ancestor junction.'
+    }
+
+    $identityParent = Join-Path $fixtureRoot 'identity-cleanup'
+    [void][System.IO.Directory]::CreateDirectory($identityParent)
+    $identityLeaf = 'atlaso-photon-build-credentials-' + [guid]::NewGuid().ToString('N')
+    $identityRoot = Join-Path $identityParent $identityLeaf
+    [void][System.IO.Directory]::CreateDirectory($identityRoot)
+    $originalSentinel = Join-Path $identityRoot 'original.txt'
+    [System.IO.File]::WriteAllText($originalSentinel, 'original')
+    $rootIdentity = Get-AtlasoPathIdentity `
+        -Path $identityRoot `
+        -Description 'Photon cleanup test root'
+    $identityMarkerPath = Join-Path $fixtureRoot 'identity-cleanup-marker.json'
+    $identityMarker = [pscustomobject][ordered]@{
+        Schema       = 2
+        RootPath     = $identityRoot
+        RootIdentity = $rootIdentity
+        BootIdentity = '1'
+        Phase        = 'active'
+    }
+    [System.IO.File]::WriteAllText(
+        $identityMarkerPath,
+        ($identityMarker | ConvertTo-Json -Compress),
+        [System.Text.UTF8Encoding]::new($false)
+    )
+    $renamedRoot = Join-Path $identityParent (
+        'atlaso-photon-build-credentials-' + [guid]::NewGuid().ToString('N')
+    )
+    Move-Item -LiteralPath $identityRoot -Destination $renamedRoot -ErrorAction Stop
+    [void][System.IO.Directory]::CreateDirectory($identityRoot)
+    $replacementSentinel = Join-Path $identityRoot 'replacement.txt'
+    [System.IO.File]::WriteAllText($replacementSentinel, 'replacement')
+    $identityError = ''
+    try {
+        Complete-AtlasoPhotonBuildCleanup `
+            -MarkerPath $identityMarkerPath `
+            -Marker $identityMarker `
+            -ExpectedRootPath $identityRoot `
+            -ExpectedRootIdentity $rootIdentity `
+            -AllowedParentRoot $identityParent
+    }
+    catch {
+        $identityError = $_.Exception.Message
+    }
+    if ($identityError -notmatch 'identity moved or changed' -or
+        -not (Test-Path -LiteralPath $identityMarkerPath -PathType Leaf) -or
+        -not (Test-Path -LiteralPath (Join-Path $renamedRoot 'original.txt') -PathType Leaf) -or
+        -not (Test-Path -LiteralPath $replacementSentinel -PathType Leaf)) {
+        throw (
+            'Photon cleanup did not preserve marker, original root, and replacement after an identity swap: ' +
+            $identityError
+        )
+    }
+    Set-Item -Path Function:Get-AtlasoWindowsBootIdentity -Value { 'current-test-boot' }
+    $recoveryError = ''
+    try {
+        Invoke-AtlasoPhotonBuildCleanupRecovery `
+            -MarkerPath $identityMarkerPath `
+            -AllowedParentRoots @($identityParent)
+    }
+    catch {
+        $recoveryError = $_.Exception.Message
+    }
+    if ($recoveryError -notmatch 'unresolved sensitive cleanup' -or
+        -not (Test-Path -LiteralPath $identityMarkerPath -PathType Leaf) -or
+        -not (Test-Path -LiteralPath (Join-Path $renamedRoot 'original.txt') -PathType Leaf) -or
+        -not (Test-Path -LiteralPath $replacementSentinel -PathType Leaf)) {
+        throw (
+            'Photon reboot recovery did not preserve marker, original root, and replacement after an identity swap: ' +
+            $recoveryError
+        )
     }
 
     $stagingBuildState = Join-Path $fixtureRoot 'staging-build-state'

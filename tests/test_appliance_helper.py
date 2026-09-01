@@ -5667,6 +5667,540 @@ def wan_config_text(
     )
 
 
+@pytest.mark.parametrize(
+    ("routing_enabled", "nat_enabled", "simulation_enabled", "route_active", "nat_active", "qdisc_active"),
+    [
+        (False, False, False, False, False, False),
+        (True, False, False, True, False, False),
+        (False, True, False, False, False, False),
+        (False, False, True, False, False, True),
+        (True, True, True, True, True, True),
+    ],
+)
+def test_wan_feature_switch_runtime_matrix(
+    monkeypatch,
+    tmp_path,
+    routing_enabled,
+    nat_enabled,
+    simulation_enabled,
+    route_active,
+    nat_active,
+    qdisc_active,
+):
+    """Gate routes, NAT, forwarding, and netem independently.
+
+    Args:
+        monkeypatch: Pytest fixture used to replace dependencies for the test.
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+        routing_enabled: Saved global routing state for the scenario.
+        nat_enabled: Saved global NAT state for the scenario.
+        simulation_enabled: Saved global WAN Simulation state for the scenario.
+        route_active: Whether lab routes should be applied.
+        nat_active: Whether NAT rules should be rendered.
+        qdisc_active: Whether the assigned qdisc should be applied.
+    """
+    helper = load_helper_module()
+    config_path = tmp_path / "atlaso-wan.conf"
+    config_path.write_text(
+        "\n".join(
+            [
+                "[feature_settings]",
+                f"routing_enabled={'true' if routing_enabled else 'false'}",
+                f"nat_enabled={'true' if nat_enabled else 'false'}",
+                f"wan_simulation_enabled={'true' if simulation_enabled else 'false'}",
+                "",
+                wan_config_text(),
+            ]
+        ),
+        encoding="utf-8",
+    )
+    parsed = helper._parse_wan_config(config_path)
+    commands: list[list[str]] = []
+
+    def fake_run(command: list[str]) -> subprocess.CompletedProcess[str]:
+        """Record one forwarding command.
+
+        Args:
+            command: Exact helper command being modeled.
+        """
+        commands.append(command)
+        return subprocess.CompletedProcess(command, 0, "", "")
+
+    monkeypatch.setattr(helper, "WAN_SYSCTL_PATH", tmp_path / "90-atlaso-routing-wan.conf")
+    monkeypatch.setattr(helper.shutil, "which", lambda command: f"/usr/sbin/{command}")
+    monkeypatch.setattr(helper, "_run", fake_run)
+
+    assert helper._apply_wan_forwarding(parsed) == 0
+    assert helper._apply_wan_target_routes(parsed) == 0
+    assert helper._apply_wan_routes_and_qdiscs(parsed) == 0
+
+    route_replace = [
+        "ip",
+        "route",
+        "replace",
+        "10.20.0.0/24",
+        "dev",
+        "eth1.20",
+        "metric",
+        "120",
+        "table",
+        "200",
+    ]
+    route_delete = [
+        "ip",
+        "route",
+        "del",
+        "10.20.0.0/24",
+        "dev",
+        "eth1.20",
+        "table",
+        "200",
+    ]
+    assert (route_replace in commands) is route_active
+    assert (route_delete in commands) is (not route_active)
+    assert (["sysctl", "-w", f"net.ipv4.ip_forward={1 if routing_enabled else 0}"] in commands)
+    assert (["sysctl", "-w", f"net.ipv6.conf.all.forwarding={1 if routing_enabled else 0}"] in commands)
+    assert any(command[:4] == ["tc", "qdisc", "replace", "dev"] for command in commands) is qdisc_active
+    assert any(command[:4] == ["tc", "qdisc", "del", "dev"] for command in commands) is (not qdisc_active)
+    settings = helper._wan_feature_settings(parsed)
+    nat_config = helper._render_wan_nat_config(
+        parsed["nat_rules"] if settings["effective_nat_enabled"] else []
+    )
+    assert ('masquerade comment "SiteA outbound WAN"' in nat_config) is nat_active
+
+
+def test_legacy_wan_nat_inference_keeps_routing_enabled():
+    """Keep forwarding active for a legacy NAT-only configuration."""
+    helper = load_helper_module()
+    settings = helper._wan_feature_settings(
+        {
+            "routes": [],
+            "routing_rules": [],
+            "nat_rules": [{"enabled": "true"}],
+            "wan_policies": [],
+        }
+    )
+
+    assert settings == {
+        "routing_enabled": True,
+        "nat_enabled": True,
+        "effective_nat_enabled": True,
+        "wan_simulation_enabled": False,
+    }
+
+
+def test_legacy_wan_route_role_topology_inference_keeps_routing_enabled():
+    """Keep generated route-role paths active when replaying a legacy config."""
+    helper = load_helper_module()
+    base = {
+        "routes": [],
+        "routing_rules": [],
+        "nat_rules": [],
+        "wan_policies": [],
+    }
+    route_target = {
+        "name": "eth1",
+        "role": "route",
+        "routing_domain": "lab",
+        "ip_cidr": "192.0.2.1/24",
+    }
+
+    inactive = helper._wan_feature_settings(
+        {
+            **base,
+            "targets": [
+                route_target,
+                {
+                    "name": "eth2",
+                    "role": "route",
+                    "routing_domain": "lab",
+                    "ip_cidr": "not-a-cidr",
+                },
+                {
+                    "name": "eth0",
+                    "role": "management",
+                    "routing_domain": "management",
+                    "ip_cidr": "198.51.100.1/24",
+                },
+            ],
+        }
+    )
+    active = helper._wan_feature_settings(
+        {
+            **base,
+            "targets": [
+                route_target,
+                {
+                    "name": "eth2.20",
+                    "role": "route",
+                    "routing_domain": "lab",
+                    "ipv6_cidr": "2001:db8:20::1/64",
+                },
+            ],
+        }
+    )
+
+    assert inactive["routing_enabled"] is False
+    assert active["routing_enabled"] is True
+
+
+def test_wan_only_simulation_ignores_dormant_route_path_errors(tmp_path):
+    """Validate only the netem assignment when Routing is globally off.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
+    helper = load_helper_module()
+    config_path = tmp_path / "wan-only-simulation.conf"
+    config_path.write_text(
+        "\n".join(
+            [
+                "[feature_settings]",
+                "routing_enabled=false",
+                "nat_enabled=true",
+                "wan_simulation_enabled=true",
+                "",
+                wan_config_text().replace(
+                    "  gateway=",
+                    "  gateway=198.51.100.1",
+                    1,
+                ),
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    assert helper._wan_config_errors(config_path) == []
+
+
+@pytest.mark.parametrize(
+    "target_fields",
+    [
+        "  role=management\n  routing_domain=management",
+        "  role=access\n  routing_domain=lab\n  route_allowed=false",
+    ],
+)
+def test_wan_only_simulation_rejects_management_or_ineligible_target(
+    tmp_path,
+    target_fields,
+):
+    """Keep tc/netem assignments off management and route-ineligible links.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+        target_fields: Target role and eligibility fields under test.
+    """
+    helper = load_helper_module()
+    config_path = tmp_path / "wan-only-management-target.conf"
+    config_path.write_text(
+        "\n".join(
+            [
+                "[feature_settings]",
+                "routing_enabled=false",
+                "nat_enabled=false",
+                "wan_simulation_enabled=true",
+                "",
+                wan_config_text().replace("  role=route", target_fields, 1),
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    assert helper._wan_config_errors(config_path) == [
+        "WAN policy assignment cannot target management or route-ineligible WAN target eth1.20."
+    ]
+
+
+def test_wan_disabled_validate_rejects_malformed_preserved_route(tmp_path):
+    """Reject malformed saved destinations before disabled-route cleanup.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
+    helper = load_helper_module()
+    config_path = tmp_path / "disabled-malformed-route.conf"
+    config_path.write_text(
+        """[feature_settings]
+routing_enabled=false
+nat_enabled=false
+wan_simulation_enabled=false
+
+[targets]
+
+[routes]
+route=not-a-cidr
+  interface=eth2
+  metric=100
+  enabled=true
+  wan_mode=interface
+
+[removed_routes]
+[removed_main_defaults]
+[routing_rules]
+[nat_rules]
+[wan_policies]
+""",
+        encoding="utf-8",
+    )
+
+    assert helper._wan_config_errors(config_path) == [
+        "Route not-a-cidr is not a valid destination CIDR."
+    ]
+
+
+def test_wan_validate_ignores_unused_gateway_on_removed_route(tmp_path):
+    """Validate removed dormant route cleanup without parsing its gateway.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
+    helper = load_helper_module()
+    config_path = tmp_path / "removed-dormant-route.conf"
+    config_path.write_text(
+        """[feature_settings]
+routing_enabled=false
+nat_enabled=false
+wan_simulation_enabled=false
+
+[targets]
+
+[routes]
+
+[removed_routes]
+route=192.0.2.0/24
+  gateway=unused-invalid-gateway
+  interface=missing-route-target
+  metric=100
+
+[removed_main_defaults]
+[routing_rules]
+[nat_rules]
+[wan_policies]
+""",
+        encoding="utf-8",
+    )
+
+    assert helper._wan_config_errors(config_path) == []
+
+
+def test_wan_disabled_apply_skips_preserved_route_with_absent_target(tmp_path):
+    """Do not address a missing device while its saved route is dormant.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
+    helper = load_helper_module()
+    config_path = tmp_path / "disabled-absent-route-target.conf"
+    config_path.write_text(
+        """[feature_settings]
+routing_enabled=false
+nat_enabled=false
+wan_simulation_enabled=false
+
+[targets]
+
+[routes]
+route=192.0.2.0/24
+  interface=missing-route-target
+  metric=100
+  enabled=true
+  wan_mode=interface
+
+[removed_routes]
+[removed_main_defaults]
+[routing_rules]
+[nat_rules]
+[wan_policies]
+""",
+        encoding="utf-8",
+    )
+    commands: list[list[str]] = []
+    helper.shutil.which = lambda command: (
+        f"/usr/sbin/{command}" if command in {"ip", "tc"} else None
+    )
+    helper._link_exists = lambda _interface_name: False
+    helper._run = lambda command: (
+        commands.append(command)
+        or subprocess.CompletedProcess(command, 1, "", "device absent")
+    )
+
+    assert helper._wan_config_errors(config_path) == []
+    assert helper._apply_wan_routes_and_qdiscs(
+        helper._parse_wan_config(config_path)
+    ) == 0
+    assert commands == []
+
+
+def test_wan_disabled_apply_cleans_live_route_target_omitted_from_intent(tmp_path):
+    """Clear routes and netem when an omitted target still exists on the host.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
+    helper = load_helper_module()
+    config_path = tmp_path / "disabled-live-omitted-route-target.conf"
+    config_path.write_text(
+        """[feature_settings]
+routing_enabled=false
+nat_enabled=false
+wan_simulation_enabled=false
+
+[targets]
+
+[routes]
+route=192.0.2.0/24
+  interface=eth2
+  metric=100
+  enabled=true
+  wan_mode=interface
+
+[removed_routes]
+[removed_main_defaults]
+[routing_rules]
+[nat_rules]
+[wan_policies]
+""",
+        encoding="utf-8",
+    )
+    commands: list[list[str]] = []
+    helper.shutil.which = lambda command: (
+        f"/usr/sbin/{command}" if command in {"ip", "tc"} else None
+    )
+    helper._link_exists = lambda interface_name: interface_name == "eth2"
+    helper._run = lambda command: (
+        commands.append(command)
+        or subprocess.CompletedProcess(command, 0, "", "")
+    )
+
+    assert helper._wan_config_errors(config_path) == []
+    assert helper._apply_wan_routes_and_qdiscs(
+        helper._parse_wan_config(config_path)
+    ) == 0
+    assert [
+        "ip",
+        "route",
+        "del",
+        "192.0.2.0/24",
+        "dev",
+        "eth2",
+        "table",
+        "200",
+    ] in commands
+    assert ["tc", "qdisc", "del", "dev", "eth2", "root"] in commands
+
+
+@pytest.mark.parametrize(("link_exists", "cleanup_expected"), [(False, False), (True, True)])
+def test_wan_target_routes_retire_only_live_omitted_targets(
+    monkeypatch,
+    link_exists,
+    cleanup_expected,
+):
+    """Retire previous lab connected routes only while their link still exists.
+
+    Args:
+        monkeypatch: Pytest fixture used to replace dependencies for the test.
+        link_exists: Whether the omitted target remains present on the host.
+        cleanup_expected: Whether the stale connected route should be deleted.
+    """
+    helper = load_helper_module()
+    current = {
+        "feature_settings": [{"routing_enabled": "false"}],
+        "targets": [],
+        "routes": [],
+        "routing_rules": [],
+        "nat_rules": [],
+        "wan_policies": [],
+    }
+    previous = {
+        **current,
+        "targets": [
+            {
+                "name": "eth2",
+                "routing_domain": "lab",
+                "ip_cidr": "192.0.2.10/24",
+            }
+        ],
+    }
+    commands: list[list[str]] = []
+    monkeypatch.setattr(helper.shutil, "which", lambda command: f"/usr/sbin/{command}")
+    monkeypatch.setattr(helper, "_link_exists", lambda _name: link_exists)
+    monkeypatch.setattr(
+        helper,
+        "_run",
+        lambda command: (
+            commands.append(command)
+            or subprocess.CompletedProcess(command, 0, "", "")
+        ),
+    )
+
+    assert helper._apply_wan_target_routes(current, previous) == 0
+    cleanup = [
+        "ip",
+        "route",
+        "del",
+        "192.0.2.0/24",
+        "dev",
+        "eth2",
+        "table",
+        "200",
+    ]
+    assert (cleanup in commands) is cleanup_expected
+
+    commands.clear()
+    current["retired_targets"] = [
+        {
+            "name": "eth2",
+            "network": "192.0.2.0/24",
+        }
+    ]
+    assert helper._apply_wan_target_routes(current) == 0
+    assert (cleanup in commands) is cleanup_expected
+
+
+def test_wan_removed_route_cleanup_skips_absent_target(monkeypatch):
+    """Do not fail removal of saved route intent after its device disappeared.
+
+    Args:
+        monkeypatch: Pytest fixture used to replace dependencies for the test.
+    """
+    helper = load_helper_module()
+    parsed = {
+        "feature_settings": [
+            {
+                "routing_enabled": "false",
+                "nat_enabled": "false",
+                "wan_simulation_enabled": "false",
+            }
+        ],
+        "targets": [],
+        "routes": [],
+        "removed_routes": [
+            {
+                "destination_cidr": "192.0.2.0/24",
+                "interface": "missing-route-target",
+            }
+        ],
+        "removed_main_defaults": [],
+        "routing_rules": [],
+        "nat_rules": [],
+        "wan_policies": [],
+    }
+    commands: list[list[str]] = []
+    monkeypatch.setattr(helper.shutil, "which", lambda command: f"/usr/sbin/{command}")
+    monkeypatch.setattr(helper, "_link_exists", lambda _name: False)
+    monkeypatch.setattr(
+        helper,
+        "_run",
+        lambda command: (
+            commands.append(command)
+            or subprocess.CompletedProcess(command, 1, "", "device absent")
+        ),
+    )
+
+    assert helper._apply_wan_routes_and_qdiscs(parsed) == 0
+    assert commands == []
+
+
 def esxi_pxe_manifest(http_root: Path, *, enabled: bool = True, stale_id: int = 99, iso_root: Path | None = None) -> dict:
     """Return esxi pxe manifest.
 
@@ -6475,6 +7009,7 @@ def test_wan_helper_validates_routes_nat_and_netem(tmp_path):
     assert helper._wan_config_errors(config_path) == []
     nat_config = helper._render_wan_nat_config(helper._parse_wan_config(config_path)["nat_rules"])
     assert "table ip atlaso_nat" in nat_config
+    assert "flush table ip atlaso_nat" in nat_config
     assert 'ip saddr 192.168.50.0/24 oifname "eth1.20" masquerade' in nat_config
 
 
@@ -6679,7 +7214,12 @@ def test_wan_helper_installs_flagged_management_default_in_main_table(tmp_path):
     helper = load_helper_module()
     config_path = tmp_path / "flagged-management-default.conf"
     config_path.write_text(
-        """[targets]
+        """[feature_settings]
+routing_enabled=false
+nat_enabled=false
+wan_simulation_enabled=false
+
+[targets]
 target=eth0
   kind=physical
   role=access
@@ -6712,6 +7252,7 @@ route=0.0.0.0/0
         f"/usr/sbin/{command}" if command in {"ip", "tc"} else None
     )
 
+    assert helper._wan_config_errors(config_path) == []
     assert helper._apply_wan_routes_and_qdiscs(parsed) == 0
     assert [
         "ip",
@@ -6725,6 +7266,24 @@ route=0.0.0.0/0
         "metric",
         "100",
     ] in commands
+    assert not any(
+        command[:3] == ["ip", "route", "replace"]
+        and command[-2:] == ["table", "200"]
+        for command in commands
+    )
+
+    off_link_path = tmp_path / "flagged-management-default-off-link.conf"
+    off_link_path.write_text(
+        config_path.read_text(encoding="utf-8").replace(
+            "gateway=192.0.2.1",
+            "gateway=198.51.100.1",
+        ),
+        encoding="utf-8",
+    )
+    assert any(
+        "gateway 198.51.100.1 is not on-link for WAN target eth0" in error
+        for error in helper._wan_config_errors(off_link_path)
+    )
 
 
 def test_wan_helper_retires_previous_flagged_management_default(tmp_path):
@@ -8055,7 +8614,9 @@ def test_wan_helper_apply_routes_nat_and_netem(monkeypatch, tmp_path):
     assert "wan restore --real" in replay_service_path.read_text(encoding="utf-8")
     assert "restore" in helper.COMMANDS["wan"]
     assert ["systemctl", "enable", "atlaso-wan.service"] in commands
-    assert sysctl_path.read_text(encoding="utf-8") == "net.ipv4.ip_forward = 1\n"
+    assert sysctl_path.read_text(encoding="utf-8") == (
+        "net.ipv4.ip_forward = 1\nnet.ipv6.conf.all.forwarding = 1\n"
+    )
 
 
 def test_automation_helper_gives_powershell_private_writable_xdg_home(monkeypatch, tmp_path):
@@ -12023,6 +12584,76 @@ def test_public_services_handoff_accepts_staged_https_cert_files(monkeypatch, tm
     deployed_errors = helper._public_services_config_errors(public_services_path)
     assert any("Public services certificate does not exist" in error for error in deployed_errors)
     assert any("Public services private key does not exist" in error for error in deployed_errors)
+
+
+def test_management_handoff_skips_wan_nat_validation_when_disabled(monkeypatch, tmp_path):
+    """Skip nft validation for dormant NAT configuration during handoff validation.
+
+    Args:
+        monkeypatch: Pytest fixture used to replace helper dependencies.
+        tmp_path: Temporary directory used for staged handoff configuration.
+    """
+    helper = load_helper_module()
+    settings_path = tmp_path / "atlaso-settings.json"
+    settings_path.write_text(appliance_settings_json(), encoding="utf-8")
+    public_services_path = tmp_path / "public-services.conf"
+    public_services_path.write_text(public_services_config_text(), encoding="utf-8")
+    wan_config_path = tmp_path / "atlaso-wan.conf"
+    wan_config_path.write_text(
+        "\n".join(
+            [
+                "[feature_settings]",
+                "routing_enabled=false",
+                "nat_enabled=false",
+                "",
+                "[targets]",
+                "target=eth1.20",
+                "  role=route",
+                "  ip_cidr=192.168.20.1/24",
+                "",
+                "[nat_rules]",
+                "nat=Dormant WAN NAT",
+                "  enabled=true",
+                "  source=not-a-cidr",
+                "  outbound_interface=eth1.20",
+                "  masquerade=true",
+                "  priority=100",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    calls: list[str] = []
+
+    def fake_nft_validation(nat_config: str) -> subprocess.CompletedProcess[str]:
+        """Record an unexpected dormant NAT validation attempt.
+
+        Args:
+            nat_config: Generated nftables NAT configuration.
+        """
+        calls.append(nat_config)
+        return subprocess.CompletedProcess(["nft", "-c", "-f", "-"], 1, "", "invalid nat config")
+
+    monkeypatch.setattr(helper, "_network_config_errors", lambda _path: [])
+    monkeypatch.setattr(
+        helper,
+        "_validate_firewall_config",
+        lambda _path: subprocess.CompletedProcess(["nft", "--check"], 0, "", ""),
+    )
+    monkeypatch.setattr(helper, "_appliance_settings_config_errors", lambda _path, **_kwargs: [])
+    monkeypatch.setattr(helper, "_public_services_config_errors", lambda _path, **_kwargs: [])
+    monkeypatch.setattr(helper, "_ca_payload_errors", lambda _path: [])
+    monkeypatch.setattr(helper, "_validate_wan_nat_config", fake_nft_validation)
+
+    assert helper._management_handoff_validation_errors(
+        {
+            "network_config_path": str(tmp_path / "network.conf"),
+            "firewall_config_path": str(tmp_path / "firewall.nft"),
+            "appliance_settings_config_path": str(settings_path),
+            "public_services_config_path": str(public_services_path),
+            "wan_config_path": str(wan_config_path),
+        }
+    ) == []
+    assert calls == []
 
 
 def test_appliance_settings_helper_requires_https_and_management_for_web_terminal(tmp_path):

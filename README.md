@@ -12,7 +12,8 @@ brings infrastructure, storage, identity, networking, and lifecycle workflows in
 - **Infrastructure** — deploy and operate a Photon OS appliance across supported virtualization platforms.
 - **Storage** — provide lab storage and manage VCF depot and backup workflows.
 - **Identity** — manage local users, LDAP, OpenID Connect, certificates, and scoped credentials.
-- **Networking** — configure interfaces, routing, DNS, DHCP, firewall policy, public services, and network boot.
+- **Networking** — configure interfaces, default-off routing, NAT, WAN simulation, DNS, DHCP, firewall policy, public
+  services, and network boot through reviewed desired state.
 - **Lifecycle** — review desired-state changes, automate tasks, monitor health, and install signed updates.
 
 Successful `main` CI automatically publishes the immutable wheel handoff, creates the signed software Release, and

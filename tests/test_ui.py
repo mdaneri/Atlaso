@@ -1084,7 +1084,7 @@ def test_pwa_manifest_service_worker_and_offline_shell(client):
     assert "ATLASO_CACHE" in service_worker.text
     assert "atlaso-management-pwa-v" in service_worker.text
     assert "ATLASO_CACHE_PREFIX" in service_worker.text
-    assert 'const ATLASO_CACHE = `${ATLASO_CACHE_PREFIX}299`;' in service_worker.text
+    assert 'const ATLASO_CACHE = `${ATLASO_CACHE_PREFIX}300`;' in service_worker.text
     assert 'fetch(asset, { cache: "reload" })' in service_worker.text
     assert "Required precache request failed" in service_worker.text
     assert "key.startsWith(ATLASO_CACHE_PREFIX)" in service_worker.text
@@ -1100,11 +1100,11 @@ def test_pwa_manifest_service_worker_and_offline_shell(client):
     assert 'accept.includes("text/html")' in service_worker.text
     assert '!hasDownloadLikePath(url)' in service_worker.text
     assert "/static/vendor/monaco/atlaso-monaco.min.js?v=atlaso-monaco-20260806-7" in service_worker.text
-    assert "/static/app.css?v=issues-515-519-10-605-1-662-663-1" in service_worker.text
+    assert "/static/app.css?v=issues-515-519-10-605-1-660-3-662-663-1" in service_worker.text
     assert "/static/ui-patterns.js?v=atlaso-ui-foundation-20260726-10" in service_worker.text
     assert "/static/appliance-apply-polling.js?v=issue-420-6" in service_worker.text
     assert "/static/ui-routes.js?v=issue-287-1" in service_worker.text
-    assert "/static/app.js?v=issues-515-519-12-513-328-1-595-6-605-1-606-607-1-662-663-3" in service_worker.text
+    assert "/static/app.js?v=issues-515-519-12-513-328-1-595-6-605-1-606-607-1-660-4-662-663-3" in service_worker.text
     assert "/static/terminal.js?v=issue-287-2" in service_worker.text
     assert "/static/pwa.js?v=issue-287-2" in service_worker.text
     assert "vcfdt-configuration-248-20260807-14" not in service_worker.text
@@ -1130,7 +1130,7 @@ def test_pwa_manifest_service_worker_and_offline_shell(client):
     )
     assert offline_stylesheet is not None
     assert offline_stylesheet.group(1) == (
-        "/static/app.css?v=issues-515-519-10-605-1-662-663-1"
+        "/static/app.css?v=issues-515-519-10-605-1-660-3-662-663-1"
     )
     assert f'"{offline_stylesheet.group(1)}"' in service_worker.text
 
@@ -1158,8 +1158,8 @@ def test_shared_ui_pattern_shell_and_wizard_contracts(client):
     base = (templates / "base.html").read_text(encoding="utf-8")
     public_base = (templates / "public_portal_base.html").read_text(encoding="utf-8")
     for shell, app_asset in (
-        (base, "/static/app.js?v=issues-515-519-12-513-328-1-595-6-605-1"),
-        (public_base, "/static/app.js?v=issues-515-519-12-513-328-1-595-6-605-1"),
+        (base, "/static/app.js?v=issues-515-519-12-513-328-1-595-6-605-1-606-607-1-660-4"),
+        (public_base, "/static/app.js?v=issues-515-519-12-513-328-1-595-6-605-1-606-607-1-660-4"),
         (base, "/static/appliance-apply-polling.js?v=issue-420-6"),
     ):
         assert shell.index("/static/vendor/tabulator/tabulator.min.js") < shell.index(
@@ -1816,9 +1816,9 @@ def test_monitor_page_renders_template_and_browser_assets(client):
     assert "Loading devices" not in page.text
     assert "<th>Device</th><th>Read/s</th><th>Write/s</th>" in page.text
     assert "swagger-link-icon" in page.text
-    assert "/static/app.css?v=issues-515-519-10-605-1" in page.text
+    assert "/static/app.css?v=issues-515-519-10-605-1-660-3" in page.text
     assert "/static/ui-patterns.js?v=atlaso-ui-foundation-20260726-10" in page.text
-    assert "/static/app.js?v=issues-515-519-12-513-328-1-595-6-605-1" in page.text
+    assert "/static/app.js?v=issues-515-519-12-513-328-1-595-6-605-1-606-607-1-660-4" in page.text
     app_css = client.get("/static/app.css")
     assert app_css.status_code == 200
     assert ".split-workspace > .wide-panel" in app_css.text
@@ -5385,6 +5385,13 @@ def test_settings_archive_preflight_rejects_invalid_collection_row_and_required_
 
     with SessionLocal() as db:
         archive = export_settings_archive(db, actor="test")
+    for setting in archive["data"]["settings"]:
+        if setting["key"] in {
+            "routes_wan.routing_enabled",
+            "routes_wan.nat_enabled",
+            "routes_wan.wan_simulation_enabled",
+        }:
+            setting["value"] = "true"
     assert archive["data"]["physical_interfaces"]
 
     invalid_collection = deepcopy(archive)
@@ -7988,6 +7995,11 @@ def test_esxi_kickstarts_round_trip_in_settings_archive(client, monkeypatch, tmp
         custom_variable_definitions,
         save_custom_variable_definition,
     )
+    from atlaso.app.services.routes_wan import (
+        NAT_ENABLED_SETTING_KEY,
+        ROUTING_ENABLED_SETTING_KEY,
+        WAN_SIMULATION_ENABLED_SETTING_KEY,
+    )
 
     iso_root = tmp_path / "installer-isos"
     iso_root.mkdir()
@@ -8050,6 +8062,9 @@ def test_esxi_kickstarts_round_trip_in_settings_archive(client, monkeypatch, tmp
             "value": '[{"default_value":"firstdisk","description":"Preferred installation disk","id":"install_disk","name":"install_disk"}]',
         },
         {"key": NTP_NTS_RESTORATION_SETTING_KEY, "value": "complete"},
+        {"key": NAT_ENABLED_SETTING_KEY, "value": "false"},
+        {"key": ROUTING_ENABLED_SETTING_KEY, "value": "false"},
+        {"key": WAN_SIMULATION_ENABLED_SETTING_KEY, "value": "false"},
     ]
 
     with SessionLocal() as db:
@@ -8602,7 +8617,7 @@ def test_backup_restore_factory_reset_replaces_database_and_baselines_runtime(cl
         assert db.execute(select(Schedule)).scalars().all() == []
         assert db.execute(select(AuditEvent)).scalars().all() == []
         services = {service.service: service for service in db.execute(select(ServiceState)).scalars()}
-        assert services["routing"].running and services["routing"].enabled
+        assert not services["routing"].running and not services["routing"].enabled
         assert services["firewall"].running and services["firewall"].enabled
         assert services["auth"].running and services["auth"].enabled
         optional = [service for key, service in services.items() if key not in {"routing", "firewall", "auth"}]
@@ -16401,6 +16416,11 @@ def test_services_ui_records_dry_run_action(client):
     assert "services-table" in page.text
     assert "services-fallback" in page.text
     assert "data-services=" in page.text
+    assert 'data-routing-can-write="true"' in page.text
+    assert '/services/routing/start"' not in page.text
+    assert '/services/routing/stop"' not in page.text
+    assert '/services/routing/restart"' not in page.text
+    assert '>Review appliance changes</a>' in page.text
     assert "Service Boundary" in page.text
     assert "<th>Health</th>" not in page.text
     assert '<span class="status-pill warn">dry-run</span>' in page.text
@@ -16443,12 +16463,73 @@ def test_services_ui_records_dry_run_action(client):
     assert "serviceActionsFormatter" not in js.text
     assert 'title: "Startup"' in js.text
     assert 'editor: "tickCross"' in js.text
+    assert 'const canControlRouting = tableElement.dataset.routingCanWrite === "true"' in js.text
+    assert 'cell.getRow().getData().service !== "routing" || canControlRouting' in js.text
+    assert 'if (service === "routing")' in js.text
+    assert 'label: "Review appliance changes"' in js.text
     assert 'service-state muted">disabled' in js.text
     css = client.get("/static/app.css")
     assert css.status_code == 200
     assert ".service-name-cell" in css.text
     assert ".services-workspace" in css.text
     assert ".services-table" in css.text
+
+
+def test_services_routing_controls_are_read_only_for_service_admin(client):
+    """Hide Routing mutations when the identity lacks Routes and WAN writes.
+
+    Args:
+        client: HTTP test client used to exercise the Atlaso application.
+    """
+    from sqlalchemy import select
+
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import Role, User
+    from atlaso.app.security import roles_to_json
+
+    with SessionLocal() as db:
+        admin = db.execute(select(User).where(User.username == "admin")).scalar_one()
+        admin.role = Role.SERVICE_ADMIN.value
+        admin.roles_json = roles_to_json([Role.SERVICE_ADMIN.value])
+        db.commit()
+
+    login(client)
+    page = client.get("/services")
+
+    assert page.status_code == 200
+    assert 'data-routing-can-write="false"' in page.text
+    assert '/services/routing/start"' not in page.text
+    assert '/services/routing/stop"' not in page.text
+    assert '/services/routing/restart"' not in page.text
+    assert '>Review appliance changes</a>' in page.text
+
+
+def test_services_routing_controls_require_service_write_permission(client):
+    """Hide Routing mutations when combined roles lack service writes.
+
+    Args:
+        client: HTTP test client used to exercise the Atlaso application.
+    """
+    from sqlalchemy import select
+
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import Role, User
+    from atlaso.app.security import roles_to_json
+
+    with SessionLocal() as db:
+        admin = db.execute(select(User).where(User.username == "admin")).scalar_one()
+        admin.role = Role.NETWORK_ADMIN.value
+        admin.roles_json = roles_to_json(
+            [Role.NETWORK_ADMIN.value, Role.VIEWER.value]
+        )
+        db.commit()
+
+    login(client)
+    page = client.get("/services")
+
+    assert page.status_code == 200
+    assert 'data-routing-can-write="false"' in page.text
+    assert '>Review appliance changes</a>' in page.text
 
 
 def test_services_and_esxi_page_show_enabled_esxi_pxe_boot_state(client):
@@ -16778,6 +16859,163 @@ def test_services_dns_dhcp_actions_update_desired_settings(client):
 
     with SessionLocal() as db:
         assert db.execute(select(DhcpSettings)).scalar_one().enabled is False
+
+
+def test_services_routing_actions_update_global_desired_state(client, monkeypatch):
+    """Keep Services Routing controls synchronized with Appliance Apply intent.
+
+    Args:
+        client: HTTP test client used to exercise the Atlaso application.
+        monkeypatch: Pytest fixture used to observe shared writer-lock ordering.
+    """
+    from sqlalchemy import select
+
+    import atlaso.app.routers.api_v1.operations as api_operations
+    import atlaso.app.routers.ui.operations as ui_operations
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import ServiceState
+    from atlaso.app.services.routes_wan import ensure_routes_wan_settings
+
+    lock_events: list[str] = []
+
+    def assert_lock_before_routing_query(db, *, transport: str) -> None:
+        """Record that the shared lock precedes the transport's Routing lookup.
+
+        Args:
+            db: Active database session inspected before the service query.
+            transport: API or UI transport invoking the shared lock.
+        """
+        assert not any(
+            isinstance(row, ServiceState) and row.service == "routing"
+            for row in db.identity_map.values()
+        )
+        lock_events.append(transport)
+
+    monkeypatch.setattr(
+        api_operations,
+        "acquire_network_objects_write_lock",
+        lambda db: assert_lock_before_routing_query(db, transport="api"),
+    )
+    monkeypatch.setattr(
+        ui_operations,
+        "acquire_network_objects_write_lock",
+        lambda db: assert_lock_before_routing_query(db, transport="ui"),
+    )
+
+    service_only_token = create_api_token(
+        client, ["read:services", "write:services"]
+    )
+    denied = client.post(
+        "/api/v1/services/routing/enable",
+        headers={"Authorization": f"Bearer {service_only_token}"},
+    )
+    assert denied.status_code == 403
+    assert lock_events == []
+
+    token = create_api_token(
+        client,
+        ["read:services", "write:services", "write:routes", "write:wan"],
+    )
+    enabled = client.post(
+        "/api/v1/services/routing/enable",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert enabled.status_code == 200
+    assert lock_events == ["api"]
+    blocked_start = client.post(
+        "/api/v1/services/routing/start",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert blocked_start.status_code == 422
+    assert blocked_start.json()["detail"] == "Routing runtime changes require Appliance Apply"
+
+    with SessionLocal() as db:
+        settings = ensure_routes_wan_settings(db)
+        service = db.execute(
+            select(ServiceState).where(ServiceState.service == "routing")
+        ).scalar_one()
+        assert settings.routing_enabled is True
+        assert service.enabled is True
+        assert service.running is False
+
+    login(client)
+    page = client.get("/services")
+    csrf = page.text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
+    disabled = client.post("/services/routing/disable", data={"csrf": csrf})
+    assert disabled.status_code == 200
+    assert lock_events == ["api", "ui"]
+
+    with SessionLocal() as db:
+        settings = ensure_routes_wan_settings(db)
+        service = db.execute(
+            select(ServiceState).where(ServiceState.service == "routing")
+        ).scalar_one()
+        assert settings.routing_enabled is False
+        assert service.enabled is False
+        assert service.running is False
+
+
+def test_seed_preserves_unconfigured_routing_until_appliance_apply(client):
+    """Keep restored Routing runtime state unconfigured across startup seeding.
+
+    Args:
+        client: HTTP test client used to initialize the isolated database.
+    """
+    from sqlalchemy import select
+
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import ServiceState
+    from atlaso.app.seed import seed_initial_data
+    from atlaso.app.services.routes_wan import (
+        ensure_routes_wan_settings,
+        save_routing_enabled_state,
+    )
+
+    with SessionLocal() as db:
+        save_routing_enabled_state(db, enabled=True)
+        service = db.execute(
+            select(ServiceState).where(ServiceState.service == "routing")
+        ).scalar_one()
+        service.enabled = False
+        service.running = False
+        service.health = "unconfigured"
+        db.commit()
+
+        seed_initial_data(db, include_examples=False)
+        db.refresh(service)
+
+        assert ensure_routes_wan_settings(db).routing_enabled is True
+        assert service.enabled is False
+        assert service.running is False
+        assert service.health == "unconfigured"
+
+    token = create_api_token(
+        client,
+        ["read:services", "write:services", "write:routes", "write:wan"],
+    )
+    response = client.post(
+        "/api/v1/services/routing/enable",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert response.status_code == 200
+
+    login(client)
+    page = client.get("/services")
+    csrf = page.text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
+    response = client.post(
+        "/services/routing/enable",
+        data={"csrf": csrf},
+    )
+    assert response.status_code == 200
+
+    with SessionLocal() as db:
+        service = db.execute(
+            select(ServiceState).where(ServiceState.service == "routing")
+        ).scalar_one()
+        assert ensure_routes_wan_settings(db).routing_enabled is True
+        assert service.enabled is False
+        assert service.running is False
+        assert service.health == "unconfigured"
 
 
 def test_services_live_dns_dhcp_runtime_uses_dnsmasq_systemd(client, monkeypatch):

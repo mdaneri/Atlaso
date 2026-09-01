@@ -1,15 +1,393 @@
 """Test routes wan behavior."""
 
-from atlaso.app.models import NatRule, Route, RoutingRule
+from atlaso.app.models import NatRule, Route, RoutingRule, Setting, WanPolicy
 from atlaso.app.services.routes_wan import (
+    ROUTES_WAN_SETTING_KEYS,
+    RoutesWanSettings,
     canonical_route_destination,
     default_route_family,
+    ensure_routes_wan_settings,
     mirrored_management_default_routes,
     render_wan_config,
     route_to_dict,
+    save_routes_wan_settings,
     validate_nat_source,
     validate_wan_state,
 )
+
+
+def test_feature_settings_render_full_saved_intent_with_effective_gates():
+    """Keep saved rows in the config while rendering only effective behavior."""
+    policy = WanPolicy(name="Slow WAN", enabled=True, latency_ms=100)
+    policy.id = 9
+    route = Route(
+        destination_cidr="10.20.0.0/24",
+        interface_name="eth1",
+        metric=100,
+        enabled=True,
+        wan_policy_id=9,
+    )
+    nat = NatRule(
+        name="Lab NAT",
+        source="10.20.0.0/24",
+        outbound_interface="eth1",
+        enabled=True,
+    )
+
+    config = render_wan_config(
+        [route],
+        [policy],
+        [nat],
+        targets=[
+            {
+                "name": "eth1",
+                "kind": "physical",
+                "role": "access",
+                "ip_cidr": "192.0.2.10/24",
+                "routing_domain": "lab",
+                "route_allowed": True,
+            }
+        ],
+        settings=RoutesWanSettings(
+            routing_enabled=False,
+            nat_enabled=True,
+            wan_simulation_enabled=True,
+        ),
+    )
+
+    assert "routing_enabled=false" in config
+    assert "nat_enabled=true" in config
+    assert "effective_nat_enabled=false" in config
+    assert "wan_simulation_enabled=true" in config
+    assert "route=10.20.0.0/24" in config
+    assert "nat=Lab NAT" in config
+    assert "policy=Slow WAN" in config
+    assert "ip route replace 10.20.0.0/24" not in config
+    assert "ip route del 192.0.2.0/24 dev eth1 table 200" in config
+    assert 'for priority in $(seq 2000 2099); do ip rule del priority "$priority"' in config
+    assert 'for priority in $(seq 2000 2099); do ip -6 rule del priority "$priority"' in config
+    assert "masquerade comment \"Lab NAT\"" not in config
+    assert "nft -f /etc/atlaso/nftables.d/atlaso-nat.nft" in config
+    assert "tc qdisc replace dev eth1 root netem delay 100ms" in config
+    assert "net.ipv4.ip_forward=0" in config
+    assert "net.ipv6.conf.all.forwarding=0" in config
+
+
+def test_disabled_route_preview_guards_unknown_target_cleanup():
+    """Preview dormant cleanup with the helper's live-link condition."""
+    route = Route(
+        destination_cidr="10.20.0.0/24",
+        interface_name="missing_eth2",
+        metric=100,
+        enabled=True,
+    )
+
+    config = render_wan_config(
+        [route],
+        settings=RoutesWanSettings(False, False, False),
+    )
+
+    assert "route=10.20.0.0/24" in config
+    assert (
+        "if ip link show dev missing_eth2 >/dev/null 2>&1; then "
+        "ip route del 10.20.0.0/24 dev missing_eth2 table 200; fi"
+    ) in config
+    assert "ip route replace 10.20.0.0/24" not in config
+    assert (
+        "if ip link show dev missing_eth2 >/dev/null 2>&1; then "
+        "tc qdisc del dev missing_eth2 root; fi"
+    ) in config
+
+
+def test_disabled_route_preview_cleans_live_ineligible_target():
+    """Keep cleanup visible when an omitted target exists but is ineligible."""
+    route = Route(
+        destination_cidr="10.20.0.0/24",
+        interface_name="eth2",
+        metric=100,
+        enabled=True,
+    )
+
+    config = render_wan_config(
+        [route],
+        settings=RoutesWanSettings(False, False, False),
+    )
+
+    assert "ip route del 10.20.0.0/24 dev eth2 table 200" in config
+    assert "tc qdisc del dev eth2 root" in config
+
+
+def test_wan_preview_retains_guarded_omitted_target_cleanup():
+    """Keep link-guarded target retirement stable across baseline convergence."""
+    target = {
+        "name": "eth2",
+        "kind": "physical",
+        "role": "access",
+        "ip_cidr": "192.0.2.10/24",
+        "routing_domain": "lab",
+        "route_allowed": True,
+    }
+    previous = render_wan_config([], targets=[target])
+
+    live = render_wan_config(
+        [],
+        previous_config_preview=previous,
+        settings=RoutesWanSettings(False, False, False),
+    )
+    converged = render_wan_config(
+        [],
+        previous_config_preview=live,
+        settings=RoutesWanSettings(False, False, False),
+    )
+    cleanup = (
+        "if ip link show dev eth2 >/dev/null 2>&1; then "
+        "ip route del 192.0.2.0/24 dev eth2 table 200; fi"
+        "  # retired omitted or ineligible WAN target"
+    )
+    assert cleanup in live
+    assert live == converged
+    assert "[retired_targets]\ntarget=eth2\n  network=192.0.2.0/24" in live
+
+
+def test_removed_route_preview_guards_unknown_target_cleanup():
+    """Preview removed-route cleanup with the helper's live-link condition."""
+    config = render_wan_config(
+        [],
+        removed_routes=[
+            {
+                "destination_cidr": "192.0.2.0/24",
+                "interface_name": "missing-route-target",
+            }
+        ],
+        settings=RoutesWanSettings(False, False, False),
+    )
+
+    assert "route=192.0.2.0/24" in config
+    assert (
+        "if ip link show dev missing-route-target >/dev/null 2>&1; then "
+        "ip route del 192.0.2.0/24 dev missing-route-target table 200; fi"
+    ) in config
+
+
+def test_disabled_features_do_not_surface_inactive_row_validation_errors():
+    """Do not block Apply on invalid resources whose global feature is off."""
+    invalid_route = Route(
+        destination_cidr="10.20.0.0/24",
+        interface_name="eth1",
+        metric=100,
+        enabled=True,
+    )
+    invalid_nat = NatRule(
+        name="",
+        source="not-a-network",
+        outbound_interface="missing",
+        priority=-1,
+        enabled=True,
+    )
+    invalid_policy = WanPolicy(name="", latency_ms=-1, jitter_ms=-1, enabled=True)
+
+    assert validate_wan_state(
+        [invalid_route],
+        [invalid_policy],
+        {"eth1"},
+        [invalid_nat],
+        set(),
+        routing_enabled=False,
+        nat_enabled=False,
+        wan_simulation_enabled=False,
+    ) == []
+    assert validate_wan_state(
+        [invalid_route],
+        [invalid_policy],
+        set(),
+        [invalid_nat],
+        set(),
+        routing_enabled=True,
+        nat_enabled=True,
+        wan_simulation_enabled=True,
+    )
+
+
+def test_validate_wan_state_rejects_invalid_route_destinations_when_routing_off():
+    """Reject malformed route destination CIDRs even while routing is disabled."""
+    invalid_route = Route(
+        destination_cidr="not-a-network",
+        interface_name="eth1",
+        metric=100,
+        enabled=True,
+    )
+
+    assert validate_wan_state(
+        [invalid_route],
+        [],
+        {"eth1"},
+        routing_enabled=False,
+        nat_enabled=False,
+        wan_simulation_enabled=False,
+    ) == ["Route not-a-network is not a valid destination CIDR."]
+
+
+def test_disabled_routing_still_validates_active_management_default():
+    """Validate a protected host default while ignoring dormant lab routes."""
+    dormant_route = Route(
+        destination_cidr="10.20.0.0/24",
+        gateway="198.51.100.1",
+        interface_name="eth2",
+        metric=100,
+        enabled=True,
+    )
+    management_default = Route(
+        destination_cidr="0.0.0.0/0",
+        gateway="198.51.100.1",
+        interface_name="eth1",
+        metric=100,
+        enabled=True,
+    )
+
+    errors = validate_wan_state(
+        [dormant_route, management_default],
+        [],
+        {"eth1", "eth2"},
+        route_target_cidrs={
+            "eth1": ("192.0.2.10/24", None),
+            "eth2": ("203.0.113.10/24", None),
+        },
+        management_target_names={"eth1"},
+        routing_enabled=False,
+        nat_enabled=False,
+        wan_simulation_enabled=False,
+    )
+
+    assert errors == [
+        "Route 0.0.0.0/0: Route gateway 198.51.100.1 is not on-link for the selected target's configured IPv4 CIDR."
+    ]
+
+
+def test_fresh_settings_default_off_and_legacy_rows_infer_once(client):
+    """Reconcile missing upgrade keys from effective legacy rows only once.
+
+    Args:
+        client: HTTP test client providing the isolated application database.
+    """
+    from sqlalchemy import delete, select
+
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import PhysicalInterface
+
+    with SessionLocal() as db:
+        fresh = ensure_routes_wan_settings(db)
+        assert fresh == RoutesWanSettings(False, False, False)
+
+        for route_row in db.execute(select(Route)).scalars():
+            route_row.enabled = False
+        for nat_rule in db.execute(select(NatRule)).scalars():
+            nat_rule.enabled = False
+        for routing_rule in db.execute(select(RoutingRule)).scalars():
+            routing_rule.enabled = False
+
+        route_targets = db.execute(
+            select(PhysicalInterface).order_by(PhysicalInterface.name)
+        ).scalars().all()[:2]
+        assert len(route_targets) == 2
+        for interface in route_targets:
+            interface.role = "route"
+            interface.mode = "access"
+            interface.admin_state = "up"
+            interface.oper_state = "up"
+            interface.ip_cidr = None
+            interface.ipv6_cidr = None
+        db.execute(delete(Setting).where(Setting.key.in_(ROUTES_WAN_SETTING_KEYS)))
+        db.flush()
+        assert ensure_routes_wan_settings(db).routing_enabled is False
+
+        for index, interface in enumerate(route_targets, start=1):
+            interface.mode = "trunk"
+            interface.ip_cidr = f"192.0.{index}.10/24"
+        db.execute(delete(Setting).where(Setting.key.in_(ROUTES_WAN_SETTING_KEYS)))
+        db.flush()
+        assert ensure_routes_wan_settings(db).routing_enabled is False
+
+        for index, interface in enumerate(route_targets, start=1):
+            interface.mode = "access"
+            interface.admin_state = "down" if index == 1 else "up"
+            interface.ip_cidr = f"192.0.{index}.10/24"
+        db.execute(delete(Setting).where(Setting.key.in_(ROUTES_WAN_SETTING_KEYS)))
+        db.flush()
+        assert ensure_routes_wan_settings(db).routing_enabled is True
+
+        db.execute(delete(Setting).where(Setting.key.in_(ROUTES_WAN_SETTING_KEYS)))
+        route = db.execute(select(Route).order_by(Route.id)).scalars().first()
+        nat = db.execute(select(NatRule).order_by(NatRule.id)).scalars().first()
+        policy = db.execute(select(WanPolicy).order_by(WanPolicy.id)).scalars().first()
+        assert route is not None and nat is not None and policy is not None
+        route.enabled = False
+        policy.enabled = True
+        nat.enabled = True
+        db.flush()
+
+        nat_only = ensure_routes_wan_settings(db)
+        assert nat_only == RoutesWanSettings(True, True, False)
+
+        db.execute(delete(Setting).where(Setting.key.in_(ROUTES_WAN_SETTING_KEYS)))
+        route.enabled = True
+        route.wan_policy_id = policy.id
+        db.flush()
+
+        inferred = ensure_routes_wan_settings(db)
+        assert inferred == RoutesWanSettings(True, True, True)
+        route.enabled = False
+        nat.enabled = False
+        policy.enabled = False
+        db.flush()
+
+        assert ensure_routes_wan_settings(db) == inferred
+
+
+def test_settings_archives_round_trip_explicit_and_infer_legacy_switches(client):
+    """Round-trip current switches and derive them for an archive without keys.
+
+    Args:
+        client: HTTP test client providing the isolated application database.
+    """
+    from sqlalchemy import delete
+
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.services.settings_archive import (
+        export_settings_archive,
+        factory_reset_desired_state,
+        restore_settings_archive,
+    )
+
+    with SessionLocal() as db:
+        save_routes_wan_settings(
+            db,
+            routing_enabled=True,
+            nat_enabled=False,
+            wan_simulation_enabled=True,
+        )
+        db.commit()
+        current_archive = export_settings_archive(db, actor="test")
+        archived_keys = {
+            row["key"]
+            for row in current_archive["data"]["settings"]
+        }
+        assert ROUTES_WAN_SETTING_KEYS <= archived_keys
+
+        db.execute(delete(Setting).where(Setting.key.in_(ROUTES_WAN_SETTING_KEYS)))
+        db.commit()
+        legacy_archive = export_settings_archive(db, actor="test")
+        assert not ROUTES_WAN_SETTING_KEYS.intersection(
+            {row["key"] for row in legacy_archive["data"]["settings"]}
+        )
+
+        factory_reset_desired_state(db)
+        assert ensure_routes_wan_settings(db) == RoutesWanSettings(False, False, False)
+        restore_settings_archive(db, current_archive)
+        assert ensure_routes_wan_settings(db) == RoutesWanSettings(True, False, True)
+
+        factory_reset_desired_state(db)
+        restore_settings_archive(db, legacy_archive)
+        assert ensure_routes_wan_settings(db) == RoutesWanSettings(True, True, True)
 
 
 def test_default_route_helpers_and_renderer_use_canonical_semantics():
@@ -64,6 +442,38 @@ def test_flagged_management_default_route_also_preserves_host_default():
     assert mirrored_management_default_routes(config) == {
         ("0.0.0.0/0", "eth1", "192.0.2.1", "90")
     }
+
+
+def test_disabled_routing_preview_keeps_flagged_management_host_default():
+    """Render the protected main-table mutation independently of lab Routing."""
+    route = Route(
+        destination_cidr="0.0.0.0/0",
+        gateway="192.0.2.1",
+        interface_name="eth1",
+        metric=90,
+        enabled=True,
+    )
+    config = render_wan_config(
+        [route],
+        targets=[
+            {
+                "name": "eth1",
+                "kind": "physical",
+                "role": "access",
+                "ip_cidr": "192.0.2.10/24",
+                "routing_domain": "lab",
+                "route_allowed": True,
+                "management_ui": True,
+            }
+        ],
+        settings=RoutesWanSettings(False, False, False),
+    )
+
+    assert "ip route replace 0.0.0.0/0 via 192.0.2.1 dev eth1 metric 90 table 200" not in config
+    assert (
+        "ip route replace 0.0.0.0/0 via 192.0.2.1 dev eth1 metric 90"
+        "  # flagged-management host default"
+    ) in config
 
 
 def test_flagged_management_default_cleanup_uses_last_applied_mirroring():

@@ -3388,6 +3388,33 @@ def test_photon_wrapper_recovers_legacy_handoffs_before_pr_admission() -> None:
     assert wrapper.count("Assert-AtlasoPhotonCredentialRootIdentity `") >= 3
 
 
+def test_photon_cleanup_pins_root_identity_for_creation_and_recovery() -> None:
+    """Cleanup keeps a durable identity proof across ordinary and reboot paths."""
+    wrapper = Path("scripts/windows/vmware/build-photon-image.ps1").read_text(
+        encoding="utf-8"
+    )
+    marker = wrapper.index("$cleanupMarkerPayload = [ordered]@{")
+    ordinary_cleanup = wrapper.index(
+        "Complete-AtlasoPhotonBuildCleanup `", marker
+    )
+    recovery = wrapper.index("function Invoke-AtlasoPhotonBuildCleanupRecovery")
+    recovery_cleanup = wrapper.index(
+        "Complete-AtlasoPhotonBuildCleanup `", recovery
+    )
+
+    assert "Schema       = 2" in wrapper[marker:ordinary_cleanup]
+    assert "RootIdentity = [string]$credentialRootIdentity.RootIdentity" in wrapper[
+        marker:ordinary_cleanup
+    ]
+    assert "-ExpectedRootIdentity $expectedRootIdentity" in wrapper[
+        recovery_cleanup : recovery_cleanup + 500
+    ]
+    assert "-ExpectedRootIdentity ([string]$credentialRootIdentity.RootIdentity)" in wrapper[
+        ordinary_cleanup : ordinary_cleanup + 500
+    ]
+    assert "identity moved or changed; artifacts and marker were preserved" in wrapper
+
+
 def test_photon_child_revalidates_pinned_credential_ancestry() -> None:
     """The isolated child re-admits parent/root identities before credentials."""
     wrapper = Path("scripts/windows/vmware/build-photon-image.ps1").read_text(

@@ -74,9 +74,138 @@ def test_routes_wan_policy_form_renders(client):
     assert "Europe WAN" in response.text
     assert "SiteA outbound WAN" in response.text
     assert "eth1.20" in response.text
-    assert "tc qdisc replace" in response.text
+    assert "Routing &amp; WAN Settings" in response.text
+    assert 'action="/ui/management/routes-wan/settings"' in response.text
+    assert '<noscript><button class="button primary" type="submit">Save Routing &amp; WAN settings</button></noscript>' in response.text
+    assert '[feature_settings]' in response.text
+    assert "routing_enabled=false" in response.text
+    assert "tc qdisc del" in response.text
     assert "table ip atlaso_nat" in response.text
     assert "Review appliance changes" in response.text
+
+
+def test_routes_wan_settings_autosave_reports_suspended_nat(client):
+    """Autosave global settings and expose NAT's effective suspended state.
+
+    Args:
+        client: HTTP test client used to exercise the Atlaso application.
+    """
+    login(client)
+    page = client.get("/routes-wan")
+    csrf = page.text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
+
+    enabled_response = client.post(
+        "/routes-wan/settings",
+        headers={"X-Atlaso-Autosave": "1"},
+        data={"routing_enabled": "on", "nat_enabled": "on", "csrf": csrf},
+    )
+    assert enabled_response.status_code == 200, enabled_response.text
+
+    response = client.post(
+        "/routes-wan/settings",
+        headers={"X-Atlaso-Autosave": "1"},
+        data={"csrf": csrf},
+    )
+
+    assert response.status_code == 200, response.text
+    assert response.json()["nat_enabled"] is True
+    assert response.json()["effective_nat_enabled"] is False
+    assert response.json()["feature_status"]["routing"] == "disabled"
+    assert response.json()["feature_status"]["nat"] == "suspended"
+    refreshed = client.get("/routes-wan")
+    assert "Suspended until Routing is enabled." in refreshed.text
+    assert 'name="nat_enabled" aria-label="NAT enabled" checked disabled' in refreshed.text
+    assert 'name="nat_enabled" value="on" data-routes-wan-nat-fallback' in refreshed.text
+
+    simulation_response = client.post(
+        "/routes-wan/settings",
+        headers={"X-Atlaso-Autosave": "1"},
+        data={"wan_simulation_enabled": "on", "csrf": csrf},
+    )
+    assert simulation_response.status_code == 200, simulation_response.text
+    assert simulation_response.json()["nat_enabled"] is True
+    assert simulation_response.json()["effective_nat_enabled"] is False
+    assert simulation_response.json()["wan_simulation_enabled"] is True
+
+    no_javascript_enable = client.post(
+        "/routes-wan/settings",
+        data={
+            "routing_enabled": "on",
+            "nat_enabled": "on",
+            "wan_simulation_enabled": "on",
+            "csrf": csrf,
+        },
+        follow_redirects=False,
+    )
+    assert no_javascript_enable.status_code == 303
+
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.services.routes_wan import ensure_routes_wan_settings
+
+    with SessionLocal() as db:
+        settings = ensure_routes_wan_settings(db)
+        assert settings.routing_enabled is True
+        assert settings.nat_enabled is True
+        assert settings.effective_nat_enabled is True
+
+    simultaneous_disable = client.post(
+        "/routes-wan/settings",
+        headers={"X-Atlaso-Autosave": "1"},
+        data={
+            "nat_enabled": "off",
+            "wan_simulation_enabled": "on",
+            "csrf": csrf,
+        },
+    )
+    assert simultaneous_disable.status_code == 200
+    assert simultaneous_disable.json()["routing_enabled"] is False
+    assert simultaneous_disable.json()["nat_enabled"] is False
+    assert simultaneous_disable.json()["effective_nat_enabled"] is False
+
+
+def test_routes_wan_settings_autosave_preserves_unconfigured_routing_service(client):
+    """Keep restored Routing runtime state unchanged until Appliance Apply.
+
+    Args:
+        client: HTTP test client used to exercise the Atlaso application.
+    """
+    from sqlalchemy import select
+
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import ServiceState
+
+    login(client)
+    page = client.get("/routes-wan")
+    csrf = page.text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
+    with SessionLocal() as db:
+        service = db.execute(
+            select(ServiceState).where(ServiceState.service == "routing")
+        ).scalar_one()
+        service.enabled = False
+        service.running = False
+        service.health = "unconfigured"
+        db.commit()
+
+    response = client.post(
+        "/routes-wan/settings",
+        headers={"X-Atlaso-Autosave": "1"},
+        data={
+            "routing_enabled": "on",
+            "nat_enabled": "on",
+            "wan_simulation_enabled": "on",
+            "csrf": csrf,
+        },
+    )
+
+    assert response.status_code == 200, response.text
+    assert response.json()["routing_enabled"] is True
+    with SessionLocal() as db:
+        service = db.execute(
+            select(ServiceState).where(ServiceState.service == "routing")
+        ).scalar_one()
+        assert service.enabled is False
+        assert service.running is False
+        assert service.health == "unconfigured"
 
 
 def test_routes_wan_default_route_add_edit_validation_and_semantic_readback(client):
@@ -274,6 +403,10 @@ def test_routes_wan_wizards_respect_read_only_permissions(client):
     assert 'id="routes-wan-routing-dialog"' not in page.text
     assert 'id="routes-wan-nat-dialog"' not in page.text
     assert 'id="routes-wan-policy-dialog"' not in page.text
+    assert 'name="routing_enabled"' in page.text
+    assert 'name="routing_enabled" aria-label="Routing enabled"  disabled' in page.text
+    assert "Read-only state. Routes and WAN write permissions are required" in page.text
+    assert "data-autosave-status-id=\"routes-wan-settings-autosave-status\"" not in page.text
 
 
 def test_routes_wan_allows_ipv6_only_route_targets_but_not_nat_targets(client):
@@ -374,6 +507,18 @@ def test_routes_wan_autosave_endpoints_and_apply_task(client):
     login(client)
     page = client.get("/routes-wan")
     csrf = page.text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
+    settings_response = client.post(
+        "/routes-wan/settings",
+        headers={"X-Atlaso-Autosave": "1"},
+        data={
+            "routing_enabled": "on",
+            "nat_enabled": "on",
+            "wan_simulation_enabled": "on",
+            "csrf": csrf,
+        },
+    )
+    assert settings_response.status_code == 200
+    assert settings_response.json()["effective_nat_enabled"] is True
     policy_response = client.post(
         "/routes-wan/policies",
         data={

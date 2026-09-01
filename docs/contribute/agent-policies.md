@@ -1672,6 +1672,11 @@ Terminal order:
 
 - Routes & WAN Simulation owns static route desired state, IPv4 outbound masquerade NAT rules, and interface/VLAN-level
   `tc/netem` latency/error simulation.
+- Persist the global Routing, NAT, and WAN Simulation switches as safe settings. Fresh install and factory reset are
+  off; missing legacy settings derive once from effective enabled rows. Keep every route, permission, NAT rule, WAN
+  policy, and assignment saved while its feature is off. Routing gates lab routes, rules, and IPv4/IPv6 forwarding;
+  NAT is effective only with Routing; WAN Simulation is independent. Management reachability remains outside the lab
+  Routing switch.
 - Label path entries **Static Routes** and forwarding authorization **Routing Permissions**. Keep Static Routes,
   explicit Routing Permissions, NAT Rules, and WAN Policies as wizard-backed Tabulator collections using the ESX
   Storage reference. Add launches from the bottom row; edit launches from row double-click or its context action;
@@ -1701,8 +1706,8 @@ Terminal order:
 - NAT outbound targets must be access physical interfaces with an IPv4 CIDR or enabled VLAN interfaces with an IPv4
   CIDR. IPv6-only interfaces are not valid NAT outbound targets. NAT is explicit desired state and remains reviewed
   through global apply; it is not inferred from an interface role.
-- Validate live Routing/WAN state with `ip route`, `tc qdisc show`, `nft list ruleset`, and `sysctl net.ipv4.ip_forward`
-  after applying on Photon.
+- Validate live Routing/WAN state with `ip route`, `ip -6 route`, `ip rule`, `tc qdisc show`, `nft list ruleset`,
+  `sysctl net.ipv4.ip_forward`, and `sysctl net.ipv6.conf.all.forwarding` after applying on Photon.
 
 ## Database And Verification
 

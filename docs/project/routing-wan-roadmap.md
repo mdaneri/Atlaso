@@ -15,7 +15,9 @@ Atlaso Routing/WAN v1 is intentionally appliance-owned and conservative. Desired
 The current UI presents four wizard-backed collections: **Static Routes**, **Routing Permissions**, **NAT**, and
 **WAN Policies**. Static Routes define paths in the lab route table. Routing Permissions separately define forwarding
 between interface/VLAN networks. Add/edit changes are reviewed before one desired-state save, while ordinary Enabled
-state remains directly editable and generated route-role permissions remain read-only.
+state remains directly editable and generated route-role permissions remain read-only. A non-grid
+**Routing & WAN Settings** card provides independent global Routing, NAT, and WAN Simulation desired-state switches;
+all three are off on fresh install and factory reset.
 
 Atlaso has no `wan` interface role. The `wan` apply-unit name and WAN Simulation UI describe explicit routing, NAT, and
 impairment behavior only; they must not be used as an interface classification.
@@ -33,7 +35,10 @@ impairment behavior only; they must not be used as an interface classification.
 - IPv4 outbound masquerade NAT rules rendered as the Atlaso-owned `table ip atlaso_nat`.
 - NAT outbound interfaces can be access physical interfaces with IPv4 CIDRs or enabled VLAN interfaces with IPv4 CIDRs;
   NAT eligibility is not inferred from an interface role.
-- IPv4 forwarding enabled only when enabled lab routing or NAT requires it.
+- IPv4 and IPv6 packet forwarding follow the global Routing switch. NAT is effective only when both Routing and NAT
+  are enabled, while WAN Simulation remains independent.
+- Feature switches preserve all saved resource rows and assignments while clearing inactive runtime state. Legacy
+  installations and settings archives infer absent switches once from previously effective enabled rows.
 - Management is never a route, NAT, or routing-permission target, and firewall apply generates explicit
   management-to-lab and lab-to-management forward drops.
 - Interface/VLAN-level WAN simulation through one `tc qdisc replace dev <target> root netem ...` per target with an
@@ -90,6 +95,7 @@ ip route
 tc qdisc show
 nft list ruleset
 sysctl net.ipv4.ip_forward
+sysctl net.ipv6.conf.all.forwarding
 systemctl status atlaso-nat.service --no-pager
 ```
 
