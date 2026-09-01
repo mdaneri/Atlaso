@@ -161,11 +161,20 @@ function Assert-AtlasoVmwarePayloadProvenance {
         throw "VMware build provenance is invalid: $($_.Exception.Message)"
     }
     if ($provenance.schema_version -ne 3) {
-        throw 'VMware build provenance does not contain verified builder identity and payload-disk roles.'
+        throw 'VMware build provenance does not contain a verified immutable source snapshot, builder identity, and payload-disk roles.'
     }
     if ([string]$provenance.source_commit -notmatch '^[0-9a-f]{40}$' -or
         $null -eq $provenance.tracked_source_dirty) {
         throw 'VMware build provenance does not contain a valid source identity.'
+    }
+    if ([bool]$provenance.tracked_source_dirty) {
+        throw 'VMware build provenance records a dirty tracked source tree.'
+    }
+    if ($null -eq $provenance.source_snapshot -or
+        [int]$provenance.source_snapshot.schema_version -ne 1 -or
+        [int]$provenance.source_snapshot.file_count -le 0 -or
+        [string]$provenance.source_snapshot.sha256 -notmatch '^[0-9a-f]{64}$') {
+        throw 'VMware build provenance does not contain a valid immutable source snapshot identity.'
     }
     if ($ExpectedSourceCommit -and [string]$provenance.source_commit -cne $ExpectedSourceCommit) {
         throw "VMware build provenance does not identify expected source commit $ExpectedSourceCommit."
@@ -286,6 +295,11 @@ function Update-AtlasoVmwarePayloadProvenance {
     if ($previous.schema_version -ne 3 -or
         [string]$previous.source_commit -notmatch '^[0-9a-f]{40}$' -or
         $null -eq $previous.tracked_source_dirty -or
+        [bool]$previous.tracked_source_dirty -or
+        $null -eq $previous.source_snapshot -or
+        [int]$previous.source_snapshot.schema_version -ne 1 -or
+        [int]$previous.source_snapshot.file_count -le 0 -or
+        [string]$previous.source_snapshot.sha256 -notmatch '^[0-9a-f]{64}$' -or
         $null -eq $previous.builder_identity) {
         throw 'VMware build provenance cannot be refreshed because its source identity is invalid.'
     }
@@ -295,6 +309,11 @@ function Update-AtlasoVmwarePayloadProvenance {
         schema_version                   = 3
         source_commit                    = [string]$previous.source_commit
         tracked_source_dirty             = [bool]$previous.tracked_source_dirty
+        source_snapshot                  = [ordered]@{
+            schema_version = [int]$previous.source_snapshot.schema_version
+            file_count     = [int]$previous.source_snapshot.file_count
+            sha256         = [string]$previous.source_snapshot.sha256
+        }
         builder_identity                 = $previous.builder_identity
         payload_state                    = 'software-deployed'
         deployment_source_name           = $source.Name

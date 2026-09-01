@@ -248,13 +248,26 @@ payload filesystems while
 retaining a 512 MiB safety reserve, delete the fill files, request TRIM, and let Packer compact both payload VMDKs.
 Zero-filling makes compaction deterministic even when the VMware virtual disks do not advertise discard. After a
 successful build, the wrapper writes a schema-v3 provenance
-JSON file beside the VMX containing the exact source commit, tracked-source state, and the verified role, SCSI unit,
+JSON file beside the VMX. Before any Workstation, ISO, Packer, output, or image mutation, the parent requires a
+completely clean checkout,
+archives its exact commit into the invocation-owned sensitive-build root, removes the build identity's write access,
+and launches the bounded child from that snapshot. The exact HCL template and every Packer file and shell source resolve
+beneath the protected snapshot instead of the operator checkout. The
+wrapper verifies the deterministic full-snapshot file-count and SHA-256 inventory before Packer and again before
+provenance emission. The wrapper records the exact source commit, tracked-source state, immutable snapshot identity,
+and the verified role, SCSI unit,
 virtual capacity, SHA-256 hash, and byte size for the VMX and both VMDKs. Test-VM cloning and OVF export require that
 exact role-bound provenance plus the matching builder identity, output leaf, VMX filename, and `displayName`, so an
 older unproven image or a later reversed/tampered/differently owned payload is rejected before cloning or export output
 replacement. A sibling `*.builder-identity.json` ownership manifest must prove the same repository, pull request,
 branch, canonical name, and suffix before checked replacement can advance it to a newer exact head. Retained reuse
 still requires the exact commit, and a legacy generic or differently owned builder is never adopted automatically.
+Moving `HEAD`, editing tracked files, or adding untracked inputs after snapshot admission through the supported wrapper
+cannot change the admitted build inputs; a dirty or ambiguous checkout fails before Workstation, ISO, Packer, or output
+mutation. The Windows producer remains a trusted build boundary: snapshot ACLs and the independent commit re-export
+protect ordinary workflow consistency, but do not claim to sandbox a process already running with the producer's own
+Windows identity. Protected hosted finalization retains its independent artifact and source-binding checks without
+claiming to authenticate the entire filesystem of a compromised producer.
 
 ## Networking
 
@@ -608,8 +621,8 @@ Depot and Backups data VMDKs at units 2 and 3 when needed. `-ResetDataDisks` rem
 them only when their canonical paths are strict, non-reparse-point descendants of the selected VM output directory.
 Both creation-size arguments accept only `500GB`; an explicitly reused data VMDK must also expose an exact 500 GiB
 virtual capacity in its descriptor or deployment stops before cloning the target VM.
-Before cloning, the wrapper verifies the source VMX and both payload bytes against schema-v3 build provenance bound to
-the matching builder identity. After
+Before cloning, the wrapper verifies the source VMX and both payload bytes against schema-v3 build provenance, including
+the immutable source-snapshot inventory identity and matching builder identity. After
 the full clone, it revalidates the PVSCSI unit assignments and exact 40 GiB/20 GiB payload capacities before it creates
 or attaches either data disk. Do not repair an ambiguous or reversed source by swapping filenames or formatting a disk;
 rebuild it through the supported wrapper.

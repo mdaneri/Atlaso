@@ -537,6 +537,8 @@ Pinned Photon source URL or path.
 Expected Photon source checksum.
 .PARAMETER PackerDirectory
 Provider Packer template directory.
+.PARAMETER PackerTemplatePath
+Optional exact Packer template file; defaults to atlaso-photon.pkr.hcl in PackerDirectory.
 .PARAMETER SshPassword
 Temporary Packer SSH password.
 .PARAMETER BootstrapAdminPassword
@@ -597,6 +599,7 @@ function Invoke-AtlasoPhotonImageBuild {
         [Parameter(Mandatory = $true)][string]$IsoUrl,
         [Parameter(Mandatory = $true)][string]$IsoChecksum,
         [Parameter(Mandatory = $true)][string]$PackerDirectory,
+        [string]$PackerTemplatePath = '',
         [Parameter(Mandatory = $true)][SecureString]$SshPassword,
         [SecureString]$BootstrapAdminPassword,
         [string]$VmName = 'Atlaso-Photon-Builder',
@@ -643,6 +646,15 @@ function Invoke-AtlasoPhotonImageBuild {
     }
 
     $packerDir = Resolve-AtlasoRepoPath -Path $PackerDirectory
+    $resolvedPackerTemplatePath = if ([string]::IsNullOrWhiteSpace($PackerTemplatePath)) {
+        Join-Path $packerDir 'atlaso-photon.pkr.hcl'
+    }
+    else {
+        [System.IO.Path]::GetFullPath($PackerTemplatePath)
+    }
+    if (-not (Test-Path -LiteralPath $resolvedPackerTemplatePath -PathType Leaf)) {
+        throw "The exact Packer template is missing: $resolvedPackerTemplatePath"
+    }
     if ([string]::IsNullOrWhiteSpace($SharedSourceDirectory)) {
         $repoRoot = Resolve-Path -LiteralPath (Join-Path $PSScriptRoot '..\..\..')
         $SharedSourceDirectory = Join-Path $repoRoot 'image\common\source'
@@ -769,16 +781,18 @@ function Invoke-AtlasoPhotonImageBuild {
     if (-not $ValidateOnly) {
         $packerArgs += "-on-error=$PackerOnError"
     }
-    $packerArgs += @('-var-file', $varFilePath, '.')
+    $packerArgs += @('-var-file', $varFilePath, $resolvedPackerTemplatePath)
 
             Push-Location $packerDir
             try {
-                & packer init .
+                & packer init $resolvedPackerTemplatePath
                 if ($LASTEXITCODE -ne 0) {
                     throw "packer init failed with exit code $LASTEXITCODE."
                 }
                 $pluginCheckScript = Join-Path $PSScriptRoot '..\..\check_packer_plugins.py'
-                & python $pluginCheckScript --packer (Get-Command packer -ErrorAction Stop).Source $packerDir
+                & python $pluginCheckScript `
+                    --packer (Get-Command packer -ErrorAction Stop).Source `
+                    $resolvedPackerTemplatePath
                 if ($LASTEXITCODE -ne 0) {
                     throw "Exact Packer plugin verification failed with exit code $LASTEXITCODE."
                 }

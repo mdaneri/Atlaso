@@ -45,6 +45,20 @@ Internal durable marker proving the isolated child claimed a pre-existing output
 Internal invocation-specific generation bound to the exclusive output claim.
 .PARAMETER BuilderAddressReservationPath
 Internal non-secret handoff for the exact temporary address reservation.
+.PARAMETER SourceSnapshotRoot
+Internal commit-derived source root consumed by the isolated child.
+.PARAMETER SourceCommit
+Internal exact source commit admitted before the isolated child starts.
+.PARAMETER SourceBranch
+Internal exact task branch admitted before the isolated child starts.
+.PARAMETER TaskRepositoryRoot
+Internal exact task worktree root recorded in the builder-address reservation.
+.PARAMETER SourceInventorySha256
+Internal deterministic SHA-256 inventory of the staged source tree.
+.PARAMETER SourceInventoryFileCount
+Internal number of regular files in the staged source inventory.
+.PARAMETER VmName
+Builder virtual-machine name.
 .PARAMETER PullRequestNumber
 Exact positive same-repository pull request that owns a task build.
 .PARAMETER CollisionSuffix
@@ -173,6 +187,13 @@ param(
     [string]$OutputCleanupClaimPath = '',
     [string]$OutputClaimGeneration = '',
     [string]$BuilderAddressReservationPath = '',
+    [string]$SourceSnapshotRoot = '',
+    [string]$SourceCommit = '',
+    [string]$SourceBranch = '',
+    [string]$TaskRepositoryRoot = '',
+    [string]$SourceInventorySha256 = '',
+    [int]$SourceInventoryFileCount = 0,
+    [string]$VmName = '',
     [ValidateRange(1, 2147483647)]
     [int]$PullRequestNumber = 0,
     [string]$CollisionSuffix = '',
@@ -237,6 +258,7 @@ Import-Module (Join-Path $PSScriptRoot 'Atlaso.WorkstationCleanup.psm1') -Force
 Import-Module (Join-Path $PSScriptRoot 'Atlaso.VmwarePayload.psm1') -Force
 Import-Module (Join-Path $PSScriptRoot 'Atlaso.WorkstationBuildMonitor.psm1') -Force
 Import-Module (Join-Path $PSScriptRoot 'Atlaso.WorkstationBuilderAddress.psm1') -Force
+Import-Module (Join-Path $PSScriptRoot 'Atlaso.SourceSnapshot.psm1') -Force
 Import-Module (Join-Path $PSScriptRoot 'Atlaso.VmwareBuilderIdentity.psm1') -Force
 
 <#
@@ -566,6 +588,10 @@ function Complete-AtlasoPhotonBuildCleanup {
         if ($rootItem.Attributes -band [System.IO.FileAttributes]::ReparsePoint) {
             throw 'Invalid cleanup root type.'
         }
+        $snapshotRoot = Join-Path $resolvedRoot 'sensitive-build\source'
+        if (Test-Path -LiteralPath $snapshotRoot -PathType Container) {
+            Unprotect-AtlasoSourceSnapshot -Root $snapshotRoot
+        }
         [System.IO.Directory]::Delete($resolvedRoot, $true)
     }
     if (Test-Path -LiteralPath $resolvedRoot) {
@@ -784,14 +810,23 @@ if (-not $CredentialChild) {
         }
     }
 }
+$identityRepositoryRoot = if ($CredentialChild) {
+    if ([string]::IsNullOrWhiteSpace($TaskRepositoryRoot)) {
+        throw 'The isolated child source repository identity is unavailable.'
+    }
+    (Resolve-Path -LiteralPath $TaskRepositoryRoot -ErrorAction Stop).Path
+}
+else {
+    $repoRoot
+}
 $builderIdentity = if ($ReleaseBuilder) {
     if ([string]::IsNullOrWhiteSpace($ReleaseVersion) -or
         $ReleaseSourceCommit -notmatch '^[0-9a-f]{40}$') {
         throw 'A protected release builder requires -ReleaseVersion and exact -ReleaseSourceCommit.'
     }
     if ($CredentialChild) {
-        $currentHead = ([string](& git -C $repoRoot rev-parse HEAD)).Trim()
-        $trackedChanges = @(& git -C $repoRoot status --short --untracked-files=no)
+        $currentHead = ([string](& git -C $identityRepositoryRoot rev-parse HEAD)).Trim()
+        $trackedChanges = @(& git -C $identityRepositoryRoot status --short --untracked-files=no)
         if ($LASTEXITCODE -ne 0 -or $currentHead -cne $ReleaseSourceCommit -or
             $VerifiedSourceCommit -cne $ReleaseSourceCommit -or $trackedChanges.Count -ne 0) {
             throw 'The isolated child release identity no longer matches exact checkout HEAD.'
@@ -815,9 +850,9 @@ $builderIdentity = if ($ReleaseBuilder) {
 }
 else {
     if ($CredentialChild) {
-        $currentBranch = ([string](& git -C $repoRoot branch --show-current)).Trim()
-        $currentHead = ([string](& git -C $repoRoot rev-parse HEAD)).Trim()
-        $trackedChanges = @(& git -C $repoRoot status --short --untracked-files=no)
+        $currentBranch = ([string](& git -C $identityRepositoryRoot branch --show-current)).Trim()
+        $currentHead = ([string](& git -C $identityRepositoryRoot rev-parse HEAD)).Trim()
+        $trackedChanges = @(& git -C $identityRepositoryRoot status --short --untracked-files=no)
         if ($LASTEXITCODE -ne 0 -or
             $VerifiedRepository -notmatch '^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$' -or
             $VerifiedSourceBranch -cne $currentBranch -or
@@ -872,6 +907,72 @@ if ($CredentialChild) {
         -not $sensitiveBuildRoot.StartsWith($credentialRootPrefix, [StringComparison]::OrdinalIgnoreCase)) {
         throw 'The isolated Photon sensitive-build root is unavailable or invalid.'
     }
+    $sensitiveBuildPrefix = $sensitiveBuildRoot.TrimEnd(
+        [System.IO.Path]::DirectorySeparatorChar,
+        [System.IO.Path]::AltDirectorySeparatorChar
+    ) + [System.IO.Path]::DirectorySeparatorChar
+    $resolvedSourceSnapshotRoot = if ([string]::IsNullOrWhiteSpace($SourceSnapshotRoot)) {
+        ''
+    }
+    else {
+        [System.IO.Path]::GetFullPath($SourceSnapshotRoot)
+    }
+    $expectedSourceSnapshotRoot = [System.IO.Path]::GetFullPath((Join-Path $sensitiveBuildRoot 'source'))
+    $resolvedTaskRepositoryRoot = if ([string]::IsNullOrWhiteSpace($TaskRepositoryRoot)) {
+        ''
+    }
+    else {
+        (Resolve-Path -LiteralPath $TaskRepositoryRoot -ErrorAction Stop).Path
+    }
+    if ([string]::IsNullOrWhiteSpace($resolvedSourceSnapshotRoot) -or
+        -not $resolvedSourceSnapshotRoot.Equals(
+            $expectedSourceSnapshotRoot,
+            [StringComparison]::OrdinalIgnoreCase
+        ) -or
+        $SourceCommit -notmatch '^[0-9a-f]{40}$' -or
+        [string]::IsNullOrWhiteSpace($SourceBranch) -or
+        [string]::IsNullOrWhiteSpace($resolvedTaskRepositoryRoot) -or
+        $SourceInventorySha256 -notmatch '^[0-9a-f]{64}$' -or
+        $SourceInventoryFileCount -le 0) {
+        throw 'The isolated Photon source snapshot identity is unavailable or invalid.'
+    }
+    if ($SourceBranch -cne '(detached-release)') {
+        & git check-ref-format --branch $SourceBranch 2>$null | Out-Null
+    }
+    if ($SourceBranch -cne '(detached-release)' -and $LASTEXITCODE -ne 0) {
+        throw 'The isolated Photon task branch identity is unavailable or invalid.'
+    }
+    $resolvedChildPackerDirectory = if ([string]::IsNullOrWhiteSpace($PackerDirectory)) {
+        ''
+    }
+    else {
+        [System.IO.Path]::GetFullPath($PackerDirectory)
+    }
+    $expectedChildPackerDirectory = [System.IO.Path]::GetFullPath((Join-Path $sensitiveBuildRoot 'packer-work'))
+    if ([string]::IsNullOrWhiteSpace($resolvedChildPackerDirectory) -or
+        -not $resolvedChildPackerDirectory.Equals(
+            $expectedChildPackerDirectory,
+            [StringComparison]::OrdinalIgnoreCase
+        )) {
+        throw 'The isolated Photon Packer working directory is unavailable or invalid.'
+    }
+    $null = Assert-AtlasoSourceSnapshotCommitBinding `
+        -Root $resolvedSourceSnapshotRoot `
+        -RepositoryRoot $resolvedTaskRepositoryRoot `
+        -Commit $SourceCommit `
+        -ExpectedSha256 $SourceInventorySha256 `
+        -ExpectedFileCount $SourceInventoryFileCount `
+        -VerificationRoot (Join-Path $sensitiveBuildRoot 'source-verification')
+    New-Item -ItemType Directory -Path $resolvedChildPackerDirectory -ErrorAction Stop | Out-Null
+    $packerTemplatePath = Join-Path `
+        $resolvedSourceSnapshotRoot `
+        'image\vmware-workstation\atlaso-photon.pkr.hcl'
+    if (-not (Test-Path -LiteralPath $packerTemplatePath -PathType Leaf)) {
+        throw 'The inventory-bound VMware Packer template is missing.'
+    }
+    $PackerDirectory = $resolvedChildPackerDirectory
+    $SourceSnapshotRoot = $resolvedSourceSnapshotRoot
+    $TaskRepositoryRoot = $resolvedTaskRepositoryRoot
     if ([string]::IsNullOrWhiteSpace($resolvedOutputCleanupClaimPath) -or
         -not $resolvedOutputCleanupClaimPath.StartsWith(
             $credentialRootPrefix,
@@ -894,10 +995,6 @@ if ($CredentialChild) {
     }
     if (-not [string]::IsNullOrWhiteSpace($PreparedIsoPath)) {
         $resolvedChildPreparedIsoPath = [System.IO.Path]::GetFullPath($PreparedIsoPath)
-        $sensitiveBuildPrefix = $sensitiveBuildRoot.TrimEnd(
-            [System.IO.Path]::DirectorySeparatorChar,
-            [System.IO.Path]::AltDirectorySeparatorChar
-        ) + [System.IO.Path]::DirectorySeparatorChar
         if (-not $resolvedChildPreparedIsoPath.StartsWith(
                 $sensitiveBuildPrefix,
                 [StringComparison]::OrdinalIgnoreCase
@@ -934,6 +1031,34 @@ if ($CredentialChild) {
     }
 }
 else {
+    $canonicalPackerDirectory = [System.IO.Path]::GetFullPath(
+        (Join-Path $repoRoot 'image\vmware-workstation')
+    )
+    $taskSourceCommit = [string]$builderIdentity.SourceCommit
+    $taskSourceBranch = if ($ReleaseBuilder) {
+        '(detached-release)'
+    }
+    else {
+        [string]$builderIdentity.SourceBranch
+    }
+    $requestedPackerDirectory = if ([string]::IsNullOrWhiteSpace($PackerDirectory)) {
+        $canonicalPackerDirectory
+    }
+    else {
+        [System.IO.Path]::GetFullPath($PackerDirectory)
+    }
+    if (-not $requestedPackerDirectory.Equals(
+            $canonicalPackerDirectory,
+            [StringComparison]::OrdinalIgnoreCase
+        )) {
+        throw 'VMware image builds require the canonical commit-derived Packer template.'
+    }
+    $outerSharedSourceDirectory = if ([string]::IsNullOrWhiteSpace($SharedSourceDirectory)) {
+        [System.IO.Path]::GetFullPath((Join-Path $repoRoot 'image\common\source'))
+    }
+    else {
+        [System.IO.Path]::GetFullPath($SharedSourceDirectory)
+    }
     $needsOnePasswordDefaults = $null -eq $SshPassword -or $null -eq $BootstrapAdminPassword
     $resolvedEnvironmentId = ''
     if ($needsOnePasswordDefaults) {
@@ -962,17 +1087,13 @@ else {
     # an active cleanup marker, so a normalization failure cannot strand it.
     $childCredentialBundlePath = Join-Path $credentialRoot 'credentials.json'
     $childSensitiveBuildDirectory = Join-Path $credentialRoot 'sensitive-build'
+    $childPackerDirectory = Join-Path $childSensitiveBuildDirectory 'packer-work'
     $childOutputCleanupClaimPath = Join-Path $credentialRoot 'output-cleanup-claimed.json'
     $childOutputClaimGeneration = [guid]::NewGuid().ToString('N')
     $childBuilderAddressReservationPath = Join-Path $builderReservationPendingRoot (
         "builder-address-reservation-$([guid]::NewGuid().ToString('N')).json"
     )
-    $outerCleanupPackerDirectory = if ([string]::IsNullOrWhiteSpace($PackerDirectory)) {
-        Join-Path $PSScriptRoot '..\..\..\image\vmware-workstation'
-    }
-    else {
-        $PackerDirectory
-    }
+    $outerCleanupPackerDirectory = $canonicalPackerDirectory
     $outerCleanupOutputDirectory = Resolve-WorkstationOutputDirectory `
         -PackerDirectory $outerCleanupPackerDirectory `
         -OutputDirectory $OutputDirectory `
@@ -1057,6 +1178,7 @@ else {
         }
     }
     [void][System.IO.Directory]::CreateDirectory($credentialRoot)
+    [void][System.IO.Directory]::CreateDirectory($childSensitiveBuildDirectory)
     $cleanupMarkerDirectory = Split-Path -Parent $cleanupMarkerPath
     [void][System.IO.Directory]::CreateDirectory($cleanupMarkerDirectory)
     $cleanupMarkerPayload = [ordered]@{
@@ -1072,6 +1194,22 @@ else {
     $cleanupMarkerPayload = $null
     $processTreeTerminationUnproven = $false
     try {
+        $sourceSnapshot = New-AtlasoImmutableSourceSnapshot `
+            -RepositoryRoot $repoRoot `
+            -StagingRoot $childSensitiveBuildDirectory
+        $recheckedTaskSourceCommit = ([string](& git -C $repoRoot rev-parse HEAD)).Trim()
+        $recheckedTaskSourceBranch = ([string](& git -C $repoRoot branch --show-current)).Trim()
+        $expectedCheckoutBranch = if ($ReleaseBuilder) { '' } else { $taskSourceBranch }
+        if ($LASTEXITCODE -ne 0 -or
+            $sourceSnapshot.Commit -cne $taskSourceCommit -or
+            $recheckedTaskSourceCommit -cne $taskSourceCommit -or
+            $recheckedTaskSourceBranch -cne $expectedCheckoutBranch) {
+            throw 'The VMware image build source checkout changed during snapshot admission.'
+        }
+        $null = Protect-AtlasoSourceSnapshot `
+            -Root $sourceSnapshot.Root `
+            -ExpectedSha256 $sourceSnapshot.Sha256 `
+            -ExpectedFileCount $sourceSnapshot.FileCount
         $credentialPayload = [ordered]@{
             AdminPasswordCiphertext = ConvertFrom-SecureString -SecureString $credentialPair.AdminPassword
             RootPasswordCiphertext  = ConvertFrom-SecureString -SecureString $credentialPair.RootPassword
@@ -1086,16 +1224,26 @@ else {
         $SshPassword = $null
         $BootstrapAdminPassword = $null
 
+        $childScriptPath = Join-Path $sourceSnapshot.Root 'scripts\windows\vmware\build-photon-image.ps1'
         $childArguments = @(
             '-NoLogo', '-NoProfile', '-NonInteractive',
-            '-File', $PSCommandPath,
+            '-File', $childScriptPath,
             '-CredentialChild',
             '-CredentialBundlePath', $childCredentialBundlePath,
             '-SensitiveBuildDirectory', $childSensitiveBuildDirectory,
             '-OutputCleanupClaimPath', $childOutputCleanupClaimPath,
             '-OutputClaimGeneration', $childOutputClaimGeneration,
             '-BuilderAddressReservationPath', $childBuilderAddressReservationPath,
-            '-PreparedIsoPath', $childPreparedIsoPath
+            '-PreparedIsoPath', $childPreparedIsoPath,
+            '-PackerDirectory', $childPackerDirectory,
+            '-OutputDirectory', $outerCleanupOutputDirectory,
+            '-SharedSourceDirectory', $outerSharedSourceDirectory,
+            '-SourceSnapshotRoot', $sourceSnapshot.Root,
+            '-SourceCommit', $sourceSnapshot.Commit,
+            '-SourceBranch', $taskSourceBranch,
+            '-TaskRepositoryRoot', $repoRoot,
+            '-SourceInventorySha256', $sourceSnapshot.Sha256,
+            '-SourceInventoryFileCount', $sourceSnapshot.FileCount.ToString()
         )
         if ($ReleaseBuilder) {
             $childArguments += @('-VerifiedSourceCommit', $builderIdentity.SourceCommit)
@@ -1117,6 +1265,10 @@ else {
             'SensitiveBuildDirectory', 'OutputCleanupClaimPath',
             'OutputClaimGeneration',
             'BuilderAddressReservationPath', 'PreparedIsoPath',
+            'PackerDirectory', 'OutputDirectory', 'SharedSourceDirectory',
+            'SourceSnapshotRoot', 'SourceCommit', 'SourceBranch',
+            'TaskRepositoryRoot',
+            'SourceInventorySha256', 'SourceInventoryFileCount',
             'VerifiedRepository', 'VerifiedSourceBranch', 'VerifiedSourceCommit'
         )
         foreach ($entry in $PSBoundParameters.GetEnumerator()) {
@@ -1402,7 +1554,15 @@ Completed Packer artifact directory.
 .PARAMETER VmName
 Expected VMX base name.
 .PARAMETER RepoRoot
-Source repository root.
+Deprecated compatibility parameter retained for existing callers.
+.PARAMETER SourceCommit
+Exact commit admitted before source staging.
+.PARAMETER SourceSnapshotRoot
+Commit-derived source tree used by Packer.
+.PARAMETER SourceInventorySha256
+Deterministic staged-source inventory SHA-256.
+.PARAMETER SourceInventoryFileCount
+Number of regular files in the staged-source inventory.
 .PARAMETER BuilderIdentity
 Validated task or release identity bound to the output and VMX.
 #>
@@ -1411,27 +1571,36 @@ function Write-AtlasoVmwareBuildProvenance {
         [Parameter(Mandatory = $true)][string]$OutputDirectory,
         [Parameter(Mandatory = $true)][string]$VmName,
         [Parameter(Mandatory = $true)][string]$RepoRoot,
+        [Parameter(Mandatory = $true)][ValidatePattern('^[0-9a-f]{40}$')][string]$SourceCommit,
+        [Parameter(Mandatory = $true)][string]$SourceSnapshotRoot,
+        [Parameter(Mandatory = $true)][ValidatePattern('^[0-9a-f]{64}$')][string]$SourceInventorySha256,
+        [Parameter(Mandatory = $true)][ValidateRange(1, [int]::MaxValue)][int]$SourceInventoryFileCount,
         [Parameter(Mandatory = $true)][psobject]$BuilderIdentity
     )
 
+    $null = $RepoRoot
+    if ([string]$BuilderIdentity.SourceCommit -cne $SourceCommit) {
+        throw 'VMware build provenance source snapshot and builder identity identify different commits.'
+    }
+    $null = Assert-AtlasoSourceSnapshot `
+        -Root $SourceSnapshotRoot `
+        -ExpectedSha256 $SourceInventorySha256 `
+        -ExpectedFileCount $SourceInventoryFileCount
     $resolvedVmx = Assert-AtlasoVmwareBuilderVmx `
         -VmxPath (Join-Path $OutputDirectory "$VmName.vmx") `
         -OutputDirectory $OutputDirectory `
         -Identity $BuilderIdentity
     $vmx = Get-Item -LiteralPath $resolvedVmx -ErrorAction Stop
     $payloadLayout = @(Get-AtlasoVmwarePayloadLayout -VmxPath $vmx.FullName -RequireExactlyTwoVmdks)
-    $sourceCommit = [string](& git -C $RepoRoot rev-parse HEAD)
-    if ($LASTEXITCODE -ne 0 -or $sourceCommit.Trim() -notmatch '^[0-9a-f]{40}$') {
-        throw 'Could not resolve the exact source commit for the VMware image build.'
-    }
-    $trackedChanges = @(& git -C $RepoRoot status --porcelain --untracked-files=no)
-    if ($LASTEXITCODE -ne 0) {
-        throw 'Could not inspect tracked source changes for VMware image provenance.'
-    }
     $provenance = [ordered]@{
         schema_version       = 3
-        source_commit        = $sourceCommit.Trim()
-        tracked_source_dirty = $trackedChanges.Count -ne 0
+        source_commit        = $SourceCommit
+        tracked_source_dirty = $false
+        source_snapshot      = [ordered]@{
+            schema_version = 1
+            file_count     = $SourceInventoryFileCount
+            sha256         = $SourceInventorySha256
+        }
         builder_identity     = [ordered]@{
             schema_version      = 1
             kind                = [string]$BuilderIdentity.Kind
@@ -1464,7 +1633,7 @@ function Write-AtlasoVmwareBuildProvenance {
     $json = $provenance | ConvertTo-Json -Depth 5
     [System.IO.File]::WriteAllText($provenancePath, "$json`n", [System.Text.UTF8Encoding]::new($false))
     $null = Assert-AtlasoVmwarePayloadProvenance -VmxPath $vmx.FullName -ProvenancePath $provenancePath
-    Write-Host "VMware build provenance: $provenancePath ($($provenance.source_commit))"
+    Write-Host "VMware build provenance: $provenancePath ($($provenance.source_commit), source snapshot $($provenance.source_snapshot.sha256))"
 }
 
 <#
@@ -1705,7 +1874,7 @@ if ($requiresBuilderReservation) {
     # Network discovery can outlive every earlier identity proof. Refresh task
     # or release state before reservation data is durably admitted.
     $null = Assert-AtlasoBuilderIdentityCurrent `
-        -RepositoryRoot $repoRoot `
+        -RepositoryRoot $identityRepositoryRoot `
         -ExpectedIdentity $builderIdentity `
         -PullRequestNumber $PullRequestNumber `
         -CollisionSuffix $CollisionSuffix `
@@ -1727,7 +1896,9 @@ if ($requiresBuilderReservation) {
         -VmrunPath $resolvedReservationVmrun `
         -OutputDirectory $workstationOutputDirectory `
         -VmName $VmName `
-        -RepositoryRoot $repoRoot
+        -RepositoryRoot $TaskRepositoryRoot `
+        -SourceCommit $SourceCommit `
+        -SourceBranch $SourceBranch
     $BuilderStaticIp = $builderReservation.Cidr
     if (-not (Test-Path -LiteralPath $resolvedBuilderAddressReservationPath -PathType Leaf)) {
         throw 'The VMware builder-address reservation was not paired with its durable release handoff.'
@@ -1764,6 +1935,7 @@ $packerVariables = @{
     vmnet_name         = $VmnetName
     service_vmnet_name = $ServiceVmnetName
     headless           = [bool]$Headless
+    source_root        = $SourceSnapshotRoot
 }
 
 $packerBuildInvoker = $null
@@ -1774,7 +1946,7 @@ if (-not $ValidateOnly -and -not $PrepareIsoOnly) {
     # Network preparation can outlive the prior proof, so refresh task or
     # release identity immediately before manifest and output mutation.
     $null = Assert-AtlasoBuilderIdentityCurrent `
-        -RepositoryRoot $repoRoot `
+        -RepositoryRoot $identityRepositoryRoot `
         -ExpectedIdentity $builderIdentity `
         -PullRequestNumber $PullRequestNumber `
         -CollisionSuffix $CollisionSuffix `
@@ -1882,7 +2054,7 @@ if (-not $ValidateOnly -and -not $PrepareIsoOnly) {
         # ISO preparation and Packer initialization happen outside this
         # callback, so refresh identity at the final provider boundary.
         $null = Assert-AtlasoBuilderIdentityCurrent `
-            -RepositoryRoot $repoRoot `
+            -RepositoryRoot $identityRepositoryRoot `
             -ExpectedIdentity $builderIdentity `
             -PullRequestNumber $PullRequestNumber `
             -CollisionSuffix $CollisionSuffix `
@@ -1906,7 +2078,7 @@ if (-not $ValidateOnly -and -not $PrepareIsoOnly) {
 
 if (-not $ValidateOnly -and -not $PrepareIsoOnly) {
     $null = Assert-AtlasoBuilderIdentityCurrent `
-        -RepositoryRoot $repoRoot `
+        -RepositoryRoot $identityRepositoryRoot `
         -ExpectedIdentity $builderIdentity `
         -PullRequestNumber $PullRequestNumber `
         -CollisionSuffix $CollisionSuffix `
@@ -1920,6 +2092,7 @@ Invoke-AtlasoPhotonImageBuild `
     -IsoUrl $IsoUrl `
     -IsoChecksum $IsoChecksum `
     -PackerDirectory $PackerDirectory `
+    -PackerTemplatePath $packerTemplatePath `
     -SshPassword $SshPassword `
     -BootstrapAdminPassword $BootstrapAdminPassword `
     -VmName $VmName `
@@ -1957,7 +2130,7 @@ if (-not $ValidateOnly -and -not $PrepareIsoOnly) {
     # A Packer build can outlive every pre-launch ownership proof. Refresh the
     # task or release identity before the completed artifact gains provenance.
     $null = Assert-AtlasoBuilderIdentityCurrent `
-        -RepositoryRoot $repoRoot `
+        -RepositoryRoot $identityRepositoryRoot `
         -ExpectedIdentity $builderIdentity `
         -PullRequestNumber $PullRequestNumber `
         -CollisionSuffix $CollisionSuffix `
@@ -1976,6 +2149,10 @@ if (-not $ValidateOnly -and -not $PrepareIsoOnly) {
         -OutputDirectory $workstationOutputDirectory `
         -VmName $VmName `
         -RepoRoot $repoRoot `
+        -SourceCommit $SourceCommit `
+        -SourceSnapshotRoot $SourceSnapshotRoot `
+        -SourceInventorySha256 $SourceInventorySha256 `
+        -SourceInventoryFileCount $SourceInventoryFileCount `
         -BuilderIdentity $builderIdentity
 }
 }

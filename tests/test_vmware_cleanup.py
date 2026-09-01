@@ -39,7 +39,7 @@ def _write_vmx(path: Path, display_name: str = "Atlaso-Test", *extra_lines: str)
 
 
 def _write_vmware_payload_fixture(directory: Path) -> Path:
-    """Write one minimal schema-v2 VMware source payload.
+    """Write one minimal schema-v3 VMware source payload.
 
     Args:
         directory: Destination directory for the VMX, VMDKs, and provenance.
@@ -89,9 +89,14 @@ def _write_vmware_payload_fixture(directory: Path) -> Path:
         }
 
     provenance = {
-        "schema_version": 2,
+        "schema_version": 3,
         "source_commit": "a" * 40,
         "tracked_source_dirty": False,
+        "source_snapshot": {
+            "schema_version": 1,
+            "file_count": 42,
+            "sha256": "b" * 64,
+        },
         "vmx": {
             "name": source_vmx.name,
             "bytes": source_vmx.stat().st_size,

@@ -112,6 +112,11 @@ function Write-TestProvenance {
         schema_version       = $SchemaVersion
         source_commit        = ('a' * 40)
         tracked_source_dirty = $false
+        source_snapshot      = [ordered]@{
+            schema_version = 1
+            file_count     = 42
+            sha256         = ('b' * 64)
+        }
         builder_identity     = [ordered]@{
             schema_version      = 1
             kind                = 'pull_request'
@@ -231,7 +236,7 @@ try {
     throw 'Legacy VMware provenance without verified payload roles was accepted.'
 }
 catch {
-    if ($_.Exception.Message -notlike '*does not contain verified builder identity and payload-disk roles*') {
+    if ($_.Exception.Message -notlike '*does not contain a verified immutable source snapshot, builder identity, and payload-disk roles*') {
         throw
     }
 }

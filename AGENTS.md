@@ -724,6 +724,15 @@ The following cross-cutting boundaries always apply:
   exact expected corrupt payload and checksum metadata, download into unique same-directory partial files, and promote
   them only after pinned verification. Failed or interrupted downloads must not become accepted durable cache entries,
   and an ordinary rerun must recover without a force flag or manual cache surgery.
+- Before the VMware Photon wrapper performs any Workstation, ISO, Packer, output, or image mutation,
+  require a completely clean source checkout and admit one exact commit. Archive that commit into the invocation-owned
+  build root, remove the build identity's write access for the complete child lifetime, launch the bounded child from
+  the snapshot, and make every Packer file and shell source plus the exact HCL template consume only that tree through
+  a separate disposable Packer working directory. Bind schema-v3 VMX provenance to the commit plus a
+  deterministic full-snapshot file-count and SHA-256 inventory, and revalidate it before Packer and provenance
+  emission. Reject dirty, ambiguous, changed, legacy-unbound, or unreproducible source state. Hyper-V and protected
+  virtualization publication inherit this boundary only through the validated OVA; their downstream signature and
+  software-source checks remain mandatory defense in depth.
 - Treat Packer HCL, systemd units/manager drop-ins, and sudoers fragments as protected deployment assets. Keep them in
   the checked-in inventory, run `scripts/check_deployment_assets.py` through pre-commit where native tools are
   available, pin every required Packer plugin to one reviewed exact version, and run `packer init` plus

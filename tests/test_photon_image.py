@@ -1444,9 +1444,9 @@ def test_photon_provisioning_prepares_attached_data_disks():
         'log_step "syncing Atlaso application files"'
     )
     assert 'SYMLINK+="disk/by-id/atlaso-path-$env{ID_PATH_TAG}"' in disk_identity_rule
-    assert 'source      = "../common/udev"' in vmware_packer
+    assert 'source      = "${var.source_root}/image/common/udev"' in vmware_packer
     assert 'destination = "/tmp/atlaso-src/image/common/udev"' in vmware_packer
-    assert 'source      = "../common/data-disks.conf"' in vmware_packer
+    assert 'source      = "${var.source_root}/image/common/data-disks.conf"' in vmware_packer
     assert 'destination = "/tmp/atlaso-src/image/common/data-disks.conf"' in vmware_packer
     assert "ATLASO_DATA_DISK_SIZE_BYTES=536870912000" in virtualization_policy
     assert "ATLASO_VMWARE_DEPOT_SCSI_TUPLE=0:2:0" in virtualization_policy
@@ -1593,9 +1593,9 @@ def test_packer_templates_stage_shared_appliance_assets():
     for template_path in (Path("image/vmware-workstation/atlaso-photon.pkr.hcl"),):
         template = template_path.read_text(encoding="utf-8")
 
-        assert 'source      = "../common/boot"' in template
+        assert 'source      = "${var.source_root}/image/common/boot"' in template
         assert 'destination = "/tmp/atlaso-src/image/common/boot"' in template
-        assert 'source      = "../common/powershell"' in template
+        assert 'source      = "${var.source_root}/image/common/powershell"' in template
         assert 'destination = "/tmp/atlaso-src/image/common/powershell"' in template
 
 
@@ -1614,9 +1614,9 @@ def test_vmware_packer_leaves_directory_upload_destinations_uncreated() -> None:
     assert "/tmp/atlaso-src/image/common " in staging_command
     assert "/tmp/atlaso-src/image/common/scripts" not in staging_command
     assert "/tmp/atlaso-src/image/common/guest-agents" not in staging_command
-    assert 'source      = "../common/scripts"' in template
+    assert 'source      = "${var.source_root}/image/common/scripts"' in template
     assert 'destination = "/tmp/atlaso-src/image/common/scripts"' in template
-    assert 'source      = "../common/guest-agents"' in template
+    assert 'source      = "${var.source_root}/image/common/guest-agents"' in template
     assert 'destination = "/tmp/atlaso-src/image/common/guest-agents"' in template
 
 
@@ -1637,6 +1637,17 @@ def test_vmware_packer_build_uses_two_compacted_payload_disks():
     assert "Write-AtlasoVmwareBuildProvenance" in wrapper
     assert "tracked_source_dirty" in wrapper
     assert "schema_version       = 3" in wrapper
+    assert "New-AtlasoImmutableSourceSnapshot" in wrapper
+    assert "Assert-AtlasoSourceSnapshot" in wrapper
+    assert "Protect-AtlasoSourceSnapshot" in wrapper
+    assert "Unprotect-AtlasoSourceSnapshot" in wrapper
+    assert "source_snapshot" in wrapper
+    assert 'source_root        = $SourceSnapshotRoot' in wrapper
+    assert "-PackerTemplatePath $packerTemplatePath" in wrapper
+    assert "'-OutputDirectory', $outerCleanupOutputDirectory" in wrapper
+    assert 'source      = "../../' not in template
+    assert 'source      = "../' not in template
+    assert 'script          = "${var.source_root}/image/common/scripts/provision-atlaso.sh"' in template
     assert "builder_identity" in wrapper
     assert "payload_disks" in wrapper
     assert "Get-AtlasoVmwarePayloadLayout" in wrapper
@@ -1644,6 +1655,39 @@ def test_vmware_packer_build_uses_two_compacted_payload_disks():
         encoding="utf-8"
     )
     assert "Get-FileHash -LiteralPath $vmx.FullName -Algorithm SHA256" in payload_module
+
+
+def test_vmware_source_snapshot_resists_during_packer_checkout_changes(
+    tmp_path: Path,
+) -> None:
+    """A commit-derived source tree stays stable while the checkout advances.
+
+    Args:
+        tmp_path: Pytest-provided isolated output directory.
+    """
+    pwsh = shutil.which("pwsh")
+    if pwsh is None:
+        pytest.skip("PowerShell 7 is required")
+
+    result = subprocess.run(
+        [
+            pwsh,
+            "-NoLogo",
+            "-NoProfile",
+            "-NonInteractive",
+            "-File",
+            "tests/powershell/Test-AtlasoSourceSnapshot.ps1",
+            "-RepositoryRoot",
+            str(Path.cwd()),
+            "-OutputDirectory",
+            str(tmp_path / "source-snapshot"),
+        ],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "Atlaso immutable source snapshot tests passed." in result.stdout
 
 
 def test_vmware_packer_requires_proven_task_or_release_builder_identity() -> None:
@@ -1710,6 +1754,8 @@ def test_vmware_packer_requires_proven_task_or_release_builder_identity() -> Non
     ) == 2
     assert "-WorkflowRunId $ReleaseWorkflowRunId" not in wrapper
     assert wrapper.count("$null = Assert-AtlasoBuilderIdentityCurrent `") == 7
+    assert "$identityRepositoryRoot = if ($CredentialChild)" in wrapper
+    assert wrapper.count("-RepositoryRoot $identityRepositoryRoot `") == 5
     assert wrapper.count("-ReleaseBuilder:$ReleaseBuilder `") >= 6
     build_invocation = wrapper.index("Invoke-AtlasoPhotonImageBuild `")
     assert (
@@ -1953,19 +1999,19 @@ def test_photon_image_optional_pip_global_index_configuration():
     assert 'trust_source_dir="$ATLASO_HOME/image/common/update-trust"' in script
     assert 'for trust_key in "$trust_source_dir"/*.pem' in script
     for packer_template in (template,):
-        assert 'source      = "../../requirements-appliance.lock"' in packer_template
+        assert 'source      = "${var.source_root}/requirements-appliance.lock"' in packer_template
         assert 'destination = "/tmp/atlaso-src/requirements-appliance.lock"' in packer_template
-        assert 'source      = "../../scripts/generate_third_party_notices.py"' in packer_template
+        assert 'source      = "${var.source_root}/scripts/generate_third_party_notices.py"' in packer_template
         assert 'destination = "/tmp/atlaso-src/scripts/generate_third_party_notices.py"' in packer_template
-        assert 'source      = "../../scripts/third_party_notices.json"' in packer_template
+        assert 'source      = "${var.source_root}/scripts/third_party_notices.json"' in packer_template
         assert 'destination = "/tmp/atlaso-src/scripts/third_party_notices.json"' in packer_template
-        assert 'source      = "../../scripts/version.py"' in packer_template
+        assert 'source      = "${var.source_root}/scripts/version.py"' in packer_template
         assert 'destination = "/tmp/atlaso-src/scripts/version.py"' in packer_template
-        assert 'source      = "../../scripts/run_tdnf_with_progress.py"' in packer_template
+        assert 'source      = "${var.source_root}/scripts/run_tdnf_with_progress.py"' in packer_template
         assert 'destination = "/tmp/atlaso-src/scripts/run_tdnf_with_progress.py"' in packer_template
-        assert 'source      = "../inventory-linux/README.md"' in packer_template
+        assert 'source      = "${var.source_root}/image/inventory-linux/README.md"' in packer_template
         assert 'destination = "/tmp/atlaso-src/image/inventory-linux/README.md"' in packer_template
-        assert 'source      = "../common/update-trust"' in packer_template
+        assert 'source      = "${var.source_root}/image/common/update-trust"' in packer_template
         assert 'destination = "/tmp/atlaso-src/image/common/update-trust"' in packer_template
     assert "Atlaso release trust source directory is missing" in script
     assert "No Atlaso release trust keys were staged" in script
