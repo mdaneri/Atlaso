@@ -12,7 +12,15 @@ from pathlib import Path
 
 PACKAGE_NAME_PATTERN = re.compile(r"[A-Za-z0-9][A-Za-z0-9+._:-]*\Z")
 PHOTON_DEFAULT_DISTROVERPKG = "photon-release"
-REQUIRED_RUNTIME_PACKAGES = ("photon-release", "rpm", "tdnf", "python3", "powershell")
+REQUIRED_RUNTIME_PACKAGES = (
+    "photon-release",
+    "rpm",
+    "tdnf",
+    "python3",
+    "powershell",
+    "ntpsec",
+    "python3-ntp",
+)
 
 
 def read_os_release(path: Path) -> dict[str, str]:
