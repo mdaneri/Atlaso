@@ -4996,6 +4996,7 @@ function initializeServicesTable() {
     return;
   }
   const csrf = tableElement.dataset.csrf || "";
+  const canControlRouting = tableElement.dataset.routingCanWrite === "true";
   const rows = JSON.parse(tableElement.dataset.services || "[]");
   try {
     const atlasoGridOptions6 = {
@@ -5006,41 +5007,62 @@ function initializeServicesTable() {
       rowHeight: 42,
       placeholder: "No allowlisted services configured.",
       reactiveData: false,
-      rowContextMenu: [
-        {
-          label: "Start",
-          action: (_event, row) => submitServiceAction(row.getData().service, "start", csrf),
-        },
-        {
-          label: "Stop",
-          action: (_event, row) => submitServiceAction(row.getData().service, "stop", csrf),
-        },
-        {
-          label: "Restart",
-          action: (_event, row) => submitServiceAction(row.getData().service, "restart", csrf),
-        },
-        {
-          label: "Enable",
-          action: (_event, row) => submitServiceAction(row.getData().service, "enable", csrf),
-          disabled: (component) => component.getData().enabled,
-        },
-        {
-          label: "Disable",
-          action: (_event, row) => submitServiceAction(row.getData().service, "disable", csrf),
-          disabled: (component) => !component.getData().enabled,
-        },
-        {
-          label: "Open logs",
-          action: (_event, row) => {
-            window.location.href = managementUiPath(`/services/${encodeURIComponent(row.getData().service)}/logs`);
+      rowContextMenu: (_event, component) => {
+        const service = component.getData().service;
+        const startupActions = service !== "routing" || canControlRouting ? [
+          {
+            label: "Enable",
+            action: (_menuEvent, row) => submitServiceAction(row.getData().service, "enable", csrf),
+            disabled: (row) => row.getData().enabled,
           },
-        },
-        {
-          label: "Check NTPsec source health",
-          action: () => openNTPsecSourceHealthModal(),
-          disabled: (component) => component.getData().service !== "ntpd",
-        },
-      ],
+          {
+            label: "Disable",
+            action: (_menuEvent, row) => submitServiceAction(row.getData().service, "disable", csrf),
+            disabled: (row) => !row.getData().enabled,
+          },
+        ] : [];
+        const commonActions = [
+          {
+            label: "Open logs",
+            action: (_menuEvent, row) => {
+              window.location.href = managementUiPath(`/services/${encodeURIComponent(row.getData().service)}/logs`);
+            },
+          },
+        ];
+        if (service === "routing") {
+          return [
+            ...startupActions,
+            {
+              label: "Review appliance changes",
+              action: () => {
+                window.location.href = managementUiPath("/appliance-apply");
+              },
+            },
+            ...commonActions,
+          ];
+        }
+        return [
+          {
+            label: "Start",
+            action: (_menuEvent, row) => submitServiceAction(row.getData().service, "start", csrf),
+          },
+          {
+            label: "Stop",
+            action: (_menuEvent, row) => submitServiceAction(row.getData().service, "stop", csrf),
+          },
+          {
+            label: "Restart",
+            action: (_menuEvent, row) => submitServiceAction(row.getData().service, "restart", csrf),
+          },
+          ...startupActions,
+          ...commonActions,
+          {
+            label: "Check NTPsec source health",
+            action: () => openNTPsecSourceHealthModal(),
+            disabled: (row) => row.getData().service !== "ntpd",
+          },
+        ];
+      },
       columns: [
         {
           title: "Service",
@@ -5060,6 +5082,7 @@ function initializeServicesTable() {
           field: "enabled",
           formatter: atlasoBooleanFormatter,
           editor: "tickCross",
+          editable: (cell) => cell.getRow().getData().service !== "routing" || canControlRouting,
           width: 125,
           hozAlign: "center",
           cellEdited: (cell) => autoToggleServiceEnabled(cell, csrf),
@@ -7351,6 +7374,103 @@ function setRoutesWanReview(form, key, value) {
 function routesWanResponseMessage(text, fallback) {
   const plainText = String(text || "").trim().replace(/<[^>]+>/g, " ").replace(/\s+/g, " ");
   return plainText || fallback;
+}
+
+function routesWanFeaturePillClass(status) {
+  if (status === "valid") return "good";
+  if (status === "suspended" || status === "needs attention") return "warn";
+  return "muted";
+}
+
+function updateRoutesWanSettingsState(payload = {}, root = document) {
+  const statuses = payload.feature_status || {};
+  ["routing", "nat", "wan_simulation"].forEach((feature) => {
+    const state = root.querySelector(`[data-routes-wan-feature-state="${feature}"]`);
+    const status = typeof statuses[feature] === "string" ? statuses[feature] : "disabled";
+    const pill = state?.querySelector(".status-pill");
+    if (pill instanceof HTMLElement) {
+      pill.textContent = status;
+      pill.className = `status-pill ${routesWanFeaturePillClass(status)}`;
+    }
+    if (feature !== "nat" || !(state instanceof HTMLElement)) return;
+    const existingHint = state.querySelector("[data-routes-wan-suspended-hint]");
+    if (status === "suspended" && !(existingHint instanceof HTMLElement)) {
+      const hint = document.createElement("small");
+      hint.className = "field-hint";
+      hint.setAttribute("data-routes-wan-suspended-hint", "");
+      hint.setAttribute("role", "status");
+      hint.textContent = "Suspended until Routing is enabled.";
+      state.append(hint);
+    } else if (status !== "suspended") {
+      existingHint?.remove();
+    }
+  });
+
+  const validationPanel = root.querySelector("[data-routes-wan-validation]");
+  const validationStatus = validationPanel?.querySelector("[data-routes-wan-validation-status]");
+  const validationContent = validationPanel?.querySelector("[data-routes-wan-validation-content]");
+  const errors = Array.isArray(payload.validation_errors) ? payload.validation_errors : [];
+  if (validationStatus instanceof HTMLElement) {
+    validationStatus.textContent = errors.length ? "needs attention" : "valid";
+    validationStatus.className = `status-pill ${errors.length ? "warn" : "good"}`;
+  }
+  if (validationContent instanceof HTMLElement) {
+    validationContent.innerHTML = "";
+    if (errors.length) {
+      const errorBox = document.createElement("div");
+      errorBox.className = "alert error";
+      errors.forEach((error) => {
+        const row = document.createElement("div");
+        row.textContent = error;
+        errorBox.append(row);
+      });
+      validationContent.append(errorBox);
+    } else {
+      const message = document.createElement("p");
+      message.className = "muted";
+      message.textContent = "The desired route and WAN simulation state passes Atlaso validation.";
+      validationContent.append(message);
+    }
+  }
+  const configPreview = validationPanel?.querySelector("[data-routes-wan-config-preview]");
+  if (configPreview instanceof HTMLElement && typeof payload.config_preview === "string") {
+    configPreview.textContent = payload.config_preview;
+    highlightConfigPreviewElement(configPreview);
+  }
+  const settingsForm = root.querySelector(`form[action="${managementUiPath("/routes-wan/settings")}"]`);
+  const natInput = settingsForm?.querySelector('input.switch-input[name="nat_enabled"]');
+  if (natInput instanceof HTMLInputElement && settingsForm.dataset.routesWanCanWrite === "true") {
+    natInput.disabled = !Boolean(payload.routing_enabled);
+  }
+}
+
+function initializeRoutesWanSettings(root = document) {
+  root.querySelectorAll(`form[action="${managementUiPath("/routes-wan/settings")}"]`).forEach((form) => {
+    if (!(form instanceof HTMLFormElement)) return;
+    if (form.dataset.routesWanSettingsInitialized === "1") return;
+    form.dataset.routesWanSettingsInitialized = "1";
+    const routingInput = form.querySelector('input[name="routing_enabled"]');
+    const natInput = form.querySelector('input.switch-input[name="nat_enabled"]');
+    const natFallbackInput = form.querySelector("[data-routes-wan-nat-fallback]");
+    if (
+      routingInput instanceof HTMLInputElement
+      && natInput instanceof HTMLInputElement
+      && natFallbackInput instanceof HTMLInputElement
+      && form.dataset.routesWanCanWrite === "true"
+    ) {
+      const syncNatFallback = () => {
+        natFallbackInput.value = natInput.checked ? "on" : "off";
+      };
+      natInput.addEventListener("change", syncNatFallback);
+      routingInput.addEventListener("change", () => {
+        syncNatFallback();
+        natInput.disabled = !routingInput.checked;
+      });
+    }
+    form.addEventListener("atlaso:autosave-success", (event) => {
+      updateRoutesWanSettingsState(event.detail || {}, root);
+    });
+  });
 }
 
 function rememberRoutesWanTab(targetId) {
@@ -11760,6 +11880,9 @@ function initializeSwitchFields(root = document) {
     field.addEventListener("click", (event) => {
       const target = event.target;
       if (!(target instanceof HTMLElement) || target === input || target.closest(".help-icon")) {
+        return;
+      }
+      if (input.disabled) {
         return;
       }
       event.preventDefault();
@@ -23206,6 +23329,7 @@ document.addEventListener("DOMContentLoaded", initializeRoutesWanRoutingTable);
 document.addEventListener("DOMContentLoaded", initializeRoutesWanNatTable);
 document.addEventListener("DOMContentLoaded", initializeRoutesWanPoliciesTable);
 document.addEventListener("DOMContentLoaded", initializeRoutesWanWizards);
+document.addEventListener("DOMContentLoaded", () => initializeRoutesWanSettings());
 document.addEventListener("DOMContentLoaded", initializeSourceGroupWizardReturnFlow);
 document.addEventListener("DOMContentLoaded", initializePhysicalInterfacesTable);
 document.addEventListener("DOMContentLoaded", initializeApiTokensTable);

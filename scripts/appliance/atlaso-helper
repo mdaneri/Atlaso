@@ -31,7 +31,7 @@ import uuid
 from collections.abc import Callable
 from contextlib import contextmanager
 from datetime import datetime, timezone
-from ipaddress import ip_address, ip_interface, ip_network
+from ipaddress import IPv4Network, IPv6Network, ip_address, ip_interface, ip_network
 from pathlib import Path, PurePosixPath
 from urllib.parse import unquote, urljoin, urlparse
 from urllib.request import HTTPRedirectHandler, Request, build_opener, urlopen
@@ -8692,7 +8692,9 @@ def _parse_wan_config(path: Path) -> dict[str, list[dict[str, str]]]:
         path: Filesystem path read, validated, or updated by the operation.
     """
     sections: dict[str, list[dict[str, str]]] = {
+        "feature_settings": [],
         "targets": [],
+        "retired_targets": [],
         "routes": [],
         "removed_routes": [],
         "removed_main_defaults": [],
@@ -8704,6 +8706,7 @@ def _parse_wan_config(path: Path) -> dict[str, list[dict[str, str]]]:
     current: dict[str, str] | None = None
     record_keys = {
         "targets": "target",
+        "retired_targets": "target",
         "routes": "route",
         "removed_routes": "route",
         "removed_main_defaults": "route",
@@ -8718,15 +8721,22 @@ def _parse_wan_config(path: Path) -> dict[str, list[dict[str, str]]]:
         if line.startswith("[") and line.endswith("]"):
             current_section = line.strip("[]")
             current = None
+            if current_section == "feature_settings":
+                current = {}
+                sections[current_section].append(current)
             continue
         if "=" not in line or current_section not in sections:
             continue
         key, value = [part.strip() for part in line.split("=", 1)]
+        if current_section == "feature_settings":
+            if current is not None:
+                current[key] = value
+            continue
         if key == record_keys[current_section]:
             name_key = "name"
             if current_section in {"routes", "removed_routes", "removed_main_defaults"}:
                 name_key = "destination_cidr"
-            elif current_section == "targets":
+            elif current_section in {"targets", "retired_targets"}:
                 name_key = "name"
             current = {name_key: value}
             sections[current_section].append(current)
@@ -8748,6 +8758,104 @@ def _wan_bool(value: str, *, default: bool = False) -> bool:
     return value.strip().lower() in {"1", "true", "yes", "on", "enabled"}
 
 
+def _wan_target_has_routing_address(target: dict[str, str]) -> bool:
+    """Return whether a legacy WAN target has a usable configured address.
+
+    Args:
+        target: Parsed legacy WAN target.
+    """
+    for key in ("ip_cidr", "ipv6_cidr"):
+        value = target.get(key, "")
+        if not value:
+            continue
+        try:
+            ip_interface(value)
+        except ValueError:
+            continue
+        return True
+    return False
+
+
+def _wan_feature_settings(
+    parsed: dict[str, list[dict[str, str]]],
+) -> dict[str, bool]:
+    """Return explicit feature gates or infer a legacy configuration once.
+
+    Args:
+        parsed: Parsed Routes and WAN configuration.
+    """
+    rows = parsed.get("feature_settings", [])
+    if rows:
+        row = rows[0]
+        routing_enabled = _wan_bool(row.get("routing_enabled", "false"))
+        nat_enabled = _wan_bool(row.get("nat_enabled", "false"))
+        wan_simulation_enabled = _wan_bool(
+            row.get("wan_simulation_enabled", "false")
+        )
+    else:
+        enabled_routes = [
+            route
+            for route in parsed["routes"]
+            if _wan_bool(route.get("enabled", ""), default=True)
+        ]
+        active_route_targets = {
+            target.get("name", "")
+            for target in parsed.get("targets", [])
+            if target.get("name", "")
+            and target.get("role", "") == "route"
+            and target.get("routing_domain", "lab") == "lab"
+            and _wan_target_has_routing_address(target)
+        }
+        routing_enabled = bool(enabled_routes) or len(active_route_targets) >= 2 or any(
+            _wan_bool(rule.get("enabled", ""), default=True)
+            for rule in parsed["routing_rules"]
+        )
+        nat_enabled = any(
+            _wan_bool(rule.get("enabled", ""), default=True)
+            for rule in parsed["nat_rules"]
+        )
+        routing_enabled = routing_enabled or nat_enabled
+        enabled_policies = {
+            policy.get("name", "")
+            for policy in parsed["wan_policies"]
+            if _wan_bool(policy.get("enabled", ""), default=True)
+        }
+        wan_simulation_enabled = any(
+            route.get("wan_policy", "") in enabled_policies
+            for route in enabled_routes
+            if route.get("wan_policy", "")
+        )
+    return {
+        "routing_enabled": routing_enabled,
+        "nat_enabled": nat_enabled,
+        "effective_nat_enabled": routing_enabled and nat_enabled,
+        "wan_simulation_enabled": wan_simulation_enabled,
+    }
+
+
+def _wan_route_is_active_management_default(
+    route: dict[str, str],
+    targets: dict[str, dict[str, str]],
+) -> bool:
+    """Return whether a saved route remains active for management reachability.
+
+    Args:
+        route: Parsed saved route intent.
+        targets: Parsed WAN targets keyed by interface name.
+    """
+    if not _wan_bool(route.get("enabled", ""), default=True):
+        return False
+    if not _wan_bool(
+        targets.get(route.get("interface", ""), {}).get("management_ui", "false")
+    ):
+        return False
+    try:
+        destination = ip_network(route.get("destination_cidr", ""), strict=False)
+    except ValueError:
+        return False
+    return destination.prefixlen == 0
+
+
 def _wan_config_errors(path: Path) -> list[str]:
     """Perform WAN config errors.
 
@@ -8755,6 +8863,10 @@ def _wan_config_errors(path: Path) -> list[str]:
         path: Filesystem path read, validated, or updated by the operation.
     """
     parsed = _parse_wan_config(path)
+    feature_settings = _wan_feature_settings(parsed)
+    routing_enabled = feature_settings["routing_enabled"]
+    effective_nat_enabled = feature_settings["effective_nat_enabled"]
+    wan_simulation_enabled = feature_settings["wan_simulation_enabled"]
     errors: list[str] = []
     targets = {row.get("name", ""): row for row in parsed["targets"]}
     policies = {row.get("name", ""): row for row in parsed["wan_policies"]}
@@ -8804,12 +8916,40 @@ def _wan_config_errors(path: Path) -> list[str]:
         domain = target.get("routing_domain", "lab")
         if domain not in {"management", "lab"}:
             errors.append(f"WAN target {name or '<missing>'} routing domain must be management or lab.")
-    default_route_destinations: dict[int, str] = {}
+    for target in parsed["retired_targets"]:
+        name = target.get("name", "")
+        network = target.get("network", "")
+        if not _valid_network_interface_name(name):
+            errors.append(f"Retired WAN target name {name or '<missing>'} is invalid.")
+        try:
+            ip_network(network, strict=False)
+        except ValueError:
+            errors.append(
+                f"Retired WAN target {name or '<missing>'} network {network or '<missing>'} is invalid."
+            )
+    saved_route_networks: dict[int, IPv4Network | IPv6Network | None] = {}
     for route in parsed["routes"]:
         destination = route.get("destination_cidr", "")
-        try:
-            destination_network = ip_network(destination, strict=False)
-        except ValueError:
+        destination_network = None
+        if not destination:
+            errors.append("Route entry is missing a destination CIDR.")
+        else:
+            try:
+                destination_network = ip_network(destination, strict=False)
+            except ValueError:
+                errors.append(f"Route {destination} is not a valid destination CIDR.")
+        saved_route_networks[id(route)] = destination_network
+
+    desired_routes_for_validation = [
+        route
+        for route in parsed["routes"]
+        if routing_enabled
+        or _wan_route_is_active_management_default(route, targets)
+    ]
+    default_route_destinations: dict[int, str] = {}
+    for route in desired_routes_for_validation:
+        destination_network = saved_route_networks[id(route)]
+        if destination_network is None:
             continue
         if destination_network.prefixlen != 0:
             continue
@@ -8825,22 +8965,23 @@ def _wan_config_errors(path: Path) -> list[str]:
         if not route.get("gateway", ""):
             errors.append(f"Default route {canonical_destination} requires a next-hop gateway.")
 
-    desired_route_ids = {id(route) for route in parsed["routes"]}
-    for route in [*parsed["routes"], *parsed["removed_routes"]]:
+    desired_route_ids = {id(route) for route in desired_routes_for_validation}
+    for route in [*desired_routes_for_validation, *parsed["removed_routes"]]:
         desired_route = id(route) in desired_route_ids
         destination = route.get("destination_cidr", "")
-        destination_network = None
-        if not destination:
-            errors.append("Route entry is missing a destination CIDR.")
-        else:
-            try:
-                destination_network = ip_network(destination, strict=False)
-            except ValueError:
-                errors.append(f"Route {destination} is not a valid destination CIDR.")
-                destination_network = None
+        destination_network = saved_route_networks.get(id(route))
+        if not desired_route:
+            if not destination:
+                errors.append("Route entry is missing a destination CIDR.")
+            else:
+                try:
+                    destination_network = ip_network(destination, strict=False)
+                except ValueError:
+                    errors.append(f"Route {destination} is not a valid destination CIDR.")
+                    destination_network = None
         gateway = route.get("gateway", "")
         gateway_address = None
-        if gateway:
+        if gateway and desired_route:
             try:
                 gateway_address = ip_address(gateway)
             except ValueError:
@@ -8902,6 +9043,34 @@ def _wan_config_errors(path: Path) -> list[str]:
         policy_name = route.get("wan_policy", "")
         if policy_name and policy_name not in policies:
             errors.append(f"Route {destination or '<missing>'} references missing WAN policy {policy_name}.")
+    if wan_simulation_enabled and not routing_enabled:
+        for route in parsed["routes"]:
+            if not _wan_bool(route.get("enabled", ""), default=True):
+                continue
+            policy_name = route.get("wan_policy", "")
+            if not policy_name:
+                continue
+            interface_name = route.get("interface", "")
+            if interface_name not in targets:
+                errors.append(
+                    "WAN policy assignment references missing target "
+                    f"{interface_name or '<missing>'}."
+                )
+            elif (
+                targets[interface_name].get("routing_domain", "lab") == "management"
+                or not _wan_bool(
+                    targets[interface_name].get("route_allowed", "true"),
+                    default=True,
+                )
+            ):
+                errors.append(
+                    "WAN policy assignment cannot target management or route-ineligible WAN target "
+                    f"{interface_name}."
+                )
+            if policy_name not in policies:
+                errors.append(
+                    f"WAN policy assignment references missing policy {policy_name}."
+                )
     for route in parsed["removed_main_defaults"]:
         destination = route.get("destination_cidr", "")
         destination_network = None
@@ -8951,7 +9120,7 @@ def _wan_config_errors(path: Path) -> list[str]:
                     errors.append(
                         f"Removed main-table default {destination or '<missing>'} metric cannot be negative."
                     )
-    for rule in parsed["nat_rules"]:
+    for rule in parsed["nat_rules"] if effective_nat_enabled else []:
         name = rule.get("name", "")
         if not name:
             errors.append("NAT rule is missing a name.")
@@ -8989,7 +9158,7 @@ def _wan_config_errors(path: Path) -> list[str]:
             priority = 0
         if priority < 0:
             errors.append(f"NAT rule {name or '<missing>'} priority cannot be negative.")
-    for rule in parsed["routing_rules"]:
+    for rule in parsed["routing_rules"] if routing_enabled else []:
         name = rule.get("name", "")
         source = rule.get("source_interface", "")
         destination = rule.get("destination_interface", "")
@@ -9014,7 +9183,7 @@ def _wan_config_errors(path: Path) -> list[str]:
             priority = 0
         if priority < 0:
             errors.append(f"Routing rule {name or '<missing>'} priority cannot be negative.")
-    for policy in parsed["wan_policies"]:
+    for policy in parsed["wan_policies"] if wan_simulation_enabled else []:
         name = policy.get("name", "")
         if not name:
             errors.append("WAN policy is missing a name.")
@@ -9068,6 +9237,8 @@ def _render_wan_nat_config(nat_rules: list[dict[str, str]]) -> str:
     """
     lines = [
         "# Managed by Atlaso. Local changes may be overwritten.",
+        "table ip atlaso_nat",
+        "flush table ip atlaso_nat",
         "table ip atlaso_nat {",
         "  chain postrouting {",
         "    type nat hook postrouting priority srcnat; policy accept;",
@@ -9301,21 +9472,65 @@ def _management_default_gateways_for_target(target: dict[str, str]) -> list[str]
     return _usable_management_default_gateways(target_networks, candidates)
 
 
-def _apply_wan_target_routes(parsed: dict[str, list[dict[str, str]]]) -> int:
+def _apply_wan_target_routes(
+    parsed: dict[str, list[dict[str, str]]],
+    previous_parsed: dict[str, list[dict[str, str]]] | None = None,
+) -> int:
     """Perform apply WAN target routes.
 
     Args:
         parsed: Parsed consumed by apply WAN target routes.
+        previous_parsed: Parsed last-applied state used to retire stale target routes.
     """
     if shutil.which("ip") is None:
         print("ip command not found", file=sys.stderr)
         return 127
     targets = parsed["targets"]
+    routing_enabled = _wan_feature_settings(parsed)["routing_enabled"]
+    current_lab_routes = {
+        (target.get("name", ""), network)
+        for target in targets
+        if target.get("routing_domain", "lab") != "management"
+        for network in _target_networks(target)
+    }
+    retired_lab_routes = {
+        (target.get("name", ""), target.get("network", ""))
+        for target in parsed.get("retired_targets", [])
+        if target.get("name") and target.get("network")
+    }
+    for previous_target in (previous_parsed or {}).get("targets", []):
+        if previous_target.get("routing_domain", "lab") == "management":
+            continue
+        interface_name = previous_target.get("name", "")
+        if not interface_name or not _link_exists(interface_name):
+            continue
+        for network in _target_networks(previous_target):
+            if (interface_name, network) in current_lab_routes:
+                continue
+            retired_lab_routes.add((interface_name, network))
+    for interface_name, network in sorted(retired_lab_routes):
+        if not _link_exists(interface_name):
+            continue
+        if (interface_name, network) in current_lab_routes:
+            continue
+        result = _run_target_route_delete(
+            network,
+            interface_name,
+            LAB_ROUTE_TABLE_ID,
+        )
+        if result != 0:
+            return result
     network_owners = _target_network_owners(targets)
     for index, target in enumerate(targets):
         table_id = _target_route_table_id(target)
         interface_name = target.get("name", "")
         management = target.get("routing_domain", "lab") == "management"
+        if not management and not routing_enabled:
+            for network in _target_networks(target):
+                result = _run_target_route_delete(network, interface_name, table_id)
+                if result != 0:
+                    return result
+            continue
         gateways = _management_default_gateways_for_target(target) if management else []
         gateways_by_version = {ip_address(gateway).version: gateway for gateway in gateways}
         for network in _target_networks(target):
@@ -9426,9 +9641,12 @@ def _apply_wan_policy_rules(parsed: dict[str, list[dict[str, str]]]) -> int:
     if cleanup_result != 0:
         return cleanup_result
     targets = parsed["targets"]
+    routing_enabled = _wan_feature_settings(parsed)["routing_enabled"]
     network_owners = _target_network_owners(targets)
     for index, target in enumerate(targets):
         domain = target.get("routing_domain", "lab")
+        if domain != "management" and not routing_enabled:
+            continue
         table_id = _target_route_table_id(target)
         base_priority = MANAGEMENT_ROUTE_RULE_PRIORITY if domain == "management" else LAB_ROUTE_RULE_PRIORITY
         management_gateway_versions = (
@@ -9509,6 +9727,9 @@ def _apply_wan_routes_and_qdiscs(
         print("tc command not found", file=sys.stderr)
         return 127
     targets = {target.get("name", ""): target for target in parsed["targets"]}
+    feature_settings = _wan_feature_settings(parsed)
+    routing_enabled = feature_settings["routing_enabled"]
+    wan_simulation_enabled = feature_settings["wan_simulation_enabled"]
     previously_mirrored_defaults = _mirrored_wan_default_keys(previous_parsed)
     policies = {policy["name"]: policy for policy in parsed["wan_policies"]}
     touched_qdisc_targets: set[str] = set()
@@ -9530,12 +9751,42 @@ def _apply_wan_routes_and_qdiscs(
             str(destination_network),
             interface_name,
         ) in previously_mirrored_defaults if destination_network is not None else False
-        enabled = _wan_bool(route.get("enabled", ""), default=True)
+        saved_enabled = _wan_bool(route.get("enabled", ""), default=True)
+        enabled = saved_enabled and routing_enabled
         if not enabled:
+            # A disabled feature may preserve an enabled route whose target is
+            # omitted from current intent. Skip a genuinely absent link, whose
+            # routes and qdisc vanished with it, but retain cleanup for a live
+            # interface that merely became ineligible (for example, a trunk).
+            if interface_name not in targets and not _link_exists(interface_name):
+                continue
             delete_result = _run_route_delete(destination, interface_name)
             if delete_result != 0:
                 return delete_result
-            if management_ui_default or previously_mirrored_default:
+            if not saved_enabled and (management_ui_default or previously_mirrored_default):
+                main_delete = _run(
+                    [*_route_command_prefix(destination), "del", destination, "dev", interface_name]
+                )
+                if main_delete.returncode not in {0, 2}:
+                    return main_delete.returncode
+            elif saved_enabled and management_ui_default:
+                main_command = [*_route_command_prefix(destination), "replace", destination]
+                if route.get("gateway"):
+                    main_command.extend(["via", route["gateway"]])
+                main_command.extend(
+                    [
+                        "dev",
+                        interface_name,
+                        "metric",
+                        str(int(route.get("metric", "100") or "100")),
+                    ]
+                )
+                main_result = _run(main_command)
+                print(main_result.stdout, end="")
+                print(main_result.stderr, end="", file=sys.stderr)
+                if main_result.returncode != 0:
+                    return main_result.returncode
+            elif previously_mirrored_default:
                 main_delete = _run(
                     [*_route_command_prefix(destination), "del", destination, "dev", interface_name]
                 )
@@ -9567,6 +9818,9 @@ def _apply_wan_routes_and_qdiscs(
                 return main_delete.returncode
         touched_qdisc_targets.add(interface_name)
     for route in parsed["removed_routes"]:
+        interface_name = route["interface"]
+        if interface_name not in targets and not _link_exists(interface_name):
+            continue
         delete_result = _run_route_delete(route["destination_cidr"], route["interface"])
         if delete_result != 0:
             return delete_result
@@ -9616,7 +9870,9 @@ def _apply_wan_routes_and_qdiscs(
             return main_delete.returncode
     policy_by_target: dict[str, dict[str, str]] = {}
     for route in parsed["routes"]:
-        if not _wan_bool(route.get("enabled", ""), default=True):
+        if not wan_simulation_enabled or not _wan_bool(
+            route.get("enabled", ""), default=True
+        ):
             continue
         policy_name = route.get("wan_policy", "")
         policy = policies.get(policy_name)
@@ -9712,7 +9968,13 @@ def _apply_wan_nat(parsed: dict[str, list[dict[str, str]]]) -> int:
     Args:
         parsed: Parsed consumed by apply WAN nat.
     """
-    nat_config = _render_wan_nat_config(parsed["nat_rules"])
+    feature_settings = _wan_feature_settings(parsed)
+    effective_rules = (
+        parsed["nat_rules"]
+        if feature_settings["effective_nat_enabled"]
+        else []
+    )
+    nat_config = _render_wan_nat_config(effective_rules)
     validation = _validate_wan_nat_config(nat_config)
     print(validation.stdout, end="")
     print(validation.stderr, end="", file=sys.stderr)
@@ -9738,10 +10000,7 @@ def _wan_forwarding_required(parsed: dict[str, list[dict[str, str]]]) -> bool:
     Args:
         parsed: Parsed consumed by WAN forwarding required.
     """
-    enabled_nat = any(_wan_bool(rule.get("enabled", ""), default=True) for rule in parsed["nat_rules"])
-    enabled_routes = any(_wan_bool(route.get("enabled", ""), default=True) for route in parsed["routes"])
-    enabled_routing_rules = any(_wan_bool(rule.get("enabled", ""), default=True) for rule in parsed["routing_rules"])
-    return enabled_nat or enabled_routes or enabled_routing_rules
+    return _wan_feature_settings(parsed)["routing_enabled"]
 
 
 def _apply_wan_forwarding(parsed: dict[str, list[dict[str, str]]]) -> int:
@@ -9751,12 +10010,24 @@ def _apply_wan_forwarding(parsed: dict[str, list[dict[str, str]]]) -> int:
         parsed: Parsed consumed by apply WAN forwarding.
     """
     value = "1" if _wan_forwarding_required(parsed) else "0"
-    WAN_SYSCTL_PATH.write_text(f"net.ipv4.ip_forward = {value}\n", encoding="utf-8")
+    WAN_SYSCTL_PATH.write_text(
+        "\n".join(
+            [
+                f"net.ipv4.ip_forward = {value}",
+                f"net.ipv6.conf.all.forwarding = {value}",
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
     os.chmod(WAN_SYSCTL_PATH, 0o644)
-    sysctl = _run(["sysctl", "-w", f"net.ipv4.ip_forward={value}"])
-    print(sysctl.stdout, end="")
-    print(sysctl.stderr, end="", file=sys.stderr)
-    return sysctl.returncode
+    for key in ("net.ipv4.ip_forward", "net.ipv6.conf.all.forwarding"):
+        sysctl = _run(["sysctl", "-w", f"{key}={value}"])
+        print(sysctl.stdout, end="")
+        print(sysctl.stderr, end="", file=sys.stderr)
+        if sysctl.returncode != 0:
+            return sysctl.returncode
+    return 0
 
 
 def _handle_wan(action: str, args: list[str]) -> int:
@@ -9780,7 +10051,15 @@ def _handle_wan(action: str, args: list[str]) -> int:
             print(error, file=sys.stderr)
         return 2
     parsed = _parse_wan_config(config_path)
-    nat_validation = _validate_wan_nat_config(_render_wan_nat_config(parsed["nat_rules"]))
+    feature_settings = _wan_feature_settings(parsed)
+    effective_nat_rules = (
+        parsed["nat_rules"]
+        if feature_settings["effective_nat_enabled"]
+        else []
+    )
+    nat_validation = _validate_wan_nat_config(
+        _render_wan_nat_config(effective_nat_rules)
+    )
     if action == "validate":
         print(nat_validation.stdout, end="")
         print(nat_validation.stderr, end="", file=sys.stderr)
@@ -9794,6 +10073,7 @@ def _handle_wan(action: str, args: list[str]) -> int:
                     "nat_rules": len(parsed["nat_rules"]),
                     "wan_policies": len(parsed["wan_policies"]),
                     "routing_rules": len(parsed["routing_rules"]),
+                    **feature_settings,
                     "scope": "ip-rule ip-route nftables tc-netem",
                 },
                 sort_keys=True,
@@ -9811,7 +10091,7 @@ def _handle_wan(action: str, args: list[str]) -> int:
     forwarding_result = _apply_wan_forwarding(parsed)
     if forwarding_result != 0:
         return forwarding_result
-    target_route_result = _apply_wan_target_routes(parsed)
+    target_route_result = _apply_wan_target_routes(parsed, previous_parsed)
     if target_route_result != 0:
         return target_route_result
     rule_result = _apply_wan_policy_rules(parsed)
@@ -9835,6 +10115,7 @@ def _handle_wan(action: str, args: list[str]) -> int:
                 "routing_rules": len(parsed["routing_rules"]),
                 "nat_rules": len(parsed["nat_rules"]),
                 "wan_policies": len(parsed["wan_policies"]),
+                **feature_settings,
             },
             sort_keys=True,
         )
@@ -19983,9 +20264,10 @@ def _management_handoff_validation_errors(payload: dict) -> list[str]:
         wan_path = Path(value)
         errors.extend(f"{label}: {error}" for error in _wan_config_errors(wan_path))
         parsed_wan = _parse_wan_config(wan_path)
-        nat_validation = _validate_wan_nat_config(_render_wan_nat_config(parsed_wan["nat_rules"]))
-        if nat_validation.returncode != 0:
-            errors.append(f"{label}: {(nat_validation.stderr or nat_validation.stdout).strip()}")
+        if _wan_feature_settings(parsed_wan)["effective_nat_enabled"]:
+            nat_validation = _validate_wan_nat_config(_render_wan_nat_config(parsed_wan["nat_rules"]))
+            if nat_validation.returncode != 0:
+                errors.append(f"{label}: {(nat_validation.stderr or nat_validation.stdout).strip()}")
     return [error for error in errors if error]
 
 

@@ -21,6 +21,27 @@ CANONICAL_BROWSER_ROOTS = {
 CAPTURE_OVERRIDES = {
     **{
         stem: {
+            "route": "/ui/management/routes-wan",
+            "state": "suspended-nat",
+            "source_commit": "45b4c2c2d640+working-tree",
+            "atlaso_version": "0.9.275",
+            "caption": (
+                "Routes and WAN Simulation with global routing disabled and the saved "
+                "NAT choice visibly suspended."
+            ),
+            "alt": (
+                "Atlaso Routes and WAN Simulation showing disabled routing, a checked "
+                "but unavailable NAT switch, and the suspended status."
+            ),
+            "capture_method": "codex-in-app-browser",
+        }
+        for stem in (
+            "routes-wan-clean-desktop",
+            "routes-wan-clean-responsive",
+        )
+    },
+    **{
+        stem: {
             "source_commit": "1d5bf935b499+working-tree",
             "atlaso_version": "0.9.84",
             "capture_method": "codex-in-app-browser",

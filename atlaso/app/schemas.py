@@ -1769,6 +1769,42 @@ class NatRuleResponse(NatRuleCreate):
     id: Annotated[int, Field(description='Unique database identifier assigned to this resource.')]
 
 
+class RoutesWanSettingsUpdate(BaseModel):
+    """Global desired-state activation fields for Routes and WAN features.
+
+    Attributes:
+        routing_enabled: Whether Atlaso lab routing and packet forwarding are desired.
+        nat_enabled: Whether saved IPv4 masquerade rules are desired when routing is enabled.
+        wan_simulation_enabled: Whether saved tc/netem assignments are desired.
+    """
+
+    routing_enabled: Annotated[
+        bool,
+        Field(description="Whether Atlaso lab routes, routing permissions, and IPv4/IPv6 packet forwarding are enabled in saved desired state."),
+    ]
+    nat_enabled: Annotated[
+        bool,
+        Field(description="Whether saved Atlaso IPv4 masquerade rules are enabled; NAT remains suspended while routing is disabled."),
+    ]
+    wan_simulation_enabled: Annotated[
+        bool,
+        Field(description="Whether enabled WAN policy assignments apply interface-level tc/netem simulation."),
+    ]
+
+
+class RoutesWanSettingsResponse(RoutesWanSettingsUpdate):
+    """Saved Routes and WAN settings plus the effective NAT state.
+
+    Attributes:
+        effective_nat_enabled: Whether both routing and NAT are enabled in saved desired state.
+    """
+
+    effective_nat_enabled: Annotated[
+        bool,
+        Field(description="True only when both routing_enabled and nat_enabled are true."),
+    ]
+
+
 class WanStatusResponse(BaseModel):
     """Fields returned by the Atlaso wan status API.
 

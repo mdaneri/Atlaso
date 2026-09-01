@@ -18,6 +18,7 @@
       class="tabulator-shell services-table"
       data-services='{{ service_rows | tojson }}'
       data-csrf="{{ csrf_token }}"
+      data-routing-can-write="{{ 'true' if identity.can('write:services') and identity.can('write:routes') and identity.can('write:wan') else 'false' }}"
       data-fallback-id="services-fallback"
     ></div>
 
@@ -42,18 +43,22 @@
             <td>{{ "enabled" if service.enabled else "disabled" }}</td>
             <td>{{ service.detail or "native host service" }}</td>
             <td class="fallback-actions">
-              <form action="{{ management_ui_root }}/services/{{ service.service }}/start" method="post">
-                <input type="hidden" name="csrf" value="{{ csrf_token }}">
-                <button class="button tiny" type="submit">Start</button>
-              </form>
-              <form action="{{ management_ui_root }}/services/{{ service.service }}/stop" method="post">
-                <input type="hidden" name="csrf" value="{{ csrf_token }}">
-                <button class="button tiny" type="submit">Stop</button>
-              </form>
-              <form action="{{ management_ui_root }}/services/{{ service.service }}/restart" method="post">
-                <input type="hidden" name="csrf" value="{{ csrf_token }}">
-                <button class="button tiny primary" type="submit">Restart</button>
-              </form>
+              {% if service.service == "routing" %}
+                <a class="button tiny secondary" href="{{ management_ui_root }}/appliance-apply">Review appliance changes</a>
+              {% else %}
+                <form action="{{ management_ui_root }}/services/{{ service.service }}/start" method="post">
+                  <input type="hidden" name="csrf" value="{{ csrf_token }}">
+                  <button class="button tiny" type="submit">Start</button>
+                </form>
+                <form action="{{ management_ui_root }}/services/{{ service.service }}/stop" method="post">
+                  <input type="hidden" name="csrf" value="{{ csrf_token }}">
+                  <button class="button tiny" type="submit">Stop</button>
+                </form>
+                <form action="{{ management_ui_root }}/services/{{ service.service }}/restart" method="post">
+                  <input type="hidden" name="csrf" value="{{ csrf_token }}">
+                  <button class="button tiny primary" type="submit">Restart</button>
+                </form>
+              {% endif %}
             </td>
           </tr>
         {% endfor %}
