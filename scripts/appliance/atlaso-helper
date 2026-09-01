@@ -19503,7 +19503,10 @@ def _factory_reset_runner(*, boot_resume: bool) -> subprocess.CompletedProcess[s
             "",
             "Atlaso factory-reset runtime is unavailable.\n",
         )
-    environment = os.environ.copy()
+    # Console and boot recovery run the transaction inline rather than through
+    # the helper's systemd-run wrapper. Pin the same persistent PowerShell home
+    # here so resumed Appliance Settings activation cannot fall back to /root.
+    environment = _privileged_powershell_environment()
     try:
         environment["ATLASO_DATABASE_URL"] = _installed_atlaso_database_url()
     except ValueError as exc:

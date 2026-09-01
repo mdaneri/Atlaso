@@ -4124,6 +4124,55 @@ def test_factory_reset_helper_resume_is_idempotent(monkeypatch, tmp_path):
     assert helper._handle_factory_reset("resume", []) == 0
 
 
+@pytest.mark.parametrize("boot_resume", [False, True])
+def test_factory_reset_runner_uses_persistent_powershell_environment(
+    monkeypatch,
+    tmp_path,
+    boot_resume,
+):
+    """Pin inline console and boot resumes to the privileged PowerShell home.
+
+    Args:
+        monkeypatch: Pytest fixture used to replace dependencies for the test.
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+        boot_resume: Whether the modeled reset resumes during service startup.
+    """
+    helper = load_helper_module()
+    runtime = tmp_path / "python"
+    runtime.write_text("", encoding="utf-8")
+    powershell_home = tmp_path / "powershell"
+    calls: list[tuple[list[str], dict[str, str]]] = []
+
+    monkeypatch.setattr(helper, "ATLASO_FACTORY_RESET_PYTHON", runtime)
+    monkeypatch.setattr(helper, "ATLASO_POWERSHELL_HOME", powershell_home)
+    monkeypatch.setattr(
+        helper,
+        "_installed_atlaso_database_url",
+        lambda: "sqlite:////var/lib/atlaso/atlaso.db",
+    )
+    monkeypatch.setattr(
+        helper,
+        "_run",
+        lambda command, *, env: (
+            calls.append((command, env))
+            or subprocess.CompletedProcess(command, 0, "", "")
+        ),
+    )
+
+    result = helper._factory_reset_runner(boot_resume=boot_resume)
+
+    assert result.returncode == 0
+    assert calls[0][0] == [str(runtime), "-m", "atlaso.app.factory_reset"]
+    environment = calls[0][1]
+    assert environment["HOME"] == str(powershell_home)
+    assert environment["XDG_CACHE_HOME"] == str(powershell_home / ".cache")
+    assert environment["XDG_CONFIG_HOME"] == str(powershell_home / ".config")
+    assert environment["XDG_DATA_HOME"] == str(powershell_home / ".local" / "share")
+    assert environment["ATLASO_DATABASE_URL"] == "sqlite:////var/lib/atlaso/atlaso.db"
+    assert (environment.get("ATLASO_FACTORY_RESET_BOOT_RESUME") == "1") is boot_resume
+    assert powershell_home.is_dir()
+
+
 @pytest.mark.parametrize(
     ("action", "args", "blocked_call"),
     [
