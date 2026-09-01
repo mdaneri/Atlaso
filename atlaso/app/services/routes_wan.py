@@ -799,6 +799,34 @@ def mirrored_management_default_routes(
     return mirrored
 
 
+def wan_config_target_entries(config_preview: str) -> list[dict[str, str]]:
+    """Return target entries from a rendered Routes and WAN configuration.
+
+    Args:
+        config_preview: Previously rendered Routes and WAN configuration.
+    """
+    targets: list[dict[str, str]] = []
+    current_section = ""
+    current_target: dict[str, str] | None = None
+    for raw_line in (config_preview or "").splitlines():
+        line = raw_line.strip()
+        if not line or line.startswith("#"):
+            continue
+        if line.startswith("[") and line.endswith("]"):
+            current_section = line.strip("[]")
+            current_target = None
+            continue
+        if current_section != "targets" or "=" not in line:
+            continue
+        key, value = [part.strip() for part in line.split("=", 1)]
+        if key == "target":
+            current_target = {"name": value}
+            targets.append(current_target)
+        elif current_target is not None:
+            current_target[key] = value
+    return targets
+
+
 def mirrored_management_default_keys(config_preview: str) -> set[tuple[str, str]]:
     """Return identities of enabled defaults mirrored for management listeners.
 
@@ -1013,6 +1041,26 @@ def render_wan_config(
             "  # disabled Routing IPv6 lab policy cleanup"
         )
     target_network_owners = _target_network_owners(targets)
+    current_lab_target_networks = {
+        (str(target.get("name") or ""), str(network))
+        for target in targets
+        if target.get("routing_domain") != "management"
+        for network in _target_networks(target)
+    }
+    for previous_target in wan_config_target_entries(previous_config_preview):
+        if previous_target.get("routing_domain") == "management":
+            continue
+        interface_name = str(previous_target.get("name") or "")
+        if not interface_name or interface_name in absent_target_names:
+            continue
+        for network in _target_networks(previous_target):
+            if (interface_name, str(network)) in current_lab_target_networks:
+                continue
+            route_family = "-6 " if network.version == 6 else ""
+            lines.append(
+                f"ip {route_family}route del {network} dev {interface_name} "
+                f"table {LAB_ROUTE_TABLE_ID}  # retired omitted or ineligible WAN target"
+            )
     for index, target in enumerate(targets):
         management = target.get("routing_domain") == "management"
         table = MANAGEMENT_ROUTE_TABLE_ID if management else LAB_ROUTE_TABLE_ID
@@ -1116,7 +1164,6 @@ def render_wan_config(
         except ValueError:
             destination = None
         route_family = "-6 " if destination and destination.version == 6 else ""
-        lines.append(f"ip {route_family}route del {route.get('destination_cidr', '')} dev {route.get('interface_name', '')} table {LAB_ROUTE_TABLE_ID}  # removed managed route")
         route_target = next(
             (
                 target
@@ -1125,6 +1172,12 @@ def render_wan_config(
             ),
             {},
         )
+        if (
+            not route_target
+            and str(route.get("interface_name", "")) in absent_target_names
+        ):
+            continue
+        lines.append(f"ip {route_family}route del {route.get('destination_cidr', '')} dev {route.get('interface_name', '')} table {LAB_ROUTE_TABLE_ID}  # removed managed route")
         removed_key = (
             canonical_route_destination(str(route.get("destination_cidr", ""))),
             str(route.get("interface_name", "")),

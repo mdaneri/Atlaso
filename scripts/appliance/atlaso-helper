@@ -9459,17 +9459,43 @@ def _management_default_gateways_for_target(target: dict[str, str]) -> list[str]
     return _usable_management_default_gateways(target_networks, candidates)
 
 
-def _apply_wan_target_routes(parsed: dict[str, list[dict[str, str]]]) -> int:
+def _apply_wan_target_routes(
+    parsed: dict[str, list[dict[str, str]]],
+    previous_parsed: dict[str, list[dict[str, str]]] | None = None,
+) -> int:
     """Perform apply WAN target routes.
 
     Args:
         parsed: Parsed consumed by apply WAN target routes.
+        previous_parsed: Parsed last-applied state used to retire stale target routes.
     """
     if shutil.which("ip") is None:
         print("ip command not found", file=sys.stderr)
         return 127
     targets = parsed["targets"]
     routing_enabled = _wan_feature_settings(parsed)["routing_enabled"]
+    current_lab_routes = {
+        (target.get("name", ""), network)
+        for target in targets
+        if target.get("routing_domain", "lab") != "management"
+        for network in _target_networks(target)
+    }
+    for previous_target in (previous_parsed or {}).get("targets", []):
+        if previous_target.get("routing_domain", "lab") == "management":
+            continue
+        interface_name = previous_target.get("name", "")
+        if not interface_name or not _link_exists(interface_name):
+            continue
+        for network in _target_networks(previous_target):
+            if (interface_name, network) in current_lab_routes:
+                continue
+            result = _run_target_route_delete(
+                network,
+                interface_name,
+                LAB_ROUTE_TABLE_ID,
+            )
+            if result != 0:
+                return result
     network_owners = _target_network_owners(targets)
     for index, target in enumerate(targets):
         table_id = _target_route_table_id(target)
@@ -9768,6 +9794,9 @@ def _apply_wan_routes_and_qdiscs(
                 return main_delete.returncode
         touched_qdisc_targets.add(interface_name)
     for route in parsed["removed_routes"]:
+        interface_name = route["interface"]
+        if interface_name not in targets and not _link_exists(interface_name):
+            continue
         delete_result = _run_route_delete(route["destination_cidr"], route["interface"])
         if delete_result != 0:
             return delete_result
@@ -10038,7 +10067,7 @@ def _handle_wan(action: str, args: list[str]) -> int:
     forwarding_result = _apply_wan_forwarding(parsed)
     if forwarding_result != 0:
         return forwarding_result
-    target_route_result = _apply_wan_target_routes(parsed)
+    target_route_result = _apply_wan_target_routes(parsed, previous_parsed)
     if target_route_result != 0:
         return target_route_result
     rule_result = _apply_wan_policy_rules(parsed)

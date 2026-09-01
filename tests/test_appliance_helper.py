@@ -6054,6 +6054,108 @@ route=192.0.2.0/24
     assert ["tc", "qdisc", "del", "dev", "eth2", "root"] in commands
 
 
+@pytest.mark.parametrize(("link_exists", "cleanup_expected"), [(False, False), (True, True)])
+def test_wan_target_routes_retire_only_live_omitted_targets(
+    monkeypatch,
+    link_exists,
+    cleanup_expected,
+):
+    """Retire previous lab connected routes only while their link still exists.
+
+    Args:
+        monkeypatch: Pytest fixture used to replace dependencies for the test.
+        link_exists: Whether the omitted target remains present on the host.
+        cleanup_expected: Whether the stale connected route should be deleted.
+    """
+    helper = load_helper_module()
+    current = {
+        "feature_settings": [{"routing_enabled": "false"}],
+        "targets": [],
+        "routes": [],
+        "routing_rules": [],
+        "nat_rules": [],
+        "wan_policies": [],
+    }
+    previous = {
+        **current,
+        "targets": [
+            {
+                "name": "eth2",
+                "routing_domain": "lab",
+                "ip_cidr": "192.0.2.10/24",
+            }
+        ],
+    }
+    commands: list[list[str]] = []
+    monkeypatch.setattr(helper.shutil, "which", lambda command: f"/usr/sbin/{command}")
+    monkeypatch.setattr(helper, "_link_exists", lambda _name: link_exists)
+    monkeypatch.setattr(
+        helper,
+        "_run",
+        lambda command: (
+            commands.append(command)
+            or subprocess.CompletedProcess(command, 0, "", "")
+        ),
+    )
+
+    assert helper._apply_wan_target_routes(current, previous) == 0
+    cleanup = [
+        "ip",
+        "route",
+        "del",
+        "192.0.2.0/24",
+        "dev",
+        "eth2",
+        "table",
+        "200",
+    ]
+    assert (cleanup in commands) is cleanup_expected
+
+
+def test_wan_removed_route_cleanup_skips_absent_target(monkeypatch):
+    """Do not fail removal of saved route intent after its device disappeared.
+
+    Args:
+        monkeypatch: Pytest fixture used to replace dependencies for the test.
+    """
+    helper = load_helper_module()
+    parsed = {
+        "feature_settings": [
+            {
+                "routing_enabled": "false",
+                "nat_enabled": "false",
+                "wan_simulation_enabled": "false",
+            }
+        ],
+        "targets": [],
+        "routes": [],
+        "removed_routes": [
+            {
+                "destination_cidr": "192.0.2.0/24",
+                "interface": "missing-route-target",
+            }
+        ],
+        "removed_main_defaults": [],
+        "routing_rules": [],
+        "nat_rules": [],
+        "wan_policies": [],
+    }
+    commands: list[list[str]] = []
+    monkeypatch.setattr(helper.shutil, "which", lambda command: f"/usr/sbin/{command}")
+    monkeypatch.setattr(helper, "_link_exists", lambda _name: False)
+    monkeypatch.setattr(
+        helper,
+        "_run",
+        lambda command: (
+            commands.append(command)
+            or subprocess.CompletedProcess(command, 1, "", "device absent")
+        ),
+    )
+
+    assert helper._apply_wan_routes_and_qdiscs(parsed) == 0
+    assert commands == []
+
+
 def esxi_pxe_manifest(http_root: Path, *, enabled: bool = True, stale_id: int = 99, iso_root: Path | None = None) -> dict:
     """Return esxi pxe manifest.
 

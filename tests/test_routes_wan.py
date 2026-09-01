@@ -111,6 +111,56 @@ def test_disabled_route_preview_cleans_live_ineligible_target():
     assert "tc qdisc del dev eth2 root" in config
 
 
+def test_wan_preview_retires_only_live_omitted_target_routes():
+    """Preview stale connected-route cleanup only for a target that remains live."""
+    target = {
+        "name": "eth2",
+        "kind": "physical",
+        "role": "access",
+        "ip_cidr": "192.0.2.10/24",
+        "routing_domain": "lab",
+        "route_allowed": True,
+    }
+    previous = render_wan_config([], targets=[target])
+
+    live = render_wan_config(
+        [],
+        previous_config_preview=previous,
+        settings=RoutesWanSettings(False, False, False),
+    )
+    absent = render_wan_config(
+        [],
+        previous_config_preview=previous,
+        settings=RoutesWanSettings(False, False, False),
+        absent_target_names={"eth2"},
+    )
+
+    cleanup = (
+        "ip route del 192.0.2.0/24 dev eth2 table 200"
+        "  # retired omitted or ineligible WAN target"
+    )
+    assert cleanup in live
+    assert cleanup not in absent
+
+
+def test_removed_route_preview_skips_absent_target_cleanup():
+    """Do not preview removed-route cleanup after the target disappeared."""
+    config = render_wan_config(
+        [],
+        removed_routes=[
+            {
+                "destination_cidr": "192.0.2.0/24",
+                "interface_name": "missing-route-target",
+            }
+        ],
+        settings=RoutesWanSettings(False, False, False),
+        absent_target_names={"missing-route-target"},
+    )
+
+    assert "route=192.0.2.0/24" in config
+    assert "ip route del 192.0.2.0/24 dev missing-route-target" not in config
+
+
 def test_parentless_vlan_is_an_absent_wan_target(client):
     """Classify a saved VLAN without an inventory parent as absent.
 
