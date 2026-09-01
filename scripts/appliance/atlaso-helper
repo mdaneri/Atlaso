@@ -276,7 +276,7 @@ ATLASO_UPDATE_RESTART_RECEIPT_PATH = (
 )
 ATLASO_UPDATE_RESTART_GATE_PATH = Path("/run/atlaso-release-restart-gate")
 ATLASO_WORKER_STARTUP_STATUS_PATH = ATLASO_STATE_DIR / "worker-startup.json"
-ATLASO_POWERSHELL_HOME = ATLASO_STATE_DIR / "powershell"
+ATLASO_POWERSHELL_HOME = ATLASO_PRIVILEGED_STATE_DIR / "powershell"
 ATLASO_DATA_DISK_POLICY_PATH = Path("/etc/atlaso/data-disks.conf")
 ATLASO_DATA_DISK_BOOTSTRAP_MARKER_PATH = Path("/etc/atlaso/data-disk-safety-bootstrap.json")
 ATLASO_MOUNT_DATA_DISKS_PATH = Path("/opt/atlaso/bin/atlaso-mount-data-disks")
@@ -723,16 +723,57 @@ def _privileged_powershell_environment() -> dict[str, str]:
     """Return the persistent writable environment for privileged PowerShell work.
 
     """
-    directories = [
-        ATLASO_POWERSHELL_HOME,
-        ATLASO_POWERSHELL_HOME / ".cache",
-        ATLASO_POWERSHELL_HOME / ".config",
-        ATLASO_POWERSHELL_HOME / ".local",
-        ATLASO_POWERSHELL_HOME / ".local" / "share",
-    ]
-    for directory in directories:
-        directory.mkdir(parents=True, exist_ok=True)
-        directory.chmod(0o700)
+    directories = [".cache", ".config", ".local", ".local/share"]
+    if os.name != "posix":
+        paths = [
+            ATLASO_POWERSHELL_HOME,
+            *(ATLASO_POWERSHELL_HOME / item for item in directories),
+        ]
+        for directory in paths:
+            if directory.is_symlink():
+                raise ValueError("privileged PowerShell directory is unsafe")
+            directory.mkdir(parents=True, exist_ok=True)
+            if directory.is_symlink() or directory.resolve() != directory:
+                raise ValueError("privileged PowerShell directory is unsafe")
+            directory.chmod(0o700)
+    else:
+        flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
+        parent_descriptor = os.open(ATLASO_POWERSHELL_HOME.parent, flags)
+        descriptors = [parent_descriptor]
+        try:
+            parent_stat = os.fstat(parent_descriptor)
+            if (
+                not stat.S_ISDIR(parent_stat.st_mode)
+                or parent_stat.st_uid != 0
+                or parent_stat.st_mode & 0o022
+            ):
+                raise ValueError("privileged PowerShell parent directory is unsafe")
+
+            def open_directory(parent: int, component: str) -> int:
+                """Create and securely open one root-owned directory component."""
+                try:
+                    os.mkdir(component, 0o700, dir_fd=parent)
+                except FileExistsError:
+                    pass
+                directory_descriptor = os.open(component, flags, dir_fd=parent)
+                descriptors.append(directory_descriptor)
+                directory_stat = os.fstat(directory_descriptor)
+                if not stat.S_ISDIR(directory_stat.st_mode) or directory_stat.st_uid != 0:
+                    raise ValueError("privileged PowerShell directory is unsafe")
+                os.fchmod(directory_descriptor, 0o700)
+                return directory_descriptor
+
+            home_descriptor = open_directory(
+                parent_descriptor,
+                ATLASO_POWERSHELL_HOME.name,
+            )
+            open_directory(home_descriptor, ".cache")
+            open_directory(home_descriptor, ".config")
+            local_descriptor = open_directory(home_descriptor, ".local")
+            open_directory(local_descriptor, "share")
+        finally:
+            for descriptor in reversed(descriptors):
+                os.close(descriptor)
     env = os.environ.copy()
     env.update(
         {

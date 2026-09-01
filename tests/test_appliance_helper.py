@@ -4173,6 +4173,14 @@ def test_factory_reset_runner_uses_persistent_powershell_environment(
     assert powershell_home.is_dir()
 
 
+def test_privileged_powershell_home_uses_the_root_owned_state_parent():
+    """Keep privileged module discovery outside the service-writable state tree."""
+    helper = load_helper_module()
+
+    assert helper.ATLASO_POWERSHELL_HOME.parent == helper.ATLASO_PRIVILEGED_STATE_DIR
+    assert helper.ATLASO_POWERSHELL_HOME != helper.ATLASO_STATE_DIR / "powershell"
+
+
 @pytest.mark.parametrize(
     ("action", "args", "blocked_call"),
     [
@@ -8853,10 +8861,10 @@ def test_appliance_update_apply_uses_a_fixed_task_stream_unit(monkeypatch, tmp_p
         helper,
         "_privileged_powershell_environment",
         lambda: {
-            "HOME": "/var/lib/atlaso/powershell",
-            "XDG_CACHE_HOME": "/var/lib/atlaso/powershell/.cache",
-            "XDG_CONFIG_HOME": "/var/lib/atlaso/powershell/.config",
-            "XDG_DATA_HOME": "/var/lib/atlaso/powershell/.local/share",
+            "HOME": "/var/lib/atlaso-privileged/powershell",
+            "XDG_CACHE_HOME": "/var/lib/atlaso-privileged/powershell/.cache",
+            "XDG_CONFIG_HOME": "/var/lib/atlaso-privileged/powershell/.config",
+            "XDG_DATA_HOME": "/var/lib/atlaso-privileged/powershell/.local/share",
         },
     )
     monkeypatch.setattr(
@@ -8938,10 +8946,10 @@ def test_appliance_update_status_transitions_serialize_one_fixed_task_unit(
         helper,
         "_privileged_powershell_environment",
         lambda: {
-            "HOME": "/var/lib/atlaso/powershell",
-            "XDG_CACHE_HOME": "/var/lib/atlaso/powershell/.cache",
-            "XDG_CONFIG_HOME": "/var/lib/atlaso/powershell/.config",
-            "XDG_DATA_HOME": "/var/lib/atlaso/powershell/.local/share",
+            "HOME": "/var/lib/atlaso-privileged/powershell",
+            "XDG_CACHE_HOME": "/var/lib/atlaso-privileged/powershell/.cache",
+            "XDG_CONFIG_HOME": "/var/lib/atlaso-privileged/powershell/.config",
+            "XDG_DATA_HOME": "/var/lib/atlaso-privileged/powershell/.local/share",
         },
     )
     monkeypatch.setattr(

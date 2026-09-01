@@ -735,7 +735,7 @@ Tool-specific choice. During real apply, the helper applies and verifies the cho
 exists. Explicit PowerCLI `User` and `Session` overrides remain outside Atlaso ownership, and missing optional VMware
 products are reported as skipped.
 
-Privileged PowerCLI policy runs with the root-owned persistent PowerShell home under `/var/lib/atlaso/powershell`,
+Privileged PowerCLI policy runs with the root-owned persistent PowerShell home under `/var/lib/atlaso-privileged/powershell`,
 including when complete factory reset activates the clean Appliance Settings unit. The helper creates the bounded XDG
 configuration directories before launching PowerShell instead of relying on `/root` or an interactive profile, so the
 packaged VMware settings manager can initialize consistently during detached reset recovery.
