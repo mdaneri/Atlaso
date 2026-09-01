@@ -3632,6 +3632,9 @@
 within the depot, file links retain their exact artifact URL, and <strong>Up one level</strong> returns to the parent directory.
 Authenticated and unauthenticated access continue to follow the configured depot policy; a server-rendered contents
 table remains available when browser scripting is unavailable.</p>
+<p>For an authenticated browser session, deliberate pointer and keyboard activity in the <code>/PROD/</code> contents grid refreshes
+the server-owned inactivity timestamp through the depot listener. Static artifact requests, background traffic, and
+unauthenticated browsing do not extend a browser session.</p>
 <h2 id="configure-the-depot">Configure the depot<a class="headerlink" href="#configure-the-depot" title="Permanent link">&para;</a></h2>
 <ol>
 <li>Confirm the fixed depot mount is present and has sufficient working space.</li>

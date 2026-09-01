@@ -3663,6 +3663,8 @@ refresh requests do not. At the exact inactivity boundary Atlaso invalidates the
 clears browser identity and CSRF state, records a sanitized audit event, and returns <code>401</code> to fetch/API consumers. Human
 navigation returns to the appropriate management, public, or protocol login surface with <strong>Session expired due to
 inactivity</strong>.</p>
+<p>The authenticated VCF Offline Depot browser sends deliberate <code>/PROD/</code> activity through its depot protocol listener;
+it does not require or publish the management UI plane on that interface.</p>
 <p>The OIDC provider applies the same timeout to its separate <code>/identity</code> browser session. Its signed cookie carries only
 an opaque session identifier; Atlaso persists the authoritative activity and terminal-expiry state. A successful
 credential submission starts the session, while silent <code>prompt=none</code> authorization does not refresh it. Once the
