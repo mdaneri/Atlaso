@@ -602,7 +602,8 @@ Depot and Backups data VMDKs at units 2 and 3 when needed. `-ResetDataDisks` rem
 them only when their canonical paths are strict, non-reparse-point descendants of the selected VM output directory.
 Both creation-size arguments accept only `500GB`; an explicitly reused data VMDK must also expose an exact 500 GiB
 virtual capacity in its descriptor or deployment stops before cloning the target VM.
-Before cloning, the wrapper verifies the source VMX and both payload bytes against schema-v2 build provenance. After
+Before cloning, the wrapper verifies the source VMX and both payload bytes against schema-v3 build provenance bound to
+the matching builder identity. After
 the full clone, it revalidates the PVSCSI unit assignments and exact 40 GiB/20 GiB payload capacities before it creates
 or attaches either data disk. Do not repair an ambiguous or reversed source by swapping filenames or formatting a disk;
 rebuild it through the supported wrapper.
