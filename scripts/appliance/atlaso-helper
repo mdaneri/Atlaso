@@ -19077,6 +19077,15 @@ def _installed_atlaso_database_url() -> str:
             raise ValueError(
                 "ATLASO_DATABASE_URL uses unsupported EnvironmentFile escape syntax."
             )
+        if database_url.startswith(('"', "'")) or database_url.endswith(('"', "'")):
+            if (
+                len(database_url) < 2
+                or database_url[0] != database_url[-1]
+                or database_url[0] not in {'"', "'"}
+            ):
+                raise ValueError(
+                    "ATLASO_DATABASE_URL uses an unsupported multiline EnvironmentFile value."
+                )
         if (
             len(database_url) >= 2
             and database_url[0] == database_url[-1]
