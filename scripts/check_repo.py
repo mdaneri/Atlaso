@@ -189,6 +189,14 @@ MAINTAINER_BREAK_GLASS_OPERATIVE_MARKERS = (
     "### Maintainer override / break-glass",
 )
 
+CODEX_WORKTREE_ROOT_SHARED_MARKERS = (
+    "supported Codex configuration",
+    "`git-worktree-root`",
+    "Never guess, infer, synthesize, or silently fall back",
+    "explicit maintainer-configured permitted root",
+    "preserve its state",
+)
+
 REQUIRED_POLICY_MARKERS = {
     Path("AGENTS.md"): (
         "## Mandatory Agent Startup Gate",
@@ -208,6 +216,7 @@ REQUIRED_POLICY_MARKERS = {
         "docs/contribute/ui-design-guide.md",
         "first progress update",
         "delegating agent",
+        *CODEX_WORKTREE_ROOT_SHARED_MARKERS,
         "direct-edit Tabulator",
         "custom/other",
         "explicit maintainer approval",
@@ -252,6 +261,7 @@ REQUIRED_POLICY_MARKERS = {
         "docs/contribute/ui-design-guide.md",
         "custom/other",
         "delegated agent",
+        *CODEX_WORKTREE_ROOT_SHARED_MARKERS,
         "### Automated pull-request follow-through",
         "Python test suite locally",
         "ready for review",
@@ -347,6 +357,7 @@ REQUIRED_POLICY_MARKERS = {
         "`spark_worker`",
         "`gpt-5.3-codex-spark`",
         "Do not silently",
+        *CODEX_WORKTREE_ROOT_SHARED_MARKERS,
         "## Repository Delivery Workflow",
         "private vulnerability remediation",
         "temporary private fork",

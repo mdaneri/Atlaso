@@ -2174,6 +2174,41 @@ def test_agent_policy_gate_rejects_missing_marker(tmp_path: Path) -> None:
     )
 
 
+def test_agent_policy_gate_rejects_unconfigured_worktree_fallback(
+    tmp_path: Path,
+) -> None:
+    """Verify policy cannot silently restore an unconfigured worktree fallback.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
+    relative_paths = (
+        Path("AGENTS.md"),
+        Path("CONTRIBUTING.md"),
+        Path("docs/contribute/agent-policies.md"),
+    )
+    for index, relative_path in enumerate(relative_paths):
+        case_root = tmp_path / str(index)
+        write_policy_files(case_root)
+        policy_path = case_root / relative_path
+        policy_path.write_text(
+            policy_path.read_text(encoding="utf-8").replace(
+                "Never guess, infer, synthesize, or silently fall back",
+                "Silently fall back",
+            ),
+            encoding="utf-8",
+        )
+
+        findings = check_agent_policy_gate(case_root)
+
+        assert len(findings) == 1
+        assert findings[0].path == policy_path
+        assert findings[0].message == (
+            "required agent policy marker is missing: "
+            "Never guess, infer, synthesize, or silently fall back"
+        )
+
+
 def test_agent_policy_gate_rejects_missing_spark_delegation_policy(
     tmp_path: Path,
 ) -> None:

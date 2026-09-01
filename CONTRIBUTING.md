@@ -52,6 +52,19 @@ missing full-suite evidence blocks advisory merge.
 
 ## Development workflow
 
+Before creating, selecting, delegating into, or reporting an automated contributor's implementation worktree, read the
+supported Codex configuration and resolve the exact configured `git-worktree-root`. Use only that configured root for
+the worktree. Never guess, infer, synthesize, or silently fall back to a repository sibling, user profile, temporary
+directory, drive, or other conventional path, and do not hard-code one host's drive into portable repository policy.
+If the setting is missing, ambiguous, inaccessible, unsafe, or unavailable through a supported interface, stop before
+repository, build, or external mutation and request maintainer direction.
+
+Keep task-owned temporary roots, staging, build outputs, logs, reservation state, and generated artifacts beneath the
+configured worktree root or another explicit maintainer-configured permitted root. Do not silently inherit
+`GetTempPath()`, `LocalAppData`, or another OS-default location. If an existing task or required mutable path is outside
+the permitted roots, preserve its state, report the exact conflict, and obtain maintainer direction instead of moving
+or deleting it automatically.
+
 1. Fork the repository or create a branch from current `main`. For private vulnerability remediation, use only the
    advisory's temporary private fork and follow `SECURITY.md`.
 2. Create or identify the labeled issue, then describe the intended approach. For private vulnerability remediation,
@@ -184,6 +197,9 @@ completed post-merge activity, and branch/checkout ownership. It evaluates remot
 local checkout/worktree ownership, requiring exclusive task ownership before a destructive step or external ownership
 for the corresponding non-destructive exception below. It identifies and verifies a primary checkout first;
 only a non-primary target must be a clean, registered, unlocked Codex worktree beneath the resolved Codex worktree root.
+The controller independently reads the supported Codex `git-worktree-root` setting at cleanup time and fails closed
+unless it resolves one exact safe root; a guessed or fallback path is never ownership evidence. If an existing task is
+outside that root, preserve it and obtain maintainer direction rather than moving or deleting it automatically.
 
 Private remediation substitutes `advisory_cleanup_ready` for the ordinary closed-issue gate. Require an explicitly
 authorized advisory-administrator merge, a resulting commit reachable from current `origin/main`, completed
@@ -337,8 +353,9 @@ progress update must confirm the policy files were read, classify the work, and 
 For UI work, the agent must also complete the **Mandatory UI Design Guide Gate** in `AGENTS.md`, read the UI guide
 before planning implementation, classify the interaction, and name the existing Atlaso reference being reused.
 
-A delegating agent is responsible for including the startup gate in delegated prompts and verifying compliance before
-accepting the delegated work. Changing repositories, worktrees, or working directories requires the gate to be repeated.
+A delegating agent is responsible for including the startup gate, exact resolved Codex worktree root, and permitted
+task-state roots in delegated prompts and verifying compliance before accepting the delegated work. Changing
+repositories, worktrees, or working directories requires the gate to be repeated.
 Automation does not waive the issue, label, documentation, validation, version, review, security, or conduct
 requirements in this guide. Automated contributors must also follow the focused local validation and pull-request
 follow-through workflow above.

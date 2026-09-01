@@ -45,9 +45,11 @@ runtime.
 - Sol owns architecture and design, ambiguous or difficult debugging, cross-component and integration decisions,
   security-sensitive work, task decomposition, review and integration of every delegated result, final validation, and
   repository delivery.
-- Every Spark prompt must name exact scope, owned files, expected output, relevant checks, and the Mandatory Agent
-  Startup Gate. UI prompts must also include the Mandatory UI Design Guide Gate, interaction classification, and reused
-  Atlaso reference. The worker must not commit, push, change GitHub state, or spawn another agent.
+- Every Spark prompt must name exact scope, owned files, expected output, relevant checks, the Mandatory Agent Startup
+  Gate, and the exact resolved Codex worktree root and permitted task-state roots. The delegating agent must verify the
+  delegated worktree and task-owned mutable paths against those roots before relying on the result. UI prompts must also
+  include the Mandatory UI Design Guide Gate, interaction classification, and reused Atlaso reference. The worker must
+  not commit, push, change GitHub state, or spawn another agent.
 - Parallel Spark work is permitted only for independent tasks with non-overlapping file ownership. Sol reviews every
   returned diff before using it.
 - If Spark is unavailable, Sol performs the work directly and reports the unavailable delegation. Do not silently
@@ -74,9 +76,20 @@ runtime.
 
 ## Repository Delivery Workflow
 
-- Agent-authored implementation work must run from a dedicated clean sibling worktree on its task-owned branch. Keep
-  the repository's primary checkout for synchronization, coordination, and completed-task cleanup; do not apply
-  implementation edits there. Establish the worktree and repeat the Mandatory Agent Startup Gate in its directory
+- Before creating, selecting, delegating into, or reporting an agent-owned implementation worktree, read the supported
+  Codex configuration and resolve the exact configured `git-worktree-root`. Use only that configured root for the
+  worktree. Never guess, infer, synthesize, or silently fall back to a repository sibling, user profile, temporary
+  directory, drive, or other conventional path. Do not hard-code a host drive in portable repository policy; the
+  supported Codex setting is authoritative. If it is missing, ambiguous, inaccessible, unsafe, or unavailable through
+  a supported interface, stop before repository, build, or external mutation and request maintainer direction.
+- Agent-authored implementation work must run from a dedicated clean worktree beneath that root on its task-owned
+  branch. Keep the repository's primary checkout for synchronization, coordination, and completed-task cleanup; do not
+  apply implementation edits there. Keep task-owned temporary roots, staging, build outputs, logs, reservation state,
+  and generated artifacts beneath the configured worktree root or another explicit maintainer-configured permitted
+  root. Do not silently inherit `GetTempPath()`, `LocalAppData`, or another OS-default location. If no supported
+  permitted location exists, stop before mutation. If an existing task or required mutable path is outside every
+  permitted root, preserve its state, report the exact conflict, and obtain maintainer direction instead of moving or
+  deleting it automatically. Establish the worktree and repeat the Mandatory Agent Startup Gate in its directory
   before planning or mutation. If a safe dedicated worktree cannot be established, stop for maintainer direction.
 - [CONTRIBUTING.md](https://github.com/mdaneri/Atlaso/blob/main/CONTRIBUTING.md) is the canonical delivery workflow.
   Every repository change requires a GitHub
@@ -214,12 +227,15 @@ runtime.
   pull-request head SHA, and merge commit SHA. The controller waits for the task to be idle and unpinned and treats the
   handoff only as evidence to revalidate.
 - Re-fetch GitHub and Git state. Require the exact merged pull request and closed issue plus completed post-merge
-  activity. Evaluate remote-branch ownership independently from local checkout/worktree ownership, requiring exclusive
+  activity. The controller independently reads the supported Codex `git-worktree-root` setting at cleanup time and
+  fails closed unless it resolves one exact safe root; a guessed or fallback path is never ownership evidence. Evaluate
+  remote-branch ownership independently from local checkout/worktree ownership, requiring exclusive
   task ownership before a destructive step or external ownership for the corresponding non-destructive exception
   below. Identify and verify a primary checkout first and exempt it from removable-worktree and Codex-root checks. Only
   a non-primary target must be a registered, clean, unlocked,
   non-reparse-point worktree beneath the resolved Codex worktree root. Never remove the primary checkout, a permanent
-  or user-created worktree, or an ambiguous target.
+  or user-created worktree, or an ambiguous target. If an existing task is outside the configured root, preserve it and
+  obtain maintainer direction instead of moving or deleting it automatically.
 
 Terminal order:
 
