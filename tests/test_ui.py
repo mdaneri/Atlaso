@@ -16498,6 +16498,34 @@ def test_services_routing_controls_are_read_only_for_service_admin(client):
     assert '>Review appliance changes</a>' in page.text
 
 
+def test_services_routing_controls_require_service_write_permission(client):
+    """Hide Routing mutations when combined roles lack service writes.
+
+    Args:
+        client: HTTP test client used to exercise the Atlaso application.
+    """
+    from sqlalchemy import select
+
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import Role, User
+    from atlaso.app.security import roles_to_json
+
+    with SessionLocal() as db:
+        admin = db.execute(select(User).where(User.username == "admin")).scalar_one()
+        admin.role = Role.NETWORK_ADMIN.value
+        admin.roles_json = roles_to_json(
+            [Role.NETWORK_ADMIN.value, Role.VIEWER.value]
+        )
+        db.commit()
+
+    login(client)
+    page = client.get("/services")
+
+    assert page.status_code == 200
+    assert 'data-routing-can-write="false"' in page.text
+    assert '>Review appliance changes</a>' in page.text
+
+
 def test_services_and_esxi_page_show_enabled_esxi_pxe_boot_state(client):
     """Verify that services and esxi page show enabled esxi pxe boot state.
 

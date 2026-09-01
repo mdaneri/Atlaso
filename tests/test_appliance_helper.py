@@ -5873,6 +5873,43 @@ def test_wan_only_simulation_ignores_dormant_route_path_errors(tmp_path):
     assert helper._wan_config_errors(config_path) == []
 
 
+def test_wan_disabled_validate_rejects_malformed_preserved_route(tmp_path):
+    """Reject malformed saved destinations before disabled-route cleanup.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
+    helper = load_helper_module()
+    config_path = tmp_path / "disabled-malformed-route.conf"
+    config_path.write_text(
+        """[feature_settings]
+routing_enabled=false
+nat_enabled=false
+wan_simulation_enabled=false
+
+[targets]
+
+[routes]
+route=not-a-cidr
+  interface=eth2
+  metric=100
+  enabled=true
+  wan_mode=interface
+
+[removed_routes]
+[removed_main_defaults]
+[routing_rules]
+[nat_rules]
+[wan_policies]
+""",
+        encoding="utf-8",
+    )
+
+    assert helper._wan_config_errors(config_path) == [
+        "Route not-a-cidr is not a valid destination CIDR."
+    ]
+
+
 def test_wan_disabled_apply_skips_preserved_route_with_absent_target(tmp_path):
     """Do not address a missing device while its saved route is dormant.
 

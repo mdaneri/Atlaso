@@ -734,6 +734,12 @@ def test_management_handoff_preserves_newer_routing_desired_state(client, monkey
     )
     monkeypatch.setattr(ui, "render_ca_apply_payload", lambda *_args, **_kwargs: "{}")
     monkeypatch.setattr(ui, "wan_rollback_config_preview", lambda *_args, **_kwargs: "")
+    lock_events: list[str] = []
+    monkeypatch.setattr(
+        ui,
+        "acquire_network_objects_write_lock",
+        lambda _db: lock_events.append("routing-sync"),
+    )
 
     with SessionLocal() as db:
         routing_service = db.execute(
@@ -753,6 +759,7 @@ def test_management_handoff_preserves_newer_routing_desired_state(client, monkey
         )
 
         assert group["success"] is True
+        assert lock_events == ["routing-sync"]
         assert routing_service.enabled is False
         assert routing_service.running is True
         assert routing_service.health == "healthy"

@@ -18,7 +18,7 @@
       class="tabulator-shell services-table"
       data-services='{{ service_rows | tojson }}'
       data-csrf="{{ csrf_token }}"
-      data-routing-can-write="{{ 'true' if identity.can('write:routes') and identity.can('write:wan') else 'false' }}"
+      data-routing-can-write="{{ 'true' if identity.can('write:services') and identity.can('write:routes') and identity.can('write:wan') else 'false' }}"
       data-fallback-id="services-fallback"
     ></div>
 

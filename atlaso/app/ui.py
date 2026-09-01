@@ -452,6 +452,7 @@ from atlaso.app.services.local_users import (
 )
 from atlaso.app.services.management_bindings import applied_management_bindings
 from atlaso.app.services.monitoring import monitor_payload
+from atlaso.app.services.network_objects import acquire_network_objects_write_lock
 from atlaso.app.services.networking import (
     INTERFACE_MODES,
     IPV4_METHODS,
@@ -13348,6 +13349,9 @@ def synchronize_routing_service_runtime(
         db: Database session that owns the service-state transaction.
         routing_enabled: Successfully applied Routing runtime state.
     """
+    # Hold the shared Routes/WAN writer lock through the caller's transaction
+    # commit so an autosave cannot race the desired-state read and mirror write.
+    acquire_network_objects_write_lock(db)
     routing_service = db.execute(
         select(ServiceState).where(ServiceState.service == "routing")
     ).scalar_one_or_none()

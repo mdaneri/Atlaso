@@ -30,7 +30,7 @@ import time
 import uuid
 from collections.abc import Callable
 from datetime import datetime, timezone
-from ipaddress import ip_address, ip_interface, ip_network
+from ipaddress import IPv4Network, IPv6Network, ip_address, ip_interface, ip_network
 from pathlib import Path, PurePosixPath
 from urllib.parse import unquote, urljoin, urlparse
 from urllib.request import HTTPRedirectHandler, Request, build_opener, urlopen
@@ -8912,6 +8912,19 @@ def _wan_config_errors(path: Path) -> list[str]:
         domain = target.get("routing_domain", "lab")
         if domain not in {"management", "lab"}:
             errors.append(f"WAN target {name or '<missing>'} routing domain must be management or lab.")
+    saved_route_networks: dict[int, IPv4Network | IPv6Network | None] = {}
+    for route in parsed["routes"]:
+        destination = route.get("destination_cidr", "")
+        destination_network = None
+        if not destination:
+            errors.append("Route entry is missing a destination CIDR.")
+        else:
+            try:
+                destination_network = ip_network(destination, strict=False)
+            except ValueError:
+                errors.append(f"Route {destination} is not a valid destination CIDR.")
+        saved_route_networks[id(route)] = destination_network
+
     desired_routes_for_validation = [
         route
         for route in parsed["routes"]
@@ -8920,10 +8933,8 @@ def _wan_config_errors(path: Path) -> list[str]:
     ]
     default_route_destinations: dict[int, str] = {}
     for route in desired_routes_for_validation:
-        destination = route.get("destination_cidr", "")
-        try:
-            destination_network = ip_network(destination, strict=False)
-        except ValueError:
+        destination_network = saved_route_networks[id(route)]
+        if destination_network is None:
             continue
         if destination_network.prefixlen != 0:
             continue
@@ -8943,15 +8954,16 @@ def _wan_config_errors(path: Path) -> list[str]:
     for route in [*desired_routes_for_validation, *parsed["removed_routes"]]:
         desired_route = id(route) in desired_route_ids
         destination = route.get("destination_cidr", "")
-        destination_network = None
-        if not destination:
-            errors.append("Route entry is missing a destination CIDR.")
-        else:
-            try:
-                destination_network = ip_network(destination, strict=False)
-            except ValueError:
-                errors.append(f"Route {destination} is not a valid destination CIDR.")
-                destination_network = None
+        destination_network = saved_route_networks.get(id(route))
+        if not desired_route:
+            if not destination:
+                errors.append("Route entry is missing a destination CIDR.")
+            else:
+                try:
+                    destination_network = ip_network(destination, strict=False)
+                except ValueError:
+                    errors.append(f"Route {destination} is not a valid destination CIDR.")
+                    destination_network = None
         gateway = route.get("gateway", "")
         gateway_address = None
         if gateway:
