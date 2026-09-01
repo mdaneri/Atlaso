@@ -5948,6 +5948,41 @@ route=not-a-cidr
     ]
 
 
+def test_wan_validate_ignores_unused_gateway_on_removed_route(tmp_path):
+    """Validate removed dormant route cleanup without parsing its gateway.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
+    helper = load_helper_module()
+    config_path = tmp_path / "removed-dormant-route.conf"
+    config_path.write_text(
+        """[feature_settings]
+routing_enabled=false
+nat_enabled=false
+wan_simulation_enabled=false
+
+[targets]
+
+[routes]
+
+[removed_routes]
+route=192.0.2.0/24
+  gateway=unused-invalid-gateway
+  interface=missing-route-target
+  metric=100
+
+[removed_main_defaults]
+[routing_rules]
+[nat_rules]
+[wan_policies]
+""",
+        encoding="utf-8",
+    )
+
+    assert helper._wan_config_errors(config_path) == []
+
+
 def test_wan_disabled_apply_skips_preserved_route_with_absent_target(tmp_path):
     """Do not address a missing device while its saved route is dormant.
 

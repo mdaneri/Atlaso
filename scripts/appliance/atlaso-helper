@@ -8968,7 +8968,7 @@ def _wan_config_errors(path: Path) -> list[str]:
                     destination_network = None
         gateway = route.get("gateway", "")
         gateway_address = None
-        if gateway:
+        if gateway and desired_route:
             try:
                 gateway_address = ip_address(gateway)
             except ValueError:
