@@ -657,7 +657,6 @@ function Remove-AtlasoWorkstationStaleRegistrations {
         $appearedInventoryPath = Resolve-AtlasoWorkstationInventoryPath
         if ($appearedInventoryPath) { throw "VMware Workstation inventory appeared while its absence was being verified; provider state was preserved: $appearedInventoryPath" }
         if (-not (Test-Path -LiteralPath $missingInventoryDirectory -PathType Container)) { try { [System.IO.Directory]::CreateDirectory($missingInventoryDirectory) | Out-Null } catch { throw "VMware Workstation inventory directory could not be created; provider state was preserved: $missingInventoryDirectory" } }
-        Assert-AtlasoPathHasNoReparsePoint -Path $missingInventoryDirectory
         if (-not (Test-Path -LiteralPath $missingInventoryDirectory -PathType Container)) { throw "VMware Workstation inventory directory could not be validated; provider state was preserved: $missingInventoryDirectory" }
         try {
             # A locked empty inventory makes zero ownership durable before the

@@ -1686,6 +1686,12 @@ def test_exact_stale_repair_locks_absent_inventory_through_callback(
     _, environment, _, inventory = _write_fake_vmrun(tmp_path / "fake", [])
     inventory.unlink()
     inventory.parent.rmdir()
+    redirected_appdata = tmp_path / "redirected-appdata"
+    try:
+        redirected_appdata.symlink_to(inventory.parent.parent, target_is_directory=True)
+    except OSError as error:
+        pytest.skip(f"directory symlink creation is unavailable: {error}")
+    environment["APPDATA"] = str(redirected_appdata)
     callback_proof = tmp_path / "callback-proof.txt"
     wrapper = tmp_path / "repair-while-inventory-absent.ps1"
     module_literal = str(
