@@ -710,6 +710,8 @@ def _depot_https_location_lines(
         "",
         *_proxy_location("= /PROD/logout", upstream_host, upstream_port, forwarded_proto="https"),
         "",
+        *_proxy_location("= /PROD/session/activity", upstream_host, upstream_port, forwarded_proto="https"),
+        "",
         "  location = /_atlaso_depot_auth {",
         "    internal;",
         f"    proxy_pass http://{upstream_host}:{upstream_port}/PROD/auth-check;",

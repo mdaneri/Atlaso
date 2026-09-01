@@ -14136,6 +14136,22 @@ def public_home(
     return render(request, "public_service_home.html", {"identity": identity, **public_service_directory_context(db, binding)})
 
 
+def _browser_session_activity_response(
+    request: Request,
+    db: Session,
+) -> Response:
+    """Refresh server-owned browser activity for a validated browser plane.
+
+    Args:
+        request: Incoming HTTP request.
+        db: Active database session used to validate and refresh the session.
+    """
+    verify_csrf(request, request.headers.get("X-CSRF-Token", ""))
+    if get_session_identity(request, db) is None:
+        raise HTTPException(status_code=401, detail="Authentication required")
+    return Response(status_code=204)
+
+
 @router.post("/session/activity", response_model=None)
 @public_router.post("/session/activity", response_model=None)
 def browser_session_activity(
@@ -14148,10 +14164,26 @@ def browser_session_activity(
         request: Incoming HTTP request.
         db: Active database session used to validate and refresh the session.
     """
-    verify_csrf(request, request.headers.get("X-CSRF-Token", ""))
-    if get_session_identity(request, db) is None:
-        raise HTTPException(status_code=401, detail="Authentication required")
-    return Response(status_code=204)
+    return _browser_session_activity_response(request, db)
+
+
+@protocol_router.post("/PROD/session/activity", response_model=None)
+def depot_browser_session_activity(
+    request: Request,
+    db: Session = Depends(get_db),
+) -> Response:
+    """Refresh deliberate activity for an authenticated depot browser session.
+
+    Args:
+        request: Incoming HTTP request on the depot protocol listener.
+        db: Active database session used to validate the listener and session.
+
+    Raises:
+        HTTPException: If VCF Offline Depot is unavailable on the called listener.
+    """
+    if not request_allows_public_service(db, request, "vcf_offline_depot"):
+        raise HTTPException(status_code=404, detail="VCF Offline Depot is not available on this interface")
+    return _browser_session_activity_response(request, db)
 
 
 def _format_file_size(size: int) -> str:

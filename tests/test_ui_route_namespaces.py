@@ -23,6 +23,7 @@ PROTOCOL_ROUTE_INVENTORY = {
     "/PROD/auth-failure",
     "/PROD/login",
     "/PROD/logout",
+    "/PROD/session/activity",
     "/PROD/{depot_path:path}",
     "/ca/downloads/ca-bundle.pem",
     "/ca/downloads/root-ca.pem",

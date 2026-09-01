@@ -15455,6 +15455,14 @@ function updateVcfDepotHttpsPreview(payload = {}) {
     "    proxy_set_header X-Forwarded-Proto https;",
     "  }",
     "",
+    "  location = /PROD/session/activity {",
+    "    proxy_pass http://127.0.0.1:8000;",
+    "    proxy_set_header Host $host;",
+    "    proxy_set_header X-Real-IP $remote_addr;",
+    "    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;",
+    "    proxy_set_header X-Forwarded-Proto https;",
+    "  }",
+    "",
     "  location = /_atlaso_depot_auth {",
     "    internal;",
     "    proxy_pass http://127.0.0.1:8000/PROD/auth-check;",
@@ -23232,6 +23240,15 @@ function initializeNetworkBootPage() {
   });
 }
 
+function browserSessionActivityPath(pathname, routes) {
+  const path = String(pathname || "");
+  if (path === "/PROD" || path.startsWith("/PROD/")) {
+    return "/PROD/session/activity";
+  }
+  const root = path.startsWith(routes.publicRoot) ? routes.publicRoot : routes.managementRoot;
+  return `${root}/session/activity`;
+}
+
 function initializeBrowserSessionActivity() {
   const csrf = document.querySelector('meta[name="atlaso-csrf-token"]')?.content || "";
   if (!csrf) return;
@@ -23239,9 +23256,7 @@ function initializeBrowserSessionActivity() {
     managementRoot: "/ui/management",
     publicRoot: "/ui/public",
   };
-  const root = window.location.pathname.startsWith(routes.publicRoot)
-    ? routes.publicRoot
-    : routes.managementRoot;
+  const activityPath = browserSessionActivityPath(window.location.pathname, routes);
   let lastSentAt = 0;
   let inFlight = false;
   const refresh = async () => {
@@ -23250,7 +23265,7 @@ function initializeBrowserSessionActivity() {
     lastSentAt = now;
     inFlight = true;
     try {
-      const response = await fetch(`${root}/session/activity`, {
+      const response = await fetch(activityPath, {
         method: "POST",
         headers: { "X-CSRF-Token": csrf, Accept: "application/json" },
         credentials: "same-origin",
