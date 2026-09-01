@@ -185,6 +185,28 @@ def test_parentless_vlan_is_an_absent_wan_target(client):
         assert vlan.name in wan_absent_target_names(db)
 
 
+def test_unknown_route_reference_is_an_absent_wan_target(client):
+    """Classify a route target missing from every inventory row as absent.
+
+    Args:
+        client: HTTP test client providing the isolated application database.
+    """
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.ui import wan_absent_target_names
+
+    with SessionLocal() as db:
+        route = Route(
+            destination_cidr="198.51.100.0/24",
+            interface_name="unknown-route-target",
+            metric=100,
+            enabled=True,
+        )
+        db.add(route)
+        db.flush()
+
+        assert route.interface_name in wan_absent_target_names(db)
+
+
 def test_disabled_features_do_not_surface_inactive_row_validation_errors():
     """Do not block Apply on invalid resources whose global feature is off."""
     invalid_route = Route(

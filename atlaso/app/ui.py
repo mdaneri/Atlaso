@@ -5341,6 +5341,15 @@ def wan_absent_target_names(db: Session) -> set[str]:
         if (parent := interfaces_by_name.get(vlan.parent_interface)) is None
         or parent.oper_state == "missing"
     )
+    inventory_names = {
+        *interfaces_by_name,
+        *db.execute(select(VlanInterface.name)).scalars().all(),
+    }
+    absent_names.update(
+        interface_name
+        for interface_name in db.execute(select(Route.interface_name)).scalars().all()
+        if interface_name and interface_name not in inventory_names
+    )
     return absent_names
 
 
