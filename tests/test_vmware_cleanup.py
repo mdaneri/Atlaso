@@ -1709,12 +1709,17 @@ Repair-AtlasoWorkstationStaleRegistrations `
     -VmxPath '{vmx_literal}' `
     -ExpectedDisplayName 'Atlaso-PR-672-cleanup' `
     -OnVerified {{
+        $readBlocked = $false
+        try {{
+            $providerRead = [System.IO.File]::Open('{inventory_literal}', 'Open', 'Read', 'ReadWrite')
+            $providerRead.Dispose()
+        }} catch {{ $readBlocked = $true }}
         $writeBlocked = $false
         try {{
             $providerWrite = [System.IO.File]::Open('{inventory_literal}', 'OpenOrCreate', 'Write', 'ReadWrite')
             $providerWrite.Dispose()
         }} catch {{ $writeBlocked = $true }}
-        if (-not $writeBlocked) {{ throw 'Provider inventory write was admitted during recovery release.' }}
+        if (-not $readBlocked -or -not $writeBlocked) {{ throw 'Provider inventory access was admitted during recovery release.' }}
         Set-Content -LiteralPath '{proof_literal}' -Value 'blocked'
     }} `
     -Confirm:$false
@@ -3013,7 +3018,7 @@ def test_module_keeps_inventory_work_out_of_normal_delete_path() -> None:
     assert "index.count" not in normal_path
     assert normal_path.count("Confirm-AtlasoWorkstationVmInactive") >= 2
     assert "[System.IO.File]::Replace($temporaryPath, $VmxPath, $backupPath, $true)" in module
-    assert "[System.IO.FileShare]::Read -bor [System.IO.FileShare]::Delete" in module
+    assert "[System.IO.FileShare]::Delete" in module
     assert "Get-AtlasoScopedInventoryEntriesFromLines -Lines $lines" in module
     assert "-ExpectedCurrentIdentity $Detachment.OriginalIdentity" in module
     assert "-ReplacementIdentity $displacedIdentity" in module
@@ -3091,7 +3096,7 @@ def test_module_keeps_inventory_work_out_of_normal_delete_path() -> None:
         "if ($staleEntries.Count -eq 0 -and (-not $resolvedVmxPath", 1
     )[1].split("$realInventoryPath", 1)[0]
     assert "$absenceLock = [System.IO.File]::Open(" in zero_owner_proof
-    assert "[System.IO.FileShare]::Read" in zero_owner_proof
+    assert "[System.IO.FileShare]::None" in zero_owner_proof
     assert "Test-AtlasoByteArraysEqual -Left $originalBytes" in zero_owner_proof
     assert zero_owner_proof.index("if ($OnVerified)") < zero_owner_proof.index(
         "$absenceLock.Dispose()"
@@ -3100,6 +3105,7 @@ def test_module_keeps_inventory_work_out_of_normal_delete_path() -> None:
         "return"
     )
     assert stale_repair.index("if ($OnVerified)", replacement_verification) < replacement_unlock
+    assert stale_repair.count("Get-Process vmware -ErrorAction SilentlyContinue") >= 5
     implementation = re.sub(r"<#.*?#>\s*", "", module, flags=re.DOTALL)
     assert len(implementation.splitlines()) < 1_260
 

@@ -661,13 +661,13 @@ function Remove-AtlasoWorkstationStaleRegistrations {
         try {
             # A locked empty inventory makes zero ownership durable before the
             # recovery marker is retired and before Workstation may be reopened.
-            $missingInventoryLock = [System.IO.File]::Open($missingInventoryPath, 'CreateNew', 'ReadWrite', 'Read')
+            $missingInventoryLock = [System.IO.File]::Open($missingInventoryPath, 'CreateNew', 'ReadWrite', 'None')
         } catch { throw "VMware Workstation inventory appeared while write exclusion was being established; provider state was preserved: $missingInventoryPath" }
         try {
             if ($resolvedVmxPath -and (Test-Path -LiteralPath $resolvedVmxPath)) {
                 throw "The exact stale-registration VMX was recreated before inventory absence could be proven: $resolvedVmxPath"
             }
-            if ($OnVerified) { & $OnVerified }
+            if ($OnVerified) { if ($isRealInventory -and (Get-Process vmware -ErrorAction SilentlyContinue)) { throw 'Close the VMware Workstation UI before removing stale Atlaso VM library entries.' }; & $OnVerified }
         }
         finally { $missingInventoryLock.Dispose() }
         return
@@ -746,7 +746,7 @@ function Remove-AtlasoWorkstationStaleRegistrations {
             $InventoryPath,
             [System.IO.FileMode]::Open,
             [System.IO.FileAccess]::Read,
-            [System.IO.FileShare]::Read
+            [System.IO.FileShare]::None
         )
         try {
             $lockedAbsenceBytes = Read-AtlasoStreamBytes -Stream $absenceLock
@@ -756,7 +756,7 @@ function Remove-AtlasoWorkstationStaleRegistrations {
             if ($resolvedVmxPath -and (Test-Path -LiteralPath $resolvedVmxPath)) {
                 throw "The exact stale-registration VMX was recreated before absence could be proven: $resolvedVmxPath"
             }
-            if ($OnVerified) { & $OnVerified }
+            if ($OnVerified) { if ($isRealInventory -and (Get-Process vmware -ErrorAction SilentlyContinue)) { throw 'Close the VMware Workstation UI before removing stale Atlaso VM library entries.' }; & $OnVerified }
         }
         finally {
             $absenceLock.Dispose()
@@ -869,7 +869,7 @@ function Remove-AtlasoWorkstationStaleRegistrations {
             $InventoryPath,
             [System.IO.FileMode]::Open,
             [System.IO.FileAccess]::Read,
-            ([System.IO.FileShare]::Read -bor [System.IO.FileShare]::Delete)
+            [System.IO.FileShare]::Delete
         )
         try {
             $lockedBytes = Read-AtlasoStreamBytes -Stream $inventoryLock
@@ -883,7 +883,7 @@ function Remove-AtlasoWorkstationStaleRegistrations {
             }
             [System.IO.File]::Replace($temporaryPath, $InventoryPath, $backupPath, $true)
             $replacementApplied = $true
-            $displacedBytes = [System.IO.File]::ReadAllBytes($backupPath)
+            $displacedBytes = Read-AtlasoStreamBytes -Stream $inventoryLock
             if (-not (Test-AtlasoByteArraysEqual -Left $originalBytes -Right $displacedBytes)) {
                 $preserveBackup = $true
                 $replacementApplied = $false
@@ -895,7 +895,7 @@ function Remove-AtlasoWorkstationStaleRegistrations {
                     -Description 'VMware Workstation inventory'
                 throw 'VMware Workstation inventory was replaced during scoped stale-registration repair; provider state was restored.'
             }
-            $replacementLock = [System.IO.File]::Open($InventoryPath, 'Open', 'Read', 'Read')
+            $replacementLock = [System.IO.File]::Open($InventoryPath, 'Open', 'Read', 'None')
             try {
                 $verifiedReplacementBytes = Read-AtlasoStreamBytes -Stream $replacementLock
                 if (-not (Test-AtlasoByteArraysEqual -Left $replacementBytes -Right $verifiedReplacementBytes)) {
@@ -904,7 +904,7 @@ function Remove-AtlasoWorkstationStaleRegistrations {
                 # A verified replacement is a safe monotonic repair. Preserve it if
                 # the recovery-release callback fails so the durable marker can retry.
                 $replacementApplied = $false
-                if ($OnVerified) { & $OnVerified }
+                if ($OnVerified) { if ($isRealInventory -and (Get-Process vmware -ErrorAction SilentlyContinue)) { throw 'Close the VMware Workstation UI before removing stale Atlaso VM library entries.' }; & $OnVerified }
             }
             finally { $replacementLock.Dispose() }
         }

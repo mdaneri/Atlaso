@@ -364,10 +364,10 @@ Durable normal-test-VM recovery repeats that same narrow registration proof afte
 the exact artifact root. The marker-bound VMX path and display name must either have no registration or identify one
 well-formed stale library row that can be removed safely. A mismatched, duplicate, malformed, changed, or otherwise
 ambiguous selected row keeps the cleanup marker and any quarantined disks actionable for the next bounded retry;
-unrelated Workstation registrations and artifact roots remain untouched. Workstation must remain closed, and recovery
-restores quarantined disks and retires the marker while the verified inventory remains write-excluded. If no inventory
-exists, recovery creates and locks an empty inventory so the proven zero-registration state remains authoritative after
-the marker is retired.
+unrelated Workstation registrations and artifact roots remain untouched. Workstation must remain closed and is
+revalidated after inventory exclusion is acquired. Recovery restores quarantined disks and retires the marker while
+the verified inventory remains read-and-write-excluded. If no inventory exists, recovery creates and exclusively locks
+an empty inventory so the proven zero-registration state remains authoritative after the marker is retired.
 
 Checked `deleteVM` may remove the complete validated artifact root itself. Cleanup records that transition immediately,
 continues the same registration and identity-aware running-inventory postconditions, and requires the exact root to stay
