@@ -198,6 +198,18 @@ CODEX_WORKTREE_ROOT_SHARED_MARKERS = (
     "First identify and verify whether the task uses the repository's primary checkout",
 )
 
+PRIMARY_CHECKOUT_BEFORE_ROOT_MARKERS = {
+    path: (
+        "First identify and verify whether the task uses the repository's primary checkout",
+        "`git-worktree-root`",
+    )
+    for path in (
+        Path("AGENTS.md"),
+        Path("CONTRIBUTING.md"),
+        Path("docs/contribute/agent-policies.md"),
+    )
+}
+
 REQUIRED_POLICY_MARKERS = {
     Path("AGENTS.md"): (
         "## Mandatory Agent Startup Gate",
@@ -3216,6 +3228,24 @@ def check_agent_policy_gate(root: Path) -> list[Finding]:
                             f"completed-task cleanup section marker is missing: {marker}",
                         )
                     )
+        primary_root_markers = PRIMARY_CHECKOUT_BEFORE_ROOT_MARKERS.get(relative_path)
+        if primary_root_markers is not None and cleanup_section is not None:
+            primary_marker, root_marker = primary_root_markers
+            normalized_cleanup_section = " ".join(cleanup_section.split())
+            primary_position = normalized_cleanup_section.find(primary_marker)
+            root_position = normalized_cleanup_section.find(root_marker)
+            if (
+                primary_position == -1
+                or root_position == -1
+                or primary_position > root_position
+            ):
+                findings.append(
+                    Finding(
+                        path,
+                        "completed-task cleanup must identify the primary checkout "
+                        "before resolving `git-worktree-root`",
+                    )
+                )
         if ordered_markers is not None and cleanup_section is not None:
             order_lines = extract_terminal_cleanup_order(cleanup_section)
             if order_lines != TERMINAL_CLEANUP_ORDER_LINES:

@@ -13,6 +13,7 @@ from scripts.check_repo import (
     NON_TASK_OWNED_CHECKOUT_PRESERVED_MARKER,
     NON_TASK_OWNED_REMOTE_BRANCH_PRESERVED_MARKER,
     ORDERED_TERMINAL_CLEANUP_MARKERS,
+    PRIMARY_CHECKOUT_BEFORE_ROOT_MARKERS,
     PRIMARY_CHECKOUT_REMOTE_GATE_MARKER,
     PRIMARY_CHECKOUT_RESTORED_MARKER,
     PRIMARY_CHECKOUT_RESUME_MARKER,
@@ -2086,6 +2087,9 @@ def write_policy_files(root: Path) -> None:
             marker
             for marker in markers
             if marker not in section_markers
+            and marker not in PRIMARY_CHECKOUT_BEFORE_ROOT_MARKERS.get(
+                relative_path, ()
+            )
             and marker != section_anchor
             and marker not in monitoring_markers
             and marker != monitoring_anchor
@@ -2118,6 +2122,12 @@ def write_policy_files(root: Path) -> None:
             )
         if section_anchor is not None:
             content_prefix = "" if section_anchor.startswith("#") else "  "
+            primary_root_markers = tuple(
+                content_prefix + marker
+                for marker in PRIMARY_CHECKOUT_BEFORE_ROOT_MARKERS.get(
+                    relative_path, ()
+                )
+            )
             non_ordered_markers = tuple(
                 content_prefix + marker
                 for marker in section_markers
@@ -2131,6 +2141,7 @@ def write_policy_files(root: Path) -> None:
             policy_lines.extend(
                 (
                     section_anchor,
+                    *primary_root_markers,
                     *non_ordered_markers,
                     content_prefix + TERMINAL_CLEANUP_ORDER_ANCHOR,
                     "",
@@ -2239,10 +2250,45 @@ def test_agent_policy_gate_requires_primary_checkout_before_root_resolution(
 
         findings = check_agent_policy_gate(case_root)
 
+        assert any(
+            finding.path == policy_path
+            and finding.message
+            == f"required agent policy marker is missing: {missing_marker}"
+            for finding in findings
+        )
+
+
+def test_agent_policy_gate_rejects_root_resolution_before_primary_checkout(
+    tmp_path: Path,
+) -> None:
+    """Cleanup policy must identify a primary checkout before root resolution.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
+    for index, (relative_path, markers) in enumerate(
+        PRIMARY_CHECKOUT_BEFORE_ROOT_MARKERS.items()
+    ):
+        case_root = tmp_path / str(index)
+        write_policy_files(case_root)
+        policy_path = case_root / relative_path
+        primary_marker, root_marker = markers
+        policy_text = policy_path.read_text(encoding="utf-8")
+        policy_path.write_text(
+            policy_text.replace(
+                f"{primary_marker}\n{root_marker}",
+                f"{root_marker}\n{primary_marker}",
+            ),
+            encoding="utf-8",
+        )
+
+        findings = check_agent_policy_gate(case_root)
+
         assert len(findings) == 1
         assert findings[0].path == policy_path
         assert findings[0].message == (
-            f"required agent policy marker is missing: {missing_marker}"
+            "completed-task cleanup must identify the primary checkout before "
+            "resolving `git-worktree-root`"
         )
 
 
