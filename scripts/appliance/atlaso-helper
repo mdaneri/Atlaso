@@ -19398,11 +19398,11 @@ def _installed_atlaso_database_url() -> str:
                 and _environment_file_unquoted_continues(raw_line)
             )
             continue
-        candidate = raw_line.strip()
+        candidate = raw_line.strip(" \t\r")
         assignment_name, separator, assignment_value = candidate.partition("=")
         if not separator or not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", assignment_name):
             continue
-        assignment_value = assignment_value.strip()
+        assignment_value = assignment_value.strip(" \t\r")
         assignment_quote = (
             assignment_value[0] if assignment_value.startswith(('"', "'")) else ""
         )

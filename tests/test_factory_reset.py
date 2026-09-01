@@ -595,6 +595,31 @@ def test_helper_database_url_preserves_non_newline_control_characters(
     )
 
 
+def test_helper_database_url_preserves_control_character_at_value_boundary(
+    monkeypatch, tmp_path
+):
+    """Systemd-preserved control characters remain part of the database URL.
+
+    Args:
+        monkeypatch: Pytest fixture used to isolate the helper environment file.
+        tmp_path: Temporary directory provided for the installed runtime fixture.
+    """
+    from tests.test_appliance_update import load_helper_module
+
+    helper = load_helper_module()
+    environment_path = tmp_path / "atlaso.env"
+    environment_path.write_text(
+        "ATLASO_DATABASE_URL=sqlite:////var/lib/atlaso/control.db\x0b\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(helper, "ATLASO_ENV_PATH", environment_path)
+
+    assert (
+        helper._installed_atlaso_database_url()
+        == "sqlite:////var/lib/atlaso/control.db\x0b"
+    )
+
+
 @pytest.mark.skipif(os.name != "posix", reason="requires POSIX descriptor paths")
 def test_factory_reset_runner_pins_admitted_state_directory(tmp_path):
     """Runner state remains bound to the admitted directory after replacement.
