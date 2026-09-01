@@ -214,6 +214,35 @@ def test_unknown_route_reference_is_an_absent_wan_target(client):
         assert route.interface_name in wan_absent_target_names(db)
 
 
+def test_unknown_live_route_reference_is_not_an_absent_wan_target(client, tmp_path):
+    """Keep cleanup visible when an unmanaged referenced interface is live.
+
+    Args:
+        client: HTTP test client providing the isolated application database.
+        tmp_path: Temporary live-link inventory root.
+    """
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.ui import wan_absent_target_names
+
+    interface_name = "external0"
+    (tmp_path / interface_name).mkdir()
+    with SessionLocal() as db:
+        db.add(
+            Route(
+                destination_cidr="203.0.113.0/24",
+                interface_name=interface_name,
+                metric=100,
+                enabled=True,
+            )
+        )
+        db.flush()
+
+        assert interface_name not in wan_absent_target_names(
+            db,
+            sys_class_net_dir=tmp_path,
+        )
+
+
 def test_disabled_features_do_not_surface_inactive_row_validation_errors():
     """Do not block Apply on invalid resources whose global feature is off."""
     invalid_route = Route(
