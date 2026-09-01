@@ -150,6 +150,9 @@ after runtime activation and protected credential cleanup finish. Current ordina
 schedule a management restart. Before activation, reset still stops and verifies any fixed-name management restart
 timer or service left by an older installation or interrupted legacy apply, then stops and verifies the application
 services again. This prevents a legacy delayed restart from reviving a database writer during factory replacement.
+Factory Appliance Settings activation initializes the packaged PowerCLI runtime from Atlaso's root-owned persistent
+PowerShell home, so the all-users VMware CEIP policy does not depend on an interactive root profile during the detached
+reset transaction.
 
 Reset progress and only the non-secret `keep`/`change` choices are recorded outside the database in
 `/var/lib/atlaso-privileged/factory-reset/request.json`; the last successful result is recorded in `last-result.json`. Atlaso

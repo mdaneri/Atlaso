@@ -719,8 +719,8 @@ def _should_run_real_action_with_systemd(action: str) -> bool:
     )
 
 
-def _appliance_update_powershell_environment() -> dict[str, str]:
-    """Perform appliance update powershell environment.
+def _privileged_powershell_environment() -> dict[str, str]:
+    """Return the persistent writable environment for privileged PowerShell work.
 
     """
     directories = [
@@ -798,8 +798,8 @@ def _run_real_action_with_systemd(group: str, action: str, args: list[str]) -> i
                 )
                 return 1
         command.append(f"--unit={unit.removesuffix('.service')}")
-    if group == "appliance-update":
-        powershell_env = _appliance_update_powershell_environment()
+    if group in {"appliance-update", "appliance-settings"}:
+        powershell_env = _privileged_powershell_environment()
         command.extend(
             [
                 f"--property=WorkingDirectory={ATLASO_POWERSHELL_HOME}",
@@ -807,15 +807,6 @@ def _run_real_action_with_systemd(group: str, action: str, args: list[str]) -> i
                 f"--setenv=XDG_CACHE_HOME={powershell_env['XDG_CACHE_HOME']}",
                 f"--setenv=XDG_CONFIG_HOME={powershell_env['XDG_CONFIG_HOME']}",
                 f"--setenv=XDG_DATA_HOME={powershell_env['XDG_DATA_HOME']}",
-            ]
-        )
-    elif group == "appliance-settings":
-        command.extend(
-            [
-                "--setenv=HOME=/root",
-                "--setenv=XDG_CACHE_HOME=/root/.cache",
-                "--setenv=XDG_CONFIG_HOME=/root/.config",
-                "--setenv=XDG_DATA_HOME=/root/.local/share",
             ]
         )
     command.extend([helper_path, group, action, "--real", *args])
@@ -12480,7 +12471,7 @@ def _sync_appliance_update_sources(payload: dict, credentials: dict[str, dict[st
         policy = "Trusted" if trusted else "Untrusted"
         credential = _source_credential(source, credentials)
         script = _powershell_repository_sync_script(name, url, policy)
-        env = _appliance_update_powershell_environment()
+        env = _privileged_powershell_environment()
         if credential:
             env.update({"LF_REPO_USER": str(credential.get("username") or ""), "LF_REPO_SECRET": str(credential["secret"])})
         command = _command_payload(
@@ -12509,7 +12500,7 @@ def _sync_appliance_update_sources(payload: dict, credentials: dict[str, dict[st
             )
             command = _command_payload(
                 [pwsh, "-NoLogo", "-NoProfile", "-NonInteractive", "-EncodedCommand", _powershell_encoded_command(script)],
-                env=_appliance_update_powershell_environment(),
+                env=_privileged_powershell_environment(),
             )
             commands.append(command)
             if not command.get("success"):
@@ -12779,7 +12770,7 @@ def _check_appliance_update(payload: dict, credentials: dict[str, dict[str, str]
                 + "; [pscustomobject]@{Name=$module.Name; AvailableVersion=$module.Version.ToString(); Repository=$module.Repository; InstalledVersions=$installed} | ConvertTo-Json -Compress"
             )
             credential = _source_credential(source, credentials)
-            env = _appliance_update_powershell_environment()
+            env = _privileged_powershell_environment()
             if credential:
                 env.update({"LF_REPO_USER": str(credential.get("username") or ""), "LF_REPO_SECRET": str(credential["secret"])})
             command_args = [pwsh, "-NoLogo", "-NoProfile", "-NonInteractive", "-EncodedCommand", _powershell_encoded_command(script)]
@@ -12912,7 +12903,7 @@ def _apply_powershell_modules(payload: dict, credentials: dict[str, dict[str, st
         )
         source = next((item for item in _enabled_sources(payload, "powershell") if str(item.get("name") or "") == repository), {})
         credential = _source_credential(source, credentials)
-        env = _appliance_update_powershell_environment()
+        env = _privileged_powershell_environment()
         if credential:
             env.update({"LF_REPO_USER": str(credential.get("username") or ""), "LF_REPO_SECRET": str(credential["secret"])})
         command_args = [pwsh, "-NoLogo", "-NoProfile", "-NonInteractive", "-EncodedCommand", _powershell_encoded_command(script)]

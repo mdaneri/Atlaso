@@ -8802,7 +8802,7 @@ def test_appliance_update_apply_uses_a_fixed_task_stream_unit(monkeypatch, tmp_p
     )
     monkeypatch.setattr(
         helper,
-        "_appliance_update_powershell_environment",
+        "_privileged_powershell_environment",
         lambda: {
             "HOME": "/var/lib/atlaso/powershell",
             "XDG_CACHE_HOME": "/var/lib/atlaso/powershell/.cache",
@@ -8887,7 +8887,7 @@ def test_appliance_update_status_transitions_serialize_one_fixed_task_unit(
     )
     monkeypatch.setattr(
         helper,
-        "_appliance_update_powershell_environment",
+        "_privileged_powershell_environment",
         lambda: {
             "HOME": "/var/lib/atlaso/powershell",
             "XDG_CACHE_HOME": "/var/lib/atlaso/powershell/.cache",
@@ -9061,8 +9061,8 @@ def test_management_handoff_recovery_uses_fixed_systemd_unit(monkeypatch):
     assert f"--unit={helper.MANAGEMENT_HANDOFF_RECOVERY_UNIT.removesuffix('.service')}" in commands[0]
 
 
-def test_powercli_helper_actions_receive_writable_root_configuration_environment(monkeypatch, tmp_path):
-    """Verify that powercli helper actions receive writable root configuration environment.
+def test_powercli_helper_actions_receive_persistent_writable_environment(monkeypatch, tmp_path):
+    """Verify that PowerCLI policy uses the persistent privileged PowerShell home.
 
     Args:
         monkeypatch: Pytest fixture used to replace dependencies for the test.
@@ -9071,8 +9071,10 @@ def test_powercli_helper_actions_receive_writable_root_configuration_environment
     helper = load_helper_module()
     config_path = tmp_path / "atlaso-settings.json"
     config_path.write_text("{}\n", encoding="utf-8")
+    powershell_home = tmp_path / "powershell"
     commands: list[list[str]] = []
 
+    monkeypatch.setattr(helper, "ATLASO_POWERSHELL_HOME", powershell_home)
     monkeypatch.setattr(
         helper.shutil,
         "which",
@@ -9093,12 +9095,16 @@ def test_powercli_helper_actions_receive_writable_root_configuration_environment
         [str(config_path)],
     ) == 0
 
-    assert "--setenv=HOME=/root" in commands[0]
-    assert "--setenv=XDG_CACHE_HOME=/root/.cache" in commands[0]
-    assert "--setenv=XDG_CONFIG_HOME=/root/.config" in commands[0]
-    assert "--setenv=XDG_DATA_HOME=/root/.local/share" in commands[0]
+    assert f"--property=WorkingDirectory={powershell_home}" in commands[0]
+    assert f"--setenv=HOME={powershell_home}" in commands[0]
+    assert f"--setenv=XDG_CACHE_HOME={powershell_home / '.cache'}" in commands[0]
+    assert f"--setenv=XDG_CONFIG_HOME={powershell_home / '.config'}" in commands[0]
+    assert f"--setenv=XDG_DATA_HOME={powershell_home / '.local' / 'share'}" in commands[0]
+    assert "--setenv=HOME=/root" not in commands[0]
     helper_index = commands[0].index(str(Path(helper.__file__).resolve()))
-    assert commands[0].index("--setenv=HOME=/root") < helper_index
+    assert commands[0].index(f"--setenv=HOME={powershell_home}") < helper_index
+    assert powershell_home.is_dir()
+    assert (powershell_home / ".config").is_dir()
 
 
 def test_appliance_update_receives_writable_powershell_environment(monkeypatch, tmp_path):
