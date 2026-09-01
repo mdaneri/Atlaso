@@ -1082,6 +1082,31 @@ if ($UseVmwareGuestInfoHostKey -and (-not $UsePasswordDeploy -or -not $VmxPath))
     throw '-UseVmwareGuestInfoHostKey requires password-backed deployment and an explicit normal test VM -VmxPath.'
 }
 
+$resolvedVmrun = ''
+$resolvedVmxPath = ''
+if ($VmxPath -or -not $IpAddress) {
+    $resolvedVmrun = Resolve-VmrunPath -Path $VmrunPath
+    if (-not $VmxPath) {
+        $VmxPath = Get-AtlasoRunningVmx -ResolvedVmrun $resolvedVmrun
+    }
+    $resolvedVmxPath = (Resolve-Path -LiteralPath $VmxPath).Path
+}
+if (-not $IpAddress) {
+    $IpAddress = Get-GuestIpAddress -ResolvedVmrun $resolvedVmrun -ResolvedVmxPath $resolvedVmxPath
+}
+
+$trustedSshHostKey = ''
+if ($UseVmwareGuestInfoHostKey) {
+    # Resolve test-only trust evidence before allocating the wheelhouse so lookup failures leave no build staging.
+    $workstationFirstBootPath = Join-Path $resolvedRepoRoot 'scripts\windows\vmware\Atlaso.WorkstationFirstBoot.ps1'
+    . $workstationFirstBootPath
+    $trustedSshHostKey = (Get-AtlasoWorkstationSshHostKey `
+            -VmxPath $resolvedVmxPath `
+            -VmrunPath $resolvedVmrun `
+            -TimeoutSeconds 15 `
+            -PollSeconds $ReadinessPollSeconds).PublicKey
+}
+
 $generatedRuntimeDependencyRoot = ''
 $generatedWheelPath = ''
 if (-not $SkipBuild) {
@@ -1248,30 +1273,6 @@ $remoteInventoryLinuxPackagePath = if ($inventoryLinuxPackagePath) {
     ''
 }
 $remoteScriptPath = Join-RemotePath -Directory $RemoteDirectory -Leaf 'atlaso-deploy-wheel.sh'
-
-$resolvedVmrun = ''
-$resolvedVmxPath = ''
-if ($VmxPath -or -not $IpAddress) {
-    $resolvedVmrun = Resolve-VmrunPath -Path $VmrunPath
-    if (-not $VmxPath) {
-        $VmxPath = Get-AtlasoRunningVmx -ResolvedVmrun $resolvedVmrun
-    }
-    $resolvedVmxPath = (Resolve-Path -LiteralPath $VmxPath).Path
-}
-if (-not $IpAddress) {
-    $IpAddress = Get-GuestIpAddress -ResolvedVmrun $resolvedVmrun -ResolvedVmxPath $resolvedVmxPath
-}
-
-$trustedSshHostKey = ''
-if ($UseVmwareGuestInfoHostKey) {
-    $workstationFirstBootPath = Join-Path $resolvedRepoRoot 'scripts\windows\vmware\Atlaso.WorkstationFirstBoot.ps1'
-    . $workstationFirstBootPath
-    $trustedSshHostKey = (Get-AtlasoWorkstationSshHostKey `
-            -VmxPath $resolvedVmxPath `
-            -VmrunPath $resolvedVmrun `
-            -TimeoutSeconds 15 `
-            -PollSeconds $ReadinessPollSeconds).PublicKey
-}
 
 if (-not $UsePasswordDeploy) {
     Test-RequiredCommand -Name 'scp' | Out-Null

@@ -105,6 +105,13 @@ if (-not $scriptText.Contains('Get-AtlasoWorkstationSshHostKey', [System.StringC
     -not $scriptText.Contains('client.get_host_keys().add(host, parts[0], trusted_key)', [System.StringComparison]::Ordinal)) {
     throw 'Only an explicitly selected normal test VM may reconcile verified guest-info evidence into the child in-memory host keys.'
 }
+$guestInfoLookupIndex = $scriptText.IndexOf('Get-AtlasoWorkstationSshHostKey `', [System.StringComparison]::Ordinal)
+$wheelhouseAllocationIndex = $scriptText.IndexOf('$generatedRuntimeDependencyRoot = Join-Path (', [System.StringComparison]::Ordinal)
+if ($guestInfoLookupIndex -lt 0 -or
+    $wheelhouseAllocationIndex -lt 0 -or
+    $guestInfoLookupIndex -ge $wheelhouseAllocationIndex) {
+    throw 'Guest-info host-key lookup must complete before generated wheelhouse staging is allocated.'
+}
 if (-not $scriptText.Contains('transport.get_security_options()', [System.StringComparison]::Ordinal) -or
     -not $scriptText.Contains('security_options.key_types', [System.StringComparison]::Ordinal)) {
     throw 'Password-backed deployment must prefer the recorded SSH host-key type before negotiation.'
