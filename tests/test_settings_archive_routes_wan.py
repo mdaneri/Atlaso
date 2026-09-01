@@ -171,6 +171,68 @@ def test_restore_routes_wan_archive_still_validates_management_default(client):
             restore_settings_archive(db_session, archive)
 
 
+def test_restore_routes_wan_archive_ignores_inactive_physical_management_default(client):
+    """Routing-off preflight leaves an inactive flagged physical default dormant."""
+    with SessionLocal() as db_session:
+        archive = deepcopy(export_settings_archive(db_session, actor="test"))
+    flagged_access = next(
+        row
+        for row in archive["data"]["physical_interfaces"]
+        if row.get("role") == "access" and row.get("ip_cidr")
+    )
+    flagged_access["access_management_ui_enabled"] = True
+    flagged_access["admin_state"] = "down"
+    archive["data"]["routes"].append(
+        {
+            "destination_cidr": "0.0.0.0/0",
+            "gateway": "203.0.113.1",
+            "interface_name": flagged_access["name"],
+            "metric": 100,
+            "enabled": True,
+            "wan_mode": "interface",
+            "wan_policy_name": None,
+        }
+    )
+    _set_routes_wan_setting(archive, key=ROUTING_ENABLED_SETTING_KEY, value=False)
+
+    with SessionLocal() as db_session:
+        restore_settings_archive(db_session, archive)
+
+
+def test_restore_routes_wan_archive_ignores_parent_down_vlan_management_default(client):
+    """Routing-off preflight leaves a flagged VLAN default dormant with its parent down."""
+    with SessionLocal() as db_session:
+        archive = deepcopy(export_settings_archive(db_session, actor="test"))
+    flagged_vlan = next(
+        row
+        for row in archive["data"]["vlan_interfaces"]
+        if row.get("enabled") and row.get("ip_cidr")
+    )
+    parent = next(
+        row
+        for row in archive["data"]["physical_interfaces"]
+        if row["name"] == flagged_vlan["parent_interface"]
+    )
+    flagged_vlan["role"] = "access"
+    flagged_vlan["access_management_ui_enabled"] = True
+    parent["admin_state"] = "down"
+    archive["data"]["routes"].append(
+        {
+            "destination_cidr": "0.0.0.0/0",
+            "gateway": "203.0.113.1",
+            "interface_name": flagged_vlan["name"],
+            "metric": 100,
+            "enabled": True,
+            "wan_mode": "interface",
+            "wan_policy_name": None,
+        }
+    )
+    _set_routes_wan_setting(archive, key=ROUTING_ENABLED_SETTING_KEY, value=False)
+
+    with SessionLocal() as db_session:
+        restore_settings_archive(db_session, archive)
+
+
 def test_restore_routes_wan_archive_rejects_dedicated_management_route(client):
     """Dedicated management interfaces are not ordinary lab-route targets."""
     with SessionLocal() as db_session:

@@ -2073,14 +2073,31 @@ def _validate_archive_relationships(data: dict[str, list[dict[str, Any]]]) -> No
         != "management"
     }
     route_target_names = set(route_target_families)
-    management_target_names = {
-        name
-        for name in route_target_names
-        if (physical_interfaces.get(name) or vlan_interfaces.get(name, {})).get(
-            "access_management_ui_enabled", False
-        )
-        is True
-    }
+    management_target_names: set[str] = set()
+    for name in route_target_names:
+        physical = physical_interfaces.get(name)
+        vlan = vlan_interfaces.get(name)
+        row = physical or vlan or {}
+        if (
+            normalize_interface_role(row.get("role")) != "access"
+            or row.get("access_management_ui_enabled", False) is not True
+        ):
+            continue
+        if physical is not None:
+            if (
+                normalize_interface_mode(physical.get("mode")) == "access"
+                and str(physical.get("admin_state") or "up").lower() == "up"
+            ):
+                management_target_names.add(name)
+            continue
+        parent = physical_interfaces.get(str((vlan or {}).get("parent_interface") or ""))
+        if (
+            parent is not None
+            and str(parent.get("oper_state") or "") != "missing"
+            and str(parent.get("admin_state") or "up").lower() == "up"
+            and normalize_interface_mode(parent.get("mode")) == "trunk"
+        ):
+            management_target_names.add(name)
     route_target_cidrs = {
         name: (
             (physical_interfaces.get(name) or vlan_interfaces[name]).get("ip_cidr"),
