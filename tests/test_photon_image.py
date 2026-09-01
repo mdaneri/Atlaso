@@ -1760,7 +1760,10 @@ def test_vmware_packer_requires_proven_task_or_release_builder_identity() -> Non
     )
     identity_admission = wrapper.index("$builderIdentity = if ($ReleaseBuilder) {")
     credential_access = wrapper.index("$needsOnePasswordDefaults =")
-    assert recovery < identity_admission < credential_access
+    artifact_admission = wrapper.index(
+        "$OnePasswordPython = Confirm-AtlasoPhotonOnePasswordArtifact `"
+    )
+    assert credential_access < artifact_admission < recovery < identity_admission
     assert wrapper.count(
         "$releaseIdentityArguments['WorkflowRunId'] = $ReleaseWorkflowRunId"
     ) == 2

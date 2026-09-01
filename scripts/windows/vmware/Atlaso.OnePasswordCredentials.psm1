@@ -244,12 +244,17 @@ Positive deadline for an architecture probe when launcher metadata omits it.
 
 .PARAMETER ArchitectureResolver
 Optional architecture-probe callback used by focused tests.
+
+.PARAMETER AllCandidates
+Return every metadata-compatible candidate in rank order so the caller can
+perform the complete runtime probe and continue after an incompatible entry.
 #>
 function Select-AtlasoOnePasswordPythonFromLauncherInventory {
     param(
         [Parameter(Mandatory = $true)][AllowEmptyString()][string]$LauncherOutput,
         [ValidateRange(1, 3600)][int]$TimeoutSeconds = 30,
-        [scriptblock]$ArchitectureResolver
+        [scriptblock]$ArchitectureResolver,
+        [switch]$AllCandidates
     )
 
     $launcherPatterns = @(
@@ -286,6 +291,7 @@ function Select-AtlasoOnePasswordPythonFromLauncherInventory {
     $rankedCandidates = @($candidates |
         Where-Object { Test-Path -LiteralPath $_.Path -PathType Leaf } |
         Sort-Object -Property @{ Expression = 'Version'; Descending = $true }, @{ Expression = 'Path'; Descending = $false })
+    $compatibleCandidates = [System.Collections.Generic.List[object]]::new()
     foreach ($candidate in $rankedCandidates) {
         # The temporary compatibility artifact is intentionally narrower than
         # upstream: only ordinary Windows x64 CPython 3.14 is approved.
@@ -313,9 +319,42 @@ function Select-AtlasoOnePasswordPythonFromLauncherInventory {
                 continue
             }
         }
-        return @($candidate)
+        if (-not $AllCandidates) {
+            return @($candidate)
+        }
+        $compatibleCandidates.Add($candidate)
     }
-    return @()
+    return @($compatibleCandidates)
+}
+
+<#
+.SYNOPSIS
+Run the complete isolated 1Password SDK Python compatibility probe.
+
+.PARAMETER PythonCommand
+Exact candidate Python executable.
+
+.PARAMETER TimeoutSeconds
+Positive deadline for the bounded runtime probe.
+#>
+function Get-AtlasoOnePasswordRuntimeProbe {
+    param(
+        [Parameter(Mandatory = $true)][string]$PythonCommand,
+        [Parameter(Mandatory = $true)][ValidateRange(1, 3600)][int]$TimeoutSeconds
+    )
+
+    return (Invoke-AtlasoBoundedProcess `
+            -FilePath $PythonCommand `
+            -ArgumentList @(
+                '-I', '-S', '-c',
+                ('import json,platform,struct,sys,sysconfig; print(json.dumps({' +
+                '"implementation":platform.python_implementation(),' +
+                '"version":f"{sys.version_info.major}.{sys.version_info.minor}",' +
+                '"bits":struct.calcsize("P")*8,"machine":platform.machine().lower(),' +
+                '"gil_disabled":bool(sysconfig.get_config_var("Py_GIL_DISABLED"))}))')
+            ) `
+            -TimeoutSeconds ([Math]::Min($TimeoutSeconds, 30)) `
+            -Action 'The 1Password SDK Python runtime probe').Trim()
 }
 
 <#
@@ -391,13 +430,28 @@ function Resolve-AtlasoOnePasswordPython {
         catch {
             throw "$ConsumerDescription could not inventory Windows-registered Python runtimes; pass -OnePasswordPython explicitly."
         }
-        $selected = @(Select-AtlasoOnePasswordPythonFromLauncherInventory `
+        $selectedCandidates = @(Select-AtlasoOnePasswordPythonFromLauncherInventory `
                 -LauncherOutput $launcherOutput `
-                -TimeoutSeconds $TimeoutSeconds)
-        if ($selected.Count -ne 1) {
+                -TimeoutSeconds $TimeoutSeconds `
+                -AllCandidates)
+        foreach ($candidate in $selectedCandidates) {
+            try {
+                $candidateRuntimeJson = Get-AtlasoOnePasswordRuntimeProbe `
+                    -PythonCommand $candidate.Path `
+                    -TimeoutSeconds $TimeoutSeconds
+                Assert-AtlasoOnePasswordRuntimeProbe `
+                    -RuntimeJson $candidateRuntimeJson `
+                    -ConsumerDescription $ConsumerDescription
+                $resolvedCommand = $candidate.Path
+                break
+            }
+            catch {
+                continue
+            }
+        }
+        if ([string]::IsNullOrWhiteSpace($resolvedCommand)) {
             throw "$ConsumerDescription requires a Windows-registered standard x64 CPython 3.14 runtime or an explicit -OnePasswordPython path."
         }
-        $resolvedCommand = $selected[0].Path
     }
     else {
         $command = Get-Command -Name $PythonCommand -CommandType Application -ErrorAction SilentlyContinue
@@ -406,21 +460,14 @@ function Resolve-AtlasoOnePasswordPython {
         }
         $resolvedCommand = $command.Source
     }
-    $runtimeJson = (Invoke-AtlasoBoundedProcess `
-            -FilePath $resolvedCommand `
-            -ArgumentList @(
-                '-I', '-S', '-c',
-                ('import json,platform,struct,sys,sysconfig; print(json.dumps({' +
-                '"implementation":platform.python_implementation(),' +
-                '"version":f"{sys.version_info.major}.{sys.version_info.minor}",' +
-                '"bits":struct.calcsize("P")*8,"machine":platform.machine().lower(),' +
-                '"gil_disabled":bool(sysconfig.get_config_var("Py_GIL_DISABLED"))}))')
-            ) `
-            -TimeoutSeconds ([Math]::Min($TimeoutSeconds, 30)) `
-            -Action 'The 1Password SDK Python runtime probe').Trim()
-    Assert-AtlasoOnePasswordRuntimeProbe `
-        -RuntimeJson $runtimeJson `
-        -ConsumerDescription $ConsumerDescription
+    if (-not [string]::IsNullOrWhiteSpace($PythonCommand)) {
+        $runtimeJson = Get-AtlasoOnePasswordRuntimeProbe `
+            -PythonCommand $resolvedCommand `
+            -TimeoutSeconds $TimeoutSeconds
+        Assert-AtlasoOnePasswordRuntimeProbe `
+            -RuntimeJson $runtimeJson `
+            -ConsumerDescription $ConsumerDescription
+    }
     return $resolvedCommand
 }
 

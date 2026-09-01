@@ -266,6 +266,14 @@ def test_omitted_nonsecret_sdk_selectors_are_discovered_fail_closed() -> None:
     assert "-(?<Architecture>32|64|arm64)" in module
     assert "$candidate.Architecture -cne '64'" in module
     assert "free-threaded 3.14t are unsupported" in module
+    assert "-AllCandidates" in module
+    auto_resolver = module.index("function Resolve-AtlasoOnePasswordPython {")
+    candidate_loop = module.index(
+        "foreach ($candidate in $selectedCandidates) {", auto_resolver
+    )
+    candidate_probe = module.index("Get-AtlasoOnePasswordRuntimeProbe `", candidate_loop)
+    candidate_continue = module.index("continue", candidate_probe)
+    assert candidate_loop < candidate_probe < candidate_continue
     assert module.index("Initialize-AtlasoOnePasswordSdkRuntime `", module.index("function Get-AtlasoOnePasswordCredentialPair")) < module.index(
         "Resolve-AtlasoOnePasswordAccount `",
         module.index("function Get-AtlasoOnePasswordCredentialPair"),
