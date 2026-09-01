@@ -582,6 +582,8 @@ def _run_stale_registration_repair(
     *,
     scope_root: Path,
     environment: dict[str, str],
+    vmx_path: Path | None = None,
+    expected_display_name: str | None = None,
 ) -> subprocess.CompletedProcess[str]:
     """Invoke only the exported pre-GUI stale-registration repair.
 
@@ -589,15 +591,27 @@ def _run_stale_registration_repair(
         tmp_path: Scratch directory for the generated wrapper.
         scope_root: Exact scope allowed for missing registration repair.
         environment: Environment used to invoke the repair command.
+        vmx_path: Optional exact missing VMX registration to select.
+        expected_display_name: Required display name for an exact selection.
     """
     wrapper = tmp_path / "repair-stale-registrations.ps1"
     module = VMWARE_SCRIPT_ROOT / "Atlaso.WorkstationCleanup.psm1"
+    module_literal = str(module).replace("'", "''")
+    scope_literal = str(scope_root).replace("'", "''")
+    exact_selection = ""
+    if vmx_path is not None or expected_display_name is not None:
+        vmx_literal = str(vmx_path).replace("'", "''")
+        display_name_literal = str(expected_display_name).replace("'", "''")
+        exact_selection = (
+            f"    -VmxPath '{vmx_literal}' `\n"
+            f"    -ExpectedDisplayName '{display_name_literal}' `\n"
+        )
     wrapper.write_text(
         f"""$ErrorActionPreference = 'Stop'
-Import-Module '{module}' -Force
+Import-Module '{module_literal}' -Force
 Repair-AtlasoWorkstationStaleRegistrations `
-    -ScopeRoot '{scope_root}' `
-    -Confirm:$false
+    -ScopeRoot '{scope_literal}' `
+{exact_selection}    -Confirm:$false
 Write-Host 'REPAIR SUCCEEDED'
 """,
         encoding="utf-8",
@@ -1512,7 +1526,7 @@ def test_stale_atlaso_registration_ignores_unrelated_broken_entries(tmp_path: Pa
     assert result.returncode == 0, result.stdout + result.stderr
     assert not root.exists()
     inventory_text = inventory.read_text(encoding="utf-8")
-    assert str(stale.resolve()) not in inventory_text
+    assert f'= "{stale.resolve()}"' not in inventory_text
     assert str(unrelated_missing.resolve()) in inventory_text
     assert "vmlistBROKEN.config = malformed" in inventory_text
     assert "unrelated.value = keep-me" in inventory_text
@@ -1552,6 +1566,483 @@ def test_pre_gui_repair_removes_only_missing_scoped_registration(tmp_path: Path)
     assert str(stale.resolve()) not in inventory_text
     assert str(unrelated.resolve()) in inventory_text
     assert "unrelated.value = keep-me" in inventory_text
+
+
+def test_exact_stale_repair_matches_marker_path_and_display_name(tmp_path: Path) -> None:
+    """Repair only the exact marker-bound row after its artifact root disappeared.
+
+    Args:
+        tmp_path: Pytest temporary directory path.
+    """
+    root = tmp_path / "test-vms" / "Atlaso-PR-672-cleanup"
+    stale = root / "Atlaso-PR-672-cleanup.vmx"
+    unrelated = root.parent / "Atlaso-PR-671-unrelated" / "missing.vmx"
+    prefixed_unrelated = root / "Atlaso-PR-672-cleanup.vmx backup.vmx"
+    apostrophe_prefixed_unrelated = root / "Atlaso-PR-672-cleanup.vmx' backup.vmx"
+    unquoted_apostrophe_unrelated = root / "Atlaso-PR-672-cleanup.vmx' unquoted.vmx"
+    quoted_non_vmx_unrelated = root / "Atlaso-PR-672-cleanup.vmx backup.txt"
+    single_quoted_non_vmx_unrelated = root / "Atlaso-PR-672-cleanup.vmx single backup.txt"
+    unquoted_non_vmx_unrelated = root / "Atlaso-PR-672-cleanup.vmx unquoted backup.txt"
+    suffix = (
+        f'index6.id = "{stale.resolve()}"\n'
+        f'VMLIST6.config = "{stale.resolve()}"\n'
+        'vmlist6.DisplayName = "Atlaso-PR-672-cleanup"\n'
+        f'vmlist7.config = "{unrelated.resolve()}"\n'
+        'vmlist7.DisplayName = "Atlaso-PR-671-unrelated"\n'
+        f'index7.id = "{unrelated.resolve()}"\n'
+        f'vmlist8.config = "{prefixed_unrelated.resolve()}"\n'
+        'vmlist8.DisplayName = "Prefixed unrelated VM"\n'
+        f'index8.id = "{prefixed_unrelated.resolve()}"\n'
+        f'vmlist9.config = "{apostrophe_prefixed_unrelated.resolve()}"\n'
+        'vmlist9.DisplayName = "Apostrophe-prefixed unrelated VM"\n'
+        f"vmlist10.config = {unquoted_apostrophe_unrelated.resolve()}\n"
+        f'vmlist11.config = "{quoted_non_vmx_unrelated.resolve()}"\n'
+        f"vmlist12.config = '{single_quoted_non_vmx_unrelated.resolve()}'\n"
+        f"vmlist13.config = {unquoted_non_vmx_unrelated.resolve()}\n"
+        "unrelated.value = keep-me\n"
+    )
+    _, environment, _, inventory = _write_fake_vmrun(
+        tmp_path / "fake", [], inventory_suffix=suffix
+    )
+    inventory.write_text('.encoding = "UTF-8"\r\ufeff' + suffix.replace("\n", "\r"), encoding="utf-8-sig")
+
+    result = _run_stale_registration_repair(
+        tmp_path,
+        scope_root=root,
+        vmx_path=stale,
+        expected_display_name="Atlaso-PR-672-cleanup",
+        environment=environment,
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    inventory_text = inventory.read_text(encoding="utf-8")
+    assert f'= "{stale.resolve()}"' not in inventory_text
+    assert 'vmlist6.DisplayName = "Atlaso-PR-672-cleanup"' not in inventory_text
+    assert str(unrelated.resolve()) in inventory_text
+    assert str(prefixed_unrelated.resolve()) in inventory_text
+    assert str(apostrophe_prefixed_unrelated.resolve()) in inventory_text
+    assert str(unquoted_apostrophe_unrelated.resolve()) in inventory_text
+    assert str(quoted_non_vmx_unrelated.resolve()) in inventory_text
+    assert str(single_quoted_non_vmx_unrelated.resolve()) in inventory_text
+    assert str(unquoted_non_vmx_unrelated.resolve()) in inventory_text
+    assert "Atlaso-PR-671-unrelated" in inventory_text
+    assert "unrelated.value = keep-me" in inventory_text
+
+
+def test_exact_stale_repair_rechecks_initially_absent_inventory(tmp_path: Path) -> None:
+    """Reject provider inventory that appears after the caller resolved absence.
+
+    Args:
+        tmp_path: Pytest temporary directory path.
+    """
+    root = tmp_path / "test-vms" / "Atlaso-PR-672-cleanup"
+    stale = root / "Atlaso-PR-672-cleanup.vmx"
+    suffix = (
+        f'vmlist6.config = "{stale.resolve()}"\n'
+        'vmlist6.DisplayName = "Atlaso-PR-672-cleanup"\n'
+    )
+    _, environment, _, inventory = _write_fake_vmrun(
+        tmp_path / "fake", [], inventory_suffix=suffix
+    )
+    original_inventory = inventory.read_bytes()
+    wrapper = tmp_path / "repair-after-inventory-appears.ps1"
+    module_literal = str(
+        VMWARE_SCRIPT_ROOT / "Atlaso.WorkstationCleanup.psm1"
+    ).replace("'", "''")
+    scope_literal = str(root).replace("'", "''")
+    vmx_literal = str(stale).replace("'", "''")
+    wrapper.write_text(
+        f"""$ErrorActionPreference = 'Stop'
+$module = Import-Module '{module_literal}' -Force -PassThru
+& $module {{
+    param($ScopeRoot, $VmxPath)
+    Remove-AtlasoWorkstationStaleRegistrations `
+        -InventoryPath $null `
+        -ScopeRoot $ScopeRoot `
+        -VmxPath $VmxPath `
+        -ExpectedDisplayName 'Atlaso-PR-672-cleanup'
+}} '{scope_literal}' '{vmx_literal}'
+""",
+        encoding="utf-8",
+    )
+
+    result = _run_script(wrapper, environment=environment)
+
+    assert result.returncode != 0
+    assert "inventory appeared while its absence was being verified" in result.stderr
+    assert inventory.read_bytes() == original_inventory
+
+
+def test_exact_stale_repair_locks_absent_inventory_through_callback(
+    tmp_path: Path,
+) -> None:
+    """Exclude provider creation until verified recovery release completes.
+
+    Args:
+        tmp_path: Pytest temporary directory path.
+    """
+    root = tmp_path / "test-vms" / "Atlaso-PR-672-cleanup"
+    stale = root / "Atlaso-PR-672-cleanup.vmx"
+    _, environment, _, inventory = _write_fake_vmrun(tmp_path / "fake", [])
+    inventory.unlink()
+    inventory.parent.rmdir()
+    redirected_appdata = tmp_path / "redirected-appdata"
+    try:
+        redirected_appdata.symlink_to(inventory.parent.parent, target_is_directory=True)
+    except OSError as error:
+        pytest.skip(f"directory symlink creation is unavailable: {error}")
+    environment["APPDATA"] = str(redirected_appdata)
+    callback_proof = tmp_path / "callback-proof.txt"
+    wrapper = tmp_path / "repair-while-inventory-absent.ps1"
+    module_literal = str(
+        VMWARE_SCRIPT_ROOT / "Atlaso.WorkstationCleanup.psm1"
+    ).replace("'", "''")
+    scope_literal = str(root).replace("'", "''")
+    vmx_literal = str(stale).replace("'", "''")
+    inventory_literal = str(inventory).replace("'", "''")
+    proof_literal = str(callback_proof).replace("'", "''")
+    wrapper.write_text(
+        f"""$ErrorActionPreference = 'Stop'
+Import-Module '{module_literal}' -Force
+Repair-AtlasoWorkstationStaleRegistrations `
+    -ScopeRoot '{scope_literal}' `
+    -VmxPath '{vmx_literal}' `
+    -ExpectedDisplayName 'Atlaso-PR-672-cleanup' `
+    -OnVerified {{
+        $readBlocked = $false
+        try {{
+            $providerRead = [System.IO.File]::Open('{inventory_literal}', 'Open', 'Read', 'ReadWrite')
+            $providerRead.Dispose()
+        }} catch {{ $readBlocked = $true }}
+        $writeBlocked = $false
+        try {{
+            $providerWrite = [System.IO.File]::Open('{inventory_literal}', 'OpenOrCreate', 'Write', 'ReadWrite')
+            $providerWrite.Dispose()
+        }} catch {{ $writeBlocked = $true }}
+        if (-not $readBlocked -or -not $writeBlocked) {{ throw 'Provider inventory access was admitted during recovery release.' }}
+        Set-Content -LiteralPath '{proof_literal}' -Value 'blocked'
+    }} `
+    -Confirm:$false
+""",
+        encoding="utf-8",
+    )
+
+    result = _run_script(wrapper, environment=environment)
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert callback_proof.read_text(encoding="utf-8").strip() == "blocked"
+    assert inventory.read_bytes() == b""
+
+
+def test_normal_stale_cleanup_keeps_missing_inventory_noop(tmp_path: Path) -> None:
+    """Do not require provider-state creation for ordinary scoped cleanup.
+
+    Args:
+        tmp_path: Pytest temporary directory path.
+    """
+    root = tmp_path / "test-vms" / "Atlaso-ordinary-cleanup"
+    appdata = tmp_path / "missing-appdata"
+    wrapper = tmp_path / "repair-ordinary-missing-inventory.ps1"
+    module_literal = str(
+        VMWARE_SCRIPT_ROOT / "Atlaso.WorkstationCleanup.psm1"
+    ).replace("'", "''")
+    scope_literal = str(root).replace("'", "''")
+    wrapper.write_text(
+        f"""$ErrorActionPreference = 'Stop'
+$env:APPDATA = '{str(appdata).replace("'", "''")}'
+$module = Import-Module '{module_literal}' -Force -PassThru
+& $module {{
+    param($ScopeRoot)
+    Remove-AtlasoWorkstationStaleRegistrations -InventoryPath $null -ScopeRoot $ScopeRoot
+}} '{scope_literal}'
+""",
+        encoding="utf-8",
+    )
+
+    result = _run_script(wrapper, environment=os.environ.copy())
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert not appdata.exists()
+
+
+def test_normal_stale_cleanup_keeps_present_zero_stale_noop(tmp_path: Path) -> None:
+    """Do not lock a present inventory when ordinary cleanup selects no rows.
+
+    Args:
+        tmp_path: Pytest temporary directory path.
+    """
+    root = tmp_path / "test-vms" / "Atlaso-ordinary-cleanup"
+    _, environment, _, inventory = _write_fake_vmrun(tmp_path / "fake", [])
+    wrapper = tmp_path / "repair-ordinary-zero-stale.ps1"
+    module_literal = str(
+        VMWARE_SCRIPT_ROOT / "Atlaso.WorkstationCleanup.psm1"
+    ).replace("'", "''")
+    scope_literal = str(root).replace("'", "''")
+    inventory_literal = str(inventory).replace("'", "''")
+    wrapper.write_text(
+        f"""$ErrorActionPreference = 'Stop'
+$module = Import-Module '{module_literal}' -Force -PassThru
+& $module {{ Set-Item -Path Function:script:Get-Process -Value {{ [pscustomobject]@{{ Name = 'vmware' }} }} }}
+& $module {{
+    param($InventoryPath, $ScopeRoot)
+    Remove-AtlasoWorkstationStaleRegistrations `
+        -InventoryPath $InventoryPath `
+        -ScopeRoot $ScopeRoot
+}} '{inventory_literal}' '{scope_literal}'
+""",
+        encoding="utf-8",
+    )
+
+    result = _run_script(wrapper, environment=environment)
+
+    assert result.returncode == 0, result.stdout + result.stderr
+
+
+def test_exact_stale_repair_removes_orphaned_marker_index(tmp_path: Path) -> None:
+    """Remove an exact stale index even when its config group is already absent.
+
+    Args:
+        tmp_path: Pytest temporary directory path.
+    """
+    root = tmp_path / "test-vms" / "Atlaso-PR-672-cleanup"
+    stale = root / "Atlaso-PR-672-cleanup.vmx"
+    unrelated = root.parent / "Atlaso-PR-671-unrelated" / "missing.vmx"
+    suffix = (
+        f'index6.id = "{stale.resolve()}"\n'
+        f'index7.id = "{unrelated.resolve()}"\n'
+        "unrelated.value = keep-me\n"
+    )
+    _, environment, _, inventory = _write_fake_vmrun(
+        tmp_path / "fake", [], inventory_suffix=suffix
+    )
+
+    result = _run_stale_registration_repair(
+        tmp_path,
+        scope_root=root,
+        vmx_path=stale,
+        expected_display_name="Atlaso-PR-672-cleanup",
+        environment=environment,
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    inventory_text = inventory.read_text(encoding="utf-8")
+    assert str(stale.resolve()) not in inventory_text
+    assert str(unrelated.resolve()) in inventory_text
+    assert "unrelated.value = keep-me" in inventory_text
+
+
+def test_exact_stale_repair_preserves_mismatched_display_name(tmp_path: Path) -> None:
+    """Keep the exact row when its provider display name is ambiguous.
+
+    Args:
+        tmp_path: Pytest temporary directory path.
+    """
+    root = tmp_path / "test-vms" / "Atlaso-PR-672-cleanup"
+    stale = root / "Atlaso-PR-672-cleanup.vmx"
+    suffix = (
+        f'vmlist6.config = "{stale.resolve()}"\n'
+        'vmlist6.DisplayName = "Different VM"\n'
+        f'index6.id = "{stale.resolve()}"\n'
+    )
+    _, environment, _, inventory = _write_fake_vmrun(
+        tmp_path / "fake", [], inventory_suffix=suffix
+    )
+    original_inventory = inventory.read_bytes()
+
+    result = _run_stale_registration_repair(
+        tmp_path,
+        scope_root=root,
+        vmx_path=stale,
+        expected_display_name="Atlaso-PR-672-cleanup",
+        environment=environment,
+    )
+
+    assert result.returncode != 0
+    assert "does not have the expected display name" in result.stderr
+    assert inventory.read_bytes() == original_inventory
+
+
+@pytest.mark.parametrize(
+    ("malformed_owner", "leading_quote", "trailing_text", "use_parent_segment"),
+    [
+        ("config", "", "", False),
+        ("index", "", "", False),
+        ("config", '"', '" junk', False),
+        ("index", '"', '" junk', False),
+        ("config", '"', '" junk "', False),
+        ("index", '"', '" junk "', False),
+        ("config", '"', '" junk.vmx', False),
+        ("index", '"', '" junk.vmx', False),
+        ("config", '" ', '"', False),
+        ("index", '" ', '"', False),
+        ("config", '" \' ', '"', False),
+        ("index", '" \' ', '"', False),
+        ("config", "' ", "'", False),
+        ("index", "' ", "'", False),
+        ("config", '""', '"', False),
+        ("index", '""', '"', False),
+        ("config", "\"'", '"', False),
+        ("index", "\"'", '"', False),
+        ("config", "\"'", "'\"", False),
+        ("index", "\"'", "'\"", False),
+        ("config", "'", "'", False),
+        ("index", "'", "'", False),
+        ("config", "'", "", False),
+        ("index", "'", "", False),
+        ("config", "'", "' junk'", False),
+        ("index", "'", "' junk'", False),
+        ("config", "'", "' junk.vmx", False),
+        ("index", "'", "' junk.vmx", False),
+        ("config", "", '" junk', False),
+        ("index", "", '" junk', False),
+        ("config", "junk ", "", False),
+        ("index", "junk ", "", False),
+        ("config", "[", "]", False),
+        ("index", "[", "]", False),
+        ("config", "[", ",]", False),
+        ("index", "[", ",]", False),
+        ("config", '"', '" junk', True),
+        ("index", '"', '" junk', True),
+    ],
+)
+def test_exact_stale_repair_preserves_malformed_marker_owner_syntax(
+    tmp_path: Path,
+    malformed_owner: str,
+    leading_quote: str,
+    trailing_text: str,
+    use_parent_segment: bool,
+) -> None:
+    """Reject a raw exact owner row that the strict inventory parser omits.
+
+    Args:
+        tmp_path: Pytest temporary directory path.
+        malformed_owner: Inventory owner kind written with invalid syntax.
+        leading_quote: Optional quote preceding the raw VMX path.
+        trailing_text: Optional quote or junk following the raw VMX path.
+        use_parent_segment: Whether the raw path is lexically noncanonical.
+    """
+    path_root = tmp_path / "O'Brien" if leading_quote == "'" else tmp_path
+    root = path_root / "test-vms" / "Atlaso-PR-672-cleanup"
+    stale = root / "Atlaso-PR-672-cleanup.vmx"
+    raw_stale = stale.parent / "subdirectory" / ".." / stale.name if use_parent_segment else stale.resolve()
+    malformed_value = f"{leading_quote}{raw_stale}{trailing_text}"
+    config_value = malformed_value if malformed_owner == "config" else f'"{stale.resolve()}"'
+    index_value = malformed_value if malformed_owner == "index" else f'"{stale.resolve()}"'
+    suffix = (
+        f"vmlist6.config = {config_value}\n"
+        'vmlist6.DisplayName = "Atlaso-PR-672-cleanup"\n'
+        f"index6.id = {index_value}\n"
+        "vmlistBROKEN.config = unrelated-malformed-row\n"
+    )
+    _, environment, _, inventory = _write_fake_vmrun(
+        tmp_path / "fake", [], inventory_suffix=suffix
+    )
+    original_inventory = inventory.read_bytes()
+
+    result = _run_stale_registration_repair(
+        tmp_path,
+        scope_root=root,
+        vmx_path=stale,
+        expected_display_name="Atlaso-PR-672-cleanup",
+        environment=environment,
+    )
+
+    assert result.returncode != 0
+    assert "malformed or ambiguous" in result.stderr
+    assert inventory.read_bytes() == original_inventory
+
+
+def test_exact_stale_repair_preserves_duplicate_marker_path(tmp_path: Path) -> None:
+    """Reject duplicate library owners for the exact marker-bound VMX path.
+
+    Args:
+        tmp_path: Pytest temporary directory path.
+    """
+    root = tmp_path / "test-vms" / "Atlaso-PR-672-cleanup"
+    stale = root / "Atlaso-PR-672-cleanup.vmx"
+    suffix = (
+        f'vmlist6.config = "{stale.resolve()}"\n'
+        'vmlist6.DisplayName = "Atlaso-PR-672-cleanup"\n'
+        f'vmlist7.config = "{stale.resolve()}"\n'
+        'vmlist7.DisplayName = "Atlaso-PR-672-cleanup"\n'
+    )
+    _, environment, _, inventory = _write_fake_vmrun(
+        tmp_path / "fake", [], inventory_suffix=suffix
+    )
+    original_inventory = inventory.read_bytes()
+
+    result = _run_stale_registration_repair(
+        tmp_path,
+        scope_root=root,
+        vmx_path=stale,
+        expected_display_name="Atlaso-PR-672-cleanup",
+        environment=environment,
+    )
+
+    assert result.returncode != 0
+    assert "multiple registrations for the exact missing VMX" in result.stderr
+    assert inventory.read_bytes() == original_inventory
+
+
+def test_exact_stale_repair_finds_unterminated_path_after_vmx_apostrophe(
+    tmp_path: Path,
+) -> None:
+    """Reject an exact unterminated owner after a VMX-like apostrophe segment.
+
+    Args:
+        tmp_path: Pytest temporary directory path.
+    """
+    root = tmp_path / "root.vmx'child" / "Atlaso-PR-672-cleanup"
+    stale = root / "Atlaso-PR-672-cleanup.vmx"
+    suffix = (
+        f"vmlist6.config = '{stale.resolve()}\n"
+        'vmlist6.DisplayName = "Atlaso-PR-672-cleanup"\n'
+    )
+    _, environment, _, inventory = _write_fake_vmrun(
+        tmp_path / "fake", [], inventory_suffix=suffix
+    )
+    original_inventory = inventory.read_bytes()
+
+    result = _run_stale_registration_repair(
+        tmp_path,
+        scope_root=root,
+        vmx_path=stale,
+        expected_display_name="Atlaso-PR-672-cleanup",
+        environment=environment,
+    )
+
+    assert result.returncode != 0
+    assert "malformed or ambiguous" in result.stderr
+    assert inventory.read_bytes() == original_inventory
+
+
+def test_exact_stale_repair_preserves_unterminated_unrelated_vmx_name(
+    tmp_path: Path,
+) -> None:
+    """Treat one complete VMX path as unrelated despite a missing opening delimiter.
+
+    Args:
+        tmp_path: Pytest temporary directory path.
+    """
+    root = tmp_path / "test-vms" / "Atlaso-PR-672-cleanup"
+    stale = root / "Atlaso-PR-672-cleanup.vmx"
+    unrelated = root / "Atlaso-PR-672-cleanup.vmx backup.vmx"
+    suffix = f'vmlist6.config = "{unrelated.resolve()}\n'
+    _, environment, _, inventory = _write_fake_vmrun(
+        tmp_path / "fake", [], inventory_suffix=suffix
+    )
+    original_inventory = inventory.read_bytes()
+
+    result = _run_stale_registration_repair(
+        tmp_path,
+        scope_root=root,
+        vmx_path=stale,
+        expected_display_name="Atlaso-PR-672-cleanup",
+        environment=environment,
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert inventory.read_bytes() == original_inventory
 
 
 def test_unrelated_uncanonicalizable_inventory_owner_does_not_block_cleanup(
@@ -2531,7 +3022,7 @@ def test_module_keeps_inventory_work_out_of_normal_delete_path() -> None:
     assert "index.count" not in normal_path
     assert normal_path.count("Confirm-AtlasoWorkstationVmInactive") >= 2
     assert "[System.IO.File]::Replace($temporaryPath, $VmxPath, $backupPath, $true)" in module
-    assert "[System.IO.FileShare]::Read -bor [System.IO.FileShare]::Delete" in module
+    assert "[System.IO.FileShare]::Delete" in module
     assert "Get-AtlasoScopedInventoryEntriesFromLines -Lines $lines" in module
     assert "-ExpectedCurrentIdentity $Detachment.OriginalIdentity" in module
     assert "-ReplacementIdentity $displacedIdentity" in module
@@ -2586,8 +3077,59 @@ def test_module_keeps_inventory_work_out_of_normal_delete_path() -> None:
         "Restore-AtlasoFileAfterCasFailure -TargetPath $InventoryPath", rollback_catch
     )
     assert inventory_replace < rollback_catch < rollback_call
+    replacement_lock = stale_repair.index(
+        "$replacementLock = [System.IO.File]::Open(", inventory_replace
+    )
+    replacement_verification = stale_repair.index(
+        "Test-AtlasoByteArraysEqual -Left $replacementBytes", replacement_lock
+    )
+    replacement_unlock = stale_repair.index(
+        "$replacementLock.Dispose()", replacement_verification
+    )
+    assert inventory_replace < replacement_lock < replacement_verification < replacement_unlock
+    assert stale_repair.count("foreach ($candidatePath in $targetPaths)") == 2
+    assert stale_repair.count("Test-Path -LiteralPath $resolvedVmxPath") >= 3
+    assert "Test-Path -LiteralPath $resolvedVmxPath -PathType Leaf" not in stale_repair
+    assert "Test-Path -LiteralPath $candidatePath -PathType Leaf" not in stale_repair
+    ordinary_zero = stale_repair.index(
+        "if ($staleEntries.Count -eq 0 -and -not $resolvedVmxPath)"
+    )
+    process_gate = stale_repair.index("Get-Process vmware", ordinary_zero)
+    assert ordinary_zero < process_gate
+    zero_owner_proof = stale_repair.split(
+        "if ($staleEntries.Count -eq 0 -and (-not $resolvedVmxPath", 1
+    )[1].split("$realInventoryPath", 1)[0]
+    assert "$absenceLock = [System.IO.File]::Open(" in zero_owner_proof
+    assert "[System.IO.FileShare]::None" in zero_owner_proof
+    assert "Test-AtlasoByteArraysEqual -Left $originalBytes" in zero_owner_proof
+    assert zero_owner_proof.index("if ($OnVerified)") < zero_owner_proof.index(
+        "$absenceLock.Dispose()"
+    )
+    assert zero_owner_proof.index("$absenceLock.Dispose()") < zero_owner_proof.index(
+        "return"
+    )
+    assert stale_repair.index("if ($OnVerified)", replacement_verification) < replacement_unlock
+    assert stale_repair.count("Get-Process vmware -ErrorAction SilentlyContinue") >= 5
     implementation = re.sub(r"<#.*?#>\s*", "", module, flags=re.DOTALL)
-    assert len(implementation.splitlines()) < 1_125
+    assert len(implementation.splitlines()) < 1_260
+
+
+def test_development_ca_cleanup_releases_recovery_inside_provider_proof() -> None:
+    """Keep quarantine and marker retirement inside the verified provider callback."""
+    script = (VMWARE_SCRIPT_ROOT / "create-atlaso-test-vm.ps1").read_text(
+        encoding="utf-8"
+    )
+    cleanup = script.split("function Invoke-PendingAtlasoDevelopmentCaCleanup", 1)[1].split(
+        "function Invoke-AtlasoTestVmProvisioning", 1
+    )[0]
+    callback = cleanup.split("-OnVerified {", 1)[1].split("} `", 1)[0]
+
+    assert "Restore-AtlasoRollbackDataDisksFromQuarantine" in callback
+    assert "Remove-AtlasoDevelopmentCaCleanupMarker" in callback
+    restore = callback.index("Restore-AtlasoRollbackDataDisksFromQuarantine")
+    final_vmx_check = callback.index("Test-Path -LiteralPath $marker.VmxPath")
+    marker_removal = callback.index("Remove-AtlasoDevelopmentCaCleanupMarker")
+    assert restore < final_vmx_check < marker_removal
 
 
 def test_pre_gui_repair_retains_exact_open_ui_refusal() -> None:
