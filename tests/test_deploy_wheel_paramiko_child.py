@@ -16,6 +16,11 @@ DEPLOY_SOURCE = (ROOT / "scripts/windows/vmware/deploy-wheel.ps1").read_text(
 
 
 def _generated_function(name: str):
+    """Compile one named function from the generated Paramiko child.
+
+    Args:
+        name: Generated function name to extract.
+    """
     marker = "$pythonDeploySource = @'\n"
     start = DEPLOY_SOURCE.index(marker) + len(marker)
     end = DEPLOY_SOURCE.index("\n'@", start)
@@ -37,6 +42,12 @@ def _generated_function(name: str):
 
 class FakeKey:
     def __init__(self, name: str, value: str) -> None:
+        """Create a comparable fake SSH public key.
+
+        Args:
+            name: SSH key algorithm name.
+            value: Stable fake key material.
+        """
         self.name = name
         self.value = value
 
@@ -44,6 +55,11 @@ class FakeKey:
         return self.name
 
     def __eq__(self, other: object) -> bool:
+        """Compare fake key algorithm and material.
+
+        Args:
+            other: Candidate object to compare.
+        """
         return isinstance(other, FakeKey) and (self.name, self.value) == (
             other.name,
             other.value,
@@ -52,17 +68,39 @@ class FakeKey:
 
 class FakeHostKeys:
     def __init__(self, entries: dict[str, dict[str, FakeKey]] | None = None) -> None:
+        """Create an in-memory Paramiko host-key mapping.
+
+        Args:
+            entries: Optional initial host and key-type mapping.
+        """
         self.entries = entries or {}
 
     def lookup(self, host: str):
+        """Return recorded keys for a host.
+
+        Args:
+            host: Host address to look up.
+        """
         return self.entries.get(host)
 
     def add(self, host: str, key_type: str, key: FakeKey) -> None:
+        """Record one in-memory host key.
+
+        Args:
+            host: Host address that owns the key.
+            key_type: SSH key algorithm name.
+            key: Fake key to record.
+        """
         self.entries.setdefault(host, {})[key_type] = key
 
 
 class FakeTransport:
     def __init__(self, server_key: FakeKey) -> None:
+        """Create a fake Paramiko transport for one server key.
+
+        Args:
+            server_key: Key returned by the simulated SSH server.
+        """
         self.server_key = server_key
         self.security = SimpleNamespace(key_types=["ssh-ed25519", "rsa-sha2-512"])
         self.authenticated = False
@@ -73,12 +111,24 @@ class FakeTransport:
         return self.security
 
     def start_client(self, timeout: int) -> None:
+        """Validate the generated child's bounded handshake timeout.
+
+        Args:
+            timeout: Requested SSH handshake timeout in seconds.
+        """
         assert timeout == 15
 
     def get_remote_server_key(self) -> FakeKey:
         return self.server_key
 
     def auth_password(self, username: str, password: str, fallback: bool) -> None:
+        """Record the generated child's password authentication attempt.
+
+        Args:
+            username: SSH account name.
+            password: SSH account password.
+            fallback: Whether keyboard-interactive fallback is allowed.
+        """
         assert (username, password, fallback) == ("admin", "example-password", False)
         self.auth_attempted = True
         self.authenticated = True
@@ -92,10 +142,23 @@ class FakeTransport:
 
 class FakeBadHostKey(Exception):
     def __init__(self, host: str, actual: FakeKey, expected: FakeKey) -> None:
+        """Create a fake Paramiko host-key mismatch error.
+
+        Args:
+            host: Host whose key mismatched.
+            actual: Key presented by the server.
+            expected: Key recorded for the host.
+        """
         super().__init__(host, actual, expected)
 
 
 def _run_connection(expected_key: FakeKey | None, server_key: FakeKey):
+    """Build the generated connection function and isolated fakes.
+
+    Args:
+        expected_key: Optional key already recorded for the host.
+        server_key: Key presented by the simulated SSH server.
+    """
     connect = _generated_function("connect_password_or_keyboard_interactive")
     transport = FakeTransport(server_key)
     system_entries = (
@@ -171,6 +234,12 @@ def test_verified_guest_key_is_added_only_to_in_memory_host_keys() -> None:
     class FakePKey:
         @staticmethod
         def from_type_string(key_type: str, decoded_blob: bytes) -> FakeKey:
+            """Parse the expected in-memory Ed25519 public key.
+
+            Args:
+                key_type: SSH key algorithm name.
+                decoded_blob: Decoded SSH public-key blob.
+            """
             assert key_type == "ssh-ed25519"
             assert decoded_blob == key_blob
             return trusted_key
