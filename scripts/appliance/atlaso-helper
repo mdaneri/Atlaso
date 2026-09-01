@@ -19437,7 +19437,7 @@ def _installed_atlaso_database_url() -> str:
             continue
         candidate = raw_line.strip(" \t\r")
         assignment_name, separator, assignment_value = candidate.partition("=")
-        if not separator or not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", assignment_name):
+        if not separator:
             continue
         assignment_value = assignment_value.strip(" \t\r")
         assignment_quote = (
@@ -19449,6 +19449,8 @@ def _installed_atlaso_database_url() -> str:
             multiline_quote = open_quote
         else:
             unquoted_continuation = _environment_file_unquoted_continues(raw_line)
+        if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", assignment_name):
+            continue
         if assignment_name != "ATLASO_DATABASE_URL":
             continue
         database_url = assignment_value
