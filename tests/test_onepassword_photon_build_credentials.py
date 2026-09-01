@@ -261,6 +261,15 @@ def test_omitted_nonsecret_sdk_selectors_are_discovered_fail_closed() -> None:
     assert "highest compatible" in test_vm
     assert "Resolve-OnePasswordTestVmAccount" in test_vm
     assert "return Resolve-AtlasoOnePasswordPython `" in test_vm
+    artifact_preflight = test_vm.index(
+        "$OnePasswordPython = Confirm-OnePasswordTestVmArtifact `"
+    )
+    assert artifact_preflight < test_vm.index("$resolvedOpPath = Resolve-OnePasswordCliPath")
+    assert artifact_preflight < test_vm.index("Assert-OnePasswordDevelopmentCaBridge `")
+    bridge_function = test_vm.index("function New-AtlasoTestVmCredentialBridgeState {")
+    assert test_vm.index(
+        "Initialize-OnePasswordTestVmSdkRuntime `", bridge_function
+    ) < test_vm.index("Resolve-OnePasswordTestVmAccount `", bridge_function)
     assert "-OnePasswordPython $OnePasswordPython `" in image_wrapper
     assert "-OnePasswordCliPath $resolvedOpPath" in test_vm
     assert "'-OnePasswordAccount', $resolvedAccount" in test_vm

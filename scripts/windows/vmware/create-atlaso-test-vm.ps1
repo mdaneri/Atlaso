@@ -460,6 +460,48 @@ function Initialize-OnePasswordTestVmSdkRuntime {
 
 <#
 .SYNOPSIS
+Admit the pinned 1Password SDK wheel before any credential-side activity.
+
+.PARAMETER RepositoryRoot
+Atlaso checkout containing the approved wheel manifest and downloader.
+
+.PARAMETER PythonCommand
+Optional standard GIL-enabled Windows x64 CPython 3.14 executable.
+
+.PARAMETER TimeoutSeconds
+Positive deadline for runtime selection and artifact download.
+#>
+function Confirm-OnePasswordTestVmArtifact {
+    param(
+        [Parameter(Mandatory = $true)][string]$RepositoryRoot,
+        [AllowEmptyString()][string]$PythonCommand = '',
+        [Parameter(Mandatory = $true)][ValidateRange(1, 3600)][int]$TimeoutSeconds
+    )
+
+    $resolvedPython = Resolve-OnePasswordTestVmPython `
+        -PythonCommand $PythonCommand `
+        -TimeoutSeconds $TimeoutSeconds
+    $artifactRoot = Join-Path ([System.IO.Path]::GetTempPath()) (
+        "atlaso-test-vm-artifact-$([guid]::NewGuid().ToString('N'))"
+    )
+    [void][System.IO.Directory]::CreateDirectory($artifactRoot)
+    try {
+        $null = Save-AtlasoOnePasswordWheel `
+            -PythonCommand $resolvedPython `
+            -RepositoryRoot $RepositoryRoot `
+            -Destination $artifactRoot `
+            -TimeoutSeconds $TimeoutSeconds
+        return $resolvedPython
+    }
+    finally {
+        if (Test-Path -LiteralPath $artifactRoot) {
+            [System.IO.Directory]::Delete($artifactRoot, $true)
+        }
+    }
+}
+
+<#
+.SYNOPSIS
 Translate a safe credential-bridge status code into an actionable error.
 
 .PARAMETER Code
@@ -661,10 +703,6 @@ function New-AtlasoTestVmCredentialBridgeState {
         $resolvedAccount = ''
         $dependencyPath = ''
         if ($needsDefaults) {
-            $resolvedAccount = Resolve-OnePasswordTestVmAccount `
-                -Account $OnePasswordAccount `
-                -TimeoutSeconds $TimeoutSeconds `
-                -CliPath $OnePasswordCliPath
             $resolvedPython = Resolve-OnePasswordTestVmPython `
                 -PythonCommand $OnePasswordPython `
                 -TimeoutSeconds $TimeoutSeconds
@@ -673,6 +711,10 @@ function New-AtlasoTestVmCredentialBridgeState {
                 -RepositoryRoot $RepositoryRoot `
                 -BridgeRoot $bridgeRoot `
                 -TimeoutSeconds $TimeoutSeconds
+            $resolvedAccount = Resolve-OnePasswordTestVmAccount `
+                -Account $OnePasswordAccount `
+                -TimeoutSeconds $TimeoutSeconds `
+                -CliPath $OnePasswordCliPath
         }
 
         $helperPath = Join-Path $PSScriptRoot 'Invoke-AtlasoTestVmCredentials.ps1'
@@ -2909,6 +2951,13 @@ if ($NoStart) {
     throw '-NoStart is not supported for normal test VMs because first boot must consume and scrub the shared development signing key.'
 }
 if (-not $WhatIfPreference) {
+    # Admit the exact fork release before the development-CA bridge or account
+    # discovery can touch 1Password. The later isolated runtime repeats the
+    # verification inside its private credential root before installation.
+    $OnePasswordPython = Confirm-OnePasswordTestVmArtifact `
+        -RepositoryRoot $repoRoot `
+        -PythonCommand $OnePasswordPython `
+        -TimeoutSeconds $TimeoutSeconds
     # Resolve new Environment configuration only after credential-independent
     # recovery has scrubbed any signer staging left by an interrupted prior run.
     $OnePasswordEnvironmentId = Resolve-OnePasswordDevelopmentCaEnvironmentId `
