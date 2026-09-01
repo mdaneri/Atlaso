@@ -52,8 +52,15 @@ case "$BUILD_ROOT_IDENTITY" in
     ;;
 esac
 
+ADMITTED_PIP_CONFIG_FILE="${PIP_CONFIG_FILE:-/etc/pip.conf}"
+ADMITTED_PIP_INDEX_URL="${PIP_INDEX_URL:-}"
+for pip_environment_name in $(env | sed -n 's/^\(PIP_[A-Za-z0-9_]*\)=.*/\1/p'); do
+  unset "$pip_environment_name"
+done
+unset XDG_CONFIG_HOME
+
 install -d -o root -g root -m 0700 "$BUILD_ROOT/home" "$BUILD_ROOT/pip-cache" \
-  "$BUILD_ROOT/xdg-cache" "$RPM_ROOT/BUILD" "$RPM_ROOT/BUILDROOT" \
+  "$BUILD_ROOT/xdg-cache" "$BUILD_ROOT/xdg-config" "$RPM_ROOT/BUILD" "$RPM_ROOT/BUILDROOT" \
   "$RPM_ROOT/RPMS" "$RPM_ROOT/SOURCES" "$RPM_ROOT/SPECS" "$RPM_ROOT/SRPMS"
 
 # Packer deliberately preserves the communicator environment through sudo -E.
@@ -62,7 +69,13 @@ install -d -o root -g root -m 0700 "$BUILD_ROOT/home" "$BUILD_ROOT/pip-cache" \
 export HOME="$BUILD_ROOT/home"
 export PIP_CACHE_DIR="$BUILD_ROOT/pip-cache"
 export XDG_CACHE_HOME="$BUILD_ROOT/xdg-cache"
+export XDG_CONFIG_HOME="$BUILD_ROOT/xdg-config"
+export PIP_CONFIG_FILE="$ADMITTED_PIP_CONFIG_FILE"
+if [ -n "$ADMITTED_PIP_INDEX_URL" ]; then
+  export PIP_INDEX_URL="$ADMITTED_PIP_INDEX_URL"
+fi
 export PIP_DISABLE_PIP_VERSION_CHECK=1
+unset ADMITTED_PIP_CONFIG_FILE ADMITTED_PIP_INDEX_URL
 
 curl --fail --location --proto '=https' --tlsv1.2 --output "$BUILD_ROOT/$QEMU_ARCHIVE" "$QEMU_URL"
 printf '%s  %s\n' "$QEMU_SHA256" "$BUILD_ROOT/$QEMU_ARCHIVE" | sha256sum -c -

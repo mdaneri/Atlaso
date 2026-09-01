@@ -282,6 +282,8 @@ def test_qemu_builder_overrides_preserved_communicator_home(tmp_path: Path) -> N
 
     output = tmp_path / "output"
     environment_log = tmp_path / "environment.log"
+    admitted_pip_config = tmp_path / "pip.conf"
+    admitted_pip_config.write_text("[global]\n", encoding="utf-8")
     environment = os.environ.copy()
     environment.update(
         {
@@ -289,6 +291,10 @@ def test_qemu_builder_overrides_preserved_communicator_home(tmp_path: Path) -> N
             "HOME": "/home/atlaso-build",
             "PIP_CACHE_DIR": "/home/atlaso-build/.cache/pip",
             "PIP_INDEX_URL": "https://index.example.invalid/simple",
+            "PIP_CONFIG_FILE": str(admitted_pip_config),
+            "PIP_FIND_LINKS": "https://unintended.example.invalid/wheels",
+            "PIP_NO_INDEX": "1",
+            "XDG_CONFIG_HOME": "/home/atlaso-build/.config",
             "ATLASO_SRC": str(Path.cwd()),
             "ATLASO_TEST_ENV_LOG": str(environment_log),
             "ATLASO_TEST_REAL_STAT": real_stat,

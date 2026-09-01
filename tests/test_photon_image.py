@@ -2054,8 +2054,10 @@ def test_photon_image_optional_pip_global_index_configuration():
     assert 'openssl pkey -pubin -in "$trust_key" -text -noout' in script
     assert "*ED25519*" in script
     assert 'export PIP_DISABLE_PIP_VERSION_CHECK=1' in script
-    pip_environment_reset = "unset PIP_INDEX_URL PIP_EXTRA_INDEX_URL PIP_CONFIG_FILE"
+    pip_environment_reset = "for pip_environment_name in $(env | sed -n"
     assert pip_environment_reset in script
+    assert "unset XDG_CONFIG_HOME" in script
+    assert "export PIP_CONFIG_FILE=/etc/pip.conf" in script
     assert 'export PIP_INDEX_URL="$ATLASO_PIP_GLOBAL_INDEX_URL"' in script
     assert script.index(pip_environment_reset) < script.index(
         'export PIP_INDEX_URL="$ATLASO_PIP_GLOBAL_INDEX_URL"'
@@ -2124,6 +2126,9 @@ def test_photon_build_installs_the_complete_qemu_build_toolchain() -> None:
     assert 'export HOME="$BUILD_ROOT/home"' in qemu_builder
     assert 'export PIP_CACHE_DIR="$BUILD_ROOT/pip-cache"' in qemu_builder
     assert 'export XDG_CACHE_HOME="$BUILD_ROOT/xdg-cache"' in qemu_builder
+    assert 'export XDG_CONFIG_HOME="$BUILD_ROOT/xdg-config"' in qemu_builder
+    assert 'export PIP_CONFIG_FILE="$ADMITTED_PIP_CONFIG_FILE"' in qemu_builder
+    assert "for pip_environment_name in $(env | sed -n" in qemu_builder
     assert qemu_builder.index('export HOME="$BUILD_ROOT/home"') < qemu_builder.index(
         "if ! ./configure"
     )

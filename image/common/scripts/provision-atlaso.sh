@@ -366,14 +366,18 @@ esac
 run_tdnf "Photon appliance package installation" \
   install python3 python3-pip python3-devel python3-setuptools python3-virtualenv python3-curses python3-ntp sudo openssh-server curl rsync tar gzip xz shadow e2fsprogs sqlite procps-ng gnupg rpm-build gcc binutils linux-api-headers make glib-devel systemd-devel ninja-build pkg-config $GUEST_INTEGRATION_PACKAGES nftables dnsmasq ntpsec nfs-utils rpcbind openldap openldap-servers ipxe syslinux nginx powershell
 
-# sudo -E preserves Packer's communicator HOME. Establish the root-owned pip
-# contract before QEMU configure can invoke mkvenv, while retaining only the
-# explicitly configured index values passed through the Atlaso build inputs.
-unset PIP_INDEX_URL PIP_EXTRA_INDEX_URL PIP_CONFIG_FILE
+# sudo -E preserves Packer's communicator environment. Clear the complete pip
+# namespace without printing values, then admit only Atlaso's generated config
+# and explicit index before QEMU configure can invoke mkvenv.
+for pip_environment_name in $(env | sed -n 's/^\(PIP_[A-Za-z0-9_]*\)=.*/\1/p'); do
+  unset "$pip_environment_name"
+done
+unset XDG_CONFIG_HOME
 install -d -o root -g root -m 0755 "$PIP_CACHE_DIR"
 write_pip_config /etc/pip.conf
 export HOME=/root
 export PIP_CACHE_DIR
+export PIP_CONFIG_FILE=/etc/pip.conf
 export PIP_DISABLE_PIP_VERSION_CHECK=1
 if [ -n "$ATLASO_PIP_GLOBAL_INDEX_URL" ]; then
   export PIP_INDEX_URL="$ATLASO_PIP_GLOBAL_INDEX_URL"

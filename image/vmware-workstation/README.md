@@ -140,7 +140,8 @@ sizes; without `linux-api-headers`, the missing `linux/limits.h` compile error i
 metadata mismatch. A configure failure prints only the bounded tail of QEMU's Meson log and never dumps the guest
 environment. Packer invokes the shared provisioner through `sudo -E`, but the QEMU RPM builder replaces the preserved
 communicator `HOME` and pip cache with root-owned, mode-`0700` directories inside one identity-bound invocation root
-before `configure` can start `mkvenv`. Configured pip indexes remain available without being echoed, and exit cleanup
+before `configure` can start `mkvenv`. It clears inherited `PIP_*` and `XDG_CONFIG_HOME` values, pins pip to the
+generated root-owned configuration, and then restores only the admitted index without echoing it. Exit cleanup
 removes only that invocation root. The RPM builder copies QEMU 10.2's linked guest agent from its `build/qga` target
 directory.
 Because that Atlaso-built RPM is not a repository-signed package, the provisioner downloads its `glib` and `systemd`
