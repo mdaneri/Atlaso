@@ -427,6 +427,27 @@ try {
         throw 'Photon cleanup did not upgrade and retire an active schema-1 marker after boot proof.'
     }
 
+    $absentSchemaOneRoot = Join-Path $schemaOneParent (
+        'atlaso-photon-build-credentials-' + [guid]::NewGuid().ToString('N')
+    )
+    $absentSchemaOneMarkerPath = Join-Path $markerDirectory 'schema-one-absent-marker.json'
+    $absentSchemaOneMarker = [ordered]@{
+        Schema = 1; RootPath = $absentSchemaOneRoot
+        BootIdentity = 'prior-test-boot'; Phase = 'active'
+    }
+    [System.IO.File]::WriteAllText(
+        $absentSchemaOneMarkerPath,
+        ($absentSchemaOneMarker | ConvertTo-Json -Compress),
+        [System.Text.UTF8Encoding]::new($false)
+    )
+    Invoke-AtlasoPhotonBuildCleanupRecovery `
+        -MarkerPath $absentSchemaOneMarkerPath `
+        -AllowedParentRoots @($schemaOneParent) `
+        -RepositoryRoot $resolvedRepositoryRoot
+    if (Test-Path -LiteralPath $absentSchemaOneMarkerPath) {
+        throw 'Photon cleanup did not retire an absent active schema-1 root after boot proof.'
+    }
+
     $absentParent = Join-Path $fixtureRoot 'root-absent-cleanup'
     [void][System.IO.Directory]::CreateDirectory($absentParent)
     $absentRoot = Join-Path $absentParent (

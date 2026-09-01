@@ -1068,7 +1068,17 @@ function Invoke-AtlasoPhotonBuildCleanupRecovery {
             [string]$marker.BootIdentity -ceq (Get-AtlasoWindowsBootIdentity)) {
             throw 'A Windows restart is required before retained Photon credential artifacts can be cleaned safely.'
         }
-        if ($legacyActiveMarker) {
+        if ($legacyActiveMarker -and -not (Test-Path -LiteralPath $resolvedRoot)) {
+            # Schema 1 cannot identify a moved root, but an absent exact path
+            # after changed-boot proof means its deletion completed before the
+            # legacy marker transition was flushed.
+            Sync-AtlasoDirectoryMetadata -DirectoryPath (Split-Path -Parent $resolvedRoot)
+            $marker.Phase = 'root-absent'
+            Write-AtlasoDurableJsonFile -Path $MarkerPath -Payload $marker -Replace
+            $legacyActiveMarker = $false
+            $legacyTerminalMarker = $true
+        }
+        elseif ($legacyActiveMarker) {
             # Schema 1 predates filesystem identity pinning. A changed boot proves
             # its plaintext-consuming process is gone; pin the admitted root now
             # and durably upgrade before allowing any recursive cleanup.
@@ -2113,9 +2123,21 @@ else {
         }
         if (-not $processTreeTerminationUnproven) {
             $reservationReleaseError = $null
+            Assert-AtlasoBuilderHandoffRootIdentity `
+                -BuildStateRoot $resolvedBuildStateRoot `
+                -HandoffStateRoot $builderReservationHandoffStateRoot `
+                -PendingRoot $builderReservationPendingRoot `
+                -StateIdentity ([string]$builderHandoffRootIdentity.StateIdentity) `
+                -PendingIdentity ([string]$builderHandoffRootIdentity.PendingIdentity)
             if (Test-Path -LiteralPath $childBuilderAddressReservationPath -PathType Leaf) {
                 if (-not $reservationReleaseBlocked) {
                     try {
+                        Assert-AtlasoBuilderHandoffRootIdentity `
+                            -BuildStateRoot $resolvedBuildStateRoot `
+                            -HandoffStateRoot $builderReservationHandoffStateRoot `
+                            -PendingRoot $builderReservationPendingRoot `
+                            -StateIdentity ([string]$builderHandoffRootIdentity.StateIdentity) `
+                            -PendingIdentity ([string]$builderHandoffRootIdentity.PendingIdentity)
                         $builderReservation = Get-Content -LiteralPath $childBuilderAddressReservationPath -Raw |
                             ConvertFrom-Json
                         Exit-AtlasoVmwareBuilderAddressReservation `
@@ -2123,6 +2145,12 @@ else {
                             -VmrunPath (Resolve-WorkstationVmrunPath -Path $VmrunPath) `
                             -StateRoot $builderReservationStateRoot `
                             -ProcessTreeTerminationProven
+                        Assert-AtlasoBuilderHandoffRootIdentity `
+                            -BuildStateRoot $resolvedBuildStateRoot `
+                            -HandoffStateRoot $builderReservationHandoffStateRoot `
+                            -PendingRoot $builderReservationPendingRoot `
+                            -StateIdentity ([string]$builderHandoffRootIdentity.StateIdentity) `
+                            -PendingIdentity ([string]$builderHandoffRootIdentity.PendingIdentity)
                         Remove-Item -LiteralPath $childBuilderAddressReservationPath -Force
                         if (Test-Path -LiteralPath $childBuilderAddressReservationPath) {
                             throw 'The released VMware builder-address handoff could not be removed.'

@@ -3442,6 +3442,21 @@ def test_photon_cleanup_pins_root_identity_for_creation_and_recovery() -> None:
     assert "Photon cleanup marker directory identity changed" in wrapper
     assert "matchingIdentityRoots.Count -eq 0" in wrapper
     assert "-not (Test-Path -LiteralPath $resolvedRoot)" in wrapper
+    assert "$legacyActiveMarker -and -not (Test-Path -LiteralPath $resolvedRoot)" in wrapper
+    parent_finally = wrapper.index("if (-not $processTreeTerminationUnproven) {")
+    parent_release = wrapper.index(
+        "Exit-AtlasoVmwareBuilderAddressReservation `", parent_finally
+    )
+    parent_remove = wrapper.index(
+        "Remove-Item -LiteralPath $childBuilderAddressReservationPath -Force",
+        parent_release,
+    )
+    assert wrapper[parent_finally:parent_release].count(
+        "Assert-AtlasoBuilderHandoffRootIdentity `"
+    ) >= 2
+    assert "Assert-AtlasoBuilderHandoffRootIdentity `" in wrapper[
+        parent_release:parent_remove
+    ]
     assert "-ExpectedRootIdentity ([string]$credentialRootIdentity.RootIdentity)" in wrapper[
         ordinary_cleanup : ordinary_cleanup + 500
     ]
