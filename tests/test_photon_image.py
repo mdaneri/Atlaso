@@ -3480,10 +3480,13 @@ def test_photon_build_state_requires_git_ignored_custom_root() -> None:
         encoding="utf-8"
     )
     resolver = wrapper.index("function Resolve-AtlasoPhotonBuildStateRoot")
-    ignore_check = wrapper.index("check-ignore --quiet -- $ignoreProbe", resolver)
+    generated_probes = wrapper.index("$ignoreProbes = @(", resolver)
+    ignore_check = wrapper.index("check-ignore --quiet -- $ignoreProbe", generated_probes)
     state_creation = wrapper.index("Initialize-AtlasoBuilderHandoffRoot `")
 
-    assert resolver < ignore_check < state_creation
+    assert resolver < generated_probes < ignore_check < state_creation
+    assert "representative leaves from every\n    # generated subtree" in wrapper
+    assert "foreach ($ignoreProbe in $ignoreProbes)" in wrapper
     assert "must remain inside a Git-ignored task subtree" in wrapper
 
 

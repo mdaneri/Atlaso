@@ -151,6 +151,32 @@ $fixtureRoot = Join-Path $resolvedRepositoryRoot (
     '.atlaso-local\photon-build-state-test-' + [guid]::NewGuid().ToString('N')
 )
 try {
+    $selectiveRepository = Join-Path $fixtureRoot 'selective-ignore-repository'
+    [void][System.IO.Directory]::CreateDirectory($selectiveRepository)
+    & git -C $selectiveRepository init --quiet
+    if ($LASTEXITCODE -ne 0) {
+        throw 'Could not initialize selective-ignore fixture repository.'
+    }
+    [System.IO.File]::WriteAllText(
+        (Join-Path $selectiveRepository '.gitignore'),
+        "/state/*`n!/state/credentials/`n!/state/credentials/**`n",
+        [System.Text.UTF8Encoding]::new($false)
+    )
+    $selectiveStateRoot = Join-Path $selectiveRepository 'state'
+    $selectiveIgnoreError = ''
+    try {
+        Resolve-AtlasoPhotonBuildStateRoot `
+            -RepositoryRoot $selectiveRepository `
+            -Path $selectiveStateRoot | Out-Null
+    }
+    catch {
+        $selectiveIgnoreError = $_.Exception.Message
+    }
+    if ($selectiveIgnoreError -cne 'Photon build state must remain inside a Git-ignored task subtree.' -or
+        (Test-Path -LiteralPath $selectiveStateRoot)) {
+        throw "Selectively ignored Photon state did not fail before task-state creation: $selectiveIgnoreError"
+    }
+
     $legacyStateRoot = Join-Path $fixtureRoot 'legacy-builder-addresses'
     $pendingRoot = Join-Path $legacyStateRoot 'pending-releases'
     [void][System.IO.Directory]::CreateDirectory($pendingRoot)

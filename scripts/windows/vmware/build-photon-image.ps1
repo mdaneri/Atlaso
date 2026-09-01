@@ -304,12 +304,28 @@ function Resolve-AtlasoPhotonBuildStateRoot {
         -ParentPath $resolvedRepositoryRoot `
         -ChildPath $resolvedCandidate `
         -FailureMessage 'Photon build state must remain beneath the exact task repository root'
-    # Source inventory admission includes every non-ignored untracked path. Prove
-    # a child of this root is ignored before any task state can dirty the checkout.
-    $ignoreProbe = Join-Path $resolvedCandidate 'atlaso-build-state-admission-probe'
-    & git -C $resolvedRepositoryRoot check-ignore --quiet -- $ignoreProbe
-    if ($LASTEXITCODE -ne 0) {
-        throw 'Photon build state must remain inside a Git-ignored task subtree.'
+    # Require both the state directory and representative leaves from every
+    # generated subtree to be ignored. The leaf probes reject selective
+    # negations before any real task state can dirty source inventory.
+    $credentialProbeRoot = Join-Path $resolvedCandidate (
+        'credentials\atlaso-photon-build-credentials-00000000000000000000000000000000'
+    )
+    $ignoreProbes = @(
+        $resolvedCandidate,
+        (Join-Path $credentialProbeRoot 'credentials.json'),
+        (Join-Path $credentialProbeRoot 'output-cleanup-claimed.json'),
+        (Join-Path $credentialProbeRoot 'sensitive-build\source\AGENTS.md'),
+        (Join-Path $credentialProbeRoot 'sensitive-build\packer-work\atlaso-photon.auto.pkrvars.hcl'),
+        (Join-Path $credentialProbeRoot 'sensitive-build\kickstart\atlaso-photon-with-kickstart.iso'),
+        (Join-Path $resolvedCandidate (
+                'vmware-builder-addresses\pending-releases\builder-address-reservation-00000000000000000000000000000000.json'
+            ))
+    )
+    foreach ($ignoreProbe in $ignoreProbes) {
+        & git -C $resolvedRepositoryRoot check-ignore --quiet -- $ignoreProbe
+        if ($LASTEXITCODE -ne 0) {
+            throw 'Photon build state must remain inside a Git-ignored task subtree.'
+        }
     }
     return $resolvedCandidate
 }
