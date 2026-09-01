@@ -698,7 +698,7 @@ function Remove-AtlasoWorkstationStaleRegistrations {
             }
             if ($hasCompletePath) { $rawCandidates = @($candidateSource) } else {
                 # Test every absolute root ending at a VMX boundary before proving zero ownership.
-                $rawCandidates = @([regex]::Matches($candidateSource, '(?i)\.vmx(?=$|["''\s])') | ForEach-Object {
+                $rawCandidates = @([regex]::Matches($candidateSource, '(?i)\.vmx(?=$|["''\s\]\)\}>])') | ForEach-Object {
                         $vmxEnd = $_.Index + $_.Length; [regex]::Matches($candidateSource.Substring(0, $vmxEnd), '(?i)(?:[a-z]:[\\/]|\\\\)') | ForEach-Object { $candidateSource.Substring($_.Index, $vmxEnd - $_.Index) }
                 })
             }
