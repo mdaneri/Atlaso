@@ -5789,6 +5789,61 @@ def test_legacy_wan_nat_inference_keeps_routing_enabled():
     }
 
 
+def test_legacy_wan_route_role_topology_inference_keeps_routing_enabled():
+    """Keep generated route-role paths active when replaying a legacy config."""
+    helper = load_helper_module()
+    base = {
+        "routes": [],
+        "routing_rules": [],
+        "nat_rules": [],
+        "wan_policies": [],
+    }
+    route_target = {
+        "name": "eth1",
+        "role": "route",
+        "routing_domain": "lab",
+        "ip_cidr": "192.0.2.1/24",
+    }
+
+    inactive = helper._wan_feature_settings(
+        {
+            **base,
+            "targets": [
+                route_target,
+                {
+                    "name": "eth2",
+                    "role": "route",
+                    "routing_domain": "lab",
+                    "ip_cidr": "not-a-cidr",
+                },
+                {
+                    "name": "eth0",
+                    "role": "management",
+                    "routing_domain": "management",
+                    "ip_cidr": "198.51.100.1/24",
+                },
+            ],
+        }
+    )
+    active = helper._wan_feature_settings(
+        {
+            **base,
+            "targets": [
+                route_target,
+                {
+                    "name": "eth2.20",
+                    "role": "route",
+                    "routing_domain": "lab",
+                    "ipv6_cidr": "2001:db8:20::1/64",
+                },
+            ],
+        }
+    )
+
+    assert inactive["routing_enabled"] is False
+    assert active["routing_enabled"] is True
+
+
 def test_wan_only_simulation_ignores_dormant_route_path_errors(tmp_path):
     """Validate only the netem assignment when Routing is globally off.
 

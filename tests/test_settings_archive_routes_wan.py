@@ -125,16 +125,17 @@ def test_restore_routes_wan_archive_still_validates_management_default(client):
     """Routing off does not suppress validation of a protected management default."""
     with SessionLocal() as db_session:
         archive = deepcopy(export_settings_archive(db_session, actor="test"))
-    management_interface = next(
-        row["name"]
+    flagged_access = next(
+        row
         for row in archive["data"]["physical_interfaces"]
-        if row.get("role") == "management"
+        if row.get("role") == "access" and row.get("ip_cidr")
     )
+    flagged_access["access_management_ui_enabled"] = True
     archive["data"]["routes"].append(
         {
             "destination_cidr": "0.0.0.0/0",
             "gateway": "203.0.113.1",
-            "interface_name": management_interface,
+            "interface_name": flagged_access["name"],
             "metric": 100,
             "enabled": True,
             "wan_mode": "interface",
@@ -145,6 +146,33 @@ def test_restore_routes_wan_archive_still_validates_management_default(client):
     _set_routes_wan_setting(archive, key=NAT_ENABLED_SETTING_KEY, value=False)
 
     with pytest.raises(ValueError, match="not on-link"):
+        with SessionLocal() as db_session:
+            restore_settings_archive(db_session, archive)
+
+
+def test_restore_routes_wan_archive_rejects_dedicated_management_route(client):
+    """Dedicated management interfaces are not ordinary lab-route targets."""
+    with SessionLocal() as db_session:
+        archive = deepcopy(export_settings_archive(db_session, actor="test"))
+    management_interface = next(
+        row["name"]
+        for row in archive["data"]["physical_interfaces"]
+        if row.get("role") == "management"
+    )
+    archive["data"]["routes"].append(
+        {
+            "destination_cidr": "10.123.0.0/24",
+            "gateway": None,
+            "interface_name": management_interface,
+            "metric": 100,
+            "enabled": True,
+            "wan_mode": "interface",
+            "wan_policy_name": None,
+        }
+    )
+    _set_routes_wan_setting(archive, key=ROUTING_ENABLED_SETTING_KEY, value=True)
+
+    with pytest.raises(ValueError, match="ineligible target interface"):
         with SessionLocal() as db_session:
             restore_settings_archive(db_session, archive)
 

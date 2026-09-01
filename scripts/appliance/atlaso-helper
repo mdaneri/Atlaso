@@ -8754,6 +8754,24 @@ def _wan_bool(value: str, *, default: bool = False) -> bool:
     return value.strip().lower() in {"1", "true", "yes", "on", "enabled"}
 
 
+def _wan_target_has_routing_address(target: dict[str, str]) -> bool:
+    """Return whether a legacy WAN target has a usable configured address.
+
+    Args:
+        target: Parsed legacy WAN target.
+    """
+    for key in ("ip_cidr", "ipv6_cidr"):
+        value = target.get(key, "")
+        if not value:
+            continue
+        try:
+            ip_interface(value)
+        except ValueError:
+            continue
+        return True
+    return False
+
+
 def _wan_feature_settings(
     parsed: dict[str, list[dict[str, str]]],
 ) -> dict[str, bool]:
@@ -8776,7 +8794,15 @@ def _wan_feature_settings(
             for route in parsed["routes"]
             if _wan_bool(route.get("enabled", ""), default=True)
         ]
-        routing_enabled = bool(enabled_routes) or any(
+        active_route_targets = {
+            target.get("name", "")
+            for target in parsed.get("targets", [])
+            if target.get("name", "")
+            and target.get("role", "") == "route"
+            and target.get("routing_domain", "lab") == "lab"
+            and _wan_target_has_routing_address(target)
+        }
+        routing_enabled = bool(enabled_routes) or len(active_route_targets) >= 2 or any(
             _wan_bool(rule.get("enabled", ""), default=True)
             for rule in parsed["routing_rules"]
         )

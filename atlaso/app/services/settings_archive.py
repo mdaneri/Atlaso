@@ -2073,31 +2073,20 @@ def _validate_archive_relationships(data: dict[str, list[dict[str, Any]]]) -> No
         != "management"
     }
     route_target_names = set(route_target_families)
-    management_target_families = {
-        name: address_families(row)
-        for name, row in physical_interfaces.items()
-        if str(row.get("oper_state") or "") != "missing"
-        and normalize_interface_mode(row.get("mode")) != "trunk"
-        and normalize_interface_role(row.get("role")) == "management"
-        and address_families(row)
+    management_target_names = {
+        name
+        for name in route_target_names
+        if (physical_interfaces.get(name) or vlan_interfaces.get(name, {})).get(
+            "access_management_ui_enabled", False
+        )
+        is True
     }
-    management_target_families.update(
-        {
-            str(row["name"]): address_families(row)
-            for row in data.get("vlan_interfaces", [])
-            if row.get("enabled", True)
-            and normalize_interface_role(row.get("role")) == "management"
-            and address_families(row)
-        }
-    )
-    management_target_names = set(management_target_families)
-    all_route_target_names = route_target_names | management_target_names
     route_target_cidrs = {
         name: (
             (physical_interfaces.get(name) or vlan_interfaces[name]).get("ip_cidr"),
             (physical_interfaces.get(name) or vlan_interfaces[name]).get("ipv6_cidr"),
         )
-        for name in all_route_target_names
+        for name in route_target_names
     }
     service_target_names = {
         name
@@ -2484,7 +2473,7 @@ def _validate_archive_relationships(data: dict[str, list[dict[str, Any]]]) -> No
                 archive_routes_wan_settings.routing_enabled
                 or archive_routes_wan_settings.wan_simulation_enabled
             )
-            and str(row.get("interface_name") or "") not in all_route_target_names
+            and str(row.get("interface_name") or "") not in route_target_names
         ):
             raise ValueError(
                 f"The settings archive row {row_index} in 'routes' has an ineligible target interface."
@@ -2563,7 +2552,7 @@ def _validate_archive_relationships(data: dict[str, list[dict[str, Any]]]) -> No
             )
             for row in data.get("wan_policies", [])
         ],
-        all_route_target_names,
+        route_target_names,
         nat_rules=[
             NatRule(**_model_kwargs_with_scalar_defaults(NatRule, row))
             for row in data.get("nat_rules", [])
