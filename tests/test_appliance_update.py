@@ -1150,9 +1150,39 @@ def test_update_source_payload_exposes_only_non_secret_revision():
     payload = update_source_payload(source)
 
     assert payload["credential_present"] is True
+    assert payload["synchronization_ready"] is False
     assert payload["validated_at"] == "2026-08-21T12:30:00+00:00"
     assert payload["updated_at"] == "2026-08-21T13:00:00+00:00"
     assert "credential_encrypted" not in payload
+
+
+def test_legacy_powershell_receipt_renders_as_unsynchronized(client):
+    """Keep the source card consistent with secured-home admission.
+
+    Args:
+        client: HTTP test client used to exercise the Atlaso application.
+    """
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import UpdateSource
+
+    login(client)
+    with SessionLocal() as db:
+        powershell = db.execute(
+            select(UpdateSource).where(UpdateSource.kind == "powershell")
+        ).scalar_one()
+        powershell.validation_status = "valid"
+        powershell.validation_message = "Repository synchronized with its appliance package client."
+        for photon in db.execute(
+            select(UpdateSource).where(UpdateSource.kind == "photon")
+        ).scalars():
+            photon.validation_status = "invalid"
+            photon.validation_message = "Test-only synchronization failure."
+        db.commit()
+
+    page = client.get("/ui/management/appliance-update")
+
+    assert "Saved, not synchronized" in page.text
+    assert "Synchronized</span>" not in page.text
 
 
 def test_availability_fingerprint_stales_after_repository_synchronization():
