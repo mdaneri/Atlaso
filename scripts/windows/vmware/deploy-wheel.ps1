@@ -41,6 +41,8 @@ Opaque ID of the preverified Atlaso 1Password Environment.
 1Password account name or ID approved for desktop SDK authorization.
 .PARAMETER OnePasswordPython
 CPython 3.10 through 3.13 executable used by the supported 1Password SDK Windows wheel and locked dependencies.
+.PARAMETER UseVmwareGuestInfoHostKey
+Trusts the selected normal test VM's verified Ed25519 guest-info key only for the password-backed child.
 .PARAMETER ResetVaultEntries
 Clears appliance vault entries during deployment.
 .PARAMETER SkipHostCheck
@@ -83,6 +85,7 @@ param(
     [string]$OnePasswordEnvironmentId = '',
     [string]$OnePasswordAccount = '',
     [string]$OnePasswordPython = '',
+    [switch]$UseVmwareGuestInfoHostKey,
     [switch]$ResetVaultEntries,
     [switch]$SkipHostCheck
 )
@@ -1074,6 +1077,9 @@ if ($UsePasswordDeploy) {
 } elseif ($OnePasswordAccount -or $OnePasswordPython) {
     throw '-OnePasswordAccount and -OnePasswordPython require -OnePasswordEnvironmentId.'
 }
+if ($UseVmwareGuestInfoHostKey -and (-not $UsePasswordDeploy -or -not $VmxPath)) {
+    throw '-UseVmwareGuestInfoHostKey requires password-backed deployment and an explicit normal test VM -VmxPath.'
+}
 
 $generatedRuntimeDependencyRoot = ''
 $generatedWheelPath = ''
@@ -1256,7 +1262,7 @@ if (-not $IpAddress) {
 }
 
 $trustedSshHostKey = ''
-if ($UsePasswordDeploy -and $resolvedVmxPath) {
+if ($UseVmwareGuestInfoHostKey) {
     $workstationFirstBootPath = Join-Path $resolvedRepoRoot 'scripts\windows\vmware\Atlaso.WorkstationFirstBoot.ps1'
     . $workstationFirstBootPath
     $trustedSshHostKey = (Get-AtlasoWorkstationSshHostKey `

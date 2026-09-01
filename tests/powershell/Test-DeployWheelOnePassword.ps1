@@ -98,9 +98,11 @@ if ($scriptText.Contains('client._policy.missing_host_key(client, host, server_k
     throw 'Unknown host keys must use a controlled rejection that does not require an attached SSHClient transport.'
 }
 if (-not $scriptText.Contains('Get-AtlasoWorkstationSshHostKey', [System.StringComparison]::Ordinal) -or
+    -not $scriptText.Contains('if ($UseVmwareGuestInfoHostKey)', [System.StringComparison]::Ordinal) -or
+    -not $scriptText.Contains('-UseVmwareGuestInfoHostKey requires password-backed deployment and an explicit normal test VM -VmxPath.', [System.StringComparison]::Ordinal) -or
     -not $scriptText.Contains("'--trusted-host-key', `$TrustedHostKey", [System.StringComparison]::Ordinal) -or
     -not $scriptText.Contains('client.get_host_keys().add(host, parts[0], trusted_key)', [System.StringComparison]::Ordinal)) {
-    throw 'Password deployment must reconcile verified VMware guest-info evidence only into the child in-memory host keys.'
+    throw 'Only an explicitly selected normal test VM may reconcile verified guest-info evidence into the child in-memory host keys.'
 }
 if (-not $scriptText.Contains('transport.get_security_options()', [System.StringComparison]::Ordinal) -or
     -not $scriptText.Contains('security_options.key_types', [System.StringComparison]::Ordinal)) {
