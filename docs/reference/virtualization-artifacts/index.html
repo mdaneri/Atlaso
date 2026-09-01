@@ -3668,6 +3668,13 @@ finalizer performs the independent checks below as defense in depth and retains 
 authority, but it is not a reproducible Photon image builder and does not claim to prove an entire root filesystem safe
 against a compromised producer. A producer compromise is therefore a release-security incident that requires stopping
 publication, rotating affected credentials, and rebuilding from a known-good trusted workstation.</p>
+<p>The producer cannot attribute a mixed live checkout to a later commit. The canonical VMware wrapper admits one clean
+commit, materializes an invocation-owned snapshot, removes the build identity's write access for the child lifetime,
+runs its bounded child, exact HCL template, and every Packer source from that tree, and
+records the snapshot inventory digest in schema-v3 VMX provenance. OVA export requires that exact binding; Hyper-V is
+derived only from the validated OVA and therefore inherits it. Protected finalization still verifies the signed
+software-source sidecar, privileged assets, artifact bytes, and publication identity independently. Those checks are
+defense in depth around the source-bound producer output, not a replacement for the snapshot boundary.</p>
 <p>The shared machine contract is UEFI with Secure Boot disabled, four virtual CPUs, 4096 MiB RAM, two NICs, one SCSI
 controller, and four ordered disks:</p>
 <ol>

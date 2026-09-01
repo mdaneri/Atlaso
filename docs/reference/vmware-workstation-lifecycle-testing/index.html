@@ -3808,8 +3808,9 @@ claim replacement ownership.</p>
 <p>For Workstation, Photon installation is bound to VMware SCSI identity <code>0:0:0</code> through kickstart preinstall discovery,
 not <code>/dev/sda</code> enumeration. Provisioning then proves the complete root dependency chain reaches that disk and proves
 the blank <code>ATLASO_SYSTEM</code> target is the exact 20 GiB disk at <code>0:1:0</code> before formatting it. The completed VMX receives
-schema-v3 role-bound provenance bound to the matching builder identity; normal test-VM cloning and OVF export both
-verify it before accepting the source. A
+schema-v3 role-bound provenance that binds the admitted clean commit, deterministic immutable source-snapshot
+inventory, and matching builder identity; normal test-VM cloning and OVF export both verify it before accepting the
+source. A
 reversed, ambiguous, capacity-mismatched, legacy-unproven, or byte-modified payload must be rebuilt and is never repaired
 by formatting or silently swapping unrelated VMDKs.</p>
 <h2 id="single-command-run">Single-Command Run<a class="headerlink" href="#single-command-run" title="Permanent link">&para;</a></h2>
@@ -3916,7 +3917,7 @@ inventory remains an ambiguous state that fails closed and preserves the new pat
 Focused regression coverage runs a test-only copy of the normal wrapper with only its host-global signer, credential,
 and post-clone startup boundaries stubbed. The wrapper still performs its real input validation, redeploy cleanup,
 data-disk checks, and low-level clone orchestration against a synthetic schema-v3, role-bound source payload bound to
-the matching builder identity. This
+both an immutable source snapshot and the matching builder identity. This
 proves that provider-owned root removal continues into cloning and that missing targets, sibling-prefix data disks, and
 invalid SSH-key inputs fail before cleanup. The harness does not use <code>-NoStart</code>; the production wrapper still requires
 first boot to consume and scrub the shared development signer.</p>

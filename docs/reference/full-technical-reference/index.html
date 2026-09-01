@@ -5241,6 +5241,15 @@ default 2700-second start-to-provisioning timeout matches Packer's 45-minute SSH
 checked exact-root cleanup only for
 <code>-PackerOnError cleanup</code>; other failure selections preserve the output. Raw Packer debug-log environment variables are
 excluded from the monitored child because they are outside the wrapper's redaction boundary.</p>
+<p>Source admission precedes Workstation, ISO, Packer, and output mutation. The wrapper requires one completely clean Git
+working tree, archives the exact admitted commit into the invocation-owned build root, and starts the bounded child from
+that snapshot. The parent removes the build identity's write access for the complete bounded-child lifetime. Packer
+uses a separate disposable working directory, while the exact HCL template and every file and shell provisioner read
+only the absolute protected snapshot root. A deterministic inventory binds every staged regular file by relative path,
+size, and
+SHA-256; the wrapper verifies its file count and aggregate SHA-256 before Packer and before schema-v3 VMX provenance is
+written. The shared ISO cache and output remain outside the snapshot. A later checkout update therefore cannot alter
+the appliance or its recorded commit, while a changed staged tree fails before provenance can authenticate the output.</p>
 <p>Build the image with:</p>
 <div class="language-powershell highlight"><pre><span></span><code><span id="__span-27-1"><a id="__codelineno-27-1" name="__codelineno-27-1" href="#__codelineno-27-1"></a><span class="n">pwsh</span> <span class="n">-ExecutionPolicy</span> <span class="n">Bypass</span> <span class="p">`</span>
 </span><span id="__span-27-2"><a id="__codelineno-27-2" name="__codelineno-27-2" href="#__codelineno-27-2"></a>  <span class="o">-File</span> <span class="n">scripts</span><span class="p">/</span><span class="n">windows</span><span class="p">/</span><span class="n">vmware</span><span class="p">/</span><span class="n">build-photon-image</span><span class="p">.</span><span class="n">ps1</span> <span class="p">`</span>
