@@ -313,6 +313,12 @@ function Select-AtlasoOnePasswordPythonFromLauncherInventory {
                 }
             }
             catch {
+                # An incompatible runtime is safe to skip only after its probe
+                # process and redirected streams are proven inactive. Preserve
+                # the bounded-process fail-closed signal across selection.
+                if ($_.Exception.Data['AtlasoProcessTreeTerminationUnproven']) {
+                    throw
+                }
                 continue
             }
             if (([string]$pointerWidth).Trim() -cne '64') {
@@ -446,6 +452,11 @@ function Resolve-AtlasoOnePasswordPython {
                 break
             }
             catch {
+                # Do not probe another registration while the prior runtime
+                # probe may still be active or own redirected streams.
+                if ($_.Exception.Data['AtlasoProcessTreeTerminationUnproven']) {
+                    throw
+                }
                 continue
             }
         }

@@ -289,8 +289,19 @@ def test_omitted_nonsecret_sdk_selectors_are_discovered_fail_closed() -> None:
         "foreach ($candidate in $selectedCandidates) {", auto_resolver
     )
     candidate_probe = module.index("Get-AtlasoOnePasswordRuntimeProbe `", candidate_loop)
-    candidate_continue = module.index("continue", candidate_probe)
-    assert candidate_loop < candidate_probe < candidate_continue
+    unproven_termination = module.index(
+        "if ($_.Exception.Data['AtlasoProcessTreeTerminationUnproven']) {",
+        candidate_probe,
+    )
+    termination_rethrow = module.index("throw", unproven_termination)
+    candidate_continue = module.index("continue", termination_rethrow)
+    assert (
+        candidate_loop
+        < candidate_probe
+        < unproven_termination
+        < termination_rethrow
+        < candidate_continue
+    )
     assert module.index("Initialize-AtlasoOnePasswordSdkRuntime `", module.index("function Get-AtlasoOnePasswordCredentialPair")) < module.index(
         "Resolve-AtlasoOnePasswordAccount `",
         module.index("function Get-AtlasoOnePasswordCredentialPair"),
