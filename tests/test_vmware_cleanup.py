@@ -1580,9 +1580,9 @@ def test_exact_stale_repair_matches_marker_path_and_display_name(tmp_path: Path)
     prefixed_unrelated = root / "Atlaso-PR-672-cleanup.vmx backup.vmx"
     apostrophe_prefixed_unrelated = root / "Atlaso-PR-672-cleanup.vmx' backup.vmx"
     suffix = (
+        f'index6.id = "{stale.resolve()}"\n'
         f'VMLIST6.config = "{stale.resolve()}"\n'
         'vmlist6.DisplayName = "Atlaso-PR-672-cleanup"\n'
-        f'index6.id = "{stale.resolve()}"\n'
         f'vmlist7.config = "{unrelated.resolve()}"\n'
         'vmlist7.DisplayName = "Atlaso-PR-671-unrelated"\n'
         f'index7.id = "{unrelated.resolve()}"\n'
@@ -1596,6 +1596,7 @@ def test_exact_stale_repair_matches_marker_path_and_display_name(tmp_path: Path)
     _, environment, _, inventory = _write_fake_vmrun(
         tmp_path / "fake", [], inventory_suffix=suffix
     )
+    inventory.write_text(suffix, encoding="utf-8-sig")
 
     result = _run_stale_registration_repair(
         tmp_path,
