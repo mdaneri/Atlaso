@@ -4535,12 +4535,11 @@ def test_factory_reset_retained_runtime_cleanup_removes_bounded_state(
     assert not managed_repo.exists()
     assert not update_state.exists()
     assert not legacy_powershell_home.exists()
-    assert synced_directories == [
-        managed_repo.parent,
-        legacy_powershell_home.parent,
-        kmip_state,
-        update_state.parent,
-    ]
+    expected_synced_directories = [managed_repo.parent]
+    if os.name != "posix":
+        expected_synced_directories.append(legacy_powershell_home.parent)
+    expected_synced_directories.extend([kmip_state, update_state.parent])
+    assert synced_directories == expected_synced_directories
     output = json.loads(capsys.readouterr().out)
     assert output["kmip_entries_removed"] == 3
     assert output["legacy_powershell_home_removed"] is True
