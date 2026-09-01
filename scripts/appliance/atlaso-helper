@@ -277,6 +277,7 @@ ATLASO_UPDATE_RESTART_RECEIPT_PATH = (
 ATLASO_UPDATE_RESTART_GATE_PATH = Path("/run/atlaso-release-restart-gate")
 ATLASO_WORKER_STARTUP_STATUS_PATH = ATLASO_STATE_DIR / "worker-startup.json"
 ATLASO_POWERSHELL_HOME = ATLASO_PRIVILEGED_STATE_DIR / "powershell"
+ATLASO_LEGACY_POWERSHELL_HOME = ATLASO_STATE_DIR / "powershell"
 ATLASO_DATA_DISK_POLICY_PATH = Path("/etc/atlaso/data-disks.conf")
 ATLASO_DATA_DISK_BOOTSTRAP_MARKER_PATH = Path("/etc/atlaso/data-disk-safety-bootstrap.json")
 ATLASO_MOUNT_DATA_DISKS_PATH = Path("/opt/atlaso/bin/atlaso-mount-data-disks")
@@ -20197,6 +20198,45 @@ def _fsync_factory_reset_directory(path: Path) -> None:
         os.close(descriptor)
 
 
+def _remove_factory_reset_legacy_powershell_home() -> bool:
+    """Remove the former service-owned PowerShell home without following links.
+
+    Returns:
+        Whether an existing legacy entry was removed.
+    """
+    path = ATLASO_LEGACY_POWERSHELL_HOME
+    if os.name != "posix":
+        if path.is_symlink() or path.is_file():
+            path.unlink()
+            return True
+        if not path.exists():
+            return False
+        if path.resolve() != path or not path.is_dir():
+            raise ValueError("factory-reset legacy PowerShell home is unsafe")
+        shutil.rmtree(path)
+        return True
+
+    flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
+    parent_descriptor = os.open(path.parent, flags)
+    try:
+        try:
+            metadata = os.stat(path.name, dir_fd=parent_descriptor, follow_symlinks=False)
+        except FileNotFoundError:
+            return False
+        if stat.S_ISLNK(metadata.st_mode) or stat.S_ISREG(metadata.st_mode):
+            os.unlink(path.name, dir_fd=parent_descriptor)
+        elif stat.S_ISDIR(metadata.st_mode):
+            if not shutil.rmtree.avoids_symlink_attacks:
+                raise ValueError("factory-reset cannot safely remove the legacy PowerShell home")
+            shutil.rmtree(path.name, dir_fd=parent_descriptor)
+        else:
+            raise ValueError("factory-reset legacy PowerShell home is unsafe")
+        os.fsync(parent_descriptor)
+        return True
+    finally:
+        os.close(parent_descriptor)
+
+
 def _reset_factory_retained_runtime() -> int:
     """Remove bounded KMIP and synchronized package-source runtime state."""
     if not _factory_reset_runtime_cleanup_is_admitted():
@@ -20214,6 +20254,9 @@ def _reset_factory_retained_runtime() -> int:
             return 1
         if MANAGED_PHOTON_REPO_PATH.exists():
             raise ValueError("factory-reset managed Photon repository cleanup did not complete")
+        legacy_powershell_home_removed = _remove_factory_reset_legacy_powershell_home()
+        if legacy_powershell_home_removed and os.name != "posix":
+            _fsync_factory_reset_directory(ATLASO_LEGACY_POWERSHELL_HOME.parent)
         removed_kmip_entries = 0
         if KMS_STATE_DIR.is_dir():
             for child in KMS_STATE_DIR.iterdir():
@@ -20232,6 +20275,7 @@ def _reset_factory_retained_runtime() -> int:
             {
                 "factory_reset_retained_runtime": "cleanup complete",
                 "kmip_entries_removed": removed_kmip_entries,
+                "legacy_powershell_home_removed": legacy_powershell_home_removed,
                 "powershell_repositories_removed": len(repositories),
             },
             sort_keys=True,

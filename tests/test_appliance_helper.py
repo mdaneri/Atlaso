@@ -4490,6 +4490,12 @@ def test_factory_reset_retained_runtime_cleanup_removes_bounded_state(
         json.dumps({"powershell_repositories": ["PrivateGallery"]}),
         encoding="utf-8",
     )
+    legacy_powershell_home = tmp_path / "legacy-powershell"
+    (legacy_powershell_home / ".local" / "share" / "powershell").mkdir(parents=True)
+    (legacy_powershell_home / ".local" / "share" / "powershell" / "PSRepositories.xml").write_text(
+        "service-owned registration fixture",
+        encoding="utf-8",
+    )
     synced_directories: list[Path] = []
 
     def sync_sources(payload):
@@ -4510,6 +4516,8 @@ def test_factory_reset_retained_runtime_cleanup_removes_bounded_state(
     monkeypatch.setattr(helper, "KMS_STATE_DIR", kmip_state)
     monkeypatch.setattr(helper, "MANAGED_PHOTON_REPO_PATH", managed_repo)
     monkeypatch.setattr(helper, "UPDATE_SOURCE_STATE_PATH", update_state)
+    monkeypatch.setattr(helper, "ATLASO_LEGACY_POWERSHELL_HOME", legacy_powershell_home)
+    monkeypatch.setattr(helper, "_cleanup_stale_photon_repository_views", lambda **_kwargs: None)
     monkeypatch.setattr(
         helper,
         "_command_path",
@@ -4526,9 +4534,16 @@ def test_factory_reset_retained_runtime_cleanup_removes_bounded_state(
     assert list(kmip_state.iterdir()) == []
     assert not managed_repo.exists()
     assert not update_state.exists()
-    assert synced_directories == [managed_repo.parent, kmip_state, update_state.parent]
+    assert not legacy_powershell_home.exists()
+    assert synced_directories == [
+        managed_repo.parent,
+        legacy_powershell_home.parent,
+        kmip_state,
+        update_state.parent,
+    ]
     output = json.loads(capsys.readouterr().out)
     assert output["kmip_entries_removed"] == 3
+    assert output["legacy_powershell_home_removed"] is True
     assert output["powershell_repositories_removed"] == 1
 
 
@@ -4572,6 +4587,12 @@ def test_factory_reset_fsyncs_photon_removal_before_partial_failure_retry(
     monkeypatch.setattr(helper, "KMS_STATE_DIR", kmip_state)
     monkeypatch.setattr(helper, "MANAGED_PHOTON_REPO_PATH", managed_repo)
     monkeypatch.setattr(helper, "UPDATE_SOURCE_STATE_PATH", update_state)
+    monkeypatch.setattr(
+        helper,
+        "ATLASO_LEGACY_POWERSHELL_HOME",
+        tmp_path / "legacy-powershell",
+    )
+    monkeypatch.setattr(helper, "_cleanup_stale_photon_repository_views", lambda **_kwargs: None)
     monkeypatch.setattr(helper, "_sync_appliance_update_sources", sync_sources)
     monkeypatch.setattr(
         helper,

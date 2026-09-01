@@ -740,7 +740,8 @@ including when complete factory reset activates the clean Appliance Settings uni
 configuration directories before launching PowerShell instead of relying on `/root` or an interactive profile, so the
 packaged VMware settings manager can initialize consistently during detached reset recovery. Appliance Update checks
 idempotently re-register validated desired PowerShell repositories in this secured home, so upgrading from the former
-service-owned home does not require an operator to synchronize unchanged repository definitions again.
+service-owned home does not require an operator to synchronize unchanged repository definitions again. Complete factory
+reset removes that bounded legacy home without following links after unregistering repositories from the secured home.
 
 The real Appliance Settings apply path stages JSON at `/var/lib/atlaso/apply/appliance-settings/atlaso-settings.json`.
 The `appliance_settings` unit records the appliance FQDN, resolver mode, resolver servers, local DNS desired-state flag,
