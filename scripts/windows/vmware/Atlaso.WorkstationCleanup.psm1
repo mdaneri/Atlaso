@@ -715,7 +715,7 @@ function Remove-AtlasoWorkstationStaleRegistrations {
                 if ($rawRefersToExactPath) { break }
             }
             if ($rawRefersToExactPath) {
-                if ($rawOwner.StartsWith('vmlist')) { $rawExactConfigCount++ } else { $rawExactIndexCount++ }
+                if ($rawOwner.StartsWith('vmlist', [System.StringComparison]::OrdinalIgnoreCase)) { $rawExactConfigCount++ } else { $rawExactIndexCount++ }
             }
         }
         $staleEntries = @($staleEntries | Where-Object {
