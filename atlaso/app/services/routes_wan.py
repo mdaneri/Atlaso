@@ -1038,8 +1038,7 @@ def render_wan_config(
             lines.append(f"ip route del default dev {target['name']}  # no static management IPv4 gateway configured")
         if management and target.get("ipv6_cidr") and not target.get("ipv6_gateway"):
             lines.append(f"ip -6 route del default dev {target['name']}  # no static management IPv6 gateway configured")
-    if settings.effective_nat_enabled and any(rule.enabled for rule in nat_rules):
-        lines.append("nft -f /etc/atlaso/nftables.d/atlaso-nat.nft")
+    lines.append("nft -f /etc/atlaso/nftables.d/atlaso-nat.nft")
 
     for route in routes:
         destination_cidr = canonical_route_destination(route.destination_cidr)
