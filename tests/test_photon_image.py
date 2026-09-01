@@ -3521,6 +3521,13 @@ def test_photon_child_revalidates_pinned_credential_ancestry() -> None:
     )
     assert sensitive_identity < credential_read
 
+    bundle_write = wrapper.index("[System.IO.File]::WriteAllText(", child)
+    bundle_guard = wrapper.rindex("Assert-AtlasoStrictDescendantPath `", child, bundle_write)
+    bundle_guard_block = wrapper[bundle_guard:bundle_write]
+    assert "-ParentPath $credentialRoot `" in bundle_guard_block
+    assert "-ChildPath $childCredentialBundlePath `" in bundle_guard_block
+    assert "Assert-AtlasoPhotonSensitiveBuildPathIdentity" not in bundle_guard_block
+
     common = Path("scripts/windows/common/Atlaso.PhotonImage.psm1").read_text(
         encoding="utf-8"
     )

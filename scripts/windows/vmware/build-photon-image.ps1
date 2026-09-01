@@ -1939,11 +1939,10 @@ else {
             -CredentialStateRoot $credentialStateRoot `
             -CredentialRoot $credentialRoot `
             -Identity $credentialRootIdentity
-        Assert-AtlasoPhotonSensitiveBuildPathIdentity `
-            -CredentialRoot $credentialRoot `
-            -SensitiveBuildRoot $childSensitiveBuildDirectory `
-            -RootIdentity $sensitiveBuildRootIdentity `
-            -Path $childCredentialBundlePath
+        Assert-AtlasoStrictDescendantPath `
+            -ParentPath $credentialRoot `
+            -ChildPath $childCredentialBundlePath `
+            -FailureMessage 'Photon credential bundle escaped the pinned credential root'
         [System.IO.File]::WriteAllText(
             $childCredentialBundlePath,
             ($credentialPayload | ConvertTo-Json -Compress),
