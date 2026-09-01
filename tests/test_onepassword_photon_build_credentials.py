@@ -97,10 +97,13 @@ def test_photon_wrapper_preflights_credentials_before_image_mutation() -> None:
     assert "AtlasoProcessTreeTerminationUnproven" in wrapper
     assert "AtlasoProcessTreeTerminationProven" in wrapper
     assert "if (-not $processTreeTerminationUnproven)" in wrapper
+    assert "$reservationReleaseBlocked = $true" in wrapper
+    assert "if (-not $reservationReleaseBlocked)" in wrapper
     assert "Restart Windows, then rerun this wrapper" in wrapper
-    assert "The outer image deadline selected checked VMware artifact cleanup." in wrapper
+    assert "The proven outer process boundary selected checked VMware artifact cleanup." in wrapper
     assert "$outerCleanupOutputExistedBeforeChild = Test-Path" in wrapper
     assert "Test-Path -LiteralPath $childOutputCleanupClaimPath -PathType Leaf" in wrapper
+    assert "if (-not $KeepExistingOutput -or -not $builderOutputExists) {" in wrapper
     assert "output-cleanup-claimed.json" in wrapper
     parent_output_resolution = wrapper.index(
         "$outerCleanupOutputDirectory = Resolve-WorkstationOutputDirectory"
@@ -191,9 +194,12 @@ def test_photon_wrapper_preflights_credentials_before_image_mutation() -> None:
     assert "$Job.TerminateAndWait(10000)" in runner
     assert "$Job.CompleteAndWait(10000)" in runner
     assert "$jobCompletionProven = $false" in runner
+    assert "$interruptionTerminationProven = $false" in runner
     assert "if (-not $jobCompletionProven)" in runner
+    assert "if ($interruptionTerminationProven)" in runner
     assert "$processJob.TerminateAndWait(10000)" in runner
     assert "was interrupted and whole-process-tree cleanup could not be proven" in runner
+    assert "was interrupted after proven whole-process-tree termination" in runner
     assert "accounting.ActiveProcesses == 0" in runner
     assert "AtlasoProcessTreeTerminationProven" in runner
     assert "Invoke-AtlasoBoundedStreamingProcess `" in module

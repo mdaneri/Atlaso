@@ -90,6 +90,7 @@ def test_disabled_route_preview_skips_confirmed_absent_target_cleanup():
 
     assert "route=10.20.0.0/24" in config
     assert "ip route del 10.20.0.0/24 dev missing_eth2" not in config
+    assert "ip route replace 10.20.0.0/24" not in config
     assert "tc qdisc del dev missing_eth2" not in config
 
 

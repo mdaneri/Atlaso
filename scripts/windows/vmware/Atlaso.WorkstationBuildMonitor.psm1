@@ -252,6 +252,35 @@ function Get-AtlasoWorkstationStartupDiagnostic {
 
 <#
 .SYNOPSIS
+Resolve Packer arguments for Atlaso-owned monitored failure handling.
+.PARAMETER Arguments
+Original Packer argument list.
+.PARAMETER PackerOnError
+Operator-selected logical failure behavior.
+#>
+function ConvertTo-AtlasoMonitoredPackerArguments {
+    param(
+        [Parameter(Mandatory = $true)][string[]]$Arguments,
+        [Parameter(Mandatory = $true)]
+        [ValidateSet('cleanup', 'abort', 'ask', 'run-cleanup-provisioner')]
+        [string]$PackerOnError
+    )
+
+    return @($Arguments | ForEach-Object {
+            if ($PackerOnError -eq 'cleanup' -and $_ -ceq '-on-error=cleanup') {
+                # Packer cleanup can delete the VMX before its Workstation provider
+                # exits. Preserve that exact identity so Atlaso's checked callback
+                # can stop, delete, and verify the provider before address release.
+                '-on-error=abort'
+            }
+            else {
+                $_
+            }
+        })
+}
+
+<#
+.SYNOPSIS
 Redact secret-bearing Packer output while preserving actionable phase text.
 .PARAMETER Line
 One Packer stdout or stderr line.
@@ -422,7 +451,10 @@ function Invoke-AtlasoMonitoredPackerBuild {
     $startInfo.CreateNoWindow = $true
     $startInfo.RedirectStandardOutput = $true
     $startInfo.RedirectStandardError = $true
-    foreach ($argument in $Arguments) {
+    $effectiveArguments = ConvertTo-AtlasoMonitoredPackerArguments `
+        -Arguments $Arguments `
+        -PackerOnError $PackerOnError
+    foreach ($argument in $effectiveArguments) {
         $startInfo.ArgumentList.Add($argument)
     }
     # Raw Packer debug logs are outside the wrapper's redaction boundary.
@@ -656,6 +688,7 @@ function Invoke-AtlasoMonitoredPackerBuild {
 }
 
 Export-ModuleMember -Function @(
+    'ConvertTo-AtlasoMonitoredPackerArguments',
     'ConvertTo-AtlasoSanitizedPackerLine',
     'Get-AtlasoWorkstationBuilderState',
     'Get-AtlasoWorkstationStartupDiagnostic',

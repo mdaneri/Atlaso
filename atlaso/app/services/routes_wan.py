@@ -1139,7 +1139,7 @@ def render_wan_config(
                     f"ip {route_family}route del {destination_cidr} dev {route.interface_name}"
                     "  # disabled flagged-management default"
                 )
-        else:
+        elif route_effective:
             command = ["ip", "-6", "route", "replace", destination_cidr] if destination.version == 6 else ["ip", "route", "replace", destination_cidr]
             if route.gateway:
                 command.extend(["via", route.gateway])
