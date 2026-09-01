@@ -1177,7 +1177,7 @@ Exact current source branch.
 function Invoke-AtlasoLegacyBuilderAddressHandoffRecovery {
     param(
         [Parameter(Mandatory = $true)][string]$StateRoot,
-        [Parameter(Mandatory = $true)][string]$VmrunPath,
+        [string]$VmrunPath,
         [Parameter(Mandatory = $true)][string]$RepositoryRoot,
         [Parameter(Mandatory = $true)][string]$VmName,
         [Parameter(Mandatory = $true)][string]$SourceBranch
@@ -1189,6 +1189,7 @@ function Invoke-AtlasoLegacyBuilderAddressHandoffRecovery {
         return
     }
     $resolvedRepositoryRoot = (Resolve-Path -LiteralPath $RepositoryRoot -ErrorAction Stop).Path
+    $resolvedVmrunPath = $null
     foreach ($handoff in @(
             Get-ChildItem -LiteralPath $pendingRoot `
                 -Filter 'builder-address-reservation-*.json' `
@@ -1206,9 +1207,14 @@ function Invoke-AtlasoLegacyBuilderAddressHandoffRecovery {
                 )) {
                 continue
             }
+            if ([string]::IsNullOrWhiteSpace($resolvedVmrunPath)) {
+                # Provider discovery belongs only to an exact actionable legacy
+                # handoff; provider-free validation must not require Workstation.
+                $resolvedVmrunPath = Resolve-WorkstationVmrunPath -Path $VmrunPath
+            }
             Complete-AtlasoBuilderAddressReservationHandoff `
                 -Path $handoff.FullName `
-                -VmrunPath $VmrunPath `
+                -VmrunPath $resolvedVmrunPath `
                 -StateRoot $resolvedStateRoot `
                 -ReservationStateRoot $resolvedStateRoot
             Write-Host "Released legacy VMware builder-address handoff $($handoff.Name)."
@@ -1307,7 +1313,7 @@ if (-not $CredentialChild) {
             -CollisionSuffix $CollisionSuffix
         Invoke-AtlasoLegacyBuilderAddressHandoffRecovery `
             -StateRoot $legacyBuilderReservationStateRoot `
-            -VmrunPath (Resolve-WorkstationVmrunPath -Path $VmrunPath) `
+            -VmrunPath $VmrunPath `
             -RepositoryRoot $repoRoot `
             -VmName ([string]$localTaskBuilderIdentity.Name) `
             -SourceBranch ([string]$localTaskBuilderIdentity.SourceBranch)
@@ -1404,7 +1410,7 @@ if (-not $CredentialChild -and $ReleaseBuilder) {
     }
     Invoke-AtlasoLegacyBuilderAddressHandoffRecovery `
         -StateRoot $legacyBuilderReservationStateRoot `
-        -VmrunPath (Resolve-WorkstationVmrunPath -Path $VmrunPath) `
+        -VmrunPath $VmrunPath `
         -RepositoryRoot $repoRoot `
         -VmName $VmName `
         -SourceBranch $legacySourceBranch

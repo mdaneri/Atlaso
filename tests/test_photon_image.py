@@ -1814,8 +1814,10 @@ def test_vmware_packer_requires_proven_task_or_release_builder_identity() -> Non
         "-OutputDirectory $workstationOutputDirectory `"
         in wrapper[build_invocation:]
     )
+    provider_build_guard = wrapper.index("$packerBuildInvoker = $null")
     output_boundary = wrapper.index(
-        "$resolvedVmrunPath = Resolve-WorkstationVmrunPath -Path $VmrunPath"
+        "$resolvedVmrunPath = Resolve-WorkstationVmrunPath -Path $VmrunPath",
+        provider_build_guard,
     )
     owner_recheck = wrapper.index(
         "Assert-AtlasoVmwareBuilderOwnershipManifest `", output_boundary
@@ -3384,6 +3386,31 @@ def test_photon_wrapper_recovers_legacy_handoffs_before_pr_admission() -> None:
     )
 
     assert local_identity < legacy_recovery < github_admission
+    recovery_function = wrapper.index(
+        "function Invoke-AtlasoLegacyBuilderAddressHandoffRecovery"
+    )
+    matching_handoff = wrapper.index(
+        "[string]$reservation.VmName -cne $VmName", recovery_function
+    )
+    provider_resolution = wrapper.index(
+        "$resolvedVmrunPath = Resolve-WorkstationVmrunPath -Path $VmrunPath",
+        matching_handoff,
+    )
+    completion = wrapper.index(
+        "Complete-AtlasoBuilderAddressReservationHandoff `", provider_resolution
+    )
+    assert matching_handoff < provider_resolution < completion
+    task_recovery = wrapper[legacy_recovery:github_admission]
+    release_recovery_start = wrapper.index(
+        "if (-not $CredentialChild -and $ReleaseBuilder) {", github_admission
+    )
+    release_recovery_end = wrapper.index(
+        "$sensitivePathValidator = $null", release_recovery_start
+    )
+    release_recovery = wrapper[release_recovery_start:release_recovery_end]
+    for recovery_call in (task_recovery, release_recovery):
+        assert "-VmrunPath $VmrunPath `" in recovery_call
+        assert "-VmrunPath (Resolve-WorkstationVmrunPath" not in recovery_call
     assert "Initialize-AtlasoPhotonCredentialRoot `" in wrapper
     assert wrapper.count("Assert-AtlasoPhotonCredentialRootIdentity `") >= 3
 

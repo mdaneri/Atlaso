@@ -221,8 +221,17 @@ try {
         [System.Text.UTF8Encoding]::new($false)
     )
     $script:completedLegacyHandoffs = @()
+    $script:resolvedLegacyVmrunCount = 0
+    Set-Item -Path Function:Resolve-WorkstationVmrunPath -Value {
+        param($Path)
+        $script:resolvedLegacyVmrunCount += 1
+        'resolved-vmrun.exe'
+    }
     Set-Item -Path Function:Complete-AtlasoBuilderAddressReservationHandoff -Value {
         param($Path, $VmrunPath, $StateRoot, $ReservationStateRoot)
+        if ($VmrunPath -cne 'resolved-vmrun.exe') {
+            throw "Legacy recovery used an unexpected vmrun path: $VmrunPath"
+        }
         $script:completedLegacyHandoffs += [System.IO.Path]::GetFullPath($Path)
     }
     Invoke-AtlasoLegacyBuilderAddressHandoffRecovery `
@@ -231,12 +240,24 @@ try {
         -RepositoryRoot $resolvedRepositoryRoot `
         -VmName 'Atlaso-PR-658-Photon-Builder-VMware' `
         -SourceBranch 'bug/623-624-photon-bootstrap-qemu'
-    if ($script:completedLegacyHandoffs.Count -ne 1 -or
+    if ($script:resolvedLegacyVmrunCount -ne 1 -or
+        $script:completedLegacyHandoffs.Count -ne 1 -or
         -not $script:completedLegacyHandoffs[0].Equals(
             $matchingPath,
             [StringComparison]::OrdinalIgnoreCase
         )) {
         throw 'Legacy recovery did not isolate the exact matching builder handoff.'
+    }
+    Remove-Item -LiteralPath $matchingPath -Force
+    Invoke-AtlasoLegacyBuilderAddressHandoffRecovery `
+        -StateRoot $legacyStateRoot `
+        -VmrunPath 'must-not-resolve-vmrun.exe' `
+        -RepositoryRoot $resolvedRepositoryRoot `
+        -VmName 'Atlaso-PR-658-Photon-Builder-VMware' `
+        -SourceBranch 'bug/623-624-photon-bootstrap-qemu'
+    if ($script:resolvedLegacyVmrunCount -ne 1 -or
+        $script:completedLegacyHandoffs.Count -ne 1) {
+        throw 'Legacy recovery resolved vmrun without an exact matching handoff.'
     }
 
     $junctionContainer = Join-Path $fixtureRoot 'junction-container'
