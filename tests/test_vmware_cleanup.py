@@ -1578,6 +1578,7 @@ def test_exact_stale_repair_matches_marker_path_and_display_name(tmp_path: Path)
     stale = root / "Atlaso-PR-672-cleanup.vmx"
     unrelated = root.parent / "Atlaso-PR-671-unrelated" / "missing.vmx"
     prefixed_unrelated = root / "Atlaso-PR-672-cleanup.vmx backup.vmx"
+    apostrophe_prefixed_unrelated = root / "Atlaso-PR-672-cleanup.vmx' backup.vmx"
     suffix = (
         f'vmlist6.config = "{stale.resolve()}"\n'
         'vmlist6.DisplayName = "Atlaso-PR-672-cleanup"\n'
@@ -1588,6 +1589,8 @@ def test_exact_stale_repair_matches_marker_path_and_display_name(tmp_path: Path)
         f'vmlist8.config = "{prefixed_unrelated.resolve()}"\n'
         'vmlist8.DisplayName = "Prefixed unrelated VM"\n'
         f'index8.id = "{prefixed_unrelated.resolve()}"\n'
+        f"vmlist9.config = '{apostrophe_prefixed_unrelated.resolve()}'\n"
+        'vmlist9.DisplayName = "Apostrophe-prefixed unrelated VM"\n'
         "unrelated.value = keep-me\n"
     )
     _, environment, _, inventory = _write_fake_vmrun(
@@ -1608,6 +1611,7 @@ def test_exact_stale_repair_matches_marker_path_and_display_name(tmp_path: Path)
     assert 'vmlist6.DisplayName = "Atlaso-PR-672-cleanup"' not in inventory_text
     assert str(unrelated.resolve()) in inventory_text
     assert str(prefixed_unrelated.resolve()) in inventory_text
+    assert str(apostrophe_prefixed_unrelated.resolve()) in inventory_text
     assert "Atlaso-PR-671-unrelated" in inventory_text
     assert "unrelated.value = keep-me" in inventory_text
 
@@ -1729,6 +1733,8 @@ def test_exact_stale_repair_preserves_mismatched_display_name(tmp_path: Path) ->
         ("index", '"', '" junk', False),
         ("config", '"', '" junk "', False),
         ("index", '"', '" junk "', False),
+        ("config", '""', '"', False),
+        ("index", '""', '"', False),
         ("config", "'", "'", False),
         ("index", "'", "'", False),
         ("config", "", '" junk', False),
@@ -2848,6 +2854,16 @@ def test_module_keeps_inventory_work_out_of_normal_delete_path() -> None:
         "Restore-AtlasoFileAfterCasFailure -TargetPath $InventoryPath", rollback_catch
     )
     assert inventory_replace < rollback_catch < rollback_call
+    replacement_lock = stale_repair.index(
+        "$replacementLock = [System.IO.File]::Open(", inventory_replace
+    )
+    replacement_verification = stale_repair.index(
+        "Test-AtlasoByteArraysEqual -Left $replacementBytes", replacement_lock
+    )
+    replacement_unlock = stale_repair.index(
+        "$replacementLock.Dispose()", replacement_verification
+    )
+    assert inventory_replace < replacement_lock < replacement_verification < replacement_unlock
     assert stale_repair.count("foreach ($candidatePath in $targetPaths)") == 2
     assert stale_repair.count("Test-Path -LiteralPath $resolvedVmxPath") >= 3
     assert "Test-Path -LiteralPath $resolvedVmxPath -PathType Leaf" not in stale_repair

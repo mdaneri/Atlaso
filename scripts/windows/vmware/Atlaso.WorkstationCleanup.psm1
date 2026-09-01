@@ -643,9 +643,7 @@ function Remove-AtlasoWorkstationStaleRegistrations {
     }
     if (-not $InventoryPath) {
         $appearedInventoryPath = Resolve-AtlasoWorkstationInventoryPath
-        if ($appearedInventoryPath) {
-            throw "VMware Workstation inventory appeared while its absence was being verified; provider state was preserved: $appearedInventoryPath"
-        }
+        if ($appearedInventoryPath) { throw "VMware Workstation inventory appeared while its absence was being verified; provider state was preserved: $appearedInventoryPath" }
         if ($resolvedVmxPath -and (Test-Path -LiteralPath $resolvedVmxPath)) {
             throw "The exact stale-registration VMX was recreated before inventory absence could be proven: $resolvedVmxPath"
         }
@@ -667,18 +665,15 @@ function Remove-AtlasoWorkstationStaleRegistrations {
             $rawCandidates = @($rawValue)
             $hasCompleteQuotedValue = $false
             if ($rawValue.Length -gt 0 -and $rawValue[0] -in @([char]34, [char]39)) {
+                $openingQuote = $rawValue[0]; $candidateStart = 1
+                while ($candidateStart -lt $rawValue.Length -and $rawValue[$candidateStart] -eq $openingQuote) { $candidateStart++ }
                 $rawCandidates = @()
-                for ($quoteIndex = 1; $quoteIndex -lt $rawValue.Length; $quoteIndex++) {
-                    if ($rawValue[$quoteIndex] -eq $rawValue[0]) {
-                        $rawCandidates += $rawValue.Substring(1, $quoteIndex - 1)
-                    }
+                for ($quoteIndex = $candidateStart; $quoteIndex -lt $rawValue.Length; $quoteIndex++) {
+                    if ($rawValue[$quoteIndex] -ne $openingQuote) { continue }
+                    $hasCompleteQuotedValue = $true; $quotedSuffix = $rawValue.Substring($quoteIndex + 1).Trim()
+                    if ($quotedSuffix -notmatch '(?i)\.vmx(?:$|["''\s])') { $rawCandidates += $rawValue.Substring($candidateStart, $quoteIndex - $candidateStart) }
                 }
-                if ($rawCandidates.Count -gt 0) {
-                    $hasCompleteQuotedValue = $true
-                }
-                else {
-                    $rawCandidates = @($rawValue.Substring(1))
-                }
+                if (-not $hasCompleteQuotedValue) { $rawCandidates = @($rawValue.Substring($candidateStart)) }
             }
             $rawRefersToExactPath = $false
             foreach ($rawCandidate in $rawCandidates) {
@@ -880,6 +875,14 @@ function Remove-AtlasoWorkstationStaleRegistrations {
                     -Description 'VMware Workstation inventory'
                 throw 'VMware Workstation inventory was replaced during scoped stale-registration repair; provider state was restored.'
             }
+            $replacementLock = [System.IO.File]::Open($InventoryPath, 'Open', 'Read', 'Read')
+            try {
+                $verifiedReplacementBytes = Read-AtlasoStreamBytes -Stream $replacementLock
+                if (-not (Test-AtlasoByteArraysEqual -Left $replacementBytes -Right $verifiedReplacementBytes)) {
+                    throw 'VMware Workstation inventory changed after scoped stale-registration repair; provider state will be restored.'
+                }
+            }
+            finally { $replacementLock.Dispose() }
         }
         finally {
             $inventoryLock.Dispose()
