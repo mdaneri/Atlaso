@@ -40,6 +40,9 @@ clears browser identity and CSRF state, records a sanitized audit event, and ret
 navigation returns to the appropriate management, public, or protocol login surface with **Session expired due to
 inactivity**.
 
+The authenticated VCF Offline Depot browser sends deliberate `/PROD/` activity through its depot protocol listener;
+it does not require or publish the management UI plane on that interface.
+
 The OIDC provider applies the same timeout to its separate `/identity` browser session. Its signed cookie carries only
 an opaque session identifier; Atlaso persists the authoritative activity and terminal-expiry state. A successful
 credential submission starts the session, while silent `prompt=none` authorization does not refresh it. Once the

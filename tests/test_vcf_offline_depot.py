@@ -336,6 +336,7 @@ def test_vcf_depot_nginx_config_renders_atlaso_auth_request_by_default():
     assert "auth_basic_user_file /etc/atlaso/nginx/htpasswd/vcf-offline-depot.htpasswd;" in config
     assert "proxy_set_header X-Atlaso-Depot-Basic-User $remote_user;" in config
     assert "location = /PROD/" in config
+    assert "location = /PROD/session/activity" in config
     assert "location = /ui/public" in config
     assert "location ^~ /ui/public/" in config
     assert "location ^~ /static/" in config
