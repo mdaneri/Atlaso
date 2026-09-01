@@ -45,6 +45,13 @@ def test_checked_in_manifest_has_the_exact_approved_identity() -> None:
     ),
 )
 def test_manifest_rejects_identity_drift(tmp_path: Path, field: str, value: Any) -> None:
+    """Reject any mutation of the approved artifact identity.
+
+    Args:
+        tmp_path: Pytest-managed temporary directory.
+        field: Manifest field to mutate.
+        value: Invalid replacement value.
+    """
     module = _load_module()
     payload = json.loads(MANIFEST.read_text(encoding="utf-8"))
     payload[field] = value
@@ -65,6 +72,13 @@ def test_redirect_policy_rejects_non_github_hosts() -> None:
 
 class _Response(io.BytesIO):
     def __init__(self, content: bytes, *, url: str, declared_length: int | None = None):
+        """Create a response stub with optional declared length.
+
+        Args:
+            content: Response body bytes.
+            url: Effective response URL.
+            declared_length: Optional Content-Length header value.
+        """
         super().__init__(content)
         self._url = url
         self.headers = {}
@@ -78,20 +92,45 @@ class _Response(io.BytesIO):
         return self
 
     def __exit__(self, *args: object) -> None:
+        """Close the response when leaving its context.
+
+        Args:
+            *args: Context-manager exception details.
+        """
         self.close()
 
 
 class _Opener:
     def __init__(self, response: _Response):
+        """Create an opener that returns one prepared response.
+
+        Args:
+            response: Prepared response returned from ``open``.
+        """
         self.response = response
         self.timeout: int | None = None
 
     def open(self, request: object, timeout: int) -> _Response:
+        """Record the timeout and return the prepared response.
+
+        Args:
+            request: Download request supplied by the implementation.
+            timeout: Requested network timeout in seconds.
+
+        Returns:
+            The prepared response.
+        """
         self.timeout = timeout
         return self.response
 
 
 def test_download_enforces_digest_size_timeout_and_filename(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Accept only the named, bounded asset with its exact digest.
+
+    Args:
+        tmp_path: Pytest-managed temporary directory.
+        monkeypatch: Pytest fixture used to replace the network opener.
+    """
     module = _load_module()
     content = b"verified-wheel"
     manifest = module.load_manifest(MANIFEST)
@@ -120,6 +159,14 @@ def test_download_failure_leaves_no_wheel(
     content: bytes,
     declared_size: int,
 ) -> None:
+    """Remove partial output after size or digest rejection.
+
+    Args:
+        tmp_path: Pytest-managed temporary directory.
+        monkeypatch: Pytest fixture used to replace the network opener.
+        content: Simulated response bytes.
+        declared_size: Approved manifest size for the simulated response.
+    """
     module = _load_module()
     manifest = module.load_manifest(MANIFEST)
     manifest["asset_size"] = declared_size
@@ -139,10 +186,22 @@ def test_download_failure_leaves_no_wheel(
 def test_missing_release_fails_without_an_artifact(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    """Leave no artifact when the immutable release is unavailable.
+
+    Args:
+        tmp_path: Pytest-managed temporary directory.
+        monkeypatch: Pytest fixture used to replace the network opener.
+    """
     module = _load_module()
 
     class MissingOpener:
         def open(self, request: object, timeout: int) -> None:
+            """Raise the simulated release-download failure.
+
+            Args:
+                request: Download request supplied by the implementation.
+                timeout: Requested network timeout in seconds.
+            """
             raise module.urllib.error.URLError("release missing")
 
     monkeypatch.setattr(

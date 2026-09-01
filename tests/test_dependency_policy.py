@@ -4,6 +4,8 @@ import io
 import json
 from pathlib import Path
 
+import pytest
+
 from scripts.check_dependency_policy import LOCK_POLICIES, validate
 from scripts.compile_requirements import (
     LOCK_TARGETS,
@@ -2378,8 +2380,14 @@ def test_index_metadata_check_accepts_complete_upload_times(monkeypatch) -> None
     _assert_index_provides_upload_times("https://example.invalid/simple")
 
 
-def test_eligible_official_cp314_wheel_requires_fork_retirement(monkeypatch) -> None:
-    """Reject lock generation once the official bridge replacement matures."""
+def test_eligible_official_cp314_wheel_requires_fork_retirement(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Reject lock generation once the official bridge replacement matures.
+
+    Args:
+        monkeypatch: Pytest fixture used to replace the trusted index response.
+    """
     payload = {
         "files": [
             {

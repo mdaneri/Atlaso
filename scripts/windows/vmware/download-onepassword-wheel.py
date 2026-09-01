@@ -32,11 +32,30 @@ class ApprovedRedirectHandler(urllib.request.HTTPRedirectHandler):
     """Reject redirects away from GitHub's release delivery hosts."""
 
     def redirect_request(self, req: Any, fp: Any, code: int, msg: str, headers: Any, newurl: str) -> Any:
+        """Validate a redirect target before constructing its request.
+
+        Args:
+            req: Original request that received the redirect.
+            fp: Response stream associated with the redirect.
+            code: HTTP redirect status code.
+            msg: HTTP status message.
+            headers: Response headers associated with the redirect.
+            newurl: Proposed redirect destination.
+
+        Returns:
+            The standard-library redirect request for an approved URL.
+        """
         _validate_delivery_url(newurl, redirect=True)
         return super().redirect_request(req, fp, code, msg, headers, newurl)
 
 
 def _validate_delivery_url(url: str, *, redirect: bool) -> None:
+    """Require a credential-free URL on an approved GitHub delivery host.
+
+    Args:
+        url: Candidate release or redirect URL.
+        redirect: Whether the URL is a release-delivery redirect target.
+    """
     parsed = urlsplit(url)
     if parsed.scheme != "https" or parsed.username is not None or parsed.password is not None:
         raise ValueError("the 1Password wheel URL must use credential-free HTTPS")
@@ -46,7 +65,14 @@ def _validate_delivery_url(url: str, *, redirect: bool) -> None:
 
 
 def load_manifest(path: Path) -> dict[str, Any]:
-    """Load and strictly validate the checked-in artifact identity."""
+    """Load and strictly validate the checked-in artifact identity.
+
+    Args:
+        path: Checked-in artifact manifest path.
+
+    Returns:
+        Strictly validated artifact identity fields.
+    """
     payload = json.loads(path.read_text(encoding="utf-8"))
     expected_keys = {
         "schema_version",
@@ -101,7 +127,17 @@ def load_manifest(path: Path) -> dict[str, Any]:
 
 
 def download(manifest: dict[str, Any], destination: Path, *, timeout: int, max_size: int) -> Path:
-    """Download, bound, and hash-verify the exact manifest asset."""
+    """Download, bound, and hash-verify the exact manifest asset.
+
+    Args:
+        manifest: Strictly validated artifact identity fields.
+        destination: Private wheel-directory destination.
+        timeout: Positive network timeout in seconds.
+        max_size: Maximum accepted response size in bytes.
+
+    Returns:
+        Path to the admitted wheel.
+    """
     if timeout < 1 or max_size < 1 or manifest["asset_size"] > max_size:
         raise ValueError("the 1Password wheel download bounds are invalid")
     destination.mkdir(parents=True, exist_ok=True)

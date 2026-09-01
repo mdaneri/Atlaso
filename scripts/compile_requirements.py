@@ -280,7 +280,11 @@ def _onepassword_artifact_hash() -> str:
 
 
 def _assert_no_eligible_official_onepassword_wheel(index_url: str) -> None:
-    """Require retirement of the fork after an official wheel ages seven days."""
+    """Require retirement of the fork after an official wheel ages seven days.
+
+    Args:
+        index_url: Trusted Python simple-index base URL to inspect.
+    """
     request = urllib.request.Request(
         f"{index_url}/onepassword-sdk/",
         headers={"Accept": "application/vnd.pypi.simple.v1+json"},
