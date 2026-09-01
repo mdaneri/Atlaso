@@ -1707,6 +1707,14 @@ if ($CredentialChild) {
     }
     $sensitivePathValidator = {
         param($Path)
+        Assert-AtlasoPhotonCredentialRootIdentity `
+            -BuildStateRoot $resolvedBuildStateRoot `
+            -CredentialStateRoot $credentialStateRoot `
+            -CredentialRoot $credentialBundleRoot `
+            -Identity ([pscustomobject][ordered]@{
+                ParentIdentity = $StagingParentIdentity
+                RootIdentity   = $StagingRootIdentity
+            })
         Assert-AtlasoPhotonSensitiveBuildPathIdentity `
             -CredentialRoot $credentialBundleRoot `
             -SensitiveBuildRoot $sensitiveBuildRoot `

@@ -3516,10 +3516,18 @@ def test_photon_child_revalidates_pinned_credential_ancestry() -> None:
     assert "'-SensitiveBuildRootIdentity'" in wrapper
     assert "-RootIdentity $SensitiveBuildRootIdentity" in wrapper
     assert "-SensitivePathValidator $sensitivePathValidator" in wrapper
-    sensitive_identity = wrapper.index(
+    sensitive_callback = wrapper.index("$sensitivePathValidator = {", child)
+    pre_read_sensitive_identity = wrapper.index(
         "Assert-AtlasoPhotonSensitiveBuildPathIdentity `", child
     )
-    assert sensitive_identity < credential_read
+    callback_credential_identity = wrapper.index(
+        "Assert-AtlasoPhotonCredentialRootIdentity `", sensitive_callback
+    )
+    sensitive_identity = wrapper.index(
+        "Assert-AtlasoPhotonSensitiveBuildPathIdentity `", sensitive_callback
+    )
+    assert callback_credential_identity < sensitive_identity
+    assert pre_read_sensitive_identity < credential_read
 
     bundle_write = wrapper.index("[System.IO.File]::WriteAllText(", child)
     bundle_guard = wrapper.rindex("Assert-AtlasoStrictDescendantPath `", child, bundle_write)

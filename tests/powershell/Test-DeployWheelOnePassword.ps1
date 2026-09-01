@@ -35,6 +35,8 @@ function Assert-Throws {
 
 $deployPath = Join-Path $RepositoryRoot 'scripts\windows\vmware\deploy-wheel.ps1'
 $deploySource = Get-Content -LiteralPath $deployPath -Raw
+$firstBootPath = Join-Path $RepositoryRoot 'scripts\windows\vmware\Atlaso.WorkstationFirstBoot.ps1'
+$firstBootSource = Get-Content -LiteralPath $firstBootPath -Raw
 $executionMarker = '$resolvedRepoRoot = Resolve-RepoRoot -Path $RepoRoot'
 $executionIndex = $deploySource.IndexOf($executionMarker, [System.StringComparison]::Ordinal)
 if ($executionIndex -lt 0) {
@@ -92,6 +94,32 @@ if ($scriptText.Contains("'run', '--environment'", [System.StringComparison]::Or
 }
 if (-not $scriptText.Contains('paramiko.RejectPolicy()', [System.StringComparison]::Ordinal)) {
     throw 'Password-backed deployment must reject unknown SSH host keys.'
+}
+if ($scriptText.Contains('client._policy.missing_host_key(client, host, server_key)', [System.StringComparison]::Ordinal) -or
+    -not $scriptText.Contains('Unknown SSH host key for {host}', [System.StringComparison]::Ordinal) -or
+    -not $scriptText.Contains('-VmxPath and -UseVmwareGuestInfoHostKey.', [System.StringComparison]::Ordinal)) {
+    throw 'Unknown host keys must use a controlled rejection that does not require an attached SSHClient transport.'
+}
+if (-not $scriptText.Contains('Get-AtlasoWorkstationSshHostKey', [System.StringComparison]::Ordinal) -or
+    -not $scriptText.Contains('if ($UseVmwareGuestInfoHostKey)', [System.StringComparison]::Ordinal) -or
+    -not $scriptText.Contains('-UseVmwareGuestInfoHostKey requires password-backed deployment and an explicit normal test VM -VmxPath.', [System.StringComparison]::Ordinal) -or
+    -not $scriptText.Contains("'--trusted-host-key', `$TrustedHostKey", [System.StringComparison]::Ordinal) -or
+    -not $scriptText.Contains('client.get_host_keys().add(host, parts[0], trusted_key)', [System.StringComparison]::Ordinal)) {
+    throw 'Only an explicitly selected normal test VM may reconcile verified guest-info evidence into the child in-memory host keys.'
+}
+$guestInfoLookupIndex = $scriptText.IndexOf('Get-AtlasoWorkstationSshHostKey `', [System.StringComparison]::Ordinal)
+$wheelhouseAllocationIndex = $scriptText.IndexOf('$generatedRuntimeDependencyRoot = Join-Path (', [System.StringComparison]::Ordinal)
+if ($guestInfoLookupIndex -lt 0 -or
+    $wheelhouseAllocationIndex -lt 0 -or
+    $guestInfoLookupIndex -ge $wheelhouseAllocationIndex) {
+    throw 'Guest-info host-key lookup must complete before generated wheelhouse staging is allocated.'
+}
+if (-not $firstBootSource.Contains('$remainingPollMilliseconds = [int][Math]::Ceiling(', [System.StringComparison]::Ordinal) -or
+    -not $firstBootSource.Contains(
+        'Start-Sleep -Milliseconds ([Math]::Min($PollSeconds * 1000, $remainingPollMilliseconds))',
+        [System.StringComparison]::Ordinal
+    )) {
+    throw 'Guest-info host-key polling must be clamped to the remaining lookup deadline.'
 }
 if (-not $scriptText.Contains('transport.get_security_options()', [System.StringComparison]::Ordinal) -or
     -not $scriptText.Contains('security_options.key_types', [System.StringComparison]::Ordinal)) {
