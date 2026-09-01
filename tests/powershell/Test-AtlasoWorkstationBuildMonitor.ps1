@@ -81,6 +81,19 @@ if ($safeLine.Contains($secret) -or -not $safeLine.Contains('[redacted]')) {
 }
 
 $fakePacker = Join-Path $OutputDirectory 'fake-packer.ps1'
+$effectiveCleanupArguments = ConvertTo-AtlasoMonitoredPackerArguments `
+    -Arguments @('build', '-force', '-on-error=cleanup', 'template.pkr.hcl') `
+    -PackerOnError cleanup
+if (($effectiveCleanupArguments -join '|') -cne 'build|-force|-on-error=abort|template.pkr.hcl') {
+    throw 'Logical cleanup did not preserve the failed VMX for checked provider cleanup.'
+}
+$effectiveAbortArguments = ConvertTo-AtlasoMonitoredPackerArguments `
+    -Arguments @('build', '-on-error=abort', 'template.pkr.hcl') `
+    -PackerOnError abort
+if (($effectiveAbortArguments -join '|') -cne 'build|-on-error=abort|template.pkr.hcl') {
+    throw 'An explicit non-cleanup Packer selection was changed.'
+}
+
 $fakeScript = @'
 param([ValidateSet('prepower-stall', 'stall', 'success', 'failure', 'burst')][string]$Mode)
 Write-Output '==> builder: Password: "generated-vnc-test-secret"'
@@ -312,6 +325,15 @@ if (-not $burstOutput.Contains('burst-output-2000') -or
     throw 'Verbose monitored Packer output was throttled or did not drain completely.'
 }
 
+$failureRecord = Join-Path $OutputDirectory 'failure.txt'
+$failureHandler = {
+    param($SelectedOnError, $State, $Diagnostic)
+    [System.IO.File]::WriteAllText(
+        $failureRecord,
+        "$SelectedOnError|$($Diagnostic.Code)",
+        [System.Text.UTF8Encoding]::new($false)
+    )
+}.GetNewClosure()
 $failureError = $null
 try {
     Invoke-AtlasoMonitoredPackerBuild `
@@ -323,6 +345,8 @@ try {
         -BuilderAddress '192.0.2.30' `
         -StartupTimeoutSeconds 2 `
         -HeartbeatSeconds 1 `
+        -PackerOnError cleanup `
+        -TimeoutHandler $failureHandler `
         -StateProbe $probe
 }
 catch {
@@ -330,6 +354,9 @@ catch {
 }
 if ($null -eq $failureError -or $failureError.Exception.Message -notmatch 'exit code 9') {
     throw 'A real Packer process failure was not propagated before the startup timeout.'
+}
+if ((Get-Content -LiteralPath $failureRecord -Raw) -cne 'cleanup|packer_failed') {
+    throw 'A real Packer process failure did not invoke checked failure handling.'
 }
 
 Write-Output 'Atlaso VMware Workstation build monitor tests passed.'

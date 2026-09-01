@@ -229,10 +229,13 @@ interval begins at monitored Packer process start, including pre-VMX and pre-pow
 so the probe matches Packer's communicator endpoint. A
 heartbeat distinguishes output identity, provider inventory, exact running state, TCP/22 reachability, Workstation
 handoff, and SSH authentication; it never reads or reports VMX contents or connection credentials. With
-`-PackerOnError cleanup`, either the monitored startup timeout or the outer whole-image deadline uses the same checked
-exact-root cleanup as an ordinary replacement build. `-KeepExistingOutput` preserves a root that predated the build,
-but not a new partial root created by this invocation; other failure selections preserve output when the wrapper cannot
-claim replacement ownership.
+`-PackerOnError cleanup`, Packer retains the exact failed VMX and the wrapper routes ordinary nonzero exits, monitored
+startup timeouts, monitor interruptions, and the outer whole-image deadline through the same checked exact-root cleanup
+as an ordinary replacement build. This preserves provider identity until Atlaso stops and reconciles the exact
+Workstation VM. The builder-address reservation is released only after both provider inactivity and artifact removal
+are proven; a checked cleanup failure retains the remaining artifacts and reservation with both failure diagnostics.
+`-KeepExistingOutput` preserves a root that predated the build, but not a new partial root created by this invocation;
+other failure selections preserve output when the wrapper cannot claim replacement ownership.
 
 For Workstation, Photon installation is bound to VMware SCSI identity `0:0:0` through kickstart preinstall discovery,
 not `/dev/sda` enumeration. Provisioning then proves the complete root dependency chain reaches that disk and proves
