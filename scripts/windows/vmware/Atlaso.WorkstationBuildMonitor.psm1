@@ -424,7 +424,7 @@ Interval for safe startup phase heartbeats.
 .PARAMETER PackerOnError
 Selected Packer failure behavior.
 .PARAMETER TimeoutHandler
-Provider cleanup or preservation callback invoked after a monitored failure.
+Provider cleanup or preservation callback invoked after a monitored timeout.
 .PARAMETER StateProbe
 Optional focused-test replacement for live VMware state collection.
 #>
@@ -653,23 +653,6 @@ function Invoke-AtlasoMonitoredPackerBuild {
             Write-Warning 'Packer exited before its redirected output handles closed; remaining output was discarded.'
         }
         if ($process.ExitCode -ne 0) {
-            $failureDiagnostic = [pscustomobject]@{
-                Code    = 'packer_failed'
-                Message = "Packer exited with code $($process.ExitCode)."
-            }
-            $failureHandlerError = $null
-            if ($null -ne $TimeoutHandler) {
-                $handlerInvoked = $true
-                try {
-                    & $TimeoutHandler $PackerOnError $lastState $failureDiagnostic
-                }
-                catch {
-                    $failureHandlerError = $_.Exception.Message
-                }
-            }
-            if ($null -ne $failureHandlerError) {
-                throw "packer build failed with exit code $($process.ExitCode). Checked failure handling also failed: $failureHandlerError"
-            }
             throw "packer build failed with exit code $($process.ExitCode)."
         }
     }

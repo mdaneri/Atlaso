@@ -2328,6 +2328,7 @@ def test_create_atlaso_vmware_test_vm_wrapper_uses_common_helpers():
     assert build_script.index("$packerBuildInvoker = {") < child_gui_check < build_script.index(
         "Invoke-AtlasoMonitoredPackerBuild"
     )
+    assert "-TimeoutHandler $timeoutHandler" not in build_script
 
     lifecycle_script = Path(
         "scripts/windows/vmware/run-lifecycle-test.ps1"
@@ -3226,7 +3227,8 @@ def test_vmware_gui_builder_repairs_stale_rows_before_ui_startup() -> None:
     )
     child_start = wrapper.index("-Action 'The isolated VMware Photon image build'")
     termination_proven = wrapper.index(
-        "$_.Exception.Data['AtlasoProcessTreeTerminationProven']", child_start
+        "$isolatedBuildFailure.Exception.Data['AtlasoProcessTreeTerminationProven']",
+        child_start,
     )
     durable_cleanup_claim = wrapper.index(
         "Test-Path -LiteralPath $childOutputCleanupClaimPath -PathType Leaf",

@@ -325,15 +325,6 @@ if (-not $burstOutput.Contains('burst-output-2000') -or
     throw 'Verbose monitored Packer output was throttled or did not drain completely.'
 }
 
-$failureRecord = Join-Path $OutputDirectory 'failure.txt'
-$failureHandler = {
-    param($SelectedOnError, $State, $Diagnostic)
-    [System.IO.File]::WriteAllText(
-        $failureRecord,
-        "$SelectedOnError|$($Diagnostic.Code)",
-        [System.Text.UTF8Encoding]::new($false)
-    )
-}.GetNewClosure()
 $failureError = $null
 try {
     Invoke-AtlasoMonitoredPackerBuild `
@@ -346,7 +337,6 @@ try {
         -StartupTimeoutSeconds 2 `
         -HeartbeatSeconds 1 `
         -PackerOnError cleanup `
-        -TimeoutHandler $failureHandler `
         -StateProbe $probe
 }
 catch {
@@ -355,8 +345,4 @@ catch {
 if ($null -eq $failureError -or $failureError.Exception.Message -notmatch 'exit code 9') {
     throw 'A real Packer process failure was not propagated before the startup timeout.'
 }
-if ((Get-Content -LiteralPath $failureRecord -Raw) -cne 'cleanup|packer_failed') {
-    throw 'A real Packer process failure did not invoke checked failure handling.'
-}
-
 Write-Output 'Atlaso VMware Workstation build monitor tests passed.'

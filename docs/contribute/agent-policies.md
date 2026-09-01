@@ -484,8 +484,9 @@ Terminal order:
   creation, provider responsiveness, running state, configured builder TCP/22, start handoff, and SSH authentication.
   Sanitize Packer output and remove raw debug-log environment variables from the monitored child. For
   `-PackerOnError cleanup`, make Packer retain the exact failed VMX and route ordinary nonzero exits, startup timeouts,
-  monitor interruptions, and the outer whole-image deadline through checked exact-root cleanup. Release the builder
-  address only after cleanup proves both exact-provider inactivity and artifact removal; otherwise retain the remaining
+  monitor interruptions, and the outer whole-image deadline through checked exact-root cleanup only after the outer
+  Windows job proves zero Packer, plugin, and provider processes remain. Release the builder address only after
+  process-tree termination, exact-provider inactivity, and artifact removal are proven; otherwise retain the remaining
   artifacts, reservation, and combined failure evidence. Preserve the exact artifacts for other selections. Never
   expose connection credentials or VMX contents, and never substitute an arbitrary delay for a diagnosed start
   transition.

@@ -350,6 +350,23 @@ if ($ordinaryExitSurvivors.Count -ne 0) {
     throw 'An ordinary-exit process-tree descendant survived completion proof.'
 }
 
+$ordinaryFailure = $null
+try {
+    Invoke-AtlasoBoundedStreamingProcess `
+        -FilePath (Get-Process -Id $PID).Path `
+        -ArgumentList @('-NoLogo', '-NoProfile', '-NonInteractive', '-Command', 'exit 9') `
+        -TimeoutSeconds 10 `
+        -Action 'Focused ordinary failure test'
+}
+catch {
+    $ordinaryFailure = $_
+}
+if ($null -eq $ordinaryFailure -or
+    $ordinaryFailure.Exception.Message -notmatch 'exit code 9' -or
+    -not $ordinaryFailure.Exception.Data['AtlasoProcessTreeTerminationProven']) {
+    throw 'An ordinary nonzero exit was not reported after proven whole-process-tree termination.'
+}
+
 $breakawayToken = "atlaso-breakaway-$([guid]::NewGuid().ToString('N'))"
 $escapedRunnerPath = (Join-Path $repositoryRoot 'scripts\windows\vmware\Atlaso.WorkstationFirstBoot.ps1') `
     -replace "'", "''"

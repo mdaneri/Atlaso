@@ -98,7 +98,7 @@ def test_photon_wrapper_preflights_credentials_before_image_mutation() -> None:
     assert "AtlasoProcessTreeTerminationProven" in wrapper
     assert "if (-not $processTreeTerminationUnproven)" in wrapper
     assert "Restart Windows, then rerun this wrapper" in wrapper
-    assert "The outer image deadline selected checked VMware artifact cleanup." in wrapper
+    assert "The proven outer process boundary selected checked VMware artifact cleanup." in wrapper
     assert "$outerCleanupOutputExistedBeforeChild = Test-Path" in wrapper
     assert "Test-Path -LiteralPath $childOutputCleanupClaimPath -PathType Leaf" in wrapper
     assert "output-cleanup-claimed.json" in wrapper

@@ -1310,63 +1310,73 @@ else {
                 -Action 'The isolated VMware Photon image build'
         }
         catch {
-            if ($_.Exception.Data['AtlasoProcessTreeTerminationUnproven']) {
+            $isolatedBuildFailure = $_
+            if ($isolatedBuildFailure.Exception.Data['AtlasoProcessTreeTerminationUnproven']) {
                 $processTreeTerminationUnproven = $true
                 throw 'The isolated VMware Photon image build could not prove whole-tree termination. Restart Windows, then rerun this wrapper to complete sensitive cleanup.'
             }
-            if ($_.Exception.Data['AtlasoProcessTreeTerminationProven'] -and
-                $PackerOnError -eq 'cleanup' -and (
-                    -not $KeepExistingOutput -and
-                    (Test-Path -LiteralPath $childOutputCleanupClaimPath -PathType Leaf)
-                )) {
-                if (Test-Path -LiteralPath $outerCleanupOutputDirectory) {
-                    $parentOutputClaim = $null
-                    try {
-                        $timeoutCleanupClaim = Get-Content `
-                            -LiteralPath $childOutputCleanupClaimPath `
-                            -Raw | ConvertFrom-Json
-                        if ([int]$timeoutCleanupClaim.Schema -ne 2 -or
-                            [string]$timeoutCleanupClaim.ClaimGeneration -cne $childOutputClaimGeneration -or
-                            -not ([string]$timeoutCleanupClaim.OutputPath).Equals(
-                                $outerCleanupOutputDirectory,
-                                [StringComparison]::OrdinalIgnoreCase
-                            )) {
-                            throw 'The isolated child output-cleanup claim does not match this build invocation.'
+            $checkedFailureHandlingError = $null
+            try {
+                if ($isolatedBuildFailure.Exception.Data['AtlasoProcessTreeTerminationProven'] -and
+                    $PackerOnError -eq 'cleanup' -and (
+                        -not $KeepExistingOutput -and
+                        (Test-Path -LiteralPath $childOutputCleanupClaimPath -PathType Leaf)
+                    )) {
+                    if (Test-Path -LiteralPath $outerCleanupOutputDirectory) {
+                        $parentOutputClaim = $null
+                        try {
+                            $timeoutCleanupClaim = Get-Content `
+                                -LiteralPath $childOutputCleanupClaimPath `
+                                -Raw | ConvertFrom-Json
+                            if ([int]$timeoutCleanupClaim.Schema -ne 2 -or
+                                [string]$timeoutCleanupClaim.ClaimGeneration -cne $childOutputClaimGeneration -or
+                                -not ([string]$timeoutCleanupClaim.OutputPath).Equals(
+                                    $outerCleanupOutputDirectory,
+                                    [StringComparison]::OrdinalIgnoreCase
+                                )) {
+                                throw 'The isolated child output-cleanup claim does not match this build invocation.'
+                            }
+                            # The child releases its claim only after proven whole-tree
+                            # termination. Revalidate identity, reacquire the output,
+                            # and reject any intervening claimant generation before cleanup.
+                            $null = Assert-AtlasoBuilderIdentityCurrent `
+                                -RepositoryRoot $repoRoot `
+                                -ExpectedIdentity $builderIdentity `
+                                -PullRequestNumber $PullRequestNumber `
+                                -CollisionSuffix $CollisionSuffix `
+                                -ReleaseBuilder:$ReleaseBuilder `
+                                -ReleaseVersion $ReleaseVersion `
+                                -ReleaseSourceCommit $ReleaseSourceCommit `
+                                -ReleaseWorkflowRunId $ReleaseWorkflowRunId
+                            $parentOutputClaim = Enter-AtlasoVmwareBuilderOutputClaim `
+                                -OutputDirectory $outerCleanupOutputDirectory `
+                                -Identity $builderIdentity
+                            $null = Assert-AtlasoVmwareBuilderOutputClaimGeneration `
+                                -Claim $parentOutputClaim `
+                                -ExpectedGeneration $childOutputClaimGeneration
+                            $cleanupVmrunPath = Resolve-WorkstationVmrunPath -Path $VmrunPath
+                            Write-Host 'The proven outer process boundary selected checked VMware artifact cleanup.'
+                            Remove-AtlasoWorkstationArtifactRoot `
+                                -VmrunPath $cleanupVmrunPath `
+                                -ExpectedRemovalRoot $outerCleanupOutputDirectory `
+                                -RemovalRoot $outerCleanupOutputDirectory `
+                                -Confirm:$false
                         }
-                        # The child releases its claim only after proven whole-tree
-                        # termination. Revalidate identity, reacquire the output,
-                        # and reject any intervening claimant generation before cleanup.
-                        $null = Assert-AtlasoBuilderIdentityCurrent `
-                            -RepositoryRoot $repoRoot `
-                            -ExpectedIdentity $builderIdentity `
-                            -PullRequestNumber $PullRequestNumber `
-                            -CollisionSuffix $CollisionSuffix `
-                            -ReleaseBuilder:$ReleaseBuilder `
-                            -ReleaseVersion $ReleaseVersion `
-                            -ReleaseSourceCommit $ReleaseSourceCommit `
-                            -ReleaseWorkflowRunId $ReleaseWorkflowRunId
-                        $parentOutputClaim = Enter-AtlasoVmwareBuilderOutputClaim `
-                            -OutputDirectory $outerCleanupOutputDirectory `
-                            -Identity $builderIdentity
-                        $null = Assert-AtlasoVmwareBuilderOutputClaimGeneration `
-                            -Claim $parentOutputClaim `
-                            -ExpectedGeneration $childOutputClaimGeneration
-                        $cleanupVmrunPath = Resolve-WorkstationVmrunPath -Path $VmrunPath
-                        Write-Host 'The outer image deadline selected checked VMware artifact cleanup.'
-                        Remove-AtlasoWorkstationArtifactRoot `
-                            -VmrunPath $cleanupVmrunPath `
-                            -ExpectedRemovalRoot $outerCleanupOutputDirectory `
-                            -RemovalRoot $outerCleanupOutputDirectory `
-                            -Confirm:$false
-                    }
-                    finally {
-                        if ($null -ne $parentOutputClaim) {
-                            $parentOutputClaim.Dispose()
+                        finally {
+                            if ($null -ne $parentOutputClaim) {
+                                $parentOutputClaim.Dispose()
+                            }
                         }
                     }
                 }
             }
-            throw
+            catch {
+                $checkedFailureHandlingError = $_
+            }
+            if ($null -ne $checkedFailureHandlingError) {
+                throw "$($isolatedBuildFailure.Exception.Message) Checked failure handling also failed: $($checkedFailureHandlingError.Exception.Message)"
+            }
+            throw $isolatedBuildFailure
         }
     }
     finally {
@@ -2022,20 +2032,6 @@ if (-not $ValidateOnly -and -not $PrepareIsoOnly) {
         throw 'A configured builder address is required for bounded VMware startup monitoring.'
     }
     $builderVmxPath = Join-Path $workstationOutputDirectory "$VmName.vmx"
-    $timeoutHandler = {
-        param($SelectedOnError, $State, $Diagnostic)
-
-        if ($SelectedOnError -eq 'cleanup' -and (Test-Path -LiteralPath $workstationOutputDirectory)) {
-            Write-Host "Monitored Packer failure selected checked cleanup [$($Diagnostic.Code)]."
-            Remove-AtlasoWorkstationArtifactRoot `
-                -VmrunPath $resolvedVmrunPath `
-                -ExpectedRemovalRoot $workstationOutputDirectory `
-                -RemovalRoot $workstationOutputDirectory `
-                -Confirm:$false
-            return
-        }
-        Write-Warning "Monitored Packer failure preserved the exact builder artifacts because -PackerOnError is '$SelectedOnError'."
-    }.GetNewClosure()
     $packerBuildInvoker = {
         param($PackerArguments, $WorkingDirectory)
 
@@ -2071,8 +2067,7 @@ if (-not $ValidateOnly -and -not $PrepareIsoOnly) {
             -BuilderAddress $builderAddress `
             -StartupTimeoutSeconds $PackerStartupTimeoutSeconds `
             -HeartbeatSeconds $PackerHeartbeatSeconds `
-            -PackerOnError $PackerOnError `
-            -TimeoutHandler $timeoutHandler
+            -PackerOnError $PackerOnError
     }.GetNewClosure()
 }
 
