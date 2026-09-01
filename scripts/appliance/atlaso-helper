@@ -19067,6 +19067,7 @@ def _installed_atlaso_database_url() -> str:
         source_lines = ATLASO_ENV_PATH.read_text(encoding="utf-8").splitlines()
     except OSError as exc:
         raise ValueError("Atlaso appliance database configuration is unavailable.") from exc
+    database_url = ""
     for raw_line in source_lines:
         candidate = raw_line.strip()
         if candidate.startswith("export "):
@@ -19080,9 +19081,8 @@ def _installed_atlaso_database_url() -> str:
             and database_url[0] in {'"', "'"}
         ):
             database_url = database_url[1:-1]
-        if database_url:
-            return database_url
-        break
+    if database_url:
+        return database_url
     raise ValueError("ATLASO_DATABASE_URL is missing from the Atlaso appliance environment.")
 
 
