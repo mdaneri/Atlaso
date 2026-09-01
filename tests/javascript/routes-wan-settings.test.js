@@ -37,6 +37,7 @@ test("Routes and WAN settings subscribe to autosave and refresh rendered state",
   const updater = functionSource("updateRoutesWanSettingsState");
   assert.match(initializer, /atlaso:autosave-success/);
   assert.match(initializer, /updateRoutesWanSettingsState/);
+  assert.match(initializer, /input\.switch-input\[name="nat_enabled"\]/);
   assert.match(initializer, /natInput\.disabled = !routingInput\.checked/);
   assert.match(initializer, /natFallbackInput\.value = natInput\.checked \? "on" : "off"/);
   assert.match(initializer, /routingInput\.addEventListener\("change", \(\) => \{\s+syncNatFallback\(\)/);
@@ -44,6 +45,7 @@ test("Routes and WAN settings subscribe to autosave and refresh rendered state",
   assert.match(updater, /data-routes-wan-validation-status/);
   assert.match(updater, /data-routes-wan-config-preview/);
   assert.match(updater, /Suspended until Routing is enabled/);
+  assert.match(updater, /input\.switch-input\[name="nat_enabled"\]/);
   assert.match(updater, /natInput\.disabled = !Boolean\(payload\.routing_enabled\)/);
   assert.match(appSource, /DOMContentLoaded", \(\) => initializeRoutesWanSettings\(\)/);
 });

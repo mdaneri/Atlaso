@@ -7415,7 +7415,7 @@ function updateRoutesWanSettingsState(payload = {}, root = document) {
     highlightConfigPreviewElement(configPreview);
   }
   const settingsForm = root.querySelector(`form[action="${managementUiPath("/routes-wan/settings")}"]`);
-  const natInput = settingsForm?.querySelector('input[name="nat_enabled"]');
+  const natInput = settingsForm?.querySelector('input.switch-input[name="nat_enabled"]');
   if (natInput instanceof HTMLInputElement && settingsForm.dataset.routesWanCanWrite === "true") {
     natInput.disabled = !Boolean(payload.routing_enabled);
   }
@@ -7427,7 +7427,7 @@ function initializeRoutesWanSettings(root = document) {
     if (form.dataset.routesWanSettingsInitialized === "1") return;
     form.dataset.routesWanSettingsInitialized = "1";
     const routingInput = form.querySelector('input[name="routing_enabled"]');
-    const natInput = form.querySelector('input[name="nat_enabled"]');
+    const natInput = form.querySelector('input.switch-input[name="nat_enabled"]');
     const natFallbackInput = form.querySelector("[data-routes-wan-nat-fallback]");
     if (
       routingInput instanceof HTMLInputElement
