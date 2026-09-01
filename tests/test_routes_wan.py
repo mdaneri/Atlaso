@@ -111,6 +111,29 @@ def test_disabled_route_preview_cleans_live_ineligible_target():
     assert "tc qdisc del dev eth2 root" in config
 
 
+def test_parentless_vlan_is_an_absent_wan_target(client):
+    """Classify a saved VLAN without an inventory parent as absent.
+
+    Args:
+        client: HTTP test client providing the isolated application database.
+    """
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import VlanInterface
+    from atlaso.app.ui import wan_absent_target_names
+
+    with SessionLocal() as db:
+        vlan = VlanInterface(
+            name="missing-parent.20",
+            parent_interface="missing-parent",
+            vlan_id=20,
+            enabled=False,
+        )
+        db.add(vlan)
+        db.flush()
+
+        assert vlan.name in wan_absent_target_names(db)
+
+
 def test_disabled_features_do_not_surface_inactive_row_validation_errors():
     """Do not block Apply on invalid resources whose global feature is off."""
     invalid_route = Route(
