@@ -1193,6 +1193,7 @@ else {
     }
     $cleanupMarkerPayload = $null
     $processTreeTerminationUnproven = $false
+    $reservationReleaseBlocked = $false
     try {
         $sourceSnapshot = New-AtlasoImmutableSourceSnapshot `
             -RepositoryRoot $repoRoot `
@@ -1373,7 +1374,8 @@ else {
                 $checkedFailureHandlingError = $_
             }
             if ($null -ne $checkedFailureHandlingError) {
-                throw "$($isolatedBuildFailure.Exception.Message) Checked failure handling also failed: $($checkedFailureHandlingError.Exception.Message)"
+                $reservationReleaseBlocked = $true
+                throw "$($isolatedBuildFailure.Exception.Message) Checked failure handling also failed: $($checkedFailureHandlingError.Exception.Message) The VMware builder address reservation was retained."
             }
             throw $isolatedBuildFailure
         }
@@ -1391,21 +1393,23 @@ else {
         if (-not $processTreeTerminationUnproven) {
             $reservationReleaseError = $null
             if (Test-Path -LiteralPath $childBuilderAddressReservationPath -PathType Leaf) {
-                try {
-                    $builderReservation = Get-Content -LiteralPath $childBuilderAddressReservationPath -Raw |
-                        ConvertFrom-Json
-                    Exit-AtlasoVmwareBuilderAddressReservation `
-                        -Reservation $builderReservation `
-                        -VmrunPath (Resolve-WorkstationVmrunPath -Path $VmrunPath) `
-                        -StateRoot $builderReservationStateRoot `
-                        -ProcessTreeTerminationProven
-                    Remove-Item -LiteralPath $childBuilderAddressReservationPath -Force
-                    if (Test-Path -LiteralPath $childBuilderAddressReservationPath) {
-                        throw 'The released VMware builder-address handoff could not be removed.'
+                if (-not $reservationReleaseBlocked) {
+                    try {
+                        $builderReservation = Get-Content -LiteralPath $childBuilderAddressReservationPath -Raw |
+                            ConvertFrom-Json
+                        Exit-AtlasoVmwareBuilderAddressReservation `
+                            -Reservation $builderReservation `
+                            -VmrunPath (Resolve-WorkstationVmrunPath -Path $VmrunPath) `
+                            -StateRoot $builderReservationStateRoot `
+                            -ProcessTreeTerminationProven
+                        Remove-Item -LiteralPath $childBuilderAddressReservationPath -Force
+                        if (Test-Path -LiteralPath $childBuilderAddressReservationPath) {
+                            throw 'The released VMware builder-address handoff could not be removed.'
+                        }
                     }
-                }
-                catch {
-                    $reservationReleaseError = $_
+                    catch {
+                        $reservationReleaseError = $_
+                    }
                 }
             }
             $cleanupMarker = Get-Content -LiteralPath $cleanupMarkerPath -Raw -ErrorAction Stop |

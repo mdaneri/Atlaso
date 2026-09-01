@@ -3289,5 +3289,11 @@ def test_vmware_gui_builder_repairs_stale_rows_before_ui_startup() -> None:
     assert "-not $KeepExistingOutput -and\n" not in wrapper[
         termination_proven:durable_cleanup_claim
     ]
+    reservation_blocked = wrapper.index("$reservationReleaseBlocked = $true")
+    reservation_gate = wrapper.index("if (-not $reservationReleaseBlocked)")
+    reservation_release = wrapper.index(
+        "Exit-AtlasoVmwareBuilderAddressReservation `", reservation_gate
+    )
+    assert parent_timeout_cleanup < reservation_blocked < reservation_gate < reservation_release
     assert "-ClaimGeneration $OutputClaimGeneration" in wrapper
     assert "ClaimGeneration = $OutputClaimGeneration" in wrapper
