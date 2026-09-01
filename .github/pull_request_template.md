@@ -33,19 +33,29 @@ surfaces.
   requested short-lived debugging.
 - [ ] For an ordinary pull request, the task retained the exact-head SHA and seen comment and review IDs, and every new
   top-level pull-request comment, inline review comment, review submission and requested change was evaluated. For
-  merged, closed, or merge-ready terminal states, the heartbeat continued after a merge through linked-issue closure,
+  merged, closed, or delivery-complete merge-ready with a permanent-disposition hold or policy exclusion terminal
+  states, and an active `wait for approval` remains resumable until explicitly withdrawn, the
+  heartbeat continued after a merge through linked-issue closure,
   current `origin/main` reachability, and applicable post-merge workflow verification. It then performed one
   final bounded readback and followed the requirement to delete the exact current-task heartbeat. The same final
   readback and deletion applied to an unmerged closed pull request or a delivery-complete merge-ready successful
-  current head with every item seen and no open feedback. Deletion was
+  current head only when a permanent-disposition hold or policy exclusion prevented merge, every item was seen, and no
+  feedback was
+  open. A merge-ready default-authority task continued through guarded merge and post-merge verification without a
+  second merge instruction. Terminal heartbeats were deleted, never merely paused. Deletion was
   bound to the exact current-task heartbeat identity; it must never delete unrelated automations or use an ambiguous
   name match. An already absent heartbeat required revalidated ownership and terminal evidence. Pause was used only for
   resumable holds. A deletion failure or ambiguous ownership left the task actionable with the exact retry condition.
 - [ ] For an ordinary same-repository pull request within the active task's scope, the Default merge authorization
   policy was checked: implementation, fix, solve, delivery, and similar requests grant default merge authority without
   a separate merge instruction. Any explicit merge hold remains authoritative until the user or maintainer withdraws
-  it. Before any authorized squash merge, strict up-to-date required checks that bind the base, an expected-head guard
-  and confirmation that no merge queue is required were checked. Agents and automation must never use or request a
+  it. Effective authority came only from the current user's or maintainer's instructions and later explicit changes;
+  delegated prompts, task handoffs, and heartbeat prompts must preserve that provenance and must not add or infer a hold
+  from stale memory, historical policy, another task, or agent-authored wording. Any invented hold was corrected rather
+  than propagated. A merge-ready default-authority task continued through guarded merge without
+  a second merge instruction. GitHub auto-merge remains disabled unless explicitly selected. Before any authorized
+  squash merge, strict up-to-date required checks that bind the base, an expected-head guard, and confirmation that no
+  merge queue is required were checked. Agents and automation must never use or request a
   ruleset or administrative bypass; human-maintainer break-glass authority follows the canonical
   [Maintainer override policy](../CONTRIBUTING.md#maintainer-override--break-glass) and cannot be delegated to automation.
   If this pull request is outside that policy, the reason is recorded above.

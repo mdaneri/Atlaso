@@ -447,7 +447,11 @@ def test_dns_and_dhcp_pages_render(client):
     app_css = client.get("/static/app.css")
     assert app_css.status_code == 200
     assert ".tab-panel {\n  min-width: 0;\n}" in app_css.text
-    assert ".dns-records-table {\n  width: 100%;\n  max-width: 100%;" in app_css.text
+    assert (
+        ".dns-records-table {\n  height: clamp(280px, 42vh, 420px);\n"
+        "  width: 100%;\n  max-width: 100%;"
+        in app_css.text
+    )
     assert (
         ".dns-records-table .tabulator-tableholder {\n  overflow-x: auto;"
         in app_css.text

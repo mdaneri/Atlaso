@@ -144,7 +144,7 @@ SCHEDULED_PR_MONITORING_SHARED_MARKERS = (
     "four minutes",
     "persistent GitHub polling loops",
     "seen comment and review IDs",
-    "merged, closed, or merge-ready",
+    "delivery-complete merge-ready",
     "final bounded readback",
     "delete the exact current-task heartbeat",
     "linked-issue closure",
@@ -156,8 +156,26 @@ SCHEDULED_PR_MONITORING_SHARED_MARKERS = (
     "already absent",
     "terminal evidence",
     "resumable holds",
+    "`wait for approval` remains resumable",
     "ambiguous ownership",
     "exact retry condition",
+    "never merely paused",
+)
+
+DEFAULT_MERGE_AUTHORITY_SHARED_MARKERS = (
+    "current user's or maintainer's instructions",
+    "later explicit",
+    "delegated prompts",
+    "task handoffs",
+    "heartbeat prompts",
+    "preserve that provenance",
+    "stale memory",
+    "historical policy",
+    "agent-authored",
+    "invented",
+    "guarded merge",
+    "second merge instruction",
+    "remains disabled",
 )
 
 MAINTAINER_BREAK_GLASS_SHARED_MARKERS = (
@@ -482,6 +500,790 @@ SCHEDULED_PR_MONITORING_SECTION_MARKERS = {
     ),
 }
 
+DEFAULT_MERGE_AUTHORITY_SECTION_ANCHORS = {
+    Path("AGENTS.md"): "### Default merge authorization",
+    Path("CONTRIBUTING.md"): "### Default merge authorization",
+    Path(".github/copilot-instructions.md"): (
+        "- apply the **Default merge authorization** policy"
+    ),
+    Path(".github/pull_request_template.md"): (
+        "- [ ] For an ordinary same-repository pull request within the active "
+        "task's scope, the Default merge authorization"
+    ),
+    Path("docs/contribute/agent-policies.md"): "### Default merge authorization",
+}
+
+DEFAULT_MERGE_AUTHORITY_SECTION_MARKERS = {
+    path: DEFAULT_MERGE_AUTHORITY_SHARED_MARKERS
+    for path in DEFAULT_MERGE_AUTHORITY_SECTION_ANCHORS
+}
+
+MERGE_AUTHORITY_TRANSFER_FIXTURE_PATH = Path(
+    "tests/fixtures/merge_authority_transfer.json"
+)
+EXPLICIT_MERGE_HOLD_PATTERNS = {
+    "do not merge": (
+        "do not merge",
+        "don't merge",
+        "don’t merge",
+        "never merge",
+        "do not squash merge",
+        "don't squash merge",
+        "don’t squash merge",
+        "never squash merge",
+        "hold off on merging",
+        "hold off on the merge",
+        "defer merging",
+        "defer the merge",
+        "delay merging",
+        "delay the merge",
+        "postpone merging",
+        "postpone the merge",
+        "pause before merging",
+        "refrain from merging",
+        "refrain from the merge",
+        "wait before merging",
+    ),
+    "leave open": (
+        "leave open",
+        "leave the pull request open",
+        "leave this pull request open",
+        "leave the pr open",
+        "leave this pr open",
+        "keep the pull request open",
+        "keep this pull request open",
+        "keep the pr open",
+        "keep this pr open",
+        "keep the pull request unmerged",
+        "keep this pull request unmerged",
+        "keep the pr unmerged",
+        "keep this pr unmerged",
+        "keep the branch unmerged",
+        "keep this branch unmerged",
+        "keep branch unmerged",
+        "leave the branch unmerged",
+        "leave this branch unmerged",
+        "leave branch unmerged",
+    ),
+    "pr only": (
+        "pull request only",
+        "pr only",
+        "only open the pull request",
+        "only open this pull request",
+        "only open a pull request",
+        "only open a pr",
+        "only open an pr",
+        "only create the pull request",
+        "only create this pull request",
+        "only create a pull request",
+        "only create a pr",
+        "only create an pr",
+        "only submit the pull request",
+        "only submit this pull request",
+        "only submit a pull request",
+        "only submit a pr",
+        "only submit an pr",
+        "only prepare the pull request",
+        "only prepare this pull request",
+        "only prepare a pull request",
+        "only prepare a pr",
+        "only prepare an pr",
+    ),
+    "wait for approval": (
+        "wait for approval",
+        "wait for my approval",
+        "wait for your approval",
+        "await approval",
+        "await my approval",
+        "await your approval",
+        "wait for maintainer approval",
+        "wait for the maintainer's approval",
+        "wait for the maintainer’s approval",
+        "wait for owner approval",
+        "wait until approved",
+        "wait until i approve",
+        "wait until we approve",
+        "wait for me to approve",
+        "wait for us to approve",
+        "after approval",
+        "after my approval",
+        "after our approval",
+        "after your approval",
+        "after maintainer approval",
+        "once approved",
+        "when approved",
+        "with approval",
+        "with maintainer approval",
+        "subject to approval",
+        "subject to maintainer approval",
+        "pending approval",
+        "pending maintainer approval",
+        "unless approved",
+        "until i approve",
+        "until we approve",
+        "for me to approve",
+        "for us to approve",
+        "merge only after i approve",
+        "merge only after we approve",
+        "merge only if i approve",
+        "merge only if we approve",
+        "merge only after maintainer approves",
+        "merge only after the maintainer approves",
+        "merge only if maintainer approves",
+        "merge only if the maintainer approves",
+        "merge only after owner approves",
+        "merge only after the owner approves",
+        "merge only if owner approves",
+        "merge only if the owner approves",
+        "merge only with my approval",
+        "merge only with our approval",
+    ),
+}
+MERGE_HOLD_WITHDRAWAL_MARKERS = (
+    "withdrawn",
+    "lifted",
+    "removed",
+    "cancelled",
+    "canceled",
+    "withdraw the",
+    "remove the",
+    "remove ",
+    "lift the",
+    "lift ",
+    "cancel the",
+    "cancel ",
+    "no longer applies",
+    "does not apply",
+    "there is no",
+    "there's no",
+    "there’s no",
+    "no longer need to",
+    "rescinded",
+    "revoked",
+    "may merge now",
+    "do not leave open",
+    "don't leave open",
+    "don’t leave open",
+    "do not leave this pr open",
+    "do not leave the pr open",
+    "do not leave this pull request open",
+    "do not leave the pull request open",
+    "don't leave this pr open",
+    "don't leave the pr open",
+    "don't leave this pull request open",
+    "don't leave the pull request open",
+    "don’t leave this pr open",
+    "don’t leave the pr open",
+    "don’t leave this pull request open",
+    "don’t leave the pull request open",
+    "do not wait for approval",
+    "don't wait for approval",
+    "don’t wait for approval",
+    "not pull request only",
+    "not pr only",
+)
+MERGE_HOLD_WITHDRAWAL_NEGATIONS = re.compile(
+    r"(?:(?:must|should|may|might|will|would|could|can)\s+not|not|never|"
+    r"cannot|can't|can’t|isn't|isn’t|wasn't|wasn’t)"
+    r"(?:\s+(?:be|been))?\s*$"
+)
+MERGE_HOLD_WITHDRAWAL_NONCURRENT_PREFIX = re.compile(
+    r"(?:\bunless\b|\bif\b|\bonce\b|\bwhen\b|\bafter\b|\bbefore\b|"
+    r"\b(?:will|would|may|might|could|shall)\s+(?:be\s+)?)"
+)
+MERGE_HOLD_WITHDRAWAL_NONCURRENT_SUFFIX = re.compile(
+    r"^\s*(?:tomorrow|later|eventually|(?:only\s+)?"
+    r"(?:after|when|once|if|unless)\b)"
+)
+AUTO_MERGE_ONLY_PATTERN = re.compile(
+    r"\b(?:do not|don't|don’t)\s+(?:"
+    r"merge(?:\s+(?:(?:this|the)\s+)?(?:pull request|pr))?\s+automatically|"
+    r"merge(?:\s+(?:(?:this|the)\s+)?(?:pull request|pr))?\s+"
+    r"(?:via|using|with)\s+(?:github\s+)?auto[- ]merge|"
+    r"automatically\s+merge(?:\s+(?:(?:this|the)\s+)?(?:pull request|pr))?"
+    r")\b"
+)
+MERGE_HOLD_MODAL_PROHIBITION = re.compile(
+    r"\b(?:(?:you\s+)?(?:(?:must|may|can|should|shall)\s+not|cannot|can't|can’t)"
+    r"\s+merge|"
+    r"(?:do\s+not|don't|don’t|must\s+not|should\s+not)\s+"
+    r"(?:complete|proceed\s+with)\s+(?:the\s+)?merge|"
+    r"you\s+(?:are|'re|’re)\s+not\s+to\s+merge|"
+    r"you\s+(?:(?:are\s+not|aren't|aren’t|isn't|isn’t)\s+"
+    r"(?:allowed|authorized|permitted)\s+to\s+merge|"
+    r"are\s+forbidden\s+from\s+merging)|"
+    r"you\s+are\s+forbidden\s+to\s+merge|"
+    r"you(?:'re|’re)\s+not\s+(?:allowed|authorized|permitted)\s+to\s+merge|"
+    r"you\s+(?:do\s+not|don't|don’t)\s+have\s+"
+    r"(?:(?:my|the|your|our)\s+)?"
+    r"(?:permission|authorization|authority|approval)\s+"
+    r"to\s+merge|(?:you|(?:(?:the|this)\s+)?(?:agent|task|heartbeat|handoff))\s+"
+    r"lacks?\s+(?:permission|authorization|authority|approval)\s+"
+    r"to\s+merge|i\s+(?:do\s+not|don't|don’t)\s+(?:authorize|permit)\s+"
+    r"you\s+to\s+merge|i\s+(?:will\s+not|won't|won’t|would\s+not|"
+    r"wouldn't|wouldn’t)\s+allow\s+you\s+to\s+merge|"
+    r"i\s+(?:have\s+not|haven't|haven’t)\s+"
+    r"(?:authorized|permitted)\s+you\s+to\s+merge|"
+    r"i\s+no\s+longer\s+(?:authorize|permit)\s+"
+    r"you\s+to\s+merge|i\s+(?:forbid|prohibit)\s+you\s+"
+    r"(?:from\s+merging|to\s+merge)|"
+    r"i\s+(?:do\s+not|don't|don’t)\s+approve\s+(?:of\s+)?merging|"
+    r"merging(?:\s+(?:(?:this|the)\s+)?(?:pull request|pr))?\s+"
+    r"(?:is|was|remains?)\s+(?:prohibited|forbidden|disallowed|not\s+allowed)|"
+    r"(?:(?:my|your|our|the)\s+)?(?:permission|authorization|authority)\s+"
+    r"to\s+merge(?:\s+(?:(?:this|the)\s+)?(?:pull request|pr))?\s+"
+    r"(?:is|was|has\s+been)\s+(?:revoked|rescinded|withdrawn)|"
+    r"i\s+(?:withdraw|revoke|rescind)\s+"
+    r"(?:(?:my|your|our|the)\s+)?(?:permission|authorization|authority)\s+"
+    r"to\s+merge(?:\s+(?:(?:this|the)\s+)?(?:pull request|pr))?)\b"
+)
+DEFAULT_MERGE_AUTHORITY_NEGATIONS = re.compile(
+    r"(?:(?:do not|don't|don’t|never|must not|should not|cannot|can't|can’t|not)"
+    r"(?:\s+\w+){0,6}|(?:lacks?|has no|have no|without)(?:\s+\w+){0,4}|"
+    r"(?:(?:there\s+(?:is|was)|there's|there’s)\s+no\s+"
+    r"(?:need|requirement|obligation)|"
+    r"(?:i|we|you|it|this\s+task|the\s+task)\s+"
+    r"(?:(?:do|does|did)\s+not|don't|don’t|doesn't|doesn’t|didn't|didn’t)\s+need|"
+    r"(?:it\s+)?(?:is|was)\s+not\s+(?:necessary|required)|"
+    r"(?:i|we|you|it|this\s+task|the\s+task)\s+"
+    r"(?:am|is|are|was|were)\s+not\s+(?:required|obligated))\s+to|"
+    r"(?:there\s+is|there's|there’s)\s+no\s+"
+    r"(?:authority|authorization|permission|approval)\s+to|"
+    r"(?:skip|avoid|omit|decline|refrain(?:\s+from)?|"
+    r"hold off(?:\s+on)?|defer|delay|postpone|pause)"
+    r"(?:\s+\w+){0,3})\s*$"
+)
+DEFAULT_MERGE_AUTHORITY_TRAILING_NEGATIONS = re.compile(
+    r"^\s*(?:[\u0022\u0027\u0060\u2019\u201d]\s*)?"
+    r"(?:[,;]\s*)?(?:(?:but|and)\s+)?"
+    r"(?:(?:does|do|is|are|must|should|can|may|will|would|has|have|had|"
+    r"was|were)\s+"
+    r"(?:not|never)|doesn't|doesn’t|isn't|isn’t|aren't|aren’t|"
+    r"cannot|can't|can’t|won't|won’t|wouldn't|wouldn’t|"
+    r"hasn't|hasn’t|haven't|haven’t|hadn't|hadn’t|wasn't|wasn’t|"
+    r"weren't|weren’t|"
+    r"(?:is|are|remains?|be)\s+(?:forbidden|disallowed|prohibited))\b"
+)
+DEFAULT_MERGE_AUTHORITY_SECOND_INSTRUCTION_CONDITIONS = re.compile(
+    r"(?:only\s+)?(?:after|once|when|until)\b.{0,80}"
+    r"\b(?:second|another|separate|additional)\b.{0,30}\bmerge instruction\b"
+)
+DEFAULT_MERGE_AUTHORITY_CONDITIONAL_APPROVAL = re.compile(
+    r"(?:only\s+)?(?:if|when|once|after|with|unless|pending|subject to)\b"
+    r"[^.!?]{0,60}\b(?:approv\w*|permission|authorization)\b"
+)
+DEFAULT_MERGE_AUTHORITY_CONDITIONAL_REQUEST = re.compile(
+    r"\b(?:if|when|once|after)\s+(?:(?:(?:the|a)\s+)?"
+    r"(?:user|maintainer|owner)\s+(?:asks?|requests?|instructs?|tells?)|"
+    r"(?:asked|requested|instructed|told))\b"
+)
+DEFAULT_MERGE_AUTHORITY_DECISION_ONLY = re.compile(r"\bwhether\s+to\b")
+DEFAULT_MERGE_AUTHORITY_PERMISSION_QUESTION = re.compile(
+    r"\b(?:(?:do|would)\s+you\s+(?:want|like)\s+(?:me|us)\s+to|"
+    r"should\s+(?:i|we)|(?:can|could|may)\s+"
+    r"(?:i|we|you|(?:(?:the|this)\s+)?(?:heartbeat|handoff|delegation|"
+    r"delegating\s+agent|agent|task))|"
+    r"(?:do|does)\s+(?:i|we|you|(?:(?:the|this)\s+)?(?:heartbeat|handoff|"
+    r"delegation|delegating\s+agent|agent|task))\s+have\s+"
+    r"(?:authority|authorization|permission|approval)\s+to|"
+    r"(?:has|have)\s+(?:i|we|(?:(?:the|this)\s+)?(?:heartbeat|handoff|"
+    r"delegation|delegating\s+agent|agent|task))\s+been\s+"
+    r"(?:authorized|permitted|allowed)\s+to|"
+    r"(?:am|are|is)\s+(?:i|we|you|(?:(?:the|this)\s+)?(?:heartbeat|handoff|"
+    r"delegation|delegating\s+agent|agent|task))\s+"
+    r"(?:authorized|permitted|allowed)\s+to|"
+    r"(?:is|was)\s+it\s+(?:permissible|allowed|authorized)\s+for\s+"
+    r"(?:(?:the|this)\s+)?(?:heartbeat|handoff|delegation|"
+    r"delegating\s+agent|agent|task)\s+to|"
+    r"(?:is|was)\s+there\s+"
+    r"(?:authority|authorization|permission|approval)\s+to|"
+    r"(?:is|was)\s+(?:authority|authorization|permission|approval)\s+"
+    r"(?:granted|given|provided)\s+to|"
+    r"(?:has|had)\s+(?:authority|authorization|permission|approval)\s+"
+    r"been\s+(?:granted|given|provided)\s+to|"
+    r"(?:does|did)\s+(?:permission|authorization|authority)\s+exist\s+to|"
+    r"should\s+(?:(?:the|this)\s+)?(?:heartbeat|handoff|delegation|"
+    r"delegating\s+agent|agent|task)\b[^?]{0,100}\?)(?=\s|[.!?]|$)"
+)
+DEFAULT_MERGE_AUTHORITY_PROMPT_MARKERS = (
+    "preserve default merge authority",
+    "use the repository's default merge authority",
+    "apply default merge authority",
+    "exercise default merge authority",
+    "guarded squash merge",
+    "guarded-squash-merge",
+    "carry the task through guarded merge",
+    "complete the guarded merge",
+    "without waiting for a second merge instruction",
+)
+DEFAULT_MERGE_AUTHORITY_SOURCE_EXCLUSIONS = re.compile(
+    r"(?:review(?:-only|[^.!?]{0,60}\bonly\b)|"
+    r"only\s+review\b[^;.!?]*|"
+    r"report findings only|"
+    r"\bplan(?:ning)?\s+(?:an?\s+)?(?:fix|patch|implementation|change|"
+    r"update|solution|rename|deletion|replacement)\b|"
+    r"(?:do not|don't|don’t|must not|without)\s+"
+    r"(?:\w+\s+){0,3}(?:implement|fix|patch|resolve|solve|deliver|"
+    r"(?:updat|chang|modif|edit|mak)\w*\s+(?:any\s+)?"
+    r"(?:changes?|code|implementation|issue|task))|"
+    r"(?:do not|don't|don’t|must not|without)\s+"
+    r"(?:\w+\s+){0,3}(?:address|apply)\s+(?:review\s+)?feedback\s+"
+    r"(?:on|for)\s+(?:an?\s+)?(?:existing\s+)?(?:ordinary\s+)?"
+    r"(?:pull request|pr)|"
+    r"(?:diagnos(?:e|tic)|investigat(?:e|ion)|analy(?:ze|sis)|assess|inspect)"
+    r"[^.!?]{0,80}\b(?:without|no)\b[^.!?]{0,40}"
+    r"\b(?:implement|chang|modif|edit|mak)|"
+    r"(?:please\s+)?(?:investigate|analyze|assess|diagnose|inspect|evaluate)\s+"
+    r"(?:how|what|whether)\b[^.!?]{0,80}\b"
+    r"(?:implement|fix|patch|resolve|solve|change|modify|edit|rename|delete|"
+    r"replace)\b|"
+    r"(?:open(?:ing)?|create|submit|prepare|deliver|leave|keep)\s+"
+    r"(?:(?:an?|the|this)\s+)?draft (?:pull request|pr)|"
+    r"(?:open(?:ing)?|create|submit|prepare|deliver|leave|keep)\s+"
+    r"(?:(?:an?|the|this)\s+)?(?:pull request|pr)"
+    r"[^.!?]{0,20}\bas (?:an? )?draft\b|"
+    r"(?:leave|keep|remain)\s+(?:(?:this|the)\s+)?(?:pull request|pr)\s+"
+    r"(?:in|as)\s+(?:an?\s+)?draft\b)"
+)
+DEFAULT_MERGE_AUTHORITY_WORKFLOW_EXCLUSIONS = re.compile(
+    r"(?:perform|follow|conduct|undertake|use)\s+(?:the\s+)?"
+    r"private (?:vulnerability|advisory|remediation)\b|"
+    r"(?:fix|patch|resolve|remediate|address)\s+"
+    r"(?:(?:this|the|an?)\s+)?(?:security\s+)?vulnerabilit(?:y|ies)\b|"
+    r"(?:fix|patch|resolve|change|modify|edit|work on)\s+"
+    r"(?:(?:an?|the|this|existing)\s+)?draft (?:pull request|pr)\b|"
+    r"(?:implement|fix|patch|resolve|solve|deliver|change|modify|edit|work on)"
+    r"\b[^.!?]{0,60}\b(?:external fork|"
+    r"(?:from|in|on|inside|within)\s+"
+    r"(?:(?:an?|the|this|my|your|our|their)\s+)?(?:external\s+)?fork|"
+    r"(?:on|in|against) (?:(?:an?|the|this|existing) )?"
+    r"draft (?:pull request|pr)\b|"
+    r"private (?:vulnerability|advisory|remediation))\b"
+)
+DEFAULT_MERGE_AUTHORITY_WORKFLOW_RECLASSIFICATION = re.compile(
+    r"(?:^|[;.!?]\s*)(?:this|the\s+(?:work|task|implementation))\s+is\s+"
+    r"(?:now\s+)?private (?:vulnerability|advisory|remediation)\b|"
+    r"(?:^|[;.!?]\s*)(?:the|this)\s+(?:pull request|pr)\s+is\s+"
+    r"(?:now\s+)?(?:an?\s+)?draft\b|"
+    r"(?:^|[;.!?]\s*)(?:the|this)\s+(?:pull request|pr)\s+is\s+"
+    r"(?:now\s+)?from\s+"
+    r"(?:(?:an?|the|my|your|our|their)\s+)?(?:external\s+)?fork\b|"
+    r"(?:^|[;.!?]\s*)(?:move|push|transfer)\s+(?:the\s+)?"
+    r"(?:work|task|implementation|branch|pull request|pr)\s+(?:to|onto)\s+"
+    r"(?:(?:(?:my|your|our|their|his|her|the|an?)|"
+    r"[a-z][a-z0-9_-]*(?:'s|’s))\s+)?(?:external\s+)?fork\b|"
+    r"(?:^|[;.!?]\s*)(?:change|convert|mark|move)\s+"
+    r"(?:(?:the|this)\s+)?(?:pull request|pr)\s+(?:to|as)\s+"
+    r"(?:an?\s+)?draft\b|"
+    r"(?:^|[;.!?]\s*)make\s+(?:(?:the|this)\s+)?"
+    r"(?:(?:pull request|pr)\s+)?(?:an?\s+)?draft\s*(?:pull request|pr)?\b"
+)
+DEFAULT_MERGE_AUTHORITY_NEGATED_WORKFLOW = re.compile(
+    r"\b(?:do\s+not|don't|don’t|never|must\s+not|without)\s+"
+    r"[^.!?]{0,50}\b(?:external\s+fork|fork|draft(?:\s+(?:pull request|pr))?|"
+    r"private\s+(?:vulnerability|advisory|remediation))\b"
+)
+DEFAULT_MERGE_AUTHORITY_DIRECT_REVIEW = re.compile(
+    r"(?:review|inspect|check|test|summarize|describe|explain|report|"
+    r"verif(?:y|ication)|validat(?:e|ion)|"
+    r"analy(?:ze|sis)|assess|audit|evaluat(?:e|ion))(?:\s+of)?\s+"
+    r"(?:(?:the|this|that|an?|my|our|your|their|his|her|its)\s+)?"
+    r"(?:(?:proposed|existing|current|updated|submitted)\s+)?"
+    r"(?:implementation|changes?|code|patch|fix(?:es)?|pull request|pr|commit|"
+    r"it|them)\b"
+    r"(?:\s+(?:#\d+|[0-9a-f]{7,40}))?"
+    r"(?:\s+and\s+(?:report|summarize|describe)\b[^;.!?]*)?"
+)
+DEFAULT_MERGE_AUTHORITY_INTERROGATIVE_REVIEW = re.compile(
+    r"(?:^|[;.!?]\s*)(?:can|could|would|will)\s+you\s+"
+    r"(?:explain|describe|assess|evaluate|tell|suggest|recommend|propose)"
+    r"\b[^?]*\?|"
+    r"(?:^|[;.!?]\s*)(?:is|are|was|were|does|do|did)\s+"
+    r"(?:(?:the|this|that|an?)\s+)?"
+    r"(?:implementation|fix|patch|changes?|code|pull request|pr)\b[^?]*\?|"
+    r"(?:^|[;.!?]\s*)(?:should|can|could|would|will)\s+"
+    r"(?:i|we|you)\s+(?:implement|fix|patch|resolve|solve|change|modify|edit|"
+    r"rename|delete|replace|add|remove|create|build|repair|refactor)\b[^?]*\?|"
+    r"(?:^|[;.!?]\s*)(?:do|does|did)\s+(?:i|we|you)\s+need\s+to\s+"
+    r"(?:implement|fix|patch|resolve|solve|change|modify|edit|rename|delete|"
+    r"replace|add|remove|create|build|repair|refactor)\b[^?]*\?|"
+    r"(?:^|[;.!?]\s*)how\s+(?:do|should|can|could|would)\s+"
+    r"(?:i|we|you)\s+(?:implement|fix|patch|resolve|solve|refactor)\b[^?]*\?|"
+    r"(?:^|[;.!?]\s*)what\s+(?:is|are)\s+(?:needed|required)\s+to\s+"
+    r"(?:implement|fix|patch|resolve|solve|refactor)\b[^?]*\?"
+)
+DEFAULT_MERGE_AUTHORITY_REPORTED_DISCUSSION = re.compile(
+    r"\b(?:(?:i|we|they|the\s+(?:user|maintainer|owner|team))\s+"
+    r"(?:discussed|considered|contemplated|explored|talked\s+about)|"
+    r"(?:i|we|they)\s+had\s+(?:a\s+)?discussion\s+about)\b"
+    r"[^.!?]{0,80}\b(?:implement|fix|patch|resolve|solve|change|modify|edit|"
+    r"refactor)\b"
+)
+DEFAULT_MERGE_AUTHORITY_SUPERSEDING_REVIEW_PREFIX = re.compile(
+    r"(?:^|[;.!?]\s*)(?:instead,?|switch to|move to|change to)\s*$"
+)
+DEFAULT_MERGE_AUTHORITY_SUPERSEDING_REVIEW_MARKER = re.compile(r"\binstead\b")
+DEFAULT_MERGE_AUTHORITY_STOP_WORK = re.compile(
+    r"(?:^|[;.!?]\s*|,\s*(?:but|and)\s+|\s+but\s+)(?:please\s+)?(?:"
+    r"(?:stop|cancel|cease|end|abort)\s+"
+    r"(?:(?:all|further|this|the)\s+)?(?:work(?:ing)?|implementation|task)|"
+    r"(?:cancel|end|abort)\s+(?:this|that|the)\s+request)\b"
+    r"(?![^;.!?]*\b(?:if|unless|when|once|after|before)\b)[^;.!?]*"
+)
+DEFAULT_MERGE_AUTHORITY_POST_STOP_SUMMARY = re.compile(
+    r"(?:^|[;.!?]\s*)(?:please\s+)?(?:"
+    r"(?:stop|cancel|cease|end|abort)\s+"
+    r"(?:(?:all|further|this|the)\s+)?(?:work(?:ing)?|implementation|task)|"
+    r"(?:cancel|end|abort)\s+(?:this|that|the)\s+request)\b"
+    r"[^.!?]*[.!?]\s*(?:summarize|describe|explain|report|document)\b[^.!?]*"
+)
+DEFAULT_MERGE_AUTHORITY_POST_STOP_STATUS = re.compile(
+    r"(?:^|[;.!?]\s*)(?:please\s+)?(?:"
+    r"(?:stop|cancel|cease|end|abort)\s+"
+    r"(?:(?:all|further|this|the)\s+)?(?:work(?:ing)?|implementation|task)|"
+    r"(?:cancel|end|abort)\s+(?:this|that|the)\s+request)\b"
+    r"[^.!?]*[.!?]\s*(?:(?:the|this|that)\s+)?"
+    r"(?:implementation|work|task|change|patch|fix)\s+"
+    r"(?:is|isn't|isn’t|is not|remains?|was|wasn't|wasn’t|was not)\b[^.!?]*"
+)
+DEFAULT_MERGE_AUTHORITY_NEGATED_MUTATION = re.compile(
+    r"(?:^|[;.!?]\s*|,\s*(?:but|and)\s+|\s+(?:but|and)\s+)"
+    r"(?:please\s+)?(?:do not|don't|don’t|must not)\s+"
+    r"(?!leave\s+(?:(?:this|the)\s+)?(?:pull request|pr)\s+open\b)"
+    r"(?:\w+\s+){0,3}(?:implement|fix|patch|resolve|solve|deliver|open|submit|"
+    r"prepare|update|change|modify|edit|rename|delete|replace|add|remove|create|"
+    r"build|refactor|repair|commit|push)"
+    r"\b[^;.!?]*"
+)
+DEFAULT_MERGE_AUTHORITY_TASK_NEGATED_MUTATION = re.compile(
+    r"\b(?:implement|fix|patch|resolve|solve|deliver|repair|commit|push)\b|"
+    r"\b(?:open|submit|prepare|create)\b[^;.!?]*\b(?:pull request|pr)\b"
+)
+DEFAULT_MERGE_AUTHORITY_EXPLANATORY_FIX = re.compile(
+    r"\b(?:describe|explain|outline|summarize|document)\s+"
+    r"(?:how|what|whether)\b[^.!?]{0,80}"
+    r"\b(?:implement|fix|patch|resolve|solve|change|modify|edit|rename|delete|"
+    r"replace|add)\b[^.!?]*"
+)
+DEFAULT_MERGE_AUTHORITY_REVIEW_ADVICE = re.compile(
+    r"\b(?:review|inspect|check|analyze|assess|evaluate)\b[^.!?]{0,100}"
+    r"\b(?:propose|recommend|suggest)\s+"
+    r"(?:(?:an?|the)\s+)?(?:fix|patch|change|solution)\b[^.!?]*"
+)
+DEFAULT_MERGE_AUTHORITY_SOURCE_MARKERS = re.compile(
+    r"\b(?:implement|fix|patch|resolve|solve|deliver|refactor|repair|rename|"
+    r"delete|replace|add)\b|"
+    r"\bcomplete\s+(?:the\s+)?implementation\b|"
+    r"\b(?:update|change|modify|edit|add|remove|create|build|make|"
+    r"prepare|open|submit|revert|roll back)\s+"
+    r"(?:(?:the|this|that|an?|new|existing)\s+)?"
+    r"(?:(?:requested|obsolete|existing|current|affected|relevant|necessary|"
+    r"corresponding)\s+)?"
+    r"(?:code|changes?|implementation|documentation|docs?|tests?|files?|repository|repo|"
+    r"scripts?|modules?|packages?|workflows?|polic(?:y|ies)|checkers?|fixtures?|"
+    r"features?|behavio(?:u)?r|support|pages?|guides?|configuration|config|"
+    r"api|ui|readme(?:\.md)?|issue(?:s)?(?:\s+#\d+)?|pull request|pr)\b|"
+    r"\b(?:update|change|modify|edit|add|remove|create|build)\s+"
+    r"(?:(?:the|this|that|an?|new|existing)\s+)?"
+    r"(?:[a-z0-9_.-]+[\\/])*[a-z_][a-z0-9_.-]*\.[a-z0-9]{1,12}\b|"
+    r"\bwork on (?:an? )?(?:existing )?(?:ordinary )?(?:pull request|pr)\b|"
+    r"\b(?:address|resolve|apply|implement)\s+(?:the\s+)?"
+    r"(?:review\s+)?feedback\b"
+    r"(?:\s+(?:on|for)\s+(?:an?\s+)?(?:existing\s+)?(?:ordinary\s+)?"
+    r"(?:pull request|pr)\b)?|"
+    r"\bapply\s+(?:the\s+)?requested\s+"
+    r"(?:changes?|updates?|fix(?:es)?|patch)\b|"
+    r"pull[- ]request delivery|guarded[- ]squash merge|"
+    r"task-owned pull request|ordinary same-repository"
+)
+DEFAULT_MERGE_AUTHORITY_COORDINATED_NO_WORK = re.compile(
+    r"\b(?:do not|don't|don’t|must not|without)\s+"
+    r"(?:\w+\s+){0,3}"
+    r"(?:implement|fix|patch|resolve|solve|deliver|update|change|modify|edit|"
+    r"rename|delete|replace|make|add|remove|create|build|refactor)"
+    r"(?:\s*(?:,\s*(?:(?:and|or)\s+)?|\s+(?:and|or)\s+)"
+    r"(?:implement|fix|patch|resolve|solve|deliver|update|change|modify|edit|"
+    r"rename|delete|replace|make|add|remove|create|build|refactor)){1,}"
+)
+MERGE_AUTHORITY_INSTRUCTION_BOUNDARY = re.compile(
+    r"(?:[;.!?]+|"
+    r",(?!\s*(?:(?:and|or)\s+)?(?:pull[- ]request|pr|issue)\s*#\d+)|"
+    r"\s+(?:but|and)\s+(?!(?:pull[- ]request|pr|issue)\s*#\d+))"
+)
+MERGE_AUTHORITY_COARSE_BOUNDARY = re.compile(r"(?:[;,.!?]+|\s+but\s+)")
+MERGE_HOLD_DISCUSSION_CONTEXT = re.compile(
+    r"\b(?:explain(?:ed|ing)?|document(?:ed|ing)?|discuss(?:ed|ing)?|"
+    r"describe(?:d|s|ing)?|mention(?:ed|ing)?|refer(?:red|ring)?|"
+    r"test(?:ed|ing)?|plan(?:ned|ning)?|consider(?:ed|ing|ation)?|"
+    r"contemplat(?:e|ed|ing|ion)|ask(?:ed|ing)?|"
+    r"determin(?:e|ed|ing|ation)|decid(?:e|ed|ing))\b"
+)
+MERGE_HOLD_NEGATED_DIRECTIVE_REPORT_CONTEXT = re.compile(
+    r"\b(?:(?:the\s+)?(?:user|maintainer|owner)|(?:i|we))\s+"
+    r"(?:(?:did|do|does|has|have)\s+not|never)\s+"
+    r"(?:say|ask|request|instruct|direct|require)\b[^.!?]{0,60}$"
+)
+MERGE_HOLD_DIRECT_REQUEST_CONTEXT = re.compile(
+    r"\b(?:i|we)\s+(?:ask|request)\s+that\s+(?:you\s+)?$"
+)
+MERGE_HOLD_DIRECT_DECISION_CONTEXT = re.compile(
+    r"\b(?:(?:i|we)\s+decid(?:e|ed)|(?:my|our)\s+decision\s+is)\s*:\s*$"
+)
+MERGE_HOLD_CONDITIONAL_CLAUSE_COMMA = re.compile(
+    r"(\b(?:if|when|once|after|unless)\b[^.!?]{0,80}),\s*"
+    r"(?=(?:do not|don't|don’t|never|leave|keep|pull request|pr|only|"
+    r"wait|await|hold off|defer|delay|postpone|pause|refrain)\b)"
+)
+MERGE_HOLD_CONDITIONAL_CONTEXT = re.compile(
+    r"\b(?:if|when|once|after|unless)\b[^.!?]{0,100}$"
+)
+MERGE_HOLD_COMPLETED_ACTION_CONTEXT = re.compile(
+    r"\bafter\s+(?:(?:i|we|(?:the\s+)?(?:user|maintainer|owner))\s+"
+    r"(?:reviewed|checked|examined|inspected|confirmed|decided|evaluated|"
+    r"assessed|read|saw|received|completed|finished)|"
+    r"(?:discussing|reviewing|checking|examining|inspecting|confirming|"
+    r"evaluating|assessing)\b)[^.!?]{0,80}$"
+)
+DEFAULT_MERGE_AUTHORITY_ACTION_BOUNDARY = re.compile(
+    r"(?:[;,.!?]+|\s+(?:and|then|but)\s+)"
+)
+MERGE_HOLD_OTHER_TASK_SUFFIX = re.compile(
+    r"^\s+(?:(?:for|on)\s+)?(?:(?:the|an?)\s+)?"
+    r"(?:unrelated|other|another)\s+"
+    r"(?:pull request|pr)\b"
+)
+MERGE_HOLD_OTHER_TASK_PREFIX = re.compile(
+    r"(?:unrelated|other|another)\s+(?:pull request|pr)(?:\s*#\d+)?"
+    r"(?:\s+[^.!?]{0,20})?\s*$"
+)
+MERGE_HOLD_OTHER_TASK_REFERENCE = re.compile(
+    r"(?:unrelated|other|another)\s+(?:pull request|pr)\b"
+)
+MERGE_HOLD_ACTIVE_TASK_TARGET = re.compile(
+    r"(?:(?:this|the)\s+)?(?:pull request|pr|branch|change|commit)\b"
+)
+MERGE_HOLD_OTHER_TASK_TRAILING_CLAUSE = re.compile(
+    r"\s+(?:and|or|but)\s+(?:(?:for|on)\s+)?(?:(?:the|an?)\s+)?"
+    r"(?:unrelated|other|another)\s+(?:pull request|pr)\b[^;.!?]*$"
+)
+MERGE_HOLD_NUMBERED_PR_REFERENCE = re.compile(
+    r"\b(?:pull[- ]request|pr)\s*#(\d+)\b"
+)
+MERGE_HOLD_NUMBERED_ISSUE_REFERENCE = re.compile(r"\bissue\s*#(\d+)\b")
+MERGE_HOLD_REPORTED_PERMISSION_CONTEXT = re.compile(
+    r"\b(?:previous|prior|earlier|former|historical|stale)\b"
+    r"[^.!?]{0,80}\b(?:claimed|said|reported|stated|suggested|wrote|asserted)\b"
+)
+MERGE_HOLD_INTERROGATIVE_PERMISSION_CONTEXT = re.compile(
+    r"(?:\b(?:who|what|why|when|where|how)\b[^.!?]{0,80}"
+    r"\b(?:said|says?|told|claimed|asked)\b|"
+    r"\b(?:did|does|do|would|could|has|have|is|are|was|were)\b"
+    r"[^.!?]{0,80}\b(?:said|say|tell|claim|authorize|permit)\b)"
+)
+MERGE_HOLD_NEGATED_PERMISSION_REPORT_CONTEXT = re.compile(
+    r"(?:\b(?:no\s+one|nobody)\s+"
+    r"(?:said|claimed|reported|stated|suggested|wrote|asserted)\b|"
+    r"\b(?:i|we|(?:the\s+)?(?:user|maintainer|owner))\s+"
+    r"(?:cannot|can't|can’t|did\s+not|didn't|didn’t|never)\s+"
+    r"(?:say|claim|report|state|suggest|write|assert)\b)"
+)
+MERGE_HOLD_NONAUTHORITATIVE_SOURCE_CONTEXT = re.compile(
+    r"(?:\baccording\s+to\s+(?:(?:the|a)\s+)?"
+    r"(?:task\s+handoff|handoff|task[- ]note|policy|stale\s+memory|memory|"
+    r"heartbeat|delegated\s+prompt|agent|automation)\b|"
+    r"\b(?:task\s+handoff|handoff|task[- ]note|policy|stale\s+memory|memory|"
+    r"heartbeat|delegated\s+prompt|(?:(?:the|an?)\s+)?agent|"
+    r"(?:(?:the|an?)\s+)?automation)\s+"
+    r"(?:said|says|reported|states?|claims?)\b)"
+)
+MERGE_AUTHORITY_TASK_CLAUSE_BOUNDARY = re.compile(r"[;.?!]+")
+MERGE_AUTHORITY_COORDINATED_CLAUSE_BOUNDARY = re.compile(
+    r",\s+(?:but|and)\s+(?!(?:pull[- ]request|pr|issue)\s*#\d+)|"
+    r"\s+but\s+(?!(?:pull[- ]request|pr|issue)\s*#\d+)"
+)
+MERGE_HOLD_STANDALONE_PERMISSION = re.compile(
+    r"\b(?:(?P<imperative>merge now|(?:please\s+)?merge\s+"
+    r"(?:(?:this|the)\s+)?(?:pull request|pr)(?:\s+now)?)|"
+    r"you\s+(?:may|can)\s+merge"
+    r"(?:\s+(?:(?:this|the)\s+)?(?:pull request|pr))?(?:\s+now)?|"
+    r"i\s+authorize\s+you\s+to\s+merge"
+    r"(?:\s+(?:(?:this|the)\s+)?(?:pull request|pr))?|"
+    r"you\s+have\s+(?:(?:my|our|your)\s+)?"
+    r"(?:permission|authorization|approval)\s+to\s+merge"
+    r"(?:\s+(?:(?:this|the)\s+)?(?:pull request|pr))?|"
+    r"(?P<approval>i\s+approve\s+(?:(?:(?:this|the)\s+)?"
+    r"(?:pull request|pr)|the\s+merge))|"
+    r"go ahead and merge|"
+    r"proceed (?:with the merge|with merging|to merge)(?: now)?)\b"
+)
+MERGE_HOLD_APPROVAL_CONDITION = re.compile(
+    r"\b(?:merge(?: only)?|only merge)"
+    r"(?:\s+(?:(?:this|the)\s+)?(?:pull request|pr))?\s+"
+    r"(?:after|when|if|once|until|unless|before)\s+"
+    r"(?:(?:i|we|(?:the\s+)?maintainer|"
+    r"(?:the\s+)?(?:[a-z][a-z0-9_-]*\s+)?owner)\s+"
+    r"(?:approves?|(?:gives?|grants?)\s+(?:approval|permission|authorization))|"
+    r"approved|(?:approval|permission|authorization)\s+is\s+(?:given|granted))\b"
+)
+MERGE_HOLD_PERMISSION_QUALIFIED_MERGE = re.compile(
+    r"\b(?:only\s+merge(?:\s+(?:(?:this|the)\s+)?(?:pull request|pr))?|"
+    r"merge(?:\s+(?:(?:this|the)\s+)?(?:pull request|pr))?\s+only)\s+"
+    r"with\s+(?:(?:my|our|your)\s+)?"
+    r"(?:approval|permission|authorization|sign[- ]off|go[- ]ahead)\b"
+)
+MERGE_HOLD_APPROVAL_CONDITION_FIRST = re.compile(
+    r"\b(?:(?:only\s+)?(?:with\s+(?:(?:my|our|your)\s+approval|"
+    r"(?:(?:the\s+)?(?:user|maintainer|owner)(?:'s|’s)?)\s+approval)|"
+    r"after\s+(?:i|we|(?:the\s+)?(?:user|maintainer|owner))\s+approves?)\s+"
+    r"(?:may|can|should)\s+(?:you|i|we)\s+merge"
+    r"(?:\s+(?:(?:this|the)\s+)?(?:pull request|pr))?|"
+    r"(?:approval|permission|authorization)\s+is\s+(?:required|needed)\s+"
+    r"(?:before\s+(?:(?:you|i|we)\s+merge|merging)|to\s+merge)"
+    r"(?:\s+(?:(?:this|the)\s+)?(?:pull request|pr))?)\b"
+)
+MERGE_HOLD_ACTOR_APPROVAL_WAIT = re.compile(
+    r"\b(?:wait\s+(?:for|until)\s+(?:(?:the\s+)?"
+    r"(?:user|maintainer|(?:[a-z][a-z0-9_-]*\s+)?owner)|me|us)\s+to\s+approve|"
+    r"wait\s+for\s+(?:(?:the\s+)?"
+    r"(?:user|maintainer|(?:[a-z][a-z0-9_-]*\s+)?owner)|me|us)\s+"
+    r"before\s+merging)\b"
+)
+MERGE_HOLD_APPROVAL_BOUNDED_DISPOSITION = re.compile(
+    r"\b(?:(?:do not|don't|don’t|never)\s+merge"
+    r"(?:\s+(?:(?:this|the)\s+)?(?:pull request|pr))?|"
+    r"(?:leave|keep)\s+(?:(?:this|the)\s+)?(?:pull request|pr)\s+open|"
+    r"(?:pull request|pr)\s+only|"
+    r"only\s+(?:open|create|submit|prepare)\s+"
+    r"(?:(?:an?|the|this)\s+)?(?:pull request|pr))\b"
+    r"[^.!?]{0,60}\b(?:after|when|if|once|until|unless|before|prior\s+to)\s+"
+    r"(?:(?:i|we|(?:the\s+)?maintainer|"
+    r"(?:the\s+)?(?:[a-z][a-z0-9_-]*\s+)?owner)\s+approves?|approved|"
+    r"(?:(?:the\s+)?(?:user|maintainer|"
+    r"(?:[a-z][a-z0-9_-]*\s+)?owner)(?:'s|’s)?\s+)?approval)\b"
+)
+MERGE_HOLD_APPROVAL_BEFORE_MERGING = re.compile(
+    r"\b(?:(?:ask|check\s+with)\s+(?:(?:the\s+)?"
+    r"(?:user|maintainer|(?:[a-z][a-z0-9_-]*\s+)?owner)|me|us)|"
+    r"(?:get|obtain|require|need|wait\s+for)\s+"
+    r"(?:(?:the\s+)?(?:user|maintainer|(?:[a-z][a-z0-9_-]*\s+)?owner)"
+    r"(?:'s|’s)?\s+|(?:my|our|your)\s+)?(?:sign[- ]off|go[- ]ahead)|"
+    r"wait (?:for|until)\s+(?:(?:(?:the\s+)?"
+    r"(?:[a-z][a-z0-9_-]*(?:'s|’s)?\s+){1,3}|me\s+|us\s+)to\s+approve|"
+    r"(?:(?:the|my|our|your)\s+)?"
+    r"(?:[a-z][a-z0-9_-]*(?:'s|’s)?\s+){0,3}"
+    r"(?:approval|permission|authorization))|"
+    r"(?:(?:you|i|we)\s+)?(?:get|obtain|require|need)\s+(?:(?:the\s+)?"
+    r"(?:user|maintainer|(?:[a-z][a-z0-9_-]*\s+)?owner)"
+    r"(?:'s|’s)?\s+|(?:my|our|your)\s+)?"
+    r"(?:approval|permission|authorization))\b"
+    r"[^.!?]{0,40}\b(?:before merging|to merge"
+    r"(?:\s+(?:(?:this|the)\s+)?(?:pull request|pr))?)\b"
+)
+MERGE_HOLD_NEGATED_APPROVAL_REQUIREMENT = re.compile(
+    r"\b(?:no\s+longer|do\s+not|don't|don’t|does\s+not|doesn't|doesn’t|"
+    r"did\s+not|didn't|didn’t)\s*$"
+)
+MERGE_HOLD_WITHOUT_APPROVAL = re.compile(
+    r"\b(?:do not|don't|don’t|must not)\s+merge"
+    r"(?:\s+(?:(?:this|the)\s+)?(?:pull request|pr))?\s+without\s+"
+    r"(?:(?:my|our|your|the|maintainer|owner|code owner)\s+)?"
+    r"(?:approval|permission|authorization)\b"
+)
+MERGE_HOLD_RESUMABLE_GATE_SUFFIX = re.compile(
+    r"^\s+(?:after|when|if|once|until|pending)\s+"
+    r"(?:(?:the|an?)\s+)?(?:ci|tests?|checks?|validation|builds?|"
+    r"(?:(?:[a-z][a-z0-9_-]*\s+){0,2}"
+    r"(?:review|deployments?|release[- ]jobs?)))\b"
+)
+MERGE_RESUMABLE_GATE_CONDITION = re.compile(
+    r"\b(?:after|when|if|once|until|pending)\s+"
+    r"(?:(?:the|an?)\s+)?"
+    r"(?P<gate>(?:(?:[a-z][a-z0-9_-]*\s+){0,2})?"
+    r"(?:ci|tests?|checks?|validation|builds?|review|deployments?|"
+    r"release[- ]jobs?))\b"
+)
+MERGE_RESUMABLE_GATE_FIRST = re.compile(
+    r"\b(?:wait\s+(?:for|until)|await)\s+"
+    r"(?:(?:the|an?)\s+)?"
+    r"(?P<gate>(?:(?:[a-z][a-z0-9_-]*\s+){0,2})?"
+    r"(?:ci|tests?|checks?|validation|builds?|review|deployments?|"
+    r"release[- ]jobs?))"
+    r"(?:\s+(?:to\s+)?(?:pass(?:es)?|succeed(?:s)?|complete(?:s)?|"
+    r"finish(?:es)?|clear(?:s)?))?\s+"
+    r"before\s+(?:merging|(?:you|i|we)\s+merge)\b"
+)
+MERGE_RESUMABLE_GATE_CONJUNCTION_TERM = (
+    r"(?:(?:[a-z][a-z0-9_-]*\s+){0,2})?"
+    r"(?:ci|tests?|checks?|validation|builds?|review|deployments?|"
+    r"release[- ]jobs?)"
+)
+MERGE_RESUMABLE_GATE_CONJUNCTION_SEPARATOR = re.compile(
+    r"\s*(?:,\s*(?:(?:and|or)\s+)?|\s+(?:and|or)\s+)"
+)
+MERGE_RESUMABLE_GATE_CONDITION_LIST = re.compile(
+    rf"\b(?:after|when|if|once|until|pending)\s+"
+    rf"(?:(?:the|an?)\s+)?(?P<gates>{MERGE_RESUMABLE_GATE_CONJUNCTION_TERM}"
+    rf"(?:\s*(?:,\s*(?:(?:and|or)\s+)?|\s+(?:and|or)\s+)"
+    rf"(?:(?:the|an?)\s+)?{MERGE_RESUMABLE_GATE_CONJUNCTION_TERM})+)\b"
+)
+MERGE_RESUMABLE_GATE_FIRST_LIST = re.compile(
+    rf"\b(?:wait\s+(?:for|until)|await)\s+"
+    rf"(?:(?:the|an?)\s+)?(?P<gates>{MERGE_RESUMABLE_GATE_CONJUNCTION_TERM}"
+    rf"(?:\s*(?:,\s*(?:(?:and|or)\s+)?|\s+(?:and|or)\s+)"
+    rf"(?:(?:the|an?)\s+)?{MERGE_RESUMABLE_GATE_CONJUNCTION_TERM})+)"
+    r"(?:\s+(?:to\s+)?(?:pass(?:es)?|succeed(?:s)?|complete(?:s)?|"
+    r"finish(?:es)?|clear(?:s)?))?\s+"
+    r"before\s+(?:merging|(?:you|i|we)\s+merge)\b"
+)
+MERGE_RESUMABLE_GATE_NEGATION_PREFIX = re.compile(
+    r"\b(?:do not|don't|don’t|must not|should not|need not|never)\s*$"
+)
+MERGE_RESUMABLE_GATE_RESOLUTION = re.compile(
+    r"\b(?:(?:the|an?)\s+)?"
+    r"(?P<gate>(?:(?:[a-z][a-z0-9_-]*\s+){0,2})?"
+    r"(?:ci|tests?|checks?|validation|builds?|review|deployments?|"
+    r"release[- ]jobs?))\s+"
+    r"(?:(?:has|have|is|are)\s+)?"
+    r"(?:passed|succeeded|successful|completed|complete|finished|cleared)\b"
+)
+MERGE_RESUMABLE_GATE_DISPOSITION_PREFIX = re.compile(
+    r"\b(?:merge(?!\s+(?:hold|instruction|directive)s?\b)|merging|"
+    r"guarded[- ]squash merge|guarded merge|"
+    r"(?:leave|keep)\s+(?:(?:this|the)\s+)?(?:pull request|pr)\s+open|"
+    r"(?:pull request|pr)\s+only)\b"
+)
+MERGE_RESUMABLE_GATE_ALLOWED_MERGE_BRIDGE = re.compile(
+    r"\s*(?:(?:(?:this|the)\s+)?"
+    r"(?:pull request|pr|branch|change|commit)|it)?\s*(?:only\s*)?"
+)
+MERGE_HOLD_NON_PR_OBJECT = re.compile(
+    r"^\s+(?!(?:(?:this|the)\s+)?(?:pull request|pr)\b|it\b|"
+    r"(?:(?:this|the)\s+)?(?:branch|change|commit)\b|"
+    r"(?:hold|instruction|directive)s?\b|until\b|before\b|after\b|unless\b|"
+    r"pending\b|"
+    r"because\b|due\s+to\b|owing\s+to\b|since\b|while\b|when\b|"
+    r"yet\b|now\b|automatically\b|"
+    r"into\s+(?:(?:the\s+)?(?:main|master|default|target|base)\s+branch|"
+    r"main|master)\b|"
+    r"(?:to|for)\s+(?:merge|merging)\b|"
+    r"for\s+issue(?:\s+#\d+)?\b|"
+    r"from\s+(?:(?:the)\s+)?(?:maintainer|owner|me|us|you)\b|"
+    r"for\s+(?:now|the moment|approval|maintainer approval)\b)\w+"
+)
+MERGE_HOLD_NONMERGE_APPROVAL_QUALIFIER = re.compile(
+    r"^\s+(?:before|after|until|when|if|once)\s+"
+    r"(?!(?:(?:we|you|i|they)\s+)?(?:merge|merging)\b)"
+    r"(?!(?:(?:the|this)\s+)?(?:pull request|pr)\b)\w+"
+)
+MERGE_HOLD_WITHDRAWAL_BEFORE_HOLD = re.compile(
+    r"\s*(?:(?:the|previous|current|explicit|earlier)\s+){0,3}"
+)
+MERGE_HOLD_WITHDRAWAL_AFTER_HOLD = re.compile(
+    r"\s*(?:(?:hold|instruction|directive)s?\s*)?"
+    r"(?:(?:is|are|was|were|has been|have been)\s*)?"
+    r"(?:(?:hereby|explicitly|now|formally)\s*)?"
+)
+
 ORDERED_TERMINAL_CLEANUP_MARKERS = {
     path: (
         "`remote_branch_absent`",
@@ -568,6 +1370,7 @@ class Finding:
         message: Message maintained by this finding.
         line: Line maintained by this finding.
     """
+
     path: Path
     message: str
     line: int | None = None
@@ -582,6 +1385,1211 @@ class Finding:
         if self.line is None:
             return f"{display}: {self.message}"
         return f"{display}:{self.line}: {self.message}"
+
+
+def explicit_merge_holds(text: str) -> tuple[str, ...]:
+    """Return canonical explicit merge holds present in user-authored text.
+
+    Args:
+        text: Current user or maintainer instruction text to inspect.
+    """
+    normalized = " ".join(text.casefold().split())
+    normalized = normalized.replace("pull-request", "pull request")
+    normalized = MERGE_HOLD_MODAL_PROHIBITION.sub("do not merge", normalized)
+    normalized = AUTO_MERGE_ONLY_PATTERN.sub(
+        "keep github auto-merge disabled", normalized
+    )
+    return tuple(
+        hold
+        for hold, patterns in EXPLICIT_MERGE_HOLD_PATTERNS.items()
+        if any(pattern in normalized for pattern in patterns)
+    )
+
+
+def _is_hold_discussion(segment: str, offset: int) -> bool:
+    """Return whether a hold phrase is only a discussed policy term.
+
+    Args:
+        segment: Current instruction segment containing the hold phrase.
+        offset: Character offset where the hold phrase begins.
+    """
+    prefix = segment[max(0, offset - 100) : offset]
+    if (
+        MERGE_HOLD_DIRECT_REQUEST_CONTEXT.search(prefix) is not None
+        or MERGE_HOLD_DIRECT_DECISION_CONTEXT.search(prefix) is not None
+        or MERGE_HOLD_COMPLETED_ACTION_CONTEXT.search(prefix) is not None
+    ):
+        return False
+    return (
+        MERGE_HOLD_DISCUSSION_CONTEXT.search(prefix) is not None
+        or MERGE_HOLD_CONDITIONAL_CONTEXT.search(prefix) is not None
+        or MERGE_HOLD_NONAUTHORITATIVE_SOURCE_CONTEXT.search(prefix) is not None
+        or MERGE_HOLD_NEGATED_DIRECTIVE_REPORT_CONTEXT.search(prefix) is not None
+    )
+
+
+def _task_clause_prefix(text: str, offset: int) -> str:
+    """Return all text before an offset in the current sentence-level clause.
+
+    Args:
+        text: Normalized instruction text being classified.
+        offset: Character offset whose preceding clause context is requested.
+    """
+    clause_start = 0
+    for boundary in MERGE_AUTHORITY_TASK_CLAUSE_BOUNDARY.finditer(text, 0, offset):
+        clause_start = boundary.end()
+    return text[clause_start:offset]
+
+
+def _hold_targets_other_task(
+    segment: str,
+    offset: int,
+    pattern: str,
+    *,
+    active_pull_request: int | None = None,
+    active_issue: int | None = None,
+) -> bool:
+    """Return whether a hold phrase explicitly targets a different task.
+
+    Args:
+        segment: Current instruction segment containing the hold phrase.
+        offset: Character offset where the hold phrase begins.
+        pattern: Exact hold phrase matched in the segment.
+        active_pull_request: Pull request owned by the active task, when known.
+        active_issue: Issue owned by the active task, when known.
+    """
+    prefix = segment[max(0, offset - 80) : offset]
+    suffix = segment[offset + len(pattern) : offset + len(pattern) + 80]
+    if active_pull_request is not None:
+        direct_object_context = segment[offset : offset + len(pattern) + 40]
+        explicit_active_target = re.search(
+            r"\bthis\s+(?:pull request|pr|branch|change|commit)\b",
+            direct_object_context,
+        )
+        # A following PR number is the permission or hold's direct object. When
+        # absent, the nearest preceding number identifies a leading task scope.
+        direct_references = tuple(
+            MERGE_HOLD_NUMBERED_PR_REFERENCE.finditer(direct_object_context)
+        )
+        if explicit_active_target is not None and (
+            not direct_references
+            or explicit_active_target.start() < direct_references[0].start()
+        ):
+            return False
+        if direct_references:
+            gate_context = direct_object_context[
+                len(pattern) : direct_references[0].start()
+            ]
+            if re.search(r"\b(?:until|before|after|while)\s*$", gate_context):
+                return False
+            return all(
+                int(reference.group(1)) != active_pull_request
+                for reference in direct_references
+            )
+        prefix_references = tuple(MERGE_HOLD_NUMBERED_PR_REFERENCE.finditer(prefix))
+        if prefix_references:
+            return all(
+                int(reference.group(1)) != active_pull_request
+                for reference in prefix_references
+            )
+    if active_issue is not None:
+        direct_issue_context = segment[offset : offset + len(pattern) + 80]
+        direct_references = tuple(
+            MERGE_HOLD_NUMBERED_ISSUE_REFERENCE.finditer(direct_issue_context)
+        )
+        if direct_references:
+            gate_context = direct_issue_context[
+                len(pattern) : direct_references[0].start()
+            ]
+            if re.search(r"\b(?:until|before|after|while)\s*$", gate_context):
+                return False
+            return all(
+                int(reference.group(1)) != active_issue
+                for reference in direct_references
+            )
+        prefix_references = tuple(MERGE_HOLD_NUMBERED_ISSUE_REFERENCE.finditer(prefix))
+        if prefix_references:
+            return all(
+                int(reference.group(1)) != active_issue
+                for reference in prefix_references
+            )
+    return (
+        MERGE_HOLD_OTHER_TASK_PREFIX.search(prefix) is not None
+        or MERGE_HOLD_OTHER_TASK_SUFFIX.search(suffix) is not None
+    )
+
+
+def _hold_targets_non_pr_object(
+    hold: str, segment: str, offset: int, pattern: str
+) -> bool:
+    """Return whether hold wording governs an application object, not PR delivery.
+
+    Args:
+        hold: Canonical merge-hold name being classified.
+        segment: Current instruction segment containing the hold phrase.
+        offset: Character offset where the hold phrase begins.
+        pattern: Exact hold phrase matched in the segment.
+    """
+    hold_end = offset + len(pattern)
+    for marker in MERGE_HOLD_WITHDRAWAL_MARKERS:
+        marker_offset = segment.find(marker)
+        while marker_offset >= 0:
+            marker_end = marker_offset + len(marker)
+            if marker_end <= offset and (
+                MERGE_HOLD_WITHDRAWAL_BEFORE_HOLD.fullmatch(
+                    segment[marker_end:offset]
+                )
+                is not None
+            ):
+                return False
+            if hold_end <= marker_offset and (
+                MERGE_HOLD_WITHDRAWAL_AFTER_HOLD.fullmatch(
+                    segment[hold_end:marker_offset]
+                )
+                is not None
+            ):
+                return False
+            marker_offset = segment.find(marker, marker_offset + 1)
+    suffix = segment[offset + len(pattern) : offset + len(pattern) + 80]
+    return (
+        MERGE_HOLD_NON_PR_OBJECT.search(suffix) is not None
+        or (
+            hold == "wait for approval"
+            and MERGE_HOLD_NONMERGE_APPROVAL_QUALIFIER.search(suffix) is not None
+        )
+    )
+
+
+def _is_approval_scoped_disposition(
+    hold: str, segment: str, offset: int, pattern: str
+) -> bool:
+    """Return whether a permanent disposition belongs to an approval condition.
+
+    Args:
+        hold: Canonical merge-hold name being classified.
+        segment: Current instruction segment containing the hold phrase.
+        offset: Character offset where the hold phrase begins.
+        pattern: Exact hold phrase matched in the segment.
+    """
+    if hold not in {"do not merge", "leave open", "pr only"}:
+        return False
+    hold_end = offset + len(pattern)
+    approval_matches = (
+        tuple(MERGE_HOLD_APPROVAL_CONDITION.finditer(segment))
+        + tuple(MERGE_HOLD_APPROVAL_BEFORE_MERGING.finditer(segment))
+        + tuple(MERGE_HOLD_WITHOUT_APPROVAL.finditer(segment))
+        + tuple(MERGE_HOLD_APPROVAL_BOUNDED_DISPOSITION.finditer(segment))
+    )
+    return any(match.start() < hold_end and offset < match.end() for match in approval_matches)
+
+
+def _is_resumable_gate_scoped_disposition(
+    hold: str, segment: str, offset: int, pattern: str
+) -> bool:
+    """Return whether a PR-only substring is followed by a resumable gate.
+
+    Args:
+        hold: Canonical hold represented by the matched phrase.
+        segment: Current instruction segment containing the phrase.
+        offset: Character offset where the phrase begins.
+        pattern: Exact hold phrase matched in the segment.
+    """
+    if hold not in {"do not merge", "leave open", "pr only"}:
+        return False
+    suffix = segment[offset + len(pattern) :]
+    return MERGE_HOLD_RESUMABLE_GATE_SUFFIX.search(suffix) is not None
+
+
+def merge_hold_directions(
+    text: str,
+    *,
+    active_holds: tuple[str, ...] = (),
+    active_pull_request: int | None = None,
+    active_issue: int | None = None,
+) -> dict[str, str | None]:
+    """Classify each mentioned hold as an addition or explicit withdrawal.
+
+    Args:
+        text: One current user or maintainer instruction to classify.
+        active_holds: Holds active before this instruction is evaluated.
+        active_pull_request: Pull request owned by the active task, when known.
+        active_issue: Issue owned by the active task, when known.
+    """
+    normalized = " ".join(text.casefold().split())
+    normalized = normalized.replace("pull-request", "pull request")
+    normalized = MERGE_HOLD_MODAL_PROHIBITION.sub("do not merge", normalized)
+    normalized = AUTO_MERGE_ONLY_PATTERN.sub(
+        "keep github auto-merge disabled", normalized
+    )
+    normalized = MERGE_HOLD_CONDITIONAL_CLAUSE_COMMA.sub(r"\1 ", normalized)
+    task_clauses: list[str] = []
+    for sentence in MERGE_AUTHORITY_TASK_CLAUSE_BOUNDARY.split(normalized):
+        for clause in MERGE_AUTHORITY_COORDINATED_CLAUSE_BOUNDARY.split(sentence):
+            clause = MERGE_HOLD_OTHER_TASK_TRAILING_CLAUSE.sub("", clause).strip()
+            other_task_reference = MERGE_HOLD_OTHER_TASK_REFERENCE.search(clause)
+            has_active_target_before_reference = (
+                other_task_reference is not None
+                and MERGE_HOLD_ACTIVE_TASK_TARGET.search(
+                    clause[: other_task_reference.start()]
+                )
+                is not None
+            )
+            has_gate_before_reference = (
+                other_task_reference is not None
+                and re.search(
+                    r"\b(?:until|before|after|while)\s*$",
+                    clause[: other_task_reference.start()],
+                )
+                is not None
+            )
+            if clause and (
+                other_task_reference is None
+                or has_active_target_before_reference
+                or has_gate_before_reference
+            ):
+                task_clauses.append(clause)
+    normalized = "; ".join(task_clauses)
+    if not normalized:
+        return {}
+    conditional_named_withdrawals: set[str] = set()
+    for clause in MERGE_AUTHORITY_TASK_CLAUSE_BOUNDARY.split(normalized):
+        for marker in MERGE_HOLD_WITHDRAWAL_MARKERS:
+            marker_offset = clause.find(marker)
+            while marker_offset >= 0:
+                context_start = 0
+                context_end = len(clause)
+                for boundary in MERGE_AUTHORITY_COORDINATED_CLAUSE_BOUNDARY.finditer(
+                    clause
+                ):
+                    if boundary.end() <= marker_offset:
+                        context_start = boundary.end()
+                    elif marker_offset < boundary.start():
+                        context_end = boundary.start()
+                        break
+                withdrawal_context = clause[context_start:context_end]
+                if MERGE_HOLD_WITHDRAWAL_NONCURRENT_PREFIX.search(
+                    withdrawal_context
+                ):
+                    marker_end = marker_offset + len(marker)
+                    for hold, patterns in EXPLICIT_MERGE_HOLD_PATTERNS.items():
+                        for pattern in patterns:
+                            hold_offset = clause.find(pattern)
+                            if hold_offset < 0:
+                                continue
+                            if hold_offset < marker_offset or (
+                                marker_end <= hold_offset
+                                and MERGE_HOLD_WITHDRAWAL_BEFORE_HOLD.fullmatch(
+                                    clause[marker_end:hold_offset]
+                                )
+                                is not None
+                            ):
+                                conditional_named_withdrawals.add(hold)
+                                break
+                marker_offset = clause.find(marker, marker_offset + 1)
+    shared_withdrawals: set[str] = set()
+    coarse_segments = (
+        segment.strip()
+        for segment in MERGE_AUTHORITY_COARSE_BOUNDARY.split(normalized)
+        if segment.strip()
+    )
+    for coarse_segment in coarse_segments:
+        for marker in MERGE_HOLD_WITHDRAWAL_MARKERS:
+            marker_offset = coarse_segment.find(marker)
+            while marker_offset >= 0:
+                prefix = coarse_segment[max(0, marker_offset - 24) : marker_offset]
+                suffix = coarse_segment[
+                    marker_offset + len(marker) : marker_offset + len(marker) + 40
+                ]
+                if (
+                    MERGE_HOLD_WITHDRAWAL_NEGATIONS.search(prefix) is None
+                    and MERGE_HOLD_WITHDRAWAL_NONCURRENT_PREFIX.search(prefix) is None
+                    and MERGE_HOLD_WITHDRAWAL_NONCURRENT_SUFFIX.search(suffix) is None
+                ):
+                    mentioned_holds = {
+                        hold
+                        for hold, patterns in EXPLICIT_MERGE_HOLD_PATTERNS.items()
+                        if any(
+                            0 <= (hold_offset := coarse_segment.find(pattern))
+                            < marker_offset
+                            and not _hold_targets_other_task(
+                                coarse_segment,
+                                hold_offset,
+                                pattern,
+                                active_pull_request=active_pull_request,
+                                active_issue=active_issue,
+                            )
+                            for pattern in patterns
+                        )
+                    }
+                    if len(mentioned_holds) > 1:
+                        shared_withdrawals.update(mentioned_holds)
+                marker_offset = coarse_segment.find(marker, marker_offset + 1)
+    # Coordinating conjunctions begin a new instruction segment so a withdrawal
+    # attached to one named hold cannot reverse a different hold later in the
+    # same sentence.
+    segments = tuple(
+        segment.strip()
+        for segment in MERGE_AUTHORITY_INSTRUCTION_BOUNDARY.split(normalized)
+        if segment.strip()
+    )
+    directions: dict[str, str | None] = {}
+    for hold, patterns in EXPLICIT_MERGE_HOLD_PATTERNS.items():
+        hold_directions: set[str] = set()
+        for segment in segments:
+            has_directive_occurrence = False
+            for pattern in patterns:
+                pattern_offset = segment.find(pattern)
+                while pattern_offset >= 0:
+                    if not _is_hold_discussion(
+                        segment, pattern_offset
+                    ) and not _hold_targets_other_task(
+                        segment,
+                        pattern_offset,
+                        pattern,
+                        active_pull_request=active_pull_request,
+                        active_issue=active_issue,
+                    ) and not _hold_targets_non_pr_object(
+                        hold, segment, pattern_offset, pattern
+                    ) and not _is_approval_scoped_disposition(
+                        hold, segment, pattern_offset, pattern
+                    ) and not _is_resumable_gate_scoped_disposition(
+                        hold, segment, pattern_offset, pattern
+                    ):
+                        has_directive_occurrence = True
+                        break
+                    pattern_offset = segment.find(pattern, pattern_offset + 1)
+                if has_directive_occurrence:
+                    break
+            if not has_directive_occurrence:
+                continue
+            withdrawn = False
+            for marker in MERGE_HOLD_WITHDRAWAL_MARKERS:
+                marker_offset = segment.find(marker)
+                while marker_offset >= 0:
+                    prefix = segment[max(0, marker_offset - 24) : marker_offset]
+                    suffix = segment[
+                        marker_offset + len(marker) : marker_offset + len(marker) + 40
+                    ]
+                    marker_end = marker_offset + len(marker)
+                    targets_hold = False
+                    for pattern in patterns:
+                        hold_offset = segment.find(pattern)
+                        while hold_offset >= 0:
+                            hold_end = hold_offset + len(pattern)
+                            if marker_offset < hold_end and hold_offset < marker_end:
+                                targets_hold = True
+                            elif marker_end <= hold_offset:
+                                bridge = segment[marker_end:hold_offset]
+                                targets_hold = (
+                                    MERGE_HOLD_WITHDRAWAL_BEFORE_HOLD.fullmatch(
+                                        bridge
+                                    )
+                                    is not None
+                                )
+                            else:
+                                bridge = segment[hold_end:marker_offset]
+                                targets_hold = (
+                                    MERGE_HOLD_WITHDRAWAL_AFTER_HOLD.fullmatch(bridge)
+                                    is not None
+                                )
+                            if targets_hold:
+                                break
+                            hold_offset = segment.find(pattern, hold_offset + 1)
+                        if targets_hold:
+                            break
+                    if (
+                        targets_hold
+                        and MERGE_HOLD_WITHDRAWAL_NEGATIONS.search(prefix) is None
+                        and MERGE_HOLD_WITHDRAWAL_NONCURRENT_PREFIX.search(prefix)
+                        is None
+                        and MERGE_HOLD_WITHDRAWAL_NONCURRENT_SUFFIX.search(suffix)
+                        is None
+                    ):
+                        withdrawn = True
+                        break
+                    marker_offset = segment.find(marker, marker_offset + 1)
+                if withdrawn:
+                    break
+            hold_directions.add("remove" if withdrawn else "add")
+        if hold_directions:
+            directions[hold] = (
+                hold_directions.pop() if len(hold_directions) == 1 else None
+            )
+    for condition_match in MERGE_HOLD_APPROVAL_CONDITION.finditer(normalized):
+        condition = condition_match.group(0)
+        if not _is_hold_discussion(
+            normalized, condition_match.start()
+        ) and not _hold_targets_other_task(
+            normalized,
+            condition_match.start(),
+            condition,
+            active_pull_request=active_pull_request,
+            active_issue=active_issue,
+        ):
+            directions["wait for approval"] = "add"
+    for condition_match in MERGE_HOLD_PERMISSION_QUALIFIED_MERGE.finditer(normalized):
+        condition = condition_match.group(0)
+        if not _is_hold_discussion(
+            normalized, condition_match.start()
+        ) and not _hold_targets_other_task(
+            normalized,
+            condition_match.start(),
+            condition,
+            active_pull_request=active_pull_request,
+            active_issue=active_issue,
+        ):
+            directions["wait for approval"] = "add"
+    for condition_match in MERGE_HOLD_APPROVAL_CONDITION_FIRST.finditer(normalized):
+        condition = condition_match.group(0)
+        if not _is_hold_discussion(
+            normalized, condition_match.start()
+        ) and not _hold_targets_other_task(
+            normalized,
+            condition_match.start(),
+            condition,
+            active_pull_request=active_pull_request,
+            active_issue=active_issue,
+        ):
+            directions["wait for approval"] = "add"
+    for condition_match in MERGE_HOLD_ACTOR_APPROVAL_WAIT.finditer(normalized):
+        condition = condition_match.group(0)
+        if not _is_hold_discussion(
+            normalized, condition_match.start()
+        ) and not _hold_targets_other_task(
+            normalized,
+            condition_match.start(),
+            condition,
+            active_pull_request=active_pull_request,
+            active_issue=active_issue,
+        ):
+            directions["wait for approval"] = "add"
+    for condition_match in MERGE_HOLD_APPROVAL_BOUNDED_DISPOSITION.finditer(
+        normalized
+    ):
+        condition = condition_match.group(0)
+        if not _is_hold_discussion(
+            normalized, condition_match.start()
+        ) and not _hold_targets_other_task(
+            normalized,
+            condition_match.start(),
+            condition,
+            active_pull_request=active_pull_request,
+            active_issue=active_issue,
+        ):
+            directions["wait for approval"] = "add"
+    for condition_match in MERGE_HOLD_APPROVAL_BEFORE_MERGING.finditer(normalized):
+        condition = condition_match.group(0)
+        condition_prefix = _task_clause_prefix(normalized, condition_match.start())
+        if MERGE_HOLD_NEGATED_APPROVAL_REQUIREMENT.search(condition_prefix):
+            if "wait for approval" in active_holds:
+                directions["wait for approval"] = "remove"
+        elif not _is_hold_discussion(
+            normalized, condition_match.start()
+        ) and not _hold_targets_other_task(
+            normalized,
+            condition_match.start(),
+            condition,
+            active_pull_request=active_pull_request,
+            active_issue=active_issue,
+        ):
+            directions["wait for approval"] = "add"
+    for condition_match in MERGE_HOLD_WITHOUT_APPROVAL.finditer(normalized):
+        condition = condition_match.group(0)
+        if not _is_hold_discussion(
+            normalized, condition_match.start()
+        ) and not _hold_targets_other_task(
+            normalized,
+            condition_match.start(),
+            condition,
+            active_pull_request=active_pull_request,
+            active_issue=active_issue,
+        ):
+            directions["wait for approval"] = "add"
+    for permission_match in MERGE_HOLD_STANDALONE_PERMISSION.finditer(normalized):
+        permission_offset = permission_match.start()
+        permission = permission_match.group(0)
+        prefix = _task_clause_prefix(normalized, permission_offset)
+        suffix = normalized[
+            permission_match.end() : permission_match.end() + 40
+        ]
+        if (
+            MERGE_HOLD_WITHDRAWAL_NEGATIONS.search(prefix) is None
+            and
+            MERGE_HOLD_WITHDRAWAL_NONCURRENT_PREFIX.search(prefix) is None
+            and MERGE_HOLD_WITHDRAWAL_NONCURRENT_SUFFIX.search(suffix) is None
+            and MERGE_HOLD_REPORTED_PERMISSION_CONTEXT.search(prefix) is None
+            and MERGE_HOLD_INTERROGATIVE_PERMISSION_CONTEXT.search(prefix) is None
+            and MERGE_HOLD_NEGATED_PERMISSION_REPORT_CONTEXT.search(prefix) is None
+            and MERGE_HOLD_NONAUTHORITATIVE_SOURCE_CONTEXT.search(prefix) is None
+            and MERGE_HOLD_NONAUTHORITATIVE_SOURCE_CONTEXT.search(suffix) is None
+            and (
+                permission_match.group("imperative") is None
+                or not prefix.strip()
+            )
+            and not _hold_targets_non_pr_object(
+                "", normalized, permission_offset, permission
+            )
+            and not _hold_targets_other_task(
+                normalized,
+                permission_offset,
+                permission,
+                active_pull_request=active_pull_request,
+                active_issue=active_issue,
+            )
+        ):
+            if permission_match.group("approval") is not None:
+                if "wait for approval" in active_holds:
+                    directions["wait for approval"] = "remove"
+            else:
+                for hold in active_holds:
+                    directions[hold] = "remove"
+            break
+    for hold in shared_withdrawals:
+        directions[hold] = "remove"
+    for hold in conditional_named_withdrawals:
+        directions[hold] = "add"
+    return directions
+
+
+def has_affirmative_default_merge_authority(text: str) -> bool:
+    """Return whether generated text affirmatively continues through merge.
+
+    Args:
+        text: Generated delegation, handoff, or heartbeat prompt to classify.
+    """
+    normalized = " ".join(text.casefold().split())
+    for marker in DEFAULT_MERGE_AUTHORITY_PROMPT_MARKERS:
+        offset = normalized.find(marker)
+        while offset >= 0:
+            prefix = normalized[max(0, offset - 80) : offset]
+            suffix = normalized[offset + len(marker) : offset + len(marker) + 80]
+            context = normalized[
+                max(0, offset - 100) : offset + len(marker) + 100
+            ]
+            action_prefix = DEFAULT_MERGE_AUTHORITY_ACTION_BOUNDARY.split(prefix)[-1]
+            if (
+                DEFAULT_MERGE_AUTHORITY_NEGATIONS.search(action_prefix) is None
+                and DEFAULT_MERGE_AUTHORITY_TRAILING_NEGATIONS.search(suffix) is None
+                and MERGE_HOLD_DISCUSSION_CONTEXT.search(action_prefix) is None
+                and DEFAULT_MERGE_AUTHORITY_SECOND_INSTRUCTION_CONDITIONS.search(
+                    context
+                )
+                is None
+                and DEFAULT_MERGE_AUTHORITY_CONDITIONAL_APPROVAL.search(context)
+                is None
+                and DEFAULT_MERGE_AUTHORITY_CONDITIONAL_REQUEST.search(context)
+                is None
+                and DEFAULT_MERGE_AUTHORITY_DECISION_ONLY.search(context) is None
+                and DEFAULT_MERGE_AUTHORITY_PERMISSION_QUESTION.search(context)
+                is None
+                and MERGE_HOLD_REPORTED_PERMISSION_CONTEXT.search(context) is None
+                and MERGE_HOLD_NONAUTHORITATIVE_SOURCE_CONTEXT.search(context)
+                is None
+            ):
+                return True
+            offset = normalized.find(marker, offset + 1)
+    return False
+
+
+def _canonical_resumable_merge_gate(gate: str) -> str:
+    """Return the canonical name for one resumable merge gate.
+
+    Args:
+        gate: Raw gate text captured from an instruction.
+
+    Returns:
+        Canonical resumable gate name.
+    """
+    normalized = " ".join(gate.replace("-", " ").split())
+    match = re.fullmatch(
+        r"(?:(?P<qualifier>(?:[a-z][a-z0-9_]*\s+){1,2}))?"
+        r"(?P<kind>ci|tests?|checks?|validation|builds?|review|deployments?|"
+        r"release jobs?)",
+        normalized,
+    )
+    if match is None:
+        raise ValueError(f"unsupported resumable merge gate: {gate}")
+    kind = match.group("kind")
+    canonical_kind = next(
+        name
+        for stem, name in (
+            ("ci", "ci"),
+            ("test", "test"),
+            ("check", "check"),
+            ("validation", "validation"),
+            ("build", "build"),
+            ("review", "review"),
+            ("deployment", "deployment"),
+            ("release job", "release job"),
+        )
+        if kind.startswith(stem)
+    )
+    qualifier = (match.group("qualifier") or "").strip()
+    return " ".join(part for part in (qualifier, canonical_kind) if part)
+
+
+def resumable_merge_gate_directions(
+    text: str,
+    *,
+    active_pull_request: int | None = None,
+    active_issue: int | None = None,
+) -> dict[str, str]:
+    """Return ordered add/remove directions for resumable merge gates.
+
+    Args:
+        text: Source or generated task text to inspect.
+        active_pull_request: Pull request owned by the active task, when known.
+        active_issue: Issue owned by the active task, when known.
+
+    Returns:
+        Final add or remove direction for each gate mentioned in the text.
+    """
+    normalized = " ".join(text.casefold().split())
+    events: list[tuple[int, str, str]] = []
+    conjunction_matches = (
+        *MERGE_RESUMABLE_GATE_CONDITION_LIST.finditer(normalized),
+        *MERGE_RESUMABLE_GATE_FIRST_LIST.finditer(normalized),
+    )
+    conjunction_spans = tuple(
+        (match.start(), match.end()) for match in conjunction_matches
+    )
+    for match in conjunction_matches:
+        if _is_hold_discussion(normalized, match.start()) or _hold_targets_other_task(
+            normalized,
+            match.start(),
+            match.group(0),
+            active_pull_request=active_pull_request,
+            active_issue=active_issue,
+        ):
+            continue
+        prefix = normalized[max(0, match.start() - 40) : match.start()]
+        direction = (
+            "remove"
+            if MERGE_RESUMABLE_GATE_NEGATION_PREFIX.search(prefix) is not None
+            else "add"
+        )
+        for gate_index, gate in enumerate(
+            MERGE_RESUMABLE_GATE_CONJUNCTION_SEPARATOR.split(match.group("gates"))
+        ):
+            gate = re.sub(r"^(?:the|an?)\s+", "", gate.strip())
+            events.append(
+                (
+                    match.start() + gate_index,
+                    direction,
+                    _canonical_resumable_merge_gate(gate),
+                )
+            )
+    for match in MERGE_RESUMABLE_GATE_CONDITION.finditer(normalized):
+        if any(start <= match.start() < end for start, end in conjunction_spans):
+            continue
+        if _is_hold_discussion(normalized, match.start()) or _hold_targets_other_task(
+            normalized,
+            match.start(),
+            match.group(0),
+            active_pull_request=active_pull_request,
+            active_issue=active_issue,
+        ):
+            continue
+        prefix = normalized[max(0, match.start() - 100) : match.start()]
+        dispositions = tuple(
+            MERGE_RESUMABLE_GATE_DISPOSITION_PREFIX.finditer(prefix)
+        )
+        if not dispositions:
+            continue
+        disposition = dispositions[-1]
+        if disposition.group(0) in {"merge", "merging"} and (
+            MERGE_RESUMABLE_GATE_ALLOWED_MERGE_BRIDGE.fullmatch(
+                prefix[disposition.end() :]
+            )
+            is None
+        ):
+            continue
+        events.append(
+            (
+                match.start(),
+                "add",
+                _canonical_resumable_merge_gate(match.group("gate")),
+            )
+        )
+    for match in MERGE_RESUMABLE_GATE_FIRST.finditer(normalized):
+        if any(start <= match.start() < end for start, end in conjunction_spans):
+            continue
+        if _is_hold_discussion(normalized, match.start()) or _hold_targets_other_task(
+            normalized,
+            match.start(),
+            match.group(0),
+            active_pull_request=active_pull_request,
+            active_issue=active_issue,
+        ):
+            continue
+        prefix = normalized[max(0, match.start() - 40) : match.start()]
+        direction = (
+            "remove"
+            if MERGE_RESUMABLE_GATE_NEGATION_PREFIX.search(prefix) is not None
+            else "add"
+        )
+        events.append(
+            (
+                match.start(),
+                direction,
+                _canonical_resumable_merge_gate(match.group("gate")),
+            )
+        )
+    for match in MERGE_RESUMABLE_GATE_RESOLUTION.finditer(normalized):
+        if _is_hold_discussion(normalized, match.start()) or _hold_targets_other_task(
+            normalized,
+            match.start(),
+            match.group(0),
+            active_pull_request=active_pull_request,
+            active_issue=active_issue,
+        ):
+            continue
+        events.append(
+            (
+                match.start(),
+                "remove",
+                _canonical_resumable_merge_gate(match.group("gate")),
+            )
+        )
+    directions: dict[str, str] = {}
+    for _, direction, gate in sorted(events):
+        directions[gate] = direction
+    return directions
+
+
+def resumable_merge_gates(
+    text: str,
+    *,
+    active_pull_request: int | None = None,
+    active_issue: int | None = None,
+) -> tuple[str, ...]:
+    """Return active canonical merge-gate conditions in task text.
+
+    Args:
+        text: Source or generated task text to inspect.
+        active_pull_request: Pull request owned by the active task, when known.
+        active_issue: Issue owned by the active task, when known.
+    """
+    return tuple(
+        gate
+        for gate, direction in resumable_merge_gate_directions(
+            text,
+            active_pull_request=active_pull_request,
+            active_issue=active_issue,
+        ).items()
+        if direction == "add"
+    )
+
+
+def source_has_default_merge_authority(instructions: tuple[str, ...]) -> bool:
+    """Derive whether current source instructions describe eligible implementation.
+
+    Args:
+        instructions: Ordered user or maintainer instructions from one fixture.
+    """
+    eligible = False
+    for instruction in instructions:
+        normalized = " ".join(instruction.casefold().split())
+        negated_workflows = tuple(
+            DEFAULT_MERGE_AUTHORITY_NEGATED_WORKFLOW.finditer(normalized)
+        )
+        workflow_exclusions = tuple(
+            exclusion
+            for exclusion in DEFAULT_MERGE_AUTHORITY_WORKFLOW_EXCLUSIONS.finditer(
+                normalized
+            )
+            if not any(
+                negation.start() < exclusion.end()
+                and exclusion.start() < negation.end()
+                for negation in negated_workflows
+            )
+        )
+        negated_mutations = tuple(
+            DEFAULT_MERGE_AUTHORITY_NEGATED_MUTATION.finditer(normalized)
+        )
+        exclusion_matches = tuple(
+            DEFAULT_MERGE_AUTHORITY_SOURCE_EXCLUSIONS.finditer(normalized)
+        ) + tuple(
+            DEFAULT_MERGE_AUTHORITY_EXPLANATORY_FIX.finditer(normalized)
+        ) + tuple(
+            DEFAULT_MERGE_AUTHORITY_REVIEW_ADVICE.finditer(normalized)
+        ) + tuple(
+            DEFAULT_MERGE_AUTHORITY_INTERROGATIVE_REVIEW.finditer(normalized)
+        ) + tuple(
+            DEFAULT_MERGE_AUTHORITY_REPORTED_DISCUSSION.finditer(normalized)
+        ) + tuple(
+            DEFAULT_MERGE_AUTHORITY_COORDINATED_NO_WORK.finditer(normalized)
+        ) + tuple(
+            DEFAULT_MERGE_AUTHORITY_STOP_WORK.finditer(normalized)
+        ) + tuple(
+            DEFAULT_MERGE_AUTHORITY_POST_STOP_SUMMARY.finditer(normalized)
+        ) + tuple(
+            DEFAULT_MERGE_AUTHORITY_POST_STOP_STATUS.finditer(normalized)
+        ) + negated_mutations + workflow_exclusions + tuple(
+            DEFAULT_MERGE_AUTHORITY_WORKFLOW_RECLASSIFICATION.finditer(normalized)
+        )
+        source_markers = tuple(
+            DEFAULT_MERGE_AUTHORITY_SOURCE_MARKERS.finditer(normalized)
+        )
+        affirmative_source_markers = tuple(
+            marker
+            for marker in source_markers
+            if not any(
+                exclusion.start() <= marker.start() < exclusion.end()
+                for exclusion in exclusion_matches
+            )
+        )
+        direct_review_matches = tuple(
+            match
+            for match in DEFAULT_MERGE_AUTHORITY_DIRECT_REVIEW.finditer(normalized)
+            if (
+                DEFAULT_MERGE_AUTHORITY_SUPERSEDING_REVIEW_PREFIX.search(
+                    normalized[: match.start()]
+                )
+                is not None
+                or DEFAULT_MERGE_AUTHORITY_SUPERSEDING_REVIEW_MARKER.search(
+                    normalized[match.end() : match.end() + 24]
+                )
+                is not None
+                or not any(
+                    marker.start() < match.start()
+                    for marker in affirmative_source_markers
+                )
+            )
+        )
+        exclusion_matches += direct_review_matches
+        authority_revoking_exclusions = tuple(
+            match
+            for match in exclusion_matches
+            if match not in negated_mutations
+            or DEFAULT_MERGE_AUTHORITY_TASK_NEGATED_MUTATION.search(match.group(0))
+            is not None
+        )
+        events = [
+            (match.start(), 0, False)
+            for match in authority_revoking_exclusions
+        ]
+        events.extend(
+            (match.start(), 1, True)
+            for match in source_markers
+            if not any(
+                exclusion.start() <= match.start() < exclusion.end()
+                for exclusion in exclusion_matches
+            )
+        )
+        for _, _, event_eligibility in sorted(events):
+            eligible = event_eligibility
+    return eligible
+
+
+def check_merge_authority_transfer_fixtures(root: Path) -> list[Finding]:
+    """Verify delegation and heartbeat fixtures preserve merge authority.
+
+    Args:
+        root: Repository or filesystem root searched by the operation.
+    """
+    path = root / MERGE_AUTHORITY_TRANSFER_FIXTURE_PATH
+    text, error = read_text(path)
+    if error is not None or text is None:
+        return [
+            Finding(path, "merge authority transfer fixtures are missing or unreadable")
+        ]
+    try:
+        payload = json.loads(text)
+    except json.JSONDecodeError as exc:
+        return [
+            Finding(path, f"merge authority transfer fixtures are invalid JSON: {exc}")
+        ]
+    cases = payload.get("cases") if isinstance(payload, dict) else None
+    if not isinstance(cases, list) or not cases:
+        return [
+            Finding(
+                path, "merge authority transfer fixtures require a non-empty cases list"
+            )
+        ]
+
+    findings: list[Finding] = []
+    seen_names: set[str] = set()
+    for index, case in enumerate(cases, start=1):
+        if not isinstance(case, dict):
+            findings.append(
+                Finding(path, f"merge authority fixture {index} must be an object")
+            )
+            continue
+        name = case.get("name")
+        instructions = case.get("instructions")
+        generated = case.get("generated")
+        expected_holds = case.get("expected_holds")
+        default_merge_authority = case.get("default_merge_authority")
+        active_pull_request = case.get("active_pull_request")
+        active_issue = case.get("active_issue")
+        if (
+            not isinstance(name, str)
+            or not name.strip()
+            or not isinstance(instructions, list)
+            or not instructions
+            or not isinstance(generated, str)
+            or not isinstance(expected_holds, list)
+            or any(not isinstance(item, str) for item in expected_holds)
+            or not isinstance(default_merge_authority, bool)
+            or (
+                active_pull_request is not None
+                and (
+                    not isinstance(active_pull_request, int)
+                    or isinstance(active_pull_request, bool)
+                    or active_pull_request <= 0
+                )
+            )
+            or (
+                active_issue is not None
+                and (
+                    not isinstance(active_issue, int)
+                    or isinstance(active_issue, bool)
+                    or active_issue <= 0
+                )
+            )
+        ):
+            findings.append(
+                Finding(path, f"merge authority fixture {index} has invalid fields")
+            )
+            continue
+        if name in seen_names:
+            findings.append(
+                Finding(path, f"merge authority fixture name is duplicated: {name}")
+            )
+            continue
+        seen_names.add(name)
+        expected = tuple(dict.fromkeys(item.casefold() for item in expected_holds))
+        source_holds: list[str] = []
+        source_instruction_texts: list[str] = []
+        instruction_error = False
+        for instruction_index, instruction in enumerate(instructions, start=1):
+            if not isinstance(instruction, dict):
+                findings.append(
+                    Finding(
+                        path,
+                        f"merge authority fixture {name} instruction "
+                        f"{instruction_index} must be an object",
+                    )
+                )
+                instruction_error = True
+                continue
+            instruction_text = instruction.get("text")
+            add_holds = instruction.get("add_holds", [])
+            remove_holds = instruction.get("remove_holds", [])
+            if (
+                not isinstance(instruction_text, str)
+                or not isinstance(add_holds, list)
+                or any(not isinstance(item, str) for item in add_holds)
+                or not isinstance(remove_holds, list)
+                or any(not isinstance(item, str) for item in remove_holds)
+            ):
+                findings.append(
+                    Finding(
+                        path,
+                        f"merge authority fixture {name} instruction "
+                        f"{instruction_index} has invalid fields",
+                    )
+                )
+                instruction_error = True
+                continue
+            source_instruction_texts.append(instruction_text)
+            additions = tuple(dict.fromkeys(item.casefold() for item in add_holds))
+            removals = tuple(dict.fromkeys(item.casefold() for item in remove_holds))
+            directions = merge_hold_directions(
+                instruction_text,
+                active_holds=tuple(source_holds),
+                active_pull_request=active_pull_request,
+                active_issue=active_issue,
+            )
+            derived_additions = {
+                hold for hold, direction in directions.items() if direction == "add"
+            }
+            derived_removals = {
+                hold for hold, direction in directions.items() if direction == "remove"
+            }
+            if (
+                any(
+                    hold not in EXPLICIT_MERGE_HOLD_PATTERNS
+                    for hold in (*additions, *removals)
+                )
+                or set(additions) & set(removals)
+                or any(direction is None for direction in directions.values())
+                or set(additions) != derived_additions
+                or set(removals) != derived_removals
+            ):
+                findings.append(
+                    Finding(
+                        path,
+                        f"merge authority fixture {name} instruction "
+                        f"{instruction_index} hold operations do not match its text",
+                    )
+                )
+                instruction_error = True
+                continue
+            source_holds = [hold for hold in source_holds if hold not in removals]
+            source_holds.extend(
+                hold for hold in additions if hold not in source_holds
+            )
+        if instruction_error:
+            continue
+        derived_default_merge_authority = source_has_default_merge_authority(
+            tuple(source_instruction_texts)
+        )
+        if default_merge_authority != derived_default_merge_authority:
+            findings.append(
+                Finding(
+                    path,
+                    f"merge authority fixture {name} declared default authority "
+                    "does not match its source instructions",
+                )
+            )
+            continue
+        source_holds_tuple = tuple(source_holds)
+        source_gates_list: list[str] = []
+        for instruction_text in source_instruction_texts:
+            for gate, direction in resumable_merge_gate_directions(
+                instruction_text,
+                active_pull_request=active_pull_request,
+                active_issue=active_issue,
+            ).items():
+                if direction == "remove":
+                    source_gates_list = [
+                        active_gate
+                        for active_gate in source_gates_list
+                        if active_gate != gate
+                    ]
+                elif gate not in source_gates_list:
+                    source_gates_list.append(gate)
+        source_gates = tuple(source_gates_list)
+        generated_gates = resumable_merge_gates(
+            generated,
+            active_pull_request=active_pull_request,
+            active_issue=active_issue,
+        )
+        generated_directions = merge_hold_directions(
+            generated,
+            active_holds=source_holds_tuple,
+            active_pull_request=active_pull_request,
+            active_issue=active_issue,
+        )
+        ambiguous_generated = tuple(
+            hold
+            for hold, direction in generated_directions.items()
+            if direction is None
+        )
+        if ambiguous_generated:
+            findings.append(
+                Finding(
+                    path,
+                    f"merge authority fixture {name} has ambiguous generated hold "
+                    f"direction: {', '.join(ambiguous_generated)}",
+                )
+            )
+        generated_holds = tuple(
+            hold
+            for hold, direction in generated_directions.items()
+            if direction == "add"
+        )
+        generated_removals = tuple(
+            hold
+            for hold, direction in generated_directions.items()
+            if direction == "remove"
+        )
+        if source_holds_tuple != expected:
+            findings.append(
+                Finding(
+                    path,
+                    f"merge authority fixture {name} expected holds do not match the source instructions",
+                )
+            )
+        invented = tuple(
+            hold for hold in generated_holds if hold not in source_holds_tuple
+        )
+        if invented:
+            findings.append(
+                Finding(
+                    path,
+                    f"merge authority fixture {name} invents a hold: {', '.join(invented)}",
+                )
+            )
+        nonexistent_removals = tuple(
+            hold for hold in generated_removals if hold not in source_holds_tuple
+        )
+        if nonexistent_removals:
+            findings.append(
+                Finding(
+                    path,
+                    f"merge authority fixture {name} withdraws a nonexistent "
+                    f"source hold: {', '.join(nonexistent_removals)}",
+                )
+            )
+        omitted = tuple(
+            hold for hold in source_holds_tuple if hold not in generated_holds
+        )
+        if omitted:
+            findings.append(
+                Finding(
+                    path,
+                    f"merge authority fixture {name} drops an explicit hold: {', '.join(omitted)}",
+                )
+            )
+        omitted_gates = tuple(
+            gate for gate in source_gates if gate not in generated_gates
+        )
+        if omitted_gates:
+            findings.append(
+                Finding(
+                    path,
+                    f"merge authority fixture {name} drops a resumable merge gate: "
+                    f"{', '.join(omitted_gates)}",
+                )
+            )
+        invented_gates = tuple(
+            gate for gate in generated_gates if gate not in source_gates
+        )
+        if invented_gates:
+            findings.append(
+                Finding(
+                    path,
+                    f"merge authority fixture {name} invents a resumable merge "
+                    f"gate: {', '.join(invented_gates)}",
+                )
+            )
+        if expected and has_affirmative_default_merge_authority(generated):
+            findings.append(
+                Finding(
+                    path,
+                    f"merge authority fixture {name} asserts merge authority while "
+                    "an explicit hold is active",
+                )
+            )
+        if (
+            default_merge_authority
+            and not expected
+            and not invented
+            and not omitted
+            and not nonexistent_removals
+            and not has_affirmative_default_merge_authority(generated)
+        ):
+            findings.append(
+                Finding(
+                    path,
+                    f"merge authority fixture {name} omits affirmative default authority",
+                )
+            )
+        if (
+            not default_merge_authority
+            and has_affirmative_default_merge_authority(generated)
+        ):
+            findings.append(
+                Finding(
+                    path,
+                    f"merge authority fixture {name} asserts default authority "
+                    "for an ineligible task",
+                )
+            )
+    return findings
 
 
 def relative_path(path: Path) -> Path:
@@ -1085,6 +3093,44 @@ def check_agent_policy_gate(root: Path) -> list[Finding]:
                             + marker,
                         )
                     )
+        authority_markers = DEFAULT_MERGE_AUTHORITY_SECTION_MARKERS.get(
+            relative_path, ()
+        )
+        authority_anchor = DEFAULT_MERGE_AUTHORITY_SECTION_ANCHORS.get(relative_path)
+        if authority_anchor is not None:
+            authority_boundary_missing = any(
+                marker in authority_anchor for marker in missing_required_markers
+            )
+            authority_anchor_count, authority_section = extract_required_policy_section(
+                text,
+                authority_anchor,
+            )
+            if authority_anchor_count == 0 and not authority_boundary_missing:
+                findings.append(
+                    Finding(
+                        path,
+                        "default merge authority section is missing: "
+                        + authority_anchor,
+                    )
+                )
+            elif authority_anchor_count > 1 and not authority_boundary_missing:
+                findings.append(
+                    Finding(
+                        path,
+                        "default merge authority section must appear exactly once: "
+                        + authority_anchor,
+                    )
+                )
+            elif authority_section is not None and not authority_boundary_missing:
+                for marker in authority_markers:
+                    if marker not in authority_section:
+                        findings.append(
+                            Finding(
+                                path,
+                                "default merge authority section marker is missing: "
+                                + marker,
+                            )
+                        )
         ordered_markers = ORDERED_TERMINAL_CLEANUP_MARKERS.get(relative_path)
         section_markers = TERMINAL_CLEANUP_SECTION_MARKERS.get(relative_path, ())
         section_anchor = TERMINAL_CLEANUP_SECTION_ANCHORS.get(relative_path)
@@ -3600,6 +5646,7 @@ def main(argv: list[str] | None = None) -> int:
     for path in files:
         findings.extend(check_file(path))
     findings.extend(check_agent_policy_gate(ROOT))
+    findings.extend(check_merge_authority_transfer_fixtures(ROOT))
     findings.extend(check_spark_worker_agent(ROOT))
     findings.extend(check_ui_pattern_foundation(ROOT))
     findings.extend(check_virtualization_legacy(ROOT))
