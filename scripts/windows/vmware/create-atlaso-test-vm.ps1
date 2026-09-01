@@ -2484,6 +2484,7 @@ function Invoke-PendingAtlasoDevelopmentCaCleanup {
                 $marker.Phase = 'stopped-vmx-scrubbed'
             }
         }
+        $registrationRepairFailed = $false
         try {
             $statesToMove = @($dataDiskStates | Where-Object { -not $_.QuarantinePath })
             if ($statesToMove.Count -gt 0) {
@@ -2550,11 +2551,17 @@ function Invoke-PendingAtlasoDevelopmentCaCleanup {
             # Workstation commits its library update. Re-prove the marker-bound
             # path and display name here on every resume before preserved disks
             # or the marker can leave recovery ownership.
-            Repair-AtlasoWorkstationStaleRegistrations `
-                -ScopeRoot $marker.OutputDirectory `
-                -VmxPath $marker.VmxPath `
-                -ExpectedDisplayName $marker.Name `
-                -Confirm:$false
+            try {
+                Repair-AtlasoWorkstationStaleRegistrations `
+                    -ScopeRoot $marker.OutputDirectory `
+                    -VmxPath $marker.VmxPath `
+                    -ExpectedDisplayName $marker.Name `
+                    -Confirm:$false
+            }
+            catch {
+                $registrationRepairFailed = $true
+                throw
+            }
             Restore-AtlasoRollbackDataDisksFromQuarantine `
                 -DataDiskStates $dataDiskStates `
                 -QuarantineDirectory $quarantineDirectory
@@ -2564,6 +2571,9 @@ function Invoke-PendingAtlasoDevelopmentCaCleanup {
             $cleanupFailure = $_
             if ($cleanupFailure.Exception.Data['AtlasoProcessTreeTerminationUnproven'] -eq $true) {
                 throw "$($cleanupFailure.Exception.Message) Preserved data remains in $quarantineDirectory and the durable cleanup marker remains at $($marker.MarkerPath); restart Windows before retrying cleanup."
+            }
+            if ($registrationRepairFailed) {
+                throw "$($cleanupFailure.Exception.Message) Preserved data remains in $quarantineDirectory and the durable cleanup marker remains at $($marker.MarkerPath); retry after the exact Workstation registration can be reconciled."
             }
             try {
                 Restore-AtlasoRollbackDataDisksFromQuarantine `

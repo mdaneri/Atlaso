@@ -1634,6 +1634,39 @@ def test_exact_stale_repair_preserves_mismatched_display_name(tmp_path: Path) ->
     assert inventory.read_bytes() == original_inventory
 
 
+def test_exact_stale_repair_preserves_malformed_unquoted_marker_path(
+    tmp_path: Path,
+) -> None:
+    """Reject a raw exact-path row that the strict inventory parser omits.
+
+    Args:
+        tmp_path: Pytest temporary directory path.
+    """
+    root = tmp_path / "test-vms" / "Atlaso-PR-672-cleanup"
+    stale = root / "Atlaso-PR-672-cleanup.vmx"
+    suffix = (
+        f"vmlist6.config = {stale.resolve()}\n"
+        'vmlist6.DisplayName = "Atlaso-PR-672-cleanup"\n'
+        "vmlistBROKEN.config = unrelated-malformed-row\n"
+    )
+    _, environment, _, inventory = _write_fake_vmrun(
+        tmp_path / "fake", [], inventory_suffix=suffix
+    )
+    original_inventory = inventory.read_bytes()
+
+    result = _run_stale_registration_repair(
+        tmp_path,
+        scope_root=root,
+        vmx_path=stale,
+        expected_display_name="Atlaso-PR-672-cleanup",
+        environment=environment,
+    )
+
+    assert result.returncode != 0
+    assert "malformed or ambiguous registration" in result.stderr
+    assert inventory.read_bytes() == original_inventory
+
+
 def test_exact_stale_repair_preserves_duplicate_marker_path(tmp_path: Path) -> None:
     """Reject duplicate library owners for the exact marker-bound VMX path.
 

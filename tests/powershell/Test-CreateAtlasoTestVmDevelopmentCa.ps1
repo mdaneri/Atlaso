@@ -1739,19 +1739,53 @@ RW 524288000 SPARSE "Atlaso-Depot-s002.vmdk"
     $resumeInventory = Join-Path $resumeInventoryDirectory 'inventory.vmls'
     $unrelatedVmx = Join-Path $markerTestRoot 'unrelated-missing.vmx'
     New-Item -ItemType Directory -Path $resumeInventoryDirectory | Out-Null
-    [System.IO.File]::WriteAllText(
-        $resumeInventory,
+    $correctResumeInventory = (
         "vmlist6.config = `"$markerVmx`"`r`n" +
         "vmlist6.DisplayName = `"Atlaso-Test`"`r`n" +
         "index6.id = `"$markerVmx`"`r`n" +
         "vmlist7.config = `"$unrelatedVmx`"`r`n" +
         "vmlist7.DisplayName = `"Unrelated VM`"`r`n" +
-        "index7.id = `"$unrelatedVmx`"`r`n",
+        "index7.id = `"$unrelatedVmx`"`r`n"
+    )
+    [System.IO.File]::WriteAllText(
+        $resumeInventory,
+        $correctResumeInventory.Replace(
+            'vmlist6.DisplayName = "Atlaso-Test"',
+            'vmlist6.DisplayName = "Different VM"'
+        ),
         [System.Text.UTF8Encoding]::new($false)
     )
     $originalAppData = $env:APPDATA
     try {
         $env:APPDATA = $resumeAppData
+        $registrationMismatchDeferred = $false
+        try {
+            Invoke-PendingAtlasoDevelopmentCaCleanup `
+                -VmrunPath 'unused-after-proven-removal' `
+                -TimeoutSeconds 5 `
+                -MarkerRoot $markerRoot
+        }
+        catch {
+            if ($_.Exception.Message -notlike '*retry after the exact Workstation registration can be reconciled*') {
+                throw
+            }
+            $registrationMismatchDeferred = $true
+        }
+        if (
+            -not $registrationMismatchDeferred -or
+            -not (Test-Path -LiteralPath $markerPath -PathType Leaf) -or
+            (Test-Path -LiteralPath $markerDisk) -or
+            @($markerDiskState | Where-Object {
+                    -not (Test-Path -LiteralPath $_.QuarantinePath -PathType Leaf)
+                }).Count -gt 0
+        ) {
+            throw 'A failed exact-registration proof released quarantined data or its durable marker.'
+        }
+        [System.IO.File]::WriteAllText(
+            $resumeInventory,
+            $correctResumeInventory,
+            [System.Text.UTF8Encoding]::new($false)
+        )
         Invoke-PendingAtlasoDevelopmentCaCleanup `
             -VmrunPath 'unused-after-proven-removal' `
             -TimeoutSeconds 5 `

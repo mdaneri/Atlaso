@@ -649,9 +649,27 @@ function Remove-AtlasoWorkstationStaleRegistrations {
             Where-Object { -not $_.Exists }
     )
     if ($resolvedVmxPath) {
+        $rawExactConfigRows = @(
+            foreach ($line in $lines) {
+                if ($line -notmatch '^\s*vmlist\d+\.config\s*=\s*(?<value>.*)$') { continue }
+                $rawCandidate = $Matches.value.Trim().Trim([char]34)
+                if (-not [System.IO.Path]::IsPathFullyQualified($rawCandidate)) { continue }
+                try {
+                    if (Test-AtlasoSamePath -Left $rawCandidate -Right $resolvedVmxPath) { $line }
+                }
+                catch {
+                    # A raw row that cannot be canonicalized cannot establish
+                    # ownership of the exact marker-bound path.
+                    Write-Verbose "Ignored an uncanonicalizable raw Workstation inventory row: $($_.Exception.Message)"
+                }
+            }
+        )
         $staleEntries = @($staleEntries | Where-Object {
                 Test-AtlasoSamePath -Left $_.Path -Right $resolvedVmxPath
             })
+        if ($rawExactConfigRows.Count -ne $staleEntries.Count) {
+            throw "VMware Workstation inventory contains a malformed or ambiguous registration for the exact missing VMX; provider state was preserved: $resolvedVmxPath"
+        }
         if ($staleEntries.Count -gt 1) {
             throw "VMware Workstation inventory contains multiple registrations for the exact missing VMX; provider state was preserved: $resolvedVmxPath"
         }
