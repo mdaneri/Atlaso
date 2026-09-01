@@ -688,7 +688,7 @@ function Remove-AtlasoWorkstationStaleRegistrations {
             }
         }
     }
-    if ($staleEntries.Count -eq 0) {
+    if ($staleEntries.Count -eq 0 -and (-not $resolvedVmxPath -or $rawExactIndexCount -eq 0)) {
         return
     }
     $realInventoryPath = Join-Path ([Environment]::GetFolderPath('ApplicationData')) 'VMware\inventory.vmls'
@@ -706,6 +706,7 @@ function Remove-AtlasoWorkstationStaleRegistrations {
         $targetPaths.Add($entry.Path) | Out-Null
         if (-not $targetIdPaths.ContainsKey($entry.Id)) { $targetIdPaths[$entry.Id] = $entry.Path }
     }
+    if ($resolvedVmxPath) { $targetPaths.Add($resolvedVmxPath) | Out-Null }
     $selectedIdOwners = @{}
     $invalidSelectedIds = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
     foreach ($line in $lines) {

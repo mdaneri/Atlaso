@@ -1603,6 +1603,39 @@ def test_exact_stale_repair_matches_marker_path_and_display_name(tmp_path: Path)
     assert "unrelated.value = keep-me" in inventory_text
 
 
+def test_exact_stale_repair_removes_orphaned_marker_index(tmp_path: Path) -> None:
+    """Remove an exact stale index even when its config group is already absent.
+
+    Args:
+        tmp_path: Pytest temporary directory path.
+    """
+    root = tmp_path / "test-vms" / "Atlaso-PR-672-cleanup"
+    stale = root / "Atlaso-PR-672-cleanup.vmx"
+    unrelated = root.parent / "Atlaso-PR-671-unrelated" / "missing.vmx"
+    suffix = (
+        f'index6.id = "{stale.resolve()}"\n'
+        f'index7.id = "{unrelated.resolve()}"\n'
+        "unrelated.value = keep-me\n"
+    )
+    _, environment, _, inventory = _write_fake_vmrun(
+        tmp_path / "fake", [], inventory_suffix=suffix
+    )
+
+    result = _run_stale_registration_repair(
+        tmp_path,
+        scope_root=root,
+        vmx_path=stale,
+        expected_display_name="Atlaso-PR-672-cleanup",
+        environment=environment,
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    inventory_text = inventory.read_text(encoding="utf-8")
+    assert str(stale.resolve()) not in inventory_text
+    assert str(unrelated.resolve()) in inventory_text
+    assert "unrelated.value = keep-me" in inventory_text
+
+
 def test_exact_stale_repair_preserves_mismatched_display_name(tmp_path: Path) -> None:
     """Keep the exact row when its provider display name is ambiguous.
 
