@@ -642,6 +642,10 @@ function Remove-AtlasoWorkstationStaleRegistrations {
         }
     }
     if (-not $InventoryPath) {
+        $appearedInventoryPath = Resolve-AtlasoWorkstationInventoryPath
+        if ($appearedInventoryPath) {
+            throw "VMware Workstation inventory appeared while its absence was being verified; provider state was preserved: $appearedInventoryPath"
+        }
         if ($resolvedVmxPath -and (Test-Path -LiteralPath $resolvedVmxPath)) {
             throw "The exact stale-registration VMX was recreated before inventory absence could be proven: $resolvedVmxPath"
         }

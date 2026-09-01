@@ -1612,6 +1612,50 @@ def test_exact_stale_repair_matches_marker_path_and_display_name(tmp_path: Path)
     assert "unrelated.value = keep-me" in inventory_text
 
 
+def test_exact_stale_repair_rechecks_initially_absent_inventory(tmp_path: Path) -> None:
+    """Reject provider inventory that appears after the caller resolved absence.
+
+    Args:
+        tmp_path: Pytest temporary directory path.
+    """
+    root = tmp_path / "test-vms" / "Atlaso-PR-672-cleanup"
+    stale = root / "Atlaso-PR-672-cleanup.vmx"
+    suffix = (
+        f'vmlist6.config = "{stale.resolve()}"\n'
+        'vmlist6.DisplayName = "Atlaso-PR-672-cleanup"\n'
+    )
+    _, environment, _, inventory = _write_fake_vmrun(
+        tmp_path / "fake", [], inventory_suffix=suffix
+    )
+    original_inventory = inventory.read_bytes()
+    wrapper = tmp_path / "repair-after-inventory-appears.ps1"
+    module_literal = str(
+        VMWARE_SCRIPT_ROOT / "Atlaso.WorkstationCleanup.psm1"
+    ).replace("'", "''")
+    scope_literal = str(root).replace("'", "''")
+    vmx_literal = str(stale).replace("'", "''")
+    wrapper.write_text(
+        f"""$ErrorActionPreference = 'Stop'
+$module = Import-Module '{module_literal}' -Force -PassThru
+& $module {{
+    param($ScopeRoot, $VmxPath)
+    Remove-AtlasoWorkstationStaleRegistrations `
+        -InventoryPath $null `
+        -ScopeRoot $ScopeRoot `
+        -VmxPath $VmxPath `
+        -ExpectedDisplayName 'Atlaso-PR-672-cleanup'
+}} '{scope_literal}' '{vmx_literal}'
+""",
+        encoding="utf-8",
+    )
+
+    result = _run_script(wrapper, environment=environment)
+
+    assert result.returncode != 0
+    assert "inventory appeared while its absence was being verified" in result.stderr
+    assert inventory.read_bytes() == original_inventory
+
+
 def test_exact_stale_repair_removes_orphaned_marker_index(tmp_path: Path) -> None:
     """Remove an exact stale index even when its config group is already absent.
 
