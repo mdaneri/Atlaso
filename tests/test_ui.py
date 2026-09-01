@@ -1104,7 +1104,7 @@ def test_pwa_manifest_service_worker_and_offline_shell(client):
     assert "/static/ui-patterns.js?v=atlaso-ui-foundation-20260726-10" in service_worker.text
     assert "/static/appliance-apply-polling.js?v=issue-420-6" in service_worker.text
     assert "/static/ui-routes.js?v=issue-287-1" in service_worker.text
-    assert "/static/app.js?v=issues-515-519-12-513-328-1-595-6-605-1-606-607-1-660-4-662-663-3" in service_worker.text
+    assert "/static/app.js?v=issues-515-519-12-513-328-1-595-6-605-1-606-607-1-660-4-662-663-3-682-1" in service_worker.text
     assert "/static/terminal.js?v=issue-287-2" in service_worker.text
     assert "/static/pwa.js?v=issue-287-2" in service_worker.text
     assert "vcfdt-configuration-248-20260807-14" not in service_worker.text
@@ -10254,6 +10254,18 @@ def test_public_service_home_is_scoped_to_called_ip(client, tmp_path, monkeypatc
     assert depot_signed_in.headers["location"] == "/PROD/COMP/?view=compact"
     assert authentication_calls == ["vcf-depot"]
     assert client.get("/PROD/auth-check", headers={"host": "192.168.87.32"}).status_code == 204
+    signed_in_depot_browser = client.get("/PROD/", headers={"host": "192.168.87.32"})
+    depot_activity_csrf = signed_in_depot_browser.text.split('name="atlaso-csrf-token" content="', 1)[1].split('"', 1)[0]
+    depot_activity = client.post(
+        "/PROD/session/activity",
+        headers={"host": "192.168.87.32", "X-CSRF-Token": depot_activity_csrf, "Accept": "application/json"},
+    )
+    assert depot_activity.status_code == 204
+    unavailable_management_activity = client.post(
+        "/ui/management/session/activity",
+        headers={"host": "192.168.87.32", "X-CSRF-Token": depot_activity_csrf, "Accept": "application/json"},
+    )
+    assert unavailable_management_activity.status_code == 404
     client.cookies.clear()
 
     unsafe_login = client.get("/PROD/login", headers={"host": "192.168.87.32"})

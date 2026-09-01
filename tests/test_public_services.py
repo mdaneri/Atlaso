@@ -273,6 +273,7 @@ def test_public_services_nginx_config_contains_per_ip_scoped_locations():
     assert "return 301 /PROD/;" in config
     assert "location = /PROD/login {" in config
     assert "location = /PROD/logout {" in config
+    assert "location = /PROD/session/activity {" in config
     assert "location = /_atlaso_depot_auth {" in config
     assert "proxy_pass http://127.0.0.1:8000/PROD/auth-check;" in config
     assert "location = /_atlaso_depot_login {" in config
