@@ -4022,8 +4022,17 @@ from an interface role and does not provide destination NAT, port forwarding, or
 <p>The <strong>WAN Policies</strong> wizard groups delay/capacity settings separately from packet loss and error effects. Assigning a
 policy to a Static Route identifies its target interface or VLAN; WAN Simulation v1 impairs all traffic on that target,
 not only traffic matching the route destination.</p>
-<p>Saving any of these resources does not change Photon. Review the rendered configuration and submit the global
-<strong>Routes &amp; WAN Simulation</strong> unit through Appliance Apply when the complete desired state is ready.</p>
+<p>The <strong>Routing &amp; WAN Settings</strong> card controls the three global activation boundaries. <strong>Routing enabled</strong> owns Atlaso
+lab routes, routing permissions, and both IPv4 and IPv6 packet forwarding. <strong>NAT enabled</strong> owns the Atlaso IPv4
+masquerade table only while Routing is also enabled; when Routing is off, NAT remains selected and visibly
+<strong>suspended</strong>. <strong>WAN Simulation enabled</strong> independently owns the saved <code>tc/netem</code> assignments. Fresh installs and
+factory reset start with all three switches off. Disabling a feature preserves every saved row and assignment, and
+inactive-row errors do not block Appliance Apply until that feature is enabled again.</p>
+<p>Saving a switch or any resource does not change Photon. Review the rendered configuration and submit the global
+<strong>Routes &amp; WAN Simulation</strong> unit through Appliance Apply when the complete desired state is ready.
+The Routing row on the Services page and local console changes the same saved <strong>Routing enabled</strong> switch. Direct
+Routing start, stop, and restart actions are unavailable because runtime forwarding changes only through Appliance
+Apply.</p>
 <h3 id="add-or-edit-a-vlan-interface">Add or edit a VLAN interface<a class="headerlink" href="#add-or-edit-a-vlan-interface" title="Permanent link">&para;</a></h3>
 <p>The VLAN table is a read-only browse surface. Select <strong>+ Add VLAN interface here</strong> to create a row, or double-click an
 existing row and use <strong>Edit VLAN</strong> from its context menu to revise it. The shared wizard reviews the complete VLAN
@@ -4077,10 +4086,10 @@ boundary described above.</p>
 <p><img alt="Atlaso static route wizard using the standard rail while reviewing the destination, interface path, WAN Simulation selection, and enabled state." src="../../assets/screenshots/routes-wan-static-route-wizard-desktop.webp" /></p>
 <p><em>Figure: Shared static route wizard review with the complete path and appliance-apply boundary.</em></p>
 <h3 id="routes-and-wan-simulation">Routes and WAN simulation<a class="headerlink" href="#routes-and-wan-simulation" title="Permanent link">&para;</a></h3>
-<p><img alt="Atlaso Routes and WAN Simulation page in the clean-appliance desktop viewport." src="../../assets/screenshots/routes-wan-clean-desktop.webp" /></p>
-<p><em>Figure: Routes and WAN Simulation in the verified clean-appliance desktop state.</em></p>
-<p><img alt="Atlaso Routes and WAN Simulation page in the clean-appliance responsive viewport." src="../../assets/screenshots/routes-wan-clean-responsive.webp" /></p>
-<p><em>Figure: Routes and WAN Simulation in the verified clean-appliance responsive state.</em></p>
+<p><img alt="Atlaso Routes and WAN Simulation showing disabled routing, a checked but unavailable NAT switch, and the suspended status." src="../../assets/screenshots/routes-wan-clean-desktop.webp" /></p>
+<p><em>Figure: Routes and WAN Simulation with global routing disabled and the saved NAT choice visibly suspended.</em></p>
+<p><img alt="Atlaso Routes and WAN Simulation showing disabled routing, a checked but unavailable NAT switch, and the suspended status." src="../../assets/screenshots/routes-wan-clean-responsive.webp" /></p>
+<p><em>Figure: Routes and WAN Simulation with global routing disabled and the saved NAT choice visibly suspended.</em></p>
 <h3 id="vlan-interfaces">VLAN interfaces<a class="headerlink" href="#vlan-interfaces" title="Permanent link">&para;</a></h3>
 <p><img alt="Atlaso VLAN Interfaces add wizard Role step showing access as the default role with the Management UI switch." src="../../assets/screenshots/vlan-interfaces-clean-desktop.webp" /></p>
 <p><em>Figure: VLAN Interfaces shared Role step defaulting a new VLAN to the canonical access role.</em></p>

@@ -5713,6 +5713,11 @@ runtime.</p>
 <ul>
 <li>Routes &amp; WAN Simulation owns static route desired state, IPv4 outbound masquerade NAT rules, and interface/VLAN-level
   <code>tc/netem</code> latency/error simulation.</li>
+<li>Persist the global Routing, NAT, and WAN Simulation switches as safe settings. Fresh install and factory reset are
+  off; missing legacy settings derive once from effective enabled rows. Keep every route, permission, NAT rule, WAN
+  policy, and assignment saved while its feature is off. Routing gates lab routes, rules, and IPv4/IPv6 forwarding;
+  NAT is effective only with Routing; WAN Simulation is independent. Management reachability remains outside the lab
+  Routing switch.</li>
 <li>Label path entries <strong>Static Routes</strong> and forwarding authorization <strong>Routing Permissions</strong>. Keep Static Routes,
   explicit Routing Permissions, NAT Rules, and WAN Policies as wizard-backed Tabulator collections using the ESX
   Storage reference. Add launches from the bottom row; edit launches from row double-click or its context action;
@@ -5742,8 +5747,8 @@ runtime.</p>
 <li>NAT outbound targets must be access physical interfaces with an IPv4 CIDR or enabled VLAN interfaces with an IPv4
   CIDR. IPv6-only interfaces are not valid NAT outbound targets. NAT is explicit desired state and remains reviewed
   through global apply; it is not inferred from an interface role.</li>
-<li>Validate live Routing/WAN state with <code>ip route</code>, <code>tc qdisc show</code>, <code>nft list ruleset</code>, and <code>sysctl net.ipv4.ip_forward</code>
-  after applying on Photon.</li>
+<li>Validate live Routing/WAN state with <code>ip route</code>, <code>ip -6 route</code>, <code>ip rule</code>, <code>tc qdisc show</code>, <code>nft list ruleset</code>,
+  <code>sysctl net.ipv4.ip_forward</code>, and <code>sysctl net.ipv6.conf.all.forwarding</code> after applying on Photon.</li>
 </ul>
 <h2 id="database-and-verification">Database And Verification<a class="headerlink" href="#database-and-verification" title="Permanent link">&para;</a></h2>
 <ul>

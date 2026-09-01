@@ -3551,7 +3551,9 @@
 <p>The current UI presents four wizard-backed collections: <strong>Static Routes</strong>, <strong>Routing Permissions</strong>, <strong>NAT</strong>, and
 <strong>WAN Policies</strong>. Static Routes define paths in the lab route table. Routing Permissions separately define forwarding
 between interface/VLAN networks. Add/edit changes are reviewed before one desired-state save, while ordinary Enabled
-state remains directly editable and generated route-role permissions remain read-only.</p>
+state remains directly editable and generated route-role permissions remain read-only. A non-grid
+<strong>Routing &amp; WAN Settings</strong> card provides independent global Routing, NAT, and WAN Simulation desired-state switches;
+all three are off on fresh install and factory reset.</p>
 <p>Atlaso has no <code>wan</code> interface role. The <code>wan</code> apply-unit name and WAN Simulation UI describe explicit routing, NAT, and
 impairment behavior only; they must not be used as an interface classification.</p>
 <h2 id="current-v1-scope">Current V1 Scope<a class="headerlink" href="#current-v1-scope" title="Permanent link">&para;</a></h2>
@@ -3567,7 +3569,10 @@ impairment behavior only; they must not be used as an interface classification.<
 <li>IPv4 outbound masquerade NAT rules rendered as the Atlaso-owned <code>table ip atlaso_nat</code>.</li>
 <li>NAT outbound interfaces can be access physical interfaces with IPv4 CIDRs or enabled VLAN interfaces with IPv4 CIDRs;
   NAT eligibility is not inferred from an interface role.</li>
-<li>IPv4 forwarding enabled only when enabled lab routing or NAT requires it.</li>
+<li>IPv4 and IPv6 packet forwarding follow the global Routing switch. NAT is effective only when both Routing and NAT
+  are enabled, while WAN Simulation remains independent.</li>
+<li>Feature switches preserve all saved resource rows and assignments while clearing inactive runtime state. Legacy
+  installations and settings archives infer absent switches once from previously effective enabled rows.</li>
 <li>Management is never a route, NAT, or routing-permission target, and firewall apply generates explicit
   management-to-lab and lab-to-management forward drops.</li>
 <li>Interface/VLAN-level WAN simulation through one <code>tc qdisc replace dev &lt;target&gt; root netem ...</code> per target with an
@@ -3616,7 +3621,8 @@ through global appliance apply.</p>
 </span><span id="__span-0-2"><a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a>tc<span class="w"> </span>qdisc<span class="w"> </span>show
 </span><span id="__span-0-3"><a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a>nft<span class="w"> </span>list<span class="w"> </span>ruleset
 </span><span id="__span-0-4"><a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a>sysctl<span class="w"> </span>net.ipv4.ip_forward
-</span><span id="__span-0-5"><a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a>systemctl<span class="w"> </span>status<span class="w"> </span>atlaso-nat.service<span class="w"> </span>--no-pager
+</span><span id="__span-0-5"><a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a>sysctl<span class="w"> </span>net.ipv6.conf.all.forwarding
+</span><span id="__span-0-6"><a id="__codelineno-0-6" name="__codelineno-0-6" href="#__codelineno-0-6"></a>systemctl<span class="w"> </span>status<span class="w"> </span>atlaso-nat.service<span class="w"> </span>--no-pager
 </span></code></pre></div>
 <p>For route-specific impairment work, add packet-level validation that shows matching destination traffic is impaired
 while unrelated traffic on the same interface is not.</p>

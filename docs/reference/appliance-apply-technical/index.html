@@ -4816,10 +4816,14 @@ but use the shared <code>resource_wizard(...)</code> structure and <code>createW
 Wizard submission and direct Enabled changes update desired state only;
 they never invoke this helper or apply unit directly. Generated route-role permissions remain read-only.</p>
 <p>Through <code>atlaso-helper wan validate|apply</code>, the helper validates staged routes, routing rules, NAT rules, WAN targets,
-and netem policy values. Apply installs <code>/etc/atlaso/nftables.d/atlaso-nat.nft</code>, enables <code>net.ipv4.ip_forward=1</code> only
-when enabled lab routing or NAT requires forwarding, applies source policy rules with <code>ip rule</code>, applies the NAT table
-with <code>nft</code>, applies static routes with <code>ip route replace ... table 200</code>, and applies or clears <code>tc qdisc</code> netem state on
-route targets with assigned policies. Removed route deletion is staged only when a route existed in the selected unit's
+and netem policy values only for their active global feature. The staged <code>[feature_settings]</code> section carries
+<code>routing_enabled</code>, <code>nat_enabled</code>, and <code>wan_simulation_enabled</code> while retaining every saved resource row. Routing on
+sets <code>net.ipv4.ip_forward=1</code> and <code>net.ipv6.conf.all.forwarding=1</code>; Routing off sets both to <code>0</code>, removes Atlaso lab
+routes and rules, and leaves protected management table <code>100</code> behavior intact. NAT is effective only when Routing and
+NAT are both on; every other combination flushes Atlaso's NAT rules without changing saved intent. WAN Simulation
+independently applies or removes root <code>tc/netem</code> qdiscs. Apply installs
+<code>/etc/atlaso/nftables.d/atlaso-nat.nft</code>, applies source policy rules with <code>ip rule</code>, and applies static routes with
+<code>ip route replace ... table 200</code>. Removed route deletion is staged only when a route existed in the selected unit's
 last-applied baseline and is absent from current desired state. Management is never a route, NAT, or routing-permission
 target, and the Firewall unit generates explicit management-to-lab and lab-to-management forward drops.
 The same validator and apply path are reused when WAN joins a protected management handoff; this is not a second host
