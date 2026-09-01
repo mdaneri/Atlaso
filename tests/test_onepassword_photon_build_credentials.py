@@ -129,6 +129,21 @@ def test_photon_wrapper_preflights_credentials_before_image_mutation() -> None:
     credential_preflight = wrapper.index(
         "$credentialPair = Get-AtlasoOnePasswordCredentialPair `"
     )
+    artifact_admission = wrapper.index(
+        "$OnePasswordPython = Confirm-AtlasoPhotonOnePasswordArtifact `"
+    )
+    recovery_block = wrapper.index(
+        "if (-not $CredentialChild) {", wrapper.index("$cleanupMarkerPath")
+    )
+    assert artifact_admission < recovery_block
+    assert artifact_admission < wrapper.index(
+        "Invoke-AtlasoPhotonBuildCleanupRecovery -MarkerPath $cleanupMarkerPath",
+        recovery_block,
+    )
+    assert artifact_admission < wrapper.index(
+        "Complete-AtlasoBuilderAddressReservationHandoff `", recovery_block
+    )
+    assert artifact_admission < credential_preflight
     isolated_child = wrapper.index(
         "-Action 'The isolated VMware Photon image build'"
     )

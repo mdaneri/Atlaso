@@ -763,6 +763,49 @@ function Complete-AtlasoBuilderAddressReservationHandoff {
     }
 }
 
+<#
+.SYNOPSIS
+Admit the pinned 1Password SDK wheel before Photon recovery activity.
+
+.PARAMETER RepositoryRoot
+Atlaso checkout containing the approved wheel manifest and downloader.
+
+.PARAMETER PythonCommand
+Optional standard GIL-enabled Windows x64 CPython 3.14 executable.
+
+.PARAMETER TimeoutSeconds
+Positive deadline for runtime selection and artifact download.
+#>
+function Confirm-AtlasoPhotonOnePasswordArtifact {
+    param(
+        [Parameter(Mandatory = $true)][string]$RepositoryRoot,
+        [AllowEmptyString()][string]$PythonCommand = '',
+        [Parameter(Mandatory = $true)][ValidateRange(1, 3600)][int]$TimeoutSeconds
+    )
+
+    $resolvedPython = Resolve-AtlasoOnePasswordPython `
+        -PythonCommand $PythonCommand `
+        -TimeoutSeconds $TimeoutSeconds `
+        -ConsumerDescription 'VMware Photon image building'
+    $artifactRoot = Join-Path ([System.IO.Path]::GetTempPath()) (
+        "atlaso-photon-artifact-$([guid]::NewGuid().ToString('N'))"
+    )
+    [void][System.IO.Directory]::CreateDirectory($artifactRoot)
+    try {
+        $null = Save-AtlasoOnePasswordWheel `
+            -PythonCommand $resolvedPython `
+            -RepositoryRoot $RepositoryRoot `
+            -Destination $artifactRoot `
+            -TimeoutSeconds $TimeoutSeconds
+        return $resolvedPython
+    }
+    finally {
+        if (Test-Path -LiteralPath $artifactRoot) {
+            [System.IO.Directory]::Delete($artifactRoot, $true)
+        }
+    }
+}
+
 $repoRoot = (Resolve-Path -LiteralPath (Join-Path $PSScriptRoot '..\..\..')).Path
 $identityModeInvalid = ($ReleaseBuilder -and $PullRequestNumber -gt 0) -or
     (-not $ReleaseBuilder -and $PullRequestNumber -le 0) -or
@@ -782,6 +825,16 @@ $builderReservationStateRoot = Join-Path (
 ) 'Atlaso\vmware-builder-addresses'
 $builderReservationPendingRoot = Join-Path $builderReservationStateRoot 'pending-releases'
 $cleanupMarkerPath = Join-Path $repoRoot '.atlaso-local\photon-image-build-cleanup.json'
+$needsOnePasswordDefaults = $null -eq $SshPassword -or $null -eq $BootstrapAdminPassword
+if (-not $CredentialChild -and $needsOnePasswordDefaults) {
+    # Artifact admission precedes sensitive-root and VMware reservation
+    # recovery. The isolated credential runtime repeats verification before
+    # installing from the private offline wheel set.
+    $OnePasswordPython = Confirm-AtlasoPhotonOnePasswordArtifact `
+        -RepositoryRoot $repoRoot `
+        -PythonCommand $OnePasswordPython `
+        -TimeoutSeconds $CredentialTimeoutSeconds
+}
 if (-not $CredentialChild) {
     # Recovery is bound to the prior boot and durable marker, not the requested
     # new build. Run it before a closed or advanced PR can block cleanup of the
@@ -1059,7 +1112,6 @@ else {
     else {
         [System.IO.Path]::GetFullPath($SharedSourceDirectory)
     }
-    $needsOnePasswordDefaults = $null -eq $SshPassword -or $null -eq $BootstrapAdminPassword
     $resolvedEnvironmentId = ''
     if ($needsOnePasswordDefaults) {
         $resolvedEnvironmentId = Resolve-AtlasoOnePasswordEnvironmentId `
