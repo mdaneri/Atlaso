@@ -30,6 +30,27 @@ def load_helper_module():
     return module
 
 
+def temporary_powershell_environment(home: Path) -> dict[str, str]:
+    """Create a non-privileged PowerShell environment for unit tests.
+
+    Args:
+        home: Temporary test directory used as the PowerShell home.
+    """
+    for directory in (
+        home,
+        home / ".cache",
+        home / ".config",
+        home / ".local" / "share",
+    ):
+        directory.mkdir(parents=True, exist_ok=True)
+    return {
+        "HOME": str(home),
+        "XDG_CACHE_HOME": str(home / ".cache"),
+        "XDG_CONFIG_HOME": str(home / ".config"),
+        "XDG_DATA_HOME": str(home / ".local" / "share"),
+    }
+
+
 def test_update_status_guards_every_browser_server_without_changing_route_paths():
     """Guard browser servers while preserving stable machine-route locations."""
     helper = load_helper_module()
@@ -4145,6 +4166,11 @@ def test_factory_reset_runner_uses_persistent_powershell_environment(
 
     monkeypatch.setattr(helper, "ATLASO_FACTORY_RESET_PYTHON", runtime)
     monkeypatch.setattr(helper, "ATLASO_POWERSHELL_HOME", powershell_home)
+    monkeypatch.setattr(
+        helper,
+        "_privileged_powershell_environment",
+        lambda: temporary_powershell_environment(powershell_home),
+    )
     monkeypatch.setattr(
         helper,
         "_installed_atlaso_database_url",
@@ -9153,6 +9179,11 @@ def test_powercli_helper_actions_receive_persistent_writable_environment(monkeyp
 
     monkeypatch.setattr(helper, "ATLASO_POWERSHELL_HOME", powershell_home)
     monkeypatch.setattr(
+        helper,
+        "_privileged_powershell_environment",
+        lambda: temporary_powershell_environment(powershell_home),
+    )
+    monkeypatch.setattr(
         helper.shutil,
         "which",
         lambda command: "/usr/bin/systemd-run" if command == "systemd-run" else None,
@@ -9198,6 +9229,11 @@ def test_appliance_update_receives_writable_powershell_environment(monkeypatch, 
     commands: list[list[str]] = []
 
     monkeypatch.setattr(helper, "ATLASO_POWERSHELL_HOME", powershell_home)
+    monkeypatch.setattr(
+        helper,
+        "_privileged_powershell_environment",
+        lambda: temporary_powershell_environment(powershell_home),
+    )
     monkeypatch.setattr(
         helper.shutil,
         "which",

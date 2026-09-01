@@ -12198,44 +12198,6 @@ def _powershell_repository_sync_script(name: str, url: str, policy: str) -> str:
     )
 
 
-def _powershell_repository_reconcile_script(name: str, url: str, policy: str) -> str:
-    """Return an idempotent PowerShellGet repository registration script.
-
-    Args:
-        name: Desired repository name.
-        url: Desired repository endpoint.
-        policy: Desired PowerShellGet installation policy.
-    """
-    reserved_gallery = _is_reserved_psgallery_name(name)
-    registration = (
-        "Register-PSRepository -Default -InstallationPolicy $policy"
-        if reserved_gallery
-        else "Register-PSRepository -Name $name -SourceLocation $url -InstallationPolicy $policy"
-    )
-    reconciliation = (
-        "if (-not [string]::Equals(([string]$existing.SourceLocation).TrimEnd('/'), $url.TrimEnd('/'), [System.StringComparison]::OrdinalIgnoreCase)) { "
-        "Unregister-PSRepository -Name $existing.Name -ErrorAction Stop; "
-        "Register-PSRepository -Default -InstallationPolicy $policy "
-        "} else { Set-PSRepository -Name $existing.Name -InstallationPolicy $policy }"
-        if reserved_gallery
-        else "Set-PSRepository -Name $existing.Name -SourceLocation $url -InstallationPolicy $policy"
-    )
-    return (
-        '$ErrorActionPreference = "Stop"; '
-        f"$name = {_powershell_literal(name)}; $url = {_powershell_literal(url)}; "
-        f"$policy = {_powershell_literal(policy)}; "
-        "$existing = Get-PSRepository -Name $name -ErrorAction SilentlyContinue; "
-        f"if (-not $existing) {{ {registration} }} "
-        f"else {{ {reconciliation} }}; "
-        "$repository = Get-PSRepository -Name $name -ErrorAction Stop; "
-        "$actualUrl = ([string]$repository.SourceLocation).TrimEnd('/'); "
-        "$expectedUrl = $url.TrimEnd('/'); "
-        "if (-not [string]::Equals($actualUrl, $expectedUrl, [System.StringComparison]::OrdinalIgnoreCase)) { throw 'Registered repository location does not match Atlaso desired state' }; "
-        "if (-not [string]::Equals([string]$repository.InstallationPolicy, $policy, [System.StringComparison]::OrdinalIgnoreCase)) { throw 'Registered repository installation policy does not match Atlaso desired state' }; "
-        "$repository | Select-Object Name,SourceLocation,InstallationPolicy | ConvertTo-Json -Compress"
-    )
-
-
 def _managed_photon_sources(payload: dict) -> list[dict]:
     """Return enabled Photon repositories owned by Atlaso.
 
@@ -12826,57 +12788,13 @@ def _check_appliance_update(payload: dict, credentials: dict[str, dict[str, str]
             repository_names=referenced_repositories,
         )
         repository_missing = any(not repository for repository in module_repositories)
-        reconciliation_failed = False
-        if not unsynchronized and not repository_missing:
-            for repository in sorted(referenced_repositories, key=str.casefold):
-                source = next(
-                    (
-                        item
-                        for item in _enabled_sources(payload, "powershell")
-                        if str(item.get("name") or "").strip() == repository
-                        and item.get("validation_status") == "valid"
-                    ),
-                    {},
-                )
-                if not source:
-                    continue
-                expected_url = str(
-                    source.get("url") or sources.get("powershell_repository_url") or ""
-                ).strip()
-                if not expected_url:
-                    reconciliation_failed = True
-                    continue
-                trusted = bool((source.get("settings") or {}).get("trusted"))
-                policy = "Trusted" if trusted else "Untrusted"
-                script = _powershell_repository_reconcile_script(
-                    repository,
-                    expected_url,
-                    policy,
-                )
-                reconciliation = _command_payload(
-                    [
-                        pwsh,
-                        "-NoLogo",
-                        "-NoProfile",
-                        "-NonInteractive",
-                        "-EncodedCommand",
-                        _powershell_encoded_command(script),
-                    ],
-                    env=_privileged_powershell_environment(),
-                )
-                commands.append(reconciliation)
-                reconciliation_failed = reconciliation_failed or not reconciliation["success"]
         module_checks: list[dict] = []
-        if repository_missing or unsynchronized or reconciliation_failed:
+        if repository_missing or unsynchronized:
             names = ", ".join(unsynchronized) or "the configured PowerShell repository"
             checks["powershell_modules"] = _failed_update_check(
                 f"Synchronize repositories for {names} and check PowerShell Modules again."
             )
-        for module in (
-            modules
-            if not unsynchronized and not repository_missing and not reconciliation_failed
-            else []
-        ):
+        for module in modules if not unsynchronized and not repository_missing else []:
             name = str(module.get("name") or "").strip()
             target = str(module.get("target_version") or "").strip()
             repository = str(module.get("repository_name") or default_repository).strip()
