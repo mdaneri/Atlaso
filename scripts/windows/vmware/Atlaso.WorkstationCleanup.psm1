@@ -686,14 +686,13 @@ function Remove-AtlasoWorkstationStaleRegistrations {
             if ($line -notmatch '^\s*(?<owner>vmlist\d+\.config|index\d+\.id)\s*=\s*(?<value>.*)$') { continue }
             $rawValue = $Matches.value.Trim()
             $rawOwner = $Matches.owner
-            $rawCandidates = @(); $candidateStart = 0
+            $rawCandidates = @(); $candidateStart = 0; $openingDelimiters = ''
             if ($rawValue.Length -gt 0 -and $rawValue[0] -in @([char]34, [char]39)) {
-                $openingQuote = $rawValue[0]; $candidateStart = 1
-                while ($candidateStart -lt $rawValue.Length -and ($rawValue[$candidateStart] -in @([char]34, [char]39) -or [char]::IsWhiteSpace($rawValue[$candidateStart]))) { $candidateStart++ }
+                while ($candidateStart -lt $rawValue.Length -and ($rawValue[$candidateStart] -in @([char]34, [char]39) -or [char]::IsWhiteSpace($rawValue[$candidateStart]))) { if ($rawValue[$candidateStart] -in @([char]34, [char]39)) { $openingDelimiters += $rawValue[$candidateStart] }; $candidateStart++ }
             }
-            $candidateSource = $rawValue.Substring($candidateStart)
-            $closedOuterQuote = $candidateStart -gt 0 -and $candidateSource.Length -gt 0 -and $candidateSource[$candidateSource.Length - 1] -eq $openingQuote
-            if ($closedOuterQuote) { $candidateSource = $candidateSource.Substring(0, $candidateSource.Length - 1) }; $hasClosedCompleteValue = $closedOuterQuote -and -not $candidateSource.Contains([string]$openingQuote)
+            $candidateSource = $rawValue.Substring($candidateStart); $hasClosedCompleteValue = $openingDelimiters.Length -gt 0
+            foreach ($closingDelimiter in $openingDelimiters.ToCharArray()) { if ($candidateSource.Length -gt 0 -and $candidateSource[$candidateSource.Length - 1] -eq $closingDelimiter) { $candidateSource = $candidateSource.Substring(0, $candidateSource.Length - 1) } else { $hasClosedCompleteValue = $false; break } }
+            if ($hasClosedCompleteValue -and @($openingDelimiters.ToCharArray() | Where-Object { $candidateSource.Contains([string]$_) }).Count -gt 0) { $hasClosedCompleteValue = $false }
             $hasCompletePath = $false
             if (($hasClosedCompleteValue -or $candidateStart -eq 0) -and -not $candidateSource.Contains([string][char]34) -and ($candidateStart -eq 0 -or $hasClosedCompleteValue -or -not $candidateSource.Contains([string][char]39)) -and [System.IO.Path]::IsPathFullyQualified($candidateSource)) {
                 try { Get-AtlasoCanonicalPath -Path $candidateSource | Out-Null; $hasCompletePath = $true } catch { Write-Verbose "Ignored an uncanonicalizable complete Workstation inventory value: $($_.Exception.Message)" }
