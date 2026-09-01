@@ -831,10 +831,6 @@ function Get-AtlasoOnePasswordCredentialPair {
         $dependencyPath = ''
         if ($needsDefaults) {
             Assert-AtlasoOnePasswordEnvironmentId -EnvironmentId $EnvironmentId
-            $resolvedAccount = Resolve-AtlasoOnePasswordAccount `
-                -Account $OnePasswordAccount `
-                -TimeoutSeconds $TimeoutSeconds `
-                -CliPath $OnePasswordCliPath
             $resolvedPython = Resolve-AtlasoOnePasswordPython `
                 -PythonCommand $OnePasswordPython `
                 -TimeoutSeconds $TimeoutSeconds `
@@ -844,6 +840,12 @@ function Get-AtlasoOnePasswordCredentialPair {
                 -RepositoryRoot $RepositoryRoot `
                 -BridgeRoot $bridgeRoot `
                 -TimeoutSeconds $TimeoutSeconds
+            # Artifact admission must complete before any 1Password CLI or
+            # desktop activity, including automatic account inventory.
+            $resolvedAccount = Resolve-AtlasoOnePasswordAccount `
+                -Account $OnePasswordAccount `
+                -TimeoutSeconds $TimeoutSeconds `
+                -CliPath $OnePasswordCliPath
         }
 
         $helperPath = Join-Path $PSScriptRoot 'Invoke-AtlasoOnePasswordCredentials.ps1'
