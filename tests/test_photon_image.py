@@ -3444,9 +3444,23 @@ def test_photon_build_state_requires_git_ignored_custom_root() -> None:
     )
     resolver = wrapper.index("function Resolve-AtlasoPhotonBuildStateRoot")
     ignore_check = wrapper.index("check-ignore --quiet -- $ignoreProbe", resolver)
-    state_creation = wrapper.index(
-        "[System.IO.Directory]::CreateDirectory($builderReservationPendingRoot)"
-    )
+    state_creation = wrapper.index("Initialize-AtlasoBuilderHandoffRoot `")
 
     assert resolver < ignore_check < state_creation
     assert "must remain inside a Git-ignored task subtree" in wrapper
+
+
+def test_photon_child_transports_pinned_builder_handoff_identity() -> None:
+    """Durable address handoffs revalidate pinned task-owned ancestry."""
+    wrapper = Path("scripts/windows/vmware/build-photon-image.ps1").read_text(
+        encoding="utf-8"
+    )
+    child_arguments = wrapper.index("$childArguments = @(")
+    reservation = wrapper.index("Enter-AtlasoVmwareBuilderAddressReservation `")
+
+    assert "Initialize-AtlasoBuilderHandoffRoot `" in wrapper
+    assert "'-BuilderHandoffStateIdentity'" in wrapper[child_arguments:reservation]
+    assert "'-BuilderHandoffPendingIdentity'" in wrapper[child_arguments:reservation]
+    assert "-HandoffBuildStateRoot $resolvedBuildStateRoot `" in wrapper[reservation:]
+    assert "-HandoffStateIdentity $BuilderHandoffStateIdentity `" in wrapper[reservation:]
+    assert "-HandoffPendingIdentity $BuilderHandoffPendingIdentity `" in wrapper[reservation:]

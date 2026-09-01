@@ -53,6 +53,10 @@ Internal durable marker proving the isolated child claimed a pre-existing output
 Internal invocation-specific generation bound to the exclusive output claim.
 .PARAMETER BuilderAddressReservationPath
 Internal non-secret handoff for the exact temporary address reservation.
+.PARAMETER BuilderHandoffStateIdentity
+Internal pinned filesystem identity for task-owned builder-address handoff state.
+.PARAMETER BuilderHandoffPendingIdentity
+Internal pinned filesystem identity for its pending-release directory.
 .PARAMETER SourceSnapshotRoot
 Internal commit-derived source root consumed by the isolated child.
 .PARAMETER SourceCommit
@@ -198,6 +202,8 @@ param(
     [string]$OutputCleanupClaimPath = '',
     [string]$OutputClaimGeneration = '',
     [string]$BuilderAddressReservationPath = '',
+    [string]$BuilderHandoffStateIdentity = '',
+    [string]$BuilderHandoffPendingIdentity = '',
     [string]$SourceSnapshotRoot = '',
     [string]$SourceCommit = '',
     [string]$SourceBranch = '',
@@ -1048,9 +1054,11 @@ if ($identityModeInvalid) {
 if (-not $CredentialChild -and (
         -not [string]::IsNullOrWhiteSpace($VerifiedRepository) -or
         -not [string]::IsNullOrWhiteSpace($VerifiedSourceBranch) -or
-        -not [string]::IsNullOrWhiteSpace($VerifiedSourceCommit)
+        -not [string]::IsNullOrWhiteSpace($VerifiedSourceCommit) -or
+        -not [string]::IsNullOrWhiteSpace($BuilderHandoffStateIdentity) -or
+        -not [string]::IsNullOrWhiteSpace($BuilderHandoffPendingIdentity)
     )) {
-    throw 'Verified builder identity fields are internal and may be supplied only to the isolated child.'
+    throw 'Internal builder identity and handoff fields may be supplied only to the isolated child.'
 }
 $buildStateRepositoryRoot = if ($CredentialChild) {
     if ([string]::IsNullOrWhiteSpace($TaskRepositoryRoot)) {
@@ -1084,7 +1092,10 @@ if (-not $CredentialChild) {
     Invoke-AtlasoPhotonBuildCleanupRecovery `
         -MarkerPath $cleanupMarkerPath `
         -AllowedParentRoots @($credentialStateRoot)
-    [void][System.IO.Directory]::CreateDirectory($builderReservationPendingRoot)
+    $builderHandoffRootIdentity = Initialize-AtlasoBuilderHandoffRoot `
+        -BuildStateRoot $resolvedBuildStateRoot `
+        -HandoffStateRoot $builderReservationHandoffStateRoot `
+        -PendingRoot $builderReservationPendingRoot
     $pendingReservationHandoffs = @(
         Get-ChildItem -LiteralPath $builderReservationPendingRoot `
             -Filter 'builder-address-reservation-*.json' `
@@ -1122,6 +1133,18 @@ if (-not $CredentialChild) {
             -VmName ([string]$localTaskBuilderIdentity.Name) `
             -SourceBranch ([string]$localTaskBuilderIdentity.SourceBranch)
     }
+}
+else {
+    if ([string]::IsNullOrWhiteSpace($BuilderHandoffStateIdentity) -or
+        [string]::IsNullOrWhiteSpace($BuilderHandoffPendingIdentity)) {
+        throw 'The isolated Photon builder-address handoff identity is unavailable or invalid.'
+    }
+    Assert-AtlasoBuilderHandoffRootIdentity `
+        -BuildStateRoot $resolvedBuildStateRoot `
+        -HandoffStateRoot $builderReservationHandoffStateRoot `
+        -PendingRoot $builderReservationPendingRoot `
+        -StateIdentity $BuilderHandoffStateIdentity `
+        -PendingIdentity $BuilderHandoffPendingIdentity
 }
 $identityRepositoryRoot = if ($CredentialChild) {
     if ([string]::IsNullOrWhiteSpace($TaskRepositoryRoot)) {
@@ -1620,6 +1643,8 @@ else {
             '-OutputCleanupClaimPath', $childOutputCleanupClaimPath,
             '-OutputClaimGeneration', $childOutputClaimGeneration,
             '-BuilderAddressReservationPath', $childBuilderAddressReservationPath,
+            '-BuilderHandoffStateIdentity', ([string]$builderHandoffRootIdentity.StateIdentity),
+            '-BuilderHandoffPendingIdentity', ([string]$builderHandoffRootIdentity.PendingIdentity),
             '-PreparedIsoPath', $childPreparedIsoPath,
             '-PackerDirectory', $childPackerDirectory,
             '-OutputDirectory', $outerCleanupOutputDirectory,
@@ -1652,7 +1677,9 @@ else {
             'BuilderStaticDnsJson', 'BuilderStaticDnsBound',
             'SensitiveBuildDirectory', 'OutputCleanupClaimPath',
             'OutputClaimGeneration',
-            'BuilderAddressReservationPath', 'PreparedIsoPath',
+            'BuilderAddressReservationPath',
+            'BuilderHandoffStateIdentity', 'BuilderHandoffPendingIdentity',
+            'PreparedIsoPath',
             'PackerDirectory', 'OutputDirectory', 'SharedSourceDirectory',
             'SourceSnapshotRoot', 'SourceCommit', 'SourceBranch',
             'TaskRepositoryRoot',
@@ -2298,6 +2325,9 @@ if ($requiresBuilderReservation) {
         -AdditionalExcludedAddresses (@($BuilderStaticGateway) + $managementHostAddresses) `
         -DhcpConfigPath $VmwareDhcpConfigPath `
         -ReservationHandoffPath $resolvedBuilderAddressReservationPath `
+        -HandoffBuildStateRoot $resolvedBuildStateRoot `
+        -HandoffStateIdentity $BuilderHandoffStateIdentity `
+        -HandoffPendingIdentity $BuilderHandoffPendingIdentity `
         -VmrunPath $resolvedReservationVmrun `
         -OutputDirectory $workstationOutputDirectory `
         -VmName $VmName `

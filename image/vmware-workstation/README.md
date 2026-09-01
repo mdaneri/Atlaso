@@ -204,7 +204,9 @@ revalidates and pins the credential parent and invocation root before any sensit
 opaque filesystem identities into the isolated child so it re-admits the complete ancestry before creating its
 workspace or consuming credentials. It also retires exact
 legacy address handoffs from bounded local checkout identity before requiring the current pull request to remain open,
-so a post-restart recovery is not stranded by later PR closure or head advancement. The wrapper
+so a post-restart recovery is not stranded by later PR closure or head advancement. The task-owned builder-address
+handoff and pending-release directories are likewise pinned, transported into the isolated child, and revalidated
+immediately before durable publication so a redirected handoff cannot leak a shared pool reservation. The wrapper
 never creates new task build state through Windows `TEMP`, `LocalApplicationData`, a profile directory, or a different
 volume. The address allocator retains one non-task-owned per-user lock and ledger under `LocalApplicationData` so
 concurrent worktrees cannot reserve the same VMware address. Recovery may read and retire an exact pre-migration marker

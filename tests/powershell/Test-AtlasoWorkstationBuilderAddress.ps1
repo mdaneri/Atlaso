@@ -280,19 +280,33 @@ exit 1
         -ProcessTreeTerminationProven
 
     $preHandoffStateRoot = Join-Path $testRoot 'pre-handoff-state'
-    $preHandoffTaskRoot = Join-Path $testRoot 'pre-handoff-task-state'
+    # Keep this fixture comfortably below Win32's legacy path limit so the
+    # test isolates handoff ordering rather than host long-path configuration.
+    $preHandoffBuildRoot = Join-Path $testRoot 'phb'
+    $preHandoffTaskRoot = Join-Path $preHandoffBuildRoot 'ba'
     $preHandoffPendingRoot = Join-Path $preHandoffTaskRoot 'pending-releases'
-    [void][System.IO.Directory]::CreateDirectory($preHandoffPendingRoot)
+    $preHandoffIdentity = Initialize-AtlasoBuilderHandoffRoot `
+        -BuildStateRoot $preHandoffBuildRoot `
+        -HandoffStateRoot $preHandoffTaskRoot `
+        -PendingRoot $preHandoffPendingRoot
     $preHandoffPath = Join-Path $preHandoffPendingRoot (
         "builder-address-reservation-$([guid]::NewGuid().ToString('N')).json"
     )
     $preHandoffCommon = $common.Clone()
     $preHandoffCommon.StateRoot = $preHandoffStateRoot
-    $preHandoffReservation = Enter-AtlasoVmwareBuilderAddressReservation `
-        @preHandoffCommon `
-        -HandoffStateRoot $preHandoffTaskRoot `
-        -ReservationHandoffPath $preHandoffPath `
-        -OutputDirectory (Join-Path $testRoot 'pre-handoff-output')
+    try {
+        $preHandoffReservation = Enter-AtlasoVmwareBuilderAddressReservation `
+            @preHandoffCommon `
+            -HandoffStateRoot $preHandoffTaskRoot `
+            -HandoffBuildStateRoot $preHandoffBuildRoot `
+            -HandoffStateIdentity ([string]$preHandoffIdentity.StateIdentity) `
+            -HandoffPendingIdentity ([string]$preHandoffIdentity.PendingIdentity) `
+            -ReservationHandoffPath $preHandoffPath `
+            -OutputDirectory (Join-Path $testRoot 'pre-handoff-output')
+    }
+    catch {
+        throw "Pre-ledger handoff publication failed with existing roots build=$(Test-Path -LiteralPath $preHandoffBuildRoot), state=$(Test-Path -LiteralPath $preHandoffTaskRoot), pending=$(Test-Path -LiteralPath $preHandoffPendingRoot): $($_.Exception.Message)"
+    }
     if (-not (Test-Path -LiteralPath $preHandoffPath -PathType Leaf)) {
         throw 'Reservation admission returned before its durable release handoff was published.'
     }
@@ -322,6 +336,50 @@ exit 1
         -Reservation $completedPreHandoff `
         -VmrunPath $vmrunPath `
         -StateRoot $preHandoffStateRoot
+
+    $swappedStateRoot = Join-Path $testRoot 'shs'
+    $swappedBuildRoot = Join-Path $testRoot 'shb'
+    $swappedTaskRoot = Join-Path $swappedBuildRoot 'ba'
+    $swappedPendingRoot = Join-Path $swappedTaskRoot 'pending-releases'
+    $swappedEscapeRoot = Join-Path $testRoot 'she'
+    [void][System.IO.Directory]::CreateDirectory($swappedEscapeRoot)
+    $swappedIdentity = Initialize-AtlasoBuilderHandoffRoot `
+        -BuildStateRoot $swappedBuildRoot `
+        -HandoffStateRoot $swappedTaskRoot `
+        -PendingRoot $swappedPendingRoot
+    Move-Item `
+        -LiteralPath $swappedPendingRoot `
+        -Destination "$swappedPendingRoot-original" `
+        -ErrorAction Stop
+    [void](New-Item `
+            -ItemType Junction `
+            -Path $swappedPendingRoot `
+            -Target $swappedEscapeRoot `
+            -ErrorAction Stop)
+    $swappedHandoffName = "builder-address-reservation-$([guid]::NewGuid().ToString('N')).json"
+    $swappedHandoffPath = Join-Path $swappedPendingRoot $swappedHandoffName
+    $swappedCommon = $common.Clone()
+    $swappedCommon.StateRoot = $swappedStateRoot
+    $swappedError = ''
+    try {
+        $null = Enter-AtlasoVmwareBuilderAddressReservation `
+            @swappedCommon `
+            -HandoffStateRoot $swappedTaskRoot `
+            -HandoffBuildStateRoot $swappedBuildRoot `
+            -HandoffStateIdentity ([string]$swappedIdentity.StateIdentity) `
+            -HandoffPendingIdentity ([string]$swappedIdentity.PendingIdentity) `
+            -ReservationHandoffPath $swappedHandoffPath `
+            -OutputDirectory (Join-Path $testRoot 'swapped-handoff-output')
+    }
+    catch {
+        $swappedError = $_.Exception.Message
+    }
+    if ($swappedError -notmatch 'reparse point|ancestry changed' -or
+        (Test-Path -LiteralPath (Join-Path $swappedEscapeRoot $swappedHandoffName)) -or
+        (Test-Path -LiteralPath (Join-Path $swappedStateRoot 'reservations.json'))) {
+        throw "A replaced pending-release directory did not block publication and ledger admission: $swappedError"
+    }
+    Remove-Item -LiteralPath $swappedPendingRoot -Force
 
     $postRenameStateRoot = Join-Path $testRoot 'post-rename-sync-state'
     [void][System.IO.Directory]::CreateDirectory($postRenameStateRoot)

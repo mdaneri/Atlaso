@@ -1434,6 +1434,7 @@ function Remove-AtlasoWorkstationArtifactRoot {
 Export-ModuleMember -Function @(
     'Assert-AtlasoStrictDescendantPath',
     'ConvertFrom-AtlasoVmrunListOutput',
+    'Get-AtlasoPathIdentity',
     'Get-AtlasoVmxDisplayName',
     'Repair-AtlasoWorkstationStaleRegistrations',
     'Remove-AtlasoWorkstationArtifactRoot',
