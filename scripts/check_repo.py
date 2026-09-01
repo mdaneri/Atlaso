@@ -3234,10 +3234,12 @@ def check_agent_policy_gate(root: Path) -> list[Finding]:
             normalized_cleanup_section = " ".join(cleanup_section.split())
             primary_position = normalized_cleanup_section.find(primary_marker)
             root_position = normalized_cleanup_section.find(root_marker)
-            if (
-                primary_position == -1
-                or root_position == -1
-                or primary_position > root_position
+            markers_missing_from_cleanup = (
+                primary_position == -1 or root_position == -1
+            )
+            path_already_fails = any(finding.path == path for finding in findings)
+            if primary_position > root_position >= 0 or (
+                markers_missing_from_cleanup and not path_already_fails
             ):
                 findings.append(
                     Finding(
