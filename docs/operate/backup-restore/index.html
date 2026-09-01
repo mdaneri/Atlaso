@@ -3651,6 +3651,13 @@ that admitted root-owned state directory without following links before it stops
 replacement database, validates all generated runtime configuration, and activates the clean state for all 16 apply
 units. Only after the candidate passes validation does Atlaso atomically replace the active database. The management
 plane restarts and the initiating browser is handed back to sign-in.</p>
+<p>Factory reset deliberately moves management admission to the applied factory binding (<code>eth0</code> at
+<code>192.168.49.1/24</code>) instead of keeping a retired pre-reset listener authorized. The replacement database, Network
+baseline, and app-owned <code>core.atlaso.internal</code> DNS record are committed together only after factory networking has
+activated. As soon as Atlaso restarts, both the factory address and appliance FQDN therefore reach the normal sign-in
+flow without waiting for inventory reconciliation. The earlier address, earlier IPv6 address, unknown hosts, and
+unflagged access/public listeners continue to return not found for <code>/ui/management</code>; use the documented local-console
+handoff if the workstation cannot route to the factory subnet.</p>
 <p>The reset:</p>
 <ul>
 <li>removes all control-plane records, including local and external users, password hashes, API tokens, sessions,
