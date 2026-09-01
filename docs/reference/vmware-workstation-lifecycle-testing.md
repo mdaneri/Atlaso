@@ -237,7 +237,8 @@ claim replacement ownership.
 For Workstation, Photon installation is bound to VMware SCSI identity `0:0:0` through kickstart preinstall discovery,
 not `/dev/sda` enumeration. Provisioning then proves the complete root dependency chain reaches that disk and proves
 the blank `ATLASO_SYSTEM` target is the exact 20 GiB disk at `0:1:0` before formatting it. The completed VMX receives
-schema-v2 role-bound provenance; normal test-VM cloning and OVF export both verify it before accepting the source. A
+schema-v3 role-bound provenance bound to the matching builder identity; normal test-VM cloning and OVF export both
+verify it before accepting the source. A
 reversed, ambiguous, capacity-mismatched, legacy-unproven, or byte-modified payload must be rebuilt and is never repaired
 by formatting or silently swapping unrelated VMDKs.
 
@@ -361,7 +362,8 @@ absent through the final gate. It does not enumerate or recursively remove the m
 inventory remains an ambiguous state that fails closed and preserves the new path.
 Focused regression coverage runs a test-only copy of the normal wrapper with only its host-global signer, credential,
 and post-clone startup boundaries stubbed. The wrapper still performs its real input validation, redeploy cleanup,
-data-disk checks, and low-level clone orchestration against a synthetic schema-v2, role-bound source payload. This
+data-disk checks, and low-level clone orchestration against a synthetic schema-v3, role-bound source payload bound to
+the matching builder identity. This
 proves that provider-owned root removal continues into cloning and that missing targets, sibling-prefix data disks, and
 invalid SSH-key inputs fail before cleanup. The harness does not use `-NoStart`; the production wrapper still requires
 first boot to consume and scrub the shared development signer.
