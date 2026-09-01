@@ -63,6 +63,7 @@ def test_feature_settings_render_full_saved_intent_with_effective_gates():
     assert "nat=Lab NAT" in config
     assert "policy=Slow WAN" in config
     assert "ip route replace 10.20.0.0/24" not in config
+    assert "ip route del 192.0.2.0/24 dev eth1 table 200" in config
     assert "masquerade comment \"Lab NAT\"" not in config
     assert "tc qdisc replace dev eth1 root netem delay 100ms" in config
     assert "net.ipv4.ip_forward=0" in config

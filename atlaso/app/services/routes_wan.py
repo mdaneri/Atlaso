@@ -998,9 +998,14 @@ def render_wan_config(
     target_network_owners = _target_network_owners(targets)
     for index, target in enumerate(targets):
         management = target.get("routing_domain") == "management"
-        if not management and not settings.routing_enabled:
-            continue
         table = MANAGEMENT_ROUTE_TABLE_ID if management else LAB_ROUTE_TABLE_ID
+        if not management and not settings.routing_enabled:
+            for network in _target_networks(target):
+                route_family = "-6 " if network.version == 6 else ""
+                lines.append(
+                    f"ip {route_family}route del {network} dev {target['name']} table {table}"
+                )
+            continue
         priority = (1000 if management else 2000) + index
         gateways = [
             str(target.get(key, "") or "").strip()
