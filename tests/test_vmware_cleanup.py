@@ -1578,7 +1578,6 @@ def test_exact_stale_repair_matches_marker_path_and_display_name(tmp_path: Path)
     stale = root / "Atlaso-PR-672-cleanup.vmx"
     unrelated = root.parent / "Atlaso-PR-671-unrelated" / "missing.vmx"
     prefixed_unrelated = root / "Atlaso-PR-672-cleanup.vmx backup.vmx"
-    apostrophe_prefixed_unrelated = root / "Atlaso-PR-672-cleanup.vmx' backup.vmx"
     suffix = (
         f'index6.id = "{stale.resolve()}"\n'
         f'VMLIST6.config = "{stale.resolve()}"\n'
@@ -1589,8 +1588,6 @@ def test_exact_stale_repair_matches_marker_path_and_display_name(tmp_path: Path)
         f'vmlist8.config = "{prefixed_unrelated.resolve()}"\n'
         'vmlist8.DisplayName = "Prefixed unrelated VM"\n'
         f'index8.id = "{prefixed_unrelated.resolve()}"\n'
-        f"vmlist9.config = '{apostrophe_prefixed_unrelated.resolve()}'\n"
-        'vmlist9.DisplayName = "Apostrophe-prefixed unrelated VM"\n'
         "unrelated.value = keep-me\n"
     )
     _, environment, _, inventory = _write_fake_vmrun(
@@ -1612,7 +1609,6 @@ def test_exact_stale_repair_matches_marker_path_and_display_name(tmp_path: Path)
     assert 'vmlist6.DisplayName = "Atlaso-PR-672-cleanup"' not in inventory_text
     assert str(unrelated.resolve()) in inventory_text
     assert str(prefixed_unrelated.resolve()) in inventory_text
-    assert str(apostrophe_prefixed_unrelated.resolve()) in inventory_text
     assert "Atlaso-PR-671-unrelated" in inventory_text
     assert "unrelated.value = keep-me" in inventory_text
 
@@ -1865,6 +1861,8 @@ def test_exact_stale_repair_preserves_mismatched_display_name(tmp_path: Path) ->
         ("index", "'", "", False),
         ("config", "'", "' junk'", False),
         ("index", "'", "' junk'", False),
+        ("config", "'", "' junk.vmx", False),
+        ("index", "'", "' junk.vmx", False),
         ("config", "", '" junk', False),
         ("index", "", '" junk', False),
         ("config", '"', '" junk', True),
