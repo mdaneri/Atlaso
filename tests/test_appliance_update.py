@@ -4384,7 +4384,7 @@ def test_helper_uses_managed_photon_credentials_only_for_tdnf_call(monkeypatch, 
     monkeypatch.setattr(helper, "MANAGED_PHOTON_REPO_PATH", photon_path)
     runtime_root = tmp_path / "run"
     runtime_root.mkdir()
-    monkeypatch.setattr(helper, "PHOTON_REPOSITORY_RUNTIME_ROOT", runtime_root)
+    monkeypatch.setattr(helper, "_photon_repository_runtime_root", lambda: runtime_root)
     captured = {}
     payload = {
         "source_definitions": [
@@ -4432,15 +4432,17 @@ def test_helper_uses_managed_photon_credentials_only_for_tdnf_call(monkeypatch, 
     assert "test-secret" not in " ".join(captured["command"])
 
 
-def test_helper_cleans_stale_managed_photon_credentials_and_fails_without_runtime_root(
+def test_helper_cleans_stale_managed_photon_credentials_with_verified_runtime_root(
     monkeypatch, tmp_path
 ):
-    """Recover inactive volatile credentials and reject non-volatile fallback storage.
+    """Recover inactive volatile credentials from an already verified runtime root.
 
     Args:
         monkeypatch: Pytest fixture used to replace dependencies for the test.
         tmp_path: Temporary directory provided by pytest for isolated filesystem state.
     """
+    from types import SimpleNamespace
+
     helper = load_helper_module()
     runtime_root = tmp_path / "run"
     runtime_root.mkdir()
@@ -4449,7 +4451,24 @@ def test_helper_cleans_stale_managed_photon_credentials_and_fails_without_runtim
     secret_path = stale / "atlaso-managed.repo"
     secret_path.write_text("password=test-secret\n", encoding="utf-8")
     secret_path.chmod(0o600)
-    monkeypatch.setattr(helper, "PHOTON_REPOSITORY_RUNTIME_ROOT", runtime_root)
+    monkeypatch.setattr(helper, "_photon_repository_runtime_root", lambda: runtime_root)
+    original_lstat = Path.lstat
+
+    def verified_runtime_view_lstat(path):
+        """Report root ownership for test-owned runtime views already admitted by the seam.
+
+        Args:
+            path: Filesystem path whose metadata is requested.
+        """
+        metadata = original_lstat(path)
+        if path.parent == runtime_root and path.name.startswith(
+            "atlaso-tdnf-repositories-"
+        ):
+            return SimpleNamespace(st_mode=stat.S_IFDIR | 0o700, st_uid=0)
+        return metadata
+
+    monkeypatch.setattr(Path, "lstat", verified_runtime_view_lstat)
+    monkeypatch.setattr(helper, "os", SimpleNamespace(name="posix"))
 
     helper._cleanup_stale_photon_repository_views()
 
@@ -4461,10 +4480,58 @@ def test_helper_cleans_stale_managed_photon_credentials_and_fails_without_runtim
     )
     helper._cleanup_stale_photon_repository_views()
     assert not reused_pid.exists()
+
+
+def test_helper_rejects_missing_photon_repository_runtime_root(monkeypatch, tmp_path):
+    """Reject unavailable volatile storage instead of falling back to durable storage.
+
+    Args:
+        monkeypatch: Pytest fixture used to replace dependencies for the test.
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
+    helper = load_helper_module()
     monkeypatch.setattr(
         helper, "PHOTON_REPOSITORY_RUNTIME_ROOT", tmp_path / "missing-run"
     )
     with pytest.raises(ValueError, match="volatile Photon repository credential storage is unavailable"):
+        helper._photon_repository_runtime_root()
+
+
+@pytest.mark.parametrize(
+    ("owner_uid", "mode"),
+    [
+        (1000, 0o755),
+        (0, 0o775),
+    ],
+)
+def test_helper_rejects_unsafe_photon_repository_runtime_root(
+    monkeypatch, owner_uid, mode
+):
+    """Reject a volatile root with unsafe POSIX ownership or write permissions.
+
+    Args:
+        monkeypatch: Pytest fixture used to replace dependencies for the test.
+        owner_uid: Synthetic owner identifier reported for the runtime root.
+        mode: Synthetic directory mode reported for the runtime root.
+    """
+    from types import SimpleNamespace
+
+    class RuntimeRoot:
+        """Expose only the filesystem metadata used by runtime-root validation."""
+
+        def lstat(self):
+            """Return the synthetic POSIX directory metadata."""
+            return SimpleNamespace(st_mode=stat.S_IFDIR | mode, st_uid=owner_uid)
+
+        def is_symlink(self):
+            """Report a direct directory rather than a symbolic link."""
+            return False
+
+    helper = load_helper_module()
+    monkeypatch.setattr(helper, "PHOTON_REPOSITORY_RUNTIME_ROOT", RuntimeRoot())
+    monkeypatch.setattr(helper, "os", SimpleNamespace(name="posix"))
+
+    with pytest.raises(ValueError, match="volatile Photon repository credential storage is unsafe"):
         helper._photon_repository_runtime_root()
 
 
