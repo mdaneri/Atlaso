@@ -177,6 +177,18 @@ def test_photon_wrapper_preflights_credentials_before_image_mutation() -> None:
     assert "Write-AtlasoDurableJsonFile -Path $cleanupMarkerPath" in module
     assert "$processTreeTerminationUnproven" in module
     assert module.index(credential_root_cleanup) < module.index("return $result")
+    credential_pair = module.index("function Get-AtlasoOnePasswordCredentialPair {")
+    direct_artifact_admission = module.index(
+        "$resolvedPython = Confirm-AtlasoOnePasswordArtifact `", credential_pair
+    )
+    credential_recovery = module.index(
+        "Invoke-AtlasoOnePasswordCredentialCleanupRecovery -RepositoryRoot",
+        credential_pair,
+    )
+    credential_marker = module.index(
+        "Write-AtlasoDurableJsonFile -Path $cleanupMarkerPath", credential_pair
+    )
+    assert direct_artifact_admission < credential_recovery < credential_marker
     assert "[System.IO.FileOptions]::WriteThrough" in runner
     assert "$stream.Flush($true)" in runner
     assert "MoveFileEx" in runner

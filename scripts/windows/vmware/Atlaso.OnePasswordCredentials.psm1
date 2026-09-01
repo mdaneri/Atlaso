@@ -769,6 +769,53 @@ function Invoke-AtlasoOnePasswordCredentialCleanupRecovery {
 
 <#
 .SYNOPSIS
+Admit the pinned wheel before shared credential recovery or state creation.
+
+.PARAMETER PythonCommand
+Optional standard GIL-enabled Windows x64 CPython 3.14 executable.
+
+.PARAMETER RepositoryRoot
+Atlaso checkout containing the approved wheel manifest and downloader.
+
+.PARAMETER TimeoutSeconds
+Positive deadline for runtime selection and artifact download.
+
+.PARAMETER ConsumerDescription
+Sanitized workflow name used in unsupported-runtime guidance.
+#>
+function Confirm-AtlasoOnePasswordArtifact {
+    param(
+        [AllowEmptyString()][string]$PythonCommand = '',
+        [Parameter(Mandatory = $true)][string]$RepositoryRoot,
+        [Parameter(Mandatory = $true)][ValidateRange(1, 3600)][int]$TimeoutSeconds,
+        [string]$ConsumerDescription = 'Atlaso credentials'
+    )
+
+    $resolvedPython = Resolve-AtlasoOnePasswordPython `
+        -PythonCommand $PythonCommand `
+        -TimeoutSeconds $TimeoutSeconds `
+        -ConsumerDescription $ConsumerDescription
+    $artifactRoot = Join-Path ([System.IO.Path]::GetTempPath()) (
+        "atlaso-onepassword-artifact-$([guid]::NewGuid().ToString('N'))"
+    )
+    [void][System.IO.Directory]::CreateDirectory($artifactRoot)
+    try {
+        $null = Save-AtlasoOnePasswordWheel `
+            -PythonCommand $resolvedPython `
+            -RepositoryRoot $RepositoryRoot `
+            -Destination $artifactRoot `
+            -TimeoutSeconds $TimeoutSeconds
+        return $resolvedPython
+    }
+    finally {
+        if (Test-Path -LiteralPath $artifactRoot) {
+            [System.IO.Directory]::Delete($artifactRoot, $true)
+        }
+    }
+}
+
+<#
+.SYNOPSIS
 Return validated SecureStrings from explicit inputs or the exact Atlaso Environment.
 
 .PARAMETER RepositoryRoot
@@ -832,6 +879,19 @@ function Get-AtlasoOnePasswordCredentialPair {
     if (-not (Get-Command Invoke-AtlasoBoundedProcess -ErrorAction SilentlyContinue)) {
         throw 'The bounded Atlaso process runner is unavailable.'
     }
+    $needsDefaults = $null -eq $AdminPassword -or $null -eq $RootPassword
+    $resolvedPython = ''
+    if ($needsDefaults) {
+        Assert-AtlasoOnePasswordEnvironmentId -EnvironmentId $EnvironmentId
+        # The exported bridge remains fail-closed when called directly: admit
+        # the exact artifact before prior-root recovery, marker creation, or
+        # account inventory. Runtime setup verifies it again before install.
+        $resolvedPython = Confirm-AtlasoOnePasswordArtifact `
+            -PythonCommand $OnePasswordPython `
+            -RepositoryRoot $RepositoryRoot `
+            -TimeoutSeconds $TimeoutSeconds `
+            -ConsumerDescription $ConsumerDescription
+    }
     Invoke-AtlasoOnePasswordCredentialCleanupRecovery -RepositoryRoot $RepositoryRoot
     $bridgeRoot = Join-Path ([System.IO.Path]::GetTempPath()) (
         "atlaso-onepassword-credentials-$([guid]::NewGuid().ToString('N'))"
@@ -853,7 +913,6 @@ function Get-AtlasoOnePasswordCredentialPair {
         $requestPath = Join-Path $bridgeRoot 'request.json'
         $statusPath = Join-Path $bridgeRoot 'status.json'
         $credentialBundlePath = Join-Path $bridgeRoot 'credentials.dpapi.json'
-        $needsDefaults = $null -eq $AdminPassword -or $null -eq $RootPassword
         $request = [ordered]@{
             AdminPasswordCiphertext = if ($null -eq $AdminPassword) {
                 ''
@@ -874,14 +933,8 @@ function Get-AtlasoOnePasswordCredentialPair {
             [System.Text.UTF8Encoding]::new($false)
         )
 
-        $resolvedPython = ''
         $dependencyPath = ''
         if ($needsDefaults) {
-            Assert-AtlasoOnePasswordEnvironmentId -EnvironmentId $EnvironmentId
-            $resolvedPython = Resolve-AtlasoOnePasswordPython `
-                -PythonCommand $OnePasswordPython `
-                -TimeoutSeconds $TimeoutSeconds `
-                -ConsumerDescription $ConsumerDescription
             $dependencyPath = Initialize-AtlasoOnePasswordSdkRuntime `
                 -PythonCommand $resolvedPython `
                 -RepositoryRoot $RepositoryRoot `
