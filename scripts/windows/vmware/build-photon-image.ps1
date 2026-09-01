@@ -37,6 +37,10 @@ strictly beneath the task repository root.
 Internal current-user DPAPI credential bundle used only by the isolated child.
 .PARAMETER CredentialChild
 Internal marker proving the current process is the isolated image-build child.
+.PARAMETER StagingParentIdentity
+Internal pinned filesystem identity for the admitted credential parent.
+.PARAMETER StagingRootIdentity
+Internal pinned filesystem identity for the invocation-owned credential root.
 .PARAMETER BuilderStaticDnsJson
 Internal JSON transport for the non-secret builder DNS server array.
 .PARAMETER BuilderStaticDnsBound
@@ -186,6 +190,8 @@ param(
     [string]$BuildStateRoot = '',
     [string]$CredentialBundlePath = '',
     [switch]$CredentialChild,
+    [string]$StagingParentIdentity = '',
+    [string]$StagingRootIdentity = '',
     [string]$BuilderStaticDnsJson = '',
     [switch]$BuilderStaticDnsBound,
     [string]$SensitiveBuildDirectory = '',
@@ -1189,12 +1195,27 @@ if (-not $CredentialChild -and $ReleaseBuilder) {
         -SourceBranch $legacySourceBranch
 }
 if ($CredentialChild) {
+    if ([string]::IsNullOrWhiteSpace($StagingParentIdentity) -or
+        [string]::IsNullOrWhiteSpace($StagingRootIdentity) -or
+        [string]::IsNullOrWhiteSpace($CredentialBundlePath)) {
+        throw 'The isolated Photon credential-root identity is unavailable or invalid.'
+    }
+    $credentialBundleRoot = [System.IO.Path]::GetFullPath((Split-Path -Parent $CredentialBundlePath))
+    # Re-admit the complete parent/root ancestry in the isolated process before
+    # it consumes credentials or creates any plaintext-derived workspace.
+    Assert-AtlasoPhotonCredentialRootIdentity `
+        -BuildStateRoot $resolvedBuildStateRoot `
+        -CredentialStateRoot $credentialStateRoot `
+        -CredentialRoot $credentialBundleRoot `
+        -Identity ([pscustomobject][ordered]@{
+            ParentIdentity = $StagingParentIdentity
+            RootIdentity   = $StagingRootIdentity
+        })
     if ($SshPassword -or $BootstrapAdminPassword -or
         [string]::IsNullOrWhiteSpace($CredentialBundlePath) -or
         -not (Test-Path -LiteralPath $CredentialBundlePath -PathType Leaf)) {
         throw 'The isolated Photon credential bundle is unavailable or invalid.'
     }
-    $credentialBundleRoot = [System.IO.Path]::GetFullPath((Split-Path -Parent $CredentialBundlePath))
     $resolvedOutputCleanupClaimPath = if ([string]::IsNullOrWhiteSpace($OutputCleanupClaimPath)) {
         ''
     }
@@ -1277,6 +1298,14 @@ if ($CredentialChild) {
         -ExpectedSha256 $SourceInventorySha256 `
         -ExpectedFileCount $SourceInventoryFileCount `
         -VerificationRoot (Join-Path $sensitiveBuildRoot 'source-verification')
+    Assert-AtlasoPhotonCredentialRootIdentity `
+        -BuildStateRoot $resolvedBuildStateRoot `
+        -CredentialStateRoot $credentialStateRoot `
+        -CredentialRoot $credentialBundleRoot `
+        -Identity ([pscustomobject][ordered]@{
+            ParentIdentity = $StagingParentIdentity
+            RootIdentity   = $StagingRootIdentity
+        })
     New-Item -ItemType Directory -Path $resolvedChildPackerDirectory -ErrorAction Stop | Out-Null
     $packerTemplatePath = Join-Path `
         $resolvedSourceSnapshotRoot `
@@ -1316,6 +1345,14 @@ if ($CredentialChild) {
             throw 'The isolated Photon prepared-ISO path is unavailable or invalid.'
         }
     }
+    Assert-AtlasoPhotonCredentialRootIdentity `
+        -BuildStateRoot $resolvedBuildStateRoot `
+        -CredentialStateRoot $credentialStateRoot `
+        -CredentialRoot $credentialBundleRoot `
+        -Identity ([pscustomobject][ordered]@{
+            ParentIdentity = $StagingParentIdentity
+            RootIdentity   = $StagingRootIdentity
+        })
     try {
         $credentialBundle = Get-Content -LiteralPath $CredentialBundlePath -Raw | ConvertFrom-Json
         $bundleProperties = @($credentialBundle.PSObject.Properties.Name)
@@ -1564,6 +1601,8 @@ else {
             '-CredentialChild',
             '-BuildStateRoot', $resolvedBuildStateRoot,
             '-CredentialBundlePath', $childCredentialBundlePath,
+            '-StagingParentIdentity', ([string]$credentialRootIdentity.ParentIdentity),
+            '-StagingRootIdentity', ([string]$credentialRootIdentity.RootIdentity),
             '-SensitiveBuildDirectory', $childSensitiveBuildDirectory,
             '-OutputCleanupClaimPath', $childOutputCleanupClaimPath,
             '-OutputClaimGeneration', $childOutputClaimGeneration,
@@ -1596,6 +1635,7 @@ else {
             'CredentialTimeoutSeconds', 'ImageBuildTimeoutSeconds',
             'BuildStateRoot',
             'CredentialBundlePath', 'CredentialChild',
+            'StagingParentIdentity', 'StagingRootIdentity',
             'BuilderStaticDnsJson', 'BuilderStaticDnsBound',
             'SensitiveBuildDirectory', 'OutputCleanupClaimPath',
             'OutputClaimGeneration',

@@ -198,7 +198,9 @@ verifies them after a whole-tree timeout kills the child before its normal `fina
 The credential bridge, immutable source snapshot, Packer workspace, remastered ISO, cleanup marker, and VMware
 builder-address release handoff all live beneath checkout-local `.atlaso-local/photon-image-build-state`. An explicit
 `-BuildStateRoot` is accepted only as a strict non-reparse-point descendant of the exact task repository. The wrapper
-revalidates and pins the credential parent and invocation root before any sensitive staging. It also retires exact
+revalidates and pins the credential parent and invocation root before any sensitive staging, then transports those
+opaque filesystem identities into the isolated child so it re-admits the complete ancestry before creating its
+workspace or consuming credentials. It also retires exact
 legacy address handoffs from bounded local checkout identity before requiring the current pull request to remain open,
 so a post-restart recovery is not stranded by later PR closure or head advancement. The wrapper
 never creates new task build state through Windows `TEMP`, `LocalApplicationData`, a profile directory, or a different

@@ -3386,3 +3386,33 @@ def test_photon_wrapper_recovers_legacy_handoffs_before_pr_admission() -> None:
     assert local_identity < legacy_recovery < github_admission
     assert "Initialize-AtlasoPhotonCredentialRoot `" in wrapper
     assert wrapper.count("Assert-AtlasoPhotonCredentialRootIdentity `") >= 3
+
+
+def test_photon_child_revalidates_pinned_credential_ancestry() -> None:
+    """The isolated child re-admits parent/root identities before credentials."""
+    wrapper = Path("scripts/windows/vmware/build-photon-image.ps1").read_text(
+        encoding="utf-8"
+    )
+    child = wrapper.index("if ($CredentialChild) {")
+    child_identity = wrapper.index(
+        "Assert-AtlasoPhotonCredentialRootIdentity `", child
+    )
+    packer_workspace = wrapper.index(
+        "New-Item -ItemType Directory -Path $resolvedChildPackerDirectory", child
+    )
+    credential_read = wrapper.index(
+        "Get-Content -LiteralPath $CredentialBundlePath -Raw", child
+    )
+    workspace_identity = wrapper.index(
+        "Assert-AtlasoPhotonCredentialRootIdentity `", child_identity + 1
+    )
+    credential_identity = wrapper.index(
+        "Assert-AtlasoPhotonCredentialRootIdentity `", workspace_identity + 1
+    )
+
+    assert child_identity < workspace_identity < packer_workspace
+    assert packer_workspace < credential_identity < credential_read
+    assert "'-StagingParentIdentity'" in wrapper
+    assert "'-StagingRootIdentity'" in wrapper
+    assert "ParentIdentity = $StagingParentIdentity" in wrapper
+    assert "RootIdentity   = $StagingRootIdentity" in wrapper
