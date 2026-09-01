@@ -19090,17 +19090,26 @@ def _installed_atlaso_database_url() -> str:
                 multiline_quote = ""
             continue
         candidate = raw_line.strip()
-        if not candidate.startswith("ATLASO_DATABASE_URL="):
+        assignment_name, separator, assignment_value = candidate.partition("=")
+        if not separator or not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", assignment_name):
             continue
-        database_url = candidate.partition("=")[2].strip()
-        database_url_quote = (
-            database_url[0] if database_url.startswith(('"', "'")) else ""
+        assignment_value = assignment_value.strip()
+        assignment_quote = (
+            assignment_value[0] if assignment_value.startswith(('"', "'")) else ""
         )
-        database_url_is_multiline = False
-        if database_url_quote:
-            if not _environment_file_quote_closes(database_url[1:], database_url_quote):
-                multiline_quote = database_url_quote
-                database_url_is_multiline = True
+        assignment_is_multiline = bool(
+            assignment_quote
+            and not _environment_file_quote_closes(
+                assignment_value[1:], assignment_quote
+            )
+        )
+        if assignment_is_multiline:
+            multiline_quote = assignment_quote
+        if assignment_name != "ATLASO_DATABASE_URL":
+            continue
+        database_url = assignment_value
+        database_url_quote = assignment_quote
+        database_url_is_multiline = assignment_is_multiline
     if database_url_is_multiline:
         raise ValueError(
             "ATLASO_DATABASE_URL uses an unsupported multiline EnvironmentFile value."
