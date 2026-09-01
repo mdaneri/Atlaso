@@ -1522,7 +1522,7 @@ def test_stale_atlaso_registration_ignores_unrelated_broken_entries(tmp_path: Pa
     assert result.returncode == 0, result.stdout + result.stderr
     assert not root.exists()
     inventory_text = inventory.read_text(encoding="utf-8")
-    assert str(stale.resolve()) not in inventory_text
+    assert f'= "{stale.resolve()}"' not in inventory_text
     assert str(unrelated_missing.resolve()) in inventory_text
     assert "vmlistBROKEN.config = malformed" in inventory_text
     assert "unrelated.value = keep-me" in inventory_text
@@ -1573,6 +1573,7 @@ def test_exact_stale_repair_matches_marker_path_and_display_name(tmp_path: Path)
     root = tmp_path / "test-vms" / "Atlaso-PR-672-cleanup"
     stale = root / "Atlaso-PR-672-cleanup.vmx"
     unrelated = root.parent / "Atlaso-PR-671-unrelated" / "missing.vmx"
+    prefixed_unrelated = root / "Atlaso-PR-672-cleanup.vmx backup.vmx"
     suffix = (
         f'vmlist6.config = "{stale.resolve()}"\n'
         'vmlist6.DisplayName = "Atlaso-PR-672-cleanup"\n'
@@ -1580,6 +1581,9 @@ def test_exact_stale_repair_matches_marker_path_and_display_name(tmp_path: Path)
         f'vmlist7.config = "{unrelated.resolve()}"\n'
         'vmlist7.DisplayName = "Atlaso-PR-671-unrelated"\n'
         f'index7.id = "{unrelated.resolve()}"\n'
+        f'vmlist8.config = "{prefixed_unrelated.resolve()}"\n'
+        'vmlist8.DisplayName = "Prefixed unrelated VM"\n'
+        f'index8.id = "{prefixed_unrelated.resolve()}"\n'
         "unrelated.value = keep-me\n"
     )
     _, environment, _, inventory = _write_fake_vmrun(
@@ -1596,9 +1600,10 @@ def test_exact_stale_repair_matches_marker_path_and_display_name(tmp_path: Path)
 
     assert result.returncode == 0, result.stdout + result.stderr
     inventory_text = inventory.read_text(encoding="utf-8")
-    assert str(stale.resolve()) not in inventory_text
-    assert "Atlaso-PR-672-cleanup" not in inventory_text
+    assert f'= "{stale.resolve()}"' not in inventory_text
+    assert 'vmlist6.DisplayName = "Atlaso-PR-672-cleanup"' not in inventory_text
     assert str(unrelated.resolve()) in inventory_text
+    assert str(prefixed_unrelated.resolve()) in inventory_text
     assert "Atlaso-PR-671-unrelated" in inventory_text
     assert "unrelated.value = keep-me" in inventory_text
 
@@ -2791,8 +2796,10 @@ def test_module_keeps_inventory_work_out_of_normal_delete_path() -> None:
     assert inventory_replace < rollback_catch < rollback_call
     assert stale_repair.count("foreach ($candidatePath in $targetPaths)") == 2
     assert stale_repair.count("Test-Path -LiteralPath $resolvedVmxPath") >= 3
+    assert "Test-Path -LiteralPath $resolvedVmxPath -PathType Leaf" not in stale_repair
+    assert "Test-Path -LiteralPath $candidatePath -PathType Leaf" not in stale_repair
     implementation = re.sub(r"<#.*?#>\s*", "", module, flags=re.DOTALL)
-    assert len(implementation.splitlines()) < 1_205
+    assert len(implementation.splitlines()) < 1_215
 
 
 def test_pre_gui_repair_retains_exact_open_ui_refusal() -> None:

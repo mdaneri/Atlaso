@@ -642,7 +642,7 @@ function Remove-AtlasoWorkstationStaleRegistrations {
         }
     }
     if (-not $InventoryPath) {
-        if ($resolvedVmxPath -and (Test-Path -LiteralPath $resolvedVmxPath -PathType Leaf)) {
+        if ($resolvedVmxPath -and (Test-Path -LiteralPath $resolvedVmxPath)) {
             throw "The exact stale-registration VMX was recreated before inventory absence could be proven: $resolvedVmxPath"
         }
         return
@@ -660,15 +660,29 @@ function Remove-AtlasoWorkstationStaleRegistrations {
             if ($line -notmatch '^\s*(?<owner>vmlist\d+\.config|index\d+\.id)\s*=\s*(?<value>.*)$') { continue }
             $rawValue = $Matches.value.Trim()
             $rawOwner = $Matches.owner
-            $unquotedRawValue = $rawValue.TrimStart([char]34, [char]39)
-            if ($unquotedRawValue -notmatch '^(?<path>.+?\.vmx)(?=$|["''\s])') { continue }
-            $rawCandidate = $Matches.path
+            $rawCandidate = $rawValue
+            $hasCompleteQuotedValue = $false
+            if ($rawValue.Length -gt 0 -and $rawValue[0] -in @([char]34, [char]39)) {
+                $closingQuote = $rawValue.IndexOf($rawValue[0], 1)
+                if ($closingQuote -ge 1) {
+                    $rawCandidate = $rawValue.Substring(1, $closingQuote - 1)
+                    $hasCompleteQuotedValue = $true
+                }
+                else {
+                    $rawCandidate = $rawValue.Substring(1)
+                }
+            }
             $rawRefersToExactPath = $false
             if ([System.IO.Path]::IsPathFullyQualified($rawCandidate)) {
                 try { $rawRefersToExactPath = Test-AtlasoSamePath -Left $rawCandidate -Right $resolvedVmxPath }
                 catch {
                     Write-Verbose "Ignored an uncanonicalizable raw Workstation inventory row: $($_.Exception.Message)"
                 }
+            }
+            if (-not $rawRefersToExactPath -and -not $hasCompleteQuotedValue -and
+                $rawCandidate -match '^(?<path>.+?\.vmx)(?=$|[\s])') {
+                try { $rawRefersToExactPath = Test-AtlasoSamePath -Left $Matches.path -Right $resolvedVmxPath }
+                catch { Write-Verbose "Ignored an uncanonicalizable malformed Workstation owner prefix: $($_.Exception.Message)" }
             }
             if ($rawRefersToExactPath) {
                 if ($rawOwner.StartsWith('vmlist')) { $rawExactConfigCount++ } else { $rawExactIndexCount++ }
@@ -696,7 +710,7 @@ function Remove-AtlasoWorkstationStaleRegistrations {
         }
     }
     if ($staleEntries.Count -eq 0 -and (-not $resolvedVmxPath -or $rawExactIndexCount -eq 0)) {
-        if ($resolvedVmxPath -and (Test-Path -LiteralPath $resolvedVmxPath -PathType Leaf)) {
+        if ($resolvedVmxPath -and (Test-Path -LiteralPath $resolvedVmxPath)) {
             throw "The exact stale-registration VMX was recreated before absence could be proven: $resolvedVmxPath"
         }
         return
@@ -797,7 +811,7 @@ function Remove-AtlasoWorkstationStaleRegistrations {
     }
     $replacementBytes = [System.Text.UTF8Encoding]::new($false).GetBytes(($updatedLines -join [Environment]::NewLine))
     foreach ($candidatePath in $targetPaths) {
-        if (Test-Path -LiteralPath $candidatePath -PathType Leaf) {
+        if (Test-Path -LiteralPath $candidatePath) {
             throw "A stale Atlaso VMX was recreated before inventory repair; artifacts were preserved: $candidatePath"
         }
     }
@@ -822,7 +836,7 @@ function Remove-AtlasoWorkstationStaleRegistrations {
                 throw 'VMware Workstation inventory changed before scoped stale-registration repair; artifacts were preserved.'
             }
             foreach ($candidatePath in $targetPaths) {
-                if (Test-Path -LiteralPath $candidatePath -PathType Leaf) {
+                if (Test-Path -LiteralPath $candidatePath) {
                     throw "A stale Atlaso VMX was recreated before inventory repair; artifacts were preserved: $candidatePath"
                 }
             }
