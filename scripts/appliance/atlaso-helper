@@ -19121,7 +19121,7 @@ def _installed_atlaso_database_url() -> str:
         assignment_is_multiline = bool(open_quote)
         if assignment_is_multiline:
             multiline_quote = open_quote
-        elif not assignment_quote:
+        else:
             unquoted_continuation = _environment_file_unquoted_continues(raw_line)
         if assignment_name != "ATLASO_DATABASE_URL":
             continue
@@ -19144,7 +19144,11 @@ def _installed_atlaso_database_url() -> str:
                 "ATLASO_DATABASE_URL uses an unsupported multiline EnvironmentFile value."
             )
         database_url = database_url[1:-1]
-    if '"' in database_url or "'" in database_url:
+    if database_url_quote and database_url_quote in database_url:
+        raise ValueError(
+            "ATLASO_DATABASE_URL uses unsupported concatenated EnvironmentFile quotes."
+        )
+    if not database_url_quote and ('"' in database_url or "'" in database_url):
         raise ValueError(
             "ATLASO_DATABASE_URL uses unsupported concatenated EnvironmentFile quotes."
         )

@@ -272,6 +272,29 @@ def test_helper_database_url_preserves_single_quoted_backslashes(monkeypatch, tm
     )
 
 
+def test_helper_database_url_preserves_opposite_quote_inside_quotes(monkeypatch, tmp_path):
+    """An apostrophe remains literal inside a double-quoted systemd value.
+
+    Args:
+        monkeypatch: Pytest fixture used to isolate the helper environment file.
+        tmp_path: Temporary directory provided for the installed runtime fixture.
+    """
+    from tests.test_appliance_update import load_helper_module
+
+    helper = load_helper_module()
+    environment_path = tmp_path / "atlaso.env"
+    environment_path.write_text(
+        'ATLASO_DATABASE_URL="sqlite:////var/lib/atlaso/o\'brien.db"\n',
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(helper, "ATLASO_ENV_PATH", environment_path)
+
+    assert (
+        helper._installed_atlaso_database_url()
+        == "sqlite:////var/lib/atlaso/o'brien.db"
+    )
+
+
 def test_helper_factory_reset_runner_rejects_concatenated_quotes(monkeypatch, tmp_path):
     """Console recovery rejects systemd quote concatenation it does not decode.
 
@@ -450,6 +473,33 @@ def test_helper_database_url_ignores_assignment_inside_unquoted_continuation(
     environment_path.write_text(
         "ATLASO_DATABASE_URL=sqlite:////var/lib/atlaso/atlaso.db\n"
         "ATLASO_BANNER=first-line\\\n"
+        "ATLASO_DATABASE_URL=sqlite:////var/lib/atlaso/decoy.db\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(helper, "ATLASO_ENV_PATH", environment_path)
+
+    assert (
+        helper._installed_atlaso_database_url()
+        == "sqlite:////var/lib/atlaso/atlaso.db"
+    )
+
+
+def test_helper_database_url_tracks_continuation_after_quoted_segment(
+    monkeypatch, tmp_path
+):
+    """A closed leading quote does not hide a trailing unquoted continuation.
+
+    Args:
+        monkeypatch: Pytest fixture used to isolate the helper environment file.
+        tmp_path: Temporary directory provided for the installed runtime fixture.
+    """
+    from tests.test_appliance_update import load_helper_module
+
+    helper = load_helper_module()
+    environment_path = tmp_path / "atlaso.env"
+    environment_path.write_text(
+        "ATLASO_DATABASE_URL=sqlite:////var/lib/atlaso/atlaso.db\n"
+        "ATLASO_BANNER='closed'\\\n"
         "ATLASO_DATABASE_URL=sqlite:////var/lib/atlaso/decoy.db\n",
         encoding="utf-8",
     )
