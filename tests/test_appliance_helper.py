@@ -6146,6 +6146,16 @@ def test_wan_target_routes_retire_only_live_omitted_targets(
     ]
     assert (cleanup in commands) is cleanup_expected
 
+    commands.clear()
+    current["retired_targets"] = [
+        {
+            "name": "eth2",
+            "network": "192.0.2.0/24",
+        }
+    ]
+    assert helper._apply_wan_target_routes(current) == 0
+    assert (cleanup in commands) is cleanup_expected
+
 
 def test_wan_removed_route_cleanup_skips_absent_target(monkeypatch):
     """Do not fail removal of saved route intent after its device disappeared.

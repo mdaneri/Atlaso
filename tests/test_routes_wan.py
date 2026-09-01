@@ -129,6 +129,11 @@ def test_wan_preview_retires_only_live_omitted_target_routes():
         previous_config_preview=previous,
         settings=RoutesWanSettings(False, False, False),
     )
+    converged = render_wan_config(
+        [],
+        previous_config_preview=live,
+        settings=RoutesWanSettings(False, False, False),
+    )
     absent = render_wan_config(
         [],
         previous_config_preview=previous,
@@ -141,6 +146,8 @@ def test_wan_preview_retires_only_live_omitted_target_routes():
         "  # retired omitted or ineligible WAN target"
     )
     assert cleanup in live
+    assert live == converged
+    assert "[retired_targets]\ntarget=eth2\n  network=192.0.2.0/24" in live
     assert cleanup not in absent
 
 

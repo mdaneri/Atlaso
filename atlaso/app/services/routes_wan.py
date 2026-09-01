@@ -799,11 +799,15 @@ def mirrored_management_default_routes(
     return mirrored
 
 
-def wan_config_target_entries(config_preview: str) -> list[dict[str, str]]:
-    """Return target entries from a rendered Routes and WAN configuration.
+def _wan_config_named_entries(
+    config_preview: str,
+    section: str,
+) -> list[dict[str, str]]:
+    """Return named entries from one rendered Routes and WAN section.
 
     Args:
         config_preview: Previously rendered Routes and WAN configuration.
+        section: Section whose target-keyed entries should be parsed.
     """
     targets: list[dict[str, str]] = []
     current_section = ""
@@ -816,7 +820,7 @@ def wan_config_target_entries(config_preview: str) -> list[dict[str, str]]:
             current_section = line.strip("[]")
             current_target = None
             continue
-        if current_section != "targets" or "=" not in line:
+        if current_section != section or "=" not in line:
             continue
         key, value = [part.strip() for part in line.split("=", 1)]
         if key == "target":
@@ -825,6 +829,24 @@ def wan_config_target_entries(config_preview: str) -> list[dict[str, str]]:
         elif current_target is not None:
             current_target[key] = value
     return targets
+
+
+def wan_config_target_entries(config_preview: str) -> list[dict[str, str]]:
+    """Return target entries from a rendered Routes and WAN configuration.
+
+    Args:
+        config_preview: Previously rendered Routes and WAN configuration.
+    """
+    return _wan_config_named_entries(config_preview, "targets")
+
+
+def wan_config_retired_target_entries(config_preview: str) -> list[dict[str, str]]:
+    """Return durable target-route retirement entries from rendered configuration.
+
+    Args:
+        config_preview: Previously rendered Routes and WAN configuration.
+    """
+    return _wan_config_named_entries(config_preview, "retired_targets")
 
 
 def mirrored_management_default_keys(config_preview: str) -> set[tuple[str, str]]:
@@ -906,6 +928,37 @@ def render_wan_config(
                 f"  routing_domain={target.get('routing_domain', 'lab')}",
                 f"  route_allowed={_bool_value(bool(target.get('route_allowed', True)))}",
                 f"  management_ui={_bool_value(bool(target.get('management_ui', False)))}",
+            ]
+        )
+
+    current_lab_target_networks = {
+        (str(target.get("name") or ""), str(network))
+        for target in targets
+        if target.get("routing_domain") != "management"
+        for network in _target_networks(target)
+    }
+    retired_target_networks = {
+        (interface_name, str(network))
+        for previous_target in [
+            *wan_config_target_entries(previous_config_preview),
+            *wan_config_retired_target_entries(previous_config_preview),
+        ]
+        if previous_target.get("routing_domain") != "management"
+        if (interface_name := str(previous_target.get("name") or ""))
+        if interface_name not in absent_target_names
+        for network in (
+            [previous_target.get("network", "")]
+            if previous_target.get("network")
+            else _target_networks(previous_target)
+        )
+        if network and (interface_name, str(network)) not in current_lab_target_networks
+    }
+    lines.extend(["", "[retired_targets]"])
+    for interface_name, network in sorted(retired_target_networks):
+        lines.extend(
+            [
+                f"target={interface_name}",
+                f"  network={network}",
             ]
         )
 
@@ -1041,26 +1094,12 @@ def render_wan_config(
             "  # disabled Routing IPv6 lab policy cleanup"
         )
     target_network_owners = _target_network_owners(targets)
-    current_lab_target_networks = {
-        (str(target.get("name") or ""), str(network))
-        for target in targets
-        if target.get("routing_domain") != "management"
-        for network in _target_networks(target)
-    }
-    for previous_target in wan_config_target_entries(previous_config_preview):
-        if previous_target.get("routing_domain") == "management":
-            continue
-        interface_name = str(previous_target.get("name") or "")
-        if not interface_name or interface_name in absent_target_names:
-            continue
-        for network in _target_networks(previous_target):
-            if (interface_name, str(network)) in current_lab_target_networks:
-                continue
-            route_family = "-6 " if network.version == 6 else ""
-            lines.append(
-                f"ip {route_family}route del {network} dev {interface_name} "
-                f"table {LAB_ROUTE_TABLE_ID}  # retired omitted or ineligible WAN target"
-            )
+    for interface_name, network in sorted(retired_target_networks):
+        route_family = "-6 " if ip_network(network, strict=False).version == 6 else ""
+        lines.append(
+            f"ip {route_family}route del {network} dev {interface_name} "
+            f"table {LAB_ROUTE_TABLE_ID}  # retired omitted or ineligible WAN target"
+        )
     for index, target in enumerate(targets):
         management = target.get("routing_domain") == "management"
         table = MANAGEMENT_ROUTE_TABLE_ID if management else LAB_ROUTE_TABLE_ID
