@@ -202,7 +202,9 @@ also requires an explicit root to be inside a Git-ignored task subtree, preventi
 source inventory before immutable snapshot admission. The wrapper
 revalidates and pins the credential parent and invocation root before any sensitive staging, then transports those
 opaque filesystem identities into the isolated child so it re-admits the complete ancestry before creating its
-workspace or consuming credentials. It also retires exact
+workspace or consuming credentials. The plaintext-sensitive build root has its own transported filesystem identity;
+the child revalidates that identity plus each destination's complete reparse-free ancestry before decryption,
+kickstart and ISO generation, Packer variable creation, consumption, and cleanup. It also retires exact
 legacy address handoffs from bounded local checkout identity before requiring the current pull request to remain open,
 so a post-restart recovery is not stranded by later PR closure or head advancement. The task-owned builder-address
 handoff and pending-release directories are likewise pinned, transported into the isolated child, and revalidated

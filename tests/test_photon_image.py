@@ -3453,6 +3453,29 @@ def test_photon_child_revalidates_pinned_credential_ancestry() -> None:
     assert "'-StagingRootIdentity'" in wrapper
     assert "ParentIdentity = $StagingParentIdentity" in wrapper
     assert "RootIdentity   = $StagingRootIdentity" in wrapper
+    assert "'-SensitiveBuildRootIdentity'" in wrapper
+    assert "-RootIdentity $SensitiveBuildRootIdentity" in wrapper
+    assert "-SensitivePathValidator $sensitivePathValidator" in wrapper
+    sensitive_identity = wrapper.index(
+        "Assert-AtlasoPhotonSensitiveBuildPathIdentity `", child
+    )
+    assert sensitive_identity < credential_read
+
+    common = Path("scripts/windows/common/Atlaso.PhotonImage.psm1").read_text(
+        encoding="utf-8"
+    )
+    plaintext_conversion = common.index(
+        "ConvertFrom-SecureString -SecureString $SshPassword -AsPlainText"
+    )
+    validation = common.rindex(
+        "Assert-AtlasoSensitiveBuildPath -Validator $SensitivePathValidator",
+        0,
+        plaintext_conversion,
+    )
+    assert validation < plaintext_conversion
+    assert common.count(
+        "Assert-AtlasoSensitiveBuildPath -Validator $SensitivePathValidator"
+    ) >= 10
 
 
 def test_release_builder_legacy_recovery_uses_detached_branch_sentinel() -> None:

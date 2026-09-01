@@ -100,6 +100,20 @@ if ($credentialInitializer.Count -ne 1) {
     throw 'Expected exactly one Photon credential-root initializer.'
 }
 . ([scriptblock]::Create($credentialInitializer[0].Extent.Text))
+$sensitivePathValidatorFunction = @(
+    $ast.FindAll(
+        {
+            param($node)
+            $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and
+            $node.Name -ceq 'Assert-AtlasoPhotonSensitiveBuildPathIdentity'
+        },
+        $true
+    )
+)
+if ($sensitivePathValidatorFunction.Count -ne 1) {
+    throw 'Expected exactly one Photon sensitive-build path validator.'
+}
+. ([scriptblock]::Create($sensitivePathValidatorFunction[0].Extent.Text))
 
 $expectedDefault = Join-Path $resolvedRepositoryRoot '.atlaso-local\photon-image-build-state'
 $actualDefault = Resolve-AtlasoPhotonBuildStateRoot -RepositoryRoot $resolvedRepositoryRoot
@@ -381,6 +395,38 @@ try {
     if ((Test-Path -LiteralPath $schemaOneRoot) -or
         (Test-Path -LiteralPath $schemaOneMarkerPath)) {
         throw 'Photon cleanup did not upgrade and retire an active schema-1 marker after boot proof.'
+    }
+
+    $sensitiveCredentialRoot = Join-Path $fixtureRoot 'sensitive-credential-root'
+    $sensitiveBuildRoot = Join-Path $sensitiveCredentialRoot 'sensitive-build'
+    $sensitiveEscapeRoot = Join-Path $fixtureRoot 'sensitive-escape'
+    [void][System.IO.Directory]::CreateDirectory($sensitiveBuildRoot)
+    [void][System.IO.Directory]::CreateDirectory($sensitiveEscapeRoot)
+    $sensitiveBuildIdentity = Get-AtlasoPathIdentity `
+        -Path $sensitiveBuildRoot `
+        -Description 'Photon sensitive-build test root'
+    $renamedSensitiveRoot = Join-Path $sensitiveCredentialRoot 'sensitive-build-retained'
+    Move-Item -LiteralPath $sensitiveBuildRoot -Destination $renamedSensitiveRoot -ErrorAction Stop
+    [void](New-Item `
+            -ItemType Junction `
+            -Path $sensitiveBuildRoot `
+            -Target $sensitiveEscapeRoot `
+            -ErrorAction Stop)
+    $sensitivePathError = ''
+    try {
+        Assert-AtlasoPhotonSensitiveBuildPathIdentity `
+            -CredentialRoot $sensitiveCredentialRoot `
+            -SensitiveBuildRoot $sensitiveBuildRoot `
+            -RootIdentity $sensitiveBuildIdentity `
+            -Path (Join-Path $sensitiveBuildRoot 'packer-vars\atlaso-photon.auto.pkrvars.hcl')
+    }
+    catch {
+        $sensitivePathError = $_.Exception.Message
+    }
+    if ($sensitivePathError -notmatch 'reparse point|identity changed' -or
+        -not (Test-Path -LiteralPath $renamedSensitiveRoot -PathType Container) -or
+        (Test-Path -LiteralPath (Join-Path $sensitiveEscapeRoot 'packer-vars'))) {
+        throw 'Photon sensitive-build validation did not block a redirected plaintext workspace.'
     }
 
     $stagingBuildState = Join-Path $fixtureRoot 'staging-build-state'

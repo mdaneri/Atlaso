@@ -530,6 +530,25 @@ function Remove-AtlasoSensitiveBuildArtifact {
 
 <#
 .SYNOPSIS
+Invoke an optional provider-owned sensitive-path identity guard.
+.PARAMETER Validator
+Optional callback that proves the destination remains inside pinned build state.
+.PARAMETER Path
+Path whose ancestry and identity must be revalidated.
+#>
+function Assert-AtlasoSensitiveBuildPath {
+    param(
+        [scriptblock]$Validator,
+        [Parameter(Mandatory = $true)][string]$Path
+    )
+
+    if ($null -ne $Validator) {
+        & $Validator $Path
+    }
+}
+
+<#
+.SYNOPSIS
 Build or validate a supported Atlaso Photon image with Packer.
 .PARAMETER IsoUrl
 Pinned Photon source URL or path.
@@ -573,6 +592,8 @@ Optional pip index URL.
 Optional remastered ISO destination.
 .PARAMETER SensitiveBuildDirectory
 Optional task-owned directory that contains every plaintext credential artifact.
+.PARAMETER SensitivePathValidator
+Optional provider callback that revalidates pinned sensitive-path ancestry.
 .PARAMETER PackerOnError
 Packer failure-handling mode.
 .PARAMETER GuestPackages
@@ -617,6 +638,7 @@ function Invoke-AtlasoPhotonImageBuild {
         [string]$PipGlobalIndexUrl = '',
         [string]$PreparedIsoPath = '',
         [string]$SensitiveBuildDirectory = '',
+        [scriptblock]$SensitivePathValidator,
         [ValidateSet('cleanup', 'abort', 'ask', 'run-cleanup-provisioner')]
         [string]$PackerOnError = 'cleanup',
         [string[]]$GuestPackages = @(),
@@ -667,6 +689,7 @@ function Invoke-AtlasoPhotonImageBuild {
     else {
         $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($SensitiveBuildDirectory)
     }
+    Assert-AtlasoSensitiveBuildPath -Validator $SensitivePathValidator -Path $sensitiveBuildDir
     New-Item -ItemType Directory -Force -Path $sensitiveBuildDir | Out-Null
     if ([string]::IsNullOrWhiteSpace($PreparedIsoPath)) {
         $PreparedIsoPath = Join-Path $sensitiveBuildDir 'kickstart\atlaso-photon-with-kickstart.iso'
@@ -685,8 +708,11 @@ function Invoke-AtlasoPhotonImageBuild {
     $preparedIsoCleanupPaths = [System.Collections.Generic.List[string]]::new()
     try {
         try {
+            Assert-AtlasoSensitiveBuildPath -Validator $SensitivePathValidator -Path $ksSourceDir
             Remove-AtlasoSensitiveBuildArtifact -Path $ksSourceDir
+            Assert-AtlasoSensitiveBuildPath -Validator $SensitivePathValidator -Path $ksSourceDir
             New-Item -ItemType Directory -Force -Path $ksSourceDir | Out-Null
+            Assert-AtlasoSensitiveBuildPath -Validator $SensitivePathValidator -Path $kickstartJson
             New-AtlasoPhotonKickstart `
                 -Path $kickstartJson `
                 -RootPassword $SshPassword `
@@ -700,8 +726,10 @@ function Invoke-AtlasoPhotonImageBuild {
                 -PostInstallCommands $GuestPostInstallCommands `
                 -InstallDiskLayout $InstallDiskLayout
 
+            Assert-AtlasoSensitiveBuildPath -Validator $SensitivePathValidator -Path $buildDir
             $sourceIsoPath = Resolve-AtlasoPhotonSourceIso -UrlOrPath $IsoUrl -Checksum $IsoChecksum -BuildDirectory $buildDir -PackerDirectory $packerDir -SharedSourceDirectory $sharedSourceDir
             try {
+                Assert-AtlasoSensitiveBuildPath -Validator $SensitivePathValidator -Path $resolvedPreparedIsoPath
                 New-AtlasoRemasteredPhotonIso `
                     -SourceIso $sourceIsoPath `
                     -KickstartJson $kickstartJson `
@@ -711,6 +739,7 @@ function Invoke-AtlasoPhotonImageBuild {
                 $fallbackPreparedIsoPath = New-AtlasoFallbackPreparedIsoPath -Path $resolvedPreparedIsoPath
                 Write-Warning "Could not replace prepared ISO at $resolvedPreparedIsoPath; retrying this run with $fallbackPreparedIsoPath"
                 $resolvedPreparedIsoPath = $fallbackPreparedIsoPath
+                Assert-AtlasoSensitiveBuildPath -Validator $SensitivePathValidator -Path $resolvedPreparedIsoPath
                 New-AtlasoRemasteredPhotonIso `
                     -SourceIso $sourceIsoPath `
                     -KickstartJson $kickstartJson `
@@ -720,7 +749,9 @@ function Invoke-AtlasoPhotonImageBuild {
         } finally {
             # The remastered ISO owns the consumed kickstart payload. Do not retain
             # its plaintext build password in the ignored repository workspace.
+            Assert-AtlasoSensitiveBuildPath -Validator $SensitivePathValidator -Path $kickstartJson
             Remove-AtlasoSensitiveBuildArtifact -Path $kickstartJson
+            Assert-AtlasoSensitiveBuildPath -Validator $SensitivePathValidator -Path $ksSourceDir
             Remove-AtlasoSensitiveBuildArtifact -Path $ksSourceDir
         }
         $preparedIso = Get-Item -LiteralPath $resolvedPreparedIsoPath -ErrorAction Stop
@@ -739,6 +770,7 @@ function Invoke-AtlasoPhotonImageBuild {
         $sshPasswordText = $null
         $bootstrapAdminPasswordText = $null
         try {
+            Assert-AtlasoSensitiveBuildPath -Validator $SensitivePathValidator -Path $varFilePath
             $sshPasswordText = ConvertFrom-SecureString -SecureString $SshPassword -AsPlainText
             $bootstrapAdminPasswordText = ConvertFrom-SecureString -SecureString $BootstrapAdminPassword -AsPlainText
             $packerVariables = @{
@@ -770,6 +802,7 @@ function Invoke-AtlasoPhotonImageBuild {
         $packerVariables[$key] = $AdditionalPackerVariables[$key]
     }
 
+    Assert-AtlasoSensitiveBuildPath -Validator $SensitivePathValidator -Path $varFilePath
     Write-AtlasoPackerVarFile -Path $varFilePath -Variables $packerVariables
     Write-Host "Using Packer var-file: $varFilePath"
 
@@ -797,9 +830,11 @@ function Invoke-AtlasoPhotonImageBuild {
                     throw "Exact Packer plugin verification failed with exit code $LASTEXITCODE."
                 }
                 if (-not $ValidateOnly -and $null -ne $PackerBuildInvoker) {
+                    Assert-AtlasoSensitiveBuildPath -Validator $SensitivePathValidator -Path $varFilePath
                     & $PackerBuildInvoker $packerArgs $packerDir
                 }
                 else {
+                    Assert-AtlasoSensitiveBuildPath -Validator $SensitivePathValidator -Path $varFilePath
                     & packer @packerArgs
                     if ($LASTEXITCODE -ne 0) {
                         $operation = if ($ValidateOnly) { 'validate' } else { 'build' }
@@ -813,6 +848,7 @@ function Invoke-AtlasoPhotonImageBuild {
             try {
                 # The var file is needed only by the bounded Packer child and must
                 # not leave reusable plaintext credentials in the build workspace.
+                Assert-AtlasoSensitiveBuildPath -Validator $SensitivePathValidator -Path $varFilePath
                 Remove-AtlasoSensitiveBuildArtifact -Path $varFilePath
             }
             finally {
@@ -827,6 +863,7 @@ function Invoke-AtlasoPhotonImageBuild {
         $preparedIsoCleanupFailures = [System.Collections.Generic.List[string]]::new()
         foreach ($candidatePath in @($preparedIsoCleanupPaths | Select-Object -Unique)) {
             try {
+                Assert-AtlasoSensitiveBuildPath -Validator $SensitivePathValidator -Path $candidatePath
                 Remove-AtlasoSensitiveBuildArtifact -Path $candidatePath
             } catch {
                 $preparedIsoCleanupFailures.Add("$candidatePath ($($_.Exception.Message))")

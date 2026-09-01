@@ -47,6 +47,8 @@ Internal JSON transport for the non-secret builder DNS server array.
 Internal marker preserving whether the caller explicitly bound the builder DNS array.
 .PARAMETER SensitiveBuildDirectory
 Internal task-owned directory containing all plaintext image-build artifacts.
+.PARAMETER SensitiveBuildRootIdentity
+Internal pinned filesystem identity for the plaintext-sensitive build root.
 .PARAMETER OutputCleanupClaimPath
 Internal durable marker proving the isolated child claimed a pre-existing output root.
 .PARAMETER OutputClaimGeneration
@@ -199,6 +201,7 @@ param(
     [string]$BuilderStaticDnsJson = '',
     [switch]$BuilderStaticDnsBound,
     [string]$SensitiveBuildDirectory = '',
+    [string]$SensitiveBuildRootIdentity = '',
     [string]$OutputCleanupClaimPath = '',
     [string]$OutputClaimGeneration = '',
     [string]$BuilderAddressReservationPath = '',
@@ -472,6 +475,49 @@ function Assert-AtlasoPhotonCredentialRootIdentity {
         (Get-AtlasoPathIdentity -Path $CredentialRoot -Description 'Photon credential root') -ne
         $Identity.RootIdentity) {
         throw 'Photon credential ancestry changed after it was admitted; sensitive staging was blocked.'
+    }
+}
+
+<#
+.SYNOPSIS
+Revalidate the pinned plaintext-sensitive root and one path beneath it.
+.PARAMETER CredentialRoot
+Invocation-owned credential root.
+.PARAMETER SensitiveBuildRoot
+Pinned root containing plaintext image-build artifacts.
+.PARAMETER RootIdentity
+Expected filesystem identity of the sensitive-build root.
+.PARAMETER Path
+Sensitive path whose complete ancestry must remain beneath the pinned root.
+#>
+function Assert-AtlasoPhotonSensitiveBuildPathIdentity {
+    [Diagnostics.CodeAnalysis.SuppressMessageAttribute(
+        'PSAvoidUsingPlainTextForPassword',
+        'CredentialRoot',
+        Justification = 'Filesystem path for credential staging, not credential material.'
+    )]
+    param(
+        [Parameter(Mandatory = $true)][string]$CredentialRoot,
+        [Parameter(Mandatory = $true)][string]$SensitiveBuildRoot,
+        [Parameter(Mandatory = $true)][string]$RootIdentity,
+        [Parameter(Mandatory = $true)][string]$Path
+    )
+
+    $resolvedSensitiveRoot = [System.IO.Path]::GetFullPath($SensitiveBuildRoot)
+    $resolvedPath = [System.IO.Path]::GetFullPath($Path)
+    Assert-AtlasoStrictDescendantPath `
+        -ParentPath $CredentialRoot `
+        -ChildPath $resolvedSensitiveRoot `
+        -FailureMessage 'Photon sensitive-build root escaped the credential root'
+    if ((Get-AtlasoPathIdentity -Path $resolvedSensitiveRoot -Description 'Photon sensitive-build root') -cne
+        $RootIdentity) {
+        throw 'Photon sensitive-build root identity changed; plaintext staging was blocked.'
+    }
+    if (-not $resolvedPath.Equals($resolvedSensitiveRoot, [StringComparison]::OrdinalIgnoreCase)) {
+        Assert-AtlasoStrictDescendantPath `
+            -ParentPath $resolvedSensitiveRoot `
+            -ChildPath $resolvedPath `
+            -FailureMessage 'Photon plaintext path escaped the sensitive-build root'
     }
 }
 
@@ -1185,7 +1231,8 @@ if (-not $CredentialChild -and (
         -not [string]::IsNullOrWhiteSpace($VerifiedSourceBranch) -or
         -not [string]::IsNullOrWhiteSpace($VerifiedSourceCommit) -or
         -not [string]::IsNullOrWhiteSpace($BuilderHandoffStateIdentity) -or
-        -not [string]::IsNullOrWhiteSpace($BuilderHandoffPendingIdentity)
+        -not [string]::IsNullOrWhiteSpace($BuilderHandoffPendingIdentity) -or
+        -not [string]::IsNullOrWhiteSpace($SensitiveBuildRootIdentity)
     )) {
     throw 'Internal builder identity and handoff fields may be supplied only to the isolated child.'
 }
@@ -1362,9 +1409,11 @@ if (-not $CredentialChild -and $ReleaseBuilder) {
         -VmName $VmName `
         -SourceBranch $legacySourceBranch
 }
+$sensitivePathValidator = $null
 if ($CredentialChild) {
     if ([string]::IsNullOrWhiteSpace($StagingParentIdentity) -or
         [string]::IsNullOrWhiteSpace($StagingRootIdentity) -or
+        [string]::IsNullOrWhiteSpace($SensitiveBuildRootIdentity) -or
         [string]::IsNullOrWhiteSpace($CredentialBundlePath)) {
         throw 'The isolated Photon credential-root identity is unavailable or invalid.'
     }
@@ -1410,6 +1459,11 @@ if ($CredentialChild) {
         -not $sensitiveBuildRoot.StartsWith($credentialRootPrefix, [StringComparison]::OrdinalIgnoreCase)) {
         throw 'The isolated Photon sensitive-build root is unavailable or invalid.'
     }
+    Assert-AtlasoPhotonSensitiveBuildPathIdentity `
+        -CredentialRoot $credentialBundleRoot `
+        -SensitiveBuildRoot $sensitiveBuildRoot `
+        -RootIdentity $SensitiveBuildRootIdentity `
+        -Path $sensitiveBuildRoot
     $sensitiveBuildPrefix = $sensitiveBuildRoot.TrimEnd(
         [System.IO.Path]::DirectorySeparatorChar,
         [System.IO.Path]::AltDirectorySeparatorChar
@@ -1459,6 +1513,11 @@ if ($CredentialChild) {
         )) {
         throw 'The isolated Photon Packer working directory is unavailable or invalid.'
     }
+    Assert-AtlasoPhotonSensitiveBuildPathIdentity `
+        -CredentialRoot $credentialBundleRoot `
+        -SensitiveBuildRoot $sensitiveBuildRoot `
+        -RootIdentity $SensitiveBuildRootIdentity `
+        -Path (Join-Path $sensitiveBuildRoot 'source-verification')
     $null = Assert-AtlasoSourceSnapshotCommitBinding `
         -Root $resolvedSourceSnapshotRoot `
         -RepositoryRoot $resolvedTaskRepositoryRoot `
@@ -1474,6 +1533,11 @@ if ($CredentialChild) {
             ParentIdentity = $StagingParentIdentity
             RootIdentity   = $StagingRootIdentity
         })
+    Assert-AtlasoPhotonSensitiveBuildPathIdentity `
+        -CredentialRoot $credentialBundleRoot `
+        -SensitiveBuildRoot $sensitiveBuildRoot `
+        -RootIdentity $SensitiveBuildRootIdentity `
+        -Path $resolvedChildPackerDirectory
     New-Item -ItemType Directory -Path $resolvedChildPackerDirectory -ErrorAction Stop | Out-Null
     $packerTemplatePath = Join-Path `
         $resolvedSourceSnapshotRoot `
@@ -1521,6 +1585,11 @@ if ($CredentialChild) {
             ParentIdentity = $StagingParentIdentity
             RootIdentity   = $StagingRootIdentity
         })
+    Assert-AtlasoPhotonSensitiveBuildPathIdentity `
+        -CredentialRoot $credentialBundleRoot `
+        -SensitiveBuildRoot $sensitiveBuildRoot `
+        -RootIdentity $SensitiveBuildRootIdentity `
+        -Path $sensitiveBuildRoot
     try {
         $credentialBundle = Get-Content -LiteralPath $CredentialBundlePath -Raw | ConvertFrom-Json
         $bundleProperties = @($credentialBundle.PSObject.Properties.Name)
@@ -1548,6 +1617,14 @@ if ($CredentialChild) {
             throw 'The isolated Photon builder DNS transport is invalid.'
         }
     }
+    $sensitivePathValidator = {
+        param($Path)
+        Assert-AtlasoPhotonSensitiveBuildPathIdentity `
+            -CredentialRoot $credentialBundleRoot `
+            -SensitiveBuildRoot $sensitiveBuildRoot `
+            -RootIdentity $SensitiveBuildRootIdentity `
+            -Path $Path
+    }.GetNewClosure()
 }
 else {
     $canonicalPackerDirectory = [System.IO.Path]::GetFullPath(
@@ -1706,6 +1783,13 @@ else {
         -CredentialStateRoot $credentialStateRoot `
         -CredentialRoot $credentialRoot `
         -Identity $credentialRootIdentity
+    Assert-AtlasoStrictDescendantPath `
+        -ParentPath $credentialRoot `
+        -ChildPath $childSensitiveBuildDirectory `
+        -FailureMessage 'Photon sensitive-build root escaped the credential root'
+    $sensitiveBuildRootIdentity = Get-AtlasoPathIdentity `
+        -Path $childSensitiveBuildDirectory `
+        -Description 'Photon sensitive-build root'
     $cleanupMarkerDirectory = Split-Path -Parent $cleanupMarkerPath
     [void][System.IO.Directory]::CreateDirectory($cleanupMarkerDirectory)
     $cleanupMarkerPayload = [ordered]@{
@@ -1728,6 +1812,11 @@ else {
             -CredentialStateRoot $credentialStateRoot `
             -CredentialRoot $credentialRoot `
             -Identity $credentialRootIdentity
+        Assert-AtlasoPhotonSensitiveBuildPathIdentity `
+            -CredentialRoot $credentialRoot `
+            -SensitiveBuildRoot $childSensitiveBuildDirectory `
+            -RootIdentity $sensitiveBuildRootIdentity `
+            -Path $childSensitiveBuildDirectory
         $sourceSnapshot = New-AtlasoImmutableSourceSnapshot `
             -RepositoryRoot $repoRoot `
             -StagingRoot $childSensitiveBuildDirectory
@@ -1753,6 +1842,11 @@ else {
             -CredentialStateRoot $credentialStateRoot `
             -CredentialRoot $credentialRoot `
             -Identity $credentialRootIdentity
+        Assert-AtlasoPhotonSensitiveBuildPathIdentity `
+            -CredentialRoot $credentialRoot `
+            -SensitiveBuildRoot $childSensitiveBuildDirectory `
+            -RootIdentity $sensitiveBuildRootIdentity `
+            -Path $childCredentialBundlePath
         [System.IO.File]::WriteAllText(
             $childCredentialBundlePath,
             ($credentialPayload | ConvertTo-Json -Compress),
@@ -1773,6 +1867,7 @@ else {
             '-StagingParentIdentity', ([string]$credentialRootIdentity.ParentIdentity),
             '-StagingRootIdentity', ([string]$credentialRootIdentity.RootIdentity),
             '-SensitiveBuildDirectory', $childSensitiveBuildDirectory,
+            '-SensitiveBuildRootIdentity', ([string]$sensitiveBuildRootIdentity),
             '-OutputCleanupClaimPath', $childOutputCleanupClaimPath,
             '-OutputClaimGeneration', $childOutputClaimGeneration,
             '-BuilderAddressReservationPath', $childBuilderAddressReservationPath,
@@ -1808,7 +1903,7 @@ else {
             'CredentialBundlePath', 'CredentialChild',
             'StagingParentIdentity', 'StagingRootIdentity',
             'BuilderStaticDnsJson', 'BuilderStaticDnsBound',
-            'SensitiveBuildDirectory', 'OutputCleanupClaimPath',
+            'SensitiveBuildDirectory', 'SensitiveBuildRootIdentity', 'OutputCleanupClaimPath',
             'OutputClaimGeneration',
             'BuilderAddressReservationPath',
             'BuilderHandoffStateIdentity', 'BuilderHandoffPendingIdentity',
@@ -2666,6 +2761,7 @@ Invoke-AtlasoPhotonImageBuild `
     -PipGlobalIndexUrl $PipGlobalIndexUrl `
     -PreparedIsoPath $PreparedIsoPath `
     -SensitiveBuildDirectory $SensitiveBuildDirectory `
+    -SensitivePathValidator $sensitivePathValidator `
     -PackerOnError $PackerOnError `
     -GuestPackages @('open-vm-tools', 'hyper-v') `
     -GuestPostInstallCommands @(
