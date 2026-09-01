@@ -272,6 +272,40 @@ def test_helper_database_url_preserves_single_quoted_backslashes(monkeypatch, tm
     )
 
 
+def test_helper_factory_reset_runner_rejects_concatenated_quotes(monkeypatch, tmp_path):
+    """Console recovery rejects systemd quote concatenation it does not decode.
+
+    Args:
+        monkeypatch: Pytest fixture used to isolate the helper process environment.
+        tmp_path: Temporary directory provided for the installed runtime fixtures.
+    """
+    from tests.test_appliance_update import load_helper_module
+
+    helper = load_helper_module()
+    python = tmp_path / "python"
+    python.write_bytes(b"python")
+    environment_path = tmp_path / "atlaso.env"
+    environment_path.write_text(
+        "ATLASO_DATABASE_URL='sqlite:////var/lib/atlaso/control'' plane.db'\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(helper, "ATLASO_FACTORY_RESET_PYTHON", python)
+    monkeypatch.setattr(helper, "ATLASO_ENV_PATH", environment_path)
+    monkeypatch.setattr(
+        helper,
+        "_run",
+        lambda *_args, **_kwargs: pytest.fail("factory-reset runtime must not start"),
+    )
+
+    result = helper._factory_reset_runner(boot_resume=True)
+
+    assert result.returncode == 1
+    assert result.stdout == ""
+    assert result.stderr == (
+        "ATLASO_DATABASE_URL uses unsupported concatenated EnvironmentFile quotes.\n"
+    )
+
+
 def test_helper_factory_reset_runner_rejects_multiline_environment_file_value(
     monkeypatch, tmp_path
 ):
