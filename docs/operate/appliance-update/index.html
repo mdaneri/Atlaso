@@ -3904,7 +3904,9 @@ signatures, and bundles without re-signing them. Every source must satisfy the s
 remain encrypted in the database and move to the privileged helper only in the existing mode-0600 transient file.
 Synchronized managed Photon repository files remain credential-free. Authenticated TDNF calls use a root-only
 repository view in volatile <code>/run</code> storage, which is removed after each command. Credentials are not written to durable
-package-client configuration, manifests, tasks, audits, URLs, command arguments, or helper output.</p>
+package-client configuration, manifests, tasks, audits, URLs, command arguments, or helper output. The helper fails
+closed when the volatile repository root is unavailable, is not a directory, is a symbolic link, is not owned by root,
+or is writable by group or other users.</p>
 <p>Create a Photon, PowerShell, or Atlaso source from the <strong>+ Repository</strong> launcher in that ecosystem's repository tab
 strip. The guided workflow collects repository identity, its endpoint and ecosystem-specific trust policy, desired
 availability, and a final review. Configured source tabs remain read-only. Select <strong>Edit repository</strong> beside <strong>Delete
