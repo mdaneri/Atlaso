@@ -249,6 +249,29 @@ def test_helper_factory_reset_runner_rejects_environment_file_escapes(monkeypatc
     )
 
 
+def test_helper_database_url_preserves_single_quoted_backslashes(monkeypatch, tmp_path):
+    """Single-quoted backslashes retain their literal systemd meaning.
+
+    Args:
+        monkeypatch: Pytest fixture used to isolate the helper environment file.
+        tmp_path: Temporary directory provided for the installed runtime fixture.
+    """
+    from tests.test_appliance_update import load_helper_module
+
+    helper = load_helper_module()
+    environment_path = tmp_path / "atlaso.env"
+    environment_path.write_text(
+        "ATLASO_DATABASE_URL='sqlite:////var/lib/atlaso/control\\plane.db'\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(helper, "ATLASO_ENV_PATH", environment_path)
+
+    assert (
+        helper._installed_atlaso_database_url()
+        == "sqlite:////var/lib/atlaso/control\\plane.db"
+    )
+
+
 def test_helper_factory_reset_runner_rejects_multiline_environment_file_value(
     monkeypatch, tmp_path
 ):
@@ -266,6 +289,44 @@ def test_helper_factory_reset_runner_rejects_multiline_environment_file_value(
     environment_path = tmp_path / "atlaso.env"
     environment_path.write_text(
         'ATLASO_DATABASE_URL="sqlite:////var/lib/atlaso/control\n plane.db"\n',
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(helper, "ATLASO_FACTORY_RESET_PYTHON", python)
+    monkeypatch.setattr(helper, "ATLASO_ENV_PATH", environment_path)
+    monkeypatch.setattr(
+        helper,
+        "_run",
+        lambda *_args, **_kwargs: pytest.fail("factory-reset runtime must not start"),
+    )
+
+    result = helper._factory_reset_runner(boot_resume=True)
+
+    assert result.returncode == 1
+    assert result.stdout == ""
+    assert result.stderr == (
+        "ATLASO_DATABASE_URL uses an unsupported multiline EnvironmentFile value.\n"
+    )
+
+
+def test_helper_factory_reset_runner_ignores_assignment_inside_multiline_value(
+    monkeypatch, tmp_path
+):
+    """Assignment-shaped continuation text cannot select a different database.
+
+    Args:
+        monkeypatch: Pytest fixture used to isolate the helper process environment.
+        tmp_path: Temporary directory provided for the installed runtime fixtures.
+    """
+    from tests.test_appliance_update import load_helper_module
+
+    helper = load_helper_module()
+    python = tmp_path / "python"
+    python.write_bytes(b"python")
+    environment_path = tmp_path / "atlaso.env"
+    environment_path.write_text(
+        'ATLASO_DATABASE_URL="sqlite:////var/lib/atlaso/control\n'
+        "ATLASO_DATABASE_URL=sqlite:////var/lib/atlaso/decoy.db\n"
+        ' plane.db"\n',
         encoding="utf-8",
     )
     monkeypatch.setattr(helper, "ATLASO_FACTORY_RESET_PYTHON", python)
