@@ -27,6 +27,9 @@ WAN_CONFIG_PATH = "/var/lib/atlaso/apply/wan/atlaso-wan.conf"
 WAN_MODES = ["interface"]
 MANAGEMENT_ROUTE_TABLE_ID = 100
 LAB_ROUTE_TABLE_ID = 200
+MANAGEMENT_ROUTE_RULE_PRIORITY = 1000
+LAB_ROUTE_RULE_PRIORITY = 2000
+ROUTE_RULE_PRIORITY_WINDOW = 100
 MANAGEMENT_ROUTE_TABLE_NAME = "atlaso_mgmt"
 LAB_ROUTE_TABLE_NAME = "atlaso_lab"
 DEFAULT_ROUTE_DESTINATIONS = {4: "0.0.0.0/0", 6: "::/0"}
@@ -994,6 +997,18 @@ def render_wan_config(
     lines.append(
         f"sysctl -w net.ipv6.conf.all.forwarding={forwarding_value}  # global Routing switch"
     )
+    if not settings.routing_enabled:
+        final_lab_priority = LAB_ROUTE_RULE_PRIORITY + ROUTE_RULE_PRIORITY_WINDOW - 1
+        lines.append(
+            f"for priority in $(seq {LAB_ROUTE_RULE_PRIORITY} {final_lab_priority}); do "
+            'ip rule del priority "$priority" 2>/dev/null || true; done'
+            "  # disabled Routing lab policy cleanup"
+        )
+        lines.append(
+            f"for priority in $(seq {LAB_ROUTE_RULE_PRIORITY} {final_lab_priority}); do "
+            'ip -6 rule del priority "$priority" 2>/dev/null || true; done'
+            "  # disabled Routing IPv6 lab policy cleanup"
+        )
     target_network_owners = _target_network_owners(targets)
     for index, target in enumerate(targets):
         management = target.get("routing_domain") == "management"
@@ -1005,7 +1020,7 @@ def render_wan_config(
                     f"ip {route_family}route del {network} dev {target['name']} table {table}"
                 )
             continue
-        priority = (1000 if management else 2000) + index
+        priority = (MANAGEMENT_ROUTE_RULE_PRIORITY if management else LAB_ROUTE_RULE_PRIORITY) + index
         gateways = [
             str(target.get(key, "") or "").strip()
             for key in ("gateway", "ipv6_gateway")
