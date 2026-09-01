@@ -864,7 +864,8 @@ def connect_password_or_keyboard_interactive(client, host, username, password):
         if known_key_entry is None:
             raise paramiko.SSHException(
                 f"Unknown SSH host key for {host}; add the verified key to known_hosts "
-                "or pass the normal test VM's verified guest-info evidence with -VmxPath."
+                "or pass the normal test VM's verified guest-info evidence with "
+                "-VmxPath and -UseVmwareGuestInfoHostKey."
             )
         elif not any(server_key == expected_key for expected_key in known_key_entry.values()):
             expected_key = next(iter(known_key_entry.values()))

@@ -94,7 +94,8 @@ if (-not $scriptText.Contains('paramiko.RejectPolicy()', [System.StringCompariso
     throw 'Password-backed deployment must reject unknown SSH host keys.'
 }
 if ($scriptText.Contains('client._policy.missing_host_key(client, host, server_key)', [System.StringComparison]::Ordinal) -or
-    -not $scriptText.Contains('Unknown SSH host key for {host}', [System.StringComparison]::Ordinal)) {
+    -not $scriptText.Contains('Unknown SSH host key for {host}', [System.StringComparison]::Ordinal) -or
+    -not $scriptText.Contains('-VmxPath and -UseVmwareGuestInfoHostKey.', [System.StringComparison]::Ordinal)) {
     throw 'Unknown host keys must use a controlled rejection that does not require an attached SSHClient transport.'
 }
 if (-not $scriptText.Contains('Get-AtlasoWorkstationSshHostKey', [System.StringComparison]::Ordinal) -or
