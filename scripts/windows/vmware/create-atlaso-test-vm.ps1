@@ -2938,7 +2938,17 @@ $developmentRootCaFingerprint = Get-AtlasoDevelopmentRootCaFingerprint `
     -CertificatePath $developmentRootCaCertificatePath
 $resolvedOpPath = ''
 $resolvedVmrunPath = ''
+if ($NoStart) {
+    throw '-NoStart is not supported for normal test VMs because first boot must consume and scrub the shared development signing key.'
+}
 if (-not $WhatIfPreference) {
+    # Admit the exact fork release before recovery or any credential-side
+    # activity. The later isolated runtime repeats the verification inside its
+    # private credential root before installation.
+    $OnePasswordPython = Confirm-OnePasswordTestVmArtifact `
+        -RepositoryRoot $repoRoot `
+        -PythonCommand $OnePasswordPython `
+        -TimeoutSeconds $TimeoutSeconds
     # Recovery consumes no 1Password material. Run it first so revoked or
     # rotated credentials cannot strand an earlier plaintext-staging failure.
     $resolvedVmrunPath = Resolve-TestVmVmrunPath -Path $VmrunPath
@@ -2947,17 +2957,7 @@ if (-not $WhatIfPreference) {
         -TimeoutSeconds ([Math]::Min($TimeoutSeconds, 30)) `
         -ExpectedFingerprint $developmentRootCaFingerprint
 }
-if ($NoStart) {
-    throw '-NoStart is not supported for normal test VMs because first boot must consume and scrub the shared development signing key.'
-}
 if (-not $WhatIfPreference) {
-    # Admit the exact fork release before the development-CA bridge or account
-    # discovery can touch 1Password. The later isolated runtime repeats the
-    # verification inside its private credential root before installation.
-    $OnePasswordPython = Confirm-OnePasswordTestVmArtifact `
-        -RepositoryRoot $repoRoot `
-        -PythonCommand $OnePasswordPython `
-        -TimeoutSeconds $TimeoutSeconds
     # Resolve new Environment configuration only after credential-independent
     # recovery has scrubbed any signer staging left by an interrupted prior run.
     $OnePasswordEnvironmentId = Resolve-OnePasswordDevelopmentCaEnvironmentId `
