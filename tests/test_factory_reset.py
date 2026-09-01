@@ -132,6 +132,87 @@ def test_factory_reset_runner_waits_for_admission_lock(monkeypatch):
     assert observed_waits == [factory_reset.FACTORY_RESET_RUNNER_LOCK_WAIT_SECONDS]
 
 
+def test_helper_factory_reset_runner_uses_installed_database_url(monkeypatch, tmp_path):
+    """Console recovery inherits the appliance database path without sourcing secrets.
+
+    Args:
+        monkeypatch: Pytest fixture used to isolate the helper process environment.
+        tmp_path: Temporary directory provided for the installed runtime fixtures.
+    """
+    from tests.test_appliance_update import load_helper_module
+
+    helper = load_helper_module()
+    python = tmp_path / "python"
+    python.write_bytes(b"python")
+    environment_path = tmp_path / "atlaso.env"
+    environment_path.write_text(
+        "ATLASO_DATABASE_URL=sqlite:////var/lib/atlaso/atlaso.db\n"
+        "ATLASO_SECRET_KEY=must-not-be-imported-by-the-helper\n",
+        encoding="utf-8",
+    )
+    captured: dict[str, object] = {}
+    monkeypatch.setenv("ATLASO_DATABASE_URL", "sqlite:////data/caller-override.db")
+    monkeypatch.delenv("ATLASO_SECRET_KEY", raising=False)
+    monkeypatch.setattr(helper, "ATLASO_FACTORY_RESET_PYTHON", python)
+    monkeypatch.setattr(helper, "ATLASO_ENV_PATH", environment_path)
+
+    def run(command, *, env=None, **_kwargs):
+        """Capture the exact child environment selected for console recovery.
+
+        Args:
+            command: Command selected for the factory-reset runtime.
+            env: Explicit child-process environment.
+            **_kwargs: Additional command-runner options unused by this test.
+        """
+        captured["command"] = command
+        captured["environment"] = env
+        return subprocess.CompletedProcess(command, 0, "complete", "")
+
+    monkeypatch.setattr(helper, "_run", run)
+
+    result = helper._factory_reset_runner(boot_resume=True)
+
+    assert result.returncode == 0
+    assert captured["command"] == [str(python), "-m", "atlaso.app.factory_reset"]
+    child_environment = captured["environment"]
+    assert isinstance(child_environment, dict)
+    assert child_environment["ATLASO_DATABASE_URL"] == "sqlite:////var/lib/atlaso/atlaso.db"
+    assert child_environment["ATLASO_FACTORY_RESET_BOOT_RESUME"] == "1"
+    assert "ATLASO_SECRET_KEY" not in child_environment
+
+
+def test_helper_factory_reset_runner_fails_when_database_url_is_unavailable(monkeypatch, tmp_path):
+    """Console recovery never falls back to the development database path.
+
+    Args:
+        monkeypatch: Pytest fixture used to isolate the helper process environment.
+        tmp_path: Temporary directory provided for the installed runtime fixtures.
+    """
+    from tests.test_appliance_update import load_helper_module
+
+    helper = load_helper_module()
+    python = tmp_path / "python"
+    python.write_bytes(b"python")
+    environment_path = tmp_path / "atlaso.env"
+    environment_path.write_text("ATLASO_ENVIRONMENT=appliance\n", encoding="utf-8")
+    monkeypatch.delenv("ATLASO_DATABASE_URL", raising=False)
+    monkeypatch.setattr(helper, "ATLASO_FACTORY_RESET_PYTHON", python)
+    monkeypatch.setattr(helper, "ATLASO_ENV_PATH", environment_path)
+    monkeypatch.setattr(
+        helper,
+        "_run",
+        lambda *_args, **_kwargs: pytest.fail("factory-reset runtime must not start"),
+    )
+
+    result = helper._factory_reset_runner(boot_resume=True)
+
+    assert result.returncode == 1
+    assert result.stdout == ""
+    assert result.stderr == (
+        "ATLASO_DATABASE_URL is missing from the Atlaso appliance environment.\n"
+    )
+
+
 @pytest.mark.skipif(os.name != "posix", reason="requires POSIX descriptor paths")
 def test_factory_reset_runner_pins_admitted_state_directory(tmp_path):
     """Runner state remains bound to the admitted directory after replacement.

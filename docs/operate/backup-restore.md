@@ -159,7 +159,9 @@ tty1 console, nginx, and two consecutive management `/openapi.json` checks are r
 preserve the VM,
 inspect `journalctl -u atlaso-factory-reset`, correct the reported
 runtime prerequisite, and reboot or run `sudo /opt/atlaso/bin/atlaso-helper factory-reset resume --real` from the local
-console. Resume is idempotent and retains the old database until a validated candidate is ready for replacement. A
+console. The console helper reads the installed appliance database URL from `/etc/atlaso/atlaso.env`, so recovery uses
+the same database as `atlaso.service` without evaluating or exporting other environment-file values. Resume is
+idempotent and retains the old database until a validated candidate is ready for replacement. A
 nonblocking transaction lock rejects overlapping scheduled, boot-resume, or console runners without allowing them to
 modify the active reset transaction; the pending systemd delay timer is part of that active transaction.
 

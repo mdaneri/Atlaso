@@ -19061,6 +19061,31 @@ def _factory_reset_state_payload() -> dict:
     return {"schema_version": 1, "state": "idle", "updated_at": "", "message": ""}
 
 
+def _installed_atlaso_database_url() -> str:
+    """Read the installed database URL without evaluating environment-file content."""
+    try:
+        source_lines = ATLASO_ENV_PATH.read_text(encoding="utf-8").splitlines()
+    except OSError as exc:
+        raise ValueError("Atlaso appliance database configuration is unavailable.") from exc
+    for raw_line in source_lines:
+        candidate = raw_line.strip()
+        if candidate.startswith("export "):
+            candidate = candidate.removeprefix("export ").lstrip()
+        if not candidate.startswith("ATLASO_DATABASE_URL="):
+            continue
+        database_url = candidate.partition("=")[2].strip()
+        if (
+            len(database_url) >= 2
+            and database_url[0] == database_url[-1]
+            and database_url[0] in {'"', "'"}
+        ):
+            database_url = database_url[1:-1]
+        if database_url:
+            return database_url
+        break
+    raise ValueError("ATLASO_DATABASE_URL is missing from the Atlaso appliance environment.")
+
+
 def _factory_reset_runner(*, boot_resume: bool) -> subprocess.CompletedProcess[str]:
     """Run the installed reset transaction synchronously.
 
@@ -19075,6 +19100,15 @@ def _factory_reset_runner(*, boot_resume: bool) -> subprocess.CompletedProcess[s
             "Atlaso factory-reset runtime is unavailable.\n",
         )
     environment = os.environ.copy()
+    try:
+        environment["ATLASO_DATABASE_URL"] = _installed_atlaso_database_url()
+    except ValueError as exc:
+        return subprocess.CompletedProcess(
+            [str(ATLASO_FACTORY_RESET_PYTHON), "-m", "atlaso.app.factory_reset"],
+            1,
+            "",
+            f"{exc}\n",
+        )
     if boot_resume:
         environment["ATLASO_FACTORY_RESET_BOOT_RESUME"] = "1"
     return _run(
