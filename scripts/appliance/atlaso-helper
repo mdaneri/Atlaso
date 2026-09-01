@@ -19446,6 +19446,7 @@ def _installed_atlaso_database_url() -> str:
         assignment_name, separator, assignment_value = candidate.partition("=")
         if not separator:
             continue
+        assignment_name = assignment_name.strip(" \t")
         assignment_value = assignment_value.strip(" \t\r")
         assignment_quote = (
             assignment_value[0] if assignment_value.startswith(('"', "'")) else ""
