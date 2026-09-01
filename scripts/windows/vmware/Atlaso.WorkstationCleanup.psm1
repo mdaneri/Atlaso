@@ -686,20 +686,20 @@ function Remove-AtlasoWorkstationStaleRegistrations {
             if ($line -notmatch '^\s*(?<owner>vmlist\d+\.config|index\d+\.id)\s*=\s*(?<value>.*)$') { continue }
             $rawValue = $Matches.value.Trim()
             $rawOwner = $Matches.owner
-            $rawCandidates = @(); $hasCompleteQuotedValue = $false
-            $candidateStart = 0
+            $rawCandidates = @(); $candidateStart = 0
             if ($rawValue.Length -gt 0 -and $rawValue[0] -in @([char]34, [char]39)) {
                 $openingQuote = $rawValue[0]; $candidateStart = 1
                 while ($candidateStart -lt $rawValue.Length -and $rawValue[$candidateStart] -eq $openingQuote) { $candidateStart++ }
-                if ($rawValue.Length -gt $candidateStart -and $rawValue[$rawValue.Length - 1] -eq $openingQuote) {
-                    $completeCandidate = $rawValue.Substring($candidateStart, $rawValue.Length - $candidateStart - 1)
-                    if ($openingQuote -ne [char]34 -or -not $completeCandidate.Contains([string][char]34)) {
-                        $hasCompleteQuotedValue = $true; $rawCandidates = @($completeCandidate)
-                    }
-                }
             }
-            if (-not $hasCompleteQuotedValue) {
-                $candidateSource = $rawValue.Substring($candidateStart)
+            $candidateSource = $rawValue.Substring($candidateStart)
+            if ($candidateStart -gt 0 -and $candidateSource.Length -gt 0 -and $candidateSource[$candidateSource.Length - 1] -eq $openingQuote) {
+                $candidateSource = $candidateSource.Substring(0, $candidateSource.Length - 1)
+            }
+            $hasCompleteVmxPath = $false
+            if ($candidateSource -match '(?i)\.vmx$' -and -not $candidateSource.Contains([string][char]34) -and [System.IO.Path]::IsPathFullyQualified($candidateSource)) {
+                try { Get-AtlasoCanonicalPath -Path $candidateSource | Out-Null; $hasCompleteVmxPath = $true } catch { Write-Verbose "Ignored an uncanonicalizable complete Workstation inventory value: $($_.Exception.Message)" }
+            }
+            if ($hasCompleteVmxPath) { $rawCandidates = @($candidateSource) } else {
                 $rawCandidates = @([regex]::Matches($candidateSource, '(?i)\.vmx(?=$|["''\s])') | ForEach-Object {
                         $candidateSource.Substring(0, $_.Index + $_.Length)
                     })

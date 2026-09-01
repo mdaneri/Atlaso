@@ -1854,6 +1854,8 @@ def test_exact_stale_repair_preserves_mismatched_display_name(tmp_path: Path) ->
         ("index", "'", "'", False),
         ("config", "'", "", False),
         ("index", "'", "", False),
+        ("config", "'", "' junk'", False),
+        ("index", "'", "' junk'", False),
         ("config", "", '" junk', False),
         ("index", "", '" junk', False),
         ("config", '"', '" junk', True),
@@ -1968,6 +1970,35 @@ def test_exact_stale_repair_finds_unterminated_path_after_vmx_apostrophe(
 
     assert result.returncode != 0
     assert "malformed or ambiguous" in result.stderr
+    assert inventory.read_bytes() == original_inventory
+
+
+def test_exact_stale_repair_preserves_unterminated_unrelated_vmx_name(
+    tmp_path: Path,
+) -> None:
+    """Treat one complete VMX path as unrelated despite a missing opening delimiter.
+
+    Args:
+        tmp_path: Pytest temporary directory path.
+    """
+    root = tmp_path / "test-vms" / "Atlaso-PR-672-cleanup"
+    stale = root / "Atlaso-PR-672-cleanup.vmx"
+    unrelated = root / "Atlaso-PR-672-cleanup.vmx backup.vmx"
+    suffix = f'vmlist6.config = "{unrelated.resolve()}\n'
+    _, environment, _, inventory = _write_fake_vmrun(
+        tmp_path / "fake", [], inventory_suffix=suffix
+    )
+    original_inventory = inventory.read_bytes()
+
+    result = _run_stale_registration_repair(
+        tmp_path,
+        scope_root=root,
+        vmx_path=stale,
+        expected_display_name="Atlaso-PR-672-cleanup",
+        environment=environment,
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
     assert inventory.read_bytes() == original_inventory
 
 
