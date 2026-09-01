@@ -91,6 +91,9 @@ try {
 finally {
     Remove-Item -LiteralPath $missingEnvironmentIdRoot -Recurse -Force -ErrorAction SilentlyContinue
 }
+# Keep this synthetic APPDATA provider independent from the interactive host.
+$cleanupModule = Get-Module Atlaso.WorkstationCleanup
+& $cleanupModule { Set-Item -Path Function:script:Get-Process -Value { $null } }
 
 $tokens = $null
 $parseErrors = $null

@@ -1660,6 +1660,55 @@ $module = Import-Module '{module_literal}' -Force -PassThru
     assert inventory.read_bytes() == original_inventory
 
 
+def test_exact_stale_repair_locks_absent_inventory_through_callback(
+    tmp_path: Path,
+) -> None:
+    """Exclude provider creation until verified recovery release completes.
+
+    Args:
+        tmp_path: Pytest temporary directory path.
+    """
+    root = tmp_path / "test-vms" / "Atlaso-PR-672-cleanup"
+    stale = root / "Atlaso-PR-672-cleanup.vmx"
+    _, environment, _, inventory = _write_fake_vmrun(tmp_path / "fake", [])
+    inventory.unlink()
+    callback_proof = tmp_path / "callback-proof.txt"
+    wrapper = tmp_path / "repair-while-inventory-absent.ps1"
+    module_literal = str(
+        VMWARE_SCRIPT_ROOT / "Atlaso.WorkstationCleanup.psm1"
+    ).replace("'", "''")
+    scope_literal = str(root).replace("'", "''")
+    vmx_literal = str(stale).replace("'", "''")
+    inventory_literal = str(inventory).replace("'", "''")
+    proof_literal = str(callback_proof).replace("'", "''")
+    wrapper.write_text(
+        f"""$ErrorActionPreference = 'Stop'
+Import-Module '{module_literal}' -Force
+Repair-AtlasoWorkstationStaleRegistrations `
+    -ScopeRoot '{scope_literal}' `
+    -VmxPath '{vmx_literal}' `
+    -ExpectedDisplayName 'Atlaso-PR-672-cleanup' `
+    -OnVerified {{
+        $writeBlocked = $false
+        try {{
+            $providerWrite = [System.IO.File]::Open('{inventory_literal}', 'OpenOrCreate', 'Write', 'ReadWrite')
+            $providerWrite.Dispose()
+        }} catch {{ $writeBlocked = $true }}
+        if (-not $writeBlocked) {{ throw 'Provider inventory write was admitted during recovery release.' }}
+        Set-Content -LiteralPath '{proof_literal}' -Value 'blocked'
+    }} `
+    -Confirm:$false
+""",
+        encoding="utf-8",
+    )
+
+    result = _run_script(wrapper, environment=environment)
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert callback_proof.read_text(encoding="utf-8").strip() == "blocked"
+    assert inventory.read_bytes() == b""
+
+
 def test_exact_stale_repair_removes_orphaned_marker_index(tmp_path: Path) -> None:
     """Remove an exact stale index even when its config group is already absent.
 
@@ -1733,6 +1782,8 @@ def test_exact_stale_repair_preserves_mismatched_display_name(tmp_path: Path) ->
         ("index", '"', '" junk', False),
         ("config", '"', '" junk "', False),
         ("index", '"', '" junk "', False),
+        ("config", '"', '" junk.vmx', False),
+        ("index", '"', '" junk.vmx', False),
         ("config", '""', '"', False),
         ("index", '""', '"', False),
         ("config", "'", "'", False),
@@ -2874,11 +2925,29 @@ def test_module_keeps_inventory_work_out_of_normal_delete_path() -> None:
     assert "$absenceLock = [System.IO.File]::Open(" in zero_owner_proof
     assert "[System.IO.FileShare]::Read" in zero_owner_proof
     assert "Test-AtlasoByteArraysEqual -Left $originalBytes" in zero_owner_proof
+    assert zero_owner_proof.index("if ($OnVerified)") < zero_owner_proof.index(
+        "$absenceLock.Dispose()"
+    )
     assert zero_owner_proof.index("$absenceLock.Dispose()") < zero_owner_proof.index(
         "return"
     )
+    assert stale_repair.index("if ($OnVerified)", replacement_verification) < replacement_unlock
     implementation = re.sub(r"<#.*?#>\s*", "", module, flags=re.DOTALL)
-    assert len(implementation.splitlines()) < 1_235
+    assert len(implementation.splitlines()) < 1_260
+
+
+def test_development_ca_cleanup_releases_recovery_inside_provider_proof() -> None:
+    """Keep quarantine and marker retirement inside the verified provider callback."""
+    script = (VMWARE_SCRIPT_ROOT / "create-atlaso-test-vm.ps1").read_text(
+        encoding="utf-8"
+    )
+    cleanup = script.split("function Invoke-PendingAtlasoDevelopmentCaCleanup", 1)[1].split(
+        "function Invoke-AtlasoTestVmProvisioning", 1
+    )[0]
+    callback = cleanup.split("-OnVerified {", 1)[1].split("} `", 1)[0]
+
+    assert "Restore-AtlasoRollbackDataDisksFromQuarantine" in callback
+    assert "Remove-AtlasoDevelopmentCaCleanupMarker" in callback
 
 
 def test_pre_gui_repair_retains_exact_open_ui_refusal() -> None:

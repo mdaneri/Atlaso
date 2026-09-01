@@ -619,13 +619,17 @@ Optional exact missing VMX path to repair without selecting sibling registration
 
 .PARAMETER ExpectedDisplayName
 Exact Workstation display name required for the selected VMX registration.
+
+.PARAMETER OnVerified
+Optional recovery action to run while verified provider state remains write-excluded.
 #>
 function Remove-AtlasoWorkstationStaleRegistrations {
     param(
         [Parameter(Mandatory = $false)][AllowNull()][string]$InventoryPath,
         [Parameter(Mandatory = $true)][string]$ScopeRoot,
         [Parameter(Mandatory = $false)][AllowEmptyString()][string]$VmxPath = '',
-        [Parameter(Mandatory = $false)][AllowEmptyString()][string]$ExpectedDisplayName = ''
+        [Parameter(Mandatory = $false)][AllowEmptyString()][string]$ExpectedDisplayName = '',
+        [Parameter(Mandatory = $false)][AllowNull()][scriptblock]$OnVerified
     )
     if ([string]::IsNullOrWhiteSpace($VmxPath) -ne [string]::IsNullOrWhiteSpace($ExpectedDisplayName)) {
         throw 'Exact stale-registration repair requires both a VMX path and display name.'
@@ -641,12 +645,32 @@ function Remove-AtlasoWorkstationStaleRegistrations {
             throw "Exact stale-registration VMX still exists; provider state was preserved: $resolvedVmxPath"
         }
     }
+    $realInventoryPath = Join-Path ([Environment]::GetFolderPath('ApplicationData')) 'VMware\inventory.vmls'
+    $missingInventoryPath = Join-Path $env:APPDATA 'VMware\inventory.vmls'
+    $isRealInventory = if ($InventoryPath) {
+        Test-AtlasoSamePath -Left $InventoryPath -Right $realInventoryPath
+    } else { Test-AtlasoSamePath -Left $missingInventoryPath -Right $realInventoryPath }
+    if ($isRealInventory -and (Get-Process vmware -ErrorAction SilentlyContinue)) {
+        throw 'Close the VMware Workstation UI before removing stale Atlaso VM library entries.'
+    }
     if (-not $InventoryPath) {
         $appearedInventoryPath = Resolve-AtlasoWorkstationInventoryPath
         if ($appearedInventoryPath) { throw "VMware Workstation inventory appeared while its absence was being verified; provider state was preserved: $appearedInventoryPath" }
-        if ($resolvedVmxPath -and (Test-Path -LiteralPath $resolvedVmxPath)) {
-            throw "The exact stale-registration VMX was recreated before inventory absence could be proven: $resolvedVmxPath"
+        if (-not (Test-Path -LiteralPath (Split-Path -Parent $missingInventoryPath) -PathType Container)) {
+            throw 'VMware Workstation inventory directory is absent, so provider write exclusion cannot be established.'
         }
+        try {
+            # A locked empty inventory makes zero ownership durable before the
+            # recovery marker is retired and before Workstation may be reopened.
+            $missingInventoryLock = [System.IO.File]::Open($missingInventoryPath, 'CreateNew', 'ReadWrite', 'Read')
+        } catch { throw "VMware Workstation inventory appeared while write exclusion was being established; provider state was preserved: $missingInventoryPath" }
+        try {
+            if ($resolvedVmxPath -and (Test-Path -LiteralPath $resolvedVmxPath)) {
+                throw "The exact stale-registration VMX was recreated before inventory absence could be proven: $resolvedVmxPath"
+            }
+            if ($OnVerified) { & $OnVerified }
+        }
+        finally { $missingInventoryLock.Dispose() }
         return
     }
     $originalBytes = [System.IO.File]::ReadAllBytes($InventoryPath)
@@ -671,7 +695,7 @@ function Remove-AtlasoWorkstationStaleRegistrations {
                 for ($quoteIndex = $candidateStart; $quoteIndex -lt $rawValue.Length; $quoteIndex++) {
                     if ($rawValue[$quoteIndex] -ne $openingQuote) { continue }
                     $hasCompleteQuotedValue = $true; $quotedSuffix = $rawValue.Substring($quoteIndex + 1).Trim()
-                    if ($quotedSuffix -notmatch '(?i)\.vmx(?:$|["''\s])') { $rawCandidates += $rawValue.Substring($candidateStart, $quoteIndex - $candidateStart) }
+                    if ($quotedSuffix -notmatch '(?i)\.vmx' -or -not $quotedSuffix.EndsWith([string]$openingQuote)) { $rawCandidates += $rawValue.Substring($candidateStart, $quoteIndex - $candidateStart) }
                 }
                 if (-not $hasCompleteQuotedValue) { $rawCandidates = @($rawValue.Substring($candidateStart)) }
             }
@@ -730,18 +754,12 @@ function Remove-AtlasoWorkstationStaleRegistrations {
             if ($resolvedVmxPath -and (Test-Path -LiteralPath $resolvedVmxPath)) {
                 throw "The exact stale-registration VMX was recreated before absence could be proven: $resolvedVmxPath"
             }
+            if ($OnVerified) { & $OnVerified }
         }
         finally {
             $absenceLock.Dispose()
         }
         return
-    }
-    $realInventoryPath = Join-Path ([Environment]::GetFolderPath('ApplicationData')) 'VMware\inventory.vmls'
-    if (
-        (Test-AtlasoSamePath -Left $InventoryPath -Right $realInventoryPath) -and
-        (Get-Process vmware -ErrorAction SilentlyContinue)
-    ) {
-        throw 'Close the VMware Workstation UI before removing stale Atlaso VM library entries.'
     }
     $targetIds = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
     $targetPaths = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
@@ -881,6 +899,10 @@ function Remove-AtlasoWorkstationStaleRegistrations {
                 if (-not (Test-AtlasoByteArraysEqual -Left $replacementBytes -Right $verifiedReplacementBytes)) {
                     throw 'VMware Workstation inventory changed after scoped stale-registration repair; provider state will be restored.'
                 }
+                # A verified replacement is a safe monotonic repair. Preserve it if
+                # the recovery-release callback fails so the durable marker can retry.
+                $replacementApplied = $false
+                if ($OnVerified) { & $OnVerified }
             }
             finally { $replacementLock.Dispose() }
         }
@@ -919,13 +941,17 @@ Optional exact missing VMX path to repair without selecting sibling registration
 
 .PARAMETER ExpectedDisplayName
 Exact Workstation display name required for the selected VMX registration.
+
+.PARAMETER OnVerified
+Optional recovery action to run while verified provider state remains write-excluded.
 #>
 function Repair-AtlasoWorkstationStaleRegistrations {
     [CmdletBinding(SupportsShouldProcess = $true)]
     param(
         [Parameter(Mandatory = $true)][string]$ScopeRoot,
         [Parameter(Mandatory = $false)][AllowEmptyString()][string]$VmxPath = '',
-        [Parameter(Mandatory = $false)][AllowEmptyString()][string]$ExpectedDisplayName = ''
+        [Parameter(Mandatory = $false)][AllowEmptyString()][string]$ExpectedDisplayName = '',
+        [Parameter(Mandatory = $false)][AllowNull()][scriptblock]$OnVerified
     )
     $resolvedScopeRoot = Get-AtlasoCanonicalPath -Path $ScopeRoot
     $filesystemRoot = [System.IO.Path]::GetPathRoot($resolvedScopeRoot)
@@ -938,7 +964,8 @@ function Repair-AtlasoWorkstationStaleRegistrations {
             -InventoryPath (Resolve-AtlasoWorkstationInventoryPath) `
             -ScopeRoot $resolvedScopeRoot `
             -VmxPath $VmxPath `
-            -ExpectedDisplayName $ExpectedDisplayName
+            -ExpectedDisplayName $ExpectedDisplayName `
+            -OnVerified $OnVerified
     }
 }
 <#

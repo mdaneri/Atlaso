@@ -2549,23 +2549,25 @@ function Invoke-PendingAtlasoDevelopmentCaCleanup {
             }
             # A provider deletion can remove the complete artifact root before
             # Workstation commits its library update. Re-prove the marker-bound
-            # path and display name here on every resume before preserved disks
-            # or the marker can leave recovery ownership.
+            # path and display name here on every resume, then retire recovery
+            # ownership before the verified provider-state exclusion is released.
             try {
                 Repair-AtlasoWorkstationStaleRegistrations `
                     -ScopeRoot $marker.OutputDirectory `
                     -VmxPath $marker.VmxPath `
                     -ExpectedDisplayName $marker.Name `
+                    -OnVerified {
+                        Restore-AtlasoRollbackDataDisksFromQuarantine `
+                            -DataDiskStates $dataDiskStates `
+                            -QuarantineDirectory $quarantineDirectory
+                        Remove-AtlasoDevelopmentCaCleanupMarker -MarkerPath $marker.MarkerPath
+                    } `
                     -Confirm:$false
             }
             catch {
                 $registrationRepairFailed = $true
                 throw
             }
-            Restore-AtlasoRollbackDataDisksFromQuarantine `
-                -DataDiskStates $dataDiskStates `
-                -QuarantineDirectory $quarantineDirectory
-            Remove-AtlasoDevelopmentCaCleanupMarker -MarkerPath $marker.MarkerPath
         }
         catch {
             $cleanupFailure = $_
