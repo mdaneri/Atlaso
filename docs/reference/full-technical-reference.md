@@ -217,7 +217,7 @@ file. When `-SshPassword` and/or `-BootstrapAdminPassword` is omitted, it retrie
 unique, concealed `DEFAULT_ROOT_PASSWORD` and/or `DEFAULT_ADMIN_PASSWORD` through the supported bounded Windows
 1Password SDK desktop integration. Both explicit parameters accept `SecureString` and override their own Environment
 default independently. With no account or Python selectors, the bridge uses the single local 1Password CLI account and
-the highest compatible CPython 3.10 through 3.13 runtime registered with the Windows launcher. Current Python Install
+standard GIL-enabled Windows x64 CPython 3.14 registered with the Windows launcher. Current Python Install
 Manager bracketed architecture selectors are accepted alongside legacy launcher and vendor-tagged registrations;
 known x86, unsupported architectures or versions, malformed entries, and missing executables remain ineligible. Explicit
 `-OnePasswordAccount` and `-OnePasswordPython` values remain authoritative. Caller `DEFAULT_*` variables, local `.env`
@@ -1539,7 +1539,7 @@ repository SHA-256 pin before invoking `op`, requires the Environments-enabled b
 certificate/key pair before mutation. For each omitted `-AdminPassword` or `-RootPassword`, it independently retrieves
 only the corresponding exact concealed default through the supported 1Password SDK desktop integration. An explicit
 `SecureString` remains authoritative for that credential. By default, the wrapper selects the single local 1Password
-CLI account and the highest compatible CPython 3.10 through 3.13 runtime registered with the Windows launcher. Current
+CLI account and standard GIL-enabled Windows x64 CPython 3.14 registered with the Windows launcher. Current
 Python Install Manager bracketed architecture selectors, legacy launcher forms, and vendor tags remain supported;
 known x86 and unsupported or malformed entries remain ineligible.
 `-OnePasswordAccount` and `-OnePasswordPython` remain explicit overrides; zero or multiple accounts and a missing
@@ -1603,7 +1603,7 @@ the exact 1Password Environment ID and approved 1Password account name or ID:
   -IpAddress 192.168.167.10 `
   -OnePasswordEnvironmentId '<atlaso-environment-id>' `
   -OnePasswordAccount '<account-name-or-id>' `
-  -OnePasswordPython '<path-to-python-3.13.exe>'
+  -OnePasswordPython '<path-to-python-3.14.exe>'
 ```
 
 To let the password-backed helper resolve the guest IP and reconcile a normal test VM's verified Ed25519 host key from
@@ -1616,7 +1616,7 @@ when the address is already known; the explicitly identified normal test VM then
   -UseVmwareGuestInfoHostKey `
   -OnePasswordEnvironmentId '<atlaso-environment-id>' `
   -OnePasswordAccount '<account-name-or-id>' `
-  -OnePasswordPython '<path-to-python-3.13.exe>'
+  -OnePasswordPython '<path-to-python-3.14.exe>'
 ```
 
 Do not pipe the VMX path or put it on a separate line by itself; PowerShell will try to execute the `.vmx` file. Before
@@ -1624,9 +1624,11 @@ using the password-backed path, authenticate the local 1Password integration, ve
 `Atlaso` exists, and confirm that `DEFAULT_ADMIN_PASSWORD` is present and concealed without reading its value. Copy the
 opaque Environment ID from that exact Environment and pass it with the account name or ID used by the desktop app.
 The parent performs local build and input preparation without the credential, then invokes one isolated Python child.
-Because the 1Password SDK publishes Windows wheels through CPython 3.13 while Atlaso builds with Python 3.14, pass an
-explicit CPython 3.10 through 3.13 executable with `-OnePasswordPython`; the script validates that boundary before any
-build or deployment work.
+Atlaso temporarily consumes one immutable `onepassword-sdk 0.4.1` Windows x64 CPython 3.14 compatibility wheel from
+`mdaneri/onepassword-sdk-python`. The checked-in manifest binds the release URL, filename, size, SHA-256, upstream
+source identity, attestation workflow, wheel tag, and MIT license. The script validates that asset and selects standard
+GIL-enabled Windows x64 CPython 3.14 before build or deployment work; `-OnePasswordPython` is only an explicit override.
+Python 3.10 through 3.13, x86, ARM64, and free-threaded `3.14t` fail closed.
 The supported 1Password SDK prompts for desktop authorization and returns the exact concealed variable only inside that
 child, which uses it directly for Paramiko without putting it in an environment variable. Python starts with `-I -S`
 and prepends only its explicit dependency directory, so `sitecustomize`, `usercustomize`, executable `.pth` hooks, and
@@ -1647,7 +1649,9 @@ stderr concurrently so a verbose remote failure cannot block on one channel and 
 `-DeploymentTimeoutSeconds` remote-command deadline; the remote readiness retry keeps
 its independent `-ReadinessTimeoutSeconds` allowance. Desktop authorization and exact Environment retrieval each use
 the deployment deadline too. The build downloads Paramiko, the pinned 1Password SDK, and every transitive dependency
-from the seven-day, hash-verified `requirements-onepassword-deploy.lock`. The child installs that runtime into a
+from the seven-day, hash-verified `requirements-onepassword-deploy.lock`. The compatibility wheel is downloaded only
+from its fixed immutable GitHub release URL with bounded redirects, time, size, filename, and SHA-256 checks before the
+remaining locked wheels are staged. The child installs that runtime into a
 temporary deployment directory using only the staged wheels, `--no-index`, and hash verification; it does not modify
 the global Python environment. `-SkipBuild` fails closed if the complete locked wheel set is not already in `dist`.
 Without `-OnePasswordEnvironmentId`, the helper preserves the original `scp`/`ssh` key or agent workflow.

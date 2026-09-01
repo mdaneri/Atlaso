@@ -102,7 +102,7 @@ when either first-boot credential is omitted. The single CLI account is used
 when this selector is omitted.
 
 .PARAMETER OnePasswordPython
-Optional CPython 3.10 through 3.13 executable used by the supported Windows
+Optional standard GIL-enabled Windows x64 CPython 3.14 executable used by the supported Windows
 1Password SDK bridge. The highest compatible Windows-registered runtime is used
 when this selector is omitted.
 
@@ -410,7 +410,7 @@ function Resolve-OnePasswordTestVmAccount {
 Resolve a Python runtime supported by the 1Password SDK Windows wheel.
 
 .PARAMETER PythonCommand
-Explicit CPython 3.10 through 3.13 executable or command.
+Explicit standard GIL-enabled Windows x64 CPython 3.14 executable or command.
 
 .PARAMETER TimeoutSeconds
 Positive deadline for the version probe.
@@ -432,7 +432,7 @@ function Resolve-OnePasswordTestVmPython {
 Prepare the isolated hash-locked 1Password SDK runtime.
 
 .PARAMETER PythonCommand
-Approved CPython 3.10 through 3.13 executable.
+Approved standard GIL-enabled Windows x64 CPython 3.14 executable.
 
 .PARAMETER RepositoryRoot
 Atlaso checkout containing requirements-onepassword-deploy.lock.
@@ -574,7 +574,7 @@ Opaque ID of the already pinned and verified Atlaso Environment.
 Account name or ID used for desktop SDK authorization when a default is needed.
 
 .PARAMETER OnePasswordPython
-CPython 3.10 through 3.13 executable used when a default is needed.
+Standard GIL-enabled Windows x64 CPython 3.14 executable used when a default is needed.
 
 .PARAMETER OnePasswordCliPath
 Exact CLI path already verified by the development-CA preflight.

@@ -22,7 +22,7 @@ Optional 1Password account name or ID approved for desktop SDK authorization
 when either credential is omitted. The single CLI account is used when this
 selector is omitted.
 .PARAMETER OnePasswordPython
-Optional CPython 3.10 through 3.13 executable used by the locked Windows
+Optional standard GIL-enabled Windows x64 CPython 3.14 executable used by the locked Windows
 1Password SDK runtime. The highest compatible Windows-registered runtime is
 used when this selector is omitted.
 .PARAMETER CredentialTimeoutSeconds

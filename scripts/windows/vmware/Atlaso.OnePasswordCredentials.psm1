@@ -253,13 +253,13 @@ function Select-AtlasoOnePasswordPythonFromLauncherInventory {
     )
 
     $launcherPatterns = @(
-        ('^\s*-V:(?:[^/]+/)?CPython(?<Version>3\.1[0-3])(?:\.\d+)?' +
+        ('^\s*-V:(?:[^/]+/)?CPython(?<Version>3\.14)(?:\.\d+)?' +
         '(?:(?:-(?<Architecture>32|64|arm64))|(?:\[-(?<Architecture>32|64|arm64)\]))?' +
         '\s+\*?\s*(?<Path>.+?\.exe)\s*\*?\s*$'),
-        ('^\s*-V:(?<Version>3\.1[0-3])(?:\.\d+)?' +
+        ('^\s*-V:(?<Version>3\.14)(?:\.\d+)?' +
         '(?:(?:-(?<Architecture>32|64|arm64))|(?:\[-(?<Architecture>32|64|arm64)\]))?' +
         '\s+\*?\s*(?<Path>.+?\.exe)\s*\*?\s*$'),
-        ('^\s*-(?<Version>3\.1[0-3])' +
+        ('^\s*-(?<Version>3\.14)' +
         '(?:(?:-(?<Architecture>32|64|arm64))|(?:\[-(?<Architecture>32|64|arm64)\]))?' +
         '\s+\*?\s*(?<Path>.+?\.exe)\s*\*?\s*$')
     )
@@ -287,10 +287,10 @@ function Select-AtlasoOnePasswordPythonFromLauncherInventory {
         Where-Object { Test-Path -LiteralPath $_.Path -PathType Leaf } |
         Sort-Object -Property @{ Expression = 'Version'; Descending = $true }, @{ Expression = 'Path'; Descending = $false })
     foreach ($candidate in $rankedCandidates) {
-        # The locked 1Password SDK publishes Windows wheels for x64 and ARM64,
-        # but not x86. Vendor tags can omit architecture, so probe those
-        # executables in an isolated bounded child before selecting by version.
-        if ($candidate.Architecture -ceq '32') {
+        # The temporary compatibility artifact is intentionally narrower than
+        # upstream: only ordinary Windows x64 CPython 3.14 is approved.
+        if (-not [string]::IsNullOrWhiteSpace($candidate.Architecture) -and
+            $candidate.Architecture -cne '64') {
             continue
         }
         if ([string]::IsNullOrWhiteSpace($candidate.Architecture)) {
@@ -320,10 +320,39 @@ function Select-AtlasoOnePasswordPythonFromLauncherInventory {
 
 <#
 .SYNOPSIS
+Validate the isolated CPython runtime probe result.
+
+.PARAMETER RuntimeJson
+JSON emitted by the bounded implementation, version, architecture, and GIL probe.
+
+.PARAMETER ConsumerDescription
+Sanitized workflow name used in unsupported-runtime guidance.
+#>
+function Assert-AtlasoOnePasswordRuntimeProbe {
+    param(
+        [Parameter(Mandatory = $true)][AllowEmptyString()][string]$RuntimeJson,
+        [string]$ConsumerDescription = 'Atlaso credentials'
+    )
+
+    try {
+        $runtime = $RuntimeJson | ConvertFrom-Json -ErrorAction Stop
+    }
+    catch {
+        throw "$ConsumerDescription could not validate the selected CPython runtime."
+    }
+    if ($runtime.implementation -cne 'CPython' -or $runtime.version -cne '3.14' -or
+        [int]$runtime.bits -ne 64 -or $runtime.machine -notin @('amd64', 'x86_64') -or
+        [bool]$runtime.gil_disabled) {
+        throw "$ConsumerDescription requires standard GIL-enabled Windows x64 CPython 3.14; x86, ARM64, Python 3.10 through 3.13, and free-threaded 3.14t are unsupported."
+    }
+}
+
+<#
+.SYNOPSIS
 Resolve a Python runtime supported by the 1Password SDK Windows wheel.
 
 .PARAMETER PythonCommand
-Explicit CPython 3.10 through 3.13 executable or command.
+Explicit standard Windows x64 CPython 3.14 executable or command.
 
 .PARAMETER TimeoutSeconds
 Positive deadline for the version probe.
@@ -350,7 +379,7 @@ function Resolve-AtlasoOnePasswordPython {
         }
         else { '' }
         if ([string]::IsNullOrWhiteSpace($launcherPath)) {
-            throw "$ConsumerDescription requires a Windows-registered CPython 3.10 through 3.13 runtime or an explicit -OnePasswordPython path."
+            throw "$ConsumerDescription requires a Windows-registered standard x64 CPython 3.14 runtime or an explicit -OnePasswordPython path."
         }
         try {
             $launcherOutput = Invoke-AtlasoBoundedProcess `
@@ -366,7 +395,7 @@ function Resolve-AtlasoOnePasswordPython {
                 -LauncherOutput $launcherOutput `
                 -TimeoutSeconds $TimeoutSeconds)
         if ($selected.Count -ne 1) {
-            throw "$ConsumerDescription requires a Windows-registered CPython 3.10 through 3.13 runtime or an explicit -OnePasswordPython path."
+            throw "$ConsumerDescription requires a Windows-registered standard x64 CPython 3.14 runtime or an explicit -OnePasswordPython path."
         }
         $resolvedCommand = $selected[0].Path
     }
@@ -377,15 +406,72 @@ function Resolve-AtlasoOnePasswordPython {
         }
         $resolvedCommand = $command.Source
     }
-    $version = (Invoke-AtlasoBoundedProcess `
+    $runtimeJson = (Invoke-AtlasoBoundedProcess `
             -FilePath $resolvedCommand `
-            -ArgumentList @('-I', '-S', '-c', 'import sys; print(f"{sys.version_info.major}.{sys.version_info.minor}")') `
+            -ArgumentList @(
+                '-I', '-S', '-c',
+                ('import json,platform,struct,sys,sysconfig; print(json.dumps({' +
+                '"implementation":platform.python_implementation(),' +
+                '"version":f"{sys.version_info.major}.{sys.version_info.minor}",' +
+                '"bits":struct.calcsize("P")*8,"machine":platform.machine().lower(),' +
+                '"gil_disabled":bool(sysconfig.get_config_var("Py_GIL_DISABLED"))}))')
+            ) `
             -TimeoutSeconds ([Math]::Min($TimeoutSeconds, 30)) `
-            -Action 'The 1Password SDK Python version probe').Trim()
-    if ($version -notmatch '^3\.1[0-3]$') {
-        throw "$ConsumerDescription requires CPython 3.10 through 3.13 for the locked 1Password SDK Windows runtime."
-    }
+            -Action 'The 1Password SDK Python runtime probe').Trim()
+    Assert-AtlasoOnePasswordRuntimeProbe `
+        -RuntimeJson $runtimeJson `
+        -ConsumerDescription $ConsumerDescription
     return $resolvedCommand
+}
+
+<#
+.SYNOPSIS
+Download the exact approved temporary CPython 3.14 1Password wheel.
+
+.PARAMETER PythonCommand
+Approved standard Windows x64 CPython 3.14 executable.
+
+.PARAMETER RepositoryRoot
+Atlaso checkout containing the immutable artifact manifest.
+
+.PARAMETER Destination
+Private wheel directory receiving the verified release asset.
+
+.PARAMETER TimeoutSeconds
+Positive network deadline for the bounded download.
+#>
+function Save-AtlasoOnePasswordWheel {
+    param(
+        [Parameter(Mandatory = $true)][string]$PythonCommand,
+        [Parameter(Mandatory = $true)][string]$RepositoryRoot,
+        [Parameter(Mandatory = $true)][string]$Destination,
+        [Parameter(Mandatory = $true)][ValidateRange(1, 3600)][int]$TimeoutSeconds
+    )
+
+    $manifestPath = Join-Path $RepositoryRoot 'scripts\windows\vmware\onepassword-sdk-cp314-wheel.json'
+    $downloaderPath = Join-Path $RepositoryRoot 'scripts\windows\vmware\download-onepassword-wheel.py'
+    foreach ($requiredPath in @($manifestPath, $downloaderPath)) {
+        if (-not (Test-Path -LiteralPath $requiredPath -PathType Leaf)) {
+            throw "The approved 1Password wheel input is unavailable: $requiredPath."
+        }
+    }
+    $output = Invoke-AtlasoBoundedProcess `
+        -FilePath $PythonCommand `
+        -ArgumentList @(
+            '-I', $downloaderPath,
+            '--manifest', $manifestPath,
+            '--destination', $Destination,
+            '--timeout-seconds', [string]([Math]::Min($TimeoutSeconds, 120)),
+            '--max-size-bytes', [string](10 * 1024 * 1024)
+        ) `
+        -TimeoutSeconds ([Math]::Min($TimeoutSeconds + 5, 125)) `
+        -Action 'The approved 1Password compatibility wheel download'
+    $wheelPath = ([string]$output).Trim()
+    if (-not (Test-Path -LiteralPath $wheelPath -PathType Leaf) -or
+        [System.IO.Path]::GetFileName($wheelPath) -cne 'onepassword_sdk-0.4.1-cp314-cp314-win_amd64.whl') {
+        throw 'The approved 1Password compatibility wheel download did not produce the exact expected asset.'
+    }
+    return $wheelPath
 }
 
 <#
@@ -393,7 +479,7 @@ function Resolve-AtlasoOnePasswordPython {
 Prepare the isolated hash-locked 1Password SDK runtime.
 
 .PARAMETER PythonCommand
-Approved CPython 3.10 through 3.13 executable.
+Approved standard Windows x64 CPython 3.14 executable.
 
 .PARAMETER RepositoryRoot
 Atlaso checkout containing requirements-onepassword-deploy.lock.
@@ -421,6 +507,12 @@ function Initialize-AtlasoOnePasswordSdkRuntime {
     [void][System.IO.Directory]::CreateDirectory($wheelDirectory)
     [void][System.IO.Directory]::CreateDirectory($dependencyDirectory)
 
+    Save-AtlasoOnePasswordWheel `
+        -PythonCommand $PythonCommand `
+        -RepositoryRoot $RepositoryRoot `
+        -Destination $wheelDirectory `
+        -TimeoutSeconds $TimeoutSeconds | Out-Null
+
     # Download is the only index-enabled step. Installation is deliberately
     # offline from the exact hash-verified wheel set, matching deploy-wheel.ps1.
     Invoke-AtlasoBoundedProcess `
@@ -429,6 +521,7 @@ function Initialize-AtlasoOnePasswordSdkRuntime {
             '-I', '-m', 'pip', 'download',
             '--disable-pip-version-check',
             '--index-url', 'https://pypi.org/simple',
+            '--find-links', $wheelDirectory,
             '--require-hashes',
             '--only-binary=:all:',
             '--dest', $wheelDirectory,
@@ -641,7 +734,7 @@ Opaque ID of the pinned Atlaso Environment when either value is omitted.
 Account name or ID used for desktop SDK authorization when a default is needed.
 
 .PARAMETER OnePasswordPython
-CPython 3.10 through 3.13 executable used when a default is needed.
+Standard Windows x64 CPython 3.14 executable used when a default is needed.
 
 .PARAMETER OnePasswordCliPath
 Optional exact CLI path already verified by a parent workflow.
@@ -828,6 +921,7 @@ Export-ModuleMember -Function @(
     'Resolve-AtlasoOnePasswordCliPath',
     'Resolve-AtlasoOnePasswordAccount',
     'Resolve-AtlasoOnePasswordPython',
+    'Save-AtlasoOnePasswordWheel',
     'Initialize-AtlasoOnePasswordSdkRuntime',
     'Get-AtlasoOnePasswordCredentialBridgeError',
     'Remove-AtlasoOnePasswordCredentialBridge',

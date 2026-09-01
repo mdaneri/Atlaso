@@ -249,9 +249,10 @@ def test_omitted_nonsecret_sdk_selectors_are_discovered_fail_closed() -> None:
     assert "\\*?\\s*(?<Path>.+?\\.exe)\\s*\\*?" in module
     assert "\\[-(?<Architecture>32|64|arm64)\\]" in module
     assert "-(?<Architecture>32|64|arm64)" in module
-    assert "$candidate.Architecture -ceq '32'" in module
+    assert "$candidate.Architecture -cne '64'" in module
+    assert "free-threaded 3.14t are unsupported" in module
     assert "struct.calcsize(\"P\") * 8" in module
-    assert "CPython(?<Version>3\\.1[0-3])" in module
+    assert "CPython(?<Version>3\\.14)" in module
     assert "highest compatible" in image_wrapper
     assert "highest compatible" in test_vm
     assert "Resolve-OnePasswordTestVmAccount" in test_vm

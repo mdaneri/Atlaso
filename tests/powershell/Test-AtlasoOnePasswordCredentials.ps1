@@ -75,7 +75,7 @@ try {
     $pythonInventory = @(
         " -V:Astral/CPython3.11.1 $python311Path *",
         " -V:Astral/CPython3.12.1 * $python312Path",
-        " -3.13-64 $python313Path *"
+        " -3.14-64 $python313Path *"
     ) -join "`n"
     $selectedPython = & $credentialModule {
         param([string]$InventoryOutput)
@@ -97,7 +97,7 @@ try {
         param([string]$InventoryOutput)
         Select-AtlasoOnePasswordPythonFromLauncherInventory -LauncherOutput $InventoryOutput
     } $bracketedInventory
-    if ($bracketedSelectedPython.Path -cne $python313Path -or
+    if ($bracketedSelectedPython.Path -cne $python314Path -or
         $bracketedSelectedPython.Architecture -cne '64') {
         throw 'The highest compatible Python Install Manager bracketed runtime was not selected.'
     }
@@ -105,15 +105,14 @@ try {
         param([string]$InventoryOutput)
         Select-AtlasoOnePasswordPythonFromLauncherInventory -LauncherOutput $InventoryOutput
     } " -V:3.12[-arm64] $python312Path *"
-    if ($bracketedArmSelectedPython.Path -cne $python312Path -or
-        $bracketedArmSelectedPython.Architecture -cne 'arm64') {
-        throw 'A supported bracketed ARM64 runtime was not admitted.'
+    if (@($bracketedArmSelectedPython).Count -ne 0) {
+        throw 'An unsupported bracketed ARM64 runtime was admitted.'
     }
     $unsupportedPythonPath = Join-Path $pythonInventoryRoot 'python313x86.exe'
     [System.IO.File]::WriteAllBytes($unsupportedPythonPath, [byte[]](1))
     $architectureInventory = @(
-        " -3.13-32 $unsupportedPythonPath",
-        " -3.12-64 $python312Path"
+        " -3.14-32 $unsupportedPythonPath",
+        " -3.14-64 $python312Path"
     ) -join "`n"
     $architectureSelectedPython = & $credentialModule {
         param([string]$InventoryOutput)
@@ -124,8 +123,8 @@ try {
         throw 'A newer unsupported x86 runtime outranked the compatible 64-bit runtime.'
     }
     $bracketedArchitectureInventory = @(
-        " -V:3.13[-32] $unsupportedPythonPath",
-        " -V:3.12[-64] $python312Path"
+        " -V:3.14[-32] $unsupportedPythonPath",
+        " -V:3.14[-64] $python312Path"
     ) -join "`n"
     $bracketedArchitectureSelectedPython = & $credentialModule {
         param([string]$InventoryOutput)
@@ -137,8 +136,8 @@ try {
     $vendorPythonPath = Join-Path $pythonInventoryRoot 'python313vendor.exe'
     [System.IO.File]::WriteAllBytes($vendorPythonPath, [byte[]](1))
     $vendorArchitectureInventory = @(
-        " -V:Astral/CPython3.13.1 $vendorPythonPath",
-        " -3.12-64 $python312Path"
+        " -V:Astral/CPython3.14.1 $vendorPythonPath",
+        " -3.14-64 $python312Path"
     ) -join "`n"
     $vendorArchitectureSelectedPython = & $credentialModule {
         param([string]$InventoryOutput, [scriptblock]$ArchitectureProbe)
@@ -155,7 +154,7 @@ try {
     }
     $missingPythonPath = Join-Path $pythonInventoryRoot 'missing-python.exe'
     foreach ($invalidInventory in @(
-            " -V:3.14[-64] $python314Path",
+            " -V:3.14t[-64] $python314Path",
             " -V:3.9[-64] $python310Path",
             " -V:3.13[-32] $unsupportedPythonPath",
             " -V:3.13[-x64] $python313Path",
@@ -175,6 +174,33 @@ try {
 }
 finally {
     [System.IO.Directory]::Delete($pythonInventoryRoot, $true)
+}
+$validRuntimeProbe = '{"implementation":"CPython","version":"3.14","bits":64,"machine":"amd64","gil_disabled":false}'
+& $credentialModule {
+    param([string]$RuntimeJson)
+    Assert-AtlasoOnePasswordRuntimeProbe -RuntimeJson $RuntimeJson
+} $validRuntimeProbe
+foreach ($invalidRuntimeProbe in @(
+        '{"implementation":"CPython","version":"3.13","bits":64,"machine":"amd64","gil_disabled":false}',
+        '{"implementation":"CPython","version":"3.14","bits":32,"machine":"x86","gil_disabled":false}',
+        '{"implementation":"CPython","version":"3.14","bits":64,"machine":"arm64","gil_disabled":false}',
+        '{"implementation":"CPython","version":"3.14","bits":64,"machine":"amd64","gil_disabled":true}',
+        '{"implementation":"PyPy","version":"3.14","bits":64,"machine":"amd64","gil_disabled":false}',
+        'not-json'
+    )) {
+    try {
+        & $credentialModule {
+            param([string]$RuntimeJson)
+            Assert-AtlasoOnePasswordRuntimeProbe -RuntimeJson $RuntimeJson
+        } $invalidRuntimeProbe
+        throw 'An unsupported CPython runtime probe was accepted.'
+    }
+    catch {
+        if ($_.Exception.Message -notlike '*requires standard GIL-enabled*' -and
+            $_.Exception.Message -notlike '*could not validate*') {
+            throw
+        }
+    }
 }
 $cliPackageRoot = Join-Path ([System.IO.Path]::GetTempPath()) (
     "atlaso-cli-inventory-$([guid]::NewGuid().ToString('N'))"

@@ -69,9 +69,10 @@ if (-not $scriptText.Contains('$script:PasswordDeployLockName = ''requirements-o
     throw 'The bounded deployment child must install the vetted SDK runtime from the hashed lock and staged wheels only.'
 }
 if (-not $scriptText.Contains('[string]$OnePasswordPython =', [System.StringComparison]::Ordinal) -or
-    -not $scriptText.Contains('$version -notmatch ''^3\.1[0-3]$''', [System.StringComparison]::Ordinal) -or
+    -not $scriptText.Contains('Resolve-AtlasoOnePasswordPython', [System.StringComparison]::Ordinal) -or
+    -not $scriptText.Contains('Save-AtlasoOnePasswordWheel', [System.StringComparison]::Ordinal) -or
     -not $scriptText.Contains('-PythonCommand $resolvedOnePasswordPython', [System.StringComparison]::Ordinal)) {
-    throw 'Password deployment must use an explicit CPython runtime with a supported 1Password SDK Windows wheel.'
+    throw 'Password deployment must use the approved standard CPython 3.14 runtime and immutable compatibility wheel.'
 }
 if (-not $scriptText.Contains("'-I', '-S', $pythonDeploy", [System.StringComparison]::Ordinal) -or
     -not $scriptText.Contains("'--dependency-path', $pythonDependencyPath", [System.StringComparison]::Ordinal) -or

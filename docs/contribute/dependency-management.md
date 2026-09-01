@@ -40,6 +40,16 @@ bootstrap tools retain `--allow-unsafe`, and the wrapper refreshes the declarati
 `requirements-appliance.lock`. Pass `--upgrade` only when the intended change should move every eligible package to the
 newest version that satisfies the seven-day cutoff.
 
+The Windows 1Password deployment lock is temporarily augmented from
+`scripts/windows/vmware/onepassword-sdk-cp314-wheel.json`. That manifest binds one immutable GitHub release asset from
+`mdaneri/onepassword-sdk-python` by filename, size, SHA-256, release commit, upstream `v0.4.1` identity, attestation
+workflow, wheel tag, and MIT license. The generator adds only that approved wheel hash. If PyPI publishes an official
+`onepassword-sdk 0.4.1` `cp314-cp314-win_amd64` wheel and it becomes seven-days eligible, regeneration fails with
+instructions to retire the fork bridge instead of silently preferring it.
+The bridge tracks [1Password issue #244](https://github.com/1Password/onepassword-sdk-python/issues/244), does not
+change the `0.4.1` package version, and is never uploaded to PyPI. Maintainer review treats the upstream MIT license and
+included notice as permitting this temporary redistribution; that delivery record is not legal advice.
+
 The wrapper resolves against the PEP 691/700 JSON API at `https://pypi.org/simple` by default and verifies that the
 index returns upload times before compiling. It ignores pip configuration and environment variables that could add an
 unverified index or find-links source. An approved alternative can be supplied with `--index-url`, but it must use HTTPS,

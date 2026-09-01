@@ -14,6 +14,7 @@ import tomllib
 import urllib.error
 import urllib.request
 from dataclasses import dataclass
+from datetime import UTC, datetime, timedelta
 from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
 from urllib.parse import urlsplit
@@ -25,6 +26,9 @@ MINIMUM_PIP = (26, 0)
 MINIMUM_AGE = "P7D"
 DEFAULT_INDEX_URL = "https://pypi.org/simple"
 DECLARATION_HASH_RE = re.compile(r"^# atlaso-declarations-sha256: [0-9a-f]{64}$")
+ONEPASSWORD_LOCK = "requirements-onepassword-deploy.lock"
+ONEPASSWORD_MANIFEST = Path("scripts/windows/vmware/onepassword-sdk-cp314-wheel.json")
+ONEPASSWORD_CP314_WHEEL = "onepassword_sdk-0.4.1-cp314-cp314-win_amd64.whl"
 
 
 @dataclass(frozen=True)
@@ -260,6 +264,75 @@ def _record_appliance_declaration_hash() -> None:
     path.write_text("\n".join(lines) + "\n", encoding="utf-8", newline="\n")
 
 
+def _onepassword_artifact_hash() -> str:
+    """Return the approved fork wheel hash from the strict artifact manifest."""
+    payload = json.loads((ROOT / ONEPASSWORD_MANIFEST).read_text(encoding="utf-8"))
+    if (
+        not isinstance(payload, dict)
+        or payload.get("asset_name") != ONEPASSWORD_CP314_WHEEL
+        or payload.get("wheel_tag") != "cp314-cp314-win_amd64"
+        or payload.get("repository") != "mdaneri/onepassword-sdk-python"
+        or payload.get("release_tag") != "atlaso-wheel-v0.4.1-cp314.1"
+        or not re.fullmatch(r"[0-9a-f]{64}", str(payload.get("asset_sha256", "")))
+    ):
+        raise RuntimeError("the approved 1Password CPython 3.14 wheel manifest is invalid")
+    return str(payload["asset_sha256"])
+
+
+def _assert_no_eligible_official_onepassword_wheel(index_url: str) -> None:
+    """Require retirement of the fork after an official wheel ages seven days."""
+    request = urllib.request.Request(
+        f"{index_url}/onepassword-sdk/",
+        headers={"Accept": "application/vnd.pypi.simple.v1+json"},
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=15) as response:
+            payload = json.load(response)
+    except (OSError, ValueError, urllib.error.HTTPError) as exc:
+        raise RuntimeError("the official 1Password wheel retirement check failed") from exc
+    cutoff = datetime.now(UTC) - timedelta(days=7)
+    for file in payload.get("files", []):
+        if not isinstance(file, dict) or file.get("filename") != ONEPASSWORD_CP314_WHEEL:
+            continue
+        uploaded = file.get("upload-time")
+        if not isinstance(uploaded, str):
+            raise RuntimeError("the official 1Password wheel lacks upload-time metadata")
+        if datetime.fromisoformat(uploaded.replace("Z", "+00:00")) <= cutoff:
+            raise RuntimeError(
+                "an official onepassword-sdk 0.4.1 cp314-win_amd64 wheel is now "
+                "seven-days eligible; remove the temporary fork manifest and dependency"
+            )
+
+
+def _record_onepassword_artifact_hash() -> None:
+    """Add the approved immutable fork wheel digest to the generated lock."""
+    path = ROOT / ONEPASSWORD_LOCK
+    lines = path.read_text(encoding="utf-8").splitlines()
+    start = next(
+        (index for index, line in enumerate(lines) if line.startswith("onepassword-sdk==0.4.1 \\")),
+        -1,
+    )
+    if start < 0:
+        raise RuntimeError(f"{path.name} does not pin onepassword-sdk==0.4.1")
+    end = start + 1
+    while end < len(lines) and lines[end].lstrip().startswith("--hash=sha256:"):
+        end += 1
+    hashes = {
+        match.group(1)
+        for line in lines[start:end]
+        if (match := re.search(r"--hash=sha256:([0-9a-f]{64})", line))
+    }
+    hashes.add(_onepassword_artifact_hash())
+    replacement = ["onepassword-sdk==0.4.1 \\"]
+    ordered = sorted(hashes)
+    replacement.extend(
+        f"    --hash=sha256:{digest}{' \\' if index < len(ordered) - 1 else ''}"
+        for index, digest in enumerate(ordered)
+    )
+    lines[start:end] = replacement
+    path.write_text("\n".join(lines) + "\n", encoding="utf-8", newline="\n")
+
+
 def main() -> int:
     """Run the command-line entry point.
 
@@ -287,7 +360,9 @@ def main() -> int:
         return 2
     try:
         index_url = _validated_index_url(args.index_url)
+        _onepassword_artifact_hash()
         _assert_index_provides_upload_times(index_url)
+        _assert_no_eligible_official_onepassword_wheel(index_url)
     except RuntimeError as exc:
         print(str(exc), file=sys.stderr)
         return 2
@@ -300,6 +375,7 @@ def main() -> int:
             check=True,
         )
     _record_appliance_declaration_hash()
+    _record_onepassword_artifact_hash()
     print(
         f"Regenerated {len(LOCK_TARGETS)} locks with packages uploaded at least "
         f"{MINIMUM_AGE.removeprefix('P').removesuffix('D')} days ago."

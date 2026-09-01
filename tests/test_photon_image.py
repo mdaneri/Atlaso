@@ -2618,7 +2618,7 @@ def test_vmware_deploy_wheel_supports_secure_onepassword_password_deploy():
     assert "Invoke-PasswordBackedDeploy `" in script
     assert "-OnePasswordEnvironmentId '<atlaso-environment-id>'" in readme
     assert "-OnePasswordAccount '<account-name-or-id>'" in readme
-    assert "-OnePasswordPython '<path-to-python-3.13.exe>'" in readme
+    assert "-OnePasswordPython '<path-to-python-3.14.exe>'" in readme
     assert "temporary deployment directory" in readme
     assert "global Python" in readme
     assert "pinned 1Password SDK" in readme
@@ -2626,7 +2626,7 @@ def test_vmware_deploy_wheel_supports_secure_onepassword_password_deploy():
     assert "`scp`/`ssh` key or agent workflow" in readme
     assert "-OnePasswordEnvironmentId '<atlaso-environment-id>'" in image_password_docs
     assert "-OnePasswordAccount '<account-name-or-id>'" in image_password_docs
-    assert "-OnePasswordPython '<path-to-python-3.13.exe>'" in image_password_docs
+    assert "-OnePasswordPython '<path-to-python-3.14.exe>'" in image_password_docs
     assert "../../docs/reference/full-technical-reference.md#vmware-workstation-workflow" in image_password_docs
 
 
