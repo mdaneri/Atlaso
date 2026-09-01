@@ -680,7 +680,7 @@ function Remove-AtlasoWorkstationStaleRegistrations {
                 }
             }
             if (-not $rawRefersToExactPath -and -not $hasCompleteQuotedValue -and
-                $rawCandidate -match '^(?<path>.+?\.vmx)(?=$|[\s])') {
+                $rawCandidate -match '^(?<path>.+?\.vmx)(?=$|["''\s])') {
                 try { $rawRefersToExactPath = Test-AtlasoSamePath -Left $Matches.path -Right $resolvedVmxPath }
                 catch { Write-Verbose "Ignored an uncanonicalizable malformed Workstation owner prefix: $($_.Exception.Message)" }
             }

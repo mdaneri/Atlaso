@@ -1673,22 +1673,25 @@ def test_exact_stale_repair_preserves_mismatched_display_name(tmp_path: Path) ->
 
 
 @pytest.mark.parametrize(
-    ("malformed_owner", "malformed_suffix", "use_parent_segment"),
+    ("malformed_owner", "leading_quote", "trailing_text", "use_parent_segment"),
     [
-        ("config", "", False),
-        ("index", "", False),
-        ("config", '" junk', False),
-        ("index", '" junk', False),
-        ("config", "'", False),
-        ("index", "'", False),
-        ("config", '" junk', True),
-        ("index", '" junk', True),
+        ("config", "", "", False),
+        ("index", "", "", False),
+        ("config", '"', '" junk', False),
+        ("index", '"', '" junk', False),
+        ("config", "'", "'", False),
+        ("index", "'", "'", False),
+        ("config", "", '" junk', False),
+        ("index", "", '" junk', False),
+        ("config", '"', '" junk', True),
+        ("index", '"', '" junk', True),
     ],
 )
 def test_exact_stale_repair_preserves_malformed_marker_owner_syntax(
     tmp_path: Path,
     malformed_owner: str,
-    malformed_suffix: str,
+    leading_quote: str,
+    trailing_text: str,
     use_parent_segment: bool,
 ) -> None:
     """Reject a raw exact owner row that the strict inventory parser omits.
@@ -1696,14 +1699,14 @@ def test_exact_stale_repair_preserves_malformed_marker_owner_syntax(
     Args:
         tmp_path: Pytest temporary directory path.
         malformed_owner: Inventory owner kind written with invalid syntax.
-        malformed_suffix: Optional invalid text following a closing quote.
+        leading_quote: Optional quote preceding the raw VMX path.
+        trailing_text: Optional quote or junk following the raw VMX path.
         use_parent_segment: Whether the raw path is lexically noncanonical.
     """
     root = tmp_path / "test-vms" / "Atlaso-PR-672-cleanup"
     stale = root / "Atlaso-PR-672-cleanup.vmx"
     raw_stale = stale.parent / "subdirectory" / ".." / stale.name if use_parent_segment else stale.resolve()
-    opening_quote = "'" if malformed_suffix == "'" else ('"' if malformed_suffix else "")
-    malformed_value = f"{opening_quote}{raw_stale}{malformed_suffix}"
+    malformed_value = f"{leading_quote}{raw_stale}{trailing_text}"
     config_value = malformed_value if malformed_owner == "config" else f'"{stale.resolve()}"'
     index_value = malformed_value if malformed_owner == "index" else f'"{stale.resolve()}"'
     suffix = (
