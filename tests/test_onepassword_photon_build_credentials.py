@@ -101,6 +101,7 @@ def test_photon_wrapper_preflights_credentials_before_image_mutation() -> None:
     assert "The proven outer process boundary selected checked VMware artifact cleanup." in wrapper
     assert "$outerCleanupOutputExistedBeforeChild = Test-Path" in wrapper
     assert "Test-Path -LiteralPath $childOutputCleanupClaimPath -PathType Leaf" in wrapper
+    assert "if (-not $KeepExistingOutput -or -not $builderOutputExists) {" in wrapper
     assert "output-cleanup-claimed.json" in wrapper
     parent_output_resolution = wrapper.index(
         "$outerCleanupOutputDirectory = Resolve-WorkstationOutputDirectory"

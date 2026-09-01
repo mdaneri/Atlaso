@@ -1319,7 +1319,6 @@ else {
             try {
                 if ($isolatedBuildFailure.Exception.Data['AtlasoProcessTreeTerminationProven'] -and
                     $PackerOnError -eq 'cleanup' -and (
-                        -not $KeepExistingOutput -and
                         (Test-Path -LiteralPath $childOutputCleanupClaimPath -PathType Leaf)
                     )) {
                     if (Test-Path -LiteralPath $outerCleanupOutputDirectory) {
@@ -1985,7 +1984,7 @@ if (-not $ValidateOnly -and -not $PrepareIsoOnly) {
             -Identity $builderIdentity
         $builderManifestExists = $true
     }
-    if (-not $KeepExistingOutput) {
+    if (-not $KeepExistingOutput -or -not $builderOutputExists) {
         $null = Assert-AtlasoVmwareBuilderOwnershipManifest `
             -Path $builderIdentityManifestPath `
             -OutputDirectory $workstationOutputDirectory `

@@ -3285,5 +3285,9 @@ def test_vmware_gui_builder_repairs_stale_rows_before_ui_startup() -> None:
     assert child_start < parent_return < child_cleanup < full_cleanup
     assert "-ScopeRoot $outerCleanupOutputDirectory" in wrapper[repair:gui_launch]
     assert "-not $outerCleanupOutputExistedBeforeChild -or" not in wrapper
+    assert "if (-not $KeepExistingOutput -or -not $builderOutputExists) {" in wrapper
+    assert "-not $KeepExistingOutput -and\n" not in wrapper[
+        termination_proven:durable_cleanup_claim
+    ]
     assert "-ClaimGeneration $OutputClaimGeneration" in wrapper
     assert "ClaimGeneration = $OutputClaimGeneration" in wrapper
