@@ -159,6 +159,29 @@ def test_restore_routes_wan_archive_rejects_missing_dormant_wan_policy(client):
             restore_settings_archive(db_session, archive)
 
 
+def test_restore_wan_only_archive_ignores_unassigned_route_target(client):
+    """WAN-only restore does not activate a route without a policy assignment.
+
+    Args:
+        client: HTTP test client that initializes the archive fixture state.
+    """
+    with SessionLocal() as db_session:
+        archive = deepcopy(export_settings_archive(db_session, actor="test"))
+    route = archive["data"]["routes"][0]
+    route["enabled"] = True
+    route["interface_name"] = "missing-unassigned-target"
+    route["wan_policy_name"] = None
+    _set_routes_wan_setting(archive, key=ROUTING_ENABLED_SETTING_KEY, value=False)
+    _set_routes_wan_setting(
+        archive,
+        key=WAN_SIMULATION_ENABLED_SETTING_KEY,
+        value=True,
+    )
+
+    with SessionLocal() as db_session:
+        restore_settings_archive(db_session, archive)
+
+
 def test_restore_routes_wan_archive_rejects_inactive_rows_when_features_on(client):
     """Dormant rows become invalid when routing and NAT are explicitly enabled.
 

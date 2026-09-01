@@ -73,6 +73,44 @@ def test_feature_settings_render_full_saved_intent_with_effective_gates():
     assert "net.ipv6.conf.all.forwarding=0" in config
 
 
+def test_disabled_route_preview_skips_confirmed_absent_target_cleanup():
+    """Do not preview cleanup that runtime replay skips for an absent device."""
+    route = Route(
+        destination_cidr="10.20.0.0/24",
+        interface_name="missing_eth2",
+        metric=100,
+        enabled=True,
+    )
+
+    config = render_wan_config(
+        [route],
+        settings=RoutesWanSettings(False, False, False),
+        absent_target_names={"missing_eth2"},
+    )
+
+    assert "route=10.20.0.0/24" in config
+    assert "ip route del 10.20.0.0/24 dev missing_eth2" not in config
+    assert "tc qdisc del dev missing_eth2" not in config
+
+
+def test_disabled_route_preview_cleans_live_ineligible_target():
+    """Keep cleanup visible when an omitted target exists but is ineligible."""
+    route = Route(
+        destination_cidr="10.20.0.0/24",
+        interface_name="eth2",
+        metric=100,
+        enabled=True,
+    )
+
+    config = render_wan_config(
+        [route],
+        settings=RoutesWanSettings(False, False, False),
+    )
+
+    assert "ip route del 10.20.0.0/24 dev eth2 table 200" in config
+    assert "tc qdisc del dev eth2 root" in config
+
+
 def test_disabled_features_do_not_surface_inactive_row_validation_errors():
     """Do not block Apply on invalid resources whose global feature is off."""
     invalid_route = Route(

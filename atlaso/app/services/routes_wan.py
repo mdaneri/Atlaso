@@ -823,6 +823,7 @@ def render_wan_config(
     source_groups: list[dict] | None = None,
     previous_config_preview: str = "",
     settings: RoutesWanSettings | None = None,
+    absent_target_names: set[str] | None = None,
 ) -> str:
     """Render wan config.
 
@@ -836,6 +837,7 @@ def render_wan_config(
         source_groups: Source Groups available to the rule.
         previous_config_preview: Last-applied configuration used to retire prior host defaults.
         settings: Saved global activation state. Omission preserves the legacy active behavior.
+        absent_target_names: Targets confirmed absent from the current host inventory.
 
     Returns:
         The rendered wan config.
@@ -845,6 +847,7 @@ def render_wan_config(
     targets = targets or []
     routing_rules = routing_rules or []
     settings = settings or RoutesWanSettings(True, True, True)
+    absent_target_names = absent_target_names or set()
     policy_lookup = _policy_by_id(policies)
     previously_mirrored_defaults = mirrored_management_default_keys(
         previous_config_preview
@@ -1071,7 +1074,11 @@ def render_wan_config(
             route.interface_name,
         ) in previously_mirrored_defaults
         route_effective = route.enabled and settings.routing_enabled
-        if not route_effective:
+        target_absent = (
+            not route_target and route.interface_name in absent_target_names
+        )
+        skip_absent_cleanup = not route_effective and target_absent
+        if not route_effective and not skip_absent_cleanup:
             lines.append(f"ip {route_family}route del {destination_cidr} dev {route.interface_name} table {LAB_ROUTE_TABLE_ID}  # disabled desired route")
             if route.enabled and management_ui_default:
                 main_command = ["ip", "-6", "route", "replace", destination_cidr] if destination.version == 6 else ["ip", "route", "replace", destination_cidr]
@@ -1101,7 +1108,7 @@ def render_wan_config(
         policy = policy_lookup.get(route.wan_policy_id or 0) or route.wan_policy
         if settings.wan_simulation_enabled and route.enabled and policy and policy.enabled:
             lines.append(" ".join(["tc", "qdisc", "replace", "dev", route.interface_name, "root", "netem", *netem_args(policy)]))
-        else:
+        elif not skip_absent_cleanup:
             lines.append(" ".join(["tc", "qdisc", "del", "dev", route.interface_name, "root"]))
     for route in removed_routes or []:
         try:

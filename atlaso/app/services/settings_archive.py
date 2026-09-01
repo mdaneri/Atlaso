@@ -2504,7 +2504,10 @@ def _validate_archive_relationships(data: dict[str, list[dict[str, Any]]]) -> No
             enabled
             and (
                 archive_routes_wan_settings.routing_enabled
-                or archive_routes_wan_settings.wan_simulation_enabled
+                or (
+                    archive_routes_wan_settings.wan_simulation_enabled
+                    and bool(str(row.get("wan_policy_name") or "").strip())
+                )
             )
             and str(row.get("interface_name") or "") not in route_target_names
         ):
