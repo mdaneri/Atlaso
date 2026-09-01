@@ -378,7 +378,7 @@ run_tdnf "Photon appliance package installation" \
 for pip_environment_name in $(env | sed -n 's/^\(PIP_[A-Za-z0-9_]*\)=.*/\1/p'); do
   unset "$pip_environment_name"
 done
-unset XDG_CONFIG_HOME
+unset XDG_CONFIG_HOME XDG_CONFIG_DIRS
 install -d -o root -g root -m 0755 "$PIP_CACHE_DIR"
 write_pip_config /etc/pip.conf
 export HOME=/root

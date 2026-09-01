@@ -57,7 +57,7 @@ ADMITTED_PIP_INDEX_URL="${PIP_INDEX_URL:-}"
 for pip_environment_name in $(env | sed -n 's/^\(PIP_[A-Za-z0-9_]*\)=.*/\1/p'); do
   unset "$pip_environment_name"
 done
-unset XDG_CONFIG_HOME
+unset XDG_CONFIG_HOME XDG_CONFIG_DIRS
 
 install -d -o root -g root -m 0700 "$BUILD_ROOT/home" "$BUILD_ROOT/pip-cache" \
   "$BUILD_ROOT/xdg-cache" "$BUILD_ROOT/xdg-config" "$RPM_ROOT/BUILD" "$RPM_ROOT/BUILDROOT" \

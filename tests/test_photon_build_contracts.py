@@ -286,7 +286,7 @@ def test_qemu_builder_overrides_preserved_communicator_home(tmp_path: Path) -> N
         "root.mkdir(parents=True)\n"
         "configure = root / 'configure'\n"
         "configure.write_text('#!/bin/sh\\n'\n"
-        "    'printf \\\"HOME=%s\\\\nPIP_CACHE_DIR=%s\\\\nXDG_CACHE_HOME=%s\\\\nPIP_INDEX_URL=%s\\\\n\\\" \\\"$HOME\\\" \\\"$PIP_CACHE_DIR\\\" \\\"$XDG_CACHE_HOME\\\" \\\"$PIP_INDEX_URL\\\" >\\\"$ATLASO_TEST_ENV_LOG\\\"\\n'\n"
+        "    'printf \\\"HOME=%s\\\\nPIP_CACHE_DIR=%s\\\\nXDG_CACHE_HOME=%s\\\\nXDG_CONFIG_DIRS=%s\\\\nPIP_INDEX_URL=%s\\\\n\\\" \\\"$HOME\\\" \\\"$PIP_CACHE_DIR\\\" \\\"$XDG_CACHE_HOME\\\" \\\"${XDG_CONFIG_DIRS-}\\\" \\\"$PIP_INDEX_URL\\\" >\\\"$ATLASO_TEST_ENV_LOG\\\"\\n'\n"
         "    'case \\\"$HOME\\\" in /tmp/atlaso-qemu-guest-agent-build.*/home) ;; *) exit 40 ;; esac\\n'\n"
         "    'case \\\"$PIP_CACHE_DIR\\\" in /tmp/atlaso-qemu-guest-agent-build.*/pip-cache) ;; *) exit 41 ;; esac\\n'\n"
         "    'test \\\"$PIP_INDEX_URL\\\" = https://index.example.invalid/simple || exit 42\\n'\n"
@@ -323,6 +323,7 @@ def test_qemu_builder_overrides_preserved_communicator_home(tmp_path: Path) -> N
             "PIP_FIND_LINKS": "https://unintended.example.invalid/wheels",
             "PIP_NO_INDEX": "1",
             "XDG_CONFIG_HOME": "/home/atlaso-build/.config",
+            "XDG_CONFIG_DIRS": "/home/atlaso-build/.config-dirs",
             "ATLASO_SRC": str(Path.cwd()),
             "ATLASO_TEST_ENV_LOG": str(environment_log),
             "ATLASO_TEST_REAL_STAT": real_stat,
@@ -347,4 +348,5 @@ def test_qemu_builder_overrides_preserved_communicator_home(tmp_path: Path) -> N
     assert "PIP_CACHE_DIR=/tmp/atlaso-qemu-guest-agent-build." in build_environment
     assert "/pip-cache" in build_environment
     assert "PIP_INDEX_URL=https://index.example.invalid/simple" in build_environment
+    assert "XDG_CONFIG_DIRS=\n" in build_environment
     assert len(list(output.glob("atlaso-qemu-guest-agent-*.rpm"))) == 1
