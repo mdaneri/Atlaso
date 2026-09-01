@@ -661,8 +661,8 @@ def test_management_handoff_timeout_stops_and_recovers_indeterminate_helper(monk
     ]
 
 
-def test_management_handoff_synchronizes_routing_runtime(client, monkeypatch, tmp_path):
-    """Publish Routing runtime state after a successful bundled WAN apply.
+def test_management_handoff_preserves_newer_routing_desired_state(client, monkeypatch, tmp_path):
+    """Preserve newer Routing desired state after a bundled WAN apply.
 
     Args:
         client: HTTP test client used to initialize an isolated database.
@@ -753,7 +753,7 @@ def test_management_handoff_synchronizes_routing_runtime(client, monkeypatch, tm
         )
 
         assert group["success"] is True
-        assert routing_service.enabled is True
+        assert routing_service.enabled is False
         assert routing_service.running is True
         assert routing_service.health == "healthy"
 

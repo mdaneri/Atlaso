@@ -13353,7 +13353,10 @@ def synchronize_routing_service_runtime(
     ).scalar_one_or_none()
     if routing_service is None:
         return
-    routing_service.enabled = routing_enabled
+    # A settings autosave may commit while the helper is applying the captured
+    # WAN snapshot. Keep Startup tied to the newest desired state while runtime
+    # fields truthfully describe the snapshot that reached Photon.
+    routing_service.enabled = ensure_routes_wan_settings(db).routing_enabled
     routing_service.running = routing_enabled
     routing_service.health = "healthy" if routing_enabled else "disabled"
     db.add(routing_service)
