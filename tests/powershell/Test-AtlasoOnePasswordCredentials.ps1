@@ -101,6 +101,22 @@ try {
         $bracketedSelectedPython.Architecture -cne '64') {
         throw 'The highest compatible Python Install Manager bracketed runtime was not selected.'
     }
+    $python3141Path = Join-Path $pythonInventoryRoot 'python314-a.exe'
+    $python3142Path = Join-Path $pythonInventoryRoot 'python314-z.exe'
+    [System.IO.File]::WriteAllBytes($python3141Path, [byte[]](1))
+    [System.IO.File]::WriteAllBytes($python3142Path, [byte[]](1))
+    $patchInventory = @(
+        " -V:3.14.1[-64] $python3141Path",
+        " -V:3.14.2[-64] $python3142Path"
+    ) -join "`n"
+    $patchSelectedPython = & $credentialModule {
+        param([string]$InventoryOutput)
+        Select-AtlasoOnePasswordPythonFromLauncherInventory -LauncherOutput $InventoryOutput
+    } $patchInventory
+    if ($patchSelectedPython.Path -cne $python3142Path -or
+        $patchSelectedPython.Version -ne [version]'3.14.2') {
+        throw 'An older CPython 3.14 patch release outranked the highest compatible registration.'
+    }
     $bracketedArmSelectedPython = & $credentialModule {
         param([string]$InventoryOutput)
         Select-AtlasoOnePasswordPythonFromLauncherInventory -LauncherOutput $InventoryOutput

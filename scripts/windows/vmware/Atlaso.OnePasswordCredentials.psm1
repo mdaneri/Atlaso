@@ -258,10 +258,10 @@ function Select-AtlasoOnePasswordPythonFromLauncherInventory {
     )
 
     $launcherPatterns = @(
-        ('^\s*-V:(?:[^/]+/)?CPython(?<Version>3\.14)(?:\.\d+)?' +
+        ('^\s*-V:(?:[^/]+/)?CPython(?<Version>3\.14(?:\.\d+)?)' +
         '(?:(?:-(?<Architecture>32|64|arm64))|(?:\[-(?<Architecture>32|64|arm64)\]))?' +
         '\s+\*?\s*(?<Path>.+?\.exe)\s*\*?\s*$'),
-        ('^\s*-V:(?<Version>3\.14)(?:\.\d+)?' +
+        ('^\s*-V:(?<Version>3\.14(?:\.\d+)?)' +
         '(?:(?:-(?<Architecture>32|64|arm64))|(?:\[-(?<Architecture>32|64|arm64)\]))?' +
         '\s+\*?\s*(?<Path>.+?\.exe)\s*\*?\s*$'),
         ('^\s*-(?<Version>3\.14)' +

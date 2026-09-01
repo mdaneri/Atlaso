@@ -291,7 +291,7 @@ def test_omitted_nonsecret_sdk_selectors_are_discovered_fail_closed() -> None:
         module.index("function Get-AtlasoOnePasswordCredentialPair"),
     )
     assert "struct.calcsize(\"P\") * 8" in module
-    assert "CPython(?<Version>3\\.14)" in module
+    assert "CPython(?<Version>3\\.14(?:\\.\\d+)?)" in module
     assert "highest compatible" in image_wrapper
     assert "highest compatible" in test_vm
     assert "Resolve-OnePasswordTestVmAccount" in test_vm
