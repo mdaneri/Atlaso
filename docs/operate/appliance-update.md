@@ -185,8 +185,10 @@ https://mdaneri.github.io/Atlaso/updates/channels/stable/manifest.json.sig
 
 Operators may add HTTPS mirrors and failover sources. A mirror copies the original channel pointers, release manifests,
 signatures, and bundles without re-signing them. Every source must satisfy the same signed v2 contract. Credentials
-remain encrypted in the database and move to the privileged helper only in the existing mode-0600 transient file. They
-are not written to manifests, tasks, audits, URLs, or helper output.
+remain encrypted in the database and move to the privileged helper only in the existing mode-0600 transient file.
+Synchronized managed Photon repository files remain credential-free. Authenticated TDNF calls use a root-only
+repository view in volatile `/run` storage, which is removed after each command. Credentials are not written to durable
+package-client configuration, manifests, tasks, audits, URLs, command arguments, or helper output.
 
 Create a Photon, PowerShell, or Atlaso source from the **+ Repository** launcher in that ecosystem's repository tab
 strip. The guided workflow collects repository identity, its endpoint and ecosystem-specific trust policy, desired
@@ -484,7 +486,8 @@ identity. Persistent startup evidence from an earlier boot or an earlier process
 Manual and scheduled Photon checks/installations remain available. Before mutation, the helper records an inspection of
 the proposed tdnf transaction and queries all repository candidates with the Photon-supported `tdnf repoquery python3`
 interface, then deterministically selects the highest advertised minor ABI. It fails closed if that ABI is not listed in
-the active signed Atlaso bundle.
+the active signed Atlaso bundle. When a managed Photon source requires authentication, every TDNF command uses the same
+configured repository identity, endpoint, TLS, GPG, and enablement settings through the private volatile repository view.
 
 If Photon changes Python to another supported ABI, the helper reconstructs the active virtualenv from the retained
 offline wheelhouse before restarting and probing Atlaso. It does not claim automatic RPM rollback and never reboots
