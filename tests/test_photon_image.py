@@ -1481,6 +1481,14 @@ def test_photon_provisioning_prepares_attached_data_disks():
         'run_tdnf "Build-only package removal" --noautoremove remove python3-devel'
         in provision
     )
+    assert provision.count("ensure_ntpsec_runtime_packages") == 3
+    build_removal_index = provision.index(
+        'run_tdnf "Build-only package removal" --noautoremove remove python3-devel'
+    )
+    first_ntpsec_reassertion_index = provision.index(
+        "ensure_ntpsec_runtime_packages", build_removal_index
+    )
+    assert build_removal_index < first_ntpsec_reassertion_index
     assert provision.count(
         'run_tdnf "Final Photon package cache cleanup" clean all'
     ) == 2
@@ -1488,6 +1496,9 @@ def test_photon_provisioning_prepares_attached_data_disks():
     assert 'run_tdnf "Final Photon OS update verification" update' in provision
     final_update_index = provision.index(
         'run_tdnf "Final Photon OS update verification" update'
+    )
+    final_ntpsec_reassertion_index = provision.index(
+        "ensure_ntpsec_runtime_packages", final_update_index
     )
     final_guest_agent_closure_index = provision.rindex("stage_guest_agent_packages")
     final_python_closure_index = provision.rindex("stage_python_runtime_packages")
@@ -1501,6 +1512,7 @@ def test_photon_provisioning_prepares_attached_data_disks():
     assert provision.count("stage_guest_agent_packages") == 3
     assert provision.count("write_third_party_notices") == 3
     assert final_update_index < final_guest_agent_closure_index < final_compatibility_index
+    assert final_update_index < final_ntpsec_reassertion_index < final_compatibility_index
     assert final_update_index < final_python_closure_index < final_compatibility_index
     assert final_update_index < final_notice_index < final_compatibility_index
     assert provision.count("install_powershell_profile") == 4

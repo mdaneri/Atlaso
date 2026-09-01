@@ -105,6 +105,12 @@ stage_python_runtime_packages() {
   chmod 0600 "$PYTHON_RUNTIME_STAGING/SHA256SUMS"
 }
 
+ensure_ntpsec_runtime_packages() {
+  # Reassert the complete time-service closure after package removal or update
+  # transactions so an otherwise successful image cannot omit ntpd at runtime.
+  run_tdnf "Photon NTPsec runtime package installation" install ntpsec python3-ntp
+}
+
 stage_guest_agent_packages() {
   log_step "staging verified offline guest-agent RPM closures"
   rm -rf "$GUEST_AGENT_STAGING"
@@ -968,6 +974,7 @@ log_step "removing build-only packages and caches"
 # Photon enables clean_requirements_on_remove, which can otherwise prune RPM,
 # systemd, and the release package while removing this temporary toolchain.
 run_tdnf "Build-only package removal" --noautoremove remove python3-devel python3-setuptools rpm-build gcc binutils linux-api-headers make glib-devel systemd-devel ninja-build pkg-config
+ensure_ntpsec_runtime_packages
 command -v python3 >/dev/null
 command -v pwsh >/dev/null
 command -v vmtoolsd >/dev/null 2>&1 || [ "$ATLASO_GUEST_PLATFORM" != "vmware" ]
@@ -979,6 +986,7 @@ python3 "$PHOTON_PACKAGE_STATE_VERIFIER" --guest-platform "$ATLASO_GUEST_PLATFOR
 run_tdnf "Final Photon package cache cleanup" clean all
 run_tdnf "Final Photon repository refresh" makecache
 run_tdnf "Final Photon OS update verification" update
+ensure_ntpsec_runtime_packages
 stage_guest_agent_packages
 rm -rf "$QEMU_GUEST_AGENT_OUTPUT"
 stage_python_runtime_packages
