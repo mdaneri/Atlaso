@@ -26,6 +26,10 @@ within the depot, file links retain their exact artifact URL, and **Up one level
 Authenticated and unauthenticated access continue to follow the configured depot policy; a server-rendered contents
 table remains available when browser scripting is unavailable.
 
+For an authenticated browser session, deliberate pointer and keyboard activity in the `/PROD/` contents grid refreshes
+the server-owned inactivity timestamp through the depot listener. Static artifact requests, background traffic, and
+unauthenticated browsing do not extend a browser session.
+
 ## Configure the depot
 
 1. Confirm the fixed depot mount is present and has sufficient working space.

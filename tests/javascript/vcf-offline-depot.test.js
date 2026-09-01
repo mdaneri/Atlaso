@@ -275,3 +275,18 @@ test("VCFDT task refresh preserves an exclusive-operation blocker", () => {
   assert.equal(updates.at(-1).can_start, true);
   assert.equal(updates.at(-1).start_blocker, "");
 });
+
+test("browser activity uses the depot protocol endpoint only for PROD paths", () => {
+  const context = vm.createContext({ String });
+  vm.runInContext(
+    `${functionSource("browserSessionActivityPath")}\n` +
+      "globalThis.browserSessionActivityPath = browserSessionActivityPath;",
+    context,
+  );
+  const routes = { managementRoot: "/ui/management", publicRoot: "/ui/public" };
+
+  assert.equal(context.browserSessionActivityPath("/PROD/", routes), "/PROD/session/activity");
+  assert.equal(context.browserSessionActivityPath("/PROD/COMP/", routes), "/PROD/session/activity");
+  assert.equal(context.browserSessionActivityPath("/ui/public/ca", routes), "/ui/public/session/activity");
+  assert.equal(context.browserSessionActivityPath("/ui/management/tasks", routes), "/ui/management/session/activity");
+});
