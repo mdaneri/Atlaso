@@ -19074,6 +19074,12 @@ def _environment_file_quote_closes(value: str, quote: str) -> bool:
     return False
 
 
+def _environment_file_unquoted_continues(value: str) -> bool:
+    """Return whether an unquoted physical line escapes its newline."""
+    trailing_backslashes = len(value) - len(value.rstrip("\\"))
+    return trailing_backslashes % 2 == 1
+
+
 def _installed_atlaso_database_url() -> str:
     """Read the installed database URL without evaluating environment-file content."""
     try:
@@ -19083,11 +19089,15 @@ def _installed_atlaso_database_url() -> str:
     database_url = ""
     database_url_quote = ""
     multiline_quote = ""
+    unquoted_continuation = False
     database_url_is_multiline = False
     for raw_line in source_lines:
         if multiline_quote:
             if _environment_file_quote_closes(raw_line, multiline_quote):
                 multiline_quote = ""
+            continue
+        if unquoted_continuation:
+            unquoted_continuation = _environment_file_unquoted_continues(raw_line)
             continue
         candidate = raw_line.strip()
         assignment_name, separator, assignment_value = candidate.partition("=")
@@ -19105,6 +19115,8 @@ def _installed_atlaso_database_url() -> str:
         )
         if assignment_is_multiline:
             multiline_quote = assignment_quote
+        elif not assignment_quote:
+            unquoted_continuation = _environment_file_unquoted_continues(raw_line)
         if assignment_name != "ATLASO_DATABASE_URL":
             continue
         database_url = assignment_value
