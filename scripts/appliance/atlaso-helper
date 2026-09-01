@@ -19073,28 +19073,23 @@ def _installed_atlaso_database_url() -> str:
         if not candidate.startswith("ATLASO_DATABASE_URL="):
             continue
         database_url = candidate.partition("=")[2].strip()
-        if "\\" in database_url:
-            raise ValueError(
-                "ATLASO_DATABASE_URL uses unsupported EnvironmentFile escape syntax."
-            )
-        if database_url.startswith(('"', "'")) or database_url.endswith(('"', "'")):
-            if (
-                len(database_url) < 2
-                or database_url[0] != database_url[-1]
-                or database_url[0] not in {'"', "'"}
-            ):
-                raise ValueError(
-                    "ATLASO_DATABASE_URL uses an unsupported multiline EnvironmentFile value."
-                )
+    if not database_url:
+        raise ValueError("ATLASO_DATABASE_URL is missing from the Atlaso appliance environment.")
+    if "\\" in database_url:
+        raise ValueError(
+            "ATLASO_DATABASE_URL uses unsupported EnvironmentFile escape syntax."
+        )
+    if database_url.startswith(('"', "'")) or database_url.endswith(('"', "'")):
         if (
-            len(database_url) >= 2
-            and database_url[0] == database_url[-1]
-            and database_url[0] in {'"', "'"}
+            len(database_url) < 2
+            or database_url[0] != database_url[-1]
+            or database_url[0] not in {'"', "'"}
         ):
-            database_url = database_url[1:-1]
-    if database_url:
-        return database_url
-    raise ValueError("ATLASO_DATABASE_URL is missing from the Atlaso appliance environment.")
+            raise ValueError(
+                "ATLASO_DATABASE_URL uses an unsupported multiline EnvironmentFile value."
+            )
+        database_url = database_url[1:-1]
+    return database_url
 
 
 def _factory_reset_runner(*, boot_resume: bool) -> subprocess.CompletedProcess[str]:
