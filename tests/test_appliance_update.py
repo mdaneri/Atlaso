@@ -49,7 +49,31 @@ def load_helper_module():
     assert spec is not None
     module = importlib.util.module_from_spec(spec)
     loader.exec_module(module)
+    module._privileged_powershell_environment = lambda: temporary_powershell_environment(
+        module.ATLASO_POWERSHELL_HOME
+    )
     return module
+
+
+def temporary_powershell_environment(home: Path) -> dict[str, str]:
+    """Create a non-privileged PowerShell environment for unit tests.
+
+    Args:
+        home: Temporary test directory used as the PowerShell home.
+    """
+    for directory in (
+        home,
+        home / ".cache",
+        home / ".config",
+        home / ".local" / "share",
+    ):
+        directory.mkdir(parents=True, exist_ok=True)
+    return {
+        "HOME": str(home),
+        "XDG_CACHE_HOME": str(home / ".cache"),
+        "XDG_CONFIG_HOME": str(home / ".config"),
+        "XDG_DATA_HOME": str(home / ".local" / "share"),
+    }
 
 
 def test_reserved_psgallery_source_requires_the_canonical_endpoint():

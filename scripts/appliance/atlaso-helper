@@ -754,7 +754,12 @@ def _privileged_powershell_environment() -> dict[str, str]:
                 raise ValueError("privileged PowerShell parent directory is unsafe")
 
             def open_directory(parent: int, component: str) -> int:
-                """Create and securely open one root-owned directory component."""
+                """Create and securely open one root-owned directory component.
+
+                Args:
+                    parent: Descriptor for the already-verified parent directory.
+                    component: Relative directory name to create and verify.
+                """
                 try:
                     os.mkdir(component, 0o700, dir_fd=parent)
                 except FileExistsError:
