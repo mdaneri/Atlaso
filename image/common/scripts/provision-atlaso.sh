@@ -33,6 +33,7 @@ BOOTSTRAP_PASSWORD="${ATLASO_BOOTSTRAP_ADMIN_PASSWORD:-}"
 BOOTSTRAP_SHELL="${ATLASO_BOOTSTRAP_ADMIN_SHELL:-/usr/bin/pwsh}"
 PIP_CACHE_DIR="/var/cache/atlaso-pip"
 TDNF_PROGRESS_RUNNER="$ATLASO_SRC/scripts/run_tdnf_with_progress.py"
+PHOTON_REPOSITORY_CONFIGURATOR="$ATLASO_SRC/image/common/scripts/configure_photon_repositories.py"
 DISK_IDENTITY_RULE_SOURCE="$ATLASO_SRC/image/common/udev/99-atlaso-disk-identity.rules"
 DATA_DISK_POLICY_SOURCE="$ATLASO_SRC/image/common/data-disks.conf"
 QEMU_GUEST_AGENT_BUILDER="$ATLASO_SRC/image/common/scripts/build-qemu-guest-agent-rpm.sh"
@@ -315,8 +316,8 @@ if [ -z "$BOOTSTRAP_PASSWORD" ]; then
   echo "ATLASO_BOOTSTRAP_ADMIN_PASSWORD is required for appliance provisioning" >&2
   exit 2
 fi
-if [ ! -r "$TDNF_PROGRESS_RUNNER" ]; then
-  echo "TDNF progress runner is missing from staged Atlaso sources: $TDNF_PROGRESS_RUNNER" >&2
+if [ ! -r "$TDNF_PROGRESS_RUNNER" ] || [ ! -r "$PHOTON_REPOSITORY_CONFIGURATOR" ]; then
+  echo "Photon repository preparation assets are missing from staged Atlaso sources." >&2
   exit 2
 fi
 if [ ! -r "$DISK_IDENTITY_RULE_SOURCE" ]; then
@@ -340,6 +341,9 @@ fi
 
 log_step "system adapter dry-run mode: $ATLASO_DRY_RUN_SYSTEM_ADAPTERS"
 log_step "guest platform: $ATLASO_GUEST_PLATFORM"
+
+log_step "establishing the trusted Photon 5 updates repository"
+python3 "$PHOTON_REPOSITORY_CONFIGURATOR"
 
 log_step "refreshing Photon package metadata"
 tdnf -y clean all || true

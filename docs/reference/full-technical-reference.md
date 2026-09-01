@@ -279,6 +279,15 @@ status and replay a normalized, bounded output tail. This avoids progress redraw
 Packer-prefixed lines without hiding actionable failures. Successful zero-status transcripts are scanned incrementally
 for reported repository errors rather than loaded into memory as a whole.
 
+Before the first metadata refresh, the shared provisioner accepts only the stock Photon 5 updates repository layouts,
+requires `gpgcheck=1` plus a repository-pinned byte serialization of the installed 4096-bit Photon RPM signing key,
+and replaces
+the retired GA URL with Photon's
+current `packages.broadcom.com/photon/$releasever/...` layout. It fetches a bounded `repomd.xml` document from that exact
+canonical HTTPS endpoint before changing the repository file. An unrecognized source, weakened signature setting,
+missing or substituted signing key, redirect, unreachable endpoint, or malformed metadata stops the image build before
+TDNF runs.
+
 The image builder does not configure a custom pip package index by default. If your build network requires an internal
 PyPI mirror, pass `-PipGlobalIndex` or `-PipGlobalIndexUrl` to set Photon site-level pip configuration before the Atlaso
 virtual environment is created. The provisioner does not upgrade pip as a separate bootstrap step; it uses the

@@ -1,0 +1,374 @@
+#!/usr/bin/env python3
+"""Establish the trusted Photon 5 updates repository before package refresh."""
+
+from __future__ import annotations
+
+import argparse
+import configparser
+import hashlib
+import os
+import stat
+import subprocess
+import tempfile
+import xml.etree.ElementTree as ET
+from pathlib import Path
+from typing import Callable
+
+REPOSITORY_SECTION = "photon-updates"
+CANONICAL_BASEURL = (
+    "https://packages.broadcom.com/photon/$releasever/"
+    "photon_updates_$releasever_$basearch"
+)
+CANONICAL_METADATA_URL = (
+    "https://packages.broadcom.com/photon/5.0/"
+    "photon_updates_5.0_x86_64/repodata/repomd.xml"
+)
+CANONICAL_GPG_KEY_URI = "file:///etc/pki/rpm-gpg/VMWARE-RPM-GPG-KEY-4096"
+TRUSTED_GPG_KEY_SHA256S = {
+    # Armored source shipped by the upstream photon-repos package sources.
+    "88b2e118c08f0a7c2acc172ac9b8557a30677ffaff5060d304697bee75028bc7",
+    # Serialization installed by the pinned Photon 5 GA ISO.
+    "8f4cb443e17f533a78c72f1f7f7d7e1b739622bb8c2d2ac8444ac3fcf85e8307",
+}
+LEGACY_GPG_KEY_URIS = (
+    "file:///etc/pki/rpm-gpg/VMWARE-RPM-GPG-KEY "
+    "file:///etc/pki/rpm-gpg/VMWARE-RPM-GPG-KEY-4096"
+)
+DEFAULT_REPOSITORY_PATH = Path("/etc/yum.repos.d/photon-updates.repo")
+DEFAULT_GPG_KEY_PATH = Path("/etc/pki/rpm-gpg/VMWARE-RPM-GPG-KEY-4096")
+PROBE_TIMEOUT_SECONDS = 30
+PROBE_PROCESS_GRACE_SECONDS = 5
+MAX_METADATA_BYTES = 2 * 1024 * 1024
+TRUSTED_EXISTING_BASEURLS = {
+    CANONICAL_BASEURL,
+    (
+        "https://packages-prod.broadcom.com/photon/$releasever/"
+        "photon_updates_$releasever_$basearch"
+    ),
+    (
+        "https://packages.vmware.com/photon/$releasever/"
+        "photon_updates_$releasever_$basearch"
+    ),
+    (
+        "https://packages.vmware.com/photon/updates/$releasever/"
+        "photon_updates_$releasever_$basearch"
+    ),
+}
+
+
+class PhotonRepositoryError(RuntimeError):
+    """Raised when the Photon repository trust boundary cannot be proven."""
+
+
+def _probe_file_size_limit() -> Callable[[], None] | None:
+    """Return a POSIX child hook that caps repository metadata output.
+
+    Returns:
+        A pre-exec hook on POSIX, or ``None`` where ``RLIMIT_FSIZE`` is not
+        available. The post-download size check remains mandatory everywhere.
+    """
+
+    if os.name != "posix":
+        return None
+    import resource
+
+    def limit_output() -> None:
+        set_limit = getattr(resource, "set" + "rlimit")
+        file_size_limit = getattr(resource, "RLIMIT_" + "FSIZE")
+        set_limit(
+            file_size_limit,
+            (MAX_METADATA_BYTES, MAX_METADATA_BYTES),
+        )
+
+    return limit_output
+
+
+def _require_regular_trusted_file(path: Path, description: str) -> os.stat_result:
+    """Return metadata for a safe existing repository trust file.
+
+    Args:
+        path: File whose type, ownership, and permissions must be checked.
+        description: Stable description used in a sanitized failure message.
+
+    Returns:
+        The file's lstat result.
+
+    Raises:
+        PhotonRepositoryError: The file is absent, linked, or writable by an
+            untrusted local account.
+    """
+
+    try:
+        metadata = path.lstat()
+    except OSError as exc:
+        raise PhotonRepositoryError(f"{description} is unavailable: {path}") from exc
+    if path.is_symlink() or not stat.S_ISREG(metadata.st_mode):
+        raise PhotonRepositoryError(f"{description} must be a regular file: {path}")
+    if os.name == "posix":
+        get_effective_uid = getattr(os, "get" + "euid")
+        if metadata.st_uid != get_effective_uid():
+            raise PhotonRepositoryError(
+                f"{description} must be owned by the provisioning account: {path}"
+            )
+        if metadata.st_mode & 0o022:
+            raise PhotonRepositoryError(
+                f"{description} must not be writable by group or other: {path}"
+            )
+    return metadata
+
+
+def _read_repository(repository_path: Path) -> configparser.ConfigParser:
+    """Read and parse the stock Photon updates repository.
+
+    Args:
+        repository_path: Repository file to parse.
+
+    Returns:
+        The parsed configuration.
+
+    Raises:
+        PhotonRepositoryError: The file is not valid UTF-8 INI data.
+    """
+
+    try:
+        source = repository_path.read_text(encoding="utf-8")
+        parser = configparser.ConfigParser(interpolation=None, strict=True)
+        parser.read_string(source)
+    except (OSError, UnicodeError, configparser.Error) as exc:
+        raise PhotonRepositoryError(
+            f"Photon updates repository is invalid: {repository_path}"
+        ) from exc
+    return parser
+
+
+def _validate_repository(parser: configparser.ConfigParser, gpg_key_path: Path) -> None:
+    """Validate the existing Photon updates repository trust settings.
+
+    Args:
+        parser: Parsed Photon repository configuration.
+        gpg_key_path: Expected installed Photon RPM signing key.
+
+    Raises:
+        PhotonRepositoryError: The repository is not the trusted stock Photon
+            updates definition.
+    """
+
+    if parser.sections() != [REPOSITORY_SECTION]:
+        raise PhotonRepositoryError(
+            "Photon updates repository must contain only [photon-updates]."
+        )
+    section = parser[REPOSITORY_SECTION]
+    baseurl = section.get("baseurl", "").strip()
+    if baseurl not in TRUSTED_EXISTING_BASEURLS:
+        raise PhotonRepositoryError(
+            "Photon updates repository base URL is not an approved Photon 5 layout."
+        )
+    if section.get("enabled", "").strip() != "1":
+        raise PhotonRepositoryError("Photon updates repository must be enabled.")
+    if section.get("gpgcheck", "").strip() != "1":
+        raise PhotonRepositoryError(
+            "Photon updates repository must enforce GPG checks."
+        )
+    if section.get("gpgkey", "").strip() not in {
+        CANONICAL_GPG_KEY_URI,
+        LEGACY_GPG_KEY_URIS,
+    }:
+        raise PhotonRepositoryError(
+            "Photon updates repository must use the approved 4096-bit RPM signing key."
+        )
+    _require_regular_trusted_file(gpg_key_path, "Photon RPM signing key")
+    digest = hashlib.sha256()
+    try:
+        with gpg_key_path.open("rb") as stream:
+            for block in iter(lambda: stream.read(64 * 1024), b""):
+                digest.update(block)
+    except OSError as exc:
+        raise PhotonRepositoryError("Photon RPM signing key is unreadable.") from exc
+    if digest.hexdigest() not in TRUSTED_GPG_KEY_SHA256S:
+        raise PhotonRepositoryError(
+            "Photon RPM signing key does not match the pinned upstream identity."
+        )
+
+
+def _canonical_repository_text() -> str:
+    """Return the canonical upstream Photon updates repository text.
+
+    Returns:
+        Canonical repository configuration with signed packages enabled.
+    """
+
+    return (
+        f"[{REPOSITORY_SECTION}]\n"
+        "name=VMware Photon Linux $releasever ($basearch) Updates\n"
+        f"baseurl={CANONICAL_BASEURL}\n"
+        f"gpgkey={CANONICAL_GPG_KEY_URI}\n"
+        "gpgcheck=1\n"
+        "enabled=1\n"
+        "skip_if_unavailable=1\n"
+    )
+
+
+def _write_repository_atomic(
+    repository_path: Path, source: str, metadata: os.stat_result
+) -> bool:
+    """Atomically replace a noncanonical repository file.
+
+    Args:
+        repository_path: Exact repository path to replace.
+        source: Canonical UTF-8 repository text.
+        metadata: Original file metadata whose mode and ownership are retained.
+
+    Returns:
+        ``True`` when the file changed, otherwise ``False``.
+    """
+
+    if repository_path.read_text(encoding="utf-8") == source:
+        return False
+    descriptor, temporary_name = tempfile.mkstemp(
+        prefix=f".{repository_path.name}.", dir=repository_path.parent
+    )
+    temporary_path = Path(temporary_name)
+    try:
+        with os.fdopen(descriptor, "w", encoding="utf-8", newline="\n") as stream:
+            stream.write(source)
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.chmod(temporary_path, stat.S_IMODE(metadata.st_mode))
+        if os.name == "posix":
+            change_owner = getattr(os, "ch" + "own")
+            change_owner(temporary_path, metadata.st_uid, metadata.st_gid)
+        os.replace(temporary_path, repository_path)
+        if os.name == "posix":
+            directory_descriptor = os.open(repository_path.parent, os.O_RDONLY)
+            try:
+                os.fsync(directory_descriptor)
+            finally:
+                os.close(directory_descriptor)
+    finally:
+        temporary_path.unlink(missing_ok=True)
+    return True
+
+
+def probe_repository_metadata(
+    runner: Callable[..., subprocess.CompletedProcess[str]] = subprocess.run,
+) -> None:
+    """Require bounded valid metadata from the canonical Photon repository.
+
+    Args:
+        runner: Process runner, injectable for focused tests.
+
+    Raises:
+        PhotonRepositoryError: The canonical endpoint is unreachable, redirects
+            elsewhere, is oversized, or does not contain repository metadata.
+    """
+
+    with tempfile.TemporaryDirectory(prefix="atlaso-photon-repository-") as temporary:
+        payload_path = Path(temporary) / "repomd.xml"
+        command = [
+            "curl",
+            "--fail",
+            "--silent",
+            "--show-error",
+            "--proto",
+            "=https",
+            "--proto-redir",
+            "=https",
+            "--connect-timeout",
+            str(PROBE_TIMEOUT_SECONDS),
+            "--max-time",
+            str(PROBE_TIMEOUT_SECONDS),
+            "--max-filesize",
+            str(MAX_METADATA_BYTES),
+            "--user-agent",
+            "Atlaso-Photon-Image-Builder/1",
+            "--output",
+            str(payload_path),
+            "--write-out",
+            "%{http_code}\n%{url_effective}",
+            CANONICAL_METADATA_URL,
+        ]
+        try:
+            completed = runner(
+                command,
+                check=False,
+                capture_output=True,
+                preexec_fn=_probe_file_size_limit(),
+                text=True,
+                timeout=PROBE_TIMEOUT_SECONDS + PROBE_PROCESS_GRACE_SECONDS,
+            )
+            probe_result = completed.stdout.splitlines()
+            if payload_path.stat().st_size > MAX_METADATA_BYTES:
+                raise PhotonRepositoryError(
+                    "Photon repository metadata exceeds the safety limit."
+                )
+            payload = payload_path.read_bytes()
+        except PhotonRepositoryError:
+            raise
+        except (OSError, subprocess.SubprocessError) as exc:
+            raise PhotonRepositoryError(
+                "Canonical Photon 5 updates metadata is unreachable."
+            ) from exc
+    if completed.returncode != 0:
+        raise PhotonRepositoryError(
+            "Canonical Photon 5 updates metadata is unreachable."
+        )
+    if probe_result != ["200", CANONICAL_METADATA_URL]:
+        raise PhotonRepositoryError(
+            "Canonical Photon 5 updates metadata did not return the approved endpoint."
+        )
+    try:
+        root = ET.fromstring(payload)
+    except ET.ParseError as exc:
+        raise PhotonRepositoryError("Photon repository metadata is malformed.") from exc
+    if root.tag.rsplit("}", 1)[-1] != "repomd":
+        raise PhotonRepositoryError(
+            "Photon repository metadata has an unexpected root."
+        )
+
+
+def configure_photon_updates_repository(
+    repository_path: Path = DEFAULT_REPOSITORY_PATH,
+    gpg_key_path: Path = DEFAULT_GPG_KEY_PATH,
+    runner: Callable[..., subprocess.CompletedProcess[str]] = subprocess.run,
+) -> bool:
+    """Validate, probe, and canonicalize the Photon updates repository.
+
+    Args:
+        repository_path: Stock Photon updates repository file.
+        gpg_key_path: Installed Photon 4096-bit RPM signing key.
+        runner: Process runner, injectable for focused tests.
+
+    Returns:
+        ``True`` when the repository file changed, otherwise ``False``.
+    """
+
+    metadata = _require_regular_trusted_file(
+        repository_path, "Photon updates repository"
+    )
+    parser = _read_repository(repository_path)
+    _validate_repository(parser, gpg_key_path)
+    probe_repository_metadata(runner)
+    canonical = _canonical_repository_text()
+    return _write_repository_atomic(repository_path, canonical, metadata)
+
+
+def main() -> int:
+    """Configure the image-build Photon repository and report bounded status."""
+
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--repository", type=Path, default=DEFAULT_REPOSITORY_PATH)
+    parser.add_argument("--gpg-key", type=Path, default=DEFAULT_GPG_KEY_PATH)
+    args = parser.parse_args()
+    try:
+        changed = configure_photon_updates_repository(args.repository, args.gpg_key)
+    except PhotonRepositoryError as exc:
+        parser.exit(2, f"Photon repository preparation failed: {exc}\n")
+    state = "updated" if changed else "already current"
+    print(
+        f"Photon 5 updates repository is {state} and reachable with GPG checks enabled."
+    )
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
