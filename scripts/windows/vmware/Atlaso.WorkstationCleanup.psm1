@@ -660,24 +660,31 @@ function Remove-AtlasoWorkstationStaleRegistrations {
             if ($line -notmatch '^\s*(?<owner>vmlist\d+\.config|index\d+\.id)\s*=\s*(?<value>.*)$') { continue }
             $rawValue = $Matches.value.Trim()
             $rawOwner = $Matches.owner
-            $rawCandidate = $rawValue
+            $rawCandidates = @($rawValue)
             $hasCompleteQuotedValue = $false
             if ($rawValue.Length -gt 0 -and $rawValue[0] -in @([char]34, [char]39)) {
-                $closingQuote = $rawValue.LastIndexOf($rawValue[0])
-                if ($closingQuote -ge 1) {
-                    $rawCandidate = $rawValue.Substring(1, $closingQuote - 1)
+                $rawCandidates = @()
+                for ($quoteIndex = 1; $quoteIndex -lt $rawValue.Length; $quoteIndex++) {
+                    if ($rawValue[$quoteIndex] -eq $rawValue[0]) {
+                        $rawCandidates += $rawValue.Substring(1, $quoteIndex - 1)
+                    }
+                }
+                if ($rawCandidates.Count -gt 0) {
                     $hasCompleteQuotedValue = $true
                 }
                 else {
-                    $rawCandidate = $rawValue.Substring(1)
+                    $rawCandidates = @($rawValue.Substring(1))
                 }
             }
             $rawRefersToExactPath = $false
-            if ([System.IO.Path]::IsPathFullyQualified($rawCandidate)) {
-                try { $rawRefersToExactPath = Test-AtlasoSamePath -Left $rawCandidate -Right $resolvedVmxPath }
-                catch {
-                    Write-Verbose "Ignored an uncanonicalizable raw Workstation inventory row: $($_.Exception.Message)"
+            foreach ($rawCandidate in $rawCandidates) {
+                if ([System.IO.Path]::IsPathFullyQualified($rawCandidate)) {
+                    try { $rawRefersToExactPath = Test-AtlasoSamePath -Left $rawCandidate -Right $resolvedVmxPath }
+                    catch {
+                        Write-Verbose "Ignored an uncanonicalizable raw Workstation inventory row: $($_.Exception.Message)"
+                    }
                 }
+                if ($rawRefersToExactPath) { break }
             }
             if (-not $rawRefersToExactPath -and -not $hasCompleteQuotedValue -and
                 $rawCandidate -match '^(?<path>.+?\.vmx)(?=$|["''\s])') {
