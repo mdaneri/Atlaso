@@ -2254,6 +2254,42 @@ def test_agent_policy_gate_rejects_hidden_worktree_root_policy(
         )
 
 
+def test_agent_policy_gate_rejects_worktree_policy_in_link_title(
+    tmp_path: Path,
+) -> None:
+    """Non-rendered link titles cannot satisfy configured-root policy.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
+    hidden_marker = "Never guess, infer, synthesize, or silently fall back"
+    assert hidden_marker in CODEX_WORKTREE_ROOT_SHARED_MARKERS
+    relative_paths = (
+        Path("AGENTS.md"),
+        Path("CONTRIBUTING.md"),
+        Path("docs/contribute/agent-policies.md"),
+    )
+    for index, relative_path in enumerate(relative_paths):
+        case_root = tmp_path / str(index)
+        write_policy_files(case_root)
+        policy_path = case_root / relative_path
+        policy_path.write_text(
+            policy_path.read_text(encoding="utf-8").replace(
+                hidden_marker,
+                f'[fallback](https://example.invalid "{hidden_marker}")',
+            ),
+            encoding="utf-8",
+        )
+
+        findings = check_agent_policy_gate(case_root)
+
+        assert len(findings) == 1
+        assert findings[0].path == policy_path
+        assert findings[0].message == (
+            f"required agent policy marker is missing: {hidden_marker}"
+        )
+
+
 def test_agent_policy_gate_requires_primary_checkout_before_root_resolution(
     tmp_path: Path,
 ) -> None:

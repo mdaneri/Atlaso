@@ -3035,26 +3035,26 @@ def check_agent_policy_gate(root: Path) -> list[Finding]:
             findings.append(Finding(path, "required agent policy entry point is missing or unreadable"))
             continue
         assert text is not None
-        operative_text = strip_markdown_nonoperative_content(text)
         markdown_operative_text = render_markdown_operative_text(text)
         normalized_text = " ".join(text.split())
-        normalized_operative_text = " ".join(operative_text.split())
         normalized_markdown_operative_text = " ".join(
             markdown_operative_text.split()
         )
-        missing_required_markers = tuple(
-            marker
-            for marker in markers
-            if (
-                marker not in operative_text
-                and marker not in normalized_operative_text
-                if marker in CODEX_WORKTREE_ROOT_SHARED_MARKERS
-                else marker not in markdown_operative_text
-                and marker not in normalized_markdown_operative_text
-                if marker in MAINTAINER_BREAK_GLASS_OPERATIVE_MARKERS
-                else marker not in text and marker not in normalized_text
-            )
-        )
+        missing_required_markers: list[str] = []
+        for marker in markers:
+            if marker in (
+                *CODEX_WORKTREE_ROOT_SHARED_MARKERS,
+                *MAINTAINER_BREAK_GLASS_OPERATIVE_MARKERS,
+            ):
+                visible_marker = marker.replace("`", "")
+                missing = (
+                    visible_marker not in markdown_operative_text
+                    and visible_marker not in normalized_markdown_operative_text
+                )
+            else:
+                missing = marker not in text and marker not in normalized_text
+            if missing:
+                missing_required_markers.append(marker)
         for marker in missing_required_markers:
             findings.append(
                 Finding(path, f"required agent policy marker is missing: {marker}")
