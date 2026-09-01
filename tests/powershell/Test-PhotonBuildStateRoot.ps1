@@ -54,6 +54,20 @@ if ($legacyRecovery.Count -ne 1) {
     throw 'Expected exactly one legacy builder-address recovery function.'
 }
 . ([scriptblock]::Create($legacyRecovery[0].Extent.Text))
+$cleanupFunction = @(
+    $ast.FindAll(
+        {
+            param($node)
+            $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and
+            $node.Name -ceq 'Complete-AtlasoPhotonBuildCleanup'
+        },
+        $true
+    )
+)
+if ($cleanupFunction.Count -ne 1) {
+    throw 'Expected exactly one Photon cleanup completion function.'
+}
+. ([scriptblock]::Create($cleanupFunction[0].Extent.Text))
 
 $expectedDefault = Join-Path $resolvedRepositoryRoot '.atlaso-local\photon-image-build-state'
 $actualDefault = Resolve-AtlasoPhotonBuildStateRoot -RepositoryRoot $resolvedRepositoryRoot
@@ -136,6 +150,40 @@ try {
             [StringComparison]::OrdinalIgnoreCase
         )) {
         throw 'Legacy recovery did not isolate the exact matching builder handoff.'
+    }
+
+    $junctionContainer = Join-Path $fixtureRoot 'junction-container'
+    $junctionTarget = Join-Path $fixtureRoot 'junction-target'
+    [void][System.IO.Directory]::CreateDirectory($junctionContainer)
+    [void][System.IO.Directory]::CreateDirectory($junctionTarget)
+    $junctionParent = Join-Path $junctionContainer 'credentials'
+    [void](New-Item -ItemType Junction -Path $junctionParent -Target $junctionTarget -ErrorAction Stop)
+    $cleanupLeaf = 'atlaso-photon-build-credentials-' + [guid]::NewGuid().ToString('N')
+    $cleanupTarget = Join-Path $junctionTarget $cleanupLeaf
+    [void][System.IO.Directory]::CreateDirectory($cleanupTarget)
+    $sentinelPath = Join-Path $cleanupTarget 'preserve.txt'
+    [System.IO.File]::WriteAllText($sentinelPath, 'preserve')
+    $cleanupRoot = Join-Path $junctionParent $cleanupLeaf
+    $cleanupMarker = [pscustomobject][ordered]@{
+        Schema       = 1
+        RootPath     = $cleanupRoot
+        BootIdentity = '1'
+        Phase        = 'active'
+    }
+    $junctionError = ''
+    try {
+        Complete-AtlasoPhotonBuildCleanup `
+            -MarkerPath (Join-Path $fixtureRoot 'junction-cleanup-marker.json') `
+            -Marker $cleanupMarker `
+            -ExpectedRootPath $cleanupRoot `
+            -AllowedParentRoot $junctionParent
+    }
+    catch {
+        $junctionError = $_.Exception.Message
+    }
+    if ($junctionError -notmatch 'reparse point' -or
+        -not (Test-Path -LiteralPath $sentinelPath -PathType Leaf)) {
+        throw 'Photon cleanup did not preserve a root redirected through a replaced ancestor junction.'
     }
 }
 finally {

@@ -592,12 +592,15 @@ Validated marker payload owning the exact root.
 
 .PARAMETER ExpectedRootPath
 Exact task-created root that the marker must still own.
+.PARAMETER AllowedParentRoot
+Exact reparse-free parent that must still contain the cleanup root.
 #>
 function Complete-AtlasoPhotonBuildCleanup {
     param(
         [Parameter(Mandatory = $true)][string]$MarkerPath,
         [Parameter(Mandatory = $true)][object]$Marker,
-        [Parameter(Mandatory = $true)][string]$ExpectedRootPath
+        [Parameter(Mandatory = $true)][string]$ExpectedRootPath,
+        [Parameter(Mandatory = $true)][string]$AllowedParentRoot
     )
 
     $markerProperties = @($Marker.PSObject.Properties.Name)
@@ -617,6 +620,12 @@ function Complete-AtlasoPhotonBuildCleanup {
         $rootLeaf -notmatch '^atlaso-photon-build-credentials-[0-9a-f]{32}$') {
         throw 'Cleanup marker root does not match the exact task-created Photon root.'
     }
+    # Recovery admission can outlive its ancestry proof. Recheck the complete
+    # parent/root chain immediately before any recursive filesystem operation.
+    Assert-AtlasoStrictDescendantPath `
+        -ParentPath $AllowedParentRoot `
+        -ChildPath $resolvedRoot `
+        -FailureMessage 'Photon cleanup root escaped its admitted parent'
     if (Test-Path -LiteralPath $resolvedRoot) {
         $rootItem = Get-Item -LiteralPath $resolvedRoot -Force -ErrorAction Stop
         if ($rootItem.Attributes -band [System.IO.FileAttributes]::ReparsePoint) {
@@ -699,7 +708,8 @@ function Invoke-AtlasoPhotonBuildCleanupRecovery {
         Complete-AtlasoPhotonBuildCleanup `
             -MarkerPath $MarkerPath `
             -Marker $marker `
-            -ExpectedRootPath $resolvedRoot
+            -ExpectedRootPath $resolvedRoot `
+            -AllowedParentRoot $admitted[0]
     }
     catch {
         throw 'A prior Photon image build has unresolved sensitive cleanup. Restart Windows, then rerun this wrapper.'
@@ -1554,7 +1564,8 @@ else {
             Complete-AtlasoPhotonBuildCleanup `
                 -MarkerPath $cleanupMarkerPath `
                 -Marker $cleanupMarker `
-                -ExpectedRootPath $credentialRoot
+                -ExpectedRootPath $credentialRoot `
+                -AllowedParentRoot $credentialStateRoot
             if ($null -ne $reservationReleaseError) {
                 throw "The VMware builder address reservation was retained: $($reservationReleaseError.Exception.Message)"
             }
