@@ -691,6 +691,7 @@ function Invoke-AtlasoPhotonImageBuild {
     }
     Assert-AtlasoSensitiveBuildPath -Validator $SensitivePathValidator -Path $sensitiveBuildDir
     New-Item -ItemType Directory -Force -Path $sensitiveBuildDir | Out-Null
+    Assert-AtlasoSensitiveBuildPath -Validator $SensitivePathValidator -Path $sensitiveBuildDir
     if ([string]::IsNullOrWhiteSpace($PreparedIsoPath)) {
         $PreparedIsoPath = Join-Path $sensitiveBuildDir 'kickstart\atlaso-photon-with-kickstart.iso'
     }
@@ -712,6 +713,7 @@ function Invoke-AtlasoPhotonImageBuild {
             Remove-AtlasoSensitiveBuildArtifact -Path $ksSourceDir
             Assert-AtlasoSensitiveBuildPath -Validator $SensitivePathValidator -Path $ksSourceDir
             New-Item -ItemType Directory -Force -Path $ksSourceDir | Out-Null
+            Assert-AtlasoSensitiveBuildPath -Validator $SensitivePathValidator -Path $ksSourceDir
             Assert-AtlasoSensitiveBuildPath -Validator $SensitivePathValidator -Path $kickstartJson
             New-AtlasoPhotonKickstart `
                 -Path $kickstartJson `
@@ -725,26 +727,34 @@ function Invoke-AtlasoPhotonImageBuild {
                 -AdditionalPackages $GuestPackages `
                 -PostInstallCommands $GuestPostInstallCommands `
                 -InstallDiskLayout $InstallDiskLayout
+            Assert-AtlasoSensitiveBuildPath -Validator $SensitivePathValidator -Path $kickstartJson
 
             Assert-AtlasoSensitiveBuildPath -Validator $SensitivePathValidator -Path $buildDir
             $sourceIsoPath = Resolve-AtlasoPhotonSourceIso -UrlOrPath $IsoUrl -Checksum $IsoChecksum -BuildDirectory $buildDir -PackerDirectory $packerDir -SharedSourceDirectory $sharedSourceDir
             try {
                 Assert-AtlasoSensitiveBuildPath -Validator $SensitivePathValidator -Path $resolvedPreparedIsoPath
+                Assert-AtlasoSensitiveBuildPath -Validator $SensitivePathValidator -Path $kickstartJson
                 New-AtlasoRemasteredPhotonIso `
                     -SourceIso $sourceIsoPath `
                     -KickstartJson $kickstartJson `
                     -OutputIso $resolvedPreparedIsoPath `
                     -CleanupPaths $preparedIsoCleanupPaths
+                Assert-AtlasoSensitiveBuildPath -Validator $SensitivePathValidator -Path $resolvedPreparedIsoPath
             } catch {
+                foreach ($candidatePath in @($preparedIsoCleanupPaths | Select-Object -Unique)) {
+                    Assert-AtlasoSensitiveBuildPath -Validator $SensitivePathValidator -Path $candidatePath
+                }
                 $fallbackPreparedIsoPath = New-AtlasoFallbackPreparedIsoPath -Path $resolvedPreparedIsoPath
                 Write-Warning "Could not replace prepared ISO at $resolvedPreparedIsoPath; retrying this run with $fallbackPreparedIsoPath"
                 $resolvedPreparedIsoPath = $fallbackPreparedIsoPath
                 Assert-AtlasoSensitiveBuildPath -Validator $SensitivePathValidator -Path $resolvedPreparedIsoPath
+                Assert-AtlasoSensitiveBuildPath -Validator $SensitivePathValidator -Path $kickstartJson
                 New-AtlasoRemasteredPhotonIso `
                     -SourceIso $sourceIsoPath `
                     -KickstartJson $kickstartJson `
                     -OutputIso $resolvedPreparedIsoPath `
                     -CleanupPaths $preparedIsoCleanupPaths
+                Assert-AtlasoSensitiveBuildPath -Validator $SensitivePathValidator -Path $resolvedPreparedIsoPath
             }
         } finally {
             # The remastered ISO owns the consumed kickstart payload. Do not retain
@@ -804,6 +814,7 @@ function Invoke-AtlasoPhotonImageBuild {
 
     Assert-AtlasoSensitiveBuildPath -Validator $SensitivePathValidator -Path $varFilePath
     Write-AtlasoPackerVarFile -Path $varFilePath -Variables $packerVariables
+    Assert-AtlasoSensitiveBuildPath -Validator $SensitivePathValidator -Path $varFilePath
     Write-Host "Using Packer var-file: $varFilePath"
 
     $packerArgs = @($(if ($ValidateOnly) { 'validate' } else { 'build' }))

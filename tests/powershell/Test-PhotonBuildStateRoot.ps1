@@ -535,6 +535,35 @@ try {
     $sensitiveBuildIdentity = Get-AtlasoPathIdentity `
         -Path $sensitiveBuildRoot `
         -Description 'Photon sensitive-build test root'
+    $sensitiveIdentityPins = @{}
+    $nestedPlaintextDirectory = Join-Path $sensitiveBuildRoot 'kickstart-src'
+    $nestedPlaintextFile = Join-Path $nestedPlaintextDirectory 'photon-ks.json'
+    [void][System.IO.Directory]::CreateDirectory($nestedPlaintextDirectory)
+    [System.IO.File]::WriteAllText($nestedPlaintextFile, 'test-secret')
+    Assert-AtlasoPhotonSensitiveBuildPathIdentity `
+        -CredentialRoot $sensitiveCredentialRoot `
+        -SensitiveBuildRoot $sensitiveBuildRoot `
+        -RootIdentity $sensitiveBuildIdentity `
+        -Path $nestedPlaintextFile `
+        -IdentityPins $sensitiveIdentityPins
+    $retainedPlaintextDirectory = Join-Path $sensitiveEscapeRoot 'retained-kickstart-src'
+    Move-Item -LiteralPath $nestedPlaintextDirectory -Destination $retainedPlaintextDirectory
+    [void][System.IO.Directory]::CreateDirectory($nestedPlaintextDirectory)
+    [System.IO.File]::WriteAllText($nestedPlaintextFile, 'replacement')
+    $nestedPlaintextError = ''
+    try {
+        Assert-AtlasoPhotonSensitiveBuildPathIdentity `
+            -CredentialRoot $sensitiveCredentialRoot `
+            -SensitiveBuildRoot $sensitiveBuildRoot `
+            -RootIdentity $sensitiveBuildIdentity `
+            -Path $nestedPlaintextFile `
+            -IdentityPins $sensitiveIdentityPins
+    }
+    catch { $nestedPlaintextError = $_.Exception.Message }
+    if ($nestedPlaintextError -notmatch 'identity changed' -or
+        -not (Test-Path -LiteralPath (Join-Path $retainedPlaintextDirectory 'photon-ks.json'))) {
+        throw 'Photon sensitive-build validation did not detect a replaced plaintext subtree.'
+    }
     $renamedSensitiveRoot = Join-Path $sensitiveCredentialRoot 'sensitive-build-retained'
     Move-Item -LiteralPath $sensitiveBuildRoot -Destination $renamedSensitiveRoot -ErrorAction Stop
     [void](New-Item `
@@ -548,7 +577,8 @@ try {
             -CredentialRoot $sensitiveCredentialRoot `
             -SensitiveBuildRoot $sensitiveBuildRoot `
             -RootIdentity $sensitiveBuildIdentity `
-            -Path (Join-Path $sensitiveBuildRoot 'packer-vars\atlaso-photon.auto.pkrvars.hcl')
+            -Path (Join-Path $sensitiveBuildRoot 'packer-vars\atlaso-photon.auto.pkrvars.hcl') `
+            -IdentityPins $sensitiveIdentityPins
     }
     catch {
         $sensitivePathError = $_.Exception.Message

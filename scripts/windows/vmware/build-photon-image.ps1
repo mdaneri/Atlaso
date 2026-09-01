@@ -489,6 +489,8 @@ Pinned root containing plaintext image-build artifacts.
 Expected filesystem identity of the sensitive-build root.
 .PARAMETER Path
 Sensitive path whose complete ancestry must remain beneath the pinned root.
+.PARAMETER IdentityPins
+Invocation-owned map of exact sensitive-path filesystem identities.
 #>
 function Assert-AtlasoPhotonSensitiveBuildPathIdentity {
     [Diagnostics.CodeAnalysis.SuppressMessageAttribute(
@@ -500,7 +502,8 @@ function Assert-AtlasoPhotonSensitiveBuildPathIdentity {
         [Parameter(Mandatory = $true)][string]$CredentialRoot,
         [Parameter(Mandatory = $true)][string]$SensitiveBuildRoot,
         [Parameter(Mandatory = $true)][string]$RootIdentity,
-        [Parameter(Mandatory = $true)][string]$Path
+        [Parameter(Mandatory = $true)][string]$Path,
+        [Parameter(Mandatory = $true)][hashtable]$IdentityPins
     )
 
     $resolvedSensitiveRoot = [System.IO.Path]::GetFullPath($SensitiveBuildRoot)
@@ -518,6 +521,31 @@ function Assert-AtlasoPhotonSensitiveBuildPathIdentity {
             -ParentPath $resolvedSensitiveRoot `
             -ChildPath $resolvedPath `
             -FailureMessage 'Photon plaintext path escaped the sensitive-build root'
+    }
+    $candidatePath = $resolvedPath
+    while ($true) {
+        $knownIdentity = $IdentityPins.ContainsKey($candidatePath)
+        $candidateItem = Get-Item -LiteralPath $candidatePath -Force -ErrorAction SilentlyContinue
+        if ($null -eq $candidateItem) {
+            if ($knownIdentity) {
+                throw 'Photon plaintext path disappeared after identity pinning; artifacts were preserved.'
+            }
+        }
+        else {
+            $candidateIdentity = Get-AtlasoPathIdentity `
+                -Path $candidatePath `
+                -Description 'Photon plaintext path'
+            if ($knownIdentity -and [string]$IdentityPins[$candidatePath] -cne $candidateIdentity) {
+                throw 'Photon plaintext path identity changed; artifacts were preserved.'
+            }
+            if (-not $knownIdentity) {
+                $IdentityPins[$candidatePath] = $candidateIdentity
+            }
+        }
+        if ($candidatePath.Equals($resolvedSensitiveRoot, [StringComparison]::OrdinalIgnoreCase)) {
+            break
+        }
+        $candidatePath = Split-Path -Parent $candidatePath
     }
 }
 
@@ -1547,11 +1575,13 @@ if ($CredentialChild) {
         -not $sensitiveBuildRoot.StartsWith($credentialRootPrefix, [StringComparison]::OrdinalIgnoreCase)) {
         throw 'The isolated Photon sensitive-build root is unavailable or invalid.'
     }
+    $sensitivePathIdentities = @{}
     Assert-AtlasoPhotonSensitiveBuildPathIdentity `
         -CredentialRoot $credentialBundleRoot `
         -SensitiveBuildRoot $sensitiveBuildRoot `
         -RootIdentity $SensitiveBuildRootIdentity `
-        -Path $sensitiveBuildRoot
+        -Path $sensitiveBuildRoot `
+        -IdentityPins $sensitivePathIdentities
     $sensitiveBuildPrefix = $sensitiveBuildRoot.TrimEnd(
         [System.IO.Path]::DirectorySeparatorChar,
         [System.IO.Path]::AltDirectorySeparatorChar
@@ -1605,7 +1635,8 @@ if ($CredentialChild) {
         -CredentialRoot $credentialBundleRoot `
         -SensitiveBuildRoot $sensitiveBuildRoot `
         -RootIdentity $SensitiveBuildRootIdentity `
-        -Path (Join-Path $sensitiveBuildRoot 'source-verification')
+        -Path (Join-Path $sensitiveBuildRoot 'source-verification') `
+        -IdentityPins $sensitivePathIdentities
     $null = Assert-AtlasoSourceSnapshotCommitBinding `
         -Root $resolvedSourceSnapshotRoot `
         -RepositoryRoot $resolvedTaskRepositoryRoot `
@@ -1625,8 +1656,15 @@ if ($CredentialChild) {
         -CredentialRoot $credentialBundleRoot `
         -SensitiveBuildRoot $sensitiveBuildRoot `
         -RootIdentity $SensitiveBuildRootIdentity `
-        -Path $resolvedChildPackerDirectory
+        -Path $resolvedChildPackerDirectory `
+        -IdentityPins $sensitivePathIdentities
     New-Item -ItemType Directory -Path $resolvedChildPackerDirectory -ErrorAction Stop | Out-Null
+    Assert-AtlasoPhotonSensitiveBuildPathIdentity `
+        -CredentialRoot $credentialBundleRoot `
+        -SensitiveBuildRoot $sensitiveBuildRoot `
+        -RootIdentity $SensitiveBuildRootIdentity `
+        -Path $resolvedChildPackerDirectory `
+        -IdentityPins $sensitivePathIdentities
     $packerTemplatePath = Join-Path `
         $resolvedSourceSnapshotRoot `
         'image\vmware-workstation\atlaso-photon.pkr.hcl'
@@ -1677,7 +1715,8 @@ if ($CredentialChild) {
         -CredentialRoot $credentialBundleRoot `
         -SensitiveBuildRoot $sensitiveBuildRoot `
         -RootIdentity $SensitiveBuildRootIdentity `
-        -Path $sensitiveBuildRoot
+        -Path $sensitiveBuildRoot `
+        -IdentityPins $sensitivePathIdentities
     try {
         $credentialBundle = Get-Content -LiteralPath $CredentialBundlePath -Raw | ConvertFrom-Json
         $bundleProperties = @($credentialBundle.PSObject.Properties.Name)
@@ -1719,7 +1758,8 @@ if ($CredentialChild) {
             -CredentialRoot $credentialBundleRoot `
             -SensitiveBuildRoot $sensitiveBuildRoot `
             -RootIdentity $SensitiveBuildRootIdentity `
-            -Path $Path
+            -Path $Path `
+            -IdentityPins $sensitivePathIdentities
     }.GetNewClosure()
 }
 else {
@@ -1927,7 +1967,8 @@ else {
             -CredentialRoot $credentialRoot `
             -SensitiveBuildRoot $childSensitiveBuildDirectory `
             -RootIdentity $sensitiveBuildRootIdentity `
-            -Path $childSensitiveBuildDirectory
+            -Path $childSensitiveBuildDirectory `
+            -IdentityPins @{}
         $sourceSnapshot = New-AtlasoImmutableSourceSnapshot `
             -RepositoryRoot $repoRoot `
             -StagingRoot $childSensitiveBuildDirectory
