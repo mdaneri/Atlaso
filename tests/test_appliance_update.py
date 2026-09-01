@@ -4441,6 +4441,8 @@ def test_helper_cleans_stale_managed_photon_credentials_with_verified_runtime_ro
         monkeypatch: Pytest fixture used to replace dependencies for the test.
         tmp_path: Temporary directory provided by pytest for isolated filesystem state.
     """
+    from types import SimpleNamespace
+
     helper = load_helper_module()
     runtime_root = tmp_path / "run"
     runtime_root.mkdir()
@@ -4450,6 +4452,23 @@ def test_helper_cleans_stale_managed_photon_credentials_with_verified_runtime_ro
     secret_path.write_text("password=test-secret\n", encoding="utf-8")
     secret_path.chmod(0o600)
     monkeypatch.setattr(helper, "_photon_repository_runtime_root", lambda: runtime_root)
+    original_lstat = Path.lstat
+
+    def verified_runtime_view_lstat(path):
+        """Report root ownership for test-owned runtime views already admitted by the seam.
+
+        Args:
+            path: Filesystem path whose metadata is requested.
+        """
+        metadata = original_lstat(path)
+        if path.parent == runtime_root and path.name.startswith(
+            "atlaso-tdnf-repositories-"
+        ):
+            return SimpleNamespace(st_mode=stat.S_IFDIR | 0o700, st_uid=0)
+        return metadata
+
+    monkeypatch.setattr(Path, "lstat", verified_runtime_view_lstat)
+    monkeypatch.setattr(helper, "os", SimpleNamespace(name="posix"))
 
     helper._cleanup_stale_photon_repository_views()
 
