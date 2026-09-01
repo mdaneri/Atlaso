@@ -19436,6 +19436,8 @@ def _installed_atlaso_database_url() -> str:
             )
             continue
         candidate = raw_line.strip(" \t\r")
+        if candidate.startswith(("#", ";")):
+            continue
         assignment_name, separator, assignment_value = candidate.partition("=")
         if not separator:
             continue

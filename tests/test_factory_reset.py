@@ -482,6 +482,35 @@ def test_helper_database_url_tracks_invalid_name_multiline_value(monkeypatch, tm
     )
 
 
+@pytest.mark.parametrize("comment_prefix", ["#", ";"])
+def test_helper_database_url_ignores_quote_state_in_comments(
+    monkeypatch, tmp_path, comment_prefix
+):
+    """Comment quotes cannot consume a later effective database assignment.
+
+    Args:
+        monkeypatch: Pytest fixture used to isolate the helper environment file.
+        tmp_path: Temporary directory provided for the installed runtime fixture.
+        comment_prefix: EnvironmentFile comment marker under test.
+    """
+    from tests.test_appliance_update import load_helper_module
+
+    helper = load_helper_module()
+    environment_path = tmp_path / "atlaso.env"
+    environment_path.write_text(
+        "ATLASO_DATABASE_URL=sqlite:////var/lib/atlaso/old.db\n"
+        f'{comment_prefix} note="\n'
+        "ATLASO_DATABASE_URL=sqlite:////var/lib/atlaso/current.db\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(helper, "ATLASO_ENV_PATH", environment_path)
+
+    assert (
+        helper._installed_atlaso_database_url()
+        == "sqlite:////var/lib/atlaso/current.db"
+    )
+
+
 def test_helper_database_url_tracks_later_multiline_quote_segment(monkeypatch, tmp_path):
     """A later quoted segment keeps assignment-shaped continuation text inert.
 
