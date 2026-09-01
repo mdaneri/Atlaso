@@ -194,11 +194,13 @@ current-user DPAPI bundle, and verifies removal of both task-owned roots. Only t
 ISO, and secret-bearing Packer variable file inside that exact task-owned root, so parent cleanup still removes and
 verifies them after a whole-tree timeout kills the child before its normal `finally` blocks can run.
 The credential bridge, immutable source snapshot, Packer workspace, remastered ISO, cleanup marker, and VMware
-builder-address ledger all live beneath checkout-local `.atlaso-local/photon-image-build-state`. An explicit
+builder-address release handoff all live beneath checkout-local `.atlaso-local/photon-image-build-state`. An explicit
 `-BuildStateRoot` is accepted only as a strict non-reparse-point descendant of the exact task repository. The wrapper
 never creates new task build state through Windows `TEMP`, `LocalApplicationData`, a profile directory, or a different
-volume. Recovery may read and retire an exact pre-migration marker or matching address handoff from those former roots,
-but it never adopts them for a new build or touches another repository or canonical builder identity.
+volume. The address allocator retains one non-task-owned per-user lock and ledger under `LocalApplicationData` so
+concurrent worktrees cannot reserve the same VMware address. Recovery may read and retire an exact pre-migration marker
+or matching address handoff from former roots, but it never adopts them for a new task handoff or touches another
+repository or canonical builder identity.
 `-ImageBuildTimeoutSeconds` bounds the whole child and defaults to six hours.
 If Windows cannot prove whole-tree termination, the wrapper retains the root plus a non-secret checkout-local cleanup
 marker and fails closed. Restart Windows and rerun the wrapper; the changed boot identity proves the prior tree is
@@ -316,7 +318,8 @@ worktree, source commit, branch, process, Windows boot identity, output root, VM
 reserved for the rest of the same Windows boot because a surviving descendant could still start the VM. After a host
 restart proves that process tree gone, recovery also requires the exact VM to be inactive and its address unobserved;
 an active or observed stale address remains reserved while the allocator tries another pool candidate.
-The non-secret release handoff lives under the same per-user state root instead of the temporary credential directory.
+The non-secret release handoff lives beneath the task worktree instead of the host-shared allocation registry or
+temporary credential directory.
 If cleanup retains a running VM, stop that VM and rerun the wrapper; startup retries every exact pending handoff before
 allocating another address, skips handoffs whose exact owner process is still active, and deletes a handoff only after
 its ledger release succeeds. A dead same-boot owner remains reserved unless the controlling parent proves complete

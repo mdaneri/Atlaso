@@ -539,7 +539,10 @@ function Enter-AtlasoVmwareBuilderAddressReservation {
     .PARAMETER DhcpConfigPath
     Optional explicit VMware DHCP configuration path.
     .PARAMETER StateRoot
-    Optional stable per-user reservation state directory.
+    Optional stable host-shared reservation lock and ledger directory.
+    .PARAMETER HandoffStateRoot
+    Optional task-owned state directory containing the pending-release handoff.
+    When omitted, handoffs remain beneath StateRoot for backward compatibility.
     .PARAMETER ReservationHandoffPath
     Optional exact pending-release handoff to publish before ledger admission.
     .PARAMETER VmrunPath
@@ -566,6 +569,7 @@ function Enter-AtlasoVmwareBuilderAddressReservation {
         [string[]]$AdditionalExcludedAddresses = @(),
         [string]$DhcpConfigPath = '',
         [string]$StateRoot = '',
+        [string]$HandoffStateRoot = '',
         [string]$ReservationHandoffPath = '',
         [Parameter(Mandatory = $true)][string]$VmrunPath,
         [Parameter(Mandatory = $true)][string]$OutputDirectory,
@@ -632,9 +636,15 @@ function Enter-AtlasoVmwareBuilderAddressReservation {
         [System.IO.Path]::GetFullPath($StateRoot)
     }
     $ledgerPath = Join-Path $resolvedStateRoot 'reservations.json'
+    $resolvedHandoffStateRoot = if ([string]::IsNullOrWhiteSpace($HandoffStateRoot)) {
+        $resolvedStateRoot
+    }
+    else {
+        [System.IO.Path]::GetFullPath($HandoffStateRoot)
+    }
     $resolvedHandoffPath = ''
     if (-not [string]::IsNullOrWhiteSpace($ReservationHandoffPath)) {
-        $pendingRoot = [System.IO.Path]::GetFullPath((Join-Path $resolvedStateRoot 'pending-releases'))
+        $pendingRoot = [System.IO.Path]::GetFullPath((Join-Path $resolvedHandoffStateRoot 'pending-releases'))
         $resolvedHandoffPath = [System.IO.Path]::GetFullPath($ReservationHandoffPath)
         if (-not (Split-Path -Parent $resolvedHandoffPath).Equals(
                 $pendingRoot,

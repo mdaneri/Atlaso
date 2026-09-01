@@ -121,7 +121,7 @@ try {
     )
     $script:completedLegacyHandoffs = @()
     Set-Item -Path Function:Complete-AtlasoBuilderAddressReservationHandoff -Value {
-        param($Path, $VmrunPath, $StateRoot)
+        param($Path, $VmrunPath, $StateRoot, $ReservationStateRoot)
         $script:completedLegacyHandoffs += [System.IO.Path]::GetFullPath($Path)
     }
     Invoke-AtlasoLegacyBuilderAddressHandoffRecovery `

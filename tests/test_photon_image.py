@@ -1720,8 +1720,10 @@ def test_vmware_photon_build_state_stays_under_task_repository() -> None:
     assert "$credentialRoot = Join-Path $credentialStateRoot" in wrapper
     assert "$buildStateRepositoryRoot = if ($CredentialChild)" in wrapper
     assert "-RepositoryRoot $buildStateRepositoryRoot" in wrapper
-    assert "$builderReservationStateRoot = Join-Path $resolvedBuildStateRoot" in wrapper
-    assert "-StateRoot $builderReservationStateRoot" in wrapper
+    assert "$builderReservationHandoffStateRoot = Join-Path $resolvedBuildStateRoot" in wrapper
+    assert "$builderReservationStateRoot = $legacyBuilderReservationStateRoot" in wrapper
+    assert "-HandoffStateRoot $builderReservationHandoffStateRoot" in wrapper
+    assert "-ReservationStateRoot $builderReservationStateRoot" in wrapper
     assert "-BuildStateRoot', $resolvedBuildStateRoot" in wrapper
     assert wrapper.count("[System.IO.Path]::GetTempPath()") == 1
     assert "$legacyCredentialParentRoot" in wrapper

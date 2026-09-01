@@ -775,12 +775,15 @@ function Complete-AtlasoBuilderAddressReservationHandoff {
     .PARAMETER VmrunPath
     Exact vmrun executable path.
     .PARAMETER StateRoot
-    Stable per-user builder-address state directory.
+    Task-owned builder-address handoff state directory.
+    .PARAMETER ReservationStateRoot
+    Host-shared builder-address allocation lock and ledger directory.
     #>
     param(
         [Parameter(Mandatory = $true)][string]$Path,
         [Parameter(Mandatory = $true)][string]$VmrunPath,
-        [Parameter(Mandatory = $true)][string]$StateRoot
+        [Parameter(Mandatory = $true)][string]$StateRoot,
+        [Parameter(Mandatory = $true)][string]$ReservationStateRoot
     )
 
     $resolvedStateRoot = [System.IO.Path]::GetFullPath($StateRoot)
@@ -801,7 +804,7 @@ function Complete-AtlasoBuilderAddressReservationHandoff {
     Exit-AtlasoVmwareBuilderAddressReservation `
         -Reservation $reservation `
         -VmrunPath $VmrunPath `
-        -StateRoot $resolvedStateRoot
+        -StateRoot $ReservationStateRoot
     Remove-Item -LiteralPath $resolvedPath -Force
     if (Test-Path -LiteralPath $resolvedPath) {
         throw "The released VMware builder-address handoff could not be removed: $resolvedPath"
@@ -857,7 +860,8 @@ function Invoke-AtlasoLegacyBuilderAddressHandoffRecovery {
             Complete-AtlasoBuilderAddressReservationHandoff `
                 -Path $handoff.FullName `
                 -VmrunPath $VmrunPath `
-                -StateRoot $resolvedStateRoot
+                -StateRoot $resolvedStateRoot `
+                -ReservationStateRoot $resolvedStateRoot
             Write-Host "Released legacy VMware builder-address handoff $($handoff.Name)."
         }
         catch {
@@ -893,14 +897,15 @@ $resolvedBuildStateRoot = Resolve-AtlasoPhotonBuildStateRoot `
     -RepositoryRoot $buildStateRepositoryRoot `
     -Path $BuildStateRoot
 $credentialStateRoot = Join-Path $resolvedBuildStateRoot 'credentials'
-$builderReservationStateRoot = Join-Path $resolvedBuildStateRoot 'vmware-builder-addresses'
-$builderReservationPendingRoot = Join-Path $builderReservationStateRoot 'pending-releases'
+$builderReservationHandoffStateRoot = Join-Path $resolvedBuildStateRoot 'vmware-builder-addresses'
+$builderReservationPendingRoot = Join-Path $builderReservationHandoffStateRoot 'pending-releases'
 $cleanupMarkerPath = Join-Path $resolvedBuildStateRoot 'photon-image-build-cleanup.json'
 $legacyCleanupMarkerPath = Join-Path $repoRoot '.atlaso-local\photon-image-build-cleanup.json'
 $legacyCredentialParentRoot = [System.IO.Path]::GetFullPath([System.IO.Path]::GetTempPath())
 $legacyBuilderReservationStateRoot = Join-Path (
     [Environment]::GetFolderPath('LocalApplicationData')
 ) 'Atlaso\vmware-builder-addresses'
+$builderReservationStateRoot = $legacyBuilderReservationStateRoot
 if (-not $CredentialChild) {
     # Legacy recovery is deletion-only and remains admitted solely to retire an
     # exact pre-migration marker after the required host restart. New task state
@@ -925,7 +930,8 @@ if (-not $CredentialChild) {
                 Complete-AtlasoBuilderAddressReservationHandoff `
                     -Path $handoff.FullName `
                     -VmrunPath $recoveryVmrunPath `
-                    -StateRoot $builderReservationStateRoot
+                    -StateRoot $builderReservationHandoffStateRoot `
+                    -ReservationStateRoot $builderReservationStateRoot
                 Write-Host "Released prior VMware builder-address handoff $($handoff.Name)."
             }
             catch {
@@ -2043,6 +2049,7 @@ if ($requiresBuilderReservation) {
         -RepositoryRoot $TaskRepositoryRoot `
         -SourceCommit $SourceCommit `
         -SourceBranch $SourceBranch `
+        -HandoffStateRoot $builderReservationHandoffStateRoot `
         -StateRoot $builderReservationStateRoot
     $BuilderStaticIp = $builderReservation.Cidr
     if (-not (Test-Path -LiteralPath $resolvedBuilderAddressReservationPath -PathType Leaf)) {

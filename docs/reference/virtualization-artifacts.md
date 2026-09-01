@@ -367,9 +367,10 @@ clobbering, and waits for the exact newly dispatched hosted-finalizer run to suc
 The intermediate VMware builder uses a deterministic version-and-source-commit identity and records that identity in
 its output manifest and schema-v3 provenance. The exporter consumes that exact proven VMX while retaining the canonical
 `atlaso-vX.Y.Z` OVA/product and release filenames; release output never inherits a pull-request number.
-Its credential bridge, sensitive source snapshot, Packer workspace, cleanup state, and builder-address reservation
-ledger remain beneath the exact checkout-local `.atlaso-local/photon-image-build-state` root. No Windows profile,
-temporary-directory, or `LocalApplicationData` fallback is used for newly created build state.
+Its credential bridge, sensitive source snapshot, Packer workspace, cleanup state, and builder-address release handoff
+remain beneath the exact checkout-local `.atlaso-local/photon-image-build-state` root. The non-task-owned address
+allocation lock and ledger remain per-user and host-shared so parallel worktrees cannot choose the same address; no
+task-owned output or sensitive state falls back to a Windows profile, temporary directory, or `LocalApplicationData`.
 Keep `StagingRoot` until stable verification; cleanup is a separate explicit operator action. The three 1Password
 selectors are required so both the fresh image build and exact wheel deployment use the same approved credential
 source; the values are forwarded to the existing isolated SDK bridges and are never uploaded as evidence. A

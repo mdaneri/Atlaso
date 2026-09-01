@@ -280,7 +280,8 @@ exit 1
         -ProcessTreeTerminationProven
 
     $preHandoffStateRoot = Join-Path $testRoot 'pre-handoff-state'
-    $preHandoffPendingRoot = Join-Path $preHandoffStateRoot 'pending-releases'
+    $preHandoffTaskRoot = Join-Path $testRoot 'pre-handoff-task-state'
+    $preHandoffPendingRoot = Join-Path $preHandoffTaskRoot 'pending-releases'
     [void][System.IO.Directory]::CreateDirectory($preHandoffPendingRoot)
     $preHandoffPath = Join-Path $preHandoffPendingRoot (
         "builder-address-reservation-$([guid]::NewGuid().ToString('N')).json"
@@ -289,10 +290,15 @@ exit 1
     $preHandoffCommon.StateRoot = $preHandoffStateRoot
     $preHandoffReservation = Enter-AtlasoVmwareBuilderAddressReservation `
         @preHandoffCommon `
+        -HandoffStateRoot $preHandoffTaskRoot `
         -ReservationHandoffPath $preHandoffPath `
         -OutputDirectory (Join-Path $testRoot 'pre-handoff-output')
     if (-not (Test-Path -LiteralPath $preHandoffPath -PathType Leaf)) {
         throw 'Reservation admission returned before its durable release handoff was published.'
+    }
+    if (-not (Test-Path -LiteralPath (Join-Path $preHandoffStateRoot 'reservations.json') -PathType Leaf) -or
+        (Test-Path -LiteralPath (Join-Path $preHandoffTaskRoot 'reservations.json'))) {
+        throw 'Reservation admission did not keep the shared ledger separate from the task-owned handoff.'
     }
     [System.IO.File]::WriteAllText(
         (Join-Path $preHandoffStateRoot 'reservations.json'),
