@@ -2560,6 +2560,9 @@ function Invoke-PendingAtlasoDevelopmentCaCleanup {
                         Restore-AtlasoRollbackDataDisksFromQuarantine `
                             -DataDiskStates $dataDiskStates `
                             -QuarantineDirectory $quarantineDirectory
+                        if (Test-Path -LiteralPath $marker.VmxPath) {
+                            throw "The exact cleanup-marker VMX was recreated during recovery release: $($marker.VmxPath)"
+                        }
                         Remove-AtlasoDevelopmentCaCleanupMarker -MarkerPath $marker.MarkerPath
                     } `
                     -Confirm:$false

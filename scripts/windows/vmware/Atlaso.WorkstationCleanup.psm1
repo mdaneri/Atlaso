@@ -645,6 +645,7 @@ function Remove-AtlasoWorkstationStaleRegistrations {
             throw "Exact stale-registration VMX still exists; provider state was preserved: $resolvedVmxPath"
         }
     }
+    if (-not $InventoryPath -and -not $resolvedVmxPath -and -not $OnVerified) { return }
     $realInventoryPath = Join-Path ([Environment]::GetFolderPath('ApplicationData')) 'VMware\inventory.vmls'
     $missingInventoryPath = Join-Path $env:APPDATA 'VMware\inventory.vmls'
     $isRealInventory = if ($InventoryPath) {
@@ -694,8 +695,10 @@ function Remove-AtlasoWorkstationStaleRegistrations {
                 $rawCandidates = @()
                 for ($quoteIndex = $candidateStart; $quoteIndex -lt $rawValue.Length; $quoteIndex++) {
                     if ($rawValue[$quoteIndex] -ne $openingQuote) { continue }
-                    $hasCompleteQuotedValue = $true; $quotedSuffix = $rawValue.Substring($quoteIndex + 1).Trim()
-                    if ($quotedSuffix -notmatch '(?i)\.vmx' -or -not $quotedSuffix.EndsWith([string]$openingQuote)) { $rawCandidates += $rawValue.Substring($candidateStart, $quoteIndex - $candidateStart) }
+                    $rawCandidate = $rawValue.Substring($candidateStart, $quoteIndex - $candidateStart)
+                    $quotedSuffix = $rawValue.Substring($quoteIndex + 1).Trim()
+                    if ($quotedSuffix -match '(?i)\.vmx' -and ($quotedSuffix.EndsWith([string]$openingQuote) -or $rawCandidate -notmatch '(?i)\.vmx$')) { continue }
+                    $hasCompleteQuotedValue = $true; $rawCandidates += $rawCandidate
                 }
                 if (-not $hasCompleteQuotedValue) { $rawCandidates = @($rawValue.Substring($candidateStart)) }
             }

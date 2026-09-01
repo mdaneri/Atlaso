@@ -1709,6 +1709,37 @@ Repair-AtlasoWorkstationStaleRegistrations `
     assert inventory.read_bytes() == b""
 
 
+def test_normal_stale_cleanup_keeps_missing_inventory_noop(tmp_path: Path) -> None:
+    """Do not require provider-state creation for ordinary scoped cleanup.
+
+    Args:
+        tmp_path: Pytest temporary directory path.
+    """
+    root = tmp_path / "test-vms" / "Atlaso-ordinary-cleanup"
+    appdata = tmp_path / "missing-appdata"
+    wrapper = tmp_path / "repair-ordinary-missing-inventory.ps1"
+    module_literal = str(
+        VMWARE_SCRIPT_ROOT / "Atlaso.WorkstationCleanup.psm1"
+    ).replace("'", "''")
+    scope_literal = str(root).replace("'", "''")
+    wrapper.write_text(
+        f"""$ErrorActionPreference = 'Stop'
+$env:APPDATA = '{str(appdata).replace("'", "''")}'
+$module = Import-Module '{module_literal}' -Force -PassThru
+& $module {{
+    param($ScopeRoot)
+    Remove-AtlasoWorkstationStaleRegistrations -InventoryPath $null -ScopeRoot $ScopeRoot
+}} '{scope_literal}'
+""",
+        encoding="utf-8",
+    )
+
+    result = _run_script(wrapper, environment=os.environ.copy())
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert not appdata.exists()
+
+
 def test_exact_stale_repair_removes_orphaned_marker_index(tmp_path: Path) -> None:
     """Remove an exact stale index even when its config group is already absent.
 
@@ -1788,6 +1819,8 @@ def test_exact_stale_repair_preserves_mismatched_display_name(tmp_path: Path) ->
         ("index", '""', '"', False),
         ("config", "'", "'", False),
         ("index", "'", "'", False),
+        ("config", "'", "", False),
+        ("index", "'", "", False),
         ("config", "", '" junk', False),
         ("index", "", '" junk', False),
         ("config", '"', '" junk', True),
@@ -2948,6 +2981,10 @@ def test_development_ca_cleanup_releases_recovery_inside_provider_proof() -> Non
 
     assert "Restore-AtlasoRollbackDataDisksFromQuarantine" in callback
     assert "Remove-AtlasoDevelopmentCaCleanupMarker" in callback
+    restore = callback.index("Restore-AtlasoRollbackDataDisksFromQuarantine")
+    final_vmx_check = callback.index("Test-Path -LiteralPath $marker.VmxPath")
+    marker_removal = callback.index("Remove-AtlasoDevelopmentCaCleanupMarker")
+    assert restore < final_vmx_check < marker_removal
 
 
 def test_pre_gui_repair_retains_exact_open_ui_refusal() -> None:
