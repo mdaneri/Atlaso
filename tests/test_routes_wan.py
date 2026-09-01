@@ -208,6 +208,14 @@ def test_fresh_settings_default_off_and_legacy_rows_infer_once(client):
         db.flush()
         assert ensure_routes_wan_settings(db).routing_enabled is False
 
+        for index, interface in enumerate(route_targets, start=1):
+            interface.mode = "access"
+            interface.admin_state = "down" if index == 1 else "up"
+            interface.ip_cidr = f"192.0.{index}.10/24"
+        db.execute(delete(Setting).where(Setting.key.in_(ROUTES_WAN_SETTING_KEYS)))
+        db.flush()
+        assert ensure_routes_wan_settings(db).routing_enabled is True
+
         db.execute(delete(Setting).where(Setting.key.in_(ROUTES_WAN_SETTING_KEYS)))
         route = db.execute(select(Route).order_by(Route.id)).scalars().first()
         nat = db.execute(select(NatRule).order_by(NatRule.id)).scalars().first()

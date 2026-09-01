@@ -117,8 +117,7 @@ def infer_routes_wan_settings(db: Session) -> RoutesWanSettings:
     active_route_targets = {
         interface.name
         for interface in physical_route_targets
-        if interface.admin_state != "down"
-        and interface.oper_state != "missing"
+        if interface.oper_state != "missing"
         and normalize_interface_mode(interface.mode) != "trunk"
         and _has_routing_address(interface.ip_cidr, interface.ipv6_cidr)
     }

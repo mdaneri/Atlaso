@@ -1869,7 +1869,6 @@ def _infer_routes_wan_feature_state(
     for row in physical_interfaces:
         if (
             normalize_interface_mode(row.get("mode")) != "trunk"
-            and str(row.get("admin_state") or "up") != "down"
             and str(row.get("oper_state") or "") != "missing"
             and normalize_interface_role(row.get("role")) == "route"
             and _has_routing_cidr(row)

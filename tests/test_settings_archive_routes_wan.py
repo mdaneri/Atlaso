@@ -333,3 +333,38 @@ def test_restore_routes_wan_archive_legacy_inference_turns_features_off_for_dorm
     assert feature_state.nat_enabled is False
     with SessionLocal() as db_session:
         restore_settings_archive(db_session, archive)
+
+
+def test_routes_wan_archive_legacy_inference_preserves_admin_down_topology(
+    client,
+):
+    """Infer Routing for an addressed route topology with an admin-down target.
+
+    Args:
+        client: HTTP test client that initializes the archive fixture state.
+    """
+    with SessionLocal() as db_session:
+        archive = deepcopy(export_settings_archive(db_session, actor="test"))
+    archive["data"]["settings"] = [
+        row
+        for row in archive["data"].get("settings", [])
+        if row.get("key") not in ROUTES_WAN_SETTING_KEYS
+    ]
+    _disable_routes_and_nat_rows(archive)
+    route_targets = archive["data"]["physical_interfaces"][:2]
+    assert len(route_targets) == 2
+    for index, interface in enumerate(route_targets, start=1):
+        interface.update(
+            {
+                "role": "route",
+                "mode": "access",
+                "admin_state": "down" if index == 1 else "up",
+                "oper_state": "up",
+                "ip_cidr": f"192.0.{index}.10/24",
+                "ipv6_cidr": None,
+            }
+        )
+
+    feature_state = _archive_routes_wan_feature_state(archive["data"])
+
+    assert feature_state.routing_enabled is True
