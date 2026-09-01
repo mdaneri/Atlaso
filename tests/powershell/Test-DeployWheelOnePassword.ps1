@@ -114,7 +114,17 @@ if (-not $scriptText.Contains('Get-AtlasoWorkstationSshHostKey', [System.StringC
     throw 'Only an explicitly selected normal test VM may reconcile verified guest-info evidence into the child in-memory host keys.'
 }
 $guestInfoLookupIndex = $scriptText.IndexOf('Get-AtlasoWorkstationSshHostKey `', [System.StringComparison]::Ordinal)
+$vmwareDiscoveryIndex = $scriptText.IndexOf('$resolvedVmrun = ''''', [System.StringComparison]::Ordinal)
+$skipBuildAdmissionIndex = $scriptText.IndexOf('$skipBuildWheelStage = Join-Path', [System.StringComparison]::Ordinal)
+$buildAdmissionIndex = $scriptText.IndexOf('Stage-PasswordDeployPythonWheels `', [System.StringComparison]::Ordinal)
 $wheelhouseAllocationIndex = $scriptText.IndexOf('$generatedRuntimeDependencyRoot = Join-Path (', [System.StringComparison]::Ordinal)
+if ($vmwareDiscoveryIndex -lt 0 -or
+    $skipBuildAdmissionIndex -lt 0 -or
+    $buildAdmissionIndex -lt 0 -or
+    $skipBuildAdmissionIndex -ge $vmwareDiscoveryIndex -or
+    $buildAdmissionIndex -ge $vmwareDiscoveryIndex) {
+    throw 'Every password-backed deployment path must admit the compatibility wheel before VMware discovery or guest-info access.'
+}
 if ($guestInfoLookupIndex -lt 0 -or
     $wheelhouseAllocationIndex -lt 0 -or
     $guestInfoLookupIndex -ge $wheelhouseAllocationIndex) {
