@@ -12,6 +12,7 @@ Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 Import-Module (Join-Path $PSScriptRoot '..\vmware\Atlaso.VmwarePayload.psm1') -Force
 Import-Module (Join-Path $PSScriptRoot '..\vmware\Atlaso.WorkstationReadiness.psm1') -Force
+Import-Module (Join-Path $PSScriptRoot '..\vmware\Atlaso.VmwareBuilderIdentity.psm1') -Force
 
 <#
 .SYNOPSIS
@@ -689,8 +690,11 @@ function Invoke-AtlasoVirtualizationPrerelease {
     }
     if (-not $reuseCandidate) {
     $buildRoot = Join-Path $operation 'vmware-build'
-    $vmName = "Atlaso-Photon-Builder-VMware-$($identity.Version)"
-    $vmx = Join-Path $buildRoot "$vmName.vmx"
+    $builderIdentity = New-AtlasoVmwareBuilderIdentity `
+        -ReleaseVersion $identity.Version `
+        -SourceCommit $identity.Commit
+    $builderOutput = Join-Path $buildRoot $builderIdentity.Name
+    $vmx = Join-Path $builderOutput "$($builderIdentity.Name).vmx"
     $requiresBuild = -not (Test-Path -LiteralPath $vmx -PathType Leaf)
     $existingProvenance = $null
     if (-not $requiresBuild) {
@@ -709,7 +713,10 @@ function Invoke-AtlasoVirtualizationPrerelease {
     }
     if ($requiresBuild) {
         $buildArguments = @(
-            '-VmName', $vmName, '-OutputDirectory', $buildRoot,
+            '-ReleaseBuilder',
+            '-ReleaseVersion', $identity.Version,
+            '-ReleaseSourceCommit', $identity.Commit,
+            '-OutputDirectory', $builderOutput,
             '-Headless', '-EnableRealSystemAdapters',
             '-OnePasswordEnvironmentId', $OnePasswordEnvironmentId,
             '-OnePasswordAccount', $OnePasswordAccount,

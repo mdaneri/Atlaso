@@ -88,7 +88,15 @@ if ($LASTEXITCODE -eq 0 -or
     ($conflictOutput -join "`n") -notlike '*-Release and -Prerelease are mutually exclusive publishing modes*') {
     throw 'The exporter did not reject conflicting stable and prerelease publication modes.'
 }
-foreach ($functionName in @('Select-AtlasoReleaseTag', 'Assert-AtlasoReleasePublicationTarget')) {
+foreach ($functionName in @(
+        'Select-AtlasoReleaseTag',
+        'Assert-AtlasoReleasePublicationTarget',
+        'New-OvfAttribute',
+        'Set-OvfAttribute',
+        'Get-NamespacedChildElement',
+        'Set-AtlasoOvfVirtualSystemIdentity',
+        'Assert-AtlasoOvfVirtualSystemIdentity'
+    )) {
     $definition = Get-AtlasoScriptFunction -ScriptPath $exportScript -Name $functionName
     . ([scriptblock]::Create($definition))
 }
@@ -270,5 +278,47 @@ Assert-ThrowsLike -Action {
         -Tag 'v0.9.219-rc.1' `
         -Prerelease
 } -Pattern '*returned malformed metadata*'
+
+$ovfNamespace = 'http://schemas.dmtf.org/ovf/envelope/1'
+[xml]$identityDocument = @'
+<Envelope xmlns="http://schemas.dmtf.org/ovf/envelope/1"
+          xmlns:ovf="http://schemas.dmtf.org/ovf/envelope/1">
+  <VirtualSystem ovf:id="Atlaso-PR-654-Photon-Builder-VMware">
+    <Info>Transient builder export</Info>
+    <Name>Atlaso-PR-654-Photon-Builder-VMware</Name>
+  </VirtualSystem>
+</Envelope>
+'@
+$identityManager = New-Object System.Xml.XmlNamespaceManager($identityDocument.NameTable)
+$identityManager.AddNamespace('ovf', $ovfNamespace)
+Set-AtlasoOvfVirtualSystemIdentity `
+    -Document $identityDocument `
+    -NamespaceManager $identityManager `
+    -Name 'atlaso-v0.9.275'
+$identityPath = [System.IO.Path]::GetTempFileName()
+try {
+    $identityDocument.Save($identityPath)
+    Assert-AtlasoOvfVirtualSystemIdentity `
+        -OvfPath $identityPath `
+        -Name 'atlaso-v0.9.275'
+    $reloadedIdentity = [xml](Get-Content -LiteralPath $identityPath -Raw)
+    $reloadedManager = New-Object System.Xml.XmlNamespaceManager($reloadedIdentity.NameTable)
+    $reloadedManager.AddNamespace('ovf', $ovfNamespace)
+    $virtualSystem = $reloadedIdentity.SelectSingleNode('/ovf:Envelope/ovf:VirtualSystem', $reloadedManager)
+    if ($virtualSystem.GetAttribute('id', $ovfNamespace) -cne 'atlaso-v0.9.275' -or
+        $virtualSystem.SelectSingleNode('ovf:Name', $reloadedManager).InnerText -cne 'atlaso-v0.9.275') {
+        throw 'The OVF virtual-system identity retained a transient builder name.'
+    }
+    $virtualSystem.SelectSingleNode('ovf:Name', $reloadedManager).InnerText = 'transient-builder'
+    $reloadedIdentity.Save($identityPath)
+    Assert-ThrowsLike -Action {
+        Assert-AtlasoOvfVirtualSystemIdentity `
+            -OvfPath $identityPath `
+            -Name 'atlaso-v0.9.275'
+    } -Pattern '*does not match the canonical product name*'
+}
+finally {
+    Remove-Item -LiteralPath $identityPath -Force
+}
 
 Write-Output 'Atlaso OVF prerelease tests passed.'

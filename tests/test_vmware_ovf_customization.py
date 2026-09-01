@@ -2485,6 +2485,12 @@ def test_vmware_ovf_export_and_image_plumbing_are_present():
     docs = Path("image/vmware-workstation/README.md").read_text(encoding="utf-8")
     gitignore = Path(".gitignore").read_text(encoding="utf-8")
 
+    assert "[string]$SourceVmxPath = ''" in export_script
+    assert "requires an explicit -SourceVmxPath" in export_script
+    assert "Atlaso-Photon-Builder-VMware.vmx" not in export_script
+    assert "schema_version -ne 3" in payload_module
+    assert "builder_identity" in payload_module
+
     for key in (
         "cidr",
         "gateway",
@@ -2510,6 +2516,21 @@ def test_vmware_ovf_export_and_image_plumbing_are_present():
     assert "VMware Workstation\\OVFTool\\ovftool.exe" in export_script
     assert "Join-Path $Path 'ovftool.exe'" in export_script
     assert "Add-AtlasoOvfProperties" in export_script
+    assert "Set-AtlasoOvfVirtualSystemIdentity" in export_script
+    assert "Assert-AtlasoOvfVirtualSystemIdentity" in export_script
+    identity_normalization = export_script.index(
+        "Add-AtlasoOvfProperties -OvfPath $ovfPath -Name $Name"
+    )
+    identity_readback = export_script.index(
+        "Assert-AtlasoOvfVirtualSystemIdentity -OvfPath $ovfPath -Name $Name"
+    )
+    manifest_write = export_script.index(
+        "Update-OvfManifest -OvfDirectory $ovfPackageDirectory"
+    )
+    ova_packaging = export_script.index(
+        "New-OvaArchive -OvfDirectory $ovfPackageDirectory"
+    )
+    assert identity_normalization < identity_readback < manifest_write < ova_packaging
     assert "Set-AtlasoOvfHardware" in export_script
     assert "Ensure-AtlasoOvfEmptyDataDisks" in export_script
     assert "Assert-AtlasoOvfDiskTopology" in export_script

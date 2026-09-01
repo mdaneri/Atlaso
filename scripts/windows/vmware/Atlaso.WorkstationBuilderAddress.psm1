@@ -640,6 +640,11 @@ function Enter-AtlasoVmwareBuilderAddressReservation {
         }
     }
     $resolvedOutput = [System.IO.Path]::GetFullPath($OutputDirectory)
+    $canonicalTaskName = '^Atlaso-PR-[1-9][0-9]*-Photon-Builder-VMware(?:-[a-z0-9]+(?:-[a-z0-9]+)*)?$'
+    $canonicalReleaseName = '^Atlaso-Release-v[0-9]+-[0-9]+-[0-9]+-[0-9a-f]{12}-Photon-Builder-VMware(?:-run-[1-9][0-9]*)?$'
+    if ($VmName -notmatch $canonicalTaskName -and $VmName -notmatch $canonicalReleaseName) {
+        throw 'The VMware builder reservation requires one canonical task- or release-owned builder identity.'
+    }
     $vmxPath = [System.IO.Path]::GetFullPath((Join-Path $resolvedOutput "$VmName.vmx"))
     $resolvedRepository = (Resolve-Path -LiteralPath $RepositoryRoot -ErrorAction Stop).Path
     $sourceCommit = [string](& git -C $resolvedRepository rev-parse HEAD)
@@ -647,8 +652,16 @@ function Enter-AtlasoVmwareBuilderAddressReservation {
         throw 'Could not bind the VMware builder reservation to an exact source commit.'
     }
     $sourceBranch = [string](& git -C $resolvedRepository branch --show-current)
-    if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($sourceBranch)) {
+    if ($LASTEXITCODE -ne 0) {
         throw 'Could not bind the VMware builder reservation to an exact task branch.'
+    }
+    if ([string]::IsNullOrWhiteSpace($sourceBranch)) {
+        if ($VmName -match $canonicalReleaseName) {
+            $sourceBranch = '(detached-release)'
+        }
+        else {
+            throw 'Could not bind the task-owned VMware builder reservation to an exact pull-request branch.'
+        }
     }
     $owner = Get-Process -Id $PID -ErrorAction Stop
     $hostBootIdentity = Get-AtlasoBuilderHostBootIdentity
