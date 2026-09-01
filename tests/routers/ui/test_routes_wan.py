@@ -76,6 +76,7 @@ def test_routes_wan_policy_form_renders(client):
     assert "eth1.20" in response.text
     assert "Routing &amp; WAN Settings" in response.text
     assert 'action="/ui/management/routes-wan/settings"' in response.text
+    assert '<noscript><button class="button primary" type="submit">Save Routing &amp; WAN settings</button></noscript>' in response.text
     assert '[feature_settings]' in response.text
     assert "routing_enabled=false" in response.text
     assert "tc qdisc del" in response.text

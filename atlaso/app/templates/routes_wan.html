@@ -290,6 +290,7 @@
         </label>
         {% if routes_wan_can_write %}
           <p id="routes-wan-settings-autosave-status" class="autosave-status" aria-live="polite">Changes save automatically.</p>
+          <noscript><button class="button primary" type="submit">Save Routing &amp; WAN settings</button></noscript>
         {% else %}
           <p class="muted">Read-only state. Routes and WAN write permissions are required to change these settings.</p>
         {% endif %}
