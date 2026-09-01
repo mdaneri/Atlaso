@@ -1181,11 +1181,17 @@ else {
 }
 $VmName = [string]$builderIdentity.Name
 if (-not $CredentialChild -and $ReleaseBuilder) {
-    $legacySourceBranch = if ($null -ne $builderIdentity.PSObject.Properties['SourceBranch']) {
+    $legacyIdentitySourceBranch = if ($null -ne $builderIdentity.PSObject.Properties['SourceBranch']) {
         [string]$builderIdentity.SourceBranch
     }
     else {
+        ''
+    }
+    $legacySourceBranch = if ([string]::IsNullOrWhiteSpace($legacyIdentitySourceBranch)) {
         '(detached-release)'
+    }
+    else {
+        $legacyIdentitySourceBranch
     }
     Invoke-AtlasoLegacyBuilderAddressHandoffRecovery `
         -StateRoot $legacyBuilderReservationStateRoot `

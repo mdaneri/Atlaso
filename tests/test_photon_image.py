@@ -3416,3 +3416,22 @@ def test_photon_child_revalidates_pinned_credential_ancestry() -> None:
     assert "'-StagingRootIdentity'" in wrapper
     assert "ParentIdentity = $StagingParentIdentity" in wrapper
     assert "RootIdentity   = $StagingRootIdentity" in wrapper
+
+
+def test_release_builder_legacy_recovery_uses_detached_branch_sentinel() -> None:
+    """An empty release identity branch maps to its legacy reservation sentinel."""
+    wrapper = Path("scripts/windows/vmware/build-photon-image.ps1").read_text(
+        encoding="utf-8"
+    )
+    release_recovery = wrapper.index(
+        "if (-not $CredentialChild -and $ReleaseBuilder) {"
+    )
+    empty_branch = wrapper.index(
+        "[string]::IsNullOrWhiteSpace($legacyIdentitySourceBranch)", release_recovery
+    )
+    detached_sentinel = wrapper.index("'(detached-release)'", empty_branch)
+    recovery = wrapper.index(
+        "Invoke-AtlasoLegacyBuilderAddressHandoffRecovery", detached_sentinel
+    )
+
+    assert release_recovery < empty_branch < detached_sentinel < recovery
