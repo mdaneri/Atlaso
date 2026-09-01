@@ -19061,17 +19061,28 @@ def _factory_reset_state_payload() -> dict:
     return {"schema_version": 1, "state": "idle", "updated_at": "", "message": ""}
 
 
-def _environment_file_quote_closes(value: str, quote: str) -> bool:
-    """Return whether a physical line closes a systemd quoted value."""
-    backslashes = 0
+def _environment_file_open_quote(value: str, initial_quote: str = "") -> str:
+    """Return the quote context left open after one physical line."""
+    quote = initial_quote
+    escaped = False
     for character in value:
-        if quote == '"' and character == "\\":
-            backslashes += 1
+        if quote == "'":
+            if character == "'":
+                quote = ""
             continue
-        if character == quote and (quote == "'" or backslashes % 2 == 0):
-            return True
-        backslashes = 0
-    return False
+        if escaped:
+            escaped = False
+            continue
+        if character == "\\":
+            escaped = True
+            continue
+        if quote == '"':
+            if character == '"':
+                quote = ""
+            continue
+        if character in {'"', "'"}:
+            quote = character
+    return quote
 
 
 def _environment_file_unquoted_continues(value: str) -> bool:
@@ -19093,8 +19104,7 @@ def _installed_atlaso_database_url() -> str:
     database_url_is_multiline = False
     for raw_line in source_lines:
         if multiline_quote:
-            if _environment_file_quote_closes(raw_line, multiline_quote):
-                multiline_quote = ""
+            multiline_quote = _environment_file_open_quote(raw_line, multiline_quote)
             continue
         if unquoted_continuation:
             unquoted_continuation = _environment_file_unquoted_continues(raw_line)
@@ -19107,14 +19117,10 @@ def _installed_atlaso_database_url() -> str:
         assignment_quote = (
             assignment_value[0] if assignment_value.startswith(('"', "'")) else ""
         )
-        assignment_is_multiline = bool(
-            assignment_quote
-            and not _environment_file_quote_closes(
-                assignment_value[1:], assignment_quote
-            )
-        )
+        open_quote = _environment_file_open_quote(assignment_value)
+        assignment_is_multiline = bool(open_quote)
         if assignment_is_multiline:
-            multiline_quote = assignment_quote
+            multiline_quote = open_quote
         elif not assignment_quote:
             unquoted_continuation = _environment_file_unquoted_continues(raw_line)
         if assignment_name != "ATLASO_DATABASE_URL":
