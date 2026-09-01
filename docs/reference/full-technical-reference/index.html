@@ -4235,8 +4235,9 @@ storage, recovery, and removal procedures.</p>
 is attached as a local remastered ISO instead of depending on early installer networking:</p>
 <div class="language-powershell highlight"><pre><span></span><code><span id="__span-2-1"><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="n">pwsh</span> <span class="n">-ExecutionPolicy</span> <span class="n">Bypass</span> <span class="p">`</span>
 </span><span id="__span-2-2"><a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a>  <span class="o">-File</span> <span class="n">scripts</span><span class="p">/</span><span class="n">windows</span><span class="p">/</span><span class="n">vmware</span><span class="p">/</span><span class="n">build-photon-image</span><span class="p">.</span><span class="n">ps1</span> <span class="p">`</span>
-</span><span id="__span-2-3"><a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a>  <span class="n">-IsoUrl</span> <span class="s2">&quot;https://packages.broadcom.com/photon/5.0/GA/iso/photon-5.0-dde71ec57.x86_64.iso&quot;</span> <span class="p">`</span>
-</span><span id="__span-2-4"><a id="__codelineno-2-4" name="__codelineno-2-4" href="#__codelineno-2-4"></a>  <span class="n">-IsoChecksum</span> <span class="s2">&quot;sha512:6a7a258399a258da742032987c043ab25503698d35edafaf1ae000f12127da1a161d8b84caa17fd8f23d129e81e1faa7ab087c20ab9229772a643f8f9475305f&quot;</span>
+</span><span id="__span-2-3"><a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a>  <span class="n">-PullRequestNumber</span> <span class="p">&lt;</span><span class="n">number</span><span class="p">&gt;</span> <span class="p">`</span>
+</span><span id="__span-2-4"><a id="__codelineno-2-4" name="__codelineno-2-4" href="#__codelineno-2-4"></a>  <span class="n">-IsoUrl</span> <span class="s2">&quot;https://packages.broadcom.com/photon/5.0/GA/iso/photon-5.0-dde71ec57.x86_64.iso&quot;</span> <span class="p">`</span>
+</span><span id="__span-2-5"><a id="__codelineno-2-5" name="__codelineno-2-5" href="#__codelineno-2-5"></a>  <span class="n">-IsoChecksum</span> <span class="s2">&quot;sha512:6a7a258399a258da742032987c043ab25503698d35edafaf1ae000f12127da1a161d8b84caa17fd8f23d129e81e1faa7ab087c20ab9229772a643f8f9475305f&quot;</span>
 </span></code></pre></div>
 <p><code>-IsoUrl</code> also accepts an existing local filesystem path or an empty-authority <code>file:///</code> URI such as
 <code>file:///C:/images/photon-5.0.iso</code>. The wrapper verifies the local file against <code>-IsoChecksum</code> before remastering and
@@ -4262,12 +4263,14 @@ child unwraps values for kickstart and Packer serialization. All plaintext kicks
 variable artifacts live under that exact task-owned root. The parent creates the child suspended, assigns its Windows
 process job, and resumes it only after every future Packer or plugin descendant is bound to that job. Both ordinary
 child exit and deadline termination require job accounting to report zero active processes. A proven deadline then
-applies checked exact-output cleanup when the selected policy owns replacement output and removes and verifies the
+applies checked exact-output cleanup only when the child durably claimed that cleanup scope, including for an initially
+absent output, and removes and verifies the
 sensitive root even when the child could not run its own cleanup. The default six-hour deadline is configurable through
 <code>-ImageBuildTimeoutSeconds</code>.
 An unproven whole-tree termination retains that root and a non-secret checkout-local ownership marker. Same-boot
 invocations fail closed; after Windows restarts, the changed boot identity proves the prior tree inactive and recovery
-removes the exact root followed by its marker before new credential or image work. Ordinary completion requires the
+removes the exact root followed by its marker before current task or release identity validation, new credential access,
+or image work. Ordinary completion requires the
 reloaded marker root to equal the in-memory task-created root before recursive removal.
 The shared SDK bridge uses the same boot-bound ownership. Marker bytes and atomic publication are write-through durable
 before plaintext consumption. After root deletion, the parent flushes directory metadata through the root parent's
@@ -4323,10 +4326,11 @@ Photon-packaged pip to install Atlaso so a transient public PyPI pip release dow
 application install starts. Leave both options empty to keep standard pip behavior:</p>
 <div class="language-powershell highlight"><pre><span></span><code><span id="__span-3-1"><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a><span class="n">pwsh</span> <span class="n">-ExecutionPolicy</span> <span class="n">Bypass</span> <span class="p">`</span>
 </span><span id="__span-3-2"><a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a>  <span class="o">-File</span> <span class="n">scripts</span><span class="p">/</span><span class="n">windows</span><span class="p">/</span><span class="n">vmware</span><span class="p">/</span><span class="n">build-photon-image</span><span class="p">.</span><span class="n">ps1</span> <span class="p">`</span>
-</span><span id="__span-3-3"><a id="__codelineno-3-3" name="__codelineno-3-3" href="#__codelineno-3-3"></a>  <span class="n">-IsoUrl</span> <span class="s2">&quot;&lt;photon-5.0-iso-url&gt;&quot;</span> <span class="p">`</span>
-</span><span id="__span-3-4"><a id="__codelineno-3-4" name="__codelineno-3-4" href="#__codelineno-3-4"></a>  <span class="n">-IsoChecksum</span> <span class="s2">&quot;&lt;packer-checksum&gt;&quot;</span> <span class="p">`</span>
-</span><span id="__span-3-5"><a id="__codelineno-3-5" name="__codelineno-3-5" href="#__codelineno-3-5"></a>  <span class="n">-PipGlobalIndex</span> <span class="s2">&quot;https://packages.vcfd.broadcom.net/artifactory/api/pypi/upstream-pypi-virtual/pypi&quot;</span> <span class="p">`</span>
-</span><span id="__span-3-6"><a id="__codelineno-3-6" name="__codelineno-3-6" href="#__codelineno-3-6"></a>  <span class="n">-PipGlobalIndexUrl</span> <span class="s2">&quot;https://packages.vcfd.broadcom.net/artifactory/api/pypi/upstream-pypi-virtual/simple&quot;</span>
+</span><span id="__span-3-3"><a id="__codelineno-3-3" name="__codelineno-3-3" href="#__codelineno-3-3"></a>  <span class="n">-PullRequestNumber</span> <span class="p">&lt;</span><span class="n">number</span><span class="p">&gt;</span> <span class="p">`</span>
+</span><span id="__span-3-4"><a id="__codelineno-3-4" name="__codelineno-3-4" href="#__codelineno-3-4"></a>  <span class="n">-IsoUrl</span> <span class="s2">&quot;&lt;photon-5.0-iso-url&gt;&quot;</span> <span class="p">`</span>
+</span><span id="__span-3-5"><a id="__codelineno-3-5" name="__codelineno-3-5" href="#__codelineno-3-5"></a>  <span class="n">-IsoChecksum</span> <span class="s2">&quot;&lt;packer-checksum&gt;&quot;</span> <span class="p">`</span>
+</span><span id="__span-3-6"><a id="__codelineno-3-6" name="__codelineno-3-6" href="#__codelineno-3-6"></a>  <span class="n">-PipGlobalIndex</span> <span class="s2">&quot;https://packages.vcfd.broadcom.net/artifactory/api/pypi/upstream-pypi-virtual/pypi&quot;</span> <span class="p">`</span>
+</span><span id="__span-3-7"><a id="__codelineno-3-7" name="__codelineno-3-7" href="#__codelineno-3-7"></a>  <span class="n">-PipGlobalIndexUrl</span> <span class="s2">&quot;https://packages.vcfd.broadcom.net/artifactory/api/pypi/upstream-pypi-virtual/simple&quot;</span>
 </span></code></pre></div>
 <p>The generated appliance intentionally keeps <code>ATLASO_DRY_RUN_SYSTEM_ADAPTERS=true</code>. Real host mutation is staged per
 apply unit after the helper-backed command path is reviewed. Build disposable demo or lifecycle images with
@@ -5240,15 +5244,38 @@ excluded from the monitored child because they are outside the wrapper's redacti
 <p>Build the image with:</p>
 <div class="language-powershell highlight"><pre><span></span><code><span id="__span-27-1"><a id="__codelineno-27-1" name="__codelineno-27-1" href="#__codelineno-27-1"></a><span class="n">pwsh</span> <span class="n">-ExecutionPolicy</span> <span class="n">Bypass</span> <span class="p">`</span>
 </span><span id="__span-27-2"><a id="__codelineno-27-2" name="__codelineno-27-2" href="#__codelineno-27-2"></a>  <span class="o">-File</span> <span class="n">scripts</span><span class="p">/</span><span class="n">windows</span><span class="p">/</span><span class="n">vmware</span><span class="p">/</span><span class="n">build-photon-image</span><span class="p">.</span><span class="n">ps1</span> <span class="p">`</span>
-</span><span id="__span-27-3"><a id="__codelineno-27-3" name="__codelineno-27-3" href="#__codelineno-27-3"></a>  <span class="n">-IsoUrl</span> <span class="s2">&quot;&lt;photon-iso-url-or-path&gt;&quot;</span> <span class="p">`</span>
-</span><span id="__span-27-4"><a id="__codelineno-27-4" name="__codelineno-27-4" href="#__codelineno-27-4"></a>  <span class="n">-IsoChecksum</span> <span class="s2">&quot;&lt;packer-checksum&gt;&quot;</span>
+</span><span id="__span-27-3"><a id="__codelineno-27-3" name="__codelineno-27-3" href="#__codelineno-27-3"></a>  <span class="n">-PullRequestNumber</span> <span class="p">&lt;</span><span class="n">number</span><span class="p">&gt;</span> <span class="p">`</span>
+</span><span id="__span-27-4"><a id="__codelineno-27-4" name="__codelineno-27-4" href="#__codelineno-27-4"></a>  <span class="n">-IsoUrl</span> <span class="s2">&quot;&lt;photon-iso-url-or-path&gt;&quot;</span> <span class="p">`</span>
+</span><span id="__span-27-5"><a id="__codelineno-27-5" name="__codelineno-27-5" href="#__codelineno-27-5"></a>  <span class="n">-IsoChecksum</span> <span class="s2">&quot;&lt;packer-checksum&gt;&quot;</span>
 </span></code></pre></div>
-<p>Before a forced Workstation rebuild deletes the output directory, the wrapper routes the complete output root through
+<p>The pull request must be open in the same repository and its head branch and commit must equal the checkout. The
+wrapper derives <code>Atlaso-PR-&lt;number&gt;-Photon-Builder-VMware[-&lt;collision-safe-suffix&gt;]</code> and binds that exact name to the
+Packer VM, output-directory leaf, VMX, temporary address reservation, diagnostics, sibling ownership manifest,
+schema-v3 provenance, cleanup scope, and reported evidence. Use <code>-CollisionSuffix</code> for another builder owned by the
+same pull request. Protected release production uses a separate deterministic version-and-commit builder identity.
+The wrapper accepts that release identity only after independently proving the exact commit is reachable from protected
+<code>main</code>, the immutable <code>v&lt;version&gt;</code> software-release tag identifies it, the complete non-draft release asset set exists,
+and exact-commit main push CI succeeded. Neither identity changes the canonical exported product or release asset names.
+The exporter rewrites both the OVF
+<code>VirtualSystem</code> identifier and its <code>Name</code> to the requested canonical product name, then reads them back before
+regenerating the manifest or packaging the OVA; transient PR and source-commit identities remain build-time provenance.</p>
+<p>Before a forced Workstation rebuild deletes the output directory, the wrapper first requires the sibling manifest to
+prove the same repository, pull request, branch, canonical name, and suffix. After checked cleanup, it advances the
+manifest to the newly verified exact head; retained reuse still requires the exact commit. It never adopts a legacy,
+differently owned, or concurrently active output: an exclusive sibling-file claim spans ownership admission, checked
+cleanup, Packer, and provenance publication for the canonical output. Each claimant durably replaces the claim's
+invocation generation; timeout cleanup reacquires the claim and requires the terminated child's exact generation, so
+any intervening builder blocks deletion. The wrapper then routes the complete output root
+through
 the checked VMware cleanup module. It validates the exact non-reparse-point Atlaso root, discovers only descendant VMX
 files, stops running targets, protects external VMDKs, and uses checked <code>vmrun deleteVM</code> for existing registered targets
 before removing the remaining root. A filesystem-identity snapshot blocks removal when the root or one of its surviving
 entries is recreated or replaced during cleanup. Provider and recursive-removal failures preserve remaining artifacts
 and prevent Packer from starting.</p>
+<p>Before a visible build repairs Workstation inventory or launches the UI, its parent holds that same exclusive claim
+across the retained manifest and VMX checks and releases it before starting the isolated child.</p>
+<p>If the bounded child reaches its deadline, the parent performs output cleanup only after proving whole-tree termination,
+revalidating the task or release identity, and reacquiring the same exclusive claim for the full cleanup interval.</p>
 <p>Unrelated Workstation library state is not validated and cannot block normal Atlaso cleanup. With the Workstation UI
 closed, a narrow fallback removes only a well-formed Atlaso-scoped registration whose VMX is already missing; unrelated
 missing, malformed, or inconsistent registrations remain unchanged.
@@ -5257,8 +5284,10 @@ The remastered kickstart disables Photon's socket-activated SSH unit and enables
 Photon root/build password remains separate from the Atlaso web bootstrap administrator password.</p>
 <p>The Workstation Packer template creates a 40 GiB OS disk and a sparse 20 GiB <code>ATLASO_SYSTEM</code> disk. Final provisioning
 removes build-only compiler packages, clears package/download caches and staged sources, trims the filesystems,
-and leaves Packer compaction enabled. OVF export preserves both payload VMDKs and adds empty 500 GiB depot and backup
-definitions at SCSI units 2 and 3. <code>export-ovf.ps1 -Release</code> derives the stable <code>vX.Y.Z</code> tag, while <code>-Prerelease</code>
+and leaves Packer compaction enabled. Low-level OVF export requires an explicit source VMX whose output path,
+<code>displayName</code>, source commit, and builder identity agree with schema-v3 provenance. It preserves both payload VMDKs and
+adds empty 500 GiB depot and backup definitions at SCSI units 2 and 3. <code>export-ovf.ps1 -Release</code> derives the stable
+<code>vX.Y.Z</code> tag, while <code>-Prerelease</code>
 requires exactly one annotated <code>vX.Y.Z-&lt;prerelease&gt;</code> tag at the clean checkout commit. Both modes derive the destination
 repository, require an existing published non-draft GitHub Release with the matching classification, and preflight and
 upload the OVF assets with GitHub CLI without creating or reclassifying the release. The combined OVA uploads only when
