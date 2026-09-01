@@ -68,6 +68,8 @@ PACKER_VALIDATION_VARS = (
     "iso_url=https://example.invalid/atlaso-photon.iso",
     f"iso_checksum={PACKER_CHECKSUM}",
     "iso_contains_kickstart=true",
+    "vm_name=Atlaso-PR-1-Photon-Builder-VMware",
+    "output_directory=C:/atlaso-validation/Atlaso-PR-1-Photon-Builder-VMware",
 )
 SYSTEMD_STUB_UNITS = (
     "atlaso-bootstrap-https.service",

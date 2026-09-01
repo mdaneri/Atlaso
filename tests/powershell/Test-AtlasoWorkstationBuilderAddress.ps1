@@ -88,7 +88,7 @@ exit 1
         DhcpConfigPath             = $dhcpPath
         StateRoot                  = $stateRoot
         VmrunPath                  = $vmrunPath
-        VmName                     = 'Atlaso-Photon-Builder-VMware'
+        VmName                     = 'Atlaso-PR-653-Photon-Builder-VMware'
         RepositoryRoot             = $RepositoryRoot
     }
     $first = Enter-AtlasoVmwareBuilderAddressReservation @common -OutputDirectory $outputOne
@@ -353,8 +353,8 @@ exit 1
                 SourceCommit           = ('0' * 40)
                 SourceBranch           = 'bug/stale-test'
                 OutputDirectory        = (Join-Path $testRoot 'stale-output')
-                VmName                 = 'Atlaso-Photon-Builder-VMware'
-                VmxPath                = (Join-Path $testRoot 'stale-output\Atlaso-Photon-Builder-VMware.vmx')
+                VmName                 = 'Atlaso-PR-653-Photon-Builder-VMware'
+                VmxPath                = (Join-Path $testRoot 'stale-output\Atlaso-PR-653-Photon-Builder-VMware.vmx')
                 CreatedUtc             = '2026-01-01T00:00:00.0000000Z'
             })
     }

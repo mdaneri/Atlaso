@@ -158,9 +158,18 @@ destination would make Packer nest the source directory and leave the provisione
 ```powershell
 pwsh -ExecutionPolicy Bypass `
   -File scripts/windows/vmware/build-photon-image.ps1 `
+  -PullRequestNumber <number> `
   -IsoUrl "https://packages.vmware.com/photon/5.0/GA/iso/photon-5.0-dde71ec57.x86_64.iso" `
   -IsoChecksum "sha512:<checksum>"
 ```
+
+Task builds require an open same-repository pull request whose head branch and commit exactly match the checkout. The
+wrapper derives `Atlaso-PR-<number>-Photon-Builder-VMware[-<collision-safe-suffix>]`; use `-CollisionSuffix` when one
+PR owns multiple simultaneous builders. That exact identity becomes the Packer `vm_name`, Workstation `displayName`,
+output-directory leaf, VMX filename/path, address-reservation identity, startup diagnostic identity, sibling ownership
+manifest, provenance identity, cleanup target, and reported evidence. Missing, malformed, fork-owned, stale-head,
+generic, or differently owned identities fail before provider or target-output mutation. Protected release production
+uses a distinct deterministic version-and-commit builder identity, optionally extended by workflow run ID.
 
 `-SshPassword` and `-BootstrapAdminPassword` accept only `SecureString` values and remain independently authoritative.
 When either is omitted, the wrapper verifies the exact Atlaso 1Password Environment selected by an explicit
@@ -215,6 +224,7 @@ For lifecycle/demo images that should use real appliance adapters:
 ```powershell
 pwsh -ExecutionPolicy Bypass `
   -File scripts/windows/vmware/build-photon-image.ps1 `
+  -PullRequestNumber <number> `
   -IsoUrl "<photon-iso-url-or-path>" `
   -IsoChecksum "<packer-checksum>" `
   -EnableRealSystemAdapters
@@ -246,11 +256,14 @@ transaction so package scriptlets cannot leave reusable build-time identity behi
 payload filesystems while
 retaining a 512 MiB safety reserve, delete the fill files, request TRIM, and let Packer compact both payload VMDKs.
 Zero-filling makes compaction deterministic even when the VMware virtual disks do not advertise discard. After a
-successful build, the wrapper writes a schema-v2 provenance
+successful build, the wrapper writes a schema-v3 provenance
 JSON file beside the VMX containing the exact source commit, tracked-source state, and the verified role, SCSI unit,
 virtual capacity, SHA-256 hash, and byte size for the VMX and both VMDKs. Test-VM cloning and OVF export require that
-exact role-bound provenance, so an older unproven image or a later reversed/tampered payload is rejected before cloning
-or export output replacement.
+exact role-bound provenance plus the matching builder identity, output leaf, VMX filename, and `displayName`, so an
+older unproven image or a later reversed/tampered/differently owned payload is rejected before cloning or export output
+replacement. A sibling `*.builder-identity.json` ownership manifest must prove the same repository, pull request,
+branch, canonical name, and suffix before checked replacement can advance it to a newer exact head. Retained reuse
+still requires the exact commit, and a legacy generic or differently owned builder is never adopted automatically.
 
 ## Networking
 
@@ -380,10 +393,14 @@ After a VMware image build, export a deployable OVF folder and OVA archive:
 ```powershell
 pwsh -ExecutionPolicy Bypass `
   -File scripts/windows/vmware/export-ovf.ps1 `
-  -SourceVmxPath image/vmware-workstation/output/atlaso-photon-vmware-workstation/Atlaso-Photon-Builder-VMware.vmx `
+  -SourceVmxPath image/vmware-workstation/output/Atlaso-PR-<number>-Photon-Builder-VMware/Atlaso-PR-<number>-Photon-Builder-VMware.vmx `
   -Name Atlaso-Photon `
   -Force
 ```
+
+`-SourceVmxPath` is mandatory for low-level export. The exporter consumes its proven builder identity and provenance;
+it does not guess a legacy generic VMX. The `-Name` value remains the consumer-facing OVF/OVA product identity and
+must not inherit the transient pull-request number.
 
 The export script runs OVF Tool, adds Atlaso vApp properties and appliance network mappings to the OVF descriptor,
 regenerates the manifest, and packages the folder as an OVA unless `-NoOva` is passed. The descriptor preserves the OS
@@ -600,7 +617,8 @@ Depot and Backups data VMDKs at units 2 and 3 when needed. `-ResetDataDisks` rem
 them only when their canonical paths are strict, non-reparse-point descendants of the selected VM output directory.
 Both creation-size arguments accept only `500GB`; an explicitly reused data VMDK must also expose an exact 500 GiB
 virtual capacity in its descriptor or deployment stops before cloning the target VM.
-Before cloning, the wrapper verifies the source VMX and both payload bytes against schema-v2 build provenance. After
+Before cloning, the wrapper verifies the source VMX and both payload bytes against schema-v3 build provenance bound to
+the matching builder identity. After
 the full clone, it revalidates the PVSCSI unit assignments and exact 40 GiB/20 GiB payload capacities before it creates
 or attaches either data disk. Do not repair an ambiguous or reversed source by swapping filenames or formatting a disk;
 rebuild it through the supported wrapper.

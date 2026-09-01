@@ -3,7 +3,7 @@
 Export a VMware VMX into a validated Atlaso OVF/OVA package.
 
 .PARAMETER SourceVmxPath
-Path to the source VMX used for ovftool export.
+Explicit path to the proven task- or release-owned source VMX used for ovftool export.
 .PARAMETER OutputDirectory
 Directory to hold generated OVF artifacts.
 .PARAMETER Name
@@ -70,8 +70,9 @@ Allow replacement of the exact approved output directory.
 )]
 [CmdletBinding()]
 param(
-    [string]$SourceVmxPath = 'image/vmware-workstation/output/atlaso-photon-vmware-workstation/Atlaso-Photon-Builder-VMware.vmx',
+    [string]$SourceVmxPath = '',
     [string]$OutputDirectory = '',
+    [ValidatePattern('^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$')]
     [string]$Name = 'Atlaso-Photon',
     [string]$OvfToolPath = '',
     [string]$TarPath = '',
@@ -691,6 +692,84 @@ function Get-NamespacedChildElement {
         }
     }
     return $null
+}
+
+<#
+.SYNOPSIS
+Normalize the OVF virtual-system identifier and display name.
+
+.PARAMETER Document
+OVF XML document containing exactly one root virtual system.
+
+.PARAMETER NamespaceManager
+Namespace manager configured for OVF selectors.
+
+.PARAMETER Name
+Canonical exported appliance product name.
+#>
+function Set-AtlasoOvfVirtualSystemIdentity {
+    param(
+        [xml]$Document,
+        [System.Xml.XmlNamespaceManager]$NamespaceManager,
+        [string]$Name
+    )
+
+    $virtualSystems = @($Document.SelectNodes('/ovf:Envelope/ovf:VirtualSystem', $NamespaceManager))
+    if ($virtualSystems.Count -ne 1) {
+        throw "OVF descriptor must contain exactly one root ovf:VirtualSystem; found $($virtualSystems.Count)."
+    }
+    $virtualSystem = $virtualSystems[0]
+    Set-OvfAttribute -Document $Document -Element $virtualSystem -Name 'id' -Value $Name
+
+    $nameElement = Get-NamespacedChildElement `
+        -Parent $virtualSystem `
+        -LocalName 'Name' `
+        -Namespace $ovfNamespace
+    if (-not $nameElement) {
+        $nameElement = $Document.CreateElement('ovf', 'Name', $ovfNamespace)
+        $infoElement = Get-NamespacedChildElement `
+            -Parent $virtualSystem `
+            -LocalName 'Info' `
+            -Namespace $ovfNamespace
+        if ($infoElement) {
+            [void]$virtualSystem.InsertAfter($nameElement, $infoElement)
+        }
+        else {
+            [void]$virtualSystem.PrependChild($nameElement)
+        }
+    }
+    $nameElement.InnerText = $Name
+}
+
+<#
+.SYNOPSIS
+Require the serialized OVF virtual-system identity to equal the product name.
+
+.PARAMETER OvfPath
+OVF descriptor path to read back after normalization.
+
+.PARAMETER Name
+Canonical exported appliance product name.
+#>
+function Assert-AtlasoOvfVirtualSystemIdentity {
+    param(
+        [string]$OvfPath,
+        [string]$Name
+    )
+
+    [xml]$document = Get-Content -LiteralPath $OvfPath -Raw
+    $manager = New-Object System.Xml.XmlNamespaceManager($document.NameTable)
+    $manager.AddNamespace('ovf', $ovfNamespace)
+    $virtualSystems = @($document.SelectNodes('/ovf:Envelope/ovf:VirtualSystem', $manager))
+    if ($virtualSystems.Count -ne 1) {
+        throw "OVF descriptor must contain exactly one root ovf:VirtualSystem; found $($virtualSystems.Count)."
+    }
+    $virtualSystem = $virtualSystems[0]
+    $nameElements = @($virtualSystem.SelectNodes('ovf:Name', $manager))
+    if ($virtualSystem.GetAttribute('id', $ovfNamespace) -cne $Name -or
+        $nameElements.Count -ne 1 -or $nameElements[0].InnerText -cne $Name) {
+        throw "OVF virtual-system identity does not match the canonical product name $Name."
+    }
 }
 
 <#
@@ -1547,10 +1626,16 @@ Inject Atlaso product properties and normalize OVF metadata.
 
 .PARAMETER OvfPath
 OVF descriptor path to modify.
+
+.PARAMETER Name
+Canonical exported appliance product name.
 #>
 
 function Add-AtlasoOvfProperties {
-    param([string]$OvfPath)
+    param(
+        [string]$OvfPath,
+        [string]$Name
+    )
 
     [xml]$document = Get-Content -LiteralPath $OvfPath -Raw
     $document.PreserveWhitespace = $false
@@ -1567,6 +1652,10 @@ function Add-AtlasoOvfProperties {
     if (-not $virtualSystem) {
         throw "OVF descriptor does not contain an ovf:VirtualSystem: $OvfPath"
     }
+    Set-AtlasoOvfVirtualSystemIdentity `
+        -Document $document `
+        -NamespaceManager $manager `
+        -Name $Name
 
     $productSection = $document.SelectSingleNode('//ovf:VirtualSystem/ovf:ProductSection[@ovf:class="atlaso"]', $manager)
     if (-not $productSection) {
@@ -1713,6 +1802,9 @@ function Get-OvfDescriptorPath {
     return $ovfFiles[0].FullName
 }
 
+if ([string]::IsNullOrWhiteSpace($SourceVmxPath)) {
+    throw 'Low-level OVF export requires an explicit -SourceVmxPath with verified builder provenance.'
+}
 $resolvedSourceVmx = (Resolve-Path -LiteralPath $SourceVmxPath).Path
 $releaseTag = ''
 $buildProvenance = $null
@@ -1743,7 +1835,8 @@ if ($LASTEXITCODE -ne 0) {
 
 $ovfPath = Get-OvfDescriptorPath -OutputDirectory $resolvedOutputDirectory
 $ovfPackageDirectory = Split-Path -Parent $ovfPath
-Add-AtlasoOvfProperties -OvfPath $ovfPath
+Add-AtlasoOvfProperties -OvfPath $ovfPath -Name $Name
+Assert-AtlasoOvfVirtualSystemIdentity -OvfPath $ovfPath -Name $Name
 Assert-AtlasoOvfDiskTopology -OvfPath $ovfPath
 Assert-AtlasoCanonicalOvf -RepoRoot $repoRoot -OvfPath $ovfPath
 $provenancePath = Write-AtlasoOvaProvenance `

@@ -201,6 +201,7 @@ is attached as a local remastered ISO instead of depending on early installer ne
 ```powershell
 pwsh -ExecutionPolicy Bypass `
   -File scripts/windows/vmware/build-photon-image.ps1 `
+  -PullRequestNumber <number> `
   -IsoUrl "https://packages.broadcom.com/photon/5.0/GA/iso/photon-5.0-dde71ec57.x86_64.iso" `
   -IsoChecksum "sha512:6a7a258399a258da742032987c043ab25503698d35edafaf1ae000f12127da1a161d8b84caa17fd8f23d129e81e1faa7ab087c20ab9229772a643f8f9475305f"
 ```
@@ -230,12 +231,14 @@ child unwraps values for kickstart and Packer serialization. All plaintext kicks
 variable artifacts live under that exact task-owned root. The parent creates the child suspended, assigns its Windows
 process job, and resumes it only after every future Packer or plugin descendant is bound to that job. Both ordinary
 child exit and deadline termination require job accounting to report zero active processes. A proven deadline then
-applies checked exact-output cleanup when the selected policy owns replacement output and removes and verifies the
+applies checked exact-output cleanup only when the child durably claimed that cleanup scope, including for an initially
+absent output, and removes and verifies the
 sensitive root even when the child could not run its own cleanup. The default six-hour deadline is configurable through
 `-ImageBuildTimeoutSeconds`.
 An unproven whole-tree termination retains that root and a non-secret checkout-local ownership marker. Same-boot
 invocations fail closed; after Windows restarts, the changed boot identity proves the prior tree inactive and recovery
-removes the exact root followed by its marker before new credential or image work. Ordinary completion requires the
+removes the exact root followed by its marker before current task or release identity validation, new credential access,
+or image work. Ordinary completion requires the
 reloaded marker root to equal the in-memory task-created root before recursive removal.
 The shared SDK bridge uses the same boot-bound ownership. Marker bytes and atomic publication are write-through durable
 before plaintext consumption. After root deletion, the parent flushes directory metadata through the root parent's
@@ -297,6 +300,7 @@ application install starts. Leave both options empty to keep standard pip behavi
 ```powershell
 pwsh -ExecutionPolicy Bypass `
   -File scripts/windows/vmware/build-photon-image.ps1 `
+  -PullRequestNumber <number> `
   -IsoUrl "<photon-5.0-iso-url>" `
   -IsoChecksum "<packer-checksum>" `
   -PipGlobalIndex "https://packages.vcfd.broadcom.net/artifactory/api/pypi/upstream-pypi-virtual/pypi" `
@@ -1375,16 +1379,42 @@ Build the image with:
 ```powershell
 pwsh -ExecutionPolicy Bypass `
   -File scripts/windows/vmware/build-photon-image.ps1 `
+  -PullRequestNumber <number> `
   -IsoUrl "<photon-iso-url-or-path>" `
   -IsoChecksum "<packer-checksum>"
 ```
 
-Before a forced Workstation rebuild deletes the output directory, the wrapper routes the complete output root through
+The pull request must be open in the same repository and its head branch and commit must equal the checkout. The
+wrapper derives `Atlaso-PR-<number>-Photon-Builder-VMware[-<collision-safe-suffix>]` and binds that exact name to the
+Packer VM, output-directory leaf, VMX, temporary address reservation, diagnostics, sibling ownership manifest,
+schema-v3 provenance, cleanup scope, and reported evidence. Use `-CollisionSuffix` for another builder owned by the
+same pull request. Protected release production uses a separate deterministic version-and-commit builder identity.
+The wrapper accepts that release identity only after independently proving the exact commit is reachable from protected
+`main`, the immutable `v<version>` software-release tag identifies it, the complete non-draft release asset set exists,
+and exact-commit main push CI succeeded. Neither identity changes the canonical exported product or release asset names.
+The exporter rewrites both the OVF
+`VirtualSystem` identifier and its `Name` to the requested canonical product name, then reads them back before
+regenerating the manifest or packaging the OVA; transient PR and source-commit identities remain build-time provenance.
+
+Before a forced Workstation rebuild deletes the output directory, the wrapper first requires the sibling manifest to
+prove the same repository, pull request, branch, canonical name, and suffix. After checked cleanup, it advances the
+manifest to the newly verified exact head; retained reuse still requires the exact commit. It never adopts a legacy,
+differently owned, or concurrently active output: an exclusive sibling-file claim spans ownership admission, checked
+cleanup, Packer, and provenance publication for the canonical output. Each claimant durably replaces the claim's
+invocation generation; timeout cleanup reacquires the claim and requires the terminated child's exact generation, so
+any intervening builder blocks deletion. The wrapper then routes the complete output root
+through
 the checked VMware cleanup module. It validates the exact non-reparse-point Atlaso root, discovers only descendant VMX
 files, stops running targets, protects external VMDKs, and uses checked `vmrun deleteVM` for existing registered targets
 before removing the remaining root. A filesystem-identity snapshot blocks removal when the root or one of its surviving
 entries is recreated or replaced during cleanup. Provider and recursive-removal failures preserve remaining artifacts
 and prevent Packer from starting.
+
+Before a visible build repairs Workstation inventory or launches the UI, its parent holds that same exclusive claim
+across the retained manifest and VMX checks and releases it before starting the isolated child.
+
+If the bounded child reaches its deadline, the parent performs output cleanup only after proving whole-tree termination,
+revalidating the task or release identity, and reacquiring the same exclusive claim for the full cleanup interval.
 
 Unrelated Workstation library state is not validated and cannot block normal Atlaso cleanup. With the Workstation UI
 closed, a narrow fallback removes only a well-formed Atlaso-scoped registration whose VMX is already missing; unrelated
@@ -1395,8 +1425,10 @@ Photon root/build password remains separate from the Atlaso web bootstrap admini
 
 The Workstation Packer template creates a 40 GiB OS disk and a sparse 20 GiB `ATLASO_SYSTEM` disk. Final provisioning
 removes build-only compiler packages, clears package/download caches and staged sources, trims the filesystems,
-and leaves Packer compaction enabled. OVF export preserves both payload VMDKs and adds empty 500 GiB depot and backup
-definitions at SCSI units 2 and 3. `export-ovf.ps1 -Release` derives the stable `vX.Y.Z` tag, while `-Prerelease`
+and leaves Packer compaction enabled. Low-level OVF export requires an explicit source VMX whose output path,
+`displayName`, source commit, and builder identity agree with schema-v3 provenance. It preserves both payload VMDKs and
+adds empty 500 GiB depot and backup definitions at SCSI units 2 and 3. `export-ovf.ps1 -Release` derives the stable
+`vX.Y.Z` tag, while `-Prerelease`
 requires exactly one annotated `vX.Y.Z-<prerelease>` tag at the clean checkout commit. Both modes derive the destination
 repository, require an existing published non-draft GitHub Release with the matching classification, and preflight and
 upload the OVF assets with GitHub CLI without creating or reclassifying the release. The combined OVA uploads only when

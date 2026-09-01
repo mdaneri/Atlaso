@@ -41,7 +41,9 @@ Visible builds repair exact missing Atlaso library registrations before starting
 cleanup retains its checked post-network-preflight boundary.
 
 Contributor-created VMware test and lifecycle VMs use pull-request-owned identities so validation artifacts remain
-traceable and cleanup cannot adopt a shared or provisional VM name. See the
+traceable and cleanup cannot adopt a shared or provisional VM name. Task-owned Photon builders follow the same rule:
+their exact PR identity owns the Packer VM, output, reservation, provenance, and cleanup scope, while portable product
+and release names remain PR-independent. See the
 [VMware Workstation lifecycle testing guide](docs/reference/vmware-workstation-lifecycle-testing.md).
 
 See [Getting started](docs/getting-started/index.md) for the first-use path and

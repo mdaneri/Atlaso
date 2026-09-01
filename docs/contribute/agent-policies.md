@@ -821,6 +821,33 @@ Terminal order:
 
 ## Photon VM Debugging Notes
 
+- Task-owned Photon/Packer VMware builders use the exact open same-repository pull request whose head branch and commit
+  match the checkout. The shared builder-identity helper derives
+  `Atlaso-PR-<number>-Photon-Builder-VMware[-<collision-safe-suffix>]`; the same exact value owns Packer `vm_name`,
+  Workstation `displayName`, the output-directory leaf, VMX filename/path, temporary-address reservation, startup
+  diagnostics, sibling ownership manifest, schema-v3 provenance, cleanup target, and reported evidence. A second
+  builder for one pull request uses a sanitized suffix without losing the PR segment. Protected release builders use
+  the helper's deterministic version-and-commit identity, optionally extended by workflow run ID, only after the wrapper
+  independently proves the exact reachable protected-main commit, immutable software-release tag, complete non-draft
+  release asset set, and successful main push CI. Reject missing,
+  malformed, closed, fork-owned, branch-mismatched, commit-mismatched, ambiguous, generic, and differently owned
+  identities before provider or target-filesystem mutation. Normalize trailing directory separators before deriving the
+  sibling manifest and claim paths. A retained task output is replaceable only when its sibling manifest proves the same
+  repository, pull request, branch, canonical name, and suffix; after checked cleanup, advance
+  the manifest to the newly verified head. Retained reuse still requires the exact source commit. Hold an OS-enforced
+  exclusive sibling-file claim from ownership admission through cleanup, Packer completion, and provenance publication
+  so concurrent builders cannot adopt or mutate the same canonical output. After proven child-tree termination, the
+  visible parent must hold the same exclusive output claim across its retained manifest and VMX checks, Workstation
+  inventory repair, and UI launch, then release it before starting the isolated child. The bounded parent may perform
+  timeout cleanup only when the child durably recorded its cleanup claim, including for an
+  initially absent output. Every claimant must durably replace the sibling claim's invocation generation while holding
+  it; the parent must then revalidate identity, reacquire the claim, and require the child's exact generation before
+  cleanup so an intervening completed or failed build blocks deletion. Clone and export
+  require exact builder provenance. Low-level OVF export accepts only an explicit proven source VMX. Never propagate
+  transient PR identity into OVF/OVA product naming, deployed-appliance names, canonical release filenames, or
+  immutable release assets. Before manifest or OVA generation, normalize and read back both the OVF `VirtualSystem`
+  identifier and its `Name` as the requested canonical product name.
+
 - Every task-owned VMware test VM used for pull-request validation has one canonical identity:
   `Atlaso-PR-<number>-<purpose>[-<collision-safe-suffix>]`. Require the exact positive pull-request number and sanitize
   the short purpose and optional suffix through `Atlaso.VmwareTestIdentity.psm1`. The same identity owns the Workstation
@@ -1094,8 +1121,10 @@ Terminal order:
   plaintext-consuming image workflow in a separately bounded PowerShell child; the parent may pass only current-user
   DPAPI ciphertext. Place every plaintext kickstart, remastered ISO, and Packer variable artifact inside the exact
   task-owned child root, and require the parent to remove and verify that root after ordinary exit or whole-tree
-  termination so a killed child cannot bypass sensitive cleanup. If whole-tree termination is unproven, retain the
-  exact root plus a non-secret cleanup marker, block same-boot reuse, and permit exact-root cleanup only after a changed
+  termination so a killed child cannot bypass sensitive cleanup. Run boot-bound cleanup-marker and pending-reservation
+  recovery before validating the identity for a new task or release build, because a closed or advanced PR must not
+  strand prior sensitive state. If whole-tree termination is unproven, retain the exact root plus a non-secret cleanup
+  marker, block same-boot reuse, and permit exact-root cleanup only after a changed
   Windows boot identity proves the prior tree inactive; remove the marker only after root absence is verified. Apply
   the same boot-bound recovery ownership to the shared SDK credential bridge. Durably publish each marker with
   write-through file and rename semantics before starting a child that can consume plaintext, then durably transition

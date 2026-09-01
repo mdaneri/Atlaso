@@ -1636,13 +1636,195 @@ def test_vmware_packer_build_uses_two_compacted_payload_disks():
     assert "Atlaso.VmwarePayload.psm1" in wrapper
     assert "Write-AtlasoVmwareBuildProvenance" in wrapper
     assert "tracked_source_dirty" in wrapper
-    assert "schema_version       = 2" in wrapper
+    assert "schema_version       = 3" in wrapper
+    assert "builder_identity" in wrapper
     assert "payload_disks" in wrapper
     assert "Get-AtlasoVmwarePayloadLayout" in wrapper
     payload_module = Path("scripts/windows/vmware/Atlaso.VmwarePayload.psm1").read_text(
         encoding="utf-8"
     )
     assert "Get-FileHash -LiteralPath $vmx.FullName -Algorithm SHA256" in payload_module
+
+
+def test_vmware_packer_requires_proven_task_or_release_builder_identity() -> None:
+    """Packer, wrapper, release, cleanup, and docs share one builder identity."""
+    template = Path("image/vmware-workstation/atlaso-photon.pkr.hcl").read_text(
+        encoding="utf-8"
+    )
+    wrapper = Path("scripts/windows/vmware/build-photon-image.ps1").read_text(
+        encoding="utf-8"
+    )
+    identity_module = Path(
+        "scripts/windows/vmware/Atlaso.VmwareBuilderIdentity.psm1"
+    ).read_text(encoding="utf-8")
+    release = Path(
+        "scripts/windows/virtualization/Atlaso.VirtualizationRelease.psm1"
+    ).read_text(encoding="utf-8")
+    policy = Path("AGENTS.md").read_text(encoding="utf-8")
+    detailed_policy = Path("docs/contribute/agent-policies.md").read_text(
+        encoding="utf-8"
+    )
+
+    assert 'variable "vm_name" {' in template
+    assert 'default = "Atlaso-Photon-Builder-VMware"' not in template
+    assert "PR-[1-9][0-9]*-Photon-Builder-VMware" in template
+    assert "Release-v[0-9]+-[0-9]+-[0-9]+-[0-9a-f]{12}" in template
+    assert 'replace(var.output_directory, "\\\\", "/")' in template
+    assert "/Atlaso-(PR-[1-9][0-9]*-Photon-Builder-VMware" in template
+    assert "basename(replace(var.output_directory" in template
+    assert "== var.vm_name" in template
+    assert "Resolve-AtlasoTaskBuilderIdentity" in wrapper
+    assert "repos/$repository/pulls/$PullRequestNumber" in wrapper
+    assert "head_repository" in wrapper
+    assert "head_branch" in wrapper
+    assert "head_commit" in wrapper
+    assert "[string]$pull.head_repository -ine $repository" in wrapper
+    assert "-Repository $canonicalRepository" in wrapper
+    assert "status --short --untracked-files=no" in wrapper
+    assert "git check-ref-format --branch" in identity_module
+    assert "Get-AtlasoVmwareBuilderIdentityManifestPath" in wrapper
+    assert "Assert-AtlasoVmwareBuilderIdentityManifest" in wrapper
+    assert "Assert-AtlasoVmwareBuilderVmx" in wrapper
+    assert "function Assert-AtlasoBuilderIdentityCurrent" in wrapper
+    assert "Resolve-AtlasoReleaseBuilderIdentity `" in wrapper
+    assert '"repos/$canonicalRepository/commits/$softwareTag"' in wrapper
+    assert "--json 'tagName,isDraft,isPrerelease,assets'" in wrapper
+    assert '"atlaso-third-party-notices-$ReleaseVersion.md"' in wrapper
+    assert "'release-manifest.json.sig'" in wrapper
+    assert "$assetNames.Count -ne $expectedAssetNames.Count" in wrapper
+    assert "$_ -cnotin $assetNames" in wrapper
+    assert "$_ -cnotin $expectedAssetNames" in wrapper
+    assert "merge-base --is-ancestor $ReleaseSourceCommit origin/main" in wrapper
+    assert '"head_sha=$ReleaseSourceCommit"' in wrapper
+    assert "'branch=main'" in wrapper
+    assert "'event=push'" in wrapper
+    assert "'status=success'" in wrapper
+    recovery = wrapper.index(
+        "Invoke-AtlasoPhotonBuildCleanupRecovery -MarkerPath $cleanupMarkerPath"
+    )
+    identity_admission = wrapper.index("$builderIdentity = if ($ReleaseBuilder) {")
+    credential_access = wrapper.index("$needsOnePasswordDefaults =")
+    assert recovery < identity_admission < credential_access
+    assert wrapper.count(
+        "$releaseIdentityArguments['WorkflowRunId'] = $ReleaseWorkflowRunId"
+    ) == 2
+    assert "-WorkflowRunId $ReleaseWorkflowRunId" not in wrapper
+    assert wrapper.count("$null = Assert-AtlasoBuilderIdentityCurrent `") == 7
+    assert wrapper.count("-ReleaseBuilder:$ReleaseBuilder `") >= 6
+    build_invocation = wrapper.index("Invoke-AtlasoPhotonImageBuild `")
+    assert (
+        "-OutputDirectory $workstationOutputDirectory `"
+        in wrapper[build_invocation:]
+    )
+    output_boundary = wrapper.index(
+        "$resolvedVmrunPath = Resolve-WorkstationVmrunPath -Path $VmrunPath"
+    )
+    owner_recheck = wrapper.index(
+        "Assert-AtlasoVmwareBuilderOwnershipManifest `", output_boundary
+    )
+    cleanup = wrapper.index("Remove-AtlasoWorkstationArtifactRoot `", owner_recheck)
+    manifest_refresh = wrapper.index("-ReplaceSameOwner", cleanup)
+    exact_recheck = wrapper.index("Assert-AtlasoVmwareBuilderIdentityManifest `", cleanup)
+    assert owner_recheck < cleanup < manifest_refresh < exact_recheck
+    remote_output_recheck = wrapper.index(
+        "Assert-AtlasoBuilderIdentityCurrent `", output_boundary
+    )
+    output_absence_recheck = wrapper.index(
+        "$outputAppearedBeforeOwnershipClaim = Test-Path", remote_output_recheck
+    )
+    concurrent_output_refusal = wrapper.index(
+        "refusing to claim or clean concurrent artifacts", output_absence_recheck
+    )
+    manifest_write = wrapper.index(
+        "Write-AtlasoVmwareBuilderIdentityManifest `", output_boundary
+    )
+    output_claim = wrapper.index(
+        "Enter-AtlasoVmwareBuilderOutputClaim `", remote_output_recheck
+    )
+    claim_release = wrapper.index("$builderOutputClaim.Dispose()", manifest_write)
+    assert (
+        output_boundary
+        < remote_output_recheck
+        < output_claim
+        < output_absence_recheck
+        < concurrent_output_refusal
+        < manifest_write
+        < cleanup
+        < claim_release
+    )
+    parent_output = wrapper.index(
+        "$outerCleanupOutputDirectory = Resolve-WorkstationOutputDirectory `"
+    )
+    parent_output_assertion = wrapper.index(
+        "$outerCleanupOutputDirectory = Assert-AtlasoVmwareBuilderOutputDirectory `",
+        parent_output,
+    )
+    registration_repair = wrapper.index(
+        "Repair-AtlasoWorkstationStaleRegistrations `", parent_output
+    )
+    parent_remote_recheck = wrapper.index(
+        "Assert-AtlasoBuilderIdentityCurrent `", parent_output_assertion
+    )
+    parent_manifest_path = wrapper.index(
+        "$outerBuilderManifestPath = Get-AtlasoVmwareBuilderIdentityManifestPath `",
+        parent_remote_recheck,
+    )
+    parent_ownership_recheck = wrapper.index(
+        "Assert-AtlasoVmwareBuilderOwnershipManifest `", parent_manifest_path
+    )
+    parent_vmx_recheck = wrapper.index(
+        "Assert-AtlasoVmwareBuilderVmx `", parent_ownership_recheck
+    )
+    parent_workstation_launch = wrapper.index(
+        "Initialize-AtlasoWorkstationGui -VmrunPath $parentVmrunPath", parent_output
+    )
+    assert (
+        parent_output
+        < parent_output_assertion
+        < parent_remote_recheck
+        < parent_manifest_path
+        < parent_ownership_recheck
+        < parent_vmx_recheck
+        < registration_repair
+        < parent_workstation_launch
+    )
+    reservation_inputs = wrapper.index(
+        "$preferredBuilderAddress = if ($builderIpWasPassed)"
+    )
+    reservation_recheck = wrapper.index(
+        "Assert-AtlasoBuilderIdentityCurrent `", reservation_inputs
+    )
+    reservation_admission = wrapper.index(
+        "Enter-AtlasoVmwareBuilderAddressReservation `", reservation_inputs
+    )
+    assert reservation_inputs < reservation_recheck < reservation_admission
+    packer_invocation = wrapper.index("Invoke-AtlasoPhotonImageBuild `")
+    prebuild_recheck = wrapper.rindex(
+        "Assert-AtlasoBuilderIdentityCurrent `", 0, packer_invocation
+    )
+    assert prebuild_recheck < packer_invocation
+    callback = wrapper.index("$packerBuildInvoker = {")
+    callback_recheck = wrapper.index(
+        "Assert-AtlasoBuilderIdentityCurrent `", callback
+    )
+    monitored_packer = wrapper.index("Invoke-AtlasoMonitoredPackerBuild `", callback)
+    assert callback < callback_recheck < monitored_packer < packer_invocation
+    build_completion = wrapper.index("-PrepareIsoOnly:$PrepareIsoOnly", packer_invocation)
+    provenance_recheck = wrapper.index(
+        "Assert-AtlasoBuilderIdentityCurrent `", build_completion
+    )
+    provenance_write = wrapper.index(
+        "Write-AtlasoVmwareBuildProvenance `", build_completion
+    )
+    assert build_completion < provenance_recheck < provenance_write
+    assert "Refusing to reuse or clean a Photon builder output" in wrapper
+    assert "Atlaso-Photon-Builder-VMware" not in wrapper
+    assert "New-AtlasoVmwareBuilderIdentity" in release
+    assert "'-ReleaseVersion', $identity.Version" in release
+    assert "'-ReleaseSourceCommit', $identity.Commit" in release
+    canonical = "Atlaso-PR-<number>-Photon-Builder-VMware"
+    assert canonical in policy
+    assert canonical in detailed_policy
 
 
 def test_vmware_payload_layout_and_provenance_fail_closed(tmp_path: Path) -> None:
@@ -1674,6 +1856,37 @@ def test_vmware_payload_layout_and_provenance_fail_closed(tmp_path: Path) -> Non
     )
     assert result.returncode == 0, result.stdout + result.stderr
     assert "Atlaso VMware payload layout and provenance tests passed." in result.stdout
+
+
+def test_vmware_builder_identity_and_ownership_fail_closed(tmp_path: Path) -> None:
+    """Task, release, manifest, output, and VMX identities stay canonical.
+
+    Args:
+        tmp_path: Pytest-provided isolated output directory.
+    """
+    pwsh = shutil.which("pwsh")
+    if pwsh is None:
+        pytest.skip("PowerShell 7 is required")
+
+    result = subprocess.run(
+        [
+            pwsh,
+            "-NoLogo",
+            "-NoProfile",
+            "-NonInteractive",
+            "-File",
+            "tests/powershell/Test-AtlasoVmwareBuilderIdentity.ps1",
+            "-RepositoryRoot",
+            str(Path.cwd()),
+            "-OutputDirectory",
+            str(tmp_path / "vmware-builder-identity"),
+        ],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "Atlaso VMware builder identity tests passed." in result.stdout
 
 
 def test_photon_kickstart_uses_deterministic_build_time_sshd_service():
@@ -2101,7 +2314,9 @@ def test_create_atlaso_vmware_test_vm_wrapper_uses_common_helpers():
     assert "Using VMware services network $ServiceVmnetName" in build_script
     assert "prepare-networks.ps1" in build_script
     assert "Resolve-WorkstationVmrunPath -Path $VmrunPath" in build_script
-    assert "Resolve-WorkstationOutputDirectory -PackerDirectory $PackerDirectory -OutputDirectory $OutputDirectory" in build_script
+    assert "Resolve-WorkstationOutputDirectory `" in build_script
+    assert "-OutputDirectory $OutputDirectory `" in build_script
+    assert "-VmName $VmName" in build_script
     assert "Atlaso.WorkstationCleanup.psm1" in build_script
     assert "Remove-AtlasoWorkstationArtifactRoot" in build_script
     assert "Repair-AtlasoWorkstationStaleRegistrations" in build_script
@@ -2956,10 +3171,51 @@ def test_vmware_gui_builder_repairs_stale_rows_before_ui_startup() -> None:
         "if (-not $Headless -and -not $ValidateOnly) {", 0, gui_launch
     )
     repair = wrapper.index("Repair-AtlasoWorkstationStaleRegistrations `", gui_guard)
+    output_assertion = wrapper.index(
+        "$outerCleanupOutputDirectory = Assert-AtlasoVmwareBuilderOutputDirectory `"
+    )
+    output_snapshot = wrapper.index(
+        "$outerCleanupOutputExistedBeforeChild = Test-Path", output_assertion
+    )
+    parent_repair_claim = wrapper.index(
+        "Enter-AtlasoVmwareBuilderOutputClaim `", gui_guard
+    )
+    output_snapshot_use = wrapper.index(
+        "if ($outerCleanupOutputExistedBeforeChild", output_snapshot
+    )
     keep_existing_guard = wrapper.index(
         "if (-not $KeepExistingOutput) {", gui_guard, repair
     )
+    parent_repair_claim_release = wrapper.index(
+        "$parentRepairOutputClaim.Dispose()", gui_launch
+    )
     child_start = wrapper.index("-Action 'The isolated VMware Photon image build'")
+    termination_proven = wrapper.index(
+        "$_.Exception.Data['AtlasoProcessTreeTerminationProven']", child_start
+    )
+    durable_cleanup_claim = wrapper.index(
+        "Test-Path -LiteralPath $childOutputCleanupClaimPath -PathType Leaf",
+        termination_proven,
+    )
+    durable_cleanup_generation = wrapper.index(
+        "[string]$timeoutCleanupClaim.ClaimGeneration -cne",
+        durable_cleanup_claim,
+    )
+    parent_timeout_recheck = wrapper.index(
+        "Assert-AtlasoBuilderIdentityCurrent `", termination_proven
+    )
+    parent_output_claim = wrapper.index(
+        "Enter-AtlasoVmwareBuilderOutputClaim `", parent_timeout_recheck
+    )
+    parent_timeout_cleanup = wrapper.index(
+        "Remove-AtlasoWorkstationArtifactRoot `", parent_output_claim
+    )
+    parent_generation_check = wrapper.index(
+        "Assert-AtlasoVmwareBuilderOutputClaimGeneration `", parent_output_claim
+    )
+    parent_claim_release = wrapper.index(
+        "$parentOutputClaim.Dispose()", parent_timeout_cleanup
+    )
     parent_return = wrapper.index("    return\n}", child_start)
     child_cleanup = wrapper.index(
         "if (-not $ValidateOnly -and -not $PrepareIsoOnly) {", parent_return
@@ -2967,6 +3223,30 @@ def test_vmware_gui_builder_repairs_stale_rows_before_ui_startup() -> None:
     full_cleanup = wrapper.index("Remove-AtlasoWorkstationArtifactRoot `", child_cleanup)
 
     assert wrapper.count("Repair-AtlasoWorkstationStaleRegistrations `") == 1
-    assert gui_guard < keep_existing_guard < repair < gui_launch < child_start
+    assert (
+        output_assertion
+        < gui_guard
+        < parent_repair_claim
+        < output_snapshot
+        < output_snapshot_use
+        < keep_existing_guard
+        < repair
+        < gui_launch
+        < parent_repair_claim_release
+        < child_start
+    )
+    assert (
+        termination_proven
+        < durable_cleanup_claim
+        < durable_cleanup_generation
+        < parent_timeout_recheck
+        < parent_output_claim
+        < parent_generation_check
+        < parent_timeout_cleanup
+        < parent_claim_release
+    )
     assert child_start < parent_return < child_cleanup < full_cleanup
     assert "-ScopeRoot $outerCleanupOutputDirectory" in wrapper[repair:gui_launch]
+    assert "-not $outerCleanupOutputExistedBeforeChild -or" not in wrapper
+    assert "-ClaimGeneration $OutputClaimGeneration" in wrapper
+    assert "ClaimGeneration = $OutputClaimGeneration" in wrapper

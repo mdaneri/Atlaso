@@ -10,13 +10,29 @@ packer {
 }
 
 variable "vm_name" {
-  type    = string
-  default = "Atlaso-Photon-Builder-VMware"
+  type        = string
+  description = "Canonical task- or release-owned Photon builder identity supplied by the supported wrapper."
+
+  validation {
+    condition = can(regex(
+      "^Atlaso-(PR-[1-9][0-9]*-Photon-Builder-VMware(-[a-z0-9]+(-[a-z0-9]+)*)?|Release-v[0-9]+-[0-9]+-[0-9]+-[0-9a-f]{12}-Photon-Builder-VMware(-run-[1-9][0-9]*)?)$",
+      var.vm_name
+    ))
+    error_message = "Vm_name must be one canonical PR-owned or release-owned Atlaso Photon builder identity."
+  }
 }
 
 variable "output_directory" {
-  type    = string
-  default = "output/atlaso-photon-vmware-workstation"
+  type        = string
+  description = "Canonical output directory whose final component exactly matches vm_name."
+
+  validation {
+    condition = can(regex(
+      "/Atlaso-(PR-[1-9][0-9]*-Photon-Builder-VMware(-[a-z0-9]+(-[a-z0-9]+)*)?|Release-v[0-9]+-[0-9]+-[0-9]+-[0-9a-f]{12}-Photon-Builder-VMware(-run-[1-9][0-9]*)?)/?$",
+      replace(var.output_directory, "\\", "/")
+    ))
+    error_message = "Output_directory must end with one canonical PR-owned or release-owned Atlaso Photon builder identity."
+  }
 }
 
 variable "vmnet_name" {
@@ -153,11 +169,14 @@ locals {
   bootstrap_admin_password     = var.bootstrap_admin_password
   dry_run_system_adapters_text = var.dry_run_system_adapters ? "true" : "false"
   ssh_password_stdin_base64    = base64encode("${var.ssh_password}\n")
+  # Packer variable validation cannot compare two variables. Force template
+  # evaluation to fail when the canonical output leaf and VM name diverge.
+  verified_output_directory = basename(replace(var.output_directory, "\\", "/")) == var.vm_name ? var.output_directory : regex("^$", var.output_directory)
 }
 
 source "vmware-iso" "photon" {
   vm_name              = var.vm_name
-  output_directory     = var.output_directory
+  output_directory     = local.verified_output_directory
   guest_os_type        = "vmware-photon-64"
   version              = 21
   headless             = var.headless
