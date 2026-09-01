@@ -5228,6 +5228,92 @@ def test_helper_powershell_check_ignores_unreferenced_unsynchronized_repository(
     assert "UnusedGallery" in blocked["remediation"]
 
 
+def test_helper_powershell_check_reconciles_valid_sources_in_secured_home(
+    monkeypatch, tmp_path
+):
+    """Re-register desired repositories after the privileged home moves.
+
+    Args:
+        monkeypatch: Pytest monkeypatch fixture.
+        tmp_path: Temporary filesystem path fixture.
+    """
+    import base64
+
+    helper = load_helper_module()
+    powershell_home = tmp_path / "powershell"
+    scripts: list[str] = []
+    environments: list[dict[str, str]] = []
+    monkeypatch.setattr(helper, "ATLASO_POWERSHELL_HOME", powershell_home)
+    monkeypatch.setattr(helper, "_command_path", lambda _name: "/usr/bin/pwsh")
+
+    def fake_command(command, *, success_codes=None, env=None, stdout_limit=4000):
+        """Capture repository reconciliation before returning module evidence.
+
+        Args:
+            command: Command and arguments to execute.
+            success_codes: Success codes supplied to the test scenario.
+            env: Environment variables supplied to the child process.
+            stdout_limit: Maximum retained standard output.
+        """
+        script = base64.b64decode(command[-1]).decode("utf-16-le")
+        scripts.append(script)
+        environments.append(env or {})
+        stdout = (
+            json.dumps(
+                {
+                    "Name": "PSGallery",
+                    "SourceLocation": "https://www.powershellgallery.com/api/v2",
+                    "InstallationPolicy": "Trusted",
+                }
+            )
+            if "Register-PSRepository" in script
+            else json.dumps(
+                {
+                    "Name": "Current.Tools",
+                    "AvailableVersion": "2.0.0",
+                    "InstalledVersions": ["2.0.0"],
+                }
+            )
+        )
+        return {
+            "command": command,
+            "returncode": 0,
+            "success": True,
+            "stdout": stdout,
+            "stderr": "",
+        }
+
+    monkeypatch.setattr(helper, "_command_payload", fake_command)
+    payload = {
+        "selected_streams": ["powershell_modules"],
+        "sources": {
+            "powershell_repository_name": "PSGallery",
+            "powershell_repository_url": "https://www.powershellgallery.com/api/v2",
+        },
+        "source_definitions": [
+            {
+                "kind": "powershell",
+                "name": "PSGallery",
+                "url": "https://www.powershellgallery.com/api/v2",
+                "enabled": True,
+                "validation_status": "valid",
+                "settings": {"trusted": True},
+            }
+        ],
+        "powershell_modules": [
+            {"name": "Current.Tools", "repository_name": "PSGallery"}
+        ],
+    }
+
+    check = helper._check_appliance_update(payload)["checks"]["powershell_modules"]
+
+    assert check["state"] == "up_to_date"
+    assert len(scripts) == 2
+    assert "Register-PSRepository -Default -InstallationPolicy $policy" in scripts[0]
+    assert "Find-Module -Name 'Current.Tools'" in scripts[1]
+    assert all(environment["HOME"] == str(powershell_home) for environment in environments)
+
+
 def test_helper_atlaso_check_uses_signed_summary_and_legacy_fallback(monkeypatch):
     """Expose optional signed release metadata without fabricating legacy notes.
 

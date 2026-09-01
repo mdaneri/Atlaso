@@ -738,7 +738,9 @@ products are reported as skipped.
 Privileged PowerCLI policy runs with the root-owned persistent PowerShell home under `/var/lib/atlaso-privileged/powershell`,
 including when complete factory reset activates the clean Appliance Settings unit. The helper creates the bounded XDG
 configuration directories before launching PowerShell instead of relying on `/root` or an interactive profile, so the
-packaged VMware settings manager can initialize consistently during detached reset recovery.
+packaged VMware settings manager can initialize consistently during detached reset recovery. Appliance Update checks
+idempotently re-register validated desired PowerShell repositories in this secured home, so upgrading from the former
+service-owned home does not require an operator to synchronize unchanged repository definitions again.
 
 The real Appliance Settings apply path stages JSON at `/var/lib/atlaso/apply/appliance-settings/atlaso-settings.json`.
 The `appliance_settings` unit records the appliance FQDN, resolver mode, resolver servers, local DNS desired-state flag,
