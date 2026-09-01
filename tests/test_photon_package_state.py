@@ -68,6 +68,8 @@ def test_package_cleanup_transaction_preserves_runtime_with_noautoremove(
         "tdnf",
         "python3",
         "powershell",
+        "ntpsec",
+        "python3-ntp",
         "open-vm-tools",
         "rpm-build",
         "glib-devel",
@@ -114,6 +116,60 @@ def test_package_cleanup_transaction_preserves_runtime_with_noautoremove(
     )
     assert distroverpkg == "photon-release-5.0-6.ph5.noarch"
     assert not {"rpm-build", "glib-devel", "systemd-devel", "pkg-config"} & installed
+
+
+@pytest.mark.parametrize("missing_package", ["ntpsec", "python3-ntp"])
+def test_package_cleanup_rejects_missing_ntpsec_runtime(
+    tmp_path: Path, missing_package: str
+) -> None:
+    """Reject an image that lost either required NTPsec runtime package.
+
+    Args:
+        tmp_path: Temporary filesystem root for the package transaction.
+        missing_package: Required NTPsec package omitted from the image.
+    """
+
+    verifier = load_verifier()
+    os_release, photon_release, tdnf_config = write_release_state(tmp_path)
+    installed = {
+        "photon-release-5.0-6.ph5.noarch",
+        "photon-release",
+        "rpm",
+        "tdnf",
+        "python3",
+        "powershell",
+        "ntpsec",
+        "python3-ntp",
+        "open-vm-tools",
+    }
+    installed.remove(missing_package)
+
+    def fake_rpm(command: list[str], **_: object) -> subprocess.CompletedProcess[str]:
+        """Return simulated RPM query results.
+
+        Args:
+            command: RPM command and queried package identity.
+            **_: Unused subprocess keyword arguments.
+        """
+        package = command[-1]
+        return subprocess.CompletedProcess(
+            command,
+            0 if package in installed else 1,
+            stdout=f"{package}\n" if package in installed else "",
+            stderr="" if package in installed else "not installed\n",
+        )
+
+    with pytest.raises(
+        ValueError,
+        match=f"Required Photon runtime package is not installed: {missing_package}",
+    ):
+        verifier.verify_photon_package_state(
+            os_release_path=os_release,
+            photon_release_path=photon_release,
+            tdnf_config_path=tdnf_config,
+            guest_platform="vmware",
+            runner=fake_rpm,
+        )
 
 
 def test_package_cleanup_transaction_rejects_autoremoved_release_identity(
