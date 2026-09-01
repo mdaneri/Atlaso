@@ -1850,6 +1850,8 @@ def test_exact_stale_repair_preserves_mismatched_display_name(tmp_path: Path) ->
         ("index", '"', '" junk.vmx', False),
         ("config", '""', '"', False),
         ("index", '""', '"', False),
+        ("config", "\"'", '"', False),
+        ("index", "\"'", '"', False),
         ("config", "'", "'", False),
         ("index", "'", "'", False),
         ("config", "'", "", False),
