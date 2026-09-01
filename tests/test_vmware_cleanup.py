@@ -2801,8 +2801,17 @@ def test_module_keeps_inventory_work_out_of_normal_delete_path() -> None:
     assert stale_repair.count("Test-Path -LiteralPath $resolvedVmxPath") >= 3
     assert "Test-Path -LiteralPath $resolvedVmxPath -PathType Leaf" not in stale_repair
     assert "Test-Path -LiteralPath $candidatePath -PathType Leaf" not in stale_repair
+    zero_owner_proof = stale_repair.split(
+        "if ($staleEntries.Count -eq 0 -and", 1
+    )[1].split("$realInventoryPath", 1)[0]
+    assert "$absenceLock = [System.IO.File]::Open(" in zero_owner_proof
+    assert "[System.IO.FileShare]::Read" in zero_owner_proof
+    assert "Test-AtlasoByteArraysEqual -Left $originalBytes" in zero_owner_proof
+    assert zero_owner_proof.index("$absenceLock.Dispose()") < zero_owner_proof.index(
+        "return"
+    )
     implementation = re.sub(r"<#.*?#>\s*", "", module, flags=re.DOTALL)
-    assert len(implementation.splitlines()) < 1_215
+    assert len(implementation.splitlines()) < 1_235
 
 
 def test_pre_gui_repair_retains_exact_open_ui_refusal() -> None:

@@ -710,8 +710,23 @@ function Remove-AtlasoWorkstationStaleRegistrations {
         }
     }
     if ($staleEntries.Count -eq 0 -and (-not $resolvedVmxPath -or $rawExactIndexCount -eq 0)) {
-        if ($resolvedVmxPath -and (Test-Path -LiteralPath $resolvedVmxPath)) {
-            throw "The exact stale-registration VMX was recreated before absence could be proven: $resolvedVmxPath"
+        $absenceLock = [System.IO.File]::Open(
+            $InventoryPath,
+            [System.IO.FileMode]::Open,
+            [System.IO.FileAccess]::Read,
+            [System.IO.FileShare]::Read
+        )
+        try {
+            $lockedAbsenceBytes = Read-AtlasoStreamBytes -Stream $absenceLock
+            if (-not (Test-AtlasoByteArraysEqual -Left $originalBytes -Right $lockedAbsenceBytes)) {
+                throw 'VMware Workstation inventory changed before exact registration absence could be proven.'
+            }
+            if ($resolvedVmxPath -and (Test-Path -LiteralPath $resolvedVmxPath)) {
+                throw "The exact stale-registration VMX was recreated before absence could be proven: $resolvedVmxPath"
+            }
+        }
+        finally {
+            $absenceLock.Dispose()
         }
         return
     }
