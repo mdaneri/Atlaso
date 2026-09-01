@@ -1606,8 +1606,9 @@ the exact 1Password Environment ID and approved 1Password account name or ID:
   -OnePasswordPython '<path-to-python-3.13.exe>'
 ```
 
-If you want that password-backed helper to resolve the guest IP from VMware Tools, pass the VMX path as the `-VmxPath`
-argument:
+To let the password-backed helper resolve the guest IP and reconcile the normal test VM's verified Ed25519 host key
+from VMware guest-info, pass the VMX path as the `-VmxPath` argument. You may also pass `-IpAddress` with `-VmxPath`
+when the address is already known; the VMX then supplies trust evidence only:
 
 ```powershell
 .\scripts\windows\vmware\deploy-wheel.ps1 `
@@ -1634,10 +1635,13 @@ file, or the retired `ATLASO_DEPLOY_SSH_PASSWORD` fallback. Stable `op run` does
 flag and is not used by this workflow.
 
 The child uses the local Python runtime and Paramiko so SSH and sudo do not prompt interactively. Paramiko loads the
-user's SSH known-hosts database and rejects unknown host keys; use the normal test wrapper's host-derived key and
-fingerprint to update trust explicitly before running the deployment. It drains non-PTY stdout and stderr concurrently
-so a verbose remote failure cannot block on one
-channel and enforces the separate `-DeploymentTimeoutSeconds` remote-command deadline; the remote readiness retry keeps
+user's SSH known-hosts database and rejects unknown host keys with a controlled pre-authentication error. When
+`-VmxPath` identifies a normal test VM, the helper reads its host-derived Ed25519 guest-info key through the supported
+VMware channel and adds it only to the child's in-memory host keys. A recorded system key remains authoritative, so a
+mismatch still fails; the helper never changes the operator's normal `known_hosts`. Without `-VmxPath`, use the normal
+test wrapper's printed key and fingerprint to update trust explicitly before deployment. It drains non-PTY stdout and
+stderr concurrently so a verbose remote failure cannot block on one channel and enforces the separate
+`-DeploymentTimeoutSeconds` remote-command deadline; the remote readiness retry keeps
 its independent `-ReadinessTimeoutSeconds` allowance. Desktop authorization and exact Environment retrieval each use
 the deployment deadline too. The build downloads Paramiko, the pinned 1Password SDK, and every transitive dependency
 from the seven-day, hash-verified `requirements-onepassword-deploy.lock`. The child installs that runtime into a

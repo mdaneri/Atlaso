@@ -93,6 +93,15 @@ if ($scriptText.Contains("'run', '--environment'", [System.StringComparison]::Or
 if (-not $scriptText.Contains('paramiko.RejectPolicy()', [System.StringComparison]::Ordinal)) {
     throw 'Password-backed deployment must reject unknown SSH host keys.'
 }
+if ($scriptText.Contains('client._policy.missing_host_key(client, host, server_key)', [System.StringComparison]::Ordinal) -or
+    -not $scriptText.Contains('Unknown SSH host key for {host}', [System.StringComparison]::Ordinal)) {
+    throw 'Unknown host keys must use a controlled rejection that does not require an attached SSHClient transport.'
+}
+if (-not $scriptText.Contains('Get-AtlasoWorkstationSshHostKey', [System.StringComparison]::Ordinal) -or
+    -not $scriptText.Contains("'--trusted-host-key', `$TrustedHostKey", [System.StringComparison]::Ordinal) -or
+    -not $scriptText.Contains('client.get_host_keys().add(host, parts[0], trusted_key)', [System.StringComparison]::Ordinal)) {
+    throw 'Password deployment must reconcile verified VMware guest-info evidence only into the child in-memory host keys.'
+}
 if (-not $scriptText.Contains('transport.get_security_options()', [System.StringComparison]::Ordinal) -or
     -not $scriptText.Contains('security_options.key_types', [System.StringComparison]::Ordinal)) {
     throw 'Password-backed deployment must prefer the recorded SSH host-key type before negotiation.'
