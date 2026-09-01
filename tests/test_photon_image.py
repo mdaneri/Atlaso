@@ -3610,6 +3610,23 @@ def test_photon_build_state_requires_git_ignored_custom_root() -> None:
     assert "must remain inside a Git-ignored task subtree" in wrapper
 
 
+def test_photon_wrapper_reimports_cleanup_after_builder_address() -> None:
+    """The wrapper retains cleanup path guards after nested forced imports."""
+    wrapper = Path("scripts/windows/vmware/build-photon-image.ps1").read_text(
+        encoding="utf-8"
+    )
+    builder_address_import = wrapper.index(
+        "Import-Module (Join-Path $PSScriptRoot 'Atlaso.WorkstationBuilderAddress.psm1')"
+    )
+    cleanup_import = wrapper.index(
+        "Import-Module (Join-Path $PSScriptRoot 'Atlaso.WorkstationCleanup.psm1')",
+        builder_address_import,
+    )
+    resolver = wrapper.index("function Resolve-AtlasoPhotonBuildStateRoot")
+
+    assert builder_address_import < cleanup_import < resolver
+
+
 def test_photon_child_transports_pinned_builder_handoff_identity() -> None:
     """Durable address handoffs revalidate pinned task-owned ancestry."""
     wrapper = Path("scripts/windows/vmware/build-photon-image.ps1").read_text(

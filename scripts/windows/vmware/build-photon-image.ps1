@@ -274,10 +274,12 @@ if ($PrepareIsoOnly) {
 . (Join-Path $PSScriptRoot 'Atlaso.WorkstationFirstBoot.ps1')
 Import-Module (Join-Path $PSScriptRoot 'Atlaso.OnePasswordCredentials.psm1') -Force
 Import-Module (Join-Path $PSScriptRoot '..\common\Atlaso.PhotonImage.psm1') -Force
-Import-Module (Join-Path $PSScriptRoot 'Atlaso.WorkstationCleanup.psm1') -Force
 Import-Module (Join-Path $PSScriptRoot 'Atlaso.VmwarePayload.psm1') -Force
 Import-Module (Join-Path $PSScriptRoot 'Atlaso.WorkstationBuildMonitor.psm1') -Force
 Import-Module (Join-Path $PSScriptRoot 'Atlaso.WorkstationBuilderAddress.psm1') -Force
+# BuilderAddress force-loads its private cleanup dependency. Import cleanup
+# afterward so the wrapper also retains the exported path guards in script scope.
+Import-Module (Join-Path $PSScriptRoot 'Atlaso.WorkstationCleanup.psm1') -Force
 Import-Module (Join-Path $PSScriptRoot 'Atlaso.SourceSnapshot.psm1') -Force
 Import-Module (Join-Path $PSScriptRoot 'Atlaso.VmwareBuilderIdentity.psm1') -Force
 
