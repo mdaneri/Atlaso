@@ -1740,6 +1740,39 @@ $module = Import-Module '{module_literal}' -Force -PassThru
     assert not appdata.exists()
 
 
+def test_normal_stale_cleanup_keeps_present_zero_stale_noop(tmp_path: Path) -> None:
+    """Do not lock a present inventory when ordinary cleanup selects no rows.
+
+    Args:
+        tmp_path: Pytest temporary directory path.
+    """
+    root = tmp_path / "test-vms" / "Atlaso-ordinary-cleanup"
+    _, environment, _, inventory = _write_fake_vmrun(tmp_path / "fake", [])
+    wrapper = tmp_path / "repair-ordinary-zero-stale.ps1"
+    module_literal = str(
+        VMWARE_SCRIPT_ROOT / "Atlaso.WorkstationCleanup.psm1"
+    ).replace("'", "''")
+    scope_literal = str(root).replace("'", "''")
+    inventory_literal = str(inventory).replace("'", "''")
+    wrapper.write_text(
+        f"""$ErrorActionPreference = 'Stop'
+$module = Import-Module '{module_literal}' -Force -PassThru
+& $module {{ Set-Item -Path Function:script:Get-Process -Value {{ [pscustomobject]@{{ Name = 'vmware' }} }} }}
+& $module {{
+    param($InventoryPath, $ScopeRoot)
+    Remove-AtlasoWorkstationStaleRegistrations `
+        -InventoryPath $InventoryPath `
+        -ScopeRoot $ScopeRoot
+}} '{inventory_literal}' '{scope_literal}'
+""",
+        encoding="utf-8",
+    )
+
+    result = _run_script(wrapper, environment=environment)
+
+    assert result.returncode == 0, result.stdout + result.stderr
+
+
 def test_exact_stale_repair_removes_orphaned_marker_index(tmp_path: Path) -> None:
     """Remove an exact stale index even when its config group is already absent.
 
@@ -2984,8 +3017,13 @@ def test_module_keeps_inventory_work_out_of_normal_delete_path() -> None:
     assert stale_repair.count("Test-Path -LiteralPath $resolvedVmxPath") >= 3
     assert "Test-Path -LiteralPath $resolvedVmxPath -PathType Leaf" not in stale_repair
     assert "Test-Path -LiteralPath $candidatePath -PathType Leaf" not in stale_repair
+    ordinary_zero = stale_repair.index(
+        "if ($staleEntries.Count -eq 0 -and -not $resolvedVmxPath)"
+    )
+    process_gate = stale_repair.index("Get-Process vmware", ordinary_zero)
+    assert ordinary_zero < process_gate
     zero_owner_proof = stale_repair.split(
-        "if ($staleEntries.Count -eq 0 -and", 1
+        "if ($staleEntries.Count -eq 0 -and (-not $resolvedVmxPath", 1
     )[1].split("$realInventoryPath", 1)[0]
     assert "$absenceLock = [System.IO.File]::Open(" in zero_owner_proof
     assert "[System.IO.FileShare]::Read" in zero_owner_proof

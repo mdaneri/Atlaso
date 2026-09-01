@@ -646,15 +646,14 @@ function Remove-AtlasoWorkstationStaleRegistrations {
         }
     }
     if (-not $InventoryPath -and -not $resolvedVmxPath -and -not $OnVerified) { return }
-    $realInventoryPath = Join-Path ([Environment]::GetFolderPath('ApplicationData')) 'VMware\inventory.vmls'
-    $missingInventoryPath = Join-Path $env:APPDATA 'VMware\inventory.vmls'
+    $realInventoryPath = Join-Path ([Environment]::GetFolderPath('ApplicationData')) 'VMware\inventory.vmls'; $missingInventoryPath = Join-Path $env:APPDATA 'VMware\inventory.vmls'
     $isRealInventory = if ($InventoryPath) {
         Test-AtlasoSamePath -Left $InventoryPath -Right $realInventoryPath
     } else { Test-AtlasoSamePath -Left $missingInventoryPath -Right $realInventoryPath }
-    if ($isRealInventory -and (Get-Process vmware -ErrorAction SilentlyContinue)) {
-        throw 'Close the VMware Workstation UI before removing stale Atlaso VM library entries.'
-    }
     if (-not $InventoryPath) {
+        if ($isRealInventory -and (Get-Process vmware -ErrorAction SilentlyContinue)) {
+            throw 'Close the VMware Workstation UI before removing stale Atlaso VM library entries.'
+        }
         $appearedInventoryPath = Resolve-AtlasoWorkstationInventoryPath
         if ($appearedInventoryPath) { throw "VMware Workstation inventory appeared while its absence was being verified; provider state was preserved: $appearedInventoryPath" }
         if (-not (Test-Path -LiteralPath (Split-Path -Parent $missingInventoryPath) -PathType Container)) {
@@ -687,8 +686,7 @@ function Remove-AtlasoWorkstationStaleRegistrations {
             if ($line -notmatch '^\s*(?<owner>vmlist\d+\.config|index\d+\.id)\s*=\s*(?<value>.*)$') { continue }
             $rawValue = $Matches.value.Trim()
             $rawOwner = $Matches.owner
-            $rawCandidates = @()
-            $hasCompleteQuotedValue = $false
+            $rawCandidates = @(); $hasCompleteQuotedValue = $false
             $candidateStart = 0
             if ($rawValue.Length -gt 0 -and $rawValue[0] -in @([char]34, [char]39)) {
                 $openingQuote = $rawValue[0]; $candidateStart = 1
@@ -740,6 +738,10 @@ function Remove-AtlasoWorkstationStaleRegistrations {
                 throw "VMware Workstation registration for the exact missing VMX does not have the expected display name; provider state was preserved: $resolvedVmxPath"
             }
         }
+    }
+    if ($staleEntries.Count -eq 0 -and -not $resolvedVmxPath) { return }
+    if ($isRealInventory -and (Get-Process vmware -ErrorAction SilentlyContinue)) {
+        throw 'Close the VMware Workstation UI before removing stale Atlaso VM library entries.'
     }
     if ($staleEntries.Count -eq 0 -and (-not $resolvedVmxPath -or $rawExactIndexCount -eq 0)) {
         $absenceLock = [System.IO.File]::Open(
