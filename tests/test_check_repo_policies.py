@@ -4,6 +4,7 @@ import json
 from pathlib import Path
 
 from scripts.check_repo import (
+    CODEX_WORKTREE_ROOT_SHARED_MARKERS,
     DEFAULT_MERGE_AUTHORITY_SECTION_ANCHORS,
     DEFAULT_MERGE_AUTHORITY_SECTION_MARKERS,
     LEGACY_TABULATOR_MARKER,
@@ -2087,9 +2088,6 @@ def write_policy_files(root: Path) -> None:
             marker
             for marker in markers
             if marker not in section_markers
-            and marker not in PRIMARY_CHECKOUT_BEFORE_ROOT_MARKERS.get(
-                relative_path, ()
-            )
             and marker != section_anchor
             and marker not in monitoring_markers
             and marker != monitoring_anchor
@@ -2217,6 +2215,42 @@ def test_agent_policy_gate_rejects_unconfigured_worktree_fallback(
         assert findings[0].message == (
             "required agent policy marker is missing: "
             "Never guess, infer, synthesize, or silently fall back"
+        )
+
+
+def test_agent_policy_gate_rejects_hidden_worktree_root_policy(
+    tmp_path: Path,
+) -> None:
+    """Hidden Markdown cannot satisfy the configured-worktree-root policy.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
+    hidden_marker = "Never guess, infer, synthesize, or silently fall back"
+    assert hidden_marker in CODEX_WORKTREE_ROOT_SHARED_MARKERS
+    relative_paths = (
+        Path("AGENTS.md"),
+        Path("CONTRIBUTING.md"),
+        Path("docs/contribute/agent-policies.md"),
+    )
+    for index, relative_path in enumerate(relative_paths):
+        case_root = tmp_path / str(index)
+        write_policy_files(case_root)
+        policy_path = case_root / relative_path
+        policy_path.write_text(
+            policy_path.read_text(encoding="utf-8").replace(
+                hidden_marker,
+                f"<!-- {hidden_marker} -->",
+            ),
+            encoding="utf-8",
+        )
+
+        findings = check_agent_policy_gate(case_root)
+
+        assert len(findings) == 1
+        assert findings[0].path == policy_path
+        assert findings[0].message == (
+            f"required agent policy marker is missing: {hidden_marker}"
         )
 
 
