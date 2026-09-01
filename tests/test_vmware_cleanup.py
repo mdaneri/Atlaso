@@ -1685,6 +1685,7 @@ def test_exact_stale_repair_locks_absent_inventory_through_callback(
     stale = root / "Atlaso-PR-672-cleanup.vmx"
     _, environment, _, inventory = _write_fake_vmrun(tmp_path / "fake", [])
     inventory.unlink()
+    inventory.parent.rmdir()
     callback_proof = tmp_path / "callback-proof.txt"
     wrapper = tmp_path / "repair-while-inventory-absent.ps1"
     module_literal = str(

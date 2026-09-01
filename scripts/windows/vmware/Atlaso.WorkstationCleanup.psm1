@@ -646,7 +646,7 @@ function Remove-AtlasoWorkstationStaleRegistrations {
         }
     }
     if (-not $InventoryPath -and -not $resolvedVmxPath -and -not $OnVerified) { return }
-    $realInventoryPath = Join-Path ([Environment]::GetFolderPath('ApplicationData')) 'VMware\inventory.vmls'; $missingInventoryPath = Join-Path $env:APPDATA 'VMware\inventory.vmls'
+    $realInventoryPath = Join-Path ([Environment]::GetFolderPath('ApplicationData')) 'VMware\inventory.vmls'; $missingInventoryPath = Join-Path $env:APPDATA 'VMware\inventory.vmls'; $missingInventoryDirectory = Split-Path -Parent $missingInventoryPath
     $isRealInventory = if ($InventoryPath) {
         Test-AtlasoSamePath -Left $InventoryPath -Right $realInventoryPath
     } else { Test-AtlasoSamePath -Left $missingInventoryPath -Right $realInventoryPath }
@@ -656,9 +656,9 @@ function Remove-AtlasoWorkstationStaleRegistrations {
         }
         $appearedInventoryPath = Resolve-AtlasoWorkstationInventoryPath
         if ($appearedInventoryPath) { throw "VMware Workstation inventory appeared while its absence was being verified; provider state was preserved: $appearedInventoryPath" }
-        if (-not (Test-Path -LiteralPath (Split-Path -Parent $missingInventoryPath) -PathType Container)) {
-            throw 'VMware Workstation inventory directory is absent, so provider write exclusion cannot be established.'
-        }
+        if (-not (Test-Path -LiteralPath $missingInventoryDirectory -PathType Container)) { try { [System.IO.Directory]::CreateDirectory($missingInventoryDirectory) | Out-Null } catch { throw "VMware Workstation inventory directory could not be created; provider state was preserved: $missingInventoryDirectory" } }
+        Assert-AtlasoPathHasNoReparsePoint -Path $missingInventoryDirectory
+        if (-not (Test-Path -LiteralPath $missingInventoryDirectory -PathType Container)) { throw "VMware Workstation inventory directory could not be validated; provider state was preserved: $missingInventoryDirectory" }
         try {
             # A locked empty inventory makes zero ownership durable before the
             # recovery marker is retired and before Workstation may be reopened.
