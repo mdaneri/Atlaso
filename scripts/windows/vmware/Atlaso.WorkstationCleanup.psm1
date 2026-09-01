@@ -457,7 +457,7 @@ function Test-AtlasoWorkstationVmxRegistered {
     $targetIdentity = Get-AtlasoPathIdentity -Path $VmxPath -Description 'VMware cleanup target'
     $inventoryStream = [System.IO.FileStream]::new($InventoryPath, [System.IO.FileMode]::Open, [System.IO.FileAccess]::Read, [System.IO.FileShare]::Read)
     try { $inventoryBytes = Read-AtlasoStreamBytes -Stream $inventoryStream } finally { $inventoryStream.Dispose() }
-    $inventoryLines = @(([System.Text.Encoding]::UTF8.GetString($inventoryBytes) -split '\r?\n') | ForEach-Object { $_.TrimStart([char]0xFEFF) })
+    $inventoryLines = @(([System.Text.Encoding]::UTF8.GetString($inventoryBytes) -split '\r\n|\n|\r') | ForEach-Object { $_.TrimStart([char]0xFEFF) })
     $ownersById = @{}
     $invalidOwnerIds = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
     foreach ($line in $inventoryLines) {
@@ -673,7 +673,7 @@ function Remove-AtlasoWorkstationStaleRegistrations {
         return
     }
     $originalBytes = [System.IO.File]::ReadAllBytes($InventoryPath)
-    $lines = @(([System.Text.Encoding]::UTF8.GetString($originalBytes) -split '\r?\n') | ForEach-Object { $_.TrimStart([char]0xFEFF) })
+    $lines = @(([System.Text.Encoding]::UTF8.GetString($originalBytes) -split '\r\n|\n|\r') | ForEach-Object { $_.TrimStart([char]0xFEFF) })
     $staleEntries = @(
         Get-AtlasoScopedInventoryEntriesFromLines -Lines $lines -ScopeRoot $resolvedScopeRoot |
             Where-Object { -not $_.Exists }

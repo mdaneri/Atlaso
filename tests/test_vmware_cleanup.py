@@ -1604,7 +1604,7 @@ def test_exact_stale_repair_matches_marker_path_and_display_name(tmp_path: Path)
     _, environment, _, inventory = _write_fake_vmrun(
         tmp_path / "fake", [], inventory_suffix=suffix
     )
-    inventory.write_text('.encoding = "UTF-8"\n\ufeff' + suffix, encoding="utf-8-sig")
+    inventory.write_text('.encoding = "UTF-8"\r\ufeff' + suffix.replace("\n", "\r"), encoding="utf-8-sig")
 
     result = _run_stale_registration_repair(
         tmp_path,
