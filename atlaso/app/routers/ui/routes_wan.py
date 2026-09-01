@@ -6,22 +6,24 @@ from ipaddress import ip_address, ip_network
 from typing import Any, cast
 
 from fastapi import APIRouter, Depends, Form, HTTPException, Request
-from fastapi.responses import HTMLResponse, RedirectResponse, Response
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from atlaso.app.audit import record_audit
 from atlaso.app.database import get_db
-from atlaso.app.models import NatRule, Route, RoutingRule, WanPolicy
+from atlaso.app.models import NatRule, Route, RoutingRule, ServiceState, WanPolicy
 from atlaso.app.security import Identity, require_session_identity
 from atlaso.app.services.network_objects import acquire_network_objects_write_lock
 from atlaso.app.services.routes_wan import (
     DEFAULT_ROUTE_DESTINATIONS,
     WAN_MODES,
     canonical_route_destination,
+    ensure_routes_wan_settings,
     has_default_route_conflict,
     route_gateway_target_error,
+    save_routes_wan_settings,
     validate_nat_source,
 )
 from atlaso.app.services.routes_wan import (
@@ -95,11 +97,87 @@ def build_router(dependencies: RoutesWanUiDependencies) -> RoutesWanUiRouter:
                 {
                     "identity": identity,
                     **routes_wan_context(db),
-                    "routes_wan_can_write": identity.can("write:routes"),
+                    "routes_wan_can_write": identity.can("write:routes") and identity.can("write:wan"),
                     "appliance_apply_status": appliance_apply_status(db, "wan"),
                 },
             ),
         )
+
+    @router.post("/routes-wan/settings", response_model=None)
+    def update_routes_wan_settings_from_ui(
+        request: Request,
+        routing_enabled: str | None = Form(None),
+        nat_enabled: str | None = Form(None),
+        wan_simulation_enabled: str | None = Form(None),
+        csrf: str = Form(...),
+        identity: Identity = Depends(require_session_identity),
+        db: Session = Depends(get_db),
+    ) -> RedirectResponse | JSONResponse:
+        """Save global Routes and WAN desired state without applying host changes.
+
+        Args:
+            request: Incoming HTTP request.
+            routing_enabled: Whether lab routing and packet forwarding are desired.
+            nat_enabled: Whether saved NAT rules are desired when routing is enabled.
+            wan_simulation_enabled: Whether saved WAN policy assignments are desired.
+            csrf: Validated CSRF token authorizing the request.
+            identity: Authenticated identity authorizing the request.
+            db: Active database session.
+
+        Raises:
+            HTTPException: If the identity lacks either required mutation permission.
+        """
+        verify_csrf(request, csrf)
+        if not identity.can("write:routes") or not identity.can("write:wan"):
+            raise HTTPException(status_code=403, detail="Routes and WAN write permissions are required")
+        acquire_network_objects_write_lock(db)
+        current_settings = ensure_routes_wan_settings(db)
+        next_routing_enabled = routing_enabled == "on"
+        next_nat_enabled = (
+            nat_enabled == "on"
+            if nat_enabled in {"on", "off"}
+            else current_settings.nat_enabled
+            if not current_settings.routing_enabled or not next_routing_enabled
+            else False
+        )
+        settings = save_routes_wan_settings(
+            db,
+            routing_enabled=next_routing_enabled,
+            nat_enabled=next_nat_enabled,
+            wan_simulation_enabled=wan_simulation_enabled == "on",
+        )
+        service_state = db.execute(
+            select(ServiceState).where(ServiceState.service == "routing")
+        ).scalar_one_or_none()
+        if service_state is not None and service_state.health != "unconfigured":
+            service_state.enabled = settings.routing_enabled
+            db.add(service_state)
+        db.commit()
+        record_audit(
+            db,
+            actor=identity.username,
+            action="update_routes_wan_settings",
+            resource_type="routes_wan_settings",
+            resource_id="global",
+            detail=(
+                f"routing_enabled={settings.routing_enabled}; nat_enabled={settings.nat_enabled}; "
+                f"wan_simulation_enabled={settings.wan_simulation_enabled}"
+            ),
+        )
+        if request.headers.get("X-Atlaso-Autosave") == "1":
+            context = routes_wan_context(db)
+            return JSONResponse(
+                {
+                    "status": "saved",
+                    **settings.as_dict(),
+                    "feature_status": context["routes_wan_feature_status"],
+                    "valid": not context["wan_validation_errors"],
+                    "validation_errors": context["wan_validation_errors"],
+                    "config_path": context["wan_config_path"],
+                    "config_preview": context["wan_config_preview"],
+                }
+            )
+        return RedirectResponse(f"{MANAGEMENT_UI_ROOT}/routes-wan", status_code=303)
 
 
     def parse_int_form_value(value: str, field_label: str, *, default: int = 0, minimum: int | None = None) -> int | Response:
@@ -1075,6 +1153,7 @@ def build_router(dependencies: RoutesWanUiDependencies) -> RoutesWanUiRouter:
 
     endpoints: dict[str, Endpoint] = {
         "routes_wan": routes_wan,
+        "update_routes_wan_settings_from_ui": update_routes_wan_settings_from_ui,
         "parse_int_form_value": parse_int_form_value,
         "parse_optional_int_form_value": parse_optional_int_form_value,
         "parse_float_form_value": parse_float_form_value,

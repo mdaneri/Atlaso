@@ -1,22 +1,252 @@
 """Implement routes wan service behavior."""
 
 import re
+import shlex
 from collections.abc import Iterable
-from ipaddress import ip_address, ip_network
+from dataclasses import dataclass
+from ipaddress import ip_address, ip_interface, ip_network
 
-from atlaso.app.models import NatRule, Route, RoutingRule, WanPolicy
+from sqlalchemy import select
+from sqlalchemy.orm import Session
+
+from atlaso.app.models import (
+    NatRule,
+    PhysicalInterface,
+    Route,
+    RoutingRule,
+    Setting,
+    VlanInterface,
+    WanPolicy,
+)
 from atlaso.app.services.firewall import (
     FIREWALL_SOURCE_GROUP_REFERENCE_PREFIX,
     source_group_to_rule_source,
 )
+from atlaso.app.services.networking import normalize_interface_mode
 
 WAN_CONFIG_PATH = "/var/lib/atlaso/apply/wan/atlaso-wan.conf"
 WAN_MODES = ["interface"]
 MANAGEMENT_ROUTE_TABLE_ID = 100
 LAB_ROUTE_TABLE_ID = 200
+MANAGEMENT_ROUTE_RULE_PRIORITY = 1000
+LAB_ROUTE_RULE_PRIORITY = 2000
+ROUTE_RULE_PRIORITY_WINDOW = 100
 MANAGEMENT_ROUTE_TABLE_NAME = "atlaso_mgmt"
 LAB_ROUTE_TABLE_NAME = "atlaso_lab"
 DEFAULT_ROUTE_DESTINATIONS = {4: "0.0.0.0/0", 6: "::/0"}
+ROUTING_ENABLED_SETTING_KEY = "routes_wan.routing_enabled"
+NAT_ENABLED_SETTING_KEY = "routes_wan.nat_enabled"
+WAN_SIMULATION_ENABLED_SETTING_KEY = "routes_wan.wan_simulation_enabled"
+ROUTES_WAN_SETTING_KEYS = frozenset(
+    {
+        ROUTING_ENABLED_SETTING_KEY,
+        NAT_ENABLED_SETTING_KEY,
+        WAN_SIMULATION_ENABLED_SETTING_KEY,
+    }
+)
+
+
+@dataclass(frozen=True)
+class RoutesWanSettings:
+    """Saved global activation state for Routes and WAN features."""
+
+    routing_enabled: bool = False
+    nat_enabled: bool = False
+    wan_simulation_enabled: bool = False
+
+    @property
+    def effective_nat_enabled(self) -> bool:
+        """Return whether NAT can be active with the saved routing state."""
+        return self.routing_enabled and self.nat_enabled
+
+    def as_dict(self) -> dict[str, bool]:
+        """Return the public representation of the saved feature settings."""
+        return {
+            "routing_enabled": self.routing_enabled,
+            "nat_enabled": self.nat_enabled,
+            "wan_simulation_enabled": self.wan_simulation_enabled,
+            "effective_nat_enabled": self.effective_nat_enabled,
+        }
+
+
+def _setting_bool(value: str | None) -> bool:
+    """Parse a persisted setting boolean using the repository's safe values.
+
+    Args:
+        value: Persisted setting value to interpret.
+    """
+    return str(value or "").strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _has_routing_address(ipv4_cidr: str | None, ipv6_cidr: str | None) -> bool:
+    """Return whether a target has at least one usable configured address.
+
+    Args:
+        ipv4_cidr: Optional configured IPv4 interface CIDR.
+        ipv6_cidr: Optional configured IPv6 interface CIDR.
+    """
+    for cidr in (ipv4_cidr, ipv6_cidr):
+        if not cidr:
+            continue
+        try:
+            ip_interface(cidr)
+        except ValueError:
+            continue
+        return True
+    return False
+
+
+def infer_routes_wan_settings(db: Session) -> RoutesWanSettings:
+    """Infer legacy feature activation from previously effective desired rows.
+
+    This is used only when one or more global settings are absent. Disabled or
+    unused rows intentionally do not activate a feature.
+
+    Args:
+        db: Active database session containing legacy desired state.
+    """
+    enabled_routes = db.execute(select(Route).where(Route.enabled.is_(True))).scalars().all()
+    enabled_routing_rule = db.execute(
+        select(RoutingRule.id).where(RoutingRule.enabled.is_(True)).limit(1)
+    ).first() is not None
+    physical_route_targets = db.execute(
+        select(PhysicalInterface).where(PhysicalInterface.role == "route")
+    ).scalars().all()
+    vlan_route_targets = db.execute(
+        select(VlanInterface).where(
+            VlanInterface.role == "route",
+            VlanInterface.enabled.is_(True),
+        )
+    ).scalars().all()
+    active_route_targets = {
+        interface.name
+        for interface in physical_route_targets
+        if interface.oper_state != "missing"
+        and normalize_interface_mode(interface.mode) != "trunk"
+        and _has_routing_address(interface.ip_cidr, interface.ipv6_cidr)
+    }
+    active_route_targets.update(
+        vlan.name
+        for vlan in vlan_route_targets
+        if _has_routing_address(vlan.ip_cidr, vlan.ipv6_cidr)
+    )
+    generated_routing_required = len(active_route_targets) >= 2
+    enabled_nat_rule = db.execute(
+        select(NatRule.id).where(NatRule.enabled.is_(True)).limit(1)
+    ).first() is not None
+    enabled_policy_ids = {
+        policy_id
+        for (policy_id,) in db.execute(
+            select(WanPolicy.id).where(WanPolicy.enabled.is_(True))
+        ).all()
+    }
+    wan_simulation_required = any(
+        route.wan_policy_id in enabled_policy_ids for route in enabled_routes if route.wan_policy_id is not None
+    )
+    return RoutesWanSettings(
+        routing_enabled=(
+            bool(enabled_routes)
+            or enabled_routing_rule
+            or generated_routing_required
+            or enabled_nat_rule
+        ),
+        nat_enabled=enabled_nat_rule,
+        wan_simulation_enabled=wan_simulation_required,
+    )
+
+
+def ensure_routes_wan_settings(
+    db: Session,
+    *,
+    force_disabled: bool = False,
+) -> RoutesWanSettings:
+    """Return saved settings, creating missing keys from legacy state once.
+
+    Args:
+        db: Active database session.
+        force_disabled: Replace all three values with factory-safe defaults.
+    """
+    rows = {
+        row.key: row
+        for row in db.execute(select(Setting).where(Setting.key.in_(ROUTES_WAN_SETTING_KEYS))).scalars().all()
+    }
+    inferred = RoutesWanSettings() if force_disabled else infer_routes_wan_settings(db)
+    inferred_values = {
+        ROUTING_ENABLED_SETTING_KEY: inferred.routing_enabled,
+        NAT_ENABLED_SETTING_KEY: inferred.nat_enabled,
+        WAN_SIMULATION_ENABLED_SETTING_KEY: inferred.wan_simulation_enabled,
+    }
+    for key, inferred_value in inferred_values.items():
+        row = rows.get(key)
+        if row is None:
+            row = Setting(key=key, value=_bool_value(inferred_value))
+            db.add(row)
+            rows[key] = row
+        elif force_disabled:
+            row.value = "false"
+            db.add(row)
+    db.flush()
+    return RoutesWanSettings(
+        routing_enabled=_setting_bool(rows[ROUTING_ENABLED_SETTING_KEY].value),
+        nat_enabled=_setting_bool(rows[NAT_ENABLED_SETTING_KEY].value),
+        wan_simulation_enabled=_setting_bool(rows[WAN_SIMULATION_ENABLED_SETTING_KEY].value),
+    )
+
+
+def save_routes_wan_settings(
+    db: Session,
+    *,
+    routing_enabled: bool,
+    nat_enabled: bool,
+    wan_simulation_enabled: bool,
+) -> RoutesWanSettings:
+    """Persist global desired state without applying host networking changes.
+
+    Args:
+        db: Active database session.
+        routing_enabled: Whether Atlaso lab routing is desired.
+        nat_enabled: Whether Atlaso IPv4 masquerade is desired.
+        wan_simulation_enabled: Whether Atlaso WAN impairment is desired.
+    """
+    ensure_routes_wan_settings(db)
+    values = {
+        ROUTING_ENABLED_SETTING_KEY: routing_enabled,
+        NAT_ENABLED_SETTING_KEY: nat_enabled,
+        WAN_SIMULATION_ENABLED_SETTING_KEY: wan_simulation_enabled,
+    }
+    rows = {
+        row.key: row
+        for row in db.execute(select(Setting).where(Setting.key.in_(ROUTES_WAN_SETTING_KEYS))).scalars().all()
+    }
+    for key, value in values.items():
+        rows[key].value = _bool_value(value)
+        db.add(rows[key])
+    db.flush()
+    return RoutesWanSettings(
+        routing_enabled=routing_enabled,
+        nat_enabled=nat_enabled,
+        wan_simulation_enabled=wan_simulation_enabled,
+    )
+
+
+def save_routing_enabled_state(
+    db: Session,
+    *,
+    enabled: bool,
+) -> RoutesWanSettings:
+    """Update only the global Routing desired-state switch.
+
+    Args:
+        db: Active database session.
+        enabled: Whether Atlaso lab routing is desired.
+    """
+    current = ensure_routes_wan_settings(db)
+    return save_routes_wan_settings(
+        db,
+        routing_enabled=enabled,
+        nat_enabled=current.nat_enabled,
+        wan_simulation_enabled=current.wan_simulation_enabled,
+    )
 
 
 def canonical_route_destination(value: str) -> str:
@@ -302,6 +532,10 @@ def validate_wan_state(
     routing_rules: list[RoutingRule] | None = None,
     routing_target_names: set[str] | None = None,
     route_target_cidrs: dict[str, Iterable[str | None]] | None = None,
+    management_target_names: set[str] | None = None,
+    routing_enabled: bool = True,
+    nat_enabled: bool = True,
+    wan_simulation_enabled: bool = True,
 ) -> list[str]:
     """Validate wan state.
 
@@ -315,20 +549,35 @@ def validate_wan_state(
         routing_rules: Routing rules supplied by the caller.
         routing_target_names: Routing target names supplied by the caller.
         route_target_cidrs: Configured target CIDRs used to validate route next hops.
+        management_target_names: Targets whose enabled defaults remain active for management reachability.
+        routing_enabled: Validate routing resources when globally active.
+        nat_enabled: Validate NAT resources when effectively active.
+        wan_simulation_enabled: Validate WAN policy resources when globally active.
 
     Returns:
         The validate wan state result.
     """
     errors: list[str] = []
     policy_ids = {policy.id for policy in policies}
+    management_target_names = management_target_names or set()
     default_families: set[int] = set()
     for route in routes:
+        if not route.destination_cidr:
+            errors.append("Route destination CIDR is required.")
+            continue
         try:
             destination_network = ip_network(route.destination_cidr, strict=False)
         except ValueError:
             errors.append(f"Route {route.destination_cidr} is not a valid destination CIDR.")
-            destination_network = None
-        if destination_network and destination_network.prefixlen == 0:
+            continue
+        management_default_active = bool(
+            route.enabled
+            and destination_network.prefixlen == 0
+            and route.interface_name in management_target_names
+        )
+        if not routing_enabled and not management_default_active:
+            continue
+        if destination_network.prefixlen == 0:
             if destination_network.version in default_families:
                 errors.append(f"Only one IPv{destination_network.version} default route can be configured.")
             default_families.add(destination_network.version)
@@ -340,7 +589,7 @@ def validate_wan_state(
             except ValueError:
                 errors.append(f"Gateway {route.gateway} for {route.destination_cidr} is not a valid IP address.")
                 gateway_address = None
-            if destination_network and gateway_address and gateway_address.version != destination_network.version:
+            if gateway_address and gateway_address.version != destination_network.version:
                 errors.append(f"Gateway {route.gateway} for {route.destination_cidr} must use the same IP family as the destination.")
             elif gateway_address and route_target_cidrs and route.interface_name in route_target_cidrs:
                 target_error = route_gateway_target_error(route.gateway, route_target_cidrs[route.interface_name])
@@ -350,62 +599,72 @@ def validate_wan_state(
             errors.append(f"Route {route.destination_cidr} uses {route.interface_name}, which is not an access interface or VLAN target.")
         if route.metric < 0:
             errors.append(f"Route {route.destination_cidr} has a negative metric.")
-        if route.wan_policy_id and route.wan_policy_id not in policy_ids:
-            errors.append(f"Route {route.destination_cidr} references a missing WAN policy.")
 
-    seen_nat_names: set[str] = set()
-    wan_target_names = wan_target_names or set()
-    source_groups = source_groups or []
-    source_group_ids = {str(group.get("id", "")) for group in source_groups}
-    for rule in nat_rules or []:
-        if not rule.name.strip():
-            errors.append("NAT rule name is required.")
-        normalized_name = rule.name.strip().lower()
-        if normalized_name in seen_nat_names:
-            errors.append(f"NAT rule {rule.name} is duplicated.")
-        seen_nat_names.add(normalized_name)
-        if rule.enabled:
-            errors.extend(validate_nat_source(rule.source, source_group_ids, source_groups))
-        if rule.enabled and rule.outbound_interface not in wan_target_names:
-            errors.append(f"NAT rule {rule.name} must use an access physical interface or enabled VLAN with an IP CIDR.")
-        if rule.priority < 0:
-            errors.append(f"NAT rule {rule.name} has a negative priority.")
-        if rule.enabled and not rule.masquerade:
-            errors.append(f"NAT rule {rule.name} must use masquerade; destination NAT and port forwarding are not supported in v1.")
+    if wan_simulation_enabled:
+        for route in routes:
+            if route.enabled and route.wan_policy_id and route.interface_name not in target_names:
+                errors.append(
+                    f"Route {route.destination_cidr} uses {route.interface_name}, which is not an access interface or VLAN target."
+                )
+            if route.wan_policy_id and route.wan_policy_id not in policy_ids:
+                errors.append(f"Route {route.destination_cidr} references a missing WAN policy.")
 
-    routing_target_names = routing_target_names or target_names
-    seen_routing_names: set[str] = set()
-    for rule in routing_rules or []:
-        if not rule.name.strip():
-            errors.append("Routing rule name is required.")
-        normalized_name = rule.name.strip().lower()
-        if normalized_name in seen_routing_names:
-            errors.append(f"Routing rule {rule.name} is duplicated.")
-        seen_routing_names.add(normalized_name)
-        if rule.enabled and rule.source_interface not in routing_target_names:
-            errors.append(f"Routing rule {rule.name} source must be a non-management access or route interface.")
-        if rule.enabled and rule.destination_interface not in routing_target_names:
-            errors.append(f"Routing rule {rule.name} destination must be a non-management access or route interface.")
-        if rule.enabled and rule.source_interface == rule.destination_interface:
-            errors.append(f"Routing rule {rule.name} must use different source and destination interfaces.")
-        if rule.priority < 0:
-            errors.append(f"Routing rule {rule.name} has a negative priority.")
+    if nat_enabled:
+        seen_nat_names: set[str] = set()
+        wan_target_names = wan_target_names or set()
+        source_groups = source_groups or []
+        source_group_ids = {str(group.get("id", "")) for group in source_groups}
+        for rule in nat_rules or []:
+            if not rule.name.strip():
+                errors.append("NAT rule name is required.")
+            normalized_name = rule.name.strip().lower()
+            if normalized_name in seen_nat_names:
+                errors.append(f"NAT rule {rule.name} is duplicated.")
+            seen_nat_names.add(normalized_name)
+            if rule.enabled:
+                errors.extend(validate_nat_source(rule.source, source_group_ids, source_groups))
+            if rule.enabled and rule.outbound_interface not in wan_target_names:
+                errors.append(f"NAT rule {rule.name} must use an access physical interface or enabled VLAN with an IP CIDR.")
+            if rule.priority < 0:
+                errors.append(f"NAT rule {rule.name} has a negative priority.")
+            if rule.enabled and not rule.masquerade:
+                errors.append(f"NAT rule {rule.name} must use masquerade; destination NAT and port forwarding are not supported in v1.")
 
-    for policy in policies:
-        if not policy.name.strip():
-            errors.append("WAN policy name is required.")
-        if policy.latency_ms < 0 or policy.jitter_ms < 0:
-            errors.append(f"WAN policy {policy.name} cannot have negative latency or jitter.")
-        for field_name, value in [
-            ("packet loss", policy.packet_loss_percent),
-            ("corruption", policy.corrupt_percent or 0.0),
-            ("duplication", policy.duplicate_percent or 0.0),
-            ("reordering", policy.reorder_percent or 0.0),
-        ]:
-            if value < 0 or value > 100:
-                errors.append(f"WAN policy {policy.name} has invalid {field_name} percentage.")
-        if policy.bandwidth_mbit is not None and policy.bandwidth_mbit < 1:
-            errors.append(f"WAN policy {policy.name} bandwidth must be at least 1 Mbps when set.")
+    if routing_enabled:
+        routing_target_names = routing_target_names or target_names
+        seen_routing_names: set[str] = set()
+        for rule in routing_rules or []:
+            if not rule.name.strip():
+                errors.append("Routing rule name is required.")
+            normalized_name = rule.name.strip().lower()
+            if normalized_name in seen_routing_names:
+                errors.append(f"Routing rule {rule.name} is duplicated.")
+            seen_routing_names.add(normalized_name)
+            if rule.enabled and rule.source_interface not in routing_target_names:
+                errors.append(f"Routing rule {rule.name} source must be a non-management access or route interface.")
+            if rule.enabled and rule.destination_interface not in routing_target_names:
+                errors.append(f"Routing rule {rule.name} destination must be a non-management access or route interface.")
+            if rule.enabled and rule.source_interface == rule.destination_interface:
+                errors.append(f"Routing rule {rule.name} must use different source and destination interfaces.")
+            if rule.priority < 0:
+                errors.append(f"Routing rule {rule.name} has a negative priority.")
+
+    if wan_simulation_enabled:
+        for policy in policies:
+            if not policy.name.strip():
+                errors.append("WAN policy name is required.")
+            if policy.latency_ms < 0 or policy.jitter_ms < 0:
+                errors.append(f"WAN policy {policy.name} cannot have negative latency or jitter.")
+            for field_name, value in [
+                ("packet loss", policy.packet_loss_percent or 0.0),
+                ("corruption", policy.corrupt_percent or 0.0),
+                ("duplication", policy.duplicate_percent or 0.0),
+                ("reordering", policy.reorder_percent or 0.0),
+            ]:
+                if value < 0 or value > 100:
+                    errors.append(f"WAN policy {policy.name} has invalid {field_name} percentage.")
+            if policy.bandwidth_mbit is not None and policy.bandwidth_mbit < 1:
+                errors.append(f"WAN policy {policy.name} bandwidth must be at least 1 Mbps when set.")
     return errors
 
 
@@ -541,6 +800,70 @@ def mirrored_management_default_routes(
     return mirrored
 
 
+def _wan_config_named_entries(
+    config_preview: str,
+    section: str,
+) -> list[dict[str, str]]:
+    """Return named entries from one rendered Routes and WAN section.
+
+    Args:
+        config_preview: Previously rendered Routes and WAN configuration.
+        section: Section whose target-keyed entries should be parsed.
+    """
+    targets: list[dict[str, str]] = []
+    current_section = ""
+    current_target: dict[str, str] | None = None
+    for raw_line in (config_preview or "").splitlines():
+        line = raw_line.strip()
+        if not line or line.startswith("#"):
+            continue
+        if line.startswith("[") and line.endswith("]"):
+            current_section = line.strip("[]")
+            current_target = None
+            continue
+        if current_section != section or "=" not in line:
+            continue
+        key, value = [part.strip() for part in line.split("=", 1)]
+        if key == "target":
+            current_target = {"name": value}
+            targets.append(current_target)
+        elif current_target is not None:
+            current_target[key] = value
+    return targets
+
+
+def wan_config_target_entries(config_preview: str) -> list[dict[str, str]]:
+    """Return target entries from a rendered Routes and WAN configuration.
+
+    Args:
+        config_preview: Previously rendered Routes and WAN configuration.
+    """
+    return _wan_config_named_entries(config_preview, "targets")
+
+
+def wan_config_retired_target_entries(config_preview: str) -> list[dict[str, str]]:
+    """Return durable target-route retirement entries from rendered configuration.
+
+    Args:
+        config_preview: Previously rendered Routes and WAN configuration.
+    """
+    return _wan_config_named_entries(config_preview, "retired_targets")
+
+
+def _link_guarded_cleanup(command: str, interface_name: str) -> str:
+    """Render cleanup that runs only while its referenced link exists.
+
+    Args:
+        command: Cleanup command to guard.
+        interface_name: Referenced Linux network-interface name.
+    """
+    quoted_name = shlex.quote(interface_name)
+    return (
+        f"if ip link show dev {quoted_name} >/dev/null 2>&1; then "
+        f"{command}; fi"
+    )
+
+
 def mirrored_management_default_keys(config_preview: str) -> set[tuple[str, str]]:
     """Return identities of enabled defaults mirrored for management listeners.
 
@@ -564,6 +887,7 @@ def render_wan_config(
     removed_routes: list[dict[str, str]] | None = None,
     source_groups: list[dict] | None = None,
     previous_config_preview: str = "",
+    settings: RoutesWanSettings | None = None,
 ) -> str:
     """Render wan config.
 
@@ -576,6 +900,7 @@ def render_wan_config(
         removed_routes: Removed routes supplied by the caller.
         source_groups: Source Groups available to the rule.
         previous_config_preview: Last-applied configuration used to retire prior host defaults.
+        settings: Saved global activation state. Omission preserves the legacy active behavior.
 
     Returns:
         The rendered wan config.
@@ -584,6 +909,7 @@ def render_wan_config(
     nat_rules = nat_rules or []
     targets = targets or []
     routing_rules = routing_rules or []
+    settings = settings or RoutesWanSettings(True, True, True)
     policy_lookup = _policy_by_id(policies)
     previously_mirrored_defaults = mirrored_management_default_keys(
         previous_config_preview
@@ -591,6 +917,12 @@ def render_wan_config(
     lines = [
         "# Managed by Atlaso. Local changes may be overwritten.",
         "# Desired route, NAT, and WAN simulation state for Photon appliances.",
+        "",
+        "[feature_settings]",
+        f"routing_enabled={_bool_value(settings.routing_enabled)}",
+        f"nat_enabled={_bool_value(settings.nat_enabled)}",
+        f"wan_simulation_enabled={_bool_value(settings.wan_simulation_enabled)}",
+        f"effective_nat_enabled={_bool_value(settings.effective_nat_enabled)}",
         "",
         "[targets]",
     ]
@@ -608,6 +940,36 @@ def render_wan_config(
                 f"  routing_domain={target.get('routing_domain', 'lab')}",
                 f"  route_allowed={_bool_value(bool(target.get('route_allowed', True)))}",
                 f"  management_ui={_bool_value(bool(target.get('management_ui', False)))}",
+            ]
+        )
+
+    current_lab_target_networks = {
+        (str(target.get("name") or ""), str(network))
+        for target in targets
+        if target.get("routing_domain") != "management"
+        for network in _target_networks(target)
+    }
+    retired_target_networks = {
+        (interface_name, str(network))
+        for previous_target in [
+            *wan_config_target_entries(previous_config_preview),
+            *wan_config_retired_target_entries(previous_config_preview),
+        ]
+        if previous_target.get("routing_domain") != "management"
+        if (interface_name := str(previous_target.get("name") or ""))
+        for network in (
+            [previous_target.get("network", "")]
+            if previous_target.get("network")
+            else _target_networks(previous_target)
+        )
+        if network and (interface_name, str(network)) not in current_lab_target_networks
+    }
+    lines.extend(["", "[retired_targets]"])
+    for interface_name, network in sorted(retired_target_networks):
+        lines.extend(
+            [
+                f"target={interface_name}",
+                f"  network={network}",
             ]
         )
 
@@ -714,26 +1076,55 @@ def render_wan_config(
             "    type nat hook postrouting priority srcnat; policy accept;",
         ]
     )
-    for rule in sorted([item for item in nat_rules if item.enabled], key=lambda item: item.priority):
+    for rule in sorted(
+        [item for item in nat_rules if item.enabled and settings.effective_nat_enabled],
+        key=lambda item: item.priority,
+    ):
         source_expr = _nft_source_expr(_nat_source_resolved(rule, source_groups))
         comment = rule.name.replace('"', "'")
         lines.append(f'    {source_expr}oifname "{rule.outbound_interface}" masquerade comment "{comment}"')
     lines.extend(["  }", "}", "", "[commands]"])
 
-    generated_lab_routing_enabled = any(row["generated"] and row["enabled"] for row in generated_route_role_rules(targets))
-    if any(rule.enabled for rule in nat_rules):
-        lines.append("sysctl -w net.ipv4.ip_forward=1  # required for NAT rules")
-    if any(route.enabled for route in routes):
-        lines.append("sysctl -w net.ipv4.ip_forward=1  # required for lab routes")
-    if generated_lab_routing_enabled or any(rule.enabled for rule in routing_rules):
-        lines.append("sysctl -w net.ipv4.ip_forward=1  # required for lab routing rules")
-    if not any(rule.enabled for rule in nat_rules) and not any(route.enabled for route in routes) and not generated_lab_routing_enabled and not any(rule.enabled for rule in routing_rules):
-        lines.append("sysctl -w net.ipv4.ip_forward=0  # no Atlaso lab routing or NAT requires forwarding")
+    forwarding_value = 1 if settings.routing_enabled else 0
+    lines.append(
+        f"sysctl -w net.ipv4.ip_forward={forwarding_value}  # global Routing switch"
+    )
+    lines.append(
+        f"sysctl -w net.ipv6.conf.all.forwarding={forwarding_value}  # global Routing switch"
+    )
+    if not settings.routing_enabled:
+        final_lab_priority = LAB_ROUTE_RULE_PRIORITY + ROUTE_RULE_PRIORITY_WINDOW - 1
+        lines.append(
+            f"for priority in $(seq {LAB_ROUTE_RULE_PRIORITY} {final_lab_priority}); do "
+            'ip rule del priority "$priority" 2>/dev/null || true; done'
+            "  # disabled Routing lab policy cleanup"
+        )
+        lines.append(
+            f"for priority in $(seq {LAB_ROUTE_RULE_PRIORITY} {final_lab_priority}); do "
+            'ip -6 rule del priority "$priority" 2>/dev/null || true; done'
+            "  # disabled Routing IPv6 lab policy cleanup"
+        )
     target_network_owners = _target_network_owners(targets)
+    for interface_name, network in sorted(retired_target_networks):
+        route_family = "-6 " if ip_network(network, strict=False).version == 6 else ""
+        lines.append(
+            _link_guarded_cleanup(
+                f"ip {route_family}route del {network} dev {interface_name} table {LAB_ROUTE_TABLE_ID}",
+                interface_name,
+            )
+            + "  # retired omitted or ineligible WAN target"
+        )
     for index, target in enumerate(targets):
         management = target.get("routing_domain") == "management"
         table = MANAGEMENT_ROUTE_TABLE_ID if management else LAB_ROUTE_TABLE_ID
-        priority = (1000 if management else 2000) + index
+        if not management and not settings.routing_enabled:
+            for network in _target_networks(target):
+                route_family = "-6 " if network.version == 6 else ""
+                lines.append(
+                    f"ip {route_family}route del {network} dev {target['name']} table {table}"
+                )
+            continue
+        priority = (MANAGEMENT_ROUTE_RULE_PRIORITY if management else LAB_ROUTE_RULE_PRIORITY) + index
         gateways = [
             str(target.get(key, "") or "").strip()
             for key in ("gateway", "ipv6_gateway")
@@ -766,8 +1157,7 @@ def render_wan_config(
             lines.append(f"ip route del default dev {target['name']}  # no static management IPv4 gateway configured")
         if management and target.get("ipv6_cidr") and not target.get("ipv6_gateway"):
             lines.append(f"ip -6 route del default dev {target['name']}  # no static management IPv6 gateway configured")
-    if any(rule.enabled for rule in nat_rules):
-        lines.append("nft -f /etc/atlaso/nftables.d/atlaso-nat.nft")
+    lines.append("nft -f /etc/atlaso/nftables.d/atlaso-nat.nft")
 
     for route in routes:
         destination_cidr = canonical_route_destination(route.destination_cidr)
@@ -784,39 +1174,57 @@ def render_wan_config(
             destination_cidr,
             route.interface_name,
         ) in previously_mirrored_defaults
-        if not route.enabled:
-            lines.append(f"ip {route_family}route del {destination_cidr} dev {route.interface_name} table {LAB_ROUTE_TABLE_ID}  # disabled desired route")
-            if management_ui_default or previously_mirrored_default:
+        route_effective = route.enabled and settings.routing_enabled
+        if not route_effective:
+            cleanup_command = f"ip {route_family}route del {destination_cidr} dev {route.interface_name} table {LAB_ROUTE_TABLE_ID}"
+            if not route_target:
+                cleanup_command = _link_guarded_cleanup(
+                    cleanup_command,
+                    route.interface_name,
+                )
+            lines.append(cleanup_command + "  # disabled desired route")
+            if route.enabled and management_ui_default:
+                main_command = ["ip", "-6", "route", "replace", destination_cidr] if destination.version == 6 else ["ip", "route", "replace", destination_cidr]
+                if route.gateway:
+                    main_command.extend(["via", route.gateway])
+                main_command.extend(["dev", route.interface_name, "metric", str(route.metric)])
+                lines.append(" ".join(main_command) + "  # flagged-management host default")
+            elif (not route.enabled) and (management_ui_default or previously_mirrored_default):
                 lines.append(
                     f"ip {route_family}route del {destination_cidr} dev {route.interface_name}"
                     "  # disabled flagged-management default"
                 )
-            continue
-        command = ["ip", "-6", "route", "replace", destination_cidr] if destination.version == 6 else ["ip", "route", "replace", destination_cidr]
-        if route.gateway:
-            command.extend(["via", route.gateway])
-        command.extend(["dev", route.interface_name, "metric", str(route.metric), "table", str(LAB_ROUTE_TABLE_ID)])
-        lines.append(" ".join(command))
-        if management_ui_default:
-            main_command = command[:-2]
-            lines.append(" ".join(main_command) + "  # flagged-management host default")
-        elif previously_mirrored_default:
-            lines.append(
-                f"ip {route_family}route del {destination_cidr} dev {route.interface_name}"
-                "  # retired flagged-management host default"
-            )
+        elif route_effective:
+            command = ["ip", "-6", "route", "replace", destination_cidr] if destination.version == 6 else ["ip", "route", "replace", destination_cidr]
+            if route.gateway:
+                command.extend(["via", route.gateway])
+            command.extend(["dev", route.interface_name, "metric", str(route.metric), "table", str(LAB_ROUTE_TABLE_ID)])
+            lines.append(" ".join(command))
+            if management_ui_default:
+                main_command = command[:-2]
+                lines.append(" ".join(main_command) + "  # flagged-management host default")
+            elif previously_mirrored_default:
+                lines.append(
+                    f"ip {route_family}route del {destination_cidr} dev {route.interface_name}"
+                    "  # retired flagged-management host default"
+                )
         policy = policy_lookup.get(route.wan_policy_id or 0) or route.wan_policy
-        if policy and policy.enabled:
+        if settings.wan_simulation_enabled and route.enabled and policy and policy.enabled:
             lines.append(" ".join(["tc", "qdisc", "replace", "dev", route.interface_name, "root", "netem", *netem_args(policy)]))
         else:
-            lines.append(" ".join(["tc", "qdisc", "del", "dev", route.interface_name, "root"]))
+            cleanup_command = " ".join(["tc", "qdisc", "del", "dev", route.interface_name, "root"])
+            if not route_target:
+                cleanup_command = _link_guarded_cleanup(
+                    cleanup_command,
+                    route.interface_name,
+                )
+            lines.append(cleanup_command)
     for route in removed_routes or []:
         try:
             destination = ip_network(str(route.get("destination_cidr", "")), strict=False)
         except ValueError:
             destination = None
         route_family = "-6 " if destination and destination.version == 6 else ""
-        lines.append(f"ip {route_family}route del {route.get('destination_cidr', '')} dev {route.get('interface_name', '')} table {LAB_ROUTE_TABLE_ID}  # removed managed route")
         route_target = next(
             (
                 target
@@ -825,6 +1233,11 @@ def render_wan_config(
             ),
             {},
         )
+        interface_name = str(route.get("interface_name", ""))
+        cleanup_command = f"ip {route_family}route del {route.get('destination_cidr', '')} dev {interface_name} table {LAB_ROUTE_TABLE_ID}"
+        if not route_target:
+            cleanup_command = _link_guarded_cleanup(cleanup_command, interface_name)
+        lines.append(cleanup_command + "  # removed managed route")
         removed_key = (
             canonical_route_destination(str(route.get("destination_cidr", ""))),
             str(route.get("interface_name", "")),
