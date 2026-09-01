@@ -639,9 +639,11 @@ Terminal order:
   **Edit repository** beside the destructive action and use the same shared reviewed source wizard for creation and
   editing. The built-in Photon row must show effective values discovered from `/etc/yum.repos.d`. Source
   credentials remain encrypted at rest and move to `atlaso-helper appliance-update` only through a separate mode-0600
-  transient staging file; never place credentials, authenticated URLs, or secret-bearing commands in manifests, jobs,
-  audits, or helper output. Source wizard submissions save desired state only; writing Photon or PowerShell package-client
-  configuration requires the explicit audited **Synchronize repositories** task through
+  transient staging file. Keep synchronized managed Photon repository files credential-free; authenticated TDNF calls
+  use a root-only repository view in volatile `/run` storage that is removed after each command. Never place credentials,
+  authenticated URLs, or secret-bearing commands in durable package-client configuration, manifests, jobs, command
+  arguments, audits, or helper output. Source wizard submissions save desired state only; writing Photon or PowerShell
+  package-client configuration requires the explicit audited **Synchronize repositories** task through
   `atlaso-helper appliance-update`; signed Atlaso sources never configure pip.
 - Keep the staged Appliance Update manifest in a compact Validation card at the bottom of the detail rail and open its
   full JSON through the shared preview modal; do not render the full manifest inline in Update Streams.

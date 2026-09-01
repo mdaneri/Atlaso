@@ -13211,6 +13211,7 @@ def cleanup_transient_secret_staging_files() -> None:
         LOCAL_USERS_STAGED_CONFIG_PATH,
         CA_STAGED_CONFIG_PATH,
         LDAP_STAGED_CONFIG_PATH,
+        APPLIANCE_UPDATE_STAGED_CREDENTIALS_PATH,
         FACTORY_RESET_STAGED_CREDENTIALS_PATH,
     ):
         staged_path = Path(path_value)

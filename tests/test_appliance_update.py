@@ -4,6 +4,8 @@ import importlib.machinery
 import importlib.util
 import json
 import logging
+import os
+import stat
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -4280,6 +4282,192 @@ def test_helper_syncs_only_owned_photon_and_powershell_sources(monkeypatch, tmp_
     assert json.loads(state_path.read_text(encoding="utf-8")) == {"powershell_repositories": []}
 
 
+def test_helper_keeps_managed_photon_credentials_out_of_durable_repo(monkeypatch, tmp_path):
+    """Persist repository settings without persisting its protected credential.
+
+    Args:
+        monkeypatch: Pytest fixture used to replace dependencies for the test.
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
+    helper = load_helper_module()
+    photon_path = tmp_path / "atlaso-managed.repo"
+    monkeypatch.setattr(helper, "MANAGED_PHOTON_REPO_PATH", photon_path)
+    monkeypatch.setattr(helper, "UPDATE_SOURCE_STATE_PATH", tmp_path / "update-sources.json")
+    monkeypatch.setattr(helper, "_command_path", lambda _name: None)
+    payload = {
+        "source_definitions": [
+            {
+                "id": 7,
+                "kind": "photon",
+                "name": "Private Photon",
+                "url": "https://packages.example.test/photon/5/x86_64",
+                "enabled": True,
+                "settings": {"managed": True, "gpgcheck": True, "tls_verify": True},
+            }
+        ]
+    }
+
+    result = helper._sync_appliance_update_sources(
+        payload, {"7": {"username": "operator", "secret": "test-secret"}}
+    )
+
+    content = photon_path.read_text(encoding="utf-8")
+    assert result["status"] == "succeeded"
+    assert "baseurl=https://packages.example.test/photon/5/x86_64" in content
+    assert "username=" not in content
+    assert "password=" not in content
+    assert "test-secret" not in content
+
+
+@pytest.mark.parametrize(
+    ("name", "url", "gpgkey", "expected"),
+    [
+        ("Private Photon\npassword=injected", "https://packages.example.test/photon", "", "name must not contain control characters"),
+        ("Private Photon", "https://operator:secret@packages.example.test/photon", "", "URL must not include embedded credentials"),
+        ("Private Photon", "https://packages.example.test/photon", "https://operator:secret@keys.example.test/key", "GPG key URL must not include embedded credentials"),
+        ("Private Photon", "https://packages.example.test/photon", "https://keys.example.test/key\npassword=injected", "GPG key must not contain control characters"),
+    ],
+)
+def test_helper_rejects_managed_photon_directive_and_credential_injection(
+    monkeypatch, tmp_path, name, url, gpgkey, expected
+):
+    """Reject staged fields that could reintroduce credentials into durable configuration.
+
+    Args:
+        monkeypatch: Pytest fixture used to replace dependencies for the test.
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+        name: Managed repository display name.
+        url: Managed repository base URL.
+        gpgkey: Managed repository GPG key location.
+        expected: Expected helper validation message.
+    """
+    helper = load_helper_module()
+    photon_path = tmp_path / "atlaso-managed.repo"
+    monkeypatch.setattr(helper, "MANAGED_PHOTON_REPO_PATH", photon_path)
+    monkeypatch.setattr(helper, "UPDATE_SOURCE_STATE_PATH", tmp_path / "update-sources.json")
+    payload = {
+        "selected_streams": [],
+        "sources": {},
+        "source_definitions": [
+            {
+                "id": 7,
+                "kind": "photon",
+                "name": name,
+                "url": url,
+                "enabled": True,
+                "settings": {"managed": True, "gpgcheck": True, "tls_verify": True, "gpgkey": gpgkey},
+            }
+        ],
+    }
+
+    errors = helper._appliance_update_config_errors(
+        payload, require_streams=False, require_synchronized=False
+    )
+
+    assert any(expected in error for error in errors)
+    with pytest.raises(ValueError, match=expected):
+        helper._sync_appliance_update_sources(payload)
+    assert not photon_path.exists()
+
+
+def test_helper_uses_managed_photon_credentials_only_for_tdnf_call(monkeypatch, tmp_path):
+    """Expose credentials through a private transient repo view and then remove it.
+
+    Args:
+        monkeypatch: Pytest fixture used to replace dependencies for the test.
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
+    helper = load_helper_module()
+    photon_path = tmp_path / "repos" / "atlaso-managed.repo"
+    photon_path.parent.mkdir()
+    photon_path.write_text("[private-photon]\nbaseurl=https://packages.example.test/photon\n", encoding="utf-8")
+    monkeypatch.setattr(helper, "MANAGED_PHOTON_REPO_PATH", photon_path)
+    runtime_root = tmp_path / "run"
+    runtime_root.mkdir()
+    monkeypatch.setattr(helper, "PHOTON_REPOSITORY_RUNTIME_ROOT", runtime_root)
+    captured = {}
+    payload = {
+        "source_definitions": [
+            {
+                "id": 7,
+                "kind": "photon",
+                "name": "Private Photon",
+                "url": "https://packages.example.test/photon",
+                "enabled": True,
+                "settings": {"managed": True, "gpgcheck": True, "tls_verify": True},
+            }
+        ]
+    }
+
+    def inspect_command(command, **_kwargs):
+        """Inspect the repository view while the child command would run.
+
+        Args:
+            command: TDNF executable and arguments.
+            **_kwargs: Additional command-capture options.
+        """
+        option = command[1]
+        repository_dir = Path(option.split("=", 2)[2])
+        credential_repo = repository_dir / photon_path.name
+        captured["command"] = command
+        captured["repository_dir"] = repository_dir
+        captured["content"] = credential_repo.read_text(encoding="utf-8")
+        captured["mode"] = stat.S_IMODE(credential_repo.stat().st_mode)
+        return {"command": command, "returncode": 0, "success": True, "stdout": "", "stderr": ""}
+
+    monkeypatch.setattr(helper, "_command_payload", inspect_command)
+    helper._photon_command_payload(
+        payload,
+        {"7": {"username": "operator", "secret": "test-secret"}},
+        ["/usr/bin/tdnf", "makecache"],
+    )
+
+    assert captured["command"][1].startswith("--setopt=repodir=")
+    assert "username=operator" in captured["content"]
+    assert "password=test-secret" in captured["content"]
+    if os.name == "posix":
+        assert captured["mode"] == 0o600
+    assert not captured["repository_dir"].exists()
+    assert "test-secret" not in photon_path.read_text(encoding="utf-8")
+    assert "test-secret" not in " ".join(captured["command"])
+
+
+def test_helper_cleans_stale_managed_photon_credentials_and_fails_without_runtime_root(
+    monkeypatch, tmp_path
+):
+    """Recover inactive volatile credentials and reject non-volatile fallback storage.
+
+    Args:
+        monkeypatch: Pytest fixture used to replace dependencies for the test.
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
+    helper = load_helper_module()
+    runtime_root = tmp_path / "run"
+    runtime_root.mkdir()
+    stale = runtime_root / "atlaso-tdnf-repositories-99999999-123-deadbeef"
+    stale.mkdir(mode=0o700)
+    secret_path = stale / "atlaso-managed.repo"
+    secret_path.write_text("password=test-secret\n", encoding="utf-8")
+    secret_path.chmod(0o600)
+    monkeypatch.setattr(helper, "PHOTON_REPOSITORY_RUNTIME_ROOT", runtime_root)
+
+    helper._cleanup_stale_photon_repository_views()
+
+    assert not stale.exists()
+    reused_pid = runtime_root / f"atlaso-tdnf-repositories-{os.getpid()}-0-deadbeef"
+    reused_pid.mkdir(mode=0o700)
+    (reused_pid / "atlaso-managed.repo").write_text(
+        "password=test-secret\n", encoding="utf-8"
+    )
+    helper._cleanup_stale_photon_repository_views()
+    assert not reused_pid.exists()
+    monkeypatch.setattr(
+        helper, "PHOTON_REPOSITORY_RUNTIME_ROOT", tmp_path / "missing-run"
+    )
+    with pytest.raises(ValueError, match="volatile Photon repository credential storage is unavailable"):
+        helper._photon_repository_runtime_root()
+
+
 def test_helper_reports_unresolvable_powershell_repository_host(monkeypatch, tmp_path):
     """Verify that helper reports unresolvable powershell repository host.
 
@@ -4765,7 +4953,7 @@ def test_helper_photon_check_parses_and_truncates_candidate_rows(monkeypatch):
     monkeypatch.setattr(
         helper,
         "_photon_python_compatibility",
-        lambda: {
+        lambda *_args: {
             "command": ["python-compatibility"],
             "returncode": 0,
             "success": True,
