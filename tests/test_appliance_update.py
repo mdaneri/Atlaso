@@ -2541,7 +2541,9 @@ def test_successful_sync_clears_prerequisite_failure_to_check_required(client):
         ui.set_setting_value(db, APPLIANCE_UPDATE_AVAILABILITY_KEY, update_availability_to_json(state))
         source = db.execute(select(UpdateSource).where(UpdateSource.kind == "powershell")).scalar_one()
         source.validation_status = "valid"
-        source.validation_message = "Repository synchronized with its appliance package client."
+        source.validation_message = (
+            "Repository synchronized with the secured privileged PowerShell home."
+        )
         source.validated_at = datetime.now(timezone.utc)
         db.add(source)
         db.commit()
@@ -4136,6 +4138,12 @@ def test_helper_rejects_unsynchronized_powershell_repository():
         payload, require_streams=True, require_synchronized=False
     ) == []
     payload["source_definitions"][0]["validation_status"] = "valid"
+    assert helper._appliance_update_config_errors(payload, require_streams=True) == [
+        "PowerShell repository PSGallery is not synchronized; run Synchronize repositories before checking or installing managed modules."
+    ]
+    payload["source_definitions"][0]["validation_message"] = (
+        helper.POWERSHELL_SOURCE_HOME_VALIDATION_MESSAGE
+    )
     assert helper._appliance_update_config_errors(payload, require_streams=True) == []
 
 
@@ -5206,6 +5214,7 @@ def test_helper_powershell_check_ignores_unreferenced_unsynchronized_repository(
                 "name": "PSGallery",
                 "enabled": True,
                 "validation_status": "valid",
+                "validation_message": helper.POWERSHELL_SOURCE_HOME_VALIDATION_MESSAGE,
             },
             {
                 "kind": "powershell",

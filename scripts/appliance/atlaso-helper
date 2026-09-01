@@ -234,6 +234,9 @@ MANAGED_PHOTON_REPO_PATH = Path("/etc/yum.repos.d/atlaso-managed.repo")
 PHOTON_REPOSITORY_RUNTIME_ROOT = Path("/run")
 PSGALLERY_NAME = "PSGallery"
 PSGALLERY_SOURCE_URL = "https://www.powershellgallery.com/api/v2"
+POWERSHELL_SOURCE_HOME_VALIDATION_MESSAGE = (
+    "Repository synchronized with the secured privileged PowerShell home."
+)
 ATLASO_HOME = Path("/opt/atlaso")
 ATLASO_RELEASES_DIR = ATLASO_HOME / "releases"
 ATLASO_CURRENT_LINK = ATLASO_HOME / "current"
@@ -11573,6 +11576,8 @@ def _appliance_update_config_errors(
             and source.get("kind") == "powershell"
             and source.get("enabled") is True
             and source.get("validation_status") == "valid"
+            and source.get("validation_message")
+            == POWERSHELL_SOURCE_HOME_VALIDATION_MESSAGE
         } if isinstance(source_definitions, list) else set()
         for repository in sorted(referenced_repositories - synchronized_repositories):
             errors.append(
@@ -12620,7 +12625,14 @@ def _unsynchronized_update_sources(
             repository_names is None
             or str(source.get("name") or "").strip() in repository_names
         )
-        and source.get("validation_status") != "valid"
+        and (
+            source.get("validation_status") != "valid"
+            or (
+                kind == "powershell"
+                and source.get("validation_message")
+                != POWERSHELL_SOURCE_HOME_VALIDATION_MESSAGE
+            )
+        )
     )
 
 

@@ -741,6 +741,8 @@ configuration directories before launching PowerShell instead of relying on `/ro
 packaged VMware settings manager can initialize consistently during detached reset recovery. The audited **Synchronize
 repositories** task registers desired PowerShell sources in this secured home; update checks remain read-only. Complete
 factory reset removes the bounded former home without following links after unregistering secured-home repositories.
+An upgrade invalidates the former home synchronization receipt, so the stream remains blocked until that audited task
+records a secured-home receipt.
 
 The real Appliance Settings apply path stages JSON at `/var/lib/atlaso/apply/appliance-settings/atlaso-settings.json`.
 The `appliance_settings` unit records the appliance FQDN, resolver mode, resolver servers, local DNS desired-state flag,
