@@ -189,6 +189,27 @@ MAINTAINER_BREAK_GLASS_OPERATIVE_MARKERS = (
     "### Maintainer override / break-glass",
 )
 
+CODEX_WORKTREE_ROOT_SHARED_MARKERS = (
+    "supported Codex configuration",
+    "`git-worktree-root`",
+    "Never guess, infer, synthesize, or silently fall back",
+    "explicit maintainer-configured permitted root",
+    "preserve its state",
+    "First identify and verify whether the task uses the repository's primary checkout",
+)
+
+PRIMARY_CHECKOUT_BEFORE_ROOT_MARKERS = {
+    path: (
+        "First identify and verify whether the task uses the repository's primary checkout",
+        "`git-worktree-root`",
+    )
+    for path in (
+        Path("AGENTS.md"),
+        Path("CONTRIBUTING.md"),
+        Path("docs/contribute/agent-policies.md"),
+    )
+}
+
 REQUIRED_POLICY_MARKERS = {
     Path("AGENTS.md"): (
         "## Mandatory Agent Startup Gate",
@@ -208,6 +229,7 @@ REQUIRED_POLICY_MARKERS = {
         "docs/contribute/ui-design-guide.md",
         "first progress update",
         "delegating agent",
+        *CODEX_WORKTREE_ROOT_SHARED_MARKERS,
         "direct-edit Tabulator",
         "custom/other",
         "explicit maintainer approval",
@@ -252,6 +274,7 @@ REQUIRED_POLICY_MARKERS = {
         "docs/contribute/ui-design-guide.md",
         "custom/other",
         "delegated agent",
+        *CODEX_WORKTREE_ROOT_SHARED_MARKERS,
         "### Automated pull-request follow-through",
         "Python test suite locally",
         "ready for review",
@@ -347,6 +370,7 @@ REQUIRED_POLICY_MARKERS = {
         "`spark_worker`",
         "`gpt-5.3-codex-spark`",
         "Do not silently",
+        *CODEX_WORKTREE_ROOT_SHARED_MARKERS,
         "## Repository Delivery Workflow",
         "private vulnerability remediation",
         "temporary private fork",
@@ -3011,22 +3035,26 @@ def check_agent_policy_gate(root: Path) -> list[Finding]:
             findings.append(Finding(path, "required agent policy entry point is missing or unreadable"))
             continue
         assert text is not None
-        operative_text = strip_markdown_nonoperative_content(text)
         markdown_operative_text = render_markdown_operative_text(text)
         normalized_text = " ".join(text.split())
         normalized_markdown_operative_text = " ".join(
             markdown_operative_text.split()
         )
-        missing_required_markers = tuple(
-            marker
-            for marker in markers
-            if (
-                marker not in markdown_operative_text
-                and marker not in normalized_markdown_operative_text
-                if marker in MAINTAINER_BREAK_GLASS_OPERATIVE_MARKERS
-                else marker not in text and marker not in normalized_text
-            )
-        )
+        missing_required_markers: list[str] = []
+        for marker in markers:
+            if marker in (
+                *CODEX_WORKTREE_ROOT_SHARED_MARKERS,
+                *MAINTAINER_BREAK_GLASS_OPERATIVE_MARKERS,
+            ):
+                visible_marker = marker.replace("`", "")
+                missing = (
+                    visible_marker not in markdown_operative_text
+                    and visible_marker not in normalized_markdown_operative_text
+                )
+            else:
+                missing = marker not in text and marker not in normalized_text
+            if missing:
+                missing_required_markers.append(marker)
         for marker in missing_required_markers:
             findings.append(
                 Finding(path, f"required agent policy marker is missing: {marker}")
@@ -3204,6 +3232,27 @@ def check_agent_policy_gate(root: Path) -> list[Finding]:
                             f"completed-task cleanup section marker is missing: {marker}",
                         )
                     )
+        primary_root_markers = PRIMARY_CHECKOUT_BEFORE_ROOT_MARKERS.get(relative_path)
+        if primary_root_markers is not None and cleanup_section is not None:
+            primary_marker, root_marker = primary_root_markers
+            rendered_cleanup_section = render_markdown_operative_text(cleanup_section)
+            normalized_cleanup_section = " ".join(rendered_cleanup_section.split())
+            primary_position = normalized_cleanup_section.find(primary_marker)
+            root_position = normalized_cleanup_section.find(root_marker.replace("`", ""))
+            markers_missing_from_cleanup = (
+                primary_position == -1 or root_position == -1
+            )
+            path_already_fails = any(finding.path == path for finding in findings)
+            if primary_position > root_position >= 0 or (
+                markers_missing_from_cleanup and not path_already_fails
+            ):
+                findings.append(
+                    Finding(
+                        path,
+                        "completed-task cleanup must identify the primary checkout "
+                        "before resolving `git-worktree-root`",
+                    )
+                )
         if ordered_markers is not None and cleanup_section is not None:
             order_lines = extract_terminal_cleanup_order(cleanup_section)
             if order_lines != TERMINAL_CLEANUP_ORDER_LINES:

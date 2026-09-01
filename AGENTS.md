@@ -48,9 +48,11 @@ already decided.
 
 Sol retains architecture and design decisions, ambiguous or difficult debugging, cross-component and integration
 work, security-sensitive changes, task decomposition, review of every delegated result, final validation, and delivery.
-Every delegated prompt must state the exact scope, owned files, expected result, relevant checks, and the Mandatory
-Agent Startup Gate. UI prompts must also include the Mandatory UI Design Guide Gate, interaction classification, and
-reused Atlaso reference. Spark must not commit, push, change GitHub state, or delegate further.
+Every delegated prompt must state the exact scope, owned files, expected result, relevant checks, the Mandatory Agent
+Startup Gate, and the exact resolved Codex worktree root and permitted task-state roots. The delegating agent must
+verify the delegated worktree and task-owned mutable paths against those roots before relying on the result. UI prompts
+must also include the Mandatory UI Design Guide Gate, interaction classification, and reused Atlaso reference. Spark
+must not commit, push, change GitHub state, or delegate further.
 
 Run multiple Spark workers only for independent tasks with non-overlapping
 file ownership. Sol must inspect and integrate every returned diff before
@@ -80,11 +82,24 @@ constructors outside the shared foundation are forbidden.
 label, documentation in the same change, the next patch version, validation, and a pull request containing
 `Closes #<issue>`. Never commit directly to `main`.
 
-Agent-authored implementation work must use a dedicated clean sibling worktree on its task-owned branch. Do not make
-implementation edits in the repository's primary checkout; reserve that checkout for synchronization, coordination,
-and completed-task cleanup. Create or select the task worktree before applying implementation changes, and repeat the
-Mandatory Agent Startup Gate there before planning or mutation. If a safe dedicated worktree cannot be established,
-stop for maintainer direction instead of continuing in the primary checkout.
+Before creating, selecting, delegating into, or reporting an agent-owned implementation worktree, read the supported
+Codex configuration and resolve the exact configured `git-worktree-root`. Use only that configured root for the
+worktree. Never guess, infer, synthesize, or silently fall back to a repository sibling, user profile, temporary
+directory, drive, or other conventional path. A repository policy must not hard-code a host drive: the supported Codex
+setting is authoritative. If the setting is missing, ambiguous, inaccessible, unsafe, or unavailable through a
+supported interface, stop before repository, build, or external mutation and request maintainer direction.
+
+Agent-authored implementation work must use a dedicated clean worktree beneath that resolved root on its task-owned
+branch. Do not make implementation edits in the repository's primary checkout; reserve that checkout for
+synchronization, coordination, and completed-task cleanup. Keep task-owned temporary roots, staging, build outputs,
+logs, reservation state, and generated artifacts beneath the configured worktree root or another explicit
+maintainer-configured permitted root; do not silently inherit `GetTempPath()`, `LocalAppData`, or another OS-default
+location. If no supported permitted location is available, stop before mutation. Create or select the task worktree
+before applying implementation changes, and repeat the Mandatory Agent Startup Gate there before planning or mutation.
+If an existing task is outside the configured root or another required task-owned mutable path is outside every
+permitted root, preserve its state: do not move or delete it automatically, and report the exact conflict for
+maintainer-directed migration or cleanup. If a safe dedicated worktree cannot be established, stop for maintainer
+direction instead of continuing in the primary checkout.
 
 ### Unrelated issue discoveries
 
@@ -247,16 +262,21 @@ the repository, task identifier and current title, pull-request number, task-own
 pull-request head SHA, and merge commit SHA. A handoff is evidence to revalidate, never authority to skip a gate.
 
 The primary-checkout controller must wait until the originating task is idle and unpinned, then independently re-fetch
-task, GitHub, and Git worktree state. It must verify the exact merged pull request and completed post-merge activity,
-then determine remote-branch ownership and local checkout/worktree ownership independently. Require exclusive task
+task, GitHub, and Git worktree state. First identify and verify whether the task uses the repository's primary checkout.
+Only for a non-primary target, independently read the supported Codex `git-worktree-root` setting at cleanup time and
+fail closed if it cannot resolve one exact safe root; a guessed or fallback path is never ownership evidence. It must
+verify the exact merged pull request and completed post-merge activity, then determine remote-branch ownership and local
+checkout/worktree ownership independently. Require exclusive task
 ownership before a destructive step or establish the external ownership required by the corresponding non-destructive
 exception below. Require a closed linked issue for ordinary work or privately revalidate every
-`advisory_cleanup_ready` criterion against the corresponding advisory record. Determine first whether
-the task uses the repository's primary checkout and verify that identity separately. Only a non-primary target must be
+`advisory_cleanup_ready` criterion against the corresponding advisory record. Only a non-primary target must be
 a registered, clean, unlocked, non-reparse-point worktree beneath the resolved Codex worktree root. Never remove the primary
 checkout, a user-created or permanent worktree, or a worktree whose ownership or state is ambiguous. A squash-merged
 pull-request head need not be an ancestor of `main` only when the worktree HEAD equals the recorded pull-request head
 SHA and the recorded merge commit is reachable from current `origin/main`.
+
+If cleanup discovers a task worktree outside the configured root, preserve its state and obtain maintainer direction;
+never move or delete it automatically.
 
 Terminal order:
 

@@ -4,6 +4,7 @@ import json
 from pathlib import Path
 
 from scripts.check_repo import (
+    CODEX_WORKTREE_ROOT_SHARED_MARKERS,
     DEFAULT_MERGE_AUTHORITY_SECTION_ANCHORS,
     DEFAULT_MERGE_AUTHORITY_SECTION_MARKERS,
     LEGACY_TABULATOR_MARKER,
@@ -13,6 +14,7 @@ from scripts.check_repo import (
     NON_TASK_OWNED_CHECKOUT_PRESERVED_MARKER,
     NON_TASK_OWNED_REMOTE_BRANCH_PRESERVED_MARKER,
     ORDERED_TERMINAL_CLEANUP_MARKERS,
+    PRIMARY_CHECKOUT_BEFORE_ROOT_MARKERS,
     PRIMARY_CHECKOUT_REMOTE_GATE_MARKER,
     PRIMARY_CHECKOUT_RESTORED_MARKER,
     PRIMARY_CHECKOUT_RESUME_MARKER,
@@ -2118,6 +2120,12 @@ def write_policy_files(root: Path) -> None:
             )
         if section_anchor is not None:
             content_prefix = "" if section_anchor.startswith("#") else "  "
+            primary_root_markers = tuple(
+                content_prefix + marker
+                for marker in PRIMARY_CHECKOUT_BEFORE_ROOT_MARKERS.get(
+                    relative_path, ()
+                )
+            )
             non_ordered_markers = tuple(
                 content_prefix + marker
                 for marker in section_markers
@@ -2131,6 +2139,7 @@ def write_policy_files(root: Path) -> None:
             policy_lines.extend(
                 (
                     section_anchor,
+                    *primary_root_markers,
                     *non_ordered_markers,
                     content_prefix + TERMINAL_CLEANUP_ORDER_ANCHOR,
                     "",
@@ -2172,6 +2181,222 @@ def test_agent_policy_gate_rejects_missing_marker(tmp_path: Path) -> None:
     assert findings[0].message == (
         "required agent policy marker is missing: delegating agent"
     )
+
+
+def test_agent_policy_gate_rejects_unconfigured_worktree_fallback(
+    tmp_path: Path,
+) -> None:
+    """Verify policy cannot silently restore an unconfigured worktree fallback.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
+    relative_paths = (
+        Path("AGENTS.md"),
+        Path("CONTRIBUTING.md"),
+        Path("docs/contribute/agent-policies.md"),
+    )
+    for index, relative_path in enumerate(relative_paths):
+        case_root = tmp_path / str(index)
+        write_policy_files(case_root)
+        policy_path = case_root / relative_path
+        policy_path.write_text(
+            policy_path.read_text(encoding="utf-8").replace(
+                "Never guess, infer, synthesize, or silently fall back",
+                "Silently fall back",
+            ),
+            encoding="utf-8",
+        )
+
+        findings = check_agent_policy_gate(case_root)
+
+        assert len(findings) == 1
+        assert findings[0].path == policy_path
+        assert findings[0].message == (
+            "required agent policy marker is missing: "
+            "Never guess, infer, synthesize, or silently fall back"
+        )
+
+
+def test_agent_policy_gate_rejects_hidden_worktree_root_policy(
+    tmp_path: Path,
+) -> None:
+    """Hidden Markdown cannot satisfy the configured-worktree-root policy.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
+    hidden_marker = "Never guess, infer, synthesize, or silently fall back"
+    assert hidden_marker in CODEX_WORKTREE_ROOT_SHARED_MARKERS
+    relative_paths = (
+        Path("AGENTS.md"),
+        Path("CONTRIBUTING.md"),
+        Path("docs/contribute/agent-policies.md"),
+    )
+    for index, relative_path in enumerate(relative_paths):
+        case_root = tmp_path / str(index)
+        write_policy_files(case_root)
+        policy_path = case_root / relative_path
+        policy_path.write_text(
+            policy_path.read_text(encoding="utf-8").replace(
+                hidden_marker,
+                f"<!-- {hidden_marker} -->",
+            ),
+            encoding="utf-8",
+        )
+
+        findings = check_agent_policy_gate(case_root)
+
+        assert len(findings) == 1
+        assert findings[0].path == policy_path
+        assert findings[0].message == (
+            f"required agent policy marker is missing: {hidden_marker}"
+        )
+
+
+def test_agent_policy_gate_rejects_worktree_policy_in_link_title(
+    tmp_path: Path,
+) -> None:
+    """Non-rendered link titles cannot satisfy configured-root policy.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
+    hidden_marker = "Never guess, infer, synthesize, or silently fall back"
+    assert hidden_marker in CODEX_WORKTREE_ROOT_SHARED_MARKERS
+    relative_paths = (
+        Path("AGENTS.md"),
+        Path("CONTRIBUTING.md"),
+        Path("docs/contribute/agent-policies.md"),
+    )
+    for index, relative_path in enumerate(relative_paths):
+        case_root = tmp_path / str(index)
+        write_policy_files(case_root)
+        policy_path = case_root / relative_path
+        policy_path.write_text(
+            policy_path.read_text(encoding="utf-8").replace(
+                hidden_marker,
+                f'[fallback](https://example.invalid "{hidden_marker}")',
+            ),
+            encoding="utf-8",
+        )
+
+        findings = check_agent_policy_gate(case_root)
+
+        assert len(findings) == 1
+        assert findings[0].path == policy_path
+        assert findings[0].message == (
+            f"required agent policy marker is missing: {hidden_marker}"
+        )
+
+
+def test_agent_policy_gate_requires_primary_checkout_before_root_resolution(
+    tmp_path: Path,
+) -> None:
+    """Primary checkouts must be identified before resolving a Codex root.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
+    relative_paths = (
+        Path("AGENTS.md"),
+        Path("CONTRIBUTING.md"),
+        Path("docs/contribute/agent-policies.md"),
+    )
+    missing_marker = (
+        "First identify and verify whether the task uses the repository's primary checkout"
+    )
+    for index, relative_path in enumerate(relative_paths):
+        case_root = tmp_path / str(index)
+        write_policy_files(case_root)
+        policy_path = case_root / relative_path
+        policy_path.write_text(
+            policy_path.read_text(encoding="utf-8").replace(
+                missing_marker,
+                "Identify the cleanup target",
+            ),
+            encoding="utf-8",
+        )
+
+        findings = check_agent_policy_gate(case_root)
+
+        assert any(
+            finding.path == policy_path
+            and finding.message
+            == f"required agent policy marker is missing: {missing_marker}"
+            for finding in findings
+        )
+
+
+def test_agent_policy_gate_rejects_root_resolution_before_primary_checkout(
+    tmp_path: Path,
+) -> None:
+    """Cleanup policy must identify a primary checkout before root resolution.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
+    for index, (relative_path, markers) in enumerate(
+        PRIMARY_CHECKOUT_BEFORE_ROOT_MARKERS.items()
+    ):
+        case_root = tmp_path / str(index)
+        write_policy_files(case_root)
+        policy_path = case_root / relative_path
+        primary_marker, root_marker = markers
+        policy_text = policy_path.read_text(encoding="utf-8")
+        policy_path.write_text(
+            policy_text.replace(
+                f"{primary_marker}\n{root_marker}",
+                f"{root_marker}\n{primary_marker}",
+            ),
+            encoding="utf-8",
+        )
+
+        findings = check_agent_policy_gate(case_root)
+
+        assert len(findings) == 1
+        assert findings[0].path == policy_path
+        assert findings[0].message == (
+            "completed-task cleanup must identify the primary checkout before "
+            "resolving `git-worktree-root`"
+        )
+
+
+def test_agent_policy_gate_rejects_cleanup_root_in_link_title(
+    tmp_path: Path,
+) -> None:
+    """Cleanup ordering requires a visibly rendered root-resolution marker.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
+    for index, (relative_path, markers) in enumerate(
+        PRIMARY_CHECKOUT_BEFORE_ROOT_MARKERS.items()
+    ):
+        case_root = tmp_path / str(index)
+        write_policy_files(case_root)
+        policy_path = case_root / relative_path
+        primary_marker, root_marker = markers
+        policy_text = policy_path.read_text(encoding="utf-8")
+        hidden_root_marker = (
+            f'[configured root](https://example.invalid "{root_marker}")'
+        )
+        policy_path.write_text(
+            policy_text.replace(
+                f"{primary_marker}\n{root_marker}",
+                f"{primary_marker}\n{hidden_root_marker}",
+            ),
+            encoding="utf-8",
+        )
+
+        findings = check_agent_policy_gate(case_root)
+
+        assert len(findings) == 1
+        assert findings[0].path == policy_path
+        assert findings[0].message == (
+            "completed-task cleanup must identify the primary checkout before "
+            "resolving `git-worktree-root`"
+        )
 
 
 def test_agent_policy_gate_rejects_missing_spark_delegation_policy(
