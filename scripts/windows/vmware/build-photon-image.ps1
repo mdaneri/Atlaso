@@ -297,6 +297,151 @@ function Resolve-AtlasoPhotonBuildStateRoot {
 
 <#
 .SYNOPSIS
+Derive one task builder identity from local checkout evidence only.
+.PARAMETER RepositoryRoot
+Atlaso checkout that owns the task branch and commit.
+.PARAMETER PullRequestNumber
+Exact positive pull-request number selected by the caller.
+.PARAMETER CollisionSuffix
+Optional sanitized suffix for another builder owned by the pull request.
+#>
+function Resolve-AtlasoLocalTaskBuilderIdentity {
+    param(
+        [Parameter(Mandatory = $true)][string]$RepositoryRoot,
+        [Parameter(Mandatory = $true)][ValidateRange(1, 2147483647)][int]$PullRequestNumber,
+        [string]$CollisionSuffix = ''
+    )
+
+    $branch = ([string](& git -C $RepositoryRoot branch --show-current)).Trim()
+    $commit = ([string](& git -C $RepositoryRoot rev-parse HEAD)).Trim()
+    $trackedChanges = @(& git -C $RepositoryRoot status --short --untracked-files=no)
+    if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($branch) -or
+        $commit -notmatch '^[0-9a-f]{40}$' -or $trackedChanges.Count -ne 0) {
+        throw 'A task-owned Photon builder requires one clean checked-out branch and exact source commit.'
+    }
+    $originUrl = ([string](& git -C $RepositoryRoot remote get-url origin)).Trim()
+    if ($LASTEXITCODE -ne 0) {
+        throw 'Could not resolve the exact origin remote for the Photon builder checkout.'
+    }
+    $originMatch = [regex]::Match(
+        $originUrl,
+        '^(?:https://github\.com/|ssh://git@github\.com/|git@github\.com:)(?<repository>[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+?)(?:\.git)?$'
+    )
+    if (-not $originMatch.Success) {
+        throw 'The Photon builder origin must be one unambiguous GitHub repository URL.'
+    }
+    return New-AtlasoVmwareBuilderIdentity `
+        -PullRequestNumber $PullRequestNumber `
+        -CollisionSuffix $CollisionSuffix `
+        -Repository $originMatch.Groups['repository'].Value `
+        -SourceBranch $branch `
+        -SourceCommit $commit
+}
+
+<#
+.SYNOPSIS
+Create and pin one reparse-free Photon credential root beneath task state.
+.PARAMETER BuildStateRoot
+Exact task-owned build-state root.
+.PARAMETER CredentialStateRoot
+Exact credential-parent directory beneath build state.
+.PARAMETER CredentialRoot
+Invocation-owned credential root to create and identify.
+#>
+function Initialize-AtlasoPhotonCredentialRoot {
+    [Diagnostics.CodeAnalysis.SuppressMessageAttribute(
+        'PSAvoidUsingPlainTextForPassword',
+        'CredentialStateRoot',
+        Justification = 'Filesystem path for credential staging, not credential material.'
+    )]
+    [Diagnostics.CodeAnalysis.SuppressMessageAttribute(
+        'PSAvoidUsingPlainTextForPassword',
+        'CredentialRoot',
+        Justification = 'Filesystem path for credential staging, not credential material.'
+    )]
+    param(
+        [Parameter(Mandatory = $true)][string]$BuildStateRoot,
+        [Parameter(Mandatory = $true)][string]$CredentialStateRoot,
+        [Parameter(Mandatory = $true)][string]$CredentialRoot
+    )
+
+    Assert-AtlasoStrictDescendantPath `
+        -ParentPath $BuildStateRoot `
+        -ChildPath $CredentialStateRoot `
+        -FailureMessage 'Photon credential parent escaped task build state'
+    [void][System.IO.Directory]::CreateDirectory($CredentialStateRoot)
+    Assert-AtlasoStrictDescendantPath `
+        -ParentPath $BuildStateRoot `
+        -ChildPath $CredentialStateRoot `
+        -FailureMessage 'Photon credential parent changed during creation'
+    $parentIdentity = Get-AtlasoPathIdentity `
+        -Path $CredentialStateRoot `
+        -Description 'Photon credential parent'
+    Assert-AtlasoStrictDescendantPath `
+        -ParentPath $CredentialStateRoot `
+        -ChildPath $CredentialRoot `
+        -FailureMessage 'Photon credential root escaped its admitted parent'
+    [void][System.IO.Directory]::CreateDirectory($CredentialRoot)
+    Assert-AtlasoStrictDescendantPath `
+        -ParentPath $CredentialStateRoot `
+        -ChildPath $CredentialRoot `
+        -FailureMessage 'Photon credential root changed during creation'
+    return [pscustomobject][ordered]@{
+        ParentIdentity = $parentIdentity
+        RootIdentity   = Get-AtlasoPathIdentity `
+            -Path $CredentialRoot `
+            -Description 'Photon credential root'
+    }
+}
+
+<#
+.SYNOPSIS
+Revalidate the pinned Photon credential parent and invocation root.
+.PARAMETER BuildStateRoot
+Exact task-owned build-state root.
+.PARAMETER CredentialStateRoot
+Exact credential-parent directory beneath build state.
+.PARAMETER CredentialRoot
+Invocation-owned credential root.
+.PARAMETER Identity
+Pinned parent and root filesystem identities.
+#>
+function Assert-AtlasoPhotonCredentialRootIdentity {
+    [Diagnostics.CodeAnalysis.SuppressMessageAttribute(
+        'PSAvoidUsingPlainTextForPassword',
+        'CredentialStateRoot',
+        Justification = 'Filesystem path for credential staging, not credential material.'
+    )]
+    [Diagnostics.CodeAnalysis.SuppressMessageAttribute(
+        'PSAvoidUsingPlainTextForPassword',
+        'CredentialRoot',
+        Justification = 'Filesystem path for credential staging, not credential material.'
+    )]
+    param(
+        [Parameter(Mandatory = $true)][string]$BuildStateRoot,
+        [Parameter(Mandatory = $true)][string]$CredentialStateRoot,
+        [Parameter(Mandatory = $true)][string]$CredentialRoot,
+        [Parameter(Mandatory = $true)][psobject]$Identity
+    )
+
+    Assert-AtlasoStrictDescendantPath `
+        -ParentPath $BuildStateRoot `
+        -ChildPath $CredentialStateRoot `
+        -FailureMessage 'Photon credential parent escaped task build state'
+    Assert-AtlasoStrictDescendantPath `
+        -ParentPath $CredentialStateRoot `
+        -ChildPath $CredentialRoot `
+        -FailureMessage 'Photon credential root escaped its admitted parent'
+    if ((Get-AtlasoPathIdentity -Path $CredentialStateRoot -Description 'Photon credential parent') -ne
+        $Identity.ParentIdentity -or
+        (Get-AtlasoPathIdentity -Path $CredentialRoot -Description 'Photon credential root') -ne
+        $Identity.RootIdentity) {
+        throw 'Photon credential ancestry changed after it was admitted; sensitive staging was blocked.'
+    }
+}
+
+<#
+.SYNOPSIS
 Resolve and verify the exact same-repository pull request for a task build.
 .PARAMETER RepositoryRoot
 Atlaso checkout whose branch and remote repository must own the pull request.
@@ -949,6 +1094,21 @@ if (-not $CredentialChild) {
             }
         }
     }
+    if (-not $ReleaseBuilder) {
+        # Legacy handoffs must be retired from bounded local identity before
+        # GitHub admission, because their original PR may now be closed or have
+        # advanced while the exact inactive reservation still needs recovery.
+        $localTaskBuilderIdentity = Resolve-AtlasoLocalTaskBuilderIdentity `
+            -RepositoryRoot $repoRoot `
+            -PullRequestNumber $PullRequestNumber `
+            -CollisionSuffix $CollisionSuffix
+        Invoke-AtlasoLegacyBuilderAddressHandoffRecovery `
+            -StateRoot $legacyBuilderReservationStateRoot `
+            -VmrunPath (Resolve-WorkstationVmrunPath -Path $VmrunPath) `
+            -RepositoryRoot $repoRoot `
+            -VmName ([string]$localTaskBuilderIdentity.Name) `
+            -SourceBranch ([string]$localTaskBuilderIdentity.SourceBranch)
+    }
 }
 $identityRepositoryRoot = if ($CredentialChild) {
     if ([string]::IsNullOrWhiteSpace($TaskRepositoryRoot)) {
@@ -1014,7 +1174,7 @@ else {
     }
 }
 $VmName = [string]$builderIdentity.Name
-if (-not $CredentialChild) {
+if (-not $CredentialChild -and $ReleaseBuilder) {
     $legacySourceBranch = if ($null -ne $builderIdentity.PSObject.Properties['SourceBranch']) {
         [string]$builderIdentity.SourceBranch
     }
@@ -1331,8 +1491,16 @@ else {
             }
         }
     }
-    [void][System.IO.Directory]::CreateDirectory($credentialRoot)
+    $credentialRootIdentity = Initialize-AtlasoPhotonCredentialRoot `
+        -BuildStateRoot $resolvedBuildStateRoot `
+        -CredentialStateRoot $credentialStateRoot `
+        -CredentialRoot $credentialRoot
     [void][System.IO.Directory]::CreateDirectory($childSensitiveBuildDirectory)
+    Assert-AtlasoPhotonCredentialRootIdentity `
+        -BuildStateRoot $resolvedBuildStateRoot `
+        -CredentialStateRoot $credentialStateRoot `
+        -CredentialRoot $credentialRoot `
+        -Identity $credentialRootIdentity
     $cleanupMarkerDirectory = Split-Path -Parent $cleanupMarkerPath
     [void][System.IO.Directory]::CreateDirectory($cleanupMarkerDirectory)
     $cleanupMarkerPayload = [ordered]@{
@@ -1349,6 +1517,11 @@ else {
     $processTreeTerminationUnproven = $false
     $reservationReleaseBlocked = $false
     try {
+        Assert-AtlasoPhotonCredentialRootIdentity `
+            -BuildStateRoot $resolvedBuildStateRoot `
+            -CredentialStateRoot $credentialStateRoot `
+            -CredentialRoot $credentialRoot `
+            -Identity $credentialRootIdentity
         $sourceSnapshot = New-AtlasoImmutableSourceSnapshot `
             -RepositoryRoot $repoRoot `
             -StagingRoot $childSensitiveBuildDirectory
@@ -1369,6 +1542,11 @@ else {
             AdminPasswordCiphertext = ConvertFrom-SecureString -SecureString $credentialPair.AdminPassword
             RootPasswordCiphertext  = ConvertFrom-SecureString -SecureString $credentialPair.RootPassword
         }
+        Assert-AtlasoPhotonCredentialRootIdentity `
+            -BuildStateRoot $resolvedBuildStateRoot `
+            -CredentialStateRoot $credentialStateRoot `
+            -CredentialRoot $credentialRoot `
+            -Identity $credentialRootIdentity
         [System.IO.File]::WriteAllText(
             $childCredentialBundlePath,
             ($credentialPayload | ConvertTo-Json -Compress),

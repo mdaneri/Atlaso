@@ -68,6 +68,20 @@ if ($cleanupFunction.Count -ne 1) {
     throw 'Expected exactly one Photon cleanup completion function.'
 }
 . ([scriptblock]::Create($cleanupFunction[0].Extent.Text))
+$credentialInitializer = @(
+    $ast.FindAll(
+        {
+            param($node)
+            $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and
+            $node.Name -ceq 'Initialize-AtlasoPhotonCredentialRoot'
+        },
+        $true
+    )
+)
+if ($credentialInitializer.Count -ne 1) {
+    throw 'Expected exactly one Photon credential-root initializer.'
+}
+. ([scriptblock]::Create($credentialInitializer[0].Extent.Text))
 
 $expectedDefault = Join-Path $resolvedRepositoryRoot '.atlaso-local\photon-image-build-state'
 $actualDefault = Resolve-AtlasoPhotonBuildStateRoot -RepositoryRoot $resolvedRepositoryRoot
@@ -184,6 +198,34 @@ try {
     if ($junctionError -notmatch 'reparse point' -or
         -not (Test-Path -LiteralPath $sentinelPath -PathType Leaf)) {
         throw 'Photon cleanup did not preserve a root redirected through a replaced ancestor junction.'
+    }
+
+    $stagingBuildState = Join-Path $fixtureRoot 'staging-build-state'
+    $stagingEscape = Join-Path $fixtureRoot 'staging-escape'
+    [void][System.IO.Directory]::CreateDirectory($stagingBuildState)
+    [void][System.IO.Directory]::CreateDirectory($stagingEscape)
+    $redirectedCredentialParent = Join-Path $stagingBuildState 'credentials'
+    [void](New-Item `
+            -ItemType Junction `
+            -Path $redirectedCredentialParent `
+            -Target $stagingEscape `
+            -ErrorAction Stop)
+    $escapedCredentialRoot = Join-Path $redirectedCredentialParent (
+        'atlaso-photon-build-credentials-' + [guid]::NewGuid().ToString('N')
+    )
+    $stagingError = ''
+    try {
+        Initialize-AtlasoPhotonCredentialRoot `
+            -BuildStateRoot $stagingBuildState `
+            -CredentialStateRoot $redirectedCredentialParent `
+            -CredentialRoot $escapedCredentialRoot | Out-Null
+    }
+    catch {
+        $stagingError = $_.Exception.Message
+    }
+    if ($stagingError -notmatch 'reparse point' -or
+        (Test-Path -LiteralPath (Join-Path $stagingEscape (Split-Path -Leaf $escapedCredentialRoot)))) {
+        throw 'Photon credential staging did not fail before following a redirected parent.'
     }
 }
 finally {

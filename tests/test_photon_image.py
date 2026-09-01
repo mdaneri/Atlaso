@@ -3353,3 +3353,24 @@ def test_vmware_gui_builder_repairs_stale_rows_before_ui_startup() -> None:
     assert parent_timeout_cleanup < reservation_blocked < reservation_gate < reservation_release
     assert "-ClaimGeneration $OutputClaimGeneration" in wrapper
     assert "ClaimGeneration = $OutputClaimGeneration" in wrapper
+
+
+def test_photon_wrapper_recovers_legacy_handoffs_before_pr_admission() -> None:
+    """Local legacy recovery precedes the open-PR GitHub identity gate."""
+    wrapper = Path("scripts/windows/vmware/build-photon-image.ps1").read_text(
+        encoding="utf-8"
+    )
+    runtime = wrapper.index("$repoRoot =")
+    local_identity = wrapper.index(
+        "$localTaskBuilderIdentity = Resolve-AtlasoLocalTaskBuilderIdentity", runtime
+    )
+    legacy_recovery = wrapper.index(
+        "Invoke-AtlasoLegacyBuilderAddressHandoffRecovery", local_identity
+    )
+    github_admission = wrapper.index(
+        "Resolve-AtlasoTaskBuilderIdentity `", legacy_recovery
+    )
+
+    assert local_identity < legacy_recovery < github_admission
+    assert "Initialize-AtlasoPhotonCredentialRoot `" in wrapper
+    assert wrapper.count("Assert-AtlasoPhotonCredentialRootIdentity `") >= 3
