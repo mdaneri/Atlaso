@@ -1,11 +1,15 @@
 """Test check repo policies behavior."""
 
+import json
 from pathlib import Path
 
 from scripts.check_repo import (
+    DEFAULT_MERGE_AUTHORITY_SECTION_ANCHORS,
+    DEFAULT_MERGE_AUTHORITY_SECTION_MARKERS,
     LEGACY_TABULATOR_MARKER,
     LOCAL_TASK_BRANCH_ABSENT_MARKER,
     MAINTAINER_BREAK_GLASS_SHARED_MARKERS,
+    MERGE_AUTHORITY_TRANSFER_FIXTURE_PATH,
     NON_TASK_OWNED_CHECKOUT_PRESERVED_MARKER,
     NON_TASK_OWNED_REMOTE_BRANCH_PRESERVED_MARKER,
     ORDERED_TERMINAL_CLEANUP_MARKERS,
@@ -32,12 +36,18 @@ from scripts.check_repo import (
     WORKTREE_REMOVAL_REMOTE_GATE_MARKER,
     WORKTREE_REMOVAL_RESUME_MARKER,
     check_agent_policy_gate,
+    check_merge_authority_transfer_fixtures,
     check_protected_workflow_caches,
     check_spark_worker_agent,
     check_ui_pattern_foundation,
     check_virtualization_legacy,
     collect_files,
+    has_affirmative_default_merge_authority,
     is_checkable,
+    merge_hold_directions,
+    resumable_merge_gate_directions,
+    resumable_merge_gates,
+    source_has_default_merge_authority,
 )
 
 
@@ -467,6 +477,1378 @@ def write_spark_worker_agent(
     path.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 
+def test_merge_hold_directions_preserves_qualified_hold() -> None:
+    """Verify a temporal qualifier does not hide an explicit merge hold."""
+    assert merge_hold_directions(
+        "Implement issue #602, but do not merge for now."
+    ) == {"do not merge": "add"}
+
+
+def test_merge_hold_directions_preserves_hold_first_explanation() -> None:
+    """Verify discussion words after a hold-first directive cannot hide it."""
+    assert merge_hold_directions(
+        "Do not merge because I need to explain the result."
+    ) == {"do not merge": "add"}
+
+
+def test_merge_hold_directions_preserves_direct_hold_request() -> None:
+    """Verify a present-tense user request remains an explicit hold."""
+    assert merge_hold_directions(
+        "I ask that you do not merge this pull request."
+    ) == {"do not merge": "add"}
+    assert merge_hold_directions(
+        "I decided: do not merge this pull request."
+    ) == {"do not merge": "add"}
+
+
+def test_merge_hold_directions_preserves_branch_targeted_hold() -> None:
+    """Verify branch delivery remains a pull-request merge target."""
+    assert merge_hold_directions(
+        "Implement issue #602, but do not merge this branch."
+    ) == {"do not merge": "add"}
+
+
+def test_merge_hold_directions_recognizes_merge_deferral() -> None:
+    """Verify explicit deferrals are holds while CI gates remain resumable."""
+    for instruction in (
+        "Implement issue #602, but hold off on merging.",
+        "Implement issue #602, but defer the merge.",
+        "Implement issue #602, but refrain from merging.",
+        "Implement issue #602, but wait before merging.",
+    ):
+        assert merge_hold_directions(instruction) == {"do not merge": "add"}
+    assert merge_hold_directions(
+        "Implement issue #602, but merge only after CI passes."
+    ) == {}
+    assert merge_hold_directions(
+        "Implement issue #602, but only merge after CI passes."
+    ) == {}
+
+
+def test_merge_hold_directions_recognizes_never_merge() -> None:
+    """Verify never-merge wording preserves the permanent merge hold."""
+    assert merge_hold_directions(
+        "Implement issue #602, but never merge this pull request."
+    ) == {"do not merge": "add"}
+
+
+def test_merge_hold_directions_preserves_shared_active_task_hold() -> None:
+    """Verify another-PR wording cannot erase an active-task hold."""
+    assert merge_hold_directions(
+        "Do not merge this pull request or another PR #621."
+    ) == {"do not merge": "add"}
+
+
+def test_merge_hold_directions_preserves_other_pr_reason() -> None:
+    """Verify an unrelated PR used as rationale cannot erase this task's hold."""
+    assert merge_hold_directions(
+        "Do not merge this pull request because another PR #621 is pending."
+    ) == {"do not merge": "add"}
+
+
+def test_merge_hold_directions_ignores_application_leave_open_object() -> None:
+    """Verify application connection state cannot create a PR hold."""
+    assert merge_hold_directions(
+        "Implement keepalive support and leave open the connection."
+    ) == {}
+
+
+def test_merge_hold_directions_ignores_approval_state_feature() -> None:
+    """Verify approval-state feature naming cannot create a task hold."""
+    assert merge_hold_directions(
+        "Implement support for a wait for approval state in the scheduler."
+    ) == {}
+
+
+def test_merge_hold_directions_binds_withdrawal_verb_to_hold() -> None:
+    """Verify feature-oriented remove wording cannot withdraw an active hold."""
+    assert merge_hold_directions(
+        "Implement a remove control for the do not merge hold.",
+        active_holds=("do not merge",),
+    ) == {"do not merge": "add"}
+
+
+def test_merge_hold_directions_accepts_current_withdrawal_adverb() -> None:
+    """Verify current adverbs preserve an explicit withdrawal's meaning."""
+    assert merge_hold_directions(
+        "The do not merge hold is hereby withdrawn.",
+        active_holds=("do not merge",),
+    ) == {"do not merge": "remove"}
+
+
+def test_merge_hold_directions_accepts_passive_withdrawal() -> None:
+    """Verify passive withdrawal verbs remove an active hold."""
+    assert merge_hold_directions(
+        "The do not merge hold is lifted.",
+        active_holds=("do not merge",),
+    ) == {"do not merge": "remove"}
+
+
+def test_merge_hold_directions_accepts_no_hold_declarations() -> None:
+    """Verify direct declarations that a hold is absent withdraw it."""
+    for instruction in (
+        "The do not merge hold does not apply.",
+        "There is no do not merge hold.",
+    ):
+        assert merge_hold_directions(
+            instruction,
+            active_holds=("do not merge",),
+        ) == {"do not merge": "remove"}
+
+
+def test_merge_hold_directions_recognizes_owner_approval() -> None:
+    """Verify possessive approval wording remains an explicit hold."""
+    assert merge_hold_directions(
+        "Implement issue #602, but wait for my approval before merging."
+    ) == {"wait for approval": "add"}
+    assert merge_hold_directions(
+        "Implement issue #602, but wait for approval from the maintainer before merging."
+    ) == {"wait for approval": "add"}
+    assert merge_hold_directions(
+        "Fix this issue, but get my permission before merging."
+    ) == {"wait for approval": "add"}
+
+
+def test_merge_hold_directions_recognizes_first_person_approval() -> None:
+    """Verify active first-person approval conditions remain explicit holds."""
+    assert merge_hold_directions(
+        "Implement issue #602, but wait until I approve."
+    ) == {"wait for approval": "add"}
+    assert merge_hold_directions(
+        "Implement issue #602, but merge only after I approve."
+    ) == {"wait for approval": "add"}
+    assert merge_hold_directions(
+        "Implement issue #602, but merge only if I approve."
+    ) == {"wait for approval": "add"}
+    assert merge_hold_directions(
+        "Implement issue #602, but merge only after my approval."
+    ) == {"wait for approval": "add"}
+    assert merge_hold_directions(
+        "Implement issue #602, but merge only after the maintainer approves."
+    ) == {"wait for approval": "add"}
+
+
+def test_merge_hold_directions_recognizes_equivalent_permission() -> None:
+    """Verify equivalent current permissions withdraw active holds."""
+    for instruction in (
+        "Merge now.",
+        "You can merge now.",
+        "Go ahead and merge.",
+        "Proceed with the merge now.",
+    ):
+        assert merge_hold_directions(
+            instruction,
+            active_holds=("do not merge",),
+        ) == {"do not merge": "remove"}
+    assert merge_hold_directions(
+        "Do not merge now.", active_holds=("do not merge",)
+    ) == {"do not merge": "add"}
+    assert merge_hold_directions(
+        "You cannot merge now.", active_holds=("do not merge",)
+    ) == {"do not merge": "add"}
+    assert merge_hold_directions(
+        "I approve this PR.",
+        active_holds=("do not merge", "wait for approval"),
+    ) == {"wait for approval": "remove"}
+
+
+def test_merge_hold_directions_recognizes_modal_merge_prohibitions() -> None:
+    """Verify modal denials remain explicit pull-request merge holds."""
+    for instruction in (
+        "You must not merge this PR.",
+        "You may not merge this PR.",
+        "You cannot merge this PR.",
+        "You can't merge this PR.",
+        "You can’t merge this PR.",
+        "You should not merge this PR.",
+        "You shall not merge this PR.",
+        "Shall not merge this PR.",
+        "You are forbidden from merging this PR.",
+        "You are forbidden to merge this PR.",
+        "You are not allowed to merge this PR.",
+        "You are not authorized to merge this PR.",
+        "You are not permitted to merge this PR.",
+        "You aren't allowed to merge this PR.",
+        "You isn’t authorized to merge this PR.",
+        "You're not allowed to merge this PR.",
+        "You’re not authorized to merge this PR.",
+        "You do not have permission to merge this PR.",
+        "You don't have permission to merge this PR.",
+        "You don’t have authorization to merge this PR.",
+        "You don't have authority to merge this PR.",
+        "You lack permission to merge this PR.",
+        "You lack authorization to merge this PR.",
+        "The agent lacks authority to merge this PR.",
+        "I do not authorize you to merge this PR.",
+        "I don’t permit you to merge this PR.",
+        "I have not authorized you to merge this PR.",
+        "I haven't permitted you to merge this PR.",
+        "I haven’t authorized you to merge this PR.",
+        "I no longer authorize you to merge this PR.",
+        "I no longer permit you to merge this PR.",
+        "I forbid you from merging this PR.",
+        "I forbid you to merge this PR.",
+        "I prohibit you from merging this PR.",
+        "I prohibit you to merge this PR.",
+        "I do not approve merging this PR.",
+        "I don't approve of merging this PR.",
+        "Merging this PR is prohibited.",
+        "Merging the pull request remains forbidden.",
+        "Merging is disallowed.",
+        "Your permission to merge this PR is revoked.",
+        "My authorization to merge the pull request was rescinded.",
+        "The authority to merge this PR has been withdrawn.",
+        "I withdraw your permission to merge this PR.",
+        "I rescind your authorization to merge this PR.",
+        "I revoke the authority to merge this PR.",
+    ):
+        assert merge_hold_directions(instruction) == {"do not merge": "add"}
+
+
+def test_merge_hold_directions_scopes_numbered_pr_permission() -> None:
+    """Verify permission for another numbered PR cannot withdraw this task's hold."""
+    assert merge_hold_directions(
+        "I don't approve of merging PR #999.",
+        active_pull_request=620,
+    ) == {}
+    assert merge_hold_directions(
+        "I don't approve of merging PR #620.",
+        active_pull_request=620,
+    ) == {"do not merge": "add"}
+    for instruction in (
+        "Do not merge PR #621, or PR #620.",
+        "Do not merge PR #621 and PR #620.",
+    ):
+        assert merge_hold_directions(
+            instruction,
+            active_pull_request=620,
+        ) == {"do not merge": "add"}
+        assert merge_hold_directions(
+            instruction,
+            active_pull_request=622,
+        ) == {}
+    assert merge_hold_directions(
+        "You may merge PR #621.",
+        active_holds=("do not merge",),
+        active_pull_request=620,
+    ) == {}
+    assert merge_hold_directions(
+        "You may merge PR #620.",
+        active_holds=("do not merge",),
+        active_pull_request=620,
+    ) == {"do not merge": "remove"}
+    assert merge_hold_directions(
+        "You may merge pull-request #621.",
+        active_holds=("do not merge",),
+        active_pull_request=620,
+    ) == {}
+
+
+def test_merge_hold_directions_checks_every_numbered_pr_target() -> None:
+    """Verify one active PR among multiple targets keeps the instruction in scope."""
+    assert merge_hold_directions(
+        "Do not merge PR #620 or PR #621.",
+        active_pull_request=621,
+    ) == {"do not merge": "add"}
+    assert merge_hold_directions(
+        "Do not merge PR #620 or PR #621.",
+        active_pull_request=622,
+    ) == {}
+
+
+def test_merge_hold_directions_preserves_cross_pr_condition() -> None:
+    """Verify a later cross-PR condition does not retarget an explicit this-PR hold."""
+    for instruction in (
+        "Do not merge this PR until PR #621 is merged.",
+        "Do not merge until PR #621 is merged.",
+        "Do not merge before PR #621 is merged.",
+        "Do not merge after PR #621 is closed.",
+        "Do not merge while PR #621 is open.",
+    ):
+        assert merge_hold_directions(
+            instruction,
+            active_pull_request=620,
+        ) == {"do not merge": "add"}
+    assert merge_hold_directions(
+        "Do not merge PR #621.",
+        active_pull_request=620,
+    ) == {}
+    assert merge_hold_directions(
+        "Do not merge until another PR is merged."
+    ) == {"do not merge": "add"}
+    assert merge_hold_directions(
+        "Do not merge while another PR is open."
+    ) == {"do not merge": "add"}
+    assert merge_hold_directions("Do not merge another PR.") == {}
+
+
+def test_merge_hold_directions_recognizes_direct_not_to_merge() -> None:
+    """Verify a direct not-to-merge prohibition becomes an explicit hold."""
+    assert merge_hold_directions(
+        "Implement issue #602, but you are not to merge this PR."
+    ) == {"do not merge": "add"}
+
+
+def test_merge_hold_directions_recognizes_qualified_merge_prohibition() -> None:
+    """Verify a prohibition that qualifies the merge action becomes a hold."""
+    for instruction in (
+        "Implement issue #602, but do not complete the merge.",
+        "Implement issue #602, but do not proceed with the merge.",
+    ):
+        assert merge_hold_directions(instruction) == {"do not merge": "add"}
+
+
+def test_merge_hold_directions_recognizes_passive_not_allowed() -> None:
+    """Verify passive not-allowed wording becomes an explicit merge hold."""
+    assert merge_hold_directions(
+        "Implement issue #602, but merging this PR is not allowed."
+    ) == {"do not merge": "add"}
+
+
+def test_merge_hold_directions_recognizes_approval_denial() -> None:
+    """Verify a direct denial of approval becomes an explicit merge hold."""
+    assert merge_hold_directions(
+        "Implement issue #602, but you do not have my approval to merge this PR."
+    ) == {"do not merge": "add"}
+
+
+def test_merge_hold_directions_recognizes_refusal_to_allow() -> None:
+    """Verify a direct refusal to allow merging becomes an explicit hold."""
+    assert merge_hold_directions(
+        "Implement issue #602, but I will not allow you to merge this PR."
+    ) == {"do not merge": "add"}
+
+
+def test_merge_hold_directions_preserves_cross_issue_condition() -> None:
+    """Verify a later cross-issue condition does not retarget this task's hold."""
+    for instruction in (
+        "Do not merge until issue #603 is resolved.",
+        "Do not merge before issue #603 is resolved.",
+        "Do not merge after issue #603 is closed.",
+        "Do not merge while issue #603 is open.",
+    ):
+        assert merge_hold_directions(
+            instruction,
+            active_issue=602,
+        ) == {"do not merge": "add"}
+    assert merge_hold_directions(
+        "Do not merge issue #603.",
+        active_issue=602,
+    ) == {}
+
+
+def test_merge_hold_directions_scopes_numbered_issue_permission() -> None:
+    """Verify permission for another issue cannot withdraw this task's hold."""
+    assert merge_hold_directions(
+        "You may merge the pull request for issue #603.",
+        active_holds=("do not merge",),
+        active_issue=602,
+    ) == {}
+    assert merge_hold_directions(
+        "You may merge the pull request for issue #602.",
+        active_holds=("do not merge",),
+        active_issue=602,
+    ) == {"do not merge": "remove"}
+
+
+def test_merge_hold_directions_ignores_reported_permission() -> None:
+    """Verify historical agent claims cannot withdraw a current hold."""
+    assert merge_hold_directions(
+        "The previous agent claimed you may merge this PR.",
+        active_holds=("do not merge",),
+    ) == {}
+    assert merge_hold_directions(
+        "Who said you may merge this PR?",
+        active_holds=("do not merge",),
+    ) == {}
+    assert merge_hold_directions(
+        "Did the maintainer say you can merge this PR?",
+        active_holds=("do not merge",),
+    ) == {}
+    assert merge_hold_directions(
+        "No one said you may merge this PR.",
+        active_holds=("do not merge",),
+    ) == {}
+    assert merge_hold_directions(
+        "I cannot say you may merge this PR.",
+        active_holds=("do not merge",),
+    ) == {}
+    assert merge_hold_directions("The agent said do not merge this PR.") == {}
+    assert merge_hold_directions(
+        "According to the task handoff, you may merge this PR.",
+        active_holds=("do not merge",),
+    ) == {}
+    assert merge_hold_directions(
+        "You may merge this PR, according to the task handoff.",
+        active_holds=("do not merge",),
+    ) == {}
+
+
+def test_merge_hold_directions_recognizes_direct_authorization() -> None:
+    """Verify direct permission explicitly withdraws a current merge hold."""
+    assert merge_hold_directions(
+        "I authorize you to merge this PR.",
+        active_holds=("do not merge",),
+    ) == {"do not merge": "remove"}
+    assert merge_hold_directions(
+        "You have my approval to merge this PR.",
+        active_holds=("wait for approval",),
+    ) == {"wait for approval": "remove"}
+    assert merge_hold_directions(
+        "I approve the merge.",
+        active_holds=("wait for approval",),
+    ) == {"wait for approval": "remove"}
+
+
+def test_merge_hold_directions_recognizes_direct_merge_imperatives() -> None:
+    """Verify direct merge commands explicitly withdraw a current hold."""
+    assert merge_hold_directions(
+        "Merge this PR now.", active_holds=("do not merge",)
+    ) == {"do not merge": "remove"}
+    assert merge_hold_directions(
+        "Please merge this pull request.", active_holds=("do not merge",)
+    ) == {"do not merge": "remove"}
+    assert merge_hold_directions(
+        "We are not ready to merge this PR.", active_holds=("do not merge",)
+    ) == {}
+
+
+def test_merge_hold_directions_preserves_squash_merge_prohibition() -> None:
+    """Verify the only authorized merge method cannot be explicitly prohibited."""
+    assert merge_hold_directions("Do not squash merge this PR.") == {
+        "do not merge": "add"
+    }
+
+
+def test_merge_hold_directions_recognizes_approval_needed() -> None:
+    """Verify approval-needed wording remains an explicit resumable hold."""
+    assert merge_hold_directions(
+        "Implement issue #602, but you need my approval before merging."
+    ) == {"wait for approval": "add"}
+    assert merge_hold_directions(
+        "Implement issue #602, but you need my approval to merge this PR."
+    ) == {"wait for approval": "add"}
+    assert merge_hold_directions(
+        "Implement issue #602, but authorization is required to merge the PR."
+    ) == {"wait for approval": "add"}
+    for instruction in (
+        "Implement issue #602, but ask me before merging.",
+        "Implement issue #602, but check with the maintainer before merging.",
+        "Implement issue #602, but get my sign-off before merging.",
+        "Implement issue #602, but obtain our go-ahead before merging.",
+    ):
+        assert merge_hold_directions(instruction) == {"wait for approval": "add"}
+    assert merge_hold_directions(
+        "Implement issue #602, but please merge this PR after I approve."
+    ) == {"wait for approval": "add"}
+    assert merge_hold_directions(
+        "Implement issue #602, but only merge with my permission."
+    ) == {"wait for approval": "add"}
+    assert merge_hold_directions(
+        "Implement issue #602, but merge this PR only with my authorization."
+    ) == {"wait for approval": "add"}
+    assert merge_hold_directions(
+        "Implement issue #602, but only merge after I give permission."
+    ) == {"wait for approval": "add"}
+    assert merge_hold_directions(
+        "Implement issue #602, but merge after I grant authorization."
+    ) == {"wait for approval": "add"}
+    assert merge_hold_directions(
+        "Implement issue #602, but only merge if I grant approval."
+    ) == {"wait for approval": "add"}
+
+
+def test_merge_hold_directions_ignores_nonauthoritative_handoff_hold() -> None:
+    """Verify reported handoff wording cannot add a current-source hold."""
+    assert merge_hold_directions("The task handoff says do not merge this PR.") == {}
+    assert merge_hold_directions("The heartbeat says leave this PR open.") == {}
+    assert merge_hold_directions(
+        "Implement issue #602, but only with my approval may you merge this PR."
+    ) == {"wait for approval": "add"}
+    assert merge_hold_directions(
+        "Implement issue #602, but approval is required before you merge this PR."
+    ) == {"wait for approval": "add"}
+    assert merge_hold_directions(
+        "Implement issue #602, but approval is required before merging this PR."
+    ) == {"wait for approval": "add"}
+    assert merge_hold_directions(
+        "Implement issue #602, but wait for the maintainer to approve."
+    ) == {"wait for approval": "add"}
+    assert merge_hold_directions(
+        "Implement issue #602, but do not merge without my permission."
+    ) == {"wait for approval": "add"}
+    assert merge_hold_directions(
+        "Implement issue #602, but do not merge without authorization."
+    ) == {"wait for approval": "add"}
+
+
+def test_merge_hold_directions_ignores_pr_only_resumable_gate() -> None:
+    """Verify a PR object followed by a CI gate is not a permanent PR-only hold."""
+    assert merge_hold_directions(
+        "Implement issue #602, but merge this PR only after CI passes."
+    ) == {}
+    assert merge_hold_directions(
+        "Implement issue #602, but do not merge until CI passes."
+    ) == {}
+    assert merge_hold_directions(
+        "Implement issue #602, but do not merge until the staging deployment succeeds."
+    ) == {}
+    assert merge_hold_directions(
+        "Implement issue #602, but keep this PR open until CI passes."
+    ) == {}
+    assert merge_hold_directions(
+        "Implement issue #602, but leave this PR open pending the release job."
+    ) == {}
+    assert resumable_merge_gates(
+        "Implement issue #602, but leave this PR open pending the release job."
+    ) == ("release job",)
+    assert resumable_merge_gates(
+        "Implement issue #602, but wait for the release job before merging."
+    ) == ("release job",)
+    assert resumable_merge_gates(
+        "The release job passed; merge now."
+    ) == ()
+    assert resumable_merge_gates(
+        "Implement a feature to merge records after validation."
+    ) == ()
+    assert resumable_merge_gates(
+        "Merge this PR after validation."
+    ) == ("validation",)
+    assert resumable_merge_gate_directions(
+        "Do not wait for CI before merging; preserve default merge authority."
+    ) == {"ci": "remove"}
+    assert resumable_merge_gates(
+        "Wait for security review before merging."
+    ) == ("security review",)
+    assert resumable_merge_gates(
+        "Wait for maintainer review before merging."
+    ) == ("maintainer review",)
+    assert resumable_merge_gate_directions(
+        "PR #621 tests passed.", active_pull_request=630
+    ) == {}
+    assert resumable_merge_gate_directions(
+        "PR #621 tests passed.", active_pull_request=621
+    ) == {"test": "remove"}
+    assert resumable_merge_gate_directions(
+        "Wait for tests before merging PR #621.", active_pull_request=630
+    ) == {}
+    assert resumable_merge_gate_directions(
+        "Wait for tests before merging PR #621.", active_pull_request=621
+    ) == {"test": "add"}
+    assert resumable_merge_gate_directions(
+        "Wait for security review and deployment before merging."
+    ) == {"security review": "add", "deployment": "add"}
+    assert resumable_merge_gate_directions(
+        "Merge after CI, tests, and deployment."
+    ) == {"ci": "add", "test": "add", "deployment": "add"}
+    assert resumable_merge_gate_directions(
+        "Do not wait for CI and tests before merging."
+    ) == {"ci": "remove", "test": "remove"}
+
+
+def test_merge_hold_directions_ignores_negated_hold_reports() -> None:
+    """Verify a report denying hold provenance does not preserve the hold."""
+    assert merge_hold_directions(
+        "The user did not say do not merge this PR.",
+        active_holds=("do not merge",),
+    ) == {}
+
+
+def test_merge_hold_directions_withdraws_object_qualified_leave_open() -> None:
+    """Verify object-qualified negation withdraws the current leave-open hold."""
+    assert merge_hold_directions(
+        "Do not leave this PR open.", active_holds=("leave open",)
+    ) == {"leave open": "remove"}
+    assert merge_hold_directions(
+        "You have permission to merge this PR.",
+        active_holds=("do not merge",),
+    ) == {"do not merge": "remove"}
+
+
+def test_merge_hold_directions_ignores_non_pr_merge_permission() -> None:
+    """Verify application-level merge permission cannot withdraw a PR hold."""
+    assert merge_hold_directions(
+        "You can merge the configuration now.",
+        active_holds=("do not merge",),
+    ) == {}
+    assert merge_hold_directions(
+        "You may merge the database migration.",
+        active_holds=("do not merge",),
+    ) == {}
+    assert merge_hold_directions(
+        "Only maintainers may merge this PR.",
+        active_holds=("do not merge",),
+    ) == {}
+
+
+def test_merge_hold_directions_preserves_causally_qualified_holds() -> None:
+    """Verify causal explanations do not turn a PR hold into an object action."""
+    for instruction in (
+        "Do not merge due to failing tests.",
+        "Do not merge owing to the unresolved review.",
+        "Do not merge since CI is failing.",
+    ):
+        assert merge_hold_directions(instruction) == {"do not merge": "add"}
+
+
+def test_merge_hold_directions_preserves_completed_action_hold() -> None:
+    """Verify a completed-action lead-in retains its current explicit hold."""
+    assert merge_hold_directions(
+        "After I reviewed the status, do not merge this PR."
+    ) == {"do not merge": "add"}
+    assert merge_hold_directions(
+        "After discussing it, do not merge this PR."
+    ) == {"do not merge": "add"}
+
+
+def test_merge_hold_directions_preserves_merge_destination_hold() -> None:
+    """Verify a named code-merge destination remains a pull-request hold."""
+    assert merge_hold_directions(
+        "Implement issue #602, but do not merge into main."
+    ) == {"do not merge": "add"}
+
+
+def test_merge_hold_directions_ignores_conditional_future_hold() -> None:
+    """Verify a future condition does not restate an active hold unconditionally."""
+    assert merge_hold_directions("If the user asks, do not merge this PR.") == {}
+
+
+def test_merge_hold_directions_preserves_long_conditional_permission() -> None:
+    """Verify a long conditional prefix cannot withdraw an active hold."""
+    assert merge_hold_directions(
+        "If the maintainer approves the final updated validation report, "
+        "you can merge now.",
+        active_holds=("do not merge",),
+    ) == {}
+
+
+def test_merge_hold_directions_recognizes_this_pull_request_hold() -> None:
+    """Verify this-pull-request wording remains an explicit leave-open hold."""
+    assert merge_hold_directions(
+        "Implement issue #602, but keep this pull request open."
+    ) == {"leave open": "add"}
+    assert merge_hold_directions(
+        "Implement issue #602, but keep this pull request unmerged."
+    ) == {"leave open": "add"}
+
+
+def test_merge_hold_directions_recognizes_hyphenated_pull_request_holds() -> None:
+    """Verify common hyphenated pull-request wording preserves every hold type."""
+    assert merge_hold_directions("Do not merge this pull-request.") == {
+        "do not merge": "add"
+    }
+    assert merge_hold_directions("Keep this pull-request open.") == {
+        "leave open": "add"
+    }
+    assert merge_hold_directions("Only submit this pull-request.") == {
+        "pr only": "add"
+    }
+
+
+def test_merge_hold_directions_recognizes_branch_unmerged_holds() -> None:
+    """Verify branch-scoped unmerged wording preserves a leave-open hold."""
+    for instruction in (
+        "Keep this branch unmerged.",
+        "Keep the branch unmerged.",
+        "Leave this branch unmerged.",
+    ):
+        assert merge_hold_directions(instruction) == {"leave open": "add"}
+
+
+def test_merge_hold_directions_recognizes_wait_for_ci_condition() -> None:
+    """Verify waiting for CI remains a resumable gate, not a permanent hold."""
+    assert merge_hold_directions(
+        "Implement issue #602, but wait for CI to pass before merging."
+    ) == {}
+    assert resumable_merge_gates(
+        "Implement issue #602, but wait for CI to pass before merging."
+    ) == ("ci",)
+    assert resumable_merge_gates(
+        "Implement issue #602, but wait until tests pass before merging."
+    ) == ("test",)
+
+
+def test_merge_hold_directions_recognizes_plain_approval_condition() -> None:
+    """Verify plain merge-after-approval wording remains a hold."""
+    assert merge_hold_directions(
+        "Implement issue #602, but merge after the maintainer approves."
+    ) == {"wait for approval": "add"}
+    assert merge_hold_directions(
+        "Implement issue #602, but wait for the maintainer to approve before merging."
+    ) == {"wait for approval": "add"}
+    assert merge_hold_directions(
+        "Implement issue #602, but wait for me before merging."
+    ) == {"wait for approval": "add"}
+    assert merge_hold_directions(
+        "Implement issue #602, but wait for the maintainer before merging."
+    ) == {"wait for approval": "add"}
+    assert merge_hold_directions(
+        "Implement issue #602, but wait for approval before deploying to staging."
+    ) == {}
+    assert merge_hold_directions(
+        "Implement issue #602, but wait for approval to merge."
+    ) == {"wait for approval": "add"}
+    assert merge_hold_directions(
+        "Implement issue #602, but wait for my permission before merging."
+    ) == {"wait for approval": "add"}
+    assert merge_hold_directions(
+        "Implement issue #602, but wait for maintainer authorization before merging."
+    ) == {"wait for approval": "add"}
+    for instruction in (
+        "Implement issue #602, but wait for reviewer approval before merging.",
+        "Implement issue #602, but wait for Alice's approval before merging.",
+        "Implement issue #602, but wait for security team approval before merging.",
+    ):
+        assert merge_hold_directions(instruction) == {"wait for approval": "add"}
+    assert merge_hold_directions("Merge only with my sign-off.") == {
+        "wait for approval": "add"
+    }
+    assert merge_hold_directions(
+        "Implement issue #602, but merge only after the code owner approves."
+    ) == {"wait for approval": "add"}
+    assert merge_hold_directions(
+        "Implement issue #602, but wait for code owner approval before merging."
+    ) == {"wait for approval": "add"}
+    assert merge_hold_directions(
+        "Implement issue #602, but do not merge without my approval."
+    ) == {"wait for approval": "add"}
+    assert merge_hold_directions(
+        "Implement issue #602, but do not merge prior to maintainer approval."
+    ) == {"wait for approval": "add"}
+    assert merge_hold_directions(
+        "Implement issue #602, but merge after CI passes."
+    ) == {}
+    assert merge_hold_directions(
+        "Implement issue #602, but wait for security review before merging."
+    ) == {}
+    assert merge_hold_directions(
+        "Implement issue #602, but merge only after security review passes."
+    ) == {}
+    assert merge_hold_directions(
+        "Implement issue #602, but merge only after QA review passes."
+    ) == {}
+
+
+def test_source_authority_excludes_no_commit_or_push_delivery() -> None:
+    """Verify implementation requests that forbid delivery remain ineligible."""
+    assert not source_has_default_merge_authority(
+        ("Implement issue #602, but do not push any changes.",)
+    )
+    assert not source_has_default_merge_authority(
+        ("Implement issue #602, but do not commit any changes.",)
+    )
+
+
+def test_source_authority_preserves_scoped_mutation_restrictions() -> None:
+    """Verify a narrow mutation exclusion does not revoke task authority."""
+    assert source_has_default_merge_authority(
+        ("Implement issue #602, but do not change the documentation.",)
+    )
+    assert source_has_default_merge_authority(
+        ("Implement issue #602.", "Do not modify README.md.")
+    )
+    assert not source_has_default_merge_authority(("Do not modify README.md.",))
+
+
+def test_object_qualified_auto_merge_denial_is_not_a_manual_hold() -> None:
+    """Verify disabling auto-merge does not block guarded manual merge."""
+    assert merge_hold_directions(
+        "Do not merge this pull request automatically."
+    ) == {}
+    assert merge_hold_directions(
+        "Do not merge this pull request via auto-merge."
+    ) == {}
+
+
+def test_merge_hold_directions_keeps_active_task_after_unrelated_clause() -> None:
+    """Verify another PR cannot hide a later active-task hold."""
+    assert merge_hold_directions(
+        "For another PR, do not merge, but leave this pull request open."
+    ) == {"leave open": "add"}
+
+
+def test_generated_merge_decision_questions_are_not_affirmative() -> None:
+    """Verify decision-only prompts do not manufacture merge authority."""
+    for instruction in (
+        "There is no need to complete the guarded merge.",
+        "There is no requirement to complete the guarded merge.",
+        "We are not obligated to complete the guarded merge.",
+        "We do not need to complete the guarded merge.",
+        "It is not necessary to complete the guarded merge.",
+    ):
+        assert not has_affirmative_default_merge_authority(instruction)
+    assert not has_affirmative_default_merge_authority(
+        "Determine whether to complete the guarded merge."
+    )
+    assert not has_affirmative_default_merge_authority(
+        "Decide whether to complete the guarded merge."
+    )
+    assert not has_affirmative_default_merge_authority(
+        "If the user asks, complete the guarded merge."
+    )
+    for verb in ("Evaluate", "Check", "Confirm"):
+        assert not has_affirmative_default_merge_authority(
+            f"{verb} whether to complete the guarded merge."
+        )
+    assert not has_affirmative_default_merge_authority(
+        "If asked, complete the guarded merge."
+    )
+    assert not has_affirmative_default_merge_authority(
+        "Complete the guarded merge if requested."
+    )
+    assert not has_affirmative_default_merge_authority(
+        "Do you want me to complete the guarded merge?"
+    )
+    for subject in ("heartbeat", "handoff", "delegation", "agent", "task"):
+        assert not has_affirmative_default_merge_authority(
+            f"Should the {subject} complete the guarded merge?"
+        )
+        assert not has_affirmative_default_merge_authority(
+            f"Is the {subject} authorized to complete the guarded merge?"
+        )
+        assert not has_affirmative_default_merge_authority(
+            f"Can the {subject} complete the guarded merge?"
+        )
+        assert not has_affirmative_default_merge_authority(
+            f"Could the {subject} complete the guarded merge?"
+        )
+        assert not has_affirmative_default_merge_authority(
+            f"Has the {subject} been authorized to complete the guarded merge?"
+        )
+
+
+def test_source_authority_excludes_patch_review() -> None:
+    """Verify reviewing an existing patch is review-only work."""
+    assert not source_has_default_merge_authority(
+        ("Review the patch and report findings.",)
+    )
+    assert not source_has_default_merge_authority(
+        ("Review the proposed fix for issue #602 and report findings.",)
+    )
+    assert not source_has_default_merge_authority(
+        ("Can you explain how to fix issue #602?",)
+    )
+    assert not source_has_default_merge_authority(
+        ("Is the fix for issue #602 correct?",)
+    )
+    assert not source_has_default_merge_authority(
+        ("Evaluate the fix and report findings.",)
+    )
+    assert not source_has_default_merge_authority(
+        ("Check the implementation for bugs and report findings.",)
+    )
+    assert not source_has_default_merge_authority(
+        ("Verify the implementation and report findings.",)
+    )
+    assert not source_has_default_merge_authority(
+        ("Test the implementation and report findings.",)
+    )
+    assert not source_has_default_merge_authority(
+        ("Perform a code review of the implementation and report findings.",)
+    )
+    assert not source_has_default_merge_authority(
+        ("Review this implementation and report findings.",)
+    )
+    assert not source_has_default_merge_authority(
+        ("Summarize the implementation for issue #602.",)
+    )
+    assert not source_has_default_merge_authority(
+        (
+            "Implement issue #602. Instead, review the implementation and "
+            "report findings.",
+        )
+    )
+    assert not source_has_default_merge_authority(
+        (
+            "Implement issue #602. Review PR #602 instead and report findings.",
+        )
+    )
+    assert not source_has_default_merge_authority(
+        ("Review the implementation; do not modify it.",)
+    )
+    assert not source_has_default_merge_authority(
+        ("Do not add any code; review the implementation and report findings.",)
+    )
+    assert not source_has_default_merge_authority(
+        ("Fix issue #602, but do not create a pull request.",)
+    )
+    assert not source_has_default_merge_authority(
+        ("Fix issue #602, but do not open a pull request.",)
+    )
+    assert not source_has_default_merge_authority(
+        ("Implement issue #602. Switch to review PR #602 and report findings.",)
+    )
+    assert not source_has_default_merge_authority(("Create a plan for issue #602.",))
+    assert not source_has_default_merge_authority(("Update me on issue #602.",))
+    assert not source_has_default_merge_authority(
+        ("The implementation for issue #602 is not authorized.",)
+    )
+
+
+def test_source_authority_honors_later_stop_work() -> None:
+    """Verify a later explicit stop-work instruction revokes eligibility."""
+    assert not source_has_default_merge_authority(
+        ("Implement issue #602.", "Stop work; only explain the failure.")
+    )
+    assert not source_has_default_merge_authority(
+        ("Implement issue #602.", "Please stop work; only explain the failure.")
+    )
+    assert not source_has_default_merge_authority(
+        ("Implement issue #602.", "Stop working on this task.")
+    )
+    assert not source_has_default_merge_authority(
+        ("Implement issue #602.", "Cancel that request.")
+    )
+    assert source_has_default_merge_authority(
+        ("Implement issue #602.", "Please stop work if CI fails.")
+    )
+    assert not source_has_default_merge_authority(
+        (
+            "Implement issue #602.",
+            "Stop work on this task. Summarize the implementation.",
+        )
+    )
+    assert not source_has_default_merge_authority(
+        (
+            "Implement issue #602.",
+            "Stop work on this task. The implementation is incomplete.",
+        )
+    )
+
+
+def test_source_authority_excludes_planning_a_fix() -> None:
+    """Verify planning-only fix language does not grant implementation authority."""
+    assert not source_has_default_merge_authority(("Plan a fix for issue #602.",))
+    assert not source_has_default_merge_authority(
+        ("Plan an implementation for issue #602.",)
+    )
+
+
+def test_source_authority_excludes_possessive_review_targets() -> None:
+    """Verify possessive fix and patch reviews remain review-only."""
+    assert not source_has_default_merge_authority(
+        ("Review my fix for issue #602 and report findings.",)
+    )
+    assert not source_has_default_merge_authority(
+        ("Review our patch for issue #602 and report findings.",)
+    )
+    assert not source_has_default_merge_authority(
+        ("Implement issue #602.", "Actually, just review it and report findings.")
+    )
+
+
+def test_merge_hold_directions_recognizes_indefinite_pr_only_instruction() -> None:
+    """Verify indefinite articles preserve an explicit PR-only hold."""
+    assert merge_hold_directions("Only open a pull request for issue #602.") == {
+        "pr only": "add"
+    }
+    assert merge_hold_directions("Only create a PR for issue #602.") == {
+        "pr only": "add"
+    }
+    assert merge_hold_directions("Only submit a pull request for issue #602.") == {
+        "pr only": "add"
+    }
+    assert merge_hold_directions("Only prepare a PR for issue #602.") == {
+        "pr only": "add"
+    }
+
+
+def test_merge_hold_directions_classifies_approval_until_as_resumable() -> None:
+    """Verify an approval-until condition is the resumable approval hold."""
+    assert merge_hold_directions(
+        "Do not merge until the maintainer approves."
+    ) == {"wait for approval": "add"}
+    assert merge_hold_directions(
+        "Do not merge unless the maintainer approves."
+    ) == {"wait for approval": "add"}
+    assert merge_hold_directions(
+        "Do not merge before the maintainer approves."
+    ) == {"wait for approval": "add"}
+    assert merge_hold_directions("Do not merge until approved.") == {
+        "wait for approval": "add"
+    }
+    assert merge_hold_directions("Keep this PR open until I approve.") == {
+        "wait for approval": "add"
+    }
+    assert merge_hold_directions("PR only until I approve.") == {
+        "wait for approval": "add"
+    }
+
+
+def test_generated_authority_rejects_absence_of_authority() -> None:
+    """Verify generated authority denials are not affirmative merge guidance."""
+    assert not has_affirmative_default_merge_authority(
+        "There is no authority to complete the guarded merge."
+    )
+    assert not has_affirmative_default_merge_authority(
+        "Can I complete the guarded merge?"
+    )
+    assert not has_affirmative_default_merge_authority(
+        "The phrase “Complete the guarded merge” is prohibited."
+    )
+
+
+def test_source_authority_excludes_diagnostic_how_to_questions() -> None:
+    """Verify how-to and what-is-needed questions remain diagnostic."""
+    assert not source_has_default_merge_authority(("How should we fix issue #602?",))
+    assert not source_has_default_merge_authority(
+        ("What is needed to implement issue #602?",)
+    )
+    assert not source_has_default_merge_authority(
+        ("Please investigate how to fix issue #602.",)
+    )
+    assert not source_has_default_merge_authority(
+        ("We discussed how to fix issue #602.",)
+    )
+    assert not source_has_default_merge_authority(
+        ("Review the PR; describe how to fix it.",)
+    )
+
+
+def test_generated_authority_rejects_general_permission_questions() -> None:
+    """Verify general merge-authority questions are not affirmative delivery."""
+    assert not has_affirmative_default_merge_authority(
+        "Do we have authority to complete the guarded merge?"
+    )
+    assert not has_affirmative_default_merge_authority(
+        "The previous agent said to complete the guarded merge."
+    )
+    assert not has_affirmative_default_merge_authority(
+        "Are we authorized to complete the guarded merge?"
+    )
+    assert not has_affirmative_default_merge_authority(
+        "Is there approval to complete the guarded merge?"
+    )
+    assert not has_affirmative_default_merge_authority(
+        "Is approval granted to complete the guarded merge?"
+    )
+    assert not has_affirmative_default_merge_authority(
+        "Has approval been granted to complete the guarded merge?"
+    )
+    assert not has_affirmative_default_merge_authority(
+        "Does the heartbeat have permission to complete the guarded merge?"
+    )
+    assert not has_affirmative_default_merge_authority(
+        "Can you complete the guarded merge?"
+    )
+    assert not has_affirmative_default_merge_authority(
+        "Is it permissible for the heartbeat to complete the guarded merge?"
+    )
+    assert not has_affirmative_default_merge_authority(
+        "Does permission exist to complete the guarded merge?"
+    )
+    assert not has_affirmative_default_merge_authority(
+        "Are you authorized to complete the guarded merge?"
+    )
+    assert not has_affirmative_default_merge_authority(
+        "Do I have approval to complete the guarded merge?"
+    )
+
+
+def test_source_authority_keeps_workflow_policy_subject_eligible() -> None:
+    """Verify workflow terminology alone does not exclude ordinary policy work."""
+    assert source_has_default_merge_authority(
+        ("Update the documentation for private vulnerability remediation.",)
+    )
+    assert source_has_default_merge_authority(
+        ("Update the documentation for external fork workflows.",)
+    )
+    assert source_has_default_merge_authority(
+        ("Please review this PR and address the feedback.",)
+    )
+    for instruction in (
+        "Please make the requested changes.",
+        "Please apply the requested changes.",
+        "Please remove the obsolete code.",
+        "Please update the README.",
+    ):
+        assert source_has_default_merge_authority((instruction,))
+    for instruction in (
+        "Update README.md.",
+        "Edit CONTRIBUTING.md.",
+        "Modify pyproject.toml.",
+        "Change docs/contribute/agent-policies.md.",
+    ):
+        assert source_has_default_merge_authority((instruction,))
+    for instruction in (
+        "Prepare a pull request for issue #602.",
+        "Open a pull request for issue #602.",
+        "Submit a pull request for issue #602.",
+        "Revert the change introduced by PR #602.",
+        "Roll back the change introduced by PR #602.",
+        "Refactor the parser in scripts/check_repo.py.",
+        "Repair the parser in scripts/check_repo.py.",
+        "Rename the parser function.",
+        "Delete the obsolete parser function.",
+        "Add retry handling to the parser.",
+    ):
+        assert source_has_default_merge_authority((instruction,))
+    assert not source_has_default_merge_authority(
+        ("Explain how to rename the parser function.",)
+    )
+    assert not source_has_default_merge_authority(
+        ("Do not delete the parser function.",)
+    )
+    assert not source_has_default_merge_authority(
+        ("Explain how to add retry handling.",)
+    )
+
+
+def test_source_authority_excludes_review_advice() -> None:
+    """Verify proposed fixes remain advice within a review-only request."""
+    for instruction in (
+        "Review the PR and propose a fix.",
+        "Review the PR, then recommend a patch.",
+        "Inspect the changes and suggest a solution.",
+        "Can you suggest how to fix issue #602?",
+    ):
+        assert not source_has_default_merge_authority((instruction,))
+
+
+def test_source_authority_excludes_implementation_questions() -> None:
+    """Verify mutation questions request a decision rather than implementation."""
+    for instruction in (
+        "Should we fix this?",
+        "Should we add retry handling?",
+        "Could you replace the parser?",
+        "Do we need to fix this?",
+        "Should we refactor the parser?",
+    ):
+        assert not source_has_default_merge_authority((instruction,))
+
+
+def test_source_authority_excludes_negated_repair() -> None:
+    """Verify an explicit repair denial does not grant implementation authority."""
+    assert not source_has_default_merge_authority(("Do not repair issue #602.",))
+    assert not source_has_default_merge_authority(
+        ("Review the changes and do not create a pull request.",)
+    )
+
+
+def test_source_authority_excludes_ineligible_delivery_scopes() -> None:
+    """Verify fork and existing-draft implementation scopes remain ineligible."""
+    assert not source_has_default_merge_authority(
+        ("Implement issue #602 in a fork.",)
+    )
+    assert not source_has_default_merge_authority(
+        ("Fix the tests on draft PR #602.",)
+    )
+    assert not source_has_default_merge_authority(("Fix draft PR #602.",))
+    assert not source_has_default_merge_authority(("Fix the draft PR #602.",))
+    assert not source_has_default_merge_authority(
+        ("Implement issue #602, but leave this PR in draft.",)
+    )
+    assert not source_has_default_merge_authority(
+        ("Fix this security vulnerability.",)
+    )
+    assert not source_has_default_merge_authority(
+        ("Implement issue #602 in my fork.",)
+    )
+    assert not source_has_default_merge_authority(
+        ("Fix issue #602 on your fork.",)
+    )
+    assert source_has_default_merge_authority(
+        ("Implement the change, but do not use an external fork.",)
+    )
+    assert source_has_default_merge_authority(
+        ("Implement the change without private remediation.",)
+    )
+
+
+def test_source_authority_honors_coordinated_cancellation() -> None:
+    """Verify same-instruction cancellation revokes implementation eligibility."""
+    assert not source_has_default_merge_authority(
+        ("Implement issue #602, but cancel this request.",)
+    )
+    assert not source_has_default_merge_authority(
+        ("Implement issue #602.", "Abort the task.")
+    )
+
+
+def test_source_authority_honors_workflow_reclassification() -> None:
+    """Verify later ineligible workflow status revokes prior task authority."""
+    for reclassification in (
+        "This is private vulnerability remediation.",
+        "The pull request is now a draft.",
+        "Move the work to a fork.",
+        "Push the branch to my fork instead.",
+        "Transfer the PR to mdaneri's fork.",
+        "Convert the pull request to draft.",
+        "Change this PR to a draft.",
+        "The pull request is now from an external fork.",
+        "Make this a draft PR.",
+    ):
+        assert not source_has_default_merge_authority(
+            ("Implement issue #602.", reclassification)
+        )
+    assert not source_has_default_merge_authority(
+        ("Implement issue #602.", "Instead, review PR #602 and report findings.")
+    )
+
+
+def test_generated_authority_rejects_conditional_approval() -> None:
+    """Verify generated prompts cannot invent an approval prerequisite."""
+    assert not has_affirmative_default_merge_authority(
+        "Only if the maintainer approves, complete the guarded merge."
+    )
+
+
+def test_generated_authority_rejects_imperative_denial() -> None:
+    """Verify negative action verbs cannot masquerade as merge authority."""
+    for instruction in (
+        "Skip the guarded squash merge.",
+        "Avoid the guarded squash merge.",
+        "Omit the guarded squash merge.",
+        "Decline the guarded squash merge.",
+        "Refrain from the guarded squash merge.",
+        "Hold off on the guarded squash merge.",
+        "Defer the guarded squash merge.",
+        "Delay the guarded squash merge.",
+        "Postpone the guarded squash merge.",
+        "Pause the guarded squash merge.",
+    ):
+        assert not has_affirmative_default_merge_authority(instruction)
+
+    assert not has_affirmative_default_merge_authority(
+        "Plan the guarded squash merge, but do not execute it."
+    )
+    assert not has_affirmative_default_merge_authority(
+        "Consider the guarded squash merge."
+    )
+    assert not has_affirmative_default_merge_authority(
+        "This task lacks authority to complete the guarded merge."
+    )
+    assert not has_affirmative_default_merge_authority(
+        "Ask whether to complete the guarded merge."
+    )
+    for denial in (
+        "has not been approved",
+        "was not approved",
+        "hasn't been authorized",
+        "wasn’t permitted",
+    ):
+        assert not has_affirmative_default_merge_authority(
+            f"The request to complete the guarded merge {denial}."
+        )
+
+
+def test_generated_permission_cannot_withdraw_source_hold(tmp_path: Path) -> None:
+    """Verify agent-authored permission cannot remove a source hold.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
+    path = tmp_path / MERGE_AUTHORITY_TRANSFER_FIXTURE_PATH
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        json.dumps(
+            {
+                "cases": [
+                    {
+                        "name": "generated permission withdrawal",
+                        "default_merge_authority": True,
+                        "instructions": [
+                            {
+                                "text": "Implement issue #602, but do not merge.",
+                                "add_holds": ["do not merge"],
+                            }
+                        ],
+                        "generated": (
+                            "Do not merge this pull request; you may merge now."
+                        ),
+                        "expected_holds": ["do not merge"],
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    findings = check_merge_authority_transfer_fixtures(tmp_path)
+
+    assert len(findings) == 1
+    assert findings[0].message == (
+        "merge authority fixture generated permission withdrawal drops an "
+        "explicit hold: do not merge"
+    )
+
+
+def test_generated_conditional_hold_cannot_weaken_source_hold(tmp_path: Path) -> None:
+    """Verify generated text cannot make an unconditional source hold conditional.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
+    path = tmp_path / MERGE_AUTHORITY_TRANSFER_FIXTURE_PATH
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        json.dumps(
+            {
+                "cases": [
+                    {
+                        "name": "conditional generated hold",
+                        "default_merge_authority": True,
+                        "instructions": [
+                            {
+                                "text": "Implement issue #602, but do not merge.",
+                                "add_holds": ["do not merge"],
+                            }
+                        ],
+                        "generated": "If the user asks, do not merge this PR.",
+                        "expected_holds": ["do not merge"],
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    findings = check_merge_authority_transfer_fixtures(tmp_path)
+
+    assert len(findings) == 1
+    assert findings[0].message == (
+        "merge authority fixture conditional generated hold drops an explicit "
+        "hold: do not merge"
+    )
+
+
+def test_generated_withdrawal_cannot_invent_source_hold(tmp_path: Path) -> None:
+    """Verify generated text cannot withdraw a hold absent from source.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
+    path = tmp_path / MERGE_AUTHORITY_TRANSFER_FIXTURE_PATH
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        json.dumps(
+            {
+                "cases": [
+                    {
+                        "name": "invented generated withdrawal",
+                        "default_merge_authority": True,
+                        "instructions": [{"text": "Implement issue #602."}],
+                        "generated": (
+                            "The earlier do not merge instruction is withdrawn. "
+                            "Complete the guarded merge."
+                        ),
+                        "expected_holds": [],
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    findings = check_merge_authority_transfer_fixtures(tmp_path)
+
+    assert len(findings) == 1
+    assert findings[0].message == (
+        "merge authority fixture invented generated withdrawal withdraws a "
+        "nonexistent source hold: do not merge"
+    )
+
+
 def test_spark_worker_agent_accepts_required_contract(tmp_path: Path) -> None:
     """Verify that the project Spark worker contract is accepted.
 
@@ -696,6 +2078,10 @@ def write_policy_files(root: Path) -> None:
         monitoring_end_anchor = SCHEDULED_PR_MONITORING_SECTION_END_ANCHORS.get(
             relative_path
         )
+        authority_markers = DEFAULT_MERGE_AUTHORITY_SECTION_MARKERS.get(
+            relative_path, ()
+        )
+        authority_anchor = DEFAULT_MERGE_AUTHORITY_SECTION_ANCHORS.get(relative_path)
         other_markers = tuple(
             marker
             for marker in markers
@@ -703,6 +2089,8 @@ def write_policy_files(root: Path) -> None:
             and marker != section_anchor
             and marker not in monitoring_markers
             and marker != monitoring_anchor
+            and marker not in authority_markers
+            and marker != authority_anchor
         )
         policy_lines = list(other_markers)
         if monitoring_anchor is not None:
@@ -712,6 +2100,20 @@ def write_policy_files(root: Path) -> None:
                     monitoring_anchor,
                     *(monitoring_prefix + marker for marker in monitoring_markers),
                     monitoring_end_anchor or "- following monitoring policy",
+                )
+            )
+        if authority_anchor is not None:
+            authority_prefix = "" if authority_anchor.startswith("#") else "  "
+            authority_heading = (
+                ()
+                if authority_anchor == monitoring_end_anchor
+                else (authority_anchor,)
+            )
+            policy_lines.extend(
+                (
+                    *authority_heading,
+                    *(authority_prefix + marker for marker in authority_markers),
+                    "- following merge authority policy",
                 )
             )
         if section_anchor is not None:
@@ -1011,7 +2413,7 @@ def test_agent_policy_gate_rejects_missing_scheduled_pr_monitoring_contract(
         "four minutes",
         "persistent GitHub polling loops",
         "seen comment and review IDs",
-        "merged, closed, or merge-ready",
+        "delivery-complete merge-ready",
         "final bounded readback",
         "delete the exact current-task heartbeat",
         "linked-issue closure",
@@ -1025,6 +2427,7 @@ def test_agent_policy_gate_rejects_missing_scheduled_pr_monitoring_contract(
         "resumable holds",
         "ambiguous ownership",
         "exact retry condition",
+        "never merely paused",
     )
     required_entry_markers = {
         Path("AGENTS.md"): (
@@ -1138,6 +2541,3131 @@ def test_agent_policy_gate_rejects_missing_default_merge_authorization(
         assert findings[0].message == (
             f"required agent policy marker is missing: {marker}"
         )
+
+
+def test_agent_policy_gate_scopes_merge_authority_provenance_to_its_section(
+    tmp_path: Path,
+) -> None:
+    """Verify authority provenance cannot be satisfied by unrelated prose.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
+    marker = "stale memory"
+    for relative_path in DEFAULT_MERGE_AUTHORITY_SECTION_MARKERS:
+        write_policy_files(tmp_path)
+        path = tmp_path / relative_path
+        text = path.read_text(encoding="utf-8")
+        path.write_text(
+            marker + "\n" + text.replace(marker, "", 1),
+            encoding="utf-8",
+        )
+
+        findings = check_agent_policy_gate(tmp_path)
+
+        assert len(findings) == 1
+        assert findings[0].path == path
+        assert findings[0].message == (
+            "default merge authority section marker is missing: " + marker
+        )
+
+
+def test_merge_authority_transfer_repository_fixtures_pass() -> None:
+    """Verify the checked-in delegation and heartbeat examples preserve authority."""
+    repository_root = Path(__file__).resolve().parents[1]
+
+    assert check_merge_authority_transfer_fixtures(repository_root) == []
+
+
+def test_merge_authority_transfer_rejects_invented_delegation_hold(
+    tmp_path: Path,
+) -> None:
+    """Verify delegation text cannot manufacture a merge hold.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
+    path = tmp_path / MERGE_AUTHORITY_TRANSFER_FIXTURE_PATH
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        json.dumps(
+            {
+                "cases": [
+                    {
+                        "name": "invented delegation hold",
+                        "default_merge_authority": True,
+                        "instructions": [
+                            {"text": "Implement and deliver the change."}
+                        ],
+                        "generated": "Implement it, but do not merge.",
+                        "expected_holds": [],
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    findings = check_merge_authority_transfer_fixtures(tmp_path)
+
+    assert len(findings) == 1
+    assert findings[0].message == (
+        "merge authority fixture invented delegation hold invents a hold: do not merge"
+    )
+
+
+def test_merge_authority_transfer_rejects_dropped_heartbeat_hold(
+    tmp_path: Path,
+) -> None:
+    """Verify heartbeat text retains a later explicit merge hold.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
+    path = tmp_path / MERGE_AUTHORITY_TRANSFER_FIXTURE_PATH
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        json.dumps(
+            {
+                "cases": [
+                    {
+                        "name": "dropped heartbeat hold",
+                        "default_merge_authority": True,
+                        "instructions": [
+                            {
+                                "text": (
+                                    "Implement the change and wait for approval before "
+                                    "merging."
+                                ),
+                                "add_holds": ["wait for approval"],
+                            }
+                        ],
+                        "generated": "Merge when the checks pass.",
+                        "expected_holds": ["wait for approval"],
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    findings = check_merge_authority_transfer_fixtures(tmp_path)
+
+    assert [finding.message for finding in findings] == [
+        (
+            "merge authority fixture dropped heartbeat hold drops an explicit hold: "
+            "wait for approval"
+        ),
+        (
+            "merge authority fixture dropped heartbeat hold invents a resumable "
+            "merge gate: check"
+        ),
+    ]
+
+
+def test_merge_authority_transfer_rejects_merge_instruction_with_active_hold(
+    tmp_path: Path,
+) -> None:
+    """Verify generated text cannot preserve and violate a hold simultaneously.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
+    path = tmp_path / MERGE_AUTHORITY_TRANSFER_FIXTURE_PATH
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        json.dumps(
+            {
+                "cases": [
+                    {
+                        "name": "contradictory active hold",
+                        "default_merge_authority": True,
+                        "instructions": [
+                            {
+                                "text": "Implement the change, but do not merge.",
+                                "add_holds": ["do not merge"],
+                            }
+                        ],
+                        "generated": (
+                            "Preserve the do not merge hold but complete the guarded "
+                            "merge."
+                        ),
+                        "expected_holds": ["do not merge"],
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    findings = check_merge_authority_transfer_fixtures(tmp_path)
+
+    assert len(findings) == 1
+    assert findings[0].message == (
+        "merge authority fixture contradictory active hold asserts merge authority "
+        "while an explicit hold is active"
+    )
+
+
+def test_merge_authority_transfer_rejects_dropped_resumable_gate(
+    tmp_path: Path,
+) -> None:
+    """Verify generated text cannot discard a source-side external merge gate.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
+    path = tmp_path / MERGE_AUTHORITY_TRANSFER_FIXTURE_PATH
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        json.dumps(
+            {
+                "cases": [
+                    {
+                        "name": "dropped release gate",
+                        "default_merge_authority": True,
+                        "instructions": [
+                            {
+                                "text": (
+                                    "Implement issue #602, but leave this PR open "
+                                    "pending the release job."
+                                )
+                            }
+                        ],
+                        "generated": "Complete the guarded merge.",
+                        "expected_holds": [],
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    findings = check_merge_authority_transfer_fixtures(tmp_path)
+
+    assert len(findings) == 1
+    assert findings[0].message == (
+        "merge authority fixture dropped release gate drops a resumable merge "
+        "gate: release job"
+    )
+
+
+def test_merge_authority_transfer_rejects_negated_resumable_gate(
+    tmp_path: Path,
+) -> None:
+    """Verify generated text cannot negate a source-side CI gate.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
+    path = tmp_path / MERGE_AUTHORITY_TRANSFER_FIXTURE_PATH
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        json.dumps(
+            {
+                "cases": [
+                    {
+                        "name": "negated CI gate",
+                        "default_merge_authority": True,
+                        "instructions": [
+                            {
+                                "text": (
+                                    "Implement issue #602, but wait for CI before "
+                                    "merging."
+                                )
+                            }
+                        ],
+                        "generated": (
+                            "Do not wait for CI before merging; preserve default "
+                            "merge authority."
+                        ),
+                        "expected_holds": [],
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    findings = check_merge_authority_transfer_fixtures(tmp_path)
+
+    assert len(findings) == 1
+    assert findings[0].message == (
+        "merge authority fixture negated CI gate drops a resumable merge gate: ci"
+    )
+
+
+def test_merge_authority_transfer_rejects_negated_hold_report(
+    tmp_path: Path,
+) -> None:
+    """Verify generated text cannot deny an active source hold.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
+    path = tmp_path / MERGE_AUTHORITY_TRANSFER_FIXTURE_PATH
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        json.dumps(
+            {
+                "cases": [
+                    {
+                        "name": "negated hold report",
+                        "default_merge_authority": True,
+                        "instructions": [
+                            {
+                                "text": "Implement issue #602, but do not merge.",
+                                "add_holds": ["do not merge"],
+                            }
+                        ],
+                        "generated": "The user did not say do not merge this PR.",
+                        "expected_holds": ["do not merge"],
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    findings = check_merge_authority_transfer_fixtures(tmp_path)
+
+    assert len(findings) == 1
+    assert findings[0].message == (
+        "merge authority fixture negated hold report drops an explicit hold: "
+        "do not merge"
+    )
+
+
+def test_merge_authority_transfer_keeps_gate_after_other_pr_resolution(
+    tmp_path: Path,
+) -> None:
+    """Verify another PR's success cannot clear the active task's gate.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
+    path = tmp_path / MERGE_AUTHORITY_TRANSFER_FIXTURE_PATH
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        json.dumps(
+            {
+                "cases": [
+                    {
+                        "name": "other PR test resolution",
+                        "default_merge_authority": True,
+                        "active_pull_request": 630,
+                        "instructions": [
+                            {
+                                "text": (
+                                    "Implement issue #602, but wait for tests before "
+                                    "merging."
+                                )
+                            },
+                            {"text": "PR #621 tests passed."},
+                        ],
+                        "generated": "Complete the guarded merge.",
+                        "expected_holds": [],
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    findings = check_merge_authority_transfer_fixtures(tmp_path)
+
+    assert len(findings) == 1
+    assert findings[0].message == (
+        "merge authority fixture other PR test resolution drops a resumable "
+        "merge gate: test"
+    )
+
+
+def test_merge_authority_transfer_rejects_replaced_gate_qualifier(
+    tmp_path: Path,
+) -> None:
+    """Verify generated text cannot substitute another qualified reviewer.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
+    path = tmp_path / MERGE_AUTHORITY_TRANSFER_FIXTURE_PATH
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        json.dumps(
+            {
+                "cases": [
+                    {
+                        "name": "replaced review qualifier",
+                        "default_merge_authority": True,
+                        "instructions": [
+                            {
+                                "text": (
+                                    "Implement issue #602, but wait for security "
+                                    "review before merging."
+                                )
+                            }
+                        ],
+                        "generated": (
+                            "Complete the guarded merge after maintainer review "
+                            "passes."
+                        ),
+                        "expected_holds": [],
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    findings = check_merge_authority_transfer_fixtures(tmp_path)
+
+    assert [finding.message for finding in findings] == [
+        (
+            "merge authority fixture replaced review qualifier drops a resumable "
+            "merge gate: security review"
+        ),
+        (
+            "merge authority fixture replaced review qualifier invents a resumable "
+            "merge gate: maintainer review"
+        ),
+    ]
+
+
+def test_merge_authority_transfer_rejects_invented_resumable_gate(
+    tmp_path: Path,
+) -> None:
+    """Verify generated prompts cannot add a source-absent merge gate.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
+    path = tmp_path / MERGE_AUTHORITY_TRANSFER_FIXTURE_PATH
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        json.dumps(
+            {
+                "cases": [
+                    {
+                        "name": "invented CI gate",
+                        "default_merge_authority": True,
+                        "instructions": [{"text": "Implement issue #602."}],
+                        "generated": (
+                            "Wait for CI before merging. Preserve default merge "
+                            "authority and complete the guarded merge."
+                        ),
+                        "expected_holds": [],
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    findings = check_merge_authority_transfer_fixtures(tmp_path)
+
+    assert len(findings) == 1
+    assert findings[0].message == (
+        "merge authority fixture invented CI gate invents a resumable merge gate: ci"
+    )
+
+
+def test_merge_authority_transfer_rejects_neutral_default_prompt(
+    tmp_path: Path,
+) -> None:
+    """Verify a no-hold generated prompt affirmatively retains default authority.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
+    path = tmp_path / MERGE_AUTHORITY_TRANSFER_FIXTURE_PATH
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        json.dumps(
+            {
+                "cases": [
+                    {
+                        "name": "neutral default prompt",
+                        "default_merge_authority": True,
+                        "instructions": [{"text": "Implement the issue completely."}],
+                        "generated": "Watch the pull request until it is ready.",
+                        "expected_holds": [],
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    findings = check_merge_authority_transfer_fixtures(tmp_path)
+
+    assert len(findings) == 1
+    assert findings[0].message == (
+        "merge authority fixture neutral default prompt omits affirmative default authority"
+    )
+
+
+def test_merge_authority_transfer_rejects_generated_authority_denial(
+    tmp_path: Path,
+) -> None:
+    """Verify a generated denial cannot satisfy affirmative default authority.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
+    path = tmp_path / MERGE_AUTHORITY_TRANSFER_FIXTURE_PATH
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        json.dumps(
+            {
+                "cases": [
+                    {
+                        "name": "generated authority denial",
+                        "default_merge_authority": True,
+                        "instructions": [{"text": "Implement issue #602."}],
+                        "generated": (
+                            "There is no authority to complete the guarded merge."
+                        ),
+                        "expected_holds": [],
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    findings = check_merge_authority_transfer_fixtures(tmp_path)
+
+    assert len(findings) == 1
+    assert findings[0].message == (
+        "merge authority fixture generated authority denial omits affirmative "
+        "default authority"
+    )
+
+
+def test_merge_authority_transfer_rejects_generated_no_need_denial(
+    tmp_path: Path,
+) -> None:
+    """Verify a generated necessity denial cannot satisfy default authority.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
+    path = tmp_path / MERGE_AUTHORITY_TRANSFER_FIXTURE_PATH
+    path.parent.mkdir(parents=True, exist_ok=True)
+    for generated in (
+        "There is no need to complete the guarded merge.",
+        "There is no requirement to complete the guarded merge.",
+    ):
+        path.write_text(
+            json.dumps(
+                {
+                    "cases": [
+                        {
+                            "name": "generated necessity denial",
+                            "default_merge_authority": True,
+                            "instructions": [{"text": "Implement issue #602."}],
+                            "generated": generated,
+                            "expected_holds": [],
+                        }
+                    ]
+                }
+            ),
+            encoding="utf-8",
+        )
+
+        findings = check_merge_authority_transfer_fixtures(tmp_path)
+
+        assert len(findings) == 1
+        assert findings[0].message == (
+            "merge authority fixture generated necessity denial omits affirmative "
+            "default authority"
+        )
+
+
+def test_merge_authority_transfer_rejects_quoted_generated_authority_denial(
+    tmp_path: Path,
+) -> None:
+    """Verify quoted affirmative wording cannot hide a generated denial.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
+    path = tmp_path / MERGE_AUTHORITY_TRANSFER_FIXTURE_PATH
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        json.dumps(
+            {
+                "cases": [
+                    {
+                        "name": "quoted generated authority denial",
+                        "default_merge_authority": True,
+                        "instructions": [{"text": "Implement issue #602."}],
+                        "generated": (
+                            "The phrase “Complete the guarded merge” is prohibited."
+                        ),
+                        "expected_holds": [],
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    findings = check_merge_authority_transfer_fixtures(tmp_path)
+
+    assert len(findings) == 1
+    assert findings[0].message == (
+        "merge authority fixture quoted generated authority denial omits "
+        "affirmative default authority"
+    )
+
+
+def test_merge_authority_transfer_rejects_generated_permission_question(
+    tmp_path: Path,
+) -> None:
+    """Verify a generated permission question cannot satisfy default authority.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
+    path = tmp_path / MERGE_AUTHORITY_TRANSFER_FIXTURE_PATH
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        json.dumps(
+            {
+                "cases": [
+                    {
+                        "name": "generated permission question",
+                        "default_merge_authority": True,
+                        "instructions": [{"text": "Implement issue #602."}],
+                        "generated": "Can I complete the guarded merge?",
+                        "expected_holds": [],
+                    },
+                    {
+                        "name": "generated permissibility question",
+                        "default_merge_authority": True,
+                        "instructions": [{"text": "Implement issue #602."}],
+                        "generated": (
+                            "Is it permissible for the heartbeat to complete the "
+                            "guarded merge?"
+                        ),
+                        "expected_holds": [],
+                    },
+                    {
+                        "name": "generated existential permission question",
+                        "default_merge_authority": True,
+                        "instructions": [{"text": "Implement issue #602."}],
+                        "generated": (
+                            "Does permission exist to complete the guarded merge?"
+                        ),
+                        "expected_holds": [],
+                    },
+                    {
+                        "name": "generated existential approval question",
+                        "default_merge_authority": True,
+                        "instructions": [{"text": "Implement issue #602."}],
+                        "generated": (
+                            "Is there approval to complete the guarded merge?"
+                        ),
+                        "expected_holds": [],
+                    },
+                    {
+                        "name": "generated passive approval question",
+                        "default_merge_authority": True,
+                        "instructions": [{"text": "Implement issue #602."}],
+                        "generated": (
+                            "Is approval granted to complete the guarded merge?"
+                        ),
+                        "expected_holds": [],
+                    },
+                    {
+                        "name": "generated passive approval-status question",
+                        "default_merge_authority": True,
+                        "instructions": [{"text": "Implement issue #602."}],
+                        "generated": (
+                            "Has approval been granted to complete the guarded merge?"
+                        ),
+                        "expected_holds": [],
+                    },
+                    {
+                        "name": "generated second-person authorization question",
+                        "default_merge_authority": True,
+                        "instructions": [{"text": "Implement issue #602."}],
+                        "generated": (
+                            "Are you authorized to complete the guarded merge?"
+                        ),
+                        "expected_holds": [],
+                    },
+                    {
+                        "name": "generated approval question",
+                        "default_merge_authority": True,
+                        "instructions": [{"text": "Implement issue #602."}],
+                        "generated": (
+                            "Do I have approval to complete the guarded merge?"
+                        ),
+                        "expected_holds": [],
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    findings = check_merge_authority_transfer_fixtures(tmp_path)
+
+    assert [finding.message for finding in findings] == [
+        "merge authority fixture generated permission question omits affirmative "
+        "default authority",
+        "merge authority fixture generated permissibility question omits affirmative "
+        "default authority",
+        "merge authority fixture generated existential permission question omits "
+        "affirmative default authority",
+        "merge authority fixture generated existential approval question omits "
+        "affirmative default authority",
+        "merge authority fixture generated passive approval question omits "
+        "affirmative default authority",
+        "merge authority fixture generated passive approval-status question omits "
+        "affirmative default authority",
+        "merge authority fixture generated second-person authorization question "
+        "omits affirmative default authority",
+        "merge authority fixture generated approval question omits affirmative "
+        "default authority",
+    ]
+
+
+def test_merge_authority_transfer_applies_structured_hold_withdrawal(
+    tmp_path: Path,
+) -> None:
+    """Verify a later explicit withdrawal restores default merge authority.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
+    path = tmp_path / MERGE_AUTHORITY_TRANSFER_FIXTURE_PATH
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        json.dumps(
+            {
+                "cases": [
+                    {
+                        "name": "withdrawn hold",
+                        "default_merge_authority": True,
+                        "instructions": [
+                            {
+                                "text": "Implement the change, but do not merge.",
+                                "add_holds": ["do not merge"],
+                            },
+                            {
+                                "text": "The earlier do not merge hold is withdrawn.",
+                                "remove_holds": ["do not merge"],
+                            },
+                        ],
+                        "generated": "Continue through guarded squash merge.",
+                        "expected_holds": [],
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    assert check_merge_authority_transfer_fixtures(tmp_path) == []
+
+
+def test_merge_authority_transfer_applies_standalone_merge_permission(
+    tmp_path: Path,
+) -> None:
+    """Verify an unconditional merge permission removes an active hold.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
+    path = tmp_path / MERGE_AUTHORITY_TRANSFER_FIXTURE_PATH
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        json.dumps(
+            {
+                "cases": [
+                    {
+                        "name": "standalone merge permission",
+                        "default_merge_authority": True,
+                        "instructions": [
+                            {
+                                "text": "Implement the change, but do not merge.",
+                                "add_holds": ["do not merge"],
+                            },
+                            {
+                                "text": "You may merge now.",
+                                "remove_holds": ["do not merge"],
+                            },
+                        ],
+                        "generated": "Continue through guarded squash merge.",
+                        "expected_holds": [],
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    assert check_merge_authority_transfer_fixtures(tmp_path) == []
+
+
+def test_merge_authority_transfer_permission_overrides_repeated_hold_text(
+    tmp_path: Path,
+) -> None:
+    """Verify current merge permission overrides repeated stale hold wording.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
+    path = tmp_path / MERGE_AUTHORITY_TRANSFER_FIXTURE_PATH
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        json.dumps(
+            {
+                "cases": [
+                    {
+                        "name": "permission overrides repeated hold",
+                        "default_merge_authority": True,
+                        "instructions": [
+                            {
+                                "text": "Implement the change, but do not merge.",
+                                "add_holds": ["do not merge"],
+                            },
+                            {
+                                "text": (
+                                    "Ignore the previous do not merge hold; you may "
+                                    "merge now."
+                                ),
+                                "remove_holds": ["do not merge"],
+                            },
+                        ],
+                        "generated": "Continue through guarded squash merge.",
+                        "expected_holds": [],
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    assert check_merge_authority_transfer_fixtures(tmp_path) == []
+
+
+def test_merge_authority_transfer_scopes_standalone_permission_to_active_task(
+    tmp_path: Path,
+) -> None:
+    """Verify permission for another PR does not remove this task's hold.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
+    path = tmp_path / MERGE_AUTHORITY_TRANSFER_FIXTURE_PATH
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        json.dumps(
+            {
+                "cases": [
+                    {
+                        "name": "unrelated PR merge permission",
+                        "default_merge_authority": True,
+                        "instructions": [
+                            {
+                                "text": "Implement the change, but do not merge.",
+                                "add_holds": ["do not merge"],
+                            },
+                            {
+                                "text": "You may merge now for unrelated PR #621.",
+                                "remove_holds": ["do not merge"],
+                            },
+                        ],
+                        "generated": "Continue through guarded squash merge.",
+                        "expected_holds": [],
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    findings = check_merge_authority_transfer_fixtures(tmp_path)
+
+    assert len(findings) == 1
+    assert findings[0].message == (
+        "merge authority fixture unrelated PR merge permission instruction 2 hold "
+        "operations do not match its text"
+    )
+
+
+def test_merge_authority_transfer_recognizes_direct_hold_removals(
+    tmp_path: Path,
+) -> None:
+    """Verify remove, lift, and cancel directly withdraw a named hold.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
+    for verb in ("Remove", "Lift", "Cancel"):
+        case_root = tmp_path / verb.casefold()
+        path = case_root / MERGE_AUTHORITY_TRANSFER_FIXTURE_PATH
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(
+            json.dumps(
+                {
+                    "cases": [
+                        {
+                            "name": f"{verb.casefold()} hold",
+                            "default_merge_authority": True,
+                            "instructions": [
+                                {
+                                    "text": "Implement the change, but do not merge.",
+                                    "add_holds": ["do not merge"],
+                                },
+                                {
+                                    "text": f"{verb} the do not merge hold.",
+                                    "remove_holds": ["do not merge"],
+                                },
+                            ],
+                            "generated": "Continue through guarded squash merge.",
+                            "expected_holds": [],
+                        }
+                    ]
+                }
+            ),
+            encoding="utf-8",
+        )
+
+        assert check_merge_authority_transfer_fixtures(case_root) == []
+
+
+def test_merge_authority_transfer_applies_coordinated_hold_withdrawal(
+    tmp_path: Path,
+) -> None:
+    """Verify one withdrawal suffix removes every hold in its coordinated list.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
+    path = tmp_path / MERGE_AUTHORITY_TRANSFER_FIXTURE_PATH
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        json.dumps(
+            {
+                "cases": [
+                    {
+                        "name": "coordinated hold withdrawal",
+                        "default_merge_authority": True,
+                        "instructions": [
+                            {
+                                "text": (
+                                    "Implement the change, but do not merge and leave "
+                                    "the pull request open."
+                                ),
+                                "add_holds": ["do not merge", "leave open"],
+                            },
+                            {
+                                "text": (
+                                    "The do not merge and leave open holds are withdrawn."
+                                ),
+                                "remove_holds": ["do not merge", "leave open"],
+                            },
+                        ],
+                        "generated": "Continue through guarded squash merge.",
+                        "expected_holds": [],
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    assert check_merge_authority_transfer_fixtures(tmp_path) == []
+
+
+def test_merge_authority_transfer_scopes_coordinated_withdrawal_to_active_task(
+    tmp_path: Path,
+) -> None:
+    """Verify a coordinated withdrawal for another PR leaves active holds intact.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
+    path = tmp_path / MERGE_AUTHORITY_TRANSFER_FIXTURE_PATH
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        json.dumps(
+            {
+                "cases": [
+                    {
+                        "name": "unrelated coordinated withdrawal",
+                        "default_merge_authority": True,
+                        "instructions": [
+                            {
+                                "text": (
+                                    "Implement the change, but do not merge and leave "
+                                    "the pull request open."
+                                ),
+                                "add_holds": ["do not merge", "leave open"],
+                            },
+                            {
+                                "text": (
+                                    "For unrelated PR #621, the do not merge and leave "
+                                    "open holds are withdrawn."
+                                ),
+                                "remove_holds": ["do not merge", "leave open"],
+                            },
+                        ],
+                        "generated": "Continue through guarded squash merge.",
+                        "expected_holds": [],
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    findings = check_merge_authority_transfer_fixtures(tmp_path)
+
+    assert len(findings) == 1
+    assert findings[0].message == (
+        "merge authority fixture unrelated coordinated withdrawal instruction 2 hold "
+        "operations do not match its text"
+    )
+
+
+def test_merge_authority_transfer_ignores_quoted_hold_discussion(
+    tmp_path: Path,
+) -> None:
+    """Verify documentation discussing quoted hold text does not add a hold.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
+    path = tmp_path / MERGE_AUTHORITY_TRANSFER_FIXTURE_PATH
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        json.dumps(
+            {
+                "cases": [
+                    {
+                        "name": "quoted hold discussion",
+                        "default_merge_authority": True,
+                        "instructions": [
+                            {
+                                "text": (
+                                    'Update the documentation explaining the "do not '
+                                    'merge" hold.'
+                                ),
+                                "add_holds": ["do not merge"],
+                            }
+                        ],
+                        "generated": "Preserve the do not merge hold.",
+                        "expected_holds": ["do not merge"],
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    findings = check_merge_authority_transfer_fixtures(tmp_path)
+
+    assert len(findings) == 1
+    assert findings[0].message == (
+        "merge authority fixture quoted hold discussion instruction 1 hold "
+        "operations do not match its text"
+    )
+
+
+def test_merge_authority_transfer_ignores_unquoted_hold_discussion(
+    tmp_path: Path,
+) -> None:
+    """Verify explanatory hold references do not depend on quotation style.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
+    path = tmp_path / MERGE_AUTHORITY_TRANSFER_FIXTURE_PATH
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        json.dumps(
+            {
+                "cases": [
+                    {
+                        "name": "unquoted hold discussion",
+                        "default_merge_authority": True,
+                        "instructions": [
+                            {
+                                "text": (
+                                    "Implement issue #602. Explain when users say do "
+                                    "not merge."
+                                ),
+                                "add_holds": ["do not merge"],
+                            }
+                        ],
+                        "generated": "Preserve the do not merge hold.",
+                        "expected_holds": ["do not merge"],
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    findings = check_merge_authority_transfer_fixtures(tmp_path)
+
+    assert len(findings) == 1
+    assert findings[0].message == (
+        "merge authority fixture unquoted hold discussion instruction 1 hold "
+        "operations do not match its text"
+    )
+
+
+def test_merge_authority_transfer_ignores_application_merge_objects(
+    tmp_path: Path,
+) -> None:
+    """Verify application merge language does not create a pull-request hold.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
+    path = tmp_path / MERGE_AUTHORITY_TRANSFER_FIXTURE_PATH
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        json.dumps(
+            {
+                "cases": [
+                    {
+                        "name": "application merge object",
+                        "default_merge_authority": True,
+                        "instructions": [
+                            {
+                                "text": (
+                                    "Implement a merge algorithm, but do not merge "
+                                    "adjacent entries."
+                                ),
+                                "add_holds": ["do not merge"],
+                            }
+                        ],
+                        "generated": "Preserve the do not merge hold.",
+                        "expected_holds": ["do not merge"],
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    findings = check_merge_authority_transfer_fixtures(tmp_path)
+
+    assert len(findings) == 1
+    assert findings[0].message == (
+        "merge authority fixture application merge object instruction 1 hold "
+        "operations do not match its text"
+    )
+
+
+def test_merge_authority_transfer_ignores_holds_for_unrelated_prs(
+    tmp_path: Path,
+) -> None:
+    """Verify a hold targeting another PR does not constrain the active task.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
+    path = tmp_path / MERGE_AUTHORITY_TRANSFER_FIXTURE_PATH
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        json.dumps(
+            {
+                "cases": [
+                    {
+                        "name": "unrelated PR hold",
+                        "default_merge_authority": True,
+                        "instructions": [
+                            {
+                                "text": (
+                                    "Implement issue #602, but do not merge unrelated "
+                                    "PR #621."
+                                ),
+                                "add_holds": ["do not merge"],
+                            }
+                        ],
+                        "generated": "Preserve the do not merge hold.",
+                        "expected_holds": ["do not merge"],
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    findings = check_merge_authority_transfer_fixtures(tmp_path)
+
+    assert len(findings) == 1
+    assert findings[0].message == (
+        "merge authority fixture unrelated PR hold instruction 1 hold operations "
+        "do not match its text"
+    )
+
+
+def test_merge_authority_transfer_preserves_active_clause_in_mixed_task_text(
+    tmp_path: Path,
+) -> None:
+    """Verify another-PR prose does not erase this task's explicit hold clause.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
+    path = tmp_path / MERGE_AUTHORITY_TRANSFER_FIXTURE_PATH
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        json.dumps(
+            {
+                "cases": [
+                    {
+                        "name": "mixed task active hold",
+                        "default_merge_authority": True,
+                        "instructions": [
+                            {
+                                "text": (
+                                    "Implement issue #602 and do not merge this pull "
+                                    "request; also document unrelated PR #621."
+                                ),
+                                "add_holds": ["do not merge"],
+                            }
+                        ],
+                        "generated": "Preserve the explicit do not merge instruction.",
+                        "expected_holds": ["do not merge"],
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    assert check_merge_authority_transfer_fixtures(tmp_path) == []
+
+
+def test_merge_authority_transfer_recognizes_no_longer_need_withdrawal(
+    tmp_path: Path,
+) -> None:
+    """Verify present no-longer-needed wording removes an approval hold.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
+    path = tmp_path / MERGE_AUTHORITY_TRANSFER_FIXTURE_PATH
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        json.dumps(
+            {
+                "cases": [
+                    {
+                        "name": "no longer need approval",
+                        "default_merge_authority": True,
+                        "instructions": [
+                            {
+                                "text": "Implement the change, but wait for approval.",
+                                "add_holds": ["wait for approval"],
+                            },
+                            {
+                                "text": "You no longer need to wait for approval.",
+                                "remove_holds": ["wait for approval"],
+                            },
+                        ],
+                        "generated": "Continue through guarded squash merge.",
+                        "expected_holds": [],
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    assert check_merge_authority_transfer_fixtures(tmp_path) == []
+
+
+def test_merge_authority_transfer_recognizes_negated_approval_requirement(
+    tmp_path: Path,
+) -> None:
+    """Verify necessity negation removes an active approval hold.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
+    path = tmp_path / MERGE_AUTHORITY_TRANSFER_FIXTURE_PATH
+    path.parent.mkdir(parents=True, exist_ok=True)
+    for withdrawal in (
+        "You no longer need my approval to merge this PR.",
+        "You do not need my approval to merge this PR.",
+    ):
+        assert merge_hold_directions(
+            withdrawal,
+            active_holds=("wait for approval",),
+        ) == {"wait for approval": "remove"}
+        path.write_text(
+            json.dumps(
+                {
+                    "cases": [
+                        {
+                            "name": "negated approval requirement",
+                            "default_merge_authority": True,
+                            "instructions": [
+                                {
+                                    "text": (
+                                        "Implement the change, but wait for approval."
+                                    ),
+                                    "add_holds": ["wait for approval"],
+                                },
+                                {
+                                    "text": withdrawal,
+                                    "remove_holds": ["wait for approval"],
+                                },
+                            ],
+                            "generated": "Continue through guarded squash merge.",
+                            "expected_holds": [],
+                        }
+                    ]
+                }
+            ),
+            encoding="utf-8",
+        )
+
+        assert check_merge_authority_transfer_fixtures(tmp_path) == []
+
+
+def test_merge_authority_transfer_rejects_mislabeled_hold_removal(
+    tmp_path: Path,
+) -> None:
+    """Verify active hold wording cannot be recorded as a withdrawal.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
+    path = tmp_path / MERGE_AUTHORITY_TRANSFER_FIXTURE_PATH
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        json.dumps(
+            {
+                "cases": [
+                    {
+                        "name": "mislabeled removal",
+                        "default_merge_authority": True,
+                        "instructions": [
+                            {
+                                "text": "Implement the change, but do not merge.",
+                                "remove_holds": ["do not merge"],
+                            }
+                        ],
+                        "generated": "Continue through guarded squash merge.",
+                        "expected_holds": [],
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    findings = check_merge_authority_transfer_fixtures(tmp_path)
+
+    assert len(findings) == 1
+    assert findings[0].message == (
+        "merge authority fixture mislabeled removal instruction 1 hold operations "
+        "do not match its text"
+    )
+
+
+def test_merge_authority_transfer_normalizes_equivalent_hold_wording(
+    tmp_path: Path,
+) -> None:
+    """Verify a common equivalent spelling retains the explicit hold.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
+    path = tmp_path / MERGE_AUTHORITY_TRANSFER_FIXTURE_PATH
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        json.dumps(
+            {
+                "cases": [
+                    {
+                        "name": "equivalent hold",
+                        "default_merge_authority": True,
+                        "instructions": [
+                            {
+                                "text": "Implement the change, but please don't merge.",
+                                "add_holds": ["do not merge"],
+                            }
+                        ],
+                        "generated": "Preserve the instruction: do not merge.",
+                        "expected_holds": ["do not merge"],
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    assert check_merge_authority_transfer_fixtures(tmp_path) == []
+
+
+def test_merge_authority_transfer_rejects_negated_default_authority(
+    tmp_path: Path,
+) -> None:
+    """Verify a negated merge marker cannot satisfy default authority.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
+    path = tmp_path / MERGE_AUTHORITY_TRANSFER_FIXTURE_PATH
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        json.dumps(
+            {
+                "cases": [
+                    {
+                        "name": "negated default authority",
+                        "default_merge_authority": True,
+                        "instructions": [{"text": "Implement the issue completely."}],
+                        "generated": "Do not carry the task through guarded merge.",
+                        "expected_holds": [],
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    findings = check_merge_authority_transfer_fixtures(tmp_path)
+
+    assert len(findings) == 1
+    assert findings[0].message == (
+        "merge authority fixture negated default authority omits affirmative "
+        "default authority"
+    )
+
+
+def test_merge_authority_transfer_rejects_trailing_default_authority_negation(
+    tmp_path: Path,
+) -> None:
+    """Verify a negation after the merge marker cannot satisfy authority.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
+    path = tmp_path / MERGE_AUTHORITY_TRANSFER_FIXTURE_PATH
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        json.dumps(
+            {
+                "cases": [
+                    {
+                        "name": "trailing default authority negation",
+                        "default_merge_authority": True,
+                        "instructions": [{"text": "Implement the issue completely."}],
+                        "generated": (
+                            "Default merge authority does not apply to this task."
+                        ),
+                        "expected_holds": [],
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    findings = check_merge_authority_transfer_fixtures(tmp_path)
+
+    assert len(findings) == 1
+    assert findings[0].message == (
+        "merge authority fixture trailing default authority negation omits "
+        "affirmative default authority"
+    )
+
+
+def test_merge_authority_transfer_rejects_lexical_authority_prohibitions(
+    tmp_path: Path,
+) -> None:
+    """Verify lexical prohibitions cannot satisfy affirmative merge authority.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
+    for adjective in ("forbidden", "disallowed", "prohibited"):
+        case_root = tmp_path / adjective
+        path = case_root / MERGE_AUTHORITY_TRANSFER_FIXTURE_PATH
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(
+            json.dumps(
+                {
+                    "cases": [
+                        {
+                            "name": f"merge {adjective}",
+                            "default_merge_authority": True,
+                            "instructions": [{"text": "Implement the issue."}],
+                            "generated": f"Guarded squash merge is {adjective}.",
+                            "expected_holds": [],
+                        }
+                    ]
+                }
+            ),
+            encoding="utf-8",
+        )
+
+        findings = check_merge_authority_transfer_fixtures(case_root)
+
+        assert len(findings) == 1
+        assert findings[0].message == (
+            f"merge authority fixture merge {adjective} omits affirmative "
+            "default authority"
+        )
+
+
+def test_merge_authority_transfer_rejects_lexical_authority_denials(
+    tmp_path: Path,
+) -> None:
+    """Verify direct lexical denials cannot satisfy affirmative authority.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
+    generated_prompts = (
+        "This task lacks default merge authority.",
+        "This task has no default merge authority.",
+    )
+    for index, generated in enumerate(generated_prompts):
+        case_root = tmp_path / str(index)
+        path = case_root / MERGE_AUTHORITY_TRANSFER_FIXTURE_PATH
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(
+            json.dumps(
+                {
+                    "cases": [
+                        {
+                            "name": f"authority denial {index}",
+                            "default_merge_authority": True,
+                            "instructions": [{"text": "Implement the issue."}],
+                            "generated": generated,
+                            "expected_holds": [],
+                        }
+                    ]
+                }
+            ),
+            encoding="utf-8",
+        )
+
+        findings = check_merge_authority_transfer_fixtures(case_root)
+
+        assert len(findings) == 1
+        assert findings[0].message == (
+            f"merge authority fixture authority denial {index} omits affirmative "
+            "default authority"
+        )
+
+
+def test_merge_authority_transfer_rejects_nonoperational_authority_mentions(
+    tmp_path: Path,
+) -> None:
+    """Verify policy documentation text is not an operational merge instruction.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
+    path = tmp_path / MERGE_AUTHORITY_TRANSFER_FIXTURE_PATH
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        json.dumps(
+            {
+                "cases": [
+                    {
+                        "name": "authority policy mention",
+                        "default_merge_authority": True,
+                        "instructions": [{"text": "Implement the issue."}],
+                        "generated": "Document the default merge authority policy.",
+                        "expected_holds": [],
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    findings = check_merge_authority_transfer_fixtures(tmp_path)
+
+    assert len(findings) == 1
+    assert findings[0].message == (
+        "merge authority fixture authority policy mention omits affirmative default "
+        "authority"
+    )
+
+
+def test_merge_authority_transfer_rejects_documented_guarded_merge_mentions(
+    tmp_path: Path,
+) -> None:
+    """Verify documentation subjects are not operational guarded-merge actions.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
+    path = tmp_path / MERGE_AUTHORITY_TRANSFER_FIXTURE_PATH
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        json.dumps(
+            {
+                "cases": [
+                    {
+                        "name": "document guarded merge",
+                        "default_merge_authority": True,
+                        "instructions": [{"text": "Implement the issue."}],
+                        "generated": "Document how to complete the guarded merge.",
+                        "expected_holds": [],
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    findings = check_merge_authority_transfer_fixtures(tmp_path)
+
+    assert len(findings) == 1
+    assert findings[0].message == (
+        "merge authority fixture document guarded merge omits affirmative default "
+        "authority"
+    )
+
+
+def test_merge_authority_transfer_rejects_test_subject_merge_mentions(
+    tmp_path: Path,
+) -> None:
+    """Verify test-subject wording is not an operational merge action.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
+    path = tmp_path / MERGE_AUTHORITY_TRANSFER_FIXTURE_PATH
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        json.dumps(
+            {
+                "cases": [
+                    {
+                        "name": "test guarded merge prompt",
+                        "default_merge_authority": True,
+                        "instructions": [{"text": "Implement the issue."}],
+                        "generated": "Test detection of guarded squash merge prompts.",
+                        "expected_holds": [],
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    findings = check_merge_authority_transfer_fixtures(tmp_path)
+
+    assert len(findings) == 1
+    assert findings[0].message == (
+        "merge authority fixture test guarded merge prompt omits affirmative default "
+        "authority"
+    )
+
+
+def test_merge_authority_transfer_rejects_second_instruction_condition(
+    tmp_path: Path,
+) -> None:
+    """Verify guarded merge cannot be conditioned on a second instruction.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
+    generated_prompts = (
+        "Perform the guarded squash merge only after receiving a second merge "
+        "instruction.",
+        "Only after another merge instruction, perform the guarded squash merge.",
+    )
+    for index, generated in enumerate(generated_prompts, start=1):
+        path = tmp_path / MERGE_AUTHORITY_TRANSFER_FIXTURE_PATH
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(
+            json.dumps(
+                {
+                    "cases": [
+                        {
+                            "name": f"second instruction condition {index}",
+                            "default_merge_authority": True,
+                            "instructions": [
+                                {"text": "Implement the issue completely."}
+                            ],
+                            "generated": generated,
+                            "expected_holds": [],
+                        }
+                    ]
+                }
+            ),
+            encoding="utf-8",
+        )
+
+        findings = check_merge_authority_transfer_fixtures(tmp_path)
+
+        assert len(findings) == 1
+        assert findings[0].message == (
+            f"merge authority fixture second instruction condition {index} omits "
+            "affirmative default authority"
+        )
+
+
+def test_merge_authority_transfer_rejects_ambiguous_generated_hold_direction(
+    tmp_path: Path,
+) -> None:
+    """Verify generated text cannot both withdraw and add the same hold.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
+    path = tmp_path / MERGE_AUTHORITY_TRANSFER_FIXTURE_PATH
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        json.dumps(
+            {
+                "cases": [
+                    {
+                        "name": "ambiguous generated direction",
+                        "default_merge_authority": True,
+                        "instructions": [{"text": "Implement the issue completely."}],
+                        "generated": (
+                            "The earlier do not merge hold is withdrawn. Do not merge. "
+                            "Continue through guarded squash merge."
+                        ),
+                        "expected_holds": [],
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    findings = check_merge_authority_transfer_fixtures(tmp_path)
+
+    assert len(findings) == 1
+    assert findings[0].message == (
+        "merge authority fixture ambiguous generated direction has ambiguous "
+        "generated hold direction: do not merge"
+    )
+
+
+def test_merge_authority_transfer_matches_each_hold_direction(
+    tmp_path: Path,
+) -> None:
+    """Verify mixed additions and withdrawals cannot be reversed.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
+    path = tmp_path / MERGE_AUTHORITY_TRANSFER_FIXTURE_PATH
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        json.dumps(
+            {
+                "cases": [
+                    {
+                        "name": "reversed mixed directions",
+                        "default_merge_authority": True,
+                        "instructions": [
+                            {
+                                "text": (
+                                    "Implement the change; the do not merge instruction "
+                                    "is withdrawn; "
+                                    "wait for approval."
+                                ),
+                                "add_holds": ["do not merge"],
+                                "remove_holds": ["wait for approval"],
+                            }
+                        ],
+                        "generated": "Do not merge.",
+                        "expected_holds": ["do not merge"],
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    findings = check_merge_authority_transfer_fixtures(tmp_path)
+
+    assert len(findings) == 1
+    assert findings[0].message == (
+        "merge authority fixture reversed mixed directions instruction 1 hold "
+        "operations do not match its text"
+    )
+
+
+def test_merge_authority_transfer_binds_withdrawal_to_matching_hold(
+    tmp_path: Path,
+) -> None:
+    """Verify one hold's withdrawal does not reverse another hold.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
+    path = tmp_path / MERGE_AUTHORITY_TRANSFER_FIXTURE_PATH
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        json.dumps(
+            {
+                "cases": [
+                    {
+                        "name": "bound hold withdrawal",
+                        "default_merge_authority": True,
+                        "instructions": [
+                            {
+                                "text": (
+                                    "Implement the change. The do not merge instruction "
+                                    "is withdrawn, but "
+                                    "wait for approval."
+                                ),
+                                "add_holds": ["wait for approval"],
+                                "remove_holds": ["do not merge"],
+                            }
+                        ],
+                        "generated": "Wait for approval before merging.",
+                        "expected_holds": ["wait for approval"],
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    assert check_merge_authority_transfer_fixtures(tmp_path) == []
+
+
+def test_merge_authority_transfer_binds_comma_separated_hold_withdrawal(
+    tmp_path: Path,
+) -> None:
+    """Verify comma-separated withdrawal does not reverse a later hold.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
+    path = tmp_path / MERGE_AUTHORITY_TRANSFER_FIXTURE_PATH
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        json.dumps(
+            {
+                "cases": [
+                    {
+                        "name": "comma-bound withdrawal",
+                        "default_merge_authority": True,
+                        "instructions": [
+                            {
+                                "text": (
+                                    "Withdraw the wait for approval requirement, keep "
+                                    "the pull request open."
+                                ),
+                                "remove_holds": ["wait for approval", "leave open"],
+                            }
+                        ],
+                        "generated": "Continue through guarded squash merge.",
+                        "expected_holds": [],
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    findings = check_merge_authority_transfer_fixtures(tmp_path)
+
+    assert len(findings) == 1
+    assert findings[0].message == (
+        "merge authority fixture comma-bound withdrawal instruction 1 hold "
+        "operations do not match its text"
+    )
+
+
+def test_merge_authority_transfer_applies_same_instruction_scope_transition(
+    tmp_path: Path,
+) -> None:
+    """Verify a later clause can restore implementation authority.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
+    path = tmp_path / MERGE_AUTHORITY_TRANSFER_FIXTURE_PATH
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        json.dumps(
+            {
+                "cases": [
+                    {
+                        "name": "same instruction scope transition",
+                        "default_merge_authority": False,
+                        "instructions": [
+                            {
+                                "text": (
+                                    "This is no longer review-only; implement issue "
+                                    "#602 completely."
+                                )
+                            }
+                        ],
+                        "generated": "Only report the findings.",
+                        "expected_holds": [],
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    findings = check_merge_authority_transfer_fixtures(tmp_path)
+
+    assert len(findings) == 1
+    assert findings[0].message == (
+        "merge authority fixture same instruction scope transition declared "
+        "default authority does not match its source instructions"
+    )
+
+
+def test_merge_authority_transfer_rejects_negated_hold_withdrawal(
+    tmp_path: Path,
+) -> None:
+    """Verify negating a withdrawal leaves the explicit hold active.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
+    path = tmp_path / MERGE_AUTHORITY_TRANSFER_FIXTURE_PATH
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        json.dumps(
+            {
+                "cases": [
+                    {
+                        "name": "negated hold withdrawal",
+                        "default_merge_authority": True,
+                        "instructions": [
+                            {
+                                "text": (
+                                    "Implement the change. The do not merge hold is not "
+                                    "withdrawn."
+                                ),
+                                "remove_holds": ["do not merge"],
+                            }
+                        ],
+                        "generated": "Continue through guarded squash merge.",
+                        "expected_holds": [],
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    findings = check_merge_authority_transfer_fixtures(tmp_path)
+
+    assert len(findings) == 1
+    assert findings[0].message == (
+        "merge authority fixture negated hold withdrawal instruction 1 hold "
+        "operations do not match its text"
+    )
+
+
+def test_merge_authority_transfer_rejects_passively_negated_withdrawal(
+    tmp_path: Path,
+) -> None:
+    """Verify passive negation cannot withdraw an explicit hold.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
+    path = tmp_path / MERGE_AUTHORITY_TRANSFER_FIXTURE_PATH
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        json.dumps(
+            {
+                "cases": [
+                    {
+                        "name": "passively negated hold withdrawal",
+                        "default_merge_authority": True,
+                        "instructions": [
+                            {
+                                "text": (
+                                    "Implement the change. The do not merge instruction "
+                                    "has not been withdrawn."
+                                ),
+                                "remove_holds": ["do not merge"],
+                            }
+                        ],
+                        "generated": "Continue through guarded squash merge.",
+                        "expected_holds": [],
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    findings = check_merge_authority_transfer_fixtures(tmp_path)
+
+    assert len(findings) == 1
+    assert findings[0].message == (
+        "merge authority fixture passively negated hold withdrawal instruction 1 "
+        "hold operations do not match its text"
+    )
+
+
+def test_merge_authority_transfer_rejects_modal_negated_withdrawal(
+    tmp_path: Path,
+) -> None:
+    """Verify cannot-be wording leaves an explicit hold active.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
+    path = tmp_path / MERGE_AUTHORITY_TRANSFER_FIXTURE_PATH
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        json.dumps(
+            {
+                "cases": [
+                    {
+                        "name": "modal negated hold withdrawal",
+                        "default_merge_authority": True,
+                        "instructions": [
+                            {
+                                "text": (
+                                    "Implement the change. The do not merge hold cannot "
+                                    "be withdrawn."
+                                ),
+                                "remove_holds": ["do not merge"],
+                            }
+                        ],
+                        "generated": "Continue through guarded squash merge.",
+                        "expected_holds": [],
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    findings = check_merge_authority_transfer_fixtures(tmp_path)
+
+    assert len(findings) == 1
+    assert findings[0].message == (
+        "merge authority fixture modal negated hold withdrawal instruction 1 hold "
+        "operations do not match its text"
+    )
+
+
+def test_merge_authority_transfer_rejects_noncurrent_hold_withdrawals(
+    tmp_path: Path,
+) -> None:
+    """Verify future and conditional statements cannot withdraw a hold.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
+    statements = (
+        "The do not merge hold will be withdrawn tomorrow.",
+        "Do not merge unless the hold is withdrawn.",
+        "The do not merge hold is withdrawn only after CI succeeds.",
+    )
+    for index, statement in enumerate(statements):
+        case_root = tmp_path / str(index)
+        path = case_root / MERGE_AUTHORITY_TRANSFER_FIXTURE_PATH
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(
+            json.dumps(
+                {
+                    "cases": [
+                        {
+                            "name": f"noncurrent withdrawal {index}",
+                            "default_merge_authority": True,
+                            "instructions": [
+                                {
+                                    "text": f"Implement the change. {statement}",
+                                    "remove_holds": ["do not merge"],
+                                }
+                            ],
+                            "generated": "Continue through guarded squash merge.",
+                            "expected_holds": [],
+                        }
+                    ]
+                }
+            ),
+            encoding="utf-8",
+        )
+
+        findings = check_merge_authority_transfer_fixtures(case_root)
+
+        assert len(findings) == 1
+        assert findings[0].message == (
+            f"merge authority fixture noncurrent withdrawal {index} instruction 1 "
+            "hold operations do not match its text"
+        )
+
+
+def test_merge_authority_transfer_applies_leading_only_review_transition(
+    tmp_path: Path,
+) -> None:
+    """Verify a later leading-only review instruction removes eligibility.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
+    path = tmp_path / MERGE_AUTHORITY_TRANSFER_FIXTURE_PATH
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        json.dumps(
+            {
+                "cases": [
+                    {
+                        "name": "leading only review",
+                        "default_merge_authority": True,
+                        "instructions": [
+                            {"text": "Implement issue #602 completely."},
+                            {"text": "Only review the pull request now."},
+                        ],
+                        "generated": "Continue through guarded squash merge.",
+                        "expected_holds": [],
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    findings = check_merge_authority_transfer_fixtures(tmp_path)
+
+    assert len(findings) == 1
+    assert findings[0].message == (
+        "merge authority fixture leading only review declared default authority "
+        "does not match its source instructions"
+    )
+
+
+def test_merge_authority_transfer_excludes_review_object_markers(
+    tmp_path: Path,
+) -> None:
+    """Verify a reviewed implementation noun does not restore task authority.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
+    path = tmp_path / MERGE_AUTHORITY_TRANSFER_FIXTURE_PATH
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        json.dumps(
+            {
+                "cases": [
+                    {
+                        "name": "review implementation object",
+                        "default_merge_authority": True,
+                        "instructions": [{"text": "Only review the implementation."}],
+                        "generated": "Continue through guarded squash merge.",
+                        "expected_holds": [],
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    findings = check_merge_authority_transfer_fixtures(tmp_path)
+
+    assert len(findings) == 1
+    assert findings[0].message == (
+        "merge authority fixture review implementation object declared default "
+        "authority does not match its source instructions"
+    )
+
+
+def test_merge_authority_transfer_excludes_direct_review_requests(
+    tmp_path: Path,
+) -> None:
+    """Verify reviewing an implementation does not grant implementation authority.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
+    path = tmp_path / MERGE_AUTHORITY_TRANSFER_FIXTURE_PATH
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        json.dumps(
+            {
+                "cases": [
+                    {
+                        "name": "direct implementation review",
+                        "default_merge_authority": True,
+                        "instructions": [
+                            {"text": "Review the implementation and report findings."}
+                        ],
+                        "generated": "Continue through guarded squash merge.",
+                        "expected_holds": [],
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    findings = check_merge_authority_transfer_fixtures(tmp_path)
+
+    assert len(findings) == 1
+    assert findings[0].message == (
+        "merge authority fixture direct implementation review declared default "
+        "authority does not match its source instructions"
+    )
+
+
+def test_merge_authority_transfer_excludes_audit_only_requests(
+    tmp_path: Path,
+) -> None:
+    """Verify auditing an implementation does not grant implementation authority.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
+    path = tmp_path / MERGE_AUTHORITY_TRANSFER_FIXTURE_PATH
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        json.dumps(
+            {
+                "cases": [
+                    {
+                        "name": "audit implementation",
+                        "default_merge_authority": True,
+                        "instructions": [
+                            {
+                                "text": (
+                                    "Audit the implementation and report findings."
+                                )
+                            }
+                        ],
+                        "generated": "Continue through guarded squash merge.",
+                        "expected_holds": [],
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    findings = check_merge_authority_transfer_fixtures(tmp_path)
+
+    assert len(findings) == 1
+    assert findings[0].message == (
+        "merge authority fixture audit implementation declared default authority "
+        "does not match its source instructions"
+    )
+
+
+def test_merge_authority_transfer_keeps_review_after_negated_work_ineligible(
+    tmp_path: Path,
+) -> None:
+    """Verify negated work does not suppress a later review-only exclusion.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
+    path = tmp_path / MERGE_AUTHORITY_TRANSFER_FIXTURE_PATH
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        json.dumps(
+            {
+                "cases": [
+                    {
+                        "name": "negated implementation review",
+                        "default_merge_authority": True,
+                        "instructions": [
+                            {
+                                "text": (
+                                    "Do not implement anything; review the "
+                                    "implementation and report findings."
+                                )
+                            }
+                        ],
+                        "generated": "Continue through guarded squash merge.",
+                        "expected_holds": [],
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    findings = check_merge_authority_transfer_fixtures(tmp_path)
+
+    assert len(findings) == 1
+    assert findings[0].message == (
+        "merge authority fixture negated implementation review declared default "
+        "authority does not match its source instructions"
+    )
+
+
+def test_merge_authority_transfer_keeps_implementation_before_review_eligible(
+    tmp_path: Path,
+) -> None:
+    """Verify a review step does not erase earlier implementation scope.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
+    path = tmp_path / MERGE_AUTHORITY_TRANSFER_FIXTURE_PATH
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        json.dumps(
+            {
+                "cases": [
+                    {
+                        "name": "implementation then review",
+                        "default_merge_authority": False,
+                        "instructions": [
+                            {
+                                "text": (
+                                    "Implement issue #602, then review the "
+                                    "implementation."
+                                )
+                            }
+                        ],
+                        "generated": "Complete the implementation and review it.",
+                        "expected_holds": [],
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    findings = check_merge_authority_transfer_fixtures(tmp_path)
+
+    assert len(findings) == 1
+    assert findings[0].message == (
+        "merge authority fixture implementation then review declared default authority "
+        "does not match its source instructions"
+    )
+
+
+def test_merge_authority_transfer_rejects_open_as_draft_eligibility(
+    tmp_path: Path,
+) -> None:
+    """Verify opening a pull request as a draft remains ineligible.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
+    path = tmp_path / MERGE_AUTHORITY_TRANSFER_FIXTURE_PATH
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        json.dumps(
+            {
+                "cases": [
+                    {
+                        "name": "open as draft",
+                        "default_merge_authority": True,
+                        "instructions": [
+                            {
+                                "text": (
+                                    "Deliver the change by opening the pull request as "
+                                    "a draft."
+                                )
+                            }
+                        ],
+                        "generated": "Continue through guarded squash merge.",
+                        "expected_holds": [],
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    findings = check_merge_authority_transfer_fixtures(tmp_path)
+
+    assert len(findings) == 1
+    assert findings[0].message == (
+        "merge authority fixture open as draft declared default authority does not "
+        "match its source instructions"
+    )
+
+
+def test_merge_authority_transfer_keeps_draft_feature_work_eligible(
+    tmp_path: Path,
+) -> None:
+    """Verify feature wording about draft pull requests remains implementation work.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
+    path = tmp_path / MERGE_AUTHORITY_TRANSFER_FIXTURE_PATH
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        json.dumps(
+            {
+                "cases": [
+                    {
+                        "name": "draft feature declared ineligible",
+                        "default_merge_authority": False,
+                        "instructions": [
+                            {"text": "Implement support for draft pull requests."}
+                        ],
+                        "generated": "Describe the requested feature.",
+                        "expected_holds": [],
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    findings = check_merge_authority_transfer_fixtures(tmp_path)
+
+    assert len(findings) == 1
+    assert findings[0].message == (
+        "merge authority fixture draft feature declared ineligible declared default "
+        "authority does not match its source instructions"
+    )
+
+
+def test_merge_authority_transfer_keeps_fork_feature_work_eligible(
+    tmp_path: Path,
+) -> None:
+    """Verify fork-PR feature wording remains ordinary implementation work.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
+    path = tmp_path / MERGE_AUTHORITY_TRANSFER_FIXTURE_PATH
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        json.dumps(
+            {
+                "cases": [
+                    {
+                        "name": "fork feature declared ineligible",
+                        "default_merge_authority": False,
+                        "instructions": [
+                            {"text": "Implement support for fork pull requests."}
+                        ],
+                        "generated": "Describe the requested feature.",
+                        "expected_holds": [],
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    findings = check_merge_authority_transfer_fixtures(tmp_path)
+
+    assert len(findings) == 1
+    assert findings[0].message == (
+        "merge authority fixture fork feature declared ineligible declared default "
+        "authority does not match its source instructions"
+    )
+
+
+def test_merge_authority_transfer_rejects_explicit_no_change_eligibility(
+    tmp_path: Path,
+) -> None:
+    """Verify a no-change instruction cannot create implementation authority.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
+    path = tmp_path / MERGE_AUTHORITY_TRANSFER_FIXTURE_PATH
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        json.dumps(
+            {
+                "cases": [
+                    {
+                        "name": "explicit no change",
+                        "default_merge_authority": True,
+                        "instructions": [
+                            {
+                                "text": (
+                                    "Do not implement any changes; only explain the "
+                                    "failure."
+                                )
+                            }
+                        ],
+                        "generated": "Continue through guarded squash merge.",
+                        "expected_holds": [],
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    findings = check_merge_authority_transfer_fixtures(tmp_path)
+
+    assert len(findings) == 1
+    assert findings[0].message == (
+        "merge authority fixture explicit no change declared default authority "
+        "does not match its source instructions"
+    )
+
+
+def test_merge_authority_transfer_rejects_negated_authority_verbs(
+    tmp_path: Path,
+) -> None:
+    """Verify negated work verbs cannot create implementation authority.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
+    for verb in ("fix", "resolve", "solve", "deliver"):
+        case_root = tmp_path / verb
+        path = case_root / MERGE_AUTHORITY_TRANSFER_FIXTURE_PATH
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(
+            json.dumps(
+                {
+                    "cases": [
+                        {
+                            "name": f"negated {verb}",
+                            "default_merge_authority": True,
+                            "instructions": [
+                                {
+                                    "text": (
+                                        f"Do not {verb} issue #602; only explain the "
+                                        "failure."
+                                    )
+                                }
+                            ],
+                            "generated": "Continue through guarded squash merge.",
+                            "expected_holds": [],
+                        }
+                    ]
+                }
+            ),
+            encoding="utf-8",
+        )
+
+        findings = check_merge_authority_transfer_fixtures(case_root)
+
+        assert len(findings) == 1
+        assert findings[0].message == (
+            f"merge authority fixture negated {verb} declared default authority "
+            "does not match its source instructions"
+        )
+
+
+def test_merge_authority_transfer_preserves_coordinated_work_negation(
+    tmp_path: Path,
+) -> None:
+    """Verify one negation remains scoped across a coordinated work-verb list.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
+    path = tmp_path / MERGE_AUTHORITY_TRANSFER_FIXTURE_PATH
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        json.dumps(
+            {
+                "cases": [
+                    {
+                        "name": "coordinated negated work",
+                        "default_merge_authority": True,
+                        "instructions": [
+                            {
+                                "text": (
+                                    "Do not implement, fix, or deliver any changes; "
+                                    "only explain the failure."
+                                )
+                            }
+                        ],
+                        "generated": "Continue through guarded squash merge.",
+                        "expected_holds": [],
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    findings = check_merge_authority_transfer_fixtures(tmp_path)
+
+    assert len(findings) == 1
+    assert findings[0].message == (
+        "merge authority fixture coordinated negated work declared default authority "
+        "does not match its source instructions"
+    )
+
+
+def test_merge_authority_transfer_keeps_implementation_constraints_eligible(
+    tmp_path: Path,
+) -> None:
+    """Verify a dependency constraint does not turn implementation into no-work.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
+    path = tmp_path / MERGE_AUTHORITY_TRANSFER_FIXTURE_PATH
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        json.dumps(
+            {
+                "cases": [
+                    {
+                        "name": "implementation constraint",
+                        "default_merge_authority": False,
+                        "instructions": [
+                            {"text": "Implement issue #602 without adding dependencies."}
+                        ],
+                        "generated": "Implement without adding dependencies.",
+                        "expected_holds": [],
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    findings = check_merge_authority_transfer_fixtures(tmp_path)
+
+    assert len(findings) == 1
+    assert findings[0].message == (
+        "merge authority fixture implementation constraint declared default authority "
+        "does not match its source instructions"
+    )
+
+
+def test_merge_authority_transfer_rejects_invented_approval_condition(
+    tmp_path: Path,
+) -> None:
+    """Verify generated prompts cannot invent approval-before-merge gates.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
+    path = tmp_path / MERGE_AUTHORITY_TRANSFER_FIXTURE_PATH
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        json.dumps(
+            {
+                "cases": [
+                    {
+                        "name": "invented approval condition",
+                        "default_merge_authority": True,
+                        "instructions": [{"text": "Implement issue #602 completely."}],
+                        "generated": (
+                            "Perform the guarded squash merge only after maintainer "
+                            "approval."
+                        ),
+                        "expected_holds": [],
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    findings = check_merge_authority_transfer_fixtures(tmp_path)
+
+    assert len(findings) == 1
+    assert findings[0].message == (
+        "merge authority fixture invented approval condition invents a hold: "
+        "wait for approval"
+    )
+
+
+def test_merge_authority_transfer_rejects_invented_approval_qualifier(
+    tmp_path: Path,
+) -> None:
+    """Verify generated prompts cannot invent approval-qualified merges.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
+    path = tmp_path / MERGE_AUTHORITY_TRANSFER_FIXTURE_PATH
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        json.dumps(
+            {
+                "cases": [
+                    {
+                        "name": "invented approval qualifier",
+                        "default_merge_authority": True,
+                        "instructions": [{"text": "Update issue #602 completely."}],
+                        "generated": (
+                            "Perform the guarded squash merge only with maintainer "
+                            "approval."
+                        ),
+                        "expected_holds": [],
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    findings = check_merge_authority_transfer_fixtures(tmp_path)
+
+    assert len(findings) == 1
+    assert findings[0].message == (
+        "merge authority fixture invented approval qualifier invents a hold: "
+        "wait for approval"
+    )
+
+
+def test_merge_authority_transfer_requires_authority_for_existing_pr_work(
+    tmp_path: Path,
+) -> None:
+    """Verify explicit existing ordinary PR work grants default authority.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
+    path = tmp_path / MERGE_AUTHORITY_TRANSFER_FIXTURE_PATH
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        json.dumps(
+            {
+                "cases": [
+                    {
+                        "name": "existing ordinary PR work",
+                        "default_merge_authority": False,
+                        "instructions": [
+                            {
+                                "text": (
+                                    "Work on existing ordinary PR #620 and address its "
+                                    "review feedback."
+                                )
+                            }
+                        ],
+                        "generated": "Address the review feedback and leave the PR open.",
+                        "expected_holds": [],
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    findings = check_merge_authority_transfer_fixtures(tmp_path)
+
+    assert len(findings) == 1
+    assert findings[0].message == (
+        "merge authority fixture existing ordinary PR work declared default authority "
+        "does not match its source instructions"
+    )
+
+
+def test_merge_authority_transfer_requires_authority_for_existing_pr_feedback(
+    tmp_path: Path,
+) -> None:
+    """Verify direct existing-PR feedback work grants default authority.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
+    path = tmp_path / MERGE_AUTHORITY_TRANSFER_FIXTURE_PATH
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        json.dumps(
+            {
+                "cases": [
+                    {
+                        "name": "existing PR feedback",
+                        "default_merge_authority": False,
+                        "instructions": [
+                            {
+                                "text": (
+                                    "Address review feedback on existing ordinary PR "
+                                    "#620."
+                                )
+                            }
+                        ],
+                        "generated": "Address the requested feedback.",
+                        "expected_holds": [],
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    findings = check_merge_authority_transfer_fixtures(tmp_path)
+
+    assert len(findings) == 1
+    assert findings[0].message == (
+        "merge authority fixture existing PR feedback declared default authority "
+        "does not match its source instructions"
+    )
+
+
+def test_merge_authority_transfer_requires_authority_for_update_requests(
+    tmp_path: Path,
+) -> None:
+    """Verify ordinary update requests grant default merge authority.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
+    path = tmp_path / MERGE_AUTHORITY_TRANSFER_FIXTURE_PATH
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        json.dumps(
+            {
+                "cases": [
+                    {
+                        "name": "ordinary update",
+                        "default_merge_authority": False,
+                        "instructions": [
+                            {"text": "Update the documentation for issue #602."}
+                        ],
+                        "generated": "Stop after updating the documentation.",
+                        "expected_holds": [],
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    findings = check_merge_authority_transfer_fixtures(tmp_path)
+
+    assert len(findings) == 1
+    assert findings[0].message == (
+        "merge authority fixture ordinary update declared default authority does not "
+        "match its source instructions"
+    )
+
+
+def test_merge_authority_transfer_requires_authority_for_patch_requests(
+    tmp_path: Path,
+) -> None:
+    """Verify ordinary patch requests grant default merge authority.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
+    path = tmp_path / MERGE_AUTHORITY_TRANSFER_FIXTURE_PATH
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        json.dumps(
+            {
+                "cases": [
+                    {
+                        "name": "ordinary patch",
+                        "default_merge_authority": False,
+                        "instructions": [{"text": "Patch issue #602 completely."}],
+                        "generated": "Stop after applying the patch.",
+                        "expected_holds": [],
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    findings = check_merge_authority_transfer_fixtures(tmp_path)
+
+    assert len(findings) == 1
+    assert findings[0].message == (
+        "merge authority fixture ordinary patch declared default authority does not "
+        "match its source instructions"
+    )
+
+
+def test_merge_authority_transfer_distinguishes_auto_merge_choice(
+    tmp_path: Path,
+) -> None:
+    """Verify disabling auto-merge retains guarded manual merge authority.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
+    path = tmp_path / MERGE_AUTHORITY_TRANSFER_FIXTURE_PATH
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        json.dumps(
+            {
+                "cases": [
+                    {
+                        "name": "manual merge only",
+                        "default_merge_authority": True,
+                        "instructions": [
+                            {
+                                "text": (
+                                    "Do not merge automatically; perform the guarded "
+                                    "squash merge after every gate passes."
+                                )
+                            }
+                        ],
+                        "generated": (
+                            "Keep auto-merge disabled and perform the guarded squash "
+                            "merge after every gate passes."
+                        ),
+                        "expected_holds": [],
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    assert check_merge_authority_transfer_fixtures(tmp_path) == []
+
+
+def test_merge_authority_transfer_rejects_default_authority_for_ineligible_task(
+    tmp_path: Path,
+) -> None:
+    """Verify review-only work cannot gain default merge authority.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
+    path = tmp_path / MERGE_AUTHORITY_TRANSFER_FIXTURE_PATH
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        json.dumps(
+            {
+                "cases": [
+                    {
+                        "name": "review-only generated merge",
+                        "default_merge_authority": False,
+                        "instructions": [
+                            {"text": "Review the pull request and report findings only."}
+                        ],
+                        "generated": (
+                            "Continue through guarded squash merge when every gate "
+                            "passes."
+                        ),
+                        "expected_holds": [],
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    findings = check_merge_authority_transfer_fixtures(tmp_path)
+
+    assert len(findings) == 1
+    assert findings[0].message == (
+        "merge authority fixture review-only generated merge asserts default "
+        "authority for an ineligible task"
+    )
+
+
+def test_merge_authority_transfer_validates_declared_source_eligibility(
+    tmp_path: Path,
+) -> None:
+    """Verify fixture eligibility agrees with current source instructions.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
+    cases = (
+        (
+            "review-only declared eligible",
+            True,
+            "Review the pull request and report findings only.",
+        ),
+        (
+            "implementation declared ineligible",
+            False,
+            "Implement the issue completely and deliver its pull request.",
+        ),
+        (
+            "fix declared ineligible",
+            False,
+            "Fix issue #602 completely.",
+        ),
+        (
+            "implementation noun declared ineligible",
+            False,
+            "Complete the implementation for issue #602.",
+        ),
+        (
+            "pull-request delivery declared ineligible",
+            False,
+            "Perform pull-request delivery for issue #602.",
+        ),
+        (
+            "diagnostic resolve declared eligible",
+            True,
+            "Investigate how to resolve issue #602 without making changes.",
+        ),
+    )
+
+    for name, declared_authority, instruction in cases:
+        path = tmp_path / MERGE_AUTHORITY_TRANSFER_FIXTURE_PATH
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(
+            json.dumps(
+                {
+                    "cases": [
+                        {
+                            "name": name,
+                            "default_merge_authority": declared_authority,
+                            "instructions": [{"text": instruction}],
+                            "generated": "Continue through guarded squash merge.",
+                            "expected_holds": [],
+                        }
+                    ]
+                }
+            ),
+            encoding="utf-8",
+        )
+
+        findings = check_merge_authority_transfer_fixtures(tmp_path)
+
+        assert len(findings) == 1
+        assert findings[0].message == (
+            f"merge authority fixture {name} declared default authority does not "
+            "match its source instructions"
+        )
+
+
+def test_merge_authority_transfer_applies_eligibility_changes_in_order(
+    tmp_path: Path,
+) -> None:
+    """Verify the latest explicit scope change determines task eligibility.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
+    cases = (
+        {
+            "name": "later implementation scope",
+            "default_merge_authority": True,
+            "instructions": [
+                {"text": "Review the pull request and report findings only."},
+                {"text": "Now implement the issue and deliver its pull request."},
+            ],
+            "generated": "Continue through guarded squash merge.",
+            "expected_holds": [],
+        },
+        {
+            "name": "later review-only scope",
+            "default_merge_authority": False,
+            "instructions": [
+                {"text": "Implement the issue and deliver its pull request."},
+                {"text": "Instead, review the pull request and report findings only."},
+            ],
+            "generated": "Review the pull request and report findings.",
+            "expected_holds": [],
+        },
+    )
+
+    for case in cases:
+        path = tmp_path / MERGE_AUTHORITY_TRANSFER_FIXTURE_PATH
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps({"cases": [case]}), encoding="utf-8")
+
+        assert check_merge_authority_transfer_fixtures(tmp_path) == []
+
+
+def test_merge_authority_transfer_rejects_hold_only_eligibility_transition(
+    tmp_path: Path,
+) -> None:
+    """Verify a hold and its withdrawal cannot create implementation authority.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
+    path = tmp_path / MERGE_AUTHORITY_TRANSFER_FIXTURE_PATH
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        json.dumps(
+            {
+                "cases": [
+                    {
+                        "name": "review-only hold withdrawal",
+                        "default_merge_authority": True,
+                        "instructions": [
+                            {
+                                "text": (
+                                    "Review the pull request and report findings only."
+                                )
+                            },
+                            {
+                                "text": "Do not merge.",
+                                "add_holds": ["do not merge"],
+                            },
+                            {
+                                "text": "The do not merge hold is withdrawn.",
+                                "remove_holds": ["do not merge"],
+                            },
+                        ],
+                        "generated": "Continue through guarded squash merge.",
+                        "expected_holds": [],
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    findings = check_merge_authority_transfer_fixtures(tmp_path)
+
+    assert len(findings) == 1
+    assert findings[0].message == (
+        "merge authority fixture review-only hold withdrawal declared default "
+        "authority does not match its source instructions"
+    )
+
+
+def test_merge_authority_transfer_rejects_wait_hold_eligibility_transition(
+    tmp_path: Path,
+) -> None:
+    """Verify wait-for-approval wording cannot create implementation authority.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
+    path = tmp_path / MERGE_AUTHORITY_TRANSFER_FIXTURE_PATH
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        json.dumps(
+            {
+                "cases": [
+                    {
+                        "name": "review-only wait hold withdrawal",
+                        "default_merge_authority": True,
+                        "instructions": [
+                            {
+                                "text": (
+                                    "Review the pull request and report findings only."
+                                )
+                            },
+                            {
+                                "text": "Wait for approval before merging.",
+                                "add_holds": ["wait for approval"],
+                            },
+                            {
+                                "text": "The wait for approval hold is withdrawn.",
+                                "remove_holds": ["wait for approval"],
+                            },
+                        ],
+                        "generated": "Continue through guarded squash merge.",
+                        "expected_holds": [],
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    findings = check_merge_authority_transfer_fixtures(tmp_path)
+
+    assert len(findings) == 1
+    assert findings[0].message == (
+        "merge authority fixture review-only wait hold withdrawal declared default "
+        "authority does not match its source instructions"
+    )
 
 
 def test_agent_policy_gate_rejects_missing_default_merge_authority_contract(
