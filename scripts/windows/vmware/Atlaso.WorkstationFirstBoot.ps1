@@ -747,13 +747,22 @@ function Invoke-AtlasoBoundedStreamingProcess {
         -ArgumentList $ArgumentList
     $process = $processJob.RootProcess
     $jobCompletionProven = $false
+    $interruptionTerminationProven = $false
     try {
         if (-not $process.WaitForExit($TimeoutSeconds * 1000)) {
-            Stop-AtlasoBoundedProcessTree `
-                -Process $process `
-                -Job $processJob `
-                -TimeoutSeconds $TimeoutSeconds `
-                -Action $Action
+            try {
+                Stop-AtlasoBoundedProcessTree `
+                    -Process $process `
+                    -Job $processJob `
+                    -TimeoutSeconds $TimeoutSeconds `
+                    -Action $Action
+            }
+            catch {
+                if ($_.Exception.Data['AtlasoProcessTreeTerminationProven']) {
+                    $jobCompletionProven = $true
+                }
+                throw
+            }
         }
         Complete-AtlasoBoundedProcessTree `
             -Process $process `
@@ -779,6 +788,7 @@ function Invoke-AtlasoBoundedStreamingProcess {
                     throw 'The bounded root remained active after interruption cleanup.'
                 }
                 $jobCompletionProven = $true
+                $interruptionTerminationProven = $true
             }
         }
         catch {
@@ -792,6 +802,13 @@ function Invoke-AtlasoBoundedStreamingProcess {
         finally {
             $processJob.Dispose()
             $process.Dispose()
+        }
+        if ($interruptionTerminationProven) {
+            $interruptionFailure = [System.InvalidOperationException]::new(
+                "$Action was interrupted after proven whole-process-tree termination."
+            )
+            $interruptionFailure.Data['AtlasoProcessTreeTerminationProven'] = $true
+            throw $interruptionFailure
         }
     }
 }

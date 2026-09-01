@@ -194,9 +194,12 @@ def test_photon_wrapper_preflights_credentials_before_image_mutation() -> None:
     assert "$Job.TerminateAndWait(10000)" in runner
     assert "$Job.CompleteAndWait(10000)" in runner
     assert "$jobCompletionProven = $false" in runner
+    assert "$interruptionTerminationProven = $false" in runner
     assert "if (-not $jobCompletionProven)" in runner
+    assert "if ($interruptionTerminationProven)" in runner
     assert "$processJob.TerminateAndWait(10000)" in runner
     assert "was interrupted and whole-process-tree cleanup could not be proven" in runner
+    assert "was interrupted after proven whole-process-tree termination" in runner
     assert "accounting.ActiveProcesses == 0" in runner
     assert "AtlasoProcessTreeTerminationProven" in runner
     assert "Invoke-AtlasoBoundedStreamingProcess `" in module
