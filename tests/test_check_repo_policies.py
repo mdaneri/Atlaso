@@ -2362,6 +2362,43 @@ def test_agent_policy_gate_rejects_root_resolution_before_primary_checkout(
         )
 
 
+def test_agent_policy_gate_rejects_cleanup_root_in_link_title(
+    tmp_path: Path,
+) -> None:
+    """Cleanup ordering requires a visibly rendered root-resolution marker.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
+    for index, (relative_path, markers) in enumerate(
+        PRIMARY_CHECKOUT_BEFORE_ROOT_MARKERS.items()
+    ):
+        case_root = tmp_path / str(index)
+        write_policy_files(case_root)
+        policy_path = case_root / relative_path
+        primary_marker, root_marker = markers
+        policy_text = policy_path.read_text(encoding="utf-8")
+        hidden_root_marker = (
+            f'[configured root](https://example.invalid "{root_marker}")'
+        )
+        policy_path.write_text(
+            policy_text.replace(
+                f"{primary_marker}\n{root_marker}",
+                f"{primary_marker}\n{hidden_root_marker}",
+            ),
+            encoding="utf-8",
+        )
+
+        findings = check_agent_policy_gate(case_root)
+
+        assert len(findings) == 1
+        assert findings[0].path == policy_path
+        assert findings[0].message == (
+            "completed-task cleanup must identify the primary checkout before "
+            "resolving `git-worktree-root`"
+        )
+
+
 def test_agent_policy_gate_rejects_missing_spark_delegation_policy(
     tmp_path: Path,
 ) -> None:

@@ -3235,9 +3235,10 @@ def check_agent_policy_gate(root: Path) -> list[Finding]:
         primary_root_markers = PRIMARY_CHECKOUT_BEFORE_ROOT_MARKERS.get(relative_path)
         if primary_root_markers is not None and cleanup_section is not None:
             primary_marker, root_marker = primary_root_markers
-            normalized_cleanup_section = " ".join(cleanup_section.split())
+            rendered_cleanup_section = render_markdown_operative_text(cleanup_section)
+            normalized_cleanup_section = " ".join(rendered_cleanup_section.split())
             primary_position = normalized_cleanup_section.find(primary_marker)
-            root_position = normalized_cleanup_section.find(root_marker)
+            root_position = normalized_cleanup_section.find(root_marker.replace("`", ""))
             markers_missing_from_cleanup = (
                 primary_position == -1 or root_position == -1
             )
