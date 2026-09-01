@@ -262,14 +262,14 @@ the repository, task identifier and current title, pull-request number, task-own
 pull-request head SHA, and merge commit SHA. A handoff is evidence to revalidate, never authority to skip a gate.
 
 The primary-checkout controller must wait until the originating task is idle and unpinned, then independently re-fetch
-task, GitHub, and Git worktree state. It must independently read the supported Codex `git-worktree-root` setting at
-cleanup time and fail closed if it cannot resolve one exact safe root; a guessed or fallback path is never ownership
-evidence. It must verify the exact merged pull request and completed post-merge activity,
-then determine remote-branch ownership and local checkout/worktree ownership independently. Require exclusive task
+task, GitHub, and Git worktree state. First identify and verify whether the task uses the repository's primary checkout.
+Only for a non-primary target, independently read the supported Codex `git-worktree-root` setting at cleanup time and
+fail closed if it cannot resolve one exact safe root; a guessed or fallback path is never ownership evidence. It must
+verify the exact merged pull request and completed post-merge activity, then determine remote-branch ownership and local
+checkout/worktree ownership independently. Require exclusive task
 ownership before a destructive step or establish the external ownership required by the corresponding non-destructive
 exception below. Require a closed linked issue for ordinary work or privately revalidate every
-`advisory_cleanup_ready` criterion against the corresponding advisory record. Determine first whether
-the task uses the repository's primary checkout and verify that identity separately. Only a non-primary target must be
+`advisory_cleanup_ready` criterion against the corresponding advisory record. Only a non-primary target must be
 a registered, clean, unlocked, non-reparse-point worktree beneath the resolved Codex worktree root. Never remove the primary
 checkout, a user-created or permanent worktree, or a worktree whose ownership or state is ambiguous. A squash-merged
 pull-request head need not be an ancestor of `main` only when the worktree HEAD equals the recorded pull-request head

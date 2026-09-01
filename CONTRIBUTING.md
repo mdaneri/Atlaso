@@ -193,12 +193,13 @@ After all post-merge work is complete, a worktree-backed originating task sends 
 controller running from the primary checkout. The handoff identifies the repository, task and title, pull request,
 task-owned branch, absolute worktree path, pull-request head SHA, and merge commit SHA. The controller waits for an
 idle, unpinned task and independently revalidates the merged pull request, reachable merge commit, closed issue,
-completed post-merge activity, and branch/checkout ownership. It evaluates remote-branch ownership independently from
-local checkout/worktree ownership, requiring exclusive task ownership before a destructive step or external ownership
-for the corresponding non-destructive exception below. It identifies and verifies a primary checkout first;
-only a non-primary target must be a clean, registered, unlocked Codex worktree beneath the resolved Codex worktree root.
-The controller independently reads the supported Codex `git-worktree-root` setting at cleanup time and fails closed
-unless it resolves one exact safe root; a guessed or fallback path is never ownership evidence. If an existing task is
+completed post-merge activity, and branch/checkout ownership. First identify and verify whether the task uses the
+repository's primary checkout. Only for a non-primary target, independently read the supported Codex
+`git-worktree-root` setting at cleanup time and fail closed unless it resolves one exact safe root; a guessed or
+fallback path is never ownership evidence. It evaluates remote-branch ownership independently from local
+checkout/worktree ownership, requiring exclusive task ownership before a destructive step or external ownership for
+the corresponding non-destructive exception below. Only a non-primary target must be a clean, registered, unlocked
+Codex worktree beneath the resolved Codex worktree root. If an existing task is
 outside that root, preserve it and obtain maintainer direction rather than moving or deleting it automatically.
 
 Private remediation substitutes `advisory_cleanup_ready` for the ordinary closed-issue gate. Require an explicitly

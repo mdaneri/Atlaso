@@ -227,12 +227,13 @@ runtime.
   pull-request head SHA, and merge commit SHA. The controller waits for the task to be idle and unpinned and treats the
   handoff only as evidence to revalidate.
 - Re-fetch GitHub and Git state. Require the exact merged pull request and closed issue plus completed post-merge
-  activity. The controller independently reads the supported Codex `git-worktree-root` setting at cleanup time and
-  fails closed unless it resolves one exact safe root; a guessed or fallback path is never ownership evidence. Evaluate
-  remote-branch ownership independently from local checkout/worktree ownership, requiring exclusive
+  activity. First identify and verify whether the task uses the repository's primary checkout. Only for a non-primary
+  target, independently read the supported Codex `git-worktree-root` setting at cleanup time and fail closed unless it
+  resolves one exact safe root; a guessed or fallback path is never ownership evidence. Evaluate remote-branch
+  ownership independently from local checkout/worktree ownership, requiring exclusive
   task ownership before a destructive step or external ownership for the corresponding non-destructive exception
-  below. Identify and verify a primary checkout first and exempt it from removable-worktree and Codex-root checks. Only
-  a non-primary target must be a registered, clean, unlocked,
+  below. Exempt the primary checkout from removable-worktree and Codex-root checks. Only a non-primary target must be a
+  registered, clean, unlocked,
   non-reparse-point worktree beneath the resolved Codex worktree root. Never remove the primary checkout, a permanent
   or user-created worktree, or an ambiguous target. If an existing task is outside the configured root, preserve it and
   obtain maintainer direction instead of moving or deleting it automatically.

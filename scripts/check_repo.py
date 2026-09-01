@@ -195,6 +195,7 @@ CODEX_WORKTREE_ROOT_SHARED_MARKERS = (
     "Never guess, infer, synthesize, or silently fall back",
     "explicit maintainer-configured permitted root",
     "preserve its state",
+    "First identify and verify whether the task uses the repository's primary checkout",
 )
 
 REQUIRED_POLICY_MARKERS = {
