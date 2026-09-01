@@ -4996,6 +4996,7 @@ function initializeServicesTable() {
     return;
   }
   const csrf = tableElement.dataset.csrf || "";
+  const canControlRouting = tableElement.dataset.routingCanWrite === "true";
   const rows = JSON.parse(tableElement.dataset.services || "[]");
   try {
     const atlasoGridOptions6 = {
@@ -5006,41 +5007,62 @@ function initializeServicesTable() {
       rowHeight: 42,
       placeholder: "No allowlisted services configured.",
       reactiveData: false,
-      rowContextMenu: [
-        {
-          label: "Start",
-          action: (_event, row) => submitServiceAction(row.getData().service, "start", csrf),
-        },
-        {
-          label: "Stop",
-          action: (_event, row) => submitServiceAction(row.getData().service, "stop", csrf),
-        },
-        {
-          label: "Restart",
-          action: (_event, row) => submitServiceAction(row.getData().service, "restart", csrf),
-        },
-        {
-          label: "Enable",
-          action: (_event, row) => submitServiceAction(row.getData().service, "enable", csrf),
-          disabled: (component) => component.getData().enabled,
-        },
-        {
-          label: "Disable",
-          action: (_event, row) => submitServiceAction(row.getData().service, "disable", csrf),
-          disabled: (component) => !component.getData().enabled,
-        },
-        {
-          label: "Open logs",
-          action: (_event, row) => {
-            window.location.href = managementUiPath(`/services/${encodeURIComponent(row.getData().service)}/logs`);
+      rowContextMenu: (_event, component) => {
+        const service = component.getData().service;
+        const startupActions = service !== "routing" || canControlRouting ? [
+          {
+            label: "Enable",
+            action: (_menuEvent, row) => submitServiceAction(row.getData().service, "enable", csrf),
+            disabled: (row) => row.getData().enabled,
           },
-        },
-        {
-          label: "Check NTPsec source health",
-          action: () => openNTPsecSourceHealthModal(),
-          disabled: (component) => component.getData().service !== "ntpd",
-        },
-      ],
+          {
+            label: "Disable",
+            action: (_menuEvent, row) => submitServiceAction(row.getData().service, "disable", csrf),
+            disabled: (row) => !row.getData().enabled,
+          },
+        ] : [];
+        const commonActions = [
+          {
+            label: "Open logs",
+            action: (_menuEvent, row) => {
+              window.location.href = managementUiPath(`/services/${encodeURIComponent(row.getData().service)}/logs`);
+            },
+          },
+        ];
+        if (service === "routing") {
+          return [
+            ...startupActions,
+            {
+              label: "Review appliance changes",
+              action: () => {
+                window.location.href = managementUiPath("/appliance-apply");
+              },
+            },
+            ...commonActions,
+          ];
+        }
+        return [
+          {
+            label: "Start",
+            action: (_menuEvent, row) => submitServiceAction(row.getData().service, "start", csrf),
+          },
+          {
+            label: "Stop",
+            action: (_menuEvent, row) => submitServiceAction(row.getData().service, "stop", csrf),
+          },
+          {
+            label: "Restart",
+            action: (_menuEvent, row) => submitServiceAction(row.getData().service, "restart", csrf),
+          },
+          ...startupActions,
+          ...commonActions,
+          {
+            label: "Check NTPsec source health",
+            action: () => openNTPsecSourceHealthModal(),
+            disabled: (row) => row.getData().service !== "ntpd",
+          },
+        ];
+      },
       columns: [
         {
           title: "Service",
@@ -5060,6 +5082,7 @@ function initializeServicesTable() {
           field: "enabled",
           formatter: atlasoBooleanFormatter,
           editor: "tickCross",
+          editable: (cell) => cell.getRow().getData().service !== "routing" || canControlRouting,
           width: 125,
           hozAlign: "center",
           cellEdited: (cell) => autoToggleServiceEnabled(cell, csrf),

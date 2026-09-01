@@ -16410,6 +16410,11 @@ def test_services_ui_records_dry_run_action(client):
     assert "services-table" in page.text
     assert "services-fallback" in page.text
     assert "data-services=" in page.text
+    assert 'data-routing-can-write="true"' in page.text
+    assert '/services/routing/start"' not in page.text
+    assert '/services/routing/stop"' not in page.text
+    assert '/services/routing/restart"' not in page.text
+    assert '>Review appliance changes</a>' in page.text
     assert "Service Boundary" in page.text
     assert "<th>Health</th>" not in page.text
     assert '<span class="status-pill warn">dry-run</span>' in page.text
@@ -16452,12 +16457,41 @@ def test_services_ui_records_dry_run_action(client):
     assert "serviceActionsFormatter" not in js.text
     assert 'title: "Startup"' in js.text
     assert 'editor: "tickCross"' in js.text
+    assert 'const canControlRouting = tableElement.dataset.routingCanWrite === "true"' in js.text
+    assert 'cell.getRow().getData().service !== "routing" || canControlRouting' in js.text
+    assert 'if (service === "routing")' in js.text
+    assert 'label: "Review appliance changes"' in js.text
     assert 'service-state muted">disabled' in js.text
     css = client.get("/static/app.css")
     assert css.status_code == 200
     assert ".service-name-cell" in css.text
     assert ".services-workspace" in css.text
     assert ".services-table" in css.text
+
+
+def test_services_routing_controls_are_read_only_for_service_admin(client):
+    """Hide Routing mutations when the identity lacks Routes and WAN writes."""
+    from sqlalchemy import select
+
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import Role, User
+    from atlaso.app.security import roles_to_json
+
+    with SessionLocal() as db:
+        admin = db.execute(select(User).where(User.username == "admin")).scalar_one()
+        admin.role = Role.SERVICE_ADMIN.value
+        admin.roles_json = roles_to_json([Role.SERVICE_ADMIN.value])
+        db.commit()
+
+    login(client)
+    page = client.get("/services")
+
+    assert page.status_code == 200
+    assert 'data-routing-can-write="false"' in page.text
+    assert '/services/routing/start"' not in page.text
+    assert '/services/routing/stop"' not in page.text
+    assert '/services/routing/restart"' not in page.text
+    assert '>Review appliance changes</a>' in page.text
 
 
 def test_services_and_esxi_page_show_enabled_esxi_pxe_boot_state(client):
