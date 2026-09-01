@@ -1038,11 +1038,17 @@ function Invoke-AtlasoPhotonBuildCleanupRecovery {
         $candidateParentRoots = @($AllowedParentRoots)
         if (-not [string]::IsNullOrWhiteSpace($RepositoryRoot)) {
             $markerParentRoot = Split-Path -Parent $resolvedRoot
-            Assert-AtlasoStrictDescendantPath `
-                -ParentPath $resolvedRepositoryRoot `
-                -ChildPath $markerParentRoot `
-                -FailureMessage 'Photon cleanup parent escaped the exact task repository'
-            $candidateParentRoots += $markerParentRoot
+            $repositoryPrefix = $resolvedRepositoryRoot.TrimEnd(
+                [System.IO.Path]::DirectorySeparatorChar,
+                [System.IO.Path]::AltDirectorySeparatorChar
+            ) + [System.IO.Path]::DirectorySeparatorChar
+            if ($markerParentRoot.StartsWith($repositoryPrefix, [StringComparison]::OrdinalIgnoreCase)) {
+                Assert-AtlasoStrictDescendantPath `
+                    -ParentPath $resolvedRepositoryRoot `
+                    -ChildPath $markerParentRoot `
+                    -FailureMessage 'Photon cleanup parent escaped the exact task repository'
+                $candidateParentRoots += $markerParentRoot
+            }
         }
         $admitted = @(
             $candidateParentRoots |

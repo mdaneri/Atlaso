@@ -427,6 +427,36 @@ try {
         throw 'Photon cleanup did not upgrade and retire an active schema-1 marker after boot proof.'
     }
 
+    # A pre-migration marker remains checkout-local, but its sensitive root was
+    # created beneath the explicitly admitted host temporary directory.
+    $legacyRepositoryRoot = Join-Path $fixtureRoot 'legacy-repository'
+    $legacyMarkerDirectory = Join-Path $legacyRepositoryRoot 'cleanup-markers'
+    $legacyTemporaryParent = Join-Path $fixtureRoot 'legacy-temporary-parent'
+    [void][System.IO.Directory]::CreateDirectory($legacyMarkerDirectory)
+    [void][System.IO.Directory]::CreateDirectory($legacyTemporaryParent)
+    $legacyTemporaryRoot = Join-Path $legacyTemporaryParent (
+        'atlaso-photon-build-credentials-' + [guid]::NewGuid().ToString('N')
+    )
+    [void][System.IO.Directory]::CreateDirectory($legacyTemporaryRoot)
+    $legacyTemporaryMarkerPath = Join-Path $legacyMarkerDirectory 'legacy-temporary-marker.json'
+    $legacyTemporaryMarker = [ordered]@{
+        Schema = 1; RootPath = $legacyTemporaryRoot
+        BootIdentity = 'prior-test-boot'; Phase = 'active'
+    }
+    [System.IO.File]::WriteAllText(
+        $legacyTemporaryMarkerPath,
+        ($legacyTemporaryMarker | ConvertTo-Json -Compress),
+        [System.Text.UTF8Encoding]::new($false)
+    )
+    Invoke-AtlasoPhotonBuildCleanupRecovery `
+        -MarkerPath $legacyTemporaryMarkerPath `
+        -AllowedParentRoots @($legacyTemporaryParent) `
+        -RepositoryRoot $legacyRepositoryRoot
+    if ((Test-Path -LiteralPath $legacyTemporaryRoot) -or
+        (Test-Path -LiteralPath $legacyTemporaryMarkerPath)) {
+        throw 'Photon cleanup did not retire a legacy root beneath an explicitly admitted temporary parent.'
+    }
+
     $absentSchemaOneRoot = Join-Path $schemaOneParent (
         'atlaso-photon-build-credentials-' + [guid]::NewGuid().ToString('N')
     )
