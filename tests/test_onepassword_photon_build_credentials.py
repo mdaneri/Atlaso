@@ -230,6 +230,11 @@ def test_photon_wrapper_preflights_credentials_before_image_mutation() -> None:
     assert "accounting.ActiveProcesses == 0" in runner
     assert "AtlasoProcessTreeTerminationProven" in runner
     assert "Invoke-AtlasoBoundedStreamingProcess `" in module
+    assert "'-I', '-S', $downloaderPath" in module
+    assert "function New-AtlasoIsolatedPipRuntime {" in module
+    assert "'-I', '-S', '-m', 'venv', '--clear'" in module
+    assert "@($pipRuntime.ArgumentsPrefix)" in module
+    assert "'-I', '-m', 'pip'" not in module
     assert "MOVEFILE" not in wrapper
 
 

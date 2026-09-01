@@ -471,9 +471,14 @@ function Stage-PasswordDeployPythonWheels {
             -RepositoryRoot $WorkingDirectory `
             -Destination $stagingDirectory `
             -TimeoutSeconds 120 | Out-Null
+        $pipRuntime = New-AtlasoIsolatedPipRuntime `
+            -PythonCommand $PythonCommand `
+            -RuntimeRoot (Join-Path $stagingDirectory 'pip-runtime') `
+            -TimeoutSeconds 120
         Write-Host 'Staging the vetted 1Password SDK and Paramiko deployment wheels...'
-        Invoke-CheckedCommand -FilePath $PythonCommand -WorkingDirectory $WorkingDirectory -Arguments @(
-            '-m', 'pip', 'download',
+        Invoke-CheckedCommand -FilePath $pipRuntime.PythonCommand -WorkingDirectory $WorkingDirectory -Arguments @(
+            @($pipRuntime.ArgumentsPrefix)
+            'download',
             '--disable-pip-version-check',
             '--index-url', 'https://pypi.org/simple',
             '--find-links', $stagingDirectory,
@@ -519,10 +524,15 @@ function Initialize-PasswordDeployPythonPath {
 
     $dependencyDirectory = Join-Path $TemporaryDirectory 'python-dependencies'
     New-Item -ItemType Directory -Force -Path $dependencyDirectory | Out-Null
+    $pipRuntime = New-AtlasoIsolatedPipRuntime `
+        -PythonCommand $PythonCommand `
+        -RuntimeRoot (Join-Path $TemporaryDirectory 'pip-runtime') `
+        -TimeoutSeconds 120
     Write-Host 'Preparing the isolated 1Password SDK and Paramiko deployment runtime...'
     try {
-        Invoke-CheckedCommand -FilePath $PythonCommand -WorkingDirectory $WorkingDirectory -Arguments @(
-            '-m', 'pip', 'install',
+        Invoke-CheckedCommand -FilePath $pipRuntime.PythonCommand -WorkingDirectory $WorkingDirectory -Arguments @(
+            @($pipRuntime.ArgumentsPrefix)
+            'install',
             '--disable-pip-version-check',
             '--no-index',
             '--find-links', $wheelDirectory,

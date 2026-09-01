@@ -505,7 +505,7 @@ function Save-AtlasoOnePasswordWheel {
     $output = Invoke-AtlasoBoundedProcess `
         -FilePath $PythonCommand `
         -ArgumentList @(
-            '-I', $downloaderPath,
+            '-I', '-S', $downloaderPath,
             '--manifest', $manifestPath,
             '--destination', $Destination,
             '--timeout-seconds', [string]([Math]::Min($TimeoutSeconds, 120)),
@@ -519,6 +519,46 @@ function Save-AtlasoOnePasswordWheel {
         throw 'The approved 1Password compatibility wheel download did not produce the exact expected asset.'
     }
     return $wheelPath
+}
+
+<#
+.SYNOPSIS
+Create a startup-hook-free pip command inside a private virtual environment.
+
+.PARAMETER PythonCommand
+Approved standard Windows x64 CPython 3.14 executable.
+
+.PARAMETER RuntimeRoot
+Private task-specific directory that receives the isolated pip environment.
+
+.PARAMETER TimeoutSeconds
+Positive deadline for virtual-environment creation.
+#>
+function New-AtlasoIsolatedPipRuntime {
+    param(
+        [Parameter(Mandatory = $true)][string]$PythonCommand,
+        [Parameter(Mandatory = $true)][string]$RuntimeRoot,
+        [Parameter(Mandatory = $true)][ValidateRange(1, 3600)][int]$TimeoutSeconds
+    )
+
+    $resolvedRoot = [System.IO.Path]::GetFullPath($RuntimeRoot)
+    Invoke-AtlasoBoundedProcess `
+        -FilePath $PythonCommand `
+        -ArgumentList @('-I', '-S', '-m', 'venv', '--clear', $resolvedRoot) `
+        -TimeoutSeconds $TimeoutSeconds `
+        -Action 'The startup-hook-free pip environment creation' | Out-Null
+    $runtimePython = Join-Path $resolvedRoot 'Scripts\python.exe'
+    $sitePackages = Join-Path $resolvedRoot 'Lib\site-packages'
+    $pipMain = Join-Path $sitePackages 'pip\__main__.py'
+    if (-not (Test-Path -LiteralPath $runtimePython -PathType Leaf) -or
+        -not (Test-Path -LiteralPath $pipMain -PathType Leaf)) {
+        throw 'The startup-hook-free pip environment is incomplete.'
+    }
+    $pipBootstrap = 'import runpy,sys;site_packages=sys.argv.pop(1);sys.path.insert(0,site_packages);sys.argv[0]="pip";runpy.run_module("pip",run_name="__main__")'
+    return [pscustomobject]@{
+        PythonCommand   = $runtimePython
+        ArgumentsPrefix = @('-I', '-S', '-c', $pipBootstrap, $sitePackages)
+    }
 }
 
 <#
@@ -551,6 +591,7 @@ function Initialize-AtlasoOnePasswordSdkRuntime {
     }
     $wheelDirectory = Join-Path $BridgeRoot 'wheels'
     $dependencyDirectory = Join-Path $BridgeRoot 'python-dependencies'
+    $pipRuntimeRoot = Join-Path $BridgeRoot 'pip-runtime'
     [void][System.IO.Directory]::CreateDirectory($wheelDirectory)
     [void][System.IO.Directory]::CreateDirectory($dependencyDirectory)
 
@@ -559,13 +600,18 @@ function Initialize-AtlasoOnePasswordSdkRuntime {
         -RepositoryRoot $RepositoryRoot `
         -Destination $wheelDirectory `
         -TimeoutSeconds $TimeoutSeconds | Out-Null
+    $pipRuntime = New-AtlasoIsolatedPipRuntime `
+        -PythonCommand $PythonCommand `
+        -RuntimeRoot $pipRuntimeRoot `
+        -TimeoutSeconds $TimeoutSeconds
 
     # Download is the only index-enabled step. Installation is deliberately
     # offline from the exact hash-verified wheel set, matching deploy-wheel.ps1.
     Invoke-AtlasoBoundedProcess `
-        -FilePath $PythonCommand `
+        -FilePath $pipRuntime.PythonCommand `
         -ArgumentList @(
-            '-I', '-m', 'pip', 'download',
+            @($pipRuntime.ArgumentsPrefix)
+            'download',
             '--disable-pip-version-check',
             '--index-url', 'https://pypi.org/simple',
             '--find-links', $wheelDirectory,
@@ -577,9 +623,10 @@ function Initialize-AtlasoOnePasswordSdkRuntime {
         -TimeoutSeconds $TimeoutSeconds `
         -Action 'The hash-verified 1Password SDK wheel download' | Out-Null
     Invoke-AtlasoBoundedProcess `
-        -FilePath $PythonCommand `
+        -FilePath $pipRuntime.PythonCommand `
         -ArgumentList @(
-            '-I', '-m', 'pip', 'install',
+            @($pipRuntime.ArgumentsPrefix)
+            'install',
             '--disable-pip-version-check',
             '--no-index',
             '--find-links', $wheelDirectory,
@@ -1024,6 +1071,7 @@ Export-ModuleMember -Function @(
     'Resolve-AtlasoOnePasswordAccount',
     'Resolve-AtlasoOnePasswordPython',
     'Save-AtlasoOnePasswordWheel',
+    'New-AtlasoIsolatedPipRuntime',
     'Initialize-AtlasoOnePasswordSdkRuntime',
     'Get-AtlasoOnePasswordCredentialBridgeError',
     'Remove-AtlasoOnePasswordCredentialBridge',
