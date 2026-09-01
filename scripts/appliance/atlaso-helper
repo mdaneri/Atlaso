@@ -19342,6 +19342,163 @@ def _factory_reset_state_payload() -> dict:
     return {"schema_version": 1, "state": "idle", "updated_at": "", "message": ""}
 
 
+def _environment_file_open_quote(value: str, initial_quote: str = "") -> str:
+    """Return the quote context left open after one physical line.
+
+    Args:
+        value: Physical EnvironmentFile line content to inspect.
+        initial_quote: Quote context inherited from the preceding line.
+    """
+    quote = initial_quote
+    escaped = False
+    for character in value:
+        if quote == "'":
+            if character == "'":
+                quote = ""
+            continue
+        if escaped:
+            escaped = False
+            continue
+        if character == "\\":
+            escaped = True
+            continue
+        if quote == '"':
+            if character == '"':
+                quote = ""
+            continue
+        if character in {'"', "'"}:
+            quote = character
+    return quote
+
+
+def _environment_file_unquoted_continues(value: str) -> bool:
+    """Return whether an unquoted physical line escapes its newline.
+
+    Args:
+        value: Physical EnvironmentFile line content to inspect.
+    """
+    trailing_backslashes = len(value) - len(value.rstrip("\\"))
+    return trailing_backslashes % 2 == 1
+
+
+def _decode_double_quoted_environment_value(value: str) -> str:
+    """Decode the supported systemd escapes inside one double-quoted value.
+
+    Args:
+        value: EnvironmentFile value after its matching outer quotes are removed.
+    """
+    decoded: list[str] = []
+    index = 0
+    while index < len(value):
+        character = value[index]
+        if character == '"':
+            raise ValueError(
+                "ATLASO_DATABASE_URL uses unsupported concatenated EnvironmentFile quotes."
+            )
+        if character == "\\" and index + 1 < len(value):
+            following = value[index + 1]
+            if following in {'"', "\\", "`", "$"}:
+                decoded.append(following)
+                index += 2
+                continue
+        decoded.append(character)
+        index += 1
+    return "".join(decoded)
+
+
+def _installed_atlaso_database_url() -> str:
+    """Read the installed database URL without evaluating environment-file content."""
+    try:
+        with ATLASO_ENV_PATH.open("r", encoding="utf-8", newline="") as environment_file:
+            source_lines = [
+                line.removesuffix("\r") for line in environment_file.read().split("\n")
+            ]
+    except OSError as exc:
+        raise ValueError("Atlaso appliance database configuration is unavailable.") from exc
+    database_url = ""
+    database_url_quote = ""
+    multiline_quote = ""
+    unquoted_continuation = False
+    comment_continuation = False
+    database_url_is_multiline = False
+    for raw_line in source_lines:
+        if multiline_quote:
+            multiline_quote = _environment_file_open_quote(raw_line, multiline_quote)
+            unquoted_continuation = bool(
+                not multiline_quote
+                and _environment_file_unquoted_continues(raw_line)
+            )
+            continue
+        if unquoted_continuation:
+            multiline_quote = _environment_file_open_quote(raw_line)
+            unquoted_continuation = bool(
+                not multiline_quote
+                and _environment_file_unquoted_continues(raw_line)
+            )
+            continue
+        if comment_continuation:
+            comment_continuation = _environment_file_unquoted_continues(raw_line)
+            continue
+        candidate = raw_line.strip(" \t\r")
+        if candidate.startswith(("#", ";")):
+            comment_continuation = _environment_file_unquoted_continues(raw_line)
+            continue
+        assignment_name, separator, assignment_value = candidate.partition("=")
+        if not separator:
+            continue
+        assignment_name = assignment_name.strip(" \t")
+        assignment_value = assignment_value.strip(" \t\r")
+        assignment_quote = (
+            assignment_value[0] if assignment_value.startswith(('"', "'")) else ""
+        )
+        open_quote = _environment_file_open_quote(assignment_value)
+        assignment_is_multiline = bool(open_quote)
+        if assignment_is_multiline:
+            multiline_quote = open_quote
+        else:
+            unquoted_continuation = _environment_file_unquoted_continues(raw_line)
+        if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", assignment_name):
+            continue
+        if assignment_name != "ATLASO_DATABASE_URL":
+            continue
+        database_url = assignment_value
+        database_url_quote = assignment_quote
+        database_url_is_multiline = assignment_is_multiline
+    if database_url_is_multiline:
+        raise ValueError(
+            "ATLASO_DATABASE_URL uses an unsupported multiline EnvironmentFile value."
+        )
+    if not database_url:
+        raise ValueError("ATLASO_DATABASE_URL is missing from the Atlaso appliance environment.")
+    if database_url.startswith(('"', "'")) or database_url.endswith(('"', "'")):
+        if (
+            len(database_url) < 2
+            or database_url[0] != database_url[-1]
+            or database_url[0] not in {'"', "'"}
+        ):
+            raise ValueError(
+                "ATLASO_DATABASE_URL uses an unsupported multiline EnvironmentFile value."
+            )
+        database_url = database_url[1:-1]
+    if database_url_quote == "'" and database_url_quote in database_url:
+        raise ValueError(
+            "ATLASO_DATABASE_URL uses unsupported concatenated EnvironmentFile quotes."
+        )
+    if not database_url_quote and ('"' in database_url or "'" in database_url):
+        raise ValueError(
+            "ATLASO_DATABASE_URL uses unsupported concatenated EnvironmentFile quotes."
+        )
+    if database_url_quote == "'":
+        return database_url
+    if database_url_quote == '"':
+        return _decode_double_quoted_environment_value(database_url)
+    if "\\" in database_url:
+        raise ValueError(
+            "ATLASO_DATABASE_URL uses unsupported EnvironmentFile escape syntax."
+        )
+    return database_url
+
+
 def _factory_reset_runner(*, boot_resume: bool) -> subprocess.CompletedProcess[str]:
     """Run the installed reset transaction synchronously.
 
@@ -19356,6 +19513,15 @@ def _factory_reset_runner(*, boot_resume: bool) -> subprocess.CompletedProcess[s
             "Atlaso factory-reset runtime is unavailable.\n",
         )
     environment = os.environ.copy()
+    try:
+        environment["ATLASO_DATABASE_URL"] = _installed_atlaso_database_url()
+    except ValueError as exc:
+        return subprocess.CompletedProcess(
+            [str(ATLASO_FACTORY_RESET_PYTHON), "-m", "atlaso.app.factory_reset"],
+            1,
+            "",
+            f"{exc}\n",
+        )
     if boot_resume:
         environment["ATLASO_FACTORY_RESET_BOOT_RESUME"] = "1"
     return _run(
