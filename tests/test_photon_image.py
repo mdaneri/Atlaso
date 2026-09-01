@@ -3435,3 +3435,18 @@ def test_release_builder_legacy_recovery_uses_detached_branch_sentinel() -> None
     )
 
     assert release_recovery < empty_branch < detached_sentinel < recovery
+
+
+def test_photon_build_state_requires_git_ignored_custom_root() -> None:
+    """Custom state cannot dirty the source inventory before snapshot admission."""
+    wrapper = Path("scripts/windows/vmware/build-photon-image.ps1").read_text(
+        encoding="utf-8"
+    )
+    resolver = wrapper.index("function Resolve-AtlasoPhotonBuildStateRoot")
+    ignore_check = wrapper.index("check-ignore --quiet -- $ignoreProbe", resolver)
+    state_creation = wrapper.index(
+        "[System.IO.Directory]::CreateDirectory($builderReservationPendingRoot)"
+    )
+
+    assert resolver < ignore_check < state_creation
+    assert "must remain inside a Git-ignored task subtree" in wrapper

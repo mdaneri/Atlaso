@@ -32,7 +32,7 @@ Bounded deadline for the isolated plaintext-consuming Photon/Packer child.
 .PARAMETER BuildStateRoot
 Task-owned build-state directory. The default is the checkout-local
 `.atlaso-local\photon-image-build-state` directory; explicit paths must remain
-strictly beneath the task repository root.
+strictly beneath the task repository root and inside a Git-ignored subtree.
 .PARAMETER CredentialBundlePath
 Internal current-user DPAPI credential bundle used only by the isolated child.
 .PARAMETER CredentialChild
@@ -298,6 +298,13 @@ function Resolve-AtlasoPhotonBuildStateRoot {
         -ParentPath $resolvedRepositoryRoot `
         -ChildPath $resolvedCandidate `
         -FailureMessage 'Photon build state must remain beneath the exact task repository root'
+    # Source inventory admission includes every non-ignored untracked path. Prove
+    # a child of this root is ignored before any task state can dirty the checkout.
+    $ignoreProbe = Join-Path $resolvedCandidate 'atlaso-build-state-admission-probe'
+    & git -C $resolvedRepositoryRoot check-ignore --quiet -- $ignoreProbe
+    if ($LASTEXITCODE -ne 0) {
+        throw 'Photon build state must remain inside a Git-ignored task subtree.'
+    }
     return $resolvedCandidate
 }
 

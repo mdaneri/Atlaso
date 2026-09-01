@@ -97,6 +97,21 @@ if (-not $actualExplicit.Equals($explicitChild, [StringComparison]::OrdinalIgnor
     throw "Explicit Photon build-state root changed unexpectedly: $actualExplicit"
 }
 
+$unignoredChild = Join-Path $resolvedRepositoryRoot 'photon-build-state-unignored'
+$unignoredError = ''
+try {
+    Resolve-AtlasoPhotonBuildStateRoot `
+        -RepositoryRoot $resolvedRepositoryRoot `
+        -Path $unignoredChild | Out-Null
+}
+catch {
+    $unignoredError = $_.Exception.Message
+}
+if ($unignoredError -cne 'Photon build state must remain inside a Git-ignored task subtree.' -or
+    (Test-Path -LiteralPath $unignoredChild)) {
+    throw "Unignored Photon build-state root did not fail before creating task state: $unignoredError"
+}
+
 $outsideRoot = Join-Path (Split-Path -Parent $resolvedRepositoryRoot) 'photon-build-state-outside'
 $outsideError = ''
 try {
