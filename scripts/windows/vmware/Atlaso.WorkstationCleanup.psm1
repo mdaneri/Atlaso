@@ -692,11 +692,10 @@ function Remove-AtlasoWorkstationStaleRegistrations {
                 while ($candidateStart -lt $rawValue.Length -and ($rawValue[$candidateStart] -in @([char]34, [char]39) -or [char]::IsWhiteSpace($rawValue[$candidateStart]))) { $candidateStart++ }
             }
             $candidateSource = $rawValue.Substring($candidateStart)
-            if ($candidateStart -gt 0 -and $candidateSource.Length -gt 0 -and $candidateSource[$candidateSource.Length - 1] -eq $openingQuote) {
-                $candidateSource = $candidateSource.Substring(0, $candidateSource.Length - 1)
-            }
+            $closedOuterQuote = $candidateStart -gt 0 -and $candidateSource.Length -gt 0 -and $candidateSource[$candidateSource.Length - 1] -eq $openingQuote
+            if ($closedOuterQuote) { $candidateSource = $candidateSource.Substring(0, $candidateSource.Length - 1) }
             $hasCompleteVmxPath = $false
-            if ($candidateSource -match '(?i)\.vmx$' -and $candidateSource.IndexOfAny([char[]]@([char]34, [char]39)) -lt 0 -and [System.IO.Path]::IsPathFullyQualified($candidateSource)) {
+            if ($candidateSource -match '(?i)\.vmx$' -and -not $candidateSource.Contains([string][char]34) -and ($closedOuterQuote -or -not $candidateSource.Contains([string][char]39)) -and [System.IO.Path]::IsPathFullyQualified($candidateSource)) {
                 try { Get-AtlasoCanonicalPath -Path $candidateSource | Out-Null; $hasCompleteVmxPath = $true } catch { Write-Verbose "Ignored an uncanonicalizable complete Workstation inventory value: $($_.Exception.Message)" }
             }
             if ($hasCompleteVmxPath) { $rawCandidates = @($candidateSource) } else {
