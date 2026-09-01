@@ -881,6 +881,10 @@ The following cross-cutting boundaries always apply:
 - Keep secret-bearing Local Users, Certificate Authority, and Managed LDAP apply inputs mode `0600` and present only
   for the constrained helper execution window. Remove them on success, validation or apply failure, and startup
   recovery; read-only Local Users status must use a separate short-lived file.
+- Keep synchronized managed Photon repository files credential-free. For authenticated TDNF checks and installations,
+  construct a root-only repository view in volatile `/run` storage, pass only its non-secret path to TDNF, and remove
+  that view when each command exits. Never place Photon repository credentials in durable package-client configuration
+  or command arguments.
 - Preflight every settings archive section, required row field, relationship, and enabled VLAN or static-route target
   before clearing desired state. A failed restore must roll back database changes and preserve separately staged LDAP
   recovery metadata and in-memory bytes. Clear staged recovery material only after a successful restore commit or
@@ -891,7 +895,7 @@ The following cross-cutting boundaries always apply:
   make resume idempotent across interruption or reboot, validate all generated runtime configuration before activation,
   scrub transient staging plus retained VCF Backup authorized keys and Web Terminal signing material, and leave all 16
   desired/applied baselines equal with no follow-up Apply workflow. Also remove retained KMIP operational state and
-  Atlaso-synchronized package-source credentials and registrations, fsyncing credential-bearing repository removal
+  Atlaso-synchronized package-source staging and registrations, fsyncing repository removal
   before the recovery marker advances. Require explicit keep-or-change choices for both
   the bootstrap administrator and root passwords, validate changes against the packaged factory Local Users policy,
   and give each request its own protected staging file so failed admission removes only that request's secret. Keep

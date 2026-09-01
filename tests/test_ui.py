@@ -15944,6 +15944,7 @@ def test_application_restart_removes_stale_secret_staging_inputs(client, monkeyp
     local_users_path = tmp_path / "apply" / "local-users" / "atlaso-users.json"
     ca_path = tmp_path / "apply" / "ca" / "atlaso-ca.json"
     ldap_path = tmp_path / "apply" / "ldap" / "atlaso-ldap.json"
+    appliance_update_path = tmp_path / "apply" / "appliance-update" / "atlaso-update-credentials.json"
     factory_reset_path = tmp_path / "apply" / "factory-reset" / "credentials.json"
     factory_reset_request_path = factory_reset_path.with_name(
         "credentials-0123456789abcdef0123456789abcdef.json"
@@ -15955,6 +15956,7 @@ def test_application_restart_removes_stale_secret_staging_inputs(client, monkeyp
             local_users_path,
             ca_path,
             ldap_path,
+            appliance_update_path,
             factory_reset_path,
             status_path,
         )
@@ -15966,6 +15968,7 @@ def test_application_restart_removes_stale_secret_staging_inputs(client, monkeyp
         local_users_path,
         ca_path,
         ldap_path,
+        appliance_update_path,
         factory_reset_path,
         status_path,
         factory_reset_request_path,
@@ -15980,6 +15983,7 @@ def test_application_restart_removes_stale_secret_staging_inputs(client, monkeyp
     monkeypatch.setattr(ui, "LOCAL_USERS_STAGED_CONFIG_PATH", str(local_users_path))
     monkeypatch.setattr(ui, "CA_STAGED_CONFIG_PATH", str(ca_path))
     monkeypatch.setattr(ui, "LDAP_STAGED_CONFIG_PATH", str(ldap_path))
+    monkeypatch.setattr(ui, "APPLIANCE_UPDATE_STAGED_CREDENTIALS_PATH", str(appliance_update_path))
     monkeypatch.setattr(ui, "FACTORY_RESET_STAGED_CREDENTIALS_PATH", str(factory_reset_path))
 
     with TestClient(create_app()) as restarted_client:
@@ -16002,6 +16006,7 @@ def test_secret_staging_cleanup_repairs_ownership_before_unlink(monkeypatch, tmp
         tmp_path / "apply" / "local-users" / "atlaso-users.json",
         tmp_path / "apply" / "ca" / "atlaso-ca.json",
         tmp_path / "apply" / "ldap" / "atlaso-ldap.json",
+        tmp_path / "apply" / "appliance-update" / "atlaso-update-credentials.json",
         tmp_path / "apply" / "factory-reset" / "credentials.json",
     ]
     for path in staged_paths:
@@ -16029,7 +16034,8 @@ def test_secret_staging_cleanup_repairs_ownership_before_unlink(monkeypatch, tmp
     monkeypatch.setattr(ui, "LOCAL_USERS_STAGED_CONFIG_PATH", str(staged_paths[0]))
     monkeypatch.setattr(ui, "CA_STAGED_CONFIG_PATH", str(staged_paths[1]))
     monkeypatch.setattr(ui, "LDAP_STAGED_CONFIG_PATH", str(staged_paths[2]))
-    monkeypatch.setattr(ui, "FACTORY_RESET_STAGED_CREDENTIALS_PATH", str(staged_paths[3]))
+    monkeypatch.setattr(ui, "APPLIANCE_UPDATE_STAGED_CREDENTIALS_PATH", str(staged_paths[3]))
+    monkeypatch.setattr(ui, "FACTORY_RESET_STAGED_CREDENTIALS_PATH", str(staged_paths[4]))
     monkeypatch.setattr(ui, "SystemAdapter", RepairingAdapter)
 
     ui.cleanup_transient_secret_staging_files()
