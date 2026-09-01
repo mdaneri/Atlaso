@@ -6,7 +6,7 @@ Repository checkout used for build and deployment inputs.
 .PARAMETER IpAddress
 Explicit appliance IP address.
 .PARAMETER VmxPath
-VMX path used for VMware guest discovery.
+VMX path used for VMware guest discovery and verified development host-key evidence.
 .PARAMETER VmrunPath
 Explicit VMware vmrun executable path.
 .PARAMETER SshUser
@@ -41,6 +41,8 @@ Opaque ID of the preverified Atlaso 1Password Environment.
 1Password account name or ID approved for desktop SDK authorization.
 .PARAMETER OnePasswordPython
 CPython 3.10 through 3.13 executable used by the supported 1Password SDK Windows wheel and locked dependencies.
+.PARAMETER UseVmwareGuestInfoHostKey
+Trusts the selected normal test VM's verified Ed25519 guest-info key only for the password-backed child.
 .PARAMETER ResetVaultEntries
 Clears appliance vault entries during deployment.
 .PARAMETER SkipHostCheck
@@ -83,6 +85,7 @@ param(
     [string]$OnePasswordEnvironmentId = '',
     [string]$OnePasswordAccount = '',
     [string]$OnePasswordPython = '',
+    [switch]$UseVmwareGuestInfoHostKey,
     [switch]$ResetVaultEntries,
     [switch]$SkipHostCheck
 )
@@ -603,6 +606,8 @@ Repository working directory.
 Opaque ID of the verified Atlaso Environment.
 .PARAMETER Account
 Account name or ID used for desktop authorization.
+.PARAMETER TrustedHostKey
+Optional verified Ed25519 host key supplied from VMware guest-info.
 #>
 function Invoke-PasswordBackedDeploy {
     param(
@@ -644,7 +649,8 @@ function Invoke-PasswordBackedDeploy {
         [Parameter(Mandatory = $true)][int]$PollSeconds,
         [Parameter(Mandatory = $true)][string]$WorkingDirectory,
         [Parameter(Mandatory = $true)][string]$EnvironmentId,
-        [Parameter(Mandatory = $true)][string]$Account
+        [Parameter(Mandatory = $true)][string]$Account,
+        [string]$TrustedHostKey = ''
     )
 
     $passwordDeployDirectory = Join-Path ([System.IO.Path]::GetTempPath()) "atlaso-password-deploy-$([guid]::NewGuid().ToString('N'))"
@@ -653,6 +659,7 @@ function Invoke-PasswordBackedDeploy {
     $pythonDeploySource = @'
 import argparse
 import asyncio
+import base64
 import os
 import pathlib
 import re
@@ -739,6 +746,7 @@ parser.add_argument("--remote-script", required=True)
 parser.add_argument("--dependency-path", required=True)
 parser.add_argument("--onepassword-account", required=True)
 parser.add_argument("--onepassword-environment-id", required=True)
+parser.add_argument("--trusted-host-key", default="")
 parser.add_argument("--reset-vault-entries", action="store_true")
 parser.add_argument("--timeout", type=int, required=True)
 parser.add_argument("--readiness-timeout", type=int, required=True)
@@ -854,7 +862,11 @@ def connect_password_or_keyboard_interactive(client, host, username, password):
         transport.start_client(timeout=15)
         server_key = transport.get_remote_server_key()
         if known_key_entry is None:
-            client._policy.missing_host_key(client, host, server_key)
+            raise paramiko.SSHException(
+                f"Unknown SSH host key for {host}; add the verified key to known_hosts "
+                "or pass the normal test VM's verified guest-info evidence with "
+                "-VmxPath and -UseVmwareGuestInfoHostKey."
+            )
         elif not any(server_key == expected_key for expected_key in known_key_entry.values()):
             expected_key = next(iter(known_key_entry.values()))
             raise paramiko.BadHostKeyException(host, server_key, expected_key)
@@ -888,9 +900,27 @@ def connect_password_or_keyboard_interactive(client, host, username, password):
         raise
 
 
+def add_trusted_host_key(client, host, public_key):
+    parts = public_key.split()
+    if len(parts) != 2 or parts[0] != "ssh-ed25519":
+        raise paramiko.SSHException("Verified VMware host-key evidence is not one Ed25519 public key.")
+    try:
+        key_blob = base64.b64decode(parts[1], validate=True)
+        trusted_key = paramiko.PKey.from_type_string(parts[0], key_blob)
+    except Exception:
+        raise paramiko.SSHException("Verified VMware host-key evidence is malformed.") from None
+    if trusted_key.get_name() != parts[0]:
+        raise paramiko.SSHException("Verified VMware host-key evidence has an unexpected key type.")
+    # This augments only the child's in-memory trust set. System known_hosts is
+    # consulted first and remains authoritative when it already records the host.
+    client.get_host_keys().add(host, parts[0], trusted_key)
+
+
 client = paramiko.SSHClient()
 client.load_system_host_keys()
 client.set_missing_host_key_policy(paramiko.RejectPolicy())
+if args.trusted_host_key:
+    add_trusted_host_key(client, args.host, args.trusted_host_key)
 connect_password_or_keyboard_interactive(client, args.host, args.user, password)
 try:
     sftp = client.open_sftp()
@@ -998,6 +1028,9 @@ finally:
         if ($ResetVaultEntryTable) {
             $deployArguments += '--reset-vault-entries'
         }
+        if ($TrustedHostKey) {
+            $deployArguments += @('--trusted-host-key', $TrustedHostKey)
+        }
         foreach ($runtimeDependencyPath in $LocalRuntimeDependencyPaths) {
             $deployArguments += @('--local-runtime-dependency', $runtimeDependencyPath)
         }
@@ -1044,6 +1077,34 @@ if ($UsePasswordDeploy) {
     $resolvedOnePasswordPython = Resolve-OnePasswordPython -PythonCommand $OnePasswordPython
 } elseif ($OnePasswordAccount -or $OnePasswordPython) {
     throw '-OnePasswordAccount and -OnePasswordPython require -OnePasswordEnvironmentId.'
+}
+if ($UseVmwareGuestInfoHostKey -and (-not $UsePasswordDeploy -or -not $VmxPath)) {
+    throw '-UseVmwareGuestInfoHostKey requires password-backed deployment and an explicit normal test VM -VmxPath.'
+}
+
+$resolvedVmrun = ''
+$resolvedVmxPath = ''
+if ($VmxPath -or -not $IpAddress) {
+    $resolvedVmrun = Resolve-VmrunPath -Path $VmrunPath
+    if (-not $VmxPath) {
+        $VmxPath = Get-AtlasoRunningVmx -ResolvedVmrun $resolvedVmrun
+    }
+    $resolvedVmxPath = (Resolve-Path -LiteralPath $VmxPath).Path
+}
+if (-not $IpAddress) {
+    $IpAddress = Get-GuestIpAddress -ResolvedVmrun $resolvedVmrun -ResolvedVmxPath $resolvedVmxPath
+}
+
+$trustedSshHostKey = ''
+if ($UseVmwareGuestInfoHostKey) {
+    # Resolve test-only trust evidence before allocating the wheelhouse so lookup failures leave no build staging.
+    $workstationFirstBootPath = Join-Path $resolvedRepoRoot 'scripts\windows\vmware\Atlaso.WorkstationFirstBoot.ps1'
+    . $workstationFirstBootPath
+    $trustedSshHostKey = (Get-AtlasoWorkstationSshHostKey `
+            -VmxPath $resolvedVmxPath `
+            -VmrunPath $resolvedVmrun `
+            -TimeoutSeconds 15 `
+            -PollSeconds $ReadinessPollSeconds).PublicKey
 }
 
 $generatedRuntimeDependencyRoot = ''
@@ -1212,15 +1273,6 @@ $remoteInventoryLinuxPackagePath = if ($inventoryLinuxPackagePath) {
     ''
 }
 $remoteScriptPath = Join-RemotePath -Directory $RemoteDirectory -Leaf 'atlaso-deploy-wheel.sh'
-
-if (-not $IpAddress) {
-    $resolvedVmrun = Resolve-VmrunPath -Path $VmrunPath
-    if (-not $VmxPath) {
-        $VmxPath = Get-AtlasoRunningVmx -ResolvedVmrun $resolvedVmrun
-    }
-    $resolvedVmxPath = (Resolve-Path -LiteralPath $VmxPath).Path
-    $IpAddress = Get-GuestIpAddress -ResolvedVmrun $resolvedVmrun -ResolvedVmxPath $resolvedVmxPath
-}
 
 if (-not $UsePasswordDeploy) {
     Test-RequiredCommand -Name 'scp' | Out-Null
@@ -1826,7 +1878,8 @@ try {
             -PollSeconds $ReadinessPollSeconds `
             -WorkingDirectory $resolvedRepoRoot `
             -EnvironmentId $OnePasswordEnvironmentId `
-            -Account $OnePasswordAccount
+            -Account $OnePasswordAccount `
+            -TrustedHostKey $trustedSshHostKey
     } else {
         Write-Host "Uploading deployment files to $SshUser@$IpAddress`:$RemoteDirectory"
         Invoke-CheckedCommand -FilePath 'scp' -Arguments @($sshConnectionArguments + $uploadPaths + "${SshUser}@${IpAddress}:$RemoteDirectory/")

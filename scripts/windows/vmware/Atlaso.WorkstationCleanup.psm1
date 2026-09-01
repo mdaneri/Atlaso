@@ -457,7 +457,7 @@ function Test-AtlasoWorkstationVmxRegistered {
     $targetIdentity = Get-AtlasoPathIdentity -Path $VmxPath -Description 'VMware cleanup target'
     $inventoryStream = [System.IO.FileStream]::new($InventoryPath, [System.IO.FileMode]::Open, [System.IO.FileAccess]::Read, [System.IO.FileShare]::Read)
     try { $inventoryBytes = Read-AtlasoStreamBytes -Stream $inventoryStream } finally { $inventoryStream.Dispose() }
-    $inventoryLines = @([System.Text.Encoding]::UTF8.GetString($inventoryBytes).TrimStart([char]0xFEFF) -split '\r?\n')
+    $inventoryLines = @(([System.Text.Encoding]::UTF8.GetString($inventoryBytes) -split '\r?\n') | ForEach-Object { $_.TrimStart([char]0xFEFF) })
     $ownersById = @{}
     $invalidOwnerIds = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
     foreach ($line in $inventoryLines) {
@@ -674,7 +674,7 @@ function Remove-AtlasoWorkstationStaleRegistrations {
         return
     }
     $originalBytes = [System.IO.File]::ReadAllBytes($InventoryPath)
-    $lines = @([System.Text.Encoding]::UTF8.GetString($originalBytes).TrimStart([char]0xFEFF) -split '\r?\n')
+    $lines = @(([System.Text.Encoding]::UTF8.GetString($originalBytes) -split '\r?\n') | ForEach-Object { $_.TrimStart([char]0xFEFF) })
     $staleEntries = @(
         Get-AtlasoScopedInventoryEntriesFromLines -Lines $lines -ScopeRoot $resolvedScopeRoot |
             Where-Object { -not $_.Exists }
@@ -693,9 +693,9 @@ function Remove-AtlasoWorkstationStaleRegistrations {
             }
             $candidateSource = $rawValue.Substring($candidateStart)
             $closedOuterQuote = $candidateStart -gt 0 -and $candidateSource.Length -gt 0 -and $candidateSource[$candidateSource.Length - 1] -eq $openingQuote
-            if ($closedOuterQuote) { $candidateSource = $candidateSource.Substring(0, $candidateSource.Length - 1) }
+            if ($closedOuterQuote) { $candidateSource = $candidateSource.Substring(0, $candidateSource.Length - 1) }; $hasClosedCompleteValue = $closedOuterQuote -and -not $candidateSource.Contains([string]$openingQuote)
             $hasCompletePath = $false
-            if ((($closedOuterQuote -and $openingQuote -eq [char]34) -or $candidateSource -match '(?i)\.vmx$') -and -not $candidateSource.Contains([string][char]34) -and ($candidateStart -eq 0 -or $closedOuterQuote -or -not $candidateSource.Contains([string][char]39)) -and [System.IO.Path]::IsPathFullyQualified($candidateSource)) {
+            if (($hasClosedCompleteValue -or $candidateSource -match '(?i)\.vmx$') -and -not $candidateSource.Contains([string][char]34) -and ($candidateStart -eq 0 -or $hasClosedCompleteValue -or -not $candidateSource.Contains([string][char]39)) -and [System.IO.Path]::IsPathFullyQualified($candidateSource)) {
                 try { Get-AtlasoCanonicalPath -Path $candidateSource | Out-Null; $hasCompletePath = $true } catch { Write-Verbose "Ignored an uncanonicalizable complete Workstation inventory value: $($_.Exception.Message)" }
             }
             if ($hasCompletePath) { $rawCandidates = @($candidateSource) } else {
