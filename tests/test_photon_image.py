@@ -3413,6 +3413,16 @@ def test_photon_cleanup_pins_root_identity_for_creation_and_recovery() -> None:
         ordinary_cleanup : ordinary_cleanup + 500
     ]
     assert "identity moved or changed; artifacts and marker were preserved" in wrapper
+    assert "$cleanupMarkerPath = Join-Path $repoRoot (" in wrapper
+    assert (
+        "'.atlaso-local\\photon-image-build-state\\photon-image-build-cleanup.json'"
+        in wrapper
+    )
+    assert "-RepositoryRoot $repoRoot" in wrapper
+    assert "$legacyActiveMarker =" in wrapper
+    assert "Write-AtlasoDurableJsonFile -Path $MarkerPath -Payload $marker -Replace" in wrapper[
+        recovery:marker
+    ]
 
 
 def test_photon_child_revalidates_pinned_credential_ancestry() -> None:

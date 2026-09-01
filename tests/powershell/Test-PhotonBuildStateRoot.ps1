@@ -15,6 +15,10 @@ $resolvedRepositoryRoot = (Resolve-Path -LiteralPath $RepositoryRoot -ErrorActio
 Import-Module (
     Join-Path $resolvedRepositoryRoot 'scripts\windows\vmware\Atlaso.WorkstationCleanup.psm1'
 ) -Force
+. (Join-Path $resolvedRepositoryRoot 'scripts\windows\vmware\Atlaso.WorkstationFirstBoot.ps1')
+Import-Module (
+    Join-Path $resolvedRepositoryRoot 'scripts\windows\vmware\Atlaso.SourceSnapshot.psm1'
+) -Force
 $wrapperPath = Join-Path $resolvedRepositoryRoot 'scripts\windows\vmware\build-photon-image.ps1'
 $tokens = $null
 $parseErrors = $null
@@ -283,11 +287,14 @@ try {
         )
     }
     Set-Item -Path Function:Get-AtlasoWindowsBootIdentity -Value { 'current-test-boot' }
+    $differentStateParent = Join-Path $fixtureRoot 'different-state\credentials'
+    [void][System.IO.Directory]::CreateDirectory($differentStateParent)
     $recoveryError = ''
     try {
         Invoke-AtlasoPhotonBuildCleanupRecovery `
             -MarkerPath $identityMarkerPath `
-            -AllowedParentRoots @($identityParent)
+            -AllowedParentRoots @($differentStateParent) `
+            -RepositoryRoot $resolvedRepositoryRoot
     }
     catch {
         $recoveryError = $_.Exception.Message
@@ -300,6 +307,54 @@ try {
             'Photon reboot recovery did not preserve marker, original root, and replacement after an identity swap: ' +
             $recoveryError
         )
+    }
+
+    $schemaOneParent = Join-Path $fixtureRoot 'schema-one-cleanup'
+    [void][System.IO.Directory]::CreateDirectory($schemaOneParent)
+    $schemaOneRoot = Join-Path $schemaOneParent (
+        'atlaso-photon-build-credentials-' + [guid]::NewGuid().ToString('N')
+    )
+    [void][System.IO.Directory]::CreateDirectory($schemaOneRoot)
+    $schemaOneMarkerPath = Join-Path $fixtureRoot 'schema-one-cleanup-marker.json'
+    $schemaOneMarker = [ordered]@{
+        Schema       = 1
+        RootPath     = $schemaOneRoot
+        BootIdentity = 'current-test-boot'
+        Phase        = 'active'
+    }
+    [System.IO.File]::WriteAllText(
+        $schemaOneMarkerPath,
+        ($schemaOneMarker | ConvertTo-Json -Compress),
+        [System.Text.UTF8Encoding]::new($false)
+    )
+    $sameBootError = ''
+    try {
+        Invoke-AtlasoPhotonBuildCleanupRecovery `
+            -MarkerPath $schemaOneMarkerPath `
+            -AllowedParentRoots @($schemaOneParent) `
+            -RepositoryRoot $resolvedRepositoryRoot
+    }
+    catch {
+        $sameBootError = $_.Exception.Message
+    }
+    if ($sameBootError -notmatch 'unresolved sensitive cleanup' -or
+        -not (Test-Path -LiteralPath $schemaOneRoot -PathType Container) -or
+        -not (Test-Path -LiteralPath $schemaOneMarkerPath -PathType Leaf)) {
+        throw 'Photon cleanup did not retain active schema-1 state before boot proof.'
+    }
+    $schemaOneMarker.BootIdentity = 'prior-test-boot'
+    [System.IO.File]::WriteAllText(
+        $schemaOneMarkerPath,
+        ($schemaOneMarker | ConvertTo-Json -Compress),
+        [System.Text.UTF8Encoding]::new($false)
+    )
+    Invoke-AtlasoPhotonBuildCleanupRecovery `
+        -MarkerPath $schemaOneMarkerPath `
+        -AllowedParentRoots @($schemaOneParent) `
+        -RepositoryRoot $resolvedRepositoryRoot
+    if ((Test-Path -LiteralPath $schemaOneRoot) -or
+        (Test-Path -LiteralPath $schemaOneMarkerPath)) {
+        throw 'Photon cleanup did not upgrade and retire an active schema-1 marker after boot proof.'
     }
 
     $stagingBuildState = Join-Path $fixtureRoot 'staging-build-state'

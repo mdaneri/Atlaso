@@ -216,6 +216,9 @@ repository or canonical builder identity.
 If Windows cannot prove whole-tree termination, the wrapper retains the root plus a non-secret checkout-local cleanup
 marker and fails closed. Restart Windows and rerun the wrapper; the changed boot identity proves the prior tree is
 inactive, allowing exact-root cleanup and marker removal before any new credential access or image mutation.
+The marker uses one fixed checkout-local path independent of `-BuildStateRoot`, so changing or omitting that option
+cannot bypass retained-root admission. After boot proof, recovery durably upgrades an active legacy marker by pinning
+its admitted root identity before cleanup.
 Immediately before recursive recovery deletion, the wrapper revalidates the complete admitted parent and cleanup-root
 ancestry and refuses any junction, symbolic link, or other reparse point introduced after marker admission. The marker
 also persists the root's opaque filesystem identity. Ordinary and post-restart cleanup require that exact identity at

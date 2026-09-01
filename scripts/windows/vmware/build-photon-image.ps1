@@ -879,11 +879,14 @@ Recover a retained Photon sensitive-build root after a proven host restart.
 Exact non-secret cleanup marker path.
 .PARAMETER AllowedParentRoots
 Exact admitted current or legacy parent roots that may own the marker root.
+.PARAMETER RepositoryRoot
+Optional exact task repository used to admit a marker-owned custom state root.
 #>
 function Invoke-AtlasoPhotonBuildCleanupRecovery {
     param(
         [Parameter(Mandatory = $true)][string]$MarkerPath,
-        [Parameter(Mandatory = $true)][string[]]$AllowedParentRoots
+        [Parameter(Mandatory = $true)][string[]]$AllowedParentRoots,
+        [string]$RepositoryRoot = ''
     )
 
     if (-not (Test-Path -LiteralPath $MarkerPath -PathType Leaf)) {
@@ -899,6 +902,13 @@ function Invoke-AtlasoPhotonBuildCleanupRecovery {
             'BootIdentity' -in $markerProperties -and
             'Phase' -in $markerProperties -and
             $marker.Schema -eq 2
+        $legacyActiveMarker = $markerProperties.Count -eq 4 -and
+            'Schema' -in $markerProperties -and
+            'RootPath' -in $markerProperties -and
+            'BootIdentity' -in $markerProperties -and
+            'Phase' -in $markerProperties -and
+            $marker.Schema -eq 1 -and
+            $marker.Phase -ceq 'active'
         $legacyTerminalMarker = $markerProperties.Count -eq 4 -and
             'Schema' -in $markerProperties -and
             'RootPath' -in $markerProperties -and
@@ -906,14 +916,27 @@ function Invoke-AtlasoPhotonBuildCleanupRecovery {
             'Phase' -in $markerProperties -and
             $marker.Schema -eq 1 -and
             $marker.Phase -in @('root-absent', 'retired')
-        if (-not $currentMarker -and -not $legacyTerminalMarker) {
+        if (-not $currentMarker -and -not $legacyActiveMarker -and -not $legacyTerminalMarker) {
             throw 'Invalid cleanup marker schema.'
         }
         $resolvedRoot = [System.IO.Path]::GetFullPath([string]$marker.RootPath)
         $rootLeaf = Split-Path -Leaf $resolvedRoot
+        $candidateParentRoots = @($AllowedParentRoots)
+        if (-not [string]::IsNullOrWhiteSpace($RepositoryRoot)) {
+            $resolvedRepositoryRoot = (Resolve-Path -LiteralPath $RepositoryRoot -ErrorAction Stop).Path
+            $markerParentRoot = Split-Path -Parent $resolvedRoot
+            Assert-AtlasoStrictDescendantPath `
+                -ParentPath $resolvedRepositoryRoot `
+                -ChildPath $markerParentRoot `
+                -FailureMessage 'Photon cleanup parent escaped the exact task repository'
+            $candidateParentRoots += $markerParentRoot
+        }
         $admitted = @(
-            $AllowedParentRoots | Where-Object {
-                $resolvedParent = [System.IO.Path]::GetFullPath($_)
+            $candidateParentRoots |
+                ForEach-Object { [System.IO.Path]::GetFullPath($_) } |
+                Sort-Object -Unique |
+                Where-Object {
+                $resolvedParent = $_
                 $parentPrefix = $resolvedParent.TrimEnd(
                     [System.IO.Path]::DirectorySeparatorChar,
                     [System.IO.Path]::AltDirectorySeparatorChar
@@ -931,6 +954,26 @@ function Invoke-AtlasoPhotonBuildCleanupRecovery {
         if ($marker.Phase -ceq 'active' -and
             [string]$marker.BootIdentity -ceq (Get-AtlasoWindowsBootIdentity)) {
             throw 'A Windows restart is required before retained Photon credential artifacts can be cleaned safely.'
+        }
+        if ($legacyActiveMarker) {
+            # Schema 1 predates filesystem identity pinning. A changed boot proves
+            # its plaintext-consuming process is gone; pin the admitted root now
+            # and durably upgrade before allowing any recursive cleanup.
+            Assert-AtlasoStrictDescendantPath `
+                -ParentPath $admitted[0] `
+                -ChildPath $resolvedRoot `
+                -FailureMessage 'Photon cleanup root escaped its admitted parent'
+            $marker = [pscustomobject][ordered]@{
+                Schema       = 2
+                RootPath     = $resolvedRoot
+                RootIdentity = Get-AtlasoPathIdentity `
+                    -Path $resolvedRoot `
+                    -Description 'Legacy Photon cleanup root'
+                BootIdentity = [string]$marker.BootIdentity
+                Phase        = 'active'
+            }
+            Write-AtlasoDurableJsonFile -Path $MarkerPath -Payload $marker -Replace
+            $currentMarker = $true
         }
         $expectedRootIdentity = if ($currentMarker) {
             [string]$marker.RootIdentity
@@ -1145,7 +1188,9 @@ $resolvedBuildStateRoot = Resolve-AtlasoPhotonBuildStateRoot `
 $credentialStateRoot = Join-Path $resolvedBuildStateRoot 'credentials'
 $builderReservationHandoffStateRoot = Join-Path $resolvedBuildStateRoot 'vmware-builder-addresses'
 $builderReservationPendingRoot = Join-Path $builderReservationHandoffStateRoot 'pending-releases'
-$cleanupMarkerPath = Join-Path $resolvedBuildStateRoot 'photon-image-build-cleanup.json'
+$cleanupMarkerPath = Join-Path $repoRoot (
+    '.atlaso-local\photon-image-build-state\photon-image-build-cleanup.json'
+)
 $legacyCleanupMarkerPath = Join-Path $repoRoot '.atlaso-local\photon-image-build-cleanup.json'
 $legacyCredentialParentRoot = [System.IO.Path]::GetFullPath([System.IO.Path]::GetTempPath())
 $legacyBuilderReservationStateRoot = Join-Path (
@@ -1161,7 +1206,8 @@ if (-not $CredentialChild) {
         -AllowedParentRoots @($legacyCredentialParentRoot)
     Invoke-AtlasoPhotonBuildCleanupRecovery `
         -MarkerPath $cleanupMarkerPath `
-        -AllowedParentRoots @($credentialStateRoot)
+        -AllowedParentRoots @($credentialStateRoot) `
+        -RepositoryRoot $repoRoot
     $builderHandoffRootIdentity = Initialize-AtlasoBuilderHandoffRoot `
         -BuildStateRoot $resolvedBuildStateRoot `
         -HandoffStateRoot $builderReservationHandoffStateRoot `
