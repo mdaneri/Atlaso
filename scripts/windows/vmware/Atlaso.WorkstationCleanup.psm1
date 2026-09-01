@@ -641,7 +641,12 @@ function Remove-AtlasoWorkstationStaleRegistrations {
             throw "Exact stale-registration VMX still exists; provider state was preserved: $resolvedVmxPath"
         }
     }
-    if (-not $InventoryPath) { return }
+    if (-not $InventoryPath) {
+        if ($resolvedVmxPath -and (Test-Path -LiteralPath $resolvedVmxPath -PathType Leaf)) {
+            throw "The exact stale-registration VMX was recreated before inventory absence could be proven: $resolvedVmxPath"
+        }
+        return
+    }
     $originalBytes = [System.IO.File]::ReadAllBytes($InventoryPath)
     $lines = @([System.Text.Encoding]::UTF8.GetString($originalBytes) -split '\r?\n')
     $staleEntries = @(
@@ -655,8 +660,8 @@ function Remove-AtlasoWorkstationStaleRegistrations {
             if ($line -notmatch '^\s*(?<owner>vmlist\d+\.config|index\d+\.id)\s*=\s*(?<value>.*)$') { continue }
             $rawValue = $Matches.value.Trim()
             $rawOwner = $Matches.owner
-            $unquotedRawValue = $rawValue.TrimStart([char]34)
-            if ($unquotedRawValue -notmatch '^(?<path>.+?\.vmx)(?=$|["\s])') { continue }
+            $unquotedRawValue = $rawValue.TrimStart([char]34, [char]39)
+            if ($unquotedRawValue -notmatch '^(?<path>.+?\.vmx)(?=$|["''\s])') { continue }
             $rawCandidate = $Matches.path
             $rawRefersToExactPath = $false
             if ([System.IO.Path]::IsPathFullyQualified($rawCandidate)) {

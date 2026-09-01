@@ -1674,6 +1674,8 @@ def test_exact_stale_repair_preserves_mismatched_display_name(tmp_path: Path) ->
         ("index", "", False),
         ("config", '" junk', False),
         ("index", '" junk', False),
+        ("config", "'", False),
+        ("index", "'", False),
         ("config", '" junk', True),
         ("index", '" junk', True),
     ],
@@ -1695,7 +1697,7 @@ def test_exact_stale_repair_preserves_malformed_marker_owner_syntax(
     root = tmp_path / "test-vms" / "Atlaso-PR-672-cleanup"
     stale = root / "Atlaso-PR-672-cleanup.vmx"
     raw_stale = stale.parent / "subdirectory" / ".." / stale.name if use_parent_segment else stale.resolve()
-    opening_quote = '"' if malformed_suffix else ""
+    opening_quote = "'" if malformed_suffix == "'" else ('"' if malformed_suffix else "")
     malformed_value = f"{opening_quote}{raw_stale}{malformed_suffix}"
     config_value = malformed_value if malformed_owner == "config" else f'"{stale.resolve()}"'
     index_value = malformed_value if malformed_owner == "index" else f'"{stale.resolve()}"'
@@ -2788,7 +2790,7 @@ def test_module_keeps_inventory_work_out_of_normal_delete_path() -> None:
     )
     assert inventory_replace < rollback_catch < rollback_call
     assert stale_repair.count("foreach ($candidatePath in $targetPaths)") == 2
-    assert stale_repair.count("Test-Path -LiteralPath $resolvedVmxPath") >= 2
+    assert stale_repair.count("Test-Path -LiteralPath $resolvedVmxPath") >= 3
     implementation = re.sub(r"<#.*?#>\s*", "", module, flags=re.DOTALL)
     assert len(implementation.splitlines()) < 1_205
 
