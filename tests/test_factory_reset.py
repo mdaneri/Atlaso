@@ -215,6 +215,40 @@ def test_helper_factory_reset_runner_fails_when_database_url_is_unavailable(monk
     )
 
 
+def test_helper_factory_reset_runner_rejects_environment_file_escapes(monkeypatch, tmp_path):
+    """Console recovery fails closed when systemd value decoding would be required.
+
+    Args:
+        monkeypatch: Pytest fixture used to isolate the helper process environment.
+        tmp_path: Temporary directory provided for the installed runtime fixtures.
+    """
+    from tests.test_appliance_update import load_helper_module
+
+    helper = load_helper_module()
+    python = tmp_path / "python"
+    python.write_bytes(b"python")
+    environment_path = tmp_path / "atlaso.env"
+    environment_path.write_text(
+        "ATLASO_DATABASE_URL=sqlite:////var/lib/atlaso/control\\ plane.db\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(helper, "ATLASO_FACTORY_RESET_PYTHON", python)
+    monkeypatch.setattr(helper, "ATLASO_ENV_PATH", environment_path)
+    monkeypatch.setattr(
+        helper,
+        "_run",
+        lambda *_args, **_kwargs: pytest.fail("factory-reset runtime must not start"),
+    )
+
+    result = helper._factory_reset_runner(boot_resume=True)
+
+    assert result.returncode == 1
+    assert result.stdout == ""
+    assert result.stderr == (
+        "ATLASO_DATABASE_URL uses unsupported EnvironmentFile escape syntax.\n"
+    )
+
+
 @pytest.mark.skipif(os.name != "posix", reason="requires POSIX descriptor paths")
 def test_factory_reset_runner_pins_admitted_state_directory(tmp_path):
     """Runner state remains bound to the admitted directory after replacement.

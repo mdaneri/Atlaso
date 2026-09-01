@@ -19073,6 +19073,10 @@ def _installed_atlaso_database_url() -> str:
         if not candidate.startswith("ATLASO_DATABASE_URL="):
             continue
         database_url = candidate.partition("=")[2].strip()
+        if "\\" in database_url:
+            raise ValueError(
+                "ATLASO_DATABASE_URL uses unsupported EnvironmentFile escape syntax."
+            )
         if (
             len(database_url) >= 2
             and database_url[0] == database_url[-1]
