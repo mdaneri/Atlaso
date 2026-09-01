@@ -50,7 +50,7 @@ def test_trusted_ci_publishes_revalidated_required_statuses() -> None:
 
 
 def test_python_ci_installs_pinned_markdown_dependencies_before_pytest() -> None:
-    """Keep Markdown policy tests backed by the locked npm dependency tree."""
+    """Keep the full suite bounded and backed by the locked npm dependency tree."""
     workflow = (ROOT / ".github" / "workflows" / "ci.yml").read_text(
         encoding="utf-8"
     )
@@ -64,6 +64,7 @@ def test_python_ci_installs_pinned_markdown_dependencies_before_pytest() -> None
 
     assert "          node-version: '22'" in python_job
     assert "          cache: npm" in python_job
+    assert "    timeout-minutes: 45" in python_job
     assert setup_node < npm_install < pytest
 
 

@@ -1345,6 +1345,12 @@ if (-not $CredentialChild) {
         -BuildStateRoot $resolvedBuildStateRoot `
         -HandoffStateRoot $builderReservationHandoffStateRoot `
         -PendingRoot $builderReservationPendingRoot
+    Assert-AtlasoBuilderHandoffRootIdentity `
+        -BuildStateRoot $resolvedBuildStateRoot `
+        -HandoffStateRoot $builderReservationHandoffStateRoot `
+        -PendingRoot $builderReservationPendingRoot `
+        -StateIdentity ([string]$builderHandoffRootIdentity.StateIdentity) `
+        -PendingIdentity ([string]$builderHandoffRootIdentity.PendingIdentity)
     $pendingReservationHandoffs = @(
         Get-ChildItem -LiteralPath $builderReservationPendingRoot `
             -Filter 'builder-address-reservation-*.json' `
@@ -1355,6 +1361,12 @@ if (-not $CredentialChild) {
         $recoveryVmrunPath = Resolve-WorkstationVmrunPath -Path $VmrunPath
         foreach ($handoff in $pendingReservationHandoffs) {
             try {
+                Assert-AtlasoBuilderHandoffRootIdentity `
+                    -BuildStateRoot $resolvedBuildStateRoot `
+                    -HandoffStateRoot $builderReservationHandoffStateRoot `
+                    -PendingRoot $builderReservationPendingRoot `
+                    -StateIdentity ([string]$builderHandoffRootIdentity.StateIdentity) `
+                    -PendingIdentity ([string]$builderHandoffRootIdentity.PendingIdentity)
                 Complete-AtlasoBuilderAddressReservationHandoff `
                     -Path $handoff.FullName `
                     -VmrunPath $recoveryVmrunPath `

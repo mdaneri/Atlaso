@@ -3413,6 +3413,18 @@ def test_photon_wrapper_recovers_legacy_handoffs_before_pr_admission() -> None:
         assert "-VmrunPath (Resolve-WorkstationVmrunPath" not in recovery_call
     assert "Initialize-AtlasoPhotonCredentialRoot `" in wrapper
     assert wrapper.count("Assert-AtlasoPhotonCredentialRootIdentity `") >= 3
+    startup_initialize = wrapper.index("$builderHandoffRootIdentity = Initialize-AtlasoBuilderHandoffRoot `")
+    startup_enumeration = wrapper.index("$pendingReservationHandoffs = @(", startup_initialize)
+    startup_loop = wrapper.index("foreach ($handoff in $pendingReservationHandoffs)", startup_enumeration)
+    startup_completion = wrapper.index(
+        "Complete-AtlasoBuilderAddressReservationHandoff `", startup_loop
+    )
+    assert "Assert-AtlasoBuilderHandoffRootIdentity `" in wrapper[
+        startup_initialize:startup_enumeration
+    ]
+    assert "Assert-AtlasoBuilderHandoffRootIdentity `" in wrapper[
+        startup_loop:startup_completion
+    ]
 
 
 def test_photon_cleanup_pins_root_identity_for_creation_and_recovery() -> None:
