@@ -13337,6 +13337,23 @@ def cleanup_transient_secret_staging_files() -> None:
         status_temp_path.unlink(missing_ok=True)
 
 
+def synchronize_routing_service_runtime(
+    db: Session,
+    *,
+    routing_enabled: bool,
+) -> None:
+    """Publish the successfully applied Routing runtime state."""
+    routing_service = db.execute(
+        select(ServiceState).where(ServiceState.service == "routing")
+    ).scalar_one_or_none()
+    if routing_service is None:
+        return
+    routing_service.enabled = routing_enabled
+    routing_service.running = routing_enabled
+    routing_service.health = "healthy" if routing_enabled else "disabled"
+    db.add(routing_service)
+
+
 def execute_appliance_apply_unit(
     unit: dict[str, Any],
     *,
@@ -13623,15 +13640,10 @@ def execute_appliance_apply_unit(
     if unit_id == "wan" and succeeded and not any(result.dry_run for result in results):
         if db is None:
             raise RuntimeError("A database session is required to finalize a Routes and WAN apply.")
-        routing_service = db.execute(
-            select(ServiceState).where(ServiceState.service == "routing")
-        ).scalar_one_or_none()
-        if routing_service is not None:
-            routing_enabled = context["routes_wan_settings"].routing_enabled
-            routing_service.enabled = routing_enabled
-            routing_service.running = routing_enabled
-            routing_service.health = "healthy" if routing_enabled else "disabled"
-            db.add(routing_service)
+        synchronize_routing_service_runtime(
+            db,
+            routing_enabled=context["routes_wan_settings"].routing_enabled,
+        )
     if (
         unit_id == "ldap"
         and context["ldap_settings"].enabled
@@ -13881,6 +13893,11 @@ def execute_management_handoff(
                 or "Management handoff failed and immediate recovery could not be proven."
             ),
         }
+    if wan is not None and succeeded and not any(result.dry_run for result in results):
+        synchronize_routing_service_runtime(
+            db,
+            routing_enabled=wan["context"]["routes_wan_settings"].routing_enabled,
+        )
     group_result = {
         "success": succeeded,
         "dry_run": any(result.dry_run for result in results),
