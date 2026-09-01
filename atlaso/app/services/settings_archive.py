@@ -2478,15 +2478,14 @@ def _validate_archive_relationships(data: dict[str, list[dict[str, Any]]]) -> No
             raise ValueError(
                 f"The settings archive row {row_index} in 'routes' has an ineligible target interface."
             )
-        if archive_routes_wan_settings.wan_simulation_enabled:
-            require_reference(
-                "routes",
-                row_index,
-                str(row.get("wan_policy_name") or ""),
-                wan_policy_names,
-                "WAN policy",
-                optional=True,
-            )
+        require_reference(
+            "routes",
+            row_index,
+            str(row.get("wan_policy_name") or ""),
+            wan_policy_names,
+            "WAN policy",
+            optional=True,
+        )
 
     for row_index, row in enumerate(data.get("nat_rules", []), start=1):
         enabled = row.get("enabled", True)

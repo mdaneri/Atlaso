@@ -10,6 +10,7 @@ from atlaso.app.models import NatRule, Route
 from atlaso.app.services.routes_wan import (
     NAT_ENABLED_SETTING_KEY,
     ROUTING_ENABLED_SETTING_KEY,
+    WAN_SIMULATION_ENABLED_SETTING_KEY,
 )
 from atlaso.app.services.settings_archive import (
     ROUTES_WAN_SETTING_KEYS,
@@ -104,6 +105,26 @@ def test_restore_routes_wan_archive_rejects_invalid_route_destination_when_routi
     archive["data"]["routes"][0]["destination_cidr"] = "bad-cidr"
 
     with pytest.raises(ValueError, match="Routes and WAN state is invalid: Route bad-cidr is not a valid destination CIDR"):
+        with SessionLocal() as db_session:
+            restore_settings_archive(db_session, archive)
+
+
+def test_restore_routes_wan_archive_rejects_missing_dormant_wan_policy(client):
+    """Dormant WAN assignments retain referential integrity during restore."""
+    with SessionLocal() as db_session:
+        archive = deepcopy(export_settings_archive(db_session, actor="test"))
+    _set_routes_wan_setting(archive, key=ROUTING_ENABLED_SETTING_KEY, value=False)
+    archive["data"]["settings"] = [
+        row
+        for row in archive["data"]["settings"]
+        if row.get("key") != WAN_SIMULATION_ENABLED_SETTING_KEY
+    ]
+    archive["data"]["settings"].append(
+        {"key": WAN_SIMULATION_ENABLED_SETTING_KEY, "value": "false"}
+    )
+    archive["data"]["routes"][0]["wan_policy_name"] = "Missing dormant policy"
+
+    with pytest.raises(ValueError, match="references an unknown WAN policy"):
         with SessionLocal() as db_session:
             restore_settings_archive(db_session, archive)
 
