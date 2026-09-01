@@ -5873,6 +5873,53 @@ def test_wan_only_simulation_ignores_dormant_route_path_errors(tmp_path):
     assert helper._wan_config_errors(config_path) == []
 
 
+def test_wan_disabled_apply_skips_preserved_route_with_absent_target(tmp_path):
+    """Do not address a missing device while its saved route is dormant.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
+    helper = load_helper_module()
+    config_path = tmp_path / "disabled-absent-route-target.conf"
+    config_path.write_text(
+        """[feature_settings]
+routing_enabled=false
+nat_enabled=false
+wan_simulation_enabled=false
+
+[targets]
+
+[routes]
+route=192.0.2.0/24
+  interface=missing-route-target
+  metric=100
+  enabled=true
+  wan_mode=interface
+
+[removed_routes]
+[removed_main_defaults]
+[routing_rules]
+[nat_rules]
+[wan_policies]
+""",
+        encoding="utf-8",
+    )
+    commands: list[list[str]] = []
+    helper.shutil.which = lambda command: (
+        f"/usr/sbin/{command}" if command in {"ip", "tc"} else None
+    )
+    helper._run = lambda command: (
+        commands.append(command)
+        or subprocess.CompletedProcess(command, 1, "", "device absent")
+    )
+
+    assert helper._wan_config_errors(config_path) == []
+    assert helper._apply_wan_routes_and_qdiscs(
+        helper._parse_wan_config(config_path)
+    ) == 0
+    assert commands == []
+
+
 def esxi_pxe_manifest(http_root: Path, *, enabled: bool = True, stale_id: int = 99, iso_root: Path | None = None) -> dict:
     """Return esxi pxe manifest.
 

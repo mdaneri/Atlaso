@@ -9679,6 +9679,12 @@ def _apply_wan_routes_and_qdiscs(
         saved_enabled = _wan_bool(route.get("enabled", ""), default=True)
         enabled = saved_enabled and routing_enabled
         if not enabled:
+            # A disabled feature may preserve an enabled route whose physical
+            # target is no longer present. The kernel retires routes when that
+            # link disappears, and naming the absent device here makes the
+            # otherwise valid dormant configuration fail its first apply.
+            if interface_name not in targets:
+                continue
             delete_result = _run_route_delete(destination, interface_name)
             if delete_result != 0:
                 return delete_result
