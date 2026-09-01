@@ -5385,6 +5385,13 @@ def test_settings_archive_preflight_rejects_invalid_collection_row_and_required_
 
     with SessionLocal() as db:
         archive = export_settings_archive(db, actor="test")
+    for setting in archive["data"]["settings"]:
+        if setting["key"] in {
+            "routes_wan.routing_enabled",
+            "routes_wan.nat_enabled",
+            "routes_wan.wan_simulation_enabled",
+        }:
+            setting["value"] = "true"
     assert archive["data"]["physical_interfaces"]
 
     invalid_collection = deepcopy(archive)
