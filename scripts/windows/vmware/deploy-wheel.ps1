@@ -471,6 +471,10 @@ function Stage-PasswordDeployPythonWheels {
             -RepositoryRoot $WorkingDirectory `
             -Destination $stagingDirectory `
             -TimeoutSeconds 120 | Out-Null
+        $indexLockPath = Join-Path $stagingDirectory 'requirements-onepassword-index.lock'
+        New-AtlasoOnePasswordIndexLock `
+            -LockPath $lockPath `
+            -DestinationPath $indexLockPath | Out-Null
         $pipRuntime = New-AtlasoIsolatedPipRuntime `
             -PythonCommand $PythonCommand `
             -RuntimeRoot (Join-Path $stagingDirectory 'pip-runtime') `
@@ -485,10 +489,10 @@ function Stage-PasswordDeployPythonWheels {
             '--require-hashes',
             '--only-binary=:all:',
             '--dest', $stagingDirectory,
-            '-r', $lockPath
+            '-r', $indexLockPath
         ) | Out-Host
         [void][System.IO.Directory]::CreateDirectory($wheelDirectory)
-        Get-ChildItem -LiteralPath $stagingDirectory -File |
+        Get-ChildItem -LiteralPath $stagingDirectory -Filter '*.whl' -File |
             Copy-Item -Destination $wheelDirectory -Force
     }
     finally {

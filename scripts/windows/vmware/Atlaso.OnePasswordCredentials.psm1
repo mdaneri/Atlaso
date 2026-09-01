@@ -574,6 +574,72 @@ function New-AtlasoIsolatedPipRuntime {
 
 <#
 .SYNOPSIS
+Create the hash-locked index-download input without the preverified 1Password SDK wheel.
+
+.PARAMETER LockPath
+Canonical deployment lock containing exactly one onepassword-sdk 0.4.1 requirement.
+
+.PARAMETER DestinationPath
+Private task-specific path that receives the remaining index-download requirements.
+#>
+function New-AtlasoOnePasswordIndexLock {
+    param(
+        [Parameter(Mandatory = $true)][string]$LockPath,
+        [Parameter(Mandatory = $true)][string]$DestinationPath
+    )
+
+    if (-not (Test-Path -LiteralPath $LockPath -PathType Leaf)) {
+        throw "The vetted 1Password deployment lock is unavailable: $LockPath."
+    }
+    $lines = [System.IO.File]::ReadAllLines([System.IO.Path]::GetFullPath($LockPath))
+    $requirementIndexes = @(
+        for ($index = 0; $index -lt $lines.Count; $index++) {
+            if ($lines[$index] -cmatch '^onepassword-sdk==0\.4\.1\s+\\\s*$') {
+                $index
+            }
+        }
+    )
+    if ($requirementIndexes.Count -ne 1) {
+        throw 'The vetted deployment lock must contain exactly one onepassword-sdk==0.4.1 requirement.'
+    }
+
+    $startIndex = [int]$requirementIndexes[0]
+    $endIndex = $startIndex
+    $sawHash = $false
+    while ($endIndex -lt $lines.Count) {
+        if ($lines[$endIndex] -cmatch '^\s+--hash=sha256:[0-9a-f]{64}(?:\s+\\)?\s*$') {
+            $sawHash = $true
+        }
+        if ($lines[$endIndex] -cnotmatch '\\\s*$') {
+            break
+        }
+        $endIndex++
+    }
+    if (-not $sawHash -or $endIndex -ge $lines.Count) {
+        throw 'The onepassword-sdk requirement in the vetted deployment lock is malformed.'
+    }
+    if (($endIndex + 1) -lt $lines.Count -and $lines[$endIndex + 1] -cmatch '^\s+# via ') {
+        $endIndex++
+    }
+
+    $remainingLines = [System.Collections.Generic.List[string]]::new()
+    for ($index = 0; $index -lt $lines.Count; $index++) {
+        if ($index -lt $startIndex -or $index -gt $endIndex) {
+            $remainingLines.Add($lines[$index])
+        }
+    }
+    $resolvedDestination = [System.IO.Path]::GetFullPath($DestinationPath)
+    [void][System.IO.Directory]::CreateDirectory([System.IO.Path]::GetDirectoryName($resolvedDestination))
+    [System.IO.File]::WriteAllLines(
+        $resolvedDestination,
+        $remainingLines,
+        [System.Text.UTF8Encoding]::new($false)
+    )
+    return $resolvedDestination
+}
+
+<#
+.SYNOPSIS
 Prepare the isolated hash-locked 1Password SDK runtime.
 
 .PARAMETER PythonCommand
@@ -603,6 +669,7 @@ function Initialize-AtlasoOnePasswordSdkRuntime {
     $wheelDirectory = Join-Path $BridgeRoot 'wheels'
     $dependencyDirectory = Join-Path $BridgeRoot 'python-dependencies'
     $pipRuntimeRoot = Join-Path $BridgeRoot 'pip-runtime'
+    $indexLockPath = Join-Path $BridgeRoot 'requirements-onepassword-index.lock'
     [void][System.IO.Directory]::CreateDirectory($wheelDirectory)
     [void][System.IO.Directory]::CreateDirectory($dependencyDirectory)
 
@@ -611,6 +678,9 @@ function Initialize-AtlasoOnePasswordSdkRuntime {
         -RepositoryRoot $RepositoryRoot `
         -Destination $wheelDirectory `
         -TimeoutSeconds $TimeoutSeconds | Out-Null
+    New-AtlasoOnePasswordIndexLock `
+        -LockPath $lockPath `
+        -DestinationPath $indexLockPath | Out-Null
     $pipRuntime = New-AtlasoIsolatedPipRuntime `
         -PythonCommand $PythonCommand `
         -RuntimeRoot $pipRuntimeRoot `
@@ -629,7 +699,7 @@ function Initialize-AtlasoOnePasswordSdkRuntime {
             '--require-hashes',
             '--only-binary=:all:',
             '--dest', $wheelDirectory,
-            '-r', $lockPath
+            '-r', $indexLockPath
         ) `
         -TimeoutSeconds $TimeoutSeconds `
         -Action 'The hash-verified 1Password SDK wheel download' | Out-Null
@@ -1083,6 +1153,7 @@ Export-ModuleMember -Function @(
     'Resolve-AtlasoOnePasswordPython',
     'Save-AtlasoOnePasswordWheel',
     'New-AtlasoIsolatedPipRuntime',
+    'New-AtlasoOnePasswordIndexLock',
     'Initialize-AtlasoOnePasswordSdkRuntime',
     'Get-AtlasoOnePasswordCredentialBridgeError',
     'Remove-AtlasoOnePasswordCredentialBridge',

@@ -72,6 +72,9 @@ if (-not $scriptText.Contains('[string]$OnePasswordPython =', [System.StringComp
     -not $scriptText.Contains('Resolve-AtlasoOnePasswordPython', [System.StringComparison]::Ordinal) -or
     -not $scriptText.Contains('Save-AtlasoOnePasswordWheel', [System.StringComparison]::Ordinal) -or
     -not $scriptText.Contains('New-AtlasoIsolatedPipRuntime', [System.StringComparison]::Ordinal) -or
+    -not $scriptText.Contains('New-AtlasoOnePasswordIndexLock', [System.StringComparison]::Ordinal) -or
+    -not $scriptText.Contains("'-r', `$indexLockPath", [System.StringComparison]::Ordinal) -or
+    -not $scriptText.Contains("-Filter '*.whl' -File", [System.StringComparison]::Ordinal) -or
     -not $scriptText.Contains('@($pipRuntime.ArgumentsPrefix)', [System.StringComparison]::Ordinal) -or
     -not $scriptText.Contains('-PythonCommand $resolvedOnePasswordPython', [System.StringComparison]::Ordinal)) {
     throw 'Password deployment must use the approved standard CPython 3.14 runtime and immutable compatibility wheel.'
