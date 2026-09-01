@@ -6948,6 +6948,66 @@
         "title": "RouteResponse",
         "type": "object"
       },
+      "RoutesWanSettingsResponse": {
+        "description": "Saved Routes and WAN settings plus the effective NAT state.\n\nAttributes:\n    effective_nat_enabled: Whether both routing and NAT are enabled in saved desired state.",
+        "properties": {
+          "effective_nat_enabled": {
+            "description": "True only when both routing_enabled and nat_enabled are true.",
+            "title": "Effective Nat Enabled",
+            "type": "boolean"
+          },
+          "nat_enabled": {
+            "description": "Whether saved Atlaso IPv4 masquerade rules are enabled; NAT remains suspended while routing is disabled.",
+            "title": "Nat Enabled",
+            "type": "boolean"
+          },
+          "routing_enabled": {
+            "description": "Whether Atlaso lab routes, routing permissions, and IPv4/IPv6 packet forwarding are enabled in saved desired state.",
+            "title": "Routing Enabled",
+            "type": "boolean"
+          },
+          "wan_simulation_enabled": {
+            "description": "Whether enabled WAN policy assignments apply interface-level tc/netem simulation.",
+            "title": "Wan Simulation Enabled",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "routing_enabled",
+          "nat_enabled",
+          "wan_simulation_enabled",
+          "effective_nat_enabled"
+        ],
+        "title": "RoutesWanSettingsResponse",
+        "type": "object"
+      },
+      "RoutesWanSettingsUpdate": {
+        "description": "Global desired-state activation fields for Routes and WAN features.\n\nAttributes:\n    routing_enabled: Whether Atlaso lab routing and packet forwarding are desired.\n    nat_enabled: Whether saved IPv4 masquerade rules are desired when routing is enabled.\n    wan_simulation_enabled: Whether saved tc/netem assignments are desired.",
+        "properties": {
+          "nat_enabled": {
+            "description": "Whether saved Atlaso IPv4 masquerade rules are enabled; NAT remains suspended while routing is disabled.",
+            "title": "Nat Enabled",
+            "type": "boolean"
+          },
+          "routing_enabled": {
+            "description": "Whether Atlaso lab routes, routing permissions, and IPv4/IPv6 packet forwarding are enabled in saved desired state.",
+            "title": "Routing Enabled",
+            "type": "boolean"
+          },
+          "wan_simulation_enabled": {
+            "description": "Whether enabled WAN policy assignments apply interface-level tc/netem simulation.",
+            "title": "Wan Simulation Enabled",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "routing_enabled",
+          "nat_enabled",
+          "wan_simulation_enabled"
+        ],
+        "title": "RoutesWanSettingsUpdate",
+        "type": "object"
+      },
       "ServiceActionResponse": {
         "description": "Fields returned by the Atlaso service action API.\n\nAttributes:\n    service: Returned service value for this service action resource.\n    action: Returned action value for this service action resource.\n    dry_run: Whether the operation reports command intent without mutating appliance host state.\n    command: Ordered collection of command values represented by this service action schema.",
         "properties": {
@@ -16393,6 +16453,90 @@
         ]
       }
     },
+    "/api/v1/routes-wan/settings": {
+      "get": {
+        "description": "Get global Routes and WAN feature settings.\n\nRequires both `read:routes` and `read:wan`. This operation returns saved desired state and\ndoes not inspect or mutate Photon runtime networking.",
+        "operationId": "getRoutesWanSettings",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RoutesWanSettingsResponse"
+                }
+              }
+            },
+            "description": "Get global Routes and WAN feature settings. The response body matches the documented success schema."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "The request parameters or body failed Atlaso validation. The response includes a request ID that can be correlated with operational logs."
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Get Routes Wan Settings",
+        "tags": [
+          "Routes",
+          "WAN"
+        ]
+      },
+      "put": {
+        "description": "Replace global Routes and WAN desired-state activation settings.\n\nRequires both `write:routes` and `write:wan`. The saved resource rows are preserved and no\nPhoton host state changes until the `wan` Appliance Apply unit succeeds.",
+        "operationId": "updateRoutesWanSettings",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RoutesWanSettingsUpdate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RoutesWanSettingsResponse"
+                }
+              }
+            },
+            "description": "Replace global Routes and WAN desired-state activation settings. The response body matches the documented success schema."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "The request parameters or body failed Atlaso validation. The response includes a request ID that can be correlated with operational logs."
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Update Routes Wan Settings",
+        "tags": [
+          "Routes",
+          "WAN"
+        ]
+      }
+    },
     "/api/v1/routes/{route_id}": {
       "delete": {
         "description": "Delete Route.\n\nRequires the `write:routes` API scope. Removal or revocation takes effect in Atlaso application\nstate; appliance host changes remain subject to the documented apply boundary for the resource.",
@@ -16844,7 +16988,7 @@
     },
     "/api/v1/services/{service}/disable": {
       "post": {
-        "description": "Disable Service.\n\nRequires the `write:services` API scope. The operation changes saved Atlaso application state;\nany appliance host enforcement remains subject to the documented apply or task boundary for the\nresource.",
+        "description": "Disable Service.\n\nRequires the `write:services` API scope. Routing additionally requires both `write:routes` and\n`write:wan`. The operation changes saved Atlaso application state; any appliance host enforcement\nremains subject to the documented apply or task boundary for the resource.",
         "operationId": "disableService",
         "parameters": [
           {
@@ -16894,7 +17038,7 @@
     },
     "/api/v1/services/{service}/enable": {
       "post": {
-        "description": "Enable Service.\n\nRequires the `write:services` API scope. The operation changes saved Atlaso application state;\nany appliance host enforcement remains subject to the documented apply or task boundary for the\nresource.",
+        "description": "Enable Service.\n\nRequires the `write:services` API scope. Routing additionally requires both `write:routes` and\n`write:wan`. The operation changes saved Atlaso application state; any appliance host enforcement\nremains subject to the documented apply or task boundary for the resource.",
         "operationId": "enableService",
         "parameters": [
           {

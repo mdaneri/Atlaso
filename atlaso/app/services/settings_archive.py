@@ -174,7 +174,10 @@ from atlaso.app.services.oidc import (
     validate_redirect_uri_list,
 )
 from atlaso.app.services.routes_wan import (
+    ROUTES_WAN_SETTING_KEYS,
+    RoutesWanSettings,
     canonical_route_destination,
+    ensure_routes_wan_settings,
     validate_nat_source,
     validate_wan_state,
 )
@@ -214,6 +217,7 @@ SAFE_SETTING_KEYS = {
     FIREWALL_SOURCE_GROUPS_SETTING_KEY,
     LOCAL_USERS_PASSWORD_POLICY_KEY,
     NTP_NTS_RESTORATION_SETTING_KEY,
+    *ROUTES_WAN_SETTING_KEYS,
 }
 
 SCALAR_TABLES = {
@@ -1563,6 +1567,10 @@ def _restore_settings_archive_data(db: Session, data: dict[str, Any]) -> dict[st
     counts["automation_scripts"] = _restore_automation_scripts(db, data.get("automation_scripts", []))
     counts["schedules"] = _restore_schedules(db, data.get("schedules", []))
     counts["settings"] = _insert_rows(db, Setting, [row for row in data.get("settings", []) if row.get("key") in SAFE_SETTING_KEYS])
+    ensure_routes_wan_settings(db)
+    counts["settings"] = len(
+        db.execute(select(Setting).where(Setting.key.in_(SAFE_SETTING_KEYS))).scalars().all()
+    )
     reconcile_factory_service_identities(db)
     _disable_startup_example_seed(db)
     return counts
@@ -1815,6 +1823,125 @@ def _validate_archive_unique_identities(data: dict[str, list[dict[str, Any]]]) -
             seen_identities.add(identity)
 
 
+def _parse_archive_setting_bool(value: Any) -> bool:
+    """Return a persisted archive setting value as a boolean.
+
+    Args:
+        value: Archived setting value to interpret.
+    """
+
+    return str(value or "").strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _infer_routes_wan_feature_state(
+    data: dict[str, list[dict[str, Any]]]
+) -> RoutesWanSettings:
+    """Infer feature activation for legacy archives without explicit routes-wan keys.
+
+    Args:
+        data: Validated archive sections used for legacy inference.
+    """
+    routes = data.get("routes", [])
+    nat_rules = data.get("nat_rules", [])
+    routing_rules = data.get("routing_rules", [])
+    policies = data.get("wan_policies", [])
+    physical_interfaces = data.get("physical_interfaces", [])
+    vlan_interfaces = data.get("vlan_interfaces", [])
+
+    def _has_routing_cidr(row: dict[str, Any]) -> bool:
+        """Return whether an archived interface has a usable routing CIDR.
+
+        Args:
+            row: Archived physical-interface or VLAN row to inspect.
+        """
+        for field_name in ("ip_cidr", "ipv6_cidr"):
+            value = str(row.get(field_name) or "")
+            if not value:
+                continue
+            try:
+                ip_interface(value)
+            except ValueError:
+                continue
+            return True
+        return False
+
+    active_route_targets: set[str] = set()
+    for row in physical_interfaces:
+        if (
+            normalize_interface_mode(row.get("mode")) != "trunk"
+            and str(row.get("oper_state") or "") != "missing"
+            and normalize_interface_role(row.get("role")) == "route"
+            and _has_routing_cidr(row)
+        ):
+            active_route_targets.add(str(row.get("name") or ""))
+
+    for row in vlan_interfaces:
+        if (
+            row.get("enabled", True)
+            and normalize_interface_role(row.get("role")) == "route"
+            and _has_routing_cidr(row)
+        ):
+            active_route_targets.add(str(row.get("name") or ""))
+
+    enabled_routes = any(row.get("enabled", False) for row in routes)
+    enabled_routing_rule = any(row.get("enabled", False) for row in routing_rules)
+    enabled_nat_rule = any(row.get("enabled", False) for row in nat_rules)
+    enabled_policy_names = {
+        str(row.get("name") or "")
+        for row in policies
+        if row.get("enabled", False)
+    }
+    wan_simulation_required = any(
+        row.get("enabled", False)
+        and str(row.get("wan_policy_name") or "") in enabled_policy_names
+        for row in routes
+    )
+
+    return RoutesWanSettings(
+        routing_enabled=(
+            bool(enabled_routes)
+            or bool(enabled_routing_rule)
+            or len(active_route_targets) >= 2
+            or bool(enabled_nat_rule)
+        ),
+        nat_enabled=bool(enabled_nat_rule),
+        wan_simulation_enabled=bool(wan_simulation_required),
+    )
+
+
+def _archive_routes_wan_feature_state(
+    data: dict[str, list[dict[str, Any]]]
+) -> RoutesWanSettings:
+    """Return saved routes-and-WAN feature state, inferring absent values.
+
+    Args:
+        data: Validated archive sections containing settings and network intent.
+    """
+    settings = {
+        str(row.get("key") or ""): row
+        for row in data.get("settings", [])
+        if str(row.get("key") or "").startswith("routes_wan.")
+    }
+    inferred = _infer_routes_wan_feature_state(data)
+    return RoutesWanSettings(
+        routing_enabled=(
+            _parse_archive_setting_bool(settings["routes_wan.routing_enabled"]["value"])
+            if "routes_wan.routing_enabled" in settings
+            else inferred.routing_enabled
+        ),
+        nat_enabled=(
+            _parse_archive_setting_bool(settings["routes_wan.nat_enabled"]["value"])
+            if "routes_wan.nat_enabled" in settings
+            else inferred.nat_enabled
+        ),
+        wan_simulation_enabled=(
+            _parse_archive_setting_bool(settings["routes_wan.wan_simulation_enabled"]["value"])
+            if "routes_wan.wan_simulation_enabled" in settings
+            else inferred.wan_simulation_enabled
+        ),
+    )
+
+
 def _validate_archive_relationships(data: dict[str, list[dict[str, Any]]]) -> None:
     """Validate archive relationships that restore resolves by public names.
 
@@ -1962,6 +2089,31 @@ def _validate_archive_relationships(data: dict[str, list[dict[str, Any]]]) -> No
         != "management"
     }
     route_target_names = set(route_target_families)
+    management_target_names: set[str] = set()
+    for name in route_target_names:
+        physical = physical_interfaces.get(name)
+        vlan = vlan_interfaces.get(name)
+        row = physical or vlan or {}
+        if (
+            normalize_interface_role(row.get("role")) != "access"
+            or row.get("access_management_ui_enabled", False) is not True
+        ):
+            continue
+        if physical is not None:
+            if (
+                normalize_interface_mode(physical.get("mode")) == "access"
+                and str(physical.get("admin_state") or "up").lower() == "up"
+            ):
+                management_target_names.add(name)
+            continue
+        parent = physical_interfaces.get(str((vlan or {}).get("parent_interface") or ""))
+        if (
+            parent is not None
+            and str(parent.get("oper_state") or "") != "missing"
+            and str(parent.get("admin_state") or "up").lower() == "up"
+            and normalize_interface_mode(parent.get("mode")) == "trunk"
+        ):
+            management_target_names.add(name)
     route_target_cidrs = {
         name: (
             (physical_interfaces.get(name) or vlan_interfaces[name]).get("ip_cidr"),
@@ -2339,13 +2491,26 @@ def _validate_archive_relationships(data: dict[str, list[dict[str, Any]]]) -> No
             f"The settings archive Firewall state is invalid: {firewall_errors[0]}"
         )
 
+    archive_routes_wan_settings = _archive_routes_wan_feature_state(data)
+    effective_nat_enabled = archive_routes_wan_settings.effective_nat_enabled
+
     for row_index, row in enumerate(data.get("routes", []), start=1):
         enabled = row.get("enabled", True)
         if not isinstance(enabled, bool):
             raise ValueError(
                 f"The settings archive row {row_index} in 'routes' has an invalid enabled value."
             )
-        if enabled and str(row.get("interface_name") or "") not in route_target_names:
+        if (
+            enabled
+            and (
+                archive_routes_wan_settings.routing_enabled
+                or (
+                    archive_routes_wan_settings.wan_simulation_enabled
+                    and bool(str(row.get("wan_policy_name") or "").strip())
+                )
+            )
+            and str(row.get("interface_name") or "") not in route_target_names
+        ):
             raise ValueError(
                 f"The settings archive row {row_index} in 'routes' has an ineligible target interface."
             )
@@ -2364,11 +2529,18 @@ def _validate_archive_relationships(data: dict[str, list[dict[str, Any]]]) -> No
             raise ValueError(
                 f"The settings archive row {row_index} in 'nat_rules' has an invalid enabled value."
             )
-        if enabled and "ipv4" not in route_target_families.get(str(row.get("outbound_interface") or ""), set()):
+        if (
+            effective_nat_enabled
+            and enabled
+            and "ipv4"
+            not in route_target_families.get(
+                str(row.get("outbound_interface") or ""), set()
+            )
+        ):
             raise ValueError(
                 f"The settings archive row {row_index} in 'nat_rules' has an ineligible outbound interface."
             )
-        if enabled and validate_nat_source(
+        if effective_nat_enabled and enabled and validate_nat_source(
             str(row.get("source") or ""),
             firewall_source_group_ids,
             firewall_source_groups,
@@ -2385,11 +2557,13 @@ def _validate_archive_relationships(data: dict[str, list[dict[str, Any]]]) -> No
             )
         source = str(row.get("source_interface") or "")
         destination = str(row.get("destination_interface") or "")
-        if enabled and (source not in route_target_names or destination not in route_target_names):
+        if archive_routes_wan_settings.routing_enabled and enabled and (
+            source not in route_target_names or destination not in route_target_names
+        ):
             raise ValueError(
                 f"The settings archive row {row_index} in 'routing_rules' has an ineligible interface."
             )
-        if enabled and source == destination:
+        if archive_routes_wan_settings.routing_enabled and enabled and source == destination:
             raise ValueError(
                 f"The settings archive row {row_index} in 'routing_rules' has identical source and destination interfaces."
             )
@@ -2428,6 +2602,10 @@ def _validate_archive_relationships(data: dict[str, list[dict[str, Any]]]) -> No
         ],
         routing_target_names=route_target_names,
         route_target_cidrs=route_target_cidrs,
+        management_target_names=management_target_names,
+        routing_enabled=archive_routes_wan_settings.routing_enabled,
+        nat_enabled=effective_nat_enabled,
+        wan_simulation_enabled=archive_routes_wan_settings.wan_simulation_enabled,
     )
     if wan_errors:
         raise ValueError(
@@ -3778,6 +3956,12 @@ def _validate_archive_relationships(data: dict[str, list[dict[str, Any]]]) -> No
         ):
             raise ValueError(
                 "The settings archive NTPsec NTS restoration marker is invalid."
+            )
+        if setting_key in ROUTES_WAN_SETTING_KEYS and str(
+            row.get("value") or ""
+        ).strip().lower() not in {"true", "false"}:
+            raise ValueError(
+                f"The settings archive Routes and WAN switch {setting_key} must be true or false."
             )
         setting_keys.add(setting_key)
 

@@ -443,13 +443,13 @@ Figure: Public certificate requests remain contained in the narrow viewport.
 
 Route: `/ui/management/routes-wan`
 
-![Atlaso Routes and WAN Simulation page in the clean-appliance desktop viewport.](../assets/screenshots/routes-wan-clean-desktop.webp)
+![Atlaso Routes and WAN Simulation showing disabled routing, a checked but unavailable NAT switch, and the suspended status.](../assets/screenshots/routes-wan-clean-desktop.webp)
 
-Figure: Routes and WAN Simulation in the verified clean-appliance desktop state.
+Figure: Routes and WAN Simulation with global routing disabled and the saved NAT choice visibly suspended.
 
-![Atlaso Routes and WAN Simulation page in the clean-appliance responsive viewport.](../assets/screenshots/routes-wan-clean-responsive.webp)
+![Atlaso Routes and WAN Simulation showing disabled routing, a checked but unavailable NAT switch, and the suspended status.](../assets/screenshots/routes-wan-clean-responsive.webp)
 
-Figure: Routes and WAN Simulation in the verified clean-appliance responsive state.
+Figure: Routes and WAN Simulation with global routing disabled and the saved NAT choice visibly suspended.
 
 ## Routes Wan: Policies
 

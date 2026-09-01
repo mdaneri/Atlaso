@@ -2,6 +2,7 @@
 
 import json
 from datetime import datetime, timedelta, timezone
+from types import SimpleNamespace
 
 import pytest
 
@@ -658,6 +659,110 @@ def test_management_handoff_timeout_stops_and_recovers_indeterminate_helper(monk
             "ipv6_cidr": "",
         }
     ]
+
+
+def test_management_handoff_preserves_newer_routing_desired_state(client, monkeypatch, tmp_path):
+    """Preserve newer Routing desired state after a bundled WAN apply.
+
+    Args:
+        client: HTTP test client used to initialize an isolated database.
+        monkeypatch: Pytest fixture used to isolate staging and helper execution.
+        tmp_path: Temporary root used for staged handoff paths.
+    """
+    from sqlalchemy import select
+
+    from atlaso.app import ui
+    from atlaso.app.adapters.system import AdapterResult
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import ServiceState
+
+    class SuccessfulAdapter:
+        """Return successful non-dry-run handoff results."""
+
+        dry_run = False
+
+        def validate_management_handoff(self, manifest_path):
+            """Accept the staged handoff manifest.
+
+            Args:
+                manifest_path: Staged handoff manifest path.
+            """
+            return AdapterResult(
+                command=["atlaso-helper", "management-handoff", "validate", manifest_path],
+                dry_run=False,
+                returncode=0,
+            )
+
+        def apply_management_handoff(self, manifest_path):
+            """Apply the staged handoff manifest successfully.
+
+            Args:
+                manifest_path: Staged handoff manifest path.
+            """
+            return AdapterResult(
+                command=["atlaso-helper", "management-handoff", "apply", manifest_path],
+                dry_run=False,
+                returncode=0,
+            )
+
+    unit_defaults = {
+        "label": "Management handoff component",
+        "summary": "Apply the management handoff component.",
+        "validation_errors": [],
+        "validation_warnings": [],
+        "config_path": "",
+        "config_preview": "",
+        "config_diff": "",
+        "raw_config_preview": "",
+    }
+    units = {
+        unit_id: {**unit_defaults, "id": unit_id}
+        for unit_id in (*ui.MANAGEMENT_HANDOFF_UNIT_IDS, "wan")
+    }
+    units["network"]["previous_management_paths"] = []
+    units["network"]["removed_vlan_interfaces"] = []
+    units["ca"]["context"] = {"ca_settings": object(), "ca_certificates": []}
+    units["wan"]["config_path"] = str(tmp_path / "wan.json")
+    units["wan"]["context"] = {
+        "routes_wan_settings": SimpleNamespace(routing_enabled=True)
+    }
+    monkeypatch.setattr(ui, "load_appliance_apply_baselines", lambda _db: {})
+    monkeypatch.setattr(
+        ui,
+        "stage_appliance_apply_config",
+        lambda target, _content: str(tmp_path / str(target).replace(":", "").replace("/", "_").replace("\\", "_")),
+    )
+    monkeypatch.setattr(ui, "render_ca_apply_payload", lambda *_args, **_kwargs: "{}")
+    monkeypatch.setattr(ui, "wan_rollback_config_preview", lambda *_args, **_kwargs: "")
+    lock_events: list[str] = []
+    monkeypatch.setattr(
+        ui,
+        "acquire_network_objects_write_lock",
+        lambda _db: lock_events.append("routing-sync"),
+    )
+
+    with SessionLocal() as db:
+        routing_service = db.execute(
+            select(ServiceState).where(ServiceState.service == "routing")
+        ).scalar_one()
+        routing_service.enabled = False
+        routing_service.running = False
+        routing_service.health = "disabled"
+        db.flush()
+
+        group, _results = ui.execute_management_handoff(
+            units,
+            job_id="job_routing_runtime_sync",
+            adapter=SuccessfulAdapter(),
+            db=db,
+            include_wan=True,
+        )
+
+        assert group["success"] is True
+        assert lock_events == ["routing-sync"]
+        assert routing_service.enabled is False
+        assert routing_service.running is True
+        assert routing_service.health == "healthy"
 
 
 def test_management_handoff_settings_baseline_ignores_only_applied_front_door_fields():

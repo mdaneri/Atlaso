@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from ipaddress import ip_address, ip_network
 from typing import Annotated, Any, cast
@@ -18,6 +18,7 @@ from atlaso.app.models import (
     NatRule,
     PhysicalInterface,
     Route,
+    ServiceState,
     VlanInterface,
     WanPolicy,
 )
@@ -27,6 +28,8 @@ from atlaso.app.schemas import (
     NatRuleResponse,
     RouteCreate,
     RouteResponse,
+    RoutesWanSettingsResponse,
+    RoutesWanSettingsUpdate,
     WanPolicyCreate,
     WanPolicyResponse,
     WanStatusResponse,
@@ -42,8 +45,10 @@ from atlaso.app.services.networking import normalize_interface_mode
 from atlaso.app.services.routes_wan import (
     canonical_route_destination,
     default_route_family,
+    ensure_routes_wan_settings,
     has_default_route_conflict,
     route_gateway_target_error,
+    save_routes_wan_settings,
     validate_nat_source,
 )
 
@@ -72,6 +77,75 @@ def build_router(dependencies: RoutesWanApiDependencies) -> RoutesWanApiRouter:
     """
     router = APIRouter(prefix="/api/v1", route_class=DocumentedAPIRoute)
     setting_value = dependencies.setting_value
+
+    @router.get(
+        "/routes-wan/settings",
+        response_model=RoutesWanSettingsResponse,
+        tags=["Routes", "WAN"],
+        operation_id="getRoutesWanSettings",
+    )
+    def get_routes_wan_settings(
+        identity: Annotated[Identity, Depends(require_scope("read:routes"))],
+        _wan_identity: Annotated[Identity, Depends(require_scope("read:wan"))],
+        db: Session = Depends(get_db),
+    ) -> RoutesWanSettingsResponse:
+        """Get global Routes and WAN feature settings.
+
+        Requires both `read:routes` and `read:wan`. This operation returns saved desired state and
+        does not inspect or mutate Photon runtime networking.
+
+        Args:
+            identity: Authenticated identity with the required routes scope.
+            _wan_identity: Authenticated identity with the required WAN scope.
+            db: Active database session used by the operation.
+        """
+        settings = ensure_routes_wan_settings(db)
+        return RoutesWanSettingsResponse(**settings.as_dict())
+
+    @router.put(
+        "/routes-wan/settings",
+        response_model=RoutesWanSettingsResponse,
+        tags=["Routes", "WAN"],
+        operation_id="updateRoutesWanSettings",
+    )
+    def update_routes_wan_settings(
+        payload: RoutesWanSettingsUpdate,
+        identity: Annotated[Identity, Depends(require_scope("write:routes"))],
+        _wan_identity: Annotated[Identity, Depends(require_scope("write:wan"))],
+        db: Session = Depends(get_db),
+    ) -> RoutesWanSettingsResponse:
+        """Replace global Routes and WAN desired-state activation settings.
+
+        Requires both `write:routes` and `write:wan`. The saved resource rows are preserved and no
+        Photon host state changes until the `wan` Appliance Apply unit succeeds.
+
+        Args:
+            payload: Complete replacement for the three global feature switches.
+            identity: Authenticated identity with the required routes scope.
+            _wan_identity: Authenticated identity with the required WAN scope.
+            db: Active database session used by the operation.
+        """
+        acquire_network_objects_write_lock(db)
+        settings = save_routes_wan_settings(db, **payload.model_dump())
+        service_state = db.execute(
+            select(ServiceState).where(ServiceState.service == "routing")
+        ).scalar_one_or_none()
+        if service_state is not None and service_state.health != "unconfigured":
+            service_state.enabled = settings.routing_enabled
+            db.add(service_state)
+        db.commit()
+        record_audit(
+            db,
+            actor=identity.username,
+            action="update_routes_wan_settings",
+            resource_type="routes_wan_settings",
+            resource_id="global",
+            detail=(
+                f"routing_enabled={settings.routing_enabled}; nat_enabled={settings.nat_enabled}; "
+                f"wan_simulation_enabled={settings.wan_simulation_enabled}"
+            ),
+        )
+        return RoutesWanSettingsResponse(**settings.as_dict())
 
     @router.get("/routes", response_model=list[RouteResponse], tags=["Routes"], operation_id="listRoutes")
     def list_routes(identity: Annotated[Identity, Depends(require_scope("read:routes"))], db: Session = Depends(get_db)) -> list[RouteResponse]:
@@ -654,8 +728,28 @@ def build_router(dependencies: RoutesWanApiDependencies) -> RoutesWanApiRouter:
             identity: Authenticated identity authorizing the operation.
             db: Active database session used by the operation.
         """
-        routes = db.execute(select(Route).where(Route.wan_policy_id.is_not(None))).scalars().all()
-        nat_rules = db.execute(select(NatRule).where(NatRule.enabled.is_(True))).scalars().all()
+        settings = ensure_routes_wan_settings(db)
+        routes: Sequence[Route] = ()
+        if settings.wan_simulation_enabled:
+            routes = (
+                db.execute(
+                    select(Route)
+                    .join(WanPolicy)
+                    .where(
+                        Route.enabled.is_(True),
+                        WanPolicy.enabled.is_(True),
+                    )
+                )
+                .scalars()
+                .all()
+            )
+        nat_rules: Sequence[NatRule] = ()
+        if settings.effective_nat_enabled:
+            nat_rules = (
+                db.execute(select(NatRule).where(NatRule.enabled.is_(True)))
+                .scalars()
+                .all()
+            )
         return WanStatusResponse(
             active_policy_count=len(routes),
             managed_interfaces=sorted({route.interface_name for route in routes} | {rule.outbound_interface for rule in nat_rules}),
@@ -663,6 +757,8 @@ def build_router(dependencies: RoutesWanApiDependencies) -> RoutesWanApiRouter:
         )
 
     endpoints: dict[str, Endpoint] = {
+        "get_routes_wan_settings": get_routes_wan_settings,
+        "update_routes_wan_settings": update_routes_wan_settings,
         "list_routes": list_routes,
         "route_response": route_response,
         "route_target_cidrs": route_target_cidrs,
