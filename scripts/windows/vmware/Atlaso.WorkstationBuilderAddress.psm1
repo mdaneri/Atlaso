@@ -549,7 +549,11 @@ function Enter-AtlasoVmwareBuilderAddressReservation {
     .PARAMETER VmName
     Exact builder VM name.
     .PARAMETER RepositoryRoot
-    Exact task worktree root and source revision owning the build.
+    Exact task worktree root owning the build.
+    .PARAMETER SourceCommit
+    Exact source commit admitted for the build.
+    .PARAMETER SourceBranch
+    Exact task branch admitted for the build.
     #>
     param(
         [Parameter(Mandatory = $true)][string]$NetworkName,
@@ -566,7 +570,9 @@ function Enter-AtlasoVmwareBuilderAddressReservation {
         [Parameter(Mandatory = $true)][string]$VmrunPath,
         [Parameter(Mandatory = $true)][string]$OutputDirectory,
         [Parameter(Mandatory = $true)][string]$VmName,
-        [Parameter(Mandatory = $true)][string]$RepositoryRoot
+        [Parameter(Mandatory = $true)][string]$RepositoryRoot,
+        [Parameter(Mandatory = $true)][string]$SourceCommit,
+        [Parameter(Mandatory = $true)][string]$SourceBranch
     )
 
     if ($PoolStartOffset -gt $PoolEndOffset) {
@@ -647,8 +653,7 @@ function Enter-AtlasoVmwareBuilderAddressReservation {
     }
     $vmxPath = [System.IO.Path]::GetFullPath((Join-Path $resolvedOutput "$VmName.vmx"))
     $resolvedRepository = (Resolve-Path -LiteralPath $RepositoryRoot -ErrorAction Stop).Path
-    $sourceCommit = [string](& git -C $resolvedRepository rev-parse HEAD)
-    if ($LASTEXITCODE -ne 0 -or $sourceCommit.Trim() -notmatch '^[0-9a-f]{40}$') {
+    if ($SourceCommit -notmatch '^[0-9a-f]{40}$') {
         throw 'Could not bind the VMware builder reservation to an exact source commit.'
     }
     $sourceBranch = [string](& git -C $resolvedRepository branch --show-current)
@@ -725,8 +730,8 @@ function Enter-AtlasoVmwareBuilderAddressReservation {
                 OwnerStartTimeUtcTicks = $owner.StartTime.ToUniversalTime().Ticks
                 HostBootIdentity       = $hostBootIdentity
                 RepositoryRoot         = $resolvedRepository
-                SourceCommit           = $sourceCommit.Trim()
-                SourceBranch           = $sourceBranch.Trim()
+                SourceCommit           = $SourceCommit
+                SourceBranch           = $SourceBranch
                 OutputDirectory        = $resolvedOutput
                 VmName                 = $VmName
                 VmxPath                = $vmxPath

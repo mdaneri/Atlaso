@@ -404,6 +404,8 @@ def validate_packer(assets: tuple[Path, ...], packer: str) -> list[Finding]:
                     packer,
                     "validate",
                     *[item for value in PACKER_VALIDATION_VARS for item in ("-var", value)],
+                    "-var",
+                    f"source_root={directory.parent.parent.resolve()}",
                     ".",
                 ],
             ),

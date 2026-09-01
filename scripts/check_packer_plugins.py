@@ -16,15 +16,17 @@ PLUGIN_LINE = re.compile(
 EXACT_VERSION = re.compile(r"^=\s*(?P<version>[0-9]+\.[0-9]+\.[0-9]+)$")
 
 
-def validate_packer_plugins(directory: Path, packer: str) -> list[str]:
+def validate_packer_plugins(target: Path, packer: str) -> list[str]:
     """Return findings when Packer does not resolve exact installed plugin versions.
 
     Args:
-        directory: Packer template directory to inspect.
+        target: Packer template directory or exact template file to inspect.
         packer: Packer executable path or command name.
     """
+    directory = target.parent if target.is_file() else target
+    packer_target = target.name if target.is_file() else "."
     result = subprocess.run(
-        [packer, "plugins", "required", "."],
+        [packer, "plugins", "required", packer_target],
         cwd=directory,
         capture_output=True,
         text=True,
@@ -89,18 +91,18 @@ def main(argv: list[str] | None = None) -> int:
         default=shutil.which("packer") or "packer",
         help="Packer executable path or command name.",
     )
-    parser.add_argument("directories", nargs="+", type=Path)
+    parser.add_argument("targets", nargs="+", type=Path)
     args = parser.parse_args(argv)
 
     findings: list[str] = []
-    for raw_directory in args.directories:
-        directory = raw_directory.resolve()
-        if not directory.is_dir():
-            findings.append(f"{directory}: Packer template directory is missing")
+    for raw_target in args.targets:
+        target = raw_target.resolve()
+        if not target.exists() or (not target.is_dir() and not target.is_file()):
+            findings.append(f"{target}: Packer template target is missing")
             continue
         findings.extend(
-            f"{directory}: {message}"
-            for message in validate_packer_plugins(directory, args.packer)
+            f"{target}: {message}"
+            for message in validate_packer_plugins(target, args.packer)
         )
 
     if findings:
@@ -109,7 +111,7 @@ def main(argv: list[str] | None = None) -> int:
             print(f"  - {finding}", file=sys.stderr)
         return 1
 
-    print(f"Packer plugin checks passed for {len(args.directories)} template directories.")
+    print(f"Packer plugin checks passed for {len(args.targets)} template target(s).")
     return 0
 
 
