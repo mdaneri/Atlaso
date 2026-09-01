@@ -663,7 +663,7 @@ function Remove-AtlasoWorkstationStaleRegistrations {
             $rawCandidate = $rawValue
             $hasCompleteQuotedValue = $false
             if ($rawValue.Length -gt 0 -and $rawValue[0] -in @([char]34, [char]39)) {
-                $closingQuote = $rawValue.IndexOf($rawValue[0], 1)
+                $closingQuote = $rawValue.LastIndexOf($rawValue[0])
                 if ($closingQuote -ge 1) {
                     $rawCandidate = $rawValue.Substring(1, $closingQuote - 1)
                     $hasCompleteQuotedValue = $true

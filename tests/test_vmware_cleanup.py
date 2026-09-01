@@ -596,17 +596,21 @@ def _run_stale_registration_repair(
     """
     wrapper = tmp_path / "repair-stale-registrations.ps1"
     module = VMWARE_SCRIPT_ROOT / "Atlaso.WorkstationCleanup.psm1"
+    module_literal = str(module).replace("'", "''")
+    scope_literal = str(scope_root).replace("'", "''")
     exact_selection = ""
     if vmx_path is not None or expected_display_name is not None:
+        vmx_literal = str(vmx_path).replace("'", "''")
+        display_name_literal = str(expected_display_name).replace("'", "''")
         exact_selection = (
-            f"    -VmxPath '{vmx_path}' `\n"
-            f"    -ExpectedDisplayName '{expected_display_name}' `\n"
+            f"    -VmxPath '{vmx_literal}' `\n"
+            f"    -ExpectedDisplayName '{display_name_literal}' `\n"
         )
     wrapper.write_text(
         f"""$ErrorActionPreference = 'Stop'
-Import-Module '{module}' -Force
+Import-Module '{module_literal}' -Force
 Repair-AtlasoWorkstationStaleRegistrations `
-    -ScopeRoot '{scope_root}' `
+    -ScopeRoot '{scope_literal}' `
 {exact_selection}    -Confirm:$false
 Write-Host 'REPAIR SUCCEEDED'
 """,
@@ -1703,7 +1707,8 @@ def test_exact_stale_repair_preserves_malformed_marker_owner_syntax(
         trailing_text: Optional quote or junk following the raw VMX path.
         use_parent_segment: Whether the raw path is lexically noncanonical.
     """
-    root = tmp_path / "test-vms" / "Atlaso-PR-672-cleanup"
+    path_root = tmp_path / "O'Brien" if leading_quote == "'" else tmp_path
+    root = path_root / "test-vms" / "Atlaso-PR-672-cleanup"
     stale = root / "Atlaso-PR-672-cleanup.vmx"
     raw_stale = stale.parent / "subdirectory" / ".." / stale.name if use_parent_segment else stale.resolve()
     malformed_value = f"{leading_quote}{raw_stale}{trailing_text}"
