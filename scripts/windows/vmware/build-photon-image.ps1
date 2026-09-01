@@ -29,6 +29,10 @@ used when this selector is omitted.
 Bounded timeout for each 1Password SDK preparation and retrieval operation.
 .PARAMETER ImageBuildTimeoutSeconds
 Bounded deadline for the isolated plaintext-consuming Photon/Packer child.
+.PARAMETER BuildStateRoot
+Task-owned build-state directory. The default is the checkout-local
+`.atlaso-local\photon-image-build-state` directory; explicit paths must remain
+strictly beneath the task repository root.
 .PARAMETER CredentialBundlePath
 Internal current-user DPAPI credential bundle used only by the isolated child.
 .PARAMETER CredentialChild
@@ -179,6 +183,7 @@ param(
     [int]$CredentialTimeoutSeconds = 300,
     [ValidateRange(300, 86400)]
     [int]$ImageBuildTimeoutSeconds = 21600,
+    [string]$BuildStateRoot = '',
     [string]$CredentialBundlePath = '',
     [switch]$CredentialChild,
     [string]$BuilderStaticDnsJson = '',
@@ -260,6 +265,35 @@ Import-Module (Join-Path $PSScriptRoot 'Atlaso.WorkstationBuildMonitor.psm1') -F
 Import-Module (Join-Path $PSScriptRoot 'Atlaso.WorkstationBuilderAddress.psm1') -Force
 Import-Module (Join-Path $PSScriptRoot 'Atlaso.SourceSnapshot.psm1') -Force
 Import-Module (Join-Path $PSScriptRoot 'Atlaso.VmwareBuilderIdentity.psm1') -Force
+
+<#
+.SYNOPSIS
+Resolve the task-owned Photon build-state directory beneath its repository.
+.PARAMETER RepositoryRoot
+Exact task repository root that bounds build state.
+.PARAMETER Path
+Optional explicit build-state directory.
+#>
+function Resolve-AtlasoPhotonBuildStateRoot {
+    param(
+        [Parameter(Mandatory = $true)][string]$RepositoryRoot,
+        [string]$Path = ''
+    )
+
+    $resolvedRepositoryRoot = (Resolve-Path -LiteralPath $RepositoryRoot -ErrorAction Stop).Path
+    $candidate = if ([string]::IsNullOrWhiteSpace($Path)) {
+        Join-Path $resolvedRepositoryRoot '.atlaso-local\photon-image-build-state'
+    }
+    else {
+        $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($Path)
+    }
+    $resolvedCandidate = [System.IO.Path]::GetFullPath($candidate)
+    Assert-AtlasoStrictDescendantPath `
+        -ParentPath $resolvedRepositoryRoot `
+        -ChildPath $resolvedCandidate `
+        -FailureMessage 'Photon build state must remain beneath the exact task repository root'
+    return $resolvedCandidate
+}
 
 <#
 .SYNOPSIS
@@ -616,9 +650,14 @@ Recover a retained Photon sensitive-build root after a proven host restart.
 
 .PARAMETER MarkerPath
 Exact non-secret cleanup marker path.
+.PARAMETER AllowedParentRoots
+Exact admitted current or legacy parent roots that may own the marker root.
 #>
 function Invoke-AtlasoPhotonBuildCleanupRecovery {
-    param([Parameter(Mandatory = $true)][string]$MarkerPath)
+    param(
+        [Parameter(Mandatory = $true)][string]$MarkerPath,
+        [Parameter(Mandatory = $true)][string[]]$AllowedParentRoots
+    )
 
     if (-not (Test-Path -LiteralPath $MarkerPath -PathType Leaf)) {
         return
@@ -635,13 +674,19 @@ function Invoke-AtlasoPhotonBuildCleanupRecovery {
             throw 'Invalid cleanup marker schema.'
         }
         $resolvedRoot = [System.IO.Path]::GetFullPath([string]$marker.RootPath)
-        $resolvedTempRoot = [System.IO.Path]::GetFullPath([System.IO.Path]::GetTempPath())
-        $tempRootPrefix = $resolvedTempRoot.TrimEnd(
-            [System.IO.Path]::DirectorySeparatorChar,
-            [System.IO.Path]::AltDirectorySeparatorChar
-        ) + [System.IO.Path]::DirectorySeparatorChar
-        if (-not $resolvedRoot.StartsWith($tempRootPrefix, [StringComparison]::OrdinalIgnoreCase) -or
-            (Split-Path -Leaf $resolvedRoot) -notmatch '^atlaso-photon-build-credentials-[0-9a-f]{32}$') {
+        $rootLeaf = Split-Path -Leaf $resolvedRoot
+        $admitted = @(
+            $AllowedParentRoots | Where-Object {
+                $resolvedParent = [System.IO.Path]::GetFullPath($_)
+                $parentPrefix = $resolvedParent.TrimEnd(
+                    [System.IO.Path]::DirectorySeparatorChar,
+                    [System.IO.Path]::AltDirectorySeparatorChar
+                ) + [System.IO.Path]::DirectorySeparatorChar
+                $resolvedRoot.StartsWith($parentPrefix, [StringComparison]::OrdinalIgnoreCase)
+            }
+        )
+        if ($admitted.Count -ne 1 -or
+            $rootLeaf -notmatch '^atlaso-photon-build-credentials-[0-9a-f]{32}$') {
             throw 'Invalid cleanup root.'
         }
         if ($marker.Phase -notin @('active', 'root-absent', 'retired')) {
@@ -763,6 +808,64 @@ function Complete-AtlasoBuilderAddressReservationHandoff {
     }
 }
 
+<#
+.SYNOPSIS
+Retire only legacy builder-address handoffs owned by the current task identity.
+.PARAMETER StateRoot
+Exact legacy builder-address state root.
+.PARAMETER VmrunPath
+Exact vmrun executable used for inactive-VM proof.
+.PARAMETER RepositoryRoot
+Exact current task repository root.
+.PARAMETER VmName
+Canonical current builder name.
+.PARAMETER SourceBranch
+Exact current source branch.
+#>
+function Invoke-AtlasoLegacyBuilderAddressHandoffRecovery {
+    param(
+        [Parameter(Mandatory = $true)][string]$StateRoot,
+        [Parameter(Mandatory = $true)][string]$VmrunPath,
+        [Parameter(Mandatory = $true)][string]$RepositoryRoot,
+        [Parameter(Mandatory = $true)][string]$VmName,
+        [Parameter(Mandatory = $true)][string]$SourceBranch
+    )
+
+    $resolvedStateRoot = [System.IO.Path]::GetFullPath($StateRoot)
+    $pendingRoot = Join-Path $resolvedStateRoot 'pending-releases'
+    if (-not (Test-Path -LiteralPath $pendingRoot -PathType Container)) {
+        return
+    }
+    $resolvedRepositoryRoot = (Resolve-Path -LiteralPath $RepositoryRoot -ErrorAction Stop).Path
+    foreach ($handoff in @(
+            Get-ChildItem -LiteralPath $pendingRoot `
+                -Filter 'builder-address-reservation-*.json' `
+                -File `
+                -ErrorAction Stop
+        )) {
+        try {
+            $reservation = Get-Content -LiteralPath $handoff.FullName -Raw -ErrorAction Stop |
+                ConvertFrom-Json -ErrorAction Stop
+            if ([string]$reservation.VmName -cne $VmName -or
+                [string]$reservation.SourceBranch -cne $SourceBranch -or
+                -not [System.IO.Path]::GetFullPath([string]$reservation.RepositoryRoot).Equals(
+                    $resolvedRepositoryRoot,
+                    [StringComparison]::OrdinalIgnoreCase
+                )) {
+                continue
+            }
+            Complete-AtlasoBuilderAddressReservationHandoff `
+                -Path $handoff.FullName `
+                -VmrunPath $VmrunPath `
+                -StateRoot $resolvedStateRoot
+            Write-Host "Released legacy VMware builder-address handoff $($handoff.Name)."
+        }
+        catch {
+            Write-Warning "Retained matching legacy VMware builder-address handoff $($handoff.Name): $($_.Exception.Message)"
+        }
+    }
+}
+
 $repoRoot = (Resolve-Path -LiteralPath (Join-Path $PSScriptRoot '..\..\..')).Path
 $identityModeInvalid = ($ReleaseBuilder -and $PullRequestNumber -gt 0) -or
     (-not $ReleaseBuilder -and $PullRequestNumber -le 0) -or
@@ -777,16 +880,37 @@ if (-not $CredentialChild -and (
     )) {
     throw 'Verified builder identity fields are internal and may be supplied only to the isolated child.'
 }
-$builderReservationStateRoot = Join-Path (
+$buildStateRepositoryRoot = if ($CredentialChild) {
+    if ([string]::IsNullOrWhiteSpace($TaskRepositoryRoot)) {
+        throw 'The isolated child task repository root is unavailable for build-state admission.'
+    }
+    (Resolve-Path -LiteralPath $TaskRepositoryRoot -ErrorAction Stop).Path
+}
+else {
+    $repoRoot
+}
+$resolvedBuildStateRoot = Resolve-AtlasoPhotonBuildStateRoot `
+    -RepositoryRoot $buildStateRepositoryRoot `
+    -Path $BuildStateRoot
+$credentialStateRoot = Join-Path $resolvedBuildStateRoot 'credentials'
+$builderReservationStateRoot = Join-Path $resolvedBuildStateRoot 'vmware-builder-addresses'
+$builderReservationPendingRoot = Join-Path $builderReservationStateRoot 'pending-releases'
+$cleanupMarkerPath = Join-Path $resolvedBuildStateRoot 'photon-image-build-cleanup.json'
+$legacyCleanupMarkerPath = Join-Path $repoRoot '.atlaso-local\photon-image-build-cleanup.json'
+$legacyCredentialParentRoot = [System.IO.Path]::GetFullPath([System.IO.Path]::GetTempPath())
+$legacyBuilderReservationStateRoot = Join-Path (
     [Environment]::GetFolderPath('LocalApplicationData')
 ) 'Atlaso\vmware-builder-addresses'
-$builderReservationPendingRoot = Join-Path $builderReservationStateRoot 'pending-releases'
-$cleanupMarkerPath = Join-Path $repoRoot '.atlaso-local\photon-image-build-cleanup.json'
 if (-not $CredentialChild) {
-    # Recovery is bound to the prior boot and durable marker, not the requested
-    # new build. Run it before a closed or advanced PR can block cleanup of the
-    # retained sensitive root or address reservation.
-    Invoke-AtlasoPhotonBuildCleanupRecovery -MarkerPath $cleanupMarkerPath
+    # Legacy recovery is deletion-only and remains admitted solely to retire an
+    # exact pre-migration marker after the required host restart. New task state
+    # is created only beneath the checkout-local build-state root.
+    Invoke-AtlasoPhotonBuildCleanupRecovery `
+        -MarkerPath $legacyCleanupMarkerPath `
+        -AllowedParentRoots @($legacyCredentialParentRoot)
+    Invoke-AtlasoPhotonBuildCleanupRecovery `
+        -MarkerPath $cleanupMarkerPath `
+        -AllowedParentRoots @($credentialStateRoot)
     [void][System.IO.Directory]::CreateDirectory($builderReservationPendingRoot)
     $pendingReservationHandoffs = @(
         Get-ChildItem -LiteralPath $builderReservationPendingRoot `
@@ -874,6 +998,20 @@ else {
     }
 }
 $VmName = [string]$builderIdentity.Name
+if (-not $CredentialChild) {
+    $legacySourceBranch = if ($null -ne $builderIdentity.PSObject.Properties['SourceBranch']) {
+        [string]$builderIdentity.SourceBranch
+    }
+    else {
+        '(detached-release)'
+    }
+    Invoke-AtlasoLegacyBuilderAddressHandoffRecovery `
+        -StateRoot $legacyBuilderReservationStateRoot `
+        -VmrunPath (Resolve-WorkstationVmrunPath -Path $VmrunPath) `
+        -RepositoryRoot $repoRoot `
+        -VmName $VmName `
+        -SourceBranch $legacySourceBranch
+}
 if ($CredentialChild) {
     if ($SshPassword -or $BootstrapAdminPassword -or
         [string]::IsNullOrWhiteSpace($CredentialBundlePath) -or
@@ -1080,7 +1218,7 @@ else {
         -RootPassword $SshPassword `
         -TimeoutSeconds $CredentialTimeoutSeconds `
         -ConsumerDescription 'VMware Photon image build'
-    $credentialRoot = Join-Path ([System.IO.Path]::GetTempPath()) (
+    $credentialRoot = Join-Path $credentialStateRoot (
         "atlaso-photon-build-credentials-$([guid]::NewGuid().ToString('N'))"
     )
     # Resolve every operator-controlled output and child path before publishing
@@ -1229,6 +1367,7 @@ else {
             '-NoLogo', '-NoProfile', '-NonInteractive',
             '-File', $childScriptPath,
             '-CredentialChild',
+            '-BuildStateRoot', $resolvedBuildStateRoot,
             '-CredentialBundlePath', $childCredentialBundlePath,
             '-SensitiveBuildDirectory', $childSensitiveBuildDirectory,
             '-OutputCleanupClaimPath', $childOutputCleanupClaimPath,
@@ -1260,6 +1399,7 @@ else {
             'OnePasswordEnvironmentId', 'EnvironmentIdFile',
             'OnePasswordAccount', 'OnePasswordPython',
             'CredentialTimeoutSeconds', 'ImageBuildTimeoutSeconds',
+            'BuildStateRoot',
             'CredentialBundlePath', 'CredentialChild',
             'BuilderStaticDnsJson', 'BuilderStaticDnsBound',
             'SensitiveBuildDirectory', 'OutputCleanupClaimPath',
@@ -1374,8 +1514,12 @@ else {
         $SshPassword = $null
         $BootstrapAdminPassword = $null
         $resolvedCredentialRoot = [System.IO.Path]::GetFullPath($credentialRoot)
-        $resolvedTempRoot = [System.IO.Path]::GetFullPath([System.IO.Path]::GetTempPath())
-        if (-not $resolvedCredentialRoot.StartsWith($resolvedTempRoot, [StringComparison]::OrdinalIgnoreCase) -or
+        $resolvedCredentialStateRoot = [System.IO.Path]::GetFullPath($credentialStateRoot)
+        $credentialStatePrefix = $resolvedCredentialStateRoot.TrimEnd(
+            [System.IO.Path]::DirectorySeparatorChar,
+            [System.IO.Path]::AltDirectorySeparatorChar
+        ) + [System.IO.Path]::DirectorySeparatorChar
+        if (-not $resolvedCredentialRoot.StartsWith($credentialStatePrefix, [StringComparison]::OrdinalIgnoreCase) -or
             (Split-Path -Leaf $resolvedCredentialRoot) -notmatch '^atlaso-photon-build-credentials-[0-9a-f]{32}$') {
             throw 'Refusing to clean an invalid Photon credential bridge root.'
         }
@@ -1898,7 +2042,8 @@ if ($requiresBuilderReservation) {
         -VmName $VmName `
         -RepositoryRoot $TaskRepositoryRoot `
         -SourceCommit $SourceCommit `
-        -SourceBranch $SourceBranch
+        -SourceBranch $SourceBranch `
+        -StateRoot $builderReservationStateRoot
     $BuilderStaticIp = $builderReservation.Cidr
     if (-not (Test-Path -LiteralPath $resolvedBuilderAddressReservationPath -PathType Leaf)) {
         throw 'The VMware builder-address reservation was not paired with its durable release handoff.'

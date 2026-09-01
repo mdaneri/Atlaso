@@ -1690,6 +1690,43 @@ def test_vmware_source_snapshot_resists_during_packer_checkout_changes(
     assert "Atlaso immutable source snapshot tests passed." in result.stdout
 
 
+def test_vmware_photon_build_state_stays_under_task_repository() -> None:
+    """Credential, Packer, cleanup, and reservation state stay task-local."""
+    pwsh = shutil.which("pwsh")
+    if pwsh is None:
+        pytest.skip("PowerShell 7 is required")
+
+    result = subprocess.run(
+        [
+            pwsh,
+            "-NoLogo",
+            "-NoProfile",
+            "-NonInteractive",
+            "-File",
+            "tests/powershell/Test-PhotonBuildStateRoot.ps1",
+            "-RepositoryRoot",
+            str(Path.cwd()),
+        ],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "Photon build-state root tests passed." in result.stdout
+
+    wrapper = Path("scripts/windows/vmware/build-photon-image.ps1").read_text(
+        encoding="utf-8"
+    )
+    assert "$credentialRoot = Join-Path $credentialStateRoot" in wrapper
+    assert "$buildStateRepositoryRoot = if ($CredentialChild)" in wrapper
+    assert "-RepositoryRoot $buildStateRepositoryRoot" in wrapper
+    assert "$builderReservationStateRoot = Join-Path $resolvedBuildStateRoot" in wrapper
+    assert "-StateRoot $builderReservationStateRoot" in wrapper
+    assert "-BuildStateRoot', $resolvedBuildStateRoot" in wrapper
+    assert wrapper.count("[System.IO.Path]::GetTempPath()") == 1
+    assert "$legacyCredentialParentRoot" in wrapper
+
+
 def test_vmware_packer_requires_proven_task_or_release_builder_identity() -> None:
     """Packer, wrapper, release, cleanup, and docs share one builder identity."""
     template = Path("image/vmware-workstation/atlaso-photon.pkr.hcl").read_text(
@@ -1743,12 +1780,13 @@ def test_vmware_packer_requires_proven_task_or_release_builder_identity() -> Non
     assert "'branch=main'" in wrapper
     assert "'event=push'" in wrapper
     assert "'status=success'" in wrapper
-    recovery = wrapper.index(
-        "Invoke-AtlasoPhotonBuildCleanupRecovery -MarkerPath $cleanupMarkerPath"
+    recovery = wrapper.index("Invoke-AtlasoPhotonBuildCleanupRecovery `")
+    current_marker_recovery = wrapper.index(
+        "-MarkerPath $cleanupMarkerPath `", recovery
     )
     identity_admission = wrapper.index("$builderIdentity = if ($ReleaseBuilder) {")
     credential_access = wrapper.index("$needsOnePasswordDefaults =")
-    assert recovery < identity_admission < credential_access
+    assert recovery < current_marker_recovery < identity_admission < credential_access
     assert wrapper.count(
         "$releaseIdentityArguments['WorkflowRunId'] = $ReleaseWorkflowRunId"
     ) == 2

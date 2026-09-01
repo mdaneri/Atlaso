@@ -1,0 +1,151 @@
+<#
+.SYNOPSIS
+Verify Photon image build-state roots remain beneath the exact task repository.
+.PARAMETER RepositoryRoot
+Atlaso repository root containing the supported Photon build wrapper.
+#>
+param(
+    [Parameter(Mandatory = $true)][string]$RepositoryRoot
+)
+
+Set-StrictMode -Version Latest
+$ErrorActionPreference = 'Stop'
+
+$resolvedRepositoryRoot = (Resolve-Path -LiteralPath $RepositoryRoot -ErrorAction Stop).Path
+Import-Module (
+    Join-Path $resolvedRepositoryRoot 'scripts\windows\vmware\Atlaso.WorkstationCleanup.psm1'
+) -Force
+$wrapperPath = Join-Path $resolvedRepositoryRoot 'scripts\windows\vmware\build-photon-image.ps1'
+$tokens = $null
+$parseErrors = $null
+$ast = [System.Management.Automation.Language.Parser]::ParseFile(
+    $wrapperPath,
+    [ref]$tokens,
+    [ref]$parseErrors
+)
+if ($parseErrors.Count -ne 0) {
+    throw "Photon build wrapper parse failed: $($parseErrors[0].Message)"
+}
+$resolver = @(
+    $ast.FindAll(
+        {
+            param($node)
+            $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and
+            $node.Name -ceq 'Resolve-AtlasoPhotonBuildStateRoot'
+        },
+        $true
+    )
+)
+if ($resolver.Count -ne 1) {
+    throw 'Expected exactly one Photon build-state resolver.'
+}
+. ([scriptblock]::Create($resolver[0].Extent.Text))
+$legacyRecovery = @(
+    $ast.FindAll(
+        {
+            param($node)
+            $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and
+            $node.Name -ceq 'Invoke-AtlasoLegacyBuilderAddressHandoffRecovery'
+        },
+        $true
+    )
+)
+if ($legacyRecovery.Count -ne 1) {
+    throw 'Expected exactly one legacy builder-address recovery function.'
+}
+. ([scriptblock]::Create($legacyRecovery[0].Extent.Text))
+
+$expectedDefault = Join-Path $resolvedRepositoryRoot '.atlaso-local\photon-image-build-state'
+$actualDefault = Resolve-AtlasoPhotonBuildStateRoot -RepositoryRoot $resolvedRepositoryRoot
+if (-not $actualDefault.Equals($expectedDefault, [StringComparison]::OrdinalIgnoreCase)) {
+    throw "Default Photon build-state root escaped the task repository: $actualDefault"
+}
+
+$explicitChild = Join-Path $resolvedRepositoryRoot '.atlaso-local\photon-build-state-test'
+$actualExplicit = Resolve-AtlasoPhotonBuildStateRoot `
+    -RepositoryRoot $resolvedRepositoryRoot `
+    -Path $explicitChild
+if (-not $actualExplicit.Equals($explicitChild, [StringComparison]::OrdinalIgnoreCase)) {
+    throw "Explicit Photon build-state root changed unexpectedly: $actualExplicit"
+}
+
+$outsideRoot = Join-Path (Split-Path -Parent $resolvedRepositoryRoot) 'photon-build-state-outside'
+$outsideError = ''
+try {
+    Resolve-AtlasoPhotonBuildStateRoot `
+        -RepositoryRoot $resolvedRepositoryRoot `
+        -Path $outsideRoot | Out-Null
+}
+catch {
+    $outsideError = $_.Exception.Message
+}
+if (-not $outsideError.StartsWith(
+        'Photon build state must remain beneath the exact task repository root:',
+        [StringComparison]::Ordinal
+    )) {
+    throw "Outside Photon build-state root did not fail closed: $outsideError"
+}
+
+$fixtureRoot = Join-Path $resolvedRepositoryRoot (
+    '.atlaso-local\photon-build-state-test-' + [guid]::NewGuid().ToString('N')
+)
+try {
+    $legacyStateRoot = Join-Path $fixtureRoot 'legacy-builder-addresses'
+    $pendingRoot = Join-Path $legacyStateRoot 'pending-releases'
+    [void][System.IO.Directory]::CreateDirectory($pendingRoot)
+    $matchingPath = Join-Path $pendingRoot (
+        'builder-address-reservation-' + [guid]::NewGuid().ToString('N') + '.json'
+    )
+    $foreignPath = Join-Path $pendingRoot (
+        'builder-address-reservation-' + [guid]::NewGuid().ToString('N') + '.json'
+    )
+    $matching = [ordered]@{
+        VmName        = 'Atlaso-PR-658-Photon-Builder-VMware'
+        SourceBranch  = 'bug/623-624-photon-bootstrap-qemu'
+        RepositoryRoot = $resolvedRepositoryRoot
+    }
+    $foreign = [ordered]@{
+        VmName        = 'Atlaso-PR-675-Photon-Builder-VMware-factory-reset'
+        SourceBranch  = 'bug/418-factory-reset-management-binding'
+        RepositoryRoot = Join-Path (Split-Path -Parent $resolvedRepositoryRoot) 'foreign-repository'
+    }
+    [System.IO.File]::WriteAllText(
+        $matchingPath,
+        ($matching | ConvertTo-Json -Compress),
+        [System.Text.UTF8Encoding]::new($false)
+    )
+    [System.IO.File]::WriteAllText(
+        $foreignPath,
+        ($foreign | ConvertTo-Json -Compress),
+        [System.Text.UTF8Encoding]::new($false)
+    )
+    $script:completedLegacyHandoffs = @()
+    Set-Item -Path Function:Complete-AtlasoBuilderAddressReservationHandoff -Value {
+        param($Path, $VmrunPath, $StateRoot)
+        $script:completedLegacyHandoffs += [System.IO.Path]::GetFullPath($Path)
+    }
+    Invoke-AtlasoLegacyBuilderAddressHandoffRecovery `
+        -StateRoot $legacyStateRoot `
+        -VmrunPath 'unused-vmrun.exe' `
+        -RepositoryRoot $resolvedRepositoryRoot `
+        -VmName 'Atlaso-PR-658-Photon-Builder-VMware' `
+        -SourceBranch 'bug/623-624-photon-bootstrap-qemu'
+    if ($script:completedLegacyHandoffs.Count -ne 1 -or
+        -not $script:completedLegacyHandoffs[0].Equals(
+            $matchingPath,
+            [StringComparison]::OrdinalIgnoreCase
+        )) {
+        throw 'Legacy recovery did not isolate the exact matching builder handoff.'
+    }
+}
+finally {
+    if (Test-Path -LiteralPath $fixtureRoot) {
+        Assert-AtlasoStrictDescendantPath `
+            -ParentPath $resolvedRepositoryRoot `
+            -ChildPath $fixtureRoot `
+            -FailureMessage 'Photon build-state test fixture escaped the repository'
+        Remove-Item -LiteralPath $fixtureRoot -Recurse -Force
+    }
+}
+
+Write-Host 'Photon build-state root tests passed.'
