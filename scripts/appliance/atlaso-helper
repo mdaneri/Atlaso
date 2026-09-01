@@ -19386,6 +19386,10 @@ def _installed_atlaso_database_url() -> str:
     for raw_line in source_lines:
         if multiline_quote:
             multiline_quote = _environment_file_open_quote(raw_line, multiline_quote)
+            unquoted_continuation = bool(
+                not multiline_quote
+                and _environment_file_unquoted_continues(raw_line)
+            )
             continue
         if unquoted_continuation:
             multiline_quote = _environment_file_open_quote(raw_line)
