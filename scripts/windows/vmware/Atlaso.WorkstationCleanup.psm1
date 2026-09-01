@@ -699,15 +699,10 @@ function Remove-AtlasoWorkstationStaleRegistrations {
                 try { Get-AtlasoCanonicalPath -Path $candidateSource | Out-Null; $hasCompletePath = $true } catch { Write-Verbose "Ignored an uncanonicalizable complete Workstation inventory value: $($_.Exception.Message)" }
             }
             if ($hasCompletePath) { $rawCandidates = @($candidateSource) } else {
-                # Malformed values may contain arbitrary prefixes, so test every
-                # absolute path root ending at a VMX boundary before proving zero ownership.
-                $pathStarts = @([regex]::Matches($candidateSource, '(?i)(?:[a-z]:[\\/]|\\\\)'))
+                # Test every absolute root ending at a VMX boundary before proving zero ownership.
                 $rawCandidates = @([regex]::Matches($candidateSource, '(?i)\.vmx(?=$|["''\s])') | ForEach-Object {
-                        $vmxEnd = $_.Index + $_.Length
-                        $pathStarts | Where-Object { $_.Index -lt $vmxEnd } | ForEach-Object {
-                            $candidateSource.Substring($_.Index, $vmxEnd - $_.Index)
-                        }
-                    })
+                        $vmxEnd = $_.Index + $_.Length; [regex]::Matches($candidateSource.Substring(0, $vmxEnd), '(?i)(?:[a-z]:[\\/]|\\\\)') | ForEach-Object { $candidateSource.Substring($_.Index, $vmxEnd - $_.Index) }
+                })
             }
             $rawRefersToExactPath = $false
             foreach ($rawCandidate in $rawCandidates) {
