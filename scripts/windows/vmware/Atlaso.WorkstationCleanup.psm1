@@ -655,23 +655,14 @@ function Remove-AtlasoWorkstationStaleRegistrations {
             if ($line -notmatch '^\s*(?<owner>vmlist\d+\.config|index\d+\.id)\s*=\s*(?<value>.*)$') { continue }
             $rawValue = $Matches.value.Trim()
             $rawOwner = $Matches.owner
-            $rawCandidate = $rawValue.Trim([char]34)
+            $unquotedRawValue = $rawValue.TrimStart([char]34)
+            if ($unquotedRawValue -notmatch '^(?<path>.+?\.vmx)(?=$|["\s])') { continue }
+            $rawCandidate = $Matches.path
             $rawRefersToExactPath = $false
             if ([System.IO.Path]::IsPathFullyQualified($rawCandidate)) {
                 try { $rawRefersToExactPath = Test-AtlasoSamePath -Left $rawCandidate -Right $resolvedVmxPath }
                 catch {
                     Write-Verbose "Ignored an uncanonicalizable raw Workstation inventory row: $($_.Exception.Message)"
-                }
-            }
-            if (-not $rawRefersToExactPath) {
-                $unquotedRawValue = $rawValue.TrimStart([char]34)
-                if ($unquotedRawValue.StartsWith($resolvedVmxPath, [System.StringComparison]::OrdinalIgnoreCase)) {
-                    $rawSuffix = $unquotedRawValue.Substring($resolvedVmxPath.Length)
-                    $rawRefersToExactPath = (
-                        $rawSuffix.Length -eq 0 -or
-                        $rawSuffix[0] -eq [char]34 -or
-                        [char]::IsWhiteSpace($rawSuffix[0])
-                    )
                 }
             }
             if ($rawRefersToExactPath) {
@@ -700,6 +691,9 @@ function Remove-AtlasoWorkstationStaleRegistrations {
         }
     }
     if ($staleEntries.Count -eq 0 -and (-not $resolvedVmxPath -or $rawExactIndexCount -eq 0)) {
+        if ($resolvedVmxPath -and (Test-Path -LiteralPath $resolvedVmxPath -PathType Leaf)) {
+            throw "The exact stale-registration VMX was recreated before absence could be proven: $resolvedVmxPath"
+        }
         return
     }
     $realInventoryPath = Join-Path ([Environment]::GetFolderPath('ApplicationData')) 'VMware\inventory.vmls'
