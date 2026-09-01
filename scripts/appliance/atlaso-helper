@@ -19375,7 +19375,10 @@ def _environment_file_unquoted_continues(value: str) -> bool:
 def _installed_atlaso_database_url() -> str:
     """Read the installed database URL without evaluating environment-file content."""
     try:
-        source_lines = ATLASO_ENV_PATH.read_text(encoding="utf-8").split("\n")
+        with ATLASO_ENV_PATH.open("r", encoding="utf-8", newline="") as environment_file:
+            source_lines = [
+                line.removesuffix("\r") for line in environment_file.read().split("\n")
+            ]
     except OSError as exc:
         raise ValueError("Atlaso appliance database configuration is unavailable.") from exc
     database_url = ""
