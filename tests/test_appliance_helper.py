@@ -5873,6 +5873,44 @@ def test_wan_only_simulation_ignores_dormant_route_path_errors(tmp_path):
     assert helper._wan_config_errors(config_path) == []
 
 
+@pytest.mark.parametrize(
+    "target_fields",
+    [
+        "  role=management\n  routing_domain=management",
+        "  role=access\n  routing_domain=lab\n  route_allowed=false",
+    ],
+)
+def test_wan_only_simulation_rejects_management_or_ineligible_target(
+    tmp_path,
+    target_fields,
+):
+    """Keep tc/netem assignments off management and route-ineligible links.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+        target_fields: Target role and eligibility fields under test.
+    """
+    helper = load_helper_module()
+    config_path = tmp_path / "wan-only-management-target.conf"
+    config_path.write_text(
+        "\n".join(
+            [
+                "[feature_settings]",
+                "routing_enabled=false",
+                "nat_enabled=false",
+                "wan_simulation_enabled=true",
+                "",
+                wan_config_text().replace("  role=route", target_fields, 1),
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    assert helper._wan_config_errors(config_path) == [
+        "WAN policy assignment cannot target management or route-ineligible WAN target eth1.20."
+    ]
+
+
 def test_wan_disabled_validate_rejects_malformed_preserved_route(tmp_path):
     """Reject malformed saved destinations before disabled-route cleanup.
 

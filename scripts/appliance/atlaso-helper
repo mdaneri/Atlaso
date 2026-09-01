@@ -9043,6 +9043,17 @@ def _wan_config_errors(path: Path) -> list[str]:
                     "WAN policy assignment references missing target "
                     f"{interface_name or '<missing>'}."
                 )
+            elif (
+                targets[interface_name].get("routing_domain", "lab") == "management"
+                or not _wan_bool(
+                    targets[interface_name].get("route_allowed", "true"),
+                    default=True,
+                )
+            ):
+                errors.append(
+                    "WAN policy assignment cannot target management or route-ineligible WAN target "
+                    f"{interface_name}."
+                )
             if policy_name not in policies:
                 errors.append(
                     f"WAN policy assignment references missing policy {policy_name}."
