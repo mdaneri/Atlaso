@@ -16988,7 +16988,7 @@
     },
     "/api/v1/services/{service}/disable": {
       "post": {
-        "description": "Disable Service.\n\nRequires the `write:services` API scope. The operation changes saved Atlaso application state;\nany appliance host enforcement remains subject to the documented apply or task boundary for the\nresource.",
+        "description": "Disable Service.\n\nRequires the `write:services` API scope. Routing additionally requires both `write:routes` and\n`write:wan`. The operation changes saved Atlaso application state; any appliance host enforcement\nremains subject to the documented apply or task boundary for the resource.",
         "operationId": "disableService",
         "parameters": [
           {
@@ -17038,7 +17038,7 @@
     },
     "/api/v1/services/{service}/enable": {
       "post": {
-        "description": "Enable Service.\n\nRequires the `write:services` API scope. The operation changes saved Atlaso application state;\nany appliance host enforcement remains subject to the documented apply or task boundary for the\nresource.",
+        "description": "Enable Service.\n\nRequires the `write:services` API scope. Routing additionally requires both `write:routes` and\n`write:wan`. The operation changes saved Atlaso application state; any appliance host enforcement\nremains subject to the documented apply or task boundary for the resource.",
         "operationId": "enableService",
         "parameters": [
           {

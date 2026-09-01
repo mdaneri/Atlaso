@@ -391,6 +391,13 @@ def build_router(dependencies: OperationsUiDependencies) -> OperationsUiRouter:
                 detail="Routing runtime changes require Appliance Apply",
             )
         if service == "routing" and action in {"enable", "disable"}:
+            if not identity.can("write:routes") or not identity.can("write:wan"):
+                raise HTTPException(
+                    status_code=403,
+                    detail=(
+                        "Routing service actions require write:routes and write:wan permissions"
+                    ),
+                )
             acquire_network_objects_write_lock(db)
         row = db.execute(
             select(ServiceState).where(ServiceState.service == service)
@@ -398,7 +405,8 @@ def build_router(dependencies: OperationsUiDependencies) -> OperationsUiRouter:
         if not row:
             raise HTTPException(status_code=404, detail="Service not found")
         if action == "enable":
-            row.enabled = True
+            if service != "routing" or row.health != "unconfigured":
+                row.enabled = True
             if service == "dns":
                 get_dns_settings_row(db).enabled = True
             elif service == "dhcp":
@@ -406,7 +414,8 @@ def build_router(dependencies: OperationsUiDependencies) -> OperationsUiRouter:
             elif service == "routing":
                 save_routing_enabled_state(db, enabled=True)
         elif action == "disable":
-            row.enabled = False
+            if service != "routing" or row.health != "unconfigured":
+                row.enabled = False
             if service == "dns":
                 get_dns_settings_row(db).enabled = False
             elif service == "dhcp":

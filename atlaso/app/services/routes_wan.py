@@ -3,7 +3,7 @@
 import re
 from collections.abc import Iterable
 from dataclasses import dataclass
-from ipaddress import ip_address, ip_network
+from ipaddress import ip_address, ip_interface, ip_network
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -21,6 +21,7 @@ from atlaso.app.services.firewall import (
     FIREWALL_SOURCE_GROUP_REFERENCE_PREFIX,
     source_group_to_rule_source,
 )
+from atlaso.app.services.networking import normalize_interface_mode
 
 WAN_CONFIG_PATH = "/var/lib/atlaso/apply/wan/atlaso-wan.conf"
 WAN_MODES = ["interface"]
@@ -73,6 +74,19 @@ def _setting_bool(value: str | None) -> bool:
     return str(value or "").strip().lower() in {"1", "true", "yes", "on"}
 
 
+def _has_routing_address(ipv4_cidr: str | None, ipv6_cidr: str | None) -> bool:
+    """Return whether a target has at least one usable configured address."""
+    for cidr in (ipv4_cidr, ipv6_cidr):
+        if not cidr:
+            continue
+        try:
+            ip_interface(cidr)
+        except ValueError:
+            continue
+        return True
+    return False
+
+
 def infer_routes_wan_settings(db: Session) -> RoutesWanSettings:
     """Infer legacy feature activation from previously effective desired rows.
 
@@ -97,10 +111,17 @@ def infer_routes_wan_settings(db: Session) -> RoutesWanSettings:
     ).scalars().all()
     active_route_targets = {
         interface.name
-        for interface in [*physical_route_targets, *vlan_route_targets]
-        if getattr(interface, "admin_state", "up") != "down"
-        and getattr(interface, "oper_state", "up") != "missing"
+        for interface in physical_route_targets
+        if interface.admin_state != "down"
+        and interface.oper_state != "missing"
+        and normalize_interface_mode(interface.mode) != "trunk"
+        and _has_routing_address(interface.ip_cidr, interface.ipv6_cidr)
     }
+    active_route_targets.update(
+        vlan.name
+        for vlan in vlan_route_targets
+        if _has_routing_address(vlan.ip_cidr, vlan.ipv6_cidr)
+    )
     generated_routing_required = len(active_route_targets) >= 2
     enabled_nat_rule = db.execute(
         select(NatRule.id).where(NatRule.enabled.is_(True)).limit(1)

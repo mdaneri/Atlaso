@@ -151,6 +151,18 @@ def build_router(dependencies: OperationsApiDependencies) -> OperationsApiRouter
                 detail="Routing runtime changes require Appliance Apply",
             )
         if service == "routing" and action in {"enable", "disable"}:
+            missing_scopes = [
+                scope
+                for scope in ("write:routes", "write:wan")
+                if not identity.can(scope)
+            ]
+            if missing_scopes:
+                raise HTTPException(
+                    status_code=403,
+                    detail=(
+                        "Routing service actions require write:routes and write:wan scopes"
+                    ),
+                )
             acquire_network_objects_write_lock(db)
         row = db.execute(
             select(ServiceState).where(ServiceState.service == service)
@@ -158,7 +170,8 @@ def build_router(dependencies: OperationsApiDependencies) -> OperationsApiRouter
         if not row:
             raise HTTPException(status_code=404, detail="Service not found")
         if action == "enable":
-            row.enabled = True
+            if service != "routing" or row.health != "unconfigured":
+                row.enabled = True
             if service == "dns":
                 get_dns_settings_row(db).enabled = True
             elif service == "dhcp":
@@ -166,7 +179,8 @@ def build_router(dependencies: OperationsApiDependencies) -> OperationsApiRouter
             elif service == "routing":
                 save_routing_enabled_state(db, enabled=True)
         elif action == "disable":
-            row.enabled = False
+            if service != "routing" or row.health != "unconfigured":
+                row.enabled = False
             if service == "dns":
                 get_dns_settings_row(db).enabled = False
             elif service == "dhcp":
@@ -296,9 +310,9 @@ def build_router(dependencies: OperationsApiDependencies) -> OperationsApiRouter
     ) -> ServiceActionResponse:
         """Enable Service.
 
-        Requires the `write:services` API scope. The operation changes saved Atlaso application state;
-        any appliance host enforcement remains subject to the documented apply or task boundary for the
-        resource.
+        Requires the `write:services` API scope. Routing additionally requires both `write:routes` and
+        `write:wan`. The operation changes saved Atlaso application state; any appliance host enforcement
+        remains subject to the documented apply or task boundary for the resource.
 
         Args:
             service: Atlaso or host service affected by the operation.
@@ -325,9 +339,9 @@ def build_router(dependencies: OperationsApiDependencies) -> OperationsApiRouter
     ) -> ServiceActionResponse:
         """Disable Service.
 
-        Requires the `write:services` API scope. The operation changes saved Atlaso application state;
-        any appliance host enforcement remains subject to the documented apply or task boundary for the
-        resource.
+        Requires the `write:services` API scope. Routing additionally requires both `write:routes` and
+        `write:wan`. The operation changes saved Atlaso application state; any appliance host enforcement
+        remains subject to the documented apply or task boundary for the resource.
 
         Args:
             service: Atlaso or host service affected by the operation.

@@ -153,10 +153,40 @@ def test_fresh_settings_default_off_and_legacy_rows_infer_once(client):
     from sqlalchemy import delete, select
 
     from atlaso.app.database import SessionLocal
+    from atlaso.app.models import PhysicalInterface
 
     with SessionLocal() as db:
         fresh = ensure_routes_wan_settings(db)
         assert fresh == RoutesWanSettings(False, False, False)
+
+        for route_row in db.execute(select(Route)).scalars():
+            route_row.enabled = False
+        for nat_rule in db.execute(select(NatRule)).scalars():
+            nat_rule.enabled = False
+        for routing_rule in db.execute(select(RoutingRule)).scalars():
+            routing_rule.enabled = False
+
+        route_targets = db.execute(
+            select(PhysicalInterface).order_by(PhysicalInterface.name)
+        ).scalars().all()[:2]
+        assert len(route_targets) == 2
+        for interface in route_targets:
+            interface.role = "route"
+            interface.mode = "access"
+            interface.admin_state = "up"
+            interface.oper_state = "up"
+            interface.ip_cidr = None
+            interface.ipv6_cidr = None
+        db.execute(delete(Setting).where(Setting.key.in_(ROUTES_WAN_SETTING_KEYS)))
+        db.flush()
+        assert ensure_routes_wan_settings(db).routing_enabled is False
+
+        for index, interface in enumerate(route_targets, start=1):
+            interface.mode = "trunk"
+            interface.ip_cidr = f"192.0.{index}.10/24"
+        db.execute(delete(Setting).where(Setting.key.in_(ROUTES_WAN_SETTING_KEYS)))
+        db.flush()
+        assert ensure_routes_wan_settings(db).routing_enabled is False
 
         db.execute(delete(Setting).where(Setting.key.in_(ROUTES_WAN_SETTING_KEYS)))
         route = db.execute(select(Route).order_by(Route.id)).scalars().first()

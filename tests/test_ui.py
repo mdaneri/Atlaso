@@ -16823,7 +16823,20 @@ def test_services_routing_actions_update_global_desired_state(client, monkeypatc
         lambda db: assert_lock_before_routing_query(db, transport="ui"),
     )
 
-    token = create_api_token(client, ["read:services", "write:services"])
+    service_only_token = create_api_token(
+        client, ["read:services", "write:services"]
+    )
+    denied = client.post(
+        "/api/v1/services/routing/enable",
+        headers={"Authorization": f"Bearer {service_only_token}"},
+    )
+    assert denied.status_code == 403
+    assert lock_events == []
+
+    token = create_api_token(
+        client,
+        ["read:services", "write:services", "write:routes", "write:wan"],
+    )
     enabled = client.post(
         "/api/v1/services/routing/enable",
         headers={"Authorization": f"Bearer {token}"},
@@ -16892,6 +16905,34 @@ def test_seed_preserves_unconfigured_routing_until_appliance_apply(client):
         seed_initial_data(db, include_examples=False)
         db.refresh(service)
 
+        assert ensure_routes_wan_settings(db).routing_enabled is True
+        assert service.enabled is False
+        assert service.running is False
+        assert service.health == "unconfigured"
+
+    token = create_api_token(
+        client,
+        ["read:services", "write:services", "write:routes", "write:wan"],
+    )
+    response = client.post(
+        "/api/v1/services/routing/enable",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert response.status_code == 200
+
+    login(client)
+    page = client.get("/services")
+    csrf = page.text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
+    response = client.post(
+        "/services/routing/enable",
+        data={"csrf": csrf},
+    )
+    assert response.status_code == 200
+
+    with SessionLocal() as db:
+        service = db.execute(
+            select(ServiceState).where(ServiceState.service == "routing")
+        ).scalar_one()
         assert ensure_routes_wan_settings(db).routing_enabled is True
         assert service.enabled is False
         assert service.running is False
