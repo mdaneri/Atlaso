@@ -1372,6 +1372,7 @@ def test_complete_factory_reset_publishes_factory_management_binding_immediately
         monkeypatch: Pytest fixture used to replace dependencies for the test.
     """
     import atlaso.app.database as database
+    import atlaso.app.factory_reset as factory_reset
     from atlaso.app.services.appliance_settings import APPLIANCE_DNS_RECORD_DESCRIPTION
     from atlaso.app.ui import appliance_apply_units, save_appliance_apply_baselines
 
@@ -1380,6 +1381,7 @@ def test_complete_factory_reset_publishes_factory_management_binding_immediately
     old_ipv6 = "2001:db8::249"
     monkeypatch.setenv("ATLASO_ENVIRONMENT", "appliance")
     monkeypatch.setenv("ATLASO_FACTORY_RESET_STATE_DIRECTORY", str(tmp_path / "factory-reset"))
+    monkeypatch.setattr(factory_reset, "_running_as_posix_root", lambda: False)
     get_settings.cache_clear()
 
     with database.SessionLocal() as db:
