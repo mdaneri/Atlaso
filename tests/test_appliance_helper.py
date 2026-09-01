@@ -5908,6 +5908,7 @@ route=192.0.2.0/24
     helper.shutil.which = lambda command: (
         f"/usr/sbin/{command}" if command in {"ip", "tc"} else None
     )
+    helper._link_exists = lambda _interface_name: False
     helper._run = lambda command: (
         commands.append(command)
         or subprocess.CompletedProcess(command, 1, "", "device absent")
@@ -5918,6 +5919,64 @@ route=192.0.2.0/24
         helper._parse_wan_config(config_path)
     ) == 0
     assert commands == []
+
+
+def test_wan_disabled_apply_cleans_live_route_target_omitted_from_intent(tmp_path):
+    """Clear routes and netem when an omitted target still exists on the host.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
+    helper = load_helper_module()
+    config_path = tmp_path / "disabled-live-omitted-route-target.conf"
+    config_path.write_text(
+        """[feature_settings]
+routing_enabled=false
+nat_enabled=false
+wan_simulation_enabled=false
+
+[targets]
+
+[routes]
+route=192.0.2.0/24
+  interface=eth2
+  metric=100
+  enabled=true
+  wan_mode=interface
+
+[removed_routes]
+[removed_main_defaults]
+[routing_rules]
+[nat_rules]
+[wan_policies]
+""",
+        encoding="utf-8",
+    )
+    commands: list[list[str]] = []
+    helper.shutil.which = lambda command: (
+        f"/usr/sbin/{command}" if command in {"ip", "tc"} else None
+    )
+    helper._link_exists = lambda interface_name: interface_name == "eth2"
+    helper._run = lambda command: (
+        commands.append(command)
+        or subprocess.CompletedProcess(command, 0, "", "")
+    )
+
+    assert helper._wan_config_errors(config_path) == []
+    assert helper._apply_wan_routes_and_qdiscs(
+        helper._parse_wan_config(config_path)
+    ) == 0
+    assert [
+        "ip",
+        "route",
+        "del",
+        "192.0.2.0/24",
+        "dev",
+        "eth2",
+        "table",
+        "200",
+    ] in commands
+    assert ["tc", "qdisc", "del", "dev", "eth2", "root"] in commands
 
 
 def esxi_pxe_manifest(http_root: Path, *, enabled: bool = True, stale_id: int = 99, iso_root: Path | None = None) -> dict:
