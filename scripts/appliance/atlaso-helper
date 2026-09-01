@@ -19419,6 +19419,7 @@ def _installed_atlaso_database_url() -> str:
     database_url_quote = ""
     multiline_quote = ""
     unquoted_continuation = False
+    comment_continuation = False
     database_url_is_multiline = False
     for raw_line in source_lines:
         if multiline_quote:
@@ -19435,8 +19436,12 @@ def _installed_atlaso_database_url() -> str:
                 and _environment_file_unquoted_continues(raw_line)
             )
             continue
+        if comment_continuation:
+            comment_continuation = _environment_file_unquoted_continues(raw_line)
+            continue
         candidate = raw_line.strip(" \t\r")
         if candidate.startswith(("#", ";")):
+            comment_continuation = _environment_file_unquoted_continues(raw_line)
             continue
         assignment_name, separator, assignment_value = candidate.partition("=")
         if not separator:
