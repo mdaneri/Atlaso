@@ -2546,6 +2546,15 @@ function Invoke-PendingAtlasoDevelopmentCaCleanup {
                     -Phase stopped-vmx-scrubbed
                 $marker.Phase = 'stopped-vmx-scrubbed'
             }
+            # A provider deletion can remove the complete artifact root before
+            # Workstation commits its library update. Re-prove the marker-bound
+            # path and display name here on every resume before preserved disks
+            # or the marker can leave recovery ownership.
+            Repair-AtlasoWorkstationStaleRegistrations `
+                -ScopeRoot $marker.OutputDirectory `
+                -VmxPath $marker.VmxPath `
+                -ExpectedDisplayName $marker.Name `
+                -Confirm:$false
             Restore-AtlasoRollbackDataDisksFromQuarantine `
                 -DataDiskStates $dataDiskStates `
                 -QuarantineDirectory $quarantineDirectory

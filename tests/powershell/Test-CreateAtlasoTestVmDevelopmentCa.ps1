@@ -1734,12 +1734,43 @@ RW 524288000 SPARSE "Atlaso-Depot-s002.vmdk"
     if (-not $resumeMarker.ArtifactsRemoved -or $resumeMarker.Phase -cne 'stopped-vmx-scrubbed') {
         throw 'A stopped and removed VM must enter persisted data-restoration resume.'
     }
-    Invoke-PendingAtlasoDevelopmentCaCleanup `
-        -VmrunPath 'unused-after-proven-removal' `
-        -TimeoutSeconds 5 `
-        -MarkerRoot $markerRoot
+    $resumeAppData = Join-Path $markerTestRoot 'resume-appdata'
+    $resumeInventoryDirectory = Join-Path $resumeAppData 'VMware'
+    $resumeInventory = Join-Path $resumeInventoryDirectory 'inventory.vmls'
+    $unrelatedVmx = Join-Path $markerTestRoot 'unrelated-missing.vmx'
+    New-Item -ItemType Directory -Path $resumeInventoryDirectory | Out-Null
+    [System.IO.File]::WriteAllText(
+        $resumeInventory,
+        "vmlist6.config = `"$markerVmx`"`r`n" +
+        "vmlist6.DisplayName = `"Atlaso-Test`"`r`n" +
+        "index6.id = `"$markerVmx`"`r`n" +
+        "vmlist7.config = `"$unrelatedVmx`"`r`n" +
+        "vmlist7.DisplayName = `"Unrelated VM`"`r`n" +
+        "index7.id = `"$unrelatedVmx`"`r`n",
+        [System.Text.UTF8Encoding]::new($false)
+    )
+    $originalAppData = $env:APPDATA
+    try {
+        $env:APPDATA = $resumeAppData
+        Invoke-PendingAtlasoDevelopmentCaCleanup `
+            -VmrunPath 'unused-after-proven-removal' `
+            -TimeoutSeconds 5 `
+            -MarkerRoot $markerRoot
+    }
+    finally {
+        $env:APPDATA = $originalAppData
+    }
     if (Test-Path -LiteralPath $markerPath) {
         throw 'The resumed post-removal cleanup marker was not removed.'
+    }
+    $resumeInventoryText = [System.IO.File]::ReadAllText($resumeInventory)
+    if (
+        $resumeInventoryText.Contains($markerVmx) -or
+        $resumeInventoryText.Contains('Atlaso-Test') -or
+        -not $resumeInventoryText.Contains($unrelatedVmx) -or
+        -not $resumeInventoryText.Contains('Unrelated VM')
+    ) {
+        throw 'Post-removal recovery did not isolate the marker-bound stale Workstation registration.'
     }
     if (
         -not (Test-Path -LiteralPath $markerDisk -PathType Leaf) -or

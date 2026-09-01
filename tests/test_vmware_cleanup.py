@@ -582,6 +582,8 @@ def _run_stale_registration_repair(
     *,
     scope_root: Path,
     environment: dict[str, str],
+    vmx_path: Path | None = None,
+    expected_display_name: str | None = None,
 ) -> subprocess.CompletedProcess[str]:
     """Invoke only the exported pre-GUI stale-registration repair.
 
@@ -589,15 +591,23 @@ def _run_stale_registration_repair(
         tmp_path: Scratch directory for the generated wrapper.
         scope_root: Exact scope allowed for missing registration repair.
         environment: Environment used to invoke the repair command.
+        vmx_path: Optional exact missing VMX registration to select.
+        expected_display_name: Required display name for an exact selection.
     """
     wrapper = tmp_path / "repair-stale-registrations.ps1"
     module = VMWARE_SCRIPT_ROOT / "Atlaso.WorkstationCleanup.psm1"
+    exact_selection = ""
+    if vmx_path is not None or expected_display_name is not None:
+        exact_selection = (
+            f"    -VmxPath '{vmx_path}' `\n"
+            f"    -ExpectedDisplayName '{expected_display_name}' `\n"
+        )
     wrapper.write_text(
         f"""$ErrorActionPreference = 'Stop'
 Import-Module '{module}' -Force
 Repair-AtlasoWorkstationStaleRegistrations `
     -ScopeRoot '{scope_root}' `
-    -Confirm:$false
+{exact_selection}    -Confirm:$false
 Write-Host 'REPAIR SUCCEEDED'
 """,
         encoding="utf-8",
@@ -1552,6 +1562,108 @@ def test_pre_gui_repair_removes_only_missing_scoped_registration(tmp_path: Path)
     assert str(stale.resolve()) not in inventory_text
     assert str(unrelated.resolve()) in inventory_text
     assert "unrelated.value = keep-me" in inventory_text
+
+
+def test_exact_stale_repair_matches_marker_path_and_display_name(tmp_path: Path) -> None:
+    """Repair only the exact marker-bound row after its artifact root disappeared.
+
+    Args:
+        tmp_path: Pytest temporary directory path.
+    """
+    root = tmp_path / "test-vms" / "Atlaso-PR-672-cleanup"
+    stale = root / "Atlaso-PR-672-cleanup.vmx"
+    unrelated = root.parent / "Atlaso-PR-671-unrelated" / "missing.vmx"
+    suffix = (
+        f'vmlist6.config = "{stale.resolve()}"\n'
+        'vmlist6.DisplayName = "Atlaso-PR-672-cleanup"\n'
+        f'index6.id = "{stale.resolve()}"\n'
+        f'vmlist7.config = "{unrelated.resolve()}"\n'
+        'vmlist7.DisplayName = "Atlaso-PR-671-unrelated"\n'
+        f'index7.id = "{unrelated.resolve()}"\n'
+        "unrelated.value = keep-me\n"
+    )
+    _, environment, _, inventory = _write_fake_vmrun(
+        tmp_path / "fake", [], inventory_suffix=suffix
+    )
+
+    result = _run_stale_registration_repair(
+        tmp_path,
+        scope_root=root,
+        vmx_path=stale,
+        expected_display_name="Atlaso-PR-672-cleanup",
+        environment=environment,
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    inventory_text = inventory.read_text(encoding="utf-8")
+    assert str(stale.resolve()) not in inventory_text
+    assert "Atlaso-PR-672-cleanup" not in inventory_text
+    assert str(unrelated.resolve()) in inventory_text
+    assert "Atlaso-PR-671-unrelated" in inventory_text
+    assert "unrelated.value = keep-me" in inventory_text
+
+
+def test_exact_stale_repair_preserves_mismatched_display_name(tmp_path: Path) -> None:
+    """Keep the exact row when its provider display name is ambiguous.
+
+    Args:
+        tmp_path: Pytest temporary directory path.
+    """
+    root = tmp_path / "test-vms" / "Atlaso-PR-672-cleanup"
+    stale = root / "Atlaso-PR-672-cleanup.vmx"
+    suffix = (
+        f'vmlist6.config = "{stale.resolve()}"\n'
+        'vmlist6.DisplayName = "Different VM"\n'
+        f'index6.id = "{stale.resolve()}"\n'
+    )
+    _, environment, _, inventory = _write_fake_vmrun(
+        tmp_path / "fake", [], inventory_suffix=suffix
+    )
+    original_inventory = inventory.read_bytes()
+
+    result = _run_stale_registration_repair(
+        tmp_path,
+        scope_root=root,
+        vmx_path=stale,
+        expected_display_name="Atlaso-PR-672-cleanup",
+        environment=environment,
+    )
+
+    assert result.returncode != 0
+    assert "does not have the expected display name" in result.stderr
+    assert inventory.read_bytes() == original_inventory
+
+
+def test_exact_stale_repair_preserves_duplicate_marker_path(tmp_path: Path) -> None:
+    """Reject duplicate library owners for the exact marker-bound VMX path.
+
+    Args:
+        tmp_path: Pytest temporary directory path.
+    """
+    root = tmp_path / "test-vms" / "Atlaso-PR-672-cleanup"
+    stale = root / "Atlaso-PR-672-cleanup.vmx"
+    suffix = (
+        f'vmlist6.config = "{stale.resolve()}"\n'
+        'vmlist6.DisplayName = "Atlaso-PR-672-cleanup"\n'
+        f'vmlist7.config = "{stale.resolve()}"\n'
+        'vmlist7.DisplayName = "Atlaso-PR-672-cleanup"\n'
+    )
+    _, environment, _, inventory = _write_fake_vmrun(
+        tmp_path / "fake", [], inventory_suffix=suffix
+    )
+    original_inventory = inventory.read_bytes()
+
+    result = _run_stale_registration_repair(
+        tmp_path,
+        scope_root=root,
+        vmx_path=stale,
+        expected_display_name="Atlaso-PR-672-cleanup",
+        environment=environment,
+    )
+
+    assert result.returncode != 0
+    assert "multiple registrations for the exact missing VMX" in result.stderr
+    assert inventory.read_bytes() == original_inventory
 
 
 def test_unrelated_uncanonicalizable_inventory_owner_does_not_block_cleanup(
@@ -2587,7 +2699,7 @@ def test_module_keeps_inventory_work_out_of_normal_delete_path() -> None:
     )
     assert inventory_replace < rollback_catch < rollback_call
     implementation = re.sub(r"<#.*?#>\s*", "", module, flags=re.DOTALL)
-    assert len(implementation.splitlines()) < 1_125
+    assert len(implementation.splitlines()) < 1_175
 
 
 def test_pre_gui_repair_retains_exact_open_ui_refusal() -> None:

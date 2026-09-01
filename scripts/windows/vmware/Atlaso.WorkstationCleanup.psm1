@@ -613,19 +613,60 @@ Optional Workstation inventory file.
 
 .PARAMETER ScopeRoot
 Canonical root that bounds stale registration selection.
+
+.PARAMETER VmxPath
+Optional exact missing VMX path to repair without selecting sibling registrations.
+
+.PARAMETER ExpectedDisplayName
+Exact Workstation display name required for the selected VMX registration.
 #>
 function Remove-AtlasoWorkstationStaleRegistrations {
     param(
         [Parameter(Mandatory = $false)][AllowNull()][string]$InventoryPath,
-        [Parameter(Mandatory = $true)][string]$ScopeRoot
+        [Parameter(Mandatory = $true)][string]$ScopeRoot,
+        [Parameter(Mandatory = $false)][AllowEmptyString()][string]$VmxPath = '',
+        [Parameter(Mandatory = $false)][AllowEmptyString()][string]$ExpectedDisplayName = ''
     )
+    if ([string]::IsNullOrWhiteSpace($VmxPath) -ne [string]::IsNullOrWhiteSpace($ExpectedDisplayName)) {
+        throw 'Exact stale-registration repair requires both a VMX path and display name.'
+    }
+    $resolvedScopeRoot = Get-AtlasoCanonicalPath -Path $ScopeRoot
+    $resolvedVmxPath = if ($VmxPath) { Get-AtlasoCanonicalPath -Path $VmxPath } else { '' }
+    if ($resolvedVmxPath) {
+        Assert-AtlasoStrictDescendantPath `
+            -ParentPath $resolvedScopeRoot `
+            -ChildPath $resolvedVmxPath `
+            -FailureMessage 'Exact stale-registration VMX is outside the approved cleanup scope'
+        if (Test-Path -LiteralPath $resolvedVmxPath) {
+            throw "Exact stale-registration VMX still exists; provider state was preserved: $resolvedVmxPath"
+        }
+    }
     if (-not $InventoryPath) { return }
     $originalBytes = [System.IO.File]::ReadAllBytes($InventoryPath)
     $lines = @([System.Text.Encoding]::UTF8.GetString($originalBytes) -split '\r?\n')
     $staleEntries = @(
-        Get-AtlasoScopedInventoryEntriesFromLines -Lines $lines -ScopeRoot $ScopeRoot |
+        Get-AtlasoScopedInventoryEntriesFromLines -Lines $lines -ScopeRoot $resolvedScopeRoot |
             Where-Object { -not $_.Exists }
     )
+    if ($resolvedVmxPath) {
+        $staleEntries = @($staleEntries | Where-Object {
+                Test-AtlasoSamePath -Left $_.Path -Right $resolvedVmxPath
+            })
+        if ($staleEntries.Count -gt 1) {
+            throw "VMware Workstation inventory contains multiple registrations for the exact missing VMX; provider state was preserved: $resolvedVmxPath"
+        }
+        if ($staleEntries.Count -eq 1) {
+            $selectedId = $staleEntries[0].Id
+            $displayNameLines = @($lines | Where-Object { $_ -match "^\s*vmlist$selectedId\.DisplayName\s*=" })
+            if (
+                $displayNameLines.Count -ne 1 -or
+                $displayNameLines[0] -notmatch '^\s*vmlist\d+\.DisplayName\s*=\s*"(?<name>[^"\r\n]+)"\s*$' -or
+                -not $Matches.name.Equals($ExpectedDisplayName, [System.StringComparison]::Ordinal)
+            ) {
+                throw "VMware Workstation registration for the exact missing VMX does not have the expected display name; provider state was preserved: $resolvedVmxPath"
+            }
+        }
+    }
     if ($staleEntries.Count -eq 0) {
         return
     }
@@ -794,11 +835,19 @@ Repair missing VMware Workstation registrations inside one exact Atlaso scope.
 
 .PARAMETER ScopeRoot
 Exact non-reparse-point Atlaso scope that bounds missing registration repair.
+
+.PARAMETER VmxPath
+Optional exact missing VMX path to repair without selecting sibling registrations.
+
+.PARAMETER ExpectedDisplayName
+Exact Workstation display name required for the selected VMX registration.
 #>
 function Repair-AtlasoWorkstationStaleRegistrations {
     [CmdletBinding(SupportsShouldProcess = $true)]
     param(
-        [Parameter(Mandatory = $true)][string]$ScopeRoot
+        [Parameter(Mandatory = $true)][string]$ScopeRoot,
+        [Parameter(Mandatory = $false)][AllowEmptyString()][string]$VmxPath = '',
+        [Parameter(Mandatory = $false)][AllowEmptyString()][string]$ExpectedDisplayName = ''
     )
     $resolvedScopeRoot = Get-AtlasoCanonicalPath -Path $ScopeRoot
     $filesystemRoot = [System.IO.Path]::GetPathRoot($resolvedScopeRoot)
@@ -809,7 +858,9 @@ function Repair-AtlasoWorkstationStaleRegistrations {
     if ($PSCmdlet.ShouldProcess($resolvedScopeRoot, 'Remove missing Atlaso VMware Workstation registrations')) {
         Remove-AtlasoWorkstationStaleRegistrations `
             -InventoryPath (Resolve-AtlasoWorkstationInventoryPath) `
-            -ScopeRoot $resolvedScopeRoot
+            -ScopeRoot $resolvedScopeRoot `
+            -VmxPath $VmxPath `
+            -ExpectedDisplayName $ExpectedDisplayName
     }
 }
 <#
