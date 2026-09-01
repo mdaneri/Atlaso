@@ -504,6 +504,15 @@ Terminal order:
 - The VMware image is automated with Packer, Photon kickstart JSON, an ISO-embedded GRUB auto-install entry, and
   provisioning scripts. Portable target exporters must consume the validated role-bound VMware provenance instead of
   recreating installation steps.
+- Before any Workstation, ISO, Packer, output, or image mutation, require a completely clean source
+  checkout and admit one exact commit. Archive that commit into the invocation-owned build root, remove the build
+  identity's write access for the complete child lifetime, launch the bounded child from the snapshot, and make every
+  Packer file and shell source plus the exact HCL template consume only that tree through a separate disposable Packer
+  working directory. Bind schema-v3 VMX provenance to the commit plus a deterministic full-snapshot
+  file-count and SHA-256 inventory, and revalidate it before Packer and provenance emission. Reject dirty, ambiguous,
+  changed, legacy-unbound, or unreproducible source state. Hyper-V and protected virtualization publication inherit
+  this boundary only through the validated OVA; downstream signature and signed-software-source verification remain
+  mandatory defense in depth.
 - Photon appliance provisioning should run `tdnf -y makecache` and `tdnf -y update` before installing Atlaso so the
   image lands on the current Photon 5.0 package stream.
 - The Photon Packer template must stage `requirements-appliance.lock` into `/tmp/atlaso-src` before shared

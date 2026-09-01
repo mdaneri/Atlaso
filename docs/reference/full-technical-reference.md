@@ -1381,6 +1381,16 @@ checked exact-root cleanup only for
 `-PackerOnError cleanup`; other failure selections preserve the output. Raw Packer debug-log environment variables are
 excluded from the monitored child because they are outside the wrapper's redaction boundary.
 
+Source admission precedes Workstation, ISO, Packer, and output mutation. The wrapper requires one completely clean Git
+working tree, archives the exact admitted commit into the invocation-owned build root, and starts the bounded child from
+that snapshot. The parent removes the build identity's write access for the complete bounded-child lifetime. Packer
+uses a separate disposable working directory, while the exact HCL template and every file and shell provisioner read
+only the absolute protected snapshot root. A deterministic inventory binds every staged regular file by relative path,
+size, and
+SHA-256; the wrapper verifies its file count and aggregate SHA-256 before Packer and before schema-v3 VMX provenance is
+written. The shared ISO cache and output remain outside the snapshot. A later checkout update therefore cannot alter
+the appliance or its recorded commit, while a changed staged tree fails before provenance can authenticate the output.
+
 Build the image with:
 
 ```powershell

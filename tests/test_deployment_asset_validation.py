@@ -416,6 +416,8 @@ def test_packer_validation_uses_wrapper_guard_and_template_directory(tmp_path: P
                 "vm_name=Atlaso-PR-1-Photon-Builder-VMware",
                 "-var",
                 "output_directory=C:/atlaso-validation/Atlaso-PR-1-Photon-Builder-VMware",
+                "-var",
+                f"source_root={tmp_path.resolve()}",
                 ".",
             ],
             cwd=template.parent,
@@ -462,6 +464,35 @@ def test_packer_plugin_resolution_rejects_ranges_and_mismatched_binaries(
     assert expected in findings[0]
 
 
+def test_packer_plugin_resolution_accepts_an_exact_template_target(tmp_path: Path) -> None:
+    """Verify plugin inspection does not widen an exact template to its directory.
+
+    Args:
+        tmp_path: Temporary directory supplied by pytest.
+    """
+    template = tmp_path / "atlaso-photon.pkr.hcl"
+    template.write_text("packer {}\n", encoding="utf-8")
+    plugin = tmp_path / "packer-plugin-vmware_v2.1.5_x5.0_windows_amd64.exe"
+    plugin.touch()
+    completed = Mock(
+        returncode=0,
+        stdout=f'vmware github.com/vmware/vmware "= 2.1.5" {plugin}\n',
+        stderr="",
+    )
+
+    with patch("scripts.check_packer_plugins.subprocess.run", return_value=completed) as run:
+        findings = validate_packer_plugins(template, "packer")
+
+    assert findings == []
+    run.assert_called_once_with(
+        ["packer", "plugins", "required", template.name],
+        cwd=tmp_path,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+
 def test_supported_packer_templates_pin_reviewed_exact_plugins() -> None:
     """Verify that the canonical image target retains its reviewed exact plugin."""
     repository = Path(__file__).resolve().parents[1]
@@ -480,13 +511,11 @@ def test_supported_packer_templates_pin_reviewed_exact_plugins() -> None:
     wrapper = (repository / "scripts/windows/common/Atlaso.PhotonImage.psm1").read_text(
         encoding="utf-8"
     )
-    init = "& packer init ."
-    verify = (
-        "& python $pluginCheckScript --packer "
-        "(Get-Command packer -ErrorAction Stop).Source $packerDir"
-    )
+    init = "& packer init $resolvedPackerTemplatePath"
+    verify = "& python $pluginCheckScript"
     execute = "& packer @packerArgs"
     assert "..\\..\\check_packer_plugins.py" in wrapper
+    assert "$resolvedPackerTemplatePath" in wrapper
     assert wrapper.index(init) < wrapper.index(verify) < wrapper.index(execute)
 
 

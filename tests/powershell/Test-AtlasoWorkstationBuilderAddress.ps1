@@ -77,6 +77,12 @@ exit 1
     $stateRoot = Join-Path $testRoot 'state'
     $outputOne = Join-Path $testRoot 'output-one'
     $outputTwo = Join-Path $testRoot 'output-two'
+    $sourceCommit = [string](& git -C $RepositoryRoot rev-parse HEAD)
+    $sourceBranch = [string](& git -C $RepositoryRoot branch --show-current)
+    if ($LASTEXITCODE -ne 0 -or $sourceCommit.Trim() -notmatch '^[0-9a-f]{40}$' -or
+        [string]::IsNullOrWhiteSpace($sourceBranch)) {
+        throw 'Could not resolve the builder-address test source identity.'
+    }
     $common = @{
         NetworkName                = 'VMnet8'
         Subnet                     = '192.0.2.0'
@@ -90,6 +96,8 @@ exit 1
         VmrunPath                  = $vmrunPath
         VmName                     = 'Atlaso-PR-653-Photon-Builder-VMware'
         RepositoryRoot             = $RepositoryRoot
+        SourceCommit               = $sourceCommit.Trim()
+        SourceBranch               = $sourceBranch.Trim()
     }
     $first = Enter-AtlasoVmwareBuilderAddressReservation @common -OutputDirectory $outputOne
     $second = Enter-AtlasoVmwareBuilderAddressReservation @common -OutputDirectory $outputTwo
@@ -428,6 +436,9 @@ exit 1
             'Complete-AtlasoBuilderAddressReservationHandoff'
             'ProcessTreeTerminationProven'
             '-ReservationHandoffPath $resolvedBuilderAddressReservationPath'
+            '-RepositoryRoot $TaskRepositoryRoot'
+            '-SourceCommit $SourceCommit'
+            '-SourceBranch $SourceBranch'
             'was not paired with its durable release handoff'
             'SkipNetworkCheck suppresses topology preparation, not allocator safety'
             '$requiresBuilderReservation = -not $ValidateOnly -and -not $PrepareIsoOnly'
@@ -438,6 +449,13 @@ exit 1
         if (-not $wrapper.Contains($required, [StringComparison]::Ordinal)) {
             throw "The Photon wrapper is missing builder reservation integration marker: $required"
         }
+    }
+    $builderAddressModule = [System.IO.File]::ReadAllText($modulePath)
+    if ($builderAddressModule.Contains(
+            'git -C $resolvedRepository rev-parse HEAD',
+            [StringComparison]::Ordinal
+        )) {
+        throw 'Builder reservation admission still requires Git metadata from its recorded root.'
     }
 }
 finally {

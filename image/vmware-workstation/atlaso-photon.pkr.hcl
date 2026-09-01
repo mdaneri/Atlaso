@@ -35,6 +35,11 @@ variable "output_directory" {
   }
 }
 
+variable "source_root" {
+  type        = string
+  description = "Absolute commit-derived Atlaso source snapshot used by every image provisioner."
+}
+
 variable "vmnet_name" {
   type        = string
   default     = "VMnet8"
@@ -228,112 +233,112 @@ build {
   }
 
   provisioner "file" {
-    source      = "../../atlaso"
+    source      = "${var.source_root}/atlaso"
     destination = "/tmp/atlaso-src/atlaso"
   }
 
   provisioner "file" {
-    source      = "../../pyproject.toml"
+    source      = "${var.source_root}/pyproject.toml"
     destination = "/tmp/atlaso-src/pyproject.toml"
   }
 
   provisioner "file" {
-    source      = "../../requirements-appliance.lock"
+    source      = "${var.source_root}/requirements-appliance.lock"
     destination = "/tmp/atlaso-src/requirements-appliance.lock"
   }
 
   provisioner "file" {
-    source      = "../../README.md"
+    source      = "${var.source_root}/README.md"
     destination = "/tmp/atlaso-src/README.md"
   }
 
   provisioner "file" {
-    source      = "../../scripts/appliance"
+    source      = "${var.source_root}/scripts/appliance"
     destination = "/tmp/atlaso-src/scripts/appliance"
   }
 
   provisioner "file" {
-    source      = "../../scripts/check_photon_compatibility.py"
+    source      = "${var.source_root}/scripts/check_photon_compatibility.py"
     destination = "/tmp/atlaso-src/scripts/check_photon_compatibility.py"
   }
 
   provisioner "file" {
-    source      = "../../scripts/generate_third_party_notices.py"
+    source      = "${var.source_root}/scripts/generate_third_party_notices.py"
     destination = "/tmp/atlaso-src/scripts/generate_third_party_notices.py"
   }
 
   provisioner "file" {
-    source      = "../../scripts/third_party_notices.json"
+    source      = "${var.source_root}/scripts/third_party_notices.json"
     destination = "/tmp/atlaso-src/scripts/third_party_notices.json"
   }
 
   provisioner "file" {
-    source      = "../../scripts/version.py"
+    source      = "${var.source_root}/scripts/version.py"
     destination = "/tmp/atlaso-src/scripts/version.py"
   }
 
   provisioner "file" {
-    source      = "../../scripts/run_tdnf_with_progress.py"
+    source      = "${var.source_root}/scripts/run_tdnf_with_progress.py"
     destination = "/tmp/atlaso-src/scripts/run_tdnf_with_progress.py"
   }
 
   provisioner "file" {
-    source      = "../../third_party/ipxe"
+    source      = "${var.source_root}/third_party/ipxe"
     destination = "/tmp/atlaso-src/third_party/ipxe"
   }
 
   provisioner "file" {
-    source      = "../inventory-linux/README.md"
+    source      = "${var.source_root}/image/inventory-linux/README.md"
     destination = "/tmp/atlaso-src/image/inventory-linux/README.md"
   }
 
   provisioner "file" {
-    source      = "systemd"
+    source      = "${var.source_root}/image/vmware-workstation/systemd"
     destination = "/tmp/atlaso-src/image/vmware-workstation/systemd"
   }
 
   provisioner "file" {
-    source      = "../common/systemd"
+    source      = "${var.source_root}/image/common/systemd"
     destination = "/tmp/atlaso-src/image/common/systemd"
   }
 
   provisioner "file" {
-    source      = "../common/scripts"
+    source      = "${var.source_root}/image/common/scripts"
     destination = "/tmp/atlaso-src/image/common/scripts"
   }
 
   provisioner "file" {
-    source      = "../common/guest-agents"
+    source      = "${var.source_root}/image/common/guest-agents"
     destination = "/tmp/atlaso-src/image/common/guest-agents"
   }
 
   provisioner "file" {
-    source      = "../common/udev"
+    source      = "${var.source_root}/image/common/udev"
     destination = "/tmp/atlaso-src/image/common/udev"
   }
 
   provisioner "file" {
-    source      = "../common/data-disks.conf"
+    source      = "${var.source_root}/image/common/data-disks.conf"
     destination = "/tmp/atlaso-src/image/common/data-disks.conf"
   }
 
   provisioner "file" {
-    source      = "../common/sudoers.d"
+    source      = "${var.source_root}/image/common/sudoers.d"
     destination = "/tmp/atlaso-src/image/common/sudoers.d"
   }
 
   provisioner "file" {
-    source      = "../common/boot"
+    source      = "${var.source_root}/image/common/boot"
     destination = "/tmp/atlaso-src/image/common/boot"
   }
 
   provisioner "file" {
-    source      = "../common/update-trust"
+    source      = "${var.source_root}/image/common/update-trust"
     destination = "/tmp/atlaso-src/image/common/update-trust"
   }
 
   provisioner "file" {
-    source      = "../common/powershell"
+    source      = "${var.source_root}/image/common/powershell"
     destination = "/tmp/atlaso-src/image/common/powershell"
   }
 
@@ -357,6 +362,6 @@ build {
       "ATLASO_PIP_GLOBAL_INDEX_URL=${var.pip_global_index_url}"
     ]
     execute_command = "printf '%s' '${local.ssh_password_stdin_base64}' | base64 -d | sudo -S -E sh -c '{{ .Vars }} {{ .Path }}'"
-    script          = "${path.root}/../common/scripts/provision-atlaso.sh"
+    script          = "${var.source_root}/image/common/scripts/provision-atlaso.sh"
   }
 }
