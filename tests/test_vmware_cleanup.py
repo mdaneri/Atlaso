@@ -1899,6 +1899,8 @@ def test_exact_stale_repair_preserves_mismatched_display_name(tmp_path: Path) ->
         ("index", "junk ", "", False),
         ("config", "[", "]", False),
         ("index", "[", "]", False),
+        ("config", "[", ",]", False),
+        ("index", "[", ",]", False),
         ("config", '"', '" junk', True),
         ("index", '"', '" junk', True),
     ],
