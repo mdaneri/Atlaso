@@ -1,6 +1,7 @@
 """Implement routes wan service behavior."""
 
 import re
+import shlex
 from collections.abc import Iterable
 from dataclasses import dataclass
 from ipaddress import ip_address, ip_interface, ip_network
@@ -849,6 +850,20 @@ def wan_config_retired_target_entries(config_preview: str) -> list[dict[str, str
     return _wan_config_named_entries(config_preview, "retired_targets")
 
 
+def _link_guarded_cleanup(command: str, interface_name: str) -> str:
+    """Render cleanup that runs only while its referenced link exists.
+
+    Args:
+        command: Cleanup command to guard.
+        interface_name: Referenced Linux network-interface name.
+    """
+    quoted_name = shlex.quote(interface_name)
+    return (
+        f"if ip link show dev {quoted_name} >/dev/null 2>&1; then "
+        f"{command}; fi"
+    )
+
+
 def mirrored_management_default_keys(config_preview: str) -> set[tuple[str, str]]:
     """Return identities of enabled defaults mirrored for management listeners.
 
@@ -873,7 +888,6 @@ def render_wan_config(
     source_groups: list[dict] | None = None,
     previous_config_preview: str = "",
     settings: RoutesWanSettings | None = None,
-    absent_target_names: set[str] | None = None,
 ) -> str:
     """Render wan config.
 
@@ -887,7 +901,6 @@ def render_wan_config(
         source_groups: Source Groups available to the rule.
         previous_config_preview: Last-applied configuration used to retire prior host defaults.
         settings: Saved global activation state. Omission preserves the legacy active behavior.
-        absent_target_names: Targets confirmed absent from the current host inventory.
 
     Returns:
         The rendered wan config.
@@ -897,7 +910,6 @@ def render_wan_config(
     targets = targets or []
     routing_rules = routing_rules or []
     settings = settings or RoutesWanSettings(True, True, True)
-    absent_target_names = absent_target_names or set()
     policy_lookup = _policy_by_id(policies)
     previously_mirrored_defaults = mirrored_management_default_keys(
         previous_config_preview
@@ -945,7 +957,6 @@ def render_wan_config(
         ]
         if previous_target.get("routing_domain") != "management"
         if (interface_name := str(previous_target.get("name") or ""))
-        if interface_name not in absent_target_names
         for network in (
             [previous_target.get("network", "")]
             if previous_target.get("network")
@@ -1097,8 +1108,11 @@ def render_wan_config(
     for interface_name, network in sorted(retired_target_networks):
         route_family = "-6 " if ip_network(network, strict=False).version == 6 else ""
         lines.append(
-            f"ip {route_family}route del {network} dev {interface_name} "
-            f"table {LAB_ROUTE_TABLE_ID}  # retired omitted or ineligible WAN target"
+            _link_guarded_cleanup(
+                f"ip {route_family}route del {network} dev {interface_name} table {LAB_ROUTE_TABLE_ID}",
+                interface_name,
+            )
+            + "  # retired omitted or ineligible WAN target"
         )
     for index, target in enumerate(targets):
         management = target.get("routing_domain") == "management"
@@ -1161,12 +1175,14 @@ def render_wan_config(
             route.interface_name,
         ) in previously_mirrored_defaults
         route_effective = route.enabled and settings.routing_enabled
-        target_absent = (
-            not route_target and route.interface_name in absent_target_names
-        )
-        skip_absent_cleanup = not route_effective and target_absent
-        if not route_effective and not skip_absent_cleanup:
-            lines.append(f"ip {route_family}route del {destination_cidr} dev {route.interface_name} table {LAB_ROUTE_TABLE_ID}  # disabled desired route")
+        if not route_effective:
+            cleanup_command = f"ip {route_family}route del {destination_cidr} dev {route.interface_name} table {LAB_ROUTE_TABLE_ID}"
+            if not route_target:
+                cleanup_command = _link_guarded_cleanup(
+                    cleanup_command,
+                    route.interface_name,
+                )
+            lines.append(cleanup_command + "  # disabled desired route")
             if route.enabled and management_ui_default:
                 main_command = ["ip", "-6", "route", "replace", destination_cidr] if destination.version == 6 else ["ip", "route", "replace", destination_cidr]
                 if route.gateway:
@@ -1195,8 +1211,14 @@ def render_wan_config(
         policy = policy_lookup.get(route.wan_policy_id or 0) or route.wan_policy
         if settings.wan_simulation_enabled and route.enabled and policy and policy.enabled:
             lines.append(" ".join(["tc", "qdisc", "replace", "dev", route.interface_name, "root", "netem", *netem_args(policy)]))
-        elif not skip_absent_cleanup:
-            lines.append(" ".join(["tc", "qdisc", "del", "dev", route.interface_name, "root"]))
+        else:
+            cleanup_command = " ".join(["tc", "qdisc", "del", "dev", route.interface_name, "root"])
+            if not route_target:
+                cleanup_command = _link_guarded_cleanup(
+                    cleanup_command,
+                    route.interface_name,
+                )
+            lines.append(cleanup_command)
     for route in removed_routes or []:
         try:
             destination = ip_network(str(route.get("destination_cidr", "")), strict=False)
@@ -1211,12 +1233,11 @@ def render_wan_config(
             ),
             {},
         )
-        if (
-            not route_target
-            and str(route.get("interface_name", "")) in absent_target_names
-        ):
-            continue
-        lines.append(f"ip {route_family}route del {route.get('destination_cidr', '')} dev {route.get('interface_name', '')} table {LAB_ROUTE_TABLE_ID}  # removed managed route")
+        interface_name = str(route.get("interface_name", ""))
+        cleanup_command = f"ip {route_family}route del {route.get('destination_cidr', '')} dev {interface_name} table {LAB_ROUTE_TABLE_ID}"
+        if not route_target:
+            cleanup_command = _link_guarded_cleanup(cleanup_command, interface_name)
+        lines.append(cleanup_command + "  # removed managed route")
         removed_key = (
             canonical_route_destination(str(route.get("destination_cidr", ""))),
             str(route.get("interface_name", "")),

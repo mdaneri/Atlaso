@@ -213,7 +213,6 @@ from atlaso.app.services.appliance_settings import (
     APPLIANCE_DNS_RECORD_DESCRIPTION,
     APPLIANCE_SETTINGS_STAGED_CONFIG_PATH,
     SERVICE_DNS_TARGET_NAMING_CHOICES,
-    SYS_CLASS_NET_DIR,
     appliance_settings_preview_payload,
     appliance_settings_to_dict,
     invalidate_observed_management_dhcp_dns,
@@ -5323,49 +5322,6 @@ def wan_route_targets(db: Session) -> list[dict[str, str]]:
     return [target for target in wan_routing_targets(db) if target["routing_domain"] == "lab"]
 
 
-def wan_absent_target_names(
-    db: Session,
-    *,
-    sys_class_net_dir: Path = SYS_CLASS_NET_DIR,
-) -> set[str]:
-    """Return route target names confirmed absent from host inventory.
-
-    Args:
-        db: Active database session.
-        sys_class_net_dir: Live Linux network-interface inventory root.
-    """
-    interfaces = db.execute(select(PhysicalInterface)).scalars().all()
-    interfaces_by_name = {interface.name: interface for interface in interfaces}
-    absent_names = {
-        interface.name
-        for interface in interfaces
-        if interface.oper_state == "missing"
-    }
-    absent_names.update(
-        vlan.name
-        for vlan in db.execute(select(VlanInterface)).scalars().all()
-        if (parent := interfaces_by_name.get(vlan.parent_interface)) is None
-        or parent.oper_state == "missing"
-    )
-    inventory_names = {
-        *interfaces_by_name,
-        *db.execute(select(VlanInterface.name)).scalars().all(),
-    }
-    absent_names.update(
-        interface_name
-        for interface_name in db.execute(select(Route.interface_name)).scalars().all()
-        if interface_name and interface_name not in inventory_names
-    )
-    return {
-        interface_name
-        for interface_name in absent_names
-        if not (
-            re.fullmatch(r"[A-Za-z0-9_.:-]{1,15}", interface_name)
-            and (sys_class_net_dir / interface_name).exists()
-        )
-    }
-
-
 def wan_routing_targets(db: Session) -> list[dict[str, str]]:
     """Return wan routing targets.
 
@@ -5460,7 +5416,6 @@ def routes_wan_context(db: Session) -> dict:
     nat_rules = db.execute(select(NatRule).order_by(NatRule.priority, NatRule.name)).scalars().all()
     routing_rules = db.execute(select(RoutingRule).order_by(RoutingRule.priority, RoutingRule.name)).scalars().all()
     all_targets = wan_routing_targets(db)
-    absent_target_names = wan_absent_target_names(db)
     targets = wan_route_targets(db)
     generated_routing_rows = generated_route_role_rules(targets)
     routing_summary = {
@@ -5565,7 +5520,6 @@ def routes_wan_context(db: Session) -> dict:
         routing_rules,
         source_groups=source_groups,
         settings=feature_settings,
-        absent_target_names=absent_target_names,
     )
     return {
         "routes": routes,
@@ -5579,7 +5533,6 @@ def routes_wan_context(db: Session) -> dict:
         "routing_summary": routing_summary,
         "policy_rows": [wan_policy_to_dict(policy) for policy in policies],
         "wan_all_targets": all_targets,
-        "wan_absent_target_names": absent_target_names,
         "wan_route_targets": targets,
         "wan_route_target_names": [target["name"] for target in targets],
         "wan_nat_targets": nat_targets,
@@ -10852,7 +10805,6 @@ def appliance_apply_units(db: Session, *, reconcile: bool = True) -> list[dict[s
         source_groups=wan["wan_source_groups"],
         previous_config_preview=str((wan_baseline or {}).get("config_preview") or ""),
         settings=wan["routes_wan_settings"],
-        absent_target_names=wan["wan_absent_target_names"],
     )
     wan_summary = [
         f"{len(wan['routes'])} routes",

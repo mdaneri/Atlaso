@@ -73,8 +73,8 @@ def test_feature_settings_render_full_saved_intent_with_effective_gates():
     assert "net.ipv6.conf.all.forwarding=0" in config
 
 
-def test_disabled_route_preview_skips_confirmed_absent_target_cleanup():
-    """Do not preview cleanup that runtime replay skips for an absent device."""
+def test_disabled_route_preview_guards_unknown_target_cleanup():
+    """Preview dormant cleanup with the helper's live-link condition."""
     route = Route(
         destination_cidr="10.20.0.0/24",
         interface_name="missing_eth2",
@@ -85,13 +85,18 @@ def test_disabled_route_preview_skips_confirmed_absent_target_cleanup():
     config = render_wan_config(
         [route],
         settings=RoutesWanSettings(False, False, False),
-        absent_target_names={"missing_eth2"},
     )
 
     assert "route=10.20.0.0/24" in config
-    assert "ip route del 10.20.0.0/24 dev missing_eth2" not in config
+    assert (
+        "if ip link show dev missing_eth2 >/dev/null 2>&1; then "
+        "ip route del 10.20.0.0/24 dev missing_eth2 table 200; fi"
+    ) in config
     assert "ip route replace 10.20.0.0/24" not in config
-    assert "tc qdisc del dev missing_eth2" not in config
+    assert (
+        "if ip link show dev missing_eth2 >/dev/null 2>&1; then "
+        "tc qdisc del dev missing_eth2 root; fi"
+    ) in config
 
 
 def test_disabled_route_preview_cleans_live_ineligible_target():
@@ -112,8 +117,8 @@ def test_disabled_route_preview_cleans_live_ineligible_target():
     assert "tc qdisc del dev eth2 root" in config
 
 
-def test_wan_preview_retires_only_live_omitted_target_routes():
-    """Preview stale connected-route cleanup only for a target that remains live."""
+def test_wan_preview_retains_guarded_omitted_target_cleanup():
+    """Keep link-guarded target retirement stable across baseline convergence."""
     target = {
         "name": "eth2",
         "kind": "physical",
@@ -134,25 +139,18 @@ def test_wan_preview_retires_only_live_omitted_target_routes():
         previous_config_preview=live,
         settings=RoutesWanSettings(False, False, False),
     )
-    absent = render_wan_config(
-        [],
-        previous_config_preview=previous,
-        settings=RoutesWanSettings(False, False, False),
-        absent_target_names={"eth2"},
-    )
-
     cleanup = (
-        "ip route del 192.0.2.0/24 dev eth2 table 200"
+        "if ip link show dev eth2 >/dev/null 2>&1; then "
+        "ip route del 192.0.2.0/24 dev eth2 table 200; fi"
         "  # retired omitted or ineligible WAN target"
     )
     assert cleanup in live
     assert live == converged
     assert "[retired_targets]\ntarget=eth2\n  network=192.0.2.0/24" in live
-    assert cleanup not in absent
 
 
-def test_removed_route_preview_skips_absent_target_cleanup():
-    """Do not preview removed-route cleanup after the target disappeared."""
+def test_removed_route_preview_guards_unknown_target_cleanup():
+    """Preview removed-route cleanup with the helper's live-link condition."""
     config = render_wan_config(
         [],
         removed_routes=[
@@ -162,85 +160,13 @@ def test_removed_route_preview_skips_absent_target_cleanup():
             }
         ],
         settings=RoutesWanSettings(False, False, False),
-        absent_target_names={"missing-route-target"},
     )
 
     assert "route=192.0.2.0/24" in config
-    assert "ip route del 192.0.2.0/24 dev missing-route-target" not in config
-
-
-def test_parentless_vlan_is_an_absent_wan_target(client):
-    """Classify a saved VLAN without an inventory parent as absent.
-
-    Args:
-        client: HTTP test client providing the isolated application database.
-    """
-    from atlaso.app.database import SessionLocal
-    from atlaso.app.models import VlanInterface
-    from atlaso.app.ui import wan_absent_target_names
-
-    with SessionLocal() as db:
-        vlan = VlanInterface(
-            name="missing-parent.20",
-            parent_interface="missing-parent",
-            vlan_id=20,
-            enabled=False,
-        )
-        db.add(vlan)
-        db.flush()
-
-        assert vlan.name in wan_absent_target_names(db)
-
-
-def test_unknown_route_reference_is_an_absent_wan_target(client):
-    """Classify a route target missing from every inventory row as absent.
-
-    Args:
-        client: HTTP test client providing the isolated application database.
-    """
-    from atlaso.app.database import SessionLocal
-    from atlaso.app.ui import wan_absent_target_names
-
-    with SessionLocal() as db:
-        route = Route(
-            destination_cidr="198.51.100.0/24",
-            interface_name="unknown-route-target",
-            metric=100,
-            enabled=True,
-        )
-        db.add(route)
-        db.flush()
-
-        assert route.interface_name in wan_absent_target_names(db)
-
-
-def test_unknown_live_route_reference_is_not_an_absent_wan_target(client, tmp_path):
-    """Keep cleanup visible when an unmanaged referenced interface is live.
-
-    Args:
-        client: HTTP test client providing the isolated application database.
-        tmp_path: Temporary live-link inventory root.
-    """
-    from atlaso.app.database import SessionLocal
-    from atlaso.app.ui import wan_absent_target_names
-
-    interface_name = "external0"
-    (tmp_path / interface_name).mkdir()
-    with SessionLocal() as db:
-        db.add(
-            Route(
-                destination_cidr="203.0.113.0/24",
-                interface_name=interface_name,
-                metric=100,
-                enabled=True,
-            )
-        )
-        db.flush()
-
-        assert interface_name not in wan_absent_target_names(
-            db,
-            sys_class_net_dir=tmp_path,
-        )
+    assert (
+        "if ip link show dev missing-route-target >/dev/null 2>&1; then "
+        "ip route del 192.0.2.0/24 dev missing-route-target table 200; fi"
+    ) in config
 
 
 def test_disabled_features_do_not_surface_inactive_row_validation_errors():
