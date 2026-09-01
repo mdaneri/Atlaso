@@ -19070,8 +19070,6 @@ def _installed_atlaso_database_url() -> str:
     database_url = ""
     for raw_line in source_lines:
         candidate = raw_line.strip()
-        if candidate.startswith("export "):
-            candidate = candidate.removeprefix("export ").lstrip()
         if not candidate.startswith("ATLASO_DATABASE_URL="):
             continue
         database_url = candidate.partition("=")[2].strip()

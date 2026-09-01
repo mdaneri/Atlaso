@@ -148,7 +148,8 @@ def test_helper_factory_reset_runner_uses_installed_database_url(monkeypatch, tm
     environment_path.write_text(
         "ATLASO_DATABASE_URL=sqlite:////var/lib/atlaso/obsolete.db\n"
         "ATLASO_DATABASE_URL=sqlite:////var/lib/atlaso/atlaso.db\n"
-        "ATLASO_SECRET_KEY=must-not-be-imported-by-the-helper\n",
+        "ATLASO_SECRET_KEY=must-not-be-imported-by-the-helper\n"
+        "export ATLASO_DATABASE_URL=sqlite:////var/lib/atlaso/shell-only.db\n",
         encoding="utf-8",
     )
     captured: dict[str, object] = {}
