@@ -19107,7 +19107,11 @@ def _installed_atlaso_database_url() -> str:
             multiline_quote = _environment_file_open_quote(raw_line, multiline_quote)
             continue
         if unquoted_continuation:
-            unquoted_continuation = _environment_file_unquoted_continues(raw_line)
+            multiline_quote = _environment_file_open_quote(raw_line)
+            unquoted_continuation = bool(
+                not multiline_quote
+                and _environment_file_unquoted_continues(raw_line)
+            )
             continue
         candidate = raw_line.strip()
         assignment_name, separator, assignment_value = candidate.partition("=")
