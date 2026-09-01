@@ -75,7 +75,12 @@ def _setting_bool(value: str | None) -> bool:
 
 
 def _has_routing_address(ipv4_cidr: str | None, ipv6_cidr: str | None) -> bool:
-    """Return whether a target has at least one usable configured address."""
+    """Return whether a target has at least one usable configured address.
+
+    Args:
+        ipv4_cidr: Optional configured IPv4 interface CIDR.
+        ipv6_cidr: Optional configured IPv6 interface CIDR.
+    """
     for cidr in (ipv4_cidr, ipv6_cidr):
         if not cidr:
             continue

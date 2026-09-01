@@ -1824,7 +1824,11 @@ def _validate_archive_unique_identities(data: dict[str, list[dict[str, Any]]]) -
 
 
 def _parse_archive_setting_bool(value: Any) -> bool:
-    """Return a persisted archive setting value as a boolean."""
+    """Return a persisted archive setting value as a boolean.
+
+    Args:
+        value: Archived setting value to interpret.
+    """
 
     return str(value or "").strip().lower() in {"1", "true", "yes", "on"}
 
@@ -1832,7 +1836,11 @@ def _parse_archive_setting_bool(value: Any) -> bool:
 def _infer_routes_wan_feature_state(
     data: dict[str, list[dict[str, Any]]]
 ) -> RoutesWanSettings:
-    """Infer feature activation for legacy archives without explicit routes-wan keys."""
+    """Infer feature activation for legacy archives without explicit routes-wan keys.
+
+    Args:
+        data: Validated archive sections used for legacy inference.
+    """
     routes = data.get("routes", [])
     nat_rules = data.get("nat_rules", [])
     routing_rules = data.get("routing_rules", [])
@@ -1841,6 +1849,11 @@ def _infer_routes_wan_feature_state(
     vlan_interfaces = data.get("vlan_interfaces", [])
 
     def _has_routing_cidr(row: dict[str, Any]) -> bool:
+        """Return whether an archived interface has a usable routing CIDR.
+
+        Args:
+            row: Archived physical-interface or VLAN row to inspect.
+        """
         for field_name in ("ip_cidr", "ipv6_cidr"):
             value = str(row.get(field_name) or "")
             if not value:
@@ -1900,7 +1913,11 @@ def _infer_routes_wan_feature_state(
 def _archive_routes_wan_feature_state(
     data: dict[str, list[dict[str, Any]]]
 ) -> RoutesWanSettings:
-    """Return saved routes-and-WAN feature state, inferring absent values."""
+    """Return saved routes-and-WAN feature state, inferring absent values.
+
+    Args:
+        data: Validated archive sections containing settings and network intent.
+    """
     settings = {
         str(row.get("key") or ""): row
         for row in data.get("settings", [])

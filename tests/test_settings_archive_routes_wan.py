@@ -21,7 +21,13 @@ from atlaso.app.services.settings_archive import (
 
 
 def _set_routes_wan_setting(archive: dict, *, key: str, value: bool) -> None:
-    """Set one routes-and-WAN setting row in an archive payload."""
+    """Set one routes-and-WAN setting row in an archive payload.
+
+    Args:
+        archive: Mutable settings archive payload.
+        key: Safe Routes and WAN setting key to update.
+        value: Boolean value to persist in the archive.
+    """
     rows = archive["data"].setdefault("settings", [])
     for row in rows:
         if row.get("key") == key:
@@ -31,7 +37,11 @@ def _set_routes_wan_setting(archive: dict, *, key: str, value: bool) -> None:
 
 
 def _disable_routes_and_nat_rows(archive: dict) -> None:
-    """Disable routes and NAT rows and introduce unresolved references."""
+    """Disable routes and NAT rows and introduce unresolved references.
+
+    Args:
+        archive: Mutable settings archive payload.
+    """
     for route in archive["data"].get("routes", []):
         route["enabled"] = False
         route["interface_name"] = "missing-route-target"
@@ -47,7 +57,11 @@ def _disable_routes_and_nat_rows(archive: dict) -> None:
 
 
 def _invalidate_routes_and_nat_rows(archive: dict) -> None:
-    """Enable routes and NAT rows and introduce unresolved references."""
+    """Enable routes and NAT rows and introduce unresolved references.
+
+    Args:
+        archive: Mutable settings archive payload.
+    """
     for route in archive["data"].get("routes", []):
         route["enabled"] = True
         route["destination_cidr"] = "not-a-cidr"
@@ -58,7 +72,11 @@ def _invalidate_routes_and_nat_rows(archive: dict) -> None:
 
 
 def _make_enabled_rows_dormant_invalid(archive: dict) -> None:
-    """Keep saved rows enabled while making globally gated values invalid."""
+    """Keep saved rows enabled while making globally gated values invalid.
+
+    Args:
+        archive: Mutable settings archive payload.
+    """
     for route in archive["data"].get("routes", []):
         route["enabled"] = True
         route["gateway"] = "203.0.113.1"
@@ -74,7 +92,11 @@ def _make_enabled_rows_dormant_invalid(archive: dict) -> None:
 
 
 def test_restore_routes_wan_archive_preserves_inactive_rows_when_features_off(client):
-    """Globally dormant enabled rows remain restorable with their intent intact."""
+    """Globally dormant enabled rows remain restorable with their intent intact.
+
+    Args:
+        client: HTTP test client that initializes the archive fixture state.
+    """
     with SessionLocal() as db_session:
         archive = deepcopy(export_settings_archive(db_session, actor="test"))
     _make_enabled_rows_dormant_invalid(archive)
@@ -97,7 +119,11 @@ def test_restore_routes_wan_archive_preserves_inactive_rows_when_features_off(cl
 
 
 def test_restore_routes_wan_archive_rejects_invalid_route_destination_when_routing_off(client):
-    """Malformed routes fail archive preflight even when Routing is disabled."""
+    """Malformed routes fail archive preflight even when Routing is disabled.
+
+    Args:
+        client: HTTP test client that initializes the archive fixture state.
+    """
     with SessionLocal() as db_session:
         archive = deepcopy(export_settings_archive(db_session, actor="test"))
     _set_routes_wan_setting(archive, key=ROUTING_ENABLED_SETTING_KEY, value=False)
@@ -110,7 +136,11 @@ def test_restore_routes_wan_archive_rejects_invalid_route_destination_when_routi
 
 
 def test_restore_routes_wan_archive_rejects_missing_dormant_wan_policy(client):
-    """Dormant WAN assignments retain referential integrity during restore."""
+    """Dormant WAN assignments retain referential integrity during restore.
+
+    Args:
+        client: HTTP test client that initializes the archive fixture state.
+    """
     with SessionLocal() as db_session:
         archive = deepcopy(export_settings_archive(db_session, actor="test"))
     _set_routes_wan_setting(archive, key=ROUTING_ENABLED_SETTING_KEY, value=False)
@@ -130,7 +160,11 @@ def test_restore_routes_wan_archive_rejects_missing_dormant_wan_policy(client):
 
 
 def test_restore_routes_wan_archive_rejects_inactive_rows_when_features_on(client):
-    """Dormant rows become invalid when routing and NAT are explicitly enabled."""
+    """Dormant rows become invalid when routing and NAT are explicitly enabled.
+
+    Args:
+        client: HTTP test client that initializes the archive fixture state.
+    """
     with SessionLocal() as db_session:
         archive = deepcopy(export_settings_archive(db_session, actor="test"))
     _invalidate_routes_and_nat_rows(archive)
@@ -143,7 +177,11 @@ def test_restore_routes_wan_archive_rejects_inactive_rows_when_features_on(clien
 
 
 def test_restore_routes_wan_archive_still_validates_management_default(client):
-    """Routing off does not suppress validation of a protected management default."""
+    """Routing off does not suppress validation of a protected management default.
+
+    Args:
+        client: HTTP test client that initializes the archive fixture state.
+    """
     with SessionLocal() as db_session:
         archive = deepcopy(export_settings_archive(db_session, actor="test"))
     flagged_access = next(
@@ -172,7 +210,11 @@ def test_restore_routes_wan_archive_still_validates_management_default(client):
 
 
 def test_restore_routes_wan_archive_ignores_inactive_physical_management_default(client):
-    """Routing-off preflight leaves an inactive flagged physical default dormant."""
+    """Routing-off preflight leaves an inactive flagged physical default dormant.
+
+    Args:
+        client: HTTP test client that initializes the archive fixture state.
+    """
     with SessionLocal() as db_session:
         archive = deepcopy(export_settings_archive(db_session, actor="test"))
     flagged_access = next(
@@ -200,7 +242,11 @@ def test_restore_routes_wan_archive_ignores_inactive_physical_management_default
 
 
 def test_restore_routes_wan_archive_ignores_parent_down_vlan_management_default(client):
-    """Routing-off preflight leaves a flagged VLAN default dormant with its parent down."""
+    """Routing-off preflight leaves a flagged VLAN default dormant with its parent down.
+
+    Args:
+        client: HTTP test client that initializes the archive fixture state.
+    """
     with SessionLocal() as db_session:
         archive = deepcopy(export_settings_archive(db_session, actor="test"))
     flagged_vlan = next(
@@ -234,7 +280,11 @@ def test_restore_routes_wan_archive_ignores_parent_down_vlan_management_default(
 
 
 def test_restore_routes_wan_archive_rejects_dedicated_management_route(client):
-    """Dedicated management interfaces are not ordinary lab-route targets."""
+    """Dedicated management interfaces are not ordinary lab-route targets.
+
+    Args:
+        client: HTTP test client that initializes the archive fixture state.
+    """
     with SessionLocal() as db_session:
         archive = deepcopy(export_settings_archive(db_session, actor="test"))
     management_interface = next(
@@ -263,7 +313,11 @@ def test_restore_routes_wan_archive_rejects_dedicated_management_route(client):
 def test_restore_routes_wan_archive_legacy_inference_turns_features_off_for_dormant_rows(
     client,
 ):
-    """Legacy archives without rows infer off for disabled routes and NAT."""
+    """Legacy archives without rows infer off for disabled routes and NAT.
+
+    Args:
+        client: HTTP test client that initializes the archive fixture state.
+    """
     with SessionLocal() as db_session:
         archive = deepcopy(export_settings_archive(db_session, actor="test"))
     archive["data"]["settings"] = [

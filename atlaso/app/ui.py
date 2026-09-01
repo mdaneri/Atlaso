@@ -13342,7 +13342,12 @@ def synchronize_routing_service_runtime(
     *,
     routing_enabled: bool,
 ) -> None:
-    """Publish the successfully applied Routing runtime state."""
+    """Publish the successfully applied Routing runtime state.
+
+    Args:
+        db: Database session that owns the service-state transaction.
+        routing_enabled: Successfully applied Routing runtime state.
+    """
     routing_service = db.execute(
         select(ServiceState).where(ServiceState.service == "routing")
     ).scalar_one_or_none()

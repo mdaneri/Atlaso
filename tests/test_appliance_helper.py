@@ -12306,7 +12306,12 @@ def test_public_services_handoff_accepts_staged_https_cert_files(monkeypatch, tm
 
 
 def test_management_handoff_skips_wan_nat_validation_when_disabled(monkeypatch, tmp_path):
-    """Skip nft validation for dormant NAT configuration during handoff validation."""
+    """Skip nft validation for dormant NAT configuration during handoff validation.
+
+    Args:
+        monkeypatch: Pytest fixture used to replace helper dependencies.
+        tmp_path: Temporary directory used for staged handoff configuration.
+    """
     helper = load_helper_module()
     settings_path = tmp_path / "atlaso-settings.json"
     settings_path.write_text(appliance_settings_json(), encoding="utf-8")
@@ -12339,6 +12344,11 @@ def test_management_handoff_skips_wan_nat_validation_when_disabled(monkeypatch, 
     calls: list[str] = []
 
     def fake_nft_validation(nat_config: str) -> subprocess.CompletedProcess[str]:
+        """Record an unexpected dormant NAT validation attempt.
+
+        Args:
+            nat_config: Generated nftables NAT configuration.
+        """
         calls.append(nat_config)
         return subprocess.CompletedProcess(["nft", "-c", "-f", "-"], 1, "", "invalid nat config")
 
