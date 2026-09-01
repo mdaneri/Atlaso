@@ -103,8 +103,9 @@ when exact provider inventory proves that the expected VMX path is the running b
 The shared provisioner stages `pyproject.toml` with `scripts/version.py`, parses `[project].version` as
 TOML, and requires the repository's strict `X.Y.Z` release format before it creates
 `/opt/atlaso/releases/bootstrap-<version>`. If that metadata is missing, unreadable, malformed, or invalid, the build
-log reports the specific version-policy error. After installation, the provisioner resolves the complete compatibility
-chain and requires `/opt/atlaso/current` to identify that exact physical bootstrap release,
+log reports the specific version-policy error. After installation, the provisioner requires `/opt/atlaso` itself to
+remain the exact physical installation root, then resolves the complete compatibility chain and requires
+`/opt/atlaso/current` to identify that exact physical bootstrap release,
 `/opt/atlaso/.venv` to identify its exact physical virtual environment, and the interpreter's CPython 3.14 `purelib`
 to identify that environment's physical `site-packages`. Broken, redirected, wrong-version, or escaping links fail with
 bounded actual/expected path diagnostics; services continue to use the supported `/opt/atlaso/.venv` compatibility

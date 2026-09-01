@@ -93,6 +93,34 @@ def test_bootstrap_venv_validator_accepts_supported_two_link_chain(tmp_path: Pat
     assert result.stdout.strip() == str(physical_purelib.resolve())
 
 
+def test_bootstrap_venv_validator_rejects_redirected_atlaso_home(
+    tmp_path: Path,
+) -> None:
+    """The required Atlaso installation root cannot itself redirect elsewhere.
+
+    Args:
+        tmp_path: Temporary root for the isolated layout.
+    """
+    physical_root = tmp_path / "physical"
+    physical_home, physical_purelib = _make_bootstrap_layout(physical_root)
+    redirected_home = tmp_path / "opt" / "atlaso"
+    redirected_home.parent.mkdir(parents=True)
+    try:
+        redirected_home.symlink_to(physical_home, target_is_directory=True)
+    except OSError as exc:
+        pytest.skip(f"symlink creation is unavailable: {exc}")
+
+    result = _run_venv_validator(
+        redirected_home, "0.9.254", physical_purelib
+    )
+
+    assert result.returncode == 2
+    assert "home identity mismatch" in result.stderr
+    assert "actual=" in result.stderr
+    assert "expected=" in result.stderr
+    assert "\n" not in result.stderr.rstrip("\n")
+
+
 @pytest.mark.parametrize("failure", ["broken", "wrong-version", "escaping"])
 def test_bootstrap_venv_validator_rejects_invalid_link_chains(
     tmp_path: Path, failure: str

@@ -78,9 +78,15 @@ def validate(atlaso_home: Path, version: str, purelib: Path) -> tuple[int, Path 
         print("Atlaso bootstrap version is not strict X.Y.Z metadata.", file=sys.stderr)
         return 2, None
 
-    home, status = _resolve(atlaso_home, "home", atlaso_home)
-    if status or home is None:
+    if not atlaso_home.is_absolute():
+        return _fail("home", atlaso_home, atlaso_home), None
+
+    resolved_home, status = _resolve(atlaso_home, "home", atlaso_home)
+    if status or resolved_home is None:
         return status, None
+    if resolved_home != atlaso_home:
+        return _fail("home", resolved_home, atlaso_home), None
+    home = resolved_home
 
     expected_release = home / "releases" / f"bootstrap-{version}"
     expected_venv = expected_release / ".venv"
