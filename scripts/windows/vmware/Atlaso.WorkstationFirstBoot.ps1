@@ -1320,7 +1320,13 @@ function Get-AtlasoWorkstationSshHostKey {
             return ConvertTo-AtlasoWorkstationSshHostKeyEvidence -PublicKey $value
         }
         if ((Get-Date) -lt $deadline) {
-            Start-Sleep -Seconds $PollSeconds
+            # A caller's general readiness cadence must not extend this bounded host-key lookup past its deadline.
+            $remainingPollMilliseconds = [int][Math]::Ceiling(
+                [Math]::Max(0, ($deadline - (Get-Date)).TotalMilliseconds)
+            )
+            if ($remainingPollMilliseconds -gt 0) {
+                Start-Sleep -Milliseconds ([Math]::Min($PollSeconds * 1000, $remainingPollMilliseconds))
+            }
         }
     } while ((Get-Date) -lt $deadline)
 
