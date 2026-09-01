@@ -689,7 +689,7 @@ function Remove-AtlasoWorkstationStaleRegistrations {
             $rawCandidates = @(); $candidateStart = 0
             if ($rawValue.Length -gt 0 -and $rawValue[0] -in @([char]34, [char]39)) {
                 $openingQuote = $rawValue[0]; $candidateStart = 1
-                while ($candidateStart -lt $rawValue.Length -and $rawValue[$candidateStart] -in @([char]34, [char]39)) { $candidateStart++ }
+                while ($candidateStart -lt $rawValue.Length -and ($rawValue[$candidateStart] -in @([char]34, [char]39) -or [char]::IsWhiteSpace($rawValue[$candidateStart]))) { $candidateStart++ }
             }
             $candidateSource = $rawValue.Substring($candidateStart)
             if ($candidateStart -gt 0 -and $candidateSource.Length -gt 0 -and $candidateSource[$candidateSource.Length - 1] -eq $openingQuote) {
