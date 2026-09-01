@@ -2384,6 +2384,7 @@ def test_create_atlaso_vmware_test_vm_wrapper_uses_common_helpers():
     assert build_script.index("$packerBuildInvoker = {") < child_gui_check < build_script.index(
         "Invoke-AtlasoMonitoredPackerBuild"
     )
+    assert "-TimeoutHandler $timeoutHandler" not in build_script
 
     lifecycle_script = Path(
         "scripts/windows/vmware/run-lifecycle-test.ps1"
@@ -3282,7 +3283,8 @@ def test_vmware_gui_builder_repairs_stale_rows_before_ui_startup() -> None:
     )
     child_start = wrapper.index("-Action 'The isolated VMware Photon image build'")
     termination_proven = wrapper.index(
-        "$_.Exception.Data['AtlasoProcessTreeTerminationProven']", child_start
+        "$isolatedBuildFailure.Exception.Data['AtlasoProcessTreeTerminationProven']",
+        child_start,
     )
     durable_cleanup_claim = wrapper.index(
         "Test-Path -LiteralPath $childOutputCleanupClaimPath -PathType Leaf",
@@ -3339,5 +3341,15 @@ def test_vmware_gui_builder_repairs_stale_rows_before_ui_startup() -> None:
     assert child_start < parent_return < child_cleanup < full_cleanup
     assert "-ScopeRoot $outerCleanupOutputDirectory" in wrapper[repair:gui_launch]
     assert "-not $outerCleanupOutputExistedBeforeChild -or" not in wrapper
+    assert "if (-not $KeepExistingOutput -or -not $builderOutputExists) {" in wrapper
+    assert "-not $KeepExistingOutput -and\n" not in wrapper[
+        termination_proven:durable_cleanup_claim
+    ]
+    reservation_blocked = wrapper.index("$reservationReleaseBlocked = $true")
+    reservation_gate = wrapper.index("if (-not $reservationReleaseBlocked)")
+    reservation_release = wrapper.index(
+        "Exit-AtlasoVmwareBuilderAddressReservation `", reservation_gate
+    )
+    assert parent_timeout_cleanup < reservation_blocked < reservation_gate < reservation_release
     assert "-ClaimGeneration $OutputClaimGeneration" in wrapper
     assert "ClaimGeneration = $OutputClaimGeneration" in wrapper
