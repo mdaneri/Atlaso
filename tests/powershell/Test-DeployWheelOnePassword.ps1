@@ -35,6 +35,8 @@ function Assert-Throws {
 
 $deployPath = Join-Path $RepositoryRoot 'scripts\windows\vmware\deploy-wheel.ps1'
 $deploySource = Get-Content -LiteralPath $deployPath -Raw
+$firstBootPath = Join-Path $RepositoryRoot 'scripts\windows\vmware\Atlaso.WorkstationFirstBoot.ps1'
+$firstBootSource = Get-Content -LiteralPath $firstBootPath -Raw
 $executionMarker = '$resolvedRepoRoot = Resolve-RepoRoot -Path $RepoRoot'
 $executionIndex = $deploySource.IndexOf($executionMarker, [System.StringComparison]::Ordinal)
 if ($executionIndex -lt 0) {
@@ -111,6 +113,13 @@ if ($guestInfoLookupIndex -lt 0 -or
     $wheelhouseAllocationIndex -lt 0 -or
     $guestInfoLookupIndex -ge $wheelhouseAllocationIndex) {
     throw 'Guest-info host-key lookup must complete before generated wheelhouse staging is allocated.'
+}
+if (-not $firstBootSource.Contains('$remainingPollMilliseconds = [int][Math]::Ceiling(', [System.StringComparison]::Ordinal) -or
+    -not $firstBootSource.Contains(
+        'Start-Sleep -Milliseconds ([Math]::Min($PollSeconds * 1000, $remainingPollMilliseconds))',
+        [System.StringComparison]::Ordinal
+    )) {
+    throw 'Guest-info host-key polling must be clamped to the remaining lookup deadline.'
 }
 if (-not $scriptText.Contains('transport.get_security_options()', [System.StringComparison]::Ordinal) -or
     -not $scriptText.Contains('security_options.key_types', [System.StringComparison]::Ordinal)) {
