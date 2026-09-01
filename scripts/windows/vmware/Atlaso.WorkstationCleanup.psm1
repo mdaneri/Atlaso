@@ -687,20 +687,24 @@ function Remove-AtlasoWorkstationStaleRegistrations {
             if ($line -notmatch '^\s*(?<owner>vmlist\d+\.config|index\d+\.id)\s*=\s*(?<value>.*)$') { continue }
             $rawValue = $Matches.value.Trim()
             $rawOwner = $Matches.owner
-            $rawCandidates = @($rawValue)
+            $rawCandidates = @()
             $hasCompleteQuotedValue = $false
+            $candidateStart = 0
             if ($rawValue.Length -gt 0 -and $rawValue[0] -in @([char]34, [char]39)) {
                 $openingQuote = $rawValue[0]; $candidateStart = 1
                 while ($candidateStart -lt $rawValue.Length -and $rawValue[$candidateStart] -eq $openingQuote) { $candidateStart++ }
-                $rawCandidates = @()
-                for ($quoteIndex = $candidateStart; $quoteIndex -lt $rawValue.Length; $quoteIndex++) {
-                    if ($rawValue[$quoteIndex] -ne $openingQuote) { continue }
-                    $rawCandidate = $rawValue.Substring($candidateStart, $quoteIndex - $candidateStart)
-                    $quotedSuffix = $rawValue.Substring($quoteIndex + 1).Trim()
-                    if ($quotedSuffix -match '(?i)\.vmx' -and ($quotedSuffix.EndsWith([string]$openingQuote) -or $rawCandidate -notmatch '(?i)\.vmx$')) { continue }
-                    $hasCompleteQuotedValue = $true; $rawCandidates += $rawCandidate
+                if ($rawValue.Length -gt $candidateStart -and $rawValue[$rawValue.Length - 1] -eq $openingQuote) {
+                    $completeCandidate = $rawValue.Substring($candidateStart, $rawValue.Length - $candidateStart - 1)
+                    if ($openingQuote -ne [char]34 -or -not $completeCandidate.Contains([string][char]34)) {
+                        $hasCompleteQuotedValue = $true; $rawCandidates = @($completeCandidate)
+                    }
                 }
-                if (-not $hasCompleteQuotedValue) { $rawCandidates = @($rawValue.Substring($candidateStart)) }
+            }
+            if (-not $hasCompleteQuotedValue) {
+                $candidateSource = $rawValue.Substring($candidateStart)
+                $rawCandidates = @([regex]::Matches($candidateSource, '(?i)\.vmx(?=$|["''\s])') | ForEach-Object {
+                        $candidateSource.Substring(0, $_.Index + $_.Length)
+                    })
             }
             $rawRefersToExactPath = $false
             foreach ($rawCandidate in $rawCandidates) {
@@ -711,11 +715,6 @@ function Remove-AtlasoWorkstationStaleRegistrations {
                     }
                 }
                 if ($rawRefersToExactPath) { break }
-            }
-            if (-not $rawRefersToExactPath -and -not $hasCompleteQuotedValue -and
-                $rawCandidate -match '^(?<path>.+?\.vmx)(?=$|["''\s])') {
-                try { $rawRefersToExactPath = Test-AtlasoSamePath -Left $Matches.path -Right $resolvedVmxPath }
-                catch { Write-Verbose "Ignored an uncanonicalizable malformed Workstation owner prefix: $($_.Exception.Message)" }
             }
             if ($rawRefersToExactPath) {
                 if ($rawOwner.StartsWith('vmlist')) { $rawExactConfigCount++ } else { $rawExactIndexCount++ }

@@ -1906,6 +1906,38 @@ def test_exact_stale_repair_preserves_duplicate_marker_path(tmp_path: Path) -> N
     assert inventory.read_bytes() == original_inventory
 
 
+def test_exact_stale_repair_finds_unterminated_path_after_vmx_apostrophe(
+    tmp_path: Path,
+) -> None:
+    """Reject an exact unterminated owner after a VMX-like apostrophe segment.
+
+    Args:
+        tmp_path: Pytest temporary directory path.
+    """
+    root = tmp_path / "root.vmx'child" / "Atlaso-PR-672-cleanup"
+    stale = root / "Atlaso-PR-672-cleanup.vmx"
+    suffix = (
+        f"vmlist6.config = '{stale.resolve()}\n"
+        'vmlist6.DisplayName = "Atlaso-PR-672-cleanup"\n'
+    )
+    _, environment, _, inventory = _write_fake_vmrun(
+        tmp_path / "fake", [], inventory_suffix=suffix
+    )
+    original_inventory = inventory.read_bytes()
+
+    result = _run_stale_registration_repair(
+        tmp_path,
+        scope_root=root,
+        vmx_path=stale,
+        expected_display_name="Atlaso-PR-672-cleanup",
+        environment=environment,
+    )
+
+    assert result.returncode != 0
+    assert "malformed or ambiguous" in result.stderr
+    assert inventory.read_bytes() == original_inventory
+
+
 def test_unrelated_uncanonicalizable_inventory_owner_does_not_block_cleanup(
     tmp_path: Path,
 ) -> None:
