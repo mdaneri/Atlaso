@@ -1634,19 +1634,30 @@ def test_exact_stale_repair_preserves_mismatched_display_name(tmp_path: Path) ->
     assert inventory.read_bytes() == original_inventory
 
 
-def test_exact_stale_repair_preserves_malformed_unquoted_marker_path(
-    tmp_path: Path,
+@pytest.mark.parametrize("malformed_owner", ["config", "index"])
+def test_exact_stale_repair_preserves_malformed_unquoted_marker_owner(
+    tmp_path: Path, malformed_owner: str
 ) -> None:
-    """Reject a raw exact-path row that the strict inventory parser omits.
+    """Reject a raw exact owner row that the strict inventory parser omits.
 
     Args:
         tmp_path: Pytest temporary directory path.
+        malformed_owner: Inventory owner kind written without required quotes.
     """
     root = tmp_path / "test-vms" / "Atlaso-PR-672-cleanup"
     stale = root / "Atlaso-PR-672-cleanup.vmx"
+    config_value = (
+        str(stale.resolve())
+        if malformed_owner == "config"
+        else f'"{stale.resolve()}"'
+    )
+    index_value = (
+        str(stale.resolve()) if malformed_owner == "index" else f'"{stale.resolve()}"'
+    )
     suffix = (
-        f"vmlist6.config = {stale.resolve()}\n"
+        f"vmlist6.config = {config_value}\n"
         'vmlist6.DisplayName = "Atlaso-PR-672-cleanup"\n'
+        f"index6.id = {index_value}\n"
         "vmlistBROKEN.config = unrelated-malformed-row\n"
     )
     _, environment, _, inventory = _write_fake_vmrun(
@@ -1663,7 +1674,7 @@ def test_exact_stale_repair_preserves_malformed_unquoted_marker_path(
     )
 
     assert result.returncode != 0
-    assert "malformed or ambiguous registration" in result.stderr
+    assert "malformed or ambiguous" in result.stderr
     assert inventory.read_bytes() == original_inventory
 
 
@@ -2732,7 +2743,7 @@ def test_module_keeps_inventory_work_out_of_normal_delete_path() -> None:
     )
     assert inventory_replace < rollback_catch < rollback_call
     implementation = re.sub(r"<#.*?#>\s*", "", module, flags=re.DOTALL)
-    assert len(implementation.splitlines()) < 1_175
+    assert len(implementation.splitlines()) < 1_185
 
 
 def test_pre_gui_repair_retains_exact_open_ui_refusal() -> None:

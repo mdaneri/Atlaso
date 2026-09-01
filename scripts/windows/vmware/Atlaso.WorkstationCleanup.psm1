@@ -649,25 +649,28 @@ function Remove-AtlasoWorkstationStaleRegistrations {
             Where-Object { -not $_.Exists }
     )
     if ($resolvedVmxPath) {
-        $rawExactConfigRows = @(
-            foreach ($line in $lines) {
-                if ($line -notmatch '^\s*vmlist\d+\.config\s*=\s*(?<value>.*)$') { continue }
-                $rawCandidate = $Matches.value.Trim().Trim([char]34)
-                if (-not [System.IO.Path]::IsPathFullyQualified($rawCandidate)) { continue }
-                try {
-                    if (Test-AtlasoSamePath -Left $rawCandidate -Right $resolvedVmxPath) { $line }
-                }
-                catch {
-                    # A raw row that cannot be canonicalized cannot establish
-                    # ownership of the exact marker-bound path.
-                    Write-Verbose "Ignored an uncanonicalizable raw Workstation inventory row: $($_.Exception.Message)"
+        $rawExactConfigCount = 0
+        $rawExactIndexCount = 0
+        foreach ($line in $lines) {
+            if ($line -notmatch '^\s*(?<owner>vmlist\d+\.config|index\d+\.id)\s*=\s*(?<value>.*)$') { continue }
+            $rawCandidate = $Matches.value.Trim().Trim([char]34)
+            $rawOwner = $Matches.owner
+            if (-not [System.IO.Path]::IsPathFullyQualified($rawCandidate)) { continue }
+            try {
+                if (Test-AtlasoSamePath -Left $rawCandidate -Right $resolvedVmxPath) {
+                    if ($rawOwner.StartsWith('vmlist')) { $rawExactConfigCount++ } else { $rawExactIndexCount++ }
                 }
             }
-        )
+            catch {
+                # A raw row that cannot be canonicalized cannot establish
+                # ownership of the exact marker-bound path.
+                Write-Verbose "Ignored an uncanonicalizable raw Workstation inventory row: $($_.Exception.Message)"
+            }
+        }
         $staleEntries = @($staleEntries | Where-Object {
                 Test-AtlasoSamePath -Left $_.Path -Right $resolvedVmxPath
             })
-        if ($rawExactConfigRows.Count -ne $staleEntries.Count) {
+        if ($rawExactConfigCount -ne $staleEntries.Count) {
             throw "VMware Workstation inventory contains a malformed or ambiguous registration for the exact missing VMX; provider state was preserved: $resolvedVmxPath"
         }
         if ($staleEntries.Count -gt 1) {
@@ -750,6 +753,9 @@ function Remove-AtlasoWorkstationStaleRegistrations {
             $targetPaths.Contains($indexOwners[$index][0])) {
             $targetIndexes.Add($index) | Out-Null
         }
+    }
+    if ($resolvedVmxPath -and $rawExactIndexCount -ne $targetIndexes.Count) {
+        throw "VMware Workstation inventory contains a malformed or ambiguous index for the exact missing VMX; provider state was preserved: $resolvedVmxPath"
     }
     $indexRenumbering = if ($targetIndexes.Count -gt 0) { @{} } else { $null }
     foreach ($line in $lines) {
