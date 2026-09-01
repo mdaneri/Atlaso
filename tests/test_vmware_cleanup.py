@@ -1667,26 +1667,26 @@ def test_exact_stale_repair_preserves_mismatched_display_name(tmp_path: Path) ->
     assert inventory.read_bytes() == original_inventory
 
 
-@pytest.mark.parametrize("malformed_owner", ["config", "index"])
-def test_exact_stale_repair_preserves_malformed_unquoted_marker_owner(
-    tmp_path: Path, malformed_owner: str
+@pytest.mark.parametrize(
+    ("malformed_owner", "malformed_suffix"),
+    [("config", ""), ("index", ""), ("config", '" junk'), ("index", '" junk')],
+)
+def test_exact_stale_repair_preserves_malformed_marker_owner_syntax(
+    tmp_path: Path, malformed_owner: str, malformed_suffix: str
 ) -> None:
     """Reject a raw exact owner row that the strict inventory parser omits.
 
     Args:
         tmp_path: Pytest temporary directory path.
-        malformed_owner: Inventory owner kind written without required quotes.
+        malformed_owner: Inventory owner kind written with invalid syntax.
+        malformed_suffix: Optional invalid text following a closing quote.
     """
     root = tmp_path / "test-vms" / "Atlaso-PR-672-cleanup"
     stale = root / "Atlaso-PR-672-cleanup.vmx"
-    config_value = (
-        str(stale.resolve())
-        if malformed_owner == "config"
-        else f'"{stale.resolve()}"'
-    )
-    index_value = (
-        str(stale.resolve()) if malformed_owner == "index" else f'"{stale.resolve()}"'
-    )
+    opening_quote = '"' if malformed_suffix else ""
+    malformed_value = f"{opening_quote}{stale.resolve()}{malformed_suffix}"
+    config_value = malformed_value if malformed_owner == "config" else f'"{stale.resolve()}"'
+    index_value = malformed_value if malformed_owner == "index" else f'"{stale.resolve()}"'
     suffix = (
         f"vmlist6.config = {config_value}\n"
         'vmlist6.DisplayName = "Atlaso-PR-672-cleanup"\n'
@@ -2777,7 +2777,7 @@ def test_module_keeps_inventory_work_out_of_normal_delete_path() -> None:
     assert inventory_replace < rollback_catch < rollback_call
     assert stale_repair.count("foreach ($candidatePath in $targetPaths)") == 2
     implementation = re.sub(r"<#.*?#>\s*", "", module, flags=re.DOTALL)
-    assert len(implementation.splitlines()) < 1_185
+    assert len(implementation.splitlines()) < 1_205
 
 
 def test_pre_gui_repair_retains_exact_open_ui_refusal() -> None:

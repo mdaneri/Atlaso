@@ -653,18 +653,29 @@ function Remove-AtlasoWorkstationStaleRegistrations {
         $rawExactIndexCount = 0
         foreach ($line in $lines) {
             if ($line -notmatch '^\s*(?<owner>vmlist\d+\.config|index\d+\.id)\s*=\s*(?<value>.*)$') { continue }
-            $rawCandidate = $Matches.value.Trim().Trim([char]34)
+            $rawValue = $Matches.value.Trim()
             $rawOwner = $Matches.owner
-            if (-not [System.IO.Path]::IsPathFullyQualified($rawCandidate)) { continue }
-            try {
-                if (Test-AtlasoSamePath -Left $rawCandidate -Right $resolvedVmxPath) {
-                    if ($rawOwner.StartsWith('vmlist')) { $rawExactConfigCount++ } else { $rawExactIndexCount++ }
+            $rawCandidate = $rawValue.Trim([char]34)
+            $rawRefersToExactPath = $false
+            if ([System.IO.Path]::IsPathFullyQualified($rawCandidate)) {
+                try { $rawRefersToExactPath = Test-AtlasoSamePath -Left $rawCandidate -Right $resolvedVmxPath }
+                catch {
+                    Write-Verbose "Ignored an uncanonicalizable raw Workstation inventory row: $($_.Exception.Message)"
                 }
             }
-            catch {
-                # A raw row that cannot be canonicalized cannot establish
-                # ownership of the exact marker-bound path.
-                Write-Verbose "Ignored an uncanonicalizable raw Workstation inventory row: $($_.Exception.Message)"
+            if (-not $rawRefersToExactPath) {
+                $unquotedRawValue = $rawValue.TrimStart([char]34)
+                if ($unquotedRawValue.StartsWith($resolvedVmxPath, [System.StringComparison]::OrdinalIgnoreCase)) {
+                    $rawSuffix = $unquotedRawValue.Substring($resolvedVmxPath.Length)
+                    $rawRefersToExactPath = (
+                        $rawSuffix.Length -eq 0 -or
+                        $rawSuffix[0] -eq [char]34 -or
+                        [char]::IsWhiteSpace($rawSuffix[0])
+                    )
+                }
+            }
+            if ($rawRefersToExactPath) {
+                if ($rawOwner.StartsWith('vmlist')) { $rawExactConfigCount++ } else { $rawExactIndexCount++ }
             }
         }
         $staleEntries = @($staleEntries | Where-Object {
