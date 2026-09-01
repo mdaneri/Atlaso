@@ -5802,7 +5802,7 @@ def test_wan_only_simulation_ignores_dormant_route_path_errors(tmp_path):
             [
                 "[feature_settings]",
                 "routing_enabled=false",
-                "nat_enabled=false",
+                "nat_enabled=true",
                 "wan_simulation_enabled=true",
                 "",
                 wan_config_text().replace(
@@ -12201,6 +12201,66 @@ def test_public_services_handoff_accepts_staged_https_cert_files(monkeypatch, tm
     deployed_errors = helper._public_services_config_errors(public_services_path)
     assert any("Public services certificate does not exist" in error for error in deployed_errors)
     assert any("Public services private key does not exist" in error for error in deployed_errors)
+
+
+def test_management_handoff_skips_wan_nat_validation_when_disabled(monkeypatch, tmp_path):
+    """Skip nft validation for dormant NAT configuration during handoff validation."""
+    helper = load_helper_module()
+    settings_path = tmp_path / "atlaso-settings.json"
+    settings_path.write_text(appliance_settings_json(), encoding="utf-8")
+    public_services_path = tmp_path / "public-services.conf"
+    public_services_path.write_text(public_services_config_text(), encoding="utf-8")
+    wan_config_path = tmp_path / "atlaso-wan.conf"
+    wan_config_path.write_text(
+        "\n".join(
+            [
+                "[feature_settings]",
+                "routing_enabled=false",
+                "nat_enabled=false",
+                "",
+                "[targets]",
+                "target=eth1.20",
+                "  role=route",
+                "  ip_cidr=192.168.20.1/24",
+                "",
+                "[nat_rules]",
+                "nat=Dormant WAN NAT",
+                "  enabled=true",
+                "  source=not-a-cidr",
+                "  outbound_interface=eth1.20",
+                "  masquerade=true",
+                "  priority=100",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    calls: list[str] = []
+
+    def fake_nft_validation(nat_config: str) -> subprocess.CompletedProcess[str]:
+        calls.append(nat_config)
+        return subprocess.CompletedProcess(["nft", "-c", "-f", "-"], 1, "", "invalid nat config")
+
+    monkeypatch.setattr(helper, "_network_config_errors", lambda _path: [])
+    monkeypatch.setattr(
+        helper,
+        "_validate_firewall_config",
+        lambda _path: subprocess.CompletedProcess(["nft", "--check"], 0, "", ""),
+    )
+    monkeypatch.setattr(helper, "_appliance_settings_config_errors", lambda _path, **_kwargs: [])
+    monkeypatch.setattr(helper, "_public_services_config_errors", lambda _path, **_kwargs: [])
+    monkeypatch.setattr(helper, "_ca_payload_errors", lambda _path: [])
+    monkeypatch.setattr(helper, "_validate_wan_nat_config", fake_nft_validation)
+
+    assert helper._management_handoff_validation_errors(
+        {
+            "network_config_path": str(tmp_path / "network.conf"),
+            "firewall_config_path": str(tmp_path / "firewall.nft"),
+            "appliance_settings_config_path": str(settings_path),
+            "public_services_config_path": str(public_services_path),
+            "wan_config_path": str(wan_config_path),
+        }
+    ) == []
+    assert calls == []
 
 
 def test_appliance_settings_helper_requires_https_and_management_for_web_terminal(tmp_path):

@@ -19819,9 +19819,10 @@ def _management_handoff_validation_errors(payload: dict) -> list[str]:
         wan_path = Path(value)
         errors.extend(f"{label}: {error}" for error in _wan_config_errors(wan_path))
         parsed_wan = _parse_wan_config(wan_path)
-        nat_validation = _validate_wan_nat_config(_render_wan_nat_config(parsed_wan["nat_rules"]))
-        if nat_validation.returncode != 0:
-            errors.append(f"{label}: {(nat_validation.stderr or nat_validation.stdout).strip()}")
+        if _wan_feature_settings(parsed_wan)["effective_nat_enabled"]:
+            nat_validation = _validate_wan_nat_config(_render_wan_nat_config(parsed_wan["nat_rules"]))
+            if nat_validation.returncode != 0:
+                errors.append(f"{label}: {(nat_validation.stderr or nat_validation.stdout).strip()}")
     return [error for error in errors if error]
 
 

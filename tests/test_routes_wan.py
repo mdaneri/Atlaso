@@ -72,9 +72,9 @@ def test_feature_settings_render_full_saved_intent_with_effective_gates():
 def test_disabled_features_do_not_surface_inactive_row_validation_errors():
     """Do not block Apply on invalid resources whose global feature is off."""
     invalid_route = Route(
-        destination_cidr="not-a-network",
-        interface_name="missing",
-        metric=-1,
+        destination_cidr="10.20.0.0/24",
+        interface_name="eth1",
+        metric=100,
         enabled=True,
     )
     invalid_nat = NatRule(
@@ -89,7 +89,7 @@ def test_disabled_features_do_not_surface_inactive_row_validation_errors():
     assert validate_wan_state(
         [invalid_route],
         [invalid_policy],
-        set(),
+        {"eth1"},
         [invalid_nat],
         set(),
         routing_enabled=False,
@@ -106,6 +106,25 @@ def test_disabled_features_do_not_surface_inactive_row_validation_errors():
         nat_enabled=True,
         wan_simulation_enabled=True,
     )
+
+
+def test_validate_wan_state_rejects_invalid_route_destinations_when_routing_off():
+    """Reject malformed route destination CIDRs even while routing is disabled."""
+    invalid_route = Route(
+        destination_cidr="not-a-network",
+        interface_name="eth1",
+        metric=100,
+        enabled=True,
+    )
+
+    assert validate_wan_state(
+        [invalid_route],
+        [],
+        {"eth1"},
+        routing_enabled=False,
+        nat_enabled=False,
+        wan_simulation_enabled=False,
+    ) == ["Route not-a-network is not a valid destination CIDR."]
 
 
 def test_disabled_routing_still_validates_active_management_default():

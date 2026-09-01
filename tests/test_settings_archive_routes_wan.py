@@ -95,6 +95,19 @@ def test_restore_routes_wan_archive_preserves_inactive_rows_when_features_off(cl
         ).scalar_one_or_none()
 
 
+def test_restore_routes_wan_archive_rejects_invalid_route_destination_when_routing_off(client):
+    """Malformed routes fail archive preflight even when Routing is disabled."""
+    with SessionLocal() as db_session:
+        archive = deepcopy(export_settings_archive(db_session, actor="test"))
+    _set_routes_wan_setting(archive, key=ROUTING_ENABLED_SETTING_KEY, value=False)
+    _set_routes_wan_setting(archive, key=NAT_ENABLED_SETTING_KEY, value=False)
+    archive["data"]["routes"][0]["destination_cidr"] = "bad-cidr"
+
+    with pytest.raises(ValueError, match="Routes and WAN state is invalid: Route bad-cidr is not a valid destination CIDR"):
+        with SessionLocal() as db_session:
+            restore_settings_archive(db_session, archive)
+
+
 def test_restore_routes_wan_archive_rejects_inactive_rows_when_features_on(client):
     """Dormant rows become invalid when routing and NAT are explicitly enabled."""
     with SessionLocal() as db_session:

@@ -554,11 +554,13 @@ def validate_wan_state(
     management_target_names = management_target_names or set()
     default_families: set[int] = set()
     for route in routes:
+        if not route.destination_cidr:
+            errors.append("Route destination CIDR is required.")
+            continue
         try:
             destination_network = ip_network(route.destination_cidr, strict=False)
         except ValueError:
-            if routing_enabled:
-                errors.append(f"Route {route.destination_cidr} is not a valid destination CIDR.")
+            errors.append(f"Route {route.destination_cidr} is not a valid destination CIDR.")
             continue
         management_default_active = bool(
             route.enabled
