@@ -30,6 +30,7 @@ from atlaso.app.models import (
     ApplianceSettings,
     AuditEvent,
     CaCertificate,
+    DnsRecord,
     DnsSettings,
     Job,
     PhysicalInterface,
@@ -1356,6 +1357,147 @@ def test_complete_factory_reset_replaces_database_and_establishes_baselines(
             unit["id"] for unit in verified_units
         }
     replacement_engine.dispose()
+
+
+def test_complete_factory_reset_publishes_factory_management_binding_immediately(
+    client,
+    tmp_path,
+    monkeypatch,
+):
+    """Reset admission follows the applied factory binding without a reconciliation delay.
+
+    Args:
+        client: HTTP test client used to exercise the Atlaso application.
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+        monkeypatch: Pytest fixture used to replace dependencies for the test.
+    """
+    import atlaso.app.database as database
+    from atlaso.app.services.appliance_settings import APPLIANCE_DNS_RECORD_DESCRIPTION
+    from atlaso.app.ui import appliance_apply_units, save_appliance_apply_baselines
+
+    database_path = tmp_path / "atlaso-test.db"
+    old_ipv4 = "192.168.167.249"
+    old_ipv6 = "2001:db8::249"
+    monkeypatch.setenv("ATLASO_ENVIRONMENT", "appliance")
+    monkeypatch.setenv("ATLASO_FACTORY_RESET_STATE_DIRECTORY", str(tmp_path / "factory-reset"))
+    get_settings.cache_clear()
+
+    with database.SessionLocal() as db:
+        management = db.execute(
+            select(PhysicalInterface).where(PhysicalInterface.name == "eth0")
+        ).scalar_one()
+        management.ip_cidr = f"{old_ipv4}/24"
+        management.host_ip_cidr = f"{old_ipv4}/24"
+        management.ipv6_enabled = True
+        management.ipv6_cidr = f"{old_ipv6}/64"
+        management.host_ipv6_cidr = f"{old_ipv6}/64"
+        save_appliance_apply_baselines(
+            db,
+            {
+                "network": {
+                    "config_preview": f"""[physical_interfaces]
+interface=eth0
+  role=management
+  mode=access
+  admin_state=up
+  ipv4_method=static
+  ip_cidr={old_ipv4}/24
+  ipv6_enabled=true
+  ipv6_cidr={old_ipv6}/64
+  access_management_ui_enabled=false
+"""
+                }
+            },
+        )
+        db.commit()
+
+    old_headers = {"host": old_ipv4}
+    login_page = client.get("/ui/management/login", headers=old_headers)
+    assert login_page.status_code == 200
+    csrf = login_page.text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
+    login_response = client.post(
+        "/ui/management/login",
+        headers=old_headers,
+        data={"username": "admin", "password": "atlaso-admin", "csrf": csrf},
+        follow_redirects=False,
+    )
+    assert login_response.status_code == 303
+    assert client.get("/ui/management/dashboard", headers=old_headers).status_code == 200
+
+    # Dispose pooled handles before the reset atomically replaces the SQLite file, matching service restart.
+    database.engine.dispose()
+    result = run_factory_reset(
+        database_url=f"sqlite:///{database_path}",
+        adapter=SystemAdapter(dry_run=True),
+        manage_services=False,
+    )
+    database.engine.dispose()
+    assert result["state"] == "succeeded"
+
+    for headers in (
+        {"host": "192.168.49.1"},
+        {"host": "core.atlaso.internal"},
+    ):
+        immediate = client.get(
+            "/ui/management/dashboard",
+            headers=headers,
+            follow_redirects=False,
+        )
+        repeated = client.get(
+            "/ui/management/dashboard",
+            headers=headers,
+            follow_redirects=False,
+        )
+        for response in (immediate, repeated):
+            assert response.status_code == 303
+            assert response.headers["location"].startswith("/ui/management/login")
+
+    assert client.get(
+        "/ui/management/dashboard",
+        headers={"host": old_ipv4},
+        follow_redirects=False,
+    ).status_code == 404
+    assert client.get(
+        "/ui/management/dashboard",
+        headers={"host": f"[{old_ipv6}]"},
+        follow_redirects=False,
+    ).status_code == 404
+
+    with database.SessionLocal() as db:
+        app_owned_records = db.execute(
+            select(DnsRecord).where(
+                DnsRecord.description == APPLIANCE_DNS_RECORD_DESCRIPTION
+            )
+        ).scalars().all()
+        assert [
+            (record.hostname, record.record_type, record.address)
+            for record in app_owned_records
+        ] == [("core.atlaso.internal", "A", "192.168.49.1")]
+        assert [
+            unit["label"]
+            for unit in appliance_apply_units(db, reconcile=False)
+            if unit["changed"]
+        ] == []
+        db.add(
+            PhysicalInterface(
+                name="eth1",
+                mac_address="00:50:56:00:00:02",
+                host_ip_cidr="192.168.50.1/24",
+                host_mtu=1500,
+                host_admin_state="up",
+                ip_cidr="192.168.50.1/24",
+                admin_state="up",
+                oper_state="up",
+                role="access",
+                mode="access",
+                access_management_ui_enabled=False,
+            )
+        )
+        db.commit()
+
+    access_headers = {"host": "192.168.50.1"}
+    assert client.get("/ui/management/dashboard", headers=access_headers).status_code == 404
+    assert client.get("/ui/public", headers=access_headers).status_code == 200
 
 
 def test_complete_factory_reset_retains_recovery_marker_after_failure(
