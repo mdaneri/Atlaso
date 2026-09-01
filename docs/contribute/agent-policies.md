@@ -482,9 +482,13 @@ Terminal order:
   Packer enters the synchronous `vmrun` GUI start transition. Keep startup monitoring bounded until SSH provisioning,
   bind every diagnostic to the expected VMX filesystem identity and exact provider inventory, and distinguish VM
   creation, provider responsiveness, running state, configured builder TCP/22, start handoff, and SSH authentication.
-  Sanitize Packer output and remove raw debug-log environment variables from the monitored child. A timeout may route
-  `-PackerOnError cleanup` only through checked exact-root cleanup; preserve the exact artifacts for other selections.
-  Never expose connection credentials or VMX contents, and never substitute an arbitrary delay for a diagnosed start
+  Sanitize Packer output and remove raw debug-log environment variables from the monitored child. For
+  `-PackerOnError cleanup`, make Packer retain the exact failed VMX and route ordinary nonzero exits, startup timeouts,
+  monitor interruptions, and the outer whole-image deadline through checked exact-root cleanup only after the outer
+  Windows job proves zero Packer, plugin, and provider processes remain. Release the builder address only after
+  process-tree termination, exact-provider inactivity, and artifact removal are proven; otherwise retain the remaining
+  artifacts, reservation, and combined failure evidence. Preserve the exact artifacts for other selections. Never
+  expose connection credentials or VMX contents, and never substitute an arbitrary delay for a diagnosed start
   transition.
 - Keep VMware release images on two compacted payload VMDKs: the Photon OS disk and a required UUID-mounted
   `ATLASO_SYSTEM` disk containing `/opt/atlaso` and appliance-wide PowerShell modules. OVF export must preserve both
