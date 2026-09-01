@@ -279,14 +279,21 @@ try {
         BootIdentity = '1'
         Phase        = 'active'
     }
+    $markerDirectory = Join-Path $fixtureRoot 'cleanup-markers'
+    [void][System.IO.Directory]::CreateDirectory($markerDirectory)
+    $markerDirectoryIdentity = Get-AtlasoPathIdentity `
+        -Path $markerDirectory `
+        -Description 'Photon cleanup marker test directory'
     $junctionError = ''
     try {
         Complete-AtlasoPhotonBuildCleanup `
-            -MarkerPath (Join-Path $fixtureRoot 'junction-cleanup-marker.json') `
+            -MarkerPath (Join-Path $markerDirectory 'junction-cleanup-marker.json') `
             -Marker $cleanupMarker `
             -ExpectedRootPath $cleanupRoot `
             -ExpectedRootIdentity 'junction-test-identity' `
-            -AllowedParentRoot $junctionParent
+            -AllowedParentRoot $junctionParent `
+            -RepositoryRoot $resolvedRepositoryRoot `
+            -MarkerDirectoryIdentity $markerDirectoryIdentity
     }
     catch {
         $junctionError = $_.Exception.Message
@@ -306,7 +313,7 @@ try {
     $rootIdentity = Get-AtlasoPathIdentity `
         -Path $identityRoot `
         -Description 'Photon cleanup test root'
-    $identityMarkerPath = Join-Path $fixtureRoot 'identity-cleanup-marker.json'
+    $identityMarkerPath = Join-Path $markerDirectory 'identity-cleanup-marker.json'
     $identityMarker = [pscustomobject][ordered]@{
         Schema       = 2
         RootPath     = $identityRoot
@@ -333,7 +340,9 @@ try {
             -Marker $identityMarker `
             -ExpectedRootPath $identityRoot `
             -ExpectedRootIdentity $rootIdentity `
-            -AllowedParentRoot $identityParent
+            -AllowedParentRoot $identityParent `
+            -RepositoryRoot $resolvedRepositoryRoot `
+            -MarkerDirectoryIdentity $markerDirectoryIdentity
     }
     catch {
         $identityError = $_.Exception.Message
@@ -416,6 +425,55 @@ try {
     if ((Test-Path -LiteralPath $schemaOneRoot) -or
         (Test-Path -LiteralPath $schemaOneMarkerPath)) {
         throw 'Photon cleanup did not upgrade and retire an active schema-1 marker after boot proof.'
+    }
+
+    $absentParent = Join-Path $fixtureRoot 'root-absent-cleanup'
+    [void][System.IO.Directory]::CreateDirectory($absentParent)
+    $absentRoot = Join-Path $absentParent (
+        'atlaso-photon-build-credentials-' + [guid]::NewGuid().ToString('N')
+    )
+    [void][System.IO.Directory]::CreateDirectory($absentRoot)
+    $absentIdentity = Get-AtlasoPathIdentity -Path $absentRoot -Description 'Root-absent test root'
+    $absentMarkerPath = Join-Path $markerDirectory 'root-absent-marker.json'
+    $absentMarker = [ordered]@{
+        Schema = 2; RootPath = $absentRoot; RootIdentity = $absentIdentity
+        BootIdentity = 'prior-test-boot'; Phase = 'active'
+    }
+    [System.IO.File]::WriteAllText(
+        $absentMarkerPath,
+        ($absentMarker | ConvertTo-Json -Compress),
+        [System.Text.UTF8Encoding]::new($false)
+    )
+    [System.IO.Directory]::Delete($absentRoot)
+    Invoke-AtlasoPhotonBuildCleanupRecovery `
+        -MarkerPath $absentMarkerPath `
+        -AllowedParentRoots @($absentParent) `
+        -RepositoryRoot $resolvedRepositoryRoot
+    if ((Test-Path -LiteralPath $absentRoot) -or (Test-Path -LiteralPath $absentMarkerPath)) {
+        throw 'Photon cleanup did not retire an active marker after proven root deletion.'
+    }
+
+    $markerEscape = Join-Path $fixtureRoot 'marker-escape'
+    $redirectedMarkerDirectory = Join-Path $fixtureRoot 'redirected-markers'
+    [void][System.IO.Directory]::CreateDirectory($markerEscape)
+    [void](New-Item -ItemType Junction -Path $redirectedMarkerDirectory -Target $markerEscape)
+    $redirectedMarkerPath = Join-Path $redirectedMarkerDirectory 'cleanup.json'
+    [System.IO.File]::WriteAllText(
+        $redirectedMarkerPath,
+        ($absentMarker | ConvertTo-Json -Compress),
+        [System.Text.UTF8Encoding]::new($false)
+    )
+    $redirectedMarkerError = ''
+    try {
+        Invoke-AtlasoPhotonBuildCleanupRecovery `
+            -MarkerPath $redirectedMarkerPath `
+            -AllowedParentRoots @($absentParent) `
+            -RepositoryRoot $resolvedRepositoryRoot
+    }
+    catch { $redirectedMarkerError = $_.Exception.Message }
+    if ($redirectedMarkerError -notmatch 'unresolved sensitive cleanup' -or
+        -not (Test-Path -LiteralPath (Join-Path $markerEscape 'cleanup.json'))) {
+        throw 'Photon recovery followed a redirected fixed marker directory.'
     }
 
     $sensitiveCredentialRoot = Join-Path $fixtureRoot 'sensitive-credential-root'

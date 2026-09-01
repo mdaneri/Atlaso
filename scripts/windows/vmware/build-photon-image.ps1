@@ -822,6 +822,10 @@ Exact task-created root that the marker must still own.
 Pinned filesystem identity of the exact task-created root.
 .PARAMETER AllowedParentRoot
 Exact reparse-free parent that must still contain the cleanup root.
+.PARAMETER RepositoryRoot
+Exact repository that owns the fixed marker directory.
+.PARAMETER MarkerDirectoryIdentity
+Pinned filesystem identity of the fixed marker directory.
 #>
 function Complete-AtlasoPhotonBuildCleanup {
     param(
@@ -829,7 +833,9 @@ function Complete-AtlasoPhotonBuildCleanup {
         [Parameter(Mandatory = $true)][object]$Marker,
         [Parameter(Mandatory = $true)][string]$ExpectedRootPath,
         [Parameter(Mandatory = $true)][string]$ExpectedRootIdentity,
-        [Parameter(Mandatory = $true)][string]$AllowedParentRoot
+        [Parameter(Mandatory = $true)][string]$AllowedParentRoot,
+        [Parameter(Mandatory = $true)][string]$RepositoryRoot,
+        [Parameter(Mandatory = $true)][string]$MarkerDirectoryIdentity
     )
 
     $markerProperties = @($Marker.PSObject.Properties.Name)
@@ -870,6 +876,15 @@ function Complete-AtlasoPhotonBuildCleanup {
         -ParentPath $AllowedParentRoot `
         -ChildPath $resolvedRoot `
         -FailureMessage 'Photon cleanup root escaped its admitted parent'
+    $markerDirectory = Split-Path -Parent $MarkerPath
+    Assert-AtlasoStrictDescendantPath `
+        -ParentPath $RepositoryRoot `
+        -ChildPath $markerDirectory `
+        -FailureMessage 'Photon cleanup marker directory escaped its repository'
+    if ((Get-AtlasoPathIdentity -Path $markerDirectory -Description 'Photon cleanup marker directory') -cne
+        $MarkerDirectoryIdentity) {
+        throw 'Photon cleanup marker directory identity changed; artifacts were preserved.'
+    }
     $matchingIdentityRoots = @(
         if ($currentMarker) {
             Get-ChildItem -LiteralPath $AllowedParentRoot -Directory -Force -ErrorAction Stop |
@@ -881,10 +896,19 @@ function Complete-AtlasoPhotonBuildCleanup {
                 ForEach-Object { [System.IO.Path]::GetFullPath($_.FullName) }
         }
     )
-    if ($Marker.Phase -ceq 'active' -and (
-            $matchingIdentityRoots.Count -ne 1 -or
-            -not $matchingIdentityRoots[0].Equals($resolvedRoot, [StringComparison]::OrdinalIgnoreCase)
-        )) {
+    if ($Marker.Phase -ceq 'active' -and $matchingIdentityRoots.Count -eq 0 -and
+        -not (Test-Path -LiteralPath $resolvedRoot)) {
+        # A crash may occur after durable root deletion but before the marker
+        # advances. Absence at the path and throughout the admitted parent is
+        # sufficient to resume the already-completed deletion transition.
+        Sync-AtlasoDirectoryMetadata -DirectoryPath (Split-Path -Parent $resolvedRoot)
+        $Marker.Phase = 'root-absent'
+        Write-AtlasoDurableJsonFile -Path $MarkerPath -Payload $Marker -Replace
+    }
+    elseif ($Marker.Phase -ceq 'active' -and (
+        $matchingIdentityRoots.Count -ne 1 -or
+        -not $matchingIdentityRoots[0].Equals($resolvedRoot, [StringComparison]::OrdinalIgnoreCase)
+    )) {
         throw 'Photon cleanup root identity moved or changed; artifacts and marker were preserved.'
     }
     if ($Marker.Phase -ceq 'active') {
@@ -912,6 +936,10 @@ function Complete-AtlasoPhotonBuildCleanup {
         # different volume is allowed to claim that the deletion is durable.
         Sync-AtlasoDirectoryMetadata -DirectoryPath (Split-Path -Parent $resolvedRoot)
         $Marker.Phase = 'root-absent'
+        if ((Get-AtlasoPathIdentity -Path $markerDirectory -Description 'Photon cleanup marker directory') -cne
+            $MarkerDirectoryIdentity) {
+            throw 'Photon cleanup marker directory identity changed; artifacts were preserved.'
+        }
         Write-AtlasoDurableJsonFile -Path $MarkerPath -Payload $Marker -Replace
     }
     if ((Test-Path -LiteralPath $resolvedRoot) -or
@@ -926,6 +954,10 @@ function Complete-AtlasoPhotonBuildCleanup {
         throw 'Retained Photon credential artifact identity is still present.'
     }
     $Marker.Phase = 'retired'
+    if ((Get-AtlasoPathIdentity -Path $markerDirectory -Description 'Photon cleanup marker directory') -cne
+        $MarkerDirectoryIdentity) {
+        throw 'Photon cleanup marker directory identity changed; artifacts were preserved.'
+    }
     Write-AtlasoDurableJsonFile -Path $MarkerPath -Payload $Marker -Replace
     Remove-Item -LiteralPath $MarkerPath -Force -ErrorAction Stop
     if (Test-Path -LiteralPath $MarkerPath) {
@@ -955,7 +987,27 @@ function Invoke-AtlasoPhotonBuildCleanupRecovery {
         return
     }
     try {
+        if ([string]::IsNullOrWhiteSpace($RepositoryRoot)) {
+            throw 'Cleanup marker recovery requires the exact task repository.'
+        }
+        $resolvedRepositoryRoot = (Resolve-Path -LiteralPath $RepositoryRoot -ErrorAction Stop).Path
+        $markerDirectory = Split-Path -Parent ([System.IO.Path]::GetFullPath($MarkerPath))
+        Assert-AtlasoStrictDescendantPath `
+            -ParentPath $resolvedRepositoryRoot `
+            -ChildPath $markerDirectory `
+            -FailureMessage 'Photon cleanup marker directory escaped the exact task repository'
+        $markerDirectoryIdentity = Get-AtlasoPathIdentity `
+            -Path $markerDirectory `
+            -Description 'Photon cleanup marker directory'
         $marker = Get-Content -LiteralPath $MarkerPath -Raw -ErrorAction Stop | ConvertFrom-Json
+        Assert-AtlasoStrictDescendantPath `
+            -ParentPath $resolvedRepositoryRoot `
+            -ChildPath $markerDirectory `
+            -FailureMessage 'Photon cleanup marker directory changed during read'
+        if ((Get-AtlasoPathIdentity -Path $markerDirectory -Description 'Photon cleanup marker directory') -cne
+            $markerDirectoryIdentity) {
+            throw 'Photon cleanup marker directory identity changed during recovery.'
+        }
         $markerProperties = @($marker.PSObject.Properties.Name)
         $currentMarker = $markerProperties.Count -eq 5 -and
             'Schema' -in $markerProperties -and
@@ -985,7 +1037,6 @@ function Invoke-AtlasoPhotonBuildCleanupRecovery {
         $rootLeaf = Split-Path -Leaf $resolvedRoot
         $candidateParentRoots = @($AllowedParentRoots)
         if (-not [string]::IsNullOrWhiteSpace($RepositoryRoot)) {
-            $resolvedRepositoryRoot = (Resolve-Path -LiteralPath $RepositoryRoot -ErrorAction Stop).Path
             $markerParentRoot = Split-Path -Parent $resolvedRoot
             Assert-AtlasoStrictDescendantPath `
                 -ParentPath $resolvedRepositoryRoot `
@@ -1048,7 +1099,9 @@ function Invoke-AtlasoPhotonBuildCleanupRecovery {
             -Marker $marker `
             -ExpectedRootPath $resolvedRoot `
             -ExpectedRootIdentity $expectedRootIdentity `
-            -AllowedParentRoot $admitted[0]
+            -AllowedParentRoot $admitted[0] `
+            -RepositoryRoot $resolvedRepositoryRoot `
+            -MarkerDirectoryIdentity $markerDirectoryIdentity
     }
     catch {
         throw 'A prior Photon image build has unresolved sensitive cleanup. Restart Windows, then rerun this wrapper.'
@@ -1272,7 +1325,8 @@ if (-not $CredentialChild) {
     # is created only beneath the checkout-local build-state root.
     Invoke-AtlasoPhotonBuildCleanupRecovery `
         -MarkerPath $legacyCleanupMarkerPath `
-        -AllowedParentRoots @($legacyCredentialParentRoot)
+        -AllowedParentRoots @($legacyCredentialParentRoot) `
+        -RepositoryRoot $repoRoot
     Invoke-AtlasoPhotonBuildCleanupRecovery `
         -MarkerPath $cleanupMarkerPath `
         -AllowedParentRoots @($credentialStateRoot) `
@@ -1797,7 +1851,18 @@ else {
         -Path $childSensitiveBuildDirectory `
         -Description 'Photon sensitive-build root'
     $cleanupMarkerDirectory = Split-Path -Parent $cleanupMarkerPath
+    Assert-AtlasoStrictDescendantPath `
+        -ParentPath $repoRoot `
+        -ChildPath $cleanupMarkerDirectory `
+        -FailureMessage 'Photon cleanup marker directory escaped the exact task repository'
     [void][System.IO.Directory]::CreateDirectory($cleanupMarkerDirectory)
+    Assert-AtlasoStrictDescendantPath `
+        -ParentPath $repoRoot `
+        -ChildPath $cleanupMarkerDirectory `
+        -FailureMessage 'Photon cleanup marker directory changed during creation'
+    $cleanupMarkerDirectoryIdentity = Get-AtlasoPathIdentity `
+        -Path $cleanupMarkerDirectory `
+        -Description 'Photon cleanup marker directory'
     $cleanupMarkerPayload = [ordered]@{
         Schema       = 2
         RootPath     = [System.IO.Path]::GetFullPath($credentialRoot)
@@ -1806,6 +1871,10 @@ else {
         Phase        = 'active'
     }
     Write-AtlasoDurableJsonFile -Path $cleanupMarkerPath -Payload $cleanupMarkerPayload
+    if ((Get-AtlasoPathIdentity -Path $cleanupMarkerDirectory -Description 'Photon cleanup marker directory') -cne
+        $cleanupMarkerDirectoryIdentity) {
+        throw 'Photon cleanup marker directory identity changed during publication.'
+    }
     if (-not (Test-Path -LiteralPath $cleanupMarkerPath -PathType Leaf)) {
         throw 'Photon sensitive-cleanup ownership could not be established.'
     }
@@ -2071,7 +2140,9 @@ else {
                 -Marker $cleanupMarker `
                 -ExpectedRootPath $credentialRoot `
                 -ExpectedRootIdentity ([string]$credentialRootIdentity.RootIdentity) `
-                -AllowedParentRoot $credentialStateRoot
+                -AllowedParentRoot $credentialStateRoot `
+                -RepositoryRoot $repoRoot `
+                -MarkerDirectoryIdentity $cleanupMarkerDirectoryIdentity
             if ($null -ne $reservationReleaseError) {
                 throw "The VMware builder address reservation was retained: $($reservationReleaseError.Exception.Message)"
             }

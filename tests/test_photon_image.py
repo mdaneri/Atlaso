@@ -3436,6 +3436,12 @@ def test_photon_cleanup_pins_root_identity_for_creation_and_recovery() -> None:
     assert "-ExpectedRootIdentity $expectedRootIdentity" in wrapper[
         recovery_cleanup : recovery_cleanup + 500
     ]
+    assert "-MarkerDirectoryIdentity $markerDirectoryIdentity" in wrapper[
+        recovery_cleanup : recovery_cleanup + 700
+    ]
+    assert "Photon cleanup marker directory identity changed" in wrapper
+    assert "matchingIdentityRoots.Count -eq 0" in wrapper
+    assert "-not (Test-Path -LiteralPath $resolvedRoot)" in wrapper
     assert "-ExpectedRootIdentity ([string]$credentialRootIdentity.RootIdentity)" in wrapper[
         ordinary_cleanup : ordinary_cleanup + 500
     ]
