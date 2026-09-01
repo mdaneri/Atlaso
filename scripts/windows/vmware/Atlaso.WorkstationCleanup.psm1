@@ -786,9 +786,9 @@ function Remove-AtlasoWorkstationStaleRegistrations {
         $updatedLines.Add($line)
     }
     $replacementBytes = [System.Text.UTF8Encoding]::new($false).GetBytes(($updatedLines -join [Environment]::NewLine))
-    foreach ($entry in $staleEntries) {
-        if (Test-Path -LiteralPath $entry.Path -PathType Leaf) {
-            throw "A stale Atlaso VMX was recreated before inventory repair; artifacts were preserved: $($entry.Path)"
+    foreach ($candidatePath in $targetPaths) {
+        if (Test-Path -LiteralPath $candidatePath -PathType Leaf) {
+            throw "A stale Atlaso VMX was recreated before inventory repair; artifacts were preserved: $candidatePath"
         }
     }
     if (-not (Test-AtlasoByteArraysEqual -Left $originalBytes -Right ([System.IO.File]::ReadAllBytes($InventoryPath)))) {
@@ -811,9 +811,9 @@ function Remove-AtlasoWorkstationStaleRegistrations {
             if (-not (Test-AtlasoByteArraysEqual -Left $originalBytes -Right $lockedBytes)) {
                 throw 'VMware Workstation inventory changed before scoped stale-registration repair; artifacts were preserved.'
             }
-            foreach ($entry in $staleEntries) {
-                if (Test-Path -LiteralPath $entry.Path -PathType Leaf) {
-                    throw "A stale Atlaso VMX was recreated before inventory repair; artifacts were preserved: $($entry.Path)"
+            foreach ($candidatePath in $targetPaths) {
+                if (Test-Path -LiteralPath $candidatePath -PathType Leaf) {
+                    throw "A stale Atlaso VMX was recreated before inventory repair; artifacts were preserved: $candidatePath"
                 }
             }
             [System.IO.File]::Replace($temporaryPath, $InventoryPath, $backupPath, $true)

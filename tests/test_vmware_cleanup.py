@@ -2775,6 +2775,7 @@ def test_module_keeps_inventory_work_out_of_normal_delete_path() -> None:
         "Restore-AtlasoFileAfterCasFailure -TargetPath $InventoryPath", rollback_catch
     )
     assert inventory_replace < rollback_catch < rollback_call
+    assert stale_repair.count("foreach ($candidatePath in $targetPaths)") == 2
     implementation = re.sub(r"<#.*?#>\s*", "", module, flags=re.DOTALL)
     assert len(implementation.splitlines()) < 1_185
 
