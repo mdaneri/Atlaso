@@ -82,8 +82,13 @@ def test_photon_wrapper_preflights_credentials_before_image_mutation() -> None:
         in wrapper
     )
     assert "'-SensitiveBuildDirectory', $childSensitiveBuildDirectory" in wrapper
-    assert "'SensitiveBuildDirectory', 'OutputCleanupClaimPath'," in wrapper
-    assert "'BuilderAddressReservationPath', 'PreparedIsoPath'" in wrapper
+    assert (
+        "'SensitiveBuildDirectory', 'SensitiveBuildRootIdentity', "
+        "'OutputCleanupClaimPath',"
+    ) in wrapper
+    assert "'BuilderAddressReservationPath'," in wrapper
+    assert "'BuilderHandoffStateIdentity', 'BuilderHandoffPendingIdentity'," in wrapper
+    assert "'PreparedIsoPath'," in wrapper
     assert "'pending-releases'" in wrapper
     assert "Complete-AtlasoBuilderAddressReservationHandoff" in wrapper
     assert "-SensitiveBuildDirectory $SensitiveBuildDirectory" in wrapper

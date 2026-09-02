@@ -774,6 +774,7 @@ function Invoke-AtlasoBoundedStreamingProcess {
                 "$Action failed with exit code $($process.ExitCode) after proven whole-process-tree termination."
             )
             $processFailure.Data['AtlasoProcessTreeTerminationProven'] = $true
+            $processFailure.Data['AtlasoProcessExitCode'] = $process.ExitCode
             throw $processFailure
         }
     }

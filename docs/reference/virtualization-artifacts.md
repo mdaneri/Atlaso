@@ -250,7 +250,9 @@ as created by that invocation.
 
 The image carries locked offline RPM closures under `/var/lib/atlaso/first-boot-packages`. A provider-neutral service
 runs before data-disk initialization, networking handoff, nginx, Atlaso, and the worker. It does not use a network
-repository.
+repository. Both the canonical VMware producer and its derived Hyper-V artifact therefore inherit the same shared
+provisioning checks: the physical bootstrap release must match both compatibility links, and QEMU's offline-agent build
+uses a private root-owned HOME/cache sandbox rather than the Packer communicator user's home.
 
 - VMware retains and enables `open-vm-tools`.
 - KVM, QEMU, and Proxmox remove VMware Tools, install the verified local QEMU guest-agent closure, and enable its
@@ -365,6 +367,10 @@ clobbering, and waits for the exact newly dispatched hosted-finalizer run to suc
 The intermediate VMware builder uses a deterministic version-and-source-commit identity and records that identity in
 its output manifest and schema-v3 provenance. The exporter consumes that exact proven VMX while retaining the canonical
 `atlaso-vX.Y.Z` OVA/product and release filenames; release output never inherits a pull-request number.
+Its credential bridge, sensitive source snapshot, Packer workspace, cleanup state, and builder-address release handoff
+remain beneath the exact checkout-local `.atlaso-local/photon-image-build-state` root. The non-task-owned address
+allocation lock and ledger remain per-user and host-shared so parallel worktrees cannot choose the same address; no
+task-owned output or sensitive state falls back to a Windows profile, temporary directory, or `LocalApplicationData`.
 Keep `StagingRoot` until stable verification; cleanup is a separate explicit operator action. The three 1Password
 selectors are required so both the fresh image build and exact wheel deployment use the same approved credential
 source; the values are forwarded to the existing isolated SDK bridges and are never uploaded as evidence. A
