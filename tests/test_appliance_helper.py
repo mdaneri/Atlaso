@@ -30,6 +30,27 @@ def load_helper_module():
     return module
 
 
+def temporary_powershell_environment(home: Path) -> dict[str, str]:
+    """Create a non-privileged PowerShell environment for unit tests.
+
+    Args:
+        home: Temporary test directory used as the PowerShell home.
+    """
+    for directory in (
+        home,
+        home / ".cache",
+        home / ".config",
+        home / ".local" / "share",
+    ):
+        directory.mkdir(parents=True, exist_ok=True)
+    return {
+        "HOME": str(home),
+        "XDG_CACHE_HOME": str(home / ".cache"),
+        "XDG_CONFIG_HOME": str(home / ".config"),
+        "XDG_DATA_HOME": str(home / ".local" / "share"),
+    }
+
+
 def test_update_status_guards_every_browser_server_without_changing_route_paths():
     """Guard browser servers while preserving stable machine-route locations."""
     helper = load_helper_module()
@@ -4124,6 +4145,68 @@ def test_factory_reset_helper_resume_is_idempotent(monkeypatch, tmp_path):
     assert helper._handle_factory_reset("resume", []) == 0
 
 
+@pytest.mark.parametrize("boot_resume", [False, True])
+def test_factory_reset_runner_uses_persistent_powershell_environment(
+    monkeypatch,
+    tmp_path,
+    boot_resume,
+):
+    """Pin inline console and boot resumes to the privileged PowerShell home.
+
+    Args:
+        monkeypatch: Pytest fixture used to replace dependencies for the test.
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+        boot_resume: Whether the modeled reset resumes during service startup.
+    """
+    helper = load_helper_module()
+    runtime = tmp_path / "python"
+    runtime.write_text("", encoding="utf-8")
+    powershell_home = tmp_path / "powershell"
+    calls: list[tuple[list[str], dict[str, str]]] = []
+
+    monkeypatch.setattr(helper, "ATLASO_FACTORY_RESET_PYTHON", runtime)
+    monkeypatch.setattr(helper, "ATLASO_POWERSHELL_HOME", powershell_home)
+    monkeypatch.setattr(
+        helper,
+        "_privileged_powershell_environment",
+        lambda: temporary_powershell_environment(powershell_home),
+    )
+    monkeypatch.setattr(
+        helper,
+        "_installed_atlaso_database_url",
+        lambda: "sqlite:////var/lib/atlaso/atlaso.db",
+    )
+    monkeypatch.setattr(
+        helper,
+        "_run",
+        lambda command, *, env: (
+            calls.append((command, env))
+            or subprocess.CompletedProcess(command, 0, "", "")
+        ),
+    )
+
+    result = helper._factory_reset_runner(boot_resume=boot_resume)
+
+    assert result.returncode == 0
+    assert calls[0][0] == [str(runtime), "-m", "atlaso.app.factory_reset"]
+    environment = calls[0][1]
+    assert environment["HOME"] == str(powershell_home)
+    assert environment["XDG_CACHE_HOME"] == str(powershell_home / ".cache")
+    assert environment["XDG_CONFIG_HOME"] == str(powershell_home / ".config")
+    assert environment["XDG_DATA_HOME"] == str(powershell_home / ".local" / "share")
+    assert environment["ATLASO_DATABASE_URL"] == "sqlite:////var/lib/atlaso/atlaso.db"
+    assert (environment.get("ATLASO_FACTORY_RESET_BOOT_RESUME") == "1") is boot_resume
+    assert powershell_home.is_dir()
+
+
+def test_privileged_powershell_home_uses_the_root_owned_state_parent():
+    """Keep privileged module discovery outside the service-writable state tree."""
+    helper = load_helper_module()
+
+    assert helper.ATLASO_POWERSHELL_HOME.parent == helper.ATLASO_PRIVILEGED_STATE_DIR
+    assert helper.ATLASO_POWERSHELL_HOME != helper.ATLASO_STATE_DIR / "powershell"
+
+
 @pytest.mark.parametrize(
     ("action", "args", "blocked_call"),
     [
@@ -4433,6 +4516,12 @@ def test_factory_reset_retained_runtime_cleanup_removes_bounded_state(
         json.dumps({"powershell_repositories": ["PrivateGallery"]}),
         encoding="utf-8",
     )
+    legacy_powershell_home = tmp_path / "legacy-powershell"
+    (legacy_powershell_home / ".local" / "share" / "powershell").mkdir(parents=True)
+    (legacy_powershell_home / ".local" / "share" / "powershell" / "PSRepositories.xml").write_text(
+        "service-owned registration fixture",
+        encoding="utf-8",
+    )
     synced_directories: list[Path] = []
 
     def sync_sources(payload):
@@ -4453,6 +4542,8 @@ def test_factory_reset_retained_runtime_cleanup_removes_bounded_state(
     monkeypatch.setattr(helper, "KMS_STATE_DIR", kmip_state)
     monkeypatch.setattr(helper, "MANAGED_PHOTON_REPO_PATH", managed_repo)
     monkeypatch.setattr(helper, "UPDATE_SOURCE_STATE_PATH", update_state)
+    monkeypatch.setattr(helper, "ATLASO_LEGACY_POWERSHELL_HOME", legacy_powershell_home)
+    monkeypatch.setattr(helper, "_cleanup_stale_photon_repository_views", lambda **_kwargs: None)
     monkeypatch.setattr(
         helper,
         "_command_path",
@@ -4469,9 +4560,15 @@ def test_factory_reset_retained_runtime_cleanup_removes_bounded_state(
     assert list(kmip_state.iterdir()) == []
     assert not managed_repo.exists()
     assert not update_state.exists()
-    assert synced_directories == [managed_repo.parent, kmip_state, update_state.parent]
+    assert not legacy_powershell_home.exists()
+    expected_synced_directories = [managed_repo.parent]
+    if os.name != "posix":
+        expected_synced_directories.append(legacy_powershell_home.parent)
+    expected_synced_directories.extend([kmip_state, update_state.parent])
+    assert synced_directories == expected_synced_directories
     output = json.loads(capsys.readouterr().out)
     assert output["kmip_entries_removed"] == 3
+    assert output["legacy_powershell_home_removed"] is True
     assert output["powershell_repositories_removed"] == 1
 
 
@@ -4515,6 +4612,12 @@ def test_factory_reset_fsyncs_photon_removal_before_partial_failure_retry(
     monkeypatch.setattr(helper, "KMS_STATE_DIR", kmip_state)
     monkeypatch.setattr(helper, "MANAGED_PHOTON_REPO_PATH", managed_repo)
     monkeypatch.setattr(helper, "UPDATE_SOURCE_STATE_PATH", update_state)
+    monkeypatch.setattr(
+        helper,
+        "ATLASO_LEGACY_POWERSHELL_HOME",
+        tmp_path / "legacy-powershell",
+    )
+    monkeypatch.setattr(helper, "_cleanup_stale_photon_repository_views", lambda **_kwargs: None)
     monkeypatch.setattr(helper, "_sync_appliance_update_sources", sync_sources)
     monkeypatch.setattr(
         helper,
@@ -8802,12 +8905,12 @@ def test_appliance_update_apply_uses_a_fixed_task_stream_unit(monkeypatch, tmp_p
     )
     monkeypatch.setattr(
         helper,
-        "_appliance_update_powershell_environment",
+        "_privileged_powershell_environment",
         lambda: {
-            "HOME": "/var/lib/atlaso/powershell",
-            "XDG_CACHE_HOME": "/var/lib/atlaso/powershell/.cache",
-            "XDG_CONFIG_HOME": "/var/lib/atlaso/powershell/.config",
-            "XDG_DATA_HOME": "/var/lib/atlaso/powershell/.local/share",
+            "HOME": "/var/lib/atlaso-privileged/powershell",
+            "XDG_CACHE_HOME": "/var/lib/atlaso-privileged/powershell/.cache",
+            "XDG_CONFIG_HOME": "/var/lib/atlaso-privileged/powershell/.config",
+            "XDG_DATA_HOME": "/var/lib/atlaso-privileged/powershell/.local/share",
         },
     )
     monkeypatch.setattr(
@@ -8887,12 +8990,12 @@ def test_appliance_update_status_transitions_serialize_one_fixed_task_unit(
     )
     monkeypatch.setattr(
         helper,
-        "_appliance_update_powershell_environment",
+        "_privileged_powershell_environment",
         lambda: {
-            "HOME": "/var/lib/atlaso/powershell",
-            "XDG_CACHE_HOME": "/var/lib/atlaso/powershell/.cache",
-            "XDG_CONFIG_HOME": "/var/lib/atlaso/powershell/.config",
-            "XDG_DATA_HOME": "/var/lib/atlaso/powershell/.local/share",
+            "HOME": "/var/lib/atlaso-privileged/powershell",
+            "XDG_CACHE_HOME": "/var/lib/atlaso-privileged/powershell/.cache",
+            "XDG_CONFIG_HOME": "/var/lib/atlaso-privileged/powershell/.config",
+            "XDG_DATA_HOME": "/var/lib/atlaso-privileged/powershell/.local/share",
         },
     )
     monkeypatch.setattr(
@@ -9061,8 +9164,8 @@ def test_management_handoff_recovery_uses_fixed_systemd_unit(monkeypatch):
     assert f"--unit={helper.MANAGEMENT_HANDOFF_RECOVERY_UNIT.removesuffix('.service')}" in commands[0]
 
 
-def test_powercli_helper_actions_receive_writable_root_configuration_environment(monkeypatch, tmp_path):
-    """Verify that powercli helper actions receive writable root configuration environment.
+def test_powercli_helper_actions_receive_persistent_writable_environment(monkeypatch, tmp_path):
+    """Verify that PowerCLI policy uses the persistent privileged PowerShell home.
 
     Args:
         monkeypatch: Pytest fixture used to replace dependencies for the test.
@@ -9071,8 +9174,15 @@ def test_powercli_helper_actions_receive_writable_root_configuration_environment
     helper = load_helper_module()
     config_path = tmp_path / "atlaso-settings.json"
     config_path.write_text("{}\n", encoding="utf-8")
+    powershell_home = tmp_path / "powershell"
     commands: list[list[str]] = []
 
+    monkeypatch.setattr(helper, "ATLASO_POWERSHELL_HOME", powershell_home)
+    monkeypatch.setattr(
+        helper,
+        "_privileged_powershell_environment",
+        lambda: temporary_powershell_environment(powershell_home),
+    )
     monkeypatch.setattr(
         helper.shutil,
         "which",
@@ -9093,12 +9203,16 @@ def test_powercli_helper_actions_receive_writable_root_configuration_environment
         [str(config_path)],
     ) == 0
 
-    assert "--setenv=HOME=/root" in commands[0]
-    assert "--setenv=XDG_CACHE_HOME=/root/.cache" in commands[0]
-    assert "--setenv=XDG_CONFIG_HOME=/root/.config" in commands[0]
-    assert "--setenv=XDG_DATA_HOME=/root/.local/share" in commands[0]
+    assert f"--property=WorkingDirectory={powershell_home}" in commands[0]
+    assert f"--setenv=HOME={powershell_home}" in commands[0]
+    assert f"--setenv=XDG_CACHE_HOME={powershell_home / '.cache'}" in commands[0]
+    assert f"--setenv=XDG_CONFIG_HOME={powershell_home / '.config'}" in commands[0]
+    assert f"--setenv=XDG_DATA_HOME={powershell_home / '.local' / 'share'}" in commands[0]
+    assert "--setenv=HOME=/root" not in commands[0]
     helper_index = commands[0].index(str(Path(helper.__file__).resolve()))
-    assert commands[0].index("--setenv=HOME=/root") < helper_index
+    assert commands[0].index(f"--setenv=HOME={powershell_home}") < helper_index
+    assert powershell_home.is_dir()
+    assert (powershell_home / ".config").is_dir()
 
 
 def test_appliance_update_receives_writable_powershell_environment(monkeypatch, tmp_path):
@@ -9115,6 +9229,11 @@ def test_appliance_update_receives_writable_powershell_environment(monkeypatch, 
     commands: list[list[str]] = []
 
     monkeypatch.setattr(helper, "ATLASO_POWERSHELL_HOME", powershell_home)
+    monkeypatch.setattr(
+        helper,
+        "_privileged_powershell_environment",
+        lambda: temporary_powershell_environment(powershell_home),
+    )
     monkeypatch.setattr(
         helper.shutil,
         "which",

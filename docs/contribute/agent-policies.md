@@ -610,7 +610,7 @@ Terminal order:
   children and fail the parent rather than requeueing terminal work. Keep child output, compatibility evidence, and
   errors independent, and
   derive the parent outcome from all selected children. Give privileged PowerShell update work the root-owned
-  persistent home `/var/lib/atlaso/powershell`; do not point it at the service's read-only `/root` view.
+  persistent home `/var/lib/atlaso-privileged/powershell`; do not point it at the service's read-only `/root` view.
 - Before any real installation child starts, atomically publish a root-owned, no-store update-only browser surface from
   the exact durable parent/child hierarchy and prove HTTP 503 on every applied management and public browser listener.
   While its runtime marker exists, nginx must serve the bounded self-contained page without Atlaso, authentication,

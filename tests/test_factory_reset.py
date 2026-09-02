@@ -142,6 +142,7 @@ def test_helper_factory_reset_runner_uses_installed_database_url(monkeypatch, tm
     from tests.test_appliance_update import load_helper_module
 
     helper = load_helper_module()
+    helper.ATLASO_POWERSHELL_HOME = tmp_path / "powershell-home"
     python = tmp_path / "python"
     python.write_bytes(b"python")
     environment_path = tmp_path / "atlaso.env"
@@ -193,6 +194,7 @@ def test_helper_factory_reset_runner_fails_when_database_url_is_unavailable(monk
     from tests.test_appliance_update import load_helper_module
 
     helper = load_helper_module()
+    helper.ATLASO_POWERSHELL_HOME = tmp_path / "powershell-home"
     python = tmp_path / "python"
     python.write_bytes(b"python")
     environment_path = tmp_path / "atlaso.env"
@@ -225,6 +227,7 @@ def test_helper_factory_reset_runner_rejects_environment_file_escapes(monkeypatc
     from tests.test_appliance_update import load_helper_module
 
     helper = load_helper_module()
+    helper.ATLASO_POWERSHELL_HOME = tmp_path / "powershell-home"
     python = tmp_path / "python"
     python.write_bytes(b"python")
     environment_path = tmp_path / "atlaso.env"
@@ -359,6 +362,7 @@ def test_helper_factory_reset_runner_rejects_concatenated_quotes(monkeypatch, tm
     from tests.test_appliance_update import load_helper_module
 
     helper = load_helper_module()
+    helper.ATLASO_POWERSHELL_HOME = tmp_path / "powershell-home"
     python = tmp_path / "python"
     python.write_bytes(b"python")
     environment_path = tmp_path / "atlaso.env"
@@ -395,6 +399,7 @@ def test_helper_factory_reset_runner_rejects_multiline_environment_file_value(
     from tests.test_appliance_update import load_helper_module
 
     helper = load_helper_module()
+    helper.ATLASO_POWERSHELL_HOME = tmp_path / "powershell-home"
     python = tmp_path / "python"
     python.write_bytes(b"python")
     environment_path = tmp_path / "atlaso.env"
@@ -431,6 +436,7 @@ def test_helper_factory_reset_runner_ignores_assignment_inside_multiline_value(
     from tests.test_appliance_update import load_helper_module
 
     helper = load_helper_module()
+    helper.ATLASO_POWERSHELL_HOME = tmp_path / "powershell-home"
     python = tmp_path / "python"
     python.write_bytes(b"python")
     environment_path = tmp_path / "atlaso.env"

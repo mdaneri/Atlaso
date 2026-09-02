@@ -527,6 +527,7 @@ from atlaso.app.services.settings_archive import (
 )
 from atlaso.app.services.update_sources import (
     ATLASO_CHANNELS,
+    POWERSHELL_SOURCE_HOME_VALIDATION_MESSAGE,
     UPDATE_SOURCE_KINDS,
     default_source_settings,
     effective_update_settings,
@@ -12706,7 +12707,11 @@ def complete_appliance_update_task(db: Session, *, job: Job, update_result: dict
             source.validation_message = (
                 "Source definition validated in dry-run; host package clients were not changed."
                 if source_succeeded and update_result.get("dry_run")
-                else "Repository synchronized with its appliance package client."
+                else (
+                    POWERSHELL_SOURCE_HOME_VALIDATION_MESSAGE
+                    if source.kind == "powershell"
+                    else "Repository synchronized with its appliance package client."
+                )
                 if source_succeeded
                 else "Source synchronization failed. Review the task output."
             )
