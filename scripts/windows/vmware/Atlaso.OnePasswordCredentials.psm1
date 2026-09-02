@@ -652,15 +652,20 @@ function Invoke-AtlasoOnePasswordCredentialCleanupRecovery {
             (Split-Path -Leaf $resolvedRoot) -notmatch '^atlaso-onepassword-credentials-[0-9a-f]{32}$') {
             throw 'Invalid credential cleanup root.'
         }
-        if ($marker.Phase -ceq 'active' -and
-            (Test-AtlasoWindowsBootIdentityCurrent -BootIdentity $marker.BootIdentity)) {
-            if (-not $ownedMarker) {
-                throw 'A Windows restart is required before retained legacy credential artifacts can be cleaned safely.'
+        if ($marker.Phase -ceq 'active') {
+            $bootIdentityState = Get-AtlasoWindowsBootIdentityState -BootIdentity $marker.BootIdentity
+            if ($bootIdentityState -ceq 'invalid') {
+                throw 'The retained credential marker has an invalid boot identity.'
             }
-            Complete-AtlasoSameBootBoundedProcessRecovery `
-                -Marker $marker `
-                -JobNamePattern '^Local\\Atlaso-OnePassword-[0-9a-f]{32}$' `
-                -ProcessDescription '1Password credential bridge'
+            if ($bootIdentityState -ceq 'current') {
+                if (-not $ownedMarker) {
+                    throw 'A Windows restart is required before retained legacy credential artifacts can be cleaned safely.'
+                }
+                Complete-AtlasoSameBootBoundedProcessRecovery `
+                    -Marker $marker `
+                    -JobNamePattern '^Local\\Atlaso-OnePassword-[0-9a-f]{32}$' `
+                    -ProcessDescription '1Password credential bridge'
+            }
         }
         Complete-AtlasoOnePasswordCredentialCleanup -MarkerPath $markerPath -Marker $marker
     }

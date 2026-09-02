@@ -16,6 +16,7 @@ Import-Module (
     Join-Path $resolvedRepositoryRoot 'scripts\windows\vmware\Atlaso.WorkstationCleanup.psm1'
 ) -Force
 . (Join-Path $resolvedRepositoryRoot 'scripts\windows\vmware\Atlaso.WorkstationFirstBoot.ps1')
+$originalWindowsBootIdentityFunction = (Get-Command Get-AtlasoWindowsBootIdentity).ScriptBlock
 Import-Module (
     Join-Path $resolvedRepositoryRoot 'scripts\windows\vmware\Atlaso.SourceSnapshot.psm1'
 ) -Force
@@ -564,6 +565,7 @@ try {
         throw 'Photon recovery followed a redirected fixed marker directory.'
     }
 
+    Set-Item -Path Function:Get-AtlasoWindowsBootIdentity -Value $originalWindowsBootIdentityFunction
     $sameBootParent = Join-Path $fixtureRoot 'same-boot-recovery'
     $sameBootMarkerDirectory = Join-Path $fixtureRoot 'same-boot-markers'
     [void][System.IO.Directory]::CreateDirectory($sameBootParent)
@@ -578,6 +580,44 @@ try {
     $exitedOwnerId = $exitedOwner.Id
     $exitedOwner.WaitForExit()
     $exitedOwner.Dispose()
+
+    $invalidBootRoot = Join-Path $sameBootParent (
+        'atlaso-photon-build-credentials-' + [guid]::NewGuid().ToString('N')
+    )
+    [void][System.IO.Directory]::CreateDirectory($invalidBootRoot)
+    [System.IO.File]::WriteAllText((Join-Path $invalidBootRoot 'preserve.fixture'), 'test-only')
+    $invalidBootMarkerPath = Join-Path $sameBootMarkerDirectory 'invalid-boot.json'
+    $invalidBootMarker = [ordered]@{
+        Schema = 3; RootPath = $invalidBootRoot
+        RootIdentity = Get-AtlasoPathIdentity -Path $invalidBootRoot -Description 'Invalid-boot test root'
+        BootIdentity = 'malformed-boot-identity'; Phase = 'active'
+        OwnerProcessId = $exitedOwnerId; OwnerProcessStartFileTimeUtc = $exitedOwnerStart
+        ProcessJobName = 'Local\Atlaso-Photon-' + [guid]::NewGuid().ToString('N')
+        ChildProcessId = [int]::MaxValue; ChildProcessStartFileTimeUtc = 1
+        ProcessOwnershipPhase = 'assigned'
+    }
+    [System.IO.File]::WriteAllText(
+        $invalidBootMarkerPath,
+        ($invalidBootMarker | ConvertTo-Json -Compress),
+        [System.Text.UTF8Encoding]::new($false)
+    )
+    $invalidBootError = ''
+    try {
+        Invoke-AtlasoPhotonBuildCleanupRecovery `
+            -MarkerPath $invalidBootMarkerPath `
+            -AllowedParentRoots @($sameBootParent) `
+            -RepositoryRoot $resolvedRepositoryRoot
+    }
+    catch {
+        $invalidBootError = $_.Exception.Message
+    }
+    if ($invalidBootError -notmatch 'unresolved sensitive cleanup' -or
+        -not (Test-Path -LiteralPath $invalidBootRoot -PathType Container) -or
+        -not (Test-Path -LiteralPath $invalidBootMarkerPath -PathType Leaf)) {
+        throw "An invalid boot identity did not preserve the retained Photon root and marker: $invalidBootError"
+    }
+    [System.IO.Directory]::Delete($invalidBootRoot, $true)
+    Remove-Item -LiteralPath $invalidBootMarkerPath -Force
 
     $sameBootRoot = Join-Path $sameBootParent (
         'atlaso-photon-build-credentials-' + [guid]::NewGuid().ToString('N')

@@ -1078,23 +1078,36 @@ function Get-AtlasoWindowsBootIdentity {
 
 <#
 .SYNOPSIS
-Test whether a persisted boot identity describes the current Windows boot.
+Classify a persisted boot identity against the current Windows boot.
 
 .PARAMETER BootIdentity
 Value read from a durable cleanup marker, accepted as invariant UTC ticks or a legacy ISO 8601 timestamp.
 #>
-function Test-AtlasoWindowsBootIdentityCurrent {
+function Get-AtlasoWindowsBootIdentityState {
     param([Parameter(Mandatory = $true)][object]$BootIdentity)
 
     $currentIdentity = Get-AtlasoWindowsBootIdentity
     if ([string]$BootIdentity -ceq $currentIdentity) {
-        return $true
+        return 'current'
     }
     if ($currentIdentity -notmatch '^[0-9]{1,19}$') {
-        return $false
+        # Focused tests replace the provider with stable symbolic boot names.
+        return 'prior'
     }
     $legacyTicks = if ($BootIdentity -is [DateTime]) {
         $BootIdentity.ToUniversalTime().Ticks
+    }
+    elseif ([string]$BootIdentity -match '^[0-9]{1,19}$') {
+        $parsedTicks = 0L
+        if (-not [long]::TryParse(
+                [string]$BootIdentity,
+                [System.Globalization.NumberStyles]::None,
+                [System.Globalization.CultureInfo]::InvariantCulture,
+                [ref]$parsedTicks
+            ) -or $parsedTicks -le 0) {
+            return 'invalid'
+        }
+        $parsedTicks
     }
     else {
         $legacyTimestamp = [DateTimeOffset]::MinValue
@@ -1104,11 +1117,30 @@ function Test-AtlasoWindowsBootIdentityCurrent {
                 [System.Globalization.DateTimeStyles]::RoundtripKind,
                 [ref]$legacyTimestamp
             )) {
-            return $false
+            return 'invalid'
         }
         $legacyTimestamp.ToUniversalTime().Ticks
     }
-    return $legacyTicks.ToString([System.Globalization.CultureInfo]::InvariantCulture) -ceq $currentIdentity
+    if ($legacyTicks -le 0) {
+        return 'invalid'
+    }
+    if ($legacyTicks.ToString([System.Globalization.CultureInfo]::InvariantCulture) -ceq $currentIdentity) {
+        return 'current'
+    }
+    return 'prior'
+}
+
+<#
+.SYNOPSIS
+Test whether a persisted boot identity describes the current Windows boot.
+
+.PARAMETER BootIdentity
+Value read from a durable cleanup marker and classified by the fail-closed boot parser.
+#>
+function Test-AtlasoWindowsBootIdentityCurrent {
+    param([Parameter(Mandatory = $true)][object]$BootIdentity)
+
+    return (Get-AtlasoWindowsBootIdentityState -BootIdentity $BootIdentity) -ceq 'current'
 }
 
 <#

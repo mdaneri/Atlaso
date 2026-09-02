@@ -1117,12 +1117,17 @@ function Invoke-AtlasoPhotonBuildCleanupRecovery {
         if ($marker.Phase -notin @('active', 'root-absent', 'retired')) {
             throw 'Invalid cleanup marker phase.'
         }
-        if ($marker.Phase -ceq 'active' -and
-            (Test-AtlasoWindowsBootIdentityCurrent -BootIdentity $marker.BootIdentity)) {
-            if (-not $schemaThreeMarker) {
-                throw 'A Windows restart is required before this legacy Photon cleanup marker can be recovered safely.'
+        if ($marker.Phase -ceq 'active') {
+            $bootIdentityState = Get-AtlasoWindowsBootIdentityState -BootIdentity $marker.BootIdentity
+            if ($bootIdentityState -ceq 'invalid') {
+                throw 'The retained Photon cleanup marker has an invalid boot identity.'
             }
-            Complete-AtlasoPhotonSameBootProcessRecovery -Marker $marker
+            if ($bootIdentityState -ceq 'current') {
+                if (-not $schemaThreeMarker) {
+                    throw 'A Windows restart is required before this legacy Photon cleanup marker can be recovered safely.'
+                }
+                Complete-AtlasoPhotonSameBootProcessRecovery -Marker $marker
+            }
         }
         if ($legacyActiveMarker -and -not (Test-Path -LiteralPath $resolvedRoot -PathType Container)) {
             throw 'Legacy Photon cleanup root is absent or moved; artifacts and marker were preserved.'
