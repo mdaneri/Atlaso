@@ -21,6 +21,7 @@ from urllib.parse import urlsplit
 
 ROOT = Path(__file__).resolve().parents[1]
 EXPECTED_PYTHON = (3, 14)
+EXPECTED_PLATFORM = "win32"
 EXPECTED_PIP_TOOLS = "7.6.0"
 MINIMUM_PIP = (26, 0)
 MINIMUM_AGE = "P7D"
@@ -112,6 +113,11 @@ def _toolchain_error() -> str:
         return (
             f"Python {EXPECTED_PYTHON[0]}.{EXPECTED_PYTHON[1]} is required; "
             f"found {sys.version_info.major}.{sys.version_info.minor}"
+        )
+    if sys.platform != EXPECTED_PLATFORM:
+        return (
+            "Native Windows is required so generated locks retain Windows-only "
+            f"dependencies; found platform {sys.platform!r}"
         )
     try:
         installed = version("pip-tools")

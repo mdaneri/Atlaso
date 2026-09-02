@@ -19,7 +19,8 @@ Dependabot cooldowns do not cover every transitive selection and do not delay se
 
 ## Regenerate locks
 
-Use Python 3.14 with pip 26.0 or newer and pip-tools 7.6.0. From the repository root, run:
+Use native Windows (not WSL) with Python 3.14, pip 26.0 or newer, and pip-tools 7.6.0. Windows resolution retains the
+Windows-only dependency superset; the wrapper adds the reviewed Linux-only dependencies. From the repository root, run:
 
 ```powershell
 python scripts/compile_requirements.py
