@@ -158,6 +158,56 @@ $emptyCleanupLedger | ForEach-Object {
         Remove-Item -LiteralPath $_ -Force
     }
 }
+$pinnedFixtureKickstart = Join-Path $emptyCleanupLedgerRoot 'pinned-photon-ks.json'
+$pinnedFixtureOutputIso = Join-Path $emptyCleanupLedgerRoot 'pinned-prepared.iso'
+$pinnedFixtureHandles = @{}
+$pinnedFixtureCleanup = [System.Collections.Generic.List[string]]::new()
+& $module {
+    param([string]$Path, [hashtable]$PinnedHandles)
+    Write-AtlasoPinnedUtf8Text -Path $Path -Text '{}' -PinnedHandles $PinnedHandles
+} $pinnedFixtureKickstart $pinnedFixtureHandles
+& $module {
+    param(
+        [string]$SourceIso,
+        [string]$KickstartJson,
+        [string]$OutputIso,
+        [System.Collections.Generic.List[string]]$CleanupPaths,
+        [hashtable]$PinnedHandles
+    )
+    New-AtlasoRemasteredPhotonIso `
+        -SourceIso $SourceIso `
+        -KickstartJson $KickstartJson `
+        -OutputIso $OutputIso `
+        -CleanupPaths $CleanupPaths `
+        -PinnedHandles $PinnedHandles
+} $fixtureSourceIso $pinnedFixtureKickstart $pinnedFixtureOutputIso $pinnedFixtureCleanup $pinnedFixtureHandles
+if (-not (Test-Path -LiteralPath $pinnedFixtureOutputIso -PathType Leaf)) {
+    throw 'Remastering could not consume the kickstart through its retained no-delete handle.'
+}
+& $module {
+    param([string]$Path, [hashtable]$PinnedHandles)
+    Remove-AtlasoPinnedPlaintextFile -Path $Path -PinnedHandles $PinnedHandles
+} $pinnedFixtureOutputIso $pinnedFixtureHandles
+& $module {
+    param([string]$Path, [hashtable]$PinnedHandles)
+    Remove-AtlasoPinnedPlaintextFile -Path $Path -PinnedHandles $PinnedHandles
+} $pinnedFixtureKickstart $pinnedFixtureHandles
+if ($pinnedFixtureHandles.Count -ne 0 -or
+    (Test-Path -LiteralPath $pinnedFixtureOutputIso) -or
+    (Test-Path -LiteralPath $pinnedFixtureKickstart)) {
+    throw 'Pinned remaster fixture cleanup did not delete the exact credential-bearing objects.'
+}
+$longFallbackSource = Join-Path $emptyCleanupLedgerRoot 'atlaso-photon-with-kickstart.iso'
+$shortFallbackPath = & $module {
+    param([string]$Path)
+    New-AtlasoFallbackPreparedIsoPath -Path $Path
+} $longFallbackSource
+if ((Split-Path -Parent $shortFallbackPath) -cne (Split-Path -Parent $longFallbackSource) -or
+    [System.IO.Path]::GetExtension($shortFallbackPath) -cne '.iso' -or
+    [System.IO.Path]::GetFileName($shortFallbackPath).Length -ge
+    [System.IO.Path]::GetFileName($longFallbackSource).Length) {
+    throw 'Prepared-ISO fallback did not retain its parent and extension with a shorter collision-resistant leaf.'
+}
 $rejectedPreparedIsoPath = Join-Path $OutputDirectory 'rejected-credential-bearing.iso'
 $rejectedSecurePassword = ConvertTo-TestSecureString -Value 'non-secret-test-credential'
 try {

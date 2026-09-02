@@ -78,6 +78,59 @@ def open_pinned_output(path: Path):
     return os.fdopen(descriptor, "r+b", buffering=0)
 
 
+def open_pinned_input(path: Path):
+    """Open a caller-pinned input with Windows delete sharing enabled.
+
+    Args:
+        path: Existing input path held by the PowerShell caller.
+
+    Returns:
+        A binary read stream that owns its newly opened handle.
+    """
+    if os.name != "nt":
+        return path.open("rb", buffering=0)
+
+    import ctypes
+    import msvcrt
+
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    create_file = kernel32.CreateFileW
+    create_file.argtypes = (
+        ctypes.c_wchar_p,
+        ctypes.c_uint32,
+        ctypes.c_uint32,
+        ctypes.c_void_p,
+        ctypes.c_uint32,
+        ctypes.c_uint32,
+        ctypes.c_void_p,
+    )
+    create_file.restype = ctypes.c_void_p
+    generic_read = 0x80000000
+    share_read = 0x00000001
+    share_write = 0x00000002
+    share_delete = 0x00000004
+    open_existing = 3
+    normal = 0x00000080
+    handle = create_file(
+        str(path),
+        generic_read,
+        share_read | share_write | share_delete,
+        None,
+        open_existing,
+        normal,
+        None,
+    )
+    invalid_handle = ctypes.c_void_p(-1).value
+    if handle == invalid_handle:
+        raise ctypes.WinError(ctypes.get_last_error())
+    try:
+        descriptor = msvcrt.open_osfhandle(int(handle), os.O_RDONLY | os.O_BINARY)
+    except Exception:
+        kernel32.CloseHandle(ctypes.c_void_p(handle))
+        raise
+    return os.fdopen(descriptor, "rb", buffering=0)
+
+
 def parse_args() -> argparse.Namespace:
     """Parse args.
 
@@ -202,16 +255,26 @@ def main() -> int:
     iso = pycdlib.PyCdlib()
     iso.open(str(source_iso))
     try:
-        iso.add_file(str(kickstart), iso_path="/PHOTONKS.JSON;1", rr_name="photon-ks.json")
-        grub_path = replace_grub_config(iso)
-        # The PowerShell caller creates and identity-pins this file before
-        # launch. Truncate and write through that same directory entry instead
-        # of unlinking it and silently replacing the pinned filesystem object.
-        with open_pinned_output(output) as output_stream:
-            output_stream.truncate(0)
-            iso.write_fp(output_stream)
-            output_stream.flush()
-            os.fsync(output_stream.fileno())
+        # The caller's protective handle owns DELETE access. Open the kickstart
+        # with compatible delete sharing and retain this exact stream until
+        # pycdlib has consumed it during the final ISO write.
+        with open_pinned_input(kickstart) as kickstart_stream:
+            kickstart_size = os.fstat(kickstart_stream.fileno()).st_size
+            iso.add_fp(
+                kickstart_stream,
+                kickstart_size,
+                iso_path="/PHOTONKS.JSON;1",
+                rr_name="photon-ks.json",
+            )
+            grub_path = replace_grub_config(iso)
+            # The PowerShell caller creates and identity-pins this file before
+            # launch. Truncate and write through that same directory entry instead
+            # of unlinking it and silently replacing the pinned filesystem object.
+            with open_pinned_output(output) as output_stream:
+                output_stream.truncate(0)
+                iso.write_fp(output_stream)
+                output_stream.flush()
+                os.fsync(output_stream.fileno())
     finally:
         iso.close()
 

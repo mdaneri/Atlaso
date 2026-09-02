@@ -67,7 +67,9 @@ rejected because retaining that ISO would retain a reusable build credential. A 
 task-owned cleanup ledger; the wrapper creates and filesystem-identity-pins the prepared-ISO directory, then creates
 and pins each unique partial file before the
 remaster helper writes through that same file, then promotes that exact object through its still-open no-delete handle
-and records the final path only after replacement succeeds.
+with an explicitly terminated native rename buffer and records the final path only after replacement succeeds.
+The remaster helper reads the pinned kickstart through a delete-sharing-compatible Windows handle, and its bounded
+fallback leaf stays shorter than the ordinary ISO name so the additional partial-file identity suffix remains viable.
 The kickstart JSON and Packer variable file use the same create-new, identity-pin, handle-write ordering before any
 plaintext credential byte is exposed. Their no-delete handles, and the promoted ISO handle, remain open through the
 respective helper or Packer consumer and are marked for deletion through those exact handles before release. Recovery

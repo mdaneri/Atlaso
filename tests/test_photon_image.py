@@ -3632,6 +3632,7 @@ def test_remaster_attempt_is_identity_pinned_before_helper_writes() -> None:
     assert "GenericRead | GenericWrite | Delete" in common[native:create]
     assert "ShareRead | ShareWrite" in common[native:create]
     assert "SetFileInformationByHandle" in common[native:create]
+    assert "nameOffset + nameBytes.Length + 2" in common[native:create]
     remaster_end = common.index("function ConvertTo-AtlasoHclLiteral", remaster)
     remaster_block = common[remaster:remaster_end]
     assert "$null -ne $attemptHandle -and $null -eq $PinnedHandles" in remaster_block
@@ -3642,9 +3643,18 @@ def test_remaster_attempt_is_identity_pinned_before_helper_writes() -> None:
     )
     assert "output.is_symlink() or not output.is_file()" in helper_source
     assert "share_read | share_write | share_delete" in helper_source
+    assert "open_pinned_input(kickstart)" in helper_source
+    assert "iso.add_fp(" in helper_source
+    assert "iso.add_file(str(kickstart)" not in helper_source
     assert "open_pinned_output(output)" in helper_source
     assert "iso.write_fp(output_stream)" in helper_source
     assert "output.unlink" not in helper_source
+
+    fallback = common.index("function New-AtlasoFallbackPreparedIsoPath {")
+    fallback_end = common.index("function Remove-AtlasoSensitiveBuildArtifact", fallback)
+    fallback_block = common[fallback:fallback_end]
+    assert 'Join-Path $directory ".atlaso-$token$extension"' in fallback_block
+    assert "$leaf-$stamp$extension" not in fallback_block
 
 
 def test_plaintext_leaf_files_are_pinned_before_write() -> None:

@@ -470,7 +470,10 @@ namespace Atlaso
         {
             byte[] nameBytes = System.Text.Encoding.Unicode.GetBytes(destinationPath);
             int nameOffset = (int)Marshal.OffsetOf<FileRenameInfo>("FileName");
-            int bufferLength = checked(nameOffset + nameBytes.Length);
+            // FileNameLength excludes the terminator, but the variable-length
+            // FILE_RENAME_INFO buffer still needs one zero UTF-16 code unit so
+            // the kernel never consumes adjacent unmanaged bytes as a suffix.
+            int bufferLength = checked(nameOffset + nameBytes.Length + 2);
             IntPtr buffer = Marshal.AllocHGlobal(bufferLength);
             try
             {
@@ -797,10 +800,12 @@ function New-AtlasoFallbackPreparedIsoPath {
     param([Parameter(Mandatory = $true)][string]$Path)
 
     $directory = Split-Path -Parent $Path
-    $leaf = [System.IO.Path]::GetFileNameWithoutExtension($Path)
     $extension = [System.IO.Path]::GetExtension($Path)
-    $stamp = Get-Date -Format 'yyyyMMddHHmmss'
-    return (Join-Path $directory "$leaf-$stamp$extension")
+    # Keep the retry leaf shorter than the ordinary destination. The remaster
+    # helper adds its own GUID-bearing partial suffix before CreateFileW opens
+    # it, so lengthening the fallback leaf can cross the Win32 path boundary.
+    $token = [guid]::NewGuid().ToString('N').Substring(0, 12)
+    return (Join-Path $directory ".atlaso-$token$extension")
 }
 
 <#
