@@ -496,6 +496,10 @@ vSphere/ESXi import: `Atlaso Management Network` for the first adapter, which re
 `Atlaso Services Network` for the second adapter used by DNS, DHCP, CA, depot, PXE, KMS, and other Atlaso-managed
 services.
 
+Image provisioning follows the canonical
+[boot presentation contract](../../docs/reference/appliance-console-technical.md#boot-presentation) for the Photon
+GRUB splash and `tty1` console.
+
 Supported OVF Tool exports declare disabled Secure Boot with
 `vmw:key="bootOptions.efiSecureBootEnabled" vmw:value="false"`. Atlaso validates that normalized descriptor before it
 writes `atlaso-provenance.json`; the compatibility spelling `uefi.secureBoot.enabled` is accepted only when every

@@ -30,6 +30,11 @@ This verified appliance view provides visual orientation before you begin.
 - Treat console networking and service changes as real appliance mutations.
 - Prefer the web UI for routine desired-state editing when it is reachable.
 
+The appliance image configures the local framebuffer at 1280×800 with the `VGA8x16` console font, providing 50 text
+rows and 160 columns from boot onward. To verify the image-level console configuration after a fresh boot or reboot,
+run `cat /sys/class/graphics/fb0/virtual_size` and `stty -F /dev/tty1 size` from a local shell. The expected results are
+`1280,800` and `50 160`, respectively.
+
 ## Read the main screen
 
 The main screen refreshes every five seconds and shows:

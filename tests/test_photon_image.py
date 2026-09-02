@@ -79,7 +79,7 @@ def test_data_disk_policies_remain_lf_in_windows_checkouts(tmp_path: Path) -> No
 
 
 def test_photon_image_installs_fixed_size_atlaso_grub_branding():
-    """Verify that photon image installs fixed size atlaso grub branding."""
+    """Verify that Photon image installs branding and the 50-row console mode."""
     background = Path("image/common/boot/grub/atlaso.png").read_bytes()
     photon_logo = Path("image/common/boot/grub/photon-os-logo.png").read_bytes()
     theme = Path("image/common/boot/grub/theme.txt").read_text(encoding="utf-8")
@@ -95,11 +95,108 @@ def test_photon_image_installs_fixed_size_atlaso_grub_branding():
     assert "set theme=/grub2/themes/atlaso/theme.txt" in installer
     assert 'menuentry " "' in installer
     assert "atlaso-backup" in installer
+    assert 'gfxmode="1280x800"' in installer
+    assert "gfxpayload=keep" in installer
+    assert "fbcon=font:VGA8x16" in installer
+    assert "set gfxmode" not in installer
+    assert "set gfxpayload" not in installer
     assert '"$ATLASO_HOME/bin/atlaso-install-boot-branding"' in provision
     assert "SkipBootBrandingSync" in deploy
     assert "/opt/atlaso/bin/atlaso-install-boot-branding" in deploy
     assert '"${SshUser}@${IpAddress}:$remoteBootThemePath"' in deploy
     assert '"${SshUser}@${IpAddress}:$remoteBootBackgroundPath"' in deploy
+
+
+@pytest.mark.skipif(os.name == "nt", reason="The GRUB installer requires a POSIX shell.")
+@pytest.mark.parametrize(
+    "framebuffer_config",
+    [
+        "",
+        'gfxmode="640x480"\ngfxpayload=text\n',
+        'set gfxmode="auto"\nset gfxpayload=keep\n',
+    ],
+)
+def test_boot_branding_installer_renders_idempotent_photon_console_config(
+    tmp_path: Path, framebuffer_config: str
+) -> None:
+    """Render the supported Photon GRUB structure with a 1280x800 VGA8x16 console.
+
+    Args:
+        tmp_path: Pytest-provided isolated filesystem root.
+        framebuffer_config: Photon framebuffer assignments to normalize, or an empty prefix.
+    """
+    grub_config = tmp_path / "grub.cfg"
+    original = framebuffer_config + """set theme=/boot/grub2/themes/photon/theme.txt
+menuentry \"Photon\" {
+    linux /$photon_linux root=$rootpartition $photon_cmdline $systemd_cmdline
+}
+"""
+    grub_config.write_text(original, encoding="utf-8")
+    theme_source = tmp_path / "theme.txt"
+    background_source = tmp_path / "atlaso.png"
+    theme_source.write_text('desktop-image: "atlaso.png"\n', encoding="utf-8")
+    background_source.write_bytes(b"test-png")
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    fake_id = fake_bin / "id"
+    fake_id.write_text("#!/bin/sh\nprintf '0\\n'\n", encoding="utf-8")
+    fake_id.chmod(0o755)
+    fake_install = fake_bin / "install"
+    fake_install.write_text(
+        """#!/bin/sh
+directory=0
+if [ "$1" = "-d" ]; then
+    directory=1
+    shift
+fi
+while [ "$#" -gt 0 ]; do
+    case "$1" in
+        -o|-g|-m) shift 2 ;;
+        *) break ;;
+    esac
+done
+if [ "$directory" -eq 1 ]; then
+    mkdir -p "$1"
+else
+    cp "$1" "$2"
+fi
+""",
+        encoding="utf-8",
+    )
+    fake_install.chmod(0o755)
+    environment = os.environ.copy()
+    environment.update(
+        {
+            "ATLASO_GRUB_CONFIG": str(grub_config),
+            "ATLASO_GRUB_THEME_DIR": str(tmp_path / "installed-theme"),
+            "PATH": f"{fake_bin}{os.pathsep}{environment['PATH']}",
+        }
+    )
+    command = [
+        "sh",
+        "scripts/appliance/atlaso-install-boot-branding",
+        str(theme_source),
+        str(background_source),
+    ]
+
+    first = subprocess.run(command, check=False, capture_output=True, text=True, env=environment)
+    assert first.returncode == 0, first.stderr
+    rendered = grub_config.read_text(encoding="utf-8")
+    assert 'gfxmode="1280x800"\n' in rendered
+    assert "gfxpayload=keep\n" in rendered
+    assert "set gfxmode" not in rendered
+    assert "set gfxpayload" not in rendered
+    assert (
+        "linux /$photon_linux root=$rootpartition $photon_cmdline "
+        "$systemd_cmdline fbcon=font:VGA8x16"
+    ) in rendered
+    assert rendered.count("fbcon=font:VGA8x16") == 1
+    assert grub_config.with_name("grub.cfg.atlaso-backup").read_text(encoding="utf-8") == original
+
+    second = subprocess.run(command, check=False, capture_output=True, text=True, env=environment)
+    assert second.returncode == 0, second.stderr
+    assert grub_config.read_text(encoding="utf-8") == rendered
+    assert grub_config.with_name("grub.cfg.atlaso-backup").read_text(encoding="utf-8") == original
 
 
 def test_offline_guest_agent_staging_remains_root_owned_after_provisioning() -> None:
