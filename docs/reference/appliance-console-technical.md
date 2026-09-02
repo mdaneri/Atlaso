@@ -200,9 +200,12 @@ constrained appliance-power helper. Power actions do not appear in the `F2` cust
 
 ## Boot presentation
 
-GRUB uses a fixed 640×480 Atlaso theme with the Atlaso identity at the top and official Photon OS attribution at the
-bottom. The boot entry has a blank display title so the splash remains visible during the five-second automatic boot.
+GRUB uses a 1280×800 framebuffer with a fixed 640×480 Atlaso theme asset, the Atlaso identity at the top, and
+official Photon OS attribution at the bottom. The Linux kernel entry selects `fbcon=font:VGA8x16`, producing a
+160-column by 50-row framebuffer console. The boot entry has a blank display title so the splash remains visible during
+the five-second automatic boot.
 
 `/opt/atlaso/bin/atlaso-install-boot-branding` installs the root-owned theme under
 `/boot/grub2/themes/atlaso`, preserves the original GRUB configuration once as `grub.cfg.atlaso-backup`, and changes
-only the theme reference and Photon menu-entry label. It does not add Plymouth or alter boot timing or kernel arguments.
+the theme reference, Photon menu-entry label, Photon-style `gfxmode="1280x800"` and `gfxpayload=keep` assignments, and
+the Photon kernel entry's framebuffer-console font. It does not add Plymouth or alter boot timing.
