@@ -108,16 +108,17 @@ def test_photon_image_installs_fixed_size_atlaso_grub_branding():
 
 
 @pytest.mark.skipif(os.name == "nt", reason="The GRUB installer requires a POSIX shell.")
-def test_boot_branding_installer_renders_idempotent_photon_console_config(tmp_path: Path) -> None:
+@pytest.mark.parametrize("framebuffer_config", ['', 'gfxmode="640x480"\ngfxpayload=text\n'])
+def test_boot_branding_installer_renders_idempotent_photon_console_config(
+    tmp_path: Path, framebuffer_config: str
+) -> None:
     """Render the supported Photon GRUB structure with a 1280x800 VGA8x16 console.
 
     Args:
         tmp_path: Pytest-provided isolated filesystem root.
     """
     grub_config = tmp_path / "grub.cfg"
-    original = """gfxmode=\"640x480\"
-gfxpayload=text
-set theme=/boot/grub2/themes/photon/theme.txt
+    original = framebuffer_config + """set theme=/boot/grub2/themes/photon/theme.txt
 menuentry \"Photon\" {
     linux /$photon_linux root=$rootpartition $photon_cmdline $systemd_cmdline
 }
