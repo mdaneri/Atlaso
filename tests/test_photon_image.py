@@ -3474,9 +3474,9 @@ def test_photon_cleanup_pins_root_identity_for_creation_and_recovery() -> None:
         recovery_cleanup : recovery_cleanup + 700
     ]
     assert "Photon cleanup marker directory identity changed" in wrapper
-    assert "matchingIdentityRoots.Count -eq 0" in wrapper
-    assert "-not (Test-Path -LiteralPath $resolvedRoot)" in wrapper
-    assert "$legacyActiveMarker -and -not (Test-Path -LiteralPath $resolvedRoot)" in wrapper
+    assert "Photon cleanup root is absent or moved" in wrapper
+    assert "Legacy Photon cleanup root is absent or moved" in wrapper
+    assert "matchingIdentityRoots.Count -eq 0" not in wrapper
     parent_finally = wrapper.index("if (-not $processTreeTerminationUnproven) {")
     parent_release = wrapper.index(
         "Exit-AtlasoVmwareBuilderAddressReservation `", parent_finally
@@ -3494,7 +3494,7 @@ def test_photon_cleanup_pins_root_identity_for_creation_and_recovery() -> None:
     assert "-ExpectedRootIdentity ([string]$credentialRootIdentity.RootIdentity)" in wrapper[
         ordinary_cleanup : ordinary_cleanup + 500
     ]
-    assert "identity moved or changed; artifacts and marker were preserved" in wrapper
+    assert "identity changed immediately before deletion" in wrapper
     assert "$cleanupMarkerPath = Join-Path $repoRoot (" in wrapper
     assert (
         "'.atlaso-local\\photon-image-build-state\\photon-image-build-cleanup.json'"
@@ -3620,6 +3620,39 @@ def test_remaster_attempt_is_identity_pinned_before_helper_writes() -> None:
     assert "open_pinned_output(output)" in helper_source
     assert "iso.write_fp(output_stream)" in helper_source
     assert "output.unlink" not in helper_source
+
+
+def test_plaintext_leaf_files_are_pinned_before_write() -> None:
+    """Kickstart and Packer variables write through pre-pinned file handles."""
+    common = Path("scripts/windows/common/Atlaso.PhotonImage.psm1").read_text(
+        encoding="utf-8"
+    )
+    writer = common.index("function Write-AtlasoPinnedUtf8Text {")
+    create = common.index("[Atlaso.PhotonPinnedFile]::Create($Path)", writer)
+    pin = common.index(
+        "Assert-AtlasoSensitiveBuildPath -Validator $SensitivePathValidator "
+        "-Path $Path",
+        create,
+    )
+    write = common.index("$writer.Write($Text)", pin)
+    revalidate = common.index(
+        "Assert-AtlasoSensitiveBuildPath -Validator $SensitivePathValidator "
+        "-Path $Path",
+        write,
+    )
+    dispose = common.index("$handle.Dispose()", revalidate)
+    assert create < pin < write < revalidate < dispose
+
+    kickstart = common.index("function New-AtlasoPhotonKickstart {")
+    kickstart_write = common.index("Write-AtlasoPinnedUtf8Text `", kickstart)
+    var_file = common.index("function Write-AtlasoPackerVarFile {")
+    var_write = common.index("Write-AtlasoPinnedUtf8Text `", var_file)
+    assert "-SensitivePathValidator $SensitivePathValidator" in common[
+        kickstart_write : kickstart_write + 250
+    ]
+    assert "-SensitivePathValidator $SensitivePathValidator" in common[
+        var_write : var_write + 300
+    ]
 
 
 def test_release_builder_legacy_recovery_uses_detached_branch_sentinel() -> None:

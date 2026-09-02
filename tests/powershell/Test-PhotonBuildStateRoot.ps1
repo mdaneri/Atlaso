@@ -347,7 +347,7 @@ try {
     catch {
         $identityError = $_.Exception.Message
     }
-    if ($identityError -notmatch 'identity moved or changed' -or
+    if ($identityError -notmatch 'identity (moved or changed|changed immediately before deletion)' -or
         -not (Test-Path -LiteralPath $identityMarkerPath -PathType Leaf) -or
         -not (Test-Path -LiteralPath (Join-Path $renamedRoot 'original.txt') -PathType Leaf) -or
         -not (Test-Path -LiteralPath $replacementSentinel -PathType Leaf)) {
@@ -470,12 +470,17 @@ try {
         ($absentSchemaOneMarker | ConvertTo-Json -Compress),
         [System.Text.UTF8Encoding]::new($false)
     )
-    Invoke-AtlasoPhotonBuildCleanupRecovery `
-        -MarkerPath $absentSchemaOneMarkerPath `
-        -AllowedParentRoots @($schemaOneParent) `
-        -RepositoryRoot $resolvedRepositoryRoot
-    if (Test-Path -LiteralPath $absentSchemaOneMarkerPath) {
-        throw 'Photon cleanup did not retire an absent active schema-1 root after boot proof.'
+    $absentSchemaOneError = ''
+    try {
+        Invoke-AtlasoPhotonBuildCleanupRecovery `
+            -MarkerPath $absentSchemaOneMarkerPath `
+            -AllowedParentRoots @($schemaOneParent) `
+            -RepositoryRoot $resolvedRepositoryRoot
+    }
+    catch { $absentSchemaOneError = $_.Exception.Message }
+    if ($absentSchemaOneError -notmatch 'unresolved sensitive cleanup' -or
+        -not (Test-Path -LiteralPath $absentSchemaOneMarkerPath -PathType Leaf)) {
+        throw 'Photon cleanup retired an absent schema-1 root without deletion-bound proof.'
     }
 
     $absentParent = Join-Path $fixtureRoot 'root-absent-cleanup'
@@ -496,12 +501,17 @@ try {
         [System.Text.UTF8Encoding]::new($false)
     )
     [System.IO.Directory]::Delete($absentRoot)
-    Invoke-AtlasoPhotonBuildCleanupRecovery `
-        -MarkerPath $absentMarkerPath `
-        -AllowedParentRoots @($absentParent) `
-        -RepositoryRoot $resolvedRepositoryRoot
-    if ((Test-Path -LiteralPath $absentRoot) -or (Test-Path -LiteralPath $absentMarkerPath)) {
-        throw 'Photon cleanup did not retire an active marker after proven root deletion.'
+    $absentRootError = ''
+    try {
+        Invoke-AtlasoPhotonBuildCleanupRecovery `
+            -MarkerPath $absentMarkerPath `
+            -AllowedParentRoots @($absentParent) `
+            -RepositoryRoot $resolvedRepositoryRoot
+    }
+    catch { $absentRootError = $_.Exception.Message }
+    if ($absentRootError -notmatch 'unresolved sensitive cleanup' -or
+        -not (Test-Path -LiteralPath $absentMarkerPath -PathType Leaf)) {
+        throw 'Photon cleanup retired an absent schema-2 root without deletion-bound proof.'
     }
 
     $markerEscape = Join-Path $fixtureRoot 'marker-escape'

@@ -96,6 +96,8 @@ Provider-specific Photon packages.
 Provider-specific post-install commands.
 .PARAMETER InstallDiskLayout
 Provider disk-discovery policy used by the installer.
+.PARAMETER SensitivePathValidator
+Optional callback that pins and revalidates sensitive-path filesystem identity.
 #>
 function New-AtlasoPhotonKickstart {
     param(
@@ -110,7 +112,8 @@ function New-AtlasoPhotonKickstart {
         [string[]]$AdditionalPackages = @(),
         [string[]]$PostInstallCommands = @(),
         [ValidateSet('default', 'vmware-workstation')]
-        [string]$InstallDiskLayout = 'default'
+        [string]$InstallDiskLayout = 'default',
+        [scriptblock]$SensitivePathValidator
     )
 
     # Photon kickstart JSON requires plaintext at its serialization boundary. Keep
@@ -199,7 +202,10 @@ function New-AtlasoPhotonKickstart {
     $parent = Split-Path -Parent $Path
     New-Item -ItemType Directory -Force -Path $parent | Out-Null
     $json = $kickstart | ConvertTo-Json -Depth 10
-    [System.IO.File]::WriteAllText($Path, $json, [System.Text.UTF8Encoding]::new($false))
+    Write-AtlasoPinnedUtf8Text `
+        -Path $Path `
+        -Text $json `
+        -SensitivePathValidator $SensitivePathValidator
     }
     finally {
         $rootPasswordText = $null
@@ -468,6 +474,64 @@ namespace Atlaso
 
 <#
 .SYNOPSIS
+Create, identity-pin, and write one plaintext UTF-8 file through its open handle.
+.PARAMETER Path
+Unique destination path that must not already exist.
+.PARAMETER Text
+Plaintext content to write without a byte-order mark.
+.PARAMETER SensitivePathValidator
+Optional callback that pins and revalidates sensitive-path filesystem identity.
+#>
+function Write-AtlasoPinnedUtf8Text {
+    param(
+        [Parameter(Mandatory = $true)][string]$Path,
+        [Parameter(Mandatory = $true)][AllowEmptyString()][string]$Text,
+        [scriptblock]$SensitivePathValidator
+    )
+
+    if (Test-Path -LiteralPath $Path) {
+        if ($null -ne $SensitivePathValidator) {
+            throw "Sensitive plaintext destination already exists: $Path"
+        }
+        # Provider-neutral unit fixtures do not transport the Windows identity
+        # callback. Production callers always supply it and require an absent
+        # create-new destination.
+        Remove-Item -LiteralPath $Path -Force -ErrorAction Stop
+    }
+    Initialize-AtlasoPhotonPinnedFileType
+    $handle = $null
+    $stream = $null
+    $writer = $null
+    try {
+        $handle = [Atlaso.PhotonPinnedFile]::Create($Path)
+        Assert-AtlasoSensitiveBuildPath -Validator $SensitivePathValidator -Path $Path
+        $stream = [System.IO.FileStream]::new($handle, [System.IO.FileAccess]::ReadWrite)
+        $writer = [System.IO.StreamWriter]::new(
+            $stream,
+            [System.Text.UTF8Encoding]::new($false),
+            4096,
+            $true
+        )
+        $writer.Write($Text)
+        $writer.Flush()
+        $stream.Flush($true)
+        Assert-AtlasoSensitiveBuildPath -Validator $SensitivePathValidator -Path $Path
+    }
+    finally {
+        if ($null -ne $writer) {
+            $writer.Dispose()
+        }
+        if ($null -ne $stream) {
+            $stream.Dispose()
+        }
+        if ($null -ne $handle) {
+            $handle.Dispose()
+        }
+    }
+}
+
+<#
+.SYNOPSIS
 Create a Photon ISO with the Atlaso unattended installer embedded.
 .PARAMETER SourceIso
 Verified Photon source ISO.
@@ -555,18 +619,24 @@ Write generated Packer variables as HCL.
 Destination variable-file path.
 .PARAMETER Variables
 Variables to serialize.
+.PARAMETER SensitivePathValidator
+Optional callback that pins and revalidates sensitive-path filesystem identity.
 #>
 function Write-AtlasoPackerVarFile {
     param(
         [Parameter(Mandatory = $true)][string]$Path,
-        [Parameter(Mandatory = $true)][hashtable]$Variables
+        [Parameter(Mandatory = $true)][hashtable]$Variables,
+        [scriptblock]$SensitivePathValidator
     )
 
     New-Item -ItemType Directory -Force -Path (Split-Path -Parent $Path) | Out-Null
     $lines = foreach ($key in ($Variables.Keys | Sort-Object)) {
         "$key = $(ConvertTo-AtlasoHclLiteral -Value $Variables[$key])"
     }
-    [System.IO.File]::WriteAllLines($Path, [string[]]$lines, [System.Text.UTF8Encoding]::new($false))
+    Write-AtlasoPinnedUtf8Text `
+        -Path $Path `
+        -Text (($lines -join [System.Environment]::NewLine) + [System.Environment]::NewLine) `
+        -SensitivePathValidator $SensitivePathValidator
 }
 
 <#
@@ -849,7 +919,8 @@ function Invoke-AtlasoPhotonImageBuild {
                 -StaticDns $BuilderStaticDns `
                 -AdditionalPackages $GuestPackages `
                 -PostInstallCommands $GuestPostInstallCommands `
-                -InstallDiskLayout $InstallDiskLayout
+                -InstallDiskLayout $InstallDiskLayout `
+                -SensitivePathValidator $SensitivePathValidator
             Assert-AtlasoSensitiveBuildPath -Validator $SensitivePathValidator -Path $kickstartJson
 
             Assert-AtlasoSensitiveBuildPath -Validator $SensitivePathValidator -Path $buildDir
@@ -938,7 +1009,10 @@ function Invoke-AtlasoPhotonImageBuild {
     }
 
     Assert-AtlasoSensitiveBuildPath -Validator $SensitivePathValidator -Path $varFilePath
-    Write-AtlasoPackerVarFile -Path $varFilePath -Variables $packerVariables
+    Write-AtlasoPackerVarFile `
+        -Path $varFilePath `
+        -Variables $packerVariables `
+        -SensitivePathValidator $SensitivePathValidator
     Assert-AtlasoSensitiveBuildPath -Validator $SensitivePathValidator -Path $varFilePath
     Write-Host "Using Packer var-file: $varFilePath"
 

@@ -67,6 +67,9 @@ rejected because retaining that ISO would retain a reusable build credential. A 
 task-owned cleanup ledger; the wrapper creates and filesystem-identity-pins each unique partial file before the
 remaster helper writes through that same file, then promotes that exact object through its still-open no-delete handle
 and records the final path only after replacement succeeds.
+The kickstart JSON and Packer variable file use the same create-new, identity-pin, handle-write ordering before any
+plaintext credential byte is exposed. Recovery never interprets an absent active cleanup root as deletion proof,
+because a same-user move outside the admitted parent is indistinguishable from a completed deletion after a crash.
 `New-AtlasoPhotonKickstart` in
 `scripts/windows/common/Atlaso.PhotonImage.psm1` is the only kickstart source. Focused image tests parse its VMware JSON
 output and validate the installer, package, and guest-service contract.

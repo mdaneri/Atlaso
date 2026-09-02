@@ -915,31 +915,11 @@ function Complete-AtlasoPhotonBuildCleanup {
         $MarkerDirectoryIdentity) {
         throw 'Photon cleanup marker directory identity changed; artifacts were preserved.'
     }
-    $matchingIdentityRoots = @(
-        if ($currentMarker) {
-            Get-ChildItem -LiteralPath $AllowedParentRoot -Directory -Force -ErrorAction Stop |
-                Where-Object { -not ($_.Attributes -band [System.IO.FileAttributes]::ReparsePoint) } |
-                Where-Object {
-                    (Get-AtlasoPathIdentity -Path $_.FullName -Description 'Photon cleanup candidate') -ceq
-                        $ExpectedRootIdentity
-                } |
-                ForEach-Object { [System.IO.Path]::GetFullPath($_.FullName) }
-        }
-    )
-    if ($Marker.Phase -ceq 'active' -and $matchingIdentityRoots.Count -eq 0 -and
-        -not (Test-Path -LiteralPath $resolvedRoot)) {
-        # A crash may occur after durable root deletion but before the marker
-        # advances. Absence at the path and throughout the admitted parent is
-        # sufficient to resume the already-completed deletion transition.
-        Sync-AtlasoDirectoryMetadata -DirectoryPath (Split-Path -Parent $resolvedRoot)
-        $Marker.Phase = 'root-absent'
-        Write-AtlasoDurableJsonFile -Path $MarkerPath -Payload $Marker -Replace
-    }
-    elseif ($Marker.Phase -ceq 'active' -and (
-        $matchingIdentityRoots.Count -ne 1 -or
-        -not $matchingIdentityRoots[0].Equals($resolvedRoot, [StringComparison]::OrdinalIgnoreCase)
-    )) {
-        throw 'Photon cleanup root identity moved or changed; artifacts and marker were preserved.'
+    if ($Marker.Phase -ceq 'active' -and -not (Test-Path -LiteralPath $resolvedRoot -PathType Container)) {
+        # An absent path cannot distinguish completed deletion from a same-user
+        # move outside the admitted parent. Preserve the marker until an
+        # identity-bound cleanup operation records its own durable transition.
+        throw 'Photon cleanup root is absent or moved; artifacts and marker were preserved.'
     }
     if ($Marker.Phase -ceq 'active') {
         $rootItem = Get-Item -LiteralPath $resolvedRoot -Force -ErrorAction Stop
@@ -972,15 +952,7 @@ function Complete-AtlasoPhotonBuildCleanup {
         }
         Write-AtlasoDurableJsonFile -Path $MarkerPath -Payload $Marker -Replace
     }
-    if ((Test-Path -LiteralPath $resolvedRoot) -or
-        ($currentMarker -and @(
-                Get-ChildItem -LiteralPath $AllowedParentRoot -Directory -Force -ErrorAction Stop |
-                    Where-Object { -not ($_.Attributes -band [System.IO.FileAttributes]::ReparsePoint) } |
-                    Where-Object {
-                        (Get-AtlasoPathIdentity -Path $_.FullName -Description 'Photon cleanup candidate') -ceq
-                            $ExpectedRootIdentity
-                    }
-            ).Count -ne 0)) {
+    if (Test-Path -LiteralPath $resolvedRoot) {
         throw 'Retained Photon credential artifact identity is still present.'
     }
     $Marker.Phase = 'retired'
@@ -1104,15 +1076,8 @@ function Invoke-AtlasoPhotonBuildCleanupRecovery {
             [string]$marker.BootIdentity -ceq (Get-AtlasoWindowsBootIdentity)) {
             throw 'A Windows restart is required before retained Photon credential artifacts can be cleaned safely.'
         }
-        if ($legacyActiveMarker -and -not (Test-Path -LiteralPath $resolvedRoot)) {
-            # Schema 1 cannot identify a moved root, but an absent exact path
-            # after changed-boot proof means its deletion completed before the
-            # legacy marker transition was flushed.
-            Sync-AtlasoDirectoryMetadata -DirectoryPath (Split-Path -Parent $resolvedRoot)
-            $marker.Phase = 'root-absent'
-            Write-AtlasoDurableJsonFile -Path $MarkerPath -Payload $marker -Replace
-            $legacyActiveMarker = $false
-            $legacyTerminalMarker = $true
+        if ($legacyActiveMarker -and -not (Test-Path -LiteralPath $resolvedRoot -PathType Container)) {
+            throw 'Legacy Photon cleanup root is absent or moved; artifacts and marker were preserved.'
         }
         elseif ($legacyActiveMarker) {
             # Schema 1 predates filesystem identity pinning. A changed boot proves
