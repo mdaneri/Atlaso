@@ -80,7 +80,7 @@
                       <div class="source-editor-state">
                         {% if source.kind == 'atlaso' %}
                           <span class="source-validation-state"><span class="status-pill muted">Checked during update</span><button class="help-icon" type="button" data-help="Signed release sources are verified when an update check or installation reads the channel. Synchronize repositories does not write this source into a package client.">i</button></span>
-                        {% elif source.validation_status == 'valid' %}
+                        {% elif source.synchronization_ready %}
                           <span class="source-validation-state"><span class="status-pill good">Synchronized</span><button class="help-icon" type="button" data-help="{{ source.validation_message or 'This repository was synchronized with its appliance package client.' }}">i</button></span>
                         {% elif source.validation_status == 'invalid' %}
                           <span class="source-validation-state"><span class="status-pill error">Synchronization failed</span><button class="help-icon" type="button" data-help="{{ source.validation_message or 'The last repository synchronization failed. Review its task output before retrying.' }}">i</button></span>

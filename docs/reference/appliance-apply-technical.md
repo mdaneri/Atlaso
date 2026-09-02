@@ -735,6 +735,15 @@ Tool-specific choice. During real apply, the helper applies and verifies the cho
 exists. Explicit PowerCLI `User` and `Session` overrides remain outside Atlaso ownership, and missing optional VMware
 products are reported as skipped.
 
+Privileged PowerCLI policy runs with the root-owned persistent PowerShell home under `/var/lib/atlaso-privileged/powershell`,
+including when complete factory reset activates the clean Appliance Settings unit. The helper creates the bounded XDG
+configuration directories before launching PowerShell instead of relying on `/root` or an interactive profile, so the
+packaged VMware settings manager can initialize consistently during detached reset recovery. The audited **Synchronize
+repositories** task registers desired PowerShell sources in this secured home; update checks remain read-only. Complete
+factory reset removes the bounded former home without following links after unregistering secured-home repositories.
+An upgrade invalidates the former home synchronization receipt, so the stream remains blocked until that audited task
+records a secured-home receipt.
+
 The real Appliance Settings apply path stages JSON at `/var/lib/atlaso/apply/appliance-settings/atlaso-settings.json`.
 The `appliance_settings` unit records the appliance FQDN, resolver mode, resolver servers, local DNS desired-state flag,
 management interface/IP, management UI HTTPS preference, root SSH login preference, derived nginx public ports `80` and
