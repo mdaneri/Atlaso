@@ -34,10 +34,89 @@ function ConvertTo-TestSecureString {
     return $secureValue
 }
 
+<#
+.SYNOPSIS
+Validate one non-secret retained-handle Packer fixture with a bounded child.
+.PARAMETER PackerPath
+Exact Packer executable path.
+.PARAMETER VarFile
+Pinned HCL variable file consumed by the fixture.
+.PARAMETER Template
+HCL template consumed by the fixture.
+#>
+function Invoke-PackerValidateFixture {
+    param(
+        [Parameter(Mandatory = $true)][string]$PackerPath,
+        [Parameter(Mandatory = $true)][string]$VarFile,
+        [Parameter(Mandatory = $true)][string]$Template
+    )
+
+    $startInfo = [System.Diagnostics.ProcessStartInfo]::new()
+    $startInfo.FileName = $PackerPath
+    $startInfo.ArgumentList.Add('validate')
+    $startInfo.ArgumentList.Add('-syntax-only')
+    $startInfo.ArgumentList.Add("-var-file=$VarFile")
+    $startInfo.ArgumentList.Add($Template)
+    $startInfo.UseShellExecute = $false
+    $startInfo.CreateNoWindow = $true
+    $startInfo.RedirectStandardOutput = $true
+    $startInfo.RedirectStandardError = $true
+    $process = [System.Diagnostics.Process]::new()
+    $process.StartInfo = $startInfo
+    try {
+        if (-not $process.Start()) {
+            throw 'Packer validation fixture did not start.'
+        }
+        if (-not $process.WaitForExit(30000)) {
+            $process.Kill($true)
+            $process.WaitForExit()
+            throw 'Packer validation fixture exceeded its 30-second deadline.'
+        }
+        return [pscustomobject]@{
+            ExitCode = $process.ExitCode
+            Output   = $process.StandardOutput.ReadToEnd()
+            Error    = $process.StandardError.ReadToEnd()
+        }
+    }
+    finally {
+        $process.Dispose()
+    }
+}
+
 $modulePath = Join-Path $RepositoryRoot 'scripts/windows/common/Atlaso.PhotonImage.psm1'
 $module = Import-Module $modulePath -Force -PassThru
 $emptyCleanupLedgerRoot = Join-Path $OutputDirectory 'empty-cleanup-ledger'
 New-Item -ItemType Directory -Force -Path $emptyCleanupLedgerRoot | Out-Null
+$identitySource = Join-Path $emptyCleanupLedgerRoot 'identity-source.txt'
+$identityReplacement = Join-Path $emptyCleanupLedgerRoot 'identity-replacement.txt'
+& $module {
+    param([string]$Source, [string]$Replacement)
+    Initialize-AtlasoPhotonPinnedFileType
+    $writer = [Atlaso.PhotonPinnedFile]::Create($Source)
+    [Atlaso.PhotonPinnedFile]::WriteUtf8($writer, 'source')
+    $pin = [Atlaso.PhotonPinnedFile]::PinForReadConsumers($writer)
+    $writer.Dispose()
+    $replacementWriter = [Atlaso.PhotonPinnedFile]::Create($Replacement)
+    [Atlaso.PhotonPinnedFile]::WriteUtf8($replacementWriter, 'replacement')
+    $replacementWriter.Dispose()
+    try {
+        [Atlaso.PhotonPinnedFile]::DeleteExact($pin, $Replacement)
+        throw 'Exact cleanup accepted a different filesystem identity.'
+    }
+    catch {
+        if ($_.Exception.Message -notmatch 'Pinned plaintext identity changed before exact cleanup') {
+            throw
+        }
+    }
+    finally {
+        $pin.Dispose()
+    }
+} $identitySource $identityReplacement
+if (-not (Test-Path -LiteralPath $identitySource -PathType Leaf) -or
+    -not (Test-Path -LiteralPath $identityReplacement -PathType Leaf)) {
+    throw 'Exact cleanup modified an identity-mismatch fixture.'
+}
+Remove-Item -LiteralPath $identitySource, $identityReplacement -Force
 $emptyCleanupLedger = [System.Collections.Generic.List[string]]::new()
 $fixtureScript = Join-Path $emptyCleanupLedgerRoot 'create-fixture.py'
 $fixtureSourceIso = Join-Path $emptyCleanupLedgerRoot 'source iso.iso'
@@ -183,6 +262,46 @@ $pinnedFixtureCleanup = [System.Collections.Generic.List[string]]::new()
 } $fixtureSourceIso $pinnedFixtureKickstart $pinnedFixtureOutputIso $pinnedFixtureCleanup $pinnedFixtureHandles
 if (-not (Test-Path -LiteralPath $pinnedFixtureOutputIso -PathType Leaf)) {
     throw 'Remastering could not consume the kickstart through its retained no-delete handle.'
+}
+$pinnedFixtureDigest = & $module {
+    param([string]$Path)
+    Get-AtlasoFileHashHex -Path $Path -Algorithm SHA512
+} $pinnedFixtureOutputIso
+if ($pinnedFixtureDigest -notmatch '^[0-9a-f]{128}$') {
+    throw 'Atlaso could not hash the retained-handle remastered ISO through a compatible Windows reader.'
+}
+$packerCommand = Get-Command packer -ErrorAction SilentlyContinue
+if ($null -ne $packerCommand) {
+    $pinnedPackerVarPath = Join-Path $emptyCleanupLedgerRoot 'pinned-reader.auto.pkrvars.hcl'
+    $pinnedPackerTemplate = Join-Path $emptyCleanupLedgerRoot 'pinned-reader.pkr.hcl'
+    & $module {
+        param([string]$Path, [hashtable]$PinnedHandles)
+        Write-AtlasoPinnedUtf8Text `
+            -Path $Path `
+            -Text 'test_value = "pinned-reader-ok"' `
+            -PinnedHandles $PinnedHandles
+    } $pinnedPackerVarPath $pinnedFixtureHandles
+    [System.IO.File]::WriteAllText(
+        $pinnedPackerTemplate,
+        @"
+variable "test_value" {
+  type = string
+}
+"@
+    )
+    $packerVarResult = Invoke-PackerValidateFixture `
+        -PackerPath $packerCommand.Source `
+        -VarFile $pinnedPackerVarPath `
+        -Template $pinnedPackerTemplate
+    if ($packerVarResult.ExitCode -ne 0 -or $packerVarResult.Output -notmatch 'Syntax-only check passed') {
+        $packerVarDetail = (($packerVarResult.Error + ' ' + $packerVarResult.Output) -replace '[\r\n]+', ' ').Trim()
+        throw "Packer could not read the retained-handle variable file: $packerVarDetail"
+    }
+    & $module {
+        param([string]$Path, [hashtable]$PinnedHandles)
+        Remove-AtlasoPinnedPlaintextFile -Path $Path -PinnedHandles $PinnedHandles
+    } $pinnedPackerVarPath $pinnedFixtureHandles
+    Remove-Item -LiteralPath $pinnedPackerTemplate -Force
 }
 & $module {
     param([string]$Path, [hashtable]$PinnedHandles)

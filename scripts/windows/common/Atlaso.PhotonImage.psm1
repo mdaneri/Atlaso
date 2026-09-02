@@ -255,7 +255,14 @@ function Get-AtlasoFileHashHex {
         throw "Unsupported checksum algorithm: $Algorithm"
     }
     try {
-        $stream = [System.IO.File]::OpenRead($Path)
+        $stream = if ([System.Environment]::OSVersion.Platform -eq [System.PlatformID]::Win32NT) {
+            Initialize-AtlasoPhotonPinnedFileType
+            $readHandle = [Atlaso.PhotonPinnedFile]::OpenReadSharedDelete($Path)
+            [System.IO.FileStream]::new($readHandle, [System.IO.FileAccess]::Read)
+        }
+        else {
+            [System.IO.File]::OpenRead($Path)
+        }
         try {
             $hashBytes = $hashAlgorithm.ComputeHash($stream)
             return -join ($hashBytes | ForEach-Object { $_.ToString('x2') })
@@ -399,6 +406,20 @@ namespace Atlaso
             public char FileName;
         }
 
+        [StructLayout(LayoutKind.Sequential)]
+        private struct FileId128
+        {
+            public ulong Low;
+            public ulong High;
+        }
+
+        [StructLayout(LayoutKind.Sequential)]
+        private struct FileIdInfo
+        {
+            public ulong VolumeSerialNumber;
+            public FileId128 FileId;
+        }
+
         [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
         private static extern SafeFileHandle CreateFileW(
             string fileName,
@@ -408,6 +429,21 @@ namespace Atlaso
             uint creationDisposition,
             uint flagsAndAttributes,
             IntPtr templateFile);
+
+        [DllImport("kernel32.dll", SetLastError = true)]
+        private static extern SafeFileHandle ReOpenFile(
+            SafeFileHandle originalFile,
+            uint desiredAccess,
+            uint shareMode,
+            uint flagsAndAttributes);
+
+        [DllImport("kernel32.dll", SetLastError = true)]
+        [return: MarshalAs(UnmanagedType.Bool)]
+        private static extern bool GetFileInformationByHandleEx(
+            SafeFileHandle file,
+            int fileInformationClass,
+            out FileIdInfo fileInformation,
+            uint bufferSize);
 
         [DllImport("kernel32.dll", SetLastError = true)]
         [return: MarshalAs(UnmanagedType.Bool)]
@@ -446,17 +482,56 @@ namespace Atlaso
         {
             const uint GenericRead = 0x80000000;
             const uint GenericWrite = 0x40000000;
-            const uint Delete = 0x00010000;
             const uint ShareRead = 0x00000001;
             const uint ShareWrite = 0x00000002;
             const uint CreateNew = 1;
             const uint Normal = 0x00000080;
             SafeFileHandle handle = CreateFileW(
                 path,
-                GenericRead | GenericWrite | Delete,
+                GenericRead | GenericWrite,
                 ShareRead | ShareWrite,
                 IntPtr.Zero,
                 CreateNew,
+                Normal,
+                IntPtr.Zero);
+            if (handle.IsInvalid)
+            {
+                throw new Win32Exception(Marshal.GetLastWin32Error());
+            }
+            return handle;
+        }
+
+        public static SafeFileHandle PinForReadConsumers(SafeFileHandle handle)
+        {
+            const uint FileReadAttributes = 0x00000080;
+            const uint ShareRead = 0x00000001;
+            const uint ShareWrite = 0x00000002;
+            SafeFileHandle consumerHandle = ReOpenFile(
+                handle,
+                FileReadAttributes,
+                ShareRead | ShareWrite,
+                0);
+            if (consumerHandle.IsInvalid)
+            {
+                throw new Win32Exception(Marshal.GetLastWin32Error());
+            }
+            return consumerHandle;
+        }
+
+        public static SafeFileHandle OpenReadSharedDelete(string path)
+        {
+            const uint GenericRead = 0x80000000;
+            const uint ShareRead = 0x00000001;
+            const uint ShareWrite = 0x00000002;
+            const uint ShareDelete = 0x00000004;
+            const uint OpenExisting = 3;
+            const uint Normal = 0x00000080;
+            SafeFileHandle handle = CreateFileW(
+                path,
+                GenericRead,
+                ShareRead | ShareWrite | ShareDelete,
+                IntPtr.Zero,
+                OpenExisting,
                 Normal,
                 IntPtr.Zero);
             if (handle.IsInvalid)
@@ -516,7 +591,7 @@ namespace Atlaso
             }
         }
 
-        public static void Delete(SafeFileHandle handle)
+        private static bool TryDelete(SafeFileHandle handle, out int error)
         {
             IntPtr disposition = Marshal.AllocHGlobal(1);
             try
@@ -529,12 +604,90 @@ namespace Atlaso
                     disposition,
                     1))
                 {
-                    throw new Win32Exception(Marshal.GetLastWin32Error());
+                    error = Marshal.GetLastWin32Error();
+                    return false;
                 }
+                error = 0;
+                return true;
             }
             finally
             {
                 Marshal.FreeHGlobal(disposition);
+            }
+        }
+
+        public static void DeleteExact(SafeFileHandle handle, string path)
+        {
+            int error;
+            if (TryDelete(handle, out error))
+            {
+                return;
+            }
+            const int ErrorAccessDenied = 5;
+            if (error != ErrorAccessDenied)
+            {
+                throw new Win32Exception(error);
+            }
+
+            const int FileIdInfoClass = 18;
+            FileIdInfo identity;
+            if (!GetFileInformationByHandleEx(
+                handle,
+                FileIdInfoClass,
+                out identity,
+                (uint)Marshal.SizeOf<FileIdInfo>()))
+            {
+                throw new Win32Exception(Marshal.GetLastWin32Error());
+            }
+            const uint FileReadAttributes = 0x00000080;
+            const uint Delete = 0x00010000;
+            const uint ShareRead = 0x00000001;
+            const uint ShareWrite = 0x00000002;
+            const uint OpenExisting = 3;
+            const uint Normal = 0x00000080;
+
+            // The minimal pin blocks a rename until this transition. Reopen the
+            // expected path with DELETE access, then compare the exact physical
+            // identity while that new handle blocks any further rename. A move
+            // or replacement in the transition window therefore fails closed.
+            handle.Dispose();
+            using (SafeFileHandle exact = CreateFileW(
+                System.IO.Path.GetFullPath(path),
+                FileReadAttributes | Delete,
+                ShareRead | ShareWrite,
+                IntPtr.Zero,
+                OpenExisting,
+                Normal,
+                IntPtr.Zero))
+            {
+                if (exact.IsInvalid)
+                {
+                    throw new Win32Exception(
+                        Marshal.GetLastWin32Error(),
+                        "Could not reopen the pinned plaintext path for exact cleanup.");
+                }
+                FileIdInfo reopenedIdentity;
+                if (!GetFileInformationByHandleEx(
+                    exact,
+                    FileIdInfoClass,
+                    out reopenedIdentity,
+                    (uint)Marshal.SizeOf<FileIdInfo>()))
+                {
+                    throw new Win32Exception(Marshal.GetLastWin32Error());
+                }
+                if (reopenedIdentity.VolumeSerialNumber != identity.VolumeSerialNumber ||
+                    reopenedIdentity.FileId.Low != identity.FileId.Low ||
+                    reopenedIdentity.FileId.High != identity.FileId.High)
+                {
+                    throw new InvalidOperationException(
+                        "Pinned plaintext identity changed before exact cleanup.");
+                }
+                if (!TryDelete(exact, out error))
+                {
+                    throw new Win32Exception(
+                        error,
+                        "Could not mark the exact pinned file identity for deletion.");
+                }
             }
         }
     }
@@ -579,7 +732,12 @@ function Write-AtlasoPinnedUtf8Text {
         [Atlaso.PhotonPinnedFile]::WriteUtf8($handle, $Text)
         Assert-AtlasoSensitiveBuildPath -Validator $SensitivePathValidator -Path $Path
         if ($null -ne $PinnedHandles) {
-            $PinnedHandles[[System.IO.Path]::GetFullPath($Path)] = $handle
+            # Reopen as a minimal no-delete pin before releasing the writer.
+            # Ordinary readers then remain compatible without opening a rename
+            # window between plaintext serialization and consumer completion.
+            $consumerHandle = [Atlaso.PhotonPinnedFile]::PinForReadConsumers($handle)
+            $PinnedHandles[[System.IO.Path]::GetFullPath($Path)] = $consumerHandle
+            $handle.Dispose()
             $handle = $null
         }
     }
@@ -613,7 +771,7 @@ function Remove-AtlasoPinnedPlaintextFile {
     }
     $handle = $PinnedHandles[$resolvedPath]
     Assert-AtlasoSensitiveBuildPath -Validator $SensitivePathValidator -Path $resolvedPath
-    [Atlaso.PhotonPinnedFile]::Delete($handle)
+    [Atlaso.PhotonPinnedFile]::DeleteExact($handle, $resolvedPath)
     $null = $PinnedHandles.Remove($resolvedPath)
     $handle.Dispose()
     if (Test-Path -LiteralPath $resolvedPath) {
@@ -654,45 +812,37 @@ function New-AtlasoRemasteredPhotonIso {
     }
     $pythonPath = (Get-Command python -ErrorAction Stop).Source
     $outputDirectory = Split-Path -Parent $OutputIso
-    $outputLeaf = [System.IO.Path]::GetFileNameWithoutExtension($OutputIso)
-    $outputExtension = [System.IO.Path]::GetExtension($OutputIso)
-    $attemptIsoPath = Join-Path $outputDirectory ".$outputLeaf.$([guid]::NewGuid().ToString('N')).partial$outputExtension"
     Initialize-AtlasoPhotonPinnedFileType
     $attemptHandle = $null
     try {
-        # CreateNew makes this unique path invocation-owned. Keeping a handle
-        # without delete sharing prevents a same-user rename while the helper
-        # writes credential-bearing bytes through its own read/write handle.
-        $attemptHandle = [Atlaso.PhotonPinnedFile]::Create($attemptIsoPath)
-        if ($null -ne $PinnedHandles) {
-            $PinnedHandles[[System.IO.Path]::GetFullPath($attemptIsoPath)] = $attemptHandle
-        }
-        $CleanupPaths.Add($attemptIsoPath)
-        Assert-AtlasoSensitiveBuildPath -Validator $SensitivePathValidator -Path $attemptIsoPath
-        & $pythonPath $script --source-iso $SourceIso --kickstart $KickstartJson --output $attemptIsoPath
-        if ($LASTEXITCODE -ne 0) {
-            throw "Failed to create remastered Photon ISO."
-        }
-        Assert-AtlasoSensitiveBuildPath -Validator $SensitivePathValidator -Path $attemptIsoPath
         if (Test-Path -LiteralPath $OutputIso) {
             Remove-Item -LiteralPath $OutputIso -Force -ErrorAction Stop
             if (Test-Path -LiteralPath $OutputIso) {
                 throw "Could not replace prepared Photon ISO: $OutputIso"
             }
         }
-        # Rename the already pinned filesystem object through its DELETE-capable
-        # handle. The handle never permits delete sharing, so no path-based
-        # replacement can interpose after the helper write and before promotion.
-        [Atlaso.PhotonPinnedFile]::Rename($attemptHandle, $OutputIso)
-        $CleanupPaths.Add($OutputIso)
-        $null = $CleanupPaths.Remove($attemptIsoPath)
+        # CreateNew pins the final task-owned path before the helper can expose
+        # credential-bearing bytes. Writing the final object directly avoids a
+        # DELETE-capable promotion handle that ordinary Packer readers cannot share.
+        $attemptHandle = [Atlaso.PhotonPinnedFile]::Create($OutputIso)
         if ($null -ne $PinnedHandles) {
-            $null = $PinnedHandles.Remove([System.IO.Path]::GetFullPath($attemptIsoPath))
             $PinnedHandles[[System.IO.Path]::GetFullPath($OutputIso)] = $attemptHandle
         }
+        $CleanupPaths.Add($OutputIso)
         Assert-AtlasoSensitiveBuildPath -Validator $SensitivePathValidator -Path $OutputIso
-        if ((Test-Path -LiteralPath $attemptIsoPath) -or -not (Test-Path -LiteralPath $OutputIso -PathType Leaf)) {
-            throw "Remastered Photon ISO promotion did not complete: $OutputIso"
+        & $pythonPath $script --source-iso $SourceIso --kickstart $KickstartJson --output $OutputIso
+        if ($LASTEXITCODE -ne 0) {
+            throw "Failed to create remastered Photon ISO."
+        }
+        Assert-AtlasoSensitiveBuildPath -Validator $SensitivePathValidator -Path $OutputIso
+        if ($null -ne $PinnedHandles) {
+            $consumerHandle = [Atlaso.PhotonPinnedFile]::PinForReadConsumers($attemptHandle)
+            $PinnedHandles[[System.IO.Path]::GetFullPath($OutputIso)] = $consumerHandle
+            $attemptHandle.Dispose()
+            $attemptHandle = $consumerHandle
+        }
+        if (-not (Test-Path -LiteralPath $OutputIso -PathType Leaf)) {
+            throw "Remastered Photon ISO creation did not complete: $OutputIso"
         }
         if ($null -ne $PinnedHandles) {
             $attemptHandle = $null

@@ -65,14 +65,19 @@ kickstart ISO is written under this image directory as a temporary sensitive art
 verifies its absence after the bounded Packer validation or build exits, including failure paths. `-PrepareIsoOnly` is
 rejected because retaining that ISO would retain a reusable build credential. A fresh build starts with an empty
 task-owned cleanup ledger; the wrapper creates and filesystem-identity-pins the prepared-ISO directory, then creates
-and pins each unique partial file before the
-remaster helper writes through that same file, then promotes that exact object through its still-open no-delete handle
-with an explicitly terminated native rename buffer and records the final path only after replacement succeeds.
+and pins the final ISO object before the remaster helper writes through that same file. Writing the final object directly
+avoids a DELETE-capable promotion handle that would conflict with ordinary Packer readers.
 The remaster helper reads the pinned kickstart through a delete-sharing-compatible Windows handle, and its bounded
 fallback leaf stays shorter than the ordinary ISO name so the additional partial-file identity suffix remains viable.
+Atlaso hashes the retained ISO through the same compatible sharing contract; focused Packer syntax validation reads the
+retained variable file before its exact identity-bound deletion, and the canonical build proves plugin-level ISO access.
 The kickstart JSON and Packer variable file use the same create-new, identity-pin, handle-write ordering before any
-plaintext credential byte is exposed. Their no-delete handles, and the promoted ISO handle, remain open through the
-respective helper or Packer consumer and are marked for deletion through those exact handles before release. Recovery
+plaintext credential byte is exposed. Before ordinary readers run, each writer handle is atomically reopened as a
+distinct read-attributes pin that still denies delete sharing without retaining the writer's data access. Cleanup
+releases that pin only while reopening the expected path with delete access, then requires the captured 128-bit
+filesystem identity to match before deletion. A move or replacement in that transition therefore fails closed instead
+of redirecting removal.
+Those pins remain open through the respective helper or Packer consumer. Recovery
 never interprets an absent active cleanup root as deletion proof,
 because a same-user move outside the admitted parent is indistinguishable from a completed deletion after a crash.
 Failed remaster attempts remain in the same handle ledger until the outer cleanup deletes the exact partial object.

@@ -3576,7 +3576,7 @@ def test_photon_child_revalidates_pinned_credential_ancestry() -> None:
 
 
 def test_remaster_attempt_is_identity_pinned_before_helper_writes() -> None:
-    """The helper writes through a pre-created, pinned attempt file."""
+    """The helper writes through the pre-created, pinned final ISO object."""
     common = Path("scripts/windows/common/Atlaso.PhotonImage.psm1").read_text(
         encoding="utf-8"
     )
@@ -3602,41 +3602,39 @@ def test_remaster_attempt_is_identity_pinned_before_helper_writes() -> None:
     assert directory < directory_guard < directory_create < directory_pin < remaster_call
 
     remaster = common.index("function New-AtlasoRemasteredPhotonIso {")
-    create = common.index("[Atlaso.PhotonPinnedFile]::Create($attemptIsoPath)", remaster)
-    record = common.index("$CleanupPaths.Add($attemptIsoPath)", create)
+    create = common.index("[Atlaso.PhotonPinnedFile]::Create($OutputIso)", remaster)
+    record = common.index("$CleanupPaths.Add($OutputIso)", create)
     pin = common.index(
         "Assert-AtlasoSensitiveBuildPath -Validator $SensitivePathValidator "
-        "-Path $attemptIsoPath",
+        "-Path $OutputIso",
         record,
     )
     helper = common.index("& $pythonPath $script", pin)
     revalidate = common.index(
         "Assert-AtlasoSensitiveBuildPath -Validator $SensitivePathValidator "
-        "-Path $attemptIsoPath",
+        "-Path $OutputIso",
         helper,
     )
-    promote = common.index(
-        "[Atlaso.PhotonPinnedFile]::Rename($attemptHandle, $OutputIso)", revalidate
+    consumer_pin = common.index(
+        "[Atlaso.PhotonPinnedFile]::PinForReadConsumers($attemptHandle)", revalidate
     )
-    retire = common.index("$CleanupPaths.Remove($attemptIsoPath)", promote)
-    final_pin = common.index(
-        "Assert-AtlasoSensitiveBuildPath -Validator $SensitivePathValidator "
-        "-Path $OutputIso",
-        retire,
-    )
-    dispose = common.index("$attemptHandle.Dispose()", final_pin)
+    dispose = common.index("$attemptHandle.Dispose()", consumer_pin)
 
-    assert create < record < pin < helper < revalidate < promote
-    assert promote < retire < final_pin < dispose
+    assert create < record < pin < helper < revalidate < consumer_pin < dispose
     native = common.index("public static class PhotonPinnedFile")
-    assert "GenericRead | GenericWrite | Delete" in common[native:create]
+    assert "GenericRead | GenericWrite" in common[native:create]
     assert "ShareRead | ShareWrite" in common[native:create]
+    assert "OpenReadSharedDelete" in common[native:create]
+    assert "ShareRead | ShareWrite | ShareDelete" in common[native:create]
+    assert "PinForReadConsumers" in common[native:create]
+    assert "GetFileInformationByHandleEx" in common[native:create]
+    assert "ReOpenFile" in common[native:create]
+    assert "Pinned plaintext identity changed before exact cleanup." in common
     assert "SetFileInformationByHandle" in common[native:create]
-    assert "nameOffset + nameBytes.Length + 2" in common[native:create]
+    assert "[Atlaso.PhotonPinnedFile]::OpenReadSharedDelete($Path)" in common
     remaster_end = common.index("function ConvertTo-AtlasoHclLiteral", remaster)
     remaster_block = common[remaster:remaster_end]
     assert "$null -ne $attemptHandle -and $null -eq $PinnedHandles" in remaster_block
-    assert "$PinnedHandles.Remove" in remaster_block
 
     helper_source = Path("scripts/interop/create_photon_kickstart_iso.py").read_text(
         encoding="utf-8"
@@ -3691,7 +3689,7 @@ def test_plaintext_leaf_files_are_pinned_before_write() -> None:
         var_write : var_write + 300
     ]
     assert "function Remove-AtlasoPinnedPlaintextFile" in common
-    assert "[Atlaso.PhotonPinnedFile]::Delete($handle)" in common
+    assert "[Atlaso.PhotonPinnedFile]::DeleteExact($handle, $resolvedPath)" in common
     assert common.count("-PinnedHandles $pinnedPlaintextHandles") >= 6
 
 
