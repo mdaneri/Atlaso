@@ -107,6 +107,13 @@ if ((Test-Path -LiteralPath $identitySource) -or
     throw 'Exact cleanup followed a replacement path instead of its bound filesystem identity.'
 }
 Remove-Item -LiteralPath $identityReplacement -Force
+$neverCreatedPath = Join-Path $emptyCleanupLedgerRoot 'never-created-pinned-plaintext.txt'
+& $module {
+    param([string]$Path)
+    Remove-AtlasoPinnedPlaintextFile -Path $Path -PinnedHandles @{}
+} $neverCreatedPath
+$untrackedPlaintextPath = Join-Path $emptyCleanupLedgerRoot 'untracked-plaintext.txt'
+[System.IO.File]::WriteAllText($untrackedPlaintextPath, 'untracked')
 $cleanupFailureFlag = & $module {
     param([string]$Path)
     try {
@@ -116,10 +123,12 @@ $cleanupFailureFlag = & $module {
         return [bool]$_.Exception.Data['AtlasoPlaintextCleanupUnproven']
     }
     return $false
-} (Join-Path $emptyCleanupLedgerRoot 'missing-pinned-plaintext.txt')
-if (-not $cleanupFailureFlag) {
+} $untrackedPlaintextPath
+if (-not $cleanupFailureFlag -or
+    -not (Test-Path -LiteralPath $untrackedPlaintextPath -PathType Leaf)) {
     throw 'Pinned plaintext cleanup failure did not retain its parent-visible proof.'
 }
+Remove-Item -LiteralPath $untrackedPlaintextPath -Force
 $emptyCleanupLedger = [System.Collections.Generic.List[string]]::new()
 $fixtureScript = Join-Path $emptyCleanupLedgerRoot 'create-fixture.py'
 $fixtureSourceIso = Join-Path $emptyCleanupLedgerRoot 'source iso.iso'

@@ -82,6 +82,8 @@ never interprets an absent active cleanup root as deletion proof,
 because a same-user move outside the admitted parent is indistinguishable from a completed deletion after a crash.
 If the isolated child cannot prove exact-file deletion, its dedicated failure status makes the parent retain both the
 credential root and durable cleanup marker instead of recursively deleting the root and retiring the marker.
+An absent path with no recorded handle is treated as never created; an existing untracked plaintext path remains a
+cleanup failure.
 Failed remaster attempts remain in the same handle ledger until the outer cleanup deletes the exact partial object.
 `New-AtlasoPhotonKickstart` in
 `scripts/windows/common/Atlaso.PhotonImage.psm1` is the only kickstart source. Focused image tests parse its VMware JSON

@@ -3519,6 +3519,10 @@ def test_photon_cleanup_pins_root_identity_for_creation_and_recovery() -> None:
         "scripts/windows/vmware/Atlaso.WorkstationFirstBoot.ps1"
     ).read_text(encoding="utf-8")
     assert "AtlasoPlaintextCleanupUnproven" in common
+    missing_handle = common.index("if (-not $PinnedHandles.ContainsKey($resolvedPath))")
+    absent_return = common.index("if (-not (Test-Path -LiteralPath $resolvedPath))", missing_handle)
+    unavailable = common.index("Pinned plaintext handle is unavailable", absent_return)
+    assert missing_handle < absent_return < unavailable
     assert "$processFailure.Data['AtlasoProcessExitCode'] = $process.ExitCode" in first_boot
 
 

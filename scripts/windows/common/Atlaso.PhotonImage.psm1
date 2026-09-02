@@ -889,6 +889,9 @@ function Remove-AtlasoPinnedPlaintextFile {
     $resolvedPath = [System.IO.Path]::GetFullPath($Path)
     try {
         if (-not $PinnedHandles.ContainsKey($resolvedPath)) {
+            if (-not (Test-Path -LiteralPath $resolvedPath)) {
+                return
+            }
             throw "Pinned plaintext handle is unavailable: $resolvedPath"
         }
         $handle = $PinnedHandles[$resolvedPath]
