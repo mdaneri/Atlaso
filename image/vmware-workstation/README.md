@@ -496,9 +496,9 @@ vSphere/ESXi import: `Atlaso Management Network` for the first adapter, which re
 `Atlaso Services Network` for the second adapter used by DNS, DHCP, CA, depot, PXE, KMS, and other Atlaso-managed
 services.
 
-Image provisioning configures Photon GRUB with the exact `gfxmode="1280x800"` and `gfxpayload=keep` assignments and
-adds `fbcon=font:VGA8x16` to the Photon kernel entry. This yields a 160-column by 50-row `tty1` console and survives
-reboot because the settings are written directly to `/boot/grub2/grub.cfg`.
+Image provisioning follows the canonical
+[boot presentation contract](../../docs/reference/appliance-console-technical.md#boot-presentation) for the Photon
+GRUB splash and `tty1` console.
 
 Supported OVF Tool exports declare disabled Secure Boot with
 `vmw:key="bootOptions.efiSecureBootEnabled" vmw:value="false"`. Atlaso validates that normalized descriptor before it
