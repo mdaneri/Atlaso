@@ -871,6 +871,7 @@ function Invoke-AtlasoBoundedStreamingProcess {
     $process = $processJob.RootProcess
     $jobCompletionProven = $false
     $interruptionTerminationProven = $false
+    $pendingFailure = $null
     try {
         if ($recoverable) {
             & $ProcessOwnershipPublisher $processJob
@@ -905,6 +906,13 @@ function Invoke-AtlasoBoundedStreamingProcess {
             throw $processFailure
         }
     }
+    catch {
+        # Retain the initiating failure across the mandatory job cleanup below.
+        # Without this inner exception, a publication or resume failure is
+        # indistinguishable from an operator interruption during diagnosis.
+        $pendingFailure = $_.Exception
+        throw
+    }
     finally {
         try {
             if (-not $jobCompletionProven) {
@@ -933,7 +941,8 @@ function Invoke-AtlasoBoundedStreamingProcess {
         }
         if ($interruptionTerminationProven) {
             $interruptionFailure = [System.InvalidOperationException]::new(
-                "$Action was interrupted after proven whole-process-tree termination."
+                "$Action was interrupted after proven whole-process-tree termination.",
+                $pendingFailure
             )
             $interruptionFailure.Data['AtlasoProcessTreeTerminationProven'] = $true
             throw $interruptionFailure

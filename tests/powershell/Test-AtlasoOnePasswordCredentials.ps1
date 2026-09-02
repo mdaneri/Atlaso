@@ -367,6 +367,27 @@ if ($null -eq $ordinaryFailure -or
     throw 'An ordinary nonzero exit was not reported after proven whole-process-tree termination.'
 }
 
+$publicationFailure = $null
+try {
+    Invoke-AtlasoBoundedStreamingProcess `
+        -FilePath (Get-Process -Id $PID).Path `
+        -ArgumentList @('-NoLogo', '-NoProfile', '-NonInteractive', '-Command', 'Start-Sleep -Seconds 30') `
+        -TimeoutSeconds 10 `
+        -Action 'Focused ownership-publication failure test' `
+        -ProcessJobName "Local\Atlaso-Photon-$([guid]::NewGuid().ToString('N'))" `
+        -ProcessOwnershipPublisher { throw 'Focused ownership publication failed.' }
+}
+catch {
+    $publicationFailure = $_
+}
+if ($null -eq $publicationFailure -or
+    $publicationFailure.Exception.Message -notmatch 'interrupted after proven whole-process-tree termination' -or
+    $null -eq $publicationFailure.Exception.InnerException -or
+    $publicationFailure.Exception.InnerException.Message -cne 'Focused ownership publication failed.' -or
+    -not $publicationFailure.Exception.Data['AtlasoProcessTreeTerminationProven']) {
+    throw 'An ownership-publication failure did not preserve its initiating cause after proven termination.'
+}
+
 $breakawayToken = "atlaso-breakaway-$([guid]::NewGuid().ToString('N'))"
 $escapedRunnerPath = (Join-Path $repositoryRoot 'scripts\windows\vmware\Atlaso.WorkstationFirstBoot.ps1') `
     -replace "'", "''"
