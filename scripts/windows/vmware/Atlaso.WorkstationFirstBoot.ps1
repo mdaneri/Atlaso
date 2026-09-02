@@ -956,7 +956,44 @@ Return a stable identity for the current Windows boot.
 #>
 function Get-AtlasoWindowsBootIdentity {
     $operatingSystem = Get-CimInstance -ClassName Win32_OperatingSystem -ErrorAction Stop
-    return $operatingSystem.LastBootUpTime.ToUniversalTime().ToString('o')
+    return ([DateTimeOffset]$operatingSystem.LastBootUpTime).ToUniversalTime().Ticks.ToString(
+        [System.Globalization.CultureInfo]::InvariantCulture
+    )
+}
+
+<#
+.SYNOPSIS
+Test whether a persisted boot identity describes the current Windows boot.
+
+.PARAMETER BootIdentity
+Value read from a durable cleanup marker, accepted as invariant UTC ticks or a legacy ISO 8601 timestamp.
+#>
+function Test-AtlasoWindowsBootIdentityCurrent {
+    param([Parameter(Mandatory = $true)][object]$BootIdentity)
+
+    $currentIdentity = Get-AtlasoWindowsBootIdentity
+    if ([string]$BootIdentity -ceq $currentIdentity) {
+        return $true
+    }
+    if ($currentIdentity -notmatch '^[0-9]{1,19}$') {
+        return $false
+    }
+    $legacyTicks = if ($BootIdentity -is [DateTime]) {
+        $BootIdentity.ToUniversalTime().Ticks
+    }
+    else {
+        $legacyTimestamp = [DateTimeOffset]::MinValue
+        if (-not [DateTimeOffset]::TryParse(
+                [string]$BootIdentity,
+                [System.Globalization.CultureInfo]::InvariantCulture,
+                [System.Globalization.DateTimeStyles]::RoundtripKind,
+                [ref]$legacyTimestamp
+            )) {
+            return $false
+        }
+        $legacyTimestamp.ToUniversalTime().Ticks
+    }
+    return $legacyTicks.ToString([System.Globalization.CultureInfo]::InvariantCulture) -ceq $currentIdentity
 }
 
 <#

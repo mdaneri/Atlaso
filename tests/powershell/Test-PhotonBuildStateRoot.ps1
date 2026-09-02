@@ -189,6 +189,19 @@ if (-not $outsideError.StartsWith(
     throw "Outside Photon build-state root did not fail closed: $outsideError"
 }
 
+$currentBootIdentity = Get-AtlasoWindowsBootIdentity
+if ($currentBootIdentity -notmatch '^[0-9]{1,19}$' -or
+    -not (Test-AtlasoWindowsBootIdentityCurrent -BootIdentity $currentBootIdentity)) {
+    throw 'The current Windows boot identity was not emitted as stable invariant ticks.'
+}
+$legacyBootIdentity = (Get-CimInstance -ClassName Win32_OperatingSystem -ErrorAction Stop).
+    LastBootUpTime.ToUniversalTime().ToString('o')
+$legacyRoundTrip = (@{ BootIdentity = $legacyBootIdentity } | ConvertTo-Json -Compress) |
+    ConvertFrom-Json
+if (-not (Test-AtlasoWindowsBootIdentityCurrent -BootIdentity $legacyRoundTrip.BootIdentity)) {
+    throw 'A legacy JSON ISO boot identity did not match the same Windows boot.'
+}
+
 $fixtureRoot = Join-Path $resolvedRepositoryRoot (
     '.atlaso-local\photon-build-state-test-' + [guid]::NewGuid().ToString('N')
 )

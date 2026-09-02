@@ -617,7 +617,7 @@ function Invoke-AtlasoOnePasswordCredentialCleanupRecovery {
             throw 'Invalid credential cleanup root.'
         }
         if ($marker.Phase -ceq 'active' -and
-            [string]$marker.BootIdentity -ceq (Get-AtlasoWindowsBootIdentity)) {
+            (Test-AtlasoWindowsBootIdentityCurrent -BootIdentity $marker.BootIdentity)) {
             throw 'A Windows restart is required before retained credential artifacts can be cleaned safely.'
         }
         Complete-AtlasoOnePasswordCredentialCleanup -MarkerPath $markerPath -Marker $marker

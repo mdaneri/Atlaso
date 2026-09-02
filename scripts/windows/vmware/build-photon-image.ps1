@@ -1210,7 +1210,7 @@ function Invoke-AtlasoPhotonBuildCleanupRecovery {
             throw 'Invalid cleanup marker phase.'
         }
         if ($marker.Phase -ceq 'active' -and
-            [string]$marker.BootIdentity -ceq (Get-AtlasoWindowsBootIdentity)) {
+            (Test-AtlasoWindowsBootIdentityCurrent -BootIdentity $marker.BootIdentity)) {
             if (-not $schemaThreeMarker) {
                 throw 'A Windows restart is required before this legacy Photon cleanup marker can be recovered safely.'
             }
