@@ -3458,12 +3458,19 @@ def test_photon_cleanup_pins_root_identity_for_creation_and_recovery() -> None:
     ordinary_cleanup = wrapper.index(
         "Complete-AtlasoPhotonBuildCleanup `", marker
     )
+    plaintext_failure = wrapper.index("$plaintextCleanupUnproven = $true", marker)
+    cleanup_gate = wrapper.index(
+        "if (-not $plaintextCleanupUnproven) {", plaintext_failure
+    )
     recovery = wrapper.index("function Invoke-AtlasoPhotonBuildCleanupRecovery")
     recovery_cleanup = wrapper.index(
         "Complete-AtlasoPhotonBuildCleanup `", recovery
     )
 
     assert "Schema       = 2" in wrapper[marker:ordinary_cleanup]
+    assert plaintext_failure < cleanup_gate < ordinary_cleanup
+    assert "AtlasoProcessExitCode'] -eq 86" in wrapper[marker:cleanup_gate]
+    assert "exit 86" in wrapper
     assert "RootIdentity = [string]$credentialRootIdentity.RootIdentity" in wrapper[
         marker:ordinary_cleanup
     ]
@@ -3505,6 +3512,14 @@ def test_photon_cleanup_pins_root_identity_for_creation_and_recovery() -> None:
     assert "Write-AtlasoDurableJsonFile -Path $MarkerPath -Payload $marker -Replace" in wrapper[
         recovery:marker
     ]
+    common = Path("scripts/windows/common/Atlaso.PhotonImage.psm1").read_text(
+        encoding="utf-8"
+    )
+    first_boot = Path(
+        "scripts/windows/vmware/Atlaso.WorkstationFirstBoot.ps1"
+    ).read_text(encoding="utf-8")
+    assert "AtlasoPlaintextCleanupUnproven" in common
+    assert "$processFailure.Data['AtlasoProcessExitCode'] = $process.ExitCode" in first_boot
 
 
 def test_photon_child_revalidates_pinned_credential_ancestry() -> None:

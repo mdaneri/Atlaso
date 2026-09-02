@@ -887,16 +887,22 @@ function Remove-AtlasoPinnedPlaintextFile {
     )
 
     $resolvedPath = [System.IO.Path]::GetFullPath($Path)
-    if (-not $PinnedHandles.ContainsKey($resolvedPath)) {
-        throw "Pinned plaintext handle is unavailable: $resolvedPath"
+    try {
+        if (-not $PinnedHandles.ContainsKey($resolvedPath)) {
+            throw "Pinned plaintext handle is unavailable: $resolvedPath"
+        }
+        $handle = $PinnedHandles[$resolvedPath]
+        Assert-AtlasoSensitiveBuildPath -Validator $SensitivePathValidator -Path $resolvedPath
+        [Atlaso.PhotonPinnedFile]::DeleteExact($handle, $resolvedPath)
+        $null = $PinnedHandles.Remove($resolvedPath)
+        $handle.Dispose()
+        if (Test-Path -LiteralPath $resolvedPath) {
+            throw "Pinned plaintext cleanup did not complete: $resolvedPath"
+        }
     }
-    $handle = $PinnedHandles[$resolvedPath]
-    Assert-AtlasoSensitiveBuildPath -Validator $SensitivePathValidator -Path $resolvedPath
-    [Atlaso.PhotonPinnedFile]::DeleteExact($handle, $resolvedPath)
-    $null = $PinnedHandles.Remove($resolvedPath)
-    $handle.Dispose()
-    if (Test-Path -LiteralPath $resolvedPath) {
-        throw "Pinned plaintext cleanup did not complete: $resolvedPath"
+    catch {
+        $_.Exception.Data['AtlasoPlaintextCleanupUnproven'] = $true
+        throw
     }
 }
 
@@ -1476,7 +1482,11 @@ function Invoke-AtlasoPhotonImageBuild {
             }
         }
         if ($preparedIsoCleanupFailures.Count -gt 0) {
-            throw "Remastered Photon ISO credential cleanup failed: $($preparedIsoCleanupFailures -join '; ')"
+            $cleanupFailure = [System.InvalidOperationException]::new(
+                "Remastered Photon ISO credential cleanup failed: $($preparedIsoCleanupFailures -join '; ')"
+            )
+            $cleanupFailure.Data['AtlasoPlaintextCleanupUnproven'] = $true
+            throw $cleanupFailure
         }
     }
 }

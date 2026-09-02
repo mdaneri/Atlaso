@@ -1923,6 +1923,7 @@ else {
     }
     $cleanupMarkerPayload = $null
     $processTreeTerminationUnproven = $false
+    $plaintextCleanupUnproven = $false
     $reservationReleaseBlocked = $false
     try {
         Assert-AtlasoPhotonCredentialRootIdentity `
@@ -2076,6 +2077,10 @@ else {
                 $processTreeTerminationUnproven = $true
                 throw 'The isolated VMware Photon image build could not prove whole-tree termination. Restart Windows, then rerun this wrapper to complete sensitive cleanup.'
             }
+            if ($isolatedBuildFailure.Exception.Data['AtlasoProcessExitCode'] -eq 86) {
+                $plaintextCleanupUnproven = $true
+                throw 'The isolated VMware Photon image build could not prove exact plaintext cleanup. The durable cleanup marker and credential root were retained.'
+            }
             $checkedFailureHandlingError = $null
             try {
                 if ($isolatedBuildFailure.Exception.Data['AtlasoProcessTreeTerminationProven'] -and
@@ -2194,16 +2199,18 @@ else {
                     $reservationReleaseError = $_
                 }
             }
-            $cleanupMarker = Get-Content -LiteralPath $cleanupMarkerPath -Raw -ErrorAction Stop |
-                ConvertFrom-Json
-            Complete-AtlasoPhotonBuildCleanup `
-                -MarkerPath $cleanupMarkerPath `
-                -Marker $cleanupMarker `
-                -ExpectedRootPath $credentialRoot `
-                -ExpectedRootIdentity ([string]$credentialRootIdentity.RootIdentity) `
-                -AllowedParentRoot $credentialStateRoot `
-                -RepositoryRoot $repoRoot `
-                -MarkerDirectoryIdentity $cleanupMarkerDirectoryIdentity
+            if (-not $plaintextCleanupUnproven) {
+                $cleanupMarker = Get-Content -LiteralPath $cleanupMarkerPath -Raw -ErrorAction Stop |
+                    ConvertFrom-Json
+                Complete-AtlasoPhotonBuildCleanup `
+                    -MarkerPath $cleanupMarkerPath `
+                    -Marker $cleanupMarker `
+                    -ExpectedRootPath $credentialRoot `
+                    -ExpectedRootIdentity ([string]$credentialRootIdentity.RootIdentity) `
+                    -AllowedParentRoot $credentialStateRoot `
+                    -RepositoryRoot $repoRoot `
+                    -MarkerDirectoryIdentity $cleanupMarkerDirectoryIdentity
+            }
             if ($null -ne $reservationReleaseError) {
                 throw "The VMware builder address reservation was retained: $($reservationReleaseError.Exception.Message)"
             }
@@ -2877,7 +2884,8 @@ if (-not $ValidateOnly -and -not $PrepareIsoOnly) {
         -ReleaseWorkflowRunId $ReleaseWorkflowRunId
 }
 
-Invoke-AtlasoPhotonImageBuild `
+try {
+    Invoke-AtlasoPhotonImageBuild `
     -IsoUrl $IsoUrl `
     -IsoChecksum $IsoChecksum `
     -PackerDirectory $PackerDirectory `
@@ -2914,7 +2922,17 @@ Invoke-AtlasoPhotonImageBuild `
     -KeepExistingOutput:$KeepExistingOutput `
     -EnableRealSystemAdapters:$EnableRealSystemAdapters `
     -ValidateOnly:$ValidateOnly `
-    -PrepareIsoOnly:$PrepareIsoOnly
+        -PrepareIsoOnly:$PrepareIsoOnly
+}
+catch {
+    if ($CredentialChild -and $_.Exception.Data['AtlasoPlaintextCleanupUnproven']) {
+        [Console]::Error.WriteLine(
+            'The isolated Photon child could not prove exact plaintext cleanup.'
+        )
+        exit 86
+    }
+    throw
+}
 
 if (-not $ValidateOnly -and -not $PrepareIsoOnly) {
     # A Packer build can outlive every pre-launch ownership proof. Refresh the
