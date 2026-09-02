@@ -2073,6 +2073,7 @@ else {
     if (-not (Test-Path -LiteralPath $cleanupMarkerPath -PathType Leaf)) {
         throw 'Photon sensitive-cleanup ownership could not be established.'
     }
+    $processOwnershipPayload = $cleanupMarkerPayload
     $cleanupMarkerPayload = $null
     $processTreeTerminationUnproven = $false
     $plaintextCleanupUnproven = $false
@@ -2220,10 +2221,10 @@ else {
             $processOwnershipPublisher = {
                 param($ProcessJob)
 
-                $cleanupMarkerPayload['ChildProcessId'] = [int]$ProcessJob.RootProcess.Id
-                $cleanupMarkerPayload['ChildProcessStartFileTimeUtc'] = `
+                $processOwnershipPayload['ChildProcessId'] = [int]$ProcessJob.RootProcess.Id
+                $processOwnershipPayload['ChildProcessStartFileTimeUtc'] = `
                     $ProcessJob.RootProcess.StartTime.ToUniversalTime().ToFileTimeUtc()
-                $cleanupMarkerPayload['ProcessOwnershipPhase'] = 'assigned'
+                $processOwnershipPayload['ProcessOwnershipPhase'] = 'assigned'
                 if ((Get-AtlasoPathIdentity `
                             -Path $cleanupMarkerDirectory `
                             -Description 'Photon cleanup marker directory') -cne
@@ -2232,9 +2233,10 @@ else {
                 }
                 Write-AtlasoDurableJsonFile `
                     -Path $cleanupMarkerPath `
-                    -Payload $cleanupMarkerPayload `
+                    -Payload $processOwnershipPayload `
                     -Replace
             }.GetNewClosure()
+            $processOwnershipPayload = $null
             Invoke-AtlasoBoundedStreamingProcess `
                 -FilePath (Get-Process -Id $PID).Path `
                 -ArgumentList $childArguments `
