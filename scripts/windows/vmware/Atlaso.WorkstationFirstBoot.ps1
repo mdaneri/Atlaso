@@ -652,6 +652,121 @@ function Open-AtlasoBoundedProcessJob {
 
 <#
 .SYNOPSIS
+Classify one durably recorded Windows process identity.
+
+.PARAMETER ProcessId
+Positive process identifier read from a durable ownership marker.
+
+.PARAMETER StartFileTimeUtc
+Invariant Windows file time captured before the owned process was resumed.
+#>
+function Get-AtlasoRecordedProcessIdentityState {
+    param(
+        [Parameter(Mandatory = $true)][ValidateRange(1, [int]::MaxValue)][int]$ProcessId,
+        [Parameter(Mandatory = $true)][ValidateRange(1, [long]::MaxValue)][long]$StartFileTimeUtc
+    )
+
+    $process = Get-Process -Id $ProcessId -ErrorAction SilentlyContinue
+    if ($null -eq $process) {
+        return 'absent'
+    }
+    try {
+        $actualStart = $process.StartTime.ToUniversalTime().ToFileTimeUtc()
+    }
+    catch {
+        throw 'Recorded process start identity could not be read.'
+    }
+    if ($actualStart -ne $StartFileTimeUtc) {
+        return 'reused'
+    }
+    return 'matching'
+}
+
+<#
+.SYNOPSIS
+Recover one exactly recorded bounded process tree on the current boot.
+
+.PARAMETER Marker
+Validated durable marker containing controller, job, child, and phase ownership.
+
+.PARAMETER JobNamePattern
+Anchored regular expression admitting only the caller's named-job namespace.
+
+.PARAMETER ProcessDescription
+Sanitized workflow description used in fail-closed diagnostics.
+#>
+function Complete-AtlasoSameBootBoundedProcessRecovery {
+    param(
+        [Parameter(Mandatory = $true)][object]$Marker,
+        [Parameter(Mandatory = $true)][string]$JobNamePattern,
+        [Parameter(Mandatory = $true)][string]$ProcessDescription
+    )
+
+    $ownerState = Get-AtlasoRecordedProcessIdentityState `
+        -ProcessId ([int]$Marker.OwnerProcessId) `
+        -StartFileTimeUtc ([long]$Marker.OwnerProcessStartFileTimeUtc)
+    if ($ownerState -ne 'absent') {
+        throw "The prior $ProcessDescription controller is active or its process identifier was reused."
+    }
+    $jobName = [string]$Marker.ProcessJobName
+    if ($jobName -notmatch $JobNamePattern) {
+        throw "Recorded $ProcessDescription process-job identity is invalid."
+    }
+    $ownershipPhase = [string]$Marker.ProcessOwnershipPhase
+    if ($ownershipPhase -notin @('prepared', 'assigned')) {
+        throw "Recorded $ProcessDescription process ownership phase is invalid."
+    }
+    $childState = 'absent'
+    if ($ownershipPhase -ceq 'assigned') {
+        $childState = Get-AtlasoRecordedProcessIdentityState `
+            -ProcessId ([int]$Marker.ChildProcessId) `
+            -StartFileTimeUtc ([long]$Marker.ChildProcessStartFileTimeUtc)
+    }
+    $job = $null
+    $childProcess = $null
+    try {
+        $job = Open-AtlasoBoundedProcessJob -ProcessJobName $jobName
+        if ($null -ne $job) {
+            if ($ownershipPhase -cne 'assigned' -or $childState -cne 'matching') {
+                throw "The retained $ProcessDescription process job cannot be bound to its exact recorded child ($ownershipPhase/$childState)."
+            }
+            $childProcess = Get-Process -Id ([int]$Marker.ChildProcessId) -ErrorAction Stop
+            if (-not $job.ContainsProcess($childProcess)) {
+                throw "The recorded $ProcessDescription child is not owned by the retained process job."
+            }
+            $job.TerminateAndWait(10000)
+            if (-not $childProcess.WaitForExit(10000)) {
+                throw "The recorded $ProcessDescription child remained active after process-job termination."
+            }
+        }
+        elseif ($ownershipPhase -ceq 'assigned' -and $childState -ne 'absent') {
+            throw "The recorded $ProcessDescription child remains present without its exact process job."
+        }
+    }
+    finally {
+        if ($null -ne $childProcess) {
+            $childProcess.Dispose()
+        }
+        if ($null -ne $job) {
+            $job.Dispose()
+        }
+    }
+    if ($ownershipPhase -ceq 'assigned' -and (
+            (Get-AtlasoRecordedProcessIdentityState `
+                -ProcessId ([int]$Marker.ChildProcessId) `
+                -StartFileTimeUtc ([long]$Marker.ChildProcessStartFileTimeUtc)) -ne 'absent'
+        )) {
+        throw "$ProcessDescription child termination could not be proven after recovery."
+    }
+    if ((Get-AtlasoRecordedProcessIdentityState `
+            -ProcessId ([int]$Marker.OwnerProcessId) `
+            -StartFileTimeUtc ([long]$Marker.OwnerProcessStartFileTimeUtc)) -ne 'absent') {
+        throw "$ProcessDescription controller identity changed during same-boot recovery."
+    }
+}
+
+<#
+.SYNOPSIS
 Terminate a bounded process tree and prove every captured descendant exited.
 
 .PARAMETER Process

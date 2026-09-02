@@ -86,20 +86,6 @@ if ($cleanupRecoveryFunction.Count -ne 1) {
     throw 'Expected exactly one Photon cleanup recovery function.'
 }
 . ([scriptblock]::Create($cleanupRecoveryFunction[0].Extent.Text))
-$recordedProcessStateFunction = @(
-    $ast.FindAll(
-        {
-            param($node)
-            $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and
-            $node.Name -ceq 'Get-AtlasoRecordedProcessIdentityState'
-        },
-        $true
-    )
-)
-if ($recordedProcessStateFunction.Count -ne 1) {
-    throw 'Expected exactly one recorded-process identity classifier.'
-}
-. ([scriptblock]::Create($recordedProcessStateFunction[0].Extent.Text))
 $sameBootProcessRecoveryFunction = @(
     $ast.FindAll(
         {

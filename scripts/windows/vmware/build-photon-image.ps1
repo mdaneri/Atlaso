@@ -838,37 +838,6 @@ function Assert-AtlasoBuilderIdentityCurrent {
 
 <#
 .SYNOPSIS
-Classify one durably recorded Windows process identity.
-.PARAMETER ProcessId
-Recorded positive process identifier.
-.PARAMETER StartFileTimeUtc
-Invariant 64-bit Windows file-time captured from the owned process before its
-first instruction can run.
-#>
-function Get-AtlasoRecordedProcessIdentityState {
-    param(
-        [Parameter(Mandatory = $true)][ValidateRange(1, [int]::MaxValue)][int]$ProcessId,
-        [Parameter(Mandatory = $true)][ValidateRange(1, [long]::MaxValue)][long]$StartFileTimeUtc
-    )
-
-    $process = Get-Process -Id $ProcessId -ErrorAction SilentlyContinue
-    if ($null -eq $process) {
-        return 'absent'
-    }
-    try {
-        $actualStart = $process.StartTime.ToUniversalTime().ToFileTimeUtc()
-    }
-    catch {
-        throw 'Recorded process start identity could not be read.'
-    }
-    if ($actualStart -ne $StartFileTimeUtc) {
-        return 'reused'
-    }
-    return 'matching'
-}
-
-<#
-.SYNOPSIS
 Reconcile an exact schema-3 Photon process owner on the current boot.
 .PARAMETER Marker
 Validated schema-3 cleanup marker with controller and child ownership evidence.
@@ -878,71 +847,10 @@ function Complete-AtlasoPhotonSameBootProcessRecovery {
         [Parameter(Mandatory = $true)][object]$Marker
     )
 
-    $ownerState = Get-AtlasoRecordedProcessIdentityState `
-        -ProcessId ([int]$Marker.OwnerProcessId) `
-        -StartFileTimeUtc ([long]$Marker.OwnerProcessStartFileTimeUtc)
-    if ($ownerState -ne 'absent') {
-        throw 'The prior Photon wrapper controller is active or its process identifier was reused.'
-    }
-    $jobName = [string]$Marker.ProcessJobName
-    if ($jobName -notmatch '^Local\\Atlaso-Photon-[0-9a-f]{32}$') {
-        throw 'Recorded Photon process-job identity is invalid.'
-    }
-    $ownershipPhase = [string]$Marker.ProcessOwnershipPhase
-    if ($ownershipPhase -notin @('prepared', 'assigned')) {
-        throw 'Recorded Photon process ownership phase is invalid.'
-    }
-    $childState = 'absent'
-    if ($ownershipPhase -ceq 'assigned') {
-        $childState = Get-AtlasoRecordedProcessIdentityState `
-            -ProcessId ([int]$Marker.ChildProcessId) `
-            -StartFileTimeUtc ([long]$Marker.ChildProcessStartFileTimeUtc)
-    }
-    $job = $null
-    $childProcess = $null
-    try {
-        $job = Open-AtlasoBoundedProcessJob -ProcessJobName $jobName
-        if ($null -ne $job) {
-            # A prepared marker lacks the suspended root identity that would
-            # distinguish the original job from a same-name replacement.
-            if ($ownershipPhase -cne 'assigned' -or $childState -cne 'matching') {
-                throw "The retained Photon process job cannot be bound to its exact recorded child ($ownershipPhase/$childState)."
-            }
-            $childProcess = Get-Process -Id ([int]$Marker.ChildProcessId) -ErrorAction Stop
-            if (-not $job.ContainsProcess($childProcess)) {
-                throw 'The recorded Photon child is not owned by the retained process job.'
-            }
-            $job.TerminateAndWait(10000)
-            if (-not $childProcess.WaitForExit(10000)) {
-                throw 'The recorded Photon child remained active after process-job termination.'
-            }
-        }
-        elseif ($ownershipPhase -ceq 'assigned' -and $childState -ne 'absent') {
-            # Missing job plus a matching child is identity drift; a reused PID
-            # is deliberately fail-closed even though it is not our process.
-            throw 'The recorded Photon child remains present without its exact process job.'
-        }
-    }
-    finally {
-        if ($null -ne $childProcess) {
-            $childProcess.Dispose()
-        }
-        if ($null -ne $job) {
-            $job.Dispose()
-        }
-    }
-    if ($ownershipPhase -ceq 'assigned' -and (
-            (Get-AtlasoRecordedProcessIdentityState `
-                -ProcessId ([int]$Marker.ChildProcessId) `
-                -StartFileTimeUtc ([long]$Marker.ChildProcessStartFileTimeUtc)) -ne 'absent'
-        )) {
-        throw 'Photon child termination could not be proven after recovery.'
-    }
-    if ((Get-AtlasoRecordedProcessIdentityState `
-            -ProcessId ([int]$Marker.OwnerProcessId) `
-            -StartFileTimeUtc ([long]$Marker.OwnerProcessStartFileTimeUtc)) -ne 'absent') {
-        throw 'Photon controller identity changed during same-boot recovery.'
-    }
+    Complete-AtlasoSameBootBoundedProcessRecovery `
+        -Marker $Marker `
+        -JobNamePattern '^Local\\Atlaso-Photon-[0-9a-f]{32}$' `
+        -ProcessDescription 'Photon wrapper'
 }
 
 <#
