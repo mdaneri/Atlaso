@@ -7,7 +7,11 @@ from pathlib import Path
 
 import pytest
 
-from scripts.check_dependency_policy import LOCK_POLICIES, validate
+from scripts.check_dependency_policy import (
+    LOCK_POLICIES,
+    _dev_declaration_hash,
+    validate,
+)
 from scripts.compile_requirements import (
     LOCK_TARGETS,
     UVLOOP_REQUIREMENT,
@@ -18,6 +22,9 @@ from scripts.compile_requirements import (
     _eligible_uvloop_hashes,
     _record_dev_linux_requirement,
     _validated_index_url,
+)
+from scripts.compile_requirements import (
+    _dev_declaration_hash as _compiler_dev_declaration_hash,
 )
 
 
@@ -44,6 +51,21 @@ updates:
 """.lstrip(),
         encoding="utf-8",
     )
+    (root / "pyproject.toml").write_text(
+        """[project]
+requires-python = ">=3.14"
+dependencies = ["runtime>=1"]
+
+[project.optional-dependencies]
+dev = ["pytest>=8"]
+
+[build-system]
+requires = ["hatchling>=1"]
+build-backend = "hatchling.build"
+""",
+        encoding="utf-8",
+    )
+    dev_hash = _dev_declaration_hash(root)
     for policy in LOCK_POLICIES:
         options = [
             "--generate-hashes",
@@ -70,6 +92,11 @@ updates:
                     "#",
                     f"#    {command}",
                     "#",
+                    *(
+                        (f"# atlaso-declarations-sha256: {dev_hash}",)
+                        if policy.path == "requirements-dev.lock"
+                        else ()
+                    ),
                     "example==1.0.0 \\",
                     "    --hash=sha256:" + ("a" * 64),
                     "",
@@ -2279,6 +2306,27 @@ def test_dependency_policy_rejects_incomplete_development_lock(
     assert any(expected_error in error for error in validate(tmp_path))
 
 
+def test_dependency_policy_rejects_stale_development_lock(tmp_path: Path) -> None:
+    """Verify project dependency changes require development-lock regeneration.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+    """
+    write_valid_policy(tmp_path)
+    project = tmp_path / "pyproject.toml"
+    project.write_text(
+        project.read_text(encoding="utf-8").replace(
+            'dev = ["pytest>=8"]', 'dev = ["pytest>=8", "ruff>=1"]'
+        ),
+        encoding="utf-8",
+    )
+
+    assert any(
+        "requirements-dev.lock: declaration fingerprint is stale" in error
+        for error in validate(tmp_path)
+    )
+
+
 def test_dependency_policy_rejects_unhashed_pin(tmp_path: Path) -> None:
     """Verify that dependency policy rejects unhashed pin.
 
@@ -2351,6 +2399,13 @@ def test_development_lock_compiles_the_project_dev_extra() -> None:
     assert target.inputs == ("pyproject.toml",)
     assert target.extras == ("dev",)
     assert target.build_targets == ("editable",)
+
+
+def test_development_fingerprint_implementations_match() -> None:
+    """Keep lock generation and repository validation on one fingerprint contract."""
+    root = Path(__file__).resolve().parents[1]
+
+    assert _compiler_dev_declaration_hash(root) == _dev_declaration_hash(root)
 
 
 def test_linux_development_lock_includes_uvicorn_platform_dependencies() -> None:

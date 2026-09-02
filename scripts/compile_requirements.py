@@ -258,6 +258,28 @@ def _appliance_declaration_hash() -> str:
     ).hexdigest()
 
 
+def _dev_declaration_hash(root: Path = ROOT) -> str:
+    """Return a fingerprint of declarations that resolve the development lock.
+
+    Args:
+        root: Repository root containing the project declaration.
+    """
+    document = tomllib.loads((root / "pyproject.toml").read_text(encoding="utf-8"))
+    project = document["project"]
+    return hashlib.sha256(
+        json.dumps(
+            {
+                "requires_python": project["requires-python"],
+                "dependencies": project["dependencies"],
+                "dev": project.get("optional-dependencies", {}).get("dev", []),
+                "build_system": document.get("build-system", {}),
+            },
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode("utf-8")
+    ).hexdigest()
+
+
 def _record_appliance_declaration_hash() -> None:
     """Persist appliance declaration hash.
 
@@ -283,6 +305,38 @@ def _record_appliance_declaration_hash() -> None:
     lines.insert(
         command_end + 1,
         f"# atlaso-declarations-sha256: {_appliance_declaration_hash()}",
+    )
+    path.write_text("\n".join(lines) + "\n", encoding="utf-8", newline="\n")
+
+
+def _record_dev_declaration_hash(root: Path = ROOT) -> None:
+    """Persist the development-lock declaration fingerprint.
+
+    Args:
+        root: Repository root containing the generated development lock.
+
+    Raises:
+        RuntimeError: If the generated lock header is missing.
+    """
+    path = root / DEV_LOCK
+    lines = [
+        line
+        for line in path.read_text(encoding="utf-8").splitlines()
+        if not DECLARATION_HASH_RE.fullmatch(line)
+    ]
+    command_end = next(
+        (
+            index
+            for index, line in enumerate(lines)
+            if index > 4 and line == "#"
+        ),
+        -1,
+    )
+    if command_end < 0:
+        raise RuntimeError(f"{path.name} does not contain a pip-compile header")
+    lines.insert(
+        command_end + 1,
+        f"# atlaso-declarations-sha256: {_dev_declaration_hash(root)}",
     )
     path.write_text("\n".join(lines) + "\n", encoding="utf-8", newline="\n")
 
@@ -524,6 +578,7 @@ def main() -> int:
         )
     _record_appliance_declaration_hash()
     _record_onepassword_artifact_hash()
+    _record_dev_declaration_hash()
     _record_dev_linux_requirement(uvloop_hashes)
     print(
         f"Regenerated {len(LOCK_TARGETS)} locks with packages uploaded at least "

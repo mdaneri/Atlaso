@@ -37,9 +37,9 @@ The wrapper regenerates:
 - `requirements-virtualization-smoke.lock`.
 
 Every resolver invocation includes `--uploaded-prior-to=P7D` and `--generate-hashes`. Locks that need pip's unsafe
-bootstrap tools retain `--allow-unsafe`, and the wrapper refreshes the declaration fingerprint embedded in
-`requirements-appliance.lock`. Pass `--upgrade` only when the intended change should move every eligible package to the
-newest version that satisfies the seven-day cutoff.
+bootstrap tools retain `--allow-unsafe`, and the wrapper refreshes the declaration fingerprints embedded in
+`requirements-appliance.lock` and `requirements-dev.lock`. Pass `--upgrade` only when the intended change should move
+every eligible package to the newest version that satisfies the seven-day cutoff.
 
 `requirements-dev.lock` resolves the complete project `dev` extra, application dependencies, and editable build
 requirements. CI installs that hash-locked environment before installing Atlaso itself as an editable package with
@@ -50,7 +50,8 @@ policy.
 Because pip resolves environment markers for its current host, the Windows-supported lock generator cannot select
 Linux-only dependencies from `uvicorn[standard]`. The project `dev` extra therefore declares the reviewed Linux
 `uvloop` pin explicitly, and the wrapper adds its eligible release hashes to `requirements-dev.lock` under the same
-environment marker. Ubuntu CI receives the complete declared environment before dependency resolution is disabled.
+environment marker. The wrapper fingerprints the application, `dev`, Python, and editable-build declarations;
+repository checks reject a stale lock before CI installs it with dependency resolution disabled.
 
 The Windows 1Password deployment lock is temporarily augmented from
 `scripts/windows/vmware/onepassword-sdk-cp314-wheel.json`. That manifest binds one immutable GitHub release asset from
@@ -67,7 +68,7 @@ index returns upload times before compiling. It ignores pip configuration and en
 unverified index or find-links source. An approved alternative can be supplied with `--index-url`, but it must use HTTPS,
 must not embed credentials, and must provide complete upload-time metadata or compilation stops before any lock changes.
 
-Do not edit generated pins, hashes, generation-command headers, or the appliance fingerprint manually. Do not remove or
+Do not edit generated pins, hashes, generation-command headers, or declaration fingerprints manually. Do not remove or
 shorten the upload-time cutoff to obtain a newer dependency, including for a security update. If no eligible version
 satisfies the input declarations, change the input constraint through a reviewed dependency update or wait until the
 required release reaches seven full days.
