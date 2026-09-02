@@ -40,11 +40,15 @@ class LockTarget:
         inputs: Inputs maintained by this locktarget.
         allow_unsafe: Whether unsafe is permitted.
         strip_extras: Strip extras maintained by this locktarget.
+        extras: Optional project extras included in the compiled environment.
+        build_targets: Optional project build targets included in the environment.
     """
     output: str
     inputs: tuple[str, ...]
     allow_unsafe: bool
     strip_extras: bool
+    extras: tuple[str, ...] = ()
+    build_targets: tuple[str, ...] = ()
 
 
 LOCK_TARGETS = (
@@ -59,6 +63,14 @@ LOCK_TARGETS = (
         ("pyproject.toml", "requirements-appliance-bootstrap.in"),
         True,
         True,
+    ),
+    LockTarget(
+        output="requirements-dev.lock",
+        inputs=("pyproject.toml",),
+        allow_unsafe=True,
+        strip_extras=True,
+        extras=("dev",),
+        build_targets=("editable",),
     ),
     LockTarget("requirements-docs.lock", ("requirements-docs.in",), False, True),
     LockTarget(
@@ -141,6 +153,11 @@ def _compile_command(
         command.append("--allow-unsafe")
     if target.strip_extras:
         command.append("--strip-extras")
+    command.extend(f"--extra={extra}" for extra in target.extras)
+    command.extend(
+        f"--build-deps-for={build_target}"
+        for build_target in target.build_targets
+    )
     if upgrade:
         command.append("--upgrade")
     command.extend(target.inputs)

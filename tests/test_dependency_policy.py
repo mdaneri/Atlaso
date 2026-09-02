@@ -50,6 +50,11 @@ updates:
         if policy.allow_unsafe:
             options.append("--allow-unsafe")
         options.append("--uploaded-prior-to=P7D")
+        options.extend(f"--extra={extra}" for extra in policy.extras)
+        options.extend(
+            f"--build-deps-for={build_target}"
+            for build_target in policy.build_targets
+        )
         command = " ".join(("pip-compile", *options, *policy.inputs))
         path = root / policy.path
         path.write_text(
@@ -2238,6 +2243,38 @@ def test_dependency_policy_rejects_lock_without_upload_cutoff(tmp_path: Path) ->
     )
 
 
+@pytest.mark.parametrize(
+    ("option", "expected_error"),
+    (
+        ("--extra=dev", "generation command is missing extras dev"),
+        (
+            "--build-deps-for=editable",
+            "generation command is missing build targets editable",
+        ),
+    ),
+)
+def test_dependency_policy_rejects_incomplete_development_lock(
+    tmp_path: Path,
+    option: str,
+    expected_error: str,
+) -> None:
+    """Verify that the development lock covers dev and editable build dependencies.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+        option: Required compiler option removed from the generated lock header.
+        expected_error: Policy error expected for the incomplete lock.
+    """
+    write_valid_policy(tmp_path)
+    path = tmp_path / "requirements-dev.lock"
+    path.write_text(
+        path.read_text(encoding="utf-8").replace(f" {option}", ""),
+        encoding="utf-8",
+    )
+
+    assert any(expected_error in error for error in validate(tmp_path))
+
+
 def test_dependency_policy_rejects_unhashed_pin(tmp_path: Path) -> None:
     """Verify that dependency policy rejects unhashed pin.
 
@@ -2295,6 +2332,21 @@ def test_lock_compiler_applies_upload_cutoff_to_every_target() -> None:
         assert "--no-emit-index-url" in command
         assert f"--output-file={target.output}" in command
         assert ("--allow-unsafe" in command) is target.allow_unsafe
+        for extra in target.extras:
+            assert f"--extra={extra}" in command
+        for build_target in target.build_targets:
+            assert f"--build-deps-for={build_target}" in command
+
+
+def test_development_lock_compiles_the_project_dev_extra() -> None:
+    """Verify that the reproducible test environment includes the project dev extra."""
+    target = next(
+        target for target in LOCK_TARGETS if target.output == "requirements-dev.lock"
+    )
+
+    assert target.inputs == ("pyproject.toml",)
+    assert target.extras == ("dev",)
+    assert target.build_targets == ("editable",)
 
 
 def test_lock_policy_and_generation_inventories_match() -> None:

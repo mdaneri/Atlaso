@@ -399,7 +399,8 @@ Install and run:
 ```bash
 python3.14 -m venv .venv
 source .venv/bin/activate
-pip install -e ".[dev]"
+pip install --require-hashes -r requirements-dev.lock
+pip install --no-deps --no-build-isolation -e .
 uvicorn atlaso.app.main:app --reload --host 127.0.0.1 --port 8000
 ```
 

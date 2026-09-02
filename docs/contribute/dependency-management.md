@@ -29,6 +29,7 @@ The wrapper regenerates:
 
 - `requirements-appliance-bootstrap.lock`;
 - `requirements-appliance.lock`;
+- `requirements-dev.lock`;
 - `requirements-docs.lock`;
 - `requirements-static-analysis.lock`;
 - `requirements-release-tools.lock`;
@@ -39,6 +40,12 @@ Every resolver invocation includes `--uploaded-prior-to=P7D` and `--generate-has
 bootstrap tools retain `--allow-unsafe`, and the wrapper refreshes the declaration fingerprint embedded in
 `requirements-appliance.lock`. Pass `--upgrade` only when the intended change should move every eligible package to the
 newest version that satisfies the seven-day cutoff.
+
+`requirements-dev.lock` resolves the complete project `dev` extra, application dependencies, and editable build
+requirements. CI installs that hash-locked environment before installing Atlaso itself as an editable package with
+dependency resolution and build isolation disabled. This keeps test collection reproducible when a new transitive
+release appears between pull-request and post-merge runs without weakening warnings-as-errors or the package-age
+policy.
 
 The Windows 1Password deployment lock is temporarily augmented from
 `scripts/windows/vmware/onepassword-sdk-cp314-wheel.json`. That manifest binds one immutable GitHub release asset from

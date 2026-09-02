@@ -63,10 +63,14 @@ class LockPolicy:
         path: Path maintained by this lockpolicy.
         inputs: Inputs maintained by this lockpolicy.
         allow_unsafe: Whether unsafe is permitted.
+        extras: Optional project extras required by the generation command.
+        build_targets: Optional project build targets required by the command.
     """
     path: str
     inputs: tuple[str, ...]
     allow_unsafe: bool
+    extras: tuple[str, ...] = ()
+    build_targets: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -89,6 +93,13 @@ LOCK_POLICIES = (
         "requirements-appliance.lock",
         ("pyproject.toml", "requirements-appliance-bootstrap.in"),
         True,
+    ),
+    LockPolicy(
+        path="requirements-dev.lock",
+        inputs=("pyproject.toml",),
+        allow_unsafe=True,
+        extras=("dev",),
+        build_targets=("editable",),
     ),
     LockPolicy("requirements-docs.lock", ("requirements-docs.in",), False),
     LockPolicy(
@@ -1741,6 +1752,24 @@ def validate(root: Path = ROOT) -> list[str]:
                 errors.append(
                     f"{policy.path}: generation command is missing inputs "
                     f"{', '.join(missing_inputs)}"
+                )
+            missing_extras = [
+                value for value in policy.extras if f"--extra={value}" not in command
+            ]
+            if missing_extras:
+                errors.append(
+                    f"{policy.path}: generation command is missing extras "
+                    f"{', '.join(missing_extras)}"
+                )
+            missing_build_targets = [
+                value
+                for value in policy.build_targets
+                if f"--build-deps-for={value}" not in command
+            ]
+            if missing_build_targets:
+                errors.append(
+                    f"{policy.path}: generation command is missing build targets "
+                    f"{', '.join(missing_build_targets)}"
                 )
 
         requirement_indexes = [

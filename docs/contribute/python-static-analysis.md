@@ -18,7 +18,8 @@ violation blocks a pull request instead of creating a separate advisory result.
 Use Python 3.14 and install the development dependencies and hash-locked analyzers from the repository root:
 
 ```powershell
-python -m pip install -e ".[dev]"
+python -m pip install --require-hashes -r requirements-dev.lock
+python -m pip install --no-deps --no-build-isolation -e .
 python -m pip install --require-hashes -r requirements-static-analysis.lock
 ```
 

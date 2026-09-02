@@ -68,6 +68,29 @@ def test_python_ci_installs_pinned_markdown_dependencies_before_pytest() -> None
     assert setup_node < npm_install < pytest
 
 
+def test_python_ci_uses_the_hash_locked_development_environment() -> None:
+    """Keep both Python CI jobs reproducible across transitive package releases."""
+    workflow = (ROOT / ".github" / "workflows" / "ci.yml").read_text(
+        encoding="utf-8"
+    )
+    repository_job = workflow.split("  repository-checks:", maxsplit=1)[1].split(
+        "  deployment-packer:", maxsplit=1
+    )[0]
+    python_job = workflow.split("  python-tests:", maxsplit=1)[1].split(
+        "  trusted-contexts-finish:", maxsplit=1
+    )[0]
+
+    for job in (repository_job, python_job):
+        locked_install = job.index(
+            "python -m pip install --require-hashes -r requirements-dev.lock"
+        )
+        editable_install = job.index(
+            "python -m pip install --no-deps --no-build-isolation -e ."
+        )
+        assert locked_install < editable_install
+        assert 'pip install -e ".[dev]"' not in job
+
+
 def test_packer_ci_authenticates_plugins_without_exposing_fork_tokens() -> None:
     """Verify scoped Packer authentication and the tokenless fork fallback."""
     workflow = (ROOT / ".github" / "workflows" / "ci.yml").read_text(
