@@ -1124,8 +1124,16 @@ function Get-AtlasoWindowsBootIdentityState {
     if ($legacyTicks -le 0) {
         return 'invalid'
     }
-    if ($legacyTicks.ToString([System.Globalization.CultureInfo]::InvariantCulture) -ceq $currentIdentity) {
+    $currentTicks = [long]::Parse(
+        $currentIdentity,
+        [System.Globalization.NumberStyles]::None,
+        [System.Globalization.CultureInfo]::InvariantCulture
+    )
+    if ($legacyTicks -eq $currentTicks) {
         return 'current'
+    }
+    if ($legacyTicks -gt $currentTicks) {
+        return 'invalid'
     }
     return 'prior'
 }

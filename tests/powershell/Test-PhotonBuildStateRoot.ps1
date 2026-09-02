@@ -587,10 +587,23 @@ try {
     [void][System.IO.Directory]::CreateDirectory($invalidBootRoot)
     [System.IO.File]::WriteAllText((Join-Path $invalidBootRoot 'preserve.fixture'), 'test-only')
     $invalidBootMarkerPath = Join-Path $sameBootMarkerDirectory 'invalid-boot.json'
+    $currentBootTicks = [long](Get-AtlasoWindowsBootIdentity)
+    $futureBootTicks = ($currentBootTicks + 1).ToString(
+        [System.Globalization.CultureInfo]::InvariantCulture
+    )
+    $futureBootIso = [DateTimeOffset]::new(
+        $currentBootTicks + 1,
+        [TimeSpan]::Zero
+    ).ToString('o', [System.Globalization.CultureInfo]::InvariantCulture)
+    if ((Get-AtlasoWindowsBootIdentityState -BootIdentity 'malformed-boot-identity') -cne 'invalid' -or
+        (Get-AtlasoWindowsBootIdentityState -BootIdentity $futureBootTicks) -cne 'invalid' -or
+        (Get-AtlasoWindowsBootIdentityState -BootIdentity $futureBootIso) -cne 'invalid') {
+        throw 'Malformed or future Windows boot identities were not classified as invalid.'
+    }
     $invalidBootMarker = [ordered]@{
         Schema = 3; RootPath = $invalidBootRoot
         RootIdentity = Get-AtlasoPathIdentity -Path $invalidBootRoot -Description 'Invalid-boot test root'
-        BootIdentity = 'malformed-boot-identity'; Phase = 'active'
+        BootIdentity = $futureBootTicks; Phase = 'active'
         OwnerProcessId = $exitedOwnerId; OwnerProcessStartFileTimeUtc = $exitedOwnerStart
         ProcessJobName = 'Local\Atlaso-Photon-' + [guid]::NewGuid().ToString('N')
         ChildProcessId = [int]::MaxValue; ChildProcessStartFileTimeUtc = 1
