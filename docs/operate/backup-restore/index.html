@@ -3740,7 +3740,10 @@ an Atlaso restart. The reset readiness handoff remains the sole owner of startin
 after runtime activation and protected credential cleanup finish. Current ordinary Appliance Settings apply does not
 schedule a management restart. Before activation, reset still stops and verifies any fixed-name management restart
 timer or service left by an older installation or interrupted legacy apply, then stops and verifies the application
-services again. This prevents a legacy delayed restart from reviving a database writer during factory replacement.</p>
+services again. This prevents a legacy delayed restart from reviving a database writer during factory replacement.
+Factory Appliance Settings activation initializes the packaged PowerCLI runtime from Atlaso's root-owned persistent
+PowerShell home, so the all-users VMware CEIP policy does not depend on an interactive root profile during the detached
+reset transaction.</p>
 <p>Reset progress and only the non-secret <code>keep</code>/<code>change</code> choices are recorded outside the database in
 <code>/var/lib/atlaso-privileged/factory-reset/request.json</code>; the last successful result is recorded in <code>last-result.json</code>. Atlaso
 resumes an incomplete marker before the web control plane starts after

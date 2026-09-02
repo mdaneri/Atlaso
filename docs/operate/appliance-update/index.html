@@ -3775,7 +3775,7 @@ the update task.</p>
 <li><strong>PowerShell Modules</strong> checks or installs the explicitly managed modules from their selected repositories. After
   installing or updating <code>VCF.PowerCLI</code>, the helper reapplies and verifies the centralized VMware CEIP preference at
   PowerCLI <code>AllUsers</code> scope. Explicit <code>User</code> and <code>Session</code> overrides remain outside Atlaso ownership. Privileged
-  PowerShell work uses the root-owned home <code>/var/lib/atlaso/powershell</code>, so synchronized repository state persists
+  PowerShell work uses the root-owned home <code>/var/lib/atlaso-privileged/powershell</code>, so synchronized repository state persists
   without depending on the service's read-only <code>/root</code> view.</li>
 </ul>
 <p>The appliance never performs a broad runtime <code>pip --upgrade</code> and never contacts PyPI during a Atlaso release update.
