@@ -123,6 +123,7 @@ def test_boot_branding_installer_renders_idempotent_photon_console_config(
 
     Args:
         tmp_path: Pytest-provided isolated filesystem root.
+        framebuffer_config: Photon framebuffer assignments to normalize, or an empty prefix.
     """
     grub_config = tmp_path / "grub.cfg"
     original = framebuffer_config + """set theme=/boot/grub2/themes/photon/theme.txt
