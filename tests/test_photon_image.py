@@ -108,7 +108,14 @@ def test_photon_image_installs_fixed_size_atlaso_grub_branding():
 
 
 @pytest.mark.skipif(os.name == "nt", reason="The GRUB installer requires a POSIX shell.")
-@pytest.mark.parametrize("framebuffer_config", ['', 'gfxmode="640x480"\ngfxpayload=text\n'])
+@pytest.mark.parametrize(
+    "framebuffer_config",
+    [
+        "",
+        'gfxmode="640x480"\ngfxpayload=text\n',
+        'set gfxmode="auto"\nset gfxpayload=keep\n',
+    ],
+)
 def test_boot_branding_installer_renders_idempotent_photon_console_config(
     tmp_path: Path, framebuffer_config: str
 ) -> None:

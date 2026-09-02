@@ -26,11 +26,6 @@ if ! grep -Eq '^[[:space:]]*linux /\$photon_linux([[:space:]]|$)' "$grub_config"
     echo "Photon GRUB configuration does not declare a Photon kernel entry." >&2
     exit 2
 fi
-if grep -Eq '^set[[:space:]]+(gfxmode|gfxpayload)=' "$grub_config"; then
-    echo "Photon GRUB framebuffer assignments use unsupported set syntax." >&2
-    exit 2
-fi
-
 install -d -o root -g root -m 0755 "$theme_dir"
 install -o root -g root -m 0644 "$theme_source" "$theme_dir/theme.txt"
 install -o root -g root -m 0644 "$background_source" "$theme_dir/atlaso.png"
@@ -40,13 +35,13 @@ if [ ! -f "$grub_config.atlaso-backup" ]; then
 fi
 sed -i 's#^set theme=.*#set theme=/grub2/themes/atlaso/theme.txt#' "$grub_config"
 sed -i '/^menuentry "\(Photon\|Atlaso Appliance\|Atlaso\)" {/s//menuentry " " {/' "$grub_config"
-if grep -Eq '^gfxmode=' "$grub_config"; then
-    sed -i 's/^gfxmode=.*/gfxmode="1280x800"/' "$grub_config"
+if grep -Eq '^(set[[:space:]]+)?gfxmode=' "$grub_config"; then
+    sed -i 's/^\(set[[:space:]]\+\)\?gfxmode=.*/gfxmode="1280x800"/' "$grub_config"
 else
     sed -i '/^set theme=/i gfxmode="1280x800"' "$grub_config"
 fi
-if grep -Eq '^gfxpayload=' "$grub_config"; then
-    sed -i 's/^gfxpayload=.*/gfxpayload=keep/' "$grub_config"
+if grep -Eq '^(set[[:space:]]+)?gfxpayload=' "$grub_config"; then
+    sed -i 's/^\(set[[:space:]]\+\)\?gfxpayload=.*/gfxpayload=keep/' "$grub_config"
 else
     sed -i '/^set theme=/i gfxpayload=keep' "$grub_config"
 fi
@@ -60,4 +55,8 @@ grep -q '^menuentry " " {$' "$grub_config"
 grep -q '^gfxmode="1280x800"$' "$grub_config"
 grep -q '^gfxpayload=keep$' "$grub_config"
 grep -Eq '^[[:space:]]*linux /\$photon_linux .* fbcon=font:VGA8x16([[:space:]]|$)' "$grub_config"
+if grep -Eq '^set[[:space:]]+(gfxmode|gfxpayload)=' "$grub_config"; then
+    echo "Photon GRUB framebuffer assignments use unsupported set syntax." >&2
+    exit 2
+fi
 printf 'Installed Atlaso GRUB branding and 1280x800 console mode in %s\n' "$theme_dir"
