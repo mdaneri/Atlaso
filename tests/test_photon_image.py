@@ -3467,11 +3467,24 @@ def test_photon_cleanup_pins_root_identity_for_creation_and_recovery() -> None:
         "Complete-AtlasoPhotonBuildCleanup `", recovery
     )
 
-    assert "Schema       = 2" in wrapper[marker:ordinary_cleanup]
+    marker_body = wrapper[marker:ordinary_cleanup]
+    assert "Schema                   = 3" in marker_body
+    assert "OwnerProcessId" in marker_body
+    assert "OwnerProcessStartFileTimeUtc" in marker_body
+    assert "ProcessJobName" in marker_body
+    assert "ChildProcessId" in marker_body
+    assert "ChildProcessStartFileTimeUtc" in marker_body
+    assert "ProcessOwnershipPhase    = 'prepared'" in marker_body
+    assert "$processOwnershipPayload = $cleanupMarkerPayload" in marker_body
+    assert "$processOwnershipPayload['ChildProcessId'] =" in wrapper[marker:ordinary_cleanup]
+    assert "$processOwnershipPayload['ChildProcessStartFileTimeUtc'] =" in wrapper[marker:ordinary_cleanup]
+    assert "$processOwnershipPayload['ProcessOwnershipPhase'] = 'assigned'" in wrapper[marker:ordinary_cleanup]
+    assert "}.GetNewClosure()" not in wrapper[marker:ordinary_cleanup]
+    assert "ProcessOwnershipPublisher" in wrapper[marker:ordinary_cleanup]
     assert plaintext_failure < cleanup_gate < ordinary_cleanup
     assert "AtlasoProcessExitCode'] -eq 86" in wrapper[marker:cleanup_gate]
     assert "exit 86" in wrapper
-    assert "RootIdentity = [string]$credentialRootIdentity.RootIdentity" in wrapper[
+    assert "RootIdentity             = [string]$credentialRootIdentity.RootIdentity" in wrapper[
         marker:ordinary_cleanup
     ]
     assert "-ExpectedRootIdentity $expectedRootIdentity" in wrapper[

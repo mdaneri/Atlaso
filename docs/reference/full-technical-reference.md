@@ -235,10 +235,15 @@ applies checked exact-output cleanup only when the child durably claimed that cl
 absent output, and removes and verifies the
 sensitive root even when the child could not run its own cleanup. The default six-hour deadline is configurable through
 `-ImageBuildTimeoutSeconds`.
-An unproven whole-tree termination retains that root and a non-secret checkout-local ownership marker. Same-boot
-invocations fail closed; after Windows restarts, the changed boot identity proves the prior tree inactive and recovery
-removes the exact root followed by its marker before current task or release identity validation, new credential access,
-or image work. Ordinary completion requires the
+An unproven whole-tree termination retains that root and a non-secret checkout-local ownership marker. Before the
+suspended child resumes, schema-3 state durably records the prior controller, a unique named Windows job, and the child
+with PID/start-time identities. A same-boot rerun requires the prior controller to be absent, terminates only a matching
+recorded job, proves its child and descendants gone, then removes the exact root followed by its marker before current
+task or release identity validation, new credential access, or image work. An already absent exact job and child is a
+terminal interruption and can be reconciled without termination. PID reuse, live or replaced ownership, a surviving
+job after the recorded root exits, incomplete termination, and path or filesystem-identity drift remain fail-closed.
+Legacy ownership markers and every ambiguous current marker require a Windows restart so the changed boot identity can
+prove the prior tree inactive. Ordinary completion requires the
 reloaded marker root to equal the in-memory task-created root before recursive removal.
 The shared SDK bridge uses the same boot-bound ownership. Marker bytes and atomic publication are write-through durable
 before plaintext consumption. After root deletion, the parent flushes directory metadata through the root parent's

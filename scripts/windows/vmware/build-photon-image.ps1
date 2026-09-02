@@ -838,6 +838,23 @@ function Assert-AtlasoBuilderIdentityCurrent {
 
 <#
 .SYNOPSIS
+Reconcile an exact schema-3 Photon process owner on the current boot.
+.PARAMETER Marker
+Validated schema-3 cleanup marker with controller and child ownership evidence.
+#>
+function Complete-AtlasoPhotonSameBootProcessRecovery {
+    param(
+        [Parameter(Mandatory = $true)][object]$Marker
+    )
+
+    Complete-AtlasoSameBootBoundedProcessRecovery `
+        -Marker $Marker `
+        -JobNamePattern '^Local\\Atlaso-Photon-[0-9a-f]{32}$' `
+        -ProcessDescription 'Photon wrapper'
+}
+
+<#
+.SYNOPSIS
 Remove a proven-inactive Photon root and durably retire its marker.
 
 .PARAMETER MarkerPath
@@ -869,13 +886,27 @@ function Complete-AtlasoPhotonBuildCleanup {
     )
 
     $markerProperties = @($Marker.PSObject.Properties.Name)
-    $currentMarker = $markerProperties.Count -eq 5 -and
+    $schemaTwoMarker = $markerProperties.Count -eq 5 -and
         'Schema' -in $markerProperties -and
         'RootPath' -in $markerProperties -and
         'RootIdentity' -in $markerProperties -and
         'BootIdentity' -in $markerProperties -and
         'Phase' -in $markerProperties -and
         $Marker.Schema -eq 2
+    $schemaThreeMarker = $markerProperties.Count -eq 11 -and
+        'Schema' -in $markerProperties -and
+        'RootPath' -in $markerProperties -and
+        'RootIdentity' -in $markerProperties -and
+        'BootIdentity' -in $markerProperties -and
+        'Phase' -in $markerProperties -and
+        'OwnerProcessId' -in $markerProperties -and
+        'OwnerProcessStartFileTimeUtc' -in $markerProperties -and
+        'ProcessJobName' -in $markerProperties -and
+        'ChildProcessId' -in $markerProperties -and
+        'ChildProcessStartFileTimeUtc' -in $markerProperties -and
+        'ProcessOwnershipPhase' -in $markerProperties -and
+        $Marker.Schema -eq 3
+    $currentMarker = $schemaTwoMarker -or $schemaThreeMarker
     $legacyTerminalMarker = $markerProperties.Count -eq 4 -and
         'Schema' -in $markerProperties -and
         'RootPath' -in $markerProperties -and
@@ -1011,13 +1042,27 @@ function Invoke-AtlasoPhotonBuildCleanupRecovery {
             throw 'Photon cleanup marker directory identity changed during recovery.'
         }
         $markerProperties = @($marker.PSObject.Properties.Name)
-        $currentMarker = $markerProperties.Count -eq 5 -and
+        $schemaTwoMarker = $markerProperties.Count -eq 5 -and
             'Schema' -in $markerProperties -and
             'RootPath' -in $markerProperties -and
             'RootIdentity' -in $markerProperties -and
             'BootIdentity' -in $markerProperties -and
             'Phase' -in $markerProperties -and
             $marker.Schema -eq 2
+        $schemaThreeMarker = $markerProperties.Count -eq 11 -and
+            'Schema' -in $markerProperties -and
+            'RootPath' -in $markerProperties -and
+            'RootIdentity' -in $markerProperties -and
+            'BootIdentity' -in $markerProperties -and
+            'Phase' -in $markerProperties -and
+            'OwnerProcessId' -in $markerProperties -and
+            'OwnerProcessStartFileTimeUtc' -in $markerProperties -and
+            'ProcessJobName' -in $markerProperties -and
+            'ChildProcessId' -in $markerProperties -and
+            'ChildProcessStartFileTimeUtc' -in $markerProperties -and
+            'ProcessOwnershipPhase' -in $markerProperties -and
+            $marker.Schema -eq 3
+        $currentMarker = $schemaTwoMarker -or $schemaThreeMarker
         $legacyActiveMarker = $markerProperties.Count -eq 4 -and
             'Schema' -in $markerProperties -and
             'RootPath' -in $markerProperties -and
@@ -1072,9 +1117,17 @@ function Invoke-AtlasoPhotonBuildCleanupRecovery {
         if ($marker.Phase -notin @('active', 'root-absent', 'retired')) {
             throw 'Invalid cleanup marker phase.'
         }
-        if ($marker.Phase -ceq 'active' -and
-            [string]$marker.BootIdentity -ceq (Get-AtlasoWindowsBootIdentity)) {
-            throw 'A Windows restart is required before retained Photon credential artifacts can be cleaned safely.'
+        if ($marker.Phase -ceq 'active') {
+            $bootIdentityState = Get-AtlasoWindowsBootIdentityState -BootIdentity $marker.BootIdentity
+            if ($bootIdentityState -ceq 'invalid') {
+                throw 'The retained Photon cleanup marker has an invalid boot identity.'
+            }
+            if ($bootIdentityState -ceq 'current') {
+                if (-not $schemaThreeMarker) {
+                    throw 'A Windows restart is required before this legacy Photon cleanup marker can be recovered safely.'
+                }
+                Complete-AtlasoPhotonSameBootProcessRecovery -Marker $marker
+            }
         }
         if ($legacyActiveMarker -and -not (Test-Path -LiteralPath $resolvedRoot -PathType Container)) {
             throw 'Legacy Photon cleanup root is absent or moved; artifacts and marker were preserved.'
@@ -1115,7 +1168,10 @@ function Invoke-AtlasoPhotonBuildCleanupRecovery {
             -MarkerDirectoryIdentity $markerDirectoryIdentity
     }
     catch {
-        throw 'A prior Photon image build has unresolved sensitive cleanup. Restart Windows, then rerun this wrapper.'
+        throw [System.InvalidOperationException]::new(
+            'A prior Photon image build has unresolved sensitive cleanup. Same-boot recovery could not prove exact process ownership and termination; restart Windows, then rerun this wrapper.',
+            $_.Exception
+        )
     }
 }
 
@@ -1906,13 +1962,22 @@ else {
     $cleanupMarkerDirectoryIdentity = Get-AtlasoPathIdentity `
         -Path $cleanupMarkerDirectory `
         -Description 'Photon cleanup marker directory'
+    $controllerProcess = Get-Process -Id $PID -ErrorAction Stop
+    $processJobName = 'Local\Atlaso-Photon-' + [guid]::NewGuid().ToString('N')
     $cleanupMarkerPayload = [ordered]@{
-        Schema       = 2
-        RootPath     = [System.IO.Path]::GetFullPath($credentialRoot)
-        RootIdentity = [string]$credentialRootIdentity.RootIdentity
-        BootIdentity = Get-AtlasoWindowsBootIdentity
-        Phase        = 'active'
+        Schema                   = 3
+        RootPath                 = [System.IO.Path]::GetFullPath($credentialRoot)
+        RootIdentity             = [string]$credentialRootIdentity.RootIdentity
+        BootIdentity             = Get-AtlasoWindowsBootIdentity
+        Phase                    = 'active'
+        OwnerProcessId           = $PID
+        OwnerProcessStartFileTimeUtc = $controllerProcess.StartTime.ToUniversalTime().ToFileTimeUtc()
+        ProcessJobName           = $processJobName
+        ChildProcessId           = 0
+        ChildProcessStartFileTimeUtc = 0
+        ProcessOwnershipPhase    = 'prepared'
     }
+    $controllerProcess.Dispose()
     Write-AtlasoDurableJsonFile -Path $cleanupMarkerPath -Payload $cleanupMarkerPayload
     if ((Get-AtlasoPathIdentity -Path $cleanupMarkerDirectory -Description 'Photon cleanup marker directory') -cne
         $cleanupMarkerDirectoryIdentity) {
@@ -1921,6 +1986,7 @@ else {
     if (-not (Test-Path -LiteralPath $cleanupMarkerPath -PathType Leaf)) {
         throw 'Photon sensitive-cleanup ownership could not be established.'
     }
+    $processOwnershipPayload = $cleanupMarkerPayload
     $cleanupMarkerPayload = $null
     $processTreeTerminationUnproven = $false
     $plaintextCleanupUnproven = $false
@@ -2065,11 +2131,32 @@ else {
             }
         }
         try {
+            $processOwnershipPublisher = {
+                param($ProcessJob)
+
+                $processOwnershipPayload['ChildProcessId'] = [int]$ProcessJob.RootProcess.Id
+                $processOwnershipPayload['ChildProcessStartFileTimeUtc'] = `
+                    $ProcessJob.RootProcess.StartTime.ToUniversalTime().ToFileTimeUtc()
+                $processOwnershipPayload['ProcessOwnershipPhase'] = 'assigned'
+                if ((Get-AtlasoPathIdentity `
+                            -Path $cleanupMarkerDirectory `
+                            -Description 'Photon cleanup marker directory') -cne
+                    $cleanupMarkerDirectoryIdentity) {
+                    throw 'Photon cleanup marker directory identity changed before process ownership publication.'
+                }
+                Write-AtlasoDurableJsonFile `
+                    -Path $cleanupMarkerPath `
+                    -Payload $processOwnershipPayload `
+                    -Replace
+            }
             Invoke-AtlasoBoundedStreamingProcess `
                 -FilePath (Get-Process -Id $PID).Path `
                 -ArgumentList $childArguments `
                 -TimeoutSeconds $ImageBuildTimeoutSeconds `
-                -Action 'The isolated VMware Photon image build'
+                -Action 'The isolated VMware Photon image build' `
+                -ProcessJobName $processJobName `
+                -ProcessOwnershipPublisher $processOwnershipPublisher
+            $processOwnershipPayload = $null
         }
         catch {
             $isolatedBuildFailure = $_
