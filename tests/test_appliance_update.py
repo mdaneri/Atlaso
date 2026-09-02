@@ -49,7 +49,31 @@ def load_helper_module():
     assert spec is not None
     module = importlib.util.module_from_spec(spec)
     loader.exec_module(module)
+    module._privileged_powershell_environment = lambda: temporary_powershell_environment(
+        module.ATLASO_POWERSHELL_HOME
+    )
     return module
+
+
+def temporary_powershell_environment(home: Path) -> dict[str, str]:
+    """Create a non-privileged PowerShell environment for unit tests.
+
+    Args:
+        home: Temporary test directory used as the PowerShell home.
+    """
+    for directory in (
+        home,
+        home / ".cache",
+        home / ".config",
+        home / ".local" / "share",
+    ):
+        directory.mkdir(parents=True, exist_ok=True)
+    return {
+        "HOME": str(home),
+        "XDG_CACHE_HOME": str(home / ".cache"),
+        "XDG_CONFIG_HOME": str(home / ".config"),
+        "XDG_DATA_HOME": str(home / ".local" / "share"),
+    }
 
 
 def test_reserved_psgallery_source_requires_the_canonical_endpoint():
@@ -1126,9 +1150,39 @@ def test_update_source_payload_exposes_only_non_secret_revision():
     payload = update_source_payload(source)
 
     assert payload["credential_present"] is True
+    assert payload["synchronization_ready"] is False
     assert payload["validated_at"] == "2026-08-21T12:30:00+00:00"
     assert payload["updated_at"] == "2026-08-21T13:00:00+00:00"
     assert "credential_encrypted" not in payload
+
+
+def test_legacy_powershell_receipt_renders_as_unsynchronized(client):
+    """Keep the source card consistent with secured-home admission.
+
+    Args:
+        client: HTTP test client used to exercise the Atlaso application.
+    """
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import UpdateSource
+
+    login(client)
+    with SessionLocal() as db:
+        powershell = db.execute(
+            select(UpdateSource).where(UpdateSource.kind == "powershell")
+        ).scalar_one()
+        powershell.validation_status = "valid"
+        powershell.validation_message = "Repository synchronized with its appliance package client."
+        for photon in db.execute(
+            select(UpdateSource).where(UpdateSource.kind == "photon")
+        ).scalars():
+            photon.validation_status = "invalid"
+            photon.validation_message = "Test-only synchronization failure."
+        db.commit()
+
+    page = client.get("/ui/management/appliance-update")
+
+    assert "Saved, not synchronized" in page.text
+    assert "Synchronized</span>" not in page.text
 
 
 def test_availability_fingerprint_stales_after_repository_synchronization():
@@ -2541,7 +2595,9 @@ def test_successful_sync_clears_prerequisite_failure_to_check_required(client):
         ui.set_setting_value(db, APPLIANCE_UPDATE_AVAILABILITY_KEY, update_availability_to_json(state))
         source = db.execute(select(UpdateSource).where(UpdateSource.kind == "powershell")).scalar_one()
         source.validation_status = "valid"
-        source.validation_message = "Repository synchronized with its appliance package client."
+        source.validation_message = (
+            "Repository synchronized with the secured privileged PowerShell home."
+        )
         source.validated_at = datetime.now(timezone.utc)
         db.add(source)
         db.commit()
@@ -4136,6 +4192,12 @@ def test_helper_rejects_unsynchronized_powershell_repository():
         payload, require_streams=True, require_synchronized=False
     ) == []
     payload["source_definitions"][0]["validation_status"] = "valid"
+    assert helper._appliance_update_config_errors(payload, require_streams=True) == [
+        "PowerShell repository PSGallery is not synchronized; run Synchronize repositories before checking or installing managed modules."
+    ]
+    payload["source_definitions"][0]["validation_message"] = (
+        helper.POWERSHELL_SOURCE_HOME_VALIDATION_MESSAGE
+    )
     assert helper._appliance_update_config_errors(payload, require_streams=True) == []
 
 
@@ -5206,6 +5268,7 @@ def test_helper_powershell_check_ignores_unreferenced_unsynchronized_repository(
                 "name": "PSGallery",
                 "enabled": True,
                 "validation_status": "valid",
+                "validation_message": helper.POWERSHELL_SOURCE_HOME_VALIDATION_MESSAGE,
             },
             {
                 "kind": "powershell",

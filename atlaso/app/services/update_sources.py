@@ -16,6 +16,9 @@ UPDATE_SOURCE_KINDS = {"photon", "powershell", "atlaso"}
 ATLASO_CHANNELS = {"stable", "preview", "development"}
 PSGALLERY_NAME = "PSGallery"
 PSGALLERY_SOURCE_URL = "https://www.powershellgallery.com/api/v2"
+POWERSHELL_SOURCE_HOME_VALIDATION_MESSAGE = (
+    "Repository synchronized with the secured privileged PowerShell home."
+)
 
 
 def is_reserved_psgallery_name(value: str) -> bool:
@@ -232,6 +235,8 @@ def unsynchronized_powershell_repositories(settings: dict[str, Any]) -> list[str
         and source.get("kind") == "powershell"
         and source.get("enabled") is True
         and source.get("validation_status") == "valid"
+        and source.get("validation_message")
+        == POWERSHELL_SOURCE_HOME_VALIDATION_MESSAGE
     }
     return sorted(referenced - synchronized)
 
@@ -329,6 +334,10 @@ def update_source_payload(source: UpdateSource) -> dict[str, Any]:
     Returns:
         The update source payload result.
     """
+    synchronization_ready = source.validation_status == "valid" and (
+        source.kind != "powershell"
+        or source.validation_message == POWERSHELL_SOURCE_HOME_VALIDATION_MESSAGE
+    )
     return {
         "id": source.id,
         "kind": source.kind,
@@ -340,6 +349,7 @@ def update_source_payload(source: UpdateSource) -> dict[str, Any]:
         "credential_present": bool(source.credential_encrypted),
         "validation_status": source.validation_status,
         "validation_message": source.validation_message,
+        "synchronization_ready": synchronization_ready,
         "validated_at": source.validated_at.isoformat() if source.validated_at else "",
         "updated_at": source.updated_at.isoformat() if source.updated_at else "",
     }

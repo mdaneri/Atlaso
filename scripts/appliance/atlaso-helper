@@ -234,6 +234,9 @@ MANAGED_PHOTON_REPO_PATH = Path("/etc/yum.repos.d/atlaso-managed.repo")
 PHOTON_REPOSITORY_RUNTIME_ROOT = Path("/run")
 PSGALLERY_NAME = "PSGallery"
 PSGALLERY_SOURCE_URL = "https://www.powershellgallery.com/api/v2"
+POWERSHELL_SOURCE_HOME_VALIDATION_MESSAGE = (
+    "Repository synchronized with the secured privileged PowerShell home."
+)
 ATLASO_HOME = Path("/opt/atlaso")
 ATLASO_RELEASES_DIR = ATLASO_HOME / "releases"
 ATLASO_CURRENT_LINK = ATLASO_HOME / "current"
@@ -276,7 +279,8 @@ ATLASO_UPDATE_RESTART_RECEIPT_PATH = (
 )
 ATLASO_UPDATE_RESTART_GATE_PATH = Path("/run/atlaso-release-restart-gate")
 ATLASO_WORKER_STARTUP_STATUS_PATH = ATLASO_STATE_DIR / "worker-startup.json"
-ATLASO_POWERSHELL_HOME = ATLASO_STATE_DIR / "powershell"
+ATLASO_POWERSHELL_HOME = ATLASO_PRIVILEGED_STATE_DIR / "powershell"
+ATLASO_LEGACY_POWERSHELL_HOME = ATLASO_STATE_DIR / "powershell"
 ATLASO_DATA_DISK_POLICY_PATH = Path("/etc/atlaso/data-disks.conf")
 ATLASO_DATA_DISK_BOOTSTRAP_MARKER_PATH = Path("/etc/atlaso/data-disk-safety-bootstrap.json")
 ATLASO_MOUNT_DATA_DISKS_PATH = Path("/opt/atlaso/bin/atlaso-mount-data-disks")
@@ -719,20 +723,66 @@ def _should_run_real_action_with_systemd(action: str) -> bool:
     )
 
 
-def _appliance_update_powershell_environment() -> dict[str, str]:
-    """Perform appliance update powershell environment.
+def _privileged_powershell_environment() -> dict[str, str]:
+    """Return the persistent writable environment for privileged PowerShell work.
 
     """
-    directories = [
-        ATLASO_POWERSHELL_HOME,
-        ATLASO_POWERSHELL_HOME / ".cache",
-        ATLASO_POWERSHELL_HOME / ".config",
-        ATLASO_POWERSHELL_HOME / ".local",
-        ATLASO_POWERSHELL_HOME / ".local" / "share",
-    ]
-    for directory in directories:
-        directory.mkdir(parents=True, exist_ok=True)
-        directory.chmod(0o700)
+    directories = [".cache", ".config", ".local", ".local/share"]
+    if os.name != "posix":
+        paths = [
+            ATLASO_POWERSHELL_HOME,
+            *(ATLASO_POWERSHELL_HOME / item for item in directories),
+        ]
+        for directory in paths:
+            if directory.is_symlink():
+                raise ValueError("privileged PowerShell directory is unsafe")
+            directory.mkdir(parents=True, exist_ok=True)
+            if directory.is_symlink() or directory.resolve() != directory:
+                raise ValueError("privileged PowerShell directory is unsafe")
+            directory.chmod(0o700)
+    else:
+        flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
+        parent_descriptor = os.open(ATLASO_POWERSHELL_HOME.parent, flags)
+        descriptors = [parent_descriptor]
+        try:
+            parent_stat = os.fstat(parent_descriptor)
+            if (
+                not stat.S_ISDIR(parent_stat.st_mode)
+                or parent_stat.st_uid != 0
+                or parent_stat.st_mode & 0o022
+            ):
+                raise ValueError("privileged PowerShell parent directory is unsafe")
+
+            def open_directory(parent: int, component: str) -> int:
+                """Create and securely open one root-owned directory component.
+
+                Args:
+                    parent: Descriptor for the already-verified parent directory.
+                    component: Relative directory name to create and verify.
+                """
+                try:
+                    os.mkdir(component, 0o700, dir_fd=parent)
+                except FileExistsError:
+                    pass
+                directory_descriptor = os.open(component, flags, dir_fd=parent)
+                descriptors.append(directory_descriptor)
+                directory_stat = os.fstat(directory_descriptor)
+                if not stat.S_ISDIR(directory_stat.st_mode) or directory_stat.st_uid != 0:
+                    raise ValueError("privileged PowerShell directory is unsafe")
+                os.fchmod(directory_descriptor, 0o700)
+                return directory_descriptor
+
+            home_descriptor = open_directory(
+                parent_descriptor,
+                ATLASO_POWERSHELL_HOME.name,
+            )
+            open_directory(home_descriptor, ".cache")
+            open_directory(home_descriptor, ".config")
+            local_descriptor = open_directory(home_descriptor, ".local")
+            open_directory(local_descriptor, "share")
+        finally:
+            for descriptor in reversed(descriptors):
+                os.close(descriptor)
     env = os.environ.copy()
     env.update(
         {
@@ -798,8 +848,8 @@ def _run_real_action_with_systemd(group: str, action: str, args: list[str]) -> i
                 )
                 return 1
         command.append(f"--unit={unit.removesuffix('.service')}")
-    if group == "appliance-update":
-        powershell_env = _appliance_update_powershell_environment()
+    if group in {"appliance-update", "appliance-settings"}:
+        powershell_env = _privileged_powershell_environment()
         command.extend(
             [
                 f"--property=WorkingDirectory={ATLASO_POWERSHELL_HOME}",
@@ -807,15 +857,6 @@ def _run_real_action_with_systemd(group: str, action: str, args: list[str]) -> i
                 f"--setenv=XDG_CACHE_HOME={powershell_env['XDG_CACHE_HOME']}",
                 f"--setenv=XDG_CONFIG_HOME={powershell_env['XDG_CONFIG_HOME']}",
                 f"--setenv=XDG_DATA_HOME={powershell_env['XDG_DATA_HOME']}",
-            ]
-        )
-    elif group == "appliance-settings":
-        command.extend(
-            [
-                "--setenv=HOME=/root",
-                "--setenv=XDG_CACHE_HOME=/root/.cache",
-                "--setenv=XDG_CONFIG_HOME=/root/.config",
-                "--setenv=XDG_DATA_HOME=/root/.local/share",
             ]
         )
     command.extend([helper_path, group, action, "--real", *args])
@@ -11540,6 +11581,8 @@ def _appliance_update_config_errors(
             and source.get("kind") == "powershell"
             and source.get("enabled") is True
             and source.get("validation_status") == "valid"
+            and source.get("validation_message")
+            == POWERSHELL_SOURCE_HOME_VALIDATION_MESSAGE
         } if isinstance(source_definitions, list) else set()
         for repository in sorted(referenced_repositories - synchronized_repositories):
             errors.append(
@@ -12480,7 +12523,7 @@ def _sync_appliance_update_sources(payload: dict, credentials: dict[str, dict[st
         policy = "Trusted" if trusted else "Untrusted"
         credential = _source_credential(source, credentials)
         script = _powershell_repository_sync_script(name, url, policy)
-        env = _appliance_update_powershell_environment()
+        env = _privileged_powershell_environment()
         if credential:
             env.update({"LF_REPO_USER": str(credential.get("username") or ""), "LF_REPO_SECRET": str(credential["secret"])})
         command = _command_payload(
@@ -12509,7 +12552,7 @@ def _sync_appliance_update_sources(payload: dict, credentials: dict[str, dict[st
             )
             command = _command_payload(
                 [pwsh, "-NoLogo", "-NoProfile", "-NonInteractive", "-EncodedCommand", _powershell_encoded_command(script)],
-                env=_appliance_update_powershell_environment(),
+                env=_privileged_powershell_environment(),
             )
             commands.append(command)
             if not command.get("success"):
@@ -12587,7 +12630,14 @@ def _unsynchronized_update_sources(
             repository_names is None
             or str(source.get("name") or "").strip() in repository_names
         )
-        and source.get("validation_status") != "valid"
+        and (
+            source.get("validation_status") != "valid"
+            or (
+                kind == "powershell"
+                and source.get("validation_message")
+                != POWERSHELL_SOURCE_HOME_VALIDATION_MESSAGE
+            )
+        )
     )
 
 
@@ -12779,7 +12829,7 @@ def _check_appliance_update(payload: dict, credentials: dict[str, dict[str, str]
                 + "; [pscustomobject]@{Name=$module.Name; AvailableVersion=$module.Version.ToString(); Repository=$module.Repository; InstalledVersions=$installed} | ConvertTo-Json -Compress"
             )
             credential = _source_credential(source, credentials)
-            env = _appliance_update_powershell_environment()
+            env = _privileged_powershell_environment()
             if credential:
                 env.update({"LF_REPO_USER": str(credential.get("username") or ""), "LF_REPO_SECRET": str(credential["secret"])})
             command_args = [pwsh, "-NoLogo", "-NoProfile", "-NonInteractive", "-EncodedCommand", _powershell_encoded_command(script)]
@@ -12912,7 +12962,7 @@ def _apply_powershell_modules(payload: dict, credentials: dict[str, dict[str, st
         )
         source = next((item for item in _enabled_sources(payload, "powershell") if str(item.get("name") or "") == repository), {})
         credential = _source_credential(source, credentials)
-        env = _appliance_update_powershell_environment()
+        env = _privileged_powershell_environment()
         if credential:
             env.update({"LF_REPO_USER": str(credential.get("username") or ""), "LF_REPO_SECRET": str(credential["secret"])})
         command_args = [pwsh, "-NoLogo", "-NoProfile", "-NonInteractive", "-EncodedCommand", _powershell_encoded_command(script)]
@@ -19512,7 +19562,10 @@ def _factory_reset_runner(*, boot_resume: bool) -> subprocess.CompletedProcess[s
             "",
             "Atlaso factory-reset runtime is unavailable.\n",
         )
-    environment = os.environ.copy()
+    # Console and boot recovery run the transaction inline rather than through
+    # the helper's systemd-run wrapper. Pin the same persistent PowerShell home
+    # here so resumed Appliance Settings activation cannot fall back to /root.
+    environment = _privileged_powershell_environment()
     try:
         environment["ATLASO_DATABASE_URL"] = _installed_atlaso_database_url()
     except ValueError as exc:
@@ -20080,6 +20133,45 @@ def _fsync_factory_reset_directory(path: Path) -> None:
         os.close(descriptor)
 
 
+def _remove_factory_reset_legacy_powershell_home() -> bool:
+    """Remove the former service-owned PowerShell home without following links.
+
+    Returns:
+        Whether an existing legacy entry was removed.
+    """
+    path = ATLASO_LEGACY_POWERSHELL_HOME
+    if os.name != "posix":
+        if path.is_symlink() or path.is_file():
+            path.unlink()
+            return True
+        if not path.exists():
+            return False
+        if path.resolve() != path or not path.is_dir():
+            raise ValueError("factory-reset legacy PowerShell home is unsafe")
+        shutil.rmtree(path)
+        return True
+
+    flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
+    parent_descriptor = os.open(path.parent, flags)
+    try:
+        try:
+            metadata = os.stat(path.name, dir_fd=parent_descriptor, follow_symlinks=False)
+        except FileNotFoundError:
+            return False
+        if stat.S_ISLNK(metadata.st_mode) or stat.S_ISREG(metadata.st_mode):
+            os.unlink(path.name, dir_fd=parent_descriptor)
+        elif stat.S_ISDIR(metadata.st_mode):
+            if not shutil.rmtree.avoids_symlink_attacks:
+                raise ValueError("factory-reset cannot safely remove the legacy PowerShell home")
+            shutil.rmtree(path.name, dir_fd=parent_descriptor)
+        else:
+            raise ValueError("factory-reset legacy PowerShell home is unsafe")
+        os.fsync(parent_descriptor)
+        return True
+    finally:
+        os.close(parent_descriptor)
+
+
 def _reset_factory_retained_runtime() -> int:
     """Remove bounded KMIP and synchronized package-source runtime state."""
     if not _factory_reset_runtime_cleanup_is_admitted():
@@ -20097,6 +20189,9 @@ def _reset_factory_retained_runtime() -> int:
             return 1
         if MANAGED_PHOTON_REPO_PATH.exists():
             raise ValueError("factory-reset managed Photon repository cleanup did not complete")
+        legacy_powershell_home_removed = _remove_factory_reset_legacy_powershell_home()
+        if legacy_powershell_home_removed and os.name != "posix":
+            _fsync_factory_reset_directory(ATLASO_LEGACY_POWERSHELL_HOME.parent)
         removed_kmip_entries = 0
         if KMS_STATE_DIR.is_dir():
             for child in KMS_STATE_DIR.iterdir():
@@ -20115,6 +20210,7 @@ def _reset_factory_retained_runtime() -> int:
             {
                 "factory_reset_retained_runtime": "cleanup complete",
                 "kmip_entries_removed": removed_kmip_entries,
+                "legacy_powershell_home_removed": legacy_powershell_home_removed,
                 "powershell_repositories_removed": len(repositories),
             },
             sort_keys=True,
