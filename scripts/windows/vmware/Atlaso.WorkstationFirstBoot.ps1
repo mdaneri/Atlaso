@@ -148,7 +148,11 @@ namespace Atlaso
     public sealed class WorkstationProcessJob : IDisposable
     {
         private const uint JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE = 0x00002000;
+        private const uint JOB_OBJECT_QUERY = 0x0004;
+        private const uint JOB_OBJECT_TERMINATE = 0x0008;
         private IntPtr handle;
+        private IntPtr suspendedProcessHandle;
+        private IntPtr suspendedThreadHandle;
 
         [StructLayout(LayoutKind.Sequential)]
         private struct BasicLimitInformation
@@ -235,6 +239,9 @@ namespace Atlaso
         private static extern IntPtr CreateJobObject(IntPtr securityAttributes, string name);
 
         [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+        private static extern IntPtr OpenJobObject(uint desiredAccess, bool inheritHandle, string name);
+
+        [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
         private static extern bool CreateProcess(
             string applicationName,
             System.Text.StringBuilder commandLine,
@@ -278,14 +285,23 @@ namespace Atlaso
             IntPtr returnLength);
 
         [DllImport("kernel32.dll", SetLastError = true)]
+        private static extern bool IsProcessInJob(IntPtr process, IntPtr job, out bool result);
+
+        [DllImport("kernel32.dll", SetLastError = true)]
         private static extern bool CloseHandle(IntPtr handle);
 
         public Process RootProcess { get; private set; }
 
-        private WorkstationProcessJob(IntPtr jobHandle, Process rootProcess)
+        private WorkstationProcessJob(
+            IntPtr jobHandle,
+            Process rootProcess,
+            IntPtr processHandle,
+            IntPtr threadHandle)
         {
             handle = jobHandle;
             RootProcess = rootProcess;
+            suspendedProcessHandle = processHandle;
+            suspendedThreadHandle = threadHandle;
         }
 
         private static string QuoteArgument(string value)
@@ -322,8 +338,26 @@ namespace Atlaso
 
         public static WorkstationProcessJob StartSuspended(string filePath, string[] arguments)
         {
+            WorkstationProcessJob job = CreateSuspended(filePath, arguments, null);
+            try
+            {
+                job.Resume();
+                return job;
+            }
+            catch
+            {
+                job.Dispose();
+                throw;
+            }
+        }
+
+        public static WorkstationProcessJob CreateSuspended(
+            string filePath,
+            string[] arguments,
+            string name)
+        {
             const uint CREATE_SUSPENDED = 0x00000004;
-            IntPtr job = CreateJobObject(IntPtr.Zero, null);
+            IntPtr job = CreateJobObject(IntPtr.Zero, name);
             if (job == IntPtr.Zero)
             {
                 throw new Win32Exception(Marshal.GetLastWin32Error(), "Windows process job creation failed.");
@@ -365,16 +399,14 @@ namespace Atlaso
                 }
                 Process rootProcess = Process.GetProcessById((int)processInformation.ProcessId);
                 IntPtr managedProcessHandle = rootProcess.Handle;
-                if (ResumeThread(processInformation.Thread) == UInt32.MaxValue)
-                {
-                    rootProcess.Dispose();
-                    throw new Win32Exception(Marshal.GetLastWin32Error(), "The bounded process could not be resumed after job assignment.");
-                }
-                CloseHandle(processInformation.Thread);
-                processInformation.Thread = IntPtr.Zero;
-                CloseHandle(processInformation.Process);
+                WorkstationProcessJob result = new WorkstationProcessJob(
+                    job,
+                    rootProcess,
+                    processInformation.Process,
+                    processInformation.Thread);
                 processInformation.Process = IntPtr.Zero;
-                return new WorkstationProcessJob(job, rootProcess);
+                processInformation.Thread = IntPtr.Zero;
+                return result;
             }
             catch
             {
@@ -391,6 +423,47 @@ namespace Atlaso
                 CloseHandle(job);
                 throw;
             }
+        }
+
+        public static WorkstationProcessJob OpenExisting(string name)
+        {
+            IntPtr job = OpenJobObject(JOB_OBJECT_QUERY | JOB_OBJECT_TERMINATE, false, name);
+            if (job == IntPtr.Zero)
+            {
+                int error = Marshal.GetLastWin32Error();
+                if (error == 2)
+                {
+                    return null;
+                }
+                throw new Win32Exception(error, "The recorded Windows process job could not be opened.");
+            }
+            return new WorkstationProcessJob(job, null, IntPtr.Zero, IntPtr.Zero);
+        }
+
+        public void Resume()
+        {
+            if (suspendedThreadHandle == IntPtr.Zero || suspendedProcessHandle == IntPtr.Zero)
+            {
+                throw new InvalidOperationException("The bounded process is not suspended by this owner.");
+            }
+            if (ResumeThread(suspendedThreadHandle) == UInt32.MaxValue)
+            {
+                throw new Win32Exception(Marshal.GetLastWin32Error(), "The bounded process could not be resumed after job assignment.");
+            }
+            CloseHandle(suspendedThreadHandle);
+            suspendedThreadHandle = IntPtr.Zero;
+            CloseHandle(suspendedProcessHandle);
+            suspendedProcessHandle = IntPtr.Zero;
+        }
+
+        public bool ContainsProcess(Process process)
+        {
+            bool result;
+            if (!IsProcessInJob(process.Handle, handle, out result))
+            {
+                throw new Win32Exception(Marshal.GetLastWin32Error(), "Recorded process-job membership could not be verified.");
+            }
+            return result;
         }
 
         public static Process StartBreakaway(string filePath, string[] arguments)
@@ -493,6 +566,16 @@ namespace Atlaso
 
         public void Dispose()
         {
+            if (suspendedThreadHandle != IntPtr.Zero)
+            {
+                CloseHandle(suspendedThreadHandle);
+                suspendedThreadHandle = IntPtr.Zero;
+            }
+            if (suspendedProcessHandle != IntPtr.Zero)
+            {
+                CloseHandle(suspendedProcessHandle);
+                suspendedProcessHandle = IntPtr.Zero;
+            }
             if (handle != IntPtr.Zero)
             {
                 CloseHandle(handle);
@@ -515,15 +598,31 @@ Exact executable to start without shell interpretation.
 
 .PARAMETER ArgumentList
 Individual process arguments encoded through the Windows argv contract.
+.PARAMETER ProcessJobName
+Optional exact named job used by durable same-boot recovery.
+.PARAMETER DeferResume
+Return the root suspended so its ownership can be durably published first.
 #>
 function New-AtlasoBoundedProcessJob {
     param(
         [Parameter(Mandatory = $true)][string]$FilePath,
-        [Parameter(Mandatory = $true)][AllowEmptyString()][string[]]$ArgumentList
+        [Parameter(Mandatory = $true)][AllowEmptyString()][string[]]$ArgumentList,
+        [string]$ProcessJobName = '',
+        [switch]$DeferResume
     )
 
     Initialize-AtlasoWorkstationProcessJobType
     try {
+        if ($DeferResume) {
+            if ([string]::IsNullOrWhiteSpace($ProcessJobName)) {
+                throw 'A deferred bounded process requires an exact process-job name.'
+            }
+            return [Atlaso.WorkstationProcessJob]::CreateSuspended(
+                $FilePath,
+                $ArgumentList,
+                $ProcessJobName
+            )
+        }
         return [Atlaso.WorkstationProcessJob]::StartSuspended($FilePath, $ArgumentList)
     }
     catch {
@@ -534,6 +633,21 @@ function New-AtlasoBoundedProcessJob {
         $assignmentFailure.Data['AtlasoProcessTreeTerminationUnproven'] = $true
         throw $assignmentFailure
     }
+}
+
+<#
+.SYNOPSIS
+Open an exact named Windows process job for recovery.
+.PARAMETER ProcessJobName
+Durably recorded non-secret job name owned by one bounded invocation.
+#>
+function Open-AtlasoBoundedProcessJob {
+    param(
+        [Parameter(Mandatory = $true)][string]$ProcessJobName
+    )
+
+    Initialize-AtlasoWorkstationProcessJobType
+    return [Atlaso.WorkstationProcessJob]::OpenExisting($ProcessJobName)
 }
 
 <#
@@ -730,25 +844,38 @@ Positive deadline for the external process.
 
 .PARAMETER Action
 Safe action description used in failure messages.
+.PARAMETER ProcessJobName
+Optional exact named job used by durable same-boot recovery.
+.PARAMETER ProcessOwnershipPublisher
+Callback that durably records the suspended root before it is resumed.
 #>
 function Invoke-AtlasoBoundedStreamingProcess {
     param(
         [Parameter(Mandatory = $true)][string]$FilePath,
         [Parameter(Mandatory = $true)][AllowEmptyString()][string[]]$ArgumentList,
         [Parameter(Mandatory = $true)][ValidateRange(1, 86400)][int]$TimeoutSeconds,
-        [Parameter(Mandatory = $true)][string]$Action
+        [Parameter(Mandatory = $true)][string]$Action,
+        [string]$ProcessJobName = '',
+        [scriptblock]$ProcessOwnershipPublisher
     )
 
     # The isolated image child owns redaction. Inheriting the console preserves
     # its sanitized Packer heartbeats and diagnostics without copying plaintext
     # credentials or buffered output into the PowerShell parent.
+    $recoverable = $null -ne $ProcessOwnershipPublisher
     $processJob = New-AtlasoBoundedProcessJob `
         -FilePath $FilePath `
-        -ArgumentList $ArgumentList
+        -ArgumentList $ArgumentList `
+        -ProcessJobName $ProcessJobName `
+        -DeferResume:$recoverable
     $process = $processJob.RootProcess
     $jobCompletionProven = $false
     $interruptionTerminationProven = $false
     try {
+        if ($recoverable) {
+            & $ProcessOwnershipPublisher $processJob
+            $processJob.Resume()
+        }
         if (-not $process.WaitForExit($TimeoutSeconds * 1000)) {
             try {
                 Stop-AtlasoBoundedProcessTree `

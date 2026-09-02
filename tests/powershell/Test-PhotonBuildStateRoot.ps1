@@ -86,6 +86,34 @@ if ($cleanupRecoveryFunction.Count -ne 1) {
     throw 'Expected exactly one Photon cleanup recovery function.'
 }
 . ([scriptblock]::Create($cleanupRecoveryFunction[0].Extent.Text))
+$recordedProcessStateFunction = @(
+    $ast.FindAll(
+        {
+            param($node)
+            $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and
+            $node.Name -ceq 'Get-AtlasoRecordedProcessIdentityState'
+        },
+        $true
+    )
+)
+if ($recordedProcessStateFunction.Count -ne 1) {
+    throw 'Expected exactly one recorded-process identity classifier.'
+}
+. ([scriptblock]::Create($recordedProcessStateFunction[0].Extent.Text))
+$sameBootProcessRecoveryFunction = @(
+    $ast.FindAll(
+        {
+            param($node)
+            $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and
+            $node.Name -ceq 'Complete-AtlasoPhotonSameBootProcessRecovery'
+        },
+        $true
+    )
+)
+if ($sameBootProcessRecoveryFunction.Count -ne 1) {
+    throw 'Expected exactly one same-boot Photon process recovery function.'
+}
+. ([scriptblock]::Create($sameBootProcessRecoveryFunction[0].Extent.Text))
 $credentialInitializer = @(
     $ast.FindAll(
         {
@@ -535,6 +563,264 @@ try {
     if ($redirectedMarkerError -notmatch 'unresolved sensitive cleanup' -or
         -not (Test-Path -LiteralPath (Join-Path $markerEscape 'cleanup.json'))) {
         throw 'Photon recovery followed a redirected fixed marker directory.'
+    }
+
+    $sameBootParent = Join-Path $fixtureRoot 'same-boot-recovery'
+    $sameBootMarkerDirectory = Join-Path $fixtureRoot 'same-boot-markers'
+    [void][System.IO.Directory]::CreateDirectory($sameBootParent)
+    [void][System.IO.Directory]::CreateDirectory($sameBootMarkerDirectory)
+    $pwshPath = (Get-Process -Id $PID).Path
+    $exitedOwner = Start-Process `
+        -FilePath $pwshPath `
+        -ArgumentList @('-NoLogo', '-NoProfile', '-NonInteractive', '-Command', 'exit 0') `
+        -PassThru `
+        -WindowStyle Hidden
+    $exitedOwnerStart = $exitedOwner.StartTime.ToUniversalTime().ToFileTimeUtc()
+    $exitedOwnerId = $exitedOwner.Id
+    $exitedOwner.WaitForExit()
+    $exitedOwner.Dispose()
+
+    $sameBootRoot = Join-Path $sameBootParent (
+        'atlaso-photon-build-credentials-' + [guid]::NewGuid().ToString('N')
+    )
+    [void][System.IO.Directory]::CreateDirectory($sameBootRoot)
+    [System.IO.File]::WriteAllText((Join-Path $sameBootRoot 'plaintext.fixture'), 'test-only')
+    $sameBootIdentity = Get-AtlasoPathIdentity -Path $sameBootRoot -Description 'Same-boot test root'
+    $sameBootMarkerPath = Join-Path $sameBootMarkerDirectory 'same-boot.json'
+    $sameBootJobName = 'Local\Atlaso-Photon-' + [guid]::NewGuid().ToString('N')
+    Initialize-AtlasoWorkstationProcessJobType
+    $sameBootJob = [Atlaso.WorkstationProcessJob]::CreateSuspended(
+        $pwshPath,
+        @('-NoLogo', '-NoProfile', '-NonInteractive', '-Command', 'Start-Sleep -Seconds 300'),
+        $sameBootJobName
+    )
+    try {
+        $sameBootChildId = $sameBootJob.RootProcess.Id
+        $sameBootChildStart = $sameBootJob.RootProcess.StartTime.ToUniversalTime().ToFileTimeUtc()
+        $sameBootMarker = [ordered]@{
+            Schema = 3; RootPath = $sameBootRoot; RootIdentity = $sameBootIdentity
+            BootIdentity = Get-AtlasoWindowsBootIdentity; Phase = 'active'
+            OwnerProcessId = $exitedOwnerId; OwnerProcessStartFileTimeUtc = $exitedOwnerStart
+            ProcessJobName = $sameBootJobName; ChildProcessId = $sameBootChildId
+            ChildProcessStartFileTimeUtc = $sameBootChildStart; ProcessOwnershipPhase = 'assigned'
+        }
+        [System.IO.File]::WriteAllText(
+            $sameBootMarkerPath,
+            ($sameBootMarker | ConvertTo-Json -Compress),
+            [System.Text.UTF8Encoding]::new($false)
+        )
+        $sameBootJob.Resume()
+        $sameBootLiveStart = (Get-Process -Id $sameBootChildId -ErrorAction Stop).StartTime.
+            ToUniversalTime().ToFileTimeUtc()
+        if ($sameBootLiveStart -ne $sameBootChildStart) {
+            throw "Same-boot fixture child start identity changed: $sameBootChildStart / $sameBootLiveStart"
+        }
+        $sameBootLiveState = Get-AtlasoRecordedProcessIdentityState `
+            -ProcessId $sameBootChildId `
+            -StartFileTimeUtc $sameBootChildStart
+        if ($sameBootLiveState -cne 'matching') {
+            throw "Same-boot fixture classifier changed the live child identity: $sameBootLiveState"
+        }
+        $sameBootReadback = Get-Content -LiteralPath $sameBootMarkerPath -Raw | ConvertFrom-Json
+        $sameBootReadbackState = Get-AtlasoRecordedProcessIdentityState `
+            -ProcessId ([int]$sameBootReadback.ChildProcessId) `
+            -StartFileTimeUtc ([long]$sameBootReadback.ChildProcessStartFileTimeUtc)
+        if ($sameBootReadbackState -cne 'matching') {
+            throw "Same-boot marker readback changed the live child identity: $sameBootReadbackState / $($sameBootReadback.ChildProcessStartFileTimeUtc) / $sameBootLiveStart"
+        }
+        Invoke-AtlasoPhotonBuildCleanupRecovery `
+            -MarkerPath $sameBootMarkerPath `
+            -AllowedParentRoots @($sameBootParent) `
+            -RepositoryRoot $resolvedRepositoryRoot
+        if ((Test-Path -LiteralPath $sameBootRoot) -or
+            (Test-Path -LiteralPath $sameBootMarkerPath) -or
+            $null -ne (Get-Process -Id $sameBootChildId -ErrorAction SilentlyContinue)) {
+            throw 'Same-boot Photon recovery did not terminate its exact job and retire its root.'
+        }
+        # Marker absence is the idempotent terminal state.
+        Invoke-AtlasoPhotonBuildCleanupRecovery `
+            -MarkerPath $sameBootMarkerPath `
+            -AllowedParentRoots @($sameBootParent) `
+            -RepositoryRoot $resolvedRepositoryRoot
+    }
+    finally {
+        $sameBootJob.Dispose()
+    }
+
+    $terminalRoot = Join-Path $sameBootParent (
+        'atlaso-photon-build-credentials-' + [guid]::NewGuid().ToString('N')
+    )
+    [void][System.IO.Directory]::CreateDirectory($terminalRoot)
+    $terminalIdentity = Get-AtlasoPathIdentity -Path $terminalRoot -Description 'Terminal test root'
+    $terminalChild = Start-Process `
+        -FilePath $pwshPath `
+        -ArgumentList @('-NoLogo', '-NoProfile', '-NonInteractive', '-Command', 'exit 0') `
+        -PassThru `
+        -WindowStyle Hidden
+    $terminalChildStart = $terminalChild.StartTime.ToUniversalTime().ToFileTimeUtc()
+    $terminalChildId = $terminalChild.Id
+    $terminalChild.WaitForExit()
+    $terminalChild.Dispose()
+    $terminalMarkerPath = Join-Path $sameBootMarkerDirectory 'terminal.json'
+    $terminalMarker = [ordered]@{
+        Schema = 3; RootPath = $terminalRoot; RootIdentity = $terminalIdentity
+        BootIdentity = Get-AtlasoWindowsBootIdentity; Phase = 'active'
+        OwnerProcessId = $exitedOwnerId; OwnerProcessStartFileTimeUtc = $exitedOwnerStart
+        ProcessJobName = 'Local\Atlaso-Photon-' + [guid]::NewGuid().ToString('N')
+        ChildProcessId = $terminalChildId; ChildProcessStartFileTimeUtc = $terminalChildStart
+        ProcessOwnershipPhase = 'assigned'
+    }
+    [System.IO.File]::WriteAllText(
+        $terminalMarkerPath,
+        ($terminalMarker | ConvertTo-Json -Compress),
+        [System.Text.UTF8Encoding]::new($false)
+    )
+    Invoke-AtlasoPhotonBuildCleanupRecovery `
+        -MarkerPath $terminalMarkerPath `
+        -AllowedParentRoots @($sameBootParent) `
+        -RepositoryRoot $resolvedRepositoryRoot
+    if ((Test-Path -LiteralPath $terminalRoot) -or (Test-Path -LiteralPath $terminalMarkerPath)) {
+        throw 'Terminal same-boot interruption did not retire an absent exact child.'
+    }
+
+    $reusedRoot = Join-Path $sameBootParent (
+        'atlaso-photon-build-credentials-' + [guid]::NewGuid().ToString('N')
+    )
+    [void][System.IO.Directory]::CreateDirectory($reusedRoot)
+    $reusedMarkerPath = Join-Path $sameBootMarkerDirectory 'pid-reuse.json'
+    $currentStart = (Get-Process -Id $PID).StartTime.ToUniversalTime().AddSeconds(-1).ToFileTimeUtc()
+    $reusedMarker = [ordered]@{
+        Schema = 3; RootPath = $reusedRoot
+        RootIdentity = Get-AtlasoPathIdentity -Path $reusedRoot -Description 'PID reuse test root'
+        BootIdentity = Get-AtlasoWindowsBootIdentity; Phase = 'active'
+        OwnerProcessId = $exitedOwnerId; OwnerProcessStartFileTimeUtc = $exitedOwnerStart
+        ProcessJobName = 'Local\Atlaso-Photon-' + [guid]::NewGuid().ToString('N')
+        ChildProcessId = $PID; ChildProcessStartFileTimeUtc = $currentStart
+        ProcessOwnershipPhase = 'assigned'
+    }
+    [System.IO.File]::WriteAllText(
+        $reusedMarkerPath,
+        ($reusedMarker | ConvertTo-Json -Compress),
+        [System.Text.UTF8Encoding]::new($false)
+    )
+    $reusedError = ''
+    try {
+        Invoke-AtlasoPhotonBuildCleanupRecovery `
+            -MarkerPath $reusedMarkerPath `
+            -AllowedParentRoots @($sameBootParent) `
+            -RepositoryRoot $resolvedRepositoryRoot
+    }
+    catch { $reusedError = $_.Exception.Message }
+    if ($reusedError -notmatch 'unresolved sensitive cleanup' -or
+        -not (Test-Path -LiteralPath $reusedRoot -PathType Container) -or
+        -not (Test-Path -LiteralPath $reusedMarkerPath -PathType Leaf)) {
+        throw 'Same-boot Photon recovery did not fail closed on PID reuse.'
+    }
+
+    $replacementRoot = Join-Path $sameBootParent (
+        'atlaso-photon-build-credentials-' + [guid]::NewGuid().ToString('N')
+    )
+    [void][System.IO.Directory]::CreateDirectory($replacementRoot)
+    $replacementJobName = 'Local\Atlaso-Photon-' + [guid]::NewGuid().ToString('N')
+    $replacementJob = [Atlaso.WorkstationProcessJob]::CreateSuspended(
+        $pwshPath,
+        @('-NoLogo', '-NoProfile', '-NonInteractive', '-Command', 'Start-Sleep -Seconds 300'),
+        $replacementJobName
+    )
+    $foreignChild = Start-Process `
+        -FilePath $pwshPath `
+        -ArgumentList @('-NoLogo', '-NoProfile', '-NonInteractive', '-Command', 'Start-Sleep -Seconds 300') `
+        -PassThru `
+        -WindowStyle Hidden
+    try {
+        $replacementJob.Resume()
+        $replacementMarkerPath = Join-Path $sameBootMarkerDirectory 'job-replacement.json'
+        $replacementMarker = [ordered]@{
+            Schema = 3; RootPath = $replacementRoot
+            RootIdentity = Get-AtlasoPathIdentity -Path $replacementRoot -Description 'Job replacement test root'
+            BootIdentity = Get-AtlasoWindowsBootIdentity; Phase = 'active'
+            OwnerProcessId = $exitedOwnerId; OwnerProcessStartFileTimeUtc = $exitedOwnerStart
+            ProcessJobName = $replacementJobName; ChildProcessId = $foreignChild.Id
+            ChildProcessStartFileTimeUtc = $foreignChild.StartTime.ToUniversalTime().ToFileTimeUtc()
+            ProcessOwnershipPhase = 'assigned'
+        }
+        [System.IO.File]::WriteAllText(
+            $replacementMarkerPath,
+            ($replacementMarker | ConvertTo-Json -Compress),
+            [System.Text.UTF8Encoding]::new($false)
+        )
+        $replacementError = ''
+        try {
+            Invoke-AtlasoPhotonBuildCleanupRecovery `
+                -MarkerPath $replacementMarkerPath `
+                -AllowedParentRoots @($sameBootParent) `
+                -RepositoryRoot $resolvedRepositoryRoot
+        }
+        catch { $replacementError = $_.Exception.Message }
+        if ($replacementError -notmatch 'unresolved sensitive cleanup' -or
+            -not (Test-Path -LiteralPath $replacementRoot -PathType Container) -or
+            -not (Test-Path -LiteralPath $replacementMarkerPath -PathType Leaf) -or
+            $foreignChild.HasExited) {
+            throw 'Same-boot Photon recovery acted on a job/process identity replacement.'
+        }
+    }
+    finally {
+        $replacementJob.TerminateAndWait(10000)
+        $replacementJob.Dispose()
+        if (-not $foreignChild.HasExited) {
+            $foreignChild.Kill($true)
+            $foreignChild.WaitForExit()
+        }
+        $foreignChild.Dispose()
+    }
+
+    $descendantRoot = Join-Path $sameBootParent (
+        'atlaso-photon-build-credentials-' + [guid]::NewGuid().ToString('N')
+    )
+    [void][System.IO.Directory]::CreateDirectory($descendantRoot)
+    $descendantJobName = 'Local\Atlaso-Photon-' + [guid]::NewGuid().ToString('N')
+    $descendantCommand = "Start-Process -FilePath '$($pwshPath.Replace("'", "''"))' -ArgumentList @('-NoProfile','-Command','Start-Sleep 300') -WindowStyle Hidden; exit 0"
+    $descendantJob = [Atlaso.WorkstationProcessJob]::CreateSuspended(
+        $pwshPath,
+        @('-NoLogo', '-NoProfile', '-NonInteractive', '-Command', $descendantCommand),
+        $descendantJobName
+    )
+    try {
+        $descendantRootId = $descendantJob.RootProcess.Id
+        $descendantRootStart = $descendantJob.RootProcess.StartTime.ToUniversalTime().ToFileTimeUtc()
+        $descendantJob.Resume()
+        $descendantJob.RootProcess.WaitForExit(10000) | Out-Null
+        $descendantMarkerPath = Join-Path $sameBootMarkerDirectory 'surviving-descendant.json'
+        $descendantMarker = [ordered]@{
+            Schema = 3; RootPath = $descendantRoot
+            RootIdentity = Get-AtlasoPathIdentity -Path $descendantRoot -Description 'Descendant test root'
+            BootIdentity = Get-AtlasoWindowsBootIdentity; Phase = 'active'
+            OwnerProcessId = $exitedOwnerId; OwnerProcessStartFileTimeUtc = $exitedOwnerStart
+            ProcessJobName = $descendantJobName; ChildProcessId = $descendantRootId
+            ChildProcessStartFileTimeUtc = $descendantRootStart; ProcessOwnershipPhase = 'assigned'
+        }
+        [System.IO.File]::WriteAllText(
+            $descendantMarkerPath,
+            ($descendantMarker | ConvertTo-Json -Compress),
+            [System.Text.UTF8Encoding]::new($false)
+        )
+        $descendantError = ''
+        try {
+            Invoke-AtlasoPhotonBuildCleanupRecovery `
+                -MarkerPath $descendantMarkerPath `
+                -AllowedParentRoots @($sameBootParent) `
+                -RepositoryRoot $resolvedRepositoryRoot
+        }
+        catch { $descendantError = $_.Exception.Message }
+        if ($descendantError -notmatch 'unresolved sensitive cleanup' -or
+            -not (Test-Path -LiteralPath $descendantRoot -PathType Container) -or
+            -not (Test-Path -LiteralPath $descendantMarkerPath -PathType Leaf)) {
+            throw 'Same-boot Photon recovery did not preserve a surviving unbound descendant.'
+        }
+    }
+    finally {
+        $descendantJob.TerminateAndWait(10000)
+        $descendantJob.Dispose()
     }
 
     $sensitiveCredentialRoot = Join-Path $fixtureRoot 'sensitive-credential-root'
