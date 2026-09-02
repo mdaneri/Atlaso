@@ -236,8 +236,16 @@ or matching address handoff from former roots, but it never adopts them for a ne
 repository or canonical builder identity.
 `-ImageBuildTimeoutSeconds` bounds the whole child and defaults to six hours.
 If Windows cannot prove whole-tree termination, the wrapper retains the root plus a non-secret checkout-local cleanup
-marker and fails closed. Restart Windows and rerun the wrapper; the changed boot identity proves the prior tree is
-inactive, allowing exact-root cleanup and marker removal before any new credential access or image mutation.
+marker and fails closed. Before resuming the suspended plaintext-consuming child, the wrapper durably binds the marker
+to the prior controller's PID/start time, a unique named Windows job, and the child's PID/start time. Rerun the wrapper
+on the same Windows boot to invoke bounded recovery. Recovery requires the prior controller to be absent, reopens and
+terminates only the exact recorded job when its root identity still matches, proves the child and every job descendant
+are gone, and only then removes the identity-pinned root and retires the marker. A terminal interruption whose named job
+and exact child are already absent follows the same cleanup path.
+Recovery preserves the marker and artifacts when it sees a live or reused controller/child PID, a missing or replaced
+job around a live child, a job whose recorded root has exited while descendants remain, incomplete termination, or any
+path/reparse/filesystem-identity drift. Legacy markers without process ownership evidence still require restarting
+Windows; a changed boot remains the fallback for every ambiguous current marker.
 The marker uses one fixed checkout-local path independent of `-BuildStateRoot`, so changing or omitting that option
 cannot bypass retained-root admission. After boot proof, recovery durably upgrades an active legacy marker by pinning
 its admitted root identity before cleanup.
