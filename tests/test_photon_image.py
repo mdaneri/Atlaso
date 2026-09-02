@@ -132,6 +132,29 @@ menuentry \"Photon\" {
     fake_id = fake_bin / "id"
     fake_id.write_text("#!/bin/sh\nprintf '0\\n'\n", encoding="utf-8")
     fake_id.chmod(0o755)
+    fake_install = fake_bin / "install"
+    fake_install.write_text(
+        """#!/bin/sh
+directory=0
+if [ "$1" = "-d" ]; then
+    directory=1
+    shift
+fi
+while [ "$#" -gt 0 ]; do
+    case "$1" in
+        -o|-g|-m) shift 2 ;;
+        *) break ;;
+    esac
+done
+if [ "$directory" -eq 1 ]; then
+    mkdir -p "$1"
+else
+    cp "$1" "$2"
+fi
+""",
+        encoding="utf-8",
+    )
+    fake_install.chmod(0o755)
     environment = os.environ.copy()
     environment.update(
         {
