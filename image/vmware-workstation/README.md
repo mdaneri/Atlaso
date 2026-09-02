@@ -72,6 +72,7 @@ plaintext credential byte is exposed. Their no-delete handles, and the promoted 
 respective helper or Packer consumer and are marked for deletion through those exact handles before release. Recovery
 never interprets an absent active cleanup root as deletion proof,
 because a same-user move outside the admitted parent is indistinguishable from a completed deletion after a crash.
+Failed remaster attempts remain in the same handle ledger until the outer cleanup deletes the exact partial object.
 `New-AtlasoPhotonKickstart` in
 `scripts/windows/common/Atlaso.PhotonImage.psm1` is the only kickstart source. Focused image tests parse its VMware JSON
 output and validate the installer, package, and guest-service contract.

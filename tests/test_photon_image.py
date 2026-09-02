@@ -3611,6 +3611,10 @@ def test_remaster_attempt_is_identity_pinned_before_helper_writes() -> None:
     assert "GenericRead | GenericWrite | Delete" in common[native:create]
     assert "ShareRead | ShareWrite" in common[native:create]
     assert "SetFileInformationByHandle" in common[native:create]
+    remaster_end = common.index("function ConvertTo-AtlasoHclLiteral", remaster)
+    remaster_block = common[remaster:remaster_end]
+    assert "$null -ne $attemptHandle -and $null -eq $PinnedHandles" in remaster_block
+    assert "$PinnedHandles.Remove" in remaster_block
 
     helper_source = Path("scripts/interop/create_photon_kickstart_iso.py").read_text(
         encoding="utf-8"

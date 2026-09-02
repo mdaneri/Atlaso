@@ -696,10 +696,7 @@ function New-AtlasoRemasteredPhotonIso {
         }
     }
     finally {
-        if ($null -ne $attemptHandle) {
-            if ($null -ne $PinnedHandles) {
-                $null = $PinnedHandles.Remove([System.IO.Path]::GetFullPath($attemptIsoPath))
-            }
+        if ($null -ne $attemptHandle -and $null -eq $PinnedHandles) {
             $attemptHandle.Dispose()
         }
     }
