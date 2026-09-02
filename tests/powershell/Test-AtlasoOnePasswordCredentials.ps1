@@ -289,6 +289,57 @@ $initialBridgeRoots = @(Get-ChildItem -LiteralPath ([System.IO.Path]::GetTempPat
     Where-Object { $_.Name -like 'atlaso-onepassword-credentials-*' } |
     ForEach-Object { $_.FullName })
 
+$recoveryBridgeRoot = Join-Path ([System.IO.Path]::GetTempPath()) (
+    'atlaso-onepassword-credentials-' + [guid]::NewGuid().ToString('N')
+)
+[void][System.IO.Directory]::CreateDirectory($recoveryBridgeRoot)
+$recoveryRootIdentity = & $credentialModule {
+    param([string]$Path)
+    Get-AtlasoPathIdentity -Path $Path -Description 'Focused 1Password recovery root'
+} $recoveryBridgeRoot
+$recoveryJobName = 'Local\Atlaso-OnePassword-' + [guid]::NewGuid().ToString('N')
+$recoveryJob = New-AtlasoBoundedProcessJob `
+    -FilePath (Get-Process -Id $PID).Path `
+    -ArgumentList @('-NoLogo', '-NoProfile', '-NonInteractive', '-Command', 'Start-Sleep -Seconds 30') `
+    -ProcessJobName $recoveryJobName `
+    -DeferResume
+try {
+    $recoveryMarker = [ordered]@{
+        Schema                       = 2
+        RootPath                     = $recoveryBridgeRoot
+        RootIdentity                 = $recoveryRootIdentity
+        BootIdentity                 = Get-AtlasoWindowsBootIdentity
+        Phase                        = 'active'
+        OwnerProcessId               = [int]::MaxValue
+        OwnerProcessStartFileTimeUtc = 1
+        ProcessJobName               = $recoveryJobName
+        ChildProcessId               = $recoveryJob.RootProcess.Id
+        ChildProcessStartFileTimeUtc = `
+            $recoveryJob.RootProcess.StartTime.ToUniversalTime().ToFileTimeUtc()
+        ProcessOwnershipPhase        = 'assigned'
+    }
+    Write-AtlasoDurableJsonFile -Path $cleanupMarkerPath -Payload $recoveryMarker
+    $recoveryJob.Resume()
+    & $credentialModule {
+        param([string]$RepositoryRoot)
+        Invoke-AtlasoOnePasswordCredentialCleanupRecovery -RepositoryRoot $RepositoryRoot
+    } $repositoryRoot
+    if ((Test-Path -LiteralPath $cleanupMarkerPath -PathType Leaf) -or
+        (Test-Path -LiteralPath $recoveryBridgeRoot -PathType Container) -or
+        (Get-Process -Id $recoveryMarker.ChildProcessId -ErrorAction SilentlyContinue)) {
+        throw 'Same-boot 1Password bridge recovery did not terminate and retire its exact owned state.'
+    }
+}
+finally {
+    $recoveryJob.Dispose()
+    if (Test-Path -LiteralPath $cleanupMarkerPath) {
+        Remove-Item -LiteralPath $cleanupMarkerPath -Force
+    }
+    if (Test-Path -LiteralPath $recoveryBridgeRoot) {
+        [System.IO.Directory]::Delete($recoveryBridgeRoot, $true)
+    }
+}
+
 $adminText = 'unit-admin-credential-123!'
 $rootText = 'unit-root-credential-456!'
 $adminPassword = ConvertTo-SecureString $adminText -AsPlainText -Force
@@ -451,6 +502,27 @@ if ($null -eq $ordinaryFailure -or
     $ordinaryFailure.Exception.Message -notmatch 'exit code 9' -or
     -not $ordinaryFailure.Exception.Data['AtlasoProcessTreeTerminationProven']) {
     throw 'An ordinary nonzero exit was not reported after proven whole-process-tree termination.'
+}
+
+$publicationFailure = $null
+try {
+    Invoke-AtlasoBoundedStreamingProcess `
+        -FilePath (Get-Process -Id $PID).Path `
+        -ArgumentList @('-NoLogo', '-NoProfile', '-NonInteractive', '-Command', 'Start-Sleep -Seconds 30') `
+        -TimeoutSeconds 10 `
+        -Action 'Focused ownership-publication failure test' `
+        -ProcessJobName "Local\Atlaso-Photon-$([guid]::NewGuid().ToString('N'))" `
+        -ProcessOwnershipPublisher { throw 'Focused ownership publication failed.' }
+}
+catch {
+    $publicationFailure = $_
+}
+if ($null -eq $publicationFailure -or
+    $publicationFailure.Exception.Message -notmatch 'interrupted after proven whole-process-tree termination' -or
+    $null -eq $publicationFailure.Exception.InnerException -or
+    $publicationFailure.Exception.InnerException.Message -cne 'Focused ownership publication failed.' -or
+    -not $publicationFailure.Exception.Data['AtlasoProcessTreeTerminationProven']) {
+    throw 'An ownership-publication failure did not preserve its initiating cause after proven termination.'
 }
 
 $breakawayToken = "atlaso-breakaway-$([guid]::NewGuid().ToString('N'))"

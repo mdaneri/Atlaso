@@ -761,6 +761,7 @@ def lifecycle_plan(args: argparse.Namespace) -> dict[str, Any]:
         if args.oidc_only
         else [
             "appliance health",
+            "1280x800 framebuffer and 50-row by 160-column tty1 console geometry",
             "interface and VLAN desired state",
             "DNS and DHCP desired state",
             "firewall, routing, NAT, and WAN desired state",
@@ -3409,6 +3410,33 @@ def signed_release_update_check(client: HttpClient, args: argparse.Namespace) ->
     }
 
 
+def appliance_console_geometry(args: argparse.Namespace) -> dict[str, Any]:
+    """Verify the booted appliance framebuffer and tty1 console geometry.
+
+    Args:
+        args: Parsed lifecycle arguments containing appliance SSH connection details.
+
+    Returns:
+        The observed framebuffer and tty1 geometry with redacted SSH evidence.
+    """
+    result = ssh_command(
+        args.appliance_ssh_host,
+        args,
+        "framebuffer=$(cat /sys/class/graphics/fb0/virtual_size) && "
+        "console=$(stty -F /dev/tty1 size) && "
+        "printf 'framebuffer=%s\\nconsole=%s\\n' \"$framebuffer\" \"$console\" && "
+        "test \"$framebuffer\" = '1280,800' && test \"$console\" = '50 160'",
+        role="appliance",
+    )
+    require_success(result, "appliance console geometry")
+    observed = dict(line.split("=", 1) for line in result["stdout"].splitlines() if "=" in line)
+    return {
+        "framebuffer_virtual_size": observed.get("framebuffer", ""),
+        "tty1_rows_columns": observed.get("console", ""),
+        "ssh": result,
+    }
+
+
 def appliance_health(client: HttpClient, args: argparse.Namespace) -> dict[str, Any]:
     """Return appliance health.
 
@@ -4833,6 +4861,7 @@ def run_full_lifecycle(results: list[StepResult], client: HttpClient, args: argp
         client: Client consumed by run full lifecycle.
         args: Parsed command-line options consumed by the operation.
     """
+    run_step(results, "appliance-console-geometry", appliance_console_geometry, args)
     run_step(results, "appliance-health", appliance_health, client, args)
     run_step(
         results,

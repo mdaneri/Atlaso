@@ -657,9 +657,13 @@ The following cross-cutting boundaries always apply:
   may pass only current-user DPAPI ciphertext. Place every plaintext kickstart, remastered ISO, and Packer variable
   artifact inside the exact task-owned child root, and require the parent to remove and verify that root after ordinary
   exit or whole-tree termination so a killed child cannot bypass sensitive cleanup. If whole-tree termination is
-  unproven, retain the exact root plus a non-secret cleanup marker, block same-boot reuse, and permit exact-root cleanup
-  only after a changed Windows boot identity proves the prior tree inactive; remove the marker only after root absence
-  is verified. Apply the same boot-bound recovery ownership to the shared SDK credential bridge. Durably publish each
+  unproven, retain the exact root plus a non-secret cleanup marker. Before resuming the suspended child, durably bind
+  the prior controller, unique named Windows job, and child PID/start identity. Same-boot recovery may terminate only
+  that exact job after the prior controller is absent and must prove every owned process gone before exact-root cleanup.
+  PID reuse, identity drift, a surviving descendant without the recorded root, or incomplete termination remains
+  fail-closed; legacy and ambiguous markers require a changed Windows boot identity. Remove the marker only after root
+  absence is verified. Apply the same boot-bound recovery ownership to the shared SDK credential bridge. Durably
+  publish each
   marker with write-through file and rename semantics before starting a child that can consume plaintext, then durably
   transition through root absence and a non-actionable retired tombstone before deleting the marker.
   The wrapper also owns the sole development-root exception to per-appliance CA generation: require the exact `Atlaso`

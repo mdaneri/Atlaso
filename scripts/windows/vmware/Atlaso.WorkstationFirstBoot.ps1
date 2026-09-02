@@ -148,7 +148,11 @@ namespace Atlaso
     public sealed class WorkstationProcessJob : IDisposable
     {
         private const uint JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE = 0x00002000;
+        private const uint JOB_OBJECT_QUERY = 0x0004;
+        private const uint JOB_OBJECT_TERMINATE = 0x0008;
         private IntPtr handle;
+        private IntPtr suspendedProcessHandle;
+        private IntPtr suspendedThreadHandle;
 
         [StructLayout(LayoutKind.Sequential)]
         private struct BasicLimitInformation
@@ -235,6 +239,9 @@ namespace Atlaso
         private static extern IntPtr CreateJobObject(IntPtr securityAttributes, string name);
 
         [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+        private static extern IntPtr OpenJobObject(uint desiredAccess, bool inheritHandle, string name);
+
+        [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
         private static extern bool CreateProcess(
             string applicationName,
             System.Text.StringBuilder commandLine,
@@ -278,14 +285,23 @@ namespace Atlaso
             IntPtr returnLength);
 
         [DllImport("kernel32.dll", SetLastError = true)]
+        private static extern bool IsProcessInJob(IntPtr process, IntPtr job, out bool result);
+
+        [DllImport("kernel32.dll", SetLastError = true)]
         private static extern bool CloseHandle(IntPtr handle);
 
         public Process RootProcess { get; private set; }
 
-        private WorkstationProcessJob(IntPtr jobHandle, Process rootProcess)
+        private WorkstationProcessJob(
+            IntPtr jobHandle,
+            Process rootProcess,
+            IntPtr processHandle,
+            IntPtr threadHandle)
         {
             handle = jobHandle;
             RootProcess = rootProcess;
+            suspendedProcessHandle = processHandle;
+            suspendedThreadHandle = threadHandle;
         }
 
         private static string QuoteArgument(string value)
@@ -322,8 +338,26 @@ namespace Atlaso
 
         public static WorkstationProcessJob StartSuspended(string filePath, string[] arguments)
         {
+            WorkstationProcessJob job = CreateSuspended(filePath, arguments, null);
+            try
+            {
+                job.Resume();
+                return job;
+            }
+            catch
+            {
+                job.Dispose();
+                throw;
+            }
+        }
+
+        public static WorkstationProcessJob CreateSuspended(
+            string filePath,
+            string[] arguments,
+            string name)
+        {
             const uint CREATE_SUSPENDED = 0x00000004;
-            IntPtr job = CreateJobObject(IntPtr.Zero, null);
+            IntPtr job = CreateJobObject(IntPtr.Zero, name);
             if (job == IntPtr.Zero)
             {
                 throw new Win32Exception(Marshal.GetLastWin32Error(), "Windows process job creation failed.");
@@ -365,16 +399,14 @@ namespace Atlaso
                 }
                 Process rootProcess = Process.GetProcessById((int)processInformation.ProcessId);
                 IntPtr managedProcessHandle = rootProcess.Handle;
-                if (ResumeThread(processInformation.Thread) == UInt32.MaxValue)
-                {
-                    rootProcess.Dispose();
-                    throw new Win32Exception(Marshal.GetLastWin32Error(), "The bounded process could not be resumed after job assignment.");
-                }
-                CloseHandle(processInformation.Thread);
-                processInformation.Thread = IntPtr.Zero;
-                CloseHandle(processInformation.Process);
+                WorkstationProcessJob result = new WorkstationProcessJob(
+                    job,
+                    rootProcess,
+                    processInformation.Process,
+                    processInformation.Thread);
                 processInformation.Process = IntPtr.Zero;
-                return new WorkstationProcessJob(job, rootProcess);
+                processInformation.Thread = IntPtr.Zero;
+                return result;
             }
             catch
             {
@@ -391,6 +423,47 @@ namespace Atlaso
                 CloseHandle(job);
                 throw;
             }
+        }
+
+        public static WorkstationProcessJob OpenExisting(string name)
+        {
+            IntPtr job = OpenJobObject(JOB_OBJECT_QUERY | JOB_OBJECT_TERMINATE, false, name);
+            if (job == IntPtr.Zero)
+            {
+                int error = Marshal.GetLastWin32Error();
+                if (error == 2)
+                {
+                    return null;
+                }
+                throw new Win32Exception(error, "The recorded Windows process job could not be opened.");
+            }
+            return new WorkstationProcessJob(job, null, IntPtr.Zero, IntPtr.Zero);
+        }
+
+        public void Resume()
+        {
+            if (suspendedThreadHandle == IntPtr.Zero || suspendedProcessHandle == IntPtr.Zero)
+            {
+                throw new InvalidOperationException("The bounded process is not suspended by this owner.");
+            }
+            if (ResumeThread(suspendedThreadHandle) == UInt32.MaxValue)
+            {
+                throw new Win32Exception(Marshal.GetLastWin32Error(), "The bounded process could not be resumed after job assignment.");
+            }
+            CloseHandle(suspendedThreadHandle);
+            suspendedThreadHandle = IntPtr.Zero;
+            CloseHandle(suspendedProcessHandle);
+            suspendedProcessHandle = IntPtr.Zero;
+        }
+
+        public bool ContainsProcess(Process process)
+        {
+            bool result;
+            if (!IsProcessInJob(process.Handle, handle, out result))
+            {
+                throw new Win32Exception(Marshal.GetLastWin32Error(), "Recorded process-job membership could not be verified.");
+            }
+            return result;
         }
 
         public static Process StartBreakaway(string filePath, string[] arguments)
@@ -493,6 +566,16 @@ namespace Atlaso
 
         public void Dispose()
         {
+            if (suspendedThreadHandle != IntPtr.Zero)
+            {
+                CloseHandle(suspendedThreadHandle);
+                suspendedThreadHandle = IntPtr.Zero;
+            }
+            if (suspendedProcessHandle != IntPtr.Zero)
+            {
+                CloseHandle(suspendedProcessHandle);
+                suspendedProcessHandle = IntPtr.Zero;
+            }
             if (handle != IntPtr.Zero)
             {
                 CloseHandle(handle);
@@ -515,15 +598,31 @@ Exact executable to start without shell interpretation.
 
 .PARAMETER ArgumentList
 Individual process arguments encoded through the Windows argv contract.
+.PARAMETER ProcessJobName
+Optional exact named job used by durable same-boot recovery.
+.PARAMETER DeferResume
+Return the root suspended so its ownership can be durably published first.
 #>
 function New-AtlasoBoundedProcessJob {
     param(
         [Parameter(Mandatory = $true)][string]$FilePath,
-        [Parameter(Mandatory = $true)][AllowEmptyString()][string[]]$ArgumentList
+        [Parameter(Mandatory = $true)][AllowEmptyString()][string[]]$ArgumentList,
+        [string]$ProcessJobName = '',
+        [switch]$DeferResume
     )
 
     Initialize-AtlasoWorkstationProcessJobType
     try {
+        if ($DeferResume) {
+            if ([string]::IsNullOrWhiteSpace($ProcessJobName)) {
+                throw 'A deferred bounded process requires an exact process-job name.'
+            }
+            return [Atlaso.WorkstationProcessJob]::CreateSuspended(
+                $FilePath,
+                $ArgumentList,
+                $ProcessJobName
+            )
+        }
         return [Atlaso.WorkstationProcessJob]::StartSuspended($FilePath, $ArgumentList)
     }
     catch {
@@ -533,6 +632,136 @@ function New-AtlasoBoundedProcessJob {
         )
         $assignmentFailure.Data['AtlasoProcessTreeTerminationUnproven'] = $true
         throw $assignmentFailure
+    }
+}
+
+<#
+.SYNOPSIS
+Open an exact named Windows process job for recovery.
+.PARAMETER ProcessJobName
+Durably recorded non-secret job name owned by one bounded invocation.
+#>
+function Open-AtlasoBoundedProcessJob {
+    param(
+        [Parameter(Mandatory = $true)][string]$ProcessJobName
+    )
+
+    Initialize-AtlasoWorkstationProcessJobType
+    return [Atlaso.WorkstationProcessJob]::OpenExisting($ProcessJobName)
+}
+
+<#
+.SYNOPSIS
+Classify one durably recorded Windows process identity.
+
+.PARAMETER ProcessId
+Positive process identifier read from a durable ownership marker.
+
+.PARAMETER StartFileTimeUtc
+Invariant Windows file time captured before the owned process was resumed.
+#>
+function Get-AtlasoRecordedProcessIdentityState {
+    param(
+        [Parameter(Mandatory = $true)][ValidateRange(1, [int]::MaxValue)][int]$ProcessId,
+        [Parameter(Mandatory = $true)][ValidateRange(1, [long]::MaxValue)][long]$StartFileTimeUtc
+    )
+
+    $process = Get-Process -Id $ProcessId -ErrorAction SilentlyContinue
+    if ($null -eq $process) {
+        return 'absent'
+    }
+    try {
+        $actualStart = $process.StartTime.ToUniversalTime().ToFileTimeUtc()
+    }
+    catch {
+        throw 'Recorded process start identity could not be read.'
+    }
+    if ($actualStart -ne $StartFileTimeUtc) {
+        return 'reused'
+    }
+    return 'matching'
+}
+
+<#
+.SYNOPSIS
+Recover one exactly recorded bounded process tree on the current boot.
+
+.PARAMETER Marker
+Validated durable marker containing controller, job, child, and phase ownership.
+
+.PARAMETER JobNamePattern
+Anchored regular expression admitting only the caller's named-job namespace.
+
+.PARAMETER ProcessDescription
+Sanitized workflow description used in fail-closed diagnostics.
+#>
+function Complete-AtlasoSameBootBoundedProcessRecovery {
+    param(
+        [Parameter(Mandatory = $true)][object]$Marker,
+        [Parameter(Mandatory = $true)][string]$JobNamePattern,
+        [Parameter(Mandatory = $true)][string]$ProcessDescription
+    )
+
+    $ownerState = Get-AtlasoRecordedProcessIdentityState `
+        -ProcessId ([int]$Marker.OwnerProcessId) `
+        -StartFileTimeUtc ([long]$Marker.OwnerProcessStartFileTimeUtc)
+    if ($ownerState -ne 'absent') {
+        throw "The prior $ProcessDescription controller is active or its process identifier was reused."
+    }
+    $jobName = [string]$Marker.ProcessJobName
+    if ($jobName -notmatch $JobNamePattern) {
+        throw "Recorded $ProcessDescription process-job identity is invalid."
+    }
+    $ownershipPhase = [string]$Marker.ProcessOwnershipPhase
+    if ($ownershipPhase -notin @('prepared', 'assigned')) {
+        throw "Recorded $ProcessDescription process ownership phase is invalid."
+    }
+    $childState = 'absent'
+    if ($ownershipPhase -ceq 'assigned') {
+        $childState = Get-AtlasoRecordedProcessIdentityState `
+            -ProcessId ([int]$Marker.ChildProcessId) `
+            -StartFileTimeUtc ([long]$Marker.ChildProcessStartFileTimeUtc)
+    }
+    $job = $null
+    $childProcess = $null
+    try {
+        $job = Open-AtlasoBoundedProcessJob -ProcessJobName $jobName
+        if ($null -ne $job) {
+            if ($ownershipPhase -cne 'assigned' -or $childState -cne 'matching') {
+                throw "The retained $ProcessDescription process job cannot be bound to its exact recorded child ($ownershipPhase/$childState)."
+            }
+            $childProcess = Get-Process -Id ([int]$Marker.ChildProcessId) -ErrorAction Stop
+            if (-not $job.ContainsProcess($childProcess)) {
+                throw "The recorded $ProcessDescription child is not owned by the retained process job."
+            }
+            $job.TerminateAndWait(10000)
+            if (-not $childProcess.WaitForExit(10000)) {
+                throw "The recorded $ProcessDescription child remained active after process-job termination."
+            }
+        }
+        elseif ($ownershipPhase -ceq 'assigned' -and $childState -ne 'absent') {
+            throw "The recorded $ProcessDescription child remains present without its exact process job."
+        }
+    }
+    finally {
+        if ($null -ne $childProcess) {
+            $childProcess.Dispose()
+        }
+        if ($null -ne $job) {
+            $job.Dispose()
+        }
+    }
+    if ($ownershipPhase -ceq 'assigned' -and (
+            (Get-AtlasoRecordedProcessIdentityState `
+                -ProcessId ([int]$Marker.ChildProcessId) `
+                -StartFileTimeUtc ([long]$Marker.ChildProcessStartFileTimeUtc)) -ne 'absent'
+        )) {
+        throw "$ProcessDescription child termination could not be proven after recovery."
+    }
+    if ((Get-AtlasoRecordedProcessIdentityState `
+            -ProcessId ([int]$Marker.OwnerProcessId) `
+            -StartFileTimeUtc ([long]$Marker.OwnerProcessStartFileTimeUtc)) -ne 'absent') {
+        throw "$ProcessDescription controller identity changed during same-boot recovery."
     }
 }
 
@@ -730,25 +959,39 @@ Positive deadline for the external process.
 
 .PARAMETER Action
 Safe action description used in failure messages.
+.PARAMETER ProcessJobName
+Optional exact named job used by durable same-boot recovery.
+.PARAMETER ProcessOwnershipPublisher
+Callback that durably records the suspended root before it is resumed.
 #>
 function Invoke-AtlasoBoundedStreamingProcess {
     param(
         [Parameter(Mandatory = $true)][string]$FilePath,
         [Parameter(Mandatory = $true)][AllowEmptyString()][string[]]$ArgumentList,
         [Parameter(Mandatory = $true)][ValidateRange(1, 86400)][int]$TimeoutSeconds,
-        [Parameter(Mandatory = $true)][string]$Action
+        [Parameter(Mandatory = $true)][string]$Action,
+        [string]$ProcessJobName = '',
+        [scriptblock]$ProcessOwnershipPublisher
     )
 
     # The isolated image child owns redaction. Inheriting the console preserves
     # its sanitized Packer heartbeats and diagnostics without copying plaintext
     # credentials or buffered output into the PowerShell parent.
+    $recoverable = $null -ne $ProcessOwnershipPublisher
     $processJob = New-AtlasoBoundedProcessJob `
         -FilePath $FilePath `
-        -ArgumentList $ArgumentList
+        -ArgumentList $ArgumentList `
+        -ProcessJobName $ProcessJobName `
+        -DeferResume:$recoverable
     $process = $processJob.RootProcess
     $jobCompletionProven = $false
     $interruptionTerminationProven = $false
+    $pendingFailure = $null
     try {
+        if ($recoverable) {
+            & $ProcessOwnershipPublisher $processJob
+            $processJob.Resume()
+        }
         if (-not $process.WaitForExit($TimeoutSeconds * 1000)) {
             try {
                 Stop-AtlasoBoundedProcessTree `
@@ -774,8 +1017,16 @@ function Invoke-AtlasoBoundedStreamingProcess {
                 "$Action failed with exit code $($process.ExitCode) after proven whole-process-tree termination."
             )
             $processFailure.Data['AtlasoProcessTreeTerminationProven'] = $true
+            $processFailure.Data['AtlasoProcessExitCode'] = $process.ExitCode
             throw $processFailure
         }
+    }
+    catch {
+        # Retain the initiating failure across the mandatory job cleanup below.
+        # Without this inner exception, a publication or resume failure is
+        # indistinguishable from an operator interruption during diagnosis.
+        $pendingFailure = $_.Exception
+        throw
     }
     finally {
         try {
@@ -805,7 +1056,8 @@ function Invoke-AtlasoBoundedStreamingProcess {
         }
         if ($interruptionTerminationProven) {
             $interruptionFailure = [System.InvalidOperationException]::new(
-                "$Action was interrupted after proven whole-process-tree termination."
+                "$Action was interrupted after proven whole-process-tree termination.",
+                $pendingFailure
             )
             $interruptionFailure.Data['AtlasoProcessTreeTerminationProven'] = $true
             throw $interruptionFailure
@@ -819,7 +1071,84 @@ Return a stable identity for the current Windows boot.
 #>
 function Get-AtlasoWindowsBootIdentity {
     $operatingSystem = Get-CimInstance -ClassName Win32_OperatingSystem -ErrorAction Stop
-    return $operatingSystem.LastBootUpTime.ToUniversalTime().ToString('o')
+    return ([DateTimeOffset]$operatingSystem.LastBootUpTime).ToUniversalTime().Ticks.ToString(
+        [System.Globalization.CultureInfo]::InvariantCulture
+    )
+}
+
+<#
+.SYNOPSIS
+Classify a persisted boot identity against the current Windows boot.
+
+.PARAMETER BootIdentity
+Value read from a durable cleanup marker, accepted as invariant UTC ticks or a legacy ISO 8601 timestamp.
+#>
+function Get-AtlasoWindowsBootIdentityState {
+    param([Parameter(Mandatory = $true)][object]$BootIdentity)
+
+    $currentIdentity = Get-AtlasoWindowsBootIdentity
+    if ([string]$BootIdentity -ceq $currentIdentity) {
+        return 'current'
+    }
+    if ($currentIdentity -notmatch '^[0-9]{1,19}$') {
+        # Focused tests replace the provider with stable symbolic boot names.
+        return 'prior'
+    }
+    $legacyTicks = if ($BootIdentity -is [DateTime]) {
+        $BootIdentity.ToUniversalTime().Ticks
+    }
+    elseif ([string]$BootIdentity -match '^[0-9]{1,19}$') {
+        $parsedTicks = 0L
+        if (-not [long]::TryParse(
+                [string]$BootIdentity,
+                [System.Globalization.NumberStyles]::None,
+                [System.Globalization.CultureInfo]::InvariantCulture,
+                [ref]$parsedTicks
+            ) -or $parsedTicks -le 0) {
+            return 'invalid'
+        }
+        $parsedTicks
+    }
+    else {
+        $legacyTimestamp = [DateTimeOffset]::MinValue
+        if (-not [DateTimeOffset]::TryParse(
+                [string]$BootIdentity,
+                [System.Globalization.CultureInfo]::InvariantCulture,
+                [System.Globalization.DateTimeStyles]::RoundtripKind,
+                [ref]$legacyTimestamp
+            )) {
+            return 'invalid'
+        }
+        $legacyTimestamp.ToUniversalTime().Ticks
+    }
+    if ($legacyTicks -le 0) {
+        return 'invalid'
+    }
+    $currentTicks = [long]::Parse(
+        $currentIdentity,
+        [System.Globalization.NumberStyles]::None,
+        [System.Globalization.CultureInfo]::InvariantCulture
+    )
+    if ($legacyTicks -eq $currentTicks) {
+        return 'current'
+    }
+    if ($legacyTicks -gt $currentTicks) {
+        return 'invalid'
+    }
+    return 'prior'
+}
+
+<#
+.SYNOPSIS
+Test whether a persisted boot identity describes the current Windows boot.
+
+.PARAMETER BootIdentity
+Value read from a durable cleanup marker and classified by the fail-closed boot parser.
+#>
+function Test-AtlasoWindowsBootIdentityCurrent {
+    param([Parameter(Mandatory = $true)][object]$BootIdentity)
+
+    return (Get-AtlasoWindowsBootIdentityState -BootIdentity $BootIdentity) -ceq 'current'
 }
 
 <#

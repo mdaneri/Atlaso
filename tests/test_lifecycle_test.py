@@ -335,6 +335,49 @@ def test_appliance_health_checks_version_before_authentication(monkeypatch):
     assert evidence["version"] == version_payload
 
 
+def test_appliance_console_geometry_requires_deployed_framebuffer_and_tty1(monkeypatch):
+    """Verify lifecycle coverage requires the deployed 1280x800 50-row console.
+
+    Args:
+        monkeypatch: Pytest fixture used to replace lifecycle dependencies.
+    """
+    lifecycle = load_lifecycle_module()
+    commands: list[str] = []
+
+    def fake_ssh_command(host, command_args, command, *, role):  # type: ignore[no-untyped-def]  # Fake mirrors the lifecycle SSH helper.
+        """Return deployed console geometry evidence.
+
+        Args:
+            host: Appliance host selected by the lifecycle test.
+            command_args: Parsed lifecycle command arguments.
+            command: Remote shell command issued by the check.
+            role: Lifecycle SSH role used for the command.
+        """
+        assert host == "192.0.2.10"
+        assert command_args.appliance_ssh_host == host
+        assert role == "appliance"
+        commands.append(command)
+        return {
+            "returncode": 0,
+            "stdout": "framebuffer=1280,800\nconsole=50 160\n",
+            "stderr": "",
+            "command": "redacted",
+        }
+
+    monkeypatch.setattr(lifecycle, "ssh_command", fake_ssh_command)
+
+    evidence = lifecycle.appliance_console_geometry(
+        argparse.Namespace(appliance_ssh_host="192.0.2.10")
+    )
+
+    assert "/sys/class/graphics/fb0/virtual_size" in commands[0]
+    assert "stty -F /dev/tty1 size" in commands[0]
+    assert "test \"$framebuffer\" = '1280,800'" in commands[0]
+    assert "test \"$console\" = '50 160'" in commands[0]
+    assert evidence["framebuffer_virtual_size"] == "1280,800"
+    assert evidence["tty1_rows_columns"] == "50 160"
+
+
 def test_reboot_appliance_waits_for_new_boot_and_host_facing_readiness(monkeypatch):
     """Verify reboot coverage requires a changed boot ID and recovered nginx front door.
 
@@ -463,6 +506,7 @@ def test_full_lifecycle_plan_includes_passwordless_web_terminal_acceptance():
 
     plan = lifecycle.lifecycle_plan(args)
 
+    assert "1280x800 framebuffer and 50-row by 160-column tty1 console geometry" in plan["checks"]
     assert "passwordless admin web terminal on management and one selected extra interface" in plan["checks"]
     assert any("atomic generated certificate request with explicit SAN verification" in check for check in plan["checks"])
     assert "ldap" in plan["apply_units"]

@@ -194,10 +194,15 @@ invocation remains cleanup-owned. The parent then removes the
 sensitive root and verifies its absence before returning.
 `-ImageBuildTimeoutSeconds` selects the deadline and defaults to six hours.
 If whole-tree termination itself cannot be proven, the wrapper retains the root and a non-secret
-`.atlaso-local/photon-image-build-cleanup.json` ownership marker and blocks further work. Restart Windows and rerun the
-wrapper; only a changed boot identity permits the recovery path to remove and verify the exact root and then its marker
-before new credential access or image mutation. Ordinary completion also requires the reloaded marker root to equal the
-in-memory task-created root before recursive removal.
+`.atlaso-local/photon-image-build-state/photon-image-build-cleanup.json` ownership marker and blocks further work. The
+marker records the prior controller and the suspended child's unique named job plus PID/start-time identities before
+the child resumes. Rerun the wrapper on the same boot: it proceeds only after the prior controller is absent, terminates
+only the exact matching job, proves the child and all descendants gone, and then removes and verifies the pinned root
+before retiring the marker. It can also reconcile a terminal interruption whose exact job and child are already absent.
+PID reuse, an active or replaced owner, a surviving descendant after the recorded root exits, incomplete termination,
+and path/reparse/filesystem-identity drift preserve the marker and artifacts. Restart Windows for those cases and for
+legacy markers that lack process ownership evidence. Ordinary completion also requires the reloaded marker root to equal
+the in-memory task-created root before recursive removal.
 The shared SDK credential bridge follows the same recovery ownership. Each non-secret marker is flushed with
 write-through semantics and atomically renamed before a plaintext child starts. Cleanup flushes the sensitive root
 parent's directory metadata on the root's own volume before it durably records `root-absent` and `retired` phases and

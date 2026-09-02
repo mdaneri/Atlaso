@@ -82,8 +82,13 @@ def test_photon_wrapper_preflights_credentials_before_image_mutation() -> None:
         in wrapper
     )
     assert "'-SensitiveBuildDirectory', $childSensitiveBuildDirectory" in wrapper
-    assert "'SensitiveBuildDirectory', 'OutputCleanupClaimPath'," in wrapper
-    assert "'BuilderAddressReservationPath', 'PreparedIsoPath'" in wrapper
+    assert (
+        "'SensitiveBuildDirectory', 'SensitiveBuildRootIdentity', "
+        "'OutputCleanupClaimPath',"
+    ) in wrapper
+    assert "'BuilderAddressReservationPath'," in wrapper
+    assert "'BuilderHandoffStateIdentity', 'BuilderHandoffPendingIdentity'," in wrapper
+    assert "'PreparedIsoPath'," in wrapper
     assert "'pending-releases'" in wrapper
     assert "Complete-AtlasoBuilderAddressReservationHandoff" in wrapper
     assert "-SensitiveBuildDirectory $SensitiveBuildDirectory" in wrapper
@@ -137,7 +142,7 @@ def test_photon_wrapper_preflights_credentials_before_image_mutation() -> None:
     )
     assert artifact_admission < recovery_block
     assert artifact_admission < wrapper.index(
-        "Invoke-AtlasoPhotonBuildCleanupRecovery -MarkerPath $cleanupMarkerPath",
+        "-MarkerPath $cleanupMarkerPath `",
         recovery_block,
     )
     assert artifact_admission < wrapper.index(
@@ -167,14 +172,16 @@ def test_photon_wrapper_preflights_credentials_before_image_mutation() -> None:
     assert "$env:DEFAULT_ADMIN_PASSWORD -or $env:DEFAULT_ROOT_PASSWORD" in module
     assert "ConvertFrom-SecureString -SecureString $AdminPassword" in module
     assert "ConvertFrom-SecureString -SecureString $RootPassword" in module
-    credential_root_cleanup = (
-        "Remove-AtlasoOnePasswordCredentialBridge -BridgeRoot ([string]$Marker.RootPath)"
-    )
+    credential_root_cleanup = "Remove-AtlasoOnePasswordCredentialBridge `"
     assert credential_root_cleanup in module
     assert "Sync-AtlasoDirectoryMetadata -DirectoryPath (Split-Path -Parent $resolvedBridgeRoot)" in module
     assert "onepassword-credential-cleanup.json" in module
     assert "Invoke-AtlasoOnePasswordCredentialCleanupRecovery" in module
     assert "Write-AtlasoDurableJsonFile -Path $cleanupMarkerPath" in module
+    assert "Schema                       = 2" in module
+    assert "ProcessOwnershipPhase        = 'prepared'" in module
+    assert "-ProcessOwnershipPublisher $processOwnershipPublisher" in module
+    assert "Complete-AtlasoSameBootBoundedProcessRecovery" in module
     assert "$processTreeTerminationUnproven" in module
     assert module.index(credential_root_cleanup) < module.index("return $result")
     credential_pair = module.index("function Get-AtlasoOnePasswordCredentialPair {")
@@ -195,7 +202,8 @@ def test_photon_wrapper_preflights_credentials_before_image_mutation() -> None:
     assert "FlushFileBuffers" in runner
     assert "FILE_FLAG_BACKUP_SEMANTICS" in runner
     assert "StartSuspended($FilePath, $ArgumentList)" in runner
-    assert "ResumeThread(processInformation.Thread)" in runner
+    assert "ResumeThread(suspendedThreadHandle)" in runner
+    assert "CreateSuspended(filePath, arguments, null)" in runner
     assert "JOB_OBJECT_LIMIT_BREAKAWAY_OK" not in runner
     assert "CREATE_BREAKAWAY_FROM_JOB" in runner
     assert "Start-AtlasoWorkstationUiBreakawayProcess" not in runner

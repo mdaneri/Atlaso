@@ -64,8 +64,28 @@ GRUB auto-install entry. The original Photon source ISO is cached under `image/c
 kickstart ISO is written under this image directory as a temporary sensitive artifact. The wrapper removes it and
 verifies its absence after the bounded Packer validation or build exits, including failure paths. `-PrepareIsoOnly` is
 rejected because retaining that ISO would retain a reusable build credential. A fresh build starts with an empty
-task-owned cleanup ledger; the remaster helper records each unique partial path before writing and records the final
-path only after replacement preflight succeeds. `New-AtlasoPhotonKickstart` in
+task-owned cleanup ledger; the wrapper creates and filesystem-identity-pins the prepared-ISO directory, then creates
+and pins the final ISO object before the remaster helper writes through that same file. Writing the final object directly
+avoids a DELETE-capable promotion handle that would conflict with ordinary Packer readers.
+The remaster helper reads the pinned kickstart through a delete-sharing-compatible Windows handle, and its bounded
+fallback leaf stays shorter than the ordinary ISO name so the additional partial-file identity suffix remains viable.
+Atlaso hashes the retained ISO through the same compatible sharing contract; focused Packer syntax validation reads the
+retained variable file before its exact identity-bound deletion, and the canonical build proves plugin-level ISO access.
+The kickstart JSON and Packer variable file use the same create-new, identity-pin, handle-write ordering before any
+plaintext credential byte is exposed. Before ordinary readers run, each writer handle is atomically reopened as a
+distinct read-attributes pin that still denies delete sharing without retaining the writer's data access. Cleanup
+binds the exact object by file ID before releasing that pin, follows the bound object's current path if its link moves,
+then acquires delete access and requires the captured 128-bit filesystem identity to match before deletion. A path
+replacement therefore cannot redirect removal or leave the original object behind.
+Those pins remain open through the respective helper or Packer consumer. Recovery
+never interprets an absent active cleanup root as deletion proof,
+because a same-user move outside the admitted parent is indistinguishable from a completed deletion after a crash.
+If the isolated child cannot prove exact-file deletion, its dedicated failure status makes the parent retain both the
+credential root and durable cleanup marker instead of recursively deleting the root and retiring the marker.
+An absent path with no recorded handle is treated as never created; an existing untracked plaintext path remains a
+cleanup failure.
+Failed remaster attempts remain in the same handle ledger until the outer cleanup deletes the exact partial object.
+`New-AtlasoPhotonKickstart` in
 `scripts/windows/common/Atlaso.PhotonImage.psm1` is the only kickstart source. Focused image tests parse its VMware JSON
 output and validate the installer, package, and guest-service contract.
 At shutdown, Packer schedules the root-only image finalizer from `/opt/atlaso/bin`, the same boundary as other
@@ -103,7 +123,13 @@ when exact provider inventory proves that the expected VMX path is the running b
 The shared provisioner stages `pyproject.toml` with `scripts/version.py`, parses `[project].version` as
 TOML, and requires the repository's strict `X.Y.Z` release format before it creates
 `/opt/atlaso/releases/bootstrap-<version>`. If that metadata is missing, unreadable, malformed, or invalid, the build
-log reports the specific version-policy error. The remastered kickstart disables `sshd.socket` and enables
+log reports the specific version-policy error. After installation, the provisioner requires `/opt/atlaso` itself to
+remain the exact physical installation root, then resolves the complete compatibility chain and requires
+`/opt/atlaso/current` to identify that exact physical bootstrap release,
+`/opt/atlaso/.venv` to identify its exact physical virtual environment, and the interpreter's CPython 3.14 `purelib`
+to identify that environment's physical `site-packages`. Broken, redirected, wrong-version, or escaping links fail with
+bounded actual/expected path diagnostics; services continue to use the supported `/opt/atlaso/.venv` compatibility
+path. The remastered kickstart disables `sshd.socket` and enables
 `sshd.service`. Photon must not enable both conflicting units: the normal daemon provides deterministic
 password-authenticated SSH for Packer after the installed-system boot. The Photon root/build password remains separate
 from the Atlaso web bootstrap administrator password. The shared wrapper encodes that build credential before every
@@ -133,7 +159,12 @@ It also treats `binutils` and `linux-api-headers` as build-only because Photon p
 userspace headers separately from the compiler. The QEMU configuration probe includes GLib before it checks native type
 sizes; without `linux-api-headers`, the missing `linux/limits.h` compile error is otherwise reported as a misleading GLib
 metadata mismatch. A configure failure prints only the bounded tail of QEMU's Meson log and never dumps the guest
-environment. The RPM builder copies QEMU 10.2's linked guest agent from its `build/qga` target directory.
+environment. Packer invokes the shared provisioner through `sudo -E`, but the QEMU RPM builder replaces the preserved
+communicator `HOME` and pip cache with root-owned, mode-`0700` directories inside one identity-bound invocation root
+before `configure` can start `mkvenv`. It clears inherited `PIP_*` and `XDG_CONFIG_HOME` values, pins pip to the
+generated root-owned configuration, and then restores only the admitted index without echoing it. Exit cleanup
+removes only that invocation root. The RPM builder copies QEMU 10.2's linked guest agent from its `build/qga` target
+directory.
 Because that Atlaso-built RPM is not a repository-signed package, the provisioner downloads its `glib` and `systemd`
 runtime dependency closure in a separate signature-checked Photon transaction, then stages the pinned local RPM
 directly. No transaction bypasses repository GPG checks, and the completed root-owned offline closure remains bound by
@@ -184,10 +215,45 @@ current-user DPAPI bundle, and verifies removal of both task-owned roots. Only t
 `SecureString` values at the kickstart and Packer serialization boundary. The wrapper places the kickstart, remastered
 ISO, and secret-bearing Packer variable file inside that exact task-owned root, so parent cleanup still removes and
 verifies them after a whole-tree timeout kills the child before its normal `finally` blocks can run.
+The credential bridge, immutable source snapshot, Packer workspace, remastered ISO, cleanup marker, and VMware
+builder-address release handoff all live beneath checkout-local `.atlaso-local/photon-image-build-state`. An explicit
+`-BuildStateRoot` is accepted only as a strict non-reparse-point descendant of the exact task repository. The wrapper
+also requires an explicit root to be inside a Git-ignored task subtree, preventing build state from dirtying the
+source inventory before immutable snapshot admission. The wrapper
+revalidates and pins the credential parent and invocation root before any sensitive staging, then transports those
+opaque filesystem identities into the isolated child so it re-admits the complete ancestry before creating its
+workspace or consuming credentials. The plaintext-sensitive build root has its own transported filesystem identity;
+the child revalidates that identity plus each destination's complete reparse-free ancestry before decryption,
+kickstart and ISO generation, Packer variable creation, consumption, and cleanup. It also retires exact
+legacy address handoffs from bounded local checkout identity before requiring the current pull request to remain open,
+so a post-restart recovery is not stranded by later PR closure or head advancement. The task-owned builder-address
+handoff and pending-release directories are likewise pinned, transported into the isolated child, and revalidated
+immediately before durable publication so a redirected handoff cannot leak a shared pool reservation. The wrapper
+never creates new task build state through Windows `TEMP`, `LocalApplicationData`, a profile directory, or a different
+volume. The address allocator retains one non-task-owned per-user lock and ledger under `LocalApplicationData` so
+concurrent worktrees cannot reserve the same VMware address. Recovery may read and retire an exact pre-migration marker
+or matching address handoff from former roots, but it never adopts them for a new task handoff or touches another
+repository or canonical builder identity.
 `-ImageBuildTimeoutSeconds` bounds the whole child and defaults to six hours.
 If Windows cannot prove whole-tree termination, the wrapper retains the root plus a non-secret checkout-local cleanup
-marker and fails closed. Restart Windows and rerun the wrapper; the changed boot identity proves the prior tree is
-inactive, allowing exact-root cleanup and marker removal before any new credential access or image mutation.
+marker and fails closed. Before resuming the suspended plaintext-consuming child, the wrapper durably binds the marker
+to the prior controller's PID/start time, a unique named Windows job, and the child's PID/start time. Rerun the wrapper
+on the same Windows boot to invoke bounded recovery. Recovery requires the prior controller to be absent, reopens and
+terminates only the exact recorded job when its root identity still matches, proves the child and every job descendant
+are gone, and only then removes the identity-pinned root and retires the marker. A terminal interruption whose named job
+and exact child are already absent follows the same cleanup path.
+Recovery preserves the marker and artifacts when it sees a live or reused controller/child PID, a missing or replaced
+job around a live child, a job whose recorded root has exited while descendants remain, incomplete termination, or any
+path/reparse/filesystem-identity drift. Legacy markers without process ownership evidence still require restarting
+Windows; a changed boot remains the fallback for every ambiguous current marker.
+The marker uses one fixed checkout-local path independent of `-BuildStateRoot`, so changing or omitting that option
+cannot bypass retained-root admission. After boot proof, recovery durably upgrades an active legacy marker by pinning
+its admitted root identity before cleanup.
+Immediately before recursive recovery deletion, the wrapper revalidates the complete admitted parent and cleanup-root
+ancestry and refuses any junction, symbolic link, or other reparse point introduced after marker admission. The marker
+also persists the root's opaque filesystem identity. Ordinary and post-restart cleanup require that exact identity at
+the admitted path immediately before recursive deletion; a renamed root or replacement directory preserves both
+artifacts and the cleanup evidence and fails closed.
 The shared SDK bridge uses the same boot-bound recovery rule. Both marker types are write-through flushed and
 atomically renamed before a plaintext child starts. After root removal, the wrapper flushes deletion metadata through
 the root parent's Windows directory handle on that same volume before it durably records root absence and a retired
@@ -304,7 +370,8 @@ worktree, source commit, branch, process, Windows boot identity, output root, VM
 reserved for the rest of the same Windows boot because a surviving descendant could still start the VM. After a host
 restart proves that process tree gone, recovery also requires the exact VM to be inactive and its address unobserved;
 an active or observed stale address remains reserved while the allocator tries another pool candidate.
-The non-secret release handoff lives under the same per-user state root instead of the temporary credential directory.
+The non-secret release handoff lives beneath the task worktree instead of the host-shared allocation registry or
+temporary credential directory.
 If cleanup retains a running VM, stop that VM and rerun the wrapper; startup retries every exact pending handoff before
 allocating another address, skips handoffs whose exact owner process is still active, and deletes a handoff only after
 its ledger release succeeds. A dead same-boot owner remains reserved unless the controlling parent proves complete
@@ -428,6 +495,10 @@ The descriptor exposes two network mappings for
 vSphere/ESXi import: `Atlaso Management Network` for the first adapter, which remains management-only as `eth0`, and
 `Atlaso Services Network` for the second adapter used by DNS, DHCP, CA, depot, PXE, KMS, and other Atlaso-managed
 services.
+
+Image provisioning follows the canonical
+[boot presentation contract](../../docs/reference/appliance-console-technical.md#boot-presentation) for the Photon
+GRUB splash and `tty1` console.
 
 Supported OVF Tool exports declare disabled Secure Boot with
 `vmw:key="bootOptions.efiSecureBootEnabled" vmw:value="false"`. Atlaso validates that normalized descriptor before it
