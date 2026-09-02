@@ -3526,6 +3526,15 @@ Dependabot cooldowns do not cover every transitive selection and do not delay se
 bootstrap tools retain <code>--allow-unsafe</code>, and the wrapper refreshes the declaration fingerprint embedded in
 <code>requirements-appliance.lock</code>. Pass <code>--upgrade</code> only when the intended change should move every eligible package to the
 newest version that satisfies the seven-day cutoff.</p>
+<p>The Windows 1Password deployment lock is temporarily augmented from
+<code>scripts/windows/vmware/onepassword-sdk-cp314-wheel.json</code>. That manifest binds one immutable GitHub release asset from
+<code>mdaneri/onepassword-sdk-python</code> by filename, size, SHA-256, release commit, upstream <code>v0.4.1</code> identity, attestation
+workflow, wheel tag, and MIT license. The generator adds only that approved wheel hash. If PyPI publishes an official
+<code>onepassword-sdk 0.4.1</code> <code>cp314-cp314-win_amd64</code> wheel and it becomes seven-days eligible, regeneration fails with
+instructions to retire the fork bridge instead of silently preferring it.
+The bridge tracks <a href="https://github.com/1Password/onepassword-sdk-python/issues/244">1Password issue #244</a>, does not
+change the <code>0.4.1</code> package version, and is never uploaded to PyPI. Maintainer review treats the upstream MIT license and
+included notice as permitting this temporary redistribution; that delivery record is not legal advice.</p>
 <p>The wrapper resolves against the PEP 691/700 JSON API at <code>https://pypi.org/simple</code> by default and verifies that the
 index returns upload times before compiling. It ignores pip configuration and environment variables that could add an
 unverified index or find-links source. An approved alternative can be supplied with <code>--index-url</code>, but it must use HTTPS,

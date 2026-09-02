@@ -3933,7 +3933,7 @@ successful software-release SHA, run:</p>
 </span><span id="__span-4-7"><a id="__codelineno-4-7" name="__codelineno-4-7" href="#__codelineno-4-7"></a>  <span class="n">-ServiceSwitch</span> <span class="s1">&#39;Atlaso Services&#39;</span> <span class="p">`</span>
 </span><span id="__span-4-8"><a id="__codelineno-4-8" name="__codelineno-4-8" href="#__codelineno-4-8"></a>  <span class="n">-OnePasswordEnvironmentId</span> <span class="s1">&#39;&lt;atlaso-environment-id&gt;&#39;</span> <span class="p">`</span>
 </span><span id="__span-4-9"><a id="__codelineno-4-9" name="__codelineno-4-9" href="#__codelineno-4-9"></a>  <span class="n">-OnePasswordAccount</span> <span class="s1">&#39;&lt;account-name-or-id&gt;&#39;</span> <span class="p">`</span>
-</span><span id="__span-4-10"><a id="__codelineno-4-10" name="__codelineno-4-10" href="#__codelineno-4-10"></a>  <span class="n">-OnePasswordPython</span> <span class="s1">&#39;&lt;path-to-python-3.13.exe&gt;&#39;</span>
+</span><span id="__span-4-10"><a id="__codelineno-4-10" name="__codelineno-4-10" href="#__codelineno-4-10"></a>  <span class="n">-OnePasswordPython</span> <span class="s1">&#39;&lt;path-to-python-3.14.exe&gt;&#39;</span>
 </span></code></pre></div>
 <p>The command verifies and extracts the exact published software bundle, builds the canonical VMware template, derives
 Hyper-V from that OVA, runs both Windows smokes, creates the annotated tag before the draft Release, uploads without
@@ -3985,7 +3985,7 @@ the disposable runner must still complete its local 1Password authorization and 
 operator-owned virtual switches. The Proxmox and KVM runners require the host tools listed in their import sections.
 The optional Windows producer workflow performs the same CPython 3.14 smoke-runtime installation before candidate
 production. The generated, seven-day, hash-verified smoke lock is separate from
-<code>requirements-onepassword-deploy.lock</code>: the latter belongs to the bounded CPython 3.10 through 3.13 1Password
+<code>requirements-onepassword-deploy.lock</code>: the latter belongs to the bounded standard Windows x64 CPython 3.14 1Password
 credential bridge and includes SDK dependencies the smoke helper neither imports nor needs.
 Every smoke identity and storage
 namespace is invocation-scoped: VMware generates a disposable per-run password, Proxmox serializes each VMID import,

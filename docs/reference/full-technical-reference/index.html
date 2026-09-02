@@ -4249,7 +4249,7 @@ file. When <code>-SshPassword</code> and/or <code>-BootstrapAdminPassword</code>
 unique, concealed <code>DEFAULT_ROOT_PASSWORD</code> and/or <code>DEFAULT_ADMIN_PASSWORD</code> through the supported bounded Windows
 1Password SDK desktop integration. Both explicit parameters accept <code>SecureString</code> and override their own Environment
 default independently. With no account or Python selectors, the bridge uses the single local 1Password CLI account and
-the highest compatible CPython 3.10 through 3.13 runtime registered with the Windows launcher. Current Python Install
+standard GIL-enabled Windows x64 CPython 3.14 registered with the Windows launcher. Current Python Install
 Manager bracketed architecture selectors are accepted alongside legacy launcher and vendor-tagged registrations;
 known x86, unsupported architectures or versions, malformed entries, and missing executables remain ineligible. Explicit
 <code>-OnePasswordAccount</code> and <code>-OnePasswordPython</code> values remain authoritative. Caller <code>DEFAULT_*</code> variables, local <code>.env</code>
@@ -5389,7 +5389,7 @@ repository SHA-256 pin before invoking <code>op</code>, requires the Environment
 certificate/key pair before mutation. For each omitted <code>-AdminPassword</code> or <code>-RootPassword</code>, it independently retrieves
 only the corresponding exact concealed default through the supported 1Password SDK desktop integration. An explicit
 <code>SecureString</code> remains authoritative for that credential. By default, the wrapper selects the single local 1Password
-CLI account and the highest compatible CPython 3.10 through 3.13 runtime registered with the Windows launcher. Current
+CLI account and standard GIL-enabled Windows x64 CPython 3.14 registered with the Windows launcher. Current
 Python Install Manager bracketed architecture selectors, legacy launcher forms, and vendor tags remain supported;
 known x86 and unsupported or malformed entries remain ineligible.
 <code>-OnePasswordAccount</code> and <code>-OnePasswordPython</code> remain explicit overrides; zero or multiple accounts and a missing
@@ -5446,7 +5446,7 @@ the exact 1Password Environment ID and approved 1Password account name or ID:</p
 </span><span id="__span-32-2"><a id="__codelineno-32-2" name="__codelineno-32-2" href="#__codelineno-32-2"></a>  <span class="n">-IpAddress</span> <span class="n">192</span><span class="p">.</span><span class="n">168</span><span class="p">.</span><span class="n">167</span><span class="p">.</span><span class="n">10</span> <span class="p">`</span>
 </span><span id="__span-32-3"><a id="__codelineno-32-3" name="__codelineno-32-3" href="#__codelineno-32-3"></a>  <span class="n">-OnePasswordEnvironmentId</span> <span class="s1">&#39;&lt;atlaso-environment-id&gt;&#39;</span> <span class="p">`</span>
 </span><span id="__span-32-4"><a id="__codelineno-32-4" name="__codelineno-32-4" href="#__codelineno-32-4"></a>  <span class="n">-OnePasswordAccount</span> <span class="s1">&#39;&lt;account-name-or-id&gt;&#39;</span> <span class="p">`</span>
-</span><span id="__span-32-5"><a id="__codelineno-32-5" name="__codelineno-32-5" href="#__codelineno-32-5"></a>  <span class="n">-OnePasswordPython</span> <span class="s1">&#39;&lt;path-to-python-3.13.exe&gt;&#39;</span>
+</span><span id="__span-32-5"><a id="__codelineno-32-5" name="__codelineno-32-5" href="#__codelineno-32-5"></a>  <span class="n">-OnePasswordPython</span> <span class="s1">&#39;&lt;path-to-python-3.14.exe&gt;&#39;</span>
 </span></code></pre></div>
 <p>To let the password-backed helper resolve the guest IP and reconcile a normal test VM's verified Ed25519 host key from
 VMware guest-info, pass its VMX path with <code>-UseVmwareGuestInfoHostKey</code>. You may also pass <code>-IpAddress</code> with <code>-VmxPath</code>
@@ -5456,16 +5456,18 @@ when the address is already known; the explicitly identified normal test VM then
 </span><span id="__span-33-3"><a id="__codelineno-33-3" name="__codelineno-33-3" href="#__codelineno-33-3"></a>  <span class="n">-UseVmwareGuestInfoHostKey</span> <span class="p">`</span>
 </span><span id="__span-33-4"><a id="__codelineno-33-4" name="__codelineno-33-4" href="#__codelineno-33-4"></a>  <span class="n">-OnePasswordEnvironmentId</span> <span class="s1">&#39;&lt;atlaso-environment-id&gt;&#39;</span> <span class="p">`</span>
 </span><span id="__span-33-5"><a id="__codelineno-33-5" name="__codelineno-33-5" href="#__codelineno-33-5"></a>  <span class="n">-OnePasswordAccount</span> <span class="s1">&#39;&lt;account-name-or-id&gt;&#39;</span> <span class="p">`</span>
-</span><span id="__span-33-6"><a id="__codelineno-33-6" name="__codelineno-33-6" href="#__codelineno-33-6"></a>  <span class="n">-OnePasswordPython</span> <span class="s1">&#39;&lt;path-to-python-3.13.exe&gt;&#39;</span>
+</span><span id="__span-33-6"><a id="__codelineno-33-6" name="__codelineno-33-6" href="#__codelineno-33-6"></a>  <span class="n">-OnePasswordPython</span> <span class="s1">&#39;&lt;path-to-python-3.14.exe&gt;&#39;</span>
 </span></code></pre></div>
 <p>Do not pipe the VMX path or put it on a separate line by itself; PowerShell will try to execute the <code>.vmx</code> file. Before
 using the password-backed path, authenticate the local 1Password integration, verify that exactly one Environment named
 <code>Atlaso</code> exists, and confirm that <code>DEFAULT_ADMIN_PASSWORD</code> is present and concealed without reading its value. Copy the
 opaque Environment ID from that exact Environment and pass it with the account name or ID used by the desktop app.
 The parent performs local build and input preparation without the credential, then invokes one isolated Python child.
-Because the 1Password SDK publishes Windows wheels through CPython 3.13 while Atlaso builds with Python 3.14, pass an
-explicit CPython 3.10 through 3.13 executable with <code>-OnePasswordPython</code>; the script validates that boundary before any
-build or deployment work.
+Atlaso temporarily consumes one immutable <code>onepassword-sdk 0.4.1</code> Windows x64 CPython 3.14 compatibility wheel from
+<code>mdaneri/onepassword-sdk-python</code>. The checked-in manifest binds the release URL, filename, size, SHA-256, upstream
+source identity, attestation workflow, wheel tag, and MIT license. The script validates that asset and selects standard
+GIL-enabled Windows x64 CPython 3.14 before build or deployment work; <code>-OnePasswordPython</code> is only an explicit override.
+Python 3.10 through 3.13, x86, ARM64, and free-threaded <code>3.14t</code> fail closed.
 The supported 1Password SDK prompts for desktop authorization and returns the exact concealed variable only inside that
 child, which uses it directly for Paramiko without putting it in an environment variable. Python starts with <code>-I -S</code>
 and prepends only its explicit dependency directory, so <code>sitecustomize</code>, <code>usercustomize</code>, executable <code>.pth</code> hooks, and
@@ -5485,7 +5487,9 @@ stderr concurrently so a verbose remote failure cannot block on one channel and 
 <code>-DeploymentTimeoutSeconds</code> remote-command deadline; the remote readiness retry keeps
 its independent <code>-ReadinessTimeoutSeconds</code> allowance. Desktop authorization and exact Environment retrieval each use
 the deployment deadline too. The build downloads Paramiko, the pinned 1Password SDK, and every transitive dependency
-from the seven-day, hash-verified <code>requirements-onepassword-deploy.lock</code>. The child installs that runtime into a
+from the seven-day, hash-verified <code>requirements-onepassword-deploy.lock</code>. The compatibility wheel is downloaded only
+from its fixed immutable GitHub release URL with bounded redirects, time, size, filename, and SHA-256 checks before the
+remaining locked wheels are staged. The child installs that runtime into a
 temporary deployment directory using only the staged wheels, <code>--no-index</code>, and hash verification; it does not modify
 the global Python environment. <code>-SkipBuild</code> fails closed if the complete locked wheel set is not already in <code>dist</code>.
 Without <code>-OnePasswordEnvironmentId</code>, the helper preserves the original <code>scp</code>/<code>ssh</code> key or agent workflow.
