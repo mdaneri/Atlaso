@@ -3580,6 +3580,27 @@ def test_remaster_attempt_is_identity_pinned_before_helper_writes() -> None:
     common = Path("scripts/windows/common/Atlaso.PhotonImage.psm1").read_text(
         encoding="utf-8"
     )
+    build = common.index("function Invoke-AtlasoPhotonImageBuild {")
+    directory = common.index(
+        "$preparedIsoDirectory = Split-Path -Parent $resolvedPreparedIsoPath", build
+    )
+    directory_guard = common.index(
+        "Assert-AtlasoSensitiveBuildPath -Validator $SensitivePathValidator "
+        "-Path $preparedIsoDirectory",
+        directory,
+    )
+    directory_create = common.index(
+        "New-Item -ItemType Directory -Force -Path $preparedIsoDirectory",
+        directory_guard,
+    )
+    directory_pin = common.index(
+        "Assert-AtlasoSensitiveBuildPath -Validator $SensitivePathValidator "
+        "-Path $preparedIsoDirectory",
+        directory_create,
+    )
+    remaster_call = common.index("New-AtlasoRemasteredPhotonIso `", directory_pin)
+    assert directory < directory_guard < directory_create < directory_pin < remaster_call
+
     remaster = common.index("function New-AtlasoRemasteredPhotonIso {")
     create = common.index("[Atlaso.PhotonPinnedFile]::Create($attemptIsoPath)", remaster)
     record = common.index("$CleanupPaths.Add($attemptIsoPath)", create)

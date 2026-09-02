@@ -999,6 +999,7 @@ function Invoke-AtlasoPhotonImageBuild {
     $kickstartJson = Join-Path $ksSourceDir 'photon-ks.json'
     $resolvedPreparedIsoPath = $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($PreparedIsoPath)
     $resolvedPreparedIsoPath = Resolve-AtlasoPreparedIsoPath -Path $resolvedPreparedIsoPath
+    $preparedIsoDirectory = Split-Path -Parent $resolvedPreparedIsoPath
 
     if ($PrepareIsoOnly) {
         throw 'PrepareIsoOnly is not supported because a retained remastered ISO would contain reusable build credentials. Run Packer validation or a build so the ISO can be deleted after the bounded consumer exits.'
@@ -1008,6 +1009,9 @@ function Invoke-AtlasoPhotonImageBuild {
     $pinnedPlaintextHandles = @{}
     try {
         try {
+            Assert-AtlasoSensitiveBuildPath -Validator $SensitivePathValidator -Path $preparedIsoDirectory
+            New-Item -ItemType Directory -Force -Path $preparedIsoDirectory | Out-Null
+            Assert-AtlasoSensitiveBuildPath -Validator $SensitivePathValidator -Path $preparedIsoDirectory
             Assert-AtlasoSensitiveBuildPath -Validator $SensitivePathValidator -Path $ksSourceDir
             Remove-AtlasoSensitiveBuildArtifact -Path $ksSourceDir
             Assert-AtlasoSensitiveBuildPath -Validator $SensitivePathValidator -Path $ksSourceDir
