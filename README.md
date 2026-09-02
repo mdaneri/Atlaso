@@ -47,6 +47,11 @@ their exact PR identity owns the Packer VM, output, reservation, provenance, and
 and release names remain PR-independent. See the
 [VMware Workstation lifecycle testing guide](docs/reference/vmware-workstation-lifecycle-testing.md).
 
+Password-backed Windows build and test helpers require standard GIL-enabled x64 CPython 3.14. Until 1Password ships
+an eligible official wheel, Atlaso verifies one immutable, attested compatibility release from the public
+`mdaneri/onepassword-sdk-python` fork by exact URL, filename, size, and SHA-256 before desktop authorization or VMware
+activity. The wheel is never checked into Atlaso or published to PyPI.
+
 See [Getting started](docs/getting-started/index.md) for the first-use path and
 [Portable virtualization artifacts](docs/reference/virtualization-artifacts.md) for platform-specific import details.
 

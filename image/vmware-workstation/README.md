@@ -200,9 +200,9 @@ When either is omitted, the wrapper verifies the exact Atlaso 1Password Environm
 `DEFAULT_ROOT_PASSWORD` or `DEFAULT_ADMIN_PASSWORD` through the bounded Windows 1Password SDK bridge. A custom
 single-line selector file may be passed with `-EnvironmentIdFile`; the legacy `-OnePasswordEnvironmentIdFile` spelling
 is an alias. The wrapper uses the single account returned by the local 1Password CLI and the highest compatible
-CPython 3.10 through 3.13 runtime registered with the Windows launcher. Discovery accepts current Python Install Manager
-inventory selectors such as `-V:3.13[-64]` while retaining legacy launcher and vendor-tagged runtime support; known x86
-runtimes and unsupported versions remain ineligible. Pass `-OnePasswordAccount` or
+standard GIL-enabled Windows x64 CPython 3.14 registered with the Windows launcher. Discovery accepts current Python
+Install Manager inventory selectors such as `-V:3.14[-64]` while retaining legacy launcher and vendor-tagged runtime
+support; Python 3.10 through 3.13, x86, ARM64, and free-threaded `3.14t` remain ineligible. Pass `-OnePasswordAccount` or
 `-OnePasswordPython` only to override that deterministic discovery. Zero or multiple accounts and a missing compatible
 runtime fail closed before image mutation.
 
@@ -408,14 +408,14 @@ test appliance with:
 For the password-backed path, first authenticate the local 1Password desktop integration, verify that exactly one
 Environment named `Atlaso` exists, and confirm that it contains the concealed `DEFAULT_ADMIN_PASSWORD` variable without
 reading its value. Copy that Environment's opaque ID, identify the approved 1Password account name or ID, and select an
-explicit CPython 3.10 through 3.13 executable for the supported Windows SDK bridge:
+explicit standard Windows x64 CPython 3.14 executable for the supported Windows SDK bridge:
 
 ```powershell
 .\scripts\windows\vmware\deploy-wheel.ps1 `
   -IpAddress 192.168.167.10 `
   -OnePasswordEnvironmentId '<atlaso-environment-id>' `
   -OnePasswordAccount '<account-name-or-id>' `
-  -OnePasswordPython '<path-to-python-3.13.exe>'
+  -OnePasswordPython '<path-to-python-3.14.exe>'
 ```
 
 The supported 1Password Python SDK uses desktop authorization and a locked, offline SDK/Paramiko runtime. The
@@ -822,9 +822,10 @@ clones the same fail-closed initialization contract as an OVA deployment instead
 properties
 that only an OVF deployment normally supplies. A generated non-secret deployment identifier distinguishes each raw
 clone attempt during pending-marker crash recovery. For ordinary creation, the wrapper discovers the single local
-1Password CLI account and the highest compatible CPython 3.10 through 3.13 runtime registered with the Windows
+1Password CLI account and standard GIL-enabled Windows x64 CPython 3.14 registered with the Windows
 launcher, including bracketed architecture selectors emitted by the current Python Install Manager. Legacy launcher
-and vendor-tagged registrations remain supported, while x86 and unsupported Python versions remain ineligible.
+and vendor-tagged registrations remain supported, while x86, ARM64, free-threaded, and unsupported Python versions
+remain ineligible.
 `-OnePasswordAccount` and `-OnePasswordPython` remain explicit overrides. When `-AdminPassword` or
 `-RootPassword` is omitted, the wrapper independently retrieves only that
 credential's exact concealed default through the supported 1Password SDK desktop integration. An explicitly supplied

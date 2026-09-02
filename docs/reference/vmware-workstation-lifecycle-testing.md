@@ -17,8 +17,9 @@ For a wheel-only deployment to the canonical test VM, use `scripts/windows/vmwar
 Windows 1Password handoff documented in the [full technical reference](full-technical-reference.md). Authenticate the
 local integration, verify the unique `Atlaso` Environment and concealed `DEFAULT_ADMIN_PASSWORD` variable by name,
 then pass its opaque Environment ID through `-OnePasswordEnvironmentId` and the approved account name or ID through
-`-OnePasswordAccount`. Pass a separate CPython 3.10 through 3.13 executable through `-OnePasswordPython`, because the
-supported Windows SDK wheel does not use Atlaso's Python 3.14 application-build runtime. The handoff uses the supported
+`-OnePasswordAccount`. The bridge automatically selects standard GIL-enabled Windows x64 CPython 3.14; use
+`-OnePasswordPython` only as an explicit override. Python 3.10 through 3.13, x86, ARM64, and free-threaded `3.14t` are
+rejected. The handoff uses the supported
 1Password Python SDK desktop integration and retrieves the value
 only inside the bounded Paramiko deployment child, preserves
 SSH known-host verification, and fails closed when authorization or any required Environment input is unavailable.
@@ -173,7 +174,7 @@ The image wrapper uses the same exact Atlaso Environment selector contract as no
 `-SshPassword` or `-BootstrapAdminPassword` is omitted, the bounded Windows SDK bridge retrieves only that value's
 unique concealed `DEFAULT_ROOT_PASSWORD` or `DEFAULT_ADMIN_PASSWORD`. Explicit `SecureString` parameters remain
 independently authoritative. With no explicit selectors, the bridge uses the single local 1Password CLI account and
-the highest compatible CPython 3.10 through 3.13 runtime registered with the Windows launcher, including current Python
+standard GIL-enabled Windows x64 CPython 3.14 registered with the Windows launcher, including current Python
 Install Manager bracketed architecture selectors. Legacy launcher and vendor-tagged registrations remain compatible;
 known x86 and unsupported or malformed entries remain ineligible. Zero or multiple
 accounts and a missing compatible runtime fail closed; `-OnePasswordAccount` and `-OnePasswordPython` remain explicit
@@ -471,7 +472,7 @@ guest publishes only bounded fixed first-boot stage identifiers. A timeout repor
 diagnostic that provider selection or customizer startup did not complete; it never includes command output or secret
 material.
 The wrapper injects the same complete DHCP-first OVF environment before power-on. Use `-FirstBootFqdn` for the test
-identity. The wrapper uses the single local 1Password CLI account and the highest compatible CPython 3.10 through 3.13
+identity. The wrapper uses the single local 1Password CLI account and standard GIL-enabled Windows x64 CPython 3.14
 runtime registered with the Windows launcher, including bracketed Python Install Manager architecture selectors. Use
 `-OnePasswordAccount` or `-OnePasswordPython` only when an explicit
 override is required; zero or multiple accounts and a missing compatible runtime fail before VMware mutation.

@@ -22,7 +22,7 @@ Optional 1Password account name or ID approved for desktop SDK authorization
 when either credential is omitted. The single CLI account is used when this
 selector is omitted.
 .PARAMETER OnePasswordPython
-Optional CPython 3.10 through 3.13 executable used by the locked Windows
+Optional standard GIL-enabled Windows x64 CPython 3.14 executable used by the locked Windows
 1Password SDK runtime. The highest compatible Windows-registered runtime is
 used when this selector is omitted.
 .PARAMETER CredentialTimeoutSeconds
@@ -1282,6 +1282,59 @@ function Complete-AtlasoBuilderAddressReservationHandoff {
 
 <#
 .SYNOPSIS
+Admit the pinned 1Password SDK wheel before Photon recovery activity.
+
+.PARAMETER RepositoryRoot
+Atlaso checkout containing the approved wheel manifest and downloader.
+
+.PARAMETER ArtifactStateRoot
+Task-owned checkout-local directory that bounds temporary artifact admission.
+
+.PARAMETER PythonCommand
+Optional standard GIL-enabled Windows x64 CPython 3.14 executable.
+
+.PARAMETER TimeoutSeconds
+Positive deadline for runtime selection and artifact download.
+#>
+function Confirm-AtlasoPhotonOnePasswordArtifact {
+    param(
+        [Parameter(Mandatory = $true)][string]$RepositoryRoot,
+        [Parameter(Mandatory = $true)][string]$ArtifactStateRoot,
+        [AllowEmptyString()][string]$PythonCommand = '',
+        [Parameter(Mandatory = $true)][ValidateRange(1, 3600)][int]$TimeoutSeconds
+    )
+
+    $resolvedPython = Resolve-AtlasoOnePasswordPython `
+        -PythonCommand $PythonCommand `
+        -TimeoutSeconds $TimeoutSeconds `
+        -ConsumerDescription 'VMware Photon image building'
+    $resolvedArtifactStateRoot = [System.IO.Path]::GetFullPath($ArtifactStateRoot)
+    Assert-AtlasoStrictDescendantPath `
+        -ParentPath $RepositoryRoot `
+        -ChildPath $resolvedArtifactStateRoot `
+        -FailureMessage 'Photon artifact admission state escaped the task repository'
+    [void][System.IO.Directory]::CreateDirectory($resolvedArtifactStateRoot)
+    $artifactRoot = Join-Path $resolvedArtifactStateRoot (
+        "atlaso-photon-artifact-$([guid]::NewGuid().ToString('N'))"
+    )
+    [void][System.IO.Directory]::CreateDirectory($artifactRoot)
+    try {
+        $null = Save-AtlasoOnePasswordWheel `
+            -PythonCommand $resolvedPython `
+            -RepositoryRoot $RepositoryRoot `
+            -Destination $artifactRoot `
+            -TimeoutSeconds $TimeoutSeconds
+        return $resolvedPython
+    }
+    finally {
+        if (Test-Path -LiteralPath $artifactRoot) {
+            [System.IO.Directory]::Delete($artifactRoot, $true)
+        }
+    }
+}
+
+<#
+.SYNOPSIS
 Retire only legacy builder-address handoffs owned by the current task identity.
 .PARAMETER StateRoot
 Exact legacy builder-address state root.
@@ -1386,6 +1439,17 @@ $legacyBuilderReservationStateRoot = Join-Path (
     [Environment]::GetFolderPath('LocalApplicationData')
 ) 'Atlaso\vmware-builder-addresses'
 $builderReservationStateRoot = $legacyBuilderReservationStateRoot
+$needsOnePasswordDefaults = $null -eq $SshPassword -or $null -eq $BootstrapAdminPassword
+if (-not $CredentialChild -and $needsOnePasswordDefaults) {
+    # Artifact admission precedes sensitive-root and VMware reservation
+    # recovery. The isolated credential runtime repeats verification before
+    # installing from the private offline wheel set.
+    $OnePasswordPython = Confirm-AtlasoPhotonOnePasswordArtifact `
+        -RepositoryRoot $repoRoot `
+        -ArtifactStateRoot $credentialStateRoot `
+        -PythonCommand $OnePasswordPython `
+        -TimeoutSeconds $CredentialTimeoutSeconds
+}
 if (-not $CredentialChild) {
     # Legacy recovery is deletion-only and remains admitted solely to retire an
     # exact pre-migration marker after the required host restart. New task state
@@ -1814,7 +1878,6 @@ else {
     else {
         [System.IO.Path]::GetFullPath($SharedSourceDirectory)
     }
-    $needsOnePasswordDefaults = $null -eq $SshPassword -or $null -eq $BootstrapAdminPassword
     $resolvedEnvironmentId = ''
     if ($needsOnePasswordDefaults) {
         $resolvedEnvironmentId = Resolve-AtlasoOnePasswordEnvironmentId `

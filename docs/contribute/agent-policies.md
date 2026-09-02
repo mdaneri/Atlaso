@@ -930,8 +930,9 @@ Terminal order:
   because PowerShell will try to execute it. For password-backed Windows deployment, authenticate the local 1Password
   integration, verify exactly one `Atlaso` Environment and the concealed `DEFAULT_ADMIN_PASSWORD` variable by name,
   then pass its opaque ID with `-OnePasswordEnvironmentId` and the approved account name or ID with
-  `-OnePasswordAccount`; pass an explicit CPython 3.10 through 3.13 executable with `-OnePasswordPython` rather than
-  source-building the unsupported Python 3.14 combination. The script must use the supported 1Password SDK desktop
+  `-OnePasswordAccount`; use only standard GIL-enabled Windows x64 CPython 3.14, discovered automatically or supplied
+  with `-OnePasswordPython`. Verify the immutable Atlaso compatibility-wheel manifest and release asset before any
+  credential or VMware activity. The script must use the supported 1Password SDK desktop
   integration, stage the SDK, Paramiko,
   and their transitive dependencies from the generated seven-day hash-verified deployment lock, install only from that
   offline wheel set, and fail closed when SDK preparation, desktop authorization, Environment access, the unique
@@ -1110,10 +1111,10 @@ Terminal order:
   mutation. For each omitted normal-wrapper `-AdminPassword` or `-RootPassword`, use the supported bounded Windows
   1Password SDK pattern to retrieve only the corresponding exact, unique, concealed `DEFAULT_ADMIN_PASSWORD` or
   `DEFAULT_ROOT_PASSWORD` from that same verified Environment. Preserve each explicit `SecureString` independently.
-  When account or Python selectors are omitted, resolve exactly one local 1Password CLI account and select the highest
-  compatible CPython 3.10 through 3.13 runtime registered with the Windows launcher. Accept current Python Install
-  Manager bracketed architecture selectors while retaining legacy launcher and vendor-tagged registrations. Reject
-  known x86, unsupported architectures, malformed entries, missing executables, and unsupported versions without
+  When account or Python selectors are omitted, resolve exactly one local 1Password CLI account and select standard
+  GIL-enabled Windows x64 CPython 3.14 registered with the Windows launcher. Accept current Python Install Manager
+  bracketed architecture selectors while retaining legacy launcher and vendor-tagged registrations. Reject Python
+  3.10 through 3.13, x86, ARM64, free-threaded `3.14t`, malformed entries, and missing executables without
   masking a lower compatible runtime. Explicit selectors remain authoritative. Zero or multiple accounts and a missing
   compatible runtime must fail before mutation.
   Keep plaintext out of the PowerShell parent, arguments, caller-controlled environment, logs, output, markers,

@@ -17,7 +17,7 @@ Private JSON status written with a safe machine-readable outcome code.
 DPAPI-protected credential bundle returned to the PowerShell caller.
 
 .PARAMETER PythonCommand
-Approved CPython 3.10 through 3.13 executable for omitted-value retrieval.
+Approved standard GIL-enabled Windows x64 CPython 3.14 executable for omitted-value retrieval.
 
 .PARAMETER DependencyPath
 Isolated, hash-locked 1Password SDK dependency directory.

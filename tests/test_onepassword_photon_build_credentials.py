@@ -134,6 +134,21 @@ def test_photon_wrapper_preflights_credentials_before_image_mutation() -> None:
     credential_preflight = wrapper.index(
         "$credentialPair = Get-AtlasoOnePasswordCredentialPair `"
     )
+    artifact_admission = wrapper.index(
+        "$OnePasswordPython = Confirm-AtlasoPhotonOnePasswordArtifact `"
+    )
+    recovery_block = wrapper.index(
+        "if (-not $CredentialChild) {", wrapper.index("$cleanupMarkerPath")
+    )
+    assert artifact_admission < recovery_block
+    assert artifact_admission < wrapper.index(
+        "-MarkerPath $cleanupMarkerPath `",
+        recovery_block,
+    )
+    assert artifact_admission < wrapper.index(
+        "Complete-AtlasoBuilderAddressReservationHandoff `", recovery_block
+    )
+    assert artifact_admission < credential_preflight
     isolated_child = wrapper.index(
         "-Action 'The isolated VMware Photon image build'"
     )
@@ -169,6 +184,18 @@ def test_photon_wrapper_preflights_credentials_before_image_mutation() -> None:
     assert "Complete-AtlasoSameBootBoundedProcessRecovery" in module
     assert "$processTreeTerminationUnproven" in module
     assert module.index(credential_root_cleanup) < module.index("return $result")
+    credential_pair = module.index("function Get-AtlasoOnePasswordCredentialPair {")
+    direct_artifact_admission = module.index(
+        "$resolvedPython = Confirm-AtlasoOnePasswordArtifact `", credential_pair
+    )
+    credential_recovery = module.index(
+        "Invoke-AtlasoOnePasswordCredentialCleanupRecovery -RepositoryRoot",
+        credential_pair,
+    )
+    credential_marker = module.index(
+        "Write-AtlasoDurableJsonFile -Path $cleanupMarkerPath", credential_pair
+    )
+    assert direct_artifact_admission < credential_recovery < credential_marker
     assert "[System.IO.FileOptions]::WriteThrough" in runner
     assert "$stream.Flush($true)" in runner
     assert "MoveFileEx" in runner
@@ -211,6 +238,11 @@ def test_photon_wrapper_preflights_credentials_before_image_mutation() -> None:
     assert "accounting.ActiveProcesses == 0" in runner
     assert "AtlasoProcessTreeTerminationProven" in runner
     assert "Invoke-AtlasoBoundedStreamingProcess `" in module
+    assert "'-I', '-S', $downloaderPath" in module
+    assert "function New-AtlasoIsolatedPipRuntime {" in module
+    assert "'-I', '-S', '-m', 'venv', '--clear'" in module
+    assert "@($pipRuntime.ArgumentsPrefix)" in module
+    assert "'-I', '-m', 'pip'" not in module
     assert "MOVEFILE" not in wrapper
 
 
@@ -257,13 +289,49 @@ def test_omitted_nonsecret_sdk_selectors_are_discovered_fail_closed() -> None:
     assert "\\*?\\s*(?<Path>.+?\\.exe)\\s*\\*?" in module
     assert "\\[-(?<Architecture>32|64|arm64)\\]" in module
     assert "-(?<Architecture>32|64|arm64)" in module
-    assert "$candidate.Architecture -ceq '32'" in module
+    assert "$candidate.Architecture -cne '64'" in module
+    assert "free-threaded 3.14t are unsupported" in module
+    assert "-AllCandidates" in module
+    auto_resolver = module.index("function Resolve-AtlasoOnePasswordPython {")
+    candidate_loop = module.index(
+        "foreach ($candidate in $selectedCandidates) {", auto_resolver
+    )
+    candidate_probe = module.index("Get-AtlasoOnePasswordRuntimeProbe `", candidate_loop)
+    unproven_termination = module.index(
+        "if ($_.Exception.Data['AtlasoProcessTreeTerminationUnproven']) {",
+        candidate_probe,
+    )
+    termination_rethrow = module.index("throw", unproven_termination)
+    candidate_continue = module.index("continue", termination_rethrow)
+    assert (
+        candidate_loop
+        < candidate_probe
+        < unproven_termination
+        < termination_rethrow
+        < candidate_continue
+    )
+    assert module.index("Initialize-AtlasoOnePasswordSdkRuntime `", module.index("function Get-AtlasoOnePasswordCredentialPair")) < module.index(
+        "Resolve-AtlasoOnePasswordAccount `",
+        module.index("function Get-AtlasoOnePasswordCredentialPair"),
+    )
     assert "struct.calcsize(\"P\") * 8" in module
-    assert "CPython(?<Version>3\\.1[0-3])" in module
+    assert "CPython(?<Version>3\\.14(?:\\.\\d+)?)" in module
     assert "highest compatible" in image_wrapper
     assert "highest compatible" in test_vm
     assert "Resolve-OnePasswordTestVmAccount" in test_vm
     assert "return Resolve-AtlasoOnePasswordPython `" in test_vm
+    artifact_preflight = test_vm.index(
+        "$OnePasswordPython = Confirm-OnePasswordTestVmArtifact `"
+    )
+    assert artifact_preflight < test_vm.index(
+        "Invoke-PendingAtlasoDevelopmentCaCleanup `"
+    )
+    assert artifact_preflight < test_vm.index("$resolvedOpPath = Resolve-OnePasswordCliPath")
+    assert artifact_preflight < test_vm.index("Assert-OnePasswordDevelopmentCaBridge `")
+    bridge_function = test_vm.index("function New-AtlasoTestVmCredentialBridgeState {")
+    assert test_vm.index(
+        "Initialize-OnePasswordTestVmSdkRuntime `", bridge_function
+    ) < test_vm.index("Resolve-OnePasswordTestVmAccount `", bridge_function)
     assert "-OnePasswordPython $OnePasswordPython `" in image_wrapper
     assert "-OnePasswordCliPath $resolvedOpPath" in test_vm
     assert "'-OnePasswordAccount', $resolvedAccount" in test_vm

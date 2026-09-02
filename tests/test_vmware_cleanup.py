@@ -47,7 +47,9 @@ def _write_vmware_payload_fixture(directory: Path) -> Path:
     Returns:
         Path to the provenance-bound source VMX.
     """
-    source_vmx = directory / "source.vmx"
+    builder_name = "Atlaso-PR-634-Photon-Builder-VMware-fixture"
+    directory = directory / builder_name
+    source_vmx = directory / f"{builder_name}.vmx"
     photon_disk = directory / "photon.vmdk"
     system_disk = directory / "atlaso-system.vmdk"
     photon_disk.parent.mkdir(parents=True, exist_ok=True)
@@ -57,7 +59,7 @@ def _write_vmware_payload_fixture(directory: Path) -> Path:
     )
     _write_vmx(
         source_vmx,
-        "Source",
+        builder_name,
         'scsi0.virtualDev = "pvscsi"',
         'scsi0:0.present = "TRUE"',
         'scsi0:0.fileName = "photon.vmdk"',
@@ -96,6 +98,18 @@ def _write_vmware_payload_fixture(directory: Path) -> Path:
             "schema_version": 1,
             "file_count": 42,
             "sha256": "b" * 64,
+        },
+        "builder_identity": {
+            "schema_version": 1,
+            "kind": "pull_request",
+            "name": builder_name,
+            "repository": "mdaneri/Atlaso",
+            "pull_request_number": 634,
+            "source_branch": "test/634-vmware-cleanup",
+            "source_commit": "a" * 40,
+            "collision_suffix": "fixture",
+            "release_version": "",
+            "workflow_run_id": 0,
         },
         "vmx": {
             "name": source_vmx.name,
@@ -501,8 +515,9 @@ def _write_test_vm_wrapper_harness(directory: Path) -> Path:
 
     replace_segment(
         "if (-not $WhatIfPreference) {\n"
-        "    # Recovery consumes no 1Password material.",
-        "if ($NoStart) {",
+        "    # Admit the exact fork release before recovery or any credential-side",
+        "if (-not $WhatIfPreference) {\n"
+        "    # Resolve new Environment configuration only after credential-independent",
         "$resolvedVmrunPath = $VmrunPath\n",
     )
     replace_segment(

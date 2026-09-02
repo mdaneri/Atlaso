@@ -4,10 +4,13 @@ import io
 import json
 from pathlib import Path
 
+import pytest
+
 from scripts.check_dependency_policy import LOCK_POLICIES, validate
 from scripts.compile_requirements import (
     LOCK_TARGETS,
     _assert_index_provides_upload_times,
+    _assert_no_eligible_official_onepassword_wheel,
     _compile_command,
     _compile_environment,
     _validated_index_url,
@@ -2375,6 +2378,37 @@ def test_index_metadata_check_accepts_complete_upload_times(monkeypatch) -> None
     )
 
     _assert_index_provides_upload_times("https://example.invalid/simple")
+
+
+def test_eligible_official_cp314_wheel_requires_fork_retirement(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Reject lock generation once the official bridge replacement matures.
+
+    Args:
+        monkeypatch: Pytest fixture used to replace the trusted index response.
+    """
+    payload = {
+        "files": [
+            {
+                "filename": "onepassword_sdk-0.4.1-cp314-cp314-win_amd64.whl",
+                "upload-time": "2026-01-01T00:00:00Z",
+            }
+        ]
+    }
+    monkeypatch.setattr(
+        "urllib.request.urlopen",
+        lambda request, timeout: io.BytesIO(json.dumps(payload).encode("utf-8")),
+    )
+
+    try:
+        _assert_no_eligible_official_onepassword_wheel(
+            "https://example.invalid/simple"
+        )
+    except RuntimeError as exc:
+        assert "remove the temporary fork manifest" in str(exc)
+    else:
+        raise AssertionError("an eligible official CPython 3.14 wheel was accepted")
 
 
 def test_compile_environment_ignores_unverified_package_sources(

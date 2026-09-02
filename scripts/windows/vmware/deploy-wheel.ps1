@@ -40,7 +40,7 @@ Opaque ID of the preverified Atlaso 1Password Environment.
 .PARAMETER OnePasswordAccount
 1Password account name or ID approved for desktop SDK authorization.
 .PARAMETER OnePasswordPython
-CPython 3.10 through 3.13 executable used by the supported 1Password SDK Windows wheel and locked dependencies.
+Optional standard Windows x64 CPython 3.14 executable used by the temporary compatibility wheel and locked dependencies.
 .PARAMETER UseVmwareGuestInfoHostKey
 Trusts the selected normal test VM's verified Ed25519 guest-info key only for the password-backed child.
 .PARAMETER ResetVaultEntries
@@ -126,21 +126,15 @@ function Assert-OnePasswordAccount {
 .SYNOPSIS
 Resolves a Python runtime supported by the 1Password SDK Windows wheel.
 .PARAMETER PythonCommand
-Explicit CPython 3.10 through 3.13 executable or command.
+Optional standard Windows x64 CPython 3.14 executable or command.
 #>
 function Resolve-OnePasswordPython {
-    param([Parameter(Mandatory = $true)][string]$PythonCommand)
+    param([Parameter(Mandatory = $true)][AllowEmptyString()][string]$PythonCommand)
 
-    $command = Get-Command -Name $PythonCommand -CommandType Application -ErrorAction SilentlyContinue
-    if (-not $command) {
-        throw "The 1Password SDK Python executable was not found: $PythonCommand."
-    }
-    $resolvedCommand = $command.Source
-    $version = & $resolvedCommand -c 'import sys; print(f"{sys.version_info.major}.{sys.version_info.minor}")'
-    if ($LASTEXITCODE -ne 0 -or $version -notmatch '^3\.1[0-3]$') {
-        throw 'Password-backed deployment requires a separate CPython 3.10 through 3.13 runtime supported by the locked 1Password SDK Windows dependencies.'
-    }
-    return $resolvedCommand
+    return Resolve-AtlasoOnePasswordPython `
+        -PythonCommand $PythonCommand `
+        -TimeoutSeconds 30 `
+        -ConsumerDescription 'Password-backed deployment'
 }
 
 <#
@@ -465,19 +459,45 @@ function Stage-PasswordDeployPythonWheels {
 
     $lockPath = Join-Path $WorkingDirectory $script:PasswordDeployLockName
     $wheelDirectory = Join-Path $WorkingDirectory 'dist'
+    $stagingDirectory = Join-Path ([System.IO.Path]::GetTempPath()) (
+        "atlaso-onepassword-wheel-stage-$([guid]::NewGuid().ToString('N'))"
+    )
     if (-not (Test-Path -LiteralPath $lockPath -PathType Leaf)) {
         throw "The vetted 1Password deployment lock is unavailable: $lockPath."
     }
-    Write-Host 'Staging the vetted 1Password SDK and Paramiko deployment wheels...'
-    Invoke-CheckedCommand -FilePath $PythonCommand -WorkingDirectory $WorkingDirectory -Arguments @(
-        '-m', 'pip', 'download',
-        '--disable-pip-version-check',
-        '--index-url', 'https://pypi.org/simple',
-        '--require-hashes',
-        '--only-binary=:all:',
-        '--dest', $wheelDirectory,
-        '-r', $lockPath
-    ) | Out-Host
+    try {
+        Save-AtlasoOnePasswordWheel `
+            -PythonCommand $PythonCommand `
+            -RepositoryRoot $WorkingDirectory `
+            -Destination $stagingDirectory `
+            -TimeoutSeconds 120 | Out-Null
+        $indexLockPath = Join-Path $stagingDirectory 'requirements-onepassword-index.lock'
+        New-AtlasoOnePasswordIndexLock `
+            -LockPath $lockPath `
+            -DestinationPath $indexLockPath | Out-Null
+        $pipRuntime = New-AtlasoIsolatedPipRuntime `
+            -PythonCommand $PythonCommand `
+            -RuntimeRoot (Join-Path $stagingDirectory 'pip-runtime') `
+            -TimeoutSeconds 120
+        Write-Host 'Staging the vetted 1Password SDK and Paramiko deployment wheels...'
+        Invoke-CheckedCommand -FilePath $pipRuntime.PythonCommand -WorkingDirectory $WorkingDirectory -Arguments @(
+            @($pipRuntime.ArgumentsPrefix)
+            'download',
+            '--disable-pip-version-check',
+            '--index-url', 'https://pypi.org/simple',
+            '--find-links', $stagingDirectory,
+            '--require-hashes',
+            '--only-binary=:all:',
+            '--dest', $stagingDirectory,
+            '-r', $indexLockPath
+        ) | Out-Host
+        [void][System.IO.Directory]::CreateDirectory($wheelDirectory)
+        Get-ChildItem -LiteralPath $stagingDirectory -Filter '*.whl' -File |
+            Copy-Item -Destination $wheelDirectory -Force
+    }
+    finally {
+        Remove-Item -LiteralPath $stagingDirectory -Recurse -Force -ErrorAction SilentlyContinue
+    }
 }
 
 <#
@@ -508,10 +528,15 @@ function Initialize-PasswordDeployPythonPath {
 
     $dependencyDirectory = Join-Path $TemporaryDirectory 'python-dependencies'
     New-Item -ItemType Directory -Force -Path $dependencyDirectory | Out-Null
+    $pipRuntime = New-AtlasoIsolatedPipRuntime `
+        -PythonCommand $PythonCommand `
+        -RuntimeRoot (Join-Path $TemporaryDirectory 'pip-runtime') `
+        -TimeoutSeconds 120
     Write-Host 'Preparing the isolated 1Password SDK and Paramiko deployment runtime...'
     try {
-        Invoke-CheckedCommand -FilePath $PythonCommand -WorkingDirectory $WorkingDirectory -Arguments @(
-            '-m', 'pip', 'install',
+        Invoke-CheckedCommand -FilePath $pipRuntime.PythonCommand -WorkingDirectory $WorkingDirectory -Arguments @(
+            @($pipRuntime.ArgumentsPrefix)
+            'install',
             '--disable-pip-version-check',
             '--no-index',
             '--find-links', $wheelDirectory,
@@ -1069,17 +1094,43 @@ $RemoteDirectory = Resolve-RemoteDirectoryPath -Path $RemoteDirectory
 $UsePasswordDeploy = -not [string]::IsNullOrEmpty($OnePasswordEnvironmentId)
 $resolvedOnePasswordPython = ''
 if ($UsePasswordDeploy) {
+    Import-Module (
+        Join-Path $resolvedRepoRoot 'scripts\windows\vmware\Atlaso.OnePasswordCredentials.psm1'
+    ) -Force
     Assert-OnePasswordEnvironmentId -EnvironmentId $OnePasswordEnvironmentId
     Assert-OnePasswordAccount -Account $OnePasswordAccount
-    if ([string]::IsNullOrWhiteSpace($OnePasswordPython)) {
-        throw '-OnePasswordPython is required with -OnePasswordEnvironmentId.'
-    }
     $resolvedOnePasswordPython = Resolve-OnePasswordPython -PythonCommand $OnePasswordPython
 } elseif ($OnePasswordAccount -or $OnePasswordPython) {
     throw '-OnePasswordAccount and -OnePasswordPython require -OnePasswordEnvironmentId.'
 }
 if ($UseVmwareGuestInfoHostKey -and (-not $UsePasswordDeploy -or -not $VmxPath)) {
     throw '-UseVmwareGuestInfoHostKey requires password-backed deployment and an explicit normal test VM -VmxPath.'
+}
+
+if ($UsePasswordDeploy) {
+    if ($SkipBuild) {
+        $skipBuildWheelStage = Join-Path ([System.IO.Path]::GetTempPath()) (
+            "atlaso-onepassword-wheel-stage-$([guid]::NewGuid().ToString('N'))"
+        )
+        try {
+            $verifiedWheel = Save-AtlasoOnePasswordWheel `
+                -PythonCommand $resolvedOnePasswordPython `
+                -RepositoryRoot $resolvedRepoRoot `
+                -Destination $skipBuildWheelStage `
+                -TimeoutSeconds 120
+            $passwordWheelDirectory = Join-Path $resolvedRepoRoot 'dist'
+            [void][System.IO.Directory]::CreateDirectory($passwordWheelDirectory)
+            Copy-Item -LiteralPath $verifiedWheel -Destination $passwordWheelDirectory -Force
+        }
+        finally {
+            Remove-Item -LiteralPath $skipBuildWheelStage -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+    else {
+        Stage-PasswordDeployPythonWheels `
+            -PythonCommand $resolvedOnePasswordPython `
+            -WorkingDirectory $resolvedRepoRoot
+    }
 }
 
 $resolvedVmrun = ''
@@ -1097,7 +1148,7 @@ if (-not $IpAddress) {
 
 $trustedSshHostKey = ''
 if ($UseVmwareGuestInfoHostKey) {
-    # Resolve test-only trust evidence before allocating the wheelhouse so lookup failures leave no build staging.
+    # Resolve test-only trust evidence before allocating the generated Atlaso wheelhouse.
     $workstationFirstBootPath = Join-Path $resolvedRepoRoot 'scripts\windows\vmware\Atlaso.WorkstationFirstBoot.ps1'
     . $workstationFirstBootPath
     $trustedSshHostKey = (Get-AtlasoWorkstationSshHostKey `
@@ -1132,9 +1183,6 @@ if (-not $SkipBuild) {
     } catch {
         Remove-Item -LiteralPath $generatedRuntimeDependencyRoot -Recurse -Force -ErrorAction SilentlyContinue
         throw
-    }
-    if ($UsePasswordDeploy) {
-        Stage-PasswordDeployPythonWheels -PythonCommand $resolvedOnePasswordPython -WorkingDirectory $resolvedRepoRoot
     }
 }
 

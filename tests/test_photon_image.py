@@ -1897,7 +1897,16 @@ def test_vmware_packer_requires_proven_task_or_release_builder_identity() -> Non
     )
     identity_admission = wrapper.index("$builderIdentity = if ($ReleaseBuilder) {")
     credential_access = wrapper.index("$needsOnePasswordDefaults =")
-    assert recovery < current_marker_recovery < identity_admission < credential_access
+    artifact_admission = wrapper.index(
+        "$OnePasswordPython = Confirm-AtlasoPhotonOnePasswordArtifact `"
+    )
+    assert (
+        credential_access
+        < artifact_admission
+        < recovery
+        < current_marker_recovery
+        < identity_admission
+    )
     assert wrapper.count(
         "$releaseIdentityArguments['WorkflowRunId'] = $ReleaseWorkflowRunId"
     ) == 2
@@ -2774,7 +2783,7 @@ def test_vmware_deploy_wheel_supports_secure_onepassword_password_deploy():
     assert "Invoke-PasswordBackedDeploy `" in script
     assert "-OnePasswordEnvironmentId '<atlaso-environment-id>'" in readme
     assert "-OnePasswordAccount '<account-name-or-id>'" in readme
-    assert "-OnePasswordPython '<path-to-python-3.13.exe>'" in readme
+    assert "-OnePasswordPython '<path-to-python-3.14.exe>'" in readme
     assert "temporary deployment directory" in readme
     assert "global Python" in readme
     assert "pinned 1Password SDK" in readme
@@ -2782,7 +2791,7 @@ def test_vmware_deploy_wheel_supports_secure_onepassword_password_deploy():
     assert "`scp`/`ssh` key or agent workflow" in readme
     assert "-OnePasswordEnvironmentId '<atlaso-environment-id>'" in image_password_docs
     assert "-OnePasswordAccount '<account-name-or-id>'" in image_password_docs
-    assert "-OnePasswordPython '<path-to-python-3.13.exe>'" in image_password_docs
+    assert "-OnePasswordPython '<path-to-python-3.14.exe>'" in image_password_docs
     assert "../../docs/reference/full-technical-reference.md#vmware-workstation-workflow" in image_password_docs
 
 

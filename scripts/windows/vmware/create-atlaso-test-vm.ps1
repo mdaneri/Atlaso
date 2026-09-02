@@ -102,7 +102,7 @@ when either first-boot credential is omitted. The single CLI account is used
 when this selector is omitted.
 
 .PARAMETER OnePasswordPython
-Optional CPython 3.10 through 3.13 executable used by the supported Windows
+Optional standard GIL-enabled Windows x64 CPython 3.14 executable used by the supported Windows
 1Password SDK bridge. The highest compatible Windows-registered runtime is used
 when this selector is omitted.
 
@@ -410,7 +410,7 @@ function Resolve-OnePasswordTestVmAccount {
 Resolve a Python runtime supported by the 1Password SDK Windows wheel.
 
 .PARAMETER PythonCommand
-Explicit CPython 3.10 through 3.13 executable or command.
+Explicit standard GIL-enabled Windows x64 CPython 3.14 executable or command.
 
 .PARAMETER TimeoutSeconds
 Positive deadline for the version probe.
@@ -432,7 +432,7 @@ function Resolve-OnePasswordTestVmPython {
 Prepare the isolated hash-locked 1Password SDK runtime.
 
 .PARAMETER PythonCommand
-Approved CPython 3.10 through 3.13 executable.
+Approved standard GIL-enabled Windows x64 CPython 3.14 executable.
 
 .PARAMETER RepositoryRoot
 Atlaso checkout containing requirements-onepassword-deploy.lock.
@@ -456,6 +456,48 @@ function Initialize-OnePasswordTestVmSdkRuntime {
         -RepositoryRoot $RepositoryRoot `
         -BridgeRoot $BridgeRoot `
         -TimeoutSeconds $TimeoutSeconds
+}
+
+<#
+.SYNOPSIS
+Admit the pinned 1Password SDK wheel before any credential-side activity.
+
+.PARAMETER RepositoryRoot
+Atlaso checkout containing the approved wheel manifest and downloader.
+
+.PARAMETER PythonCommand
+Optional standard GIL-enabled Windows x64 CPython 3.14 executable.
+
+.PARAMETER TimeoutSeconds
+Positive deadline for runtime selection and artifact download.
+#>
+function Confirm-OnePasswordTestVmArtifact {
+    param(
+        [Parameter(Mandatory = $true)][string]$RepositoryRoot,
+        [AllowEmptyString()][string]$PythonCommand = '',
+        [Parameter(Mandatory = $true)][ValidateRange(1, 3600)][int]$TimeoutSeconds
+    )
+
+    $resolvedPython = Resolve-OnePasswordTestVmPython `
+        -PythonCommand $PythonCommand `
+        -TimeoutSeconds $TimeoutSeconds
+    $artifactRoot = Join-Path ([System.IO.Path]::GetTempPath()) (
+        "atlaso-test-vm-artifact-$([guid]::NewGuid().ToString('N'))"
+    )
+    [void][System.IO.Directory]::CreateDirectory($artifactRoot)
+    try {
+        $null = Save-AtlasoOnePasswordWheel `
+            -PythonCommand $resolvedPython `
+            -RepositoryRoot $RepositoryRoot `
+            -Destination $artifactRoot `
+            -TimeoutSeconds $TimeoutSeconds
+        return $resolvedPython
+    }
+    finally {
+        if (Test-Path -LiteralPath $artifactRoot) {
+            [System.IO.Directory]::Delete($artifactRoot, $true)
+        }
+    }
 }
 
 <#
@@ -574,7 +616,7 @@ Opaque ID of the already pinned and verified Atlaso Environment.
 Account name or ID used for desktop SDK authorization when a default is needed.
 
 .PARAMETER OnePasswordPython
-CPython 3.10 through 3.13 executable used when a default is needed.
+Standard GIL-enabled Windows x64 CPython 3.14 executable used when a default is needed.
 
 .PARAMETER OnePasswordCliPath
 Exact CLI path already verified by the development-CA preflight.
@@ -661,10 +703,6 @@ function New-AtlasoTestVmCredentialBridgeState {
         $resolvedAccount = ''
         $dependencyPath = ''
         if ($needsDefaults) {
-            $resolvedAccount = Resolve-OnePasswordTestVmAccount `
-                -Account $OnePasswordAccount `
-                -TimeoutSeconds $TimeoutSeconds `
-                -CliPath $OnePasswordCliPath
             $resolvedPython = Resolve-OnePasswordTestVmPython `
                 -PythonCommand $OnePasswordPython `
                 -TimeoutSeconds $TimeoutSeconds
@@ -673,6 +711,10 @@ function New-AtlasoTestVmCredentialBridgeState {
                 -RepositoryRoot $RepositoryRoot `
                 -BridgeRoot $bridgeRoot `
                 -TimeoutSeconds $TimeoutSeconds
+            $resolvedAccount = Resolve-OnePasswordTestVmAccount `
+                -Account $OnePasswordAccount `
+                -TimeoutSeconds $TimeoutSeconds `
+                -CliPath $OnePasswordCliPath
         }
 
         $helperPath = Join-Path $PSScriptRoot 'Invoke-AtlasoTestVmCredentials.ps1'
@@ -2920,7 +2962,17 @@ $developmentRootCaFingerprint = Get-AtlasoDevelopmentRootCaFingerprint `
     -CertificatePath $developmentRootCaCertificatePath
 $resolvedOpPath = ''
 $resolvedVmrunPath = ''
+if ($NoStart) {
+    throw '-NoStart is not supported for normal test VMs because first boot must consume and scrub the shared development signing key.'
+}
 if (-not $WhatIfPreference) {
+    # Admit the exact fork release before recovery or any credential-side
+    # activity. The later isolated runtime repeats the verification inside its
+    # private credential root before installation.
+    $OnePasswordPython = Confirm-OnePasswordTestVmArtifact `
+        -RepositoryRoot $repoRoot `
+        -PythonCommand $OnePasswordPython `
+        -TimeoutSeconds $TimeoutSeconds
     # Recovery consumes no 1Password material. Run it first so revoked or
     # rotated credentials cannot strand an earlier plaintext-staging failure.
     $resolvedVmrunPath = Resolve-TestVmVmrunPath -Path $VmrunPath
@@ -2928,9 +2980,6 @@ if (-not $WhatIfPreference) {
         -VmrunPath $resolvedVmrunPath `
         -TimeoutSeconds ([Math]::Min($TimeoutSeconds, 30)) `
         -ExpectedFingerprint $developmentRootCaFingerprint
-}
-if ($NoStart) {
-    throw '-NoStart is not supported for normal test VMs because first boot must consume and scrub the shared development signing key.'
 }
 if (-not $WhatIfPreference) {
     # Resolve new Environment configuration only after credential-independent
