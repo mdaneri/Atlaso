@@ -74,9 +74,9 @@ retained variable file before its exact identity-bound deletion, and the canonic
 The kickstart JSON and Packer variable file use the same create-new, identity-pin, handle-write ordering before any
 plaintext credential byte is exposed. Before ordinary readers run, each writer handle is atomically reopened as a
 distinct read-attributes pin that still denies delete sharing without retaining the writer's data access. Cleanup
-releases that pin only while reopening the expected path with delete access, then requires the captured 128-bit
-filesystem identity to match before deletion. A move or replacement in that transition therefore fails closed instead
-of redirecting removal.
+binds the exact object by file ID before releasing that pin, follows the bound object's current path if its link moves,
+then acquires delete access and requires the captured 128-bit filesystem identity to match before deletion. A path
+replacement therefore cannot redirect removal or leave the original object behind.
 Those pins remain open through the respective helper or Packer consumer. Recovery
 never interprets an absent active cleanup root as deletion proof,
 because a same-user move outside the admitted parent is indistinguishable from a completed deletion after a crash.

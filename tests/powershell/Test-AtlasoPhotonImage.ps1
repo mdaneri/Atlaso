@@ -99,24 +99,14 @@ $identityReplacement = Join-Path $emptyCleanupLedgerRoot 'identity-replacement.t
     $replacementWriter = [Atlaso.PhotonPinnedFile]::Create($Replacement)
     [Atlaso.PhotonPinnedFile]::WriteUtf8($replacementWriter, 'replacement')
     $replacementWriter.Dispose()
-    try {
-        [Atlaso.PhotonPinnedFile]::DeleteExact($pin, $Replacement)
-        throw 'Exact cleanup accepted a different filesystem identity.'
-    }
-    catch {
-        if ($_.Exception.Message -notmatch 'Pinned plaintext identity changed before exact cleanup') {
-            throw
-        }
-    }
-    finally {
-        $pin.Dispose()
-    }
+    [Atlaso.PhotonPinnedFile]::DeleteExact($pin, $Replacement)
+    $pin.Dispose()
 } $identitySource $identityReplacement
-if (-not (Test-Path -LiteralPath $identitySource -PathType Leaf) -or
+if ((Test-Path -LiteralPath $identitySource) -or
     -not (Test-Path -LiteralPath $identityReplacement -PathType Leaf)) {
-    throw 'Exact cleanup modified an identity-mismatch fixture.'
+    throw 'Exact cleanup followed a replacement path instead of its bound filesystem identity.'
 }
-Remove-Item -LiteralPath $identitySource, $identityReplacement -Force
+Remove-Item -LiteralPath $identityReplacement -Force
 $emptyCleanupLedger = [System.Collections.Generic.List[string]]::new()
 $fixtureScript = Join-Path $emptyCleanupLedgerRoot 'create-fixture.py'
 $fixtureSourceIso = Join-Path $emptyCleanupLedgerRoot 'source iso.iso'

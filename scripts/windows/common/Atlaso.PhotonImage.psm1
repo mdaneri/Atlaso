@@ -391,6 +391,7 @@ function Initialize-AtlasoPhotonPinnedFileType {
 using System;
 using System.ComponentModel;
 using System.Runtime.InteropServices;
+using System.Text;
 using Microsoft.Win32.SafeHandles;
 
 namespace Atlaso
@@ -420,6 +421,39 @@ namespace Atlaso
             public FileId128 FileId;
         }
 
+        [StructLayout(LayoutKind.Sequential)]
+        private struct ByHandleFileInformation
+        {
+            public uint FileAttributes;
+            public uint CreationTimeLow;
+            public uint CreationTimeHigh;
+            public uint LastAccessTimeLow;
+            public uint LastAccessTimeHigh;
+            public uint LastWriteTimeLow;
+            public uint LastWriteTimeHigh;
+            public uint VolumeSerialNumber;
+            public uint FileSizeHigh;
+            public uint FileSizeLow;
+            public uint NumberOfLinks;
+            public uint FileIndexHigh;
+            public uint FileIndexLow;
+        }
+
+        [StructLayout(LayoutKind.Explicit)]
+        private struct FileIdUnion
+        {
+            [FieldOffset(0)] public long FileId;
+            [FieldOffset(0)] public Guid ObjectId;
+        }
+
+        [StructLayout(LayoutKind.Sequential)]
+        private struct FileIdDescriptor
+        {
+            public uint Size;
+            public int Type;
+            public FileIdUnion Value;
+        }
+
         [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
         private static extern SafeFileHandle CreateFileW(
             string fileName,
@@ -444,6 +478,28 @@ namespace Atlaso
             int fileInformationClass,
             out FileIdInfo fileInformation,
             uint bufferSize);
+
+        [DllImport("kernel32.dll", SetLastError = true)]
+        [return: MarshalAs(UnmanagedType.Bool)]
+        private static extern bool GetFileInformationByHandle(
+            SafeFileHandle file,
+            out ByHandleFileInformation fileInformation);
+
+        [DllImport("kernel32.dll", SetLastError = true)]
+        private static extern SafeFileHandle OpenFileById(
+            SafeFileHandle volumeHint,
+            ref FileIdDescriptor fileId,
+            uint desiredAccess,
+            uint shareMode,
+            IntPtr securityAttributes,
+            uint flagsAndAttributes);
+
+        [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+        private static extern uint GetFinalPathNameByHandleW(
+            SafeFileHandle file,
+            StringBuilder filePath,
+            uint filePathLength,
+            uint flags);
 
         [DllImport("kernel32.dll", SetLastError = true)]
         [return: MarshalAs(UnmanagedType.Bool)]
@@ -639,54 +695,119 @@ namespace Atlaso
             {
                 throw new Win32Exception(Marshal.GetLastWin32Error());
             }
+            ByHandleFileInformation legacyIdentity;
+            if (!GetFileInformationByHandle(handle, out legacyIdentity))
+            {
+                throw new Win32Exception(Marshal.GetLastWin32Error());
+            }
+            string root = System.IO.Path.GetPathRoot(System.IO.Path.GetFullPath(path));
+            if (String.IsNullOrEmpty(root) || root.Length < 2 || root[1] != ':')
+            {
+                throw new InvalidOperationException(
+                    "Pinned plaintext cleanup requires a local Windows volume.");
+            }
+            const uint GenericRead = 0x80000000;
             const uint FileReadAttributes = 0x00000080;
             const uint Delete = 0x00010000;
             const uint ShareRead = 0x00000001;
             const uint ShareWrite = 0x00000002;
+            const uint ShareDelete = 0x00000004;
             const uint OpenExisting = 3;
             const uint Normal = 0x00000080;
+            const uint BackupSemantics = 0x02000000;
 
-            // The minimal pin blocks a rename until this transition. Reopen the
-            // expected path with DELETE access, then compare the exact physical
-            // identity while that new handle blocks any further rename. A move
-            // or replacement in the transition window therefore fails closed.
-            handle.Dispose();
-            using (SafeFileHandle exact = CreateFileW(
-                System.IO.Path.GetFullPath(path),
-                FileReadAttributes | Delete,
-                ShareRead | ShareWrite,
+            using (SafeFileHandle volumeHint = CreateFileW(
+                root,
+                GenericRead,
+                ShareRead | ShareWrite | ShareDelete,
                 IntPtr.Zero,
                 OpenExisting,
-                Normal,
+                BackupSemantics,
                 IntPtr.Zero))
             {
-                if (exact.IsInvalid)
-                {
-                    throw new Win32Exception(
-                        Marshal.GetLastWin32Error(),
-                        "Could not reopen the pinned plaintext path for exact cleanup.");
-                }
-                FileIdInfo reopenedIdentity;
-                if (!GetFileInformationByHandleEx(
-                    exact,
-                    FileIdInfoClass,
-                    out reopenedIdentity,
-                    (uint)Marshal.SizeOf<FileIdInfo>()))
+                if (volumeHint.IsInvalid)
                 {
                     throw new Win32Exception(Marshal.GetLastWin32Error());
                 }
-                if (reopenedIdentity.VolumeSerialNumber != identity.VolumeSerialNumber ||
-                    reopenedIdentity.FileId.Low != identity.FileId.Low ||
-                    reopenedIdentity.FileId.High != identity.FileId.High)
+                FileIdDescriptor descriptor = new FileIdDescriptor();
+                descriptor.Size = (uint)Marshal.SizeOf<FileIdDescriptor>();
+                descriptor.Type = 0;
+                descriptor.Value.FileId = unchecked((long)(
+                    ((ulong)legacyIdentity.FileIndexHigh << 32) |
+                    legacyIdentity.FileIndexLow));
+                using (SafeFileHandle identityHandle = OpenFileById(
+                    volumeHint,
+                    ref descriptor,
+                    FileReadAttributes,
+                    ShareRead | ShareWrite | ShareDelete,
+                    IntPtr.Zero,
+                    0))
                 {
+                    if (identityHandle.IsInvalid)
+                    {
+                        throw new Win32Exception(
+                            Marshal.GetLastWin32Error(),
+                            "Could not bind the exact pinned file identity for cleanup.");
+                    }
+
+                    // Bind the captured object by file ID before releasing the
+                    // no-delete pin. If the link moves afterward, the binding
+                    // follows that exact object so cleanup cannot lose it.
+                    handle.Dispose();
+                    const int MaximumAttempts = 8;
+                    for (int attempt = 0; attempt < MaximumAttempts; attempt++)
+                    {
+                        StringBuilder currentPath = new StringBuilder(32768);
+                        uint pathLength = GetFinalPathNameByHandleW(
+                            identityHandle,
+                            currentPath,
+                            (uint)currentPath.Capacity,
+                            0);
+                        if (pathLength == 0 || pathLength >= currentPath.Capacity)
+                        {
+                            throw new Win32Exception(
+                                Marshal.GetLastWin32Error(),
+                                "Could not resolve the exact pinned file path for cleanup.");
+                        }
+                        using (SafeFileHandle exact = CreateFileW(
+                            currentPath.ToString(),
+                            FileReadAttributes | Delete,
+                            ShareRead | ShareWrite,
+                            IntPtr.Zero,
+                            OpenExisting,
+                            Normal,
+                            IntPtr.Zero))
+                        {
+                            if (exact.IsInvalid)
+                            {
+                                continue;
+                            }
+                            FileIdInfo reopenedIdentity;
+                            if (!GetFileInformationByHandleEx(
+                                exact,
+                                FileIdInfoClass,
+                                out reopenedIdentity,
+                                (uint)Marshal.SizeOf<FileIdInfo>()))
+                            {
+                                throw new Win32Exception(Marshal.GetLastWin32Error());
+                            }
+                            if (reopenedIdentity.VolumeSerialNumber != identity.VolumeSerialNumber ||
+                                reopenedIdentity.FileId.Low != identity.FileId.Low ||
+                                reopenedIdentity.FileId.High != identity.FileId.High)
+                            {
+                                continue;
+                            }
+                            if (!TryDelete(exact, out error))
+                            {
+                                throw new Win32Exception(
+                                    error,
+                                    "Could not mark the exact pinned file identity for deletion.");
+                            }
+                            return;
+                        }
+                    }
                     throw new InvalidOperationException(
-                        "Pinned plaintext identity changed before exact cleanup.");
-                }
-                if (!TryDelete(exact, out error))
-                {
-                    throw new Win32Exception(
-                        error,
-                        "Could not mark the exact pinned file identity for deletion.");
+                        "Pinned plaintext moved repeatedly during exact cleanup.");
                 }
             }
         }

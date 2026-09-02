@@ -3628,8 +3628,13 @@ def test_remaster_attempt_is_identity_pinned_before_helper_writes() -> None:
     assert "ShareRead | ShareWrite | ShareDelete" in common[native:create]
     assert "PinForReadConsumers" in common[native:create]
     assert "GetFileInformationByHandleEx" in common[native:create]
+    assert "OpenFileById" in common[native:create]
+    assert "GetFinalPathNameByHandleW" in common[native:create]
     assert "ReOpenFile" in common[native:create]
-    assert "Pinned plaintext identity changed before exact cleanup." in common
+    bind = common.index("using (SafeFileHandle identityHandle = OpenFileById", native)
+    release = common.index("handle.Dispose();", bind)
+    follow = common.index("GetFinalPathNameByHandleW", release)
+    assert bind < release < follow
     assert "SetFileInformationByHandle" in common[native:create]
     assert "[Atlaso.PhotonPinnedFile]::OpenReadSharedDelete($Path)" in common
     remaster_end = common.index("function ConvertTo-AtlasoHclLiteral", remaster)
