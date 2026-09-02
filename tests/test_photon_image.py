@@ -3634,7 +3634,7 @@ def test_plaintext_leaf_files_are_pinned_before_write() -> None:
         "-Path $Path",
         create,
     )
-    write = common.index("$writer.Write($Text)", pin)
+    write = common.index("[Atlaso.PhotonPinnedFile]::WriteUtf8($handle, $Text)", pin)
     revalidate = common.index(
         "Assert-AtlasoSensitiveBuildPath -Validator $SensitivePathValidator "
         "-Path $Path",
@@ -3642,6 +3642,8 @@ def test_plaintext_leaf_files_are_pinned_before_write() -> None:
     )
     dispose = common.index("$handle.Dispose()", revalidate)
     assert create < pin < write < revalidate < dispose
+    retain = common.index("$PinnedHandles[[System.IO.Path]::GetFullPath($Path)]", revalidate)
+    assert revalidate < retain < dispose
 
     kickstart = common.index("function New-AtlasoPhotonKickstart {")
     kickstart_write = common.index("Write-AtlasoPinnedUtf8Text `", kickstart)
@@ -3653,6 +3655,9 @@ def test_plaintext_leaf_files_are_pinned_before_write() -> None:
     assert "-SensitivePathValidator $SensitivePathValidator" in common[
         var_write : var_write + 300
     ]
+    assert "function Remove-AtlasoPinnedPlaintextFile" in common
+    assert "[Atlaso.PhotonPinnedFile]::Delete($handle)" in common
+    assert common.count("-PinnedHandles $pinnedPlaintextHandles") >= 6
 
 
 def test_release_builder_legacy_recovery_uses_detached_branch_sentinel() -> None:
