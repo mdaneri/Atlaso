@@ -2484,6 +2484,7 @@ function Invoke-PendingAtlasoDevelopmentCaCleanup {
                 $marker.Phase = 'stopped-vmx-scrubbed'
             }
         }
+        $registrationRepairFailed = $false
         try {
             $statesToMove = @($dataDiskStates | Where-Object { -not $_.QuarantinePath })
             if ($statesToMove.Count -gt 0) {
@@ -2546,15 +2547,38 @@ function Invoke-PendingAtlasoDevelopmentCaCleanup {
                     -Phase stopped-vmx-scrubbed
                 $marker.Phase = 'stopped-vmx-scrubbed'
             }
-            Restore-AtlasoRollbackDataDisksFromQuarantine `
-                -DataDiskStates $dataDiskStates `
-                -QuarantineDirectory $quarantineDirectory
-            Remove-AtlasoDevelopmentCaCleanupMarker -MarkerPath $marker.MarkerPath
+            # A provider deletion can remove the complete artifact root before
+            # Workstation commits its library update. Re-prove the marker-bound
+            # path and display name here on every resume, then retire recovery
+            # ownership before the verified provider-state exclusion is released.
+            try {
+                Repair-AtlasoWorkstationStaleRegistrations `
+                    -ScopeRoot $marker.OutputDirectory `
+                    -VmxPath $marker.VmxPath `
+                    -ExpectedDisplayName $marker.Name `
+                    -OnVerified {
+                        Restore-AtlasoRollbackDataDisksFromQuarantine `
+                            -DataDiskStates $dataDiskStates `
+                            -QuarantineDirectory $quarantineDirectory
+                        if (Test-Path -LiteralPath $marker.VmxPath) {
+                            throw "The exact cleanup-marker VMX was recreated during recovery release: $($marker.VmxPath)"
+                        }
+                        Remove-AtlasoDevelopmentCaCleanupMarker -MarkerPath $marker.MarkerPath
+                    } `
+                    -Confirm:$false
+            }
+            catch {
+                $registrationRepairFailed = $true
+                throw
+            }
         }
         catch {
             $cleanupFailure = $_
             if ($cleanupFailure.Exception.Data['AtlasoProcessTreeTerminationUnproven'] -eq $true) {
                 throw "$($cleanupFailure.Exception.Message) Preserved data remains in $quarantineDirectory and the durable cleanup marker remains at $($marker.MarkerPath); restart Windows before retrying cleanup."
+            }
+            if ($registrationRepairFailed) {
+                throw "$($cleanupFailure.Exception.Message) Preserved data remains in $quarantineDirectory and the durable cleanup marker remains at $($marker.MarkerPath); retry after the exact Workstation registration can be reconciled."
             }
             try {
                 Restore-AtlasoRollbackDataDisksFromQuarantine `

@@ -148,11 +148,10 @@ catch {
         -OutputIso $OutputIso `
         -CleanupPaths $CleanupPaths
 } $fixtureSourceIso $fixtureKickstart $fixtureOutputIso $emptyCleanupLedger
-if ($emptyCleanupLedger.Count -ne 2 -or
-    -not $emptyCleanupLedger[0].StartsWith($emptyCleanupLedgerRoot, [System.StringComparison]::OrdinalIgnoreCase) -or
-    $emptyCleanupLedger[1] -cne $fixtureOutputIso -or
+if ($emptyCleanupLedger.Count -ne 1 -or
+    $emptyCleanupLedger[0] -cne $fixtureOutputIso -or
     -not (Test-Path -LiteralPath $fixtureOutputIso -PathType Leaf)) {
-    throw 'Fresh remastering did not promote its ISO through the initially empty cleanup ledger.'
+    throw 'Fresh remastering did not retire its partial path after final-ISO promotion.'
 }
 $emptyCleanupLedger | ForEach-Object {
     if (Test-Path -LiteralPath $_) {

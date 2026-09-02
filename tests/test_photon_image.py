@@ -3575,6 +3575,43 @@ def test_photon_child_revalidates_pinned_credential_ancestry() -> None:
     ) >= 10
 
 
+def test_remaster_attempt_is_identity_pinned_before_helper_writes() -> None:
+    """The helper writes through a pre-created, pinned attempt file."""
+    common = Path("scripts/windows/common/Atlaso.PhotonImage.psm1").read_text(
+        encoding="utf-8"
+    )
+    remaster = common.index("function New-AtlasoRemasteredPhotonIso {")
+    create = common.index("[System.IO.FileMode]::CreateNew", remaster)
+    share = common.index("[System.IO.FileShare]::ReadWrite", create)
+    record = common.index("$CleanupPaths.Add($attemptIsoPath)", share)
+    pin = common.index(
+        "Assert-AtlasoSensitiveBuildPath -Validator $SensitivePathValidator "
+        "-Path $attemptIsoPath",
+        record,
+    )
+    helper = common.index("& $pythonPath $script", pin)
+    revalidate = common.index(
+        "Assert-AtlasoSensitiveBuildPath -Validator $SensitivePathValidator "
+        "-Path $attemptIsoPath",
+        helper,
+    )
+    dispose = common.index("$attemptHandle.Dispose()", revalidate)
+    promote = common.index("Move-Item -LiteralPath $attemptIsoPath", dispose)
+    retire = common.index("$CleanupPaths.Remove($attemptIsoPath)", promote)
+
+    assert create < share < record < pin < helper < revalidate < dispose
+    assert dispose < promote < retire
+    assert "[System.IO.FileShare]::Delete" not in common[create:dispose]
+
+    helper_source = Path("scripts/interop/create_photon_kickstart_iso.py").read_text(
+        encoding="utf-8"
+    )
+    assert "output.is_symlink() or not output.is_file()" in helper_source
+    assert 'output.open("r+b", buffering=0)' in helper_source
+    assert "iso.write_fp(output_stream)" in helper_source
+    assert "output.unlink" not in helper_source
+
+
 def test_release_builder_legacy_recovery_uses_detached_branch_sentinel() -> None:
     """An empty release identity branch maps to its legacy reservation sentinel."""
     wrapper = Path("scripts/windows/vmware/build-photon-image.ps1").read_text(

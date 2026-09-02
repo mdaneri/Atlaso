@@ -64,8 +64,9 @@ GRUB auto-install entry. The original Photon source ISO is cached under `image/c
 kickstart ISO is written under this image directory as a temporary sensitive artifact. The wrapper removes it and
 verifies its absence after the bounded Packer validation or build exits, including failure paths. `-PrepareIsoOnly` is
 rejected because retaining that ISO would retain a reusable build credential. A fresh build starts with an empty
-task-owned cleanup ledger; the remaster helper records each unique partial path before writing and records the final
-path only after replacement preflight succeeds. `New-AtlasoPhotonKickstart` in
+task-owned cleanup ledger; the wrapper creates and filesystem-identity-pins each unique partial file before the
+remaster helper writes through that same file, then records the final path only after replacement preflight succeeds.
+`New-AtlasoPhotonKickstart` in
 `scripts/windows/common/Atlaso.PhotonImage.psm1` is the only kickstart source. Focused image tests parse its VMware JSON
 output and validate the installer, package, and guest-service contract.
 At shutdown, Packer schedules the root-only image finalizer from `/opt/atlaso/bin`, the same boundary as other

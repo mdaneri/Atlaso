@@ -5,8 +5,8 @@ from __future__ import annotations
 
 import argparse
 import io
+import os
 import sys
-import time
 from pathlib import Path
 
 GRUB_BOOT_CONFIG = """set default=0
@@ -117,22 +117,6 @@ def replace_grub_config(iso) -> str:
     raise RuntimeError(f"Could not embed Atlaso GRUB config. Tried: {targets}. {detail}")
 
 
-def unlink_with_retry(path: Path) -> None:
-    """Handle unlink with retry.
-
-    Args:
-        path: Filesystem or URL path to read, validate, or update.
-    """
-    for attempt in range(10):
-        try:
-            path.unlink()
-            return
-        except PermissionError:
-            if attempt == 9:
-                raise
-            time.sleep(0.5)
-
-
 def main() -> int:
     """Run the command-line entry point.
 
@@ -157,16 +141,23 @@ def main() -> int:
         print(f"Kickstart file not found: {kickstart}", file=sys.stderr)
         return 2
 
-    output.parent.mkdir(parents=True, exist_ok=True)
-    if output.exists():
-        unlink_with_retry(output)
+    if output.is_symlink() or not output.is_file():
+        print("Output ISO must be a pre-created regular file.", file=sys.stderr)
+        return 2
 
     iso = pycdlib.PyCdlib()
     iso.open(str(source_iso))
     try:
         iso.add_file(str(kickstart), iso_path="/PHOTONKS.JSON;1", rr_name="photon-ks.json")
         grub_path = replace_grub_config(iso)
-        iso.write(str(output))
+        # The PowerShell caller creates and identity-pins this file before
+        # launch. Truncate and write through that same directory entry instead
+        # of unlinking it and silently replacing the pinned filesystem object.
+        with output.open("r+b", buffering=0) as output_stream:
+            output_stream.truncate(0)
+            iso.write_fp(output_stream)
+            output_stream.flush()
+            os.fsync(output_stream.fileno())
     finally:
         iso.close()
 

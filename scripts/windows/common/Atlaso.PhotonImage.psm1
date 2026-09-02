@@ -373,13 +373,16 @@ Generated Photon kickstart document.
 Destination remastered ISO.
 .PARAMETER CleanupPaths
 Mutable list that records only task-owned partial or replaced ISO paths.
+.PARAMETER SensitivePathValidator
+Optional callback that pins and revalidates sensitive-path filesystem identity.
 #>
 function New-AtlasoRemasteredPhotonIso {
     param(
         [Parameter(Mandatory = $true)][string]$SourceIso,
         [Parameter(Mandatory = $true)][string]$KickstartJson,
         [Parameter(Mandatory = $true)][string]$OutputIso,
-        [Parameter(Mandatory = $true)][AllowEmptyCollection()][System.Collections.Generic.List[string]]$CleanupPaths
+        [Parameter(Mandatory = $true)][AllowEmptyCollection()][System.Collections.Generic.List[string]]$CleanupPaths,
+        [scriptblock]$SensitivePathValidator
     )
 
     $repoRoot = Resolve-Path -LiteralPath (Join-Path $PSScriptRoot '..\..\..')
@@ -392,12 +395,29 @@ function New-AtlasoRemasteredPhotonIso {
     $outputLeaf = [System.IO.Path]::GetFileNameWithoutExtension($OutputIso)
     $outputExtension = [System.IO.Path]::GetExtension($OutputIso)
     $attemptIsoPath = Join-Path $outputDirectory ".$outputLeaf.$([guid]::NewGuid().ToString('N')).partial$outputExtension"
-    # The unique attempt path is task-owned before the helper can write a
-    # credential-bearing byte. A caller-selected target is not task-owned yet.
-    $CleanupPaths.Add($attemptIsoPath)
-    & $pythonPath $script --source-iso $SourceIso --kickstart $KickstartJson --output $attemptIsoPath
-    if ($LASTEXITCODE -ne 0) {
-        throw "Failed to create remastered Photon ISO."
+    $attemptHandle = $null
+    try {
+        # CreateNew makes this unique path invocation-owned. Keeping a handle
+        # without delete sharing prevents a same-user rename while the helper
+        # writes credential-bearing bytes through its own read/write handle.
+        $attemptHandle = [System.IO.File]::Open(
+            $attemptIsoPath,
+            [System.IO.FileMode]::CreateNew,
+            [System.IO.FileAccess]::ReadWrite,
+            [System.IO.FileShare]::ReadWrite
+        )
+        $CleanupPaths.Add($attemptIsoPath)
+        Assert-AtlasoSensitiveBuildPath -Validator $SensitivePathValidator -Path $attemptIsoPath
+        & $pythonPath $script --source-iso $SourceIso --kickstart $KickstartJson --output $attemptIsoPath
+        if ($LASTEXITCODE -ne 0) {
+            throw "Failed to create remastered Photon ISO."
+        }
+        Assert-AtlasoSensitiveBuildPath -Validator $SensitivePathValidator -Path $attemptIsoPath
+    }
+    finally {
+        if ($null -ne $attemptHandle) {
+            $attemptHandle.Dispose()
+        }
     }
     if (Test-Path -LiteralPath $OutputIso) {
         Remove-Item -LiteralPath $OutputIso -Force -ErrorAction Stop
@@ -412,6 +432,8 @@ function New-AtlasoRemasteredPhotonIso {
     if ((Test-Path -LiteralPath $attemptIsoPath) -or -not (Test-Path -LiteralPath $OutputIso -PathType Leaf)) {
         throw "Remastered Photon ISO promotion did not complete: $OutputIso"
     }
+    # The promoted final path is now the only cleanup target for this identity.
+    $null = $CleanupPaths.Remove($attemptIsoPath)
 }
 
 <#
@@ -738,7 +760,8 @@ function Invoke-AtlasoPhotonImageBuild {
                     -SourceIso $sourceIsoPath `
                     -KickstartJson $kickstartJson `
                     -OutputIso $resolvedPreparedIsoPath `
-                    -CleanupPaths $preparedIsoCleanupPaths
+                    -CleanupPaths $preparedIsoCleanupPaths `
+                    -SensitivePathValidator $SensitivePathValidator
                 Assert-AtlasoSensitiveBuildPath -Validator $SensitivePathValidator -Path $resolvedPreparedIsoPath
             } catch {
                 foreach ($candidatePath in @($preparedIsoCleanupPaths | Select-Object -Unique)) {
@@ -753,7 +776,8 @@ function Invoke-AtlasoPhotonImageBuild {
                     -SourceIso $sourceIsoPath `
                     -KickstartJson $kickstartJson `
                     -OutputIso $resolvedPreparedIsoPath `
-                    -CleanupPaths $preparedIsoCleanupPaths
+                    -CleanupPaths $preparedIsoCleanupPaths `
+                    -SensitivePathValidator $SensitivePathValidator
                 Assert-AtlasoSensitiveBuildPath -Validator $SensitivePathValidator -Path $resolvedPreparedIsoPath
             }
         } finally {

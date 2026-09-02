@@ -91,6 +91,9 @@ try {
 finally {
     Remove-Item -LiteralPath $missingEnvironmentIdRoot -Recurse -Force -ErrorAction SilentlyContinue
 }
+# Keep this synthetic APPDATA provider independent from the interactive host.
+$cleanupModule = Get-Module Atlaso.WorkstationCleanup
+& $cleanupModule { Set-Item -Path Function:script:Get-Process -Value { $null } }
 
 $tokens = $null
 $parseErrors = $null
@@ -1734,12 +1737,77 @@ RW 524288000 SPARSE "Atlaso-Depot-s002.vmdk"
     if (-not $resumeMarker.ArtifactsRemoved -or $resumeMarker.Phase -cne 'stopped-vmx-scrubbed') {
         throw 'A stopped and removed VM must enter persisted data-restoration resume.'
     }
-    Invoke-PendingAtlasoDevelopmentCaCleanup `
-        -VmrunPath 'unused-after-proven-removal' `
-        -TimeoutSeconds 5 `
-        -MarkerRoot $markerRoot
+    $resumeAppData = Join-Path $markerTestRoot 'resume-appdata'
+    $resumeInventoryDirectory = Join-Path $resumeAppData 'VMware'
+    $resumeInventory = Join-Path $resumeInventoryDirectory 'inventory.vmls'
+    $unrelatedVmx = Join-Path $markerTestRoot 'unrelated-missing.vmx'
+    New-Item -ItemType Directory -Path $resumeInventoryDirectory | Out-Null
+    $correctResumeInventory = (
+        "vmlist6.config = `"$markerVmx`"`r`n" +
+        "vmlist6.DisplayName = `"Atlaso-Test`"`r`n" +
+        "index6.id = `"$markerVmx`"`r`n" +
+        "vmlist7.config = `"$unrelatedVmx`"`r`n" +
+        "vmlist7.DisplayName = `"Unrelated VM`"`r`n" +
+        "index7.id = `"$unrelatedVmx`"`r`n"
+    )
+    [System.IO.File]::WriteAllText(
+        $resumeInventory,
+        $correctResumeInventory.Replace(
+            'vmlist6.DisplayName = "Atlaso-Test"',
+            'vmlist6.DisplayName = "Different VM"'
+        ),
+        [System.Text.UTF8Encoding]::new($false)
+    )
+    $originalAppData = $env:APPDATA
+    try {
+        $env:APPDATA = $resumeAppData
+        $registrationMismatchDeferred = $false
+        try {
+            Invoke-PendingAtlasoDevelopmentCaCleanup `
+                -VmrunPath 'unused-after-proven-removal' `
+                -TimeoutSeconds 5 `
+                -MarkerRoot $markerRoot
+        }
+        catch {
+            if ($_.Exception.Message -notlike '*retry after the exact Workstation registration can be reconciled*') {
+                throw
+            }
+            $registrationMismatchDeferred = $true
+        }
+        if (
+            -not $registrationMismatchDeferred -or
+            -not (Test-Path -LiteralPath $markerPath -PathType Leaf) -or
+            (Test-Path -LiteralPath $markerDisk) -or
+            @($markerDiskState | Where-Object {
+                    -not (Test-Path -LiteralPath $_.QuarantinePath -PathType Leaf)
+                }).Count -gt 0
+        ) {
+            throw 'A failed exact-registration proof released quarantined data or its durable marker.'
+        }
+        [System.IO.File]::WriteAllText(
+            $resumeInventory,
+            $correctResumeInventory,
+            [System.Text.UTF8Encoding]::new($false)
+        )
+        Invoke-PendingAtlasoDevelopmentCaCleanup `
+            -VmrunPath 'unused-after-proven-removal' `
+            -TimeoutSeconds 5 `
+            -MarkerRoot $markerRoot
+    }
+    finally {
+        $env:APPDATA = $originalAppData
+    }
     if (Test-Path -LiteralPath $markerPath) {
         throw 'The resumed post-removal cleanup marker was not removed.'
+    }
+    $resumeInventoryText = [System.IO.File]::ReadAllText($resumeInventory)
+    if (
+        $resumeInventoryText.Contains($markerVmx) -or
+        $resumeInventoryText.Contains('Atlaso-Test') -or
+        -not $resumeInventoryText.Contains($unrelatedVmx) -or
+        -not $resumeInventoryText.Contains('Unrelated VM')
+    ) {
+        throw 'Post-removal recovery did not isolate the marker-bound stale Workstation registration.'
     }
     if (
         -not (Test-Path -LiteralPath $markerDisk -PathType Leaf) -or
