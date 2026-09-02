@@ -2220,10 +2220,10 @@ else {
             $processOwnershipPublisher = {
                 param($ProcessJob)
 
-                $cleanupMarkerPayload.ChildProcessId = [int]$ProcessJob.RootProcess.Id
-                $cleanupMarkerPayload.ChildProcessStartFileTimeUtc = `
+                $cleanupMarkerPayload['ChildProcessId'] = [int]$ProcessJob.RootProcess.Id
+                $cleanupMarkerPayload['ChildProcessStartFileTimeUtc'] = `
                     $ProcessJob.RootProcess.StartTime.ToUniversalTime().ToFileTimeUtc()
-                $cleanupMarkerPayload.ProcessOwnershipPhase = 'assigned'
+                $cleanupMarkerPayload['ProcessOwnershipPhase'] = 'assigned'
                 if ((Get-AtlasoPathIdentity `
                             -Path $cleanupMarkerDirectory `
                             -Description 'Photon cleanup marker directory') -cne

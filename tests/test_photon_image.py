@@ -3475,7 +3475,9 @@ def test_photon_cleanup_pins_root_identity_for_creation_and_recovery() -> None:
     assert "ChildProcessId" in marker_body
     assert "ChildProcessStartFileTimeUtc" in marker_body
     assert "ProcessOwnershipPhase    = 'prepared'" in marker_body
-    assert "ProcessOwnershipPhase = 'assigned'" in wrapper[marker:ordinary_cleanup]
+    assert "$cleanupMarkerPayload['ChildProcessId'] =" in wrapper[marker:ordinary_cleanup]
+    assert "$cleanupMarkerPayload['ChildProcessStartFileTimeUtc'] =" in wrapper[marker:ordinary_cleanup]
+    assert "$cleanupMarkerPayload['ProcessOwnershipPhase'] = 'assigned'" in wrapper[marker:ordinary_cleanup]
     assert "ProcessOwnershipPublisher" in wrapper[marker:ordinary_cleanup]
     assert plaintext_failure < cleanup_gate < ordinary_cleanup
     assert "AtlasoProcessExitCode'] -eq 86" in wrapper[marker:cleanup_gate]
