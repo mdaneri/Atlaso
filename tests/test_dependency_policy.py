@@ -2,6 +2,7 @@
 
 import io
 import json
+import tomllib
 from pathlib import Path
 
 import pytest
@@ -9,10 +10,13 @@ import pytest
 from scripts.check_dependency_policy import LOCK_POLICIES, validate
 from scripts.compile_requirements import (
     LOCK_TARGETS,
+    UVLOOP_REQUIREMENT,
     _assert_index_provides_upload_times,
     _assert_no_eligible_official_onepassword_wheel,
     _compile_command,
     _compile_environment,
+    _eligible_uvloop_hashes,
+    _record_dev_linux_requirement,
     _validated_index_url,
 )
 
@@ -2347,6 +2351,109 @@ def test_development_lock_compiles_the_project_dev_extra() -> None:
     assert target.inputs == ("pyproject.toml",)
     assert target.extras == ("dev",)
     assert target.build_targets == ("editable",)
+
+
+def test_linux_development_lock_includes_uvicorn_platform_dependencies() -> None:
+    """Verify that Linux CI retains dependencies omitted by Windows resolution."""
+    project_path = Path(__file__).resolve().parents[1] / "pyproject.toml"
+    project = tomllib.loads(project_path.read_text(encoding="utf-8"))["project"]
+    assert project["optional-dependencies"]["dev"].count(UVLOOP_REQUIREMENT) == 1
+    lock_path = Path(__file__).resolve().parents[1] / "requirements-dev.lock"
+    assert "uvloop==0.22.1 ; sys_platform" in lock_path.read_text(encoding="utf-8")
+
+
+def test_uvloop_hashes_require_mature_cp314_manylinux_wheel(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Select mature hashes only after validating the Linux CI wheel.
+
+    Args:
+        tmp_path: Temporary directory containing an isolated project declaration.
+        monkeypatch: Pytest fixture used to replace the trusted index response.
+    """
+    (tmp_path / "pyproject.toml").write_text(
+        "[project.optional-dependencies]\n"
+        f"dev = [{UVLOOP_REQUIREMENT!r}]\n",
+        encoding="utf-8",
+    )
+    payload = {
+        "files": [
+            {
+                "filename": (
+                    "uvloop-0.22.1-cp314-cp314-manylinux_2_17_x86_64.whl"
+                ),
+                "upload-time": "2026-01-01T00:00:00Z",
+                "hashes": {"sha256": "a" * 64},
+            },
+            {
+                "filename": "uvloop-0.22.1.tar.gz",
+                "upload-time": "2099-01-01T00:00:00Z",
+                "hashes": {"sha256": "b" * 64},
+            },
+        ]
+    }
+    monkeypatch.setattr(
+        "urllib.request.urlopen",
+        lambda request, timeout: io.BytesIO(json.dumps(payload).encode("utf-8")),
+    )
+
+    assert _eligible_uvloop_hashes(
+        "https://example.invalid/simple", root=tmp_path
+    ) == ("a" * 64,)
+
+
+def test_uvloop_hashes_reject_missing_cp314_manylinux_wheel(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Reject a release without a mature Linux wheel for canonical CI.
+
+    Args:
+        tmp_path: Temporary directory containing an isolated project declaration.
+        monkeypatch: Pytest fixture used to replace the trusted index response.
+    """
+    (tmp_path / "pyproject.toml").write_text(
+        "[project.optional-dependencies]\n"
+        f"dev = [{UVLOOP_REQUIREMENT!r}]\n",
+        encoding="utf-8",
+    )
+    payload = {
+        "files": [
+            {
+                "filename": "uvloop-0.22.1.tar.gz",
+                "upload-time": "2026-01-01T00:00:00Z",
+                "hashes": {"sha256": "a" * 64},
+            }
+        ]
+    }
+    monkeypatch.setattr(
+        "urllib.request.urlopen",
+        lambda request, timeout: io.BytesIO(json.dumps(payload).encode("utf-8")),
+    )
+
+    with pytest.raises(RuntimeError, match="seven-day-eligible CPython 3.14"):
+        _eligible_uvloop_hashes("https://example.invalid/simple", root=tmp_path)
+
+
+def test_dev_lock_records_linux_uvloop_requirement(tmp_path: Path) -> None:
+    """Inject the reviewed marker and trusted hashes into the generated dev lock.
+
+    Args:
+        tmp_path: Temporary directory containing an isolated development lock.
+    """
+    path = tmp_path / "requirements-dev.lock"
+    path.write_text(
+        "uvicorn==0.41.0 \\\n"
+        f"    --hash=sha256:{'c' * 64}\n",
+        encoding="utf-8",
+    )
+
+    _record_dev_linux_requirement(("a" * 64, "b" * 64), root=tmp_path)
+
+    content = path.read_text(encoding="utf-8")
+    assert f"{UVLOOP_REQUIREMENT} \\\n" in content
+    assert f"--hash=sha256:{'a' * 64} \\\n" in content
+    assert f"--hash=sha256:{'b' * 64}\n" in content
+    assert content.index("uvloop==") < content.index("uvicorn==")
 
 
 def test_lock_policy_and_generation_inventories_match() -> None:

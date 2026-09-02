@@ -29,6 +29,12 @@ DECLARATION_HASH_RE = re.compile(r"^# atlaso-declarations-sha256: [0-9a-f]{64}$"
 ONEPASSWORD_LOCK = "requirements-onepassword-deploy.lock"
 ONEPASSWORD_MANIFEST = Path("scripts/windows/vmware/onepassword-sdk-cp314-wheel.json")
 ONEPASSWORD_CP314_WHEEL = "onepassword_sdk-0.4.1-cp314-cp314-win_amd64.whl"
+DEV_LOCK = "requirements-dev.lock"
+UVLOOP_VERSION = "0.22.1"
+UVLOOP_REQUIREMENT = (
+    f'uvloop=={UVLOOP_VERSION} ; sys_platform != "win32" and '
+    'sys_platform != "cygwin" and platform_python_implementation != "PyPy"'
+)
 
 
 @dataclass(frozen=True)
@@ -354,6 +360,126 @@ def _record_onepassword_artifact_hash() -> None:
     path.write_text("\n".join(lines) + "\n", encoding="utf-8", newline="\n")
 
 
+def _eligible_uvloop_hashes(index_url: str, root: Path = ROOT) -> tuple[str, ...]:
+    """Return mature uvloop artifact hashes for the Linux development environment.
+
+    Args:
+        index_url: Trusted Python simple-index base URL to inspect.
+        root: Repository root containing the Linux development declaration.
+
+    Raises:
+        RuntimeError: If the declaration or trusted index metadata is invalid.
+    """
+    project = tomllib.loads((root / "pyproject.toml").read_text(encoding="utf-8"))[
+        "project"
+    ]
+    dev_dependencies = project.get("optional-dependencies", {}).get("dev", [])
+    if dev_dependencies.count(UVLOOP_REQUIREMENT) != 1:
+        raise RuntimeError(
+            "pyproject.toml must contain exactly one reviewed Linux development "
+            f"dependency {UVLOOP_REQUIREMENT!r}"
+        )
+    request = urllib.request.Request(
+        f"{index_url}/uvloop/",
+        headers={"Accept": "application/vnd.pypi.simple.v1+json"},
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=15) as response:
+            payload = json.load(response)
+    except (OSError, ValueError, urllib.error.HTTPError) as exc:
+        raise RuntimeError("the uvloop release metadata check failed") from exc
+    files = payload.get("files") if isinstance(payload, dict) else None
+    if not isinstance(files, list):
+        raise RuntimeError("the uvloop simple-index response does not contain files")
+    cutoff = datetime.now(UTC) - timedelta(days=7)
+    prefix = f"uvloop-{UVLOOP_VERSION}"
+    hashes: set[str] = set()
+    has_linux_cp314_wheel = False
+    for file in files:
+        if not isinstance(file, dict) or file.get("yanked"):
+            continue
+        filename = file.get("filename")
+        if not isinstance(filename, str) or not filename.startswith(
+            (f"{prefix}-", f"{prefix}.")
+        ):
+            continue
+        uploaded = file.get("upload-time")
+        file_hashes = file.get("hashes")
+        digest = (
+            file_hashes.get("sha256") if isinstance(file_hashes, dict) else None
+        )
+        if not isinstance(uploaded, str) or not re.fullmatch(
+            r"[0-9a-f]{64}", str(digest)
+        ):
+            raise RuntimeError("the uvloop release has incomplete trusted index metadata")
+        try:
+            uploaded_at = datetime.fromisoformat(uploaded.replace("Z", "+00:00"))
+        except ValueError as exc:
+            raise RuntimeError(
+                "the uvloop release has invalid upload-time metadata"
+            ) from exc
+        if uploaded_at.tzinfo is None:
+            raise RuntimeError("the uvloop release upload-time must include a timezone")
+        if uploaded_at > cutoff:
+            continue
+        hashes.add(str(digest))
+        if (
+            filename.startswith(f"{prefix}-cp314-cp314-")
+            and "manylinux" in filename
+            and "x86_64" in filename
+        ):
+            has_linux_cp314_wheel = True
+    if not hashes or not has_linux_cp314_wheel:
+        raise RuntimeError(
+            f"uvloop {UVLOOP_VERSION} lacks a seven-day-eligible CPython 3.14 "
+            "manylinux x86_64 wheel"
+        )
+    return tuple(sorted(hashes))
+
+
+def _record_dev_linux_requirement(
+    hashes: tuple[str, ...], root: Path = ROOT
+) -> None:
+    """Add the reviewed Linux-only uvloop pin to the generated development lock.
+
+    Args:
+        hashes: Mature trusted-index artifact hashes for the pinned release.
+        root: Repository root containing the generated development lock.
+
+    Raises:
+        RuntimeError: If the generated lock cannot be updated safely.
+    """
+    if not hashes or any(not re.fullmatch(r"[0-9a-f]{64}", digest) for digest in hashes):
+        raise RuntimeError("the uvloop release hashes are invalid")
+    path = root / DEV_LOCK
+    lines = path.read_text(encoding="utf-8").splitlines()
+    starts = [index for index, line in enumerate(lines) if line.startswith("uvloop==")]
+    if len(starts) > 1:
+        raise RuntimeError(f"{path.name} contains duplicate uvloop requirements")
+    if starts:
+        start = starts[0]
+        end = start + 1
+        while end < len(lines) and (
+            not lines[end] or lines[end][0].isspace()
+        ):
+            end += 1
+        del lines[start:end]
+    insertion = next(
+        (index for index, line in enumerate(lines) if line.startswith("uvicorn==")),
+        -1,
+    )
+    if insertion < 0:
+        raise RuntimeError(f"{path.name} does not contain the expected uvicorn pin")
+    replacement = [f"{UVLOOP_REQUIREMENT} \\"]
+    replacement.extend(
+        f"    --hash=sha256:{digest}{' \\' if index < len(hashes) - 1 else ''}"
+        for index, digest in enumerate(hashes)
+    )
+    replacement.append("    # via atlaso (pyproject.toml)")
+    lines[insertion:insertion] = replacement
+    path.write_text("\n".join(lines) + "\n", encoding="utf-8", newline="\n")
+
+
 def main() -> int:
     """Run the command-line entry point.
 
@@ -384,6 +510,7 @@ def main() -> int:
         _onepassword_artifact_hash()
         _assert_index_provides_upload_times(index_url)
         _assert_no_eligible_official_onepassword_wheel(index_url)
+        uvloop_hashes = _eligible_uvloop_hashes(index_url)
     except RuntimeError as exc:
         print(str(exc), file=sys.stderr)
         return 2
@@ -397,6 +524,7 @@ def main() -> int:
         )
     _record_appliance_declaration_hash()
     _record_onepassword_artifact_hash()
+    _record_dev_linux_requirement(uvloop_hashes)
     print(
         f"Regenerated {len(LOCK_TARGETS)} locks with packages uploaded at least "
         f"{MINIMUM_AGE.removeprefix('P').removesuffix('D')} days ago."

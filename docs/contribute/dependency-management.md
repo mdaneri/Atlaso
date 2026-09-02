@@ -47,6 +47,11 @@ dependency resolution and build isolation disabled. This keeps test collection r
 release appears between pull-request and post-merge runs without weakening warnings-as-errors or the package-age
 policy.
 
+Because pip resolves environment markers for its current host, the Windows-supported lock generator cannot select
+Linux-only dependencies from `uvicorn[standard]`. The project `dev` extra therefore declares the reviewed Linux
+`uvloop` pin explicitly, and the wrapper adds its eligible release hashes to `requirements-dev.lock` under the same
+environment marker. Ubuntu CI receives the complete declared environment before dependency resolution is disabled.
+
 The Windows 1Password deployment lock is temporarily augmented from
 `scripts/windows/vmware/onepassword-sdk-cp314-wheel.json`. That manifest binds one immutable GitHub release asset from
 `mdaneri/onepassword-sdk-python` by filename, size, SHA-256, release commit, upstream `v0.4.1` identity, attestation
