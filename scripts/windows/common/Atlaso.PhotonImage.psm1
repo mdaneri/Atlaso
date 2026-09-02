@@ -96,6 +96,10 @@ Provider-specific Photon packages.
 Provider-specific post-install commands.
 .PARAMETER InstallDiskLayout
 Provider disk-discovery policy used by the installer.
+.PARAMETER SensitivePathValidator
+Optional callback that pins and revalidates sensitive-path filesystem identity.
+.PARAMETER PinnedHandles
+Optional invocation-owned map that retains no-delete handles through consumption and cleanup.
 #>
 function New-AtlasoPhotonKickstart {
     param(
@@ -110,7 +114,9 @@ function New-AtlasoPhotonKickstart {
         [string[]]$AdditionalPackages = @(),
         [string[]]$PostInstallCommands = @(),
         [ValidateSet('default', 'vmware-workstation')]
-        [string]$InstallDiskLayout = 'default'
+        [string]$InstallDiskLayout = 'default',
+        [scriptblock]$SensitivePathValidator,
+        [hashtable]$PinnedHandles
     )
 
     # Photon kickstart JSON requires plaintext at its serialization boundary. Keep
@@ -199,7 +205,11 @@ function New-AtlasoPhotonKickstart {
     $parent = Split-Path -Parent $Path
     New-Item -ItemType Directory -Force -Path $parent | Out-Null
     $json = $kickstart | ConvertTo-Json -Depth 10
-    [System.IO.File]::WriteAllText($Path, $json, [System.Text.UTF8Encoding]::new($false))
+    Write-AtlasoPinnedUtf8Text `
+        -Path $Path `
+        -Text $json `
+        -SensitivePathValidator $SensitivePathValidator `
+        -PinnedHandles $PinnedHandles
     }
     finally {
         $rootPasswordText = $null
@@ -245,7 +255,14 @@ function Get-AtlasoFileHashHex {
         throw "Unsupported checksum algorithm: $Algorithm"
     }
     try {
-        $stream = [System.IO.File]::OpenRead($Path)
+        $stream = if ([System.Environment]::OSVersion.Platform -eq [System.PlatformID]::Win32NT) {
+            Initialize-AtlasoPhotonPinnedFileType
+            $readHandle = [Atlaso.PhotonPinnedFile]::OpenReadSharedDelete($Path)
+            [System.IO.FileStream]::new($readHandle, [System.IO.FileAccess]::Read)
+        }
+        else {
+            [System.IO.File]::OpenRead($Path)
+        }
         try {
             $hashBytes = $hashAlgorithm.ComputeHash($stream)
             return -join ($hashBytes | ForEach-Object { $_.ToString('x2') })
@@ -364,6 +381,536 @@ function Resolve-AtlasoPhotonSourceIso {
 
 <#
 .SYNOPSIS
+Load the Windows handle-relative file promotion helper once.
+#>
+function Initialize-AtlasoPhotonPinnedFileType {
+    if ('Atlaso.PhotonPinnedFile' -as [type]) {
+        return
+    }
+    Add-Type -TypeDefinition @'
+using System;
+using System.ComponentModel;
+using System.Runtime.InteropServices;
+using System.Text;
+using Microsoft.Win32.SafeHandles;
+
+namespace Atlaso
+{
+    public static class PhotonPinnedFile
+    {
+        [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
+        private struct FileRenameInfo
+        {
+            [MarshalAs(UnmanagedType.U1)] public bool ReplaceIfExists;
+            public IntPtr RootDirectory;
+            public uint FileNameLength;
+            public char FileName;
+        }
+
+        [StructLayout(LayoutKind.Sequential)]
+        private struct FileId128
+        {
+            public ulong Low;
+            public ulong High;
+        }
+
+        [StructLayout(LayoutKind.Sequential)]
+        private struct FileIdInfo
+        {
+            public ulong VolumeSerialNumber;
+            public FileId128 FileId;
+        }
+
+        [StructLayout(LayoutKind.Sequential)]
+        private struct ByHandleFileInformation
+        {
+            public uint FileAttributes;
+            public uint CreationTimeLow;
+            public uint CreationTimeHigh;
+            public uint LastAccessTimeLow;
+            public uint LastAccessTimeHigh;
+            public uint LastWriteTimeLow;
+            public uint LastWriteTimeHigh;
+            public uint VolumeSerialNumber;
+            public uint FileSizeHigh;
+            public uint FileSizeLow;
+            public uint NumberOfLinks;
+            public uint FileIndexHigh;
+            public uint FileIndexLow;
+        }
+
+        [StructLayout(LayoutKind.Explicit)]
+        private struct FileIdUnion
+        {
+            [FieldOffset(0)] public long FileId;
+            [FieldOffset(0)] public Guid ObjectId;
+        }
+
+        [StructLayout(LayoutKind.Sequential)]
+        private struct FileIdDescriptor
+        {
+            public uint Size;
+            public int Type;
+            public FileIdUnion Value;
+        }
+
+        [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+        private static extern SafeFileHandle CreateFileW(
+            string fileName,
+            uint desiredAccess,
+            uint shareMode,
+            IntPtr securityAttributes,
+            uint creationDisposition,
+            uint flagsAndAttributes,
+            IntPtr templateFile);
+
+        [DllImport("kernel32.dll", SetLastError = true)]
+        private static extern SafeFileHandle ReOpenFile(
+            SafeFileHandle originalFile,
+            uint desiredAccess,
+            uint shareMode,
+            uint flagsAndAttributes);
+
+        [DllImport("kernel32.dll", SetLastError = true)]
+        [return: MarshalAs(UnmanagedType.Bool)]
+        private static extern bool GetFileInformationByHandleEx(
+            SafeFileHandle file,
+            int fileInformationClass,
+            out FileIdInfo fileInformation,
+            uint bufferSize);
+
+        [DllImport("kernel32.dll", SetLastError = true)]
+        [return: MarshalAs(UnmanagedType.Bool)]
+        private static extern bool GetFileInformationByHandle(
+            SafeFileHandle file,
+            out ByHandleFileInformation fileInformation);
+
+        [DllImport("kernel32.dll", SetLastError = true)]
+        private static extern SafeFileHandle OpenFileById(
+            SafeFileHandle volumeHint,
+            ref FileIdDescriptor fileId,
+            uint desiredAccess,
+            uint shareMode,
+            IntPtr securityAttributes,
+            uint flagsAndAttributes);
+
+        [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+        private static extern uint GetFinalPathNameByHandleW(
+            SafeFileHandle file,
+            StringBuilder filePath,
+            uint filePathLength,
+            uint flags);
+
+        [DllImport("kernel32.dll", SetLastError = true)]
+        [return: MarshalAs(UnmanagedType.Bool)]
+        private static extern bool SetFileInformationByHandle(
+            SafeFileHandle file,
+            int fileInformationClass,
+            IntPtr fileInformation,
+            uint bufferSize);
+
+        [DllImport("kernel32.dll", SetLastError = true)]
+        [return: MarshalAs(UnmanagedType.Bool)]
+        private static extern bool SetFilePointerEx(
+            SafeFileHandle file,
+            long distance,
+            out long newPosition,
+            uint moveMethod);
+
+        [DllImport("kernel32.dll", SetLastError = true)]
+        [return: MarshalAs(UnmanagedType.Bool)]
+        private static extern bool SetEndOfFile(SafeFileHandle file);
+
+        [DllImport("kernel32.dll", SetLastError = true)]
+        [return: MarshalAs(UnmanagedType.Bool)]
+        private static extern bool WriteFile(
+            SafeFileHandle file,
+            byte[] buffer,
+            uint bytesToWrite,
+            out uint bytesWritten,
+            IntPtr overlapped);
+
+        [DllImport("kernel32.dll", SetLastError = true)]
+        [return: MarshalAs(UnmanagedType.Bool)]
+        private static extern bool FlushFileBuffers(SafeFileHandle file);
+
+        public static SafeFileHandle Create(string path)
+        {
+            const uint GenericRead = 0x80000000;
+            const uint GenericWrite = 0x40000000;
+            const uint ShareRead = 0x00000001;
+            const uint ShareWrite = 0x00000002;
+            const uint CreateNew = 1;
+            const uint Normal = 0x00000080;
+            SafeFileHandle handle = CreateFileW(
+                path,
+                GenericRead | GenericWrite,
+                ShareRead | ShareWrite,
+                IntPtr.Zero,
+                CreateNew,
+                Normal,
+                IntPtr.Zero);
+            if (handle.IsInvalid)
+            {
+                throw new Win32Exception(Marshal.GetLastWin32Error());
+            }
+            return handle;
+        }
+
+        public static SafeFileHandle PinForReadConsumers(SafeFileHandle handle)
+        {
+            const uint FileReadAttributes = 0x00000080;
+            const uint ShareRead = 0x00000001;
+            const uint ShareWrite = 0x00000002;
+            SafeFileHandle consumerHandle = ReOpenFile(
+                handle,
+                FileReadAttributes,
+                ShareRead | ShareWrite,
+                0);
+            if (consumerHandle.IsInvalid)
+            {
+                throw new Win32Exception(Marshal.GetLastWin32Error());
+            }
+            return consumerHandle;
+        }
+
+        public static SafeFileHandle OpenReadSharedDelete(string path)
+        {
+            const uint GenericRead = 0x80000000;
+            const uint ShareRead = 0x00000001;
+            const uint ShareWrite = 0x00000002;
+            const uint ShareDelete = 0x00000004;
+            const uint OpenExisting = 3;
+            const uint Normal = 0x00000080;
+            SafeFileHandle handle = CreateFileW(
+                path,
+                GenericRead,
+                ShareRead | ShareWrite | ShareDelete,
+                IntPtr.Zero,
+                OpenExisting,
+                Normal,
+                IntPtr.Zero);
+            if (handle.IsInvalid)
+            {
+                throw new Win32Exception(Marshal.GetLastWin32Error());
+            }
+            return handle;
+        }
+
+        public static void Rename(SafeFileHandle handle, string destinationPath)
+        {
+            byte[] nameBytes = System.Text.Encoding.Unicode.GetBytes(destinationPath);
+            int nameOffset = (int)Marshal.OffsetOf<FileRenameInfo>("FileName");
+            // FileNameLength excludes the terminator, but the variable-length
+            // FILE_RENAME_INFO buffer still needs one zero UTF-16 code unit so
+            // the kernel never consumes adjacent unmanaged bytes as a suffix.
+            int bufferLength = checked(nameOffset + nameBytes.Length + 2);
+            IntPtr buffer = Marshal.AllocHGlobal(bufferLength);
+            try
+            {
+                for (int index = 0; index < bufferLength; index++)
+                {
+                    Marshal.WriteByte(buffer, index, 0);
+                }
+                Marshal.WriteByte(buffer, 0, 1);
+                Marshal.WriteInt32(buffer, (int)Marshal.OffsetOf<FileRenameInfo>("FileNameLength"), nameBytes.Length);
+                Marshal.Copy(nameBytes, 0, IntPtr.Add(buffer, nameOffset), nameBytes.Length);
+                const int FileRenameInfoClass = 3;
+                if (!SetFileInformationByHandle(
+                    handle,
+                    FileRenameInfoClass,
+                    buffer,
+                    (uint)bufferLength))
+                {
+                    throw new Win32Exception(Marshal.GetLastWin32Error());
+                }
+            }
+            finally
+            {
+                Marshal.FreeHGlobal(buffer);
+            }
+        }
+
+        public static void WriteUtf8(SafeFileHandle handle, string text)
+        {
+            byte[] bytes = new System.Text.UTF8Encoding(false).GetBytes(text);
+            long position;
+            if (!SetFilePointerEx(handle, 0, out position, 0) || !SetEndOfFile(handle))
+            {
+                throw new Win32Exception(Marshal.GetLastWin32Error());
+            }
+            uint written;
+            if (!WriteFile(handle, bytes, (uint)bytes.Length, out written, IntPtr.Zero) ||
+                written != bytes.Length || !FlushFileBuffers(handle))
+            {
+                throw new Win32Exception(Marshal.GetLastWin32Error());
+            }
+        }
+
+        private static bool TryDelete(SafeFileHandle handle, out int error)
+        {
+            IntPtr disposition = Marshal.AllocHGlobal(1);
+            try
+            {
+                Marshal.WriteByte(disposition, 0, 1);
+                const int FileDispositionInfoClass = 4;
+                if (!SetFileInformationByHandle(
+                    handle,
+                    FileDispositionInfoClass,
+                    disposition,
+                    1))
+                {
+                    error = Marshal.GetLastWin32Error();
+                    return false;
+                }
+                error = 0;
+                return true;
+            }
+            finally
+            {
+                Marshal.FreeHGlobal(disposition);
+            }
+        }
+
+        public static void DeleteExact(SafeFileHandle handle, string path)
+        {
+            int error;
+            if (TryDelete(handle, out error))
+            {
+                return;
+            }
+            const int ErrorAccessDenied = 5;
+            if (error != ErrorAccessDenied)
+            {
+                throw new Win32Exception(error);
+            }
+
+            const int FileIdInfoClass = 18;
+            FileIdInfo identity;
+            if (!GetFileInformationByHandleEx(
+                handle,
+                FileIdInfoClass,
+                out identity,
+                (uint)Marshal.SizeOf<FileIdInfo>()))
+            {
+                throw new Win32Exception(Marshal.GetLastWin32Error());
+            }
+            ByHandleFileInformation legacyIdentity;
+            if (!GetFileInformationByHandle(handle, out legacyIdentity))
+            {
+                throw new Win32Exception(Marshal.GetLastWin32Error());
+            }
+            string root = System.IO.Path.GetPathRoot(System.IO.Path.GetFullPath(path));
+            if (String.IsNullOrEmpty(root) || root.Length < 2 || root[1] != ':')
+            {
+                throw new InvalidOperationException(
+                    "Pinned plaintext cleanup requires a local Windows volume.");
+            }
+            const uint GenericRead = 0x80000000;
+            const uint FileReadAttributes = 0x00000080;
+            const uint Delete = 0x00010000;
+            const uint ShareRead = 0x00000001;
+            const uint ShareWrite = 0x00000002;
+            const uint ShareDelete = 0x00000004;
+            const uint OpenExisting = 3;
+            const uint Normal = 0x00000080;
+            const uint BackupSemantics = 0x02000000;
+
+            using (SafeFileHandle volumeHint = CreateFileW(
+                root,
+                GenericRead,
+                ShareRead | ShareWrite | ShareDelete,
+                IntPtr.Zero,
+                OpenExisting,
+                BackupSemantics,
+                IntPtr.Zero))
+            {
+                if (volumeHint.IsInvalid)
+                {
+                    throw new Win32Exception(Marshal.GetLastWin32Error());
+                }
+                FileIdDescriptor descriptor = new FileIdDescriptor();
+                descriptor.Size = (uint)Marshal.SizeOf<FileIdDescriptor>();
+                descriptor.Type = 0;
+                descriptor.Value.FileId = unchecked((long)(
+                    ((ulong)legacyIdentity.FileIndexHigh << 32) |
+                    legacyIdentity.FileIndexLow));
+                using (SafeFileHandle identityHandle = OpenFileById(
+                    volumeHint,
+                    ref descriptor,
+                    FileReadAttributes,
+                    ShareRead | ShareWrite | ShareDelete,
+                    IntPtr.Zero,
+                    0))
+                {
+                    if (identityHandle.IsInvalid)
+                    {
+                        throw new Win32Exception(
+                            Marshal.GetLastWin32Error(),
+                            "Could not bind the exact pinned file identity for cleanup.");
+                    }
+
+                    // Bind the captured object by file ID before releasing the
+                    // no-delete pin. If the link moves afterward, the binding
+                    // follows that exact object so cleanup cannot lose it.
+                    handle.Dispose();
+                    const int MaximumAttempts = 8;
+                    for (int attempt = 0; attempt < MaximumAttempts; attempt++)
+                    {
+                        StringBuilder currentPath = new StringBuilder(32768);
+                        uint pathLength = GetFinalPathNameByHandleW(
+                            identityHandle,
+                            currentPath,
+                            (uint)currentPath.Capacity,
+                            0);
+                        if (pathLength == 0 || pathLength >= currentPath.Capacity)
+                        {
+                            throw new Win32Exception(
+                                Marshal.GetLastWin32Error(),
+                                "Could not resolve the exact pinned file path for cleanup.");
+                        }
+                        using (SafeFileHandle exact = CreateFileW(
+                            currentPath.ToString(),
+                            FileReadAttributes | Delete,
+                            ShareRead | ShareWrite,
+                            IntPtr.Zero,
+                            OpenExisting,
+                            Normal,
+                            IntPtr.Zero))
+                        {
+                            if (exact.IsInvalid)
+                            {
+                                continue;
+                            }
+                            FileIdInfo reopenedIdentity;
+                            if (!GetFileInformationByHandleEx(
+                                exact,
+                                FileIdInfoClass,
+                                out reopenedIdentity,
+                                (uint)Marshal.SizeOf<FileIdInfo>()))
+                            {
+                                throw new Win32Exception(Marshal.GetLastWin32Error());
+                            }
+                            if (reopenedIdentity.VolumeSerialNumber != identity.VolumeSerialNumber ||
+                                reopenedIdentity.FileId.Low != identity.FileId.Low ||
+                                reopenedIdentity.FileId.High != identity.FileId.High)
+                            {
+                                continue;
+                            }
+                            if (!TryDelete(exact, out error))
+                            {
+                                throw new Win32Exception(
+                                    error,
+                                    "Could not mark the exact pinned file identity for deletion.");
+                            }
+                            return;
+                        }
+                    }
+                    throw new InvalidOperationException(
+                        "Pinned plaintext moved repeatedly during exact cleanup.");
+                }
+            }
+        }
+    }
+}
+'@
+}
+
+<#
+.SYNOPSIS
+Create, identity-pin, and write one plaintext UTF-8 file through its open handle.
+.PARAMETER Path
+Unique destination path that must not already exist.
+.PARAMETER Text
+Plaintext content to write without a byte-order mark.
+.PARAMETER SensitivePathValidator
+Optional callback that pins and revalidates sensitive-path filesystem identity.
+.PARAMETER PinnedHandles
+Optional invocation-owned map that retains the no-delete handle through consumption and cleanup.
+#>
+function Write-AtlasoPinnedUtf8Text {
+    param(
+        [Parameter(Mandatory = $true)][string]$Path,
+        [Parameter(Mandatory = $true)][AllowEmptyString()][string]$Text,
+        [scriptblock]$SensitivePathValidator,
+        [hashtable]$PinnedHandles
+    )
+
+    if (Test-Path -LiteralPath $Path) {
+        if ($null -ne $SensitivePathValidator) {
+            throw "Sensitive plaintext destination already exists: $Path"
+        }
+        # Provider-neutral unit fixtures do not transport the Windows identity
+        # callback. Production callers always supply it and require an absent
+        # create-new destination.
+        Remove-Item -LiteralPath $Path -Force -ErrorAction Stop
+    }
+    Initialize-AtlasoPhotonPinnedFileType
+    $handle = $null
+    try {
+        $handle = [Atlaso.PhotonPinnedFile]::Create($Path)
+        Assert-AtlasoSensitiveBuildPath -Validator $SensitivePathValidator -Path $Path
+        [Atlaso.PhotonPinnedFile]::WriteUtf8($handle, $Text)
+        Assert-AtlasoSensitiveBuildPath -Validator $SensitivePathValidator -Path $Path
+        if ($null -ne $PinnedHandles) {
+            # Reopen as a minimal no-delete pin before releasing the writer.
+            # Ordinary readers then remain compatible without opening a rename
+            # window between plaintext serialization and consumer completion.
+            $consumerHandle = [Atlaso.PhotonPinnedFile]::PinForReadConsumers($handle)
+            $PinnedHandles[[System.IO.Path]::GetFullPath($Path)] = $consumerHandle
+            $handle.Dispose()
+            $handle = $null
+        }
+    }
+    finally {
+        if ($null -ne $handle) {
+            $handle.Dispose()
+        }
+    }
+}
+
+<#
+.SYNOPSIS
+Delete one pinned plaintext file through its retained no-delete handle.
+.PARAMETER Path
+Exact plaintext path to delete.
+.PARAMETER PinnedHandles
+Invocation-owned map containing the retained file handle.
+.PARAMETER SensitivePathValidator
+Optional callback that revalidates sensitive-path filesystem identity.
+#>
+function Remove-AtlasoPinnedPlaintextFile {
+    param(
+        [Parameter(Mandatory = $true)][string]$Path,
+        [Parameter(Mandatory = $true)][hashtable]$PinnedHandles,
+        [scriptblock]$SensitivePathValidator
+    )
+
+    $resolvedPath = [System.IO.Path]::GetFullPath($Path)
+    try {
+        if (-not $PinnedHandles.ContainsKey($resolvedPath)) {
+            if (-not (Test-Path -LiteralPath $resolvedPath)) {
+                return
+            }
+            throw "Pinned plaintext handle is unavailable: $resolvedPath"
+        }
+        $handle = $PinnedHandles[$resolvedPath]
+        Assert-AtlasoSensitiveBuildPath -Validator $SensitivePathValidator -Path $resolvedPath
+        [Atlaso.PhotonPinnedFile]::DeleteExact($handle, $resolvedPath)
+        $null = $PinnedHandles.Remove($resolvedPath)
+        $handle.Dispose()
+        if (Test-Path -LiteralPath $resolvedPath) {
+            throw "Pinned plaintext cleanup did not complete: $resolvedPath"
+        }
+    }
+    catch {
+        $_.Exception.Data['AtlasoPlaintextCleanupUnproven'] = $true
+        throw
+    }
+}
+
+<#
+.SYNOPSIS
 Create a Photon ISO with the Atlaso unattended installer embedded.
 .PARAMETER SourceIso
 Verified Photon source ISO.
@@ -373,13 +920,19 @@ Generated Photon kickstart document.
 Destination remastered ISO.
 .PARAMETER CleanupPaths
 Mutable list that records only task-owned partial or replaced ISO paths.
+.PARAMETER SensitivePathValidator
+Optional callback that pins and revalidates sensitive-path filesystem identity.
+.PARAMETER PinnedHandles
+Optional invocation-owned map that retains the no-delete handle through consumption and cleanup.
 #>
 function New-AtlasoRemasteredPhotonIso {
     param(
         [Parameter(Mandatory = $true)][string]$SourceIso,
         [Parameter(Mandatory = $true)][string]$KickstartJson,
         [Parameter(Mandatory = $true)][string]$OutputIso,
-        [Parameter(Mandatory = $true)][AllowEmptyCollection()][System.Collections.Generic.List[string]]$CleanupPaths
+        [Parameter(Mandatory = $true)][AllowEmptyCollection()][System.Collections.Generic.List[string]]$CleanupPaths,
+        [scriptblock]$SensitivePathValidator,
+        [hashtable]$PinnedHandles
     )
 
     $repoRoot = Resolve-Path -LiteralPath (Join-Path $PSScriptRoot '..\..\..')
@@ -389,28 +942,46 @@ function New-AtlasoRemasteredPhotonIso {
     }
     $pythonPath = (Get-Command python -ErrorAction Stop).Source
     $outputDirectory = Split-Path -Parent $OutputIso
-    $outputLeaf = [System.IO.Path]::GetFileNameWithoutExtension($OutputIso)
-    $outputExtension = [System.IO.Path]::GetExtension($OutputIso)
-    $attemptIsoPath = Join-Path $outputDirectory ".$outputLeaf.$([guid]::NewGuid().ToString('N')).partial$outputExtension"
-    # The unique attempt path is task-owned before the helper can write a
-    # credential-bearing byte. A caller-selected target is not task-owned yet.
-    $CleanupPaths.Add($attemptIsoPath)
-    & $pythonPath $script --source-iso $SourceIso --kickstart $KickstartJson --output $attemptIsoPath
-    if ($LASTEXITCODE -ne 0) {
-        throw "Failed to create remastered Photon ISO."
-    }
-    if (Test-Path -LiteralPath $OutputIso) {
-        Remove-Item -LiteralPath $OutputIso -Force -ErrorAction Stop
+    Initialize-AtlasoPhotonPinnedFileType
+    $attemptHandle = $null
+    try {
         if (Test-Path -LiteralPath $OutputIso) {
-            throw "Could not replace prepared Photon ISO: $OutputIso"
+            Remove-Item -LiteralPath $OutputIso -Force -ErrorAction Stop
+            if (Test-Path -LiteralPath $OutputIso) {
+                throw "Could not replace prepared Photon ISO: $OutputIso"
+            }
+        }
+        # CreateNew pins the final task-owned path before the helper can expose
+        # credential-bearing bytes. Writing the final object directly avoids a
+        # DELETE-capable promotion handle that ordinary Packer readers cannot share.
+        $attemptHandle = [Atlaso.PhotonPinnedFile]::Create($OutputIso)
+        if ($null -ne $PinnedHandles) {
+            $PinnedHandles[[System.IO.Path]::GetFullPath($OutputIso)] = $attemptHandle
+        }
+        $CleanupPaths.Add($OutputIso)
+        Assert-AtlasoSensitiveBuildPath -Validator $SensitivePathValidator -Path $OutputIso
+        & $pythonPath $script --source-iso $SourceIso --kickstart $KickstartJson --output $OutputIso
+        if ($LASTEXITCODE -ne 0) {
+            throw "Failed to create remastered Photon ISO."
+        }
+        Assert-AtlasoSensitiveBuildPath -Validator $SensitivePathValidator -Path $OutputIso
+        if ($null -ne $PinnedHandles) {
+            $consumerHandle = [Atlaso.PhotonPinnedFile]::PinForReadConsumers($attemptHandle)
+            $PinnedHandles[[System.IO.Path]::GetFullPath($OutputIso)] = $consumerHandle
+            $attemptHandle.Dispose()
+            $attemptHandle = $consumerHandle
+        }
+        if (-not (Test-Path -LiteralPath $OutputIso -PathType Leaf)) {
+            throw "Remastered Photon ISO creation did not complete: $OutputIso"
+        }
+        if ($null -ne $PinnedHandles) {
+            $attemptHandle = $null
         }
     }
-    # Only after successful remastering and target replacement preflight does
-    # the final path become task-owned and eligible for credential cleanup.
-    $CleanupPaths.Add($OutputIso)
-    Move-Item -LiteralPath $attemptIsoPath -Destination $OutputIso -Force -ErrorAction Stop
-    if ((Test-Path -LiteralPath $attemptIsoPath) -or -not (Test-Path -LiteralPath $OutputIso -PathType Leaf)) {
-        throw "Remastered Photon ISO promotion did not complete: $OutputIso"
+    finally {
+        if ($null -ne $attemptHandle -and $null -eq $PinnedHandles) {
+            $attemptHandle.Dispose()
+        }
     }
 }
 
@@ -432,18 +1003,28 @@ Write generated Packer variables as HCL.
 Destination variable-file path.
 .PARAMETER Variables
 Variables to serialize.
+.PARAMETER SensitivePathValidator
+Optional callback that pins and revalidates sensitive-path filesystem identity.
+.PARAMETER PinnedHandles
+Optional invocation-owned map that retains the no-delete handle through consumption and cleanup.
 #>
 function Write-AtlasoPackerVarFile {
     param(
         [Parameter(Mandatory = $true)][string]$Path,
-        [Parameter(Mandatory = $true)][hashtable]$Variables
+        [Parameter(Mandatory = $true)][hashtable]$Variables,
+        [scriptblock]$SensitivePathValidator,
+        [hashtable]$PinnedHandles
     )
 
     New-Item -ItemType Directory -Force -Path (Split-Path -Parent $Path) | Out-Null
     $lines = foreach ($key in ($Variables.Keys | Sort-Object)) {
         "$key = $(ConvertTo-AtlasoHclLiteral -Value $Variables[$key])"
     }
-    [System.IO.File]::WriteAllLines($Path, [string[]]$lines, [System.Text.UTF8Encoding]::new($false))
+    Write-AtlasoPinnedUtf8Text `
+        -Path $Path `
+        -Text (($lines -join [System.Environment]::NewLine) + [System.Environment]::NewLine) `
+        -SensitivePathValidator $SensitivePathValidator `
+        -PinnedHandles $PinnedHandles
 }
 
 <#
@@ -499,10 +1080,12 @@ function New-AtlasoFallbackPreparedIsoPath {
     param([Parameter(Mandatory = $true)][string]$Path)
 
     $directory = Split-Path -Parent $Path
-    $leaf = [System.IO.Path]::GetFileNameWithoutExtension($Path)
     $extension = [System.IO.Path]::GetExtension($Path)
-    $stamp = Get-Date -Format 'yyyyMMddHHmmss'
-    return (Join-Path $directory "$leaf-$stamp$extension")
+    # Keep the retry leaf shorter than the ordinary destination. The remaster
+    # helper adds its own GUID-bearing partial suffix before CreateFileW opens
+    # it, so lengthening the fallback leaf can cross the Win32 path boundary.
+    $token = [guid]::NewGuid().ToString('N').Substring(0, 12)
+    return (Join-Path $directory ".atlaso-$token$extension")
 }
 
 <#
@@ -525,6 +1108,25 @@ function Remove-AtlasoSensitiveBuildArtifact {
     }
     if (Test-Path -LiteralPath $Path -ErrorAction Stop) {
         throw "Plaintext credential artifact cleanup did not complete: $Path"
+    }
+}
+
+<#
+.SYNOPSIS
+Invoke an optional provider-owned sensitive-path identity guard.
+.PARAMETER Validator
+Optional callback that proves the destination remains inside pinned build state.
+.PARAMETER Path
+Path whose ancestry and identity must be revalidated.
+#>
+function Assert-AtlasoSensitiveBuildPath {
+    param(
+        [scriptblock]$Validator,
+        [Parameter(Mandatory = $true)][string]$Path
+    )
+
+    if ($null -ne $Validator) {
+        & $Validator $Path
     }
 }
 
@@ -573,6 +1175,8 @@ Optional pip index URL.
 Optional remastered ISO destination.
 .PARAMETER SensitiveBuildDirectory
 Optional task-owned directory that contains every plaintext credential artifact.
+.PARAMETER SensitivePathValidator
+Optional provider callback that revalidates pinned sensitive-path ancestry.
 .PARAMETER PackerOnError
 Packer failure-handling mode.
 .PARAMETER GuestPackages
@@ -617,6 +1221,7 @@ function Invoke-AtlasoPhotonImageBuild {
         [string]$PipGlobalIndexUrl = '',
         [string]$PreparedIsoPath = '',
         [string]$SensitiveBuildDirectory = '',
+        [scriptblock]$SensitivePathValidator,
         [ValidateSet('cleanup', 'abort', 'ask', 'run-cleanup-provisioner')]
         [string]$PackerOnError = 'cleanup',
         [string[]]$GuestPackages = @(),
@@ -667,7 +1272,9 @@ function Invoke-AtlasoPhotonImageBuild {
     else {
         $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($SensitiveBuildDirectory)
     }
+    Assert-AtlasoSensitiveBuildPath -Validator $SensitivePathValidator -Path $sensitiveBuildDir
     New-Item -ItemType Directory -Force -Path $sensitiveBuildDir | Out-Null
+    Assert-AtlasoSensitiveBuildPath -Validator $SensitivePathValidator -Path $sensitiveBuildDir
     if ([string]::IsNullOrWhiteSpace($PreparedIsoPath)) {
         $PreparedIsoPath = Join-Path $sensitiveBuildDir 'kickstart\atlaso-photon-with-kickstart.iso'
     }
@@ -677,16 +1284,25 @@ function Invoke-AtlasoPhotonImageBuild {
     $kickstartJson = Join-Path $ksSourceDir 'photon-ks.json'
     $resolvedPreparedIsoPath = $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($PreparedIsoPath)
     $resolvedPreparedIsoPath = Resolve-AtlasoPreparedIsoPath -Path $resolvedPreparedIsoPath
+    $preparedIsoDirectory = Split-Path -Parent $resolvedPreparedIsoPath
 
     if ($PrepareIsoOnly) {
         throw 'PrepareIsoOnly is not supported because a retained remastered ISO would contain reusable build credentials. Run Packer validation or a build so the ISO can be deleted after the bounded consumer exits.'
     }
 
     $preparedIsoCleanupPaths = [System.Collections.Generic.List[string]]::new()
+    $pinnedPlaintextHandles = @{}
     try {
         try {
+            Assert-AtlasoSensitiveBuildPath -Validator $SensitivePathValidator -Path $preparedIsoDirectory
+            New-Item -ItemType Directory -Force -Path $preparedIsoDirectory | Out-Null
+            Assert-AtlasoSensitiveBuildPath -Validator $SensitivePathValidator -Path $preparedIsoDirectory
+            Assert-AtlasoSensitiveBuildPath -Validator $SensitivePathValidator -Path $ksSourceDir
             Remove-AtlasoSensitiveBuildArtifact -Path $ksSourceDir
+            Assert-AtlasoSensitiveBuildPath -Validator $SensitivePathValidator -Path $ksSourceDir
             New-Item -ItemType Directory -Force -Path $ksSourceDir | Out-Null
+            Assert-AtlasoSensitiveBuildPath -Validator $SensitivePathValidator -Path $ksSourceDir
+            Assert-AtlasoSensitiveBuildPath -Validator $SensitivePathValidator -Path $kickstartJson
             New-AtlasoPhotonKickstart `
                 -Path $kickstartJson `
                 -RootPassword $SshPassword `
@@ -698,29 +1314,50 @@ function Invoke-AtlasoPhotonImageBuild {
                 -StaticDns $BuilderStaticDns `
                 -AdditionalPackages $GuestPackages `
                 -PostInstallCommands $GuestPostInstallCommands `
-                -InstallDiskLayout $InstallDiskLayout
+                -InstallDiskLayout $InstallDiskLayout `
+                -SensitivePathValidator $SensitivePathValidator `
+                -PinnedHandles $pinnedPlaintextHandles
+            Assert-AtlasoSensitiveBuildPath -Validator $SensitivePathValidator -Path $kickstartJson
 
+            Assert-AtlasoSensitiveBuildPath -Validator $SensitivePathValidator -Path $buildDir
             $sourceIsoPath = Resolve-AtlasoPhotonSourceIso -UrlOrPath $IsoUrl -Checksum $IsoChecksum -BuildDirectory $buildDir -PackerDirectory $packerDir -SharedSourceDirectory $sharedSourceDir
             try {
+                Assert-AtlasoSensitiveBuildPath -Validator $SensitivePathValidator -Path $resolvedPreparedIsoPath
+                Assert-AtlasoSensitiveBuildPath -Validator $SensitivePathValidator -Path $kickstartJson
                 New-AtlasoRemasteredPhotonIso `
                     -SourceIso $sourceIsoPath `
                     -KickstartJson $kickstartJson `
                     -OutputIso $resolvedPreparedIsoPath `
-                    -CleanupPaths $preparedIsoCleanupPaths
+                    -CleanupPaths $preparedIsoCleanupPaths `
+                    -SensitivePathValidator $SensitivePathValidator `
+                    -PinnedHandles $pinnedPlaintextHandles
+                Assert-AtlasoSensitiveBuildPath -Validator $SensitivePathValidator -Path $resolvedPreparedIsoPath
             } catch {
+                foreach ($candidatePath in @($preparedIsoCleanupPaths | Select-Object -Unique)) {
+                    Assert-AtlasoSensitiveBuildPath -Validator $SensitivePathValidator -Path $candidatePath
+                }
                 $fallbackPreparedIsoPath = New-AtlasoFallbackPreparedIsoPath -Path $resolvedPreparedIsoPath
                 Write-Warning "Could not replace prepared ISO at $resolvedPreparedIsoPath; retrying this run with $fallbackPreparedIsoPath"
                 $resolvedPreparedIsoPath = $fallbackPreparedIsoPath
+                Assert-AtlasoSensitiveBuildPath -Validator $SensitivePathValidator -Path $resolvedPreparedIsoPath
+                Assert-AtlasoSensitiveBuildPath -Validator $SensitivePathValidator -Path $kickstartJson
                 New-AtlasoRemasteredPhotonIso `
                     -SourceIso $sourceIsoPath `
                     -KickstartJson $kickstartJson `
                     -OutputIso $resolvedPreparedIsoPath `
-                    -CleanupPaths $preparedIsoCleanupPaths
+                    -CleanupPaths $preparedIsoCleanupPaths `
+                    -SensitivePathValidator $SensitivePathValidator `
+                    -PinnedHandles $pinnedPlaintextHandles
+                Assert-AtlasoSensitiveBuildPath -Validator $SensitivePathValidator -Path $resolvedPreparedIsoPath
             }
         } finally {
             # The remastered ISO owns the consumed kickstart payload. Do not retain
             # its plaintext build password in the ignored repository workspace.
-            Remove-AtlasoSensitiveBuildArtifact -Path $kickstartJson
+            Remove-AtlasoPinnedPlaintextFile `
+                -Path $kickstartJson `
+                -PinnedHandles $pinnedPlaintextHandles `
+                -SensitivePathValidator $SensitivePathValidator
+            Assert-AtlasoSensitiveBuildPath -Validator $SensitivePathValidator -Path $ksSourceDir
             Remove-AtlasoSensitiveBuildArtifact -Path $ksSourceDir
         }
         $preparedIso = Get-Item -LiteralPath $resolvedPreparedIsoPath -ErrorAction Stop
@@ -739,6 +1376,7 @@ function Invoke-AtlasoPhotonImageBuild {
         $sshPasswordText = $null
         $bootstrapAdminPasswordText = $null
         try {
+            Assert-AtlasoSensitiveBuildPath -Validator $SensitivePathValidator -Path $varFilePath
             $sshPasswordText = ConvertFrom-SecureString -SecureString $SshPassword -AsPlainText
             $bootstrapAdminPasswordText = ConvertFrom-SecureString -SecureString $BootstrapAdminPassword -AsPlainText
             $packerVariables = @{
@@ -770,7 +1408,13 @@ function Invoke-AtlasoPhotonImageBuild {
         $packerVariables[$key] = $AdditionalPackerVariables[$key]
     }
 
-    Write-AtlasoPackerVarFile -Path $varFilePath -Variables $packerVariables
+    Assert-AtlasoSensitiveBuildPath -Validator $SensitivePathValidator -Path $varFilePath
+    Write-AtlasoPackerVarFile `
+        -Path $varFilePath `
+        -Variables $packerVariables `
+        -SensitivePathValidator $SensitivePathValidator `
+        -PinnedHandles $pinnedPlaintextHandles
+    Assert-AtlasoSensitiveBuildPath -Validator $SensitivePathValidator -Path $varFilePath
     Write-Host "Using Packer var-file: $varFilePath"
 
     $packerArgs = @($(if ($ValidateOnly) { 'validate' } else { 'build' }))
@@ -797,9 +1441,11 @@ function Invoke-AtlasoPhotonImageBuild {
                     throw "Exact Packer plugin verification failed with exit code $LASTEXITCODE."
                 }
                 if (-not $ValidateOnly -and $null -ne $PackerBuildInvoker) {
+                    Assert-AtlasoSensitiveBuildPath -Validator $SensitivePathValidator -Path $varFilePath
                     & $PackerBuildInvoker $packerArgs $packerDir
                 }
                 else {
+                    Assert-AtlasoSensitiveBuildPath -Validator $SensitivePathValidator -Path $varFilePath
                     & packer @packerArgs
                     if ($LASTEXITCODE -ne 0) {
                         $operation = if ($ValidateOnly) { 'validate' } else { 'build' }
@@ -813,7 +1459,10 @@ function Invoke-AtlasoPhotonImageBuild {
             try {
                 # The var file is needed only by the bounded Packer child and must
                 # not leave reusable plaintext credentials in the build workspace.
-                Remove-AtlasoSensitiveBuildArtifact -Path $varFilePath
+                Remove-AtlasoPinnedPlaintextFile `
+                    -Path $varFilePath `
+                    -PinnedHandles $pinnedPlaintextHandles `
+                    -SensitivePathValidator $SensitivePathValidator
             }
             finally {
                 $sshPasswordText = $null
@@ -827,13 +1476,20 @@ function Invoke-AtlasoPhotonImageBuild {
         $preparedIsoCleanupFailures = [System.Collections.Generic.List[string]]::new()
         foreach ($candidatePath in @($preparedIsoCleanupPaths | Select-Object -Unique)) {
             try {
-                Remove-AtlasoSensitiveBuildArtifact -Path $candidatePath
+                Remove-AtlasoPinnedPlaintextFile `
+                    -Path $candidatePath `
+                    -PinnedHandles $pinnedPlaintextHandles `
+                    -SensitivePathValidator $SensitivePathValidator
             } catch {
                 $preparedIsoCleanupFailures.Add("$candidatePath ($($_.Exception.Message))")
             }
         }
         if ($preparedIsoCleanupFailures.Count -gt 0) {
-            throw "Remastered Photon ISO credential cleanup failed: $($preparedIsoCleanupFailures -join '; ')"
+            $cleanupFailure = [System.InvalidOperationException]::new(
+                "Remastered Photon ISO credential cleanup failed: $($preparedIsoCleanupFailures -join '; ')"
+            )
+            $cleanupFailure.Data['AtlasoPlaintextCleanupUnproven'] = $true
+            throw $cleanupFailure
         }
     }
 }

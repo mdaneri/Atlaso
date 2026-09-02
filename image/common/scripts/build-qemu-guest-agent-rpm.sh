@@ -6,18 +6,76 @@ if [ -z "$OUTPUT_DIRECTORY" ]; then
   echo "Usage: build-qemu-guest-agent-rpm.sh OUTPUT_DIRECTORY" >&2
   exit 2
 fi
+if [ "$(id -u)" -ne 0 ]; then
+  echo "QEMU guest-agent RPM build must run as root." >&2
+  exit 2
+fi
 
 QEMU_VERSION=10.2.2
 QEMU_ARCHIVE="qemu-${QEMU_VERSION}.tar.xz"
 QEMU_URL="https://download.qemu.org/${QEMU_ARCHIVE}"
 QEMU_SHA256=784b296ff29c1417aa72323abcb2d2ea9ab9771724f577dcd785c3b04f21e176
 SOURCE_ROOT="${ATLASO_SRC:-/tmp/atlaso-src}"
-BUILD_ROOT="/tmp/atlaso-qemu-guest-agent-build"
+BUILD_ROOT="$(mktemp -d /tmp/atlaso-qemu-guest-agent-build.XXXXXX)"
 RPM_ROOT="$BUILD_ROOT/rpmbuild"
+BUILD_ROOT_IDENTITY=""
 
-rm -rf "$BUILD_ROOT"
-install -d -o root -g root -m 0700 "$BUILD_ROOT" "$RPM_ROOT/BUILD" "$RPM_ROOT/BUILDROOT" \
+cleanup_build_root() {
+  status=$?
+  trap - EXIT
+  current_identity=""
+  if [ -d "$BUILD_ROOT" ] && [ ! -L "$BUILD_ROOT" ]; then
+    current_identity="$(stat -Lc '%d:%i:%u:%g:%a' "$BUILD_ROOT" 2>/dev/null || true)"
+  fi
+  if [ -z "$BUILD_ROOT_IDENTITY" ] || [ "$current_identity" != "$BUILD_ROOT_IDENTITY" ]; then
+    echo "QEMU build root identity changed; preserving the invocation root." >&2
+    [ "$status" -ne 0 ] && exit "$status"
+    exit 2
+  fi
+  rm -rf "$BUILD_ROOT"
+  if [ -e "$BUILD_ROOT" ] || [ -L "$BUILD_ROOT" ]; then
+    echo "QEMU build root cleanup did not remove the invocation root." >&2
+    [ "$status" -ne 0 ] && exit "$status"
+    exit 2
+  fi
+  exit "$status"
+}
+
+trap cleanup_build_root EXIT
+chmod 0700 "$BUILD_ROOT"
+BUILD_ROOT_IDENTITY="$(stat -Lc '%d:%i:%u:%g:%a' "$BUILD_ROOT")"
+case "$BUILD_ROOT_IDENTITY" in
+  *:*:0:0:700) ;;
+  *)
+    echo "QEMU build root does not have the required root-owned private identity." >&2
+    exit 2
+    ;;
+esac
+
+ADMITTED_PIP_CONFIG_FILE="${PIP_CONFIG_FILE:-/etc/pip.conf}"
+ADMITTED_PIP_INDEX_URL="${PIP_INDEX_URL:-}"
+for pip_environment_name in $(env | sed -n 's/^\(PIP_[A-Za-z0-9_]*\)=.*/\1/p'); do
+  unset "$pip_environment_name"
+done
+unset XDG_CONFIG_HOME XDG_CONFIG_DIRS
+
+install -d -o root -g root -m 0700 "$BUILD_ROOT/home" "$BUILD_ROOT/pip-cache" \
+  "$BUILD_ROOT/xdg-cache" "$BUILD_ROOT/xdg-config" "$RPM_ROOT/BUILD" "$RPM_ROOT/BUILDROOT" \
   "$RPM_ROOT/RPMS" "$RPM_ROOT/SOURCES" "$RPM_ROOT/SPECS" "$RPM_ROOT/SRPMS"
+
+# Packer deliberately preserves the communicator environment through sudo -E.
+# QEMU's mkvenv must instead use only this root-owned invocation sandbox while
+# retaining any explicitly configured pip indexes from the parent environment.
+export HOME="$BUILD_ROOT/home"
+export PIP_CACHE_DIR="$BUILD_ROOT/pip-cache"
+export XDG_CACHE_HOME="$BUILD_ROOT/xdg-cache"
+export XDG_CONFIG_HOME="$BUILD_ROOT/xdg-config"
+export PIP_CONFIG_FILE="$ADMITTED_PIP_CONFIG_FILE"
+if [ -n "$ADMITTED_PIP_INDEX_URL" ]; then
+  export PIP_INDEX_URL="$ADMITTED_PIP_INDEX_URL"
+fi
+export PIP_DISABLE_PIP_VERSION_CHECK=1
+unset ADMITTED_PIP_CONFIG_FILE ADMITTED_PIP_INDEX_URL
 
 curl --fail --location --proto '=https' --tlsv1.2 --output "$BUILD_ROOT/$QEMU_ARCHIVE" "$QEMU_URL"
 printf '%s  %s\n' "$QEMU_SHA256" "$BUILD_ROOT/$QEMU_ARCHIVE" | sha256sum -c -
@@ -70,5 +128,3 @@ if [ "$rpm_count" -ne 1 ]; then
   echo "Expected exactly one Atlaso QEMU guest-agent RPM; found $rpm_count." >&2
   exit 2
 fi
-
-rm -rf "$BUILD_ROOT"

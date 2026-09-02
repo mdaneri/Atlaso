@@ -31,12 +31,13 @@ ATLASO_SYSTEM_DISK_SIZE_BYTES="${ATLASO_SYSTEM_DISK_SIZE_BYTES:-}"
 BOOTSTRAP_USERNAME="${ATLASO_BOOTSTRAP_ADMIN_USERNAME:-admin}"
 BOOTSTRAP_PASSWORD="${ATLASO_BOOTSTRAP_ADMIN_PASSWORD:-}"
 BOOTSTRAP_SHELL="${ATLASO_BOOTSTRAP_ADMIN_SHELL:-/usr/bin/pwsh}"
-PIP_CACHE_DIR="${PIP_CACHE_DIR:-/var/cache/atlaso-pip}"
+PIP_CACHE_DIR="/var/cache/atlaso-pip"
 TDNF_PROGRESS_RUNNER="$ATLASO_SRC/scripts/run_tdnf_with_progress.py"
 PHOTON_REPOSITORY_CONFIGURATOR="$ATLASO_SRC/image/common/scripts/configure_photon_repositories.py"
 DISK_IDENTITY_RULE_SOURCE="$ATLASO_SRC/image/common/udev/99-atlaso-disk-identity.rules"
 DATA_DISK_POLICY_SOURCE="$ATLASO_SRC/image/common/data-disks.conf"
 QEMU_GUEST_AGENT_BUILDER="$ATLASO_SRC/image/common/scripts/build-qemu-guest-agent-rpm.sh"
+BOOTSTRAP_VENV_VALIDATOR="$ATLASO_SRC/image/common/scripts/validate-bootstrap-venv.py"
 GUEST_AGENT_SELECTOR_SOURCE="$ATLASO_SRC/scripts/appliance/atlaso-select-guest-agent"
 MACHINE_IDENTITY_INITIALIZER_SOURCE="$ATLASO_SRC/scripts/appliance/atlaso-initialize-machine-identity.py"
 IMAGE_BUILD_FINALIZER_SOURCE="$ATLASO_SRC/image/common/scripts/finalize-image-build.sh"
@@ -333,6 +334,10 @@ if [ ! -r "$DATA_DISK_POLICY_SOURCE" ]; then
   echo "Platform data-disk policy is missing from staged Atlaso sources: $DATA_DISK_POLICY_SOURCE" >&2
   exit 2
 fi
+if [ ! -r "$BOOTSTRAP_VENV_VALIDATOR" ]; then
+  echo "Bootstrap virtualenv identity validator is missing from staged Atlaso sources." >&2
+  exit 2
+fi
 if [ ! -r "$QEMU_GUEST_AGENT_BUILDER" ] || [ ! -r "$GUEST_AGENT_SELECTOR_SOURCE" ] ||
   [ ! -r "$MACHINE_IDENTITY_INITIALIZER_SOURCE" ] || [ ! -r "$IMAGE_BUILD_FINALIZER_SOURCE" ] ||
   [ ! -r "$PHOTON_PACKAGE_STATE_VERIFIER" ] || [ ! -r "$GUEST_AGENT_UNIT_SOURCE" ]; then
@@ -366,6 +371,23 @@ case "$ATLASO_GUEST_PLATFORM" in
 esac
 run_tdnf "Photon appliance package installation" \
   install python3 python3-pip python3-devel python3-setuptools python3-virtualenv python3-curses python3-ntp sudo openssh-server curl rsync tar gzip xz shadow e2fsprogs sqlite procps-ng gnupg rpm-build gcc binutils linux-api-headers make glib-devel systemd-devel ninja-build pkg-config $GUEST_INTEGRATION_PACKAGES nftables dnsmasq ntpsec nfs-utils rpcbind openldap openldap-servers ipxe syslinux nginx powershell
+
+# sudo -E preserves Packer's communicator environment. Clear the complete pip
+# namespace without printing values, then admit only Atlaso's generated config
+# and explicit index before QEMU configure can invoke mkvenv.
+for pip_environment_name in $(env | sed -n 's/^\(PIP_[A-Za-z0-9_]*\)=.*/\1/p'); do
+  unset "$pip_environment_name"
+done
+unset XDG_CONFIG_HOME XDG_CONFIG_DIRS
+install -d -o root -g root -m 0755 "$PIP_CACHE_DIR"
+write_pip_config /etc/pip.conf
+export HOME=/root
+export PIP_CACHE_DIR
+export PIP_CONFIG_FILE=/etc/pip.conf
+export PIP_DISABLE_PIP_VERSION_CHECK=1
+if [ -n "$ATLASO_PIP_GLOBAL_INDEX_URL" ]; then
+  export PIP_INDEX_URL="$ATLASO_PIP_GLOBAL_INDEX_URL"
+fi
 
 log_step "building the pinned QEMU guest-agent RPM"
 QEMU_GUEST_AGENT_OUTPUT=/tmp/atlaso-qemu-guest-agent-rpm
@@ -604,7 +626,6 @@ else
 fi
 
 log_step "installing Atlaso Python environment"
-install -d -o root -g root -m 0755 "$PIP_CACHE_DIR"
 install -d -o root -g root -m 0755 "$ATLASO_HOME/releases"
 if ! ATLASO_RELEASE_VERSION="$(
   python3 "$ATLASO_HOME/scripts/version.py" project-get --root "$ATLASO_HOME"
@@ -614,14 +635,6 @@ if ! ATLASO_RELEASE_VERSION="$(
 fi
 ATLASO_RELEASE_DIR="$ATLASO_HOME/releases/bootstrap-$ATLASO_RELEASE_VERSION"
 install -d -o root -g root -m 0755 "$ATLASO_RELEASE_DIR"
-write_pip_config /etc/pip.conf
-export HOME=/root
-export PIP_CACHE_DIR
-export PIP_DISABLE_PIP_VERSION_CHECK=1
-if [ -n "$ATLASO_PIP_GLOBAL_INDEX_URL" ]; then
-  export PIP_INDEX_URL="$ATLASO_PIP_GLOBAL_INDEX_URL"
-fi
-
 python3 -m venv "$ATLASO_RELEASE_DIR/.venv"
 ATLASO_BOOTSTRAP_PYTHON_ABI="$(python3 -c 'import sys; print(f"cp{sys.version_info.major}{sys.version_info.minor}")')"
 printf '{\n  "schema_version": 1,\n  "version": "%s",\n  "bootstrap": true,\n  "supported_python_abis": ["%s"]\n}\n' \
@@ -634,15 +647,15 @@ write_pip_config "$ATLASO_HOME/.venv/pip.conf"
   --require-hashes \
   --requirement "$ATLASO_HOME/requirements-appliance.lock"
 "$ATLASO_HOME/.venv/bin/python" -m pip install --no-compile --no-deps "$ATLASO_HOME"
-ATLASO_SITE_PACKAGES="$("$ATLASO_HOME/.venv/bin/python" -c 'import sysconfig; print(sysconfig.get_path("purelib"))')"
-ATLASO_SITE_PACKAGES_REAL="$(readlink -f "$ATLASO_SITE_PACKAGES")"
-ATLASO_EXPECTED_SITE_PACKAGES="$ATLASO_RELEASE_DIR/.venv/lib/python3.14/site-packages"
-if [ "$ATLASO_SITE_PACKAGES_REAL" != "$ATLASO_EXPECTED_SITE_PACKAGES" ]; then
-  echo "Atlaso site-packages resolved outside the expected release environment." >&2
-  exit 2
-fi
-find "$ATLASO_SITE_PACKAGES_REAL" -type f -name '*.pyc' -delete
-find "$ATLASO_SITE_PACKAGES_REAL" -depth -type d -name __pycache__ -empty -delete
+ATLASO_LOGICAL_SITE_PACKAGES="$("$ATLASO_HOME/.venv/bin/python" -c 'import sysconfig; print(sysconfig.get_path("purelib"))')"
+ATLASO_SITE_PACKAGES="$(
+  python3 "$BOOTSTRAP_VENV_VALIDATOR" \
+    --atlaso-home "$ATLASO_HOME" \
+    --version "$ATLASO_RELEASE_VERSION" \
+    --purelib "$ATLASO_LOGICAL_SITE_PACKAGES"
+)"
+find "$ATLASO_SITE_PACKAGES" -type f -name '*.pyc' -delete
+find "$ATLASO_SITE_PACKAGES" -depth -type d -name __pycache__ -empty -delete
 install -d -o root -g root -m 0755 /usr/local/bin
 ln -sfn "$ATLASO_HOME/.venv/bin/atlaso-vault" /usr/local/bin/atlaso-vault
 ln -sfn "$ATLASO_HOME/.venv/bin/atlaso-vault" /usr/bin/atlaso-vault

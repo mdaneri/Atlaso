@@ -1767,6 +1767,45 @@ def test_vmware_source_snapshot_resists_during_packer_checkout_changes(
     assert "Atlaso immutable source snapshot tests passed." in result.stdout
 
 
+def test_vmware_photon_build_state_stays_under_task_repository() -> None:
+    """Credential, Packer, cleanup, and reservation state stay task-local."""
+    pwsh = shutil.which("pwsh")
+    if pwsh is None:
+        pytest.skip("PowerShell 7 is required")
+
+    result = subprocess.run(
+        [
+            pwsh,
+            "-NoLogo",
+            "-NoProfile",
+            "-NonInteractive",
+            "-File",
+            "tests/powershell/Test-PhotonBuildStateRoot.ps1",
+            "-RepositoryRoot",
+            str(Path.cwd()),
+        ],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "Photon build-state root tests passed." in result.stdout
+
+    wrapper = Path("scripts/windows/vmware/build-photon-image.ps1").read_text(
+        encoding="utf-8"
+    )
+    assert "$credentialRoot = Join-Path $credentialStateRoot" in wrapper
+    assert "$buildStateRepositoryRoot = if ($CredentialChild)" in wrapper
+    assert "-RepositoryRoot $buildStateRepositoryRoot" in wrapper
+    assert "$builderReservationHandoffStateRoot = Join-Path $resolvedBuildStateRoot" in wrapper
+    assert "$builderReservationStateRoot = $legacyBuilderReservationStateRoot" in wrapper
+    assert "-HandoffStateRoot $builderReservationHandoffStateRoot" in wrapper
+    assert "-ReservationStateRoot $builderReservationStateRoot" in wrapper
+    assert "-BuildStateRoot', $resolvedBuildStateRoot" in wrapper
+    assert wrapper.count("[System.IO.Path]::GetTempPath()") == 1
+    assert "$legacyCredentialParentRoot" in wrapper
+
+
 def test_vmware_packer_requires_proven_task_or_release_builder_identity() -> None:
     """Packer, wrapper, release, cleanup, and docs share one builder identity."""
     template = Path("image/vmware-workstation/atlaso-photon.pkr.hcl").read_text(
@@ -1820,12 +1859,13 @@ def test_vmware_packer_requires_proven_task_or_release_builder_identity() -> Non
     assert "'branch=main'" in wrapper
     assert "'event=push'" in wrapper
     assert "'status=success'" in wrapper
-    recovery = wrapper.index(
-        "Invoke-AtlasoPhotonBuildCleanupRecovery -MarkerPath $cleanupMarkerPath"
+    recovery = wrapper.index("Invoke-AtlasoPhotonBuildCleanupRecovery `")
+    current_marker_recovery = wrapper.index(
+        "-MarkerPath $cleanupMarkerPath `", recovery
     )
     identity_admission = wrapper.index("$builderIdentity = if ($ReleaseBuilder) {")
     credential_access = wrapper.index("$needsOnePasswordDefaults =")
-    assert recovery < identity_admission < credential_access
+    assert recovery < current_marker_recovery < identity_admission < credential_access
     assert wrapper.count(
         "$releaseIdentityArguments['WorkflowRunId'] = $ReleaseWorkflowRunId"
     ) == 2
@@ -1839,8 +1879,10 @@ def test_vmware_packer_requires_proven_task_or_release_builder_identity() -> Non
         "-OutputDirectory $workstationOutputDirectory `"
         in wrapper[build_invocation:]
     )
+    provider_build_guard = wrapper.index("$packerBuildInvoker = $null")
     output_boundary = wrapper.index(
-        "$resolvedVmrunPath = Resolve-WorkstationVmrunPath -Path $VmrunPath"
+        "$resolvedVmrunPath = Resolve-WorkstationVmrunPath -Path $VmrunPath",
+        provider_build_guard,
     )
     owner_recheck = wrapper.index(
         "Assert-AtlasoVmwareBuilderOwnershipManifest `", output_boundary
@@ -2045,7 +2087,7 @@ def test_photon_image_optional_pip_global_index_configuration():
 
     assert 'ATLASO_PIP_GLOBAL_INDEX="${ATLASO_PIP_GLOBAL_INDEX:-}"' in script
     assert 'ATLASO_PIP_GLOBAL_INDEX_URL="${ATLASO_PIP_GLOBAL_INDEX_URL:-}"' in script
-    assert 'PIP_CACHE_DIR="${PIP_CACHE_DIR:-/var/cache/atlaso-pip}"' in script
+    assert 'PIP_CACHE_DIR="/var/cache/atlaso-pip"' in script
     assert "write_pip_config() {" in script
     assert 'printf \'index = %s\\n\' "$ATLASO_PIP_GLOBAL_INDEX"' in script
     assert 'printf \'index-url = %s\\n\' "$ATLASO_PIP_GLOBAL_INDEX_URL"' in script
@@ -2064,14 +2106,10 @@ def test_photon_image_optional_pip_global_index_configuration():
     assert 'write_pip_config "$ATLASO_HOME/.venv/pip.conf"' in script
     assert '--requirement "$ATLASO_HOME/requirements-appliance.lock"' in script
     assert 'pip install --no-compile --no-deps "$ATLASO_HOME"' in script
-    assert 'ATLASO_SITE_PACKAGES_REAL="$(readlink -f "$ATLASO_SITE_PACKAGES")"' in script
-    assert (
-        'ATLASO_EXPECTED_SITE_PACKAGES="$ATLASO_RELEASE_DIR/.venv/lib/python3.14/site-packages"'
-        in script
-    )
-    assert 'if [ "$ATLASO_SITE_PACKAGES_REAL" != "$ATLASO_EXPECTED_SITE_PACKAGES" ]; then' in script
-    assert "Atlaso site-packages resolved outside the expected release environment." in script
-    assert 'find "$ATLASO_SITE_PACKAGES_REAL" -type f -name \'*.pyc\' -delete' in script
+    assert 'BOOTSTRAP_VENV_VALIDATOR="$ATLASO_SRC/image/common/scripts/validate-bootstrap-venv.py"' in script
+    assert 'python3 "$BOOTSTRAP_VENV_VALIDATOR"' in script
+    assert '--purelib "$ATLASO_LOGICAL_SITE_PACKAGES"' in script
+    assert 'find "$ATLASO_SITE_PACKAGES" -type f -name \'*.pyc\' -delete' in script
     assert "/etc/atlaso/update-trust.d" in script
     assert 'trust_source_dir="$ATLASO_HOME/image/common/update-trust"' in script
     assert 'for trust_key in "$trust_source_dir"/*.pem' in script
@@ -2095,7 +2133,14 @@ def test_photon_image_optional_pip_global_index_configuration():
     assert 'openssl pkey -pubin -in "$trust_key" -text -noout' in script
     assert "*ED25519*" in script
     assert 'export PIP_DISABLE_PIP_VERSION_CHECK=1' in script
+    pip_environment_reset = "for pip_environment_name in $(env | sed -n"
+    assert pip_environment_reset in script
+    assert "unset XDG_CONFIG_HOME XDG_CONFIG_DIRS" in script
+    assert "export PIP_CONFIG_FILE=/etc/pip.conf" in script
     assert 'export PIP_INDEX_URL="$ATLASO_PIP_GLOBAL_INDEX_URL"' in script
+    assert script.index(pip_environment_reset) < script.index(
+        'export PIP_INDEX_URL="$ATLASO_PIP_GLOBAL_INDEX_URL"'
+    )
     assert "pip install --upgrade pip setuptools wheel" not in script
     assert "packages.vcfd.broadcom.net/artifactory" not in wrapper
     assert "packages.vcfd.broadcom.net/artifactory" not in template
@@ -2156,6 +2201,20 @@ def test_photon_build_installs_the_complete_qemu_build_toolchain() -> None:
     )
     assert "QEMU configure diagnostic (last 80 Meson log lines):" in qemu_builder
     assert "tail -n 80 build/meson-logs/meson-log.txt" in qemu_builder
+    assert 'BUILD_ROOT="$(mktemp -d /tmp/atlaso-qemu-guest-agent-build.XXXXXX)"' in qemu_builder
+    assert 'export HOME="$BUILD_ROOT/home"' in qemu_builder
+    assert 'export PIP_CACHE_DIR="$BUILD_ROOT/pip-cache"' in qemu_builder
+    assert 'export XDG_CACHE_HOME="$BUILD_ROOT/xdg-cache"' in qemu_builder
+    assert 'export XDG_CONFIG_HOME="$BUILD_ROOT/xdg-config"' in qemu_builder
+    assert "unset XDG_CONFIG_HOME XDG_CONFIG_DIRS" in qemu_builder
+    assert 'export PIP_CONFIG_FILE="$ADMITTED_PIP_CONFIG_FILE"' in qemu_builder
+    assert "for pip_environment_name in $(env | sed -n" in qemu_builder
+    assert qemu_builder.index('export HOME="$BUILD_ROOT/home"') < qemu_builder.index(
+        "if ! ./configure"
+    )
+    assert provision.index("export HOME=/root") < provision.index(
+        'sh "$QEMU_GUEST_AGENT_BUILDER"'
+    )
     assert (
         'install -o root -g root -m 0755 build/qga/qemu-ga "$RPM_ROOT/SOURCES/qemu-ga"'
         in qemu_builder
@@ -3371,6 +3430,421 @@ def test_vmware_gui_builder_repairs_stale_rows_before_ui_startup() -> None:
     reservation_release = wrapper.index(
         "Exit-AtlasoVmwareBuilderAddressReservation `", reservation_gate
     )
-    assert parent_timeout_cleanup < reservation_blocked < reservation_gate < reservation_release
+    handoff_identity = wrapper.index(
+        "Assert-AtlasoBuilderHandoffRootIdentity `", reservation_gate
+    )
+    reservation_error_capture = wrapper.index(
+        "$reservationReleaseError = $_", handoff_identity
+    )
+    sensitive_cleanup = wrapper.index(
+        "Complete-AtlasoPhotonBuildCleanup `", reservation_error_capture
+    )
+    reservation_error_throw = wrapper.index(
+        "if ($null -ne $reservationReleaseError)", sensitive_cleanup
+    )
+    assert (
+        parent_timeout_cleanup
+        < reservation_blocked
+        < reservation_gate
+        < handoff_identity
+        < reservation_release
+        < reservation_error_capture
+        < sensitive_cleanup
+        < reservation_error_throw
+    )
     assert "-ClaimGeneration $OutputClaimGeneration" in wrapper
     assert "ClaimGeneration = $OutputClaimGeneration" in wrapper
+
+
+def test_photon_wrapper_recovers_legacy_handoffs_before_pr_admission() -> None:
+    """Local legacy recovery precedes the open-PR GitHub identity gate."""
+    wrapper = Path("scripts/windows/vmware/build-photon-image.ps1").read_text(
+        encoding="utf-8"
+    )
+    runtime = wrapper.index("$repoRoot =")
+    local_identity = wrapper.index(
+        "$localTaskBuilderIdentity = Resolve-AtlasoLocalTaskBuilderIdentity", runtime
+    )
+    legacy_recovery = wrapper.index(
+        "Invoke-AtlasoLegacyBuilderAddressHandoffRecovery", local_identity
+    )
+    github_admission = wrapper.index(
+        "Resolve-AtlasoTaskBuilderIdentity `", legacy_recovery
+    )
+
+    assert local_identity < legacy_recovery < github_admission
+    recovery_function = wrapper.index(
+        "function Invoke-AtlasoLegacyBuilderAddressHandoffRecovery"
+    )
+    matching_handoff = wrapper.index(
+        "[string]$reservation.VmName -cne $VmName", recovery_function
+    )
+    provider_resolution = wrapper.index(
+        "$resolvedVmrunPath = Resolve-WorkstationVmrunPath -Path $VmrunPath",
+        matching_handoff,
+    )
+    completion = wrapper.index(
+        "Complete-AtlasoBuilderAddressReservationHandoff `", provider_resolution
+    )
+    assert matching_handoff < provider_resolution < completion
+    task_recovery = wrapper[legacy_recovery:github_admission]
+    release_recovery_start = wrapper.index(
+        "if (-not $CredentialChild -and $ReleaseBuilder) {", github_admission
+    )
+    release_recovery_end = wrapper.index(
+        "$sensitivePathValidator = $null", release_recovery_start
+    )
+    release_recovery = wrapper[release_recovery_start:release_recovery_end]
+    for recovery_call in (task_recovery, release_recovery):
+        assert "-VmrunPath $VmrunPath `" in recovery_call
+        assert "-VmrunPath (Resolve-WorkstationVmrunPath" not in recovery_call
+    assert "Initialize-AtlasoPhotonCredentialRoot `" in wrapper
+    assert wrapper.count("Assert-AtlasoPhotonCredentialRootIdentity `") >= 3
+    startup_initialize = wrapper.index("$builderHandoffRootIdentity = Initialize-AtlasoBuilderHandoffRoot `")
+    startup_enumeration = wrapper.index("$pendingReservationHandoffs = @(", startup_initialize)
+    startup_loop = wrapper.index("foreach ($handoff in $pendingReservationHandoffs)", startup_enumeration)
+    startup_completion = wrapper.index(
+        "Complete-AtlasoBuilderAddressReservationHandoff `", startup_loop
+    )
+    assert "Assert-AtlasoBuilderHandoffRootIdentity `" in wrapper[
+        startup_initialize:startup_enumeration
+    ]
+    assert "Assert-AtlasoBuilderHandoffRootIdentity `" in wrapper[
+        startup_loop:startup_completion
+    ]
+
+
+def test_photon_cleanup_pins_root_identity_for_creation_and_recovery() -> None:
+    """Cleanup keeps a durable identity proof across ordinary and reboot paths."""
+    wrapper = Path("scripts/windows/vmware/build-photon-image.ps1").read_text(
+        encoding="utf-8"
+    )
+    marker = wrapper.index("$cleanupMarkerPayload = [ordered]@{")
+    ordinary_cleanup = wrapper.index(
+        "Complete-AtlasoPhotonBuildCleanup `", marker
+    )
+    plaintext_failure = wrapper.index("$plaintextCleanupUnproven = $true", marker)
+    cleanup_gate = wrapper.index(
+        "if (-not $plaintextCleanupUnproven) {", plaintext_failure
+    )
+    recovery = wrapper.index("function Invoke-AtlasoPhotonBuildCleanupRecovery")
+    recovery_cleanup = wrapper.index(
+        "Complete-AtlasoPhotonBuildCleanup `", recovery
+    )
+
+    assert "Schema       = 2" in wrapper[marker:ordinary_cleanup]
+    assert plaintext_failure < cleanup_gate < ordinary_cleanup
+    assert "AtlasoProcessExitCode'] -eq 86" in wrapper[marker:cleanup_gate]
+    assert "exit 86" in wrapper
+    assert "RootIdentity = [string]$credentialRootIdentity.RootIdentity" in wrapper[
+        marker:ordinary_cleanup
+    ]
+    assert "-ExpectedRootIdentity $expectedRootIdentity" in wrapper[
+        recovery_cleanup : recovery_cleanup + 500
+    ]
+    assert "-MarkerDirectoryIdentity $markerDirectoryIdentity" in wrapper[
+        recovery_cleanup : recovery_cleanup + 700
+    ]
+    assert "Photon cleanup marker directory identity changed" in wrapper
+    assert "Photon cleanup root is absent or moved" in wrapper
+    assert "Legacy Photon cleanup root is absent or moved" in wrapper
+    assert "matchingIdentityRoots.Count -eq 0" not in wrapper
+    parent_finally = wrapper.index("if (-not $processTreeTerminationUnproven) {")
+    parent_release = wrapper.index(
+        "Exit-AtlasoVmwareBuilderAddressReservation `", parent_finally
+    )
+    parent_remove = wrapper.index(
+        "Remove-Item -LiteralPath $childBuilderAddressReservationPath -Force",
+        parent_release,
+    )
+    assert wrapper[parent_finally:parent_release].count(
+        "Assert-AtlasoBuilderHandoffRootIdentity `"
+    ) >= 2
+    assert "Assert-AtlasoBuilderHandoffRootIdentity `" in wrapper[
+        parent_release:parent_remove
+    ]
+    assert "-ExpectedRootIdentity ([string]$credentialRootIdentity.RootIdentity)" in wrapper[
+        ordinary_cleanup : ordinary_cleanup + 500
+    ]
+    assert "identity changed immediately before deletion" in wrapper
+    assert "$cleanupMarkerPath = Join-Path $repoRoot (" in wrapper
+    assert (
+        "'.atlaso-local\\photon-image-build-state\\photon-image-build-cleanup.json'"
+        in wrapper
+    )
+    assert "-RepositoryRoot $repoRoot" in wrapper
+    assert "$legacyActiveMarker =" in wrapper
+    assert "Write-AtlasoDurableJsonFile -Path $MarkerPath -Payload $marker -Replace" in wrapper[
+        recovery:marker
+    ]
+    common = Path("scripts/windows/common/Atlaso.PhotonImage.psm1").read_text(
+        encoding="utf-8"
+    )
+    first_boot = Path(
+        "scripts/windows/vmware/Atlaso.WorkstationFirstBoot.ps1"
+    ).read_text(encoding="utf-8")
+    assert "AtlasoPlaintextCleanupUnproven" in common
+    missing_handle = common.index("if (-not $PinnedHandles.ContainsKey($resolvedPath))")
+    absent_return = common.index("if (-not (Test-Path -LiteralPath $resolvedPath))", missing_handle)
+    unavailable = common.index("Pinned plaintext handle is unavailable", absent_return)
+    assert missing_handle < absent_return < unavailable
+    assert "$processFailure.Data['AtlasoProcessExitCode'] = $process.ExitCode" in first_boot
+
+
+def test_photon_child_revalidates_pinned_credential_ancestry() -> None:
+    """The isolated child re-admits parent/root identities before credentials."""
+    wrapper = Path("scripts/windows/vmware/build-photon-image.ps1").read_text(
+        encoding="utf-8"
+    )
+    child = wrapper.index("if ($CredentialChild) {")
+    child_identity = wrapper.index(
+        "Assert-AtlasoPhotonCredentialRootIdentity `", child
+    )
+    packer_workspace = wrapper.index(
+        "New-Item -ItemType Directory -Path $resolvedChildPackerDirectory", child
+    )
+    credential_read = wrapper.index(
+        "Get-Content -LiteralPath $CredentialBundlePath -Raw", child
+    )
+    workspace_identity = wrapper.index(
+        "Assert-AtlasoPhotonCredentialRootIdentity `", child_identity + 1
+    )
+    credential_identity = wrapper.index(
+        "Assert-AtlasoPhotonCredentialRootIdentity `", workspace_identity + 1
+    )
+
+    assert child_identity < workspace_identity < packer_workspace
+    assert packer_workspace < credential_identity < credential_read
+    assert "'-StagingParentIdentity'" in wrapper
+    assert "'-StagingRootIdentity'" in wrapper
+    assert "ParentIdentity = $StagingParentIdentity" in wrapper
+    assert "RootIdentity   = $StagingRootIdentity" in wrapper
+    assert "'-SensitiveBuildRootIdentity'" in wrapper
+    assert "-RootIdentity $SensitiveBuildRootIdentity" in wrapper
+    assert "-SensitivePathValidator $sensitivePathValidator" in wrapper
+    sensitive_callback = wrapper.index("$sensitivePathValidator = {", child)
+    pre_read_sensitive_identity = wrapper.index(
+        "Assert-AtlasoPhotonSensitiveBuildPathIdentity `", child
+    )
+    callback_credential_identity = wrapper.index(
+        "Assert-AtlasoPhotonCredentialRootIdentity `", sensitive_callback
+    )
+    sensitive_identity = wrapper.index(
+        "Assert-AtlasoPhotonSensitiveBuildPathIdentity `", sensitive_callback
+    )
+    assert callback_credential_identity < sensitive_identity
+    assert pre_read_sensitive_identity < credential_read
+
+    bundle_write = wrapper.index("[System.IO.File]::WriteAllText(", child)
+    bundle_guard = wrapper.rindex("Assert-AtlasoStrictDescendantPath `", child, bundle_write)
+    bundle_guard_block = wrapper[bundle_guard:bundle_write]
+    assert "-ParentPath $credentialRoot `" in bundle_guard_block
+    assert "-ChildPath $childCredentialBundlePath `" in bundle_guard_block
+    assert "Assert-AtlasoPhotonSensitiveBuildPathIdentity" not in bundle_guard_block
+
+    common = Path("scripts/windows/common/Atlaso.PhotonImage.psm1").read_text(
+        encoding="utf-8"
+    )
+    plaintext_conversion = common.index(
+        "ConvertFrom-SecureString -SecureString $SshPassword -AsPlainText"
+    )
+    validation = common.rindex(
+        "Assert-AtlasoSensitiveBuildPath -Validator $SensitivePathValidator",
+        0,
+        plaintext_conversion,
+    )
+    assert validation < plaintext_conversion
+    assert common.count(
+        "Assert-AtlasoSensitiveBuildPath -Validator $SensitivePathValidator"
+    ) >= 10
+
+
+def test_remaster_attempt_is_identity_pinned_before_helper_writes() -> None:
+    """The helper writes through the pre-created, pinned final ISO object."""
+    common = Path("scripts/windows/common/Atlaso.PhotonImage.psm1").read_text(
+        encoding="utf-8"
+    )
+    build = common.index("function Invoke-AtlasoPhotonImageBuild {")
+    directory = common.index(
+        "$preparedIsoDirectory = Split-Path -Parent $resolvedPreparedIsoPath", build
+    )
+    directory_guard = common.index(
+        "Assert-AtlasoSensitiveBuildPath -Validator $SensitivePathValidator "
+        "-Path $preparedIsoDirectory",
+        directory,
+    )
+    directory_create = common.index(
+        "New-Item -ItemType Directory -Force -Path $preparedIsoDirectory",
+        directory_guard,
+    )
+    directory_pin = common.index(
+        "Assert-AtlasoSensitiveBuildPath -Validator $SensitivePathValidator "
+        "-Path $preparedIsoDirectory",
+        directory_create,
+    )
+    remaster_call = common.index("New-AtlasoRemasteredPhotonIso `", directory_pin)
+    assert directory < directory_guard < directory_create < directory_pin < remaster_call
+
+    remaster = common.index("function New-AtlasoRemasteredPhotonIso {")
+    create = common.index("[Atlaso.PhotonPinnedFile]::Create($OutputIso)", remaster)
+    record = common.index("$CleanupPaths.Add($OutputIso)", create)
+    pin = common.index(
+        "Assert-AtlasoSensitiveBuildPath -Validator $SensitivePathValidator "
+        "-Path $OutputIso",
+        record,
+    )
+    helper = common.index("& $pythonPath $script", pin)
+    revalidate = common.index(
+        "Assert-AtlasoSensitiveBuildPath -Validator $SensitivePathValidator "
+        "-Path $OutputIso",
+        helper,
+    )
+    consumer_pin = common.index(
+        "[Atlaso.PhotonPinnedFile]::PinForReadConsumers($attemptHandle)", revalidate
+    )
+    dispose = common.index("$attemptHandle.Dispose()", consumer_pin)
+
+    assert create < record < pin < helper < revalidate < consumer_pin < dispose
+    native = common.index("public static class PhotonPinnedFile")
+    assert "GenericRead | GenericWrite" in common[native:create]
+    assert "ShareRead | ShareWrite" in common[native:create]
+    assert "OpenReadSharedDelete" in common[native:create]
+    assert "ShareRead | ShareWrite | ShareDelete" in common[native:create]
+    assert "PinForReadConsumers" in common[native:create]
+    assert "GetFileInformationByHandleEx" in common[native:create]
+    assert "OpenFileById" in common[native:create]
+    assert "GetFinalPathNameByHandleW" in common[native:create]
+    assert "ReOpenFile" in common[native:create]
+    bind = common.index("using (SafeFileHandle identityHandle = OpenFileById", native)
+    release = common.index("handle.Dispose();", bind)
+    follow = common.index("GetFinalPathNameByHandleW", release)
+    assert bind < release < follow
+    assert "SetFileInformationByHandle" in common[native:create]
+    assert "[Atlaso.PhotonPinnedFile]::OpenReadSharedDelete($Path)" in common
+    remaster_end = common.index("function ConvertTo-AtlasoHclLiteral", remaster)
+    remaster_block = common[remaster:remaster_end]
+    assert "$null -ne $attemptHandle -and $null -eq $PinnedHandles" in remaster_block
+
+    helper_source = Path("scripts/interop/create_photon_kickstart_iso.py").read_text(
+        encoding="utf-8"
+    )
+    assert "output.is_symlink() or not output.is_file()" in helper_source
+    assert "share_read | share_write | share_delete" in helper_source
+    assert "open_pinned_input(kickstart)" in helper_source
+    assert "iso.add_fp(" in helper_source
+    assert "iso.add_file(str(kickstart)" not in helper_source
+    assert "open_pinned_output(output)" in helper_source
+    assert "iso.write_fp(output_stream)" in helper_source
+    assert "output.unlink" not in helper_source
+
+    fallback = common.index("function New-AtlasoFallbackPreparedIsoPath {")
+    fallback_end = common.index("function Remove-AtlasoSensitiveBuildArtifact", fallback)
+    fallback_block = common[fallback:fallback_end]
+    assert 'Join-Path $directory ".atlaso-$token$extension"' in fallback_block
+    assert "$leaf-$stamp$extension" not in fallback_block
+
+
+def test_plaintext_leaf_files_are_pinned_before_write() -> None:
+    """Kickstart and Packer variables write through pre-pinned file handles."""
+    common = Path("scripts/windows/common/Atlaso.PhotonImage.psm1").read_text(
+        encoding="utf-8"
+    )
+    writer = common.index("function Write-AtlasoPinnedUtf8Text {")
+    create = common.index("[Atlaso.PhotonPinnedFile]::Create($Path)", writer)
+    pin = common.index(
+        "Assert-AtlasoSensitiveBuildPath -Validator $SensitivePathValidator "
+        "-Path $Path",
+        create,
+    )
+    write = common.index("[Atlaso.PhotonPinnedFile]::WriteUtf8($handle, $Text)", pin)
+    revalidate = common.index(
+        "Assert-AtlasoSensitiveBuildPath -Validator $SensitivePathValidator "
+        "-Path $Path",
+        write,
+    )
+    dispose = common.index("$handle.Dispose()", revalidate)
+    assert create < pin < write < revalidate < dispose
+    retain = common.index("$PinnedHandles[[System.IO.Path]::GetFullPath($Path)]", revalidate)
+    assert revalidate < retain < dispose
+
+    kickstart = common.index("function New-AtlasoPhotonKickstart {")
+    kickstart_write = common.index("Write-AtlasoPinnedUtf8Text `", kickstart)
+    var_file = common.index("function Write-AtlasoPackerVarFile {")
+    var_write = common.index("Write-AtlasoPinnedUtf8Text `", var_file)
+    assert "-SensitivePathValidator $SensitivePathValidator" in common[
+        kickstart_write : kickstart_write + 250
+    ]
+    assert "-SensitivePathValidator $SensitivePathValidator" in common[
+        var_write : var_write + 300
+    ]
+    assert "function Remove-AtlasoPinnedPlaintextFile" in common
+    assert "[Atlaso.PhotonPinnedFile]::DeleteExact($handle, $resolvedPath)" in common
+    assert common.count("-PinnedHandles $pinnedPlaintextHandles") >= 6
+
+
+def test_release_builder_legacy_recovery_uses_detached_branch_sentinel() -> None:
+    """An empty release identity branch maps to its legacy reservation sentinel."""
+    wrapper = Path("scripts/windows/vmware/build-photon-image.ps1").read_text(
+        encoding="utf-8"
+    )
+    release_recovery = wrapper.index(
+        "if (-not $CredentialChild -and $ReleaseBuilder) {"
+    )
+    empty_branch = wrapper.index(
+        "[string]::IsNullOrWhiteSpace($legacyIdentitySourceBranch)", release_recovery
+    )
+    detached_sentinel = wrapper.index("'(detached-release)'", empty_branch)
+    recovery = wrapper.index(
+        "Invoke-AtlasoLegacyBuilderAddressHandoffRecovery", detached_sentinel
+    )
+
+    assert release_recovery < empty_branch < detached_sentinel < recovery
+
+
+def test_photon_build_state_requires_git_ignored_custom_root() -> None:
+    """Custom state cannot dirty the source inventory before snapshot admission."""
+    wrapper = Path("scripts/windows/vmware/build-photon-image.ps1").read_text(
+        encoding="utf-8"
+    )
+    resolver = wrapper.index("function Resolve-AtlasoPhotonBuildStateRoot")
+    generated_probes = wrapper.index("$ignoreProbes = @(", resolver)
+    ignore_check = wrapper.index("check-ignore --quiet -- $ignoreProbe", generated_probes)
+    state_creation = wrapper.index("Initialize-AtlasoBuilderHandoffRoot `")
+
+    assert resolver < generated_probes < ignore_check < state_creation
+    assert "representative leaves from every\n    # generated subtree" in wrapper
+    assert "foreach ($ignoreProbe in $ignoreProbes)" in wrapper
+    assert "must remain inside a Git-ignored task subtree" in wrapper
+
+
+def test_photon_wrapper_reimports_cleanup_after_builder_address() -> None:
+    """The wrapper retains cleanup path guards after nested forced imports."""
+    wrapper = Path("scripts/windows/vmware/build-photon-image.ps1").read_text(
+        encoding="utf-8"
+    )
+    builder_address_import = wrapper.index(
+        "Import-Module (Join-Path $PSScriptRoot 'Atlaso.WorkstationBuilderAddress.psm1')"
+    )
+    cleanup_import = wrapper.index(
+        "Import-Module (Join-Path $PSScriptRoot 'Atlaso.WorkstationCleanup.psm1')",
+        builder_address_import,
+    )
+    resolver = wrapper.index("function Resolve-AtlasoPhotonBuildStateRoot")
+
+    assert builder_address_import < cleanup_import < resolver
+
+
+def test_photon_child_transports_pinned_builder_handoff_identity() -> None:
+    """Durable address handoffs revalidate pinned task-owned ancestry."""
+    wrapper = Path("scripts/windows/vmware/build-photon-image.ps1").read_text(
+        encoding="utf-8"
+    )
+    child_arguments = wrapper.index("$childArguments = @(")
+    reservation = wrapper.index("Enter-AtlasoVmwareBuilderAddressReservation `")
+
+    assert "Initialize-AtlasoBuilderHandoffRoot `" in wrapper
+    assert "'-BuilderHandoffStateIdentity'" in wrapper[child_arguments:reservation]
+    assert "'-BuilderHandoffPendingIdentity'" in wrapper[child_arguments:reservation]
+    assert "-HandoffBuildStateRoot $resolvedBuildStateRoot `" in wrapper[reservation:]
+    assert "-HandoffStateIdentity $BuilderHandoffStateIdentity `" in wrapper[reservation:]
+    assert "-HandoffPendingIdentity $BuilderHandoffPendingIdentity `" in wrapper[reservation:]

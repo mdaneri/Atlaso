@@ -11,6 +11,93 @@ ranges and fixed addresses are excluded before a reservation is published.
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
+Import-Module (Join-Path $PSScriptRoot 'Atlaso.WorkstationCleanup.psm1') -Force
+
+function Initialize-AtlasoBuilderHandoffRoot {
+    <#
+    .SYNOPSIS
+    Create and pin one task-owned builder-address handoff directory.
+    .PARAMETER BuildStateRoot
+    Exact task-owned Photon build-state root.
+    .PARAMETER HandoffStateRoot
+    Exact builder-address handoff state directory.
+    .PARAMETER PendingRoot
+    Exact pending-release directory beneath the handoff state root.
+    #>
+    param(
+        [Parameter(Mandatory = $true)][string]$BuildStateRoot,
+        [Parameter(Mandatory = $true)][string]$HandoffStateRoot,
+        [Parameter(Mandatory = $true)][string]$PendingRoot
+    )
+
+    Assert-AtlasoStrictDescendantPath `
+        -ParentPath $BuildStateRoot `
+        -ChildPath $HandoffStateRoot `
+        -FailureMessage 'Builder-address handoff state escaped task build state'
+    [void][System.IO.Directory]::CreateDirectory($HandoffStateRoot)
+    Assert-AtlasoStrictDescendantPath `
+        -ParentPath $BuildStateRoot `
+        -ChildPath $HandoffStateRoot `
+        -FailureMessage 'Builder-address handoff state changed during creation'
+    $stateIdentity = Get-AtlasoPathIdentity `
+        -Path $HandoffStateRoot `
+        -Description 'Builder-address handoff state'
+    Assert-AtlasoStrictDescendantPath `
+        -ParentPath $HandoffStateRoot `
+        -ChildPath $PendingRoot `
+        -FailureMessage 'Builder-address pending-release root escaped handoff state'
+    [void][System.IO.Directory]::CreateDirectory($PendingRoot)
+    Assert-AtlasoStrictDescendantPath `
+        -ParentPath $HandoffStateRoot `
+        -ChildPath $PendingRoot `
+        -FailureMessage 'Builder-address pending-release root changed during creation'
+    return [pscustomobject][ordered]@{
+        StateIdentity   = $stateIdentity
+        PendingIdentity = Get-AtlasoPathIdentity `
+            -Path $PendingRoot `
+            -Description 'Builder-address pending-release root'
+    }
+}
+
+function Assert-AtlasoBuilderHandoffRootIdentity {
+    <#
+    .SYNOPSIS
+    Revalidate one pinned task-owned builder-address handoff directory.
+    .PARAMETER BuildStateRoot
+    Exact task-owned Photon build-state root.
+    .PARAMETER HandoffStateRoot
+    Exact builder-address handoff state directory.
+    .PARAMETER PendingRoot
+    Exact pending-release directory beneath the handoff state root.
+    .PARAMETER StateIdentity
+    Pinned filesystem identity for the handoff state directory.
+    .PARAMETER PendingIdentity
+    Pinned filesystem identity for the pending-release directory.
+    #>
+    param(
+        [Parameter(Mandatory = $true)][string]$BuildStateRoot,
+        [Parameter(Mandatory = $true)][string]$HandoffStateRoot,
+        [Parameter(Mandatory = $true)][string]$PendingRoot,
+        [Parameter(Mandatory = $true)][string]$StateIdentity,
+        [Parameter(Mandatory = $true)][string]$PendingIdentity
+    )
+
+    Assert-AtlasoStrictDescendantPath `
+        -ParentPath $BuildStateRoot `
+        -ChildPath $HandoffStateRoot `
+        -FailureMessage 'Builder-address handoff state escaped task build state'
+    Assert-AtlasoStrictDescendantPath `
+        -ParentPath $HandoffStateRoot `
+        -ChildPath $PendingRoot `
+        -FailureMessage 'Builder-address pending-release root escaped handoff state'
+    if ((Get-AtlasoPathIdentity -Path $HandoffStateRoot -Description 'Builder-address handoff state') -ne
+        $StateIdentity -or
+        (Get-AtlasoPathIdentity -Path $PendingRoot -Description 'Builder-address pending-release root') -ne
+        $PendingIdentity) {
+        throw 'Builder-address handoff ancestry changed after admission; publication was blocked.'
+    }
+}
+
 function ConvertTo-AtlasoIpv4Integer {
     <#
     .SYNOPSIS
@@ -539,7 +626,16 @@ function Enter-AtlasoVmwareBuilderAddressReservation {
     .PARAMETER DhcpConfigPath
     Optional explicit VMware DHCP configuration path.
     .PARAMETER StateRoot
-    Optional stable per-user reservation state directory.
+    Optional stable host-shared reservation lock and ledger directory.
+    .PARAMETER HandoffStateRoot
+    Optional task-owned state directory containing the pending-release handoff.
+    When omitted, handoffs remain beneath StateRoot for backward compatibility.
+    .PARAMETER HandoffBuildStateRoot
+    Exact task-owned build-state root that bounds HandoffStateRoot.
+    .PARAMETER HandoffStateIdentity
+    Pinned filesystem identity for HandoffStateRoot.
+    .PARAMETER HandoffPendingIdentity
+    Pinned filesystem identity for its pending-releases directory.
     .PARAMETER ReservationHandoffPath
     Optional exact pending-release handoff to publish before ledger admission.
     .PARAMETER VmrunPath
@@ -566,6 +662,10 @@ function Enter-AtlasoVmwareBuilderAddressReservation {
         [string[]]$AdditionalExcludedAddresses = @(),
         [string]$DhcpConfigPath = '',
         [string]$StateRoot = '',
+        [string]$HandoffStateRoot = '',
+        [string]$HandoffBuildStateRoot = '',
+        [string]$HandoffStateIdentity = '',
+        [string]$HandoffPendingIdentity = '',
         [string]$ReservationHandoffPath = '',
         [Parameter(Mandatory = $true)][string]$VmrunPath,
         [Parameter(Mandatory = $true)][string]$OutputDirectory,
@@ -632,11 +732,20 @@ function Enter-AtlasoVmwareBuilderAddressReservation {
         [System.IO.Path]::GetFullPath($StateRoot)
     }
     $ledgerPath = Join-Path $resolvedStateRoot 'reservations.json'
+    $resolvedHandoffStateRoot = if ([string]::IsNullOrWhiteSpace($HandoffStateRoot)) {
+        $resolvedStateRoot
+    }
+    else {
+        [System.IO.Path]::GetFullPath($HandoffStateRoot)
+    }
     $resolvedHandoffPath = ''
     if (-not [string]::IsNullOrWhiteSpace($ReservationHandoffPath)) {
-        $pendingRoot = [System.IO.Path]::GetFullPath((Join-Path $resolvedStateRoot 'pending-releases'))
+        $pendingRoot = [System.IO.Path]::GetFullPath((Join-Path $resolvedHandoffStateRoot 'pending-releases'))
         $resolvedHandoffPath = [System.IO.Path]::GetFullPath($ReservationHandoffPath)
-        if (-not (Split-Path -Parent $resolvedHandoffPath).Equals(
+        if ([string]::IsNullOrWhiteSpace($HandoffBuildStateRoot) -or
+            [string]::IsNullOrWhiteSpace($HandoffStateIdentity) -or
+            [string]::IsNullOrWhiteSpace($HandoffPendingIdentity) -or
+            -not (Split-Path -Parent $resolvedHandoffPath).Equals(
                 $pendingRoot,
                 [StringComparison]::OrdinalIgnoreCase
             ) -or
@@ -644,6 +753,12 @@ function Enter-AtlasoVmwareBuilderAddressReservation {
             -not (Test-Path -LiteralPath $pendingRoot -PathType Container)) {
             throw 'The VMware builder-address release handoff path is invalid.'
         }
+        Assert-AtlasoBuilderHandoffRootIdentity `
+            -BuildStateRoot ([System.IO.Path]::GetFullPath($HandoffBuildStateRoot)) `
+            -HandoffStateRoot $resolvedHandoffStateRoot `
+            -PendingRoot $pendingRoot `
+            -StateIdentity $HandoffStateIdentity `
+            -PendingIdentity $HandoffPendingIdentity
     }
     $resolvedOutput = [System.IO.Path]::GetFullPath($OutputDirectory)
     $canonicalTaskName = '^Atlaso-PR-[1-9][0-9]*-Photon-Builder-VMware(?:-[a-z0-9]+(?:-[a-z0-9]+)*)?$'
@@ -741,6 +856,12 @@ function Enter-AtlasoVmwareBuilderAddressReservation {
                 # Publish recoverable intent first. A concurrent recovery keeps
                 # it while this exact owner is active; after owner termination,
                 # absence from the ledger is an idempotently completed release.
+                Assert-AtlasoBuilderHandoffRootIdentity `
+                    -BuildStateRoot ([System.IO.Path]::GetFullPath($HandoffBuildStateRoot)) `
+                    -HandoffStateRoot $resolvedHandoffStateRoot `
+                    -PendingRoot $pendingRoot `
+                    -StateIdentity $HandoffStateIdentity `
+                    -PendingIdentity $HandoffPendingIdentity
                 Write-AtlasoBuilderDurableJsonFile `
                     -Path $resolvedHandoffPath `
                     -Payload ([pscustomobject]$record)
@@ -846,6 +967,8 @@ function Exit-AtlasoVmwareBuilderAddressReservation {
 }
 
 Export-ModuleMember -Function @(
+    'Assert-AtlasoBuilderHandoffRootIdentity',
+    'Initialize-AtlasoBuilderHandoffRoot',
     'Get-AtlasoVmwareDhcpExclusions',
     'Enter-AtlasoVmwareBuilderAddressReservation',
     'Exit-AtlasoVmwareBuilderAddressReservation'
