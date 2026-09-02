@@ -3709,6 +3709,10 @@ login prompt.</p>
 <li>Treat console networking and service changes as real appliance mutations.</li>
 <li>Prefer the web UI for routine desired-state editing when it is reachable.</li>
 </ul>
+<p>The appliance image configures the local framebuffer at 1280×800 with the <code>VGA8x16</code> console font, providing 50 text
+rows and 160 columns from boot onward. To verify the image-level console configuration after a fresh boot or reboot,
+run <code>cat /sys/class/graphics/fb0/virtual_size</code> and <code>stty -F /dev/tty1 size</code> from a local shell. The expected results are
+<code>1280,800</code> and <code>50 160</code>, respectively.</p>
 <h2 id="read-the-main-screen">Read the main screen<a class="headerlink" href="#read-the-main-screen" title="Permanent link">&para;</a></h2>
 <p>The main screen refreshes every five seconds and shows:</p>
 <ul>

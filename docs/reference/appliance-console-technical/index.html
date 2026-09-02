@@ -3834,11 +3834,14 @@ Restore enables or starts only units recorded as enabled or active.</p>
 <p>Restart and shutdown require an independent <code>F12</code> authentication and confirmation. They use the delayed, audited,
 constrained appliance-power helper. Power actions do not appear in the <code>F2</code> customization menu.</p>
 <h2 id="boot-presentation">Boot presentation<a class="headerlink" href="#boot-presentation" title="Permanent link">&para;</a></h2>
-<p>GRUB uses a fixed 640×480 Atlaso theme with the Atlaso identity at the top and official Photon OS attribution at the
-bottom. The boot entry has a blank display title so the splash remains visible during the five-second automatic boot.</p>
+<p>GRUB uses a 1280×800 framebuffer with a fixed 640×480 Atlaso theme asset, the Atlaso identity at the top, and
+official Photon OS attribution at the bottom. The Linux kernel entry selects <code>fbcon=font:VGA8x16</code>, producing a
+160-column by 50-row framebuffer console. The boot entry has a blank display title so the splash remains visible during
+the five-second automatic boot.</p>
 <p><code>/opt/atlaso/bin/atlaso-install-boot-branding</code> installs the root-owned theme under
 <code>/boot/grub2/themes/atlaso</code>, preserves the original GRUB configuration once as <code>grub.cfg.atlaso-backup</code>, and changes
-only the theme reference and Photon menu-entry label. It does not add Plymouth or alter boot timing or kernel arguments.</p>
+the theme reference, Photon menu-entry label, Photon-style <code>gfxmode="1280x800"</code> and <code>gfxpayload=keep</code> assignments, and
+the Photon kernel entry's framebuffer-console font. It does not add Plymouth or alter boot timing.</p>
 
 
 
