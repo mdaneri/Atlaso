@@ -364,6 +364,110 @@ function Resolve-AtlasoPhotonSourceIso {
 
 <#
 .SYNOPSIS
+Load the Windows handle-relative file promotion helper once.
+#>
+function Initialize-AtlasoPhotonPinnedFileType {
+    if ('Atlaso.PhotonPinnedFile' -as [type]) {
+        return
+    }
+    Add-Type -TypeDefinition @'
+using System;
+using System.ComponentModel;
+using System.Runtime.InteropServices;
+using Microsoft.Win32.SafeHandles;
+
+namespace Atlaso
+{
+    public static class PhotonPinnedFile
+    {
+        [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
+        private struct FileRenameInfo
+        {
+            [MarshalAs(UnmanagedType.U1)] public bool ReplaceIfExists;
+            public IntPtr RootDirectory;
+            public uint FileNameLength;
+            public char FileName;
+        }
+
+        [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+        private static extern SafeFileHandle CreateFileW(
+            string fileName,
+            uint desiredAccess,
+            uint shareMode,
+            IntPtr securityAttributes,
+            uint creationDisposition,
+            uint flagsAndAttributes,
+            IntPtr templateFile);
+
+        [DllImport("kernel32.dll", SetLastError = true)]
+        [return: MarshalAs(UnmanagedType.Bool)]
+        private static extern bool SetFileInformationByHandle(
+            SafeFileHandle file,
+            int fileInformationClass,
+            IntPtr fileInformation,
+            uint bufferSize);
+
+        public static SafeFileHandle Create(string path)
+        {
+            const uint GenericRead = 0x80000000;
+            const uint GenericWrite = 0x40000000;
+            const uint Delete = 0x00010000;
+            const uint ShareRead = 0x00000001;
+            const uint ShareWrite = 0x00000002;
+            const uint CreateNew = 1;
+            const uint Normal = 0x00000080;
+            SafeFileHandle handle = CreateFileW(
+                path,
+                GenericRead | GenericWrite | Delete,
+                ShareRead | ShareWrite,
+                IntPtr.Zero,
+                CreateNew,
+                Normal,
+                IntPtr.Zero);
+            if (handle.IsInvalid)
+            {
+                throw new Win32Exception(Marshal.GetLastWin32Error());
+            }
+            return handle;
+        }
+
+        public static void Rename(SafeFileHandle handle, string destinationPath)
+        {
+            byte[] nameBytes = System.Text.Encoding.Unicode.GetBytes(destinationPath);
+            int nameOffset = (int)Marshal.OffsetOf<FileRenameInfo>("FileName");
+            int bufferLength = checked(nameOffset + nameBytes.Length);
+            IntPtr buffer = Marshal.AllocHGlobal(bufferLength);
+            try
+            {
+                for (int index = 0; index < bufferLength; index++)
+                {
+                    Marshal.WriteByte(buffer, index, 0);
+                }
+                Marshal.WriteByte(buffer, 0, 1);
+                Marshal.WriteInt32(buffer, (int)Marshal.OffsetOf<FileRenameInfo>("FileNameLength"), nameBytes.Length);
+                Marshal.Copy(nameBytes, 0, IntPtr.Add(buffer, nameOffset), nameBytes.Length);
+                const int FileRenameInfoClass = 3;
+                if (!SetFileInformationByHandle(
+                    handle,
+                    FileRenameInfoClass,
+                    buffer,
+                    (uint)bufferLength))
+                {
+                    throw new Win32Exception(Marshal.GetLastWin32Error());
+                }
+            }
+            finally
+            {
+                Marshal.FreeHGlobal(buffer);
+            }
+        }
+    }
+}
+'@
+}
+
+<#
+.SYNOPSIS
 Create a Photon ISO with the Atlaso unattended installer embedded.
 .PARAMETER SourceIso
 Verified Photon source ISO.
@@ -395,17 +499,13 @@ function New-AtlasoRemasteredPhotonIso {
     $outputLeaf = [System.IO.Path]::GetFileNameWithoutExtension($OutputIso)
     $outputExtension = [System.IO.Path]::GetExtension($OutputIso)
     $attemptIsoPath = Join-Path $outputDirectory ".$outputLeaf.$([guid]::NewGuid().ToString('N')).partial$outputExtension"
+    Initialize-AtlasoPhotonPinnedFileType
     $attemptHandle = $null
     try {
         # CreateNew makes this unique path invocation-owned. Keeping a handle
         # without delete sharing prevents a same-user rename while the helper
         # writes credential-bearing bytes through its own read/write handle.
-        $attemptHandle = [System.IO.File]::Open(
-            $attemptIsoPath,
-            [System.IO.FileMode]::CreateNew,
-            [System.IO.FileAccess]::ReadWrite,
-            [System.IO.FileShare]::ReadWrite
-        )
+        $attemptHandle = [Atlaso.PhotonPinnedFile]::Create($attemptIsoPath)
         $CleanupPaths.Add($attemptIsoPath)
         Assert-AtlasoSensitiveBuildPath -Validator $SensitivePathValidator -Path $attemptIsoPath
         & $pythonPath $script --source-iso $SourceIso --kickstart $KickstartJson --output $attemptIsoPath
@@ -413,27 +513,28 @@ function New-AtlasoRemasteredPhotonIso {
             throw "Failed to create remastered Photon ISO."
         }
         Assert-AtlasoSensitiveBuildPath -Validator $SensitivePathValidator -Path $attemptIsoPath
+        if (Test-Path -LiteralPath $OutputIso) {
+            Remove-Item -LiteralPath $OutputIso -Force -ErrorAction Stop
+            if (Test-Path -LiteralPath $OutputIso) {
+                throw "Could not replace prepared Photon ISO: $OutputIso"
+            }
+        }
+        # Rename the already pinned filesystem object through its DELETE-capable
+        # handle. The handle never permits delete sharing, so no path-based
+        # replacement can interpose after the helper write and before promotion.
+        [Atlaso.PhotonPinnedFile]::Rename($attemptHandle, $OutputIso)
+        $CleanupPaths.Add($OutputIso)
+        $null = $CleanupPaths.Remove($attemptIsoPath)
+        Assert-AtlasoSensitiveBuildPath -Validator $SensitivePathValidator -Path $OutputIso
+        if ((Test-Path -LiteralPath $attemptIsoPath) -or -not (Test-Path -LiteralPath $OutputIso -PathType Leaf)) {
+            throw "Remastered Photon ISO promotion did not complete: $OutputIso"
+        }
     }
     finally {
         if ($null -ne $attemptHandle) {
             $attemptHandle.Dispose()
         }
     }
-    if (Test-Path -LiteralPath $OutputIso) {
-        Remove-Item -LiteralPath $OutputIso -Force -ErrorAction Stop
-        if (Test-Path -LiteralPath $OutputIso) {
-            throw "Could not replace prepared Photon ISO: $OutputIso"
-        }
-    }
-    # Only after successful remastering and target replacement preflight does
-    # the final path become task-owned and eligible for credential cleanup.
-    $CleanupPaths.Add($OutputIso)
-    Move-Item -LiteralPath $attemptIsoPath -Destination $OutputIso -Force -ErrorAction Stop
-    if ((Test-Path -LiteralPath $attemptIsoPath) -or -not (Test-Path -LiteralPath $OutputIso -PathType Leaf)) {
-        throw "Remastered Photon ISO promotion did not complete: $OutputIso"
-    }
-    # The promoted final path is now the only cleanup target for this identity.
-    $null = $CleanupPaths.Remove($attemptIsoPath)
 }
 
 <#

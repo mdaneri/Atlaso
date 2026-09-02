@@ -3581,9 +3581,8 @@ def test_remaster_attempt_is_identity_pinned_before_helper_writes() -> None:
         encoding="utf-8"
     )
     remaster = common.index("function New-AtlasoRemasteredPhotonIso {")
-    create = common.index("[System.IO.FileMode]::CreateNew", remaster)
-    share = common.index("[System.IO.FileShare]::ReadWrite", create)
-    record = common.index("$CleanupPaths.Add($attemptIsoPath)", share)
+    create = common.index("[Atlaso.PhotonPinnedFile]::Create($attemptIsoPath)", remaster)
+    record = common.index("$CleanupPaths.Add($attemptIsoPath)", create)
     pin = common.index(
         "Assert-AtlasoSensitiveBuildPath -Validator $SensitivePathValidator "
         "-Path $attemptIsoPath",
@@ -3595,19 +3594,30 @@ def test_remaster_attempt_is_identity_pinned_before_helper_writes() -> None:
         "-Path $attemptIsoPath",
         helper,
     )
-    dispose = common.index("$attemptHandle.Dispose()", revalidate)
-    promote = common.index("Move-Item -LiteralPath $attemptIsoPath", dispose)
+    promote = common.index(
+        "[Atlaso.PhotonPinnedFile]::Rename($attemptHandle, $OutputIso)", revalidate
+    )
     retire = common.index("$CleanupPaths.Remove($attemptIsoPath)", promote)
+    final_pin = common.index(
+        "Assert-AtlasoSensitiveBuildPath -Validator $SensitivePathValidator "
+        "-Path $OutputIso",
+        retire,
+    )
+    dispose = common.index("$attemptHandle.Dispose()", final_pin)
 
-    assert create < share < record < pin < helper < revalidate < dispose
-    assert dispose < promote < retire
-    assert "[System.IO.FileShare]::Delete" not in common[create:dispose]
+    assert create < record < pin < helper < revalidate < promote
+    assert promote < retire < final_pin < dispose
+    native = common.index("public static class PhotonPinnedFile")
+    assert "GenericRead | GenericWrite | Delete" in common[native:create]
+    assert "ShareRead | ShareWrite" in common[native:create]
+    assert "SetFileInformationByHandle" in common[native:create]
 
     helper_source = Path("scripts/interop/create_photon_kickstart_iso.py").read_text(
         encoding="utf-8"
     )
     assert "output.is_symlink() or not output.is_file()" in helper_source
-    assert 'output.open("r+b", buffering=0)' in helper_source
+    assert "share_read | share_write | share_delete" in helper_source
+    assert "open_pinned_output(output)" in helper_source
     assert "iso.write_fp(output_stream)" in helper_source
     assert "output.unlink" not in helper_source
 

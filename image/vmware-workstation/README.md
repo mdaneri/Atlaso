@@ -65,7 +65,8 @@ kickstart ISO is written under this image directory as a temporary sensitive art
 verifies its absence after the bounded Packer validation or build exits, including failure paths. `-PrepareIsoOnly` is
 rejected because retaining that ISO would retain a reusable build credential. A fresh build starts with an empty
 task-owned cleanup ledger; the wrapper creates and filesystem-identity-pins each unique partial file before the
-remaster helper writes through that same file, then records the final path only after replacement preflight succeeds.
+remaster helper writes through that same file, then promotes that exact object through its still-open no-delete handle
+and records the final path only after replacement succeeds.
 `New-AtlasoPhotonKickstart` in
 `scripts/windows/common/Atlaso.PhotonImage.psm1` is the only kickstart source. Focused image tests parse its VMware JSON
 output and validate the installer, package, and guest-service contract.
