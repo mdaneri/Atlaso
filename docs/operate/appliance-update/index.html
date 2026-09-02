@@ -4031,7 +4031,12 @@ size/hash, safe archive paths, exact content set, and per-file hashes before it 
 <p>The helper creates the candidate virtualenv from the ABI-specific retained wheelhouse with <code>PIP_CONFIG_FILE=/dev/null</code>,
 <code>--no-index</code>, <code>--require-hashes</code>, and no network dependency resolution. It then runs <code>pip check</code>, imports the
 web/worker/console modules, and validates the installed entry points. <code>/opt/atlaso/current</code> points at the active
-release, while <code>/opt/atlaso/.venv</code> points through <code>current</code> to its virtual environment.</p>
+release, while <code>/opt/atlaso/.venv</code> points through <code>current</code> to its virtual environment.
+Fresh-image bootstrap first requires <code>/opt/atlaso</code> itself to remain the exact non-redirected physical installation
+root, then validates those links by resolved filesystem identity: <code>current</code> must resolve to the exact
+<code>bootstrap-&lt;version&gt;</code> directory, <code>.venv</code> must resolve to that directory's exact environment, and CPython 3.14 <code>purelib</code>
+must resolve to its physical <code>site-packages</code>. A broken, redirected, wrong-version, or escaping chain blocks the image
+instead of weakening the compatibility path used by services and helpers.</p>
 <p>Before switching, the helper creates the nginx maintenance marker, requires every applied management HTTP and HTTPS
 server block to honor it, validates and reloads nginx, and allows a bounded nginx convergence interval before requiring
 three consecutive local 503 responses from every default management listener. A missing or malformed management site,

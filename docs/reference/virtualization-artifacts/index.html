@@ -3839,7 +3839,9 @@ as created by that invocation.</p>
 <h2 id="first-boot-guest-agent-selection">First boot guest-agent selection<a class="headerlink" href="#first-boot-guest-agent-selection" title="Permanent link">&para;</a></h2>
 <p>The image carries locked offline RPM closures under <code>/var/lib/atlaso/first-boot-packages</code>. A provider-neutral service
 runs before data-disk initialization, networking handoff, nginx, Atlaso, and the worker. It does not use a network
-repository.</p>
+repository. Both the canonical VMware producer and its derived Hyper-V artifact therefore inherit the same shared
+provisioning checks: the physical bootstrap release must match both compatibility links, and QEMU's offline-agent build
+uses a private root-owned HOME/cache sandbox rather than the Packer communicator user's home.</p>
 <ul>
 <li>VMware retains and enables <code>open-vm-tools</code>.</li>
 <li>KVM, QEMU, and Proxmox remove VMware Tools, install the verified local QEMU guest-agent closure, and enable its
@@ -3939,6 +3941,10 @@ clobbering, and waits for the exact newly dispatched hosted-finalizer run to suc
 The intermediate VMware builder uses a deterministic version-and-source-commit identity and records that identity in
 its output manifest and schema-v3 provenance. The exporter consumes that exact proven VMX while retaining the canonical
 <code>atlaso-vX.Y.Z</code> OVA/product and release filenames; release output never inherits a pull-request number.
+Its credential bridge, sensitive source snapshot, Packer workspace, cleanup state, and builder-address release handoff
+remain beneath the exact checkout-local <code>.atlaso-local/photon-image-build-state</code> root. The non-task-owned address
+allocation lock and ledger remain per-user and host-shared so parallel worktrees cannot choose the same address; no
+task-owned output or sensitive state falls back to a Windows profile, temporary directory, or <code>LocalApplicationData</code>.
 Keep <code>StagingRoot</code> until stable verification; cleanup is a separate explicit operator action. The three 1Password
 selectors are required so both the fresh image build and exact wheel deployment use the same approved credential
 source; the values are forwarded to the existing isolated SDK bridges and are never uploaded as evidence. A
