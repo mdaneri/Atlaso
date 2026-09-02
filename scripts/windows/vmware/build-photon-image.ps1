@@ -2235,8 +2235,7 @@ else {
                     -Path $cleanupMarkerPath `
                     -Payload $processOwnershipPayload `
                     -Replace
-            }.GetNewClosure()
-            $processOwnershipPayload = $null
+            }
             Invoke-AtlasoBoundedStreamingProcess `
                 -FilePath (Get-Process -Id $PID).Path `
                 -ArgumentList $childArguments `
@@ -2244,6 +2243,7 @@ else {
                 -Action 'The isolated VMware Photon image build' `
                 -ProcessJobName $processJobName `
                 -ProcessOwnershipPublisher $processOwnershipPublisher
+            $processOwnershipPayload = $null
         }
         catch {
             $isolatedBuildFailure = $_
