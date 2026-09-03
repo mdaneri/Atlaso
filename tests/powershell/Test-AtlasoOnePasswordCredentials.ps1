@@ -103,7 +103,7 @@ if ($null -eq $ordinaryBoundedFailure -or
 }
 
 $diagnosticFixtures = @(
-    @{ Category = 'index_connectivity_tls_proxy'; Output = ''; Error = 'HTTPSConnectionPool Max retries exceeded ConnectionResetError token=hidden' },
+    @{ Category = 'index_connectivity_tls_proxy'; Output = 'Could not find a version that satisfies fixture'; Error = "`e[31mHTTPSConnectionPool Max retries exceeded ConnectionResetError token=hidden" },
     @{ Category = 'invocation_runtime'; Output = 'usage: pip unknown option --fixture'; Error = '' },
     @{ Category = 'distribution_unavailable'; Output = ''; Error = 'No matching distribution found for fixture' },
     @{ Category = 'hash_mismatch'; Output = 'THESE PACKAGES DO NOT MATCH THE HASHES expected sha256 fixture'; Error = '' },
@@ -119,7 +119,7 @@ foreach ($fixture in $diagnosticFixtures) {
     } 2 $fixture.Output $fixture.Error
     if ($diagnostic.Category -cne $fixture.Category -or
         $diagnostic.Message -notmatch 'exit code 2' -or
-        $diagnostic.Message -match 'token=hidden|fixture|HTTPSConnectionPool') {
+        $diagnostic.Message -match 'token=hidden|fixture|HTTPSConnectionPool|[\x00-\x1f\x7f]') {
         throw "The $($fixture.Category) dependency diagnostic was not useful and fully sanitized."
     }
 }

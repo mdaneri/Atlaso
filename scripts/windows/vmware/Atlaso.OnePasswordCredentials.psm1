@@ -131,13 +131,13 @@ function Get-AtlasoOnePasswordDependencyFailure {
         $category = 'hash_mismatch'
         $message = 'Downloaded dependency bytes did not match the checked-in hash lock. Verify mirror synchronization and the exact checkout; no dependency was installed.'
     }
-    elseif ($sample -match 'no matching distribution found|could not find a version that satisfies|not a supported wheel|unsupported wheel|requires-python|incompatible (?:platform|python)') {
-        $category = 'distribution_unavailable'
-        $message = 'The selected package source does not offer a required binary distribution for standard Windows x64 CPython 3.14. Verify mirror completeness and retained platform wheels.'
-    }
     elseif ($sample -match 'connectionreset|connection refused|connection aborted|connection timed out|read timed out|max retries exceeded|proxyerror|proxy error|sslerror|certificate verify failed|tls|temporary failure in name resolution|name or service not known|network is unreachable|unable to fetch|could not fetch url|httpsconnectionpool') {
         $category = 'index_connectivity_tls_proxy'
         $message = 'The selected package source could not be reached because of an index, connectivity, TLS, or proxy failure. Verify host trust and proxy access to the configured pair; Atlaso did not try a public fallback.'
+    }
+    elseif ($sample -match 'no matching distribution found|could not find a version that satisfies|not a supported wheel|unsupported wheel|requires-python|incompatible (?:platform|python)') {
+        $category = 'distribution_unavailable'
+        $message = 'The selected package source does not offer a required binary distribution for standard Windows x64 CPython 3.14. Verify mirror completeness and retained platform wheels.'
     }
     elseif ($sample -match 'no module named pip|unknown option|unrecognized arguments|invalid choice|usage:|syntaxerror|modulenotfounderror|failed to create process|cannot start process') {
         $category = 'invocation_runtime'
