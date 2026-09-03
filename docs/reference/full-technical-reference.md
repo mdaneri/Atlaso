@@ -298,11 +298,13 @@ canonical HTTPS endpoint before changing the repository file. An unrecognized so
 missing or substituted signing key, redirect, unreachable endpoint, or malformed metadata stops the image build before
 TDNF runs.
 
-The image builder does not configure a custom pip package index by default. If your build network requires an internal
-PyPI mirror, pass `-PipGlobalIndex` or `-PipGlobalIndexUrl` to set Photon site-level pip configuration before the Atlaso
-virtual environment is created. The provisioner does not upgrade pip as a separate bootstrap step; it uses the
-Photon-packaged pip to install Atlaso so a transient public PyPI pip release download cannot fail the image before the
-application install starts. Leave both options empty to keep standard pip behavior:
+The image builder resolves one package-source pair before credential preparation. `-PipGlobalIndex` is pip's
+`global.index` repository/API endpoint and `-PipGlobalIndexUrl` is its `global.index-url` PEP 503 simple-index endpoint.
+Supply both credential-free absolute HTTPS values together for an internal mirror, or omit both for the deterministic
+public defaults. The exact resolved pair configures both the host-side hash-locked 1Password SDK dependency closure and
+the guest Photon site/virtual-environment pip behavior; Atlaso does not fill a partial override or retry an explicit
+pair through public PyPI. Package-source values are not passed in child process arguments. The provisioner does not
+upgrade pip as a separate bootstrap step; it uses the Photon-packaged pip to install Atlaso:
 
 ```powershell
 pwsh -ExecutionPolicy Bypass `

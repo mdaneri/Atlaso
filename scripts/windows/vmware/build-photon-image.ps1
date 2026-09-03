@@ -1461,6 +1461,16 @@ function Invoke-AtlasoLegacyBuilderAddressHandoffRecovery {
 }
 
 $repoRoot = (Resolve-Path -LiteralPath (Join-Path $PSScriptRoot '..\..\..')).Path
+$resolvedPackageSource = $null
+if (-not $CredentialChild) {
+    # Resolve the pair before artifact, network, output, or provider work. A
+    # partial override must never inherit its missing half from public PyPI.
+    $resolvedPackageSource = Resolve-AtlasoPipPackageSource `
+        -PipGlobalIndex $PipGlobalIndex `
+        -PipGlobalIndexUrl $PipGlobalIndexUrl
+    $PipGlobalIndex = $resolvedPackageSource.PipGlobalIndex
+    $PipGlobalIndexUrl = $resolvedPackageSource.PipGlobalIndexUrl
+}
 $selectedBuilderModeCount = [int]($PullRequestNumber -gt 0) +
     [int][bool]$LocalBuilder + [int][bool]$ReleaseBuilder
 $identityModeInvalid = $selectedBuilderModeCount -ne 1 -or
@@ -1901,13 +1911,21 @@ if ($CredentialChild) {
     try {
         $credentialBundle = Get-Content -LiteralPath $CredentialBundlePath -Raw | ConvertFrom-Json
         $bundleProperties = @($credentialBundle.PSObject.Properties.Name)
-        if ($bundleProperties.Count -ne 2 -or
+        if ($bundleProperties.Count -ne 4 -or
             'AdminPasswordCiphertext' -notin $bundleProperties -or
-            'RootPasswordCiphertext' -notin $bundleProperties) {
+            'RootPasswordCiphertext' -notin $bundleProperties -or
+            'PipGlobalIndexCiphertext' -notin $bundleProperties -or
+            'PipGlobalIndexUrlCiphertext' -notin $bundleProperties) {
             throw 'The isolated Photon credential bundle is invalid.'
         }
         $BootstrapAdminPassword = ConvertTo-SecureString $credentialBundle.AdminPasswordCiphertext
         $SshPassword = ConvertTo-SecureString $credentialBundle.RootPasswordCiphertext
+        $PipGlobalIndex = ConvertFrom-SecureString `
+            -SecureString (ConvertTo-SecureString $credentialBundle.PipGlobalIndexCiphertext) `
+            -AsPlainText
+        $PipGlobalIndexUrl = ConvertFrom-SecureString `
+            -SecureString (ConvertTo-SecureString $credentialBundle.PipGlobalIndexUrlCiphertext) `
+            -AsPlainText
     }
     catch {
         throw 'The isolated Photon credential bundle is unavailable or invalid.'
@@ -1990,6 +2008,8 @@ else {
         -OnePasswordPython $OnePasswordPython `
         -AdminPassword $BootstrapAdminPassword `
         -RootPassword $SshPassword `
+        -PipGlobalIndex $resolvedPackageSource.PipGlobalIndex `
+        -PipGlobalIndexUrl $resolvedPackageSource.PipGlobalIndexUrl `
         -TimeoutSeconds $CredentialTimeoutSeconds `
         -ConsumerDescription 'VMware Photon image build'
     $credentialRoot = Join-Path $credentialStateRoot (
@@ -2177,10 +2197,24 @@ else {
             -Root $sourceSnapshot.Root `
             -ExpectedSha256 $sourceSnapshot.Sha256 `
             -ExpectedFileCount $sourceSnapshot.FileCount
+        $pipGlobalIndexSecure = [SecureString]::new()
+        foreach ($character in $resolvedPackageSource.PipGlobalIndex.ToCharArray()) {
+            $pipGlobalIndexSecure.AppendChar($character)
+        }
+        $pipGlobalIndexSecure.MakeReadOnly()
+        $pipGlobalIndexUrlSecure = [SecureString]::new()
+        foreach ($character in $resolvedPackageSource.PipGlobalIndexUrl.ToCharArray()) {
+            $pipGlobalIndexUrlSecure.AppendChar($character)
+        }
+        $pipGlobalIndexUrlSecure.MakeReadOnly()
         $credentialPayload = [ordered]@{
             AdminPasswordCiphertext = ConvertFrom-SecureString -SecureString $credentialPair.AdminPassword
             RootPasswordCiphertext  = ConvertFrom-SecureString -SecureString $credentialPair.RootPassword
+            PipGlobalIndexCiphertext = ConvertFrom-SecureString -SecureString $pipGlobalIndexSecure
+            PipGlobalIndexUrlCiphertext = ConvertFrom-SecureString -SecureString $pipGlobalIndexUrlSecure
         }
+        $pipGlobalIndexSecure = $null
+        $pipGlobalIndexUrlSecure = $null
         Assert-AtlasoPhotonCredentialRootIdentity `
             -BuildStateRoot $resolvedBuildStateRoot `
             -CredentialStateRoot $credentialStateRoot `
@@ -2239,6 +2273,7 @@ else {
         }
         $excludedParameters = @(
             'SshPassword', 'BootstrapAdminPassword',
+            'PipGlobalIndex', 'PipGlobalIndexUrl',
             'OnePasswordEnvironmentId', 'EnvironmentIdFile',
             'OnePasswordAccount', 'OnePasswordPython',
             'CredentialTimeoutSeconds', 'ImageBuildTimeoutSeconds',

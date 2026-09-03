@@ -1171,7 +1171,12 @@ Terminal order:
   account, SDK, uniqueness, concealment, value, and cleanup preflight before network discovery or preparation, output
   cleanup, ISO remastering, Packer initialization, or any other image mutation. Keep plaintext out of the PowerShell
   parent, arguments, caller environment, durable files, output, logs, Packer diagnostics, and provenance, and preserve
-  exact-byte validation plus sensitive kickstart, ISO, and Packer-variable cleanup. Run the complete
+  exact-byte validation plus sensitive kickstart, ISO, and Packer-variable cleanup. Resolve `PipGlobalIndex` and
+  `PipGlobalIndexUrl` once as a complete credential-free HTTPS pair before the SDK or image network paths run. Require
+  both or neither, apply the exact pair to the private host-side pip configuration and guest Photon build, and forbid
+  partial-default or public-PyPI fallback. Transport the pair to the isolated image child through the protected bundle,
+  not process arguments. A dependency failure may expose only an allowlisted bounded category derived from captured
+  stdout and stderr or a no-detail fallback; keep the generic bounded runner non-disclosing. Run the complete
   plaintext-consuming image workflow in a separately bounded PowerShell child; the parent may pass only current-user
   DPAPI ciphertext. Place every plaintext kickstart, remastered ISO, and Packer variable artifact inside the exact
   task-owned child root, and require the parent to remove and verify that root after ordinary exit or whole-tree

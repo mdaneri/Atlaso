@@ -18,6 +18,144 @@ $repositoryRoot = (Resolve-Path -LiteralPath (Join-Path $PSScriptRoot '..\..')).
 . (Join-Path $repositoryRoot 'scripts\windows\vmware\Atlaso.WorkstationFirstBoot.ps1')
 Import-Module (Join-Path $repositoryRoot 'scripts\windows\vmware\Atlaso.OnePasswordCredentials.psm1') -Force
 $credentialModule = Get-Module -Name 'Atlaso.OnePasswordCredentials'
+$defaultPackageSource = Resolve-AtlasoPipPackageSource
+if ($defaultPackageSource.PipGlobalIndex -cne 'https://pypi.org/pypi' -or
+    $defaultPackageSource.PipGlobalIndexUrl -cne 'https://pypi.org/simple' -or
+    $defaultPackageSource.IsExplicit) {
+    throw 'The omitted package-source pair did not resolve to the deterministic public defaults.'
+}
+$explicitPackageSource = Resolve-AtlasoPipPackageSource `
+    -PipGlobalIndex 'https://mirror.example.test/api/pypi' `
+    -PipGlobalIndexUrl 'https://mirror.example.test/simple'
+if ($explicitPackageSource.PipGlobalIndex -cne 'https://mirror.example.test/api/pypi' -or
+    $explicitPackageSource.PipGlobalIndexUrl -cne 'https://mirror.example.test/simple' -or
+    -not $explicitPackageSource.IsExplicit) {
+    throw 'The explicit package-source pair did not retain both distinct values.'
+}
+foreach ($invalidPackageSource in @(
+        @{ PipGlobalIndex = 'https://mirror.example.test/api/pypi'; PipGlobalIndexUrl = '' },
+        @{ PipGlobalIndex = ''; PipGlobalIndexUrl = 'https://mirror.example.test/simple' },
+        @{ PipGlobalIndex = 'https://user:password@mirror.example.test/api/pypi'; PipGlobalIndexUrl = 'https://mirror.example.test/simple' },
+        @{ PipGlobalIndex = 'https://mirror.example.test/api/pypi'; PipGlobalIndexUrl = 'https://mirror.example.test/simple?token=fixture' },
+        @{ PipGlobalIndex = 'http://mirror.example.test/api/pypi'; PipGlobalIndexUrl = 'https://mirror.example.test/simple' }
+    )) {
+    try {
+        Resolve-AtlasoPipPackageSource @invalidPackageSource | Out-Null
+        throw 'An incomplete, credential-bearing, or non-HTTPS package-source pair was accepted.'
+    }
+    catch {
+        if ($_.Exception.Message -notlike 'PipGlobalIndex*') {
+            throw
+        }
+    }
+}
+$partialBoundaryFailure = $null
+try {
+    Initialize-AtlasoOnePasswordSdkRuntime `
+        -PythonCommand 'must-not-run' `
+        -RepositoryRoot 'must-not-read' `
+        -BridgeRoot 'must-not-create' `
+        -PipGlobalIndex 'https://mirror.example.test/api/pypi' `
+        -TimeoutSeconds 1 | Out-Null
+}
+catch {
+    $partialBoundaryFailure = $_
+}
+if ($null -eq $partialBoundaryFailure -or
+    $partialBoundaryFailure.Exception.Message -notlike 'PipGlobalIndex and PipGlobalIndexUrl*') {
+    throw 'The exported SDK download boundary did not reject a partial package-source pair before activity.'
+}
+$partialBridgeFailure = $null
+try {
+    Get-AtlasoOnePasswordCredentialPair `
+        -RepositoryRoot 'must-not-read' `
+        -PipGlobalIndexUrl 'https://mirror.example.test/simple' `
+        -TimeoutSeconds 1 | Out-Null
+}
+catch {
+    $partialBridgeFailure = $_
+}
+if ($null -eq $partialBridgeFailure -or
+    $partialBridgeFailure.Exception.Message -notlike 'PipGlobalIndex and PipGlobalIndexUrl*') {
+    throw 'The exported credential bridge did not reject a partial package-source pair before activity.'
+}
+
+$classifiedBoundedFailure = $null
+$classifiedBoundedOutput = @()
+try {
+    $classifiedBoundedOutput = @(Invoke-AtlasoBoundedProcess `
+            -FilePath (Get-Process -Id $PID).Path `
+            -ArgumentList @(
+                '-NoLogo', '-NoProfile', '-NonInteractive', '-Command',
+                '[Console]::Out.Write("stdout-fixture"); [Console]::Error.Write("HTTPSConnectionPool token=hidden"); exit 2'
+            ) `
+            -TimeoutSeconds 30 `
+            -Action 'Focused bounded classification test' `
+            -FailureClassification onepassword_dependency `
+            -DiscardOutput)
+}
+catch {
+    $classifiedBoundedFailure = $_
+}
+if ($classifiedBoundedOutput.Count -ne 0 -or
+    $null -eq $classifiedBoundedFailure -or
+    $classifiedBoundedFailure.Exception.Message -notmatch 'exit code 2' -or
+    $classifiedBoundedFailure.Exception.Message -notmatch 'index, connectivity, TLS, or proxy failure' -or
+    $classifiedBoundedFailure.Exception.Message -match 'stdout-fixture|HTTPSConnectionPool|token=hidden') {
+    throw 'The fixed bounded failure classifier allowed captured child streams to escape the runner.'
+}
+$discardedBoundedOutput = @(Invoke-AtlasoBoundedProcess `
+        -FilePath (Get-Process -Id $PID).Path `
+        -ArgumentList @(
+            '-NoLogo', '-NoProfile', '-NonInteractive', '-Command',
+            '[Console]::Out.Write("successful-output-must-not-surface")'
+        ) `
+        -TimeoutSeconds 30 `
+        -Action 'Focused bounded discard-output test' `
+        -DiscardOutput)
+if ($discardedBoundedOutput.Count -ne 0) {
+    throw 'The bounded runner emitted successful output despite explicit suppression.'
+}
+$ordinaryBoundedFailure = $null
+try {
+    Invoke-AtlasoBoundedProcess `
+        -FilePath (Get-Process -Id $PID).Path `
+        -ArgumentList @(
+            '-NoLogo', '-NoProfile', '-NonInteractive', '-Command',
+            '[Console]::Error.Write("raw-child-output-must-not-surface"); exit 4'
+        ) `
+        -TimeoutSeconds 30 `
+        -Action 'Focused ordinary bounded failure' | Out-Null
+}
+catch {
+    $ordinaryBoundedFailure = $_
+}
+if ($null -eq $ordinaryBoundedFailure -or
+    $ordinaryBoundedFailure.Exception.Message -notmatch 'exit code 4' -or
+    $ordinaryBoundedFailure.Exception.Message -match 'raw-child-output') {
+    throw 'The ordinary bounded runner did not preserve its generic non-disclosing failure contract.'
+}
+
+$diagnosticFixtures = @(
+    @{ Category = 'index_connectivity_tls_proxy'; Output = 'Could not find a version that satisfies fixture'; Error = "`e[31mHTTPSConnectionPool Max retries exceeded ConnectionResetError token=hidden" },
+    @{ Category = 'index_connectivity_tls_proxy'; Output = 'No matching distribution found for fixture'; Error = 'NewConnectionError Failed to establish a new connection getaddrinfo failed' },
+    @{ Category = 'invocation_runtime'; Output = 'usage: pip unknown option --fixture'; Error = '' },
+    @{ Category = 'distribution_unavailable'; Output = ''; Error = 'No matching distribution found for fixture' },
+    @{ Category = 'hash_mismatch'; Output = 'THESE PACKAGES DO NOT MATCH THE HASHES expected sha256 fixture'; Error = '' },
+    @{ Category = 'unclassified'; Output = ''; Error = '' }
+)
+foreach ($fixture in $diagnosticFixtures) {
+    $diagnostic = Get-AtlasoOnePasswordDependencyFailure `
+        -ExitCode 2 `
+        -StandardOutput $fixture.Output `
+        -StandardError $fixture.Error
+    if ($diagnostic.Category -cne $fixture.Category -or
+        $diagnostic.Message -notmatch 'exit code 2' -or
+        $diagnostic.Message -match 'token=hidden|fixture|HTTPSConnectionPool|[\x00-\x1f\x7f]') {
+        throw "The $($fixture.Category) dependency diagnostic was not useful and fully sanitized."
+    }
+}
+
 $indexLockTestRoot = Join-Path ([System.IO.Path]::GetTempPath()) (
     "atlaso-onepassword-index-lock-$([guid]::NewGuid().ToString('N'))"
 )
@@ -35,6 +173,26 @@ try {
     }
     if ((Get-Content -LiteralPath $canonicalLockPath -Raw) -cnotmatch '(?m)^onepassword-sdk==0\.4\.1') {
         throw 'Creating the index-download lock modified the canonical deployment lock.'
+    }
+    $pipConfigurationPath = & $credentialModule {
+        param([string]$Path, [string]$Index, [string]$IndexUrl)
+        New-AtlasoOnePasswordPipConfiguration `
+            -Path $Path `
+            -PipGlobalIndex $Index `
+            -PipGlobalIndexUrl $IndexUrl `
+            -LocalWheelDirectory (Join-Path ([System.IO.Path]::GetDirectoryName($Path)) 'wheels')
+    } (Join-Path $indexLockTestRoot 'pip.ini') `
+        $explicitPackageSource.PipGlobalIndex `
+        $explicitPackageSource.PipGlobalIndexUrl
+    $pipConfigurationText = Get-Content -LiteralPath $pipConfigurationPath -Raw
+    if ($pipConfigurationText -cnotmatch '(?m)^index = https://mirror\.example\.test/api/pypi\r?$' -or
+        $pipConfigurationText -cnotmatch '(?m)^index-url = https://mirror\.example\.test/simple\r?$' -or
+        ([regex]::Matches($pipConfigurationText, '(?m)^extra-index-url = https://mirror\.example\.test/simple\r?$')).Count -ne 2 -or
+        ([regex]::Matches($pipConfigurationText, '(?m)^find-links = .+\\wheels\r?$')).Count -ne 2 -or
+        ([regex]::Matches($pipConfigurationText, '(?m)^no-index = false\r?$')).Count -ne 2 -or
+        $pipConfigurationText -cnotmatch '(?m)^\[download\]\r?$' -or
+        $pipConfigurationText -match 'pypi\.org') {
+        throw 'The private SDK pip configuration did not override global and download sources without public fallback.'
     }
 
     $duplicateLockPath = Join-Path $indexLockTestRoot 'duplicate.lock'
