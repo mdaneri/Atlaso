@@ -442,6 +442,31 @@ function Select-AtlasoVirtualizationPrereleaseTag {
 
 <#
 .SYNOPSIS
+Rejects remote identity presence changes after prerelease selection.
+.PARAMETER Tag
+Frozen virtualization prerelease tag.
+.PARAMETER IdentityKind
+Remote identity kind being compared.
+.PARAMETER WasPresent
+Whether the identity existed during preflight selection.
+.PARAMETER IsPresent
+Whether the identity exists at the collision guard.
+#>
+function Assert-AtlasoVirtualizationFrozenPresence {
+    param(
+        [Parameter(Mandatory = $true)][string]$Tag,
+        [Parameter(Mandatory = $true)][ValidateSet('tag', 'Release')][string]$IdentityKind,
+        [Parameter(Mandatory = $true)][bool]$WasPresent,
+        [Parameter(Mandatory = $true)][bool]$IsPresent
+    )
+
+    if ($WasPresent -ne $IsPresent) {
+        throw "Remote $IdentityKind presence for $Tag changed after prerelease selection."
+    }
+}
+
+<#
+.SYNOPSIS
 Validates a retained tag against corresponding remote tag and Release state.
 .PARAMETER RepoRoot
 Exact Atlaso checkout root.
@@ -856,6 +881,8 @@ function Invoke-AtlasoVirtualizationPrerelease {
         -RetainedTags $retainedTags `
         -RemoteTagNames $remoteTagNames `
         -ReleaseTagNames $releaseTagNames
+    $tagExistedAtSelection = $tag -cin $remoteTagNames
+    $releaseExistedAtSelection = $tag -cin $releaseTagNames
     if ($retainedTags.Count -eq 1) {
         Assert-AtlasoVirtualizationRetainedRemoteIdentity `
             -RepoRoot $RepoRoot `
@@ -952,6 +979,11 @@ function Invoke-AtlasoVirtualizationPrerelease {
     catch {
         $releaseState = $null
     }
+    Assert-AtlasoVirtualizationFrozenPresence `
+        -Tag $tag `
+        -IdentityKind Release `
+        -WasPresent $releaseExistedAtSelection `
+        -IsPresent ($null -ne $releaseState)
     if ($null -ne $releaseState -and
         ($releaseState.tagName -cne $tag -or -not $releaseState.isPrerelease)) {
         throw "Existing virtualization Release $tag is misclassified."
@@ -1169,6 +1201,11 @@ function Invoke-AtlasoVirtualizationPrerelease {
     if ($LASTEXITCODE -ne 0) {
         throw "Could not inspect remote tag $tag."
     }
+    Assert-AtlasoVirtualizationFrozenPresence `
+        -Tag $tag `
+        -IdentityKind tag `
+        -WasPresent $tagExistedAtSelection `
+        -IsPresent ($remoteTag.Count -gt 0)
     if ($remoteTag.Count -eq 0) {
         & git -C $RepoRoot show-ref --verify --quiet "refs/tags/$tag"
         $localTagStatus = $LASTEXITCODE

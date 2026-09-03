@@ -295,6 +295,32 @@ $retainedSelection = & $releaseScope {
 if ($retainedSelection -cne 'virtualization-v0.9.304-rc.7') {
     throw 'The one retained operation was not selected for retry.'
 }
+foreach ($presenceChange in @(
+        @{ WasPresent = $false; IsPresent = $true },
+        @{ WasPresent = $true; IsPresent = $false }
+    )) {
+    try {
+        & $releaseScope {
+            param($WasPresent, $IsPresent)
+            Assert-AtlasoVirtualizationFrozenPresence `
+                -Tag 'virtualization-v0.9.304-rc.7' `
+                -IdentityKind tag `
+                -WasPresent $WasPresent `
+                -IsPresent $IsPresent
+        } $presenceChange.WasPresent $presenceChange.IsPresent
+        throw 'A post-selection remote-identity presence change was accepted.'
+    }
+    catch {
+        if ($_.Exception.Message -eq 'A post-selection remote-identity presence change was accepted.') { throw }
+    }
+}
+& $releaseScope {
+    Assert-AtlasoVirtualizationFrozenPresence `
+        -Tag 'virtualization-v0.9.304-rc.7' `
+        -IdentityKind Release `
+        -WasPresent $true `
+        -IsPresent $true
+}
 try {
     & $releaseScope {
         Select-AtlasoVirtualizationPrereleaseTag `
@@ -376,6 +402,8 @@ foreach ($required in @(
         'Resolve-AtlasoOnePasswordPython',
         'Virtualization prerelease preflight:',
         'The selected tag is frozen before the first staging mutation',
+        'Assert-AtlasoVirtualizationFrozenPresence',
+        'changed after prerelease selection',
         'show-ref --verify --quiet',
         'cat-file -t',
         'Always reconstruct the signed source',
