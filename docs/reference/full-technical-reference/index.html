@@ -4115,6 +4115,8 @@ KMS changes by default.</p>
 <li>a Photon OS 5.0 VMware VM with UEFI firmware and Secure Boot off;</li>
 <li>updated Photon packages from the configured Photon 5.0 repositories, with a second update pass after appliance
   packages are installed;</li>
+<li>no cloud-init lifecycle: Atlaso removes Photon's incidental <code>cloud-init</code> package after the initial update and rejects
+  package or runtime-path remnants because Atlaso's own first-boot services own customization;</li>
 <li>the <code>atlaso</code> system user;</li>
 <li><code>/opt/atlaso</code> for the installed application;</li>
 <li><code>/etc/atlaso/atlaso.env</code> for appliance environment settings;</li>
