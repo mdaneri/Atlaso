@@ -442,6 +442,11 @@ pwsh -ExecutionPolicy Bypass `
   -TrustRootCa
 ```
 
+For exploratory normal-VM testing before a pull request exists, replace `-PullRequestNumber <number>` with
+`-LocalBuilder`. A clean checked-out branch derives
+`Atlaso-Local-<12-character-source-commit>-test-vm[-<collision-safe-suffix>]` while retaining exact VM ownership and
+redeploy checks. Lifecycle labs and acceptance evidence remain PR-numbered.
+
 It defaults to the management vmnet only; pass `-IncludeLabNetworkAdapters` after creating the SiteA, WAN/SiteB, and
 trunk-like vmnets.
 For real creation, the wrapper prefers an explicit `-OnePasswordEnvironmentId` override and otherwise reads the exact

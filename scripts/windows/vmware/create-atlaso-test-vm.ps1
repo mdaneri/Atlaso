@@ -21,6 +21,9 @@ fingerprint for explicit known_hosts verification.
 .PARAMETER PullRequestNumber
 Exact positive GitHub pull-request number that owns this validation VM.
 
+.PARAMETER LocalBuilder
+Use a deterministic local-development identity derived from the clean checked-out commit.
+
 .PARAMETER Purpose
 Short purpose text sanitized into the canonical VMware identity.
 
@@ -155,9 +158,9 @@ minutes for the 15-minute offline-cleanup gate, disk preparation, and bootstrap 
 )]
 [CmdletBinding(SupportsShouldProcess = $true)]
 param(
-    [Parameter(Mandatory = $true)]
     [ValidateRange(1, 2147483647)]
-    [int]$PullRequestNumber,
+    [int]$PullRequestNumber = 0,
+    [switch]$LocalBuilder,
     [string]$Purpose = 'test-vm',
     [string]$CollisionSuffix = '',
     [string]$ApplianceVmxPath = '',
@@ -2881,6 +2884,9 @@ Verified management NIC MAC address from the exact VMX.
 
 .PARAMETER Hostname
 First-boot hostname bound into the readiness evidence.
+
+.PARAMETER Owner
+Operator-facing pull-request or local-commit owner of the test VM.
 #>
 function Write-ConnectionSummary {
     param(
@@ -2890,7 +2896,8 @@ function Write-ConnectionSummary {
         [Parameter(Mandatory = $true)][bool]$RootCaTrusted,
         [Parameter(Mandatory = $true)][bool]$SshKeyProvisioned,
         [Parameter(Mandatory = $true)][string]$MacAddress,
-        [Parameter(Mandatory = $true)][string]$Hostname
+        [Parameter(Mandatory = $true)][string]$Hostname,
+        [Parameter(Mandatory = $true)][string]$Owner
     )
 
     <#
@@ -2918,7 +2925,7 @@ function Write-ConnectionSummary {
 
     Write-Host ""
     Write-Host "Atlaso VMware appliance connection summary" -ForegroundColor Cyan
-    Write-SummaryRow -Label "Pull request:" -Value "#$PullRequestNumber" -ValueColor White
+    Write-SummaryRow -Label "Owner:" -Value $Owner -ValueColor White
     Write-SummaryRow -Label "Name:" -Value $Name -ValueColor White
     Write-SummaryRow -Label "VMX:" -Value $VmxPath -ValueColor Gray
     Write-SummaryRow -Label "MAC:" -Value $MacAddress -ValueColor Gray
@@ -2945,11 +2952,37 @@ function Write-ConnectionSummary {
 }
 
 $repoRoot = (Resolve-Path -LiteralPath (Join-Path $PSScriptRoot '..\..\..')).Path
-$vmIdentity = New-AtlasoVmwareTestIdentity `
-    -PullRequestNumber $PullRequestNumber `
-    -Purpose $Purpose `
-    -CollisionSuffix $CollisionSuffix
+$selectedIdentityCount = [int]($PullRequestNumber -gt 0) + [int][bool]$LocalBuilder
+if ($selectedIdentityCount -ne 1) {
+    throw 'Select exactly one test VM identity: -PullRequestNumber for PR validation or -LocalBuilder for local testing.'
+}
+$vmIdentity = if ($LocalBuilder) {
+    $sourceBranch = ([string](& git -C $repoRoot branch --show-current)).Trim()
+    $sourceCommit = ([string](& git -C $repoRoot rev-parse HEAD)).Trim()
+    $sourceChanges = @(& git -C $repoRoot status --short)
+    if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($sourceBranch) -or
+        $sourceCommit -notmatch '^[0-9a-f]{40}$' -or $sourceChanges.Count -ne 0) {
+        throw 'A local test VM requires one clean checked-out branch and exact source commit.'
+    }
+    New-AtlasoVmwareTestIdentity `
+        -LocalBuilder `
+        -SourceCommit $sourceCommit `
+        -Purpose $Purpose `
+        -CollisionSuffix $CollisionSuffix
+}
+else {
+    New-AtlasoVmwareTestIdentity `
+        -PullRequestNumber $PullRequestNumber `
+        -Purpose $Purpose `
+        -CollisionSuffix $CollisionSuffix
+}
 $Name = $vmIdentity.Name
+$identityOwner = if ($LocalBuilder) {
+    "local commit $($vmIdentity.SourceCommit.Substring(0, 12))"
+}
+else {
+    "pull request #$PullRequestNumber"
+}
 if (-not $OutputDirectory) {
     $OutputDirectory = Join-Path $repoRoot "image\vmware-workstation\test-vms\$Name"
 }
@@ -3069,13 +3102,13 @@ else {
 }
 
 if ((Test-Path -LiteralPath $targetVmx) -and -not $Redeploy) {
-    throw "VM already exists: $targetVmx. Pass -Redeploy to remove and recreate it, or choose a different -CollisionSuffix for another PR-owned test VM."
+    throw "VM already exists: $targetVmx. Pass -Redeploy to remove and recreate it, or choose a different -CollisionSuffix for another identically owned test VM."
 }
 if (
     (Test-Path -LiteralPath $resolvedOutputDirectory -PathType Container) -and
     -not (Test-Path -LiteralPath $targetVmx -PathType Leaf)
 ) {
-    throw "Refusing VMware creation because the canonical PR-owned output directory already exists without its exact VMX: $resolvedOutputDirectory"
+    throw "Refusing VMware creation because the canonical Atlaso-owned output directory already exists without its exact VMX: $resolvedOutputDirectory"
 }
 
 if (-not $SkipNetworkPrepare) {
@@ -3093,7 +3126,7 @@ if (-not $SkipNetworkPrepare) {
 
 if ((Test-Path -LiteralPath $resolvedOutputDirectory) -and $Redeploy) {
     if (-not (Test-Path -LiteralPath $targetVmx -PathType Leaf)) {
-        throw "Refusing redeploy cleanup because the expected PR-owned Atlaso VMX is missing: $targetVmx. Choose the correct -PullRequestNumber/-Purpose/-CollisionSuffix/-OutputDirectory or remove the directory manually after reviewing its contents."
+        throw "Refusing redeploy cleanup because the expected Atlaso-owned VMX is missing: $targetVmx. Choose the correct identity, purpose, collision suffix, and output directory, or remove the directory manually after reviewing its contents."
     }
     Assert-AtlasoVmwareOwnedVmx `
         -VmxPath $targetVmx `
@@ -3577,7 +3610,8 @@ if (($waitForIpEnabled -or $TrustRootCa) -and $readinessIdentity) {
         -RootCaTrusted ([bool]$rootCaStatus.Trusted) `
         -SshKeyProvisioned (-not [bool]$SkipSshKeyProvisioning) `
         -MacAddress $readinessIdentity.MacAddress `
-        -Hostname $readinessIdentity.Hostname
+        -Hostname $readinessIdentity.Hostname `
+        -Owner $identityOwner
 }
 elseif ($readinessIdentity) {
     Write-Host 'Management wait and development-root verification were explicitly disabled with -WaitForIp:$false.' -ForegroundColor DarkGray
