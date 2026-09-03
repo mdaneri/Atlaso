@@ -230,6 +230,17 @@ try {
     if ($ambiguousRetained.Count -ne 2) {
         throw 'Multiple current-version retained operations were not discovered for fail-closed selection.'
     }
+    New-Item -ItemType Directory -Path (Join-Path $retainedRoot 'Virtualization-v0.9.304-rc.9') | Out-Null
+    try {
+        & $releaseScope {
+            param($Root)
+            Get-AtlasoVirtualizationRetainedOperationTags -StagingRoot $Root -Version '0.9.304'
+        } $retainedRoot | Out-Null
+        throw 'A noncanonical retained-operation directory name was accepted.'
+    }
+    catch {
+        if ($_.Exception.Message -eq 'A noncanonical retained-operation directory name was accepted.') { throw }
+    }
 }
 finally {
     Remove-Item -LiteralPath $retainedRoot -Recurse -Force -ErrorAction SilentlyContinue
@@ -251,6 +262,29 @@ foreach ($case in $selectionCases) {
     if ($selected -cne $case.Expected) {
         throw "Unexpected automatic virtualization prerelease selection: $selected"
     }
+}
+$releaseInventory = @(& $releaseScope {
+        <#
+        .SYNOPSIS
+        Return nested GitHub CLI output for focused inventory validation.
+        .PARAMETER Arguments
+        Ignored GitHub CLI arguments from the release inventory helper.
+        #>
+        function Invoke-AtlasoReleaseGh {
+            param([string[]]$Arguments)
+            $null = $Arguments
+            return ,@(
+                'virtualization-v0.9.304-rc.2',
+                'virtualization-v0.9.304-rc.5',
+                'virtualization-v0.9.303-rc.99'
+            )
+        }
+        Get-AtlasoVirtualizationReleaseTagNames -Repository 'example/Atlaso' -Version '0.9.304'
+    })
+if ($releaseInventory.Count -ne 2 -or
+    'virtualization-v0.9.304-rc.2' -notin $releaseInventory -or
+    'virtualization-v0.9.304-rc.5' -notin $releaseInventory) {
+    throw 'GitHub Release tag inventory did not enumerate and filter every captured output line.'
 }
 $retainedSelection = & $releaseScope {
     Select-AtlasoVirtualizationPrereleaseTag `
@@ -332,6 +366,8 @@ foreach ($required in @(
         'Select-AtlasoVirtualizationPrereleaseTag',
         'Multiple retained virtualization-v$Version release-candidate operations make retry intent ambiguous',
         "'api', '--paginate'",
+        'Enumerate both levels explicitly before matching tag lines',
+        'does not use the canonical tag casing',
         "'Atlaso Management'",
         "'Atlaso Services'",
         'Resolve-AtlasoOnePasswordEnvironmentId',

@@ -325,6 +325,9 @@ function Get-AtlasoVirtualizationRetainedOperationTags {
         if ($item.Name -notmatch $pattern) {
             continue
         }
+        if ($item.Name -cnotmatch $pattern) {
+            throw "Retained virtualization operation $($item.FullName) does not use the canonical tag casing."
+        }
         if (-not $item.PSIsContainer -or
             ($item.Attributes -band [System.IO.FileAttributes]::ReparsePoint) -ne 0) {
             throw "Retained virtualization operation $($item.FullName) must be an ordinary directory."
@@ -355,7 +358,7 @@ function Get-AtlasoVirtualizationRemoteTagNames {
     $pattern = '^refs/tags/(virtualization-v' + [regex]::Escape($Version) + '-rc\.[1-9]\d*)(?:\^\{\})?$'
     $names = foreach ($line in $lines) {
         $fields = [string]$line -split '\s+'
-        if ($fields.Count -ge 2 -and $fields[1] -match $pattern) {
+        if ($fields.Count -ge 2 -and $fields[1] -cmatch $pattern) {
             $Matches[1]
         }
     }
@@ -377,10 +380,19 @@ function Get-AtlasoVirtualizationReleaseTagNames {
     )
 
     $pattern = '^virtualization-v' + [regex]::Escape($Version) + '-rc\.[1-9]\d*$'
+    $releaseTagOutput = Invoke-AtlasoReleaseGh -Arguments @(
+        'api', '--paginate', "repos/$Repository/releases?per_page=100", '--jq', '.[].tag_name'
+    )
     $names = @(
-        Invoke-AtlasoReleaseGh -Arguments @(
-            'api', '--paginate', "repos/$Repository/releases?per_page=100", '--jq', '.[].tag_name'
-        ) | Where-Object { [string]$_ -match $pattern }
+        # Invoke-AtlasoReleaseGh preserves its captured output as one array
+        # object. Enumerate both levels explicitly before matching tag lines.
+        foreach ($entry in @($releaseTagOutput)) {
+            foreach ($line in @($entry)) {
+                if ([string]$line -cmatch $pattern) {
+                    [string]$line
+                }
+            }
+        }
     )
     return @($names | ForEach-Object { ([string]$_).Trim() } | Sort-Object -Unique)
 }
