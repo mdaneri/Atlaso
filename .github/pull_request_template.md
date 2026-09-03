@@ -29,8 +29,14 @@ surfaces.
 - [ ] For an ordinary pull request, each post-opening pushed commit received one `@codex review` request as the exact
   head, and current-head checks, comments, reviews, and authoritative review threads were followed through.
 - [ ] For an ordinary pull request, exactly one current-task heartbeat ran every four minutes and each run exited after
-  one bounded reconciliation; no persistent GitHub polling loops combined `gh` with `sleep` outside explicitly
-  requested short-lived debugging.
+  one bounded reconciliation. Once created, the current-task heartbeat was the exclusive routine PR monitoring
+  mechanism. No persistent GitHub polling loops or finite-but-delayed shell polling such as
+  `Start-Sleep -Seconds 55; gh pr checks <pr>` or `sleep 55; gh pr view <pr>`, timeout wrappers, or equivalent delayed
+  workflow or status reads ran alongside it, and no terminal remained occupied merely to wait for CI, review,
+  mergeability, or post-merge state. When the task was already awake for real work, after a push, after user input, or
+  immediately before a guarded state transition, it could perform one immediate bounded reconciliation; it must not
+  schedule its own next check with a shell delay. The short-lived local-debugging exception requires an explicit
+  maintainer request and must not duplicate an active heartbeat.
 - [ ] For an ordinary pull request, the task retained the exact-head SHA and seen comment and review IDs, and every new
   top-level pull-request comment, inline review comment, review submission and requested change was evaluated. For
   merged, closed, or delivery-complete merge-ready with a permanent-disposition hold or policy exclusion terminal

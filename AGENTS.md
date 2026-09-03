@@ -167,8 +167,14 @@ exact head, post one `@codex review` comment, and only then begin another commit
 
 Keep the originating task active after opening the pull request and create or update exactly one current-task heartbeat
 that runs every four minutes. Each scheduled run performs one bounded reconciliation pass and exits cleanly; never vary
-the cadence or create a duplicate automation. Normal monitoring forbids persistent GitHub polling loops that combine
-`gh` with `sleep`. Use them only for short-lived local debugging when continuous polling is explicitly requested.
+the cadence or create a duplicate automation. Once created, the current-task heartbeat is the exclusive routine PR
+monitoring mechanism. Do not run persistent GitHub polling loops or finite-but-delayed shell polling such as
+`Start-Sleep -Seconds 55; gh pr checks <pr>` or `sleep 55; gh pr view <pr>`, timeout wrappers, or equivalent delayed
+workflow or status reads alongside it, and do not occupy a terminal merely to wait for CI, review, mergeability, or
+post-merge state. When the task is already awake for real work, after a push, after user input, or immediately before a
+guarded state transition, it may perform one immediate bounded reconciliation; it must not schedule its own next check
+with a shell delay. The short-lived local-debugging exception requires an explicit maintainer request and must not
+duplicate an active heartbeat.
 
 Retain the current exact-head SHA and seen comment and review IDs in the task context. On every run, inspect the pull
 request state, exact-head checks, mergeability and conflicts, top-level pull-request comments, inline review comments,

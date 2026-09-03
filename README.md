@@ -64,6 +64,10 @@ the resulting appliance changes, and explicitly submit valid units through the g
 
 ## Project and community
 
+Automated pull-request monitoring uses one four-minute current-task heartbeat as the exclusive routine reconciliation
+mechanism; contributor tasks may make immediate bounded reads while awake, but must not self-schedule delayed shell
+status checks alongside that heartbeat. See [Contributing](CONTRIBUTING.md) for the complete workflow.
+
 - [What is Atlaso?](docs/project/what-is-atlaso.md)
 - [Contributing](CONTRIBUTING.md)
 - [Security policy](SECURITY.md)
