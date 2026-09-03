@@ -90,7 +90,6 @@ foreach ($invalidPath in $invalidPaths) {
             SkipHelperSync = $true
             SkipConsoleAssetSync = $true
             SkipBootBrandingSync = $true
-            SkipInventoryLinuxSync = $true
             SkipHostCheck = $true
         }
         try {
@@ -180,7 +179,6 @@ $SkipBuild = $true
 $SkipHelperSync = $true
 $SkipConsoleAssetSync = $true
 $SkipBootBrandingSync = $false
-$SkipInventoryLinuxSync = $true
 $WheelPath = $wheelPath.FullName
 $ResetVaultEntries = $false
 $SkipHostCheck = $true

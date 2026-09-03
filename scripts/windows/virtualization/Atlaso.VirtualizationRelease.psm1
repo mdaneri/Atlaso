@@ -755,7 +755,6 @@ function Invoke-AtlasoVirtualizationPrerelease {
             SkipBuild = $true
             WheelPath = $wheel
             RuntimeDependencyDirectory = (Join-Path $sourceInput 'wheelhouse\cp314')
-            SkipInventoryLinuxSync = $true
         }
         if ($OnePasswordEnvironmentId) {
             $deployArguments.OnePasswordEnvironmentId = $OnePasswordEnvironmentId

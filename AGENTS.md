@@ -606,8 +606,8 @@ The following cross-cutting boundaries always apply:
   signed assets, and require the replayed application wheel bytes to match the wheel inside that bundle; never rebuild
   the Release with the replay publisher identity.
 - Inventory Linux is an independently versioned Atlaso release package; full images leave it uninstalled so an
-  administrator downloads a signed release on demand. Supported VMware wheel deployment synchronizes it unless
-  explicitly skipped. Publish it only through the protected manual Inventory
+  administrator downloads a signed release on demand. VMware wheel deployment must never build, package, upload,
+  validate, or install Inventory Linux. Publish it only through the protected manual Inventory
   Linux release workflow for an exact successful `main` CI SHA. Every workflow build is a final immutable
   `inventory-linux-v<version>` release and signed Pages pointer; never attach it to an appliance release or introduce
   development, preview, or staging channels.

@@ -29,8 +29,6 @@ Leaves the installed privileged helper unchanged.
 Leaves console assets unchanged.
 .PARAMETER SkipBootBrandingSync
 Leaves boot-branding assets unchanged.
-.PARAMETER SkipInventoryLinuxSync
-Leaves Inventory Linux unchanged.
 .PARAMETER WheelPath
 Explicit Atlaso wheel path.
 .PARAMETER RuntimeDependencyDirectory
@@ -79,7 +77,6 @@ param(
     [switch]$SkipHelperSync,
     [switch]$SkipConsoleAssetSync,
     [switch]$SkipBootBrandingSync,
-    [switch]$SkipInventoryLinuxSync,
     [string]$WheelPath = '',
     [string]$RuntimeDependencyDirectory = '',
     [string]$OnePasswordEnvironmentId = '',
@@ -573,8 +570,6 @@ Optional local boot installer path.
 Optional local boot-theme path.
 .PARAMETER LocalBootBackgroundPath
 Optional local boot-background path.
-.PARAMETER LocalInventoryLinuxPackagePath
-Optional local Inventory Linux package path.
 .PARAMETER LocalTrustKeyPaths
 Local public release trust-key paths.
 .PARAMETER LocalAtlasoServicePath
@@ -603,8 +598,6 @@ Optional remote boot installer path.
 Optional remote boot-theme path.
 .PARAMETER RemoteBootBackground
 Optional remote boot-background path.
-.PARAMETER RemoteInventoryLinuxPackage
-Optional remote Inventory Linux package path.
 .PARAMETER RemoteTrustKeys
 Remote public release trust-key paths.
 .PARAMETER RemoteAtlasoService
@@ -646,7 +639,6 @@ function Invoke-PasswordBackedDeploy {
         [string]$LocalBootInstallerPath = '',
         [string]$LocalBootThemePath = '',
         [string]$LocalBootBackgroundPath = '',
-        [string]$LocalInventoryLinuxPackagePath = '',
         [Parameter(Mandatory = $true)][string[]]$LocalTrustKeyPaths,
         [Parameter(Mandatory = $true)][string]$LocalAtlasoServicePath,
         [Parameter(Mandatory = $true)][string]$LocalWorkerServicePath,
@@ -661,7 +653,6 @@ function Invoke-PasswordBackedDeploy {
         [string]$RemoteBootInstaller = '',
         [string]$RemoteBootTheme = '',
         [string]$RemoteBootBackground = '',
-        [string]$RemoteInventoryLinuxPackage = '',
         [Parameter(Mandatory = $true)][string[]]$RemoteTrustKeys,
         [Parameter(Mandatory = $true)][string]$RemoteAtlasoService,
         [Parameter(Mandatory = $true)][string]$RemoteWorkerService,
@@ -746,7 +737,6 @@ parser.add_argument("--local-console-manager", default="")
 parser.add_argument("--local-boot-installer", default="")
 parser.add_argument("--local-boot-theme", default="")
 parser.add_argument("--local-boot-background", default="")
-parser.add_argument("--local-inventory-linux-package", default="")
 parser.add_argument("--local-trust-key", action="append", default=[])
 parser.add_argument("--local-atlaso-service", required=True)
 parser.add_argument("--local-worker-service", required=True)
@@ -761,7 +751,6 @@ parser.add_argument("--remote-console-manager", default="")
 parser.add_argument("--remote-boot-installer", default="")
 parser.add_argument("--remote-boot-theme", default="")
 parser.add_argument("--remote-boot-background", default="")
-parser.add_argument("--remote-inventory-linux-package", default="")
 parser.add_argument("--remote-trust-key", action="append", default=[])
 parser.add_argument("--remote-atlaso-service", required=True)
 parser.add_argument("--remote-worker-service", required=True)
@@ -852,11 +841,6 @@ if args.local_boot_installer:
             (pathlib.Path(args.local_boot_background), args.remote_boot_background),
         ]
     )
-if args.local_inventory_linux_package:
-    uploads.append(
-        (pathlib.Path(args.local_inventory_linux_package), args.remote_inventory_linux_package)
-    )
-
 def connect_password_or_keyboard_interactive(client, host, username, password):
     sock = socket.create_connection((host, 22), timeout=15)
     transport = paramiko.Transport(sock)
@@ -965,9 +949,6 @@ try:
     remote_boot_installer_argument = args.remote_boot_installer if args.local_boot_installer else ""
     remote_boot_theme_argument = args.remote_boot_theme if args.local_boot_installer else ""
     remote_boot_background_argument = args.remote_boot_background if args.local_boot_installer else ""
-    remote_inventory_linux_package_argument = (
-        args.remote_inventory_linux_package if args.local_inventory_linux_package else ""
-    )
     remote_runtime_dependencies_argument = ":".join(args.remote_runtime_dependency)
     remote_trust_keys_argument = ":".join(args.remote_trust_key)
     command = (
@@ -987,8 +968,7 @@ try:
         f"{shell_quote(args.remote_nginx_service_drop_in)} "
         f"{shell_quote(remote_runtime_dependencies_argument)} "
         f"{shell_quote(remote_trust_keys_argument)} "
-        f"{shell_quote('true' if args.reset_vault_entries else 'false')} "
-        f"{shell_quote(remote_inventory_linux_package_argument)}"
+        f"{shell_quote('true' if args.reset_vault_entries else 'false')}"
     )
     stdin, stdout, stderr = client.exec_command(command, get_pty=False, timeout=args.timeout)
     stdin.write(password + "\n")
@@ -1032,13 +1012,7 @@ finally:
             @('--local-console-manager', $LocalConsoleManagerPath, '--remote-console-manager', $RemoteConsoleManager),
             @('--local-boot-installer', $LocalBootInstallerPath, '--remote-boot-installer', $RemoteBootInstaller),
             @('--local-boot-theme', $LocalBootThemePath, '--remote-boot-theme', $RemoteBootTheme),
-            @('--local-boot-background', $LocalBootBackgroundPath, '--remote-boot-background', $RemoteBootBackground),
-            @(
-                '--local-inventory-linux-package',
-                $LocalInventoryLinuxPackagePath,
-                '--remote-inventory-linux-package',
-                $RemoteInventoryLinuxPackage
-            )
+            @('--local-boot-background', $LocalBootBackgroundPath, '--remote-boot-background', $RemoteBootBackground)
         )) {
             $localPath = [string]$optionalPathPair[1]
             $remotePath = [string]$optionalPathPair[3]
@@ -1248,26 +1222,6 @@ $atlasoServicePath = Join-Path $resolvedRepoRoot 'image\common\systemd\atlaso.se
 $workerServicePath = Join-Path $resolvedRepoRoot 'image\common\systemd\atlaso-worker.service'
 $atlasoServiceDropInPath = Join-Path $resolvedRepoRoot 'image\common\systemd\atlaso-require-data-disks.conf'
 $nginxServiceDropInPath = Join-Path $resolvedRepoRoot 'image\common\systemd\nginx-atlaso-data-disks.conf'
-$inventoryLinuxPackagePath = ''
-if (-not $SkipInventoryLinuxSync) {
-    $inventoryLinuxOutput = Join-Path $resolvedRepoRoot 'image\inventory-linux\output'
-    foreach ($inventoryAsset in @('bzImage', 'rootfs.cpio.gz', 'manifest.json')) {
-        if (-not (Test-Path -LiteralPath (Join-Path $inventoryLinuxOutput $inventoryAsset) -PathType Leaf)) {
-            throw "Bundled Inventory Linux output is missing $inventoryAsset. Run scripts/windows/common/Build-AtlasoInventoryLinux.ps1 or pass -SkipInventoryLinuxSync."
-        }
-    }
-    $inventoryPackageOutput = Join-Path $resolvedRepoRoot 'dist\inventory-linux'
-    Invoke-CheckedCommand -FilePath $Python -WorkingDirectory $resolvedRepoRoot -Arguments @(
-        'scripts/build_inventory_linux_package.py',
-        '--source', $inventoryLinuxOutput,
-        '--output', $inventoryPackageOutput
-    )
-    $inventoryLinuxPackagePath = (
-        Get-ChildItem -LiteralPath $inventoryPackageOutput -Filter 'atlaso-inventory-linux-*.zip' -File |
-            Sort-Object LastWriteTime -Descending |
-            Select-Object -First 1
-    ).FullName
-}
 if (-not $SkipHelperSync -and -not (Test-Path -LiteralPath $helperPath -PathType Leaf)) {
     throw "Atlaso helper script not found: $helperPath"
 }
@@ -1315,11 +1269,6 @@ $remoteAtlasoServicePath = Join-RemotePath -Directory $RemoteDirectory -Leaf 'at
 $remoteWorkerServicePath = Join-RemotePath -Directory $RemoteDirectory -Leaf 'atlaso-worker.service'
 $remoteAtlasoServiceDropInPath = Join-RemotePath -Directory $RemoteDirectory -Leaf 'atlaso-require-data-disks.conf'
 $remoteNginxServiceDropInPath = Join-RemotePath -Directory $RemoteDirectory -Leaf 'nginx-atlaso-data-disks.conf'
-$remoteInventoryLinuxPackagePath = if ($inventoryLinuxPackagePath) {
-    Join-RemotePath -Directory $RemoteDirectory -Leaf (Split-Path -Leaf $inventoryLinuxPackagePath)
-} else {
-    ''
-}
 $remoteScriptPath = Join-RemotePath -Directory $RemoteDirectory -Leaf 'atlaso-deploy-wheel.sh'
 
 if (-not $UsePasswordDeploy) {
@@ -1346,7 +1295,6 @@ nginx_service_drop_in_path="${12:?nginx service drop-in path required}"
 runtime_dependency_paths="${13:?runtime dependency wheel paths required}"
 trust_key_paths="${14:?release trust key paths required}"
 reset_vault_entries="${15:-false}"
-inventory_linux_package="${16:-}"
 venv="/opt/atlaso/.venv"
 python="$venv/bin/python"
 
@@ -1505,130 +1453,9 @@ restore_services_on_exit() {
 }
 trap restore_services_on_exit EXIT
 systemctl stop atlaso-worker.service atlaso.service
-"$python" - <<'PY'
-import pathlib
-
-required_directories = (
-    pathlib.Path("/var/lib/atlaso"),
-    pathlib.Path("/var/lib/atlaso/pxe"),
-)
-optional_directories = (
-    pathlib.Path("/var/lib/atlaso/pxe/media"),
-    pathlib.Path("/var/lib/atlaso/pxe/uploads"),
-)
-for directory in (*required_directories, *optional_directories):
-    if directory.is_symlink():
-        raise SystemExit(f"Atlaso media path must not be a symlink: {directory}")
-    if directory.exists() and not directory.is_dir():
-        raise SystemExit(f"Atlaso media path must be a directory: {directory}")
-for directory in required_directories:
-    if not directory.is_dir():
-        raise SystemExit(f"Required Atlaso media parent is missing: {directory}")
-PY
-install -d -o atlaso -g atlaso -m 0755 /var/lib/atlaso/pxe/media /var/lib/atlaso/pxe/uploads
 if [ "$reset_vault_entries" = "true" ]; then
     sqlite3 /var/lib/atlaso/atlaso.db 'DROP TABLE IF EXISTS vault_entries;'
     echo "Reset vault_entries table; Atlaso will recreate it from the installed model."
-fi
-if [ -n "$inventory_linux_package" ]; then
-    "$python" - "$inventory_linux_package" <<'PY'
-import hashlib
-import json
-import pathlib
-import re
-import secrets
-import shutil
-import sys
-import tempfile
-import zipfile
-
-package = pathlib.Path(sys.argv[1])
-with zipfile.ZipFile(package) as archive:
-    names = set(archive.namelist())
-    if not {"manifest.json", "bzImage", "rootfs.cpio.gz"} <= names:
-        raise SystemExit("Atlaso Inventory Linux package is incomplete.")
-    manifest = json.loads(archive.read("manifest.json"))
-    version = str(manifest.get("version") or "")
-    if (
-        manifest.get("kind") != "atlaso-inventory-linux"
-        or manifest.get("schema_version") != 1
-        or re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._+-]{0,118}[A-Za-z0-9]", version) is None
-    ):
-        raise SystemExit("Atlaso Inventory Linux package identity is invalid.")
-    target = pathlib.Path("/var/lib/atlaso/pxe/media/inventory") / version
-    if target.parent.is_symlink():
-        raise SystemExit("Atlaso Inventory Linux media root must not be a symlink.")
-    if target.parent.exists() and not target.parent.is_dir():
-        raise SystemExit("Atlaso Inventory Linux media root must be a directory.")
-    target.parent.mkdir(exist_ok=True)
-    target.parent.chmod(0o755)
-    if target.is_symlink():
-        raise SystemExit(
-            f"Atlaso Inventory Linux {version} target must not be a symlink."
-        )
-    if target.exists() and not target.is_dir():
-        raise SystemExit(
-            f"Atlaso Inventory Linux {version} target must be a directory."
-        )
-    with tempfile.TemporaryDirectory(prefix=".inventory-", dir=target.parent) as temporary:
-        staging = pathlib.Path(temporary)
-        staging.chmod(0o755)
-        for name in ("bzImage", "rootfs.cpio.gz"):
-            destination = staging / name
-            with archive.open(name) as source, destination.open("wb") as output:
-                shutil.copyfileobj(source, output, length=1024 * 1024)
-            actual = hashlib.sha256(destination.read_bytes()).hexdigest()
-            expected = str((manifest.get("artifacts") or {}).get(name) or "").lower()
-            if not secrets.compare_digest(actual, expected):
-                raise SystemExit(f"Atlaso Inventory Linux artifact digest mismatch: {name}")
-            destination.chmod(0o644)
-        (staging / "manifest.json").write_text(
-            json.dumps(manifest, indent=2, sort_keys=True) + "\n",
-            encoding="utf-8",
-        )
-        (staging / "manifest.json").chmod(0o644)
-        if target.exists():
-            for name in ("bzImage", "rootfs.cpio.gz"):
-                installed_artifact = target / name
-                if (
-                    installed_artifact.is_symlink()
-                    or not installed_artifact.is_file()
-                    or installed_artifact.read_bytes() != (staging / name).read_bytes()
-                ):
-                    raise SystemExit(f"Immutable Atlaso Inventory Linux {version} is already installed with different content.")
-            installed_manifest_path = target / "manifest.json"
-            if installed_manifest_path.is_symlink() or not installed_manifest_path.is_file():
-                raise SystemExit(f"Installed Atlaso Inventory Linux {version} has no manifest.")
-            installed_manifest = json.loads(installed_manifest_path.read_text(encoding="utf-8"))
-            if installed_manifest_path.read_bytes() != (staging / "manifest.json").read_bytes():
-                if (
-                    installed_manifest.get("kind") != "atlaso-network-boot-media"
-                    or installed_manifest.get("schema_version") != 1
-                    or installed_manifest.get("environment") != "inventory"
-                    or installed_manifest.get("version") != version
-                ):
-                    raise SystemExit(f"Immutable Atlaso Inventory Linux {version} is already installed with a different manifest.")
-            target.chmod(0o755)
-        else:
-            pathlib.Path(temporary).replace(target)
-    owned_paths = [
-        target.parent,
-        target,
-        *(target / name for name in ("bzImage", "rootfs.cpio.gz", "manifest.json")),
-    ]
-    if any(owned_path.is_symlink() for owned_path in owned_paths):
-        raise SystemExit(
-            f"Atlaso Inventory Linux {version} ownership path must not be a symlink."
-        )
-    for owned_path in owned_paths:
-        shutil.chown(
-            owned_path,
-            user="atlaso",
-            group="atlaso",
-            follow_symlinks=False,
-        )
-print(f"Installed Atlaso Inventory Linux {version}.")
-PY
 fi
 install -d -o root -g root -m 0755 /usr/local/bin
 ln -sfn "$venv/bin/atlaso-vault" /usr/local/bin/atlaso-vault
@@ -1869,9 +1696,6 @@ try {
     $uploadPaths += $workerServicePath
     $uploadPaths += $atlasoServiceDropInPath
     $uploadPaths += $nginxServiceDropInPath
-    if ($inventoryLinuxPackagePath) {
-        $uploadPaths += $inventoryLinuxPackagePath
-    }
     $uploadPaths += $tempScript
 
     $remoteHelperArgument = if ($SkipHelperSync) { '' } else { $remoteHelperPath }
@@ -1898,7 +1722,6 @@ try {
             -LocalBootInstallerPath $localBootInstallerArgument `
             -LocalBootThemePath $localBootThemeArgument `
             -LocalBootBackgroundPath $localBootBackgroundArgument `
-            -LocalInventoryLinuxPackagePath $inventoryLinuxPackagePath `
             -LocalTrustKeyPaths $trustKeyPaths `
             -LocalAtlasoServicePath $atlasoServicePath `
             -LocalWorkerServicePath $workerServicePath `
@@ -1913,7 +1736,6 @@ try {
             -RemoteBootInstaller $remoteBootInstallerArgument `
             -RemoteBootTheme $remoteBootThemeArgument `
             -RemoteBootBackground $remoteBootBackgroundArgument `
-            -RemoteInventoryLinuxPackage $remoteInventoryLinuxPackagePath `
             -RemoteTrustKeys $remoteTrustKeyPaths `
             -RemoteAtlasoService $remoteAtlasoServicePath `
             -RemoteWorkerService $remoteWorkerServicePath `
@@ -1956,8 +1778,7 @@ try {
             $remoteNginxServiceDropInPath,
             $remoteRuntimeDependenciesArgument,
             $remoteTrustKeysArgument,
-            $resetVaultEntriesArgument,
-            $remoteInventoryLinuxPackagePath
+            $resetVaultEntriesArgument
         )
         $remoteCommand = (
             $remoteCommandArguments | ForEach-Object { ConvertTo-PosixShellArgument -Value $_ }

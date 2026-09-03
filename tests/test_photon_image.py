@@ -310,8 +310,8 @@ def test_guest_agent_success_marker_makes_cleanup_retryable() -> None:
     assert 'if [ "$cleanup_required" -eq 1 ]; then' in selector
 
 
-def test_inventory_linux_release_package_is_reproducible_and_deployable(tmp_path):
-    """Verify that inventory linux release package is reproducible and deployable.
+def test_inventory_linux_release_package_is_reproducible_and_independent(tmp_path):
+    """Verify that Inventory Linux packaging stays independent from wheel deployment.
 
     Args:
         tmp_path: Temporary directory provided by pytest for isolated filesystem state.
@@ -350,43 +350,26 @@ def test_inventory_linux_release_package_is_reproducible_and_deployable(tmp_path
 
     deploy = Path("scripts/windows/vmware/deploy-wheel.ps1").read_text(encoding="utf-8")
     release = Path(".github/workflows/release.yml").read_text(encoding="utf-8")
-    assert "SkipInventoryLinuxSync" in deploy
+    assert "SkipInventoryLinuxSync" not in deploy
+    assert "build_inventory_linux_package.py" not in deploy
+    assert "image\\inventory-linux" not in deploy
+    assert "/var/lib/atlaso/pxe/media/inventory" not in deploy
+    assert "inventory-linux-package" not in deploy
     assert "[AllowEmptyString()][string[]]$Arguments" in deploy
-    assert "Installed Atlaso Inventory Linux" in deploy
-    assert (
-        "install -d -o atlaso -g atlaso -m 0755 "
-        "/var/lib/atlaso/pxe/media /var/lib/atlaso/pxe/uploads"
-    ) in deploy
     restore_trap = deploy.index("trap restore_services_on_exit EXIT")
     stop_writers = deploy.index("systemctl stop atlaso-worker.service atlaso.service")
-    media_preflight = deploy.index("Atlaso media path must not be a symlink")
-    media_install = deploy.index(
-        "install -d -o atlaso -g atlaso -m 0755 "
-        "/var/lib/atlaso/pxe/media /var/lib/atlaso/pxe/uploads"
-    )
-    inventory_install = deploy.index(
-        'if [ -n "$inventory_linux_package" ]; then'
-    )
     disarm_trap = deploy.rindex("trap - EXIT")
     worker_active = deploy.index("systemctl is-active atlaso-worker.service")
     readiness_complete = deploy.index(
         'echo "Atlaso service restarted and loopback OpenAPI is reachable."'
     )
-    assert restore_trap < stop_writers < media_preflight < media_install < inventory_install
+    assert restore_trap < stop_writers
     assert worker_active < disarm_trap < readiness_complete
     assert 'if [ "$atlaso_was_active" = "true" ]; then' in deploy
     assert 'if [ "$worker_was_active" = "true" ]; then' in deploy
     assert "systemctl stop atlaso.service" in deploy
     assert "systemctl stop atlaso-worker.service" in deploy
     assert 'install -o root -g root -m 0644 "$atlaso_service_path" /etc/systemd/system/atlaso.service' in deploy
-    assert "target.parent.is_symlink()" in deploy
-    assert "target.is_symlink()" in deploy
-    assert "installed_artifact.is_symlink()" in deploy
-    assert "installed_manifest_path.is_symlink()" in deploy
-    assert 'target / name for name in ("bzImage", "rootfs.cpio.gz", "manifest.json")' in deploy
-    assert "owned_path.is_symlink()" in deploy
-    assert "follow_symlinks=False" in deploy
-    assert 'target.rglob("*")' not in deploy
     provision = Path("image/common/scripts/provision-atlaso.sh").read_text(
         encoding="utf-8"
     )
@@ -533,8 +516,6 @@ def test_inventory_linux_release_package_is_reproducible_and_deployable(tmp_path
     assert "CONFIG_FBSPLASH=y" in busybox_fragment
     assert "CONFIG_FBSET=y" in busybox_fragment
     assert "CONFIG_DRM_HYPERV=y" in kernel_fragment
-    assert 'installed_manifest.get("kind") != "atlaso-network-boot-media"' in deploy
-    assert 'installed_manifest.get("environment") != "inventory"' in deploy
 
 
 def test_windows_inventory_linux_build_selects_one_distribution_and_native_cache():
@@ -2877,6 +2858,13 @@ def test_vmware_normal_test_vm_development_ca_bridge_contract():
 def test_vmware_password_deploy_omits_absent_optional_native_arguments():
     """Verify skipped deployment assets do not rely on native empty-argument preservation."""
     script = Path("scripts/windows/vmware/deploy-wheel.ps1").read_text(encoding="utf-8")
+    for removed_inventory_contract in (
+        "SkipInventoryLinuxSync",
+        "--local-inventory-linux-package",
+        "--remote-inventory-linux-package",
+        "inventory_linux_package",
+    ):
+        assert removed_inventory_contract not in script
     password_deploy = script.split("function Invoke-PasswordBackedDeploy", 1)[1].split(
         "$resolvedRepoRoot = Resolve-RepoRoot", 1
     )[0]
@@ -2890,13 +2878,11 @@ def test_vmware_password_deploy_omits_absent_optional_native_arguments():
         "--local-boot-installer",
         "--local-boot-theme",
         "--local-boot-background",
-        "--local-inventory-linux-package",
         "--remote-helper",
         "--remote-console-manager",
         "--remote-boot-installer",
         "--remote-boot-theme",
         "--remote-boot-background",
-        "--remote-inventory-linux-package",
     ):
         assert option not in mandatory_arguments
         assert option in optional_arguments

@@ -101,9 +101,10 @@ This creates the deterministic, independently versioned
 `dist/inventory-linux/atlaso-inventory-linux-<version>.zip` package. Full
 appliance images leave Inventory Linux uninstalled; an administrator uses
 **Download latest** to retrieve and verify the signed release when needed.
-Supported VMware wheel deployment synchronizes a locally built package unless
-explicitly skipped. Ordinary Atlaso appliance releases do not contain Inventory
-Linux.
+VMware wheel deployment does not build, package, upload, validate, or install
+Inventory Linux. Administrators manage that boot media only through its
+independent signed release and installation workflow. Ordinary Atlaso appliance
+releases do not contain Inventory Linux.
 
 ## Publish a final Inventory Linux release
 
