@@ -151,8 +151,11 @@ def verify_paths_absent(paths: Sequence[Path]) -> None:
     """
 
     for path in paths:
-        if path.exists():
-            raise ValueError(f"Unsupported cloud-init runtime path remains: {path}")
+        try:
+            path.lstat()
+        except FileNotFoundError:
+            continue
+        raise ValueError(f"Unsupported cloud-init runtime path remains: {path}")
 
 
 def verify_photon_package_state(

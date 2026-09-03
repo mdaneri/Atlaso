@@ -277,6 +277,37 @@ def test_package_cleanup_rejects_cloud_init_runtime_path(
         )
 
 
+def test_package_cleanup_rejects_dangling_cloud_init_symlink(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Reject a dangling symlink at a forbidden cloud-init runtime path.
+
+    Args:
+        tmp_path: Temporary filesystem root for the simulated runtime path.
+        monkeypatch: Pytest helper used to simulate link-aware metadata.
+    """
+
+    verifier = load_verifier()
+    runtime_path = tmp_path / "usr/lib/cloud-init"
+    original_lstat = Path.lstat
+
+    def fake_lstat(path: Path):
+        """Report the forbidden path as a dangling link directory entry.
+
+        Args:
+            path: Filesystem path inspected by the verifier.
+        """
+
+        if path == runtime_path:
+            return original_lstat(tmp_path)
+        return original_lstat(path)
+
+    monkeypatch.setattr(Path, "lstat", fake_lstat)
+
+    with pytest.raises(ValueError, match="cloud-init runtime path remains"):
+        verifier.verify_paths_absent((runtime_path,))
+
+
 def test_package_cleanup_transaction_rejects_autoremoved_release_identity(
     tmp_path: Path,
 ) -> None:
