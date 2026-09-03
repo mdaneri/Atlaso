@@ -1663,6 +1663,24 @@ Environment access, the unique variable, or masking is unavailable. It never acc
 file, or the retired `ATLASO_DEPLOY_SSH_PASSWORD` fallback. Stable `op run` does not support the beta-only Environment
 flag and is not used by this workflow.
 
+The shared VMware credential bridge has one supported retained-state controller:
+`scripts/windows/vmware/reset-atlaso-onepassword-credential-bridge.ps1`; follow the
+[operator recovery guide](../operate/onepassword-credential-bridge-recovery.md). `-Inspect` and `-WhatIf` return only sanitized
+phase, boot, process, job, root, blocker, and action fields; they do not import or authorize the 1Password SDK or change
+state. An inactive exact schema-2 marker can be reset directly. A still-active exact child requires
+`-TerminateOwnedProcess`, which revalidates its PID/start identity and membership in the marker's exact
+`Local\Atlaso-OnePassword-<32-hex>` job, captures the active job members, terminates only that job, and proves the job,
+recorded child, and captured members inactive before root cleanup. The controller is never terminated by recovery.
+After the identity-matching root is absent and its parent directory metadata is flushed, recovery durably writes
+`root-absent`, then `retired`, removes the exact marker, and flushes the marker directory. Missing and already-terminal
+state is idempotent.
+
+Current-boot legacy markers and ambiguous process evidence require a Windows restart followed by the original VMware
+workflow. Reused identities are never terminated. Malformed markers, reparse points, root or marker replacement,
+inaccessible identities, and terminal markers paired with a present root remain preserved for maintainer
+investigation. Manual marker deletion or renaming is unsupported because it destroys the ownership proof needed to
+distinguish the retained credential process and root from unrelated state.
+
 The child uses the local Python runtime and Paramiko so SSH and sudo do not prompt interactively. Paramiko loads the
 user's SSH known-hosts database and rejects unknown host keys with a controlled pre-authentication error. When
 `-UseVmwareGuestInfoHostKey` accompanies an explicit normal test VM `-VmxPath`, the helper reads its host-derived

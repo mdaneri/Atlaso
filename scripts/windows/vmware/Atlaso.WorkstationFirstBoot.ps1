@@ -284,6 +284,14 @@ namespace Atlaso
             uint informationLength,
             IntPtr returnLength);
 
+        [DllImport("kernel32.dll", EntryPoint = "QueryInformationJobObject", SetLastError = true)]
+        private static extern bool QueryProcessIdsInJobObject(
+            IntPtr job,
+            int informationClass,
+            IntPtr information,
+            uint informationLength,
+            IntPtr returnLength);
+
         [DllImport("kernel32.dll", SetLastError = true)]
         private static extern bool IsProcessInJob(IntPtr process, IntPtr job, out bool result);
 
@@ -544,6 +552,53 @@ namespace Atlaso
                 System.Threading.Thread.Sleep(50);
             }
             throw new TimeoutException("A process-job descendant remained active after termination.");
+        }
+
+        public int[] GetActiveProcessIds()
+        {
+            const int JobObjectBasicProcessIdList = 3;
+            const int ErrorMoreData = 234;
+            int capacity = 16;
+            while (capacity <= 65536)
+            {
+                int byteLength = checked(8 + capacity * IntPtr.Size);
+                IntPtr buffer = Marshal.AllocHGlobal(byteLength);
+                try
+                {
+                    if (QueryProcessIdsInJobObject(
+                        handle,
+                        JobObjectBasicProcessIdList,
+                        buffer,
+                        (uint)byteLength,
+                        IntPtr.Zero))
+                    {
+                        int count = Marshal.ReadInt32(buffer, 4);
+                        int[] processIds = new int[count];
+                        for (int index = 0; index < count; index++)
+                        {
+                            long processId = Marshal.ReadIntPtr(buffer, 8 + index * IntPtr.Size).ToInt64();
+                            if (processId <= 0 || processId > Int32.MaxValue)
+                            {
+                                throw new InvalidOperationException("Windows process-job accounting returned an invalid process identifier.");
+                            }
+                            processIds[index] = (int)processId;
+                        }
+                        return processIds;
+                    }
+                    int error = Marshal.GetLastWin32Error();
+                    if (error != ErrorMoreData)
+                    {
+                        throw new Win32Exception(error, "Windows process-job membership could not be enumerated.");
+                    }
+                    int assigned = Marshal.ReadInt32(buffer, 0);
+                    capacity = Math.Max(capacity * 2, assigned);
+                }
+                finally
+                {
+                    Marshal.FreeHGlobal(buffer);
+                }
+            }
+            throw new InvalidOperationException("Windows process-job membership exceeded the supported recovery bound.");
         }
 
         public void CompleteAndWait(int timeoutMilliseconds)

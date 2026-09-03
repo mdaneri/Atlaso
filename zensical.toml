@@ -29,6 +29,7 @@ nav = [
     { "Network Objects" = "operate/network-objects.md" },
     { "Local appliance console" = "operate/appliance-console.md" },
     { "Appliance Update" = "operate/appliance-update.md" },
+    { "1Password bridge recovery" = "operate/onepassword-credential-bridge-recovery.md" },
     { "Backup and restore" = "operate/backup-restore.md" },
     { "Automation" = "operate/automation.md" },
     { "Use the API" = "operate/api.md" },

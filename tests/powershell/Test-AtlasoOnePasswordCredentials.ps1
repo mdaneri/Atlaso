@@ -480,7 +480,10 @@ try {
     $recoveryJob.Resume()
     & $credentialModule {
         param([string]$RepositoryRoot)
-        Invoke-AtlasoOnePasswordCredentialCleanupRecovery -RepositoryRoot $RepositoryRoot
+        Invoke-AtlasoOnePasswordCredentialBridgeReset `
+            -RepositoryRoot $RepositoryRoot `
+            -TerminateOwnedProcess `
+            -Confirm:$false | Out-Null
     } $repositoryRoot
     if ((Test-Path -LiteralPath $cleanupMarkerPath -PathType Leaf) -or
         (Test-Path -LiteralPath $recoveryBridgeRoot -PathType Container) -or
