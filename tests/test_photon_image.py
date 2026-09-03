@@ -2033,8 +2033,8 @@ def test_vmware_packer_requires_proven_builder_identity() -> None:
     assert "Refusing to reuse or clean a Photon builder output" in wrapper
     assert "Atlaso-Photon-Builder-VMware" not in wrapper
     assert "New-AtlasoVmwareBuilderIdentity" in release
-    assert "'-ReleaseVersion', $identity.Version" in release
-    assert "'-ReleaseSourceCommit', $identity.Commit" in release
+    assert "-ReleaseVersion $identity.Version `" in release
+    assert "-ReleaseSourceCommit $identity.Commit `" in release
     canonical = "Atlaso-PR-<number>-Photon-Builder-VMware"
     assert canonical in policy
     assert canonical in detailed_policy
