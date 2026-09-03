@@ -850,6 +850,60 @@ function Complete-AtlasoBoundedProcessTree {
 
 <#
 .SYNOPSIS
+Classify a failed 1Password dependency preparation without exposing child output.
+
+.PARAMETER ExitCode
+Nonzero exit code returned by the bounded dependency child.
+
+.PARAMETER StandardOutput
+Captured standard output inspected only through the bounded allowlist.
+
+.PARAMETER StandardError
+Captured standard error inspected only through the bounded allowlist.
+#>
+function Get-AtlasoOnePasswordDependencyFailure {
+    param(
+        [Parameter(Mandatory = $true)][int]$ExitCode,
+        [AllowEmptyString()][string]$StandardOutput = '',
+        [AllowEmptyString()][string]$StandardError = ''
+    )
+
+    $combined = "$StandardError`n$StandardOutput"
+    if ($combined.Length -gt 16384) {
+        $combined = $combined.Substring(0, 8192) + "`n" + $combined.Substring($combined.Length - 8192)
+    }
+    $sample = [regex]::Replace($combined, '[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]', ' ')
+    $category = 'unclassified'
+    $message = ''
+    if ($sample -match 'hash(?:es)? (?:do not|does not) match|hash mismatch|package hashes|expected sha256|THESE PACKAGES DO NOT MATCH THE HASHES') {
+        $category = 'hash_mismatch'
+        $message = 'Downloaded dependency bytes did not match the checked-in hash lock. Verify mirror synchronization and the exact checkout; no dependency was installed.'
+    }
+    elseif ($sample -match 'connectionreset|connection refused|connection aborted|connection timed out|read timed out|max retries exceeded|proxyerror|proxy error|sslerror|certificate verify failed|tls|temporary failure in name resolution|name or service not known|getaddrinfo failed|newconnectionerror|failed to establish a new connection|network is unreachable|unable to fetch|could not fetch url|httpsconnectionpool') {
+        $category = 'index_connectivity_tls_proxy'
+        $message = 'The selected package source could not be reached because of an index, connectivity, TLS, or proxy failure. Verify host trust and proxy access to the configured pair; Atlaso did not try a public fallback.'
+    }
+    elseif ($sample -match 'no matching distribution found|could not find a version that satisfies|not a supported wheel|unsupported wheel|requires-python|incompatible (?:platform|python)') {
+        $category = 'distribution_unavailable'
+        $message = 'The selected package source does not offer a required binary distribution for standard Windows x64 CPython 3.14. Verify mirror completeness and retained platform wheels.'
+    }
+    elseif ($sample -match 'no module named pip|unknown option|unrecognized arguments|invalid choice|usage:|syntaxerror|modulenotfounderror|failed to create process|cannot start process') {
+        $category = 'invocation_runtime'
+        $message = 'The isolated pip invocation or Python runtime failed before dependency preparation. Verify the selected standard Windows x64 CPython 3.14 runtime and its bundled pip installation.'
+    }
+    else {
+        $stdoutState = if ([string]::IsNullOrWhiteSpace($StandardOutput)) { 'absent' } else { 'present' }
+        $stderrState = if ([string]::IsNullOrWhiteSpace($StandardError)) { 'absent' } else { 'present' }
+        $message = "The dependency failure did not match an allowlisted diagnostic class (stdout $stdoutState; stderr $stderrState). Record only this sanitized message and exit code; do not share raw child streams."
+    }
+    return [pscustomobject][ordered]@{
+        Category = $category
+        Message  = "The hash-verified 1Password SDK wheel download failed with exit code $ExitCode. $message"
+    }
+}
+
+<#
+.SYNOPSIS
 Run one external process with a deadline and whole-tree termination.
 
 .PARAMETER FilePath
@@ -870,11 +924,10 @@ Optional child-only environment values applied without command-line exposure.
 .PARAMETER ClearEnvironmentVariablePrefixes
 Optional environment-variable prefixes removed from the child before overrides.
 
-.PARAMETER NonzeroExitMessageFactory
-Optional caller-owned failure classifier invoked inside the runner for a
-nonzero exit. It receives the exit code, captured standard output, and captured
-standard error, and must return one non-empty sanitized message. Captured
-streams never enter the success pipeline.
+.PARAMETER FailureClassification
+Fixed safe failure-classification policy. The onepassword_dependency policy
+inspects captured streams inside the runner and throws only its allowlisted
+sanitized message.
 
 .PARAMETER DiscardOutput
 Suppress successful standard output when the caller needs only completion.
@@ -888,7 +941,8 @@ function Invoke-AtlasoBoundedProcess {
         [Parameter(Mandatory = $true)][string]$Action,
         [hashtable]$EnvironmentVariables = @{},
         [string[]]$ClearEnvironmentVariablePrefixes = @(),
-        [scriptblock]$NonzeroExitMessageFactory,
+        [ValidateSet('generic', 'onepassword_dependency')]
+        [string]$FailureClassification = 'generic',
         [switch]$DiscardOutput
     )
 
@@ -972,17 +1026,14 @@ function Invoke-AtlasoBoundedProcess {
         $output = $streams.GetOutput()
         $errorOutput = $streams.GetError()
         if ($process.ExitCode -ne 0) {
-            if ($NonzeroExitMessageFactory) {
-                # Keep raw child streams inside the caller-owned classifier.
-                # Capturing its output before validation prevents accidental
-                # pipeline disclosure even when the runner itself is unassigned.
-                $failureMessages = @(& $NonzeroExitMessageFactory `
-                        $process.ExitCode $output $errorOutput)
-                if ($failureMessages.Count -ne 1 -or
-                    [string]::IsNullOrWhiteSpace([string]$failureMessages[0])) {
-                    throw "$Action failed with exit code $($process.ExitCode), and its failure classifier returned no single sanitized message."
-                }
-                throw [string]$failureMessages[0]
+            if ($FailureClassification -ceq 'onepassword_dependency') {
+                # Raw streams cross only this fixed dependency-specific
+                # classifier boundary and can never reach caller-provided code.
+                $failure = Get-AtlasoOnePasswordDependencyFailure `
+                    -ExitCode $process.ExitCode `
+                    -StandardOutput $output `
+                    -StandardError $errorOutput
+                throw $failure.Message
             }
             throw "$Action failed with exit code $($process.ExitCode)."
         }

@@ -79,8 +79,9 @@ def test_photon_package_source_pair_is_resolved_once_and_shared_safely() -> None
     assert '"extra-index-url = $PipGlobalIndexUrl"' in module
     assert '"find-links = $LocalWheelDirectory"' in module
     assert "'[download]'" in module
-    download_start = module.index("$dependencyFailureMessageFactory = {")
-    download_invocation = module.index("    Invoke-AtlasoBoundedProcess `", download_start)
+    runtime_start = module.index("function Initialize-AtlasoOnePasswordSdkRuntime")
+    download_start = module.index("    Invoke-AtlasoBoundedProcess `", runtime_start)
+    download_invocation = download_start
     download_end = module.index(
         "    Invoke-AtlasoBoundedProcess `", download_invocation + 1
     )
@@ -89,15 +90,20 @@ def test_photon_package_source_pair_is_resolved_once_and_shared_safely() -> None
     assert "PIP_CONFIG_FILE" in download
     assert "'--find-links'" not in download
     assert "-ClearEnvironmentVariablePrefixes @('PIP_')" in download
-    assert "-NonzeroExitMessageFactory $dependencyFailureMessageFactory" in download
+    assert "-FailureClassification onepassword_dependency" in download
     assert "-DiscardOutput" in download
 
-    assert "[scriptblock]$NonzeroExitMessageFactory" in runner
+    assert "[string]$FailureClassification = 'generic'" in runner
     assert "[switch]$DiscardOutput" in runner
-    assert "@(& $NonzeroExitMessageFactory" in runner
+    assert "$FailureClassification -ceq 'onepassword_dependency'" in runner
+    assert "Get-AtlasoOnePasswordDependencyFailure `" in runner
+    assert "NonzeroExitMessageFactory" not in runner
     assert "StandardOutput       = $output" not in runner
     assert "StandardError        = $errorOutput" not in runner
-    assert runner.index("if ($NonzeroExitMessageFactory) {") < runner.index(
+    classification_branch = runner.index(
+        "if ($FailureClassification -ceq 'onepassword_dependency') {"
+    )
+    assert classification_branch < runner.index(
         'throw "$Action failed with exit code $($process.ExitCode)."'
     )
 

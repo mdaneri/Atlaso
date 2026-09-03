@@ -87,20 +87,11 @@ try {
             -FilePath (Get-Process -Id $PID).Path `
             -ArgumentList @(
                 '-NoLogo', '-NoProfile', '-NonInteractive', '-Command',
-                '[Console]::Out.Write("stdout-fixture"); [Console]::Error.Write("stderr-fixture"); exit 2'
+                '[Console]::Out.Write("stdout-fixture"); [Console]::Error.Write("HTTPSConnectionPool token=hidden"); exit 2'
             ) `
             -TimeoutSeconds 30 `
             -Action 'Focused bounded classification test' `
-            -NonzeroExitMessageFactory {
-                param([int]$ExitCode, [string]$StandardOutput, [string]$StandardError)
-
-                if ($ExitCode -ne 2 -or
-                    $StandardOutput -cne 'stdout-fixture' -or
-                    $StandardError -cne 'stderr-fixture') {
-                    throw 'The bounded classifier did not receive the exact captured process result.'
-                }
-                'The bounded dependency failed with a sanitized fixture message.'
-            } `
+            -FailureClassification onepassword_dependency `
             -DiscardOutput)
 }
 catch {
@@ -108,9 +99,10 @@ catch {
 }
 if ($classifiedBoundedOutput.Count -ne 0 -or
     $null -eq $classifiedBoundedFailure -or
-    $classifiedBoundedFailure.Exception.Message -cne 'The bounded dependency failed with a sanitized fixture message.' -or
-    $classifiedBoundedFailure.Exception.Message -match 'stdout-fixture|stderr-fixture') {
-    throw 'The bounded failure classifier allowed captured child streams to escape the generic runner.'
+    $classifiedBoundedFailure.Exception.Message -notmatch 'exit code 2' -or
+    $classifiedBoundedFailure.Exception.Message -notmatch 'index, connectivity, TLS, or proxy failure' -or
+    $classifiedBoundedFailure.Exception.Message -match 'stdout-fixture|HTTPSConnectionPool|token=hidden') {
+    throw 'The fixed bounded failure classifier allowed captured child streams to escape the runner.'
 }
 $discardedBoundedOutput = @(Invoke-AtlasoBoundedProcess `
         -FilePath (Get-Process -Id $PID).Path `
@@ -153,13 +145,10 @@ $diagnosticFixtures = @(
     @{ Category = 'unclassified'; Output = ''; Error = '' }
 )
 foreach ($fixture in $diagnosticFixtures) {
-    $diagnostic = & $credentialModule {
-        param([int]$ExitCode, [string]$Output, [string]$ErrorOutput)
-        Get-AtlasoOnePasswordDependencyFailure `
-            -ExitCode $ExitCode `
-            -StandardOutput $Output `
-            -StandardError $ErrorOutput
-    } 2 $fixture.Output $fixture.Error
+    $diagnostic = Get-AtlasoOnePasswordDependencyFailure `
+        -ExitCode 2 `
+        -StandardOutput $fixture.Output `
+        -StandardError $fixture.Error
     if ($diagnostic.Category -cne $fixture.Category -or
         $diagnostic.Message -notmatch 'exit code 2' -or
         $diagnostic.Message -match 'token=hidden|fixture|HTTPSConnectionPool|[\x00-\x1f\x7f]') {

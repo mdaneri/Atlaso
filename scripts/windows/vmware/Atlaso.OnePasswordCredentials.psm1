@@ -120,60 +120,6 @@ function New-AtlasoOnePasswordPipConfiguration {
 
 <#
 .SYNOPSIS
-Classify a failed 1Password dependency preparation without exposing child output.
-
-.PARAMETER ExitCode
-Nonzero exit code returned by the bounded dependency child.
-
-.PARAMETER StandardOutput
-Captured standard output inspected only through the bounded allowlist.
-
-.PARAMETER StandardError
-Captured standard error inspected only through the bounded allowlist.
-#>
-function Get-AtlasoOnePasswordDependencyFailure {
-    param(
-        [Parameter(Mandatory = $true)][int]$ExitCode,
-        [AllowEmptyString()][string]$StandardOutput = '',
-        [AllowEmptyString()][string]$StandardError = ''
-    )
-
-    $combined = "$StandardError`n$StandardOutput"
-    if ($combined.Length -gt 16384) {
-        $combined = $combined.Substring(0, 8192) + "`n" + $combined.Substring($combined.Length - 8192)
-    }
-    $sample = [regex]::Replace($combined, '[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]', ' ')
-    $category = 'unclassified'
-    $message = ''
-    if ($sample -match 'hash(?:es)? (?:do not|does not) match|hash mismatch|package hashes|expected sha256|THESE PACKAGES DO NOT MATCH THE HASHES') {
-        $category = 'hash_mismatch'
-        $message = 'Downloaded dependency bytes did not match the checked-in hash lock. Verify mirror synchronization and the exact checkout; no dependency was installed.'
-    }
-    elseif ($sample -match 'connectionreset|connection refused|connection aborted|connection timed out|read timed out|max retries exceeded|proxyerror|proxy error|sslerror|certificate verify failed|tls|temporary failure in name resolution|name or service not known|getaddrinfo failed|newconnectionerror|failed to establish a new connection|network is unreachable|unable to fetch|could not fetch url|httpsconnectionpool') {
-        $category = 'index_connectivity_tls_proxy'
-        $message = 'The selected package source could not be reached because of an index, connectivity, TLS, or proxy failure. Verify host trust and proxy access to the configured pair; Atlaso did not try a public fallback.'
-    }
-    elseif ($sample -match 'no matching distribution found|could not find a version that satisfies|not a supported wheel|unsupported wheel|requires-python|incompatible (?:platform|python)') {
-        $category = 'distribution_unavailable'
-        $message = 'The selected package source does not offer a required binary distribution for standard Windows x64 CPython 3.14. Verify mirror completeness and retained platform wheels.'
-    }
-    elseif ($sample -match 'no module named pip|unknown option|unrecognized arguments|invalid choice|usage:|syntaxerror|modulenotfounderror|failed to create process|cannot start process') {
-        $category = 'invocation_runtime'
-        $message = 'The isolated pip invocation or Python runtime failed before dependency preparation. Verify the selected standard Windows x64 CPython 3.14 runtime and its bundled pip installation.'
-    }
-    else {
-        $stdoutState = if ([string]::IsNullOrWhiteSpace($StandardOutput)) { 'absent' } else { 'present' }
-        $stderrState = if ([string]::IsNullOrWhiteSpace($StandardError)) { 'absent' } else { 'present' }
-        $message = "The dependency failure did not match an allowlisted diagnostic class (stdout $stdoutState; stderr $stderrState). Record only this sanitized message and exit code; do not share raw child streams."
-    }
-    return [pscustomobject][ordered]@{
-        Category = $category
-        Message  = "The hash-verified 1Password SDK wheel download failed with exit code $ExitCode. $message"
-    }
-}
-
-<#
-.SYNOPSIS
 Resolve the exact Atlaso 1Password Environment ID without printing it.
 
 .PARAMETER EnvironmentId
@@ -869,14 +815,6 @@ function Initialize-AtlasoOnePasswordSdkRuntime {
 
     # Download is the only index-enabled step. Installation is deliberately
     # offline from the exact hash-verified wheel set, matching deploy-wheel.ps1.
-    $dependencyFailureMessageFactory = {
-        param([int]$ExitCode, [string]$StandardOutput, [string]$StandardError)
-
-        (Get-AtlasoOnePasswordDependencyFailure `
-                -ExitCode $ExitCode `
-                -StandardOutput $StandardOutput `
-                -StandardError $StandardError).Message
-    }
     Invoke-AtlasoBoundedProcess `
         -FilePath $pipRuntime.PythonCommand `
         -ArgumentList @(
@@ -895,7 +833,7 @@ function Initialize-AtlasoOnePasswordSdkRuntime {
         } `
         -TimeoutSeconds $TimeoutSeconds `
         -Action 'The hash-verified 1Password SDK wheel download' `
-        -NonzeroExitMessageFactory $dependencyFailureMessageFactory `
+        -FailureClassification onepassword_dependency `
         -DiscardOutput
     Invoke-AtlasoBoundedProcess `
         -FilePath $pipRuntime.PythonCommand `
