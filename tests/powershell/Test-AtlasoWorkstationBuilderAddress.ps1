@@ -99,6 +99,19 @@ exit 1
         SourceCommit               = $sourceCommit.Trim()
         SourceBranch               = $sourceBranch.Trim()
     }
+    $localCommon = $common.Clone()
+    $localCommon.StateRoot = Join-Path $testRoot 'local-state'
+    $localCommon.VmName = "Atlaso-Local-$($sourceCommit.Trim().Substring(0, 12))-Photon-Builder-VMware-run-02"
+    $localReservation = Enter-AtlasoVmwareBuilderAddressReservation `
+        @localCommon `
+        -OutputDirectory (Join-Path $testRoot 'local-output')
+    if ($localReservation.VmName -cne $localCommon.VmName) {
+        throw 'A canonical local/test builder identity did not retain its address reservation ownership.'
+    }
+    Exit-AtlasoVmwareBuilderAddressReservation `
+        -Reservation $localReservation `
+        -VmrunPath $vmrunPath `
+        -StateRoot $localCommon.StateRoot
     $first = Enter-AtlasoVmwareBuilderAddressReservation @common -OutputDirectory $outputOne
     $second = Enter-AtlasoVmwareBuilderAddressReservation @common -OutputDirectory $outputTwo
     if ($first.Address -cne '192.0.2.30' -or $second.Address -cne '192.0.2.31') {

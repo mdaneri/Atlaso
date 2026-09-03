@@ -193,6 +193,24 @@ manifest, provenance identity, cleanup target, and reported evidence. Missing, m
 generic, or differently owned identities fail before provider or target-output mutation. Protected release production
 uses a distinct deterministic version-and-commit builder identity, optionally extended by workflow run ID.
 
+For local development or image testing before a pull request exists, select the explicit local/test mode:
+
+```powershell
+pwsh -ExecutionPolicy Bypass `
+  -File scripts/windows/vmware/build-photon-image.ps1 `
+  -LocalBuilder `
+  -IsoUrl "<photon-iso-url-or-path>" `
+  -IsoChecksum "<packer-checksum>" `
+  -EnableRealSystemAdapters
+```
+
+The checkout must still be clean and on a branch. The wrapper derives
+`Atlaso-Local-<12-character-source-commit>-Photon-Builder-VMware[-<collision-safe-suffix>]`, and `-CollisionSuffix`
+distinguishes concurrent local builders at the same commit. Local builds retain the same immutable source snapshot,
+output claim, ownership manifest, cleanup, address reservation, and schema-v3 provenance controls. Provenance records
+`builder_identity.kind` as `local`; protected release construction and direct release publication reject that mode.
+Exactly one of `-PullRequestNumber`, `-LocalBuilder`, or `-ReleaseBuilder` is required.
+
 `-SshPassword` and `-BootstrapAdminPassword` accept only `SecureString` values and remain independently authoritative.
 When either is omitted, the wrapper verifies the exact Atlaso 1Password Environment selected by an explicit
 `-OnePasswordEnvironmentId` or by the checkout-local, Git-ignored
@@ -328,9 +346,10 @@ and the verified role, SCSI unit,
 virtual capacity, SHA-256 hash, and byte size for the VMX and both VMDKs. Test-VM cloning and OVF export require that
 exact role-bound provenance plus the matching builder identity, output leaf, VMX filename, and `displayName`, so an
 older unproven image or a later reversed/tampered/differently owned payload is rejected before cloning or export output
-replacement. A sibling `*.builder-identity.json` ownership manifest must prove the same repository, pull request,
-branch, canonical name, and suffix before checked replacement can advance it to a newer exact head. Retained reuse
-still requires the exact commit, and a legacy generic or differently owned builder is never adopted automatically.
+replacement. A sibling `*.builder-identity.json` ownership manifest binds every builder to its repository, branch,
+canonical name, suffix, and commit. Only a pull-request-owned manifest can advance to a newer exact head for the same
+owner; a new local commit derives a different canonical output identity. Retained reuse still requires the exact
+commit, and a legacy generic or differently owned builder is never adopted automatically.
 Moving `HEAD`, editing tracked files, or adding untracked inputs after snapshot admission through the supported wrapper
 cannot change the admitted build inputs; a dirty or ambiguous checkout fails before Workstation, ISO, Packer, or output
 mutation. The Windows producer remains a trusted build boundary: snapshot ACLs and the independent commit re-export

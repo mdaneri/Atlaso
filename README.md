@@ -44,7 +44,8 @@ cleanup retains its checked post-network-preflight boundary.
 Contributor-created VMware test and lifecycle VMs use pull-request-owned identities so validation artifacts remain
 traceable and cleanup cannot adopt a shared or provisional VM name. Task-owned Photon builders follow the same rule:
 their exact PR identity owns the Packer VM, output, reservation, provenance, and cleanup scope, while portable product
-and release names remain PR-independent. See the
+and release names remain PR-independent. Before a pull request exists, the explicit local/test builder mode derives the
+same guarded identity from the clean source commit; protected release paths reject local/test provenance. See the
 [VMware Workstation lifecycle testing guide](docs/reference/vmware-workstation-lifecycle-testing.md).
 
 Password-backed Windows build and test helpers require standard GIL-enabled x64 CPython 3.14. Until 1Password ships

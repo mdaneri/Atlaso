@@ -645,11 +645,11 @@ function Enter-AtlasoVmwareBuilderAddressReservation {
     .PARAMETER VmName
     Exact builder VM name.
     .PARAMETER RepositoryRoot
-    Exact task worktree root owning the build.
+    Exact checkout root owning the build.
     .PARAMETER SourceCommit
     Exact source commit admitted for the build.
     .PARAMETER SourceBranch
-    Exact task branch admitted for the build.
+    Exact task or local/test branch admitted for the build.
     #>
     param(
         [Parameter(Mandatory = $true)][string]$NetworkName,
@@ -762,9 +762,11 @@ function Enter-AtlasoVmwareBuilderAddressReservation {
     }
     $resolvedOutput = [System.IO.Path]::GetFullPath($OutputDirectory)
     $canonicalTaskName = '^Atlaso-PR-[1-9][0-9]*-Photon-Builder-VMware(?:-[a-z0-9]+(?:-[a-z0-9]+)*)?$'
+    $canonicalLocalName = '^Atlaso-Local-[0-9a-f]{12}-Photon-Builder-VMware(?:-[a-z0-9]+(?:-[a-z0-9]+)*)?$'
     $canonicalReleaseName = '^Atlaso-Release-v[0-9]+-[0-9]+-[0-9]+-[0-9a-f]{12}-Photon-Builder-VMware(?:-run-[1-9][0-9]*)?$'
-    if ($VmName -notmatch $canonicalTaskName -and $VmName -notmatch $canonicalReleaseName) {
-        throw 'The VMware builder reservation requires one canonical task- or release-owned builder identity.'
+    if ($VmName -notmatch $canonicalTaskName -and $VmName -notmatch $canonicalLocalName -and
+        $VmName -notmatch $canonicalReleaseName) {
+        throw 'The VMware builder reservation requires one canonical task-owned, local/test, or release-owned builder identity.'
     }
     $vmxPath = [System.IO.Path]::GetFullPath((Join-Path $resolvedOutput "$VmName.vmx"))
     $resolvedRepository = (Resolve-Path -LiteralPath $RepositoryRoot -ErrorAction Stop).Path
@@ -773,14 +775,14 @@ function Enter-AtlasoVmwareBuilderAddressReservation {
     }
     $sourceBranch = [string](& git -C $resolvedRepository branch --show-current)
     if ($LASTEXITCODE -ne 0) {
-        throw 'Could not bind the VMware builder reservation to an exact task branch.'
+        throw 'Could not bind the VMware builder reservation to an exact checkout branch.'
     }
     if ([string]::IsNullOrWhiteSpace($sourceBranch)) {
         if ($VmName -match $canonicalReleaseName) {
             $sourceBranch = '(detached-release)'
         }
         else {
-            throw 'Could not bind the task-owned VMware builder reservation to an exact pull-request branch.'
+            throw 'Could not bind the task or local/test VMware builder reservation to an exact checkout branch.'
         }
     }
     $owner = Get-Process -Id $PID -ErrorAction Stop

@@ -1,6 +1,6 @@
 <#
 .SYNOPSIS
-Validate canonical task and release VMware Photon builder identities.
+Validate canonical task, local/test, and release VMware Photon builder identities.
 .PARAMETER RepositoryRoot
 Atlaso repository root containing the identity module.
 .PARAMETER OutputDirectory
@@ -29,6 +29,41 @@ if ($task.Name -cne 'Atlaso-PR-653-Photon-Builder-VMware-run-02' -or
     $task.Kind -cne 'pull_request' -or $task.PullRequestNumber -ne 653) {
     throw 'Task-owned Photon builder identity was not canonical.'
 }
+
+$local = New-AtlasoVmwareBuilderIdentity `
+    -LocalBuilder `
+    -CollisionSuffix 'Run 02' `
+    -Repository 'mdaneri/Atlaso' `
+    -SourceBranch 'enhancement/703-local-photon-builder' `
+    -SourceCommit $commit
+if ($local.Name -cne 'Atlaso-Local-aaaaaaaaaaaa-Photon-Builder-VMware-run-02' -or
+    $local.Kind -cne 'local' -or $local.PullRequestNumber -ne 0 -or
+    $local.Repository -cne 'mdaneri/Atlaso' -or
+    $local.SourceBranch -cne 'enhancement/703-local-photon-builder' -or
+    $local.SourceCommit -cne $commit -or $local.CollisionSuffix -cne 'run-02' -or
+    $local.ReleaseVersion -cne '' -or $local.WorkflowRunId -ne 0) {
+    throw 'Local/test Photon builder identity was not canonical.'
+}
+$nextLocal = New-AtlasoVmwareBuilderIdentity `
+    -LocalBuilder `
+    -CollisionSuffix 'Run 02' `
+    -Repository 'mdaneri/Atlaso' `
+    -SourceBranch 'enhancement/703-local-photon-builder' `
+    -SourceCommit ('b' * 40)
+if ($nextLocal.Name -cne 'Atlaso-Local-bbbbbbbbbbbb-Photon-Builder-VMware-run-02' -or
+    $nextLocal.Name -ceq $local.Name) {
+    throw 'Local/test Photon builder identity did not change with the source commit.'
+}
+$localOutput = Join-Path (Join-Path $OutputDirectory 'local-parent') $local.Name
+$localManifest = Get-AtlasoVmwareBuilderIdentityManifestPath -OutputDirectory $localOutput
+Write-AtlasoVmwareBuilderIdentityManifest `
+    -Path $localManifest `
+    -OutputDirectory $localOutput `
+    -Identity $local
+$null = Assert-AtlasoVmwareBuilderIdentityManifest `
+    -Path $localManifest `
+    -OutputDirectory $localOutput `
+    -Identity $local
 
 foreach ($branchName in @('feature/foo+bar', 'feature/fix@two', 'feature/foo=bar')) {
     $validBranch = New-AtlasoVmwareBuilderIdentity `

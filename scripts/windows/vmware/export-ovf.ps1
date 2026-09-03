@@ -3,7 +3,7 @@
 Export a VMware VMX into a validated Atlaso OVF/OVA package.
 
 .PARAMETER SourceVmxPath
-Explicit path to the proven task- or release-owned source VMX used for ovftool export.
+Explicit path to the proven task-owned, local/test, or release-owned source VMX used for ovftool export.
 .PARAMETER OutputDirectory
 Directory to hold generated OVF artifacts.
 .PARAMETER Name
@@ -387,7 +387,9 @@ function Assert-AtlasoReleaseProvenance {
         throw "Release tag $Tag identifies $tagCommit, but the exported image checkout is $headCommit."
     }
 
-    $provenance = Assert-AtlasoVmwarePayloadProvenance -VmxPath $SourceVmxPath
+    $provenance = Assert-AtlasoVmwarePayloadProvenance `
+        -VmxPath $SourceVmxPath `
+        -RequireReleaseBuilder
     if ($provenance.source_commit -ne $headCommit -or
         [bool]$provenance.tracked_source_dirty) {
         throw 'VMware build provenance does not identify this exact clean release commit.'

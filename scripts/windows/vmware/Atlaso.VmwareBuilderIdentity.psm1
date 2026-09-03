@@ -3,10 +3,10 @@
 Build and verify canonical VMware Photon builder identities.
 
 .DESCRIPTION
-Defines the task-owned pull-request and protected release identity contracts
-used by the Photon/Packer VMware builder. The helpers keep the canonical name,
-output directory, VMX path, ownership manifest, and provenance bound together
-before provider or recursive filesystem mutation is permitted.
+Defines the task-owned pull-request, local/test, and protected release identity
+contracts used by the Photon/Packer VMware builder. The helpers keep the
+canonical name, output directory, VMX path, ownership manifest, and provenance
+bound together before provider or recursive filesystem mutation is permitted.
 #>
 
 Set-StrictMode -Version Latest
@@ -15,10 +15,13 @@ Import-Module (Join-Path $PSScriptRoot 'Atlaso.VmwareTestIdentity.psm1') -Force
 
 <#
 .SYNOPSIS
-Create one validated task-owned or release-owned Photon builder identity.
+Create one validated task-owned, local/test, or release-owned Photon builder identity.
 
 .PARAMETER PullRequestNumber
 Exact positive same-repository pull-request number for a task-owned build.
+
+.PARAMETER LocalBuilder
+Select a deterministic local/test builder identity that requires no pull request.
 
 .PARAMETER CollisionSuffix
 Optional collision-safe suffix for another builder owned by the same pull request.
@@ -46,17 +49,24 @@ function New-AtlasoVmwareBuilderIdentity {
         [ValidateRange(1, 2147483647)]
         [int]$PullRequestNumber,
 
+        [Parameter(Mandatory = $true, ParameterSetName = 'Local')]
+        [switch]$LocalBuilder,
+
         [Parameter(ParameterSetName = 'PullRequest')]
+        [Parameter(ParameterSetName = 'Local')]
         [string]$CollisionSuffix = '',
 
         [Parameter(Mandatory = $true, ParameterSetName = 'PullRequest')]
+        [Parameter(Mandatory = $true, ParameterSetName = 'Local')]
         [ValidatePattern('^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$')]
         [string]$Repository,
 
         [Parameter(Mandatory = $true, ParameterSetName = 'PullRequest')]
+        [Parameter(Mandatory = $true, ParameterSetName = 'Local')]
         [string]$SourceBranch,
 
         [Parameter(Mandatory = $true, ParameterSetName = 'PullRequest')]
+        [Parameter(Mandatory = $true, ParameterSetName = 'Local')]
         [Parameter(Mandatory = $true, ParameterSetName = 'Release')]
         [ValidatePattern('^[0-9a-f]{40}$')]
         [string]$SourceCommit,
@@ -70,10 +80,38 @@ function New-AtlasoVmwareBuilderIdentity {
         [long]$WorkflowRunId = 0
     )
 
-    if ($PSCmdlet.ParameterSetName -eq 'PullRequest') {
+    if ($PSCmdlet.ParameterSetName -in @('PullRequest', 'Local')) {
         $null = & git check-ref-format --branch $SourceBranch 2>$null
         if ($LASTEXITCODE -ne 0) {
             throw "SourceBranch is not one valid Git branch name: $SourceBranch"
+        }
+        if ($PSCmdlet.ParameterSetName -eq 'Local') {
+            $canonicalSuffix = ''
+            if (-not [string]::IsNullOrWhiteSpace($CollisionSuffix)) {
+                $canonicalSuffix = ($CollisionSuffix.Trim().ToLowerInvariant() -replace '[^a-z0-9]+', '-').Trim('-')
+                if ([string]::IsNullOrWhiteSpace($canonicalSuffix)) {
+                    throw 'CollisionSuffix must contain at least one ASCII letter or digit.'
+                }
+                if ($canonicalSuffix.Length -gt 32) {
+                    throw 'CollisionSuffix sanitizes to more than 32 characters. Choose a shorter value.'
+                }
+            }
+            $name = "Atlaso-Local-$($SourceCommit.Substring(0, 12))-Photon-Builder-VMware"
+            if ($canonicalSuffix) {
+                $name = "$name-$canonicalSuffix"
+            }
+            return [pscustomobject][ordered]@{
+                SchemaVersion     = 1
+                Kind              = 'local'
+                Name              = $name
+                Repository        = $Repository
+                PullRequestNumber = 0
+                SourceBranch      = $SourceBranch
+                SourceCommit      = $SourceCommit
+                CollisionSuffix   = $canonicalSuffix
+                ReleaseVersion    = ''
+                WorkflowRunId     = 0
+            }
         }
         # Reuse the #634 grammar for positive PR numbers and sanitized suffixes,
         # while retaining the operator-facing Photon builder purpose casing.
@@ -149,7 +187,7 @@ Acquire the exclusive process-lifetime claim for one canonical builder output.
 Canonical builder output directory protected by the claim.
 
 .PARAMETER Identity
-Validated task or release builder identity that owns the output scope.
+Validated task, local/test, or release builder identity that owns the output scope.
 
 .PARAMETER ClaimGeneration
 Optional invocation-specific generation written durably while the exclusive
@@ -290,11 +328,11 @@ Exact sibling manifest path.
 Canonical output directory owned by the identity.
 
 .PARAMETER Identity
-Validated task or release builder identity.
+Validated task, local/test, or release builder identity.
 
 .PARAMETER ReplaceSameOwner
 Replace an older source-commit binding only after the existing manifest proves
-the same canonical task or release owner.
+the same canonical pull-request owner.
 #>
 function Write-AtlasoVmwareBuilderIdentityManifest {
     [CmdletBinding()]

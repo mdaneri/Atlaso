@@ -64,9 +64,9 @@ Internal commit-derived source root consumed by the isolated child.
 .PARAMETER SourceCommit
 Internal exact source commit admitted before the isolated child starts.
 .PARAMETER SourceBranch
-Internal exact task branch admitted before the isolated child starts.
+Internal exact task or local/test branch admitted before the isolated child starts.
 .PARAMETER TaskRepositoryRoot
-Internal exact task worktree root recorded in the builder-address reservation.
+Internal exact checkout root recorded in the builder-address reservation.
 .PARAMETER SourceInventorySha256
 Internal deterministic SHA-256 inventory of the staged source tree.
 .PARAMETER SourceInventoryFileCount
@@ -75,8 +75,10 @@ Internal number of regular files in the staged source inventory.
 Builder virtual-machine name.
 .PARAMETER PullRequestNumber
 Exact positive same-repository pull request that owns a task build.
+.PARAMETER LocalBuilder
+Select a deterministic local/test builder identity that requires no pull request.
 .PARAMETER CollisionSuffix
-Optional collision-safe suffix for multiple builders owned by one pull request.
+Optional collision-safe suffix for concurrent pull-request or local/test builders.
 .PARAMETER ReleaseBuilder
 Select the protected version-and-commit-bound release builder identity.
 .PARAMETER ReleaseVersion
@@ -86,9 +88,9 @@ Exact source commit for a protected release builder.
 .PARAMETER ReleaseWorkflowRunId
 Optional workflow run ID that further distinguishes a release builder.
 .PARAMETER VerifiedRepository
-Internal exact same-repository identity proven by the parent process.
+Internal exact repository identity proven by the parent process.
 .PARAMETER VerifiedSourceBranch
-Internal exact pull-request head branch proven by the parent process.
+Internal exact task or local/test source branch proven by the parent process.
 .PARAMETER VerifiedSourceCommit
 Internal exact source commit proven by the parent process.
 .PARAMETER OutputDirectory
@@ -216,6 +218,7 @@ param(
     [string]$VmName = '',
     [ValidateRange(1, 2147483647)]
     [int]$PullRequestNumber = 0,
+    [switch]$LocalBuilder,
     [string]$CollisionSuffix = '',
     [switch]$ReleaseBuilder,
     [string]$ReleaseVersion = '',
@@ -372,6 +375,46 @@ function Resolve-AtlasoLocalTaskBuilderIdentity {
     }
     return New-AtlasoVmwareBuilderIdentity `
         -PullRequestNumber $PullRequestNumber `
+        -CollisionSuffix $CollisionSuffix `
+        -Repository $originMatch.Groups['repository'].Value `
+        -SourceBranch $branch `
+        -SourceCommit $commit
+}
+
+<#
+.SYNOPSIS
+Resolve one deterministic local/test builder identity from clean checkout evidence.
+.PARAMETER RepositoryRoot
+Atlaso checkout whose branch, repository, and commit identify the local build.
+.PARAMETER CollisionSuffix
+Optional sanitized suffix for another local builder at the same source commit.
+#>
+function Resolve-AtlasoLocalBuilderIdentity {
+    param(
+        [Parameter(Mandatory = $true)][string]$RepositoryRoot,
+        [string]$CollisionSuffix = ''
+    )
+
+    $branch = ([string](& git -C $RepositoryRoot branch --show-current)).Trim()
+    $commit = ([string](& git -C $RepositoryRoot rev-parse HEAD)).Trim()
+    $trackedChanges = @(& git -C $RepositoryRoot status --short --untracked-files=no)
+    if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($branch) -or
+        $commit -notmatch '^[0-9a-f]{40}$' -or $trackedChanges.Count -ne 0) {
+        throw 'A local/test Photon builder requires one clean checked-out branch and exact source commit.'
+    }
+    $originUrl = ([string](& git -C $RepositoryRoot remote get-url origin)).Trim()
+    if ($LASTEXITCODE -ne 0) {
+        throw 'Could not resolve the exact origin remote for the Photon builder checkout.'
+    }
+    $originMatch = [regex]::Match(
+        $originUrl,
+        '^(?:https://github\.com/|ssh://git@github\.com/|git@github\.com:)(?<repository>[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+?)(?:\.git)?$'
+    )
+    if (-not $originMatch.Success) {
+        throw 'The Photon builder origin must be one unambiguous GitHub repository URL.'
+    }
+    return New-AtlasoVmwareBuilderIdentity `
+        -LocalBuilder `
         -CollisionSuffix $CollisionSuffix `
         -Repository $originMatch.Groups['repository'].Value `
         -SourceBranch $branch `
@@ -783,15 +826,17 @@ function Resolve-AtlasoReleaseBuilderIdentity {
 
 <#
 .SYNOPSIS
-Revalidate the selected task or release builder identity at a mutation boundary.
+Revalidate the selected task, local/test, or release builder identity at a mutation boundary.
 .PARAMETER RepositoryRoot
 Atlaso checkout whose identity must remain current and clean.
 .PARAMETER ExpectedIdentity
-Previously verified task or release builder identity.
+Previously verified task, local/test, or release builder identity.
 .PARAMETER PullRequestNumber
 Exact same-repository pull request selected for a task build.
 .PARAMETER CollisionSuffix
-Optional collision-safe suffix for a task build.
+Optional collision-safe suffix for a task or local/test build.
+.PARAMETER LocalBuilder
+Select local/test identity revalidation instead of pull-request revalidation.
 .PARAMETER ReleaseBuilder
 Select release identity revalidation instead of pull-request revalidation.
 .PARAMETER ReleaseVersion
@@ -807,12 +852,27 @@ function Assert-AtlasoBuilderIdentityCurrent {
         [Parameter(Mandatory = $true)][object]$ExpectedIdentity,
         [int]$PullRequestNumber = 0,
         [string]$CollisionSuffix = '',
+        [switch]$LocalBuilder,
         [switch]$ReleaseBuilder,
         [string]$ReleaseVersion = '',
         [string]$ReleaseSourceCommit = '',
         [long]$ReleaseWorkflowRunId = 0
     )
 
+    if ($LocalBuilder) {
+        $currentIdentity = Resolve-AtlasoLocalBuilderIdentity `
+            -RepositoryRoot $RepositoryRoot `
+            -CollisionSuffix $CollisionSuffix
+        if ([string]$currentIdentity.Kind -cne [string]$ExpectedIdentity.Kind -or
+            [string]$currentIdentity.Name -cne [string]$ExpectedIdentity.Name -or
+            [string]$currentIdentity.Repository -cne [string]$ExpectedIdentity.Repository -or
+            [string]$currentIdentity.SourceBranch -cne [string]$ExpectedIdentity.SourceBranch -or
+            [string]$currentIdentity.SourceCommit -cne [string]$ExpectedIdentity.SourceCommit -or
+            [string]$currentIdentity.CollisionSuffix -cne [string]$ExpectedIdentity.CollisionSuffix) {
+            throw 'The local/test Photon builder identity changed before a destructive or provider boundary.'
+        }
+        return $currentIdentity
+    }
     if (-not $ReleaseBuilder) {
         $currentIdentity = Assert-AtlasoTaskBuilderIdentityCurrent `
             -RepositoryRoot $RepositoryRoot `
@@ -1216,7 +1276,7 @@ VMware Packer template directory.
 .PARAMETER OutputDirectory
 Optional explicit artifact directory.
 .PARAMETER VmName
-Canonical task- or release-owned builder name used as the default output leaf.
+Canonical task-owned, local/test, or release-owned builder name used as the default output leaf.
 #>
 function Resolve-WorkstationOutputDirectory {
     param(
@@ -1399,11 +1459,12 @@ function Invoke-AtlasoLegacyBuilderAddressHandoffRecovery {
 }
 
 $repoRoot = (Resolve-Path -LiteralPath (Join-Path $PSScriptRoot '..\..\..')).Path
-$identityModeInvalid = ($ReleaseBuilder -and $PullRequestNumber -gt 0) -or
-    (-not $ReleaseBuilder -and $PullRequestNumber -le 0) -or
+$selectedBuilderModeCount = [int]($PullRequestNumber -gt 0) +
+    [int][bool]$LocalBuilder + [int][bool]$ReleaseBuilder
+$identityModeInvalid = $selectedBuilderModeCount -ne 1 -or
     ($ReleaseBuilder -and -not [string]::IsNullOrWhiteSpace($CollisionSuffix))
 if ($identityModeInvalid) {
-    throw 'Select exactly one Photon builder identity: -PullRequestNumber for a task build, or -ReleaseBuilder with release version and commit inputs.'
+    throw 'Select exactly one Photon builder identity: -PullRequestNumber for a task build, -LocalBuilder for local/test, or -ReleaseBuilder with release version and commit inputs.'
 }
 if (-not $CredentialChild -and (
         -not [string]::IsNullOrWhiteSpace($VerifiedRepository) -or
@@ -1501,13 +1562,20 @@ if (-not $CredentialChild) {
         }
     }
     if (-not $ReleaseBuilder) {
-        # Legacy handoffs must be retired from bounded local identity before
-        # GitHub admission, because their original PR may now be closed or have
-        # advanced while the exact inactive reservation still needs recovery.
-        $localTaskBuilderIdentity = Resolve-AtlasoLocalTaskBuilderIdentity `
-            -RepositoryRoot $repoRoot `
-            -PullRequestNumber $PullRequestNumber `
-            -CollisionSuffix $CollisionSuffix
+        # Legacy handoffs must be retired from bounded checkout identity before
+        # current identity admission. A prior PR may now be closed or advanced,
+        # while a local/test build intentionally has no GitHub PR identity.
+        $localTaskBuilderIdentity = if ($LocalBuilder) {
+            Resolve-AtlasoLocalBuilderIdentity `
+                -RepositoryRoot $repoRoot `
+                -CollisionSuffix $CollisionSuffix
+        }
+        else {
+            Resolve-AtlasoLocalTaskBuilderIdentity `
+                -RepositoryRoot $repoRoot `
+                -PullRequestNumber $PullRequestNumber `
+                -CollisionSuffix $CollisionSuffix
+        }
         Invoke-AtlasoLegacyBuilderAddressHandoffRecovery `
             -StateRoot $legacyBuilderReservationStateRoot `
             -VmrunPath $VmrunPath `
@@ -1564,6 +1632,30 @@ $builderIdentity = if ($ReleaseBuilder) {
             -ReleaseVersion $ReleaseVersion `
             -ReleaseSourceCommit $ReleaseSourceCommit `
             -ReleaseWorkflowRunId $ReleaseWorkflowRunId
+    }
+}
+elseif ($LocalBuilder) {
+    if ($CredentialChild) {
+        $currentBranch = ([string](& git -C $identityRepositoryRoot branch --show-current)).Trim()
+        $currentHead = ([string](& git -C $identityRepositoryRoot rev-parse HEAD)).Trim()
+        $trackedChanges = @(& git -C $identityRepositoryRoot status --short --untracked-files=no)
+        if ($LASTEXITCODE -ne 0 -or
+            $VerifiedRepository -notmatch '^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$' -or
+            $VerifiedSourceBranch -cne $currentBranch -or
+            $VerifiedSourceCommit -cne $currentHead -or $trackedChanges.Count -ne 0) {
+            throw 'The isolated child local/test identity no longer matches the proven repository branch and commit.'
+        }
+        New-AtlasoVmwareBuilderIdentity `
+            -LocalBuilder `
+            -CollisionSuffix $CollisionSuffix `
+            -Repository $VerifiedRepository `
+            -SourceBranch $VerifiedSourceBranch `
+            -SourceCommit $VerifiedSourceCommit
+    }
+    else {
+        Resolve-AtlasoLocalBuilderIdentity `
+            -RepositoryRoot $repoRoot `
+            -CollisionSuffix $CollisionSuffix
     }
 }
 else {
@@ -1932,12 +2024,13 @@ else {
     $childPreparedIsoPath = Join-Path (Join-Path $childSensitiveBuildDirectory 'kickstart') $preparedIsoLeaf
     if (-not $Headless -and -not $ValidateOnly) {
         # Credential retrieval can outlive the initial identity proof. Refresh
-        # task or release state before the parent mutates VMware provider state.
+        # task, local/test, or release state before the parent mutates VMware provider state.
         $null = Assert-AtlasoBuilderIdentityCurrent `
             -RepositoryRoot $repoRoot `
             -ExpectedIdentity $builderIdentity `
             -PullRequestNumber $PullRequestNumber `
             -CollisionSuffix $CollisionSuffix `
+            -LocalBuilder:$LocalBuilder `
             -ReleaseBuilder:$ReleaseBuilder `
             -ReleaseVersion $ReleaseVersion `
             -ReleaseSourceCommit $ReleaseSourceCommit `
@@ -2259,6 +2352,7 @@ else {
                                 -ExpectedIdentity $builderIdentity `
                                 -PullRequestNumber $PullRequestNumber `
                                 -CollisionSuffix $CollisionSuffix `
+                                -LocalBuilder:$LocalBuilder `
                                 -ReleaseBuilder:$ReleaseBuilder `
                                 -ReleaseVersion $ReleaseVersion `
                                 -ReleaseSourceCommit $ReleaseSourceCommit `
@@ -2520,7 +2614,7 @@ Deterministic staged-source inventory SHA-256.
 .PARAMETER SourceInventoryFileCount
 Number of regular files in the staged-source inventory.
 .PARAMETER BuilderIdentity
-Validated task or release identity bound to the output and VMX.
+Validated task, local/test, or release identity bound to the output and VMX.
 #>
 function Write-AtlasoVmwareBuildProvenance {
     param(
@@ -2834,6 +2928,7 @@ if ($requiresBuilderReservation) {
         -ExpectedIdentity $builderIdentity `
         -PullRequestNumber $PullRequestNumber `
         -CollisionSuffix $CollisionSuffix `
+        -LocalBuilder:$LocalBuilder `
         -ReleaseBuilder:$ReleaseBuilder `
         -ReleaseVersion $ReleaseVersion `
         -ReleaseSourceCommit $ReleaseSourceCommit `
@@ -2911,6 +3006,7 @@ if (-not $ValidateOnly -and -not $PrepareIsoOnly) {
         -ExpectedIdentity $builderIdentity `
         -PullRequestNumber $PullRequestNumber `
         -CollisionSuffix $CollisionSuffix `
+        -LocalBuilder:$LocalBuilder `
         -ReleaseBuilder:$ReleaseBuilder `
         -ReleaseVersion $ReleaseVersion `
         -ReleaseSourceCommit $ReleaseSourceCommit `
@@ -3005,6 +3101,7 @@ if (-not $ValidateOnly -and -not $PrepareIsoOnly) {
             -ExpectedIdentity $builderIdentity `
             -PullRequestNumber $PullRequestNumber `
             -CollisionSuffix $CollisionSuffix `
+            -LocalBuilder:$LocalBuilder `
             -ReleaseBuilder:$ReleaseBuilder `
             -ReleaseVersion $ReleaseVersion `
             -ReleaseSourceCommit $ReleaseSourceCommit `
@@ -3028,6 +3125,7 @@ if (-not $ValidateOnly -and -not $PrepareIsoOnly) {
         -ExpectedIdentity $builderIdentity `
         -PullRequestNumber $PullRequestNumber `
         -CollisionSuffix $CollisionSuffix `
+        -LocalBuilder:$LocalBuilder `
         -ReleaseBuilder:$ReleaseBuilder `
         -ReleaseVersion $ReleaseVersion `
         -ReleaseSourceCommit $ReleaseSourceCommit `
@@ -3086,12 +3184,13 @@ catch {
 
 if (-not $ValidateOnly -and -not $PrepareIsoOnly) {
     # A Packer build can outlive every pre-launch ownership proof. Refresh the
-    # task or release identity before the completed artifact gains provenance.
+    # task, local/test, or release identity before the completed artifact gains provenance.
     $null = Assert-AtlasoBuilderIdentityCurrent `
         -RepositoryRoot $identityRepositoryRoot `
         -ExpectedIdentity $builderIdentity `
         -PullRequestNumber $PullRequestNumber `
         -CollisionSuffix $CollisionSuffix `
+        -LocalBuilder:$LocalBuilder `
         -ReleaseBuilder:$ReleaseBuilder `
         -ReleaseVersion $ReleaseVersion `
         -ReleaseSourceCommit $ReleaseSourceCommit `

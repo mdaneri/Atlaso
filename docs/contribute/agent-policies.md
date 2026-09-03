@@ -859,7 +859,12 @@ Terminal order:
   `Atlaso-PR-<number>-Photon-Builder-VMware[-<collision-safe-suffix>]`; the same exact value owns Packer `vm_name`,
   Workstation `displayName`, the output-directory leaf, VMX filename/path, temporary-address reservation, startup
   diagnostics, sibling ownership manifest, schema-v3 provenance, cleanup target, and reported evidence. A second
-  builder for one pull request uses a sanitized suffix without losing the PR segment. Protected release builders use
+  builder for one pull request uses a sanitized suffix without losing the PR segment. Explicit local/test builds use
+  `-LocalBuilder`, require one clean checked-out branch, and derive
+  `Atlaso-Local-<12-character-source-commit>-Photon-Builder-VMware[-<collision-safe-suffix>]` without querying a pull
+  request. They retain the same immutable snapshot, output claim, ownership manifest, cleanup, reservation, and
+  schema-v3 provenance controls; `builder_identity.kind` is `local`. Protected virtualization release and publication
+  paths require release-builder provenance and reject local/test artifacts. Protected release builders use
   the helper's deterministic version-and-commit identity, optionally extended by workflow run ID, only after the wrapper
   independently proves the exact reachable protected-main commit, immutable software-release tag, complete non-draft
   release asset set, and successful main push CI. Reject missing,
