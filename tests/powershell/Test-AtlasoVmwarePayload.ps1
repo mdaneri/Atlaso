@@ -84,13 +84,17 @@ Verified payload layout records.
 Provenance schema version.
 .PARAMETER ReverseRoles
 Swap recorded roles to test rejection.
+.PARAMETER BuilderKind
+Builder identity kind recorded in the fixture provenance.
 #>
 function Write-TestProvenance {
     param(
         [Parameter(Mandatory = $true)][string]$VmxPath,
         [Parameter(Mandatory = $true)]$Layout,
         [int]$SchemaVersion = 3,
-        [switch]$ReverseRoles
+        [switch]$ReverseRoles,
+        [ValidateSet('pull_request', 'local', 'release')]
+        [string]$BuilderKind = 'pull_request'
     )
 
     $vmx = Get-Item -LiteralPath $VmxPath
@@ -108,6 +112,50 @@ function Write-TestProvenance {
                 sha256         = (Get-FileHash -LiteralPath $_.File.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
             }
         })
+    $builderIdentity = switch ($BuilderKind) {
+        'local' {
+            [ordered]@{
+                schema_version      = 1
+                kind                = 'local'
+                name                = $vmx.BaseName
+                repository          = 'mdaneri/Atlaso'
+                pull_request_number = 0
+                source_branch       = 'enhancement/703-local-photon-builder'
+                source_commit       = ('a' * 40)
+                collision_suffix    = ''
+                release_version     = ''
+                workflow_run_id     = 0
+            }
+        }
+        'release' {
+            [ordered]@{
+                schema_version      = 1
+                kind                = 'release'
+                name                = $vmx.BaseName
+                repository          = ''
+                pull_request_number = 0
+                source_branch       = ''
+                source_commit       = ('a' * 40)
+                collision_suffix    = ''
+                release_version     = '0.9.250'
+                workflow_run_id     = 0
+            }
+        }
+        default {
+            [ordered]@{
+                schema_version      = 1
+                kind                = 'pull_request'
+                name                = $vmx.BaseName
+                repository          = 'mdaneri/Atlaso'
+                pull_request_number = 653
+                source_branch       = 'enhancement/653-pr-photon-builder-identity'
+                source_commit       = ('a' * 40)
+                collision_suffix    = ''
+                release_version     = ''
+                workflow_run_id     = 0
+            }
+        }
+    }
     $provenance = [ordered]@{
         schema_version       = $SchemaVersion
         source_commit        = ('a' * 40)
@@ -117,18 +165,7 @@ function Write-TestProvenance {
             file_count     = 42
             sha256         = ('b' * 64)
         }
-        builder_identity     = [ordered]@{
-            schema_version      = 1
-            kind                = 'pull_request'
-            name                = $vmx.BaseName
-            repository          = 'mdaneri/Atlaso'
-            pull_request_number = 653
-            source_branch       = 'enhancement/653-pr-photon-builder-identity'
-            source_commit       = ('a' * 40)
-            collision_suffix    = ''
-            release_version     = ''
-            workflow_run_id     = 0
-        }
+        builder_identity     = $builderIdentity
         vmx                  = [ordered]@{
             name   = $vmx.Name
             bytes  = $vmx.Length
@@ -167,6 +204,56 @@ $null = Assert-AtlasoVmwarePayloadProvenance `
     -ProvenancePath $provenancePath `
     -ExpectedSourceCommit ('a' * 40) `
     -RequireCleanSource
+
+$fixtureParent = Split-Path -Parent $OutputDirectory
+$localBuilderName = 'Atlaso-Local-aaaaaaaaaaaa-Photon-Builder-VMware'
+$localOutput = Join-Path $fixtureParent $localBuilderName
+New-Item -ItemType Directory -Force -Path $localOutput | Out-Null
+$localOsDisk = Join-Path $localOutput 'photon.vmdk'
+$localSystemDisk = Join-Path $localOutput 'atlaso-system.vmdk'
+$localVmxPath = Join-Path $localOutput "$localBuilderName.vmx"
+Write-TestVmdk -Path $localOsDisk -CapacityBytes 40GB
+Write-TestVmdk -Path $localSystemDisk -CapacityBytes 20GB
+Write-TestVmx -Path $localVmxPath -UnitZero 'photon.vmdk' -UnitOne 'atlaso-system.vmdk'
+$localLayout = @(Get-AtlasoVmwarePayloadLayout -VmxPath $localVmxPath -RequireExactlyTwoVmdks)
+$localProvenancePath = Write-TestProvenance `
+    -VmxPath $localVmxPath `
+    -Layout $localLayout `
+    -BuilderKind local
+$null = Assert-AtlasoVmwarePayloadProvenance `
+    -VmxPath $localVmxPath `
+    -ProvenancePath $localProvenancePath
+try {
+    $null = Assert-AtlasoVmwarePayloadProvenance `
+        -VmxPath $localVmxPath `
+        -ProvenancePath $localProvenancePath `
+        -RequireReleaseBuilder
+    throw 'Local/test VMware provenance was accepted for protected release work.'
+}
+catch {
+    if ($_.Exception.Message -notlike '*requires release-builder provenance*') {
+        throw
+    }
+}
+
+$releaseBuilderName = 'Atlaso-Release-v0-9-250-aaaaaaaaaaaa-Photon-Builder-VMware'
+$releaseOutput = Join-Path $fixtureParent $releaseBuilderName
+New-Item -ItemType Directory -Force -Path $releaseOutput | Out-Null
+$releaseOsDisk = Join-Path $releaseOutput 'photon.vmdk'
+$releaseSystemDisk = Join-Path $releaseOutput 'atlaso-system.vmdk'
+$releaseVmxPath = Join-Path $releaseOutput "$releaseBuilderName.vmx"
+Write-TestVmdk -Path $releaseOsDisk -CapacityBytes 40GB
+Write-TestVmdk -Path $releaseSystemDisk -CapacityBytes 20GB
+Write-TestVmx -Path $releaseVmxPath -UnitZero 'photon.vmdk' -UnitOne 'atlaso-system.vmdk'
+$releaseLayout = @(Get-AtlasoVmwarePayloadLayout -VmxPath $releaseVmxPath -RequireExactlyTwoVmdks)
+$releaseProvenancePath = Write-TestProvenance `
+    -VmxPath $releaseVmxPath `
+    -Layout $releaseLayout `
+    -BuilderKind release
+$null = Assert-AtlasoVmwarePayloadProvenance `
+    -VmxPath $releaseVmxPath `
+    -ProvenancePath $releaseProvenancePath `
+    -RequireReleaseBuilder
 try {
     $null = Assert-AtlasoVmwarePayloadProvenance `
         -VmxPath $vmxPath `

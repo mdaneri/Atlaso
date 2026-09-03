@@ -702,7 +702,8 @@ function Invoke-AtlasoVirtualizationPrerelease {
             $existingProvenance = Assert-AtlasoVmwarePayloadProvenance `
                 -VmxPath $vmx `
                 -ExpectedSourceCommit $identity.Commit `
-                -RequireCleanSource
+                -RequireCleanSource `
+                -RequireReleaseBuilder
         }
         catch {
             # Re-entering the wrapper is required so it can recover any durable
@@ -729,7 +730,8 @@ function Invoke-AtlasoVirtualizationPrerelease {
         $existingProvenance = Assert-AtlasoVmwarePayloadProvenance `
             -VmxPath $vmx `
             -ExpectedSourceCommit $identity.Commit `
-            -RequireCleanSource
+            -RequireCleanSource `
+            -RequireReleaseBuilder
     }
     $wheel = Join-Path $sourceInput ([string]$source.application_wheel -replace '/', '\')
     $sourceMetadataSha256 = (Get-FileHash -LiteralPath $sourceMetadata -Algorithm SHA256).Hash.ToLowerInvariant()

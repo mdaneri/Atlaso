@@ -11,14 +11,14 @@ packer {
 
 variable "vm_name" {
   type        = string
-  description = "Canonical task- or release-owned Photon builder identity supplied by the supported wrapper."
+  description = "Canonical task-owned, local/test, or release-owned Photon builder identity supplied by the supported wrapper."
 
   validation {
     condition = can(regex(
-      "^Atlaso-(PR-[1-9][0-9]*-Photon-Builder-VMware(-[a-z0-9]+(-[a-z0-9]+)*)?|Release-v[0-9]+-[0-9]+-[0-9]+-[0-9a-f]{12}-Photon-Builder-VMware(-run-[1-9][0-9]*)?)$",
+      "^Atlaso-(PR-[1-9][0-9]*-Photon-Builder-VMware(-[a-z0-9]+(-[a-z0-9]+)*)?|Local-[0-9a-f]{12}-Photon-Builder-VMware(-[a-z0-9]+(-[a-z0-9]+)*)?|Release-v[0-9]+-[0-9]+-[0-9]+-[0-9a-f]{12}-Photon-Builder-VMware(-run-[1-9][0-9]*)?)$",
       var.vm_name
     ))
-    error_message = "Vm_name must be one canonical PR-owned or release-owned Atlaso Photon builder identity."
+    error_message = "Vm_name must be one canonical PR-owned, local/test, or release-owned Atlaso Photon builder identity."
   }
 }
 
@@ -28,10 +28,10 @@ variable "output_directory" {
 
   validation {
     condition = can(regex(
-      "/Atlaso-(PR-[1-9][0-9]*-Photon-Builder-VMware(-[a-z0-9]+(-[a-z0-9]+)*)?|Release-v[0-9]+-[0-9]+-[0-9]+-[0-9a-f]{12}-Photon-Builder-VMware(-run-[1-9][0-9]*)?)/?$",
+      "/Atlaso-(PR-[1-9][0-9]*-Photon-Builder-VMware(-[a-z0-9]+(-[a-z0-9]+)*)?|Local-[0-9a-f]{12}-Photon-Builder-VMware(-[a-z0-9]+(-[a-z0-9]+)*)?|Release-v[0-9]+-[0-9]+-[0-9]+-[0-9a-f]{12}-Photon-Builder-VMware(-run-[1-9][0-9]*)?)/?$",
       replace(var.output_directory, "\\", "/")
     ))
-    error_message = "Output_directory must end with one canonical PR-owned or release-owned Atlaso Photon builder identity."
+    error_message = "Output_directory must end with one canonical PR-owned, local/test, or release-owned Atlaso Photon builder identity."
   }
 }
 

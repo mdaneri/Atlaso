@@ -798,7 +798,12 @@ The following cross-cutting boundaries always apply:
   `Atlaso-PR-<number>-Photon-Builder-VMware[-<collision-safe-suffix>]` identity through the shared builder helper and
   keep it identical across Packer `vm_name`, Workstation `displayName`, output directory, VMX filename/path, address
   reservation, startup diagnostics, ownership manifest, provenance, cleanup scope, and reported evidence. Multiple
-  builders for one pull request retain the PR segment and use sanitized suffixes. Protected release builders instead
+  builders for one pull request retain the PR segment and use sanitized suffixes. Explicit local/test builds use
+  `-LocalBuilder` without a pull request and derive
+  `Atlaso-Local-<12-character-source-commit>-Photon-Builder-VMware[-<collision-safe-suffix>]` from one clean checked-out
+  branch. They retain the same snapshot, output, ownership, cleanup, reservation, and schema-v3 provenance controls;
+  provenance records `builder_identity.kind` as `local`. Protected release and publication paths must reject local/test
+  provenance. Protected release builders instead
   use the deterministic version-and-commit identity produced by that helper, optionally extended by workflow run ID,
   only after independently proving the exact reachable protected-main commit, immutable software-release tag, complete
   non-draft release asset set, and successful main push CI.

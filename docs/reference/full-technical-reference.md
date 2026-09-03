@@ -1413,7 +1413,12 @@ The pull request must be open in the same repository and its head branch and com
 wrapper derives `Atlaso-PR-<number>-Photon-Builder-VMware[-<collision-safe-suffix>]` and binds that exact name to the
 Packer VM, output-directory leaf, VMX, temporary address reservation, diagnostics, sibling ownership manifest,
 schema-v3 provenance, cleanup scope, and reported evidence. Use `-CollisionSuffix` for another builder owned by the
-same pull request. Protected release production uses a separate deterministic version-and-commit builder identity.
+same pull request. Local development before a pull request uses the mutually exclusive `-LocalBuilder` mode. It
+derives `Atlaso-Local-<12-character-source-commit>-Photon-Builder-VMware[-<collision-safe-suffix>]` from the clean
+checked-out branch without querying GitHub, retains the same snapshot and safety controls, and records
+`builder_identity.kind` as `local` in schema-v3 provenance. Protected release construction and publication reject that
+local/test provenance. Exactly one of `-PullRequestNumber`, `-LocalBuilder`, or `-ReleaseBuilder` is required.
+Protected release production uses a separate deterministic version-and-commit builder identity.
 The wrapper accepts that release identity only after independently proving the exact commit is reachable from protected
 `main`, the immutable `v<version>` software-release tag identifies it, the complete non-draft release asset set exists,
 and exact-commit main push CI succeeded. Neither identity changes the canonical exported product or release asset names.
@@ -1422,8 +1427,9 @@ The exporter rewrites both the OVF
 regenerating the manifest or packaging the OVA; transient PR and source-commit identities remain build-time provenance.
 
 Before a forced Workstation rebuild deletes the output directory, the wrapper first requires the sibling manifest to
-prove the same repository, pull request, branch, canonical name, and suffix. After checked cleanup, it advances the
-manifest to the newly verified exact head; retained reuse still requires the exact commit. It never adopts a legacy,
+prove the same repository, identity kind, branch, canonical name, suffix, and commit. After checked cleanup, it may
+advance only a pull-request-owned manifest to the newly verified exact head; a new local commit receives a different
+canonical output identity. Retained reuse still requires the exact commit. It never adopts a legacy,
 differently owned, or concurrently active output: an exclusive sibling-file claim spans ownership admission, checked
 cleanup, Packer, and provenance publication for the canonical output. Each claimant durably replaces the claim's
 invocation generation; timeout cleanup reacquires the claim and requires the terminated child's exact generation, so

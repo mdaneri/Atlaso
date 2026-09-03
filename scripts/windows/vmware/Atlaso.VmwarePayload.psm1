@@ -138,13 +138,16 @@ Optional explicit provenance document path.
 Optional exact source commit required by a release caller.
 .PARAMETER RequireCleanSource
 Reject provenance recorded from a dirty tracked source tree.
+.PARAMETER RequireReleaseBuilder
+Reject provenance that was not produced by a protected release builder.
 #>
 function Assert-AtlasoVmwarePayloadProvenance {
     param(
         [Parameter(Mandatory = $true)][string]$VmxPath,
         [string]$ProvenancePath = '',
         [string]$ExpectedSourceCommit = '',
-        [switch]$RequireCleanSource
+        [switch]$RequireCleanSource,
+        [switch]$RequireReleaseBuilder
     )
 
     $vmx = Get-Item -LiteralPath $VmxPath -ErrorAction Stop
@@ -211,6 +214,23 @@ function Assert-AtlasoVmwarePayloadProvenance {
             throw 'VMware task-builder provenance contains an invalid pull-request ownership identity.'
         }
     }
+    elseif ([string]$identity.kind -ceq 'local') {
+        $null = & git check-ref-format --branch ([string]$identity.source_branch) 2>$null
+        $sourceBranchIsValid = $LASTEXITCODE -eq 0
+        $expectedLocalName = "Atlaso-Local-$(([string]$identity.source_commit).Substring(0, 12))-Photon-Builder-VMware"
+        if (-not [string]::IsNullOrWhiteSpace([string]$identity.collision_suffix)) {
+            $expectedLocalName = "$expectedLocalName-$([string]$identity.collision_suffix)"
+        }
+        if ([int]$identity.pull_request_number -ne 0 -or
+            [string]$identity.repository -notmatch '^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$' -or
+            -not $sourceBranchIsValid -or
+            [string]$identity.collision_suffix -notmatch '^(?:|[a-z0-9]+(?:-[a-z0-9]+)*)$' -or
+            [string]$identity.name -cne $expectedLocalName -or
+            -not [string]::IsNullOrWhiteSpace([string]$identity.release_version) -or
+            [long]$identity.workflow_run_id -ne 0) {
+            throw 'VMware local-builder provenance contains an invalid local/test ownership identity.'
+        }
+    }
     elseif ([string]$identity.kind -ceq 'release') {
         $version = [string]$identity.release_version
         $expectedReleaseName = if ($version -match '^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$') {
@@ -234,6 +254,9 @@ function Assert-AtlasoVmwarePayloadProvenance {
     }
     else {
         throw 'VMware build provenance contains an unsupported builder identity kind.'
+    }
+    if ($RequireReleaseBuilder -and [string]$identity.kind -cne 'release') {
+        throw 'Protected virtualization release work requires release-builder provenance.'
     }
     if ($provenance.vmx.name -ne $vmx.Name -or
         [long]$provenance.vmx.bytes -ne $vmx.Length -or

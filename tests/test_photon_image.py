@@ -1819,8 +1819,8 @@ def test_vmware_photon_build_state_stays_under_task_repository() -> None:
     assert "$legacyCredentialParentRoot" in wrapper
 
 
-def test_vmware_packer_requires_proven_task_or_release_builder_identity() -> None:
-    """Packer, wrapper, release, cleanup, and docs share one builder identity."""
+def test_vmware_packer_requires_proven_builder_identity() -> None:
+    """Packer, wrapper, release, cleanup, and docs share all builder modes."""
     template = Path("image/vmware-workstation/atlaso-photon.pkr.hcl").read_text(
         encoding="utf-8"
     )
@@ -1830,6 +1830,15 @@ def test_vmware_packer_requires_proven_task_or_release_builder_identity() -> Non
     identity_module = Path(
         "scripts/windows/vmware/Atlaso.VmwareBuilderIdentity.psm1"
     ).read_text(encoding="utf-8")
+    address_module = Path(
+        "scripts/windows/vmware/Atlaso.WorkstationBuilderAddress.psm1"
+    ).read_text(encoding="utf-8")
+    payload_module = Path(
+        "scripts/windows/vmware/Atlaso.VmwarePayload.psm1"
+    ).read_text(encoding="utf-8")
+    export = Path("scripts/windows/vmware/export-ovf.ps1").read_text(
+        encoding="utf-8"
+    )
     release = Path(
         "scripts/windows/virtualization/Atlaso.VirtualizationRelease.psm1"
     ).read_text(encoding="utf-8")
@@ -1841,12 +1850,17 @@ def test_vmware_packer_requires_proven_task_or_release_builder_identity() -> Non
     assert 'variable "vm_name" {' in template
     assert 'default = "Atlaso-Photon-Builder-VMware"' not in template
     assert "PR-[1-9][0-9]*-Photon-Builder-VMware" in template
+    assert "Local-[0-9a-f]{12}-Photon-Builder-VMware" in template
     assert "Release-v[0-9]+-[0-9]+-[0-9]+-[0-9a-f]{12}" in template
     assert 'replace(var.output_directory, "\\\\", "/")' in template
     assert "/Atlaso-(PR-[1-9][0-9]*-Photon-Builder-VMware" in template
     assert "basename(replace(var.output_directory" in template
     assert "== var.vm_name" in template
     assert "Resolve-AtlasoTaskBuilderIdentity" in wrapper
+    assert "Resolve-AtlasoLocalBuilderIdentity" in wrapper
+    assert "elseif ($LocalBuilder)" in wrapper
+    assert "$selectedBuilderModeCount" in wrapper
+    assert "-LocalBuilder for local/test" in wrapper
     assert "repos/$repository/pulls/$PullRequestNumber" in wrapper
     assert "head_repository" in wrapper
     assert "head_branch" in wrapper
@@ -1854,7 +1868,15 @@ def test_vmware_packer_requires_proven_task_or_release_builder_identity() -> Non
     assert "[string]$pull.head_repository -ine $repository" in wrapper
     assert "-Repository $canonicalRepository" in wrapper
     assert "status --short --untracked-files=no" in wrapper
+    local_identity_resolver = wrapper.split(
+        "function Resolve-AtlasoLocalBuilderIdentity", 1
+    )[1].split("function ", 1)[0]
+    assert "status --short)" in local_identity_resolver
+    assert "--untracked-files=no" not in local_identity_resolver
     assert "git check-ref-format --branch" in identity_module
+    assert "Kind              = 'local'" in identity_module
+    assert "Atlaso-Local-$($SourceCommit.Substring(0, 12))-Photon-Builder-VMware" in identity_module
+    assert "$canonicalLocalName" in address_module
     assert "Get-AtlasoVmwareBuilderIdentityManifestPath" in wrapper
     assert "Assert-AtlasoVmwareBuilderIdentityManifest" in wrapper
     assert "Assert-AtlasoVmwareBuilderVmx" in wrapper
@@ -1896,6 +1918,10 @@ def test_vmware_packer_requires_proven_task_or_release_builder_identity() -> Non
     assert "$identityRepositoryRoot = if ($CredentialChild)" in wrapper
     assert wrapper.count("-RepositoryRoot $identityRepositoryRoot `") == 5
     assert wrapper.count("-ReleaseBuilder:$ReleaseBuilder `") >= 6
+    assert wrapper.count("-LocalBuilder:$LocalBuilder `") == 7
+    assert "RequireReleaseBuilder" in payload_module
+    assert export.count("-RequireReleaseBuilder") == 1
+    assert release.count("-RequireReleaseBuilder") == 2
     build_invocation = wrapper.index("Invoke-AtlasoPhotonImageBuild `")
     assert (
         "-OutputDirectory $workstationOutputDirectory `"
@@ -3483,14 +3509,14 @@ def test_vmware_gui_builder_repairs_stale_rows_before_ui_startup() -> None:
     assert "ClaimGeneration = $OutputClaimGeneration" in wrapper
 
 
-def test_photon_wrapper_recovers_legacy_handoffs_before_pr_admission() -> None:
-    """Local legacy recovery precedes the open-PR GitHub identity gate."""
+def test_photon_wrapper_recovers_legacy_handoffs_before_identity_admission() -> None:
+    """Legacy recovery uses the selected local checkout identity before admission."""
     wrapper = Path("scripts/windows/vmware/build-photon-image.ps1").read_text(
         encoding="utf-8"
     )
     runtime = wrapper.index("$repoRoot =")
     local_identity = wrapper.index(
-        "$localTaskBuilderIdentity = Resolve-AtlasoLocalTaskBuilderIdentity", runtime
+        "$localTaskBuilderIdentity = if ($LocalBuilder)", runtime
     )
     legacy_recovery = wrapper.index(
         "Invoke-AtlasoLegacyBuilderAddressHandoffRecovery", local_identity
@@ -3500,6 +3526,9 @@ def test_photon_wrapper_recovers_legacy_handoffs_before_pr_admission() -> None:
     )
 
     assert local_identity < legacy_recovery < github_admission
+    recovery_selection = wrapper[local_identity:legacy_recovery]
+    assert "Resolve-AtlasoLocalBuilderIdentity `" in recovery_selection
+    assert "Resolve-AtlasoLocalTaskBuilderIdentity `" in recovery_selection
     recovery_function = wrapper.index(
         "function Invoke-AtlasoLegacyBuilderAddressHandoffRecovery"
     )

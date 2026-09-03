@@ -164,6 +164,13 @@ that identity aligned across the Packer VM, output/VMX, builder-address reservat
 schema-v3 provenance, cleanup, and evidence. Use `-CollisionSuffix` for another builder owned by the same pull request;
 never reuse the legacy generic builder for lifecycle acceptance.
 
+Before a pull request exists, developers may build the source image with `-LocalBuilder` instead of
+`-PullRequestNumber`. The clean checked-out commit derives
+`Atlaso-Local-<12-character-source-commit>-Photon-Builder-VMware[-<collision-safe-suffix>]`, while all snapshot,
+ownership, cleanup, reservation, and provenance checks remain active. This is a local/test artifact: protected release
+paths reject its `builder_identity.kind` of `local`, and lifecycle acceptance evidence must still come from the
+PR-numbered builder and test VMs after the pull request exists.
+
 For a previously downloaded ISO, pass either its local filesystem path or an empty-authority `file:///` URI. The
 wrapper verifies that exact file against `-IsoChecksum` before any remastering and does not route it through the HTTP
 download path. Host-authority file URIs are rejected; use an explicitly mounted local path instead.
