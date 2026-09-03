@@ -897,8 +897,11 @@ Terminal order:
   suffixes while retaining the exact `PR-<number>` segment. Reuse, redeploy, and cleanup must rederive the expected
   identity and fail before mutation unless the exact directory, VMX path, `displayName`, and lifecycle ownership
   manifest agree. Never rename, adopt, reuse, redeploy, or remove a generic, issue-only, or differently owned VM
-  automatically. No provisional shared/live VM workflow is supported; create acceptance VMs only after the pull request
-  exists and collect acceptance evidence only from the PR-numbered VM.
+  automatically. Before a pull request exists, the normal test-VM wrapper may select `-LocalBuilder` and derive
+  `Atlaso-Local-<12-character-source-commit>-<purpose>[-<collision-safe-suffix>]` from one clean checked-out branch.
+  It retains the same exact directory, VMX, `displayName`, redeploy, and cleanup checks. This local VM is exploratory:
+  lifecycle labs remain PR-only, and acceptance evidence must be collected from the PR-numbered VM after the pull
+  request exists.
 - Use the running VMware Photon VM for real functionality checks after appliance-impacting changes: validate focused
   local tests first, then install and test on the VM when behavior depends on Photon NICs, systemd, nftables, dnsmasq,
   resolver state, or `/ui/management/appliance-apply`.

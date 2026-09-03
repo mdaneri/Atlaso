@@ -1538,6 +1538,12 @@ pwsh -ExecutionPolicy Bypass `
   -ResetDataDisks
 ```
 
+For exploratory testing before a pull request exists, use `-LocalBuilder` instead of `-PullRequestNumber`. The wrapper
+requires a clean checked-out branch and derives
+`Atlaso-Local-<12-character-source-commit>-test-vm[-<collision-safe-suffix>]`. The local identity retains the same exact
+directory, VMX, `displayName`, redeploy, and cleanup checks. Exactly one identity mode is required. Lifecycle labs and
+acceptance evidence remain PR-numbered.
+
 The normal wrapper resolves the current Windows user's existing `.ssh/id_ed25519.pub` before any cleanup or VM
 creation, validates it as one canonical Ed25519 public key, and provisions it for the bootstrap `admin` account with a
 separate test-only passwordless-sudo rule. Use `-SshPublicKeyPath <path>` for another existing Ed25519 public key or
