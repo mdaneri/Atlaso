@@ -76,6 +76,9 @@ def test_photon_package_source_pair_is_resolved_once_and_shared_safely() -> None
     assert "'https://pypi.org/simple'" in module
     assert "index = $PipGlobalIndex" in module
     assert "index-url = $PipGlobalIndexUrl" in module
+    assert '"extra-index-url = $PipGlobalIndexUrl"' in module
+    assert '"find-links = $LocalWheelDirectory"' in module
+    assert "'[download]'" in module
     download = module[
         module.index("$downloadResult = Invoke-AtlasoBoundedProcess") : module.index(
             "if ($downloadResult.ExitCode -ne 0)"
@@ -83,7 +86,7 @@ def test_photon_package_source_pair_is_resolved_once_and_shared_safely() -> None
     ]
     assert "'--index-url'" not in download
     assert "PIP_CONFIG_FILE" in download
-    assert "PIP_EXTRA_INDEX_URL" in download
+    assert "'--find-links'" not in download
     assert "-ClearEnvironmentVariablePrefixes @('PIP_')" in download
     assert "-ReturnResult" in download
 

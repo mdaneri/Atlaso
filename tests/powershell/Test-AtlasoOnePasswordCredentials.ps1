@@ -148,15 +148,20 @@ try {
         New-AtlasoOnePasswordPipConfiguration `
             -Path $Path `
             -PipGlobalIndex $Index `
-            -PipGlobalIndexUrl $IndexUrl
+            -PipGlobalIndexUrl $IndexUrl `
+            -LocalWheelDirectory (Join-Path ([System.IO.Path]::GetDirectoryName($Path)) 'wheels')
     } (Join-Path $indexLockTestRoot 'pip.ini') `
         $explicitPackageSource.PipGlobalIndex `
         $explicitPackageSource.PipGlobalIndexUrl
     $pipConfigurationText = Get-Content -LiteralPath $pipConfigurationPath -Raw
     if ($pipConfigurationText -cnotmatch '(?m)^index = https://mirror\.example\.test/api/pypi\r?$' -or
         $pipConfigurationText -cnotmatch '(?m)^index-url = https://mirror\.example\.test/simple\r?$' -or
+        ([regex]::Matches($pipConfigurationText, '(?m)^extra-index-url = https://mirror\.example\.test/simple\r?$')).Count -ne 2 -or
+        ([regex]::Matches($pipConfigurationText, '(?m)^find-links = .+\\wheels\r?$')).Count -ne 2 -or
+        ([regex]::Matches($pipConfigurationText, '(?m)^no-index = false\r?$')).Count -ne 2 -or
+        $pipConfigurationText -cnotmatch '(?m)^\[download\]\r?$' -or
         $pipConfigurationText -match 'pypi\.org') {
-        throw 'The private SDK pip configuration did not preserve the explicit pair without public fallback.'
+        throw 'The private SDK pip configuration did not override global and download sources without public fallback.'
     }
 
     $duplicateLockPath = Join-Path $indexLockTestRoot 'duplicate.lock'

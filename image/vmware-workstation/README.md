@@ -235,7 +235,9 @@ both. Atlaso resolves the pair before credential preparation, uses the same exac
 1Password dependency closure and the guest Photon build, and never fills a partial override or retries an explicit pair
 through public PyPI. Authenticated URLs, queries, fragments, whitespace, and non-HTTPS values are rejected before
 network or image mutation. The host download receives only a private pip configuration path; the resolved URLs and
-their protected parent-to-child transport do not enter process arguments.
+their protected parent-to-child transport do not enter process arguments. That private file overrides global and
+download-command index, extra-index, and find-links settings so machine-wide pip configuration cannot add a fallback
+source.
 
 Dependency-preparation failures report only a fixed safe category: package-index/connectivity/TLS/proxy,
 invocation/runtime, unavailable distribution/platform, hash mismatch, or unclassified. The classifier inspects bounded

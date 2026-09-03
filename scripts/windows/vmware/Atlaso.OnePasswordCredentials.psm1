@@ -71,25 +71,43 @@ Resolved pip `global.index` value.
 
 .PARAMETER PipGlobalIndexUrl
 Resolved pip `global.index-url` value.
+
+.PARAMETER LocalWheelDirectory
+Private directory containing the admitted compatibility wheel.
 #>
 function New-AtlasoOnePasswordPipConfiguration {
     param(
         [Parameter(Mandatory = $true)][string]$Path,
         [Parameter(Mandatory = $true)][string]$PipGlobalIndex,
-        [Parameter(Mandatory = $true)][string]$PipGlobalIndexUrl
+        [Parameter(Mandatory = $true)][string]$PipGlobalIndexUrl,
+        [Parameter(Mandatory = $true)][string]$LocalWheelDirectory
     )
 
     $resolvedPath = [System.IO.Path]::GetFullPath($Path)
     [void][System.IO.Directory]::CreateDirectory([System.IO.Path]::GetDirectoryName($resolvedPath))
     try {
+        # PIP_CONFIG_FILE loads after system, user, and site files, but pip's
+        # command section outranks its global section. Override every source
+        # key in both scopes so an inherited extra index or find-links value
+        # cannot survive the explicit pair.
         [System.IO.File]::WriteAllLines(
             $resolvedPath,
             @(
                 '[global]',
                 "index = $PipGlobalIndex",
                 "index-url = $PipGlobalIndexUrl",
+                "extra-index-url = $PipGlobalIndexUrl",
+                "find-links = $LocalWheelDirectory",
+                'no-index = false',
                 'disable-pip-version-check = true',
-                'no-cache-dir = true'
+                'no-cache-dir = true',
+                '',
+                '[download]',
+                "index = $PipGlobalIndex",
+                "index-url = $PipGlobalIndexUrl",
+                "extra-index-url = $PipGlobalIndexUrl",
+                "find-links = $LocalWheelDirectory",
+                'no-index = false'
             ),
             [System.Text.UTF8Encoding]::new($false)
         )
@@ -839,7 +857,8 @@ function Initialize-AtlasoOnePasswordSdkRuntime {
     $null = New-AtlasoOnePasswordPipConfiguration `
         -Path $pipConfigurationPath `
         -PipGlobalIndex $PipGlobalIndex `
-        -PipGlobalIndexUrl $PipGlobalIndexUrl
+        -PipGlobalIndexUrl $PipGlobalIndexUrl `
+        -LocalWheelDirectory $wheelDirectory
 
     # Download is the only index-enabled step. Installation is deliberately
     # offline from the exact hash-verified wheel set, matching deploy-wheel.ps1.
@@ -849,7 +868,6 @@ function Initialize-AtlasoOnePasswordSdkRuntime {
             @($pipRuntime.ArgumentsPrefix)
             'download',
             '--disable-pip-version-check',
-            '--find-links', $wheelDirectory,
             '--require-hashes',
             '--only-binary=:all:',
             '--dest', $wheelDirectory,
@@ -858,7 +876,6 @@ function Initialize-AtlasoOnePasswordSdkRuntime {
         -ClearEnvironmentVariablePrefixes @('PIP_') `
         -EnvironmentVariables @{
             PIP_CONFIG_FILE       = $pipConfigurationPath
-            PIP_EXTRA_INDEX_URL   = ''
             PIP_NO_INPUT          = '1'
         } `
         -TimeoutSeconds $TimeoutSeconds `
