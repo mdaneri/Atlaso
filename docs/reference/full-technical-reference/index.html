@@ -5318,12 +5318,16 @@ Photon root/build password remains separate from the Atlaso web bootstrap admini
 removes build-only compiler packages, clears package/download caches and staged sources, trims the filesystems,
 and leaves Packer compaction enabled. Low-level OVF export requires an explicit source VMX whose output path,
 <code>displayName</code>, source commit, and builder identity agree with schema-v3 provenance. It preserves both payload VMDKs and
-adds empty 500 GiB depot and backup definitions at SCSI units 2 and 3. <code>export-ovf.ps1 -Release</code> derives the stable
-<code>vX.Y.Z</code> tag, while <code>-Prerelease</code>
-requires exactly one annotated <code>vX.Y.Z-&lt;prerelease&gt;</code> tag at the clean checkout commit. Both modes derive the destination
-repository, require an existing published non-draft GitHub Release with the matching classification, and preflight and
-upload the OVF assets with GitHub CLI without creating or reclassifying the release. The combined OVA uploads only when
-it independently remains below the configured asset limit. Export also writes a manifest-covered provenance record
+adds empty 500 GiB depot and backup definitions at SCSI units 2 and 3. The standard
+<code>export-ovf.ps1 -Prerelease</code> producer derives the synchronized version and freezes one
+<code>virtualization-vX.Y.Z-rc.N</code> identity. It resumes exactly one retained current-version operation beneath the resolved
+staging root, or inventories remote tags and every GitHub Release and selects one greater than the maximum canonical
+ordinal. Ambiguous retained state, mismatched identity, and later collisions fail closed without automatic advancement.
+Before staging or build mutation it validates the default or explicit Hyper-V and shared 1Password selectors and prints
+only version/tag, staging root, switch names, and sanitized selector-source labels. Candidate production retains
+non-force annotated-tag creation, <code>--verify-tag</code>, no-clobber uploads, exact-commit binding, and byte-idempotent retry.
+Stable <code>virtualization-vX.Y.Z</code> promotion continues to reuse the selected prerelease bytes. The combined OVA uploads only
+when it independently remains below the configured asset limit. Export also writes a manifest-covered provenance record
 binding both payloads to the exact version and source commit. Publication mode implicitly replaces only the canonical
 repository-derived OVF output. Any explicitly supplied existing output requires <code>-Force</code>, while every recursive
 replacement remains limited to a strict, non-reparse-point descendant of <code>image/vmware-workstation/ovf</code>; filesystem,

@@ -3926,14 +3926,7 @@ and storage owned by that import attempt, correct the host prerequisite, and run
 successful software-release SHA, run:</p>
 <div class="language-powershell highlight"><pre><span></span><code><span id="__span-4-1"><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a><span class="n">python</span> <span class="n">-m</span> <span class="n">pip</span> <span class="n">install</span> <span class="p">-</span><span class="n">-require-hashes</span> <span class="p">-</span><span class="n">-requirement</span> <span class="n">requirements-virtualization-smoke</span><span class="p">.</span><span class="n">lock</span>
 </span><span id="__span-4-2"><a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a>
-</span><span id="__span-4-3"><a id="__codelineno-4-3" name="__codelineno-4-3" href="#__codelineno-4-3"></a><span class="p">./</span><span class="n">scripts</span><span class="p">/</span><span class="n">windows</span><span class="p">/</span><span class="n">vmware</span><span class="p">/</span><span class="nb">export-ovf</span><span class="p">.</span><span class="n">ps1</span> <span class="n">-Prerelease</span> <span class="p">`</span>
-</span><span id="__span-4-4"><a id="__codelineno-4-4" name="__codelineno-4-4" href="#__codelineno-4-4"></a>  <span class="n">-PrereleaseIdentifier</span> <span class="n">rc</span><span class="p">.</span><span class="n">1</span> <span class="p">`</span>
-</span><span id="__span-4-5"><a id="__codelineno-4-5" name="__codelineno-4-5" href="#__codelineno-4-5"></a>  <span class="n">-StagingRoot</span> <span class="s1">&#39;D:\Atlaso-Releases&#39;</span> <span class="p">`</span>
-</span><span id="__span-4-6"><a id="__codelineno-4-6" name="__codelineno-4-6" href="#__codelineno-4-6"></a>  <span class="n">-ManagementSwitch</span> <span class="s1">&#39;Atlaso Management&#39;</span> <span class="p">`</span>
-</span><span id="__span-4-7"><a id="__codelineno-4-7" name="__codelineno-4-7" href="#__codelineno-4-7"></a>  <span class="n">-ServiceSwitch</span> <span class="s1">&#39;Atlaso Services&#39;</span> <span class="p">`</span>
-</span><span id="__span-4-8"><a id="__codelineno-4-8" name="__codelineno-4-8" href="#__codelineno-4-8"></a>  <span class="n">-OnePasswordEnvironmentId</span> <span class="s1">&#39;&lt;atlaso-environment-id&gt;&#39;</span> <span class="p">`</span>
-</span><span id="__span-4-9"><a id="__codelineno-4-9" name="__codelineno-4-9" href="#__codelineno-4-9"></a>  <span class="n">-OnePasswordAccount</span> <span class="s1">&#39;&lt;account-name-or-id&gt;&#39;</span> <span class="p">`</span>
-</span><span id="__span-4-10"><a id="__codelineno-4-10" name="__codelineno-4-10" href="#__codelineno-4-10"></a>  <span class="n">-OnePasswordPython</span> <span class="s1">&#39;&lt;path-to-python-3.14.exe&gt;&#39;</span>
+</span><span id="__span-4-3"><a id="__codelineno-4-3" name="__codelineno-4-3" href="#__codelineno-4-3"></a><span class="p">./</span><span class="n">scripts</span><span class="p">/</span><span class="n">windows</span><span class="p">/</span><span class="n">vmware</span><span class="p">/</span><span class="nb">export-ovf</span><span class="p">.</span><span class="n">ps1</span> <span class="n">-Prerelease</span>
 </span></code></pre></div>
 <p>The command verifies and extracts the exact published software bundle, builds the canonical VMware template, derives
 Hyper-V from that OVA, runs both Windows smokes, creates the annotated tag before the draft Release, uploads without
@@ -3945,11 +3938,25 @@ Its credential bridge, sensitive source snapshot, Packer workspace, cleanup stat
 remain beneath the exact checkout-local <code>.atlaso-local/photon-image-build-state</code> root. The non-task-owned address
 allocation lock and ledger remain per-user and host-shared so parallel worktrees cannot choose the same address; no
 task-owned output or sensitive state falls back to a Windows profile, temporary directory, or <code>LocalApplicationData</code>.
-Keep <code>StagingRoot</code> until stable verification; cleanup is a separate explicit operator action. The three 1Password
-selectors are required so both the fresh image build and exact wheel deployment use the same approved credential
-source; the values are forwarded to the existing isolated SDK bridges and are never uploaded as evidence. A
-conflicting candidate requires a new explicit <code>rc.N</code>. Every retry reconstructs and byte-validates the complete cached
-software source against freshly downloaded signed Release assets. A complete retained candidate is independently
+Use <code>-CandidateOnly</code> to stop after candidate production and smoke; otherwise the command continues through tag creation,
+draft upload, and protected hosted finalization. The standard
+producer defaults <code>StagingRoot</code> to <code>&lt;checkout&gt;\artifacts\virtualization-release</code>, uses the exact Hyper-V switches
+<code>Atlaso Management</code> and <code>Atlaso Services</code>, resolves the pinned Atlaso 1Password Environment through the checkout-local
+selector file, requires one uniquely signed-in 1Password CLI account, and discovers a standard Windows x64 CPython
+3.14 runtime. The retained <code>-StagingRoot</code>, <code>-ManagementSwitch</code>, <code>-ServiceSwitch</code>,
+<code>-OnePasswordEnvironmentId</code>, <code>-OnePasswordAccount</code>, and <code>-OnePasswordPython</code> parameters remain authoritative overrides.
+The resolved credential selectors are forwarded unchanged to both the fresh image build and exact-wheel deployment.</p>
+<p>Preflight prints the synchronized version and selected tag, staging root, switch names, and selector-source labels
+before creating staging directories or starting build activity. It never prints Environment IDs, account values,
+credentials, credential material, or secret-bearing paths. If the resolved staging root contains exactly one valid
+current-version <code>rc.N</code> operation, the producer resumes it after validating any corresponding remote tag and Release.
+With no retained operation it inventories remote tags and all GitHub Releases, deduplicates canonical ordinals, and
+selects <code>rc.1</code> or one greater than the maximum. Multiple retained operations fail closed as ambiguous. The selection is
+frozen for the invocation: a later collision never advances automatically and remains subject to non-force tag
+creation, <code>--verify-tag</code>, no-clobber upload, exact-commit, and byte-idempotency guards.</p>
+<p>Keep <code>StagingRoot</code> until stable verification; cleanup is a separate explicit operator action. Every retry reconstructs
+and byte-validates the complete cached software source against freshly downloaded signed Release assets. A complete
+retained candidate is independently
 revalidated and reused byte-for-byte; only an absent candidate enters the image-build, OVA-export, and Hyper-V
 conversion path. Pre-verification network downloads are invocation-temporary and never reused after interruption.
 Before signing, the hosted finalizer requires the OVA provenance's software tag, manifest, bundle, application-wheel, and
