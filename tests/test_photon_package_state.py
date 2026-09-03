@@ -112,6 +112,7 @@ def test_package_cleanup_transaction_preserves_runtime_with_noautoremove(
         photon_release_path=photon_release,
         tdnf_config_path=tdnf_config,
         guest_platform="vmware",
+        image_root=tmp_path,
         runner=fake_rpm,
     )
     assert distroverpkg == "photon-release-5.0-6.ph5.noarch"
@@ -168,6 +169,7 @@ def test_package_cleanup_rejects_missing_ntpsec_runtime(
             photon_release_path=photon_release,
             tdnf_config_path=tdnf_config,
             guest_platform="vmware",
+            image_root=tmp_path,
             runner=fake_rpm,
         )
 
@@ -214,23 +216,33 @@ def test_package_cleanup_rejects_installed_cloud_init(tmp_path: Path) -> None:
             photon_release_path=photon_release,
             tdnf_config_path=tdnf_config,
             guest_platform="vmware",
+            image_root=tmp_path,
             runner=fake_rpm,
-            forbidden_runtime_paths=(),
         )
 
 
-def test_package_cleanup_rejects_cloud_init_runtime_path(tmp_path: Path) -> None:
-    """Reject a stale cloud-init generator after package removal.
+@pytest.mark.parametrize(
+    "relative_path",
+    (
+        "usr/lib/systemd/system-generators/cloud-init-generator",
+        "usr/lib/systemd/system/cloud-config.service",
+    ),
+)
+def test_package_cleanup_rejects_cloud_init_runtime_path(
+    tmp_path: Path, relative_path: str
+) -> None:
+    """Reject a stale cloud-init runtime path after package removal.
 
     Args:
-        tmp_path: Temporary filesystem root for the simulated generator.
+        tmp_path: Temporary filesystem root for the simulated runtime path.
+        relative_path: Unsupported path retained beneath the image root.
     """
 
     verifier = load_verifier()
     os_release, photon_release, tdnf_config = write_release_state(tmp_path)
-    generator = tmp_path / "usr/lib/systemd/system-generators/cloud-init-generator"
-    generator.parent.mkdir(parents=True)
-    generator.write_text("stale", encoding="utf-8")
+    runtime_path = tmp_path / relative_path
+    runtime_path.parent.mkdir(parents=True)
+    runtime_path.write_text("stale", encoding="utf-8")
     installed = {
         "photon-release-5.0-6.ph5.noarch",
         "photon-release",
@@ -260,8 +272,8 @@ def test_package_cleanup_rejects_cloud_init_runtime_path(tmp_path: Path) -> None
             photon_release_path=photon_release,
             tdnf_config_path=tdnf_config,
             guest_platform="vmware",
+            image_root=tmp_path,
             runner=fake_rpm,
-            forbidden_runtime_paths=(generator,),
         )
 
 
@@ -285,6 +297,7 @@ def test_package_cleanup_transaction_rejects_autoremoved_release_identity(
             photon_release_path=photon_release,
             tdnf_config_path=tdnf_config,
             guest_platform="vmware",
+            image_root=tmp_path,
         )
 
 

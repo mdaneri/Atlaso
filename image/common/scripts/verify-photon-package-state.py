@@ -23,11 +23,19 @@ REQUIRED_RUNTIME_PACKAGES = (
 )
 FORBIDDEN_RUNTIME_PACKAGES = ("cloud-init",)
 CLOUD_INIT_RUNTIME_PATHS = (
-    Path("/usr/lib/systemd/system-generators/cloud-init-generator"),
-    Path("/usr/lib/cloud-init"),
-    Path("/usr/lib/systemd/system/cloud-init.target"),
-    Path("/etc/cloud"),
-    Path("/var/lib/cloud"),
+    Path("usr/lib/systemd/system-generators/cloud-init-generator"),
+    Path("usr/lib/cloud-init"),
+    Path("usr/lib/systemd/system/cloud-config.service"),
+    Path("usr/lib/systemd/system/cloud-final.service"),
+    Path("usr/lib/systemd/system/cloud-init-hotplugd.service"),
+    Path("usr/lib/systemd/system/cloud-init-hotplugd.socket"),
+    Path("usr/lib/systemd/system/cloud-init-local.service"),
+    Path("usr/lib/systemd/system/cloud-init-main.service"),
+    Path("usr/lib/systemd/system/cloud-init-network.service"),
+    Path("usr/lib/systemd/system/cloud-init.service"),
+    Path("usr/lib/systemd/system/cloud-init.target"),
+    Path("etc/cloud"),
+    Path("var/lib/cloud"),
 )
 
 
@@ -153,8 +161,8 @@ def verify_photon_package_state(
     photon_release_path: Path,
     tdnf_config_path: Path,
     guest_platform: str,
+    image_root: Path,
     runner: Callable[..., subprocess.CompletedProcess[str]] = subprocess.run,
-    forbidden_runtime_paths: Sequence[Path] = CLOUD_INIT_RUNTIME_PATHS,
 ) -> str:
     """Verify release files, TDNF identity, and required runtime RPMs.
 
@@ -163,8 +171,8 @@ def verify_photon_package_state(
         photon_release_path: Photon human-readable release identity file.
         tdnf_config_path: TDNF configuration defining the distro version package.
         guest_platform: Appliance platform whose runtime packages are required.
+        image_root: Root beneath which unsupported image paths are checked.
         runner: Subprocess-compatible command runner.
-        forbidden_runtime_paths: Unsupported cloud-init paths that must be absent.
     """
 
     os_release = read_os_release(os_release_path)
@@ -187,7 +195,7 @@ def verify_photon_package_state(
         raise ValueError(f"Unsupported Photon guest platform: {guest_platform}")
     verify_rpm_packages(tuple(dict.fromkeys(packages)), runner=runner)
     verify_rpm_packages_absent(FORBIDDEN_RUNTIME_PACKAGES, runner=runner)
-    verify_paths_absent(forbidden_runtime_paths)
+    verify_paths_absent(tuple(image_root / path for path in CLOUD_INIT_RUNTIME_PATHS))
     return distroverpkg
 
 
@@ -222,6 +230,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             photon_release_path=args.photon_release,
             tdnf_config_path=args.tdnf_config,
             guest_platform=args.guest_platform,
+            image_root=Path("/"),
         )
     except (OSError, UnicodeError, ValueError) as exc:
         raise SystemExit(f"Photon package runtime verification failed: {exc}") from exc
