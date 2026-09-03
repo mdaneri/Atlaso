@@ -5381,6 +5381,11 @@ checkout-local, Git-ignored configuration file. Input is masked and is never pri
 </span><span id="__span-30-4"><a id="__codelineno-30-4" name="__codelineno-30-4" href="#__codelineno-30-4"></a>  <span class="n">-Redeploy</span> <span class="p">`</span>
 </span><span id="__span-30-5"><a id="__codelineno-30-5" name="__codelineno-30-5" href="#__codelineno-30-5"></a>  <span class="n">-ResetDataDisks</span>
 </span></code></pre></div>
+<p>For exploratory testing before a pull request exists, use <code>-LocalBuilder</code> instead of <code>-PullRequestNumber</code>. The wrapper
+requires a clean checked-out branch and derives
+<code>Atlaso-Local-&lt;12-character-source-commit&gt;-test-vm[-&lt;collision-safe-suffix&gt;]</code>. The local identity retains the same exact
+directory, VMX, <code>displayName</code>, redeploy, and cleanup checks. Exactly one identity mode is required. Lifecycle labs and
+acceptance evidence remain PR-numbered.</p>
 <p>The normal wrapper resolves the current Windows user's existing <code>.ssh/id_ed25519.pub</code> before any cleanup or VM
 creation, validates it as one canonical Ed25519 public key, and provisions it for the bootstrap <code>admin</code> account with a
 separate test-only passwordless-sudo rule. Use <code>-SshPublicKeyPath &lt;path&gt;</code> for another existing Ed25519 public key or

@@ -3982,6 +3982,10 @@ the checkout-local, Git-ignored configuration file. The prompt is masked and the
 </span><span id="__span-6-6"><a id="__codelineno-6-6" name="__codelineno-6-6" href="#__codelineno-6-6"></a>  <span class="n">-WaitForIp</span> <span class="p">`</span>
 </span><span id="__span-6-7"><a id="__codelineno-6-7" name="__codelineno-6-7" href="#__codelineno-6-7"></a>  <span class="n">-TrustRootCa</span>
 </span></code></pre></div>
+<p>For exploratory normal-VM testing before a pull request exists, replace <code>-PullRequestNumber &lt;number&gt;</code> with
+<code>-LocalBuilder</code>. A clean checked-out branch derives
+<code>Atlaso-Local-&lt;12-character-source-commit&gt;-test-vm[-&lt;collision-safe-suffix&gt;]</code> while retaining exact VM ownership and
+redeploy checks. Lifecycle labs and acceptance evidence remain PR-numbered.</p>
 <p>It defaults to the management vmnet only; pass <code>-IncludeLabNetworkAdapters</code> after creating the SiteA, WAN/SiteB, and
 trunk-like vmnets.
 For real creation, the wrapper prefers an explicit <code>-OnePasswordEnvironmentId</code> override and otherwise reads the exact
