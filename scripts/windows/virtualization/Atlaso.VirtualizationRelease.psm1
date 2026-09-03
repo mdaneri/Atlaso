@@ -13,6 +13,7 @@ $ErrorActionPreference = 'Stop'
 Import-Module (Join-Path $PSScriptRoot '..\vmware\Atlaso.VmwarePayload.psm1') -Force
 Import-Module (Join-Path $PSScriptRoot '..\vmware\Atlaso.WorkstationReadiness.psm1') -Force
 Import-Module (Join-Path $PSScriptRoot '..\vmware\Atlaso.VmwareBuilderIdentity.psm1') -Force
+Import-Module (Join-Path $PSScriptRoot '..\vmware\Atlaso.OnePasswordCredentials.psm1') -Force
 
 <#
 .SYNOPSIS
@@ -266,6 +267,290 @@ function Get-AtlasoReleaseRepository {
 
 <#
 .SYNOPSIS
+Resolves and validates the non-mutating virtualization staging root.
+.PARAMETER RepoRoot
+Exact Atlaso checkout root.
+.PARAMETER StagingRoot
+Optional operator-selected absolute staging root.
+#>
+function Resolve-AtlasoVirtualizationStagingRoot {
+    param(
+        [Parameter(Mandatory = $true)][string]$RepoRoot,
+        [string]$StagingRoot = ''
+    )
+
+    $candidate = $StagingRoot
+    if (-not $candidate) {
+        $candidate = Join-Path $RepoRoot 'artifacts\virtualization-release'
+    }
+    if (-not [System.IO.Path]::IsPathFullyQualified($candidate)) {
+        throw 'StagingRoot must be an absolute filesystem path.'
+    }
+    $root = [System.IO.Path]::GetFullPath($candidate)
+    $filesystemRoot = [System.IO.Path]::GetPathRoot($root)
+    if ($root.TrimEnd('\', '/') -eq $filesystemRoot.TrimEnd('\', '/')) {
+        throw 'StagingRoot cannot be a filesystem root.'
+    }
+    if (Test-Path -LiteralPath $root) {
+        $rootItem = Get-Item -LiteralPath $root -Force
+        if (-not $rootItem.PSIsContainer -or
+            ($rootItem.Attributes -band [System.IO.FileAttributes]::ReparsePoint) -ne 0) {
+            throw 'StagingRoot must be an ordinary directory, not a reparse point.'
+        }
+        return $rootItem.FullName
+    }
+    return $root
+}
+
+<#
+.SYNOPSIS
+Returns retained current-version prerelease operation tags without mutation.
+.PARAMETER StagingRoot
+Validated staging root, which may not exist yet.
+.PARAMETER Version
+Synchronized Atlaso version.
+#>
+function Get-AtlasoVirtualizationRetainedOperationTags {
+    param(
+        [Parameter(Mandatory = $true)][string]$StagingRoot,
+        [Parameter(Mandatory = $true)][string]$Version
+    )
+
+    if (-not (Test-Path -LiteralPath $StagingRoot)) {
+        return @()
+    }
+    $pattern = '^virtualization-v' + [regex]::Escape($Version) + '-rc\.[1-9]\d*$'
+    $retainedOperations = @()
+    foreach ($item in @(Get-ChildItem -LiteralPath $StagingRoot -Force)) {
+        if ($item.Name -notmatch $pattern) {
+            continue
+        }
+        if ($item.Name -cnotmatch $pattern) {
+            throw "Retained virtualization operation $($item.FullName) does not use the canonical tag casing."
+        }
+        if (-not $item.PSIsContainer -or
+            ($item.Attributes -band [System.IO.FileAttributes]::ReparsePoint) -ne 0) {
+            throw "Retained virtualization operation $($item.FullName) must be an ordinary directory."
+        }
+        $retainedOperations += $item.Name
+    }
+    return @($retainedOperations | Sort-Object)
+}
+
+<#
+.SYNOPSIS
+Inventories canonical remote virtualization prerelease tag names.
+.PARAMETER RepoRoot
+Exact Atlaso checkout root.
+.PARAMETER Version
+Synchronized Atlaso version.
+#>
+function Get-AtlasoVirtualizationRemoteTagNames {
+    param(
+        [Parameter(Mandatory = $true)][string]$RepoRoot,
+        [Parameter(Mandatory = $true)][string]$Version
+    )
+
+    $lines = @(& git -C $RepoRoot ls-remote --tags origin "refs/tags/virtualization-v$Version-rc.*")
+    if ($LASTEXITCODE -ne 0) {
+        throw "Could not inventory remote virtualization-v$Version release-candidate tags."
+    }
+    $pattern = '^refs/tags/(virtualization-v' + [regex]::Escape($Version) + '-rc\.[1-9]\d*)(?:\^\{\})?$'
+    $names = foreach ($line in $lines) {
+        $fields = [string]$line -split '\s+'
+        if ($fields.Count -ge 2 -and $fields[1] -cmatch $pattern) {
+            $Matches[1]
+        }
+    }
+    return @($names | Sort-Object -Unique)
+}
+
+<#
+.SYNOPSIS
+Inventories canonical virtualization prerelease tags from all GitHub Releases.
+.PARAMETER Repository
+GitHub name-with-owner.
+.PARAMETER Version
+Synchronized Atlaso version.
+#>
+function Get-AtlasoVirtualizationReleaseTagNames {
+    param(
+        [Parameter(Mandatory = $true)][string]$Repository,
+        [Parameter(Mandatory = $true)][string]$Version
+    )
+
+    $pattern = '^virtualization-v' + [regex]::Escape($Version) + '-rc\.[1-9]\d*$'
+    $releaseTagOutput = Invoke-AtlasoReleaseGh -Arguments @(
+        'api', '--paginate', "repos/$Repository/releases?per_page=100", '--jq', '.[].tag_name'
+    )
+    $names = @(
+        # Invoke-AtlasoReleaseGh preserves its captured output as one array
+        # object. Enumerate both levels explicitly before matching tag lines.
+        foreach ($entry in @($releaseTagOutput)) {
+            foreach ($line in @($entry)) {
+                if ([string]$line -cmatch $pattern) {
+                    [string]$line
+                }
+            }
+        }
+    )
+    return @($names | ForEach-Object { ([string]$_).Trim() } | Sort-Object -Unique)
+}
+
+<#
+.SYNOPSIS
+Selects one frozen current-version virtualization prerelease tag.
+.PARAMETER Version
+Synchronized Atlaso version.
+.PARAMETER RetainedTags
+Validated retained current-version operation tags.
+.PARAMETER RemoteTagNames
+Canonical current-version remote Git tag names.
+.PARAMETER ReleaseTagNames
+Canonical current-version GitHub Release tag names.
+#>
+function Select-AtlasoVirtualizationPrereleaseTag {
+    param(
+        [Parameter(Mandatory = $true)][string]$Version,
+        [string[]]$RetainedTags = @(),
+        [string[]]$RemoteTagNames = @(),
+        [string[]]$ReleaseTagNames = @()
+    )
+
+    if ($RetainedTags.Count -gt 1) {
+        throw "Multiple retained virtualization-v$Version release-candidate operations make retry intent ambiguous."
+    }
+    if ($RetainedTags.Count -eq 1) {
+        return $RetainedTags[0]
+    }
+    $prefix = "virtualization-v$Version-rc."
+    $ordinals = @(
+        @($RemoteTagNames) + @($ReleaseTagNames) |
+            Sort-Object -Unique |
+            ForEach-Object { [long]([string]$_).Substring($prefix.Length) }
+    )
+    [long]$next = 1
+    if ($ordinals.Count -gt 0) {
+        $maximum = [long]($ordinals | Measure-Object -Maximum).Maximum
+        if ($maximum -eq [long]::MaxValue) {
+            throw "No higher virtualization-v$Version release-candidate ordinal can be represented."
+        }
+        $next = $maximum + 1
+    }
+    return "$prefix$next"
+}
+
+<#
+.SYNOPSIS
+Rejects remote identity presence changes after prerelease selection.
+.PARAMETER Tag
+Frozen virtualization prerelease tag.
+.PARAMETER IdentityKind
+Remote identity kind being compared.
+.PARAMETER WasPresent
+Whether the identity existed during preflight selection.
+.PARAMETER IsPresent
+Whether the identity exists at the collision guard.
+#>
+function Assert-AtlasoVirtualizationFrozenPresence {
+    param(
+        [Parameter(Mandatory = $true)][string]$Tag,
+        [Parameter(Mandatory = $true)][ValidateSet('tag', 'Release')][string]$IdentityKind,
+        [Parameter(Mandatory = $true)][bool]$WasPresent,
+        [Parameter(Mandatory = $true)][bool]$IsPresent
+    )
+
+    if ($WasPresent -ne $IsPresent) {
+        throw "Remote $IdentityKind presence for $Tag changed after prerelease selection."
+    }
+}
+
+<#
+.SYNOPSIS
+Validates a retained tag against corresponding remote tag and Release state.
+.PARAMETER RepoRoot
+Exact Atlaso checkout root.
+.PARAMETER Repository
+GitHub name-with-owner.
+.PARAMETER Tag
+Frozen retained virtualization prerelease tag.
+.PARAMETER Commit
+Exact source commit.
+.PARAMETER RemoteTagNames
+Inventoried canonical remote Git tag names.
+.PARAMETER ReleaseTagNames
+Inventoried canonical GitHub Release tag names.
+#>
+function Assert-AtlasoVirtualizationRetainedRemoteIdentity {
+    param(
+        [Parameter(Mandatory = $true)][string]$RepoRoot,
+        [Parameter(Mandatory = $true)][string]$Repository,
+        [Parameter(Mandatory = $true)][string]$Tag,
+        [Parameter(Mandatory = $true)][string]$Commit,
+        [string[]]$RemoteTagNames = @(),
+        [string[]]$ReleaseTagNames = @()
+    )
+
+    $hasTag = $Tag -cin @($RemoteTagNames)
+    $hasRelease = $Tag -cin @($ReleaseTagNames)
+    if ($hasRelease -and -not $hasTag) {
+        throw "Retained virtualization Release $Tag has no corresponding remote tag."
+    }
+    if ($hasTag) {
+        $remoteTag = @(& git -C $RepoRoot ls-remote --tags origin "refs/tags/$Tag" "refs/tags/$Tag^{}")
+        if ($LASTEXITCODE -ne 0) {
+            throw "Could not inspect remote tag $Tag."
+        }
+        $peeled = @($remoteTag | Where-Object { $_ -match '\^\{\}$' })
+        if ($peeled.Count -ne 1 -or ([string]$peeled[0] -split '\s+')[0] -cne $Commit) {
+            throw "Remote tag $Tag is not one annotated tag for the exact source commit."
+        }
+    }
+    if ($hasRelease) {
+        $release = ((Invoke-AtlasoReleaseGh -Arguments @(
+            'release', 'view', $Tag, '--repo', $Repository,
+            '--json', 'tagName,isDraft,isPrerelease'
+        )) -join [Environment]::NewLine) | ConvertFrom-Json
+        if ($release.tagName -cne $Tag -or -not $release.isPrerelease) {
+            throw "Existing virtualization Release $Tag is misclassified."
+        }
+    }
+}
+
+<#
+.SYNOPSIS
+Resolves exact Hyper-V smoke switches and rejects missing or duplicate names.
+.PARAMETER ManagementSwitch
+Optional exact management switch name.
+.PARAMETER ServiceSwitch
+Optional exact services switch name.
+.PARAMETER SwitchInventory
+Optional pre-inventoried switch objects for focused validation.
+#>
+function Resolve-AtlasoVirtualizationHyperVSwitches {
+    param(
+        [string]$ManagementSwitch = '',
+        [string]$ServiceSwitch = '',
+        [object[]]$SwitchInventory = @()
+    )
+
+    $management = if ($ManagementSwitch) { $ManagementSwitch } else { 'Atlaso Management' }
+    $service = if ($ServiceSwitch) { $ServiceSwitch } else { 'Atlaso Services' }
+    $inventory = @($SwitchInventory)
+    if ($PSBoundParameters.ContainsKey('SwitchInventory') -eq $false) {
+        $inventory = @(Get-VMSwitch -ErrorAction Stop)
+    }
+    foreach ($name in @($management, $service)) {
+        $switchMatches = @($inventory | Where-Object { [string]$_.Name -ceq $name })
+        if ($switchMatches.Count -ne 1) {
+            throw "Hyper-V switch '$name' must exist exactly once."
+        }
+    }
+    return [pscustomobject]@{ Management = $management; Service = $service }
+}
+
+<#
+.SYNOPSIS
 Validates and creates one invocation-owned staging directory.
 .PARAMETER StagingRoot
 Absolute fixed-volume staging root selected by the operator.
@@ -278,14 +563,10 @@ function Resolve-AtlasoVirtualizationStagingDirectory {
         [Parameter(Mandatory = $true)][string]$Tag
     )
 
-    if (-not [System.IO.Path]::IsPathFullyQualified($StagingRoot)) {
+    if ([string]::IsNullOrWhiteSpace($StagingRoot)) {
         throw 'StagingRoot must be an absolute filesystem path.'
     }
-    $root = [System.IO.Path]::GetFullPath($StagingRoot)
-    $filesystemRoot = [System.IO.Path]::GetPathRoot($root)
-    if ($root.TrimEnd('\', '/') -eq $filesystemRoot.TrimEnd('\', '/')) {
-        throw 'StagingRoot cannot be a filesystem root.'
-    }
+    $root = Resolve-AtlasoVirtualizationStagingRoot -RepoRoot $PSScriptRoot -StagingRoot $StagingRoot
     if (-not (Test-Path -LiteralPath $root)) {
         New-Item -ItemType Directory -Path $root | Out-Null
     }
@@ -529,24 +810,22 @@ function Invoke-AtlasoVirtualizationPrereleaseFinalizer {
 Creates, smokes, and stages one local virtualization prerelease.
 .PARAMETER RepoRoot
 Exact Atlaso checkout root.
-.PARAMETER PrereleaseIdentifier
-Explicit rc.N identifier.
 .PARAMETER StagingRoot
-Absolute fixed-volume staging root.
+Optional absolute fixed-volume staging root. Defaults to artifacts\virtualization-release beneath the checkout.
 .PARAMETER ManagementVmnet
 VMware management vmnet used by smoke.
 .PARAMETER ServiceVmnet
 VMware services vmnet used by smoke.
 .PARAMETER ManagementSwitch
-Hyper-V management switch used by smoke.
+Optional Hyper-V management switch used by smoke. Defaults to Atlaso Management.
 .PARAMETER ServiceSwitch
-Hyper-V services switch used by smoke.
+Optional Hyper-V services switch used by smoke. Defaults to Atlaso Services.
 .PARAMETER OnePasswordEnvironmentId
-Optional exact Atlaso Environment ID for password-backed wheel deployment.
+Optional exact Atlaso Environment ID. Omission uses the checkout-local selector file.
 .PARAMETER OnePasswordAccount
-Optional 1Password account selector.
+Optional 1Password account selector. Omission requires one uniquely signed-in CLI account.
 .PARAMETER OnePasswordPython
-Optional supported Python executable for the 1Password SDK.
+Optional supported Python executable. Omission discovers standard Windows x64 CPython 3.14.
 .PARAMETER NoWait
 Return after dispatch instead of waiting for hosted publication.
 .PARAMETER CandidateOnly
@@ -571,12 +850,11 @@ function Invoke-AtlasoVirtualizationPrerelease {
     [CmdletBinding()]
     param(
         [Parameter(Mandatory = $true)][string]$RepoRoot,
-        [Parameter(Mandatory = $true)][string]$PrereleaseIdentifier,
-        [Parameter(Mandatory = $true)][string]$StagingRoot,
+        [string]$StagingRoot = '',
         [string]$ManagementVmnet = 'VMnet8',
         [string]$ServiceVmnet = 'VMnet1',
-        [Parameter(Mandatory = $true)][string]$ManagementSwitch,
-        [Parameter(Mandatory = $true)][string]$ServiceSwitch,
+        [string]$ManagementSwitch = '',
+        [string]$ServiceSwitch = '',
         [string]$OnePasswordEnvironmentId = '',
         [string]$OnePasswordAccount = '',
         [string]$OnePasswordPython = '',
@@ -584,16 +862,69 @@ function Invoke-AtlasoVirtualizationPrerelease {
         [switch]$NoWait
     )
 
-    if ($PrereleaseIdentifier -notmatch '^rc\.[1-9]\d*$') {
-        throw 'PrereleaseIdentifier must be an explicit rc.N value with N greater than zero.'
-    }
-    if (-not $OnePasswordEnvironmentId -or -not $OnePasswordAccount -or -not $OnePasswordPython) {
-        throw 'Virtualization production requires OnePasswordEnvironmentId, OnePasswordAccount, and OnePasswordPython.'
-    }
     $repository = Get-AtlasoReleaseRepository -RepoRoot $RepoRoot
     $identity = Get-AtlasoVirtualizationSourceIdentity -RepoRoot $RepoRoot -Repository $repository
-    $tag = "virtualization-v$($identity.Version)-$PrereleaseIdentifier"
-    $operation = Resolve-AtlasoVirtualizationStagingDirectory -StagingRoot $StagingRoot -Tag $tag
+    $resolvedStagingRoot = Resolve-AtlasoVirtualizationStagingRoot `
+        -RepoRoot $RepoRoot `
+        -StagingRoot $StagingRoot
+    $retainedTags = @(Get-AtlasoVirtualizationRetainedOperationTags `
+        -StagingRoot $resolvedStagingRoot `
+        -Version $identity.Version)
+    $remoteTagNames = @(Get-AtlasoVirtualizationRemoteTagNames `
+        -RepoRoot $RepoRoot `
+        -Version $identity.Version)
+    $releaseTagNames = @(Get-AtlasoVirtualizationReleaseTagNames `
+        -Repository $repository `
+        -Version $identity.Version)
+    $tag = Select-AtlasoVirtualizationPrereleaseTag `
+        -Version $identity.Version `
+        -RetainedTags $retainedTags `
+        -RemoteTagNames $remoteTagNames `
+        -ReleaseTagNames $releaseTagNames
+    $tagExistedAtSelection = $tag -cin $remoteTagNames
+    $releaseExistedAtSelection = $tag -cin $releaseTagNames
+    if ($retainedTags.Count -eq 1) {
+        Assert-AtlasoVirtualizationRetainedRemoteIdentity `
+            -RepoRoot $RepoRoot `
+            -Repository $repository `
+            -Tag $tag `
+            -Commit $identity.Commit `
+            -RemoteTagNames $remoteTagNames `
+            -ReleaseTagNames $releaseTagNames
+    }
+    $resolvedSwitches = Resolve-AtlasoVirtualizationHyperVSwitches `
+        -ManagementSwitch $ManagementSwitch `
+        -ServiceSwitch $ServiceSwitch
+    $environmentSource = if ($OnePasswordEnvironmentId) { 'explicit parameter' } else { 'checkout-local selector file' }
+    $accountSource = if ($OnePasswordAccount) { 'explicit parameter' } else { 'unique signed-in CLI account' }
+    $pythonSource = if ($OnePasswordPython) { 'explicit parameter' } else { 'discovered Windows x64 CPython 3.14' }
+    $OnePasswordEnvironmentId = Resolve-AtlasoOnePasswordEnvironmentId `
+        -EnvironmentId $OnePasswordEnvironmentId `
+        -RepositoryRoot $RepoRoot `
+        -ConsumerDescription 'virtualization production'
+    Assert-AtlasoOnePasswordEnvironmentId `
+        -EnvironmentId $OnePasswordEnvironmentId
+    $OnePasswordAccount = Resolve-AtlasoOnePasswordAccount `
+        -Account $OnePasswordAccount `
+        -TimeoutSeconds 300
+    $OnePasswordPython = Resolve-AtlasoOnePasswordPython `
+        -PythonCommand $OnePasswordPython `
+        -ConsumerDescription 'virtualization production' `
+        -TimeoutSeconds 300
+    $ManagementSwitch = $resolvedSwitches.Management
+    $ServiceSwitch = $resolvedSwitches.Service
+
+    Write-Host 'Virtualization prerelease preflight:'
+    Write-Host "  Version/tag: $($identity.Version) / $tag"
+    Write-Host "  Staging root: $resolvedStagingRoot"
+    Write-Host "  Hyper-V switches: $ManagementSwitch / $ServiceSwitch"
+    Write-Host "  1Password Environment selector: $environmentSource"
+    Write-Host "  1Password account selector: $accountSource"
+    Write-Host "  Python selector: $pythonSource"
+
+    # The selected tag is frozen before the first staging mutation. Later tag or
+    # Release collisions are rejected by the existing no-clobber guards.
+    $operation = Resolve-AtlasoVirtualizationStagingDirectory -StagingRoot $resolvedStagingRoot -Tag $tag
     $sourceInput = Join-Path $operation 'verified-source'
     $sourceDownloads = Join-Path $operation (
         '.software-release-download-' + [guid]::NewGuid().ToString('N')
@@ -648,6 +979,11 @@ function Invoke-AtlasoVirtualizationPrerelease {
     catch {
         $releaseState = $null
     }
+    Assert-AtlasoVirtualizationFrozenPresence `
+        -Tag $tag `
+        -IdentityKind Release `
+        -WasPresent $releaseExistedAtSelection `
+        -IsPresent ($null -ne $releaseState)
     if ($null -ne $releaseState -and
         ($releaseState.tagName -cne $tag -or -not $releaseState.isPrerelease)) {
         throw "Existing virtualization Release $tag is misclassified."
@@ -758,11 +1094,9 @@ function Invoke-AtlasoVirtualizationPrerelease {
             WheelPath = $wheel
             RuntimeDependencyDirectory = (Join-Path $sourceInput 'wheelhouse\cp314')
         }
-        if ($OnePasswordEnvironmentId) {
-            $deployArguments.OnePasswordEnvironmentId = $OnePasswordEnvironmentId
-            $deployArguments.OnePasswordAccount = $OnePasswordAccount
-            $deployArguments.OnePasswordPython = $OnePasswordPython
-        }
+        $deployArguments.OnePasswordEnvironmentId = $OnePasswordEnvironmentId
+        $deployArguments.OnePasswordAccount = $OnePasswordAccount
+        $deployArguments.OnePasswordPython = $OnePasswordPython
         try {
             $deployArguments.IpAddress = Start-AtlasoVirtualizationDeploymentVm `
                 -VmrunPath $deploymentVmrun `
@@ -867,6 +1201,11 @@ function Invoke-AtlasoVirtualizationPrerelease {
     if ($LASTEXITCODE -ne 0) {
         throw "Could not inspect remote tag $tag."
     }
+    Assert-AtlasoVirtualizationFrozenPresence `
+        -Tag $tag `
+        -IdentityKind tag `
+        -WasPresent $tagExistedAtSelection `
+        -IsPresent ($remoteTag.Count -gt 0)
     if ($remoteTag.Count -eq 0) {
         & git -C $RepoRoot show-ref --verify --quiet "refs/tags/$tag"
         $localTagStatus = $LASTEXITCODE
@@ -901,7 +1240,7 @@ function Invoke-AtlasoVirtualizationPrerelease {
     if ($null -eq $releaseState) {
         Invoke-AtlasoReleaseGh -Arguments @(
             'release', 'create', $tag, '--repo', $repository, '--draft', '--prerelease',
-            '--verify-tag', '--title', "Atlaso Virtualization v$($identity.Version) $PrereleaseIdentifier",
+            '--verify-tag', '--title', "Atlaso Virtualization v$($identity.Version) $($tag.Substring($tag.LastIndexOf('-') + 1))",
             '--notes', 'Windows-produced OVA and Hyper-V candidate for protected hosted finalization.'
         ) | Out-Null
         Publish-AtlasoVirtualizationDraftAssets -Repository $repository -Tag $tag -AssetDirectory $candidate
