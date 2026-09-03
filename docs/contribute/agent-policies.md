@@ -523,6 +523,9 @@ Terminal order:
   capabilities, clean package/download caches and staged build sources, zero-fill both payload filesystems with a
   bounded free-space reserve, remove the fill files, request TRIM, and emit bounded before/after footprint evidence
   before Packer compaction.
+- Atlaso's platform services exclusively own appliance first boot; cloud-init metadata is unsupported. Remove Photon's
+  incidental `cloud-init` package immediately after the initial OS update and before subsequent systemd daemon reloads.
+  Final package-state verification must reject both the package and leftover generator, unit, or configuration paths.
 - The VMware image is automated with Packer, Photon kickstart JSON, an ISO-embedded GRUB auto-install entry, and
   provisioning scripts. Portable target exporters must consume the validated role-bound VMware provenance instead of
   recreating installation steps.

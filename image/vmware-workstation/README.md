@@ -153,6 +153,11 @@ metadata from the exact current
 `packages.broadcom.com/photon/$releasever/...` endpoint, and atomically replaces the retired GA repository layout.
 Unexpected sources, disabled GPG checks, missing or substituted key material, redirects, unreachable metadata, and
 malformed metadata all fail the build before TDNF runs.
+Atlaso does not accept cloud-init metadata. Its VMware OVF customizer and platform-neutral first-boot services own the
+appliance lifecycle, so the provisioner removes Photon's incidental `cloud-init` package immediately after the initial
+OS update. The final package verifier rejects both an installed package and leftover generator, service, or
+configuration paths. This also prevents a Photon package update from leaving a newer systemd generator paired with
+missing or stale datasource-discovery files at the next daemon reload.
 Photon 5.0 packages the C and C++ compiler front ends together as `gcc`. The image requests and later removes that one
 build-only package; it does not request the unavailable `gcc-c++` name used by distributions that split the front ends.
 It also treats `binutils` and `linux-api-headers` as build-only because Photon packages the assembler, linker, and Linux

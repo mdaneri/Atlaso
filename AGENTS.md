@@ -761,6 +761,9 @@ The following cross-cutting boundaries always apply:
   emission. Reject dirty, ambiguous, changed, legacy-unbound, or unreproducible source state. Hyper-V and protected
   virtualization publication inherit this boundary only through the validated OVA; their downstream signature and
   software-source checks remain mandatory defense in depth.
+- Atlaso does not support cloud-init metadata. Remove Photon's incidental `cloud-init` package immediately after the
+  initial OS update, before any later systemd daemon reload, and fail final image verification if the package or its
+  generator, service, or configuration paths remain. Keep first-boot ownership in Atlaso's platform services.
 - Treat Packer HCL, systemd units/manager drop-ins, and sudoers fragments as protected deployment assets. Keep them in
   the checked-in inventory, run `scripts/check_deployment_assets.py` through pre-commit where native tools are
   available, pin every required Packer plugin to one reviewed exact version, and run `packer init` plus

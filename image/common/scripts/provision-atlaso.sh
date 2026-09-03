@@ -358,6 +358,35 @@ run_tdnf "Photon package metadata refresh" makecache
 log_step "applying Photon OS updates"
 run_tdnf "Photon OS update" update
 
+# Atlaso owns first-boot customization through its platform-specific services.
+# Photon's minimal install includes cloud-init incidentally, and leaving it in
+# the image permits its systemd generator to compete with that owned lifecycle.
+log_step "removing unsupported cloud-init lifecycle"
+if rpm -q cloud-init >/dev/null 2>&1; then
+  run_tdnf "Cloud-init package removal" --noautoremove remove cloud-init
+fi
+# Photon upgrades have left files from an older cloud-init payload behind after
+# the RPM transaction. Remove only cloud-init's exact unsupported lifecycle,
+# configuration, persistent state, and log paths before systemd reloads.
+rm -rf /usr/lib/cloud-init /etc/cloud /var/lib/cloud
+rm -f \
+  /usr/lib/systemd/system-generators/cloud-init-generator \
+  /usr/lib/systemd/system/cloud-config.service \
+  /usr/lib/systemd/system/cloud-final.service \
+  /usr/lib/systemd/system/cloud-init-hotplugd.service \
+  /usr/lib/systemd/system/cloud-init-hotplugd.socket \
+  /usr/lib/systemd/system/cloud-init-local.service \
+  /usr/lib/systemd/system/cloud-init-main.service \
+  /usr/lib/systemd/system/cloud-init-network.service \
+  /usr/lib/systemd/system/cloud-init.service \
+  /usr/lib/systemd/system/cloud-init.target \
+  /var/log/cloud-init-output.log \
+  /var/log/cloud-init.log
+if rpm -q cloud-init >/dev/null 2>&1; then
+  echo "Unsupported cloud-init package remains installed after removal." >&2
+  exit 1
+fi
+
 log_step "installing Photon appliance packages"
 GUEST_INTEGRATION_PACKAGES=""
 case "$ATLASO_GUEST_PLATFORM" in
