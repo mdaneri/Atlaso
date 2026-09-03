@@ -1092,8 +1092,10 @@ def test_photon_provisioning_installs_default_nginx_management_proxy():
     )
     assert "-PipGlobalIndex" in root_docs
     assert "-PipGlobalIndexUrl" in root_docs
-    assert "Leave both options empty to keep" in root_docs
-    assert "standard pip behavior" in root_docs
+    assert "Supply both credential-free absolute HTTPS values together" in root_docs
+    assert "omit both for the deterministic" in root_docs
+    assert "does not fill a partial override or retry an explicit" in root_docs
+    assert "pair through public PyPI" in root_docs
 
 
 def test_photon_https_bootstrap_publishes_exact_development_root_import_proof(
