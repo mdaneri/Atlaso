@@ -2904,7 +2904,7 @@ def test_redeploy_missing_target_and_sibling_disk_fail_closed(tmp_path: Path) ->
     )
     assert redeploy.returncode != 0
     assert (
-        "canonical PR-owned output directory already exists without its exact VMX"
+        "canonical Atlaso-owned output directory already exists"
         in redeploy.stderr
     )
     assert sentinel.read_text(encoding="utf-8") == "preserve"
@@ -2938,6 +2938,33 @@ def test_redeploy_missing_target_and_sibling_disk_fail_closed(tmp_path: Path) ->
     assert disk_reset.returncode != 0
     assert "outside the VM output directory" in disk_reset.stderr
     assert sibling_disk.read_text(encoding="utf-8") == "preserve"
+
+
+def test_test_vm_identity_mode_selection_fails_before_provider_activity(
+    tmp_path: Path,
+) -> None:
+    """Require exactly one PR or local test-VM identity before side effects.
+
+    Args:
+        tmp_path: Pytest temporary directory path.
+    """
+    wrapper = _write_test_vm_wrapper_harness(tmp_path / "wrapper-harness")
+
+    environment = os.environ.copy()
+    missing = _run_script(wrapper, "-WhatIf", environment=environment)
+    assert missing.returncode != 0
+    assert "Select exactly one test VM identity" in missing.stderr
+
+    conflicting = _run_script(
+        wrapper,
+        "-PullRequestNumber",
+        "634",
+        "-LocalBuilder",
+        "-WhatIf",
+        environment=environment,
+    )
+    assert conflicting.returncode != 0
+    assert "Select exactly one test VM identity" in conflicting.stderr
 
 
 def test_test_vm_ssh_key_inputs_fail_before_cleanup(tmp_path: Path) -> None:

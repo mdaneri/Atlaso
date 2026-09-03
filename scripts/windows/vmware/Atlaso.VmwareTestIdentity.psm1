@@ -1,12 +1,12 @@
 <#
 .SYNOPSIS
-Build and verify canonical pull-request-owned VMware test identities.
+Build and verify canonical Atlaso-owned VMware test identities.
 
 .DESCRIPTION
-Centralizes the repository-wide `Atlaso-PR-<number>-<purpose>[-<suffix>]`
-contract used by normal test appliances and VMware lifecycle labs. The
-helpers deliberately bind operator-visible names to exact filesystem and VMX
-evidence before any reuse, redeploy, or cleanup mutation is allowed.
+Centralizes the repository-wide pull-request and local-development identity
+contracts used by normal test appliances and VMware lifecycle labs. The helpers
+deliberately bind operator-visible names to exact filesystem and VMX evidence
+before any reuse, redeploy, or cleanup mutation is allowed.
 #>
 
 Set-StrictMode -Version Latest
@@ -45,10 +45,16 @@ function ConvertTo-AtlasoVmwareIdentityToken {
 
 <#
 .SYNOPSIS
-Return the canonical identity for one pull-request-owned VMware test resource.
+Return the canonical identity for one Atlaso-owned VMware test resource.
 
 .PARAMETER PullRequestNumber
 Exact positive GitHub pull-request number that owns the VM or lifecycle lab.
+
+.PARAMETER LocalBuilder
+Select a local-development VM identity that does not require a pull request.
+
+.PARAMETER SourceCommit
+Exact Git commit used to distinguish and own a local-development VM.
 
 .PARAMETER Purpose
 Short purpose text sanitized to lowercase ASCII words separated by hyphens.
@@ -60,9 +66,16 @@ function New-AtlasoVmwareTestIdentity {
     [CmdletBinding()]
     [OutputType([pscustomobject])]
     param(
-        [Parameter(Mandatory = $true)]
+        [Parameter(Mandatory = $true, ParameterSetName = 'PullRequest')]
         [ValidateRange(1, 2147483647)]
         [int]$PullRequestNumber,
+
+        [Parameter(Mandatory = $true, ParameterSetName = 'Local')]
+        [switch]$LocalBuilder,
+
+        [Parameter(Mandatory = $true, ParameterSetName = 'Local')]
+        [ValidatePattern('^[0-9a-f]{40}$')]
+        [string]$SourceCommit,
 
         [Parameter(Mandatory = $true)]
         [string]$Purpose,
@@ -82,13 +95,20 @@ function New-AtlasoVmwareTestIdentity {
             -MaximumLength 32
     }
 
-    $name = "Atlaso-PR-$PullRequestNumber-$canonicalPurpose"
+    $name = if ($LocalBuilder) {
+        "Atlaso-Local-$($SourceCommit.Substring(0, 12))-$canonicalPurpose"
+    }
+    else {
+        "Atlaso-PR-$PullRequestNumber-$canonicalPurpose"
+    }
     if ($canonicalSuffix) {
         $name = "$name-$canonicalSuffix"
     }
     return [pscustomobject]@{
         Name              = $name
+        Kind              = if ($LocalBuilder) { 'local' } else { 'pull_request' }
         PullRequestNumber = $PullRequestNumber
+        SourceCommit      = if ($LocalBuilder) { $SourceCommit } else { '' }
         Purpose           = $canonicalPurpose
         CollisionSuffix   = $canonicalSuffix
     }
@@ -155,7 +175,7 @@ function Assert-AtlasoVmwareOwnedVmx {
         (Join-Path $resolvedDirectory "$ExpectedName.vmx")
     )
     if (-not $resolvedVmxPath.Equals($expectedVmxPath, [System.StringComparison]::OrdinalIgnoreCase)) {
-        throw "Refusing VMware mutation because the VMX path does not match the expected PR-owned identity '$ExpectedName': $resolvedVmxPath"
+        throw "Refusing VMware mutation because the VMX path does not match the expected Atlaso-owned identity '$ExpectedName': $resolvedVmxPath"
     }
 
     $displayNameLines = @(
@@ -163,10 +183,10 @@ function Assert-AtlasoVmwareOwnedVmx {
             Where-Object { $_ -match '^\s*displayName\b' }
     )
     if ($displayNameLines.Count -ne 1 -or $displayNameLines[0] -notmatch '^\s*displayName\s*=\s*"([^"\r\n]+)"\s*$') {
-        throw "Refusing VMware mutation because the PR-owned VMX must contain one well-formed displayName: $resolvedVmxPath"
+        throw "Refusing VMware mutation because the Atlaso-owned VMX must contain one well-formed displayName: $resolvedVmxPath"
     }
     if (-not $Matches[1].Equals($ExpectedName, [System.StringComparison]::Ordinal)) {
-        throw "Refusing VMware mutation because VMX displayName '$($Matches[1])' does not match the expected PR-owned identity '$ExpectedName': $resolvedVmxPath"
+        throw "Refusing VMware mutation because VMX displayName '$($Matches[1])' does not match the expected Atlaso-owned identity '$ExpectedName': $resolvedVmxPath"
     }
     return $resolvedVmxPath
 }

@@ -693,6 +693,23 @@ pwsh -ExecutionPolicy Bypass `
   -TrustRootCa
 ```
 
+Before a pull request exists, create the normal exploratory test VM from a clean checked-out branch with
+`-LocalBuilder` instead of `-PullRequestNumber`:
+
+```powershell
+pwsh -ExecutionPolicy Bypass `
+  -File scripts/windows/vmware/create-atlaso-test-vm.ps1 `
+  -LocalBuilder `
+  -Redeploy `
+  -ResetDataDisks `
+  -TrustRootCa
+```
+
+The wrapper derives
+`Atlaso-Local-<12-character-source-commit>-test-vm[-<collision-safe-suffix>]` and retains the exact output-directory,
+VMX, `displayName`, redeploy, and cleanup checks. Exactly one of `-PullRequestNumber` or `-LocalBuilder` is required.
+Local VMs are for exploratory testing only; collect acceptance evidence from a PR-numbered VM.
+
 Before preparing networks, removing an existing target, or creating the VM, the wrapper resolves the current Windows
 user's existing `.ssh/id_ed25519.pub` and validates it as one canonical Ed25519 public key. First boot installs exactly
 that key for `admin` and a separate development-only passwordless-sudo drop-in. Pass

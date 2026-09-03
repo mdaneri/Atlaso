@@ -2365,7 +2365,15 @@ def test_create_atlaso_vmware_test_vm_wrapper_uses_common_helpers():
     packer_template = Path("image/vmware-workstation/atlaso-photon.pkr.hcl").read_text(encoding="utf-8")
     docs = Path("image/vmware-workstation/README.md").read_text(encoding="utf-8")
 
-    assert "[int]$PullRequestNumber" in script
+    assert "[int]$PullRequestNumber = 0" in script
+    assert "[switch]$LocalBuilder" in script
+    assert "$selectedIdentityCount" in script
+    assert "Select exactly one test VM identity" in script
+    assert "status --short)" in script
+    assert "-LocalBuilder `" in script
+    assert "-SourceCommit $sourceCommit" in script
+    assert "$expectedPayloadSourceCommit = if ($LocalBuilder)" in script
+    assert "-ExpectedSourceCommit $expectedPayloadSourceCommit" in script
     assert "[string]$Purpose = 'test-vm'" in script
     assert "[string]$CollisionSuffix = ''" in script
     assert "Atlaso.VmwareTestIdentity.psm1" in script
@@ -2448,7 +2456,7 @@ def test_create_atlaso_vmware_test_vm_wrapper_uses_common_helpers():
     assert "Atlaso-Depot.vmdk" in script
     assert "Atlaso-Backups.vmdk" in script
     assert "Atlaso.WorkstationCleanup.psm1" in script
-    assert "expected PR-owned Atlaso VMX is missing" in script
+    assert "expected Atlaso-owned VMX is missing" in script
     assert "-ExpectedName $Name" in script
     assert "Assert-AtlasoStrictDescendantPath" in script
     assert "Assert-AtlasoVmwarePayloadProvenance -VmxPath $resolvedSourceVmx" in vm_script
@@ -3015,8 +3023,8 @@ def test_vmware_lifecycle_cleanup_only_removes_existing_lifecycle_vms():
     assert "-CleanupVmsOnly" in docs
 
 
-def test_vmware_test_identity_is_bound_to_the_exact_pull_request():
-    """Verify normal and lifecycle tooling share the PR-owned identity contract."""
+def test_vmware_test_identity_is_bound_to_the_exact_owner():
+    """Verify normal and lifecycle tooling share the exact-owner identity contract."""
     identity_module = Path(
         "scripts/windows/vmware/Atlaso.VmwareTestIdentity.psm1"
     ).read_text(encoding="utf-8")
@@ -3043,12 +3051,13 @@ def test_vmware_test_identity_is_bound_to_the_exact_pull_request():
         assert grammar in policy_path.read_text(encoding="utf-8")
 
     assert '"Atlaso-PR-$PullRequestNumber-$canonicalPurpose"' in identity_module
+    assert '"Atlaso-Local-$($SourceCommit.Substring(0, 12))-$canonicalPurpose"' in identity_module
     assert "[ValidateRange(1, 2147483647)]" in identity_module
     assert "[^a-z0-9]+" in identity_module
     assert "Assert-AtlasoVmwareIdentityDirectory" in identity_module
     assert "Assert-AtlasoVmwareOwnedVmx" in identity_module
     assert "[string]$Name = 'Atlaso-VMware'" not in normal_wrapper
-    assert "[Parameter(Mandatory = $true)]" in normal_wrapper
+    assert "[switch]$LocalBuilder" in normal_wrapper
     assert "-PullRequestNumber $PullRequestNumber" in normal_wrapper
     assert "-ExpectedName $Name" in normal_wrapper
     assert "[string]$Purpose = 'lifecycle'" in lifecycle_wrapper

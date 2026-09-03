@@ -50,6 +50,21 @@ if ($identity.PullRequestNumber -ne 634 -or $identity.Purpose -cne 'lifecycle-ac
     throw 'Canonical VMware identity did not retain its exact PR owner and sanitized purpose.'
 }
 
+$localCommit = 'abcdef0123456789abcdef0123456789abcdef01'
+$localIdentity = New-AtlasoVmwareTestIdentity `
+    -LocalBuilder `
+    -SourceCommit $localCommit `
+    -Purpose 'Test VM' `
+    -CollisionSuffix 'Run 02'
+if ($localIdentity.Name -cne 'Atlaso-Local-abcdef012345-test-vm-run-02' -or
+    $localIdentity.Kind -cne 'local' -or $localIdentity.PullRequestNumber -ne 0 -or
+    $localIdentity.SourceCommit -cne $localCommit) {
+    throw 'Canonical local VMware identity did not retain its exact commit ownership.'
+}
+Assert-Throws {
+    New-AtlasoVmwareTestIdentity -LocalBuilder -SourceCommit 'not-a-commit' -Purpose 'test-vm'
+} 'A malformed local source commit must fail closed.'
+
 $secondIdentity = New-AtlasoVmwareTestIdentity `
     -PullRequestNumber 634 `
     -Purpose 'Lifecycle Acceptance' `
