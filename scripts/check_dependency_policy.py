@@ -3,10 +3,12 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import re
 import shlex
 import sys
+import tomllib
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 
@@ -14,6 +16,8 @@ ROOT = Path(__file__).resolve().parents[1]
 MINIMUM_AGE_DAYS = 7
 UPLOAD_CUTOFF = f"P{MINIMUM_AGE_DAYS}D"
 INDEX_URL = "https://pypi.org/simple"
+DEV_LOCK = "requirements-dev.lock"
+DECLARATION_HASH_RE = re.compile(r"^# atlaso-declarations-sha256: ([0-9a-f]{64})$")
 PIN_RE = re.compile(
     r"^[A-Za-z0-9_.-]+==[^\s\\;]+(?:\s*;\s*[^\\]+)?\s*\\?$"
 )
@@ -63,10 +67,14 @@ class LockPolicy:
         path: Path maintained by this lockpolicy.
         inputs: Inputs maintained by this lockpolicy.
         allow_unsafe: Whether unsafe is permitted.
+        extras: Optional project extras required by the generation command.
+        build_targets: Optional project build targets required by the command.
     """
     path: str
     inputs: tuple[str, ...]
     allow_unsafe: bool
+    extras: tuple[str, ...] = ()
+    build_targets: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -89,6 +97,13 @@ LOCK_POLICIES = (
         "requirements-appliance.lock",
         ("pyproject.toml", "requirements-appliance-bootstrap.in"),
         True,
+    ),
+    LockPolicy(
+        path="requirements-dev.lock",
+        inputs=("pyproject.toml",),
+        allow_unsafe=True,
+        extras=("dev",),
+        build_targets=("editable",),
     ),
     LockPolicy("requirements-docs.lock", ("requirements-docs.in",), False),
     LockPolicy(
@@ -1671,6 +1686,28 @@ def _lock_command(lines: list[str]) -> list[str]:
     return shlex.split(command_line, posix=True) if command_line else []
 
 
+def _dev_declaration_hash(root: Path) -> str:
+    """Return a fingerprint of declarations that resolve the development lock.
+
+    Args:
+        root: Repository root containing the project declaration.
+    """
+    document = tomllib.loads((root / "pyproject.toml").read_text(encoding="utf-8"))
+    project = document["project"]
+    return hashlib.sha256(
+        json.dumps(
+            {
+                "requires_python": project["requires-python"],
+                "dependencies": project["dependencies"],
+                "dev": project.get("optional-dependencies", {}).get("dev", []),
+                "build_system": document.get("build-system", {}),
+            },
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode("utf-8")
+    ).hexdigest()
+
+
 def validate(root: Path = ROOT) -> list[str]:
     """Validate operation.
 
@@ -1742,6 +1779,24 @@ def validate(root: Path = ROOT) -> list[str]:
                     f"{policy.path}: generation command is missing inputs "
                     f"{', '.join(missing_inputs)}"
                 )
+            missing_extras = [
+                value for value in policy.extras if f"--extra={value}" not in command
+            ]
+            if missing_extras:
+                errors.append(
+                    f"{policy.path}: generation command is missing extras "
+                    f"{', '.join(missing_extras)}"
+                )
+            missing_build_targets = [
+                value
+                for value in policy.build_targets
+                if f"--build-deps-for={value}" not in command
+            ]
+            if missing_build_targets:
+                errors.append(
+                    f"{policy.path}: generation command is missing build targets "
+                    f"{', '.join(missing_build_targets)}"
+                )
 
         requirement_indexes = [
             index
@@ -1754,6 +1809,21 @@ def validate(root: Path = ROOT) -> list[str]:
         if not requirement_indexes:
             errors.append(f"{policy.path}: lock contains no package requirements")
             continue
+        if policy.path == DEV_LOCK:
+            recorded_hashes = [
+                match.group(1)
+                for line in lines
+                if (match := DECLARATION_HASH_RE.fullmatch(line))
+            ]
+            try:
+                expected_hash = _dev_declaration_hash(root)
+            except (KeyError, OSError, tomllib.TOMLDecodeError):
+                expected_hash = ""
+            if recorded_hashes != [expected_hash]:
+                errors.append(
+                    f"{policy.path}: declaration fingerprint is stale; "
+                    "regenerate the lock with python scripts/compile_requirements.py"
+                )
         for offset, index in enumerate(requirement_indexes):
             if not PIN_RE.fullmatch(lines[index]):
                 errors.append(
