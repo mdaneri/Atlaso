@@ -26,8 +26,14 @@ New Tabulators must use `window.AtlasoUiPatterns.createGrid(...)`; every new or 
 - open pull requests ready for review without a duplicate opening `@codex review`, then request one `@codex review`
   after every later commit is pushed as the exact head;
 - keep the task active with exactly one current-task heartbeat running every four minutes; each run must perform one
-  bounded reconciliation and exit, and persistent GitHub polling loops that combine `gh` with `sleep` are forbidden
-  outside explicitly requested short-lived debugging;
+  bounded reconciliation and exit. Once created, the current-task heartbeat is the exclusive routine PR monitoring
+  mechanism. Do not run persistent GitHub polling loops or finite-but-delayed shell polling such as
+  `Start-Sleep -Seconds 55; gh pr checks <pr>` or `sleep 55; gh pr view <pr>`, timeout wrappers, or equivalent delayed
+  workflow or status reads alongside it, and do not occupy a terminal merely to wait for CI, review, mergeability, or
+  post-merge state. When the task is already awake for real work, after a push, after user input, or immediately before
+  a guarded state transition, it may perform one immediate bounded reconciliation; it must not schedule its own next
+  check with a shell delay. The short-lived local-debugging exception requires an explicit maintainer request and must
+  not duplicate an active heartbeat;
 - retain the exact-head SHA and seen comment and review IDs in task context; every run must read and evaluate new
   top-level pull-request comments, inline review comments, review submissions and requested changes, exact-head checks,
   mergeability and conflicts, and authoritative review threads;

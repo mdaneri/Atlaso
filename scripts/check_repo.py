@@ -143,6 +143,14 @@ SCHEDULED_PR_MONITORING_SHARED_MARKERS = (
     "current-task heartbeat",
     "four minutes",
     "persistent GitHub polling loops",
+    "exclusive routine PR monitoring mechanism",
+    "finite-but-delayed shell polling",
+    "Start-Sleep -Seconds 55; gh pr checks",
+    "sleep 55; gh pr view",
+    "one immediate bounded reconciliation",
+    "must not schedule its own next check with a shell delay",
+    "explicit maintainer request",
+    "must not duplicate an active heartbeat",
     "seen comment and review IDs",
     "delivery-complete merge-ready",
     "final bounded readback",
@@ -3107,10 +3115,12 @@ def check_agent_policy_gate(root: Path) -> list[Finding]:
             and monitoring_section is not None
             and not monitoring_boundary_missing
         ):
+            normalized_monitoring_section = " ".join(monitoring_section.split())
             missing_monitoring_markers = tuple(
                 marker
                 for marker in monitoring_markers
                 if marker not in monitoring_section
+                and marker not in normalized_monitoring_section
             )
             for marker in missing_monitoring_markers:
                 if marker not in missing_required_markers:
