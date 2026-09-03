@@ -807,6 +807,67 @@ function Invoke-AtlasoVirtualizationPrereleaseFinalizer {
 
 <#
 .SYNOPSIS
+Invokes the canonical VMware release image builder with named parameters.
+.PARAMETER BuilderScriptPath
+Exact path to the canonical VMware image-builder script.
+.PARAMETER ReleaseVersion
+Synchronized Atlaso version for the protected release builder.
+.PARAMETER ReleaseSourceCommit
+Exact source commit for the protected release builder.
+.PARAMETER OutputDirectory
+Task-owned output directory for the VMware builder.
+.PARAMETER OnePasswordEnvironmentId
+Resolved exact Atlaso Environment ID.
+.PARAMETER OnePasswordAccount
+Resolved 1Password account selector.
+.PARAMETER OnePasswordPython
+Resolved supported Python executable.
+#>
+function Invoke-AtlasoVirtualizationReleaseImageBuilder {
+    [Diagnostics.CodeAnalysis.SuppressMessageAttribute(
+        'PSAvoidUsingPlainTextForPassword',
+        'OnePasswordEnvironmentId',
+        Justification = 'Opaque Environment identifier; the SDK child retrieves concealed values.'
+    )]
+    [Diagnostics.CodeAnalysis.SuppressMessageAttribute(
+        'PSAvoidUsingPlainTextForPassword',
+        'OnePasswordAccount',
+        Justification = 'Desktop authorization account identifier, not an account password.'
+    )]
+    [Diagnostics.CodeAnalysis.SuppressMessageAttribute(
+        'PSAvoidUsingPlainTextForPassword',
+        'OnePasswordPython',
+        Justification = 'Executable selector for the isolated SDK runtime, not a password.'
+    )]
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)][string]$BuilderScriptPath,
+        [Parameter(Mandatory = $true)][string]$ReleaseVersion,
+        [Parameter(Mandatory = $true)][string]$ReleaseSourceCommit,
+        [Parameter(Mandatory = $true)][string]$OutputDirectory,
+        [Parameter(Mandatory = $true)][string]$OnePasswordEnvironmentId,
+        [Parameter(Mandatory = $true)][string]$OnePasswordAccount,
+        [Parameter(Mandatory = $true)][string]$OnePasswordPython
+    )
+
+    # Named splatting is a credential boundary: positional binding would send
+    # the release version into the builder's SecureString password parameter.
+    $buildArguments = @{
+        ReleaseBuilder           = $true
+        ReleaseVersion           = $ReleaseVersion
+        ReleaseSourceCommit      = $ReleaseSourceCommit
+        OutputDirectory          = $OutputDirectory
+        Headless                 = $true
+        EnableRealSystemAdapters = $true
+        OnePasswordEnvironmentId = $OnePasswordEnvironmentId
+        OnePasswordAccount       = $OnePasswordAccount
+        OnePasswordPython        = $OnePasswordPython
+    }
+    & $BuilderScriptPath @buildArguments
+}
+
+<#
+.SYNOPSIS
 Creates, smokes, and stages one local virtualization prerelease.
 .PARAMETER RepoRoot
 Exact Atlaso checkout root.
@@ -1049,17 +1110,14 @@ function Invoke-AtlasoVirtualizationPrerelease {
         }
     }
     if ($requiresBuild) {
-        $buildArguments = @(
-            '-ReleaseBuilder',
-            '-ReleaseVersion', $identity.Version,
-            '-ReleaseSourceCommit', $identity.Commit,
-            '-OutputDirectory', $builderOutput,
-            '-Headless', '-EnableRealSystemAdapters',
-            '-OnePasswordEnvironmentId', $OnePasswordEnvironmentId,
-            '-OnePasswordAccount', $OnePasswordAccount,
-            '-OnePasswordPython', $OnePasswordPython
-        )
-        & (Join-Path $RepoRoot 'scripts\windows\vmware\build-photon-image.ps1') @buildArguments
+        Invoke-AtlasoVirtualizationReleaseImageBuilder `
+            -BuilderScriptPath (Join-Path $RepoRoot 'scripts\windows\vmware\build-photon-image.ps1') `
+            -ReleaseVersion $identity.Version `
+            -ReleaseSourceCommit $identity.Commit `
+            -OutputDirectory $builderOutput `
+            -OnePasswordEnvironmentId $OnePasswordEnvironmentId `
+            -OnePasswordAccount $OnePasswordAccount `
+            -OnePasswordPython $OnePasswordPython
         if ($LASTEXITCODE -ne 0) {
             throw 'Canonical VMware image build failed.'
         }

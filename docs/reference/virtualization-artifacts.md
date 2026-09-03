@@ -372,6 +372,8 @@ selector file, requires one uniquely signed-in 1Password CLI account, and discov
 3.14 runtime. The retained `-StagingRoot`, `-ManagementSwitch`, `-ServiceSwitch`,
 `-OnePasswordEnvironmentId`, `-OnePasswordAccount`, and `-OnePasswordPython` parameters remain authoritative overrides.
 The resolved credential selectors are forwarded unchanged to both the fresh image build and exact-wheel deployment.
+The image-builder handoff uses named parameters and deliberately leaves both `SecureString` credential parameters
+unbound so the reviewed 1Password defaults remain authoritative.
 
 Preflight prints the synchronized version and selected tag, staging root, switch names, and selector-source labels
 before creating staging directories or starting build activity. It never prints Environment IDs, account values,
