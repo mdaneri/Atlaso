@@ -131,7 +131,7 @@ function Get-AtlasoOnePasswordDependencyFailure {
         $category = 'hash_mismatch'
         $message = 'Downloaded dependency bytes did not match the checked-in hash lock. Verify mirror synchronization and the exact checkout; no dependency was installed.'
     }
-    elseif ($sample -match 'connectionreset|connection refused|connection aborted|connection timed out|read timed out|max retries exceeded|proxyerror|proxy error|sslerror|certificate verify failed|tls|temporary failure in name resolution|name or service not known|network is unreachable|unable to fetch|could not fetch url|httpsconnectionpool') {
+    elseif ($sample -match 'connectionreset|connection refused|connection aborted|connection timed out|read timed out|max retries exceeded|proxyerror|proxy error|sslerror|certificate verify failed|tls|temporary failure in name resolution|name or service not known|getaddrinfo failed|newconnectionerror|failed to establish a new connection|network is unreachable|unable to fetch|could not fetch url|httpsconnectionpool') {
         $category = 'index_connectivity_tls_proxy'
         $message = 'The selected package source could not be reached because of an index, connectivity, TLS, or proxy failure. Verify host trust and proxy access to the configured pair; Atlaso did not try a public fallback.'
     }

@@ -104,6 +104,7 @@ if ($null -eq $ordinaryBoundedFailure -or
 
 $diagnosticFixtures = @(
     @{ Category = 'index_connectivity_tls_proxy'; Output = 'Could not find a version that satisfies fixture'; Error = "`e[31mHTTPSConnectionPool Max retries exceeded ConnectionResetError token=hidden" },
+    @{ Category = 'index_connectivity_tls_proxy'; Output = 'No matching distribution found for fixture'; Error = 'NewConnectionError Failed to establish a new connection getaddrinfo failed' },
     @{ Category = 'invocation_runtime'; Output = 'usage: pip unknown option --fixture'; Error = '' },
     @{ Category = 'distribution_unavailable'; Output = ''; Error = 'No matching distribution found for fixture' },
     @{ Category = 'hash_mismatch'; Output = 'THESE PACKAGES DO NOT MATCH THE HASHES expected sha256 fixture'; Error = '' },
