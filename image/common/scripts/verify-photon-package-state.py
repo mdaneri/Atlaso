@@ -21,6 +21,14 @@ REQUIRED_RUNTIME_PACKAGES = (
     "ntpsec",
     "python3-ntp",
 )
+FORBIDDEN_RUNTIME_PACKAGES = ("cloud-init",)
+CLOUD_INIT_RUNTIME_PATHS = (
+    Path("/usr/lib/systemd/system-generators/cloud-init-generator"),
+    Path("/usr/lib/cloud-init"),
+    Path("/usr/lib/systemd/system/cloud-init.target"),
+    Path("/etc/cloud"),
+    Path("/var/lib/cloud"),
+)
 
 
 def read_os_release(path: Path) -> dict[str, str]:
@@ -98,6 +106,47 @@ def verify_rpm_packages(
             )
 
 
+def verify_rpm_packages_absent(
+    packages: Sequence[str],
+    *,
+    runner: Callable[..., subprocess.CompletedProcess[str]] = subprocess.run,
+) -> None:
+    """Require every named unsupported RPM to be absent.
+
+    Args:
+        packages: Unsupported RPM package identities to query.
+        runner: Subprocess-compatible command runner.
+    """
+
+    for package in packages:
+        completed = runner(
+            ["rpm", "-q", package],
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+        if completed.returncode == 0:
+            raise ValueError(
+                f"Unsupported Photon runtime package is installed: {package}"
+            )
+        if completed.returncode != 1:
+            raise ValueError(
+                f"Could not verify unsupported Photon package is absent: {package}"
+            )
+
+
+def verify_paths_absent(paths: Sequence[Path]) -> None:
+    """Require unsupported runtime paths to be absent from the image.
+
+    Args:
+        paths: Filesystem paths that must not remain in the appliance.
+    """
+
+    for path in paths:
+        if path.exists():
+            raise ValueError(f"Unsupported cloud-init runtime path remains: {path}")
+
+
 def verify_photon_package_state(
     *,
     os_release_path: Path,
@@ -105,6 +154,7 @@ def verify_photon_package_state(
     tdnf_config_path: Path,
     guest_platform: str,
     runner: Callable[..., subprocess.CompletedProcess[str]] = subprocess.run,
+    forbidden_runtime_paths: Sequence[Path] = CLOUD_INIT_RUNTIME_PATHS,
 ) -> str:
     """Verify release files, TDNF identity, and required runtime RPMs.
 
@@ -114,6 +164,7 @@ def verify_photon_package_state(
         tdnf_config_path: TDNF configuration defining the distro version package.
         guest_platform: Appliance platform whose runtime packages are required.
         runner: Subprocess-compatible command runner.
+        forbidden_runtime_paths: Unsupported cloud-init paths that must be absent.
     """
 
     os_release = read_os_release(os_release_path)
@@ -135,6 +186,8 @@ def verify_photon_package_state(
     elif guest_platform != "none":
         raise ValueError(f"Unsupported Photon guest platform: {guest_platform}")
     verify_rpm_packages(tuple(dict.fromkeys(packages)), runner=runner)
+    verify_rpm_packages_absent(FORBIDDEN_RUNTIME_PACKAGES, runner=runner)
+    verify_paths_absent(forbidden_runtime_paths)
     return distroverpkg
 
 

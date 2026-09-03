@@ -2201,6 +2201,23 @@ def test_photon_image_optional_pip_global_index_configuration():
     assert "\ntdnf -y update" not in script
 
 
+def test_photon_removes_cloud_init_before_systemd_reload() -> None:
+    """Keep Atlaso's first-boot services as the only customization owner."""
+
+    provision = Path("image/common/scripts/provision-atlaso.sh").read_text(
+        encoding="utf-8"
+    )
+    cloud_init_removal = (
+        'run_tdnf "Cloud-init package removal" --noautoremove remove cloud-init'
+    )
+    assert cloud_init_removal in provision
+    assert provision.index('run_tdnf "Photon OS update" update') < provision.index(
+        cloud_init_removal
+    ) < provision.index("systemctl daemon-reexec")
+    for path in ("/usr/lib/cloud-init", "/etc/cloud", "/var/lib/cloud"):
+        assert path in provision
+
+
 def test_photon_build_installs_the_complete_qemu_build_toolchain() -> None:
     """Photon supplies the compiler and Linux userspace headers separately."""
 

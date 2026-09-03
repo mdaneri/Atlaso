@@ -64,6 +64,8 @@ The canonical OS appliance target is Photon OS 5.0 on VMware Workstation. The im
 - a Photon OS 5.0 VMware VM with UEFI firmware and Secure Boot off;
 - updated Photon packages from the configured Photon 5.0 repositories, with a second update pass after appliance
   packages are installed;
+- no cloud-init lifecycle: Atlaso removes Photon's incidental `cloud-init` package after the initial update and rejects
+  package or runtime-path remnants because Atlaso's own first-boot services own customization;
 - the `atlaso` system user;
 - `/opt/atlaso` for the installed application;
 - `/etc/atlaso/atlaso.env` for appliance environment settings;
