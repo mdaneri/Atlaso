@@ -3509,13 +3509,15 @@ artifact and gives maintainers time to observe upstream regressions or compromis
 <p>Dependabot applies the same seven-day cooldown to pip version updates. The resolver cutoff remains authoritative because
 Dependabot cooldowns do not cover every transitive selection and do not delay security-update pull requests.</p>
 <h2 id="regenerate-locks">Regenerate locks<a class="headerlink" href="#regenerate-locks" title="Permanent link">&para;</a></h2>
-<p>Use Python 3.14 with pip 26.0 or newer and pip-tools 7.6.0. From the repository root, run:</p>
+<p>Use native Windows (not WSL) with Python 3.14, pip 26.0 or newer, and pip-tools 7.6.0. Windows resolution retains the
+Windows-only dependency superset; the wrapper adds the reviewed Linux-only dependencies. From the repository root, run:</p>
 <div class="language-powershell highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="n">python</span> <span class="n">scripts</span><span class="p">/</span><span class="n">compile_requirements</span><span class="p">.</span><span class="n">py</span>
 </span></code></pre></div>
 <p>The wrapper regenerates:</p>
 <ul>
 <li><code>requirements-appliance-bootstrap.lock</code>;</li>
 <li><code>requirements-appliance.lock</code>;</li>
+<li><code>requirements-dev.lock</code>;</li>
 <li><code>requirements-docs.lock</code>;</li>
 <li><code>requirements-static-analysis.lock</code>;</li>
 <li><code>requirements-release-tools.lock</code>;</li>
@@ -3523,9 +3525,19 @@ Dependabot cooldowns do not cover every transitive selection and do not delay se
 <li><code>requirements-virtualization-smoke.lock</code>.</li>
 </ul>
 <p>Every resolver invocation includes <code>--uploaded-prior-to=P7D</code> and <code>--generate-hashes</code>. Locks that need pip's unsafe
-bootstrap tools retain <code>--allow-unsafe</code>, and the wrapper refreshes the declaration fingerprint embedded in
-<code>requirements-appliance.lock</code>. Pass <code>--upgrade</code> only when the intended change should move every eligible package to the
-newest version that satisfies the seven-day cutoff.</p>
+bootstrap tools retain <code>--allow-unsafe</code>, and the wrapper refreshes the declaration fingerprints embedded in
+<code>requirements-appliance.lock</code> and <code>requirements-dev.lock</code>. Pass <code>--upgrade</code> only when the intended change should move
+every eligible package to the newest version that satisfies the seven-day cutoff.</p>
+<p><code>requirements-dev.lock</code> resolves the complete project <code>dev</code> extra, application dependencies, and editable build
+requirements. CI installs that hash-locked environment before installing Atlaso itself as an editable package with
+dependency resolution and build isolation disabled. This keeps test collection reproducible when a new transitive
+release appears between pull-request and post-merge runs without weakening warnings-as-errors or the package-age
+policy.</p>
+<p>Because pip resolves environment markers for its current host, the Windows-supported lock generator cannot select
+Linux-only dependencies from <code>uvicorn[standard]</code>. The project <code>dev</code> extra therefore declares the reviewed Linux
+<code>uvloop</code> pin explicitly, and the wrapper adds its eligible release hashes to <code>requirements-dev.lock</code> under the same
+environment marker. The wrapper fingerprints the application, <code>dev</code>, Python, and editable-build declarations;
+repository checks reject a stale lock before CI installs it with dependency resolution disabled.</p>
 <p>The Windows 1Password deployment lock is temporarily augmented from
 <code>scripts/windows/vmware/onepassword-sdk-cp314-wheel.json</code>. That manifest binds one immutable GitHub release asset from
 <code>mdaneri/onepassword-sdk-python</code> by filename, size, SHA-256, release commit, upstream <code>v0.4.1</code> identity, attestation
@@ -3539,7 +3551,7 @@ included notice as permitting this temporary redistribution; that delivery recor
 index returns upload times before compiling. It ignores pip configuration and environment variables that could add an
 unverified index or find-links source. An approved alternative can be supplied with <code>--index-url</code>, but it must use HTTPS,
 must not embed credentials, and must provide complete upload-time metadata or compilation stops before any lock changes.</p>
-<p>Do not edit generated pins, hashes, generation-command headers, or the appliance fingerprint manually. Do not remove or
+<p>Do not edit generated pins, hashes, generation-command headers, or declaration fingerprints manually. Do not remove or
 shorten the upload-time cutoff to obtain a newer dependency, including for a security update. If no eligible version
 satisfies the input declarations, change the input constraint through a reviewed dependency update or wait until the
 required release reaches seven full days.</p>

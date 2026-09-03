@@ -4347,7 +4347,8 @@ runtime.</p>
   pre-existing issue and per-update documentation requirements. They must carry the <code>enhancement</code> type label plus
   <code>dependencies</code>, remain subject to the normal version, CI, review, and squash-merge gates, and must not weaken
   Atlaso's generated-lock or release boundaries. Before merging a Python update, regenerate every affected <code>.lock</code>
-  file through <code>python scripts/compile_requirements.py</code> with Python 3.14 and pip-tools 7.6.0. The wrapper must retain
+  file through <code>python scripts/compile_requirements.py</code> on native Windows with Python 3.14 and pip-tools 7.6.0. The
+  wrapper must retain
   pip's <code>--uploaded-prior-to=P7D</code> cutoff for every direct, transitive, and security update, preserve hashes and required
   <code>--allow-unsafe</code> behavior, refresh the appliance declaration fingerprint, and run the dependency-policy, lock, and
   Photon compatibility checks. Do not admit a Python distribution uploaded less than seven full days ago.</li>
