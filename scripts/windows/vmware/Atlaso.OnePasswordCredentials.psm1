@@ -1241,12 +1241,20 @@ function Get-AtlasoOnePasswordCredentialPair {
         [string]$OnePasswordCliPath = '',
         [SecureString]$AdminPassword,
         [SecureString]$RootPassword,
-        [string]$PipGlobalIndex = 'https://pypi.org/pypi',
-        [string]$PipGlobalIndexUrl = 'https://pypi.org/simple',
+        [AllowEmptyString()][string]$PipGlobalIndex = '',
+        [AllowEmptyString()][string]$PipGlobalIndexUrl = '',
         [Parameter(Mandatory = $true)][ValidateRange(1, 3600)][int]$TimeoutSeconds,
         [string]$ConsumerDescription = 'Atlaso workflow'
     )
 
+    # Validate the exported bridge before artifact admission or recovery. This
+    # prevents a direct caller from combining one explicit field with a public
+    # default before the lower-level download boundary revalidates the pair.
+    $validatedPackageSource = Resolve-AtlasoPipPackageSource `
+        -PipGlobalIndex $PipGlobalIndex `
+        -PipGlobalIndexUrl $PipGlobalIndexUrl
+    $PipGlobalIndex = $validatedPackageSource.PipGlobalIndex
+    $PipGlobalIndexUrl = $validatedPackageSource.PipGlobalIndexUrl
     if ($env:DEFAULT_ADMIN_PASSWORD -or $env:DEFAULT_ROOT_PASSWORD) {
         throw 'DEFAULT_ADMIN_PASSWORD and DEFAULT_ROOT_PASSWORD must not be supplied by the caller; use the exact Atlaso 1Password Environment bridge.'
     }

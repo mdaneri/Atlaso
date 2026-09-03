@@ -65,6 +65,20 @@ if ($null -eq $partialBoundaryFailure -or
     $partialBoundaryFailure.Exception.Message -notlike 'PipGlobalIndex and PipGlobalIndexUrl*') {
     throw 'The exported SDK download boundary did not reject a partial package-source pair before activity.'
 }
+$partialBridgeFailure = $null
+try {
+    Get-AtlasoOnePasswordCredentialPair `
+        -RepositoryRoot 'must-not-read' `
+        -PipGlobalIndexUrl 'https://mirror.example.test/simple' `
+        -TimeoutSeconds 1 | Out-Null
+}
+catch {
+    $partialBridgeFailure = $_
+}
+if ($null -eq $partialBridgeFailure -or
+    $partialBridgeFailure.Exception.Message -notlike 'PipGlobalIndex and PipGlobalIndexUrl*') {
+    throw 'The exported credential bridge did not reject a partial package-source pair before activity.'
+}
 
 $boundedResult = Invoke-AtlasoBoundedProcess `
     -FilePath (Get-Process -Id $PID).Path `
