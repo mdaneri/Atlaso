@@ -4964,8 +4964,8 @@ runtime.</p>
   it with <code>scp</code>, installs it into <code>/opt/atlaso/.venv</code>, syncs <code>scripts/appliance/atlaso-helper</code> to
   <code>/opt/atlaso/bin/atlaso-helper</code>, provisions every checked-in public release key under <code>/etc/atlaso/update-trust.d</code>,
   restores venv permissions, restarts <code>atlaso.service</code>, and verifies guest plus host <code>/openapi.json</code> with a readiness
-  retry. The default deploy also builds and installs the independently versioned Inventory Linux package; use
-  <code>-SkipInventoryLinuxSync</code> only for a code-only patch that intentionally preserves existing boot media. Packer image
+  retry. It never builds, packages, uploads, validates, or installs the independently versioned Inventory Linux
+  package; administrators manage that boot media through its signed release and installation workflow. Packer image
   definitions must explicitly stage <code>image/common/update-trust</code>, and provisioning must fail rather
   than build an appliance with no valid public release key. Use <code>-IpAddress &lt;appliance-ip&gt;</code> when the VM IP is known, or
   <code>-VmxPath "&lt;path-to-vmx&gt;"</code> for VMware discovery; do not pipe the VMX path or put the <code>.vmx</code> path on a separate line

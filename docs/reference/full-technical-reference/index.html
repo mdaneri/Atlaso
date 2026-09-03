@@ -5496,10 +5496,10 @@ the global Python environment. <code>-SkipBuild</code> fails closed if the compl
 Without <code>-OnePasswordEnvironmentId</code>, the helper preserves the original <code>scp</code>/<code>ssh</code> key or agent workflow.
 Helper sync matters because the privileged helper is installed outside the Python virtualenv and is not replaced by
 <code>pip install</code>. If the app takes longer to import after reinstalling the wheel, increase the readiness wait with
-<code>-ReadinessTimeoutSeconds 120</code>. Use <code>-SkipInventoryLinuxSync</code> only when deliberately leaving the appliance's existing
-Inventory Linux package unchanged. The password-backed helper omits skipped optional asset arguments instead of passing
-empty native-command values, so these skip switches behave consistently in Windows PowerShell and PowerShell 7
-native-argument modes.</p>
+<code>-ReadinessTimeoutSeconds 120</code>. Wheel deployment never builds, packages, uploads, validates, or installs Inventory
+Linux; administrators manage that boot media through its independent signed release and installation workflow. The
+password-backed helper omits skipped optional asset arguments instead of passing empty native-command values, so the
+remaining skip switches behave consistently in Windows PowerShell and PowerShell 7 native-argument modes.</p>
 <p><code>-RemoteDirectory</code> defaults to <code>/tmp</code> and accepts an absolute POSIX path made only from ASCII letters, digits, <code>/</code>,
 <code>.</code>, <code>_</code>, and <code>-</code>; <code>.</code> and <code>..</code> path components are not allowed. The helper normalizes a trailing slash and applies the
 same validation before build or upload for password-backed and key/agent-backed SSH. Paths containing whitespace,
