@@ -3945,7 +3945,9 @@ producer defaults <code>StagingRoot</code> to <code>&lt;checkout&gt;\artifacts\v
 selector file, requires one uniquely signed-in 1Password CLI account, and discovers a standard Windows x64 CPython
 3.14 runtime. The retained <code>-StagingRoot</code>, <code>-ManagementSwitch</code>, <code>-ServiceSwitch</code>,
 <code>-OnePasswordEnvironmentId</code>, <code>-OnePasswordAccount</code>, and <code>-OnePasswordPython</code> parameters remain authoritative overrides.
-The resolved credential selectors are forwarded unchanged to both the fresh image build and exact-wheel deployment.</p>
+The resolved credential selectors are forwarded unchanged to both the fresh image build and exact-wheel deployment.
+The image-builder handoff uses named parameters and deliberately leaves both <code>SecureString</code> credential parameters
+unbound so the reviewed 1Password defaults remain authoritative.</p>
 <p>Preflight prints the synchronized version and selected tag, staging root, switch names, and selector-source labels
 before creating staging directories or starting build activity. It never prints Environment IDs, account values,
 credentials, credential material, or secret-bearing paths. If the resolved staging root contains exactly one valid
