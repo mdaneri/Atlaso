@@ -1868,6 +1868,11 @@ def test_vmware_packer_requires_proven_builder_identity() -> None:
     assert "[string]$pull.head_repository -ine $repository" in wrapper
     assert "-Repository $canonicalRepository" in wrapper
     assert "status --short --untracked-files=no" in wrapper
+    local_identity_resolver = wrapper.split(
+        "function Resolve-AtlasoLocalBuilderIdentity", 1
+    )[1].split("function ", 1)[0]
+    assert "status --short)" in local_identity_resolver
+    assert "--untracked-files=no" not in local_identity_resolver
     assert "git check-ref-format --branch" in identity_module
     assert "Kind              = 'local'" in identity_module
     assert "Atlaso-Local-$($SourceCommit.Substring(0, 12))-Photon-Builder-VMware" in identity_module

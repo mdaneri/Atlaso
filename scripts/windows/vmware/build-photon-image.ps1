@@ -397,7 +397,9 @@ function Resolve-AtlasoLocalBuilderIdentity {
 
     $branch = ([string](& git -C $RepositoryRoot branch --show-current)).Trim()
     $commit = ([string](& git -C $RepositoryRoot rev-parse HEAD)).Trim()
-    $trackedChanges = @(& git -C $RepositoryRoot status --short --untracked-files=no)
+    # Local/test mode must reject untracked content before credential lookup or
+    # Workstation repair can cause provider-side effects.
+    $trackedChanges = @(& git -C $RepositoryRoot status --short)
     if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($branch) -or
         $commit -notmatch '^[0-9a-f]{40}$' -or $trackedChanges.Count -ne 0) {
         throw 'A local/test Photon builder requires one clean checked-out branch and exact source commit.'
