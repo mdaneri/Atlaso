@@ -15,6 +15,147 @@ Import-Module (Join-Path $PSScriptRoot 'Atlaso.WorkstationCleanup.psm1') -Force
 
 <#
 .SYNOPSIS
+Resolve one deterministic credential-free HTTPS pip package-source pair.
+
+.PARAMETER PipGlobalIndex
+Optional pip `global.index` repository or API endpoint.
+
+.PARAMETER PipGlobalIndexUrl
+Optional pip `global.index-url` PEP 503 simple-index endpoint.
+#>
+function Resolve-AtlasoPipPackageSource {
+    param(
+        [AllowEmptyString()][string]$PipGlobalIndex = '',
+        [AllowEmptyString()][string]$PipGlobalIndexUrl = ''
+    )
+
+    $hasIndex = -not [string]::IsNullOrWhiteSpace($PipGlobalIndex)
+    $hasIndexUrl = -not [string]::IsNullOrWhiteSpace($PipGlobalIndexUrl)
+    if ($hasIndex -xor $hasIndexUrl) {
+        throw 'PipGlobalIndex and PipGlobalIndexUrl must be supplied together so Atlaso never fills a partial override from public PyPI.'
+    }
+    $resolvedIndex = if ($hasIndex) { $PipGlobalIndex } else { 'https://pypi.org/pypi' }
+    $resolvedIndexUrl = if ($hasIndexUrl) { $PipGlobalIndexUrl } else { 'https://pypi.org/simple' }
+    foreach ($source in @(
+            [pscustomobject]@{ Name = 'PipGlobalIndex'; Value = $resolvedIndex },
+            [pscustomobject]@{ Name = 'PipGlobalIndexUrl'; Value = $resolvedIndexUrl }
+        )) {
+        $candidate = [string]$source.Value
+        $uri = $null
+        if ($candidate.Length -gt 2048 -or $candidate -cne $candidate.Trim() -or
+            $candidate -match '[\x00-\x20\x7f]' -or
+            -not [uri]::TryCreate($candidate, [UriKind]::Absolute, [ref]$uri) -or
+            $uri.Scheme -cne 'https' -or [string]::IsNullOrWhiteSpace($uri.Host) -or
+            -not [string]::IsNullOrEmpty($uri.UserInfo) -or
+            -not [string]::IsNullOrEmpty($uri.Query) -or
+            -not [string]::IsNullOrEmpty($uri.Fragment)) {
+            throw "$($source.Name) must be a credential-free absolute HTTPS URL without whitespace, user information, query, or fragment data."
+        }
+    }
+    return [pscustomobject][ordered]@{
+        PipGlobalIndex    = $resolvedIndex
+        PipGlobalIndexUrl = $resolvedIndexUrl
+        IsExplicit        = $hasIndex
+    }
+}
+
+<#
+.SYNOPSIS
+Write the private pip configuration used by the isolated SDK download.
+
+.PARAMETER Path
+Task-private configuration path beneath the bounded bridge root.
+
+.PARAMETER PipGlobalIndex
+Resolved pip `global.index` value.
+
+.PARAMETER PipGlobalIndexUrl
+Resolved pip `global.index-url` value.
+#>
+function New-AtlasoOnePasswordPipConfiguration {
+    param(
+        [Parameter(Mandatory = $true)][string]$Path,
+        [Parameter(Mandatory = $true)][string]$PipGlobalIndex,
+        [Parameter(Mandatory = $true)][string]$PipGlobalIndexUrl
+    )
+
+    $resolvedPath = [System.IO.Path]::GetFullPath($Path)
+    [void][System.IO.Directory]::CreateDirectory([System.IO.Path]::GetDirectoryName($resolvedPath))
+    try {
+        [System.IO.File]::WriteAllLines(
+            $resolvedPath,
+            @(
+                '[global]',
+                "index = $PipGlobalIndex",
+                "index-url = $PipGlobalIndexUrl",
+                'disable-pip-version-check = true',
+                'no-cache-dir = true'
+            ),
+            [System.Text.UTF8Encoding]::new($false)
+        )
+    }
+    catch {
+        throw 'The private 1Password dependency package-source configuration could not be prepared.'
+    }
+    return $resolvedPath
+}
+
+<#
+.SYNOPSIS
+Classify a failed 1Password dependency preparation without exposing child output.
+
+.PARAMETER ExitCode
+Nonzero exit code returned by the bounded dependency child.
+
+.PARAMETER StandardOutput
+Captured standard output inspected only through the bounded allowlist.
+
+.PARAMETER StandardError
+Captured standard error inspected only through the bounded allowlist.
+#>
+function Get-AtlasoOnePasswordDependencyFailure {
+    param(
+        [Parameter(Mandatory = $true)][int]$ExitCode,
+        [AllowEmptyString()][string]$StandardOutput = '',
+        [AllowEmptyString()][string]$StandardError = ''
+    )
+
+    $combined = "$StandardError`n$StandardOutput"
+    if ($combined.Length -gt 16384) {
+        $combined = $combined.Substring(0, 8192) + "`n" + $combined.Substring($combined.Length - 8192)
+    }
+    $sample = [regex]::Replace($combined, '[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]', ' ')
+    $category = 'unclassified'
+    $message = ''
+    if ($sample -match 'hash(?:es)? (?:do not|does not) match|hash mismatch|package hashes|expected sha256|THESE PACKAGES DO NOT MATCH THE HASHES') {
+        $category = 'hash_mismatch'
+        $message = 'Downloaded dependency bytes did not match the checked-in hash lock. Verify mirror synchronization and the exact checkout; no dependency was installed.'
+    }
+    elseif ($sample -match 'no matching distribution found|could not find a version that satisfies|not a supported wheel|unsupported wheel|requires-python|incompatible (?:platform|python)') {
+        $category = 'distribution_unavailable'
+        $message = 'The selected package source does not offer a required binary distribution for standard Windows x64 CPython 3.14. Verify mirror completeness and retained platform wheels.'
+    }
+    elseif ($sample -match 'connectionreset|connection refused|connection aborted|connection timed out|read timed out|max retries exceeded|proxyerror|proxy error|sslerror|certificate verify failed|tls|temporary failure in name resolution|name or service not known|network is unreachable|unable to fetch|could not fetch url|httpsconnectionpool') {
+        $category = 'index_connectivity_tls_proxy'
+        $message = 'The selected package source could not be reached because of an index, connectivity, TLS, or proxy failure. Verify host trust and proxy access to the configured pair; Atlaso did not try a public fallback.'
+    }
+    elseif ($sample -match 'no module named pip|unknown option|unrecognized arguments|invalid choice|usage:|syntaxerror|modulenotfounderror|failed to create process|cannot start process') {
+        $category = 'invocation_runtime'
+        $message = 'The isolated pip invocation or Python runtime failed before dependency preparation. Verify the selected standard Windows x64 CPython 3.14 runtime and its bundled pip installation.'
+    }
+    else {
+        $stdoutState = if ([string]::IsNullOrWhiteSpace($StandardOutput)) { 'absent' } else { 'present' }
+        $stderrState = if ([string]::IsNullOrWhiteSpace($StandardError)) { 'absent' } else { 'present' }
+        $message = "The dependency failure did not match an allowlisted diagnostic class (stdout $stdoutState; stderr $stderrState). Record only this sanitized message and exit code; do not share raw child streams."
+    }
+    return [pscustomobject][ordered]@{
+        Category = $category
+        Message  = "The hash-verified 1Password SDK wheel download failed with exit code $ExitCode. $message"
+    }
+}
+
+<#
+.SYNOPSIS
 Resolve the exact Atlaso 1Password Environment ID without printing it.
 
 .PARAMETER EnvironmentId
@@ -652,6 +793,12 @@ Atlaso checkout containing requirements-onepassword-deploy.lock.
 .PARAMETER BridgeRoot
 Private task-specific temporary root for wheels and installed dependencies.
 
+.PARAMETER PipGlobalIndex
+Resolved pip `global.index` value shared with the Photon guest build.
+
+.PARAMETER PipGlobalIndexUrl
+Resolved pip `global.index-url` value shared with the Photon guest build.
+
 .PARAMETER TimeoutSeconds
 Positive deadline for each dependency operation.
 #>
@@ -660,6 +807,8 @@ function Initialize-AtlasoOnePasswordSdkRuntime {
         [Parameter(Mandatory = $true)][string]$PythonCommand,
         [Parameter(Mandatory = $true)][string]$RepositoryRoot,
         [Parameter(Mandatory = $true)][string]$BridgeRoot,
+        [string]$PipGlobalIndex = 'https://pypi.org/pypi',
+        [string]$PipGlobalIndexUrl = 'https://pypi.org/simple',
         [Parameter(Mandatory = $true)][ValidateRange(1, 3600)][int]$TimeoutSeconds
     )
 
@@ -671,6 +820,7 @@ function Initialize-AtlasoOnePasswordSdkRuntime {
     $dependencyDirectory = Join-Path $BridgeRoot 'python-dependencies'
     $pipRuntimeRoot = Join-Path $BridgeRoot 'pip-runtime'
     $indexLockPath = Join-Path $BridgeRoot 'requirements-onepassword-index.lock'
+    $pipConfigurationPath = Join-Path $BridgeRoot 'pip.ini'
     [void][System.IO.Directory]::CreateDirectory($wheelDirectory)
     [void][System.IO.Directory]::CreateDirectory($dependencyDirectory)
 
@@ -686,24 +836,41 @@ function Initialize-AtlasoOnePasswordSdkRuntime {
         -PythonCommand $PythonCommand `
         -RuntimeRoot $pipRuntimeRoot `
         -TimeoutSeconds $TimeoutSeconds
+    $null = New-AtlasoOnePasswordPipConfiguration `
+        -Path $pipConfigurationPath `
+        -PipGlobalIndex $PipGlobalIndex `
+        -PipGlobalIndexUrl $PipGlobalIndexUrl
 
     # Download is the only index-enabled step. Installation is deliberately
     # offline from the exact hash-verified wheel set, matching deploy-wheel.ps1.
-    Invoke-AtlasoBoundedProcess `
+    $downloadResult = Invoke-AtlasoBoundedProcess `
         -FilePath $pipRuntime.PythonCommand `
         -ArgumentList @(
             @($pipRuntime.ArgumentsPrefix)
             'download',
             '--disable-pip-version-check',
-            '--index-url', 'https://pypi.org/simple',
             '--find-links', $wheelDirectory,
             '--require-hashes',
             '--only-binary=:all:',
             '--dest', $wheelDirectory,
             '-r', $indexLockPath
         ) `
+        -ClearEnvironmentVariablePrefixes @('PIP_') `
+        -EnvironmentVariables @{
+            PIP_CONFIG_FILE       = $pipConfigurationPath
+            PIP_EXTRA_INDEX_URL   = ''
+            PIP_NO_INPUT          = '1'
+        } `
         -TimeoutSeconds $TimeoutSeconds `
-        -Action 'The hash-verified 1Password SDK wheel download' | Out-Null
+        -Action 'The hash-verified 1Password SDK wheel download' `
+        -ReturnResult
+    if ($downloadResult.ExitCode -ne 0) {
+        $failure = Get-AtlasoOnePasswordDependencyFailure `
+            -ExitCode $downloadResult.ExitCode `
+            -StandardOutput $downloadResult.StandardOutput `
+            -StandardError $downloadResult.StandardError
+        throw $failure.Message
+    }
     Invoke-AtlasoBoundedProcess `
         -FilePath $pipRuntime.PythonCommand `
         -ArgumentList @(
@@ -1014,6 +1181,12 @@ Optional explicit administrator SecureString override.
 .PARAMETER RootPassword
 Optional explicit root SecureString override.
 
+.PARAMETER PipGlobalIndex
+Resolved pip `global.index` value for SDK dependency preparation.
+
+.PARAMETER PipGlobalIndexUrl
+Resolved pip `global.index-url` value for SDK dependency preparation.
+
 .PARAMETER TimeoutSeconds
 Positive deadline for dependency and credential children.
 
@@ -1044,6 +1217,8 @@ function Get-AtlasoOnePasswordCredentialPair {
         [string]$OnePasswordCliPath = '',
         [SecureString]$AdminPassword,
         [SecureString]$RootPassword,
+        [string]$PipGlobalIndex = 'https://pypi.org/pypi',
+        [string]$PipGlobalIndexUrl = 'https://pypi.org/simple',
         [Parameter(Mandatory = $true)][ValidateRange(1, 3600)][int]$TimeoutSeconds,
         [string]$ConsumerDescription = 'Atlaso workflow'
     )
@@ -1126,6 +1301,8 @@ function Get-AtlasoOnePasswordCredentialPair {
                 -PythonCommand $resolvedPython `
                 -RepositoryRoot $RepositoryRoot `
                 -BridgeRoot $bridgeRoot `
+                -PipGlobalIndex $PipGlobalIndex `
+                -PipGlobalIndexUrl $PipGlobalIndexUrl `
                 -TimeoutSeconds $TimeoutSeconds
             # Artifact admission must complete before any 1Password CLI or
             # desktop activity, including automatic account inventory.
@@ -1215,6 +1392,7 @@ function Get-AtlasoOnePasswordCredentialPair {
 }
 
 Export-ModuleMember -Function @(
+    'Resolve-AtlasoPipPackageSource',
     'Resolve-AtlasoOnePasswordEnvironmentId',
     'Assert-AtlasoOnePasswordEnvironmentId',
     'Assert-AtlasoOnePasswordAccount',

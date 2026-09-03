@@ -38,6 +38,65 @@ def test_photon_bridge_reuses_the_established_test_vm_sdk_child() -> None:
     assert generic == established
 
 
+def test_photon_package_source_pair_is_resolved_once_and_shared_safely() -> None:
+    """Keep host SDK and guest Photon package-source semantics identical."""
+    wrapper = Path("scripts/windows/vmware/build-photon-image.ps1").read_text(
+        encoding="utf-8"
+    )
+    module = Path(
+        "scripts/windows/vmware/Atlaso.OnePasswordCredentials.psm1"
+    ).read_text(encoding="utf-8")
+    runner = Path(
+        "scripts/windows/vmware/Atlaso.WorkstationFirstBoot.ps1"
+    ).read_text(encoding="utf-8")
+
+    resolver = wrapper.index("$resolvedPackageSource = Resolve-AtlasoPipPackageSource")
+    artifact = wrapper.index("$OnePasswordPython = Confirm-AtlasoPhotonOnePasswordArtifact")
+    credential_preflight = wrapper.index(
+        "$credentialPair = Get-AtlasoOnePasswordCredentialPair `"
+    )
+    assert resolver < artifact < credential_preflight
+    assert "-PipGlobalIndex $resolvedPackageSource.PipGlobalIndex `" in wrapper
+    assert "-PipGlobalIndexUrl $resolvedPackageSource.PipGlobalIndexUrl `" in wrapper
+    assert "PipGlobalIndexCiphertext = ConvertFrom-SecureString" in wrapper
+    assert "PipGlobalIndexUrlCiphertext = ConvertFrom-SecureString" in wrapper
+    assert "'PipGlobalIndex', 'PipGlobalIndexUrl'," in wrapper
+    child_arguments = wrapper[
+        wrapper.index("$childArguments = @(") : wrapper.index(
+            "Invoke-AtlasoBoundedStreamingProcess `"
+        )
+    ]
+    assert "'-PipGlobalIndex'" not in child_arguments
+    assert "'-PipGlobalIndexUrl'" not in child_arguments
+    assert "-PipGlobalIndex $PipGlobalIndex `" in wrapper
+    assert "-PipGlobalIndexUrl $PipGlobalIndexUrl `" in wrapper
+
+    assert "PipGlobalIndex and PipGlobalIndexUrl must be supplied together" in module
+    assert "'https://pypi.org/pypi'" in module
+    assert "'https://pypi.org/simple'" in module
+    assert "index = $PipGlobalIndex" in module
+    assert "index-url = $PipGlobalIndexUrl" in module
+    download = module[
+        module.index("$downloadResult = Invoke-AtlasoBoundedProcess") : module.index(
+            "if ($downloadResult.ExitCode -ne 0)"
+        )
+    ]
+    assert "'--index-url'" not in download
+    assert "PIP_CONFIG_FILE" in download
+    assert "PIP_EXTRA_INDEX_URL" in download
+    assert "-ClearEnvironmentVariablePrefixes @('PIP_')" in download
+    assert "-ReturnResult" in download
+
+    assert "[switch]$ReturnResult" in runner
+    assert "StandardOutput       = $output" in runner
+    assert "StandardError        = $errorOutput" in runner
+    assert "StandardOutputLength = $outputLength" in runner
+    assert "StandardErrorLength  = $errorOutputLength" in runner
+    assert runner.index("if ($ReturnResult) {") < runner.index(
+        'throw "$Action failed with exit code $($process.ExitCode)."'
+    )
+
+
 def test_photon_wrapper_preflights_credentials_before_image_mutation() -> None:
     """Require credential preparation before every VMware or image mutation."""
     wrapper = Path("scripts/windows/vmware/build-photon-image.ps1").read_text(

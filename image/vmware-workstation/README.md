@@ -229,6 +229,20 @@ support; Python 3.10 through 3.13, x86, ARM64, and free-threaded `3.14t` remain 
 `-OnePasswordPython` only to override that deterministic discovery. Zero or multiple accounts and a missing compatible
 runtime fail closed before image mutation.
 
+`-PipGlobalIndex` retains pip's `global.index` repository/API meaning, while `-PipGlobalIndexUrl` retains the
+`global.index-url` PEP 503 simple-index meaning. Supply both credential-free absolute HTTPS values together or omit
+both. Atlaso resolves the pair before credential preparation, uses the same exact values for the host-side isolated
+1Password dependency closure and the guest Photon build, and never fills a partial override or retries an explicit pair
+through public PyPI. Authenticated URLs, queries, fragments, whitespace, and non-HTTPS values are rejected before
+network or image mutation. The host download receives only a private pip configuration path; the resolved URLs and
+their protected parent-to-child transport do not enter process arguments.
+
+Dependency-preparation failures report only a fixed safe category: package-index/connectivity/TLS/proxy,
+invocation/runtime, unavailable distribution/platform, hash mismatch, or unclassified. The classifier inspects bounded
+samples of both captured streams without printing either one. For an unclassified failure, record the wrapper's exact
+sanitized message, exit code, and stdout/stderr presence indicators. Do not paste raw pip streams, package-source URLs,
+user paths, 1Password selectors, or tokens into an issue or pull request.
+
 There are no interactive prompts, caller-environment fallbacks, repository password defaults, or local `.env` inputs.
 Missing, ambiguous, non-concealed, invalid, unauthorized, or timed-out 1Password state fails with sanitized guidance
 before VMware network preparation, output cleanup, ISO remastering, Packer initialization, or other image mutation.

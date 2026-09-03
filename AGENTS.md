@@ -664,7 +664,13 @@ The following cross-cutting boundaries always apply:
   `DEFAULT_ADMIN_PASSWORD`. Explicit `SecureString` values remain independently authoritative. Complete credential
   preflight and task-owned bridge cleanup before network discovery or preparation, output cleanup, ISO remastering,
   Packer initialization, or other image mutation; retain exact-byte validation and all sensitive ISO/Packer-variable
-  cleanup. Run the complete plaintext-consuming image workflow in a separately bounded PowerShell child; the parent
+  cleanup. Resolve `PipGlobalIndex` and `PipGlobalIndexUrl` once as one credential-free HTTPS pair before credential
+  preparation, require both or neither, and propagate the exact resolved semantics to both the host-side hash-locked
+  SDK dependency download and the guest Photon build. A partial or explicit pair must never inherit or fall back to
+  public PyPI. Keep the host configuration and parent-to-child transport out of arguments and process listings, and
+  classify dependency failures only through bounded caller-scoped sanitized diagnostics; the generic process runner
+  must not emit arbitrary child streams. Run the complete plaintext-consuming image workflow in a separately bounded
+  PowerShell child; the parent
   may pass only current-user DPAPI ciphertext. Place every plaintext kickstart, remastered ISO, and Packer variable
   artifact inside the exact task-owned child root, and require the parent to remove and verify that root after ordinary
   exit or whole-tree termination so a killed child cannot bypass sensitive cleanup. If whole-tree termination is

@@ -864,13 +864,33 @@ Positive deadline for the external process.
 .PARAMETER Action
 Safe action description used in failure messages.
 
+.PARAMETER EnvironmentVariables
+Optional child-only environment values applied without command-line exposure.
+
+.PARAMETER ClearEnvironmentVariablePrefixes
+Optional environment-variable prefixes removed from the child before overrides.
+
+.PARAMETER ReturnResult
+Return the exit code and captured streams to an explicit caller instead of
+throwing the ordinary nonzero-exit error. Stream content is never printed by
+the runner.
+
+.PARAMETER ResultStreamCharacterLimit
+Maximum characters returned from each captured stream when ReturnResult is
+selected. The runner retains the beginning and end of longer streams and
+reports their original lengths.
+
 #>
 function Invoke-AtlasoBoundedProcess {
     param(
         [Parameter(Mandatory = $true)][string]$FilePath,
         [Parameter(Mandatory = $true)][AllowEmptyString()][string[]]$ArgumentList,
         [Parameter(Mandatory = $true)][ValidateRange(1, 86400)][int]$TimeoutSeconds,
-        [Parameter(Mandatory = $true)][string]$Action
+        [Parameter(Mandatory = $true)][string]$Action,
+        [hashtable]$EnvironmentVariables = @{},
+        [string[]]$ClearEnvironmentVariablePrefixes = @(),
+        [switch]$ReturnResult,
+        [ValidateRange(256, 65536)][int]$ResultStreamCharacterLimit = 16384
     )
 
     Initialize-AtlasoWorkstationProcessJobType
@@ -879,6 +899,22 @@ function Invoke-AtlasoBoundedProcess {
     $startInfo.UseShellExecute = $false
     $startInfo.RedirectStandardOutput = $true
     $startInfo.RedirectStandardError = $true
+    foreach ($prefix in $ClearEnvironmentVariablePrefixes) {
+        if ([string]::IsNullOrEmpty($prefix)) {
+            throw 'A bounded-process environment prefix cannot be empty.'
+        }
+        foreach ($name in @($startInfo.Environment.Keys)) {
+            if ($name.StartsWith($prefix, [StringComparison]::OrdinalIgnoreCase)) {
+                $null = $startInfo.Environment.Remove($name)
+            }
+        }
+    }
+    foreach ($entry in $EnvironmentVariables.GetEnumerator()) {
+        if ([string]::IsNullOrWhiteSpace([string]$entry.Key) -or $null -eq $entry.Value) {
+            throw 'A bounded-process environment override is invalid.'
+        }
+        $startInfo.Environment[[string]$entry.Key] = [string]$entry.Value
+    }
     foreach ($argument in $ArgumentList) {
         $startInfo.ArgumentList.Add($argument)
     }
@@ -886,7 +922,12 @@ function Invoke-AtlasoBoundedProcess {
     $process.StartInfo = $startInfo
     $streams = $null
     try {
-        if (-not $process.Start()) {
+        try {
+            if (-not $process.Start()) {
+                throw 'The process start returned false.'
+            }
+        }
+        catch {
             throw "$Action could not be started."
         }
         # Drain both streams concurrently and retain each copied chunk. A
@@ -930,7 +971,30 @@ function Invoke-AtlasoBoundedProcess {
             throw $streamFailure
         }
         $output = $streams.GetOutput()
-        $null = $streams.GetError()
+        $errorOutput = $streams.GetError()
+        if ($ReturnResult) {
+            $outputLength = $output.Length
+            $errorOutputLength = $errorOutput.Length
+            if ($outputLength -gt $ResultStreamCharacterLimit) {
+                $prefixLength = [Math]::Floor($ResultStreamCharacterLimit / 2)
+                $suffixLength = $ResultStreamCharacterLimit - $prefixLength
+                $output = $output.Substring(0, $prefixLength) +
+                    $output.Substring($outputLength - $suffixLength)
+            }
+            if ($errorOutputLength -gt $ResultStreamCharacterLimit) {
+                $prefixLength = [Math]::Floor($ResultStreamCharacterLimit / 2)
+                $suffixLength = $ResultStreamCharacterLimit - $prefixLength
+                $errorOutput = $errorOutput.Substring(0, $prefixLength) +
+                    $errorOutput.Substring($errorOutputLength - $suffixLength)
+            }
+            return [pscustomobject][ordered]@{
+                ExitCode             = $process.ExitCode
+                StandardOutput       = $output
+                StandardError        = $errorOutput
+                StandardOutputLength = $outputLength
+                StandardErrorLength  = $errorOutputLength
+            }
+        }
         if ($process.ExitCode -ne 0) {
             throw "$Action failed with exit code $($process.ExitCode)."
         }
