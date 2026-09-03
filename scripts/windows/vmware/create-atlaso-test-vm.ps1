@@ -3085,7 +3085,10 @@ if (-not $ApplianceVmxPath) {
     $ApplianceVmxPath = Find-LatestApplianceVmx -RepoRoot $repoRoot
 }
 $resolvedSourceVmx = (Resolve-Path -LiteralPath $ApplianceVmxPath).Path
-Assert-AtlasoVmwarePayloadProvenance -VmxPath $resolvedSourceVmx | Out-Null
+$expectedPayloadSourceCommit = if ($LocalBuilder) { $vmIdentity.SourceCommit } else { '' }
+Assert-AtlasoVmwarePayloadProvenance `
+    -VmxPath $resolvedSourceVmx `
+    -ExpectedSourceCommit $expectedPayloadSourceCommit | Out-Null
 
 $targetVmx = Join-Path $resolvedOutputDirectory "$Name.vmx"
 $resolvedDepotVmdkPath = if ($DepotVmdkPath) {

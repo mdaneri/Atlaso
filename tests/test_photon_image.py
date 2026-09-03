@@ -2372,6 +2372,8 @@ def test_create_atlaso_vmware_test_vm_wrapper_uses_common_helpers():
     assert "status --short)" in script
     assert "-LocalBuilder `" in script
     assert "-SourceCommit $sourceCommit" in script
+    assert "$expectedPayloadSourceCommit = if ($LocalBuilder)" in script
+    assert "-ExpectedSourceCommit $expectedPayloadSourceCommit" in script
     assert "[string]$Purpose = 'test-vm'" in script
     assert "[string]$CollisionSuffix = ''" in script
     assert "Atlaso.VmwareTestIdentity.psm1" in script
