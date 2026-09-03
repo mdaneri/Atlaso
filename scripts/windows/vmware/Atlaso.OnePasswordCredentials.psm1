@@ -825,11 +825,18 @@ function Initialize-AtlasoOnePasswordSdkRuntime {
         [Parameter(Mandatory = $true)][string]$PythonCommand,
         [Parameter(Mandatory = $true)][string]$RepositoryRoot,
         [Parameter(Mandatory = $true)][string]$BridgeRoot,
-        [string]$PipGlobalIndex = 'https://pypi.org/pypi',
-        [string]$PipGlobalIndexUrl = 'https://pypi.org/simple',
+        [AllowEmptyString()][string]$PipGlobalIndex = '',
+        [AllowEmptyString()][string]$PipGlobalIndexUrl = '',
         [Parameter(Mandatory = $true)][ValidateRange(1, 3600)][int]$TimeoutSeconds
     )
 
+    # Revalidate at the exported network boundary so a direct caller cannot
+    # combine one explicit value with the other field's public default.
+    $validatedPackageSource = Resolve-AtlasoPipPackageSource `
+        -PipGlobalIndex $PipGlobalIndex `
+        -PipGlobalIndexUrl $PipGlobalIndexUrl
+    $PipGlobalIndex = $validatedPackageSource.PipGlobalIndex
+    $PipGlobalIndexUrl = $validatedPackageSource.PipGlobalIndexUrl
     $lockPath = Join-Path $RepositoryRoot 'requirements-onepassword-deploy.lock'
     if (-not (Test-Path -LiteralPath $lockPath -PathType Leaf)) {
         throw "The vetted 1Password deployment lock is unavailable: $lockPath."

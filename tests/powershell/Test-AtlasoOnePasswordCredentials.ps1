@@ -49,6 +49,22 @@ foreach ($invalidPackageSource in @(
         }
     }
 }
+$partialBoundaryFailure = $null
+try {
+    Initialize-AtlasoOnePasswordSdkRuntime `
+        -PythonCommand 'must-not-run' `
+        -RepositoryRoot 'must-not-read' `
+        -BridgeRoot 'must-not-create' `
+        -PipGlobalIndex 'https://mirror.example.test/api/pypi' `
+        -TimeoutSeconds 1 | Out-Null
+}
+catch {
+    $partialBoundaryFailure = $_
+}
+if ($null -eq $partialBoundaryFailure -or
+    $partialBoundaryFailure.Exception.Message -notlike 'PipGlobalIndex and PipGlobalIndexUrl*') {
+    throw 'The exported SDK download boundary did not reject a partial package-source pair before activity.'
+}
 
 $boundedResult = Invoke-AtlasoBoundedProcess `
     -FilePath (Get-Process -Id $PID).Path `
