@@ -200,6 +200,80 @@ $prereleaseParameters = (Get-Command Invoke-AtlasoVirtualizationPrerelease).Para
 if ('PrereleaseIdentifier' -in $prereleaseParameters) {
     throw 'The removed PrereleaseIdentifier parameter remains available.'
 }
+$builderInvocationRoot = Join-Path $RepositoryRoot (
+    '.atlaso-local\virtualization-builder-invocation-test-' + [guid]::NewGuid().ToString('N')
+)
+$builderStubPath = Join-Path $builderInvocationRoot 'build-photon-image-stub.ps1'
+try {
+    New-Item -ItemType Directory -Path $builderInvocationRoot | Out-Null
+    [IO.File]::WriteAllText(
+        $builderStubPath,
+        @'
+[CmdletBinding()]
+param(
+    [string]$IsoUrl = 'default-iso-url',
+    [string]$IsoChecksum = 'default-iso-checksum',
+    [SecureString]$SshPassword,
+    [SecureString]$BootstrapAdminPassword,
+    [string]$OnePasswordEnvironmentId = '',
+    [string]$OnePasswordAccount = '',
+    [string]$OnePasswordPython = '',
+    [switch]$ReleaseBuilder,
+    [string]$ReleaseVersion = '',
+    [string]$ReleaseSourceCommit = '',
+    [string]$OutputDirectory = '',
+    [switch]$Headless,
+    [switch]$EnableRealSystemAdapters
+)
+
+[pscustomobject]@{
+    IsoUrl = $IsoUrl
+    IsoChecksum = $IsoChecksum
+    SshPasswordBound = $PSBoundParameters.ContainsKey('SshPassword')
+    BootstrapAdminPasswordBound = $PSBoundParameters.ContainsKey('BootstrapAdminPassword')
+    OnePasswordEnvironmentId = $OnePasswordEnvironmentId
+    OnePasswordAccount = $OnePasswordAccount
+    OnePasswordPython = $OnePasswordPython
+    ReleaseBuilder = [bool]$ReleaseBuilder
+    ReleaseVersion = $ReleaseVersion
+    ReleaseSourceCommit = $ReleaseSourceCommit
+    OutputDirectory = $OutputDirectory
+    Headless = [bool]$Headless
+    EnableRealSystemAdapters = [bool]$EnableRealSystemAdapters
+}
+'@,
+        [Text.UTF8Encoding]::new($false)
+    )
+    $builderInvocation = & $releaseScope {
+        param($ScriptPath, $OutputPath)
+        Invoke-AtlasoVirtualizationReleaseImageBuilder `
+            -BuilderScriptPath $ScriptPath `
+            -ReleaseVersion '0.9.306' `
+            -ReleaseSourceCommit '0123456789abcdef0123456789abcdef01234567' `
+            -OutputDirectory $OutputPath `
+            -OnePasswordEnvironmentId 'environment-selector' `
+            -OnePasswordAccount 'account-selector' `
+            -OnePasswordPython 'python-selector'
+    } $builderStubPath (Join-Path $builderInvocationRoot 'output')
+    if ($builderInvocation.IsoUrl -cne 'default-iso-url' -or
+        $builderInvocation.IsoChecksum -cne 'default-iso-checksum' -or
+        $builderInvocation.SshPasswordBound -or
+        $builderInvocation.BootstrapAdminPasswordBound -or
+        -not $builderInvocation.ReleaseBuilder -or
+        $builderInvocation.ReleaseVersion -cne '0.9.306' -or
+        $builderInvocation.ReleaseSourceCommit -cne '0123456789abcdef0123456789abcdef01234567' -or
+        $builderInvocation.OutputDirectory -cne (Join-Path $builderInvocationRoot 'output') -or
+        -not $builderInvocation.Headless -or
+        -not $builderInvocation.EnableRealSystemAdapters -or
+        $builderInvocation.OnePasswordEnvironmentId -cne 'environment-selector' -or
+        $builderInvocation.OnePasswordAccount -cne 'account-selector' -or
+        $builderInvocation.OnePasswordPython -cne 'python-selector') {
+        throw 'The virtualization producer did not invoke the VMware builder with the exact named non-secret parameters.'
+    }
+}
+finally {
+    Remove-Item -LiteralPath $builderInvocationRoot -Recurse -Force -ErrorAction SilentlyContinue
+}
 $expectedDefaultRoot = [IO.Path]::GetFullPath((Join-Path $RepositoryRoot 'artifacts\virtualization-release'))
 $defaultRootExisted = Test-Path -LiteralPath $expectedDefaultRoot
 $defaultRoot = & $releaseScope {
@@ -382,6 +456,7 @@ foreach ($required in @(
         '[string]$FromPrerelease',
         '[switch]$CandidateOnly',
         'Invoke-AtlasoVirtualizationPrerelease',
+        'Invoke-AtlasoVirtualizationReleaseImageBuilder',
         'Invoke-AtlasoVirtualizationStablePromotion',
         'Invoke-AtlasoReleaseWorkflow',
         'git -C $RepoRoot remote get-url origin',
@@ -434,7 +509,7 @@ foreach ($required in @(
         "'--verify-tag'",
         "'release', 'upload', `$Tag",
         'already contains different bytes',
-        "'-OnePasswordEnvironmentId', `$OnePasswordEnvironmentId",
+        'OnePasswordEnvironmentId = $OnePasswordEnvironmentId',
         'artifacts\virtualization\$tag',
         'artifacts\virtualization-smoke\$tag',
         "-Workflow 'virtualization-prerelease.yml'",
