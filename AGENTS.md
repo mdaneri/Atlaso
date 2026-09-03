@@ -562,9 +562,12 @@ The following cross-cutting boundaries always apply:
   repository OVF output root. `-Release` and `-Prerelease` provide implicit replacement only for the canonical derived
   destination; an explicitly supplied existing destination still requires `-Force`, which never widens the approved
   deletion boundary. Low-level OVF export never changes GitHub. Manual virtualization orchestration through
-  `-Prerelease` may create only the exact annotated `virtualization-vX.Y.Z-rc.N` tag and hidden draft after both Windows
-  smokes pass; it never publishes or reclassifies that draft. Only the protected hosted finalizer may sign, attest, and
-  publish the prerelease.
+  `-Prerelease` derives and freezes one exact annotated `virtualization-vX.Y.Z-rc.N` tag after preflight. It resumes the
+  single retained current-version staging operation, or selects one greater than the maximum canonical ordinal found
+  across remote tags and all Releases. Multiple retained operations, mismatched remote identity, and later collisions
+  fail closed without advancing to another ordinal. The producer may create only that tag and hidden draft after both
+  Windows smokes pass; it never publishes or reclassifies that draft. Only the protected hosted finalizer may sign,
+  attest, and publish the prerelease.
 - The maintainer workstation and any explicitly approved ephemeral Windows alternative are trusted virtualization
   producers while building a release. They receive no signing key, and the protected hosted finalizer independently
   verifies software-source binding, selected privileged assets, provenance, exact virtualization bytes, and publication

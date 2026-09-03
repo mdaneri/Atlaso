@@ -192,8 +192,132 @@ try {
 catch {
     if ($_.Exception.Message -eq 'A relative virtualization staging root was accepted.') { throw }
 }
+$releaseScope = Get-Module Atlaso.VirtualizationRelease
+if ($null -eq $releaseScope) {
+    throw 'The virtualization release module was not imported for focused prerelease tests.'
+}
+$prereleaseParameters = (Get-Command Invoke-AtlasoVirtualizationPrerelease).Parameters.Keys
+if ('PrereleaseIdentifier' -in $prereleaseParameters) {
+    throw 'The removed PrereleaseIdentifier parameter remains available.'
+}
+$expectedDefaultRoot = [IO.Path]::GetFullPath((Join-Path $RepositoryRoot 'artifacts\virtualization-release'))
+$defaultRootExisted = Test-Path -LiteralPath $expectedDefaultRoot
+$defaultRoot = & $releaseScope {
+    param($Root)
+    Resolve-AtlasoVirtualizationStagingRoot -RepoRoot $Root
+} $RepositoryRoot
+if ($defaultRoot -cne $expectedDefaultRoot -or
+    (Test-Path -LiteralPath $defaultRoot) -ne $defaultRootExisted) {
+    throw 'Default virtualization prerelease staging-root preflight is not non-mutating.'
+}
+$retainedRoot = Join-Path $RepositoryRoot ('.atlaso-local\virtualization-release-test-' + [guid]::NewGuid().ToString('N'))
+try {
+    New-Item -ItemType Directory -Path (Join-Path $retainedRoot 'virtualization-v0.9.304-rc.7') -Force | Out-Null
+    New-Item -ItemType Directory -Path (Join-Path $retainedRoot 'virtualization-v0.9.303-rc.99') -Force | Out-Null
+    $discoveredRetained = @(& $releaseScope {
+            param($Root)
+            Get-AtlasoVirtualizationRetainedOperationTags -StagingRoot $Root -Version '0.9.304'
+        } $retainedRoot)
+    if ($discoveredRetained.Count -ne 1 -or
+        $discoveredRetained[0] -cne 'virtualization-v0.9.304-rc.7') {
+        throw 'Retained-operation discovery did not isolate the current synchronized version.'
+    }
+    New-Item -ItemType Directory -Path (Join-Path $retainedRoot 'virtualization-v0.9.304-rc.8') | Out-Null
+    $ambiguousRetained = @(& $releaseScope {
+            param($Root)
+            Get-AtlasoVirtualizationRetainedOperationTags -StagingRoot $Root -Version '0.9.304'
+        } $retainedRoot)
+    if ($ambiguousRetained.Count -ne 2) {
+        throw 'Multiple current-version retained operations were not discovered for fail-closed selection.'
+    }
+}
+finally {
+    Remove-Item -LiteralPath $retainedRoot -Recurse -Force -ErrorAction SilentlyContinue
+}
+$selectionCases = @(
+    @{ Remote = @(); Releases = @(); Expected = 'virtualization-v0.9.304-rc.1' },
+    @{ Remote = @('virtualization-v0.9.304-rc.1'); Releases = @(); Expected = 'virtualization-v0.9.304-rc.2' },
+    @{ Remote = @('virtualization-v0.9.304-rc.1', 'virtualization-v0.9.304-rc.4'); Releases = @(); Expected = 'virtualization-v0.9.304-rc.5' },
+    @{ Remote = @('virtualization-v0.9.304-rc.2'); Releases = @('virtualization-v0.9.304-rc.2', 'virtualization-v0.9.304-rc.3'); Expected = 'virtualization-v0.9.304-rc.4' }
+)
+foreach ($case in $selectionCases) {
+    $selected = & $releaseScope {
+        param($Remote, $Releases)
+        Select-AtlasoVirtualizationPrereleaseTag `
+            -Version '0.9.304' `
+            -RemoteTagNames $Remote `
+            -ReleaseTagNames $Releases
+    } $case.Remote $case.Releases
+    if ($selected -cne $case.Expected) {
+        throw "Unexpected automatic virtualization prerelease selection: $selected"
+    }
+}
+$retainedSelection = & $releaseScope {
+    Select-AtlasoVirtualizationPrereleaseTag `
+        -Version '0.9.304' `
+        -RetainedTags @('virtualization-v0.9.304-rc.7') `
+        -RemoteTagNames @('virtualization-v0.9.304-rc.9')
+}
+if ($retainedSelection -cne 'virtualization-v0.9.304-rc.7') {
+    throw 'The one retained operation was not selected for retry.'
+}
+try {
+    & $releaseScope {
+        Select-AtlasoVirtualizationPrereleaseTag `
+            -Version '0.9.304' `
+            -RetainedTags @('virtualization-v0.9.304-rc.1', 'virtualization-v0.9.304-rc.2')
+    } | Out-Null
+    throw 'Ambiguous retained virtualization operations were accepted.'
+}
+catch {
+    if ($_.Exception.Message -eq 'Ambiguous retained virtualization operations were accepted.') { throw }
+}
+$switches = & $releaseScope {
+    Resolve-AtlasoVirtualizationHyperVSwitches -SwitchInventory @(
+        [pscustomobject]@{ Name = 'Atlaso Management' },
+        [pscustomobject]@{ Name = 'Atlaso Services' }
+    )
+}
+if ($switches.Management -cne 'Atlaso Management' -or $switches.Service -cne 'Atlaso Services') {
+    throw 'Default Hyper-V switch selection is incorrect.'
+}
+$switchOverrides = & $releaseScope {
+    Resolve-AtlasoVirtualizationHyperVSwitches `
+        -ManagementSwitch 'Management Override' `
+        -ServiceSwitch 'Services Override' `
+        -SwitchInventory @(
+            [pscustomobject]@{ Name = 'Management Override' },
+            [pscustomobject]@{ Name = 'Services Override' }
+        )
+}
+if ($switchOverrides.Management -cne 'Management Override' -or
+    $switchOverrides.Service -cne 'Services Override') {
+    throw 'Explicit Hyper-V switch overrides were not authoritative.'
+}
+foreach ($badInventory in @(
+        @([pscustomobject]@{ Name = 'Atlaso Management' }),
+        @(
+            [pscustomobject]@{ Name = 'Atlaso Management' },
+            [pscustomobject]@{ Name = 'Atlaso Management' },
+            [pscustomobject]@{ Name = 'Atlaso Services' }
+        ),
+        @(
+            [pscustomobject]@{ Name = 'atlaso management' },
+            [pscustomobject]@{ Name = 'atlaso services' }
+        )
+    )) {
+    try {
+        & $releaseScope {
+            param($Inventory)
+            Resolve-AtlasoVirtualizationHyperVSwitches -SwitchInventory $Inventory
+        } $badInventory | Out-Null
+        throw 'Missing or duplicate Hyper-V switch inventory was accepted.'
+    }
+    catch {
+        if ($_.Exception.Message -eq 'Missing or duplicate Hyper-V switch inventory was accepted.') { throw }
+    }
+}
 foreach ($required in @(
-        '[string]$PrereleaseIdentifier',
         '[string]$StagingRoot',
         '[string]$FromPrerelease',
         '[switch]$CandidateOnly',
@@ -205,7 +329,17 @@ foreach ($required in @(
         'differs from the checkout origin',
         "'--json', 'databaseId,displayTitle'",
         '[string]$run.conclusion -cne ''success''',
-        'PrereleaseIdentifier must be an explicit rc.N',
+        'Select-AtlasoVirtualizationPrereleaseTag',
+        'Multiple retained virtualization-v$Version release-candidate operations make retry intent ambiguous',
+        "'api', '--paginate'",
+        "'Atlaso Management'",
+        "'Atlaso Services'",
+        'Resolve-AtlasoOnePasswordEnvironmentId',
+        'Assert-AtlasoOnePasswordEnvironmentId',
+        'Resolve-AtlasoOnePasswordAccount',
+        'Resolve-AtlasoOnePasswordPython',
+        'Virtualization prerelease preflight:',
+        'The selected tag is frozen before the first staging mutation',
         'show-ref --verify --quiet',
         'cat-file -t',
         'Always reconstruct the signed source',
@@ -244,6 +378,26 @@ foreach ($required in @(
     )) {
     if (-not $releaseModule.Contains($required) -and -not $ovaExporter.Contains($required)) {
         throw "Virtualization release orchestration is missing required marker: $required"
+    }
+}
+if ($releaseModule.Contains('PrereleaseIdentifier') -or $ovaExporter.Contains('PrereleaseIdentifier')) {
+    throw 'The removed PrereleaseIdentifier interface remains in release code or help.'
+}
+$summaryIndex = $releaseModule.IndexOf("Write-Host 'Virtualization prerelease preflight:'")
+$stagingMutationIndex = $releaseModule.IndexOf(
+    '$operation = Resolve-AtlasoVirtualizationStagingDirectory',
+    $releaseModule.IndexOf('function Invoke-AtlasoVirtualizationPrerelease')
+)
+if ($summaryIndex -lt 0 -or $stagingMutationIndex -lt 0 -or $summaryIndex -gt $stagingMutationIndex) {
+    throw 'Sanitized prerelease summary must precede the first staging mutation.'
+}
+foreach ($secretMarker in @(
+        'Write-Host $OnePasswordEnvironmentId',
+        'Write-Host $OnePasswordAccount',
+        'Write-Host $OnePasswordPython'
+    )) {
+    if ($releaseModule.Contains($secretMarker)) {
+        throw "Prerelease summary exposes a resolved selector: $secretMarker"
     }
 }
 $releaseSourceChecks = ([regex]::Matches(

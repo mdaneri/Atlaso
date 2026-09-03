@@ -15,11 +15,9 @@ Optional path to tar used when creating OVA archives.
 .PARAMETER Release
 Promote an existing virtualization prerelease without rebuilding its assets.
 .PARAMETER Prerelease
-Build and publish a manually produced virtualization prerelease.
-.PARAMETER PrereleaseIdentifier
-Explicit release-candidate identifier in rc.N form.
+Build and publish a manually produced virtualization prerelease with an automatically selected rc.N tag.
 .PARAMETER StagingRoot
-Absolute local root retained through stable publication and verification.
+Optional absolute local root retained through stable publication and verification. Defaults to artifacts\virtualization-release beneath the checkout.
 .PARAMETER FromPrerelease
 Published virtualization prerelease tag selected for stable promotion.
 .PARAMETER ManagementVmnet
@@ -27,15 +25,15 @@ VMware management network used by the workstation smoke test.
 .PARAMETER ServiceVmnet
 VMware service network used by the workstation smoke test.
 .PARAMETER ManagementSwitch
-Hyper-V management switch used by the workstation smoke test.
+Optional Hyper-V management switch used by the workstation smoke test. Defaults to Atlaso Management.
 .PARAMETER ServiceSwitch
-Hyper-V service switch used by the workstation smoke test.
+Optional Hyper-V service switch used by the workstation smoke test. Defaults to Atlaso Services.
 .PARAMETER OnePasswordEnvironmentId
-Optional 1Password Environment ID used for password-backed guest deployment.
+Optional 1Password Environment ID. Omission uses the checkout-local selector file.
 .PARAMETER OnePasswordAccount
-Optional 1Password account selector.
+Optional 1Password account selector. Omission requires one uniquely signed-in CLI account.
 .PARAMETER OnePasswordPython
-Optional supported Python executable used by the 1Password SDK.
+Optional supported Python executable. Omission discovers standard Windows x64 CPython 3.14.
 .PARAMETER ProxmoxRunnerLabel
 Release-specific label of the approved ephemeral Proxmox runner.
 .PARAMETER KvmRunnerLabel
@@ -78,7 +76,6 @@ param(
     [string]$TarPath = '',
     [switch]$Release,
     [switch]$Prerelease,
-    [string]$PrereleaseIdentifier = '',
     [string]$StagingRoot = '',
     [string]$FromPrerelease = '',
     [string]$ManagementVmnet = 'VMnet8',
@@ -109,15 +106,11 @@ if ($Release -or $Prerelease) {
     $releaseModule = Join-Path $repoRoot 'scripts\windows\virtualization\Atlaso.VirtualizationRelease.psm1'
     Import-Module $releaseModule -Force
     if ($Prerelease) {
-        if (-not $PrereleaseIdentifier -or -not $StagingRoot -or -not $ManagementSwitch -or -not $ServiceSwitch) {
-            throw '-Prerelease requires -PrereleaseIdentifier, -StagingRoot, -ManagementSwitch, and -ServiceSwitch.'
-        }
         if ($FromPrerelease -or $ProxmoxRunnerLabel -or $KvmRunnerLabel) {
             throw '-FromPrerelease and Linux runner labels apply only to -Release.'
         }
         Invoke-AtlasoVirtualizationPrerelease `
             -RepoRoot $repoRoot `
-            -PrereleaseIdentifier $PrereleaseIdentifier `
             -StagingRoot $StagingRoot `
             -ManagementVmnet $ManagementVmnet `
             -ServiceVmnet $ServiceVmnet `
@@ -133,7 +126,7 @@ if ($Release -or $Prerelease) {
     if (-not $FromPrerelease -or -not $ProxmoxRunnerLabel -or -not $KvmRunnerLabel) {
         throw '-Release requires -FromPrerelease, -ProxmoxRunnerLabel, and -KvmRunnerLabel.'
     }
-    if ($PrereleaseIdentifier -or $StagingRoot -or $ManagementSwitch -or $ServiceSwitch -or $CandidateOnly) {
+    if ($StagingRoot -or $ManagementSwitch -or $ServiceSwitch -or $CandidateOnly) {
         throw 'Prerelease build and Windows smoke parameters do not apply to -Release.'
     }
     Invoke-AtlasoVirtualizationStablePromotion `

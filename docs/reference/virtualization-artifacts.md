@@ -351,14 +351,7 @@ successful software-release SHA, run:
 ```powershell
 python -m pip install --require-hashes --requirement requirements-virtualization-smoke.lock
 
-./scripts/windows/vmware/export-ovf.ps1 -Prerelease `
-  -PrereleaseIdentifier rc.1 `
-  -StagingRoot 'D:\Atlaso-Releases' `
-  -ManagementSwitch 'Atlaso Management' `
-  -ServiceSwitch 'Atlaso Services' `
-  -OnePasswordEnvironmentId '<atlaso-environment-id>' `
-  -OnePasswordAccount '<account-name-or-id>' `
-  -OnePasswordPython '<path-to-python-3.14.exe>'
+./scripts/windows/vmware/export-ovf.ps1 -Prerelease
 ```
 
 The command verifies and extracts the exact published software bundle, builds the canonical VMware template, derives
@@ -371,11 +364,27 @@ Its credential bridge, sensitive source snapshot, Packer workspace, cleanup stat
 remain beneath the exact checkout-local `.atlaso-local/photon-image-build-state` root. The non-task-owned address
 allocation lock and ledger remain per-user and host-shared so parallel worktrees cannot choose the same address; no
 task-owned output or sensitive state falls back to a Windows profile, temporary directory, or `LocalApplicationData`.
-Keep `StagingRoot` until stable verification; cleanup is a separate explicit operator action. The three 1Password
-selectors are required so both the fresh image build and exact wheel deployment use the same approved credential
-source; the values are forwarded to the existing isolated SDK bridges and are never uploaded as evidence. A
-conflicting candidate requires a new explicit `rc.N`. Every retry reconstructs and byte-validates the complete cached
-software source against freshly downloaded signed Release assets. A complete retained candidate is independently
+Use `-CandidateOnly` to stop after candidate production and smoke; otherwise the command continues through tag creation,
+draft upload, and protected hosted finalization. The standard
+producer defaults `StagingRoot` to `<checkout>\artifacts\virtualization-release`, uses the exact Hyper-V switches
+`Atlaso Management` and `Atlaso Services`, resolves the pinned Atlaso 1Password Environment through the checkout-local
+selector file, requires one uniquely signed-in 1Password CLI account, and discovers a standard Windows x64 CPython
+3.14 runtime. The retained `-StagingRoot`, `-ManagementSwitch`, `-ServiceSwitch`,
+`-OnePasswordEnvironmentId`, `-OnePasswordAccount`, and `-OnePasswordPython` parameters remain authoritative overrides.
+The resolved credential selectors are forwarded unchanged to both the fresh image build and exact-wheel deployment.
+
+Preflight prints the synchronized version and selected tag, staging root, switch names, and selector-source labels
+before creating staging directories or starting build activity. It never prints Environment IDs, account values,
+credentials, credential material, or secret-bearing paths. If the resolved staging root contains exactly one valid
+current-version `rc.N` operation, the producer resumes it after validating any corresponding remote tag and Release.
+With no retained operation it inventories remote tags and all GitHub Releases, deduplicates canonical ordinals, and
+selects `rc.1` or one greater than the maximum. Multiple retained operations fail closed as ambiguous. The selection is
+frozen for the invocation: a later collision never advances automatically and remains subject to non-force tag
+creation, `--verify-tag`, no-clobber upload, exact-commit, and byte-idempotency guards.
+
+Keep `StagingRoot` until stable verification; cleanup is a separate explicit operator action. Every retry reconstructs
+and byte-validates the complete cached software source against freshly downloaded signed Release assets. A complete
+retained candidate is independently
 revalidated and reused byte-for-byte; only an absent candidate enters the image-build, OVA-export, and Hyper-V
 conversion path. Pre-verification network downloads are invocation-temporary and never reused after interruption.
 Before signing, the hosted finalizer requires the OVA provenance's software tag, manifest, bundle, application-wheel, and

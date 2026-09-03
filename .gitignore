@@ -44,6 +44,7 @@ playwright-report/
 data/
 /vcfDownloadTool
 /artifacts/virtualization
+/artifacts/virtualization-release
 /artifacts/virtualization-smoke
 /image/common/source
 /image/vmware-workstation/build
