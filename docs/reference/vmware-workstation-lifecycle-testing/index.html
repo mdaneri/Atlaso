@@ -3739,6 +3739,12 @@ match the checkout. The wrapper derives <code>Atlaso-PR-&lt;number&gt;-Photon-Bu
 that identity aligned across the Packer VM, output/VMX, builder-address reservation, diagnostics, ownership manifest,
 schema-v3 provenance, cleanup, and evidence. Use <code>-CollisionSuffix</code> for another builder owned by the same pull request;
 never reuse the legacy generic builder for lifecycle acceptance.</p>
+<p>Before a pull request exists, developers may build the source image with <code>-LocalBuilder</code> instead of
+<code>-PullRequestNumber</code>. The clean checked-out commit derives
+<code>Atlaso-Local-&lt;12-character-source-commit&gt;-Photon-Builder-VMware[-&lt;collision-safe-suffix&gt;]</code>, while all snapshot,
+ownership, cleanup, reservation, and provenance checks remain active. This is a local/test artifact: protected release
+paths reject its <code>builder_identity.kind</code> of <code>local</code>, and lifecycle acceptance evidence must still come from the
+PR-numbered builder and test VMs after the pull request exists.</p>
 <p>For a previously downloaded ISO, pass either its local filesystem path or an empty-authority <code>file:///</code> URI. The
 wrapper verifies that exact file against <code>-IsoChecksum</code> before any remastering and does not route it through the HTTP
 download path. Host-authority file URIs are rejected; use an explicitly mounted local path instead.</p>
