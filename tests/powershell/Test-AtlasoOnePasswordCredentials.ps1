@@ -80,37 +80,49 @@ if ($null -eq $partialBridgeFailure -or
     throw 'The exported credential bridge did not reject a partial package-source pair before activity.'
 }
 
-$boundedResult = Invoke-AtlasoBoundedProcess `
-    -FilePath (Get-Process -Id $PID).Path `
-    -ArgumentList @(
-        '-NoLogo', '-NoProfile', '-NonInteractive', '-Command',
-        '[Console]::Out.Write("stdout-fixture"); [Console]::Error.Write("stderr-fixture"); exit 2'
-    ) `
-    -TimeoutSeconds 30 `
-    -Action 'Focused bounded-result test' `
-    -ReturnResult
-if ($boundedResult.ExitCode -ne 2 -or
-    $boundedResult.StandardOutput -cne 'stdout-fixture' -or
-    $boundedResult.StandardError -cne 'stderr-fixture' -or
-    $boundedResult.StandardOutputLength -ne 14 -or
-    $boundedResult.StandardErrorLength -ne 14) {
-    throw 'The caller-scoped bounded result did not retain both diagnostic streams and the exit code.'
+$classifiedBoundedFailure = $null
+$classifiedBoundedOutput = @()
+try {
+    $classifiedBoundedOutput = @(Invoke-AtlasoBoundedProcess `
+            -FilePath (Get-Process -Id $PID).Path `
+            -ArgumentList @(
+                '-NoLogo', '-NoProfile', '-NonInteractive', '-Command',
+                '[Console]::Out.Write("stdout-fixture"); [Console]::Error.Write("stderr-fixture"); exit 2'
+            ) `
+            -TimeoutSeconds 30 `
+            -Action 'Focused bounded classification test' `
+            -NonzeroExitMessageFactory {
+                param([int]$ExitCode, [string]$StandardOutput, [string]$StandardError)
+
+                if ($ExitCode -ne 2 -or
+                    $StandardOutput -cne 'stdout-fixture' -or
+                    $StandardError -cne 'stderr-fixture') {
+                    throw 'The bounded classifier did not receive the exact captured process result.'
+                }
+                'The bounded dependency failed with a sanitized fixture message.'
+            } `
+            -DiscardOutput)
 }
-$boundedLargeResult = Invoke-AtlasoBoundedProcess `
-    -FilePath (Get-Process -Id $PID).Path `
-    -ArgumentList @(
-        '-NoLogo', '-NoProfile', '-NonInteractive', '-Command',
-        '[Console]::Out.Write((''x'' * 4096)); [Console]::Error.Write((''y'' * 3072)); exit 2'
-    ) `
-    -TimeoutSeconds 30 `
-    -Action 'Focused bounded-result limit test' `
-    -ReturnResult `
-    -ResultStreamCharacterLimit 1024
-if ($boundedLargeResult.StandardOutput.Length -ne 1024 -or
-    $boundedLargeResult.StandardError.Length -ne 1024 -or
-    $boundedLargeResult.StandardOutputLength -ne 4096 -or
-    $boundedLargeResult.StandardErrorLength -ne 3072) {
-    throw 'The caller-scoped bounded result did not cap both streams while retaining their original lengths.'
+catch {
+    $classifiedBoundedFailure = $_
+}
+if ($classifiedBoundedOutput.Count -ne 0 -or
+    $null -eq $classifiedBoundedFailure -or
+    $classifiedBoundedFailure.Exception.Message -cne 'The bounded dependency failed with a sanitized fixture message.' -or
+    $classifiedBoundedFailure.Exception.Message -match 'stdout-fixture|stderr-fixture') {
+    throw 'The bounded failure classifier allowed captured child streams to escape the generic runner.'
+}
+$discardedBoundedOutput = @(Invoke-AtlasoBoundedProcess `
+        -FilePath (Get-Process -Id $PID).Path `
+        -ArgumentList @(
+            '-NoLogo', '-NoProfile', '-NonInteractive', '-Command',
+            '[Console]::Out.Write("successful-output-must-not-surface")'
+        ) `
+        -TimeoutSeconds 30 `
+        -Action 'Focused bounded discard-output test' `
+        -DiscardOutput)
+if ($discardedBoundedOutput.Count -ne 0) {
+    throw 'The bounded runner emitted successful output despite explicit suppression.'
 }
 $ordinaryBoundedFailure = $null
 try {

@@ -869,7 +869,15 @@ function Initialize-AtlasoOnePasswordSdkRuntime {
 
     # Download is the only index-enabled step. Installation is deliberately
     # offline from the exact hash-verified wheel set, matching deploy-wheel.ps1.
-    $downloadResult = Invoke-AtlasoBoundedProcess `
+    $dependencyFailureMessageFactory = {
+        param([int]$ExitCode, [string]$StandardOutput, [string]$StandardError)
+
+        (Get-AtlasoOnePasswordDependencyFailure `
+                -ExitCode $ExitCode `
+                -StandardOutput $StandardOutput `
+                -StandardError $StandardError).Message
+    }
+    Invoke-AtlasoBoundedProcess `
         -FilePath $pipRuntime.PythonCommand `
         -ArgumentList @(
             @($pipRuntime.ArgumentsPrefix)
@@ -887,14 +895,8 @@ function Initialize-AtlasoOnePasswordSdkRuntime {
         } `
         -TimeoutSeconds $TimeoutSeconds `
         -Action 'The hash-verified 1Password SDK wheel download' `
-        -ReturnResult
-    if ($downloadResult.ExitCode -ne 0) {
-        $failure = Get-AtlasoOnePasswordDependencyFailure `
-            -ExitCode $downloadResult.ExitCode `
-            -StandardOutput $downloadResult.StandardOutput `
-            -StandardError $downloadResult.StandardError
-        throw $failure.Message
-    }
+        -NonzeroExitMessageFactory $dependencyFailureMessageFactory `
+        -DiscardOutput
     Invoke-AtlasoBoundedProcess `
         -FilePath $pipRuntime.PythonCommand `
         -ArgumentList @(

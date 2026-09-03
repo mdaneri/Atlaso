@@ -870,15 +870,14 @@ Optional child-only environment values applied without command-line exposure.
 .PARAMETER ClearEnvironmentVariablePrefixes
 Optional environment-variable prefixes removed from the child before overrides.
 
-.PARAMETER ReturnResult
-Return the exit code and captured streams to an explicit caller instead of
-throwing the ordinary nonzero-exit error. Stream content is never printed by
-the runner.
+.PARAMETER NonzeroExitMessageFactory
+Optional caller-owned failure classifier invoked inside the runner for a
+nonzero exit. It receives the exit code, captured standard output, and captured
+standard error, and must return one non-empty sanitized message. Captured
+streams never enter the success pipeline.
 
-.PARAMETER ResultStreamCharacterLimit
-Maximum characters returned from each captured stream when ReturnResult is
-selected. The runner retains the beginning and end of longer streams and
-reports their original lengths.
+.PARAMETER DiscardOutput
+Suppress successful standard output when the caller needs only completion.
 
 #>
 function Invoke-AtlasoBoundedProcess {
@@ -889,8 +888,8 @@ function Invoke-AtlasoBoundedProcess {
         [Parameter(Mandatory = $true)][string]$Action,
         [hashtable]$EnvironmentVariables = @{},
         [string[]]$ClearEnvironmentVariablePrefixes = @(),
-        [switch]$ReturnResult,
-        [ValidateRange(256, 65536)][int]$ResultStreamCharacterLimit = 16384
+        [scriptblock]$NonzeroExitMessageFactory,
+        [switch]$DiscardOutput
     )
 
     Initialize-AtlasoWorkstationProcessJobType
@@ -972,33 +971,24 @@ function Invoke-AtlasoBoundedProcess {
         }
         $output = $streams.GetOutput()
         $errorOutput = $streams.GetError()
-        if ($ReturnResult) {
-            $outputLength = $output.Length
-            $errorOutputLength = $errorOutput.Length
-            if ($outputLength -gt $ResultStreamCharacterLimit) {
-                $prefixLength = [Math]::Floor($ResultStreamCharacterLimit / 2)
-                $suffixLength = $ResultStreamCharacterLimit - $prefixLength
-                $output = $output.Substring(0, $prefixLength) +
-                    $output.Substring($outputLength - $suffixLength)
-            }
-            if ($errorOutputLength -gt $ResultStreamCharacterLimit) {
-                $prefixLength = [Math]::Floor($ResultStreamCharacterLimit / 2)
-                $suffixLength = $ResultStreamCharacterLimit - $prefixLength
-                $errorOutput = $errorOutput.Substring(0, $prefixLength) +
-                    $errorOutput.Substring($errorOutputLength - $suffixLength)
-            }
-            return [pscustomobject][ordered]@{
-                ExitCode             = $process.ExitCode
-                StandardOutput       = $output
-                StandardError        = $errorOutput
-                StandardOutputLength = $outputLength
-                StandardErrorLength  = $errorOutputLength
-            }
-        }
         if ($process.ExitCode -ne 0) {
+            if ($NonzeroExitMessageFactory) {
+                # Keep raw child streams inside the caller-owned classifier.
+                # Capturing its output before validation prevents accidental
+                # pipeline disclosure even when the runner itself is unassigned.
+                $failureMessages = @(& $NonzeroExitMessageFactory `
+                        $process.ExitCode $output $errorOutput)
+                if ($failureMessages.Count -ne 1 -or
+                    [string]::IsNullOrWhiteSpace([string]$failureMessages[0])) {
+                    throw "$Action failed with exit code $($process.ExitCode), and its failure classifier returned no single sanitized message."
+                }
+                throw [string]$failureMessages[0]
+            }
             throw "$Action failed with exit code $($process.ExitCode)."
         }
-        return $output
+        if (-not $DiscardOutput) {
+            return $output
+        }
     }
     finally {
         if ($streams) {

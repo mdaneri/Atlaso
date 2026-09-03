@@ -79,23 +79,25 @@ def test_photon_package_source_pair_is_resolved_once_and_shared_safely() -> None
     assert '"extra-index-url = $PipGlobalIndexUrl"' in module
     assert '"find-links = $LocalWheelDirectory"' in module
     assert "'[download]'" in module
-    download = module[
-        module.index("$downloadResult = Invoke-AtlasoBoundedProcess") : module.index(
-            "if ($downloadResult.ExitCode -ne 0)"
-        )
-    ]
+    download_start = module.index("$dependencyFailureMessageFactory = {")
+    download_invocation = module.index("    Invoke-AtlasoBoundedProcess `", download_start)
+    download_end = module.index(
+        "    Invoke-AtlasoBoundedProcess `", download_invocation + 1
+    )
+    download = module[download_start:download_end]
     assert "'--index-url'" not in download
     assert "PIP_CONFIG_FILE" in download
     assert "'--find-links'" not in download
     assert "-ClearEnvironmentVariablePrefixes @('PIP_')" in download
-    assert "-ReturnResult" in download
+    assert "-NonzeroExitMessageFactory $dependencyFailureMessageFactory" in download
+    assert "-DiscardOutput" in download
 
-    assert "[switch]$ReturnResult" in runner
-    assert "StandardOutput       = $output" in runner
-    assert "StandardError        = $errorOutput" in runner
-    assert "StandardOutputLength = $outputLength" in runner
-    assert "StandardErrorLength  = $errorOutputLength" in runner
-    assert runner.index("if ($ReturnResult) {") < runner.index(
+    assert "[scriptblock]$NonzeroExitMessageFactory" in runner
+    assert "[switch]$DiscardOutput" in runner
+    assert "@(& $NonzeroExitMessageFactory" in runner
+    assert "StandardOutput       = $output" not in runner
+    assert "StandardError        = $errorOutput" not in runner
+    assert runner.index("if ($NonzeroExitMessageFactory) {") < runner.index(
         'throw "$Action failed with exit code $($process.ExitCode)."'
     )
 
