@@ -380,8 +380,8 @@ def test_omitted_nonsecret_sdk_selectors_are_discovered_fail_closed() -> None:
         < termination_rethrow
         < candidate_continue
     )
-    assert module.index("Initialize-AtlasoOnePasswordSdkRuntime `", module.index("function Get-AtlasoOnePasswordCredentialPair")) < module.index(
-        "Resolve-AtlasoOnePasswordAccount `",
+    assert module.index("Resolve-AtlasoOnePasswordAuthentication `", module.index("function Get-AtlasoOnePasswordCredentialPair")) < module.index(
+        "Initialize-AtlasoOnePasswordSdkRuntime `",
         module.index("function Get-AtlasoOnePasswordCredentialPair"),
     )
     assert "struct.calcsize(\"P\") * 8" in module
@@ -401,11 +401,19 @@ def test_omitted_nonsecret_sdk_selectors_are_discovered_fail_closed() -> None:
     bridge_function = test_vm.index("function New-AtlasoTestVmCredentialBridgeState {")
     assert test_vm.index(
         "Initialize-OnePasswordTestVmSdkRuntime `", bridge_function
-    ) < test_vm.index("Resolve-OnePasswordTestVmAccount `", bridge_function)
+    ) < test_vm.index("Resolve-AtlasoOnePasswordAuthentication `", bridge_function)
     assert "-OnePasswordPython $OnePasswordPython `" in image_wrapper
     assert "-OnePasswordCliPath $resolvedOpPath" in test_vm
-    assert "'-OnePasswordAccount', $resolvedAccount" in test_vm
-    assert "'-OnePasswordAccount', $resolvedAccount" in module
+    assert "'-OnePasswordAccount', $authentication.Account" in test_vm
+    assert (
+        "'-OnePasswordServiceAccountTokenFile', $authentication.TokenFile"
+        in test_vm
+    )
+    assert "'-OnePasswordAccount', $authentication.Account" in module
+    assert (
+        "'-OnePasswordServiceAccountTokenFile', $authentication.TokenFile"
+        in module
+    )
 
 
 def test_shared_credential_bridge_explicit_and_fail_closed_cases() -> None:

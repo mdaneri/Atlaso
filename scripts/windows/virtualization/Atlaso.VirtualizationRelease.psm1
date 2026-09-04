@@ -820,10 +820,17 @@ Task-owned output directory for the VMware builder.
 Resolved exact Atlaso Environment ID.
 .PARAMETER OnePasswordAccount
 Resolved 1Password account selector.
+.PARAMETER OnePasswordServiceAccountTokenFile
+Resolved current-user DPAPI service-account ciphertext file.
 .PARAMETER OnePasswordPython
 Resolved supported Python executable.
 #>
 function Invoke-AtlasoVirtualizationReleaseImageBuilder {
+    [Diagnostics.CodeAnalysis.SuppressMessageAttribute(
+        'PSAvoidUsingPlainTextForPassword',
+        'OnePasswordServiceAccountTokenFile',
+        Justification = 'Path to current-user DPAPI ciphertext, not a plaintext token.'
+    )]
     [Diagnostics.CodeAnalysis.SuppressMessageAttribute(
         'PSAvoidUsingPlainTextForPassword',
         'OnePasswordEnvironmentId',
@@ -846,7 +853,8 @@ function Invoke-AtlasoVirtualizationReleaseImageBuilder {
         [Parameter(Mandatory = $true)][string]$ReleaseSourceCommit,
         [Parameter(Mandatory = $true)][string]$OutputDirectory,
         [Parameter(Mandatory = $true)][string]$OnePasswordEnvironmentId,
-        [Parameter(Mandatory = $true)][string]$OnePasswordAccount,
+        [AllowEmptyString()][string]$OnePasswordAccount = '',
+        [AllowEmptyString()][string]$OnePasswordServiceAccountTokenFile = '',
         [Parameter(Mandatory = $true)][string]$OnePasswordPython
     )
 
@@ -861,6 +869,7 @@ function Invoke-AtlasoVirtualizationReleaseImageBuilder {
         EnableRealSystemAdapters = $true
         OnePasswordEnvironmentId = $OnePasswordEnvironmentId
         OnePasswordAccount       = $OnePasswordAccount
+        OnePasswordServiceAccountTokenFile = $OnePasswordServiceAccountTokenFile
         OnePasswordPython        = $OnePasswordPython
     }
     & $BuilderScriptPath @buildArguments
@@ -885,6 +894,9 @@ Optional Hyper-V services switch used by smoke. Defaults to Atlaso Services.
 Optional exact Atlaso Environment ID. Omission uses the checkout-local selector file.
 .PARAMETER OnePasswordAccount
 Optional 1Password account selector. Omission requires one uniquely signed-in CLI account.
+.PARAMETER OnePasswordServiceAccountTokenFile
+Optional current-user DPAPI ciphertext file. The checkout-local default is
+preferred before desktop discovery when neither authentication selector is explicit.
 .PARAMETER OnePasswordPython
 Optional supported Python executable. Omission discovers standard Windows x64 CPython 3.14.
 .PARAMETER NoWait
@@ -893,6 +905,11 @@ Return after dispatch instead of waiting for hosted publication.
 Stop after producing and smoking the candidate set without changing GitHub.
 #>
 function Invoke-AtlasoVirtualizationPrerelease {
+    [Diagnostics.CodeAnalysis.SuppressMessageAttribute(
+        'PSAvoidUsingPlainTextForPassword',
+        'OnePasswordServiceAccountTokenFile',
+        Justification = 'Path to current-user DPAPI ciphertext, not a plaintext token.'
+    )]
     [Diagnostics.CodeAnalysis.SuppressMessageAttribute(
         'PSAvoidUsingPlainTextForPassword',
         'OnePasswordEnvironmentId',
@@ -918,6 +935,7 @@ function Invoke-AtlasoVirtualizationPrerelease {
         [string]$ServiceSwitch = '',
         [string]$OnePasswordEnvironmentId = '',
         [string]$OnePasswordAccount = '',
+        [string]$OnePasswordServiceAccountTokenFile = '',
         [string]$OnePasswordPython = '',
         [switch]$CandidateOnly,
         [switch]$NoWait
@@ -957,7 +975,15 @@ function Invoke-AtlasoVirtualizationPrerelease {
         -ManagementSwitch $ManagementSwitch `
         -ServiceSwitch $ServiceSwitch
     $environmentSource = if ($OnePasswordEnvironmentId) { 'explicit parameter' } else { 'checkout-local selector file' }
-    $accountSource = if ($OnePasswordAccount) { 'explicit parameter' } else { 'unique signed-in CLI account' }
+    $authenticationSource = if ($OnePasswordServiceAccountTokenFile) {
+        'explicit service-account token file'
+    }
+    elseif ($OnePasswordAccount) {
+        'explicit desktop account'
+    }
+    else {
+        'checkout-local service-account token or desktop discovery'
+    }
     $pythonSource = if ($OnePasswordPython) { 'explicit parameter' } else { 'discovered Windows x64 CPython 3.14' }
     $OnePasswordEnvironmentId = Resolve-AtlasoOnePasswordEnvironmentId `
         -EnvironmentId $OnePasswordEnvironmentId `
@@ -965,9 +991,13 @@ function Invoke-AtlasoVirtualizationPrerelease {
         -ConsumerDescription 'virtualization production'
     Assert-AtlasoOnePasswordEnvironmentId `
         -EnvironmentId $OnePasswordEnvironmentId
-    $OnePasswordAccount = Resolve-AtlasoOnePasswordAccount `
+    $authentication = Resolve-AtlasoOnePasswordAuthentication `
+        -RepositoryRoot $RepoRoot `
+        -ServiceAccountTokenFile $OnePasswordServiceAccountTokenFile `
         -Account $OnePasswordAccount `
         -TimeoutSeconds 300
+    $OnePasswordAccount = $authentication.Account
+    $OnePasswordServiceAccountTokenFile = $authentication.TokenFile
     $OnePasswordPython = Resolve-AtlasoOnePasswordPython `
         -PythonCommand $OnePasswordPython `
         -ConsumerDescription 'virtualization production' `
@@ -980,7 +1010,7 @@ function Invoke-AtlasoVirtualizationPrerelease {
     Write-Host "  Staging root: $resolvedStagingRoot"
     Write-Host "  Hyper-V switches: $ManagementSwitch / $ServiceSwitch"
     Write-Host "  1Password Environment selector: $environmentSource"
-    Write-Host "  1Password account selector: $accountSource"
+    Write-Host "  1Password authentication: $authenticationSource"
     Write-Host "  Python selector: $pythonSource"
 
     # The selected tag is frozen before the first staging mutation. Later tag or
@@ -1117,6 +1147,7 @@ function Invoke-AtlasoVirtualizationPrerelease {
             -OutputDirectory $builderOutput `
             -OnePasswordEnvironmentId $OnePasswordEnvironmentId `
             -OnePasswordAccount $OnePasswordAccount `
+            -OnePasswordServiceAccountTokenFile $OnePasswordServiceAccountTokenFile `
             -OnePasswordPython $OnePasswordPython
         if ($LASTEXITCODE -ne 0) {
             throw 'Canonical VMware image build failed.'
@@ -1154,6 +1185,7 @@ function Invoke-AtlasoVirtualizationPrerelease {
         }
         $deployArguments.OnePasswordEnvironmentId = $OnePasswordEnvironmentId
         $deployArguments.OnePasswordAccount = $OnePasswordAccount
+        $deployArguments.OnePasswordServiceAccountTokenFile = $OnePasswordServiceAccountTokenFile
         $deployArguments.OnePasswordPython = $OnePasswordPython
         try {
             $deployArguments.IpAddress = Start-AtlasoVirtualizationDeploymentVm `

@@ -948,20 +948,23 @@ Terminal order:
   definitions must explicitly stage `image/common/update-trust`, and provisioning must fail rather
   than build an appliance with no valid public release key. Use `-IpAddress <appliance-ip>` when the VM IP is known, or
   `-VmxPath "<path-to-vmx>"` for VMware discovery; do not pipe the VMX path or put the `.vmx` path on a separate line
-  because PowerShell will try to execute it. For password-backed Windows deployment, authenticate the local 1Password
-  integration, verify exactly one `Atlaso` Environment and the concealed `DEFAULT_ADMIN_PASSWORD` variable by name,
-  then pass its opaque ID with `-OnePasswordEnvironmentId` and the approved account name or ID with
-  `-OnePasswordAccount`; use only standard GIL-enabled Windows x64 CPython 3.14, discovered automatically or supplied
+  because PowerShell will try to execute it. For password-backed Windows deployment, verify exactly one `Atlaso`
+  Environment and the concealed `DEFAULT_ADMIN_PASSWORD` variable by name, then pass its opaque ID with
+  `-OnePasswordEnvironmentId`. Prefer the checkout-local current-user DPAPI service-account token; an explicit
+  `-OnePasswordServiceAccountTokenFile` takes precedence, while `-OnePasswordAccount` retains desktop authorization.
+  Use only standard GIL-enabled Windows x64 CPython 3.14, discovered automatically or supplied
   with `-OnePasswordPython`. Verify the immutable Atlaso compatibility-wheel manifest and release asset before any
-  credential or VMware activity. The script must use the supported 1Password SDK desktop
-  integration, stage the SDK, Paramiko,
+  credential or VMware activity. The script must use the supported 1Password SDK integration, stage the SDK, Paramiko,
   and their transitive dependencies from the generated seven-day hash-verified deployment lock, install only from that
-  offline wheel set, and fail closed when SDK preparation, desktop authorization, Environment access, the unique
+  offline wheel set, and fail closed when SDK preparation, authorization, Environment access, the unique
   variable, or masking is unavailable. Never pass a password
-  argument, create a local `.env`, set `DEFAULT_ADMIN_PASSWORD` in the caller, or use the retired
+  or token argument, create a plaintext token file or local `.env`, set `OP_SERVICE_ACCOUNT_TOKEN` or
+  `DEFAULT_ADMIN_PASSWORD` in the caller, or use the retired
   `ATLASO_DEPLOY_SSH_PASSWORD` fallback. The parent must perform local build and input preparation without the
   credential, then invoke one bounded Python child that retrieves `DEFAULT_ADMIN_PASSWORD` through the SDK and uses it
-  directly for Paramiko without placing it in the environment. Start Python with `-I -S` and prepend only its explicit
+  directly for Paramiko without placing the password in the environment. Decrypt a service-account token only in the
+  bounded launcher, expose it only to the immediate SDK process, and remove its environment copy immediately after
+  client initialization. Start Python with `-I -S` and prepend only its explicit
   dependency path; caller-controlled child command-line values, startup hooks, and inherited `PYTHONPATH` must not
   observe or authorize password consumption. Password-backed Paramiko
   must load system known hosts and reject unknown keys; accept only one non-echoing account-password prompt and reject
@@ -1132,16 +1135,20 @@ Terminal order:
   mutation. For each omitted normal-wrapper `-AdminPassword` or `-RootPassword`, use the supported bounded Windows
   1Password SDK pattern to retrieve only the corresponding exact, unique, concealed `DEFAULT_ADMIN_PASSWORD` or
   `DEFAULT_ROOT_PASSWORD` from that same verified Environment. Preserve each explicit `SecureString` independently.
-  When account or Python selectors are omitted, resolve exactly one local 1Password CLI account and select standard
-  GIL-enabled Windows x64 CPython 3.14 registered with the Windows launcher. Accept current Python Install Manager
+  Prefer the checkout-local current-user DPAPI service-account token before desktop discovery. An explicit token file
+  takes precedence over an explicit account; without a token, resolve exactly one local 1Password CLI account. Select
+  standard GIL-enabled Windows x64 CPython 3.14 registered with the Windows launcher. Accept current Python Install Manager
   bracketed architecture selectors while retaining legacy launcher and vendor-tagged registrations. Reject Python
   3.10 through 3.13, x86, ARM64, free-threaded `3.14t`, malformed entries, and missing executables without
-  masking a lower compatible runtime. Explicit selectors remain authoritative. Zero or multiple accounts and a missing
+  masking a lower compatible runtime. Explicit selectors remain authoritative. Without a token, zero or multiple
+  desktop accounts and a missing
   compatible runtime must fail before mutation.
   Keep plaintext out of the PowerShell parent, arguments, caller-controlled environment, logs, output, markers,
   evidence, documentation, and GitHub surfaces by exchanging only current-user DPAPI ciphertext between bounded
-  children. Never accept caller environment variables, repository defaults, local `.env` files, or interactive password
-  prompts. Fail before network preparation, cleanup, disk reset, or cloning, and keep `-WhatIf` credential-free. Bound
+  children. Store a service-account token only as current-user DPAPI ciphertext with access limited to that user and
+  SYSTEM. Never accept caller environment variables, repository defaults, plaintext token files, local `.env` files, or
+  interactive password prompts. Fail before network preparation, cleanup, disk reset, or cloning, and keep `-WhatIf`
+  credential-free. Bound
   each secret child and post-staging VMware operation and require proven complete process-tree termination before
   mutating the VM or VMX during rollback. Persist boot-bound child-active phases for staging, VM start, and artifact
   removal. If termination is unproven, preserve the VM and VMX, or keep reused disks quarantined during removal, until

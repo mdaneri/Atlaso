@@ -31,6 +31,12 @@ Isolated, hash-locked 1Password SDK dependency directory.
 .PARAMETER OnePasswordAccount
 Non-secret 1Password account name or ID used for desktop authorization.
 
+.PARAMETER OnePasswordAuthenticationMode
+Select desktop authorization or service-account token authentication.
+
+.PARAMETER OnePasswordServiceAccountTokenFile
+Current-user DPAPI ciphertext file read only inside this bounded child.
+
 .PARAMETER EnvironmentId
 Opaque ID of the already pinned and verified Atlaso Environment.
 
@@ -45,6 +51,16 @@ Bounded SDK authorization and Environment retrieval deadline.
     'OnePasswordAccount',
     Justification = 'Desktop authorization account identifier, not an account password.'
 )]
+[Diagnostics.CodeAnalysis.SuppressMessageAttribute(
+    'PSAvoidUsingPlainTextForPassword',
+    'OnePasswordAuthenticationMode',
+    Justification = 'Authentication mechanism selector, not a credential.'
+)]
+[Diagnostics.CodeAnalysis.SuppressMessageAttribute(
+    'PSAvoidUsingPlainTextForPassword',
+    'OnePasswordServiceAccountTokenFile',
+    Justification = 'Path to current-user DPAPI ciphertext, not a plaintext token.'
+)]
 [CmdletBinding()]
 param(
     [Parameter(Mandatory = $true)][ValidateSet('Prepare', 'Stage')][string]$Action,
@@ -54,6 +70,8 @@ param(
     [string]$PythonCommand = '',
     [string]$DependencyPath = '',
     [string]$OnePasswordAccount = '',
+    [ValidateSet('desktop', 'service-account')][string]$OnePasswordAuthenticationMode = 'desktop',
+    [string]$OnePasswordServiceAccountTokenFile = '',
     [string]$EnvironmentId = '',
     [string]$VmxPath = '',
     [ValidateRange(1, 3600)][int]$TimeoutSeconds = 300
@@ -71,6 +89,8 @@ $pythonChildPath = ''
 $adminPasswordText = $null
 $rootPasswordText = $null
 $ovfEnvironment = $null
+$serviceAccountTokenText = $null
+$env:OP_SERVICE_ACCOUNT_TOKEN = $null
 
 try {
     if ($Action -eq 'Stage') {
@@ -108,7 +128,10 @@ try {
         if (
             [string]::IsNullOrWhiteSpace($PythonCommand) -or
             [string]::IsNullOrWhiteSpace($DependencyPath) -or
-            [string]::IsNullOrWhiteSpace($OnePasswordAccount) -or
+            ($OnePasswordAuthenticationMode -eq 'desktop' -and
+                [string]::IsNullOrWhiteSpace($OnePasswordAccount)) -or
+            ($OnePasswordAuthenticationMode -eq 'service-account' -and
+                [string]::IsNullOrWhiteSpace($OnePasswordServiceAccountTokenFile)) -or
             [string]::IsNullOrWhiteSpace($EnvironmentId)
         ) {
             $status.Code = 'sdk_configuration_missing'
@@ -195,10 +218,20 @@ async def retrieve_defaults(args, request):
         from onepassword import Client, DesktopAuth
     except ImportError:
         raise SystemExit(26) from None
+    token = None
+    auth = None
     try:
+        if args.onepassword_authentication == "service-account":
+            token = os.environ.pop("OP_SERVICE_ACCOUNT_TOKEN", None)
+            if not token:
+                raise SystemExit(27)
+            auth = token
+        else:
+            os.environ.pop("OP_SERVICE_ACCOUNT_TOKEN", None)
+            auth = DesktopAuth(account_name=args.onepassword_account)
         client = await asyncio.wait_for(
             Client.authenticate(
-                auth=DesktopAuth(account_name=args.onepassword_account),
+                auth=auth,
                 integration_name="Atlaso VMware credentials",
                 integration_version="v1",
             ),
@@ -208,8 +241,14 @@ async def retrieve_defaults(args, request):
             client.environments.get_variables(args.onepassword_environment_id),
             timeout=args.timeout,
         )
+    except SystemExit:
+        raise
     except Exception:
         raise SystemExit(20) from None
+    finally:
+        os.environ.pop("OP_SERVICE_ACCOUNT_TOKEN", None)
+        token = None
+        auth = None
 
     selected = {}
     for field_name, variable_name, contract_code, validation_code in (
@@ -236,7 +275,8 @@ async def retrieve_defaults(args, request):
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--dependency-path", required=True)
-    parser.add_argument("--onepassword-account", required=True)
+    parser.add_argument("--onepassword-authentication", choices=("desktop", "service-account"), required=True)
+    parser.add_argument("--onepassword-account", default="")
     parser.add_argument("--onepassword-environment-id", required=True)
     parser.add_argument("--request", required=True)
     parser.add_argument("--output", required=True)
@@ -269,16 +309,57 @@ if __name__ == "__main__":
             ($pythonSource -replace "`r?`n", "`n"),
             [System.Text.UTF8Encoding]::new($false)
         )
-        $null = & $PythonCommand @(
+        $pythonArguments = @(
             '-I', '-S', $pythonChildPath,
             '--dependency-path', $DependencyPath,
+            '--onepassword-authentication', $OnePasswordAuthenticationMode,
             '--onepassword-account', $OnePasswordAccount,
             '--onepassword-environment-id', $EnvironmentId,
             '--request', $RequestPath,
             '--output', $defaultBundlePath,
             '--timeout', "$TimeoutSeconds"
-        ) 2>$null
-        $pythonExitCode = $LASTEXITCODE
+        )
+        if ($OnePasswordAuthenticationMode -eq 'service-account') {
+            try {
+                $tokenCiphertext = [System.IO.File]::ReadAllText($OnePasswordServiceAccountTokenFile)
+                $tokenSecureString = ConvertTo-SecureString -String $tokenCiphertext
+                $serviceAccountTokenText = ConvertFrom-SecureString `
+                    -SecureString $tokenSecureString `
+                    -AsPlainText
+            }
+            catch {
+                $status.Code = 'service_account_token_invalid'
+                return
+            }
+            if ($serviceAccountTokenText -notmatch '^ops_[A-Za-z0-9_-]{80,8188}$') {
+                $status.Code = 'service_account_token_invalid'
+                return
+            }
+            $startInfo = [System.Diagnostics.ProcessStartInfo]::new()
+            $startInfo.FileName = $PythonCommand
+            $startInfo.UseShellExecute = $false
+            $startInfo.CreateNoWindow = $true
+            $startInfo.RedirectStandardOutput = $true
+            $startInfo.RedirectStandardError = $true
+            foreach ($pythonArgument in $pythonArguments) {
+                [void]$startInfo.ArgumentList.Add($pythonArgument)
+            }
+            $startInfo.Environment['OP_SERVICE_ACCOUNT_TOKEN'] = $serviceAccountTokenText
+            $pythonProcess = [System.Diagnostics.Process]::Start($startInfo)
+            [void]$startInfo.Environment.Remove('OP_SERVICE_ACCOUNT_TOKEN')
+            $serviceAccountTokenText = $null
+            $standardOutputTask = $pythonProcess.StandardOutput.ReadToEndAsync()
+            $standardErrorTask = $pythonProcess.StandardError.ReadToEndAsync()
+            $pythonProcess.WaitForExit()
+            $standardOutputTask.GetAwaiter().GetResult() | Out-Null
+            $standardErrorTask.GetAwaiter().GetResult() | Out-Null
+            $pythonExitCode = $pythonProcess.ExitCode
+            $pythonProcess.Dispose()
+        }
+        else {
+            $null = & $PythonCommand @pythonArguments 2>$null
+            $pythonExitCode = $LASTEXITCODE
+        }
         $status.Code = switch ($pythonExitCode) {
             0 { 'sdk_defaults_ready' }
             20 { 'sdk_access_failed' }
@@ -288,6 +369,7 @@ if __name__ == "__main__":
             24 { 'root_password_invalid' }
             25 { 'sdk_output_protection_failed' }
             26 { 'sdk_runtime_invalid' }
+            27 { 'service_account_token_invalid' }
             default { 'sdk_child_failed' }
         }
         if ($pythonExitCode -ne 0) {
@@ -359,6 +441,8 @@ finally {
     $adminPasswordText = $null
     $rootPasswordText = $null
     $ovfEnvironment = $null
+    $serviceAccountTokenText = $null
+    $env:OP_SERVICE_ACCOUNT_TOKEN = $null
     if ($defaultBundlePath -and (Test-Path -LiteralPath $defaultBundlePath -PathType Leaf)) {
         [System.IO.File]::Delete($defaultBundlePath)
     }

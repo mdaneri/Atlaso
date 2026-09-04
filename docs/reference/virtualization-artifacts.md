@@ -368,9 +368,10 @@ Use `-CandidateOnly` to stop after candidate production and smoke; otherwise the
 draft upload, and protected hosted finalization. The standard
 producer defaults `StagingRoot` to `<checkout>\artifacts\virtualization-release`, uses the exact Hyper-V switches
 `Atlaso Management` and `Atlaso Services`, resolves the pinned Atlaso 1Password Environment through the checkout-local
-selector file, requires one uniquely signed-in 1Password CLI account, and discovers a standard Windows x64 CPython
-3.14 runtime. The retained `-StagingRoot`, `-ManagementSwitch`, `-ServiceSwitch`,
-`-OnePasswordEnvironmentId`, `-OnePasswordAccount`, and `-OnePasswordPython` parameters remain authoritative overrides.
+selector file, prefers the checkout-local current-user DPAPI service-account token before desktop discovery, and
+discovers a standard Windows x64 CPython 3.14 runtime. The retained `-StagingRoot`, `-ManagementSwitch`,
+`-ServiceSwitch`, `-OnePasswordEnvironmentId`, `-OnePasswordServiceAccountTokenFile`, `-OnePasswordAccount`, and
+`-OnePasswordPython` parameters remain authoritative overrides.
 The resolved credential selectors are forwarded unchanged to both the fresh image build and exact-wheel deployment.
 The image-builder handoff uses named parameters and deliberately leaves both `SecureString` credential parameters
 unbound so the reviewed 1Password defaults remain authoritative.

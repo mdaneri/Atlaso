@@ -198,6 +198,173 @@ function Assert-AtlasoOnePasswordEnvironmentId {
 
 <#
 .SYNOPSIS
+Validate a current-user DPAPI-protected 1Password service-account token file.
+
+.PARAMETER Path
+Exact local ciphertext file to validate without decrypting it in the caller.
+#>
+function Assert-AtlasoOnePasswordServiceAccountTokenFile {
+    param([Parameter(Mandatory = $true)][string]$Path)
+
+    if (-not [System.Runtime.InteropServices.RuntimeInformation]::IsOSPlatform(
+            [System.Runtime.InteropServices.OSPlatform]::Windows
+        )) {
+        throw 'The Atlaso 1Password service-account token file requires Windows current-user DPAPI.'
+    }
+    if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) {
+        throw 'The 1Password service-account token file is unavailable.'
+    }
+    $item = Get-Item -LiteralPath $Path -Force
+    if (($item.Attributes -band [System.IO.FileAttributes]::ReparsePoint) -ne 0) {
+        throw 'The 1Password service-account token file must not be a reparse point.'
+    }
+    if ($item.Length -lt 32 -or $item.Length -gt 65536) {
+        throw 'The 1Password service-account token file has an invalid ciphertext size.'
+    }
+
+    $currentSid = [System.Security.Principal.WindowsIdentity]::GetCurrent().User
+    $systemSid = [System.Security.Principal.SecurityIdentifier]::new('S-1-5-18')
+    $acl = Get-Acl -LiteralPath $item.FullName
+    try {
+        $ownerSid = if ($acl.Owner -match '^S-1-') {
+            [System.Security.Principal.SecurityIdentifier]::new($acl.Owner)
+        }
+        else {
+            ([System.Security.Principal.NTAccount]$acl.Owner).Translate(
+                [System.Security.Principal.SecurityIdentifier]
+            )
+        }
+    }
+    catch {
+        throw 'The 1Password service-account token file owner could not be verified.'
+    }
+    if (-not $ownerSid.Equals($currentSid) -or -not $acl.AreAccessRulesProtected) {
+        throw 'The 1Password service-account token file must be owned by the current user with inherited access disabled.'
+    }
+    $rules = @($acl.GetAccessRules(
+            $true,
+            $true,
+            [System.Security.Principal.SecurityIdentifier]
+        ))
+    $currentUserCanRead = $false
+    foreach ($rule in $rules) {
+        if ($rule.AccessControlType -ne [System.Security.AccessControl.AccessControlType]::Allow) {
+            throw 'The 1Password service-account token file contains an unsupported access-control rule.'
+        }
+        if (-not $rule.IdentityReference.Equals($currentSid) -and
+            -not $rule.IdentityReference.Equals($systemSid)) {
+            throw 'The 1Password service-account token file grants access outside the current user and SYSTEM.'
+        }
+        if ($rule.IdentityReference.Equals($currentSid) -and
+            ($rule.FileSystemRights -band [System.Security.AccessControl.FileSystemRights]::Read) -ne 0) {
+            $currentUserCanRead = $true
+        }
+    }
+    if (-not $currentUserCanRead) {
+        throw 'The current user cannot read the 1Password service-account token file.'
+    }
+    return $item.FullName
+}
+
+<#
+.SYNOPSIS
+Resolve the optional local DPAPI-protected service-account token file.
+
+.PARAMETER TokenFile
+Optional explicit ciphertext file. An explicit missing or unsafe file fails closed.
+
+.PARAMETER RepositoryRoot
+Atlaso checkout containing the default Git-ignored .atlaso-local path.
+#>
+function Resolve-AtlasoOnePasswordServiceAccountTokenFile {
+    param(
+        [AllowEmptyString()][string]$TokenFile = '',
+        [Parameter(Mandatory = $true)][string]$RepositoryRoot
+    )
+
+    $isExplicit = -not [string]::IsNullOrWhiteSpace($TokenFile)
+    $candidate = if ($isExplicit) {
+        $TokenFile
+    }
+    else {
+        Join-Path $RepositoryRoot '.atlaso-local\onepassword-service-account-token.dpapi'
+    }
+    if (-not (Test-Path -LiteralPath $candidate -PathType Leaf)) {
+        if ($isExplicit) {
+            throw 'The explicit 1Password service-account token file is unavailable.'
+        }
+        return ''
+    }
+    return Assert-AtlasoOnePasswordServiceAccountTokenFile -Path $candidate
+}
+
+<#
+.SYNOPSIS
+Select service-account or desktop authorization without exposing credentials.
+
+.PARAMETER RepositoryRoot
+Atlaso checkout containing the default Git-ignored token-file location.
+
+.PARAMETER ServiceAccountTokenFile
+Optional explicit current-user DPAPI ciphertext file.
+
+.PARAMETER Account
+Optional desktop authorization account. An explicit token file has precedence.
+
+.PARAMETER TimeoutSeconds
+Positive deadline for legacy desktop account discovery.
+
+.PARAMETER CliPath
+Optional exact CLI path already verified by the caller.
+#>
+function Resolve-AtlasoOnePasswordAuthentication {
+    param(
+        [Parameter(Mandatory = $true)][string]$RepositoryRoot,
+        [AllowEmptyString()][string]$ServiceAccountTokenFile = '',
+        [AllowEmptyString()][string]$Account = '',
+        [Parameter(Mandatory = $true)][ValidateRange(1, 3600)][int]$TimeoutSeconds,
+        [AllowEmptyString()][string]$CliPath = ''
+    )
+
+    if (-not [string]::IsNullOrWhiteSpace($ServiceAccountTokenFile)) {
+        return [pscustomobject][ordered]@{
+            Mode      = 'service-account'
+            TokenFile = Resolve-AtlasoOnePasswordServiceAccountTokenFile `
+                -TokenFile $ServiceAccountTokenFile `
+                -RepositoryRoot $RepositoryRoot
+            Account   = ''
+        }
+    }
+    if (-not [string]::IsNullOrWhiteSpace($Account)) {
+        return [pscustomobject][ordered]@{
+            Mode      = 'desktop'
+            TokenFile = ''
+            Account   = Resolve-AtlasoOnePasswordAccount `
+                -Account $Account `
+                -TimeoutSeconds $TimeoutSeconds `
+                -CliPath $CliPath
+        }
+    }
+    $defaultTokenFile = Resolve-AtlasoOnePasswordServiceAccountTokenFile `
+        -RepositoryRoot $RepositoryRoot
+    if (-not [string]::IsNullOrWhiteSpace($defaultTokenFile)) {
+        return [pscustomobject][ordered]@{
+            Mode      = 'service-account'
+            TokenFile = $defaultTokenFile
+            Account   = ''
+        }
+    }
+    return [pscustomobject][ordered]@{
+        Mode      = 'desktop'
+        TokenFile = ''
+        Account   = Resolve-AtlasoOnePasswordAccount `
+            -TimeoutSeconds $TimeoutSeconds `
+            -CliPath $CliPath
+    }
+}
+
+<#
+.SYNOPSIS
 Validate the non-secret 1Password account selector used by desktop authorization.
 
 .PARAMETER Account
@@ -870,10 +1037,13 @@ function Get-AtlasoOnePasswordCredentialBridgeError {
 
     $message = switch ($Code) {
         'sdk_configuration_missing' {
-            "Omitted $ConsumerDescription credentials require OnePasswordAccount and OnePasswordPython for the supported 1Password SDK bridge."
+            "Omitted $ConsumerDescription credentials require a service-account token file or OnePasswordAccount, plus OnePasswordPython, for the supported 1Password SDK bridge."
         }
         'sdk_access_failed' {
-            "1Password desktop authorization or exact Atlaso Environment access failed; no $ConsumerDescription mutation was attempted."
+            "1Password authorization or exact Atlaso Environment access failed; no $ConsumerDescription mutation was attempted."
+        }
+        'service_account_token_invalid' {
+            "The current-user DPAPI 1Password service-account token could not be used; no $ConsumerDescription mutation was attempted."
         }
         'admin_variable_invalid' {
             'The exact Atlaso 1Password Environment must contain exactly one concealed DEFAULT_ADMIN_PASSWORD variable.'
@@ -1133,6 +1303,10 @@ Opaque ID of the pinned Atlaso Environment when either value is omitted.
 .PARAMETER OnePasswordAccount
 Account name or ID used for desktop SDK authorization when a default is needed.
 
+.PARAMETER OnePasswordServiceAccountTokenFile
+Optional explicit current-user DPAPI ciphertext file. When omitted, the
+Git-ignored checkout-local default is preferred over desktop discovery.
+
 .PARAMETER OnePasswordPython
 Standard Windows x64 CPython 3.14 executable used when a default is needed.
 
@@ -1160,6 +1334,11 @@ Sanitized workflow name used in errors and child diagnostics.
 function Get-AtlasoOnePasswordCredentialPair {
     [Diagnostics.CodeAnalysis.SuppressMessageAttribute(
         'PSAvoidUsingPlainTextForPassword',
+        'OnePasswordServiceAccountTokenFile',
+        Justification = 'Path to current-user DPAPI ciphertext, not a plaintext token.'
+    )]
+    [Diagnostics.CodeAnalysis.SuppressMessageAttribute(
+        'PSAvoidUsingPlainTextForPassword',
         'OnePasswordAccount',
         Justification = 'Desktop authorization account identifier, not an account password.'
     )]
@@ -1177,6 +1356,7 @@ function Get-AtlasoOnePasswordCredentialPair {
         [Parameter(Mandatory = $true)][string]$RepositoryRoot,
         [string]$EnvironmentId = '',
         [string]$OnePasswordAccount = '',
+        [string]$OnePasswordServiceAccountTokenFile = '',
         [string]$OnePasswordPython = '',
         [string]$OnePasswordCliPath = '',
         [SecureString]$AdminPassword,
@@ -1198,11 +1378,15 @@ function Get-AtlasoOnePasswordCredentialPair {
     if ($env:DEFAULT_ADMIN_PASSWORD -or $env:DEFAULT_ROOT_PASSWORD) {
         throw 'DEFAULT_ADMIN_PASSWORD and DEFAULT_ROOT_PASSWORD must not be supplied by the caller; use the exact Atlaso 1Password Environment bridge.'
     }
+    if ($env:OP_SERVICE_ACCOUNT_TOKEN) {
+        throw 'OP_SERVICE_ACCOUNT_TOKEN must not be supplied by the caller; use the current-user DPAPI token file.'
+    }
     if (-not (Get-Command Invoke-AtlasoBoundedProcess -ErrorAction SilentlyContinue)) {
         throw 'The bounded Atlaso process runner is unavailable.'
     }
     $needsDefaults = $null -eq $AdminPassword -or $null -eq $RootPassword
     $resolvedPython = ''
+    $authentication = [pscustomobject]@{ Mode = 'desktop'; TokenFile = ''; Account = '' }
     if ($needsDefaults) {
         Assert-AtlasoOnePasswordEnvironmentId -EnvironmentId $EnvironmentId
         # The exported bridge remains fail-closed when called directly: admit
@@ -1213,6 +1397,12 @@ function Get-AtlasoOnePasswordCredentialPair {
             -RepositoryRoot $RepositoryRoot `
             -TimeoutSeconds $TimeoutSeconds `
             -ConsumerDescription $ConsumerDescription
+        $authentication = Resolve-AtlasoOnePasswordAuthentication `
+            -RepositoryRoot $RepositoryRoot `
+            -ServiceAccountTokenFile $OnePasswordServiceAccountTokenFile `
+            -Account $OnePasswordAccount `
+            -TimeoutSeconds $TimeoutSeconds `
+            -CliPath $OnePasswordCliPath
     }
     Invoke-AtlasoOnePasswordCredentialCleanupRecovery -RepositoryRoot $RepositoryRoot
     $bridgeRoot = Join-Path ([System.IO.Path]::GetTempPath()) (
@@ -1276,12 +1466,6 @@ function Get-AtlasoOnePasswordCredentialPair {
                 -PipGlobalIndex $PipGlobalIndex `
                 -PipGlobalIndexUrl $PipGlobalIndexUrl `
                 -TimeoutSeconds $TimeoutSeconds
-            # Artifact admission must complete before any 1Password CLI or
-            # desktop activity, including automatic account inventory.
-            $resolvedAccount = Resolve-AtlasoOnePasswordAccount `
-                -Account $OnePasswordAccount `
-                -TimeoutSeconds $TimeoutSeconds `
-                -CliPath $OnePasswordCliPath
         }
 
         $helperPath = Join-Path $PSScriptRoot 'Invoke-AtlasoOnePasswordCredentials.ps1'
@@ -1296,7 +1480,9 @@ function Get-AtlasoOnePasswordCredentialPair {
             $arguments += @(
                 '-PythonCommand', $resolvedPython,
                 '-DependencyPath', $dependencyPath,
-                '-OnePasswordAccount', $resolvedAccount,
+                '-OnePasswordAuthenticationMode', $authentication.Mode,
+                '-OnePasswordAccount', $authentication.Account,
+                '-OnePasswordServiceAccountTokenFile', $authentication.TokenFile,
                 '-EnvironmentId', $EnvironmentId
             )
         }
@@ -1367,6 +1553,9 @@ Export-ModuleMember -Function @(
     'Resolve-AtlasoPipPackageSource',
     'Resolve-AtlasoOnePasswordEnvironmentId',
     'Assert-AtlasoOnePasswordEnvironmentId',
+    'Assert-AtlasoOnePasswordServiceAccountTokenFile',
+    'Resolve-AtlasoOnePasswordServiceAccountTokenFile',
+    'Resolve-AtlasoOnePasswordAuthentication',
     'Assert-AtlasoOnePasswordAccount',
     'Resolve-AtlasoOnePasswordCliPath',
     'Resolve-AtlasoOnePasswordAccount',

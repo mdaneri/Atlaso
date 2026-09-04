@@ -217,6 +217,7 @@ param(
     [SecureString]$BootstrapAdminPassword,
     [string]$OnePasswordEnvironmentId = '',
     [string]$OnePasswordAccount = '',
+    [string]$OnePasswordServiceAccountTokenFile = '',
     [string]$OnePasswordPython = '',
     [switch]$ReleaseBuilder,
     [string]$ReleaseVersion = '',
@@ -233,6 +234,7 @@ param(
     BootstrapAdminPasswordBound = $PSBoundParameters.ContainsKey('BootstrapAdminPassword')
     OnePasswordEnvironmentId = $OnePasswordEnvironmentId
     OnePasswordAccount = $OnePasswordAccount
+    OnePasswordServiceAccountTokenFile = $OnePasswordServiceAccountTokenFile
     OnePasswordPython = $OnePasswordPython
     ReleaseBuilder = [bool]$ReleaseBuilder
     ReleaseVersion = $ReleaseVersion
@@ -253,6 +255,7 @@ param(
             -OutputDirectory $OutputPath `
             -OnePasswordEnvironmentId 'environment-selector' `
             -OnePasswordAccount 'account-selector' `
+            -OnePasswordServiceAccountTokenFile 'token-file-selector' `
             -OnePasswordPython 'python-selector'
     } $builderStubPath (Join-Path $builderInvocationRoot 'output')
     if ($builderInvocation.IsoUrl -cne 'default-iso-url' -or
@@ -267,6 +270,7 @@ param(
         -not $builderInvocation.EnableRealSystemAdapters -or
         $builderInvocation.OnePasswordEnvironmentId -cne 'environment-selector' -or
         $builderInvocation.OnePasswordAccount -cne 'account-selector' -or
+        $builderInvocation.OnePasswordServiceAccountTokenFile -cne 'token-file-selector' -or
         $builderInvocation.OnePasswordPython -cne 'python-selector') {
         throw 'The virtualization producer did not invoke the VMware builder with the exact named non-secret parameters.'
     }
@@ -473,7 +477,7 @@ foreach ($required in @(
         "'Atlaso Services'",
         'Resolve-AtlasoOnePasswordEnvironmentId',
         'Assert-AtlasoOnePasswordEnvironmentId',
-        'Resolve-AtlasoOnePasswordAccount',
+        'Resolve-AtlasoOnePasswordAuthentication',
         'Resolve-AtlasoOnePasswordPython',
         'Virtualization prerelease preflight:',
         'The selected tag is frozen before the first staging mutation',
@@ -510,6 +514,7 @@ foreach ($required in @(
         "'release', 'upload', `$Tag",
         'already contains different bytes',
         'OnePasswordEnvironmentId = $OnePasswordEnvironmentId',
+        'OnePasswordServiceAccountTokenFile = $OnePasswordServiceAccountTokenFile',
         'artifacts\virtualization\$tag',
         'artifacts\virtualization-smoke\$tag',
         "-Workflow 'virtualization-prerelease.yml'",

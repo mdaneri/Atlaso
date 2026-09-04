@@ -87,12 +87,12 @@ if (-not $scriptText.Contains("'-I', '-S', $pythonDeploy", [System.StringCompari
 if (-not $scriptText.Contains('len(matches) != 1 or not matches[0].masked or not matches[0].value', [System.StringComparison]::Ordinal)) {
     throw 'Password deployment must require exactly one non-empty concealed variable.'
 }
-if (-not $scriptText.Contains('1Password desktop authorization or exact Environment access failed', [System.StringComparison]::Ordinal)) {
+if (-not $scriptText.Contains('1Password authorization or exact Environment access failed', [System.StringComparison]::Ordinal)) {
     throw 'Authorization and Environment failures must fail closed without secret output.'
 }
 if (($scriptText.Split('await asyncio.wait_for(', [System.StringSplitOptions]::None).Count - 1) -lt 2 -or
     ($scriptText.Split('timeout=args.timeout', [System.StringSplitOptions]::None).Count - 1) -lt 2) {
-    throw 'Desktop authorization and Environment retrieval must each use the bounded deployment timeout.'
+    throw 'Authorization and Environment retrieval must each use the bounded deployment timeout.'
 }
 if ($scriptText.Contains("'run', '--environment'", [System.StringComparison]::Ordinal) -or
     $scriptText.Contains('Assert-OnePasswordEnvironmentSupport', [System.StringComparison]::Ordinal)) {

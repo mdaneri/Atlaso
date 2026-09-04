@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -18,12 +19,15 @@ def _embedded_child() -> str:
     return source[start:end]
 
 
-def _run_child(tmp_path: Path, mode: str) -> subprocess.CompletedProcess[str]:
+def _run_child(
+    tmp_path: Path, mode: str, *, authentication: str = "desktop"
+) -> subprocess.CompletedProcess[str]:
     """Run the extracted deployment child against synthetic dependencies.
 
     Args:
         tmp_path: Isolated directory for the extracted child and fake packages.
         mode: Synthetic SDK response scenario to exercise.
+        authentication: SDK authentication mode to exercise.
     """
     dependency_path = tmp_path / "dependencies"
     package_path = dependency_path / "onepassword"
@@ -31,9 +35,12 @@ def _run_child(tmp_path: Path, mode: str) -> subprocess.CompletedProcess[str]:
     fake_secret = "unit-test-secret-sentinel"
     (package_path / "__init__.py").write_text(
         f'''import asyncio
+import os
 
 class DesktopAuth:
     def __init__(self, account_name):
+        if "{authentication}" == "service-account":
+            raise RuntimeError("DesktopAuth must not be invoked")
         self.account_name = account_name
 
 class Variable:
@@ -58,6 +65,10 @@ class Environments:
 class Client:
     @staticmethod
     async def authenticate(**kwargs):
+        if "{authentication}" == "service-account" and kwargs.get("auth") != "ops_{'A' * 100}":
+            raise RuntimeError("wrong service-account token")
+        if os.environ.get("OP_SERVICE_ACCOUNT_TOKEN"):
+            raise RuntimeError("service-account token remained in the environment")
         if "{mode}" == "hang-auth":
             await asyncio.sleep(3600)
         if "{mode}" == "denied":
@@ -81,6 +92,8 @@ class Client:
         str(child_path),
         "--dependency-path",
         str(dependency_path),
+        "--onepassword-authentication",
+        authentication,
         "--onepassword-account",
         mode,
         "--onepassword-environment-id",
@@ -130,7 +143,12 @@ class Client:
         "--poll",
         "1",
     ]
-    return subprocess.run(args, check=False, capture_output=True, text=True)
+    environment = os.environ.copy()
+    if authentication == "service-account":
+        environment["OP_SERVICE_ACCOUNT_TOKEN"] = "ops_" + "A" * 100
+    return subprocess.run(
+        args, check=False, capture_output=True, text=True, env=environment
+    )
 
 
 @pytest.mark.parametrize("mode", ["denied", "wrong-environment", "hang-auth", "hang-environment"])
@@ -174,3 +192,15 @@ def test_success_keeps_value_out_of_process_output(tmp_path: Path) -> None:
     assert result.returncode != 0
     assert "bridge-success" in output
     assert "unit-test-secret-sentinel" not in output
+
+
+def test_service_account_authentication_avoids_desktop_auth_and_clears_environment(
+    tmp_path: Path,
+) -> None:
+    """Use the service token directly without carrying it past SDK initialization."""
+    result = _run_child(tmp_path, "success", authentication="service-account")
+    output = result.stdout + result.stderr
+
+    assert result.returncode != 0
+    assert "bridge-success" in output
+    assert "ops_" not in output

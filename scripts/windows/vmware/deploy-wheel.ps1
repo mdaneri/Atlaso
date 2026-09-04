@@ -37,6 +37,10 @@ Directory containing the complete exact dependency wheelhouse used with an expli
 Opaque ID of the preverified Atlaso 1Password Environment.
 .PARAMETER OnePasswordAccount
 1Password account name or ID approved for desktop SDK authorization.
+.PARAMETER OnePasswordServiceAccountTokenFile
+Optional current-user DPAPI ciphertext file. An explicit token file takes
+precedence over OnePasswordAccount. When both are omitted, the Git-ignored
+checkout-local default is preferred before desktop account discovery.
 .PARAMETER OnePasswordPython
 Optional standard Windows x64 CPython 3.14 executable used by the temporary compatibility wheel and locked dependencies.
 .PARAMETER UseVmwareGuestInfoHostKey
@@ -55,6 +59,11 @@ Skips the final host-facing OpenAPI probe.
     'PSAvoidUsingPlainTextForPassword',
     'OnePasswordAccount',
     Justification = 'Desktop authorization account identifier, not an account password.'
+)]
+[Diagnostics.CodeAnalysis.SuppressMessageAttribute(
+    'PSAvoidUsingPlainTextForPassword',
+    'OnePasswordServiceAccountTokenFile',
+    Justification = 'Path to current-user DPAPI ciphertext, not a plaintext token.'
 )]
 [Diagnostics.CodeAnalysis.SuppressMessageAttribute(
     'PSAvoidUsingPlainTextForPassword',
@@ -81,6 +90,7 @@ param(
     [string]$RuntimeDependencyDirectory = '',
     [string]$OnePasswordEnvironmentId = '',
     [string]$OnePasswordAccount = '',
+    [string]$OnePasswordServiceAccountTokenFile = '',
     [string]$OnePasswordPython = '',
     [switch]$UseVmwareGuestInfoHostKey,
     [switch]$ResetVaultEntries,
@@ -624,6 +634,10 @@ Repository working directory.
 Opaque ID of the verified Atlaso Environment.
 .PARAMETER Account
 Account name or ID used for desktop authorization.
+.PARAMETER AuthenticationMode
+Use desktop authorization or the current-user DPAPI service-account token.
+.PARAMETER ServiceAccountTokenFile
+Validated ciphertext file read only by the service-account wrapper child.
 .PARAMETER TrustedHostKey
 Optional verified Ed25519 host key supplied from VMware guest-info.
 #>
@@ -665,7 +679,10 @@ function Invoke-PasswordBackedDeploy {
         [Parameter(Mandatory = $true)][int]$PollSeconds,
         [Parameter(Mandatory = $true)][string]$WorkingDirectory,
         [Parameter(Mandatory = $true)][string]$EnvironmentId,
-        [Parameter(Mandatory = $true)][string]$Account,
+        [AllowEmptyString()][string]$Account = '',
+        [Parameter(Mandatory = $true)][ValidateSet('desktop', 'service-account')]
+        [string]$AuthenticationMode,
+        [AllowEmptyString()][string]$ServiceAccountTokenFile = '',
         [string]$TrustedHostKey = ''
     )
 
@@ -758,7 +775,8 @@ parser.add_argument("--remote-atlaso-service-drop-in", required=True)
 parser.add_argument("--remote-nginx-service-drop-in", required=True)
 parser.add_argument("--remote-script", required=True)
 parser.add_argument("--dependency-path", required=True)
-parser.add_argument("--onepassword-account", required=True)
+parser.add_argument("--onepassword-authentication", choices=("desktop", "service-account"), required=True)
+parser.add_argument("--onepassword-account", default="")
 parser.add_argument("--onepassword-environment-id", required=True)
 parser.add_argument("--trusted-host-key", default="")
 parser.add_argument("--reset-vault-entries", action="store_true")
@@ -783,10 +801,20 @@ except ImportError as exc:
 
 
 async def load_password():
+    token = None
+    auth = None
     try:
+        if args.onepassword_authentication == "service-account":
+            token = os.environ.pop("OP_SERVICE_ACCOUNT_TOKEN", None)
+            if not token:
+                raise SystemExit("The current-user DPAPI 1Password service-account token is invalid; no deployment was attempted.")
+            auth = token
+        else:
+            os.environ.pop("OP_SERVICE_ACCOUNT_TOKEN", None)
+            auth = DesktopAuth(account_name=args.onepassword_account)
         onepassword = await asyncio.wait_for(
             Client.authenticate(
-                auth=DesktopAuth(account_name=args.onepassword_account),
+                auth=auth,
                 integration_name="Atlaso VMware deployment",
                 integration_version="v1",
             ),
@@ -798,8 +826,12 @@ async def load_password():
         )
     except Exception as exc:
         raise SystemExit(
-            "1Password desktop authorization or exact Environment access failed; no deployment was attempted."
+            "1Password authorization or exact Environment access failed; no deployment was attempted."
         ) from None
+    finally:
+        os.environ.pop("OP_SERVICE_ACCOUNT_TOKEN", None)
+        token = None
+        auth = None
     matches = [variable for variable in response.variables if variable.name == "DEFAULT_ADMIN_PASSWORD"]
     if len(matches) != 1 or not matches[0].masked or not matches[0].value:
         raise SystemExit(
@@ -994,6 +1026,7 @@ finally:
         $deployArguments = @(
             '-I', '-S', $pythonDeploy,
             '--dependency-path', $pythonDependencyPath,
+            '--onepassword-authentication', $AuthenticationMode,
             '--onepassword-account', $Account,
             '--onepassword-environment-id', $EnvironmentId,
             '--host', $HostAddress,
@@ -1052,7 +1085,30 @@ finally:
             '--local-nginx-service-drop-in', $LocalNginxServiceDropInPath,
             '--remote-nginx-service-drop-in', $RemoteNginxServiceDropIn
         )
-        Invoke-CheckedCommand -FilePath $PythonCommand -Arguments $deployArguments -WorkingDirectory $WorkingDirectory
+        if ($AuthenticationMode -eq 'service-account') {
+            $argumentsPath = Join-Path $passwordDeployDirectory 'service-account-command.json'
+            [System.IO.File]::WriteAllText(
+                $argumentsPath,
+                ($deployArguments | ConvertTo-Json -Compress),
+                [System.Text.UTF8Encoding]::new($false)
+            )
+            Invoke-CheckedCommand `
+                -FilePath (Get-Process -Id $PID).Path `
+                -Arguments @(
+                    '-NoLogo', '-NoProfile', '-NonInteractive', '-File',
+                    (Join-Path $PSScriptRoot 'Invoke-AtlasoServiceAccountCommand.ps1'),
+                    '-TokenFile', $ServiceAccountTokenFile,
+                    '-FilePath', $PythonCommand,
+                    '-ArgumentsPath', $argumentsPath,
+                    '-WorkingDirectory', $WorkingDirectory
+                )
+        }
+        else {
+            Invoke-CheckedCommand `
+                -FilePath $PythonCommand `
+                -Arguments $deployArguments `
+                -WorkingDirectory $WorkingDirectory
+        }
     } finally {
         Remove-Item -LiteralPath $passwordDeployDirectory -Recurse -Force -ErrorAction SilentlyContinue
     }
@@ -1061,21 +1117,29 @@ finally:
 if ($env:DEFAULT_ADMIN_PASSWORD) {
     throw 'DEFAULT_ADMIN_PASSWORD must not be supplied by the caller; use the exact Atlaso 1Password Environment bridge.'
 }
+if ($env:OP_SERVICE_ACCOUNT_TOKEN) {
+    throw 'OP_SERVICE_ACCOUNT_TOKEN must not be supplied by the caller; use -OnePasswordServiceAccountTokenFile.'
+}
 
 $resolvedRepoRoot = Resolve-RepoRoot -Path $RepoRoot
 $RemoteDirectory = Resolve-RemoteDirectoryPath -Path $RemoteDirectory
 
 $UsePasswordDeploy = -not [string]::IsNullOrEmpty($OnePasswordEnvironmentId)
 $resolvedOnePasswordPython = ''
+$onePasswordAuthentication = $null
 if ($UsePasswordDeploy) {
     Import-Module (
         Join-Path $resolvedRepoRoot 'scripts\windows\vmware\Atlaso.OnePasswordCredentials.psm1'
     ) -Force
     Assert-OnePasswordEnvironmentId -EnvironmentId $OnePasswordEnvironmentId
-    Assert-OnePasswordAccount -Account $OnePasswordAccount
     $resolvedOnePasswordPython = Resolve-OnePasswordPython -PythonCommand $OnePasswordPython
-} elseif ($OnePasswordAccount -or $OnePasswordPython) {
-    throw '-OnePasswordAccount and -OnePasswordPython require -OnePasswordEnvironmentId.'
+    $onePasswordAuthentication = Resolve-AtlasoOnePasswordAuthentication `
+        -RepositoryRoot $resolvedRepoRoot `
+        -ServiceAccountTokenFile $OnePasswordServiceAccountTokenFile `
+        -Account $OnePasswordAccount `
+        -TimeoutSeconds 30
+} elseif ($OnePasswordAccount -or $OnePasswordServiceAccountTokenFile -or $OnePasswordPython) {
+    throw '-OnePasswordAccount, -OnePasswordServiceAccountTokenFile, and -OnePasswordPython require -OnePasswordEnvironmentId.'
 }
 if ($UseVmwareGuestInfoHostKey -and (-not $UsePasswordDeploy -or -not $VmxPath)) {
     throw '-UseVmwareGuestInfoHostKey requires password-backed deployment and an explicit normal test VM -VmxPath.'
@@ -1748,7 +1812,9 @@ try {
             -PollSeconds $ReadinessPollSeconds `
             -WorkingDirectory $resolvedRepoRoot `
             -EnvironmentId $OnePasswordEnvironmentId `
-            -Account $OnePasswordAccount `
+            -Account $onePasswordAuthentication.Account `
+            -AuthenticationMode $onePasswordAuthentication.Mode `
+            -ServiceAccountTokenFile $onePasswordAuthentication.TokenFile `
             -TrustedHostKey $trustedSshHostKey
     } else {
         Write-Host "Uploading deployment files to $SshUser@$IpAddress`:$RemoteDirectory"
