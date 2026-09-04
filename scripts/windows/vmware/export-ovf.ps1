@@ -107,6 +107,9 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
+if ($env:OP_SERVICE_ACCOUNT_TOKEN) {
+    throw 'OP_SERVICE_ACCOUNT_TOKEN must not be supplied by the caller; use -OnePasswordServiceAccountTokenFile.'
+}
 if ($Release -and $Prerelease) {
     throw '-Release and -Prerelease are mutually exclusive publishing modes.'
 }

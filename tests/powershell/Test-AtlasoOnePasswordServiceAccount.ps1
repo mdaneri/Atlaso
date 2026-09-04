@@ -39,6 +39,15 @@ try {
     if (Test-Path -LiteralPath $outsidePath) {
         throw 'The rejected outside token destination was created.'
     }
+    $setupSource = [System.IO.File]::ReadAllText($setupPath)
+    $existingAncestorCheck = $setupSource.IndexOf('$existingAncestorPath = $parentPath')
+    $directoryCreation = $setupSource.IndexOf(
+        '[System.IO.Directory]::CreateDirectory($parentPath)'
+    )
+    if ($existingAncestorCheck -lt 0 -or $directoryCreation -lt 0 -or
+        $existingAncestorCheck -gt $directoryCreation) {
+        throw 'The setup helper does not validate existing ancestors before directory creation.'
+    }
     & $setupPath -Token $firstSecureToken -TokenFile $tokenPath | Out-Null
     $ciphertext = [System.IO.File]::ReadAllText($tokenPath)
     if ($ciphertext.Contains($firstToken)) {

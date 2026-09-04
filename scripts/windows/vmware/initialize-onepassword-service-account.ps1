@@ -63,6 +63,28 @@ if ([string]::IsNullOrWhiteSpace($parentPath)) {
     throw 'The 1Password service-account token destination must have a parent directory.'
 }
 
+# Reject every existing component before CreateDirectory can follow a junction
+# or symlink into storage outside the checkout-local boundary.
+$existingAncestorPath = $parentPath
+while (-not (Test-Path -LiteralPath $existingAncestorPath)) {
+    $existingAncestorPath = [System.IO.Path]::GetDirectoryName($existingAncestorPath)
+    if ([string]::IsNullOrWhiteSpace($existingAncestorPath)) {
+        throw 'The 1Password service-account token path has no verifiable local ancestor.'
+    }
+}
+$ancestorPath = $existingAncestorPath
+while ($ancestorPath.Length -ge $repositoryRoot.Length) {
+    $ancestorItem = Get-Item -LiteralPath $ancestorPath -Force
+    if (-not $ancestorItem.PSIsContainer -or
+        ($ancestorItem.Attributes -band [System.IO.FileAttributes]::ReparsePoint) -ne 0) {
+        throw 'The 1Password service-account token path must not traverse a reparse point.'
+    }
+    if ($ancestorPath.Equals($repositoryRoot, [System.StringComparison]::OrdinalIgnoreCase)) {
+        break
+    }
+    $ancestorPath = [System.IO.Path]::GetDirectoryName($ancestorPath)
+}
+
 if (Test-Path -LiteralPath $resolvedTokenFile) {
     $existingItem = Get-Item -LiteralPath $resolvedTokenFile -Force
     if (-not $existingItem.PSIsContainer -and

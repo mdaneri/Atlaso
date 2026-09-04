@@ -162,6 +162,15 @@ def test_photon_and_deployment_entry_points_bound_service_tokens() -> None:
     assert "'-RepositoryRoot', $WorkingDirectory" in password_deploy
 
 
+def test_export_rejects_inherited_service_tokens_before_dispatch() -> None:
+    """Keep caller-supplied tokens away from every export subprocess mode."""
+    source = Path("scripts/windows/vmware/export-ovf.ps1").read_text(encoding="utf-8")
+    guard = source.index("if ($env:OP_SERVICE_ACCOUNT_TOKEN)")
+    mode_dispatch = source.index("if ($Release -and $Prerelease)")
+
+    assert guard < mode_dispatch
+
+
 def test_service_account_access_depends_only_on_the_exact_environment() -> None:
     """Do not introduce a vault lookup into service-account authentication."""
     sources = "\n".join(
