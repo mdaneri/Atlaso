@@ -43,11 +43,20 @@ if (-not [System.Runtime.InteropServices.RuntimeInformation]::IsOSPlatform(
 }
 
 $repositoryRoot = [System.IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..\..\..'))
+$atlasoLocalRoot = [System.IO.Path]::GetFullPath((Join-Path $repositoryRoot '.atlaso-local'))
 $resolvedTokenFile = if ([string]::IsNullOrWhiteSpace($TokenFile)) {
     Join-Path $repositoryRoot '.atlaso-local\onepassword-service-account-token.dpapi'
 }
 else {
     $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($TokenFile)
+}
+$resolvedTokenFile = [System.IO.Path]::GetFullPath($resolvedTokenFile)
+$atlasoLocalPrefix = $atlasoLocalRoot.TrimEnd('\') + '\'
+if (-not $resolvedTokenFile.StartsWith(
+        $atlasoLocalPrefix,
+        [System.StringComparison]::OrdinalIgnoreCase
+    )) {
+    throw 'The 1Password service-account token must be stored beneath this checkout''s .atlaso-local directory.'
 }
 $parentPath = [System.IO.Path]::GetDirectoryName($resolvedTokenFile)
 if ([string]::IsNullOrWhiteSpace($parentPath)) {
@@ -77,6 +86,19 @@ if (Test-Path -LiteralPath $parentPath) {
 }
 else {
     [void][System.IO.Directory]::CreateDirectory($parentPath)
+}
+
+$ancestorPath = $parentPath
+while ($ancestorPath.Length -ge $atlasoLocalRoot.Length) {
+    $ancestorItem = Get-Item -LiteralPath $ancestorPath -Force
+    if (-not $ancestorItem.PSIsContainer -or
+        ($ancestorItem.Attributes -band [System.IO.FileAttributes]::ReparsePoint) -ne 0) {
+        throw 'The 1Password service-account token path must not traverse a reparse point.'
+    }
+    if ($ancestorPath.Equals($atlasoLocalRoot, [System.StringComparison]::OrdinalIgnoreCase)) {
+        break
+    }
+    $ancestorPath = [System.IO.Path]::GetDirectoryName($ancestorPath)
 }
 
 if ($null -eq $Token) {

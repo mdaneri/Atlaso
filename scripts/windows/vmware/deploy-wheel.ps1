@@ -1133,11 +1133,6 @@ if ($UsePasswordDeploy) {
     ) -Force
     Assert-OnePasswordEnvironmentId -EnvironmentId $OnePasswordEnvironmentId
     $resolvedOnePasswordPython = Resolve-OnePasswordPython -PythonCommand $OnePasswordPython
-    $onePasswordAuthentication = Resolve-AtlasoOnePasswordAuthentication `
-        -RepositoryRoot $resolvedRepoRoot `
-        -ServiceAccountTokenFile $OnePasswordServiceAccountTokenFile `
-        -Account $OnePasswordAccount `
-        -TimeoutSeconds 30
 } elseif ($OnePasswordAccount -or $OnePasswordServiceAccountTokenFile -or $OnePasswordPython) {
     throw '-OnePasswordAccount, -OnePasswordServiceAccountTokenFile, and -OnePasswordPython require -OnePasswordEnvironmentId.'
 }
@@ -1169,6 +1164,16 @@ if ($UsePasswordDeploy) {
             -PythonCommand $resolvedOnePasswordPython `
             -WorkingDirectory $resolvedRepoRoot
     }
+}
+
+if ($UsePasswordDeploy) {
+    # Compatibility-wheel admission must finish before service-token validation
+    # or desktop account discovery initiates any 1Password credential activity.
+    $onePasswordAuthentication = Resolve-AtlasoOnePasswordAuthentication `
+        -RepositoryRoot $resolvedRepoRoot `
+        -ServiceAccountTokenFile $OnePasswordServiceAccountTokenFile `
+        -Account $OnePasswordAccount `
+        -TimeoutSeconds 30
 }
 
 $resolvedVmrun = ''

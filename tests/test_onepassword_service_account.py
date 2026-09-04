@@ -77,6 +77,26 @@ def test_all_requested_entry_points_expose_the_dpapi_token_file() -> None:
         assert "[string]$OnePasswordServiceAccountTokenFile = ''" in source
 
 
+def test_setup_destination_and_deploy_preflight_order_fail_closed() -> None:
+    """Restrict durable storage and admit the SDK wheel before account discovery."""
+    root = Path("scripts/windows/vmware")
+    setup = (root / "initialize-onepassword-service-account.ps1").read_text(
+        encoding="utf-8"
+    )
+    deploy = (root / "deploy-wheel.ps1").read_text(encoding="utf-8")
+
+    assert "$atlasoLocalPrefix" in setup
+    assert "must be stored beneath this checkout''s .atlaso-local" in setup
+    assert "must not traverse a reparse point" in setup
+    wheel_stage = deploy.index("if ($UsePasswordDeploy) {", deploy.index("$onePasswordAuthentication"))
+    authentication = deploy.index(
+        "$onePasswordAuthentication = Resolve-AtlasoOnePasswordAuthentication `",
+        wheel_stage,
+    )
+    vmware_discovery = deploy.index("$resolvedVmrun = ''", authentication)
+    assert wheel_stage < authentication < vmware_discovery
+
+
 def test_service_account_access_depends_only_on_the_exact_environment() -> None:
     """Do not introduce a vault lookup into service-account authentication."""
     sources = "\n".join(

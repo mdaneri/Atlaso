@@ -26,6 +26,19 @@ $rotatedToken = 'ops_' + ('B' * 100)
 try {
     $firstToken = 'ops_' + ('A' * 100)
     $firstSecureToken = ConvertTo-SecureString $firstToken -AsPlainText -Force
+    $outsidePath = Join-Path $repositoryRoot 'onepassword-token-outside-local.dpapi'
+    try {
+        & $setupPath -Token $firstSecureToken -TokenFile $outsidePath | Out-Null
+        throw 'A token destination outside .atlaso-local unexpectedly succeeded.'
+    }
+    catch {
+        if ($_.Exception.Message -notlike '*beneath this checkout*') {
+            throw
+        }
+    }
+    if (Test-Path -LiteralPath $outsidePath) {
+        throw 'The rejected outside token destination was created.'
+    }
     & $setupPath -Token $firstSecureToken -TokenFile $tokenPath | Out-Null
     $ciphertext = [System.IO.File]::ReadAllText($tokenPath)
     if ($ciphertext.Contains($firstToken)) {
