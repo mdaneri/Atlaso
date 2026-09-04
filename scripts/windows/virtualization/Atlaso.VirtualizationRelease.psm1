@@ -823,7 +823,8 @@ Resolved 1Password account selector.
 .PARAMETER OnePasswordServiceAccountTokenFile
 Resolved current-user DPAPI service-account ciphertext file.
 .PARAMETER OnePasswordPython
-Resolved supported Python executable.
+Optional supported Python selector forwarded to the builder. An empty value
+preserves the builder's post-admission runtime discovery.
 #>
 function Invoke-AtlasoVirtualizationReleaseImageBuilder {
     [Diagnostics.CodeAnalysis.SuppressMessageAttribute(
@@ -855,7 +856,7 @@ function Invoke-AtlasoVirtualizationReleaseImageBuilder {
         [Parameter(Mandatory = $true)][string]$OnePasswordEnvironmentId,
         [AllowEmptyString()][string]$OnePasswordAccount = '',
         [AllowEmptyString()][string]$OnePasswordServiceAccountTokenFile = '',
-        [Parameter(Mandatory = $true)][string]$OnePasswordPython
+        [AllowEmptyString()][string]$OnePasswordPython = ''
     )
 
     # Named splatting is a credential boundary: positional binding would send

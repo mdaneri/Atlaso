@@ -141,6 +141,7 @@ def test_virtualization_prerelease_defers_desktop_discovery() -> None:
     assert "Resolve-AtlasoOnePasswordAuthentication `" not in prerelease
     assert "Resolve-AtlasoOnePasswordPython `" not in prerelease
     assert "Resolve-AtlasoOnePasswordServiceAccountTokenFile `" in prerelease
+    assert "[AllowEmptyString()][string]$OnePasswordPython = ''" in source
 
 
 def test_photon_and_deployment_entry_points_bound_service_tokens() -> None:
