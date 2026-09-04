@@ -282,6 +282,8 @@
       
         
       
+        
+      
     
     
     
@@ -670,6 +672,8 @@
       
         
           
+        
+      
         
       
         
@@ -1152,6 +1156,40 @@
     
   
   Appliance Update
+
+    
+  </span>
+  
+  
+    
+  
+  
+    <span class="md-status md-status--current"></span>
+  
+
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../operate/onepassword-credential-bridge-recovery/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  1Password bridge recovery
 
     
   </span>
@@ -5495,6 +5533,27 @@ inherited <code>PYTHONPATH</code> cannot observe the value. The helper fails clo
 Environment access, the unique variable, or masking is unavailable. It never accepts a password argument, local <code>.env</code>
 file, or the retired <code>ATLASO_DEPLOY_SSH_PASSWORD</code> fallback. Stable <code>op run</code> does not support the beta-only Environment
 flag and is not used by this workflow.</p>
+<p>The shared VMware credential bridge has one supported retained-state controller:
+<code>scripts/windows/vmware/reset-atlaso-onepassword-credential-bridge.ps1</code>; follow the
+<a href="../../operate/onepassword-credential-bridge-recovery/">operator recovery guide</a>. <code>-Inspect</code> and <code>-WhatIf</code> return only sanitized
+phase, boot, process, job, root, blocker, and action fields; they do not import or authorize the 1Password SDK or change
+state. An inactive exact schema-3 marker can be reset directly. The marker pins the bridge's creation-time temporary
+parent path and filesystem identity, so recovery remains valid from a later shell whose <code>TEMP</code> or <code>TMP</code> differs. A
+still-active exact child requires
+<code>-TerminateOwnedProcess</code>, which revalidates its PID/start identity and membership in the marker's exact
+<code>Local\Atlaso-OnePassword-&lt;32-hex&gt;</code> job, captures the active job members, terminates only that job, and proves the job,
+recorded child, and captured members inactive before root cleanup. The controller is never terminated by recovery.
+After the identity-matching root is absent and its parent directory metadata is flushed, recovery durably writes
+<code>root-absent</code>, then <code>retired</code>, removes the exact marker, and flushes the marker directory. Missing and already-terminal
+state is idempotent.</p>
+<p>Exact schema-2 markers from the preceding implementation remain recoverable. Recovery derives their creation-time
+temporary parent from the identity-pinned bridge path instead of the current shell environment; schema-3 additionally
+pins that parent's filesystem identity.</p>
+<p>Current-boot legacy markers and ambiguous process evidence require a Windows restart followed by the original VMware
+workflow. Reused identities are never terminated. Malformed markers, reparse points, root or marker replacement,
+inaccessible identities, and terminal markers paired with a present root remain preserved for maintainer
+investigation. Manual marker deletion or renaming is unsupported because it destroys the ownership proof needed to
+distinguish the retained credential process and root from unrelated state.</p>
 <p>The child uses the local Python runtime and Paramiko so SSH and sudo do not prompt interactively. Paramiko loads the
 user's SSH known-hosts database and rejects unknown host keys with a controlled pre-authentication error. When
 <code>-UseVmwareGuestInfoHostKey</code> accompanies an explicit normal test VM <code>-VmxPath</code>, the helper reads its host-derived
