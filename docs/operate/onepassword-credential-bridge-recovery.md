@@ -47,11 +47,15 @@ PowerShell prompts before this high-impact reset. Review the inspection result a
 ownership state matches the intended bridge. Unattended automation may pass `-Confirm:$false` only after performing
 and evaluating the same inspection.
 
-The command revalidates the schema, current checkout marker, boot identity, exact bridge-root namespace and filesystem
-identity, reparse-free ancestry, controller and child PID/start identities, job name, and ownership phase before it
+The command revalidates the schema, current checkout marker, boot identity, the durably recorded creation-time
+temporary parent and its filesystem identity, exact bridge-root namespace and filesystem identity, reparse-free
+ancestry, controller and child PID/start identities, job name, and ownership phase before it
 changes state. It removes only the exact identity-matching bridge root, flushes its parent directory, durably advances
 the marker through `root-absent` and `retired`, removes the marker, and flushes the marker directory. A missing marker,
 an already completed terminal phase, and a repeated reset are successful no-ops.
+
+The reset does not depend on the invoking shell's current `TEMP` or `TMP`; use the same checkout even when those
+environment variables changed after the interrupted workflow.
 
 ## Terminate an exact owned job
 

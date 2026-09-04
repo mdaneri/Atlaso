@@ -44,7 +44,7 @@ function New-TestCredentialBridgeRoot {
 
 <#
 .SYNOPSIS
-Create a valid schema-2 marker payload for a synthetic recovery case.
+Create a valid schema-3 marker payload for a synthetic recovery case.
 
 .PARAMETER RootPath
 Exact synthetic bridge root.
@@ -90,10 +90,19 @@ function New-TestCredentialMarker {
         param([string]$Path)
         Get-AtlasoPathIdentity -Path $Path -Description 'Synthetic credential bridge root'
     } $RootPath
+    $temporaryRootPath = [System.IO.Path]::GetFullPath(
+        (Split-Path -Parent ([System.IO.Path]::GetFullPath($RootPath)))
+    ).TrimEnd('\')
+    $temporaryRootIdentity = & $credentialModule {
+        param([string]$Path)
+        Get-AtlasoPathIdentity -Path $Path -Description 'Synthetic temporary root'
+    } $temporaryRootPath
     return [ordered]@{
-        Schema                       = 2
+        Schema                       = 3
         RootPath                     = [System.IO.Path]::GetFullPath($RootPath)
         RootIdentity                 = $rootIdentity
+        TemporaryRootPath            = $temporaryRootPath
+        TemporaryRootIdentity        = $temporaryRootIdentity
         BootIdentity                 = $BootIdentity
         Phase                        = $Phase
         OwnerProcessId               = $OwnerProcessId
@@ -261,6 +270,40 @@ finally {
     Remove-TestCredentialState -RootPath $inactiveRoot
 }
 
+$changedEnvironmentRoot = New-TestCredentialBridgeRoot
+$alternateShellTemp = Join-Path ([System.IO.Path]::GetTempPath()) (
+    'alternate-reset-shell-' + [guid]::NewGuid().ToString('N')
+)
+[void][System.IO.Directory]::CreateDirectory($alternateShellTemp)
+try {
+    Write-TestCredentialMarker -Marker (New-TestCredentialMarker `
+            -RootPath $changedEnvironmentRoot)
+    $originalTemp = $env:TEMP
+    $originalTmp = $env:TMP
+    try {
+        $env:TEMP = $alternateShellTemp
+        $env:TMP = $alternateShellTemp
+        $changedEnvironmentResult = Invoke-AtlasoOnePasswordCredentialBridgeReset `
+            -RepositoryRoot $repositoryRoot `
+            -Confirm:$false
+    }
+    finally {
+        $env:TEMP = $originalTemp
+        $env:TMP = $originalTmp
+    }
+    if ($changedEnvironmentResult.Result -cne 'reset' -or
+        (Test-Path -LiteralPath $markerPath) -or
+        (Test-Path -LiteralPath $changedEnvironmentRoot)) {
+        throw 'Recovery did not use the bridge creation-time temporary root.'
+    }
+}
+finally {
+    Remove-TestCredentialState -RootPath $changedEnvironmentRoot
+    if (Test-Path -LiteralPath $alternateShellTemp -PathType Container) {
+        [System.IO.Directory]::Delete($alternateShellTemp, $true)
+    }
+}
+
 $previousBootRoot = New-TestCredentialBridgeRoot
 try {
     $previousBoot = ([long](Get-AtlasoWindowsBootIdentity) - 1).ToString(
@@ -275,7 +318,7 @@ try {
     if ($previousResult.Result -cne 'reset' -or
         (Test-Path -LiteralPath $markerPath) -or
         (Test-Path -LiteralPath $previousBootRoot)) {
-        throw 'Previous-boot schema-2 recovery did not complete.'
+        throw 'Previous-boot schema-3 recovery did not complete.'
     }
 }
 finally {
@@ -641,8 +684,17 @@ try {
         param([string]$Path)
         Get-AtlasoPathIdentity -Path $Path -Description 'Synthetic credential bridge junction'
     } $junctionRoot
+    $junctionTemporaryRoot = [System.IO.Path]::GetFullPath(
+        (Split-Path -Parent $junctionRoot)
+    ).TrimEnd('\')
+    $junctionTemporaryRootIdentity = & $credentialModule {
+        param([string]$Path)
+        Get-AtlasoPathIdentity -Path $Path -Description 'Synthetic junction temporary root'
+    } $junctionTemporaryRoot
     $junctionMarker = [ordered]@{
-        Schema = 2; RootPath = $junctionRoot; RootIdentity = $junctionIdentity
+        Schema = 3; RootPath = $junctionRoot; RootIdentity = $junctionIdentity
+        TemporaryRootPath = $junctionTemporaryRoot
+        TemporaryRootIdentity = $junctionTemporaryRootIdentity
         BootIdentity = Get-AtlasoWindowsBootIdentity; Phase = 'active'
         OwnerProcessId = [int]::MaxValue; OwnerProcessStartFileTimeUtc = 1
         ProcessJobName = 'Local\Atlaso-OnePassword-' + [guid]::NewGuid().ToString('N')

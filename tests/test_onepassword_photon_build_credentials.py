@@ -250,7 +250,8 @@ def test_photon_wrapper_preflights_credentials_before_image_mutation() -> None:
     assert "Invoke-AtlasoOnePasswordCredentialCleanupRecovery" in module
     assert "reset-atlaso-onepassword-credential-bridge.ps1 -Inspect" in module
     assert "Write-AtlasoDurableJsonFile -Path $cleanupMarkerPath" in module
-    assert "Schema                       = 2" in module
+    assert "Schema                       = 3" in module
+    assert "TemporaryRootIdentity" in module
     assert "ProcessOwnershipPhase        = 'prepared'" in module
     assert "-ProcessOwnershipPublisher $processOwnershipPublisher" in module
     assert "Invoke-AtlasoOnePasswordCredentialBridgeReset" in module

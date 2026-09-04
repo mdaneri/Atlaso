@@ -1667,7 +1667,9 @@ The shared VMware credential bridge has one supported retained-state controller:
 `scripts/windows/vmware/reset-atlaso-onepassword-credential-bridge.ps1`; follow the
 [operator recovery guide](../operate/onepassword-credential-bridge-recovery.md). `-Inspect` and `-WhatIf` return only sanitized
 phase, boot, process, job, root, blocker, and action fields; they do not import or authorize the 1Password SDK or change
-state. An inactive exact schema-2 marker can be reset directly. A still-active exact child requires
+state. An inactive exact schema-3 marker can be reset directly. The marker pins the bridge's creation-time temporary
+parent path and filesystem identity, so recovery remains valid from a later shell whose `TEMP` or `TMP` differs. A
+still-active exact child requires
 `-TerminateOwnedProcess`, which revalidates its PID/start identity and membership in the marker's exact
 `Local\Atlaso-OnePassword-<32-hex>` job, captures the active job members, terminates only that job, and proves the job,
 recorded child, and captured members inactive before root cleanup. The controller is never terminated by recovery.
