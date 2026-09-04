@@ -1061,6 +1061,72 @@ function Get-AtlasoOptionalOnePasswordRecoveryItem {
 
 <#
 .SYNOPSIS
+Flush the nearest existing parent and re-prove that a recovery path is absent.
+
+.PARAMETER Path
+Exact already-absent path whose directory-entry deletion must be durable.
+
+.PARAMETER DirectorySynchronizer
+Directory metadata flush operation overridden only by focused tests.
+#>
+function Sync-AtlasoOnePasswordAbsentPathMetadata {
+    param(
+        [Parameter(Mandatory = $true)][string]$Path,
+        [scriptblock]$DirectorySynchronizer = {
+            param([string]$DirectoryPath)
+            Sync-AtlasoDirectoryMetadata -DirectoryPath $DirectoryPath
+        }
+    )
+
+    $resolvedPath = [System.IO.Path]::GetFullPath($Path).TrimEnd('\')
+    $candidateParent = Split-Path -Parent $resolvedPath
+    while (-not [string]::IsNullOrWhiteSpace($candidateParent)) {
+        $parentItem = Get-AtlasoOptionalOnePasswordRecoveryItem `
+            -Path $candidateParent `
+            -FailureCode 'root-parent-state-unavailable' `
+            -FailureMessage 'The credential bridge parent state cannot be inspected safely.'
+        if ($null -ne $parentItem) {
+            if (-not ($parentItem -is [System.IO.DirectoryInfo]) -or
+                ($parentItem.Attributes -band [System.IO.FileAttributes]::ReparsePoint) -ne 0) {
+                throw (New-AtlasoOnePasswordRecoveryException `
+                        -Code 'root-parent-invalid' `
+                        -Message 'The nearest credential bridge parent is not an ordinary directory; state was preserved.')
+            }
+            $volumeRoot = [System.IO.Path]::GetPathRoot($candidateParent)
+            if (-not $candidateParent.TrimEnd('\').Equals(
+                    $volumeRoot.TrimEnd('\'),
+                    [System.StringComparison]::OrdinalIgnoreCase
+                )) {
+                Assert-AtlasoStrictDescendantPath `
+                    -ParentPath $volumeRoot `
+                    -ChildPath $candidateParent `
+                    -FailureMessage 'Invalid credential bridge parent ancestry'
+            }
+            & $DirectorySynchronizer $candidateParent
+            $remainingPath = Get-AtlasoOptionalOnePasswordRecoveryItem `
+                -Path $resolvedPath `
+                -FailureCode 'root-state-unavailable' `
+                -FailureMessage 'The recorded credential bridge root state cannot be inspected safely.'
+            if ($null -ne $remainingPath) {
+                throw (New-AtlasoOnePasswordRecoveryException `
+                        -Code 'root-reappeared-before-retirement' `
+                        -Message 'The credential bridge root reappeared before durable retirement; state was preserved.')
+            }
+            return
+        }
+        $nextParent = Split-Path -Parent $candidateParent
+        if ($nextParent -ceq $candidateParent) {
+            break
+        }
+        $candidateParent = $nextParent
+    }
+    throw (New-AtlasoOnePasswordRecoveryException `
+            -Code 'root-parent-unavailable' `
+            -Message 'No existing credential bridge parent could be flushed; state was preserved.')
+}
+
+<#
+.SYNOPSIS
 Test whether a marker value is an integer inside an exact bound.
 
 .PARAMETER Value
@@ -1846,6 +1912,11 @@ function Complete-AtlasoOnePasswordCredentialCleanup {
                 -ExpectedRootIdentity $expectedRootIdentity `
                 -TemporaryRootPath $temporaryRootPath `
                 -ExpectedTemporaryRootIdentity $expectedTemporaryRootIdentity
+        }
+        else {
+            # An observed absence is not yet durable evidence. Flush the
+            # nearest surviving parent before advancing the marker phase.
+            Sync-AtlasoOnePasswordAbsentPathMetadata -Path ([string]$Marker.RootPath)
         }
         if ($verifyMarkerOwnership) {
             Assert-AtlasoOnePasswordMarkerOwnership `

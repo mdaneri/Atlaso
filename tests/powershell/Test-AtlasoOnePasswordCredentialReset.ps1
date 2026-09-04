@@ -434,6 +434,25 @@ $missingActiveRoot = Join-Path $missingActiveParent (
 try {
     $missingActiveMarker = New-TestCredentialMarker -RootPath $missingActiveRoot
     [System.IO.Directory]::Delete($missingActiveParent, $true)
+    $syncEvidence = [pscustomobject]@{ DirectoryPath = '' }
+    & $credentialModule {
+        param([string]$Path, [object]$Evidence)
+        Sync-AtlasoOnePasswordAbsentPathMetadata `
+            -Path $Path `
+            -DirectorySynchronizer {
+                param([string]$DirectoryPath)
+                $Evidence.DirectoryPath = $DirectoryPath
+            }
+    } $missingActiveRoot $syncEvidence
+    $expectedSyncDirectory = [System.IO.Path]::GetFullPath(
+        [System.IO.Path]::GetTempPath()
+    ).TrimEnd('\')
+    if (-not $syncEvidence.DirectoryPath.Equals(
+            $expectedSyncDirectory,
+            [System.StringComparison]::OrdinalIgnoreCase
+        )) {
+        throw 'Absent-root recovery did not flush the nearest existing parent.'
+    }
     Write-TestCredentialMarker -Marker $missingActiveMarker
     $missingActiveResult = Invoke-AtlasoOnePasswordCredentialBridgeReset `
         -RepositoryRoot $repositoryRoot `
