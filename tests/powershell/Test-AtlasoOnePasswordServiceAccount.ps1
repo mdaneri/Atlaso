@@ -57,6 +57,22 @@ try {
     if ($resolvedTokenPath -cne $tokenPath) {
         throw 'The token-file validator changed the exact destination path.'
     }
+    $hardLinkPath = Join-Path $testRoot 'token-hard-link.dpapi'
+    try {
+        New-Item -ItemType HardLink -Path $hardLinkPath -Target $tokenPath | Out-Null
+        try {
+            Assert-AtlasoOnePasswordServiceAccountTokenFile -Path $tokenPath | Out-Null
+            throw 'A multiply linked token file unexpectedly succeeded.'
+        }
+        catch {
+            if ($_.Exception.Message -notlike '*exactly one hard link*') {
+                throw
+            }
+        }
+    }
+    finally {
+        Remove-Item -LiteralPath $hardLinkPath -Force -ErrorAction SilentlyContinue
+    }
     $roundTrip = ConvertFrom-SecureString `
         -SecureString (ConvertTo-SecureString -String $ciphertext) `
         -AsPlainText

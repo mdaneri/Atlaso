@@ -79,6 +79,7 @@ def test_token_contract_is_never_transportable_as_plaintext() -> None:
     )
     assert "PlainTextToken" not in launcher
     assert "ReparsePoint" in module
+    assert "GetLinkCount($item.FullName) -ne 1" in module
     assert "ConvertTo-SecureString -String $tokenCiphertext" in sdk_child
 
 
