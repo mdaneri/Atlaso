@@ -31,6 +31,9 @@ Select desktop authorization or service-account token authentication.
 .PARAMETER OnePasswordServiceAccountTokenFile
 Current-user DPAPI ciphertext file read only inside this bounded child.
 
+.PARAMETER RepositoryRoot
+Atlaso checkout that owns the permitted .atlaso-local token storage boundary.
+
 .PARAMETER EnvironmentId
 Opaque ID of the pinned and verified Atlaso Environment.
 
@@ -67,11 +70,13 @@ param(
     [string]$OnePasswordAccount = '',
     [ValidateSet('desktop', 'service-account')][string]$OnePasswordAuthenticationMode = 'desktop',
     [string]$OnePasswordServiceAccountTokenFile = '',
+    [Parameter(Mandatory = $true)][string]$RepositoryRoot,
     [string]$EnvironmentId = '',
     [ValidateRange(1, 3600)][int]$TimeoutSeconds = 300
 )
 
 $ErrorActionPreference = 'Stop'
+Import-Module (Join-Path $PSScriptRoot 'Atlaso.OnePasswordCredentials.psm1') -Force
 $status = [ordered]@{
     Success = $false
     Code    = 'credential_bridge_failed'
@@ -291,7 +296,10 @@ if __name__ == "__main__":
         )
         if ($OnePasswordAuthenticationMode -eq 'service-account') {
             try {
-                $tokenCiphertext = [System.IO.File]::ReadAllText($OnePasswordServiceAccountTokenFile)
+                $resolvedTokenFile = Resolve-AtlasoOnePasswordServiceAccountTokenFile `
+                    -TokenFile $OnePasswordServiceAccountTokenFile `
+                    -RepositoryRoot $RepositoryRoot
+                $tokenCiphertext = [System.IO.File]::ReadAllText($resolvedTokenFile)
                 $tokenSecureString = ConvertTo-SecureString -String $tokenCiphertext
                 $serviceAccountTokenText = ConvertFrom-SecureString `
                     -SecureString $tokenSecureString `

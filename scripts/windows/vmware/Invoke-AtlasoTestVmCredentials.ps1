@@ -37,6 +37,9 @@ Select desktop authorization or service-account token authentication.
 .PARAMETER OnePasswordServiceAccountTokenFile
 Current-user DPAPI ciphertext file read only inside this bounded child.
 
+.PARAMETER RepositoryRoot
+Atlaso checkout that owns the permitted .atlaso-local token storage boundary.
+
 .PARAMETER EnvironmentId
 Opaque ID of the already pinned and verified Atlaso Environment.
 
@@ -72,6 +75,7 @@ param(
     [string]$OnePasswordAccount = '',
     [ValidateSet('desktop', 'service-account')][string]$OnePasswordAuthenticationMode = 'desktop',
     [string]$OnePasswordServiceAccountTokenFile = '',
+    [string]$RepositoryRoot = '',
     [string]$EnvironmentId = '',
     [string]$VmxPath = '',
     [ValidateRange(1, 3600)][int]$TimeoutSeconds = 300
@@ -79,6 +83,7 @@ param(
 
 $ErrorActionPreference = 'Stop'
 . (Join-Path $PSScriptRoot 'Atlaso.WorkstationFirstBoot.ps1')
+Import-Module (Join-Path $PSScriptRoot 'Atlaso.OnePasswordCredentials.psm1') -Force
 
 $status = [ordered]@{
     Success = $false
@@ -131,7 +136,8 @@ try {
             ($OnePasswordAuthenticationMode -eq 'desktop' -and
                 [string]::IsNullOrWhiteSpace($OnePasswordAccount)) -or
             ($OnePasswordAuthenticationMode -eq 'service-account' -and
-                [string]::IsNullOrWhiteSpace($OnePasswordServiceAccountTokenFile)) -or
+                ([string]::IsNullOrWhiteSpace($OnePasswordServiceAccountTokenFile) -or
+                    [string]::IsNullOrWhiteSpace($RepositoryRoot))) -or
             [string]::IsNullOrWhiteSpace($EnvironmentId)
         ) {
             $status.Code = 'sdk_configuration_missing'
@@ -321,7 +327,10 @@ if __name__ == "__main__":
         )
         if ($OnePasswordAuthenticationMode -eq 'service-account') {
             try {
-                $tokenCiphertext = [System.IO.File]::ReadAllText($OnePasswordServiceAccountTokenFile)
+                $resolvedTokenFile = Resolve-AtlasoOnePasswordServiceAccountTokenFile `
+                    -TokenFile $OnePasswordServiceAccountTokenFile `
+                    -RepositoryRoot $RepositoryRoot
+                $tokenCiphertext = [System.IO.File]::ReadAllText($resolvedTokenFile)
                 $tokenSecureString = ConvertTo-SecureString -String $tokenCiphertext
                 $serviceAccountTokenText = ConvertFrom-SecureString `
                     -SecureString $tokenSecureString `

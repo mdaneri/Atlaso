@@ -60,6 +60,9 @@ def test_token_contract_is_never_transportable_as_plaintext() -> None:
     assert "OP_SERVICE_ACCOUNT_TOKEN'] = $serviceAccountTokenText" in test_vm_child
     assert 'os.environ.pop("OP_SERVICE_ACCOUNT_TOKEN", None)' in sdk_child
     assert 'os.environ.pop("OP_SERVICE_ACCOUNT_TOKEN", None)' in test_vm_child
+    assert "Resolve-AtlasoOnePasswordServiceAccountTokenFile `" in sdk_child
+    assert "Resolve-AtlasoOnePasswordServiceAccountTokenFile `" in test_vm_child
+    assert "'-RepositoryRoot', $RepositoryRoot" in module
     assert "TokenFile" in launcher
     assert "[Parameter(Mandatory = $true)][string]$RepositoryRoot" in launcher
     assert "Resolve-AtlasoOnePasswordServiceAccountTokenFile `" in launcher
@@ -118,6 +121,19 @@ def test_virtualization_prerelease_rejects_inherited_service_tokens_first() -> N
     )
 
     assert guard < first_subprocess_helper
+
+
+def test_virtualization_prerelease_defers_desktop_discovery() -> None:
+    """Leave fallback account discovery to consumers after SDK wheel admission."""
+    source = Path(
+        "scripts/windows/virtualization/Atlaso.VirtualizationRelease.psm1"
+    ).read_text(encoding="utf-8")
+    prerelease = source.split("function Invoke-AtlasoVirtualizationPrerelease", 1)[1]
+    prerelease = prerelease.split("function Invoke-AtlasoVirtualizationStablePromotion", 1)[0]
+
+    assert "Resolve-AtlasoOnePasswordAuthentication `" not in prerelease
+    assert "Resolve-AtlasoOnePasswordPython `" not in prerelease
+    assert "Resolve-AtlasoOnePasswordServiceAccountTokenFile `" in prerelease
 
 
 def test_photon_and_deployment_entry_points_bound_service_tokens() -> None:

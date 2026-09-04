@@ -1506,6 +1506,7 @@ function Get-AtlasoOnePasswordCredentialPair {
             '-RequestPath', $requestPath,
             '-StatusPath', $statusPath,
             '-CredentialBundlePath', $credentialBundlePath,
+            '-RepositoryRoot', $RepositoryRoot,
             '-TimeoutSeconds', "$TimeoutSeconds"
         )
         if ($needsDefaults) {

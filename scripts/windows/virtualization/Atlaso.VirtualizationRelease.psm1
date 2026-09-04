@@ -994,17 +994,21 @@ function Invoke-AtlasoVirtualizationPrerelease {
         -ConsumerDescription 'virtualization production'
     Assert-AtlasoOnePasswordEnvironmentId `
         -EnvironmentId $OnePasswordEnvironmentId
-    $authentication = Resolve-AtlasoOnePasswordAuthentication `
-        -RepositoryRoot $RepoRoot `
-        -ServiceAccountTokenFile $OnePasswordServiceAccountTokenFile `
-        -Account $OnePasswordAccount `
-        -TimeoutSeconds 300
-    $OnePasswordAccount = $authentication.Account
-    $OnePasswordServiceAccountTokenFile = $authentication.TokenFile
-    $OnePasswordPython = Resolve-AtlasoOnePasswordPython `
-        -PythonCommand $OnePasswordPython `
-        -ConsumerDescription 'virtualization production' `
-        -TimeoutSeconds 300
+    if ($OnePasswordServiceAccountTokenFile) {
+        $OnePasswordServiceAccountTokenFile = Resolve-AtlasoOnePasswordServiceAccountTokenFile `
+            -TokenFile $OnePasswordServiceAccountTokenFile `
+            -RepositoryRoot $RepoRoot
+    }
+    elseif ($OnePasswordAccount) {
+        Assert-AtlasoOnePasswordAccount -Account $OnePasswordAccount
+    }
+    else {
+        # Validate a checkout-local service token when present, but leave an
+        # absent default unresolved so downstream consumers admit the locked
+        # SDK wheel before attempting legacy desktop account discovery.
+        $OnePasswordServiceAccountTokenFile = Resolve-AtlasoOnePasswordServiceAccountTokenFile `
+            -RepositoryRoot $RepoRoot
+    }
     $ManagementSwitch = $resolvedSwitches.Management
     $ServiceSwitch = $resolvedSwitches.Service
 

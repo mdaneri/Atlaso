@@ -784,6 +784,7 @@ function New-AtlasoTestVmCredentialBridgeState {
             '-RequestPath', $requestPath,
             '-StatusPath', $statusPath,
             '-OvfBundlePath', $ovfBundlePath,
+            '-RepositoryRoot', $RepositoryRoot,
             '-TimeoutSeconds', "$TimeoutSeconds"
         )
         if ($needsDefaults) {
