@@ -1989,7 +1989,8 @@ else {
     # detached checkout at the same admitted commit. Preserve which state was
     # admitted so a branch attach, detach, or switch during credential work is
     # still rejected before the immutable snapshot crosses into the child.
-    $taskSourceBranch = if ($ReleaseBuilder -and $taskSourceIdentity.Detached) {
+    $taskSourceDetached = [bool]$taskSourceIdentity.Detached
+    $taskSourceBranch = if ($ReleaseBuilder -and $taskSourceDetached) {
         '(detached-release)'
     }
     else {
@@ -2209,15 +2210,11 @@ else {
             -RepositoryRoot $repoRoot `
             -StagingRoot $childSensitiveBuildDirectory
         $recheckedTaskSourceIdentity = Get-AtlasoSourceCheckoutIdentity -RepositoryRoot $repoRoot
-        $recheckedTaskSourceBranch = if ($ReleaseBuilder -and $recheckedTaskSourceIdentity.Detached) {
-            '(detached-release)'
-        }
-        else {
-            [string]$recheckedTaskSourceIdentity.Branch
-        }
         if ($sourceSnapshot.Commit -cne $taskSourceCommit -or
             $recheckedTaskSourceIdentity.Commit -cne $taskSourceCommit -or
-            $recheckedTaskSourceBranch -cne $taskSourceBranch) {
+            [bool]$recheckedTaskSourceIdentity.Detached -ne $taskSourceDetached -or
+            (-not $taskSourceDetached -and
+                $recheckedTaskSourceIdentity.Branch -cne $taskSourceBranch)) {
             throw 'The VMware image build source checkout changed during snapshot admission.'
         }
         $null = Protect-AtlasoSourceSnapshot `
