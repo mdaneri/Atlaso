@@ -3960,8 +3960,8 @@ correct only the reported image or platform conflict, and restart the selector. 
 while the selector is failed. For an import-time failure, keep the original release assets, remove only the target VM
 and storage owned by that import attempt, correct the host prerequisite, and run the helper again.</p>
 <h2 id="protected-release-runners">Protected release runners<a class="headerlink" href="#protected-release-runners" title="Permanent link">&para;</a></h2>
-<p>The primary Windows producer is a maintainer workstation, not a permanent GitHub runner. From a clean checkout of the
-successful software-release SHA, run:</p>
+<p>The primary Windows producer is a maintainer workstation, not a permanent GitHub runner. From a clean attached branch
+or detached checkout at the successful software-release SHA, run:</p>
 <div class="language-powershell highlight"><pre><span></span><code><span id="__span-4-1"><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a><span class="n">python</span> <span class="n">-m</span> <span class="n">pip</span> <span class="n">install</span> <span class="p">-</span><span class="n">-require-hashes</span> <span class="p">-</span><span class="n">-requirement</span> <span class="n">requirements-virtualization-smoke</span><span class="p">.</span><span class="n">lock</span>
 </span><span id="__span-4-2"><a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a>
 </span><span id="__span-4-3"><a id="__codelineno-4-3" name="__codelineno-4-3" href="#__codelineno-4-3"></a><span class="p">./</span><span class="n">scripts</span><span class="p">/</span><span class="n">windows</span><span class="p">/</span><span class="n">vmware</span><span class="p">/</span><span class="nb">export-ovf</span><span class="p">.</span><span class="n">ps1</span> <span class="n">-Prerelease</span>
@@ -3973,7 +3973,9 @@ The intermediate VMware builder uses a deterministic version-and-source-commit i
 its output manifest and schema-v3 provenance. The exporter consumes that exact proven VMX while retaining the canonical
 <code>atlaso-vX.Y.Z</code> OVA/product and release filenames; release output never inherits a pull-request number.
 Its credential bridge, sensitive source snapshot, Packer workspace, cleanup state, and builder-address release handoff
-remain beneath the exact checkout-local <code>.atlaso-local/photon-image-build-state</code> root. The non-task-owned address
+remain beneath the exact checkout-local <code>.atlaso-local/photon-image-build-state</code> root. Snapshot admission preserves
+and revalidates whether that exact source checkout was attached to its original branch or detached at the release SHA.
+The non-task-owned address
 allocation lock and ledger remain per-user and host-shared so parallel worktrees cannot choose the same address; no
 task-owned output or sensitive state falls back to a Windows profile, temporary directory, or <code>LocalApplicationData</code>.
 Use <code>-CandidateOnly</code> to stop after candidate production and smoke; otherwise the command continues through tag creation,
