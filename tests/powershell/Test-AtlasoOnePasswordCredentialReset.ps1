@@ -424,6 +424,33 @@ finally {
     }
 }
 
+$missingActiveParent = Join-Path ([System.IO.Path]::GetTempPath()) (
+    'atlaso-reset-missing-active-parent-' + [guid]::NewGuid().ToString('N')
+)
+$missingActiveRoot = Join-Path $missingActiveParent (
+    'atlaso-onepassword-credentials-' + [guid]::NewGuid().ToString('N')
+)
+[void][System.IO.Directory]::CreateDirectory($missingActiveRoot)
+try {
+    $missingActiveMarker = New-TestCredentialMarker -RootPath $missingActiveRoot
+    [System.IO.Directory]::Delete($missingActiveParent, $true)
+    Write-TestCredentialMarker -Marker $missingActiveMarker
+    $missingActiveResult = Invoke-AtlasoOnePasswordCredentialBridgeReset `
+        -RepositoryRoot $repositoryRoot `
+        -Confirm:$false
+    if ($missingActiveResult.Result -cne 'reset' -or
+        (Test-Path -LiteralPath $markerPath) -or
+        (Test-Path -LiteralPath $missingActiveParent)) {
+        throw 'An active marker with an absent root could not skip obsolete parent flushing.'
+    }
+}
+finally {
+    Remove-TestCredentialState -RootPath $missingActiveRoot
+    if (Test-Path -LiteralPath $missingActiveParent -PathType Container) {
+        [System.IO.Directory]::Delete($missingActiveParent, $true)
+    }
+}
+
 $interruptedRoot = New-TestCredentialBridgeRoot
 try {
     $interruptedMarker = New-TestCredentialMarker -RootPath $interruptedRoot

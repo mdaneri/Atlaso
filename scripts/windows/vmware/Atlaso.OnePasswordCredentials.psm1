@@ -1836,11 +1836,17 @@ function Complete-AtlasoOnePasswordCredentialCleanup {
         ''
     }
     if ([string]$Marker.Phase -ceq 'active') {
-        Remove-AtlasoOnePasswordCredentialBridge `
-            -BridgeRoot ([string]$Marker.RootPath) `
-            -ExpectedRootIdentity $expectedRootIdentity `
-            -TemporaryRootPath $temporaryRootPath `
-            -ExpectedTemporaryRootIdentity $expectedTemporaryRootIdentity
+        $activeRoot = Get-AtlasoOptionalOnePasswordRecoveryItem `
+            -Path ([string]$Marker.RootPath) `
+            -FailureCode 'root-state-unavailable' `
+            -FailureMessage 'The recorded credential bridge root state cannot be inspected safely.'
+        if ($null -ne $activeRoot) {
+            Remove-AtlasoOnePasswordCredentialBridge `
+                -BridgeRoot ([string]$Marker.RootPath) `
+                -ExpectedRootIdentity $expectedRootIdentity `
+                -TemporaryRootPath $temporaryRootPath `
+                -ExpectedTemporaryRootIdentity $expectedTemporaryRootIdentity
+        }
         if ($verifyMarkerOwnership) {
             Assert-AtlasoOnePasswordMarkerOwnership `
                 -MarkerPath $MarkerPath `
