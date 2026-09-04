@@ -345,8 +345,8 @@ and storage owned by that import attempt, correct the host prerequisite, and run
 
 ## Protected release runners
 
-The primary Windows producer is a maintainer workstation, not a permanent GitHub runner. From a clean checkout of the
-successful software-release SHA, run:
+The primary Windows producer is a maintainer workstation, not a permanent GitHub runner. From a clean attached branch
+or detached checkout at the successful software-release SHA, run:
 
 ```powershell
 python -m pip install --require-hashes --requirement requirements-virtualization-smoke.lock
@@ -361,7 +361,9 @@ The intermediate VMware builder uses a deterministic version-and-source-commit i
 its output manifest and schema-v3 provenance. The exporter consumes that exact proven VMX while retaining the canonical
 `atlaso-vX.Y.Z` OVA/product and release filenames; release output never inherits a pull-request number.
 Its credential bridge, sensitive source snapshot, Packer workspace, cleanup state, and builder-address release handoff
-remain beneath the exact checkout-local `.atlaso-local/photon-image-build-state` root. The non-task-owned address
+remain beneath the exact checkout-local `.atlaso-local/photon-image-build-state` root. Snapshot admission preserves
+and revalidates whether that exact source checkout was attached to its original branch or detached at the release SHA.
+The non-task-owned address
 allocation lock and ledger remain per-user and host-shared so parallel worktrees cannot choose the same address; no
 task-owned output or sensitive state falls back to a Windows profile, temporary directory, or `LocalApplicationData`.
 Use `-CandidateOnly` to stop after candidate production and smoke; otherwise the command continues through tag creation,

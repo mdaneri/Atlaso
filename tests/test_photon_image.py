@@ -1749,6 +1749,28 @@ def test_vmware_packer_build_uses_two_compacted_payload_disks():
     assert "Get-FileHash -LiteralPath $vmx.FullName -Algorithm SHA256" in payload_module
 
 
+def test_vmware_release_snapshot_preserves_attached_or_detached_identity() -> None:
+    """Release snapshot admission revalidates its original branch-style state."""
+    wrapper = Path("scripts/windows/vmware/build-photon-image.ps1").read_text(
+        encoding="utf-8"
+    )
+    initial_start = wrapper.index("$taskSourceCommit = [string]$builderIdentity.SourceCommit")
+    initial_end = wrapper.index("$requestedPackerDirectory = if", initial_start)
+    initial_admission = wrapper[initial_start:initial_end]
+    recheck_start = wrapper.index("$sourceSnapshot = New-AtlasoImmutableSourceSnapshot")
+    recheck_end = wrapper.index("$null = Protect-AtlasoSourceSnapshot", recheck_start)
+    snapshot_recheck = wrapper[recheck_start:recheck_end]
+
+    assert "Get-AtlasoSourceCheckoutIdentity" in initial_admission
+    assert "$taskSourceIdentity.Detached" in initial_admission
+    assert "'(detached-release)'" in initial_admission
+    assert "Get-AtlasoSourceCheckoutIdentity" in snapshot_recheck
+    assert "$recheckedTaskSourceIdentity.Detached" in snapshot_recheck
+    assert "$recheckedTaskSourceBranch -cne $taskSourceBranch" in snapshot_recheck
+    assert "$expectedCheckoutBranch" not in snapshot_recheck
+    assert "branch --show-current)).Trim()" not in snapshot_recheck
+
+
 def test_vmware_source_snapshot_resists_during_packer_checkout_changes(
     tmp_path: Path,
 ) -> None:
