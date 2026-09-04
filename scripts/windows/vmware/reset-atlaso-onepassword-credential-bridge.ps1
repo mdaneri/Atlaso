@@ -42,8 +42,7 @@ try {
         -RepositoryRoot $repositoryRoot `
         -Inspect:$Inspect `
         -TerminateOwnedProcess:$TerminateOwnedProcess `
-        -WhatIf:$WhatIfPreference `
-        -Confirm:$false
+        -WhatIf:$WhatIfPreference
 }
 catch {
     $message = if ($_.Exception.Data['AtlasoOnePasswordRecoverySafe']) {

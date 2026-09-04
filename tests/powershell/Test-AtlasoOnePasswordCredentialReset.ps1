@@ -224,7 +224,8 @@ try {
             -ChildProcessStartFileTimeUtc 1 `
             -ProcessOwnershipPhase assigned)
     $inactiveOutput = & (Get-Process -Id $PID).Path `
-        -NoLogo -NoProfile -NonInteractive -File $standaloneScript 2>&1 | Out-String
+        -NoLogo -NoProfile -NonInteractive -File $standaloneScript `
+        -Confirm:$false 2>&1 | Out-String
     if ($LASTEXITCODE -ne 0 -or
         $inactiveOutput -notmatch 'Result\s*:\s*reset' -or
         $inactiveOutput -match [regex]::Escape($repositoryRoot) -or
@@ -531,7 +532,7 @@ try {
     }
     $ownedResetOutput = & (Get-Process -Id $PID).Path `
         -NoLogo -NoProfile -NonInteractive -File $standaloneScript `
-        -TerminateOwnedProcess 2>&1 | Out-String
+        -TerminateOwnedProcess -Confirm:$false 2>&1 | Out-String
     if ($LASTEXITCODE -ne 0 -or
         $ownedResetOutput -notmatch 'Result\s*:\s*reset' -or
         $ownedResetOutput -match [regex]::Escape($repositoryRoot) -or

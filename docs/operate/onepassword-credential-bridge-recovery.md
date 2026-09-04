@@ -43,6 +43,10 @@ pwsh -NoProfile -File `
   .\scripts\windows\vmware\reset-atlaso-onepassword-credential-bridge.ps1
 ```
 
+PowerShell prompts before this high-impact reset. Review the inspection result and confirm only when the reported
+ownership state matches the intended bridge. Unattended automation may pass `-Confirm:$false` only after performing
+and evaluating the same inspection.
+
 The command revalidates the schema, current checkout marker, boot identity, exact bridge-root namespace and filesystem
 identity, reparse-free ancestry, controller and child PID/start identities, job name, and ownership phase before it
 changes state. It removes only the exact identity-matching bridge root, flushes its parent directory, durably advances
@@ -59,6 +63,9 @@ pwsh -NoProfile -File `
   .\scripts\windows\vmware\reset-atlaso-onepassword-credential-bridge.ps1 `
   -TerminateOwnedProcess
 ```
+
+This path also presents the high-impact confirmation prompt before terminating the exact job or removing retained
+state.
 
 Immediately before termination, recovery reopens the exact `Local\Atlaso-OnePassword-<32-hex>` job, verifies the
 recorded child PID/start identity and membership, and captures every active job member. It terminates the job as one

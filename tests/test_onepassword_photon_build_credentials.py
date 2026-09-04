@@ -455,6 +455,8 @@ def test_supported_credential_bridge_reset_contract(tmp_path: Path) -> None:
     script = script_path.read_text(encoding="utf-8")
     assert "Invoke-AtlasoOnePasswordCredentialBridgeReset" in script
     assert "-WhatIf:$WhatIfPreference" in script
+    reset_invocation = script[script.index("Invoke-AtlasoOnePasswordCredentialBridgeReset") :]
+    assert "-Confirm:$false" not in reset_invocation
     assert "Get-AtlasoOnePasswordCredentialPair" not in script
     assert "Resolve-AtlasoOnePasswordAccount" not in script
     assert "DEFAULT_ADMIN_PASSWORD" not in script
