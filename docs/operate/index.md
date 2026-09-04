@@ -21,6 +21,8 @@ Use these guides for day-to-day appliance work:
 - [Network configuration](networking.md) — physical interfaces, VLANs, routing, and WAN desired state.
 - [Local appliance console](appliance-console.md) — local status and recovery access.
 - [Appliance Update](appliance-update.md) — signed Atlaso, PowerShell, and Photon update streams.
+- [1Password bridge recovery](onepassword-credential-bridge-recovery.md) — inspect and safely reset exact retained
+  Windows credential state for VMware workflows.
 - [Backup and restore](backup-restore.md) — protect and recover Atlaso settings.
 - [Automation](automation.md) — schedules, executions, and immutable managed scripts.
 - [Use the Atlaso API](api.md) — create scoped tokens, call `/api/v1`, and interpret errors and apply boundaries.

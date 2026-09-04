@@ -299,6 +299,13 @@ the root parent's Windows directory handle on that same volume before it durably
 tombstone in the marker. A crash therefore cannot preserve marker retirement while resurrecting credential-bearing
 files from a different volume.
 
+### Recover a retained 1Password credential bridge
+
+Use the canonical [1Password credential-bridge recovery guide](../../docs/operate/onepassword-credential-bridge-recovery.md)
+when a VMware wrapper reports retained cleanup. The supported script inspects only this checkout's fixed marker,
+requires an explicit switch before exact-job termination, and preserves every ambiguous state. Never delete or rename
+the marker manually.
+
 The wrapper does not build or embed Inventory Linux. New templates leave it uninstalled so an administrator can use
 **Download latest** to retrieve the signed independent release when needed. Contributors building Inventory Linux
 itself use `scripts/windows/common/Build-AtlasoInventoryLinux.ps1` and its `-WslDistribution <name>` option.

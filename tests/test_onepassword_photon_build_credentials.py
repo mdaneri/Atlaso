@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import shutil
 import subprocess
 from pathlib import Path
@@ -247,11 +248,15 @@ def test_photon_wrapper_preflights_credentials_before_image_mutation() -> None:
     assert "Sync-AtlasoDirectoryMetadata -DirectoryPath (Split-Path -Parent $resolvedBridgeRoot)" in module
     assert "onepassword-credential-cleanup.json" in module
     assert "Invoke-AtlasoOnePasswordCredentialCleanupRecovery" in module
+    assert "reset-atlaso-onepassword-credential-bridge.ps1 -Inspect" in module
     assert "Write-AtlasoDurableJsonFile -Path $cleanupMarkerPath" in module
-    assert "Schema                       = 2" in module
+    assert "Schema                       = 3" in module
+    assert "TemporaryRootIdentity" in module
     assert "ProcessOwnershipPhase        = 'prepared'" in module
     assert "-ProcessOwnershipPublisher $processOwnershipPublisher" in module
-    assert "Complete-AtlasoSameBootBoundedProcessRecovery" in module
+    assert "Invoke-AtlasoOnePasswordCredentialBridgeReset" in module
+    assert "GetActiveProcessIds()" in runner
+    assert "-TerminateOwnedProcess" in module
     assert "$processTreeTerminationUnproven" in module
     assert module.index(credential_root_cleanup) < module.index("return $result")
     credential_pair = module.index("function Get-AtlasoOnePasswordCredentialPair {")
@@ -433,3 +438,51 @@ def test_shared_credential_bridge_explicit_and_fail_closed_cases() -> None:
     assert "unit-root-credential" not in result.stdout + result.stderr
     assert "caller-admin-must-not-be-used" not in result.stdout + result.stderr
     assert "caller-root-must-not-be-used" not in result.stdout + result.stderr
+
+
+def test_supported_credential_bridge_reset_contract(tmp_path: Path) -> None:
+    """Run live Windows reset, fail-closed, interruption, and idempotency cases.
+
+    Args:
+        tmp_path: Pytest-managed temporary root for credential-bridge artifacts.
+    """
+    pwsh = shutil.which("pwsh")
+    if pwsh is None:
+        pytest.skip("PowerShell 7 is required")
+
+    script_path = Path(
+        "scripts/windows/vmware/reset-atlaso-onepassword-credential-bridge.ps1"
+    )
+    script = script_path.read_text(encoding="utf-8")
+    assert "Invoke-AtlasoOnePasswordCredentialBridgeReset" in script
+    assert "-WhatIf:$WhatIfPreference" in script
+    reset_invocation = script[script.index("Invoke-AtlasoOnePasswordCredentialBridgeReset") :]
+    assert "-Confirm:$false" not in reset_invocation
+    assert "Get-AtlasoOnePasswordCredentialPair" not in script
+    assert "Resolve-AtlasoOnePasswordAccount" not in script
+    assert "DEFAULT_ADMIN_PASSWORD" not in script
+    assert "DEFAULT_ROOT_PASSWORD" not in script
+
+    test_environment = os.environ.copy()
+    test_environment["TEMP"] = str(tmp_path)
+    test_environment["TMP"] = str(tmp_path)
+    result = subprocess.run(
+        [
+            pwsh,
+            "-NoLogo",
+            "-NoProfile",
+            "-NonInteractive",
+            "-File",
+            "tests/powershell/Test-AtlasoOnePasswordCredentialReset.ps1",
+        ],
+        check=False,
+        capture_output=True,
+        text=True,
+        env=test_environment,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    combined = result.stdout + result.stderr
+    assert "Supported 1Password credential-bridge reset tests passed." in result.stdout
+    assert "RootPath" not in combined
+    assert "ProcessJobName" not in combined
+    assert "OwnerProcessId" not in combined
