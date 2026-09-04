@@ -21,9 +21,14 @@ $repositoryRoot = (Resolve-Path -LiteralPath (Join-Path $PSScriptRoot '..\..')).
 $markerPath = Join-Path $repositoryRoot '.atlaso-local\onepassword-credential-cleanup.json'
 $runnerPath = Join-Path $repositoryRoot 'scripts\windows\vmware\Atlaso.WorkstationFirstBoot.ps1'
 $modulePath = Join-Path $repositoryRoot 'scripts\windows\vmware\Atlaso.OnePasswordCredentials.psm1'
+$cleanupModulePath = Join-Path $repositoryRoot 'scripts\windows\vmware\Atlaso.WorkstationCleanup.psm1'
 . $runnerPath
 Import-Module $modulePath -Force
-$credentialModule = Get-Module -Name 'Atlaso.OnePasswordCredentials'
+Import-Module $cleanupModulePath -Force
+$credentialModule = @(Get-Module -Name 'Atlaso.OnePasswordCredentials' -All |
+    Where-Object { $_.Path -eq $modulePath })[-1]
+$cleanupModule = @(Get-Module -Name 'Atlaso.WorkstationCleanup' -All |
+    Where-Object { $_.Path -eq $cleanupModulePath })[-1]
 
 <#
 .SYNOPSIS
@@ -166,6 +171,25 @@ function Remove-TestCredentialState {
 
 if (Test-Path -LiteralPath $markerPath) {
     throw 'The reset test cannot start with a retained checkout marker.'
+}
+
+$ancestryFailure = $null
+try {
+    & $cleanupModule {
+        Assert-AtlasoPathHasNoReparsePoint `
+            -Path ([System.IO.Path]::GetTempPath()) `
+            -ItemReader {
+                param([string]$ItemPath)
+                throw [System.UnauthorizedAccessException]::new('Synthetic inaccessible ancestry')
+            }
+    }
+}
+catch {
+    $ancestryFailure = $_
+}
+if ($null -eq $ancestryFailure -or
+    $ancestryFailure.Exception.Message -notmatch 'cannot be inspected safely') {
+    throw 'An inaccessible path-ancestry entry did not fail closed.'
 }
 
 $standaloneScript = Join-Path $repositoryRoot `
