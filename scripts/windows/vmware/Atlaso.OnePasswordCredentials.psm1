@@ -998,6 +998,46 @@ function New-AtlasoOnePasswordRecoveryException {
 
 <#
 .SYNOPSIS
+Read one optional filesystem item without hiding inspection failures.
+
+.PARAMETER Path
+Exact filesystem path to inspect.
+
+.PARAMETER FailureCode
+Stable non-secret recovery blocker code for a failed inspection.
+
+.PARAMETER FailureMessage
+Operator-safe recovery guidance for a failed inspection.
+
+.PARAMETER ItemReader
+Filesystem lookup operation overridden only by focused tests.
+#>
+function Get-AtlasoOptionalOnePasswordRecoveryItem {
+    param(
+        [Parameter(Mandatory = $true)][string]$Path,
+        [Parameter(Mandatory = $true)][string]$FailureCode,
+        [Parameter(Mandatory = $true)][string]$FailureMessage,
+        [scriptblock]$ItemReader = {
+            param([string]$ItemPath)
+            Get-Item -LiteralPath $ItemPath -Force -ErrorAction Stop
+        }
+    )
+
+    try {
+        return & $ItemReader $Path
+    }
+    catch [System.Management.Automation.ItemNotFoundException] {
+        return $null
+    }
+    catch {
+        throw (New-AtlasoOnePasswordRecoveryException `
+                -Code $FailureCode `
+                -Message $FailureMessage)
+    }
+}
+
+<#
+.SYNOPSIS
 Test whether a marker value is an integer inside an exact bound.
 
 .PARAMETER Value
@@ -1035,16 +1075,28 @@ Read and fully validate the current checkout's schema-2 recovery marker.
 
 .PARAMETER RepositoryRoot
 Exact Atlaso checkout that owns the fixed cleanup marker.
+
+.PARAMETER RootItemReader
+Recorded-root lookup operation overridden only by focused tests.
 #>
 function Get-AtlasoOnePasswordCredentialRecoveryContext {
-    param([Parameter(Mandatory = $true)][string]$RepositoryRoot)
+    param(
+        [Parameter(Mandatory = $true)][string]$RepositoryRoot,
+        [scriptblock]$RootItemReader = {
+            param([string]$ItemPath)
+            Get-Item -LiteralPath $ItemPath -Force -ErrorAction Stop
+        }
+    )
 
     try {
         $resolvedRepositoryRoot = (Resolve-Path -LiteralPath $RepositoryRoot -ErrorAction Stop).Path
         $markerPath = [System.IO.Path]::GetFullPath(
             (Get-AtlasoOnePasswordCleanupMarkerPath -RepositoryRoot $resolvedRepositoryRoot)
         )
-        $markerItem = Get-Item -LiteralPath $markerPath -Force -ErrorAction SilentlyContinue
+        $markerItem = Get-AtlasoOptionalOnePasswordRecoveryItem `
+            -Path $markerPath `
+            -FailureCode 'marker-state-unavailable' `
+            -FailureMessage 'The checkout-local credential cleanup marker state cannot be inspected safely.'
         if ($null -eq $markerItem) {
             return [pscustomobject][ordered]@{
                 MarkerState            = 'absent'
@@ -1215,7 +1267,11 @@ function Get-AtlasoOnePasswordCredentialRecoveryContext {
                     -Code 'root-ancestry-invalid' `
                     -Message 'The recorded credential bridge root ancestry is invalid or contains a reparse point.')
         }
-        $rootItem = Get-Item -LiteralPath $resolvedRoot -Force -ErrorAction SilentlyContinue
+        $rootItem = Get-AtlasoOptionalOnePasswordRecoveryItem `
+            -Path $resolvedRoot `
+            -FailureCode 'root-state-unavailable' `
+            -FailureMessage 'The recorded credential bridge root state cannot be inspected safely.' `
+            -ItemReader $RootItemReader
         $rootState = 'absent'
         if ($null -ne $rootItem) {
             if (-not ($rootItem -is [System.IO.DirectoryInfo]) -or
@@ -1334,7 +1390,10 @@ function Assert-AtlasoOnePasswordCredentialRootOwnership {
             -ParentPath $tempRoot `
             -ChildPath $rootPath `
             -FailureMessage 'Invalid credential bridge root ancestry'
-        $rootItem = Get-Item -LiteralPath $rootPath -Force -ErrorAction SilentlyContinue
+        $rootItem = Get-AtlasoOptionalOnePasswordRecoveryItem `
+            -Path $rootPath `
+            -FailureCode 'root-state-unavailable' `
+            -FailureMessage 'The recorded credential bridge root state cannot be inspected safely.'
         if ($Context.RootState -ceq 'absent') {
             if ($null -ne $rootItem) {
                 throw 'root appeared'
@@ -1703,7 +1762,11 @@ function Complete-AtlasoOnePasswordCredentialCleanup {
         }
     }
     if ([string]$Marker.Phase -ceq 'root-absent') {
-        if (Test-Path -LiteralPath ([string]$Marker.RootPath)) {
+        $remainingRoot = Get-AtlasoOptionalOnePasswordRecoveryItem `
+            -Path ([string]$Marker.RootPath) `
+            -FailureCode 'root-state-unavailable' `
+            -FailureMessage 'The recorded credential bridge root state cannot be inspected safely.'
+        if ($null -ne $remainingRoot) {
             throw 'The credential bridge root reappeared after its durable root-absent transition.'
         }
         if ($verifyMarkerOwnership) {
@@ -1901,7 +1964,10 @@ function Invoke-AtlasoLegacyOnePasswordCredentialCleanupRecovery {
             -ParentPath $resolvedTempRoot `
             -ChildPath $resolvedRoot `
             -FailureMessage 'Invalid legacy credential root ancestry'
-        $rootPresent = Test-Path -LiteralPath $resolvedRoot -PathType Container
+        $rootPresent = $null -ne (Get-AtlasoOptionalOnePasswordRecoveryItem `
+                -Path $resolvedRoot `
+                -FailureCode 'root-state-unavailable' `
+                -FailureMessage 'The recorded credential bridge root state cannot be inspected safely.')
         if ([string]$marker.Phase -cin @('root-absent', 'retired') -and $rootPresent) {
             throw 'legacy terminal root present'
         }

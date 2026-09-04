@@ -289,6 +289,29 @@ finally {
     Remove-TestCredentialState -RootPath $contradictoryTerminalRoot
 }
 
+$unreadableRoot = New-TestCredentialBridgeRoot
+try {
+    Write-TestCredentialMarker -Marker (New-TestCredentialMarker -RootPath $unreadableRoot)
+    Assert-TestRecoveryBlocked -Code 'root-state-unavailable' -Action {
+        & $credentialModule {
+            param([string]$RepositoryRoot)
+            Get-AtlasoOnePasswordCredentialRecoveryContext `
+                -RepositoryRoot $RepositoryRoot `
+                -RootItemReader {
+                    param([string]$ItemPath)
+                    throw [System.UnauthorizedAccessException]::new('Synthetic inaccessible root')
+                } | Out-Null
+        } $repositoryRoot
+    }
+    if (-not (Test-Path -LiteralPath $markerPath -PathType Leaf) -or
+        -not (Test-Path -LiteralPath $unreadableRoot -PathType Container)) {
+        throw 'A failed recorded-root inspection changed retained state.'
+    }
+}
+finally {
+    Remove-TestCredentialState -RootPath $unreadableRoot
+}
+
 $activeOwnerRoot = New-TestCredentialBridgeRoot
 try {
     $currentProcess = Get-Process -Id $PID -ErrorAction Stop
