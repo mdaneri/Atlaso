@@ -455,6 +455,13 @@ $recoveryRootIdentity = & $credentialModule {
     param([string]$Path)
     Get-AtlasoPathIdentity -Path $Path -Description 'Focused 1Password recovery root'
 } $recoveryBridgeRoot
+$recoveryTemporaryRoot = [System.IO.Path]::GetFullPath(
+    (Split-Path -Parent $recoveryBridgeRoot)
+).TrimEnd('\')
+$recoveryTemporaryRootIdentity = & $credentialModule {
+    param([string]$Path)
+    Get-AtlasoPathIdentity -Path $Path -Description 'Focused 1Password temporary root'
+} $recoveryTemporaryRoot
 $recoveryJobName = 'Local\Atlaso-OnePassword-' + [guid]::NewGuid().ToString('N')
 $recoveryJob = New-AtlasoBoundedProcessJob `
     -FilePath (Get-Process -Id $PID).Path `
@@ -463,9 +470,11 @@ $recoveryJob = New-AtlasoBoundedProcessJob `
     -DeferResume
 try {
     $recoveryMarker = [ordered]@{
-        Schema                       = 2
+        Schema                       = 3
         RootPath                     = $recoveryBridgeRoot
         RootIdentity                 = $recoveryRootIdentity
+        TemporaryRootPath            = $recoveryTemporaryRoot
+        TemporaryRootIdentity        = $recoveryTemporaryRootIdentity
         BootIdentity                 = Get-AtlasoWindowsBootIdentity
         Phase                        = 'active'
         OwnerProcessId               = [int]::MaxValue
@@ -481,7 +490,10 @@ try {
     $recoveryJob.Resume()
     & $credentialModule {
         param([string]$RepositoryRoot)
-        Invoke-AtlasoOnePasswordCredentialCleanupRecovery -RepositoryRoot $RepositoryRoot
+        Invoke-AtlasoOnePasswordCredentialBridgeReset `
+            -RepositoryRoot $RepositoryRoot `
+            -TerminateOwnedProcess `
+            -Confirm:$false | Out-Null
     } $repositoryRoot
     if ((Test-Path -LiteralPath $cleanupMarkerPath -PathType Leaf) -or
         (Test-Path -LiteralPath $recoveryBridgeRoot -PathType Container) -or

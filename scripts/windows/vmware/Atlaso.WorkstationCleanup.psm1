@@ -168,12 +168,15 @@ Reject a path whose existing ancestry contains a reparse point.
 
 .PARAMETER Path
 Path whose ancestry is validated.
+
+.PARAMETER ItemReader
+Filesystem lookup operation overridden only by focused tests.
 #>
 function Assert-AtlasoPathHasNoReparsePoint {
-    param([Parameter(Mandatory = $true)][string]$Path)
+    param([Parameter(Mandatory = $true)][string]$Path, [scriptblock]$ItemReader = { param([string]$ItemPath) Get-Item -LiteralPath $ItemPath -Force -ErrorAction Stop })
     $currentPath = Get-AtlasoCanonicalPath -Path $Path
     while ($currentPath) {
-        $item = Get-Item -LiteralPath $currentPath -Force -ErrorAction SilentlyContinue
+        try { $item = & $ItemReader $currentPath } catch [System.Management.Automation.ItemNotFoundException] { $item = $null } catch { throw "The path ancestry cannot be inspected safely; artifacts were preserved: $currentPath" }
         if ($null -ne $item -and ($item.Attributes -band [System.IO.FileAttributes]::ReparsePoint) -ne 0) {
             throw "Refusing recursive VMware cleanup through reparse point: $currentPath"
         }

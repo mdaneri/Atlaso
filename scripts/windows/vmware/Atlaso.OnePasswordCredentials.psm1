@@ -1114,29 +1114,61 @@ Exact private temporary root created for the bounded credential bridge.
 
 .PARAMETER ExpectedRootIdentity
 Optional pinned filesystem identity required immediately before recursive deletion.
+
+.PARAMETER TemporaryRootPath
+Optional creation-time temporary parent recorded for recovery in another shell.
+
+.PARAMETER ExpectedTemporaryRootIdentity
+Optional pinned filesystem identity for the creation-time temporary parent.
 #>
 function Remove-AtlasoOnePasswordCredentialBridge {
     param(
         [Parameter(Mandatory = $true)][string]$BridgeRoot,
-        [string]$ExpectedRootIdentity = ''
+        [string]$ExpectedRootIdentity = '',
+        [string]$TemporaryRootPath = '',
+        [string]$ExpectedTemporaryRootIdentity = ''
     )
 
     $resolvedBridgeRoot = [System.IO.Path]::GetFullPath($BridgeRoot).TrimEnd('\')
-    $resolvedTempRoot = [System.IO.Path]::GetFullPath([System.IO.Path]::GetTempPath()).TrimEnd('\')
+    $resolvedTempRoot = if ([string]::IsNullOrWhiteSpace($TemporaryRootPath)) {
+        [System.IO.Path]::GetFullPath([System.IO.Path]::GetTempPath()).TrimEnd('\')
+    }
+    else {
+        [System.IO.Path]::GetFullPath($TemporaryRootPath).TrimEnd('\')
+    }
     $bridgeName = [System.IO.Path]::GetFileName($resolvedBridgeRoot)
     if (
-        -not $resolvedBridgeRoot.StartsWith(
-            $resolvedTempRoot + '\',
-            [System.StringComparison]::OrdinalIgnoreCase
-        ) -or
-        -not $bridgeName.StartsWith('atlaso-onepassword-credentials-', [System.StringComparison]::Ordinal)
+        -not ([System.IO.Path]::GetFullPath((Split-Path -Parent $resolvedBridgeRoot)).Equals(
+                $resolvedTempRoot,
+                [System.StringComparison]::OrdinalIgnoreCase
+            )) -or
+        $bridgeName -cnotmatch '^atlaso-onepassword-credentials-[0-9a-f]{32}$'
     ) {
-        throw "Refusing to remove an unrecognized credential bridge root: $resolvedBridgeRoot"
+        throw 'Refusing to remove an unrecognized 1Password credential bridge root.'
     }
-    if (Test-Path -LiteralPath $resolvedBridgeRoot) {
-        $bridgeItem = Get-Item -LiteralPath $resolvedBridgeRoot -Force
+    try {
+        Assert-AtlasoStrictDescendantPath `
+            -ParentPath $resolvedTempRoot `
+            -ChildPath $resolvedBridgeRoot `
+            -FailureMessage 'Invalid 1Password credential bridge root ancestry'
+    }
+    catch {
+        throw 'The 1Password credential bridge root ancestry is invalid or contains a reparse point.'
+    }
+    $bridgeItem = Get-AtlasoOptionalOnePasswordRecoveryItem `
+        -Path $resolvedBridgeRoot `
+        -FailureCode 'root-state-unavailable' `
+        -FailureMessage 'The recorded credential bridge root state cannot be inspected safely.'
+    if ($null -ne $bridgeItem) {
         if (($bridgeItem.Attributes -band [System.IO.FileAttributes]::ReparsePoint) -ne 0) {
-            throw "Refusing to remove a reparse-point credential bridge root: $resolvedBridgeRoot"
+            throw 'Refusing to remove a reparse-point 1Password credential bridge root.'
+        }
+        if (-not [string]::IsNullOrWhiteSpace($ExpectedTemporaryRootIdentity) -and
+            (Get-AtlasoPathIdentity `
+                -Path $resolvedTempRoot `
+                -Description '1Password credential bridge temporary root') -cne
+            $ExpectedTemporaryRootIdentity) {
+            throw 'The 1Password credential bridge temporary root identity changed before deletion.'
         }
         if (-not [string]::IsNullOrWhiteSpace($ExpectedRootIdentity) -and
             (Get-AtlasoPathIdentity `
@@ -1147,7 +1179,7 @@ function Remove-AtlasoOnePasswordCredentialBridge {
         [System.IO.Directory]::Delete($resolvedBridgeRoot, $true)
     }
     if (Test-Path -LiteralPath $resolvedBridgeRoot) {
-        throw "Credential bridge cleanup did not remove the exact task-created root: $resolvedBridgeRoot"
+        throw 'Credential bridge cleanup did not remove the exact task-created root.'
     }
     # The checkout-local marker can reside on another volume, so first flush
     # deletion metadata through the bridge root's own parent directory.
@@ -1169,6 +1201,854 @@ function Get-AtlasoOnePasswordCleanupMarkerPath {
 
 <#
 .SYNOPSIS
+Create a sanitized credential-recovery exception.
+
+.PARAMETER Code
+Stable non-secret recovery blocker code.
+
+.PARAMETER Message
+Operator-safe recovery guidance that contains no marker values or paths.
+#>
+function New-AtlasoOnePasswordRecoveryException {
+    param(
+        [Parameter(Mandatory = $true)][string]$Code,
+        [Parameter(Mandatory = $true)][string]$Message
+    )
+
+    $exception = [System.InvalidOperationException]::new($Message)
+    $exception.Data['AtlasoOnePasswordRecoverySafe'] = $true
+    $exception.Data['AtlasoOnePasswordRecoveryCode'] = $Code
+    return $exception
+}
+
+<#
+.SYNOPSIS
+Read one optional filesystem item without hiding inspection failures.
+
+.PARAMETER Path
+Exact filesystem path to inspect.
+
+.PARAMETER FailureCode
+Stable non-secret recovery blocker code for a failed inspection.
+
+.PARAMETER FailureMessage
+Operator-safe recovery guidance for a failed inspection.
+
+.PARAMETER ItemReader
+Filesystem lookup operation overridden only by focused tests.
+#>
+function Get-AtlasoOptionalOnePasswordRecoveryItem {
+    param(
+        [Parameter(Mandatory = $true)][string]$Path,
+        [Parameter(Mandatory = $true)][string]$FailureCode,
+        [Parameter(Mandatory = $true)][string]$FailureMessage,
+        [scriptblock]$ItemReader = {
+            param([string]$ItemPath)
+            Get-Item -LiteralPath $ItemPath -Force -ErrorAction Stop
+        }
+    )
+
+    try {
+        return & $ItemReader $Path
+    }
+    catch [System.Management.Automation.ItemNotFoundException] {
+        return $null
+    }
+    catch {
+        throw (New-AtlasoOnePasswordRecoveryException `
+                -Code $FailureCode `
+                -Message $FailureMessage)
+    }
+}
+
+<#
+.SYNOPSIS
+Flush the nearest existing parent and re-prove that a recovery path is absent.
+
+.PARAMETER Path
+Exact already-absent path whose directory-entry deletion must be durable.
+
+.PARAMETER DirectorySynchronizer
+Directory metadata flush operation overridden only by focused tests.
+#>
+function Sync-AtlasoOnePasswordAbsentPathMetadata {
+    param(
+        [Parameter(Mandatory = $true)][string]$Path,
+        [scriptblock]$DirectorySynchronizer = {
+            param([string]$DirectoryPath)
+            Sync-AtlasoDirectoryMetadata -DirectoryPath $DirectoryPath
+        }
+    )
+
+    $resolvedPath = [System.IO.Path]::GetFullPath($Path).TrimEnd('\')
+    $candidateParent = Split-Path -Parent $resolvedPath
+    while (-not [string]::IsNullOrWhiteSpace($candidateParent)) {
+        $parentItem = Get-AtlasoOptionalOnePasswordRecoveryItem `
+            -Path $candidateParent `
+            -FailureCode 'root-parent-state-unavailable' `
+            -FailureMessage 'The credential bridge parent state cannot be inspected safely.'
+        if ($null -ne $parentItem) {
+            if (-not ($parentItem -is [System.IO.DirectoryInfo]) -or
+                ($parentItem.Attributes -band [System.IO.FileAttributes]::ReparsePoint) -ne 0) {
+                throw (New-AtlasoOnePasswordRecoveryException `
+                        -Code 'root-parent-invalid' `
+                        -Message 'The nearest credential bridge parent is not an ordinary directory; state was preserved.')
+            }
+            $volumeRoot = [System.IO.Path]::GetPathRoot($candidateParent)
+            if (-not $candidateParent.TrimEnd('\').Equals(
+                    $volumeRoot.TrimEnd('\'),
+                    [System.StringComparison]::OrdinalIgnoreCase
+                )) {
+                Assert-AtlasoStrictDescendantPath `
+                    -ParentPath $volumeRoot `
+                    -ChildPath $candidateParent `
+                    -FailureMessage 'Invalid credential bridge parent ancestry'
+            }
+            & $DirectorySynchronizer $candidateParent
+            $remainingPath = Get-AtlasoOptionalOnePasswordRecoveryItem `
+                -Path $resolvedPath `
+                -FailureCode 'root-state-unavailable' `
+                -FailureMessage 'The recorded credential bridge root state cannot be inspected safely.'
+            if ($null -ne $remainingPath) {
+                throw (New-AtlasoOnePasswordRecoveryException `
+                        -Code 'root-reappeared-before-retirement' `
+                        -Message 'The credential bridge root reappeared before durable retirement; state was preserved.')
+            }
+            return
+        }
+        $nextParent = Split-Path -Parent $candidateParent
+        if ($nextParent -ceq $candidateParent) {
+            break
+        }
+        $candidateParent = $nextParent
+    }
+    throw (New-AtlasoOnePasswordRecoveryException `
+            -Code 'root-parent-unavailable' `
+            -Message 'No existing credential bridge parent could be flushed; state was preserved.')
+}
+
+<#
+.SYNOPSIS
+Test whether a marker value is an integer inside an exact bound.
+
+.PARAMETER Value
+Value deserialized from the durable JSON marker.
+
+.PARAMETER Minimum
+Lowest integer the marker field may contain for the requested contract.
+
+.PARAMETER Maximum
+Highest integer the marker field may contain for the requested contract.
+#>
+function Test-AtlasoOnePasswordMarkerInteger {
+    [OutputType([bool])]
+    param(
+        [AllowNull()][object]$Value,
+        [Parameter(Mandatory = $true)][long]$Minimum,
+        [Parameter(Mandatory = $true)][long]$Maximum
+    )
+
+    if ($null -eq $Value -or -not (
+            $Value -is [byte] -or $Value -is [sbyte] -or
+            $Value -is [int16] -or $Value -is [uint16] -or
+            $Value -is [int32] -or $Value -is [uint32] -or
+            $Value -is [int64]
+        )) {
+        return $false
+    }
+    $number = [long]$Value
+    return $number -ge $Minimum -and $number -le $Maximum
+}
+
+<#
+.SYNOPSIS
+Read and fully validate the current checkout's schema-2 or schema-3 recovery marker.
+
+.PARAMETER RepositoryRoot
+Exact Atlaso checkout that owns the fixed cleanup marker.
+
+.PARAMETER RootItemReader
+Recorded-root lookup operation overridden only by focused tests.
+#>
+function Get-AtlasoOnePasswordCredentialRecoveryContext {
+    param(
+        [Parameter(Mandatory = $true)][string]$RepositoryRoot,
+        [scriptblock]$RootItemReader = {
+            param([string]$ItemPath)
+            Get-Item -LiteralPath $ItemPath -Force -ErrorAction Stop
+        }
+    )
+
+    try {
+        $resolvedRepositoryRoot = (Resolve-Path -LiteralPath $RepositoryRoot -ErrorAction Stop).Path
+        $markerPath = [System.IO.Path]::GetFullPath(
+            (Get-AtlasoOnePasswordCleanupMarkerPath -RepositoryRoot $resolvedRepositoryRoot)
+        )
+        $markerItem = Get-AtlasoOptionalOnePasswordRecoveryItem `
+            -Path $markerPath `
+            -FailureCode 'marker-state-unavailable' `
+            -FailureMessage 'The checkout-local credential cleanup marker state cannot be inspected safely.'
+        if ($null -eq $markerItem) {
+            return [pscustomobject][ordered]@{
+                MarkerState            = 'absent'
+                MarkerPath             = $markerPath
+                Marker                 = $null
+                MarkerIdentity         = ''
+                MarkerDirectory        = Split-Path -Parent $markerPath
+                MarkerDirectoryIdentity = ''
+                Phase                  = 'none'
+                BootRelation           = 'not-applicable'
+                OwnerState             = 'not-recorded'
+                ChildState             = 'not-recorded'
+                JobState               = 'not-recorded'
+                RootState              = 'not-recorded'
+            }
+        }
+        if (-not ($markerItem -is [System.IO.FileInfo]) -or
+            ($markerItem.Attributes -band [System.IO.FileAttributes]::ReparsePoint) -ne 0 -or
+            $markerItem.Length -gt 65536) {
+            throw (New-AtlasoOnePasswordRecoveryException `
+                    -Code 'marker-invalid' `
+                    -Message 'The checkout-local credential cleanup marker is not a bounded regular file.')
+        }
+        $markerDirectory = Split-Path -Parent $markerPath
+        try {
+            Assert-AtlasoStrictDescendantPath `
+                -ParentPath $resolvedRepositoryRoot `
+                -ChildPath $markerPath `
+                -FailureMessage 'Invalid credential cleanup marker ancestry'
+            $markerDirectoryIdentity = Get-AtlasoPathIdentity `
+                -Path $markerDirectory `
+                -Description 'Credential cleanup marker directory'
+            $markerIdentity = Get-AtlasoPathIdentity `
+                -Path $markerPath `
+                -Description 'Credential cleanup marker'
+        }
+        catch {
+            throw (New-AtlasoOnePasswordRecoveryException `
+                    -Code 'marker-ancestry-invalid' `
+                    -Message 'The checkout-local credential cleanup marker ancestry is invalid or contains a reparse point.')
+        }
+        $jsonDocument = $null
+        try {
+            $rawMarker = Get-Content -LiteralPath $markerPath -Raw -ErrorAction Stop
+            $jsonDocument = [System.Text.Json.JsonDocument]::Parse($rawMarker)
+            if ($jsonDocument.RootElement.ValueKind -ne [System.Text.Json.JsonValueKind]::Object) {
+                throw 'marker root is not an object'
+            }
+            $jsonPropertyNames = [System.Collections.Generic.List[string]]::new()
+            $jsonPropertyEnumerator = $jsonDocument.RootElement.EnumerateObject()
+            while ($jsonPropertyEnumerator.MoveNext()) {
+                $jsonPropertyNames.Add($jsonPropertyEnumerator.Current.Name)
+            }
+            $marker = $rawMarker | ConvertFrom-Json -ErrorAction Stop
+        }
+        catch {
+            throw (New-AtlasoOnePasswordRecoveryException `
+                    -Code 'marker-json-invalid' `
+                    -Message 'The checkout-local credential cleanup marker is not valid bounded JSON.')
+        }
+        finally {
+            if ($null -ne $jsonDocument) {
+                $jsonDocument.Dispose()
+            }
+        }
+        if (@($jsonPropertyNames | Sort-Object -Unique -CaseSensitive).Count -ne $jsonPropertyNames.Count) {
+            throw (New-AtlasoOnePasswordRecoveryException `
+                    -Code 'marker-schema-invalid' `
+                    -Message 'The credential cleanup marker contains duplicate property names.')
+        }
+        $properties = @($marker.PSObject.Properties.Name)
+        $legacyProperties = @('BootIdentity', 'Phase', 'RootPath', 'Schema')
+        if ($properties.Count -eq $legacyProperties.Count -and
+            -not (Compare-Object -ReferenceObject $legacyProperties -DifferenceObject $properties -CaseSensitive) -and
+            (Test-AtlasoOnePasswordMarkerInteger -Value $marker.Schema -Minimum 1 -Maximum 1)) {
+            throw (New-AtlasoOnePasswordRecoveryException `
+                    -Code 'legacy-marker' `
+                    -Message 'Legacy credential cleanup markers cannot be reset on the current boot. Restart Windows, then rerun the original VMware workflow so its compatibility recovery can retire the marker.')
+        }
+        $schema2Properties = @(
+            'BootIdentity',
+            'ChildProcessId',
+            'ChildProcessStartFileTimeUtc',
+            'OwnerProcessId',
+            'OwnerProcessStartFileTimeUtc',
+            'Phase',
+            'ProcessJobName',
+            'ProcessOwnershipPhase',
+            'RootIdentity',
+            'RootPath',
+            'Schema'
+        )
+        $schema3Properties = @(
+            $schema2Properties
+            'TemporaryRootIdentity',
+            'TemporaryRootPath'
+        )
+        $isSchema2 = $properties.Count -eq $schema2Properties.Count -and
+            -not (Compare-Object -ReferenceObject $schema2Properties -DifferenceObject $properties -CaseSensitive) -and
+            (Test-AtlasoOnePasswordMarkerInteger -Value $marker.Schema -Minimum 2 -Maximum 2)
+        $isSchema3 = $properties.Count -eq $schema3Properties.Count -and
+            -not (Compare-Object -ReferenceObject $schema3Properties -DifferenceObject $properties -CaseSensitive) -and
+            (Test-AtlasoOnePasswordMarkerInteger -Value $marker.Schema -Minimum 3 -Maximum 3)
+        if (-not $isSchema2 -and -not $isSchema3) {
+            throw (New-AtlasoOnePasswordRecoveryException `
+                    -Code 'marker-schema-invalid' `
+                    -Message 'The credential cleanup marker does not match an exact supported schema-2 or schema-3 contract.')
+        }
+        $bootIdentityTicks = 0L
+        $validBootIdentity = $marker.BootIdentity -is [string] -and
+            [string]$marker.BootIdentity -cmatch '^[0-9]{1,19}$' -and
+            [long]::TryParse(
+                [string]$marker.BootIdentity,
+                [System.Globalization.NumberStyles]::None,
+                [System.Globalization.CultureInfo]::InvariantCulture,
+                [ref]$bootIdentityTicks
+            ) -and $bootIdentityTicks -gt 0
+        if (-not ($marker.RootPath -is [string]) -or [string]::IsNullOrWhiteSpace($marker.RootPath) -or
+            -not ($marker.RootIdentity -is [string]) -or
+            [string]$marker.RootIdentity -cnotmatch '^[0-9A-F]{8}:[0-9A-F]{16}$' -or
+            ($isSchema3 -and (
+                -not ($marker.TemporaryRootPath -is [string]) -or
+                [string]::IsNullOrWhiteSpace($marker.TemporaryRootPath) -or
+                -not ($marker.TemporaryRootIdentity -is [string]) -or
+                [string]$marker.TemporaryRootIdentity -cnotmatch '^[0-9A-F]{8}:[0-9A-F]{16}$'
+            )) -or
+            -not $validBootIdentity -or
+            -not ($marker.Phase -is [string]) -or [string]$marker.Phase -cnotin @('active', 'root-absent', 'retired') -or
+            -not (Test-AtlasoOnePasswordMarkerInteger -Value $marker.OwnerProcessId -Minimum 1 -Maximum ([int]::MaxValue)) -or
+            -not (Test-AtlasoOnePasswordMarkerInteger -Value $marker.OwnerProcessStartFileTimeUtc -Minimum 1 -Maximum ([long]::MaxValue)) -or
+            -not ($marker.ProcessJobName -is [string]) -or
+            [string]$marker.ProcessJobName -cnotmatch '^Local\\Atlaso-OnePassword-[0-9a-f]{32}$' -or
+            -not ($marker.ProcessOwnershipPhase -is [string]) -or
+            [string]$marker.ProcessOwnershipPhase -cnotin @('prepared', 'assigned')) {
+            throw (New-AtlasoOnePasswordRecoveryException `
+                    -Code 'marker-schema-invalid' `
+                    -Message 'The credential cleanup marker does not match an exact supported schema-2 or schema-3 contract.')
+        }
+        $preparedOwnership = [string]$marker.ProcessOwnershipPhase -ceq 'prepared'
+        if (($preparedOwnership -and (
+                    -not (Test-AtlasoOnePasswordMarkerInteger -Value $marker.ChildProcessId -Minimum 0 -Maximum 0) -or
+                    -not (Test-AtlasoOnePasswordMarkerInteger -Value $marker.ChildProcessStartFileTimeUtc -Minimum 0 -Maximum 0)
+                )) -or
+            (-not $preparedOwnership -and (
+                    -not (Test-AtlasoOnePasswordMarkerInteger -Value $marker.ChildProcessId -Minimum 1 -Maximum ([int]::MaxValue)) -or
+                    -not (Test-AtlasoOnePasswordMarkerInteger -Value $marker.ChildProcessStartFileTimeUtc -Minimum 1 -Maximum ([long]::MaxValue))
+                ))) {
+            throw (New-AtlasoOnePasswordRecoveryException `
+                    -Code 'process-ownership-invalid' `
+                    -Message 'The credential cleanup marker has inconsistent process-ownership fields.')
+        }
+        try {
+            $recordedRoot = [string]$marker.RootPath
+            $resolvedRoot = [System.IO.Path]::GetFullPath($recordedRoot).TrimEnd('\')
+            $recordedTempRoot = if ($isSchema3) {
+                [string]$marker.TemporaryRootPath
+            }
+            else {
+                Split-Path -Parent $resolvedRoot
+            }
+            $resolvedTempRoot = [System.IO.Path]::GetFullPath($recordedTempRoot).TrimEnd('\')
+        }
+        catch {
+            throw (New-AtlasoOnePasswordRecoveryException `
+                    -Code 'root-path-invalid' `
+                    -Message 'The recorded credential bridge root path is invalid.')
+        }
+        if (-not $recordedRoot.TrimEnd('\').Equals(
+                $resolvedRoot,
+                [System.StringComparison]::OrdinalIgnoreCase
+            ) -or
+            ($isSchema3 -and
+                -not $recordedTempRoot.TrimEnd('\').Equals(
+                    $resolvedTempRoot,
+                    [System.StringComparison]::OrdinalIgnoreCase
+                )) -or
+            -not ([System.IO.Path]::GetFullPath((Split-Path -Parent $resolvedRoot)).Equals(
+                    $resolvedTempRoot,
+                    [System.StringComparison]::OrdinalIgnoreCase
+                )) -or
+            (Split-Path -Leaf $resolvedRoot) -cnotmatch '^atlaso-onepassword-credentials-[0-9a-f]{32}$') {
+            throw (New-AtlasoOnePasswordRecoveryException `
+                    -Code 'root-path-invalid' `
+                    -Message 'The recorded credential bridge root is outside the exact supported temporary-root namespace.')
+        }
+        try {
+            Assert-AtlasoStrictDescendantPath `
+                -ParentPath $resolvedTempRoot `
+                -ChildPath $resolvedRoot `
+                -FailureMessage 'Invalid credential bridge root ancestry'
+        }
+        catch {
+            throw (New-AtlasoOnePasswordRecoveryException `
+                    -Code 'root-ancestry-invalid' `
+                    -Message 'The recorded credential bridge root ancestry is invalid or contains a reparse point.')
+        }
+        $rootItem = Get-AtlasoOptionalOnePasswordRecoveryItem `
+            -Path $resolvedRoot `
+            -FailureCode 'root-state-unavailable' `
+            -FailureMessage 'The recorded credential bridge root state cannot be inspected safely.' `
+            -ItemReader $RootItemReader
+        $rootState = 'absent'
+        if ($null -ne $rootItem) {
+            if ($isSchema3) {
+                try {
+                    if ((Get-AtlasoPathIdentity `
+                            -Path $resolvedTempRoot `
+                            -Description '1Password credential bridge temporary root') -cne
+                        [string]$marker.TemporaryRootIdentity) {
+                        throw 'temporary root changed'
+                    }
+                }
+                catch {
+                    throw (New-AtlasoOnePasswordRecoveryException `
+                            -Code 'temporary-root-identity-mismatch' `
+                            -Message 'The recorded credential bridge temporary root changed; the marker and root were preserved.')
+                }
+            }
+            if (-not ($rootItem -is [System.IO.DirectoryInfo]) -or
+                ($rootItem.Attributes -band [System.IO.FileAttributes]::ReparsePoint) -ne 0) {
+                throw (New-AtlasoOnePasswordRecoveryException `
+                        -Code 'root-type-invalid' `
+                        -Message 'The recorded credential bridge root is not an ordinary directory.')
+            }
+            $actualRootIdentity = ''
+            try {
+                $actualRootIdentity = Get-AtlasoPathIdentity `
+                    -Path $resolvedRoot `
+                    -Description '1Password credential bridge root'
+            }
+            catch {
+                throw (New-AtlasoOnePasswordRecoveryException `
+                        -Code 'root-identity-unavailable' `
+                        -Message 'The recorded credential bridge root identity cannot be verified.')
+            }
+            if ($actualRootIdentity -cne [string]$marker.RootIdentity) {
+                throw (New-AtlasoOnePasswordRecoveryException `
+                        -Code 'root-identity-mismatch' `
+                        -Message 'The recorded credential bridge root was replaced; the marker and root were preserved.')
+            }
+            $rootState = 'identity-matching'
+        }
+        if ([string]$marker.Phase -cin @('root-absent', 'retired') -and $rootState -cne 'absent') {
+            throw (New-AtlasoOnePasswordRecoveryException `
+                    -Code 'terminal-root-present' `
+                    -Message 'The credential bridge root is present despite a terminal marker phase; state was preserved for investigation.')
+        }
+        $bootRelation = Get-AtlasoWindowsBootIdentityState -BootIdentity ([long]$marker.BootIdentity)
+        if ($bootRelation -ceq 'invalid') {
+            throw (New-AtlasoOnePasswordRecoveryException `
+                    -Code 'boot-identity-invalid' `
+                    -Message 'The credential cleanup marker has an invalid Windows boot identity.')
+        }
+        return [pscustomobject][ordered]@{
+            MarkerState             = if ($isSchema3) { 'schema-3' } else { 'schema-2' }
+            MarkerPath              = $markerPath
+            Marker                  = $marker
+            MarkerIdentity          = $markerIdentity
+            MarkerDirectory         = $markerDirectory
+            MarkerDirectoryIdentity = $markerDirectoryIdentity
+            Phase                   = [string]$marker.Phase
+            BootRelation            = $bootRelation
+            OwnerState              = 'not-evaluated'
+            ChildState              = 'not-evaluated'
+            JobState                = 'not-evaluated'
+            RootState               = $rootState
+        }
+    }
+    catch {
+        if ($_.Exception.Data['AtlasoOnePasswordRecoverySafe']) {
+            throw
+        }
+        throw (New-AtlasoOnePasswordRecoveryException `
+                -Code 'inspection-failed' `
+                -Message 'The retained credential bridge state could not be inspected safely; no process or file was changed.')
+    }
+}
+
+<#
+.SYNOPSIS
+Verify that the cleanup marker and its directory retain their captured identities.
+
+.PARAMETER MarkerPath
+Exact checkout-local cleanup marker path.
+
+.PARAMETER ExpectedMarkerIdentity
+Filesystem identity captured from the validated marker.
+
+.PARAMETER MarkerDirectory
+Exact checkout-local marker directory.
+
+.PARAMETER ExpectedMarkerDirectoryIdentity
+Filesystem identity captured from the marker directory.
+#>
+function Assert-AtlasoOnePasswordMarkerOwnership {
+    param(
+        [Parameter(Mandatory = $true)][string]$MarkerPath,
+        [Parameter(Mandatory = $true)][string]$ExpectedMarkerIdentity,
+        [Parameter(Mandatory = $true)][string]$MarkerDirectory,
+        [Parameter(Mandatory = $true)][string]$ExpectedMarkerDirectoryIdentity
+    )
+
+    try {
+        if ((Get-AtlasoPathIdentity -Path $MarkerDirectory -Description 'Credential cleanup marker directory') -cne
+            $ExpectedMarkerDirectoryIdentity -or
+            (Get-AtlasoPathIdentity -Path $MarkerPath -Description 'Credential cleanup marker') -cne
+            $ExpectedMarkerIdentity) {
+            throw 'identity mismatch'
+        }
+    }
+    catch {
+        throw (New-AtlasoOnePasswordRecoveryException `
+                -Code 'marker-identity-mismatch' `
+                -Message 'The checkout-local credential cleanup marker or its directory changed during recovery; state was preserved.')
+    }
+}
+
+<#
+.SYNOPSIS
+Revalidate the exact credential-root state captured during recovery inspection.
+
+.PARAMETER Context
+Validated credential-recovery context containing the root path and identity.
+#>
+function Assert-AtlasoOnePasswordCredentialRootOwnership {
+    param([Parameter(Mandatory = $true)][object]$Context)
+
+    try {
+        $rootPath = [string]$Context.Marker.RootPath
+        $markerProperties = @($Context.Marker.PSObject.Properties.Name)
+        $hasTemporaryRootIdentity = 'TemporaryRootPath' -in $markerProperties -and
+            'TemporaryRootIdentity' -in $markerProperties
+        $tempRoot = if ($hasTemporaryRootIdentity) {
+            [System.IO.Path]::GetFullPath(
+                [string]$Context.Marker.TemporaryRootPath
+            ).TrimEnd('\')
+        }
+        else {
+            [System.IO.Path]::GetFullPath((Split-Path -Parent $rootPath)).TrimEnd('\')
+        }
+        Assert-AtlasoStrictDescendantPath `
+            -ParentPath $tempRoot `
+            -ChildPath $rootPath `
+            -FailureMessage 'Invalid credential bridge root ancestry'
+        $rootItem = Get-AtlasoOptionalOnePasswordRecoveryItem `
+            -Path $rootPath `
+            -FailureCode 'root-state-unavailable' `
+            -FailureMessage 'The recorded credential bridge root state cannot be inspected safely.'
+        if ($null -ne $rootItem -and $hasTemporaryRootIdentity -and
+            (Get-AtlasoPathIdentity `
+                -Path $tempRoot `
+                -Description '1Password credential bridge temporary root') -cne
+            [string]$Context.Marker.TemporaryRootIdentity) {
+            throw 'temporary root changed'
+        }
+        if ($Context.RootState -ceq 'absent') {
+            if ($null -ne $rootItem) {
+                throw 'root appeared'
+            }
+            return
+        }
+        if ($null -eq $rootItem -or -not ($rootItem -is [System.IO.DirectoryInfo]) -or
+            ($rootItem.Attributes -band [System.IO.FileAttributes]::ReparsePoint) -ne 0 -or
+            (Get-AtlasoPathIdentity -Path $rootPath -Description '1Password credential bridge root') -cne
+            [string]$Context.Marker.RootIdentity) {
+            throw 'root changed'
+        }
+    }
+    catch {
+        throw (New-AtlasoOnePasswordRecoveryException `
+                -Code 'root-changed-before-mutation' `
+                -Message 'The credential bridge root changed after inspection and before mutation; no process or file was changed.')
+    }
+}
+
+<#
+.SYNOPSIS
+Classify the safe action for one fully validated schema-2 or schema-3 marker.
+
+.PARAMETER Context
+Validated credential-recovery context containing the durable marker.
+#>
+function Get-AtlasoOnePasswordCredentialRecoveryPlan {
+    param([Parameter(Mandatory = $true)][object]$Context)
+
+    $plan = [ordered]@{
+        MarkerState        = [string]$Context.MarkerState
+        Phase              = [string]$Context.Phase
+        BootRelation       = [string]$Context.BootRelation
+        OwnerState         = [string]$Context.OwnerState
+        ChildState         = [string]$Context.ChildState
+        JobState           = [string]$Context.JobState
+        RootState          = [string]$Context.RootState
+        Action             = 'none'
+        BlockerCode        = ''
+        BlockerMessage     = ''
+        RequiresTermination = $false
+    }
+    if ($Context.MarkerState -ceq 'absent') {
+        $plan.Action = 'already-reset'
+        return [pscustomobject]$plan
+    }
+    if ($Context.Phase -cin @('root-absent', 'retired')) {
+        $plan.OwnerState = 'not-applicable'
+        $plan.ChildState = 'not-applicable'
+        $plan.JobState = 'not-applicable'
+        $plan.Action = 'finish-marker-retirement'
+        return [pscustomobject]$plan
+    }
+    if ($Context.BootRelation -ceq 'prior') {
+        $plan.OwnerState = 'not-applicable'
+        $plan.ChildState = 'not-applicable'
+        $plan.JobState = 'not-applicable'
+        $plan.Action = 'remove-root-and-retire-marker'
+        return [pscustomobject]$plan
+    }
+
+    $marker = $Context.Marker
+    try {
+        $plan.OwnerState = Get-AtlasoRecordedProcessIdentityState `
+            -ProcessId ([int]$marker.OwnerProcessId) `
+            -StartFileTimeUtc ([long]$marker.OwnerProcessStartFileTimeUtc)
+    }
+    catch {
+        $plan.OwnerState = 'unavailable'
+        $plan.BlockerCode = 'owner-identity-unavailable'
+        $plan.BlockerMessage = 'The recorded credential-bridge controller identity cannot be inspected safely.'
+        $plan.Action = 'preserve-and-investigate'
+        return [pscustomobject]$plan
+    }
+    if ($plan.OwnerState -ceq 'matching') {
+        $plan.BlockerCode = 'owner-active'
+        $plan.BlockerMessage = 'The exact recorded credential-bridge controller is still active. Allow the original VMware workflow to exit before resetting; the recovery command never terminates that controller.'
+        $plan.Action = 'wait-for-controller-exit'
+        return [pscustomobject]$plan
+    }
+    if ($plan.OwnerState -ceq 'reused') {
+        $plan.BlockerCode = 'owner-pid-reused'
+        $plan.BlockerMessage = 'The recorded controller process identifier was reused on this boot. No process or file can be changed safely; restart Windows, then rerun the original VMware workflow.'
+        $plan.Action = 'restart-windows-and-rerun-workflow'
+        return [pscustomobject]$plan
+    }
+
+    $ownershipPhase = [string]$marker.ProcessOwnershipPhase
+    if ($ownershipPhase -ceq 'prepared') {
+        $plan.ChildState = 'not-recorded'
+    }
+    else {
+        try {
+            $plan.ChildState = Get-AtlasoRecordedProcessIdentityState `
+                -ProcessId ([int]$marker.ChildProcessId) `
+                -StartFileTimeUtc ([long]$marker.ChildProcessStartFileTimeUtc)
+        }
+        catch {
+            $plan.ChildState = 'unavailable'
+            $plan.BlockerCode = 'child-identity-unavailable'
+            $plan.BlockerMessage = 'The recorded credential-bridge child identity cannot be inspected safely.'
+            $plan.Action = 'preserve-and-investigate'
+            return [pscustomobject]$plan
+        }
+        if ($plan.ChildState -ceq 'reused') {
+            $plan.BlockerCode = 'child-pid-reused'
+            $plan.BlockerMessage = 'The recorded child process identifier was reused. The unrelated process will not be terminated; restart Windows, then rerun the original VMware workflow.'
+            $plan.Action = 'restart-windows-and-rerun-workflow'
+            return [pscustomobject]$plan
+        }
+    }
+
+    $job = $null
+    try {
+        try {
+            $job = Open-AtlasoBoundedProcessJob -ProcessJobName ([string]$marker.ProcessJobName)
+            if ($null -eq $job) {
+                $plan.JobState = 'absent'
+            }
+            else {
+                $activeProcessIds = @($job.GetActiveProcessIds())
+                $plan.JobState = if ($activeProcessIds.Count -eq 0) { 'inactive' } else { 'active' }
+            }
+        }
+        catch {
+            $plan.JobState = 'unavailable'
+            $plan.BlockerCode = 'job-state-unavailable'
+            $plan.BlockerMessage = 'The exact recorded credential-bridge process job cannot be inspected safely.'
+            $plan.Action = 'preserve-and-investigate'
+            return [pscustomobject]$plan
+        }
+        if ($ownershipPhase -ceq 'prepared') {
+            if ($null -ne $job -and $activeProcessIds.Count -ne 0) {
+                $plan.JobState = 'active-unrecorded'
+                $plan.BlockerCode = 'unrecorded-job-descendants'
+                $plan.BlockerMessage = 'The retained process job has active descendants but no durably recorded root child. Same-boot termination is not provable; restart Windows, then rerun the original VMware workflow.'
+                $plan.Action = 'restart-windows-and-rerun-workflow'
+                return [pscustomobject]$plan
+            }
+            $plan.Action = 'remove-root-and-retire-marker'
+            return [pscustomobject]$plan
+        }
+        if ($plan.ChildState -ceq 'matching') {
+            if ($null -eq $job) {
+                $plan.BlockerCode = 'active-child-missing-job'
+                $plan.BlockerMessage = 'The exact recorded credential-bridge child is active without its named process job. It will not be terminated; restart Windows, then rerun the original VMware workflow.'
+                $plan.Action = 'restart-windows-and-rerun-workflow'
+                return [pscustomobject]$plan
+            }
+            $childProcess = $null
+            try {
+                $childProcess = Get-Process -Id ([int]$marker.ChildProcessId) -ErrorAction Stop
+                if (-not $job.ContainsProcess($childProcess) -or
+                    [int]$marker.ChildProcessId -notin $activeProcessIds) {
+                    $plan.BlockerCode = 'child-job-mismatch'
+                    $plan.BlockerMessage = 'The recorded credential-bridge child is not provably owned by its exact named process job. No process will be terminated.'
+                    $plan.Action = 'preserve-and-investigate'
+                    return [pscustomobject]$plan
+                }
+            }
+            finally {
+                if ($null -ne $childProcess) {
+                    $childProcess.Dispose()
+                }
+            }
+            $plan.JobState = 'active-owned'
+            $plan.RequiresTermination = $true
+            $plan.Action = 'terminate-exact-job-remove-root-and-retire-marker'
+            return [pscustomobject]$plan
+        }
+        if ($null -ne $job -and $activeProcessIds.Count -ne 0) {
+            $plan.JobState = 'active-unrecorded'
+            $plan.BlockerCode = 'surviving-descendant-without-root'
+            $plan.BlockerMessage = 'The retained process job has active descendants after its recorded root child exited. Same-boot termination is not provable; restart Windows, then rerun the original VMware workflow.'
+            $plan.Action = 'restart-windows-and-rerun-workflow'
+            return [pscustomobject]$plan
+        }
+        $plan.Action = 'remove-root-and-retire-marker'
+        return [pscustomobject]$plan
+    }
+    finally {
+        if ($null -ne $job) {
+            $job.Dispose()
+        }
+    }
+}
+
+<#
+.SYNOPSIS
+Terminate the exact recorded credential job and prove its captured processes inactive.
+
+.PARAMETER Context
+Validated current-boot schema-2 or schema-3 recovery context.
+#>
+function Stop-AtlasoOnePasswordCredentialRecoveryJob {
+    param([Parameter(Mandatory = $true)][object]$Context)
+
+    $marker = $Context.Marker
+    $job = $null
+    $childProcess = $null
+    try {
+        Assert-AtlasoOnePasswordMarkerOwnership `
+            -MarkerPath $Context.MarkerPath `
+            -ExpectedMarkerIdentity $Context.MarkerIdentity `
+            -MarkerDirectory $Context.MarkerDirectory `
+            -ExpectedMarkerDirectoryIdentity $Context.MarkerDirectoryIdentity
+        Assert-AtlasoOnePasswordCredentialRootOwnership -Context $Context
+        if ((Get-AtlasoRecordedProcessIdentityState `
+                -ProcessId ([int]$marker.OwnerProcessId) `
+                -StartFileTimeUtc ([long]$marker.OwnerProcessStartFileTimeUtc)) -cne 'absent') {
+            throw (New-AtlasoOnePasswordRecoveryException `
+                    -Code 'owner-changed-before-termination' `
+                    -Message 'The recorded controller identity changed before recovery could terminate the child job; state was preserved.')
+        }
+        if ([string]$marker.ProcessOwnershipPhase -cne 'assigned' -or
+            (Get-AtlasoRecordedProcessIdentityState `
+                -ProcessId ([int]$marker.ChildProcessId) `
+                -StartFileTimeUtc ([long]$marker.ChildProcessStartFileTimeUtc)) -cne 'matching') {
+            throw (New-AtlasoOnePasswordRecoveryException `
+                    -Code 'child-changed-before-termination' `
+                    -Message 'The recorded child identity changed before recovery could terminate its job; state was preserved.')
+        }
+        $job = Open-AtlasoBoundedProcessJob -ProcessJobName ([string]$marker.ProcessJobName)
+        if ($null -eq $job) {
+            throw (New-AtlasoOnePasswordRecoveryException `
+                    -Code 'job-missing-before-termination' `
+                    -Message 'The recorded child remains active but its exact process job disappeared; no process was terminated.')
+        }
+        $childProcess = Get-Process -Id ([int]$marker.ChildProcessId) -ErrorAction Stop
+        $activeProcessIds = @($job.GetActiveProcessIds())
+        if (-not $job.ContainsProcess($childProcess) -or
+            [int]$marker.ChildProcessId -notin $activeProcessIds) {
+            throw (New-AtlasoOnePasswordRecoveryException `
+                    -Code 'child-job-mismatch-before-termination' `
+                    -Message 'The recorded child is no longer provably owned by its exact process job; no process was terminated.')
+        }
+        $capturedProcesses = @()
+        foreach ($processId in $activeProcessIds) {
+            $process = Get-Process -Id $processId -ErrorAction SilentlyContinue
+            if ($null -eq $process) {
+                throw (New-AtlasoOnePasswordRecoveryException `
+                        -Code 'job-membership-changed' `
+                        -Message 'The exact process-job membership changed during recovery admission; no process was terminated.')
+            }
+            try {
+                $capturedProcesses += [pscustomobject]@{
+                    ProcessId       = $processId
+                    StartFileTimeUtc = $process.StartTime.ToUniversalTime().ToFileTimeUtc()
+                }
+            }
+            catch {
+                throw (New-AtlasoOnePasswordRecoveryException `
+                        -Code 'job-member-identity-unavailable' `
+                        -Message 'A recorded process-job member identity could not be captured; no process was terminated.')
+            }
+            finally {
+                $process.Dispose()
+            }
+        }
+        $job.TerminateAndWait(10000)
+        if (@($job.GetActiveProcessIds()).Count -ne 0) {
+            throw (New-AtlasoOnePasswordRecoveryException `
+                    -Code 'job-termination-incomplete' `
+                    -Message 'The exact credential-bridge process job remained active after termination; the marker and root were preserved.')
+        }
+        foreach ($capturedProcess in $capturedProcesses) {
+            if ((Get-AtlasoRecordedProcessIdentityState `
+                    -ProcessId ([int]$capturedProcess.ProcessId) `
+                    -StartFileTimeUtc ([long]$capturedProcess.StartFileTimeUtc)) -ceq 'matching') {
+                throw (New-AtlasoOnePasswordRecoveryException `
+                        -Code 'captured-process-still-active' `
+                        -Message 'A captured credential-bridge process remained active after job termination; the marker and root were preserved.')
+            }
+        }
+        if ((Get-AtlasoRecordedProcessIdentityState `
+                -ProcessId ([int]$marker.ChildProcessId) `
+                -StartFileTimeUtc ([long]$marker.ChildProcessStartFileTimeUtc)) -ceq 'matching' -or
+            (Get-AtlasoRecordedProcessIdentityState `
+                -ProcessId ([int]$marker.OwnerProcessId) `
+                -StartFileTimeUtc ([long]$marker.OwnerProcessStartFileTimeUtc)) -cne 'absent') {
+            throw (New-AtlasoOnePasswordRecoveryException `
+                    -Code 'process-inactivity-unproven' `
+                    -Message 'Credential-bridge process inactivity could not be proven after job termination; the marker and root were preserved.')
+        }
+    }
+    catch {
+        if ($_.Exception.Data['AtlasoOnePasswordRecoverySafe']) {
+            throw
+        }
+        throw (New-AtlasoOnePasswordRecoveryException `
+                -Code 'job-termination-failed' `
+                -Message 'The exact credential-bridge process job could not be terminated and verified; the marker and root were preserved.')
+    }
+    finally {
+        if ($null -ne $childProcess) {
+            $childProcess.Dispose()
+        }
+        if ($null -ne $job) {
+            $job.Dispose()
+        }
+    }
+}
+
+<#
+.SYNOPSIS
 Remove a proven-inactive credential root and durably retire its marker.
 
 .PARAMETER MarkerPath
@@ -1176,13 +2056,34 @@ Exact non-secret cleanup marker path.
 
 .PARAMETER Marker
 Validated marker payload owning the exact bridge root.
+
+.PARAMETER ExpectedMarkerIdentity
+Optional filesystem identity captured from the validated marker.
+
+.PARAMETER MarkerDirectory
+Optional exact directory containing the marker.
+
+.PARAMETER ExpectedMarkerDirectoryIdentity
+Optional filesystem identity captured from the marker directory.
 #>
 function Complete-AtlasoOnePasswordCredentialCleanup {
     param(
         [Parameter(Mandatory = $true)][string]$MarkerPath,
-        [Parameter(Mandatory = $true)][object]$Marker
+        [Parameter(Mandatory = $true)][object]$Marker,
+        [string]$ExpectedMarkerIdentity = '',
+        [string]$MarkerDirectory = '',
+        [string]$ExpectedMarkerDirectoryIdentity = ''
     )
 
+    $verifyMarkerOwnership = -not [string]::IsNullOrWhiteSpace($ExpectedMarkerIdentity)
+    $currentMarkerIdentity = $ExpectedMarkerIdentity
+    if ($verifyMarkerOwnership) {
+        Assert-AtlasoOnePasswordMarkerOwnership `
+            -MarkerPath $MarkerPath `
+            -ExpectedMarkerIdentity $currentMarkerIdentity `
+            -MarkerDirectory $MarkerDirectory `
+            -ExpectedMarkerDirectoryIdentity $ExpectedMarkerDirectoryIdentity
+    }
     $markerProperties = @($Marker.PSObject.Properties.Name)
     $expectedRootIdentity = if ('RootIdentity' -in $markerProperties) {
         [string]$Marker.RootIdentity
@@ -1190,22 +2091,283 @@ function Complete-AtlasoOnePasswordCredentialCleanup {
     else {
         ''
     }
-    Remove-AtlasoOnePasswordCredentialBridge `
-        -BridgeRoot ([string]$Marker.RootPath) `
-        -ExpectedRootIdentity $expectedRootIdentity
-    $Marker.Phase = 'root-absent'
-    Write-AtlasoDurableJsonFile -Path $MarkerPath -Payload $Marker -Replace
-    $Marker.Phase = 'retired'
-    Write-AtlasoDurableJsonFile -Path $MarkerPath -Payload $Marker -Replace
+    $temporaryRootPath = if ('TemporaryRootPath' -in $markerProperties) {
+        [string]$Marker.TemporaryRootPath
+    }
+    else {
+        Split-Path -Parent ([string]$Marker.RootPath)
+    }
+    $expectedTemporaryRootIdentity = if ('TemporaryRootIdentity' -in $markerProperties) {
+        [string]$Marker.TemporaryRootIdentity
+    }
+    else {
+        ''
+    }
+    if ([string]$Marker.Phase -ceq 'active') {
+        $activeRoot = Get-AtlasoOptionalOnePasswordRecoveryItem `
+            -Path ([string]$Marker.RootPath) `
+            -FailureCode 'root-state-unavailable' `
+            -FailureMessage 'The recorded credential bridge root state cannot be inspected safely.'
+        if ($null -ne $activeRoot) {
+            Remove-AtlasoOnePasswordCredentialBridge `
+                -BridgeRoot ([string]$Marker.RootPath) `
+                -ExpectedRootIdentity $expectedRootIdentity `
+                -TemporaryRootPath $temporaryRootPath `
+                -ExpectedTemporaryRootIdentity $expectedTemporaryRootIdentity
+        }
+        else {
+            # An observed absence is not yet durable evidence. Flush the
+            # nearest surviving parent before advancing the marker phase.
+            Sync-AtlasoOnePasswordAbsentPathMetadata -Path ([string]$Marker.RootPath)
+        }
+        if ($verifyMarkerOwnership) {
+            Assert-AtlasoOnePasswordMarkerOwnership `
+                -MarkerPath $MarkerPath `
+                -ExpectedMarkerIdentity $currentMarkerIdentity `
+                -MarkerDirectory $MarkerDirectory `
+                -ExpectedMarkerDirectoryIdentity $ExpectedMarkerDirectoryIdentity
+        }
+        $Marker.Phase = 'root-absent'
+        Write-AtlasoDurableJsonFile -Path $MarkerPath -Payload $Marker -Replace
+        if ($verifyMarkerOwnership) {
+            $currentMarkerIdentity = Get-AtlasoPathIdentity `
+                -Path $MarkerPath `
+                -Description 'Credential cleanup marker'
+        }
+    }
+    if ([string]$Marker.Phase -ceq 'root-absent') {
+        $remainingRoot = Get-AtlasoOptionalOnePasswordRecoveryItem `
+            -Path ([string]$Marker.RootPath) `
+            -FailureCode 'root-state-unavailable' `
+            -FailureMessage 'The recorded credential bridge root state cannot be inspected safely.'
+        if ($null -ne $remainingRoot) {
+            throw 'The credential bridge root reappeared after its durable root-absent transition.'
+        }
+        if ($verifyMarkerOwnership) {
+            Assert-AtlasoOnePasswordMarkerOwnership `
+                -MarkerPath $MarkerPath `
+                -ExpectedMarkerIdentity $currentMarkerIdentity `
+                -MarkerDirectory $MarkerDirectory `
+                -ExpectedMarkerDirectoryIdentity $ExpectedMarkerDirectoryIdentity
+        }
+        $Marker.Phase = 'retired'
+        Write-AtlasoDurableJsonFile -Path $MarkerPath -Payload $Marker -Replace
+        if ($verifyMarkerOwnership) {
+            $currentMarkerIdentity = Get-AtlasoPathIdentity `
+                -Path $MarkerPath `
+                -Description 'Credential cleanup marker'
+        }
+    }
+    if ($verifyMarkerOwnership) {
+        Assert-AtlasoOnePasswordMarkerOwnership `
+            -MarkerPath $MarkerPath `
+            -ExpectedMarkerIdentity $currentMarkerIdentity `
+            -MarkerDirectory $MarkerDirectory `
+            -ExpectedMarkerDirectoryIdentity $ExpectedMarkerDirectoryIdentity
+    }
     Remove-Item -LiteralPath $MarkerPath -Force -ErrorAction Stop
     if (Test-Path -LiteralPath $MarkerPath) {
         throw 'The credential cleanup marker removal did not complete.'
+    }
+    Sync-AtlasoDirectoryMetadata -DirectoryPath (Split-Path -Parent $MarkerPath)
+    if ($verifyMarkerOwnership -and
+        (Get-AtlasoPathIdentity -Path $MarkerDirectory -Description 'Credential cleanup marker directory') -cne
+        $ExpectedMarkerDirectoryIdentity) {
+        throw 'The credential cleanup marker directory changed during retirement.'
     }
 }
 
 <#
 .SYNOPSIS
-Recover a retained 1Password bridge after proven process-tree inactivity.
+Return the sanitized public projection of a credential-recovery plan.
+
+.PARAMETER Plan
+Internal recovery plan containing only fixed state and blocker fields.
+
+.PARAMETER Result
+Outcome for the requested inspection or reset operation.
+#>
+function ConvertTo-AtlasoOnePasswordCredentialRecoveryStatus {
+    param(
+        [Parameter(Mandatory = $true)][object]$Plan,
+        [Parameter(Mandatory = $true)][string]$Result
+    )
+
+    return [pscustomobject][ordered]@{
+        MarkerState  = [string]$Plan.MarkerState
+        Phase        = [string]$Plan.Phase
+        BootRelation = [string]$Plan.BootRelation
+        OwnerState   = [string]$Plan.OwnerState
+        ChildState   = [string]$Plan.ChildState
+        JobState     = [string]$Plan.JobState
+        RootState    = [string]$Plan.RootState
+        Action       = [string]$Plan.Action
+        Result       = $Result
+        Blocker      = [string]$Plan.BlockerCode
+    }
+}
+
+<#
+.SYNOPSIS
+Inspect or safely reset the current checkout's retained schema-2 or schema-3 credential bridge.
+
+.PARAMETER RepositoryRoot
+Exact Atlaso checkout that owns the fixed cleanup marker.
+
+.PARAMETER Inspect
+Return a sanitized read-only state report without changing a process or file.
+
+.PARAMETER TerminateOwnedProcess
+Permit termination of the exact matching recorded child job after all ownership checks pass.
+#>
+function Invoke-AtlasoOnePasswordCredentialBridgeReset {
+    [CmdletBinding(SupportsShouldProcess = $true, ConfirmImpact = 'High')]
+    param(
+        [Parameter(Mandatory = $true)][string]$RepositoryRoot,
+        [switch]$Inspect,
+        [switch]$TerminateOwnedProcess
+    )
+
+    try {
+        $context = Get-AtlasoOnePasswordCredentialRecoveryContext -RepositoryRoot $RepositoryRoot
+        $plan = Get-AtlasoOnePasswordCredentialRecoveryPlan -Context $context
+        if ($Inspect -or $WhatIfPreference) {
+            $result = if ($WhatIfPreference) { 'what-if' } else { 'inspection' }
+            if ($plan.RequiresTermination -and -not $TerminateOwnedProcess) {
+                $plan.Action = 'rerun-with-terminate-owned-process'
+            }
+            return ConvertTo-AtlasoOnePasswordCredentialRecoveryStatus -Plan $plan -Result $result
+        }
+        if (-not [string]::IsNullOrWhiteSpace($plan.BlockerCode)) {
+            throw (New-AtlasoOnePasswordRecoveryException `
+                    -Code $plan.BlockerCode `
+                    -Message $plan.BlockerMessage)
+        }
+        if ($plan.MarkerState -ceq 'absent') {
+            return ConvertTo-AtlasoOnePasswordCredentialRecoveryStatus -Plan $plan -Result 'already-reset'
+        }
+        if ($plan.RequiresTermination -and -not $TerminateOwnedProcess) {
+            throw (New-AtlasoOnePasswordRecoveryException `
+                    -Code 'termination-switch-required' `
+                    -Message 'The exact recorded credential-bridge child and job are active. Inspect first, then rerun with -TerminateOwnedProcess to authorize only that owned job termination.')
+        }
+        if (-not $PSCmdlet.ShouldProcess(
+                'the exact retained 1Password credential bridge',
+                'verify process inactivity, remove its identity-matching root, and durably retire its marker'
+            )) {
+            return ConvertTo-AtlasoOnePasswordCredentialRecoveryStatus -Plan $plan -Result 'not-changed'
+        }
+        if ($plan.RequiresTermination) {
+            Stop-AtlasoOnePasswordCredentialRecoveryJob -Context $context
+            $context = Get-AtlasoOnePasswordCredentialRecoveryContext -RepositoryRoot $RepositoryRoot
+            $plan = Get-AtlasoOnePasswordCredentialRecoveryPlan -Context $context
+            if (-not [string]::IsNullOrWhiteSpace($plan.BlockerCode) -or $plan.RequiresTermination) {
+                throw (New-AtlasoOnePasswordRecoveryException `
+                        -Code 'post-termination-state-unproven' `
+                        -Message 'The credential-bridge state could not be proven inactive after exact job termination; the marker and root were preserved.')
+            }
+        }
+        Assert-AtlasoOnePasswordCredentialRootOwnership -Context $context
+        Complete-AtlasoOnePasswordCredentialCleanup `
+            -MarkerPath $context.MarkerPath `
+            -Marker $context.Marker `
+            -ExpectedMarkerIdentity $context.MarkerIdentity `
+            -MarkerDirectory $context.MarkerDirectory `
+            -ExpectedMarkerDirectoryIdentity $context.MarkerDirectoryIdentity
+        $completedContext = Get-AtlasoOnePasswordCredentialRecoveryContext -RepositoryRoot $RepositoryRoot
+        $completedPlan = Get-AtlasoOnePasswordCredentialRecoveryPlan -Context $completedContext
+        if ($completedPlan.MarkerState -cne 'absent') {
+            throw (New-AtlasoOnePasswordRecoveryException `
+                    -Code 'marker-retirement-incomplete' `
+                    -Message 'The credential cleanup marker remained after reset; retained state was preserved for investigation.')
+        }
+        $completedPlan.Action = 'reset-complete'
+        return ConvertTo-AtlasoOnePasswordCredentialRecoveryStatus -Plan $completedPlan -Result 'reset'
+    }
+    catch {
+        if ($_.Exception.Data['AtlasoOnePasswordRecoverySafe']) {
+            throw
+        }
+        throw (New-AtlasoOnePasswordRecoveryException `
+                -Code 'reset-failed' `
+                -Message 'The retained credential bridge could not be reset safely; no unverified process or path was changed.')
+    }
+}
+
+<#
+.SYNOPSIS
+Retire a legacy credential marker only after a different Windows boot is proven.
+
+.PARAMETER RepositoryRoot
+Atlaso checkout owning the legacy compatibility marker.
+#>
+function Invoke-AtlasoLegacyOnePasswordCredentialCleanupRecovery {
+    param([Parameter(Mandatory = $true)][string]$RepositoryRoot)
+
+    try {
+        $markerPath = [System.IO.Path]::GetFullPath(
+            (Get-AtlasoOnePasswordCleanupMarkerPath -RepositoryRoot $RepositoryRoot)
+        )
+        $markerItem = Get-Item -LiteralPath $markerPath -Force -ErrorAction Stop
+        if (-not ($markerItem -is [System.IO.FileInfo]) -or
+            ($markerItem.Attributes -band [System.IO.FileAttributes]::ReparsePoint) -ne 0 -or
+            $markerItem.Length -gt 65536) {
+            throw 'invalid legacy marker file'
+        }
+        $marker = Get-Content -LiteralPath $markerPath -Raw -ErrorAction Stop |
+            ConvertFrom-Json -ErrorAction Stop
+        $properties = @($marker.PSObject.Properties.Name)
+        $expectedProperties = @('BootIdentity', 'Phase', 'RootPath', 'Schema')
+        if ($properties.Count -ne $expectedProperties.Count -or
+            (Compare-Object -ReferenceObject $expectedProperties -DifferenceObject $properties -CaseSensitive) -or
+            -not (Test-AtlasoOnePasswordMarkerInteger -Value $marker.Schema -Minimum 1 -Maximum 1) -or
+            -not ($marker.RootPath -is [string]) -or [string]::IsNullOrWhiteSpace($marker.RootPath) -or
+            -not ($marker.Phase -is [string]) -or [string]$marker.Phase -cnotin @('active', 'root-absent', 'retired')) {
+            throw 'invalid legacy marker schema'
+        }
+        $resolvedRoot = [System.IO.Path]::GetFullPath([string]$marker.RootPath).TrimEnd('\')
+        $resolvedTempRoot = [System.IO.Path]::GetFullPath([System.IO.Path]::GetTempPath()).TrimEnd('\')
+        if (-not ([System.IO.Path]::GetFullPath((Split-Path -Parent $resolvedRoot)).Equals(
+                    $resolvedTempRoot,
+                    [System.StringComparison]::OrdinalIgnoreCase
+                )) -or
+            (Split-Path -Leaf $resolvedRoot) -cnotmatch '^atlaso-onepassword-credentials-[0-9a-f]{32}$') {
+            throw 'invalid legacy root namespace'
+        }
+        Assert-AtlasoStrictDescendantPath `
+            -ParentPath $resolvedTempRoot `
+            -ChildPath $resolvedRoot `
+            -FailureMessage 'Invalid legacy credential root ancestry'
+        $rootPresent = $null -ne (Get-AtlasoOptionalOnePasswordRecoveryItem `
+                -Path $resolvedRoot `
+                -FailureCode 'root-state-unavailable' `
+                -FailureMessage 'The recorded credential bridge root state cannot be inspected safely.')
+        if ([string]$marker.Phase -cin @('root-absent', 'retired') -and $rootPresent) {
+            throw 'legacy terminal root present'
+        }
+        if ([string]$marker.Phase -ceq 'active') {
+            $bootRelation = Get-AtlasoWindowsBootIdentityState -BootIdentity $marker.BootIdentity
+            if ($bootRelation -cne 'prior') {
+                throw (New-AtlasoOnePasswordRecoveryException `
+                        -Code 'legacy-marker-current-boot' `
+                        -Message 'The legacy credential marker lacks process ownership evidence. Restart Windows, then rerun the original VMware workflow; no same-boot reset is permitted.')
+            }
+        }
+        Complete-AtlasoOnePasswordCredentialCleanup -MarkerPath $markerPath -Marker $marker
+    }
+    catch {
+        if ($_.Exception.Data['AtlasoOnePasswordRecoverySafe']) {
+            throw
+        }
+        throw (New-AtlasoOnePasswordRecoveryException `
+                -Code 'legacy-marker-invalid' `
+                -Message 'The legacy credential marker or root cannot be verified for compatibility recovery. Preserve it and obtain maintainer guidance.')
+    }
+}
+
+<#
+.SYNOPSIS
+Recover a retained 1Password bridge during an ordinary VMware workflow admission.
 
 .PARAMETER RepositoryRoot
 Atlaso checkout owning the durable marker.
@@ -1213,65 +2375,29 @@ Atlaso checkout owning the durable marker.
 function Invoke-AtlasoOnePasswordCredentialCleanupRecovery {
     param([Parameter(Mandatory = $true)][string]$RepositoryRoot)
 
-    $markerPath = Get-AtlasoOnePasswordCleanupMarkerPath -RepositoryRoot $RepositoryRoot
-    if (-not (Test-Path -LiteralPath $markerPath -PathType Leaf)) {
-        return
-    }
     try {
-        $marker = Get-Content -LiteralPath $markerPath -Raw -ErrorAction Stop | ConvertFrom-Json
-        $properties = @($marker.PSObject.Properties.Name)
-        $legacyMarker = $properties.Count -eq 4 -and
-            'Schema' -in $properties -and
-            'RootPath' -in $properties -and
-            'BootIdentity' -in $properties -and
-            'Phase' -in $properties -and
-            $marker.Schema -eq 1
-        $ownedMarker = $properties.Count -eq 11 -and
-            'Schema' -in $properties -and
-            'RootPath' -in $properties -and
-            'BootIdentity' -in $properties -and
-            'Phase' -in $properties -and
-            'OwnerProcessId' -in $properties -and
-            'OwnerProcessStartFileTimeUtc' -in $properties -and
-            'ProcessJobName' -in $properties -and
-            'ChildProcessId' -in $properties -and
-            'ChildProcessStartFileTimeUtc' -in $properties -and
-            'ProcessOwnershipPhase' -in $properties -and
-            'RootIdentity' -in $properties -and
-            $marker.Schema -eq 2
-        if ((-not $legacyMarker -and -not $ownedMarker) -or
-            $marker.Phase -notin @('active', 'root-absent', 'retired')) {
-            throw 'Invalid credential cleanup marker.'
-        }
-        $resolvedRoot = [System.IO.Path]::GetFullPath([string]$marker.RootPath)
-        $resolvedTempRoot = [System.IO.Path]::GetFullPath([System.IO.Path]::GetTempPath())
-        $tempRootPrefix = $resolvedTempRoot.TrimEnd(
-            [System.IO.Path]::DirectorySeparatorChar,
-            [System.IO.Path]::AltDirectorySeparatorChar
-        ) + [System.IO.Path]::DirectorySeparatorChar
-        if (-not $resolvedRoot.StartsWith($tempRootPrefix, [StringComparison]::OrdinalIgnoreCase) -or
-            (Split-Path -Leaf $resolvedRoot) -notmatch '^atlaso-onepassword-credentials-[0-9a-f]{32}$') {
-            throw 'Invalid credential cleanup root.'
-        }
-        if ($marker.Phase -ceq 'active') {
-            $bootIdentityState = Get-AtlasoWindowsBootIdentityState -BootIdentity $marker.BootIdentity
-            if ($bootIdentityState -ceq 'invalid') {
-                throw 'The retained credential marker has an invalid boot identity.'
-            }
-            if ($bootIdentityState -ceq 'current') {
-                if (-not $ownedMarker) {
-                    throw 'A Windows restart is required before retained legacy credential artifacts can be cleaned safely.'
-                }
-                Complete-AtlasoSameBootBoundedProcessRecovery `
-                    -Marker $marker `
-                    -JobNamePattern '^Local\\Atlaso-OnePassword-[0-9a-f]{32}$' `
-                    -ProcessDescription '1Password credential bridge'
-            }
-        }
-        Complete-AtlasoOnePasswordCredentialCleanup -MarkerPath $markerPath -Marker $marker
+        Invoke-AtlasoOnePasswordCredentialBridgeReset `
+            -RepositoryRoot $RepositoryRoot `
+            -Confirm:$false | Out-Null
     }
     catch {
-        throw 'A prior 1Password credential bridge has unresolved cleanup. Restart Windows, then rerun the workflow.'
+        $recoveryFailure = $_
+        if ($recoveryFailure.Exception.Data['AtlasoOnePasswordRecoveryCode'] -ceq 'legacy-marker') {
+            try {
+                Invoke-AtlasoLegacyOnePasswordCredentialCleanupRecovery -RepositoryRoot $RepositoryRoot
+                return
+            }
+            catch {
+                $recoveryFailure = $_
+            }
+        }
+        $safeMessage = if ($recoveryFailure.Exception.Data['AtlasoOnePasswordRecoverySafe']) {
+            $recoveryFailure.Exception.Message
+        }
+        else {
+            'The retained credential bridge state could not be classified safely.'
+        }
+        throw "A prior 1Password credential bridge has unresolved cleanup. Run .\scripts\windows\vmware\reset-atlaso-onepassword-credential-bridge.ps1 -Inspect, then follow its sanitized recovery guidance. Blocker: $safeMessage"
     }
 }
 
@@ -1437,7 +2563,8 @@ function Get-AtlasoOnePasswordCredentialPair {
             -CliPath $OnePasswordCliPath
     }
     Invoke-AtlasoOnePasswordCredentialCleanupRecovery -RepositoryRoot $RepositoryRoot
-    $bridgeRoot = Join-Path ([System.IO.Path]::GetTempPath()) (
+    $temporaryRoot = [System.IO.Path]::GetFullPath([System.IO.Path]::GetTempPath()).TrimEnd('\')
+    $bridgeRoot = Join-Path $temporaryRoot (
         "atlaso-onepassword-credentials-$([guid]::NewGuid().ToString('N'))"
     )
     [void][System.IO.Directory]::CreateDirectory($bridgeRoot)
@@ -1446,11 +2573,15 @@ function Get-AtlasoOnePasswordCredentialPair {
     $controllerProcess = Get-Process -Id $PID -ErrorAction Stop
     $processJobName = 'Local\Atlaso-OnePassword-' + [guid]::NewGuid().ToString('N')
     $cleanupMarker = [ordered]@{
-        Schema                       = 2
+        Schema                       = 3
         RootPath                     = [System.IO.Path]::GetFullPath($bridgeRoot)
         RootIdentity                 = Get-AtlasoPathIdentity `
             -Path $bridgeRoot `
             -Description '1Password credential bridge root'
+        TemporaryRootPath            = $temporaryRoot
+        TemporaryRootIdentity        = Get-AtlasoPathIdentity `
+            -Path $temporaryRoot `
+            -Description '1Password credential bridge temporary root'
         BootIdentity                 = Get-AtlasoWindowsBootIdentity
         Phase                        = 'active'
         OwnerProcessId               = $PID
@@ -1598,6 +2729,7 @@ Export-ModuleMember -Function @(
     'New-AtlasoOnePasswordIndexLock',
     'Initialize-AtlasoOnePasswordSdkRuntime',
     'Get-AtlasoOnePasswordCredentialBridgeError',
+    'Invoke-AtlasoOnePasswordCredentialBridgeReset',
     'Remove-AtlasoOnePasswordCredentialBridge',
     'Invoke-AtlasoBoundedStreamingProcess',
     'Get-AtlasoOnePasswordCredentialPair'
