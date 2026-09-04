@@ -56,6 +56,9 @@ an already completed terminal phase, and a repeated reset are successful no-ops.
 
 The reset does not depend on the invoking shell's current `TEMP` or `TMP`; use the same checkout even when those
 environment variables changed after the interrupted workflow.
+Exact schema-2 markers written by the preceding implementation retain the same reset support; recovery derives their
+original temporary parent from the identity-pinned bridge path. Newly created schema-3 markers also pin that parent's
+filesystem identity.
 
 ## Terminate an exact owned job
 

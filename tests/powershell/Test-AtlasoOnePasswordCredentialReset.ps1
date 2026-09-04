@@ -49,6 +49,9 @@ Create a valid schema-3 marker payload for a synthetic recovery case.
 .PARAMETER RootPath
 Exact synthetic bridge root.
 
+.PARAMETER Schema
+Supported marker schema version to construct.
+
 .PARAMETER Phase
 Durable cleanup phase.
 
@@ -76,6 +79,7 @@ Whether child ownership was durably prepared or assigned.
 function New-TestCredentialMarker {
     param(
         [Parameter(Mandatory = $true)][string]$RootPath,
+        [ValidateSet(2, 3)][int]$Schema = 3,
         [ValidateSet('active', 'root-absent', 'retired')][string]$Phase = 'active',
         [string]$BootIdentity = (Get-AtlasoWindowsBootIdentity),
         [int]$OwnerProcessId = [int]::MaxValue,
@@ -97,12 +101,10 @@ function New-TestCredentialMarker {
         param([string]$Path)
         Get-AtlasoPathIdentity -Path $Path -Description 'Synthetic temporary root'
     } $temporaryRootPath
-    return [ordered]@{
-        Schema                       = 3
+    $marker = [ordered]@{
+        Schema                       = $Schema
         RootPath                     = [System.IO.Path]::GetFullPath($RootPath)
         RootIdentity                 = $rootIdentity
-        TemporaryRootPath            = $temporaryRootPath
-        TemporaryRootIdentity        = $temporaryRootIdentity
         BootIdentity                 = $BootIdentity
         Phase                        = $Phase
         OwnerProcessId               = $OwnerProcessId
@@ -112,6 +114,11 @@ function New-TestCredentialMarker {
         ChildProcessStartFileTimeUtc = $ChildProcessStartFileTimeUtc
         ProcessOwnershipPhase        = $ProcessOwnershipPhase
     }
+    if ($Schema -eq 3) {
+        $marker['TemporaryRootPath'] = $temporaryRootPath
+        $marker['TemporaryRootIdentity'] = $temporaryRootIdentity
+    }
+    return $marker
 }
 
 <#
@@ -301,6 +308,45 @@ finally {
     Remove-TestCredentialState -RootPath $changedEnvironmentRoot
     if (Test-Path -LiteralPath $alternateShellTemp -PathType Container) {
         [System.IO.Directory]::Delete($alternateShellTemp, $true)
+    }
+}
+
+$schema2Root = New-TestCredentialBridgeRoot
+$schema2AlternateTemp = Join-Path ([System.IO.Path]::GetTempPath()) (
+    'alternate-schema2-reset-shell-' + [guid]::NewGuid().ToString('N')
+)
+[void][System.IO.Directory]::CreateDirectory($schema2AlternateTemp)
+try {
+    $schema2PreviousBoot = ([long](Get-AtlasoWindowsBootIdentity) - 1).ToString(
+        [System.Globalization.CultureInfo]::InvariantCulture
+    )
+    Write-TestCredentialMarker -Marker (New-TestCredentialMarker `
+            -RootPath $schema2Root `
+            -Schema 2 `
+            -BootIdentity $schema2PreviousBoot)
+    $schema2OriginalTemp = $env:TEMP
+    $schema2OriginalTmp = $env:TMP
+    try {
+        $env:TEMP = $schema2AlternateTemp
+        $env:TMP = $schema2AlternateTemp
+        $schema2Result = Invoke-AtlasoOnePasswordCredentialBridgeReset `
+            -RepositoryRoot $repositoryRoot `
+            -Confirm:$false
+    }
+    finally {
+        $env:TEMP = $schema2OriginalTemp
+        $env:TMP = $schema2OriginalTmp
+    }
+    if ($schema2Result.Result -cne 'reset' -or
+        (Test-Path -LiteralPath $markerPath) -or
+        (Test-Path -LiteralPath $schema2Root)) {
+        throw 'Previous-boot schema-2 compatibility recovery did not complete.'
+    }
+}
+finally {
+    Remove-TestCredentialState -RootPath $schema2Root
+    if (Test-Path -LiteralPath $schema2AlternateTemp -PathType Container) {
+        [System.IO.Directory]::Delete($schema2AlternateTemp, $true)
     }
 }
 

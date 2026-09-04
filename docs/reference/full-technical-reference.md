@@ -1677,6 +1677,10 @@ After the identity-matching root is absent and its parent directory metadata is 
 `root-absent`, then `retired`, removes the exact marker, and flushes the marker directory. Missing and already-terminal
 state is idempotent.
 
+Exact schema-2 markers from the preceding implementation remain recoverable. Recovery derives their creation-time
+temporary parent from the identity-pinned bridge path instead of the current shell environment; schema-3 additionally
+pins that parent's filesystem identity.
+
 Current-boot legacy markers and ambiguous process evidence require a Windows restart followed by the original VMware
 workflow. Reused identities are never terminated. Malformed markers, reparse points, root or marker replacement,
 inaccessible identities, and terminal markers paired with a present root remain preserved for maintainer

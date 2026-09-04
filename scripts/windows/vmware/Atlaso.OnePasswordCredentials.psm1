@@ -1091,7 +1091,7 @@ function Test-AtlasoOnePasswordMarkerInteger {
 
 <#
 .SYNOPSIS
-Read and fully validate the current checkout's schema-3 recovery marker.
+Read and fully validate the current checkout's schema-2 or schema-3 recovery marker.
 
 .PARAMETER RepositoryRoot
 Exact Atlaso checkout that owns the fixed cleanup marker.
@@ -1196,7 +1196,7 @@ function Get-AtlasoOnePasswordCredentialRecoveryContext {
                     -Code 'legacy-marker' `
                     -Message 'Legacy credential cleanup markers cannot be reset on the current boot. Restart Windows, then rerun the original VMware workflow so its compatibility recovery can retire the marker.')
         }
-        $expectedProperties = @(
+        $schema2Properties = @(
             'BootIdentity',
             'ChildProcessId',
             'ChildProcessStartFileTimeUtc',
@@ -1207,15 +1207,23 @@ function Get-AtlasoOnePasswordCredentialRecoveryContext {
             'ProcessOwnershipPhase',
             'RootIdentity',
             'RootPath',
-            'Schema',
+            'Schema'
+        )
+        $schema3Properties = @(
+            $schema2Properties
             'TemporaryRootIdentity',
             'TemporaryRootPath'
         )
-        if ($properties.Count -ne $expectedProperties.Count -or
-            (Compare-Object -ReferenceObject $expectedProperties -DifferenceObject $properties -CaseSensitive)) {
+        $isSchema2 = $properties.Count -eq $schema2Properties.Count -and
+            -not (Compare-Object -ReferenceObject $schema2Properties -DifferenceObject $properties -CaseSensitive) -and
+            (Test-AtlasoOnePasswordMarkerInteger -Value $marker.Schema -Minimum 2 -Maximum 2)
+        $isSchema3 = $properties.Count -eq $schema3Properties.Count -and
+            -not (Compare-Object -ReferenceObject $schema3Properties -DifferenceObject $properties -CaseSensitive) -and
+            (Test-AtlasoOnePasswordMarkerInteger -Value $marker.Schema -Minimum 3 -Maximum 3)
+        if (-not $isSchema2 -and -not $isSchema3) {
             throw (New-AtlasoOnePasswordRecoveryException `
                     -Code 'marker-schema-invalid' `
-                    -Message 'The credential cleanup marker does not match the exact supported schema-3 contract.')
+                    -Message 'The credential cleanup marker does not match an exact supported schema-2 or schema-3 contract.')
         }
         $bootIdentityTicks = 0L
         $validBootIdentity = $marker.BootIdentity -is [string] -and
@@ -1226,14 +1234,15 @@ function Get-AtlasoOnePasswordCredentialRecoveryContext {
                 [System.Globalization.CultureInfo]::InvariantCulture,
                 [ref]$bootIdentityTicks
             ) -and $bootIdentityTicks -gt 0
-        if (-not (Test-AtlasoOnePasswordMarkerInteger -Value $marker.Schema -Minimum 3 -Maximum 3) -or
-            -not ($marker.RootPath -is [string]) -or [string]::IsNullOrWhiteSpace($marker.RootPath) -or
+        if (-not ($marker.RootPath -is [string]) -or [string]::IsNullOrWhiteSpace($marker.RootPath) -or
             -not ($marker.RootIdentity -is [string]) -or
             [string]$marker.RootIdentity -cnotmatch '^[0-9A-F]{8}:[0-9A-F]{16}$' -or
-            -not ($marker.TemporaryRootPath -is [string]) -or
-            [string]::IsNullOrWhiteSpace($marker.TemporaryRootPath) -or
-            -not ($marker.TemporaryRootIdentity -is [string]) -or
-            [string]$marker.TemporaryRootIdentity -cnotmatch '^[0-9A-F]{8}:[0-9A-F]{16}$' -or
+            ($isSchema3 -and (
+                -not ($marker.TemporaryRootPath -is [string]) -or
+                [string]::IsNullOrWhiteSpace($marker.TemporaryRootPath) -or
+                -not ($marker.TemporaryRootIdentity -is [string]) -or
+                [string]$marker.TemporaryRootIdentity -cnotmatch '^[0-9A-F]{8}:[0-9A-F]{16}$'
+            )) -or
             -not $validBootIdentity -or
             -not ($marker.Phase -is [string]) -or [string]$marker.Phase -cnotin @('active', 'root-absent', 'retired') -or
             -not (Test-AtlasoOnePasswordMarkerInteger -Value $marker.OwnerProcessId -Minimum 1 -Maximum ([int]::MaxValue)) -or
@@ -1244,7 +1253,7 @@ function Get-AtlasoOnePasswordCredentialRecoveryContext {
             [string]$marker.ProcessOwnershipPhase -cnotin @('prepared', 'assigned')) {
             throw (New-AtlasoOnePasswordRecoveryException `
                     -Code 'marker-schema-invalid' `
-                    -Message 'The credential cleanup marker does not match the exact supported schema-3 contract.')
+                    -Message 'The credential cleanup marker does not match an exact supported schema-2 or schema-3 contract.')
         }
         $preparedOwnership = [string]$marker.ProcessOwnershipPhase -ceq 'prepared'
         if (($preparedOwnership -and (
@@ -1262,7 +1271,12 @@ function Get-AtlasoOnePasswordCredentialRecoveryContext {
         try {
             $recordedRoot = [string]$marker.RootPath
             $resolvedRoot = [System.IO.Path]::GetFullPath($recordedRoot).TrimEnd('\')
-            $recordedTempRoot = [string]$marker.TemporaryRootPath
+            $recordedTempRoot = if ($isSchema3) {
+                [string]$marker.TemporaryRootPath
+            }
+            else {
+                Split-Path -Parent $resolvedRoot
+            }
             $resolvedTempRoot = [System.IO.Path]::GetFullPath($recordedTempRoot).TrimEnd('\')
         }
         catch {
@@ -1274,10 +1288,11 @@ function Get-AtlasoOnePasswordCredentialRecoveryContext {
                 $resolvedRoot,
                 [System.StringComparison]::OrdinalIgnoreCase
             ) -or
-            -not $recordedTempRoot.TrimEnd('\').Equals(
-                $resolvedTempRoot,
-                [System.StringComparison]::OrdinalIgnoreCase
-            ) -or
+            ($isSchema3 -and
+                -not $recordedTempRoot.TrimEnd('\').Equals(
+                    $resolvedTempRoot,
+                    [System.StringComparison]::OrdinalIgnoreCase
+                )) -or
             -not ([System.IO.Path]::GetFullPath((Split-Path -Parent $resolvedRoot)).Equals(
                     $resolvedTempRoot,
                     [System.StringComparison]::OrdinalIgnoreCase
@@ -1298,18 +1313,20 @@ function Get-AtlasoOnePasswordCredentialRecoveryContext {
                     -Code 'root-ancestry-invalid' `
                     -Message 'The recorded credential bridge root ancestry is invalid or contains a reparse point.')
         }
-        try {
-            if ((Get-AtlasoPathIdentity `
-                    -Path $resolvedTempRoot `
-                    -Description '1Password credential bridge temporary root') -cne
-                [string]$marker.TemporaryRootIdentity) {
-                throw 'temporary root changed'
+        if ($isSchema3) {
+            try {
+                if ((Get-AtlasoPathIdentity `
+                        -Path $resolvedTempRoot `
+                        -Description '1Password credential bridge temporary root') -cne
+                    [string]$marker.TemporaryRootIdentity) {
+                    throw 'temporary root changed'
+                }
             }
-        }
-        catch {
-            throw (New-AtlasoOnePasswordRecoveryException `
-                    -Code 'temporary-root-identity-mismatch' `
-                    -Message 'The recorded credential bridge temporary root changed; the marker and root were preserved.')
+            catch {
+                throw (New-AtlasoOnePasswordRecoveryException `
+                        -Code 'temporary-root-identity-mismatch' `
+                        -Message 'The recorded credential bridge temporary root changed; the marker and root were preserved.')
+            }
         }
         $rootItem = Get-AtlasoOptionalOnePasswordRecoveryItem `
             -Path $resolvedRoot `
@@ -1354,7 +1371,7 @@ function Get-AtlasoOnePasswordCredentialRecoveryContext {
                     -Message 'The credential cleanup marker has an invalid Windows boot identity.')
         }
         return [pscustomobject][ordered]@{
-            MarkerState             = 'schema-3'
+            MarkerState             = if ($isSchema3) { 'schema-3' } else { 'schema-2' }
             MarkerPath              = $markerPath
             Marker                  = $marker
             MarkerIdentity          = $markerIdentity
@@ -1429,14 +1446,23 @@ function Assert-AtlasoOnePasswordCredentialRootOwnership {
 
     try {
         $rootPath = [string]$Context.Marker.RootPath
-        $tempRoot = [System.IO.Path]::GetFullPath(
-            [string]$Context.Marker.TemporaryRootPath
-        ).TrimEnd('\')
+        $markerProperties = @($Context.Marker.PSObject.Properties.Name)
+        $hasTemporaryRootIdentity = 'TemporaryRootPath' -in $markerProperties -and
+            'TemporaryRootIdentity' -in $markerProperties
+        $tempRoot = if ($hasTemporaryRootIdentity) {
+            [System.IO.Path]::GetFullPath(
+                [string]$Context.Marker.TemporaryRootPath
+            ).TrimEnd('\')
+        }
+        else {
+            [System.IO.Path]::GetFullPath((Split-Path -Parent $rootPath)).TrimEnd('\')
+        }
         Assert-AtlasoStrictDescendantPath `
             -ParentPath $tempRoot `
             -ChildPath $rootPath `
             -FailureMessage 'Invalid credential bridge root ancestry'
-        if ((Get-AtlasoPathIdentity `
+        if ($hasTemporaryRootIdentity -and
+            (Get-AtlasoPathIdentity `
                 -Path $tempRoot `
                 -Description '1Password credential bridge temporary root') -cne
             [string]$Context.Marker.TemporaryRootIdentity) {
@@ -1468,7 +1494,7 @@ function Assert-AtlasoOnePasswordCredentialRootOwnership {
 
 <#
 .SYNOPSIS
-Classify the safe action for one fully validated schema-3 marker.
+Classify the safe action for one fully validated schema-2 or schema-3 marker.
 
 .PARAMETER Context
 Validated credential-recovery context containing the durable marker.
@@ -1639,7 +1665,7 @@ function Get-AtlasoOnePasswordCredentialRecoveryPlan {
 Terminate the exact recorded credential job and prove its captured processes inactive.
 
 .PARAMETER Context
-Validated current-boot schema-3 recovery context.
+Validated current-boot schema-2 or schema-3 recovery context.
 #>
 function Stop-AtlasoOnePasswordCredentialRecoveryJob {
     param([Parameter(Mandatory = $true)][object]$Context)
@@ -1798,7 +1824,7 @@ function Complete-AtlasoOnePasswordCredentialCleanup {
         [string]$Marker.TemporaryRootPath
     }
     else {
-        ''
+        Split-Path -Parent ([string]$Marker.RootPath)
     }
     $expectedTemporaryRootIdentity = if ('TemporaryRootIdentity' -in $markerProperties) {
         [string]$Marker.TemporaryRootIdentity
@@ -1901,7 +1927,7 @@ function ConvertTo-AtlasoOnePasswordCredentialRecoveryStatus {
 
 <#
 .SYNOPSIS
-Inspect or safely reset the current checkout's retained schema-3 credential bridge.
+Inspect or safely reset the current checkout's retained schema-2 or schema-3 credential bridge.
 
 .PARAMETER RepositoryRoot
 Exact Atlaso checkout that owns the fixed cleanup marker.

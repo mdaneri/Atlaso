@@ -3,8 +3,8 @@
 Inspect or safely reset this checkout's retained 1Password credential bridge.
 
 .DESCRIPTION
-Uses only the fixed checkout-local schema-3 marker and its boot, process-job,
-process-start, creation-time temporary-root, ancestry, and filesystem-identity evidence. Inspection and
+Uses only the fixed checkout-local schema-2 or schema-3 marker and its boot,
+process-job, process-start, creation-time temporary-root, ancestry, and filesystem-identity evidence. Inspection and
 WhatIf never open 1Password, terminate a process, or change retained state.
 
 .PARAMETER Inspect
