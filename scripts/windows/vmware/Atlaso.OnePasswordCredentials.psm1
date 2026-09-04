@@ -953,17 +953,20 @@ function Remove-AtlasoOnePasswordCredentialBridge {
     catch {
         throw 'The 1Password credential bridge root ancestry is invalid or contains a reparse point.'
     }
-    if (-not [string]::IsNullOrWhiteSpace($ExpectedTemporaryRootIdentity) -and
-        (Get-AtlasoPathIdentity `
-            -Path $resolvedTempRoot `
-            -Description '1Password credential bridge temporary root') -cne
-        $ExpectedTemporaryRootIdentity) {
-        throw 'The 1Password credential bridge temporary root identity changed before deletion.'
-    }
-    if (Test-Path -LiteralPath $resolvedBridgeRoot) {
-        $bridgeItem = Get-Item -LiteralPath $resolvedBridgeRoot -Force
+    $bridgeItem = Get-AtlasoOptionalOnePasswordRecoveryItem `
+        -Path $resolvedBridgeRoot `
+        -FailureCode 'root-state-unavailable' `
+        -FailureMessage 'The recorded credential bridge root state cannot be inspected safely.'
+    if ($null -ne $bridgeItem) {
         if (($bridgeItem.Attributes -band [System.IO.FileAttributes]::ReparsePoint) -ne 0) {
             throw 'Refusing to remove a reparse-point 1Password credential bridge root.'
+        }
+        if (-not [string]::IsNullOrWhiteSpace($ExpectedTemporaryRootIdentity) -and
+            (Get-AtlasoPathIdentity `
+                -Path $resolvedTempRoot `
+                -Description '1Password credential bridge temporary root') -cne
+            $ExpectedTemporaryRootIdentity) {
+            throw 'The 1Password credential bridge temporary root identity changed before deletion.'
         }
         if (-not [string]::IsNullOrWhiteSpace($ExpectedRootIdentity) -and
             (Get-AtlasoPathIdentity `
@@ -1313,21 +1316,6 @@ function Get-AtlasoOnePasswordCredentialRecoveryContext {
                     -Code 'root-ancestry-invalid' `
                     -Message 'The recorded credential bridge root ancestry is invalid or contains a reparse point.')
         }
-        if ($isSchema3) {
-            try {
-                if ((Get-AtlasoPathIdentity `
-                        -Path $resolvedTempRoot `
-                        -Description '1Password credential bridge temporary root') -cne
-                    [string]$marker.TemporaryRootIdentity) {
-                    throw 'temporary root changed'
-                }
-            }
-            catch {
-                throw (New-AtlasoOnePasswordRecoveryException `
-                        -Code 'temporary-root-identity-mismatch' `
-                        -Message 'The recorded credential bridge temporary root changed; the marker and root were preserved.')
-            }
-        }
         $rootItem = Get-AtlasoOptionalOnePasswordRecoveryItem `
             -Path $resolvedRoot `
             -FailureCode 'root-state-unavailable' `
@@ -1335,6 +1323,21 @@ function Get-AtlasoOnePasswordCredentialRecoveryContext {
             -ItemReader $RootItemReader
         $rootState = 'absent'
         if ($null -ne $rootItem) {
+            if ($isSchema3) {
+                try {
+                    if ((Get-AtlasoPathIdentity `
+                            -Path $resolvedTempRoot `
+                            -Description '1Password credential bridge temporary root') -cne
+                        [string]$marker.TemporaryRootIdentity) {
+                        throw 'temporary root changed'
+                    }
+                }
+                catch {
+                    throw (New-AtlasoOnePasswordRecoveryException `
+                            -Code 'temporary-root-identity-mismatch' `
+                            -Message 'The recorded credential bridge temporary root changed; the marker and root were preserved.')
+                }
+            }
             if (-not ($rootItem -is [System.IO.DirectoryInfo]) -or
                 ($rootItem.Attributes -band [System.IO.FileAttributes]::ReparsePoint) -ne 0) {
                 throw (New-AtlasoOnePasswordRecoveryException `
@@ -1461,17 +1464,17 @@ function Assert-AtlasoOnePasswordCredentialRootOwnership {
             -ParentPath $tempRoot `
             -ChildPath $rootPath `
             -FailureMessage 'Invalid credential bridge root ancestry'
-        if ($hasTemporaryRootIdentity -and
+        $rootItem = Get-AtlasoOptionalOnePasswordRecoveryItem `
+            -Path $rootPath `
+            -FailureCode 'root-state-unavailable' `
+            -FailureMessage 'The recorded credential bridge root state cannot be inspected safely.'
+        if ($null -ne $rootItem -and $hasTemporaryRootIdentity -and
             (Get-AtlasoPathIdentity `
                 -Path $tempRoot `
                 -Description '1Password credential bridge temporary root') -cne
             [string]$Context.Marker.TemporaryRootIdentity) {
             throw 'temporary root changed'
         }
-        $rootItem = Get-AtlasoOptionalOnePasswordRecoveryItem `
-            -Path $rootPath `
-            -FailureCode 'root-state-unavailable' `
-            -FailureMessage 'The recorded credential bridge root state cannot be inspected safely.'
         if ($Context.RootState -ceq 'absent') {
             if ($null -ne $rootItem) {
                 throw 'root appeared'

@@ -395,6 +395,35 @@ foreach ($terminalPhase in @('root-absent', 'retired')) {
     }
 }
 
+$missingTemporaryParent = Join-Path ([System.IO.Path]::GetTempPath()) (
+    'atlaso-reset-missing-parent-' + [guid]::NewGuid().ToString('N')
+)
+$missingParentTerminalRoot = Join-Path $missingTemporaryParent (
+    'atlaso-onepassword-credentials-' + [guid]::NewGuid().ToString('N')
+)
+[void][System.IO.Directory]::CreateDirectory($missingParentTerminalRoot)
+try {
+    $missingParentMarker = New-TestCredentialMarker `
+        -RootPath $missingParentTerminalRoot `
+        -Phase root-absent
+    [System.IO.Directory]::Delete($missingTemporaryParent, $true)
+    Write-TestCredentialMarker -Marker $missingParentMarker
+    $missingParentResult = Invoke-AtlasoOnePasswordCredentialBridgeReset `
+        -RepositoryRoot $repositoryRoot `
+        -Confirm:$false
+    if ($missingParentResult.Result -cne 'reset' -or
+        (Test-Path -LiteralPath $markerPath) -or
+        (Test-Path -LiteralPath $missingTemporaryParent)) {
+        throw 'A terminal marker could not retire after its temporary parent disappeared.'
+    }
+}
+finally {
+    Remove-TestCredentialState -RootPath $missingParentTerminalRoot
+    if (Test-Path -LiteralPath $missingTemporaryParent -PathType Container) {
+        [System.IO.Directory]::Delete($missingTemporaryParent, $true)
+    }
+}
+
 $interruptedRoot = New-TestCredentialBridgeRoot
 try {
     $interruptedMarker = New-TestCredentialMarker -RootPath $interruptedRoot
