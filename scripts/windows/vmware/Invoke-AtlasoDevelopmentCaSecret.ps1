@@ -29,6 +29,7 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
+[Environment]::SetEnvironmentVariable('OP_SERVICE_ACCOUNT_TOKEN', $null)
 . (Join-Path $PSScriptRoot 'Atlaso.WorkstationFirstBoot.ps1')
 
 $privateKey = [Environment]::GetEnvironmentVariable('ATLASO_DEVELOPMENT_ROOT_CA_PRIVATE_KEY')
