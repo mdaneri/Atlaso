@@ -1598,5 +1598,6 @@ Export-ModuleMember -Function @(
     'Initialize-AtlasoOnePasswordSdkRuntime',
     'Get-AtlasoOnePasswordCredentialBridgeError',
     'Remove-AtlasoOnePasswordCredentialBridge',
+    'Invoke-AtlasoBoundedStreamingProcess',
     'Get-AtlasoOnePasswordCredentialPair'
 )

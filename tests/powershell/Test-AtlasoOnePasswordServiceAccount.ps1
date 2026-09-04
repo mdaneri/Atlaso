@@ -211,6 +211,7 @@ $present = -not [string]::IsNullOrWhiteSpace($env:OP_SERVICE_ACCOUNT_TOKEN)
     $env:OP_SERVICE_ACCOUNT_TOKEN = $null
     & (Get-Process -Id $PID).Path -NoLogo -NoProfile -NonInteractive -File $launcherPath `
         -TokenFile $tokenPath `
+        -RepositoryRoot $repositoryRoot `
         -FilePath (Get-Process -Id $PID).Path `
         -ArgumentsPath $argumentsPath `
         -WorkingDirectory $testRoot
@@ -227,6 +228,7 @@ $present = -not [string]::IsNullOrWhiteSpace($env:OP_SERVICE_ACCOUNT_TOKEN)
     [System.IO.File]::WriteAllText($corruptPath, 'not-dpapi-ciphertext')
     & (Get-Process -Id $PID).Path -NoLogo -NoProfile -NonInteractive -File $launcherPath `
         -TokenFile $corruptPath `
+        -RepositoryRoot $repositoryRoot `
         -FilePath (Get-Process -Id $PID).Path `
         -ArgumentsPath $argumentsPath `
         -WorkingDirectory $testRoot 2>&1 | Out-Null

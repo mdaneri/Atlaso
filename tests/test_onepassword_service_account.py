@@ -58,6 +58,8 @@ def test_token_contract_is_never_transportable_as_plaintext() -> None:
     assert 'os.environ.pop("OP_SERVICE_ACCOUNT_TOKEN", None)' in sdk_child
     assert 'os.environ.pop("OP_SERVICE_ACCOUNT_TOKEN", None)' in test_vm_child
     assert "TokenFile" in launcher
+    assert "[Parameter(Mandatory = $true)][string]$RepositoryRoot" in launcher
+    assert "Resolve-AtlasoOnePasswordServiceAccountTokenFile `" in launcher
     assert "PlainTextToken" not in launcher
     assert "ReparsePoint" in module
     assert "ConvertTo-SecureString -String $tokenCiphertext" in sdk_child
@@ -109,6 +111,24 @@ def test_virtualization_prerelease_rejects_inherited_service_tokens_first() -> N
     )
 
     assert guard < first_subprocess_helper
+
+
+def test_photon_and_deployment_entry_points_bound_service_tokens() -> None:
+    """Reject inherited build tokens and bound the decrypting deploy process tree."""
+    root = Path("scripts/windows/vmware")
+    build = (root / "build-photon-image.ps1").read_text(encoding="utf-8")
+    deploy = (root / "deploy-wheel.ps1").read_text(encoding="utf-8")
+
+    build_guard = build.index("if ($env:OP_SERVICE_ACCOUNT_TOKEN)")
+    first_build_helper = build.index(". (Join-Path $PSScriptRoot")
+    assert build_guard < first_build_helper
+
+    password_deploy = deploy.split("function Invoke-PasswordBackedDeploy", 1)[1].split(
+        "if ($env:DEFAULT_ADMIN_PASSWORD)", 1
+    )[0]
+    assert "Invoke-AtlasoBoundedStreamingProcess `" in password_deploy
+    assert "-TimeoutSeconds $DeploymentTimeoutSeconds `" in password_deploy
+    assert "'-RepositoryRoot', $WorkingDirectory" in password_deploy
 
 
 def test_service_account_access_depends_only_on_the_exact_environment() -> None:

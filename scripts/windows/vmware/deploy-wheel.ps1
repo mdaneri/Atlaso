@@ -1092,16 +1092,19 @@ finally:
                 ($deployArguments | ConvertTo-Json -Compress),
                 [System.Text.UTF8Encoding]::new($false)
             )
-            Invoke-CheckedCommand `
+            Invoke-AtlasoBoundedStreamingProcess `
                 -FilePath (Get-Process -Id $PID).Path `
-                -Arguments @(
+                -ArgumentList @(
                     '-NoLogo', '-NoProfile', '-NonInteractive', '-File',
                     (Join-Path $PSScriptRoot 'Invoke-AtlasoServiceAccountCommand.ps1'),
                     '-TokenFile', $ServiceAccountTokenFile,
+                    '-RepositoryRoot', $WorkingDirectory,
                     '-FilePath', $PythonCommand,
                     '-ArgumentsPath', $argumentsPath,
                     '-WorkingDirectory', $WorkingDirectory
-                )
+                ) `
+                -TimeoutSeconds $DeploymentTimeoutSeconds `
+                -Action 'Password-backed service-account deployment'
         }
         else {
             Invoke-CheckedCommand `

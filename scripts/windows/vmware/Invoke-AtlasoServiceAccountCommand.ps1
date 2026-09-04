@@ -10,6 +10,9 @@ every exit path. The token is never accepted as an argument or written to output
 .PARAMETER TokenFile
 Current-user DPAPI ciphertext file containing the service-account token.
 
+.PARAMETER RepositoryRoot
+Atlaso checkout that owns the permitted .atlaso-local token storage boundary.
+
 .PARAMETER FilePath
 Exact executable to invoke.
 
@@ -22,6 +25,7 @@ Exact working directory for the child command.
 [CmdletBinding()]
 param(
     [Parameter(Mandatory = $true)][string]$TokenFile,
+    [Parameter(Mandatory = $true)][string]$RepositoryRoot,
     [Parameter(Mandatory = $true)][string]$FilePath,
     [Parameter(Mandatory = $true)][string]$ArgumentsPath,
     [Parameter(Mandatory = $true)][string]$WorkingDirectory
@@ -34,7 +38,9 @@ $serviceAccountTokenText = $null
 $exitCode = 1
 $env:OP_SERVICE_ACCOUNT_TOKEN = $null
 try {
-    $resolvedTokenFile = Assert-AtlasoOnePasswordServiceAccountTokenFile -Path $TokenFile
+    $resolvedTokenFile = Resolve-AtlasoOnePasswordServiceAccountTokenFile `
+        -TokenFile $TokenFile `
+        -RepositoryRoot $RepositoryRoot
     if (-not (Test-Path -LiteralPath $FilePath -PathType Leaf) -or
         -not (Test-Path -LiteralPath $ArgumentsPath -PathType Leaf) -or
         -not (Test-Path -LiteralPath $WorkingDirectory -PathType Container)) {
