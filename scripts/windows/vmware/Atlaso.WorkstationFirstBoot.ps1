@@ -714,22 +714,38 @@ Positive process identifier read from a durable ownership marker.
 
 .PARAMETER StartFileTimeUtc
 Invariant Windows file time captured before the owned process was resumed.
+
+.PARAMETER ProcessReader
+Optional terminating process lookup used by focused fail-closed tests.
 #>
 function Get-AtlasoRecordedProcessIdentityState {
     param(
         [Parameter(Mandatory = $true)][ValidateRange(1, [int]::MaxValue)][int]$ProcessId,
-        [Parameter(Mandatory = $true)][ValidateRange(1, [long]::MaxValue)][long]$StartFileTimeUtc
+        [Parameter(Mandatory = $true)][ValidateRange(1, [long]::MaxValue)][long]$StartFileTimeUtc,
+        [scriptblock]$ProcessReader = {
+            param([int]$Id)
+            Get-Process -Id $Id -ErrorAction Stop
+        }
     )
 
-    $process = Get-Process -Id $ProcessId -ErrorAction SilentlyContinue
-    if ($null -eq $process) {
-        return 'absent'
+    try {
+        $process = & $ProcessReader $ProcessId
+    }
+    catch {
+        if ($_.FullyQualifiedErrorId -ceq
+            'NoProcessFoundForGivenId,Microsoft.PowerShell.Commands.GetProcessCommand') {
+            return 'absent'
+        }
+        throw 'Recorded process identity could not be inspected safely.'
     }
     try {
         $actualStart = $process.StartTime.ToUniversalTime().ToFileTimeUtc()
     }
     catch {
         throw 'Recorded process start identity could not be read.'
+    }
+    finally {
+        $process.Dispose()
     }
     if ($actualStart -ne $StartFileTimeUtc) {
         return 'reused'

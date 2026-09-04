@@ -192,6 +192,29 @@ if ($null -eq $ancestryFailure -or
     throw 'An inaccessible path-ancestry entry did not fail closed.'
 }
 
+$processLookupFailure = $null
+try {
+    & $credentialModule {
+        Get-AtlasoRecordedProcessIdentityState `
+            -ProcessId $PID `
+            -StartFileTimeUtc 1 `
+            -ProcessReader {
+                param([int]$Id)
+                throw [System.UnauthorizedAccessException]::new(
+                    "Synthetic inaccessible process $Id"
+                )
+            }
+    }
+}
+catch {
+    $processLookupFailure = $_
+}
+if ($null -eq $processLookupFailure -or
+    $processLookupFailure.Exception.Message -notmatch 'could not be inspected safely' -or
+    $processLookupFailure.Exception.Message -match 'Synthetic inaccessible process') {
+    throw 'An inaccessible recorded process was not converted to a sanitized fail-closed result.'
+}
+
 $standaloneScript = Join-Path $repositoryRoot `
     'scripts\windows\vmware\reset-atlaso-onepassword-credential-bridge.ps1'
 $standaloneOutput = & (Get-Process -Id $PID).Path `
