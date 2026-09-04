@@ -10,6 +10,9 @@ clears it on every exit path.
 .PARAMETER TokenFile
 Current-user DPAPI ciphertext file containing the service-account token.
 
+.PARAMETER RepositoryRoot
+Atlaso checkout that owns the permitted .atlaso-local token storage boundary.
+
 .PARAMETER OpPath
 Exact verified 1Password CLI executable.
 
@@ -28,6 +31,7 @@ Exact newly created VMX required by the Stage action.
 [CmdletBinding()]
 param(
     [Parameter(Mandatory = $true)][string]$TokenFile,
+    [Parameter(Mandatory = $true)][string]$RepositoryRoot,
     [Parameter(Mandatory = $true)][string]$OpPath,
     [Parameter(Mandatory = $true)][string]$EnvironmentId,
     [Parameter(Mandatory = $true)][ValidateSet('Validate', 'Stage')][string]$Action,
@@ -42,7 +46,9 @@ $serviceAccountTokenText = $null
 $exitCode = 1
 $env:OP_SERVICE_ACCOUNT_TOKEN = $null
 try {
-    $resolvedTokenFile = Assert-AtlasoOnePasswordServiceAccountTokenFile -Path $TokenFile
+    $resolvedTokenFile = Resolve-AtlasoOnePasswordServiceAccountTokenFile `
+        -TokenFile $TokenFile `
+        -RepositoryRoot $RepositoryRoot
     $tokenCiphertext = [System.IO.File]::ReadAllText($resolvedTokenFile)
     $tokenSecureString = ConvertTo-SecureString -String $tokenCiphertext
     $serviceAccountTokenText = ConvertFrom-SecureString `

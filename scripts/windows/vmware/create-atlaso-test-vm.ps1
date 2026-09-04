@@ -361,6 +361,9 @@ Use desktop authorization or the current-user DPAPI service-account token.
 
 .PARAMETER ServiceAccountTokenFile
 Validated ciphertext file used only by the bounded service-account wrapper.
+
+.PARAMETER RepositoryRoot
+Atlaso checkout that owns the permitted .atlaso-local token storage boundary.
 #>
 function Invoke-OnePasswordDevelopmentCaChild {
     param(
@@ -372,6 +375,7 @@ function Invoke-OnePasswordDevelopmentCaChild {
         [Parameter(Mandatory = $true)][ValidateSet('desktop', 'service-account')]
         [string]$AuthenticationMode,
         [AllowEmptyString()][string]$ServiceAccountTokenFile = '',
+        [Parameter(Mandatory = $true)][string]$RepositoryRoot,
         [Parameter(Mandatory = $true)][ValidateRange(1, 3600)][int]$TimeoutSeconds
     )
 
@@ -382,6 +386,7 @@ function Invoke-OnePasswordDevelopmentCaChild {
         $arguments = @(
             '-NoLogo', '-NoProfile', '-NonInteractive', '-File', $childPath,
             '-TokenFile', $ServiceAccountTokenFile,
+            '-RepositoryRoot', $RepositoryRoot,
             '-OpPath', $OpPath,
             '-EnvironmentId', $EnvironmentId,
             '-Action', $Action,
@@ -3096,6 +3101,7 @@ if (-not $WhatIfPreference) {
         -CertificatePath $developmentRootCaCertificatePath `
         -AuthenticationMode $onePasswordAuthentication.Mode `
         -ServiceAccountTokenFile $onePasswordAuthentication.TokenFile `
+        -RepositoryRoot $repoRoot `
         -TimeoutSeconds $TimeoutSeconds
 }
 
@@ -3342,6 +3348,7 @@ if (-not $WhatIfPreference) {
                 -VmxPath $targetVmx `
                 -AuthenticationMode $onePasswordAuthentication.Mode `
                 -ServiceAccountTokenFile $onePasswordAuthentication.TokenFile `
+                -RepositoryRoot $repoRoot `
                 -TimeoutSeconds $TimeoutSeconds
         }
         catch {

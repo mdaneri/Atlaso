@@ -44,6 +44,9 @@ def test_token_contract_is_never_transportable_as_plaintext() -> None:
     test_vm_child = (root / "Invoke-AtlasoTestVmCredentials.ps1").read_text(
         encoding="utf-8"
     )
+    development_ca_child = (
+        root / "Invoke-AtlasoDevelopmentCaWithServiceAccount.ps1"
+    ).read_text(encoding="utf-8")
     launcher = (root / "Invoke-AtlasoServiceAccountCommand.ps1").read_text(
         encoding="utf-8"
     )
@@ -60,6 +63,10 @@ def test_token_contract_is_never_transportable_as_plaintext() -> None:
     assert "TokenFile" in launcher
     assert "[Parameter(Mandatory = $true)][string]$RepositoryRoot" in launcher
     assert "Resolve-AtlasoOnePasswordServiceAccountTokenFile `" in launcher
+    assert "[Parameter(Mandatory = $true)][string]$RepositoryRoot" in development_ca_child
+    assert (
+        "Resolve-AtlasoOnePasswordServiceAccountTokenFile `" in development_ca_child
+    )
     assert "PlainTextToken" not in launcher
     assert "ReparsePoint" in module
     assert "ConvertTo-SecureString -String $tokenCiphertext" in sdk_child
