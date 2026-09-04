@@ -440,7 +440,11 @@ def test_shared_credential_bridge_explicit_and_fail_closed_cases() -> None:
 
 
 def test_supported_credential_bridge_reset_contract(tmp_path: Path) -> None:
-    """Run live Windows reset, fail-closed, interruption, and idempotency cases."""
+    """Run live Windows reset, fail-closed, interruption, and idempotency cases.
+
+    Args:
+        tmp_path: Pytest-managed temporary root for credential-bridge artifacts.
+    """
     pwsh = shutil.which("pwsh")
     if pwsh is None:
         pytest.skip("PowerShell 7 is required")
