@@ -116,6 +116,39 @@ try {
         }
     }
 
+    $partialReadPath = Join-Path $testRoot 'partial-read.dpapi'
+    [System.IO.File]::Copy($tokenPath, $partialReadPath)
+    $partialReadAcl = Get-Acl -LiteralPath $partialReadPath
+    $partialReadAcl.SetAccessRuleProtection($true, $false)
+    foreach ($rule in @($partialReadAcl.Access)) {
+        [void]$partialReadAcl.RemoveAccessRuleAll($rule)
+    }
+    $partialReadAcl.AddAccessRule(
+        [System.Security.AccessControl.FileSystemAccessRule]::new(
+            $currentSid,
+            ([System.Security.AccessControl.FileSystemRights]::ReadAttributes -bor
+                [System.Security.AccessControl.FileSystemRights]::Delete),
+            [System.Security.AccessControl.AccessControlType]::Allow
+        )
+    )
+    $partialReadAcl.AddAccessRule(
+        [System.Security.AccessControl.FileSystemAccessRule]::new(
+            $systemSid,
+            [System.Security.AccessControl.FileSystemRights]::FullControl,
+            [System.Security.AccessControl.AccessControlType]::Allow
+        )
+    )
+    Set-Acl -LiteralPath $partialReadPath -AclObject $partialReadAcl
+    try {
+        Assert-AtlasoOnePasswordServiceAccountTokenFile -Path $partialReadPath | Out-Null
+        throw 'A token file with only partial current-user read rights unexpectedly succeeded.'
+    }
+    catch {
+        if ($_.Exception.Message -notlike '*current user cannot read*') {
+            throw
+        }
+    }
+
     try {
         & $setupPath -Token $firstSecureToken -TokenFile $tokenPath | Out-Null
         throw 'Token replacement succeeded without -Force.'

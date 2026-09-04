@@ -97,6 +97,20 @@ def test_setup_destination_and_deploy_preflight_order_fail_closed() -> None:
     assert wheel_stage < authentication < vmware_discovery
 
 
+def test_virtualization_prerelease_rejects_inherited_service_tokens_first() -> None:
+    """Keep inherited service tokens away from Git and GitHub subprocesses."""
+    source = Path(
+        "scripts/windows/virtualization/Atlaso.VirtualizationRelease.psm1"
+    ).read_text(encoding="utf-8")
+    prerelease = source.index("function Invoke-AtlasoVirtualizationPrerelease")
+    guard = source.index("if ($env:OP_SERVICE_ACCOUNT_TOKEN)", prerelease)
+    first_subprocess_helper = source.index(
+        "$repository = Get-AtlasoReleaseRepository", prerelease
+    )
+
+    assert guard < first_subprocess_helper
+
+
 def test_service_account_access_depends_only_on_the_exact_environment() -> None:
     """Do not introduce a vault lookup into service-account authentication."""
     sources = "\n".join(

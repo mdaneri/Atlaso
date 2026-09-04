@@ -257,11 +257,11 @@ function Assert-AtlasoOnePasswordServiceAccountTokenFile {
             throw 'The 1Password service-account token file grants access outside the current user and SYSTEM.'
         }
         if ($rule.IdentityReference.Equals($currentSid) -and
-            ($rule.FileSystemRights -band [System.Security.AccessControl.FileSystemRights]::Read) -ne 0) {
+            ($rule.FileSystemRights -band [System.Security.AccessControl.FileSystemRights]::ReadData) -ne 0) {
             $currentUserCanRead = $true
         }
         if ($rule.IdentityReference.Equals($systemSid) -and
-            ($rule.FileSystemRights -band [System.Security.AccessControl.FileSystemRights]::Read) -ne 0) {
+            ($rule.FileSystemRights -band [System.Security.AccessControl.FileSystemRights]::ReadData) -ne 0) {
             $systemCanRead = $true
         }
     }

@@ -941,6 +941,9 @@ function Invoke-AtlasoVirtualizationPrerelease {
         [switch]$NoWait
     )
 
+    if ($env:OP_SERVICE_ACCOUNT_TOKEN) {
+        throw 'OP_SERVICE_ACCOUNT_TOKEN must not be supplied by the caller; use -OnePasswordServiceAccountTokenFile.'
+    }
     $repository = Get-AtlasoReleaseRepository -RepoRoot $RepoRoot
     $identity = Get-AtlasoVirtualizationSourceIdentity -RepoRoot $RepoRoot -Repository $repository
     $resolvedStagingRoot = Resolve-AtlasoVirtualizationStagingRoot `
