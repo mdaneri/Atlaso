@@ -262,7 +262,11 @@ def test_explicit_overrides_remain_independently_authoritative(
 def test_service_account_authentication_avoids_desktop_auth_and_clears_environment(
     tmp_path: Path,
 ) -> None:
-    """Authenticate directly with the service token and remove its environment copy."""
+    """Authenticate directly with the service token and remove its environment copy.
+
+    Args:
+        tmp_path: Isolated directory for the extracted child and fake packages.
+    """
     result, output = _run_child(
         tmp_path,
         "success",
@@ -278,7 +282,12 @@ def test_service_account_authentication_avoids_desktop_auth_and_clears_environme
 def test_service_account_revocation_or_environment_denial_fails_closed(
     tmp_path: Path, mode: str
 ) -> None:
-    """Reject a revoked token or missing exact-Environment grant without output."""
+    """Reject a revoked token or missing exact-Environment grant without output.
+
+    Args:
+        tmp_path: Isolated directory for the extracted child and fake packages.
+        mode: Simulated service-account authorization failure.
+    """
     result, output = _run_child(
         tmp_path,
         mode,

@@ -197,7 +197,11 @@ def test_success_keeps_value_out_of_process_output(tmp_path: Path) -> None:
 def test_service_account_authentication_avoids_desktop_auth_and_clears_environment(
     tmp_path: Path,
 ) -> None:
-    """Use the service token directly without carrying it past SDK initialization."""
+    """Use the service token directly without carrying it past SDK initialization.
+
+    Args:
+        tmp_path: Isolated directory for the extracted child and fake packages.
+    """
     result = _run_child(tmp_path, "success", authentication="service-account")
     output = result.stdout + result.stderr
 
