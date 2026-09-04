@@ -2526,6 +2526,17 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
+  <a href="#configure-non-interactive-1password-authentication" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Configure non-interactive 1Password authentication
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#topology" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
@@ -3465,6 +3476,17 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
+  <a href="#configure-non-interactive-1password-authentication" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Configure non-interactive 1Password authentication
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#topology" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
@@ -3653,18 +3675,42 @@
 <p>The shared lifecycle host-state checks verify that first-boot appliances retain <code>vcf-sdk==9.1.0.0</code>,
 <code>VCF.PowerCLI==9.1.0.25380678</code>, and <code>Connect-VIServer</code> after the wheel-only test deployment. The PowerCLI import and
 command check run directly as the unprivileged appliance SSH user rather than through sudo.</p>
+<h2 id="configure-non-interactive-1password-authentication">Configure non-interactive 1Password authentication<a class="headerlink" href="#configure-non-interactive-1password-authentication" title="Permanent link">&para;</a></h2>
+<p>Use a 1Password service account with read access to the exact <code>Atlaso</code> Environment. Vault access is not required. Copy
+or rotate the service-account token in the 1Password portal, then enter it once at the non-echoing prompt:</p>
+<div class="language-powershell highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="p">.\</span><span class="n">scripts</span><span class="p">\</span><span class="n">windows</span><span class="p">\</span><span class="n">vmware</span><span class="p">\</span><span class="nb">initialize-onepassword</span><span class="n">-service-account</span><span class="p">.</span><span class="n">ps1</span>
+</span></code></pre></div>
+<p>The helper validates the service-account token shape and stores only current-user DPAPI ciphertext at the Git-ignored
+<code>.atlaso-local\onepassword-service-account-token.dpapi</code> path. The file is usable only by the same Windows user on the
+same machine; its ACL allows only that user and SYSTEM. Never put the plaintext token in Git, <code>.env</code>, a PowerShell
+profile, a command argument, or <code>OP_SERVICE_ACCOUNT_TOKEN</code> in the caller. Rotate the token by rerunning the helper with
+the explicit replacement option:</p>
+<div class="language-powershell highlight"><pre><span></span><code><span id="__span-1-1"><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="p">.\</span><span class="n">scripts</span><span class="p">\</span><span class="n">windows</span><span class="p">\</span><span class="n">vmware</span><span class="p">\</span><span class="nb">initialize-onepassword</span><span class="n">-service-account</span><span class="p">.</span><span class="n">ps1</span> <span class="n">-Force</span>
+</span></code></pre></div>
+<p>The VMware build, normal-test-VM, deployment, and export entry points use this authentication precedence:</p>
+<ol>
+<li>Explicit <code>-OnePasswordServiceAccountTokenFile</code> DPAPI ciphertext.</li>
+<li>Explicit <code>-OnePasswordAccount</code> desktop authorization.</li>
+<li>The checkout-local DPAPI token file when present.</li>
+<li>Existing single-account desktop discovery.</li>
+</ol>
+<p>The token is decrypted only in a bounded child and supplied to the immediate SDK or <code>op run</code> process. The SDK removes
+its environment copy before Environment retrieval. A missing, corrupt, wrong-user, malformed, revoked, or unauthorized
+token fails before VMware or network mutation. If the original token was not retained, rotate it in the portal and use
+the secure setup prompt; the portal does not provide a local token filename.</p>
 <p>For a wheel-only deployment to the canonical test VM, use <code>scripts/windows/vmware/deploy-wheel.ps1</code> with the secure
-Windows 1Password handoff documented in the <a href="../full-technical-reference/">full technical reference</a>. Authenticate the
-local integration, verify the unique <code>Atlaso</code> Environment and concealed <code>DEFAULT_ADMIN_PASSWORD</code> variable by name,
-then pass its opaque Environment ID through <code>-OnePasswordEnvironmentId</code> and the approved account name or ID through
-<code>-OnePasswordAccount</code>. The bridge automatically selects standard GIL-enabled Windows x64 CPython 3.14; use
+Windows 1Password handoff documented in the <a href="../full-technical-reference/">full technical reference</a>. Verify the unique
+<code>Atlaso</code> Environment and concealed <code>DEFAULT_ADMIN_PASSWORD</code> variable by name, then pass its opaque Environment ID
+through <code>-OnePasswordEnvironmentId</code>. The checkout-local service-account token is used automatically when present;
+pass <code>-OnePasswordAccount</code> only to select desktop authorization. The bridge automatically selects standard GIL-enabled
+Windows x64 CPython 3.14; use
 <code>-OnePasswordPython</code> only as an explicit override. Python 3.10 through 3.13, x86, ARM64, and free-threaded <code>3.14t</code> are
 rejected. The handoff uses the supported
-1Password Python SDK desktop integration and retrieves the value
+1Password Python SDK integration and retrieves the value
 only inside the bounded Paramiko deployment child, preserves
 SSH known-host verification, and fails closed when authorization or any required Environment input is unavailable.
-Desktop authorization and Environment retrieval each use the deployment timeout, so an ignored approval prompt or a
-non-responsive SDK exits without beginning the VMware deployment.
+Authorization and Environment retrieval each use the deployment timeout, so a revoked token, ignored desktop approval
+prompt, or non-responsive SDK exits without beginning the VMware deployment.
 The build stages the SDK, Paramiko, and their transitive wheels from the hash-verified
 <code>requirements-onepassword-deploy.lock</code>; the bounded child installs only from that local wheel set with index access
 disabled. <code>-SkipBuild</code> therefore fails closed unless the complete vetted set is already present in <code>dist</code>.
@@ -3705,7 +3751,7 @@ installation fails before any lifecycle VM is created.</p>
 blank-disk claims depend on those identities and reject transient <code>/dev/sdX</code> names.</p>
 <h2 id="topology">Topology<a class="headerlink" href="#topology" title="Permanent link">&para;</a></h2>
 <p>The default lifecycle lab creates isolated VM directories and result/log artifacts under its canonical identity:</p>
-<div class="language-text highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>test-results/vmware-workstation-lifecycle/Atlaso-PR-&lt;number&gt;-lifecycle-&lt;collision-safe-suffix&gt;/vms
+<div class="language-text highlight"><pre><span></span><code><span id="__span-2-1"><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a>test-results/vmware-workstation-lifecycle/Atlaso-PR-&lt;number&gt;-lifecycle-&lt;collision-safe-suffix&gt;/vms
 </span></code></pre></div>
 <p>The appliance VMX is copied from the selected Workstation image output. Client VMs use an Alpine cloud VMDK prepared
 from a pinned upstream QCOW2 source. The payload and SHA-512 metadata are cached only as
@@ -3721,9 +3767,9 @@ versioned <code>v3.24</code> release URL and a repository-pinned SHA-512 digest;
 <li><code>VMnet4</code> for trunk-like validation</li>
 </ul>
 <p>Check the current Workstation host network inventory with:</p>
-<div class="language-powershell highlight"><pre><span></span><code><span id="__span-1-1"><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="n">pwsh</span> <span class="n">-ExecutionPolicy</span> <span class="n">Bypass</span> <span class="p">`</span>
-</span><span id="__span-1-2"><a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a>  <span class="o">-File</span> <span class="n">scripts</span><span class="p">/</span><span class="n">windows</span><span class="p">/</span><span class="n">vmware</span><span class="p">/</span><span class="n">prepare-networks</span><span class="p">.</span><span class="n">ps1</span> <span class="p">`</span>
-</span><span id="__span-1-3"><a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a>  <span class="n">-PlanOnly</span>
+<div class="language-powershell highlight"><pre><span></span><code><span id="__span-3-1"><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a><span class="n">pwsh</span> <span class="n">-ExecutionPolicy</span> <span class="n">Bypass</span> <span class="p">`</span>
+</span><span id="__span-3-2"><a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a>  <span class="o">-File</span> <span class="n">scripts</span><span class="p">/</span><span class="n">windows</span><span class="p">/</span><span class="n">vmware</span><span class="p">/</span><span class="n">prepare-networks</span><span class="p">.</span><span class="n">ps1</span> <span class="p">`</span>
+</span><span id="__span-3-3"><a id="__codelineno-3-3" name="__codelineno-3-3" href="#__codelineno-3-3"></a>  <span class="n">-PlanOnly</span>
 </span></code></pre></div>
 <p>If vmnets are missing, adjust them in VMware Virtual Network Editor before running the interop test. The image build
 wrapper reads the selected management vmnet before rendering Packer variables; for bridged <code>vmnet0</code>, it uses the active
@@ -3765,12 +3811,12 @@ receipt/finalizer/update-info, and three-vantage probe checks. Preserve sanitize
 desktop and responsive update-only page; redact sessions, credentials, keys, source credentials, and raw helper output.</p>
 <h2 id="build-the-appliance">Build The Appliance<a class="headerlink" href="#build-the-appliance" title="Permanent link">&para;</a></h2>
 <p>Build the Workstation appliance with:</p>
-<div class="language-powershell highlight"><pre><span></span><code><span id="__span-2-1"><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="n">pwsh</span> <span class="n">-ExecutionPolicy</span> <span class="n">Bypass</span> <span class="p">`</span>
-</span><span id="__span-2-2"><a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a>  <span class="o">-File</span> <span class="n">scripts</span><span class="p">/</span><span class="n">windows</span><span class="p">/</span><span class="n">vmware</span><span class="p">/</span><span class="n">build-photon-image</span><span class="p">.</span><span class="n">ps1</span> <span class="p">`</span>
-</span><span id="__span-2-3"><a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a>  <span class="n">-PullRequestNumber</span> <span class="p">&lt;</span><span class="n">number</span><span class="p">&gt;</span> <span class="p">`</span>
-</span><span id="__span-2-4"><a id="__codelineno-2-4" name="__codelineno-2-4" href="#__codelineno-2-4"></a>  <span class="n">-IsoUrl</span> <span class="s2">&quot;&lt;photon-iso-url-or-path&gt;&quot;</span> <span class="p">`</span>
-</span><span id="__span-2-5"><a id="__codelineno-2-5" name="__codelineno-2-5" href="#__codelineno-2-5"></a>  <span class="n">-IsoChecksum</span> <span class="s2">&quot;&lt;packer-checksum&gt;&quot;</span> <span class="p">`</span>
-</span><span id="__span-2-6"><a id="__codelineno-2-6" name="__codelineno-2-6" href="#__codelineno-2-6"></a>  <span class="n">-EnableRealSystemAdapters</span>
+<div class="language-powershell highlight"><pre><span></span><code><span id="__span-4-1"><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a><span class="n">pwsh</span> <span class="n">-ExecutionPolicy</span> <span class="n">Bypass</span> <span class="p">`</span>
+</span><span id="__span-4-2"><a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a>  <span class="o">-File</span> <span class="n">scripts</span><span class="p">/</span><span class="n">windows</span><span class="p">/</span><span class="n">vmware</span><span class="p">/</span><span class="n">build-photon-image</span><span class="p">.</span><span class="n">ps1</span> <span class="p">`</span>
+</span><span id="__span-4-3"><a id="__codelineno-4-3" name="__codelineno-4-3" href="#__codelineno-4-3"></a>  <span class="n">-PullRequestNumber</span> <span class="p">&lt;</span><span class="n">number</span><span class="p">&gt;</span> <span class="p">`</span>
+</span><span id="__span-4-4"><a id="__codelineno-4-4" name="__codelineno-4-4" href="#__codelineno-4-4"></a>  <span class="n">-IsoUrl</span> <span class="s2">&quot;&lt;photon-iso-url-or-path&gt;&quot;</span> <span class="p">`</span>
+</span><span id="__span-4-5"><a id="__codelineno-4-5" name="__codelineno-4-5" href="#__codelineno-4-5"></a>  <span class="n">-IsoChecksum</span> <span class="s2">&quot;&lt;packer-checksum&gt;&quot;</span> <span class="p">`</span>
+</span><span id="__span-4-6"><a id="__codelineno-4-6" name="__codelineno-4-6" href="#__codelineno-4-6"></a>  <span class="n">-EnableRealSystemAdapters</span>
 </span></code></pre></div>
 <p>The task build begins only after that pull request exists. Its same-repository head branch and commit must exactly
 match the checkout. The wrapper derives <code>Atlaso-PR-&lt;number&gt;-Photon-Builder-VMware[-&lt;collision-safe-suffix&gt;]</code> and keeps
@@ -3791,8 +3837,9 @@ download path. Host-authority file URIs are rejected; use an explicitly mounted 
 <code>.atlaso-local/onepassword-environment-id</code>, and <code>-EnvironmentIdFile</code> selects a different single-line file. When
 <code>-SshPassword</code> or <code>-BootstrapAdminPassword</code> is omitted, the bounded Windows SDK bridge retrieves only that value's
 unique concealed <code>DEFAULT_ROOT_PASSWORD</code> or <code>DEFAULT_ADMIN_PASSWORD</code>. Explicit <code>SecureString</code> parameters remain
-independently authoritative. With no explicit selectors, the bridge uses the single local 1Password CLI account and
-standard GIL-enabled Windows x64 CPython 3.14 registered with the Windows launcher, including current Python
+independently authoritative. With no explicit selectors, the bridge prefers the checkout-local current-user DPAPI
+service-account token before single-account desktop discovery and uses standard GIL-enabled Windows x64 CPython 3.14
+registered with the Windows launcher, including current Python
 Install Manager bracketed architecture selectors. Legacy launcher and vendor-tagged registrations remain compatible;
 known x86 and unsupported or malformed entries remain ineligible. Zero or multiple
 accounts and a missing compatible runtime fail closed; <code>-OnePasswordAccount</code> and <code>-OnePasswordPython</code> remain explicit
@@ -3868,9 +3915,9 @@ source. A
 reversed, ambiguous, capacity-mismatched, legacy-unproven, or byte-modified payload must be rebuilt and is never repaired
 by formatting or silently swapping unrelated VMDKs.</p>
 <h2 id="single-command-run">Single-Command Run<a class="headerlink" href="#single-command-run" title="Permanent link">&para;</a></h2>
-<div class="language-powershell highlight"><pre><span></span><code><span id="__span-3-1"><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a><span class="n">pwsh</span> <span class="n">-ExecutionPolicy</span> <span class="n">Bypass</span> <span class="p">`</span>
-</span><span id="__span-3-2"><a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a>  <span class="o">-File</span> <span class="n">scripts</span><span class="p">/</span><span class="n">windows</span><span class="p">/</span><span class="n">vmware</span><span class="p">/</span><span class="nb">invoke-lifecycle</span><span class="n">-test</span><span class="p">.</span><span class="n">ps1</span> <span class="p">`</span>
-</span><span id="__span-3-3"><a id="__codelineno-3-3" name="__codelineno-3-3" href="#__codelineno-3-3"></a>  <span class="n">-PullRequestNumber</span> <span class="p">&lt;</span><span class="n">number</span><span class="p">&gt;</span>
+<div class="language-powershell highlight"><pre><span></span><code><span id="__span-5-1"><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a><span class="n">pwsh</span> <span class="n">-ExecutionPolicy</span> <span class="n">Bypass</span> <span class="p">`</span>
+</span><span id="__span-5-2"><a id="__codelineno-5-2" name="__codelineno-5-2" href="#__codelineno-5-2"></a>  <span class="o">-File</span> <span class="n">scripts</span><span class="p">/</span><span class="n">windows</span><span class="p">/</span><span class="n">vmware</span><span class="p">/</span><span class="nb">invoke-lifecycle</span><span class="n">-test</span><span class="p">.</span><span class="n">ps1</span> <span class="p">`</span>
+</span><span id="__span-5-3"><a id="__codelineno-5-3" name="__codelineno-5-3" href="#__codelineno-5-3"></a>  <span class="n">-PullRequestNumber</span> <span class="p">&lt;</span><span class="n">number</span><span class="p">&gt;</span>
 </span></code></pre></div>
 <p>The wrapper has no password defaults. It prompts securely for the appliance administrator and VCF Backup credentials;
 client SSH reuses the administrator <code>SecureString</code> unless <code>-SshPassword</code> is supplied. <code>-FullEsxiPxeInstall</code> also
@@ -3915,23 +3962,23 @@ still clones the selected appliance, installs the exact branch wheel, proves app
 Authorization Code acceptance check. It skips unrelated multi-NIC service configuration, client VM creation and probes,
 and the backup/restore pass.</p>
 <p>Useful commands:</p>
-<div class="language-powershell highlight"><pre><span></span><code><span id="__span-4-1"><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a><span class="c"># Print selected paths and topology without creating VMs.</span>
-</span><span id="__span-4-2"><a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a><span class="n">pwsh</span> <span class="n">-ExecutionPolicy</span> <span class="n">Bypass</span> <span class="p">`</span>
-</span><span id="__span-4-3"><a id="__codelineno-4-3" name="__codelineno-4-3" href="#__codelineno-4-3"></a>  <span class="o">-File</span> <span class="n">scripts</span><span class="p">/</span><span class="n">windows</span><span class="p">/</span><span class="n">vmware</span><span class="p">/</span><span class="nb">invoke-lifecycle</span><span class="n">-test</span><span class="p">.</span><span class="n">ps1</span> <span class="p">`</span>
-</span><span id="__span-4-4"><a id="__codelineno-4-4" name="__codelineno-4-4" href="#__codelineno-4-4"></a>  <span class="n">-PullRequestNumber</span> <span class="p">&lt;</span><span class="n">number</span><span class="p">&gt;</span> <span class="p">`</span>
-</span><span id="__span-4-5"><a id="__codelineno-4-5" name="__codelineno-4-5" href="#__codelineno-4-5"></a>  <span class="n">-PlanOnly</span>
-</span><span id="__span-4-6"><a id="__codelineno-4-6" name="__codelineno-4-6" href="#__codelineno-4-6"></a>
-</span><span id="__span-4-7"><a id="__codelineno-4-7" name="__codelineno-4-7" href="#__codelineno-4-7"></a><span class="c"># Validate Workstation vmnet inventory.</span>
-</span><span id="__span-4-8"><a id="__codelineno-4-8" name="__codelineno-4-8" href="#__codelineno-4-8"></a><span class="n">pwsh</span> <span class="n">-ExecutionPolicy</span> <span class="n">Bypass</span> <span class="p">`</span>
-</span><span id="__span-4-9"><a id="__codelineno-4-9" name="__codelineno-4-9" href="#__codelineno-4-9"></a>  <span class="o">-File</span> <span class="n">scripts</span><span class="p">/</span><span class="n">windows</span><span class="p">/</span><span class="n">vmware</span><span class="p">/</span><span class="nb">invoke-lifecycle</span><span class="n">-test</span><span class="p">.</span><span class="n">ps1</span> <span class="p">`</span>
-</span><span id="__span-4-10"><a id="__codelineno-4-10" name="__codelineno-4-10" href="#__codelineno-4-10"></a>  <span class="n">-PrepareNetworksOnly</span>
-</span><span id="__span-4-11"><a id="__codelineno-4-11" name="__codelineno-4-11" href="#__codelineno-4-11"></a>
-</span><span id="__span-4-12"><a id="__codelineno-4-12" name="__codelineno-4-12" href="#__codelineno-4-12"></a><span class="c"># Stop and remove one exact retained PR-owned lifecycle lab.</span>
-</span><span id="__span-4-13"><a id="__codelineno-4-13" name="__codelineno-4-13" href="#__codelineno-4-13"></a><span class="n">pwsh</span> <span class="n">-ExecutionPolicy</span> <span class="n">Bypass</span> <span class="p">`</span>
-</span><span id="__span-4-14"><a id="__codelineno-4-14" name="__codelineno-4-14" href="#__codelineno-4-14"></a>  <span class="o">-File</span> <span class="n">scripts</span><span class="p">/</span><span class="n">windows</span><span class="p">/</span><span class="n">vmware</span><span class="p">/</span><span class="nb">invoke-lifecycle</span><span class="n">-test</span><span class="p">.</span><span class="n">ps1</span> <span class="p">`</span>
-</span><span id="__span-4-15"><a id="__codelineno-4-15" name="__codelineno-4-15" href="#__codelineno-4-15"></a>  <span class="n">-PullRequestNumber</span> <span class="p">&lt;</span><span class="n">number</span><span class="p">&gt;</span> <span class="p">`</span>
-</span><span id="__span-4-16"><a id="__codelineno-4-16" name="__codelineno-4-16" href="#__codelineno-4-16"></a>  <span class="n">-CollisionSuffix</span> <span class="s1">&#39;&lt;suffix-reported-by-the-run&gt;&#39;</span> <span class="p">`</span>
-</span><span id="__span-4-17"><a id="__codelineno-4-17" name="__codelineno-4-17" href="#__codelineno-4-17"></a>  <span class="n">-CleanupVmsOnly</span>
+<div class="language-powershell highlight"><pre><span></span><code><span id="__span-6-1"><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a><span class="c"># Print selected paths and topology without creating VMs.</span>
+</span><span id="__span-6-2"><a id="__codelineno-6-2" name="__codelineno-6-2" href="#__codelineno-6-2"></a><span class="n">pwsh</span> <span class="n">-ExecutionPolicy</span> <span class="n">Bypass</span> <span class="p">`</span>
+</span><span id="__span-6-3"><a id="__codelineno-6-3" name="__codelineno-6-3" href="#__codelineno-6-3"></a>  <span class="o">-File</span> <span class="n">scripts</span><span class="p">/</span><span class="n">windows</span><span class="p">/</span><span class="n">vmware</span><span class="p">/</span><span class="nb">invoke-lifecycle</span><span class="n">-test</span><span class="p">.</span><span class="n">ps1</span> <span class="p">`</span>
+</span><span id="__span-6-4"><a id="__codelineno-6-4" name="__codelineno-6-4" href="#__codelineno-6-4"></a>  <span class="n">-PullRequestNumber</span> <span class="p">&lt;</span><span class="n">number</span><span class="p">&gt;</span> <span class="p">`</span>
+</span><span id="__span-6-5"><a id="__codelineno-6-5" name="__codelineno-6-5" href="#__codelineno-6-5"></a>  <span class="n">-PlanOnly</span>
+</span><span id="__span-6-6"><a id="__codelineno-6-6" name="__codelineno-6-6" href="#__codelineno-6-6"></a>
+</span><span id="__span-6-7"><a id="__codelineno-6-7" name="__codelineno-6-7" href="#__codelineno-6-7"></a><span class="c"># Validate Workstation vmnet inventory.</span>
+</span><span id="__span-6-8"><a id="__codelineno-6-8" name="__codelineno-6-8" href="#__codelineno-6-8"></a><span class="n">pwsh</span> <span class="n">-ExecutionPolicy</span> <span class="n">Bypass</span> <span class="p">`</span>
+</span><span id="__span-6-9"><a id="__codelineno-6-9" name="__codelineno-6-9" href="#__codelineno-6-9"></a>  <span class="o">-File</span> <span class="n">scripts</span><span class="p">/</span><span class="n">windows</span><span class="p">/</span><span class="n">vmware</span><span class="p">/</span><span class="nb">invoke-lifecycle</span><span class="n">-test</span><span class="p">.</span><span class="n">ps1</span> <span class="p">`</span>
+</span><span id="__span-6-10"><a id="__codelineno-6-10" name="__codelineno-6-10" href="#__codelineno-6-10"></a>  <span class="n">-PrepareNetworksOnly</span>
+</span><span id="__span-6-11"><a id="__codelineno-6-11" name="__codelineno-6-11" href="#__codelineno-6-11"></a>
+</span><span id="__span-6-12"><a id="__codelineno-6-12" name="__codelineno-6-12" href="#__codelineno-6-12"></a><span class="c"># Stop and remove one exact retained PR-owned lifecycle lab.</span>
+</span><span id="__span-6-13"><a id="__codelineno-6-13" name="__codelineno-6-13" href="#__codelineno-6-13"></a><span class="n">pwsh</span> <span class="n">-ExecutionPolicy</span> <span class="n">Bypass</span> <span class="p">`</span>
+</span><span id="__span-6-14"><a id="__codelineno-6-14" name="__codelineno-6-14" href="#__codelineno-6-14"></a>  <span class="o">-File</span> <span class="n">scripts</span><span class="p">/</span><span class="n">windows</span><span class="p">/</span><span class="n">vmware</span><span class="p">/</span><span class="nb">invoke-lifecycle</span><span class="n">-test</span><span class="p">.</span><span class="n">ps1</span> <span class="p">`</span>
+</span><span id="__span-6-15"><a id="__codelineno-6-15" name="__codelineno-6-15" href="#__codelineno-6-15"></a>  <span class="n">-PullRequestNumber</span> <span class="p">&lt;</span><span class="n">number</span><span class="p">&gt;</span> <span class="p">`</span>
+</span><span id="__span-6-16"><a id="__codelineno-6-16" name="__codelineno-6-16" href="#__codelineno-6-16"></a>  <span class="n">-CollisionSuffix</span> <span class="s1">&#39;&lt;suffix-reported-by-the-run&gt;&#39;</span> <span class="p">`</span>
+</span><span id="__span-6-17"><a id="__codelineno-6-17" name="__codelineno-6-17" href="#__codelineno-6-17"></a>  <span class="n">-CleanupVmsOnly</span>
 </span></code></pre></div>
 <p>The plan-only command does not prompt for passwords or create a protected credential bundle because the emitted plan
 does not consume credentials.</p>
@@ -3998,27 +4045,27 @@ descendants of the selected VM output, so sibling-prefix and reparse-point paths
 <h2 id="normal-test-vm">Normal Test VM<a class="headerlink" href="#normal-test-vm" title="Permanent link">&para;</a></h2>
 <p>For a normal Workstation appliance VM, separate from the lifecycle lab, store the exact <code>Atlaso</code> Environment ID once in
 the checkout-local, Git-ignored configuration file. The prompt is masked and the command does not print the ID:</p>
-<div class="language-powershell highlight"><pre><span></span><code><span id="__span-5-1"><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a><span class="nv">$atlasoLocal</span> <span class="p">=</span> <span class="nb">Join-Path</span> <span class="p">(</span><span class="n">git</span> <span class="n">rev-parse</span> <span class="p">-</span><span class="n">-show-toplevel</span><span class="p">)</span> <span class="s1">&#39;.atlaso-local&#39;</span>
-</span><span id="__span-5-2"><a id="__codelineno-5-2" name="__codelineno-5-2" href="#__codelineno-5-2"></a><span class="nb">New-Item</span> <span class="n">-ItemType</span> <span class="n">Directory</span> <span class="n">-Path</span> <span class="nv">$atlasoLocal</span> <span class="n">-Force</span> <span class="p">|</span> <span class="nb">Out-Null</span>
-</span><span id="__span-5-3"><a id="__codelineno-5-3" name="__codelineno-5-3" href="#__codelineno-5-3"></a><span class="nv">$atlasoEnvironmentId</span> <span class="p">=</span> <span class="nb">Read-Host</span> <span class="s1">&#39;Paste the Atlaso Environment ID&#39;</span> <span class="n">-MaskInput</span>
-</span><span id="__span-5-4"><a id="__codelineno-5-4" name="__codelineno-5-4" href="#__codelineno-5-4"></a><span class="k">try</span> <span class="p">{</span>
-</span><span id="__span-5-5"><a id="__codelineno-5-5" name="__codelineno-5-5" href="#__codelineno-5-5"></a>    <span class="no">[System.IO.File]</span><span class="p">::</span><span class="n">WriteAllText</span><span class="p">(</span>
-</span><span id="__span-5-6"><a id="__codelineno-5-6" name="__codelineno-5-6" href="#__codelineno-5-6"></a>        <span class="p">(</span><span class="nb">Join-Path</span> <span class="nv">$atlasoLocal</span> <span class="s1">&#39;onepassword-environment-id&#39;</span><span class="p">),</span>
-</span><span id="__span-5-7"><a id="__codelineno-5-7" name="__codelineno-5-7" href="#__codelineno-5-7"></a>        <span class="nv">$atlasoEnvironmentId</span>
-</span><span id="__span-5-8"><a id="__codelineno-5-8" name="__codelineno-5-8" href="#__codelineno-5-8"></a>    <span class="p">)</span>
-</span><span id="__span-5-9"><a id="__codelineno-5-9" name="__codelineno-5-9" href="#__codelineno-5-9"></a><span class="p">}</span>
-</span><span id="__span-5-10"><a id="__codelineno-5-10" name="__codelineno-5-10" href="#__codelineno-5-10"></a><span class="k">finally</span> <span class="p">{</span>
-</span><span id="__span-5-11"><a id="__codelineno-5-11" name="__codelineno-5-11" href="#__codelineno-5-11"></a>    <span class="nb">Remove-Variable</span> <span class="n">atlasoEnvironmentId</span> <span class="n">-ErrorAction</span> <span class="n">SilentlyContinue</span>
-</span><span id="__span-5-12"><a id="__codelineno-5-12" name="__codelineno-5-12" href="#__codelineno-5-12"></a><span class="p">}</span>
+<div class="language-powershell highlight"><pre><span></span><code><span id="__span-7-1"><a id="__codelineno-7-1" name="__codelineno-7-1" href="#__codelineno-7-1"></a><span class="nv">$atlasoLocal</span> <span class="p">=</span> <span class="nb">Join-Path</span> <span class="p">(</span><span class="n">git</span> <span class="n">rev-parse</span> <span class="p">-</span><span class="n">-show-toplevel</span><span class="p">)</span> <span class="s1">&#39;.atlaso-local&#39;</span>
+</span><span id="__span-7-2"><a id="__codelineno-7-2" name="__codelineno-7-2" href="#__codelineno-7-2"></a><span class="nb">New-Item</span> <span class="n">-ItemType</span> <span class="n">Directory</span> <span class="n">-Path</span> <span class="nv">$atlasoLocal</span> <span class="n">-Force</span> <span class="p">|</span> <span class="nb">Out-Null</span>
+</span><span id="__span-7-3"><a id="__codelineno-7-3" name="__codelineno-7-3" href="#__codelineno-7-3"></a><span class="nv">$atlasoEnvironmentId</span> <span class="p">=</span> <span class="nb">Read-Host</span> <span class="s1">&#39;Paste the Atlaso Environment ID&#39;</span> <span class="n">-MaskInput</span>
+</span><span id="__span-7-4"><a id="__codelineno-7-4" name="__codelineno-7-4" href="#__codelineno-7-4"></a><span class="k">try</span> <span class="p">{</span>
+</span><span id="__span-7-5"><a id="__codelineno-7-5" name="__codelineno-7-5" href="#__codelineno-7-5"></a>    <span class="no">[System.IO.File]</span><span class="p">::</span><span class="n">WriteAllText</span><span class="p">(</span>
+</span><span id="__span-7-6"><a id="__codelineno-7-6" name="__codelineno-7-6" href="#__codelineno-7-6"></a>        <span class="p">(</span><span class="nb">Join-Path</span> <span class="nv">$atlasoLocal</span> <span class="s1">&#39;onepassword-environment-id&#39;</span><span class="p">),</span>
+</span><span id="__span-7-7"><a id="__codelineno-7-7" name="__codelineno-7-7" href="#__codelineno-7-7"></a>        <span class="nv">$atlasoEnvironmentId</span>
+</span><span id="__span-7-8"><a id="__codelineno-7-8" name="__codelineno-7-8" href="#__codelineno-7-8"></a>    <span class="p">)</span>
+</span><span id="__span-7-9"><a id="__codelineno-7-9" name="__codelineno-7-9" href="#__codelineno-7-9"></a><span class="p">}</span>
+</span><span id="__span-7-10"><a id="__codelineno-7-10" name="__codelineno-7-10" href="#__codelineno-7-10"></a><span class="k">finally</span> <span class="p">{</span>
+</span><span id="__span-7-11"><a id="__codelineno-7-11" name="__codelineno-7-11" href="#__codelineno-7-11"></a>    <span class="nb">Remove-Variable</span> <span class="n">atlasoEnvironmentId</span> <span class="n">-ErrorAction</span> <span class="n">SilentlyContinue</span>
+</span><span id="__span-7-12"><a id="__codelineno-7-12" name="__codelineno-7-12" href="#__codelineno-7-12"></a><span class="p">}</span>
 </span></code></pre></div>
 <p>Then use the ordinary command without an ID argument:</p>
-<div class="language-powershell highlight"><pre><span></span><code><span id="__span-6-1"><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a><span class="n">pwsh</span> <span class="n">-ExecutionPolicy</span> <span class="n">Bypass</span> <span class="p">`</span>
-</span><span id="__span-6-2"><a id="__codelineno-6-2" name="__codelineno-6-2" href="#__codelineno-6-2"></a>  <span class="o">-File</span> <span class="n">scripts</span><span class="p">/</span><span class="n">windows</span><span class="p">/</span><span class="n">vmware</span><span class="p">/</span><span class="n">create-atlaso-test-vm</span><span class="p">.</span><span class="n">ps1</span> <span class="p">`</span>
-</span><span id="__span-6-3"><a id="__codelineno-6-3" name="__codelineno-6-3" href="#__codelineno-6-3"></a>  <span class="n">-PullRequestNumber</span> <span class="p">&lt;</span><span class="n">number</span><span class="p">&gt;</span> <span class="p">`</span>
-</span><span id="__span-6-4"><a id="__codelineno-6-4" name="__codelineno-6-4" href="#__codelineno-6-4"></a>  <span class="n">-Redeploy</span> <span class="p">`</span>
-</span><span id="__span-6-5"><a id="__codelineno-6-5" name="__codelineno-6-5" href="#__codelineno-6-5"></a>  <span class="n">-ResetDataDisks</span> <span class="p">`</span>
-</span><span id="__span-6-6"><a id="__codelineno-6-6" name="__codelineno-6-6" href="#__codelineno-6-6"></a>  <span class="n">-WaitForIp</span> <span class="p">`</span>
-</span><span id="__span-6-7"><a id="__codelineno-6-7" name="__codelineno-6-7" href="#__codelineno-6-7"></a>  <span class="n">-TrustRootCa</span>
+<div class="language-powershell highlight"><pre><span></span><code><span id="__span-8-1"><a id="__codelineno-8-1" name="__codelineno-8-1" href="#__codelineno-8-1"></a><span class="n">pwsh</span> <span class="n">-ExecutionPolicy</span> <span class="n">Bypass</span> <span class="p">`</span>
+</span><span id="__span-8-2"><a id="__codelineno-8-2" name="__codelineno-8-2" href="#__codelineno-8-2"></a>  <span class="o">-File</span> <span class="n">scripts</span><span class="p">/</span><span class="n">windows</span><span class="p">/</span><span class="n">vmware</span><span class="p">/</span><span class="n">create-atlaso-test-vm</span><span class="p">.</span><span class="n">ps1</span> <span class="p">`</span>
+</span><span id="__span-8-3"><a id="__codelineno-8-3" name="__codelineno-8-3" href="#__codelineno-8-3"></a>  <span class="n">-PullRequestNumber</span> <span class="p">&lt;</span><span class="n">number</span><span class="p">&gt;</span> <span class="p">`</span>
+</span><span id="__span-8-4"><a id="__codelineno-8-4" name="__codelineno-8-4" href="#__codelineno-8-4"></a>  <span class="n">-Redeploy</span> <span class="p">`</span>
+</span><span id="__span-8-5"><a id="__codelineno-8-5" name="__codelineno-8-5" href="#__codelineno-8-5"></a>  <span class="n">-ResetDataDisks</span> <span class="p">`</span>
+</span><span id="__span-8-6"><a id="__codelineno-8-6" name="__codelineno-8-6" href="#__codelineno-8-6"></a>  <span class="n">-WaitForIp</span> <span class="p">`</span>
+</span><span id="__span-8-7"><a id="__codelineno-8-7" name="__codelineno-8-7" href="#__codelineno-8-7"></a>  <span class="n">-TrustRootCa</span>
 </span></code></pre></div>
 <p>For exploratory normal-VM testing before a pull request exists, replace <code>-PullRequestNumber &lt;number&gt;</code> with
 <code>-LocalBuilder</code>. A clean checked-out branch derives
@@ -4061,15 +4108,17 @@ guest publishes only bounded fixed first-boot stage identifiers. A timeout repor
 diagnostic that provider selection or customizer startup did not complete; it never includes command output or secret
 material.
 The wrapper injects the same complete DHCP-first OVF environment before power-on. Use <code>-FirstBootFqdn</code> for the test
-identity. The wrapper uses the single local 1Password CLI account and standard GIL-enabled Windows x64 CPython 3.14
-runtime registered with the Windows launcher, including bracketed Python Install Manager architecture selectors. Use
-<code>-OnePasswordAccount</code> or <code>-OnePasswordPython</code> only when an explicit
-override is required; zero or multiple accounts and a missing compatible runtime fail before VMware mutation.
+identity. The wrapper prefers the checkout-local current-user DPAPI service-account token and uses standard GIL-enabled
+Windows x64 CPython 3.14 registered with the Windows launcher, including bracketed Python Install Manager architecture
+selectors. Use <code>-OnePasswordServiceAccountTokenFile</code>, <code>-OnePasswordAccount</code>, or <code>-OnePasswordPython</code> only when an
+explicit override is required. Without a token, zero or multiple desktop accounts fail closed; a missing compatible
+runtime always fails before VMware mutation.
 <code>-AdminPassword</code> and <code>-RootPassword</code> accept only
 <code>SecureString</code> objects. When either parameter is omitted, the wrapper retrieves only that credential's exact concealed
 <code>DEFAULT_ADMIN_PASSWORD</code> or <code>DEFAULT_ROOT_PASSWORD</code> from the already verified Environment through the supported
-1Password SDK desktop integration. Each explicit parameter remains independently authoritative; there are no password
-prompts, caller-environment fallbacks, repository defaults, or local <code>.env</code> inputs.</p>
+1Password SDK integration. Service-account authentication does not invoke <code>DesktopAuth</code>; explicit account selection
+preserves the existing desktop flow. Each explicit password parameter remains independently authoritative; there are
+no password prompts, caller-environment fallbacks, repository defaults, plaintext token files, or local <code>.env</code> inputs.</p>
 <p>The SDK runtime is built from the hash-locked deployment wheel set and invoked only after credential-independent signer
 recovery, exact Environment verification, and local input validation. It returns only current-user DPAPI ciphertext to
 the PowerShell parent. A second bounded child stages the DPAPI-protected OVF environment into the exact new VMX.
