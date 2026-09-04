@@ -247,6 +247,7 @@ function Assert-AtlasoOnePasswordServiceAccountTokenFile {
             [System.Security.Principal.SecurityIdentifier]
         ))
     $currentUserCanRead = $false
+    $systemCanRead = $false
     foreach ($rule in $rules) {
         if ($rule.AccessControlType -ne [System.Security.AccessControl.AccessControlType]::Allow) {
             throw 'The 1Password service-account token file contains an unsupported access-control rule.'
@@ -259,9 +260,16 @@ function Assert-AtlasoOnePasswordServiceAccountTokenFile {
             ($rule.FileSystemRights -band [System.Security.AccessControl.FileSystemRights]::Read) -ne 0) {
             $currentUserCanRead = $true
         }
+        if ($rule.IdentityReference.Equals($systemSid) -and
+            ($rule.FileSystemRights -band [System.Security.AccessControl.FileSystemRights]::Read) -ne 0) {
+            $systemCanRead = $true
+        }
     }
     if (-not $currentUserCanRead) {
         throw 'The current user cannot read the 1Password service-account token file.'
+    }
+    if (-not $systemCanRead) {
+        throw 'SYSTEM cannot read the 1Password service-account token file.'
     }
     return $item.FullName
 }
@@ -282,18 +290,42 @@ function Resolve-AtlasoOnePasswordServiceAccountTokenFile {
         [Parameter(Mandatory = $true)][string]$RepositoryRoot
     )
 
+    $resolvedRepositoryRoot = [System.IO.Path]::GetFullPath($RepositoryRoot)
+    $atlasoLocalRoot = [System.IO.Path]::GetFullPath(
+        (Join-Path $resolvedRepositoryRoot '.atlaso-local')
+    )
+    $atlasoLocalPrefix = $atlasoLocalRoot.TrimEnd('\') + '\'
     $isExplicit = -not [string]::IsNullOrWhiteSpace($TokenFile)
     $candidate = if ($isExplicit) {
-        $TokenFile
+        $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($TokenFile)
     }
     else {
-        Join-Path $RepositoryRoot '.atlaso-local\onepassword-service-account-token.dpapi'
+        Join-Path $atlasoLocalRoot 'onepassword-service-account-token.dpapi'
+    }
+    $candidate = [System.IO.Path]::GetFullPath($candidate)
+    if (-not $candidate.StartsWith(
+            $atlasoLocalPrefix,
+            [System.StringComparison]::OrdinalIgnoreCase
+        )) {
+        throw 'The 1Password service-account token must be stored beneath this checkout''s .atlaso-local directory.'
     }
     if (-not (Test-Path -LiteralPath $candidate -PathType Leaf)) {
         if ($isExplicit) {
             throw 'The explicit 1Password service-account token file is unavailable.'
         }
         return ''
+    }
+    $ancestorPath = [System.IO.Path]::GetDirectoryName($candidate)
+    while ($ancestorPath.Length -ge $atlasoLocalRoot.Length) {
+        $ancestorItem = Get-Item -LiteralPath $ancestorPath -Force
+        if (-not $ancestorItem.PSIsContainer -or
+            ($ancestorItem.Attributes -band [System.IO.FileAttributes]::ReparsePoint) -ne 0) {
+            throw 'The 1Password service-account token path must not traverse a reparse point.'
+        }
+        if ($ancestorPath.Equals($atlasoLocalRoot, [System.StringComparison]::OrdinalIgnoreCase)) {
+            break
+        }
+        $ancestorPath = [System.IO.Path]::GetDirectoryName($ancestorPath)
     }
     return Assert-AtlasoOnePasswordServiceAccountTokenFile -Path $candidate
 }

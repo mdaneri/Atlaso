@@ -67,6 +67,18 @@ try {
         }
     }
 
+    try {
+        Resolve-AtlasoOnePasswordServiceAccountTokenFile `
+            -TokenFile (Join-Path $repositoryRoot 'outside-token.dpapi') `
+            -RepositoryRoot $repositoryRoot | Out-Null
+        throw 'An explicit token file outside .atlaso-local unexpectedly succeeded.'
+    }
+    catch {
+        if ($_.Exception.Message -notlike '*beneath this checkout*') {
+            throw
+        }
+    }
+
     $currentSid = [System.Security.Principal.WindowsIdentity]::GetCurrent().User
     $systemSid = [System.Security.Principal.SecurityIdentifier]::new('S-1-5-18')
     $acl = Get-Acl -LiteralPath $tokenPath
@@ -78,6 +90,30 @@ try {
     if (-not $acl.AreAccessRulesProtected -or $accessSids.Count -ne 2 -or
         $currentSid.Value -notin $accessSids -or $systemSid.Value -notin $accessSids) {
         throw 'The setup helper did not restrict the token file to the current user and SYSTEM.'
+    }
+
+    $missingSystemPath = Join-Path $testRoot 'missing-system.dpapi'
+    [System.IO.File]::Copy($tokenPath, $missingSystemPath)
+    $missingSystemAcl = Get-Acl -LiteralPath $missingSystemPath
+    $missingSystemAcl.SetAccessRuleProtection($true, $false)
+    foreach ($rule in @($missingSystemAcl.Access)) {
+        [void]$missingSystemAcl.RemoveAccessRuleAll($rule)
+    }
+    $currentUserRule = [System.Security.AccessControl.FileSystemAccessRule]::new(
+        $currentSid,
+        [System.Security.AccessControl.FileSystemRights]::FullControl,
+        [System.Security.AccessControl.AccessControlType]::Allow
+    )
+    $missingSystemAcl.AddAccessRule($currentUserRule)
+    Set-Acl -LiteralPath $missingSystemPath -AclObject $missingSystemAcl
+    try {
+        Assert-AtlasoOnePasswordServiceAccountTokenFile -Path $missingSystemPath | Out-Null
+        throw 'A token file without SYSTEM access unexpectedly succeeded.'
+    }
+    catch {
+        if ($_.Exception.Message -notlike '*SYSTEM cannot read*') {
+            throw
+        }
     }
 
     try {
