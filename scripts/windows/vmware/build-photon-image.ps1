@@ -1979,11 +1979,24 @@ else {
         (Join-Path $repoRoot 'image\vmware-workstation')
     )
     $taskSourceCommit = [string]$builderIdentity.SourceCommit
-    $taskSourceBranch = if ($ReleaseBuilder) {
+    $taskSourceIdentity = Get-AtlasoSourceCheckoutIdentity -RepositoryRoot $repoRoot
+    if ($taskSourceIdentity.Commit -cne $taskSourceCommit -or
+        (-not $ReleaseBuilder -and (
+                $taskSourceIdentity.Detached -or
+                $taskSourceIdentity.Branch -cne [string]$builderIdentity.SourceBranch
+            ))) {
+        throw 'The VMware image build source checkout changed before snapshot admission.'
+    }
+    # Release production supports the documented attached checkout and a
+    # detached checkout at the same admitted commit. Preserve which state was
+    # admitted so a branch attach, detach, or switch during credential work is
+    # still rejected before the immutable snapshot crosses into the child.
+    $taskSourceDetached = [bool]$taskSourceIdentity.Detached
+    $taskSourceBranch = if ($ReleaseBuilder -and $taskSourceDetached) {
         '(detached-release)'
     }
     else {
-        [string]$builderIdentity.SourceBranch
+        [string]$taskSourceIdentity.Branch
     }
     $requestedPackerDirectory = if ([string]::IsNullOrWhiteSpace($PackerDirectory)) {
         $canonicalPackerDirectory
@@ -2198,13 +2211,12 @@ else {
         $sourceSnapshot = New-AtlasoImmutableSourceSnapshot `
             -RepositoryRoot $repoRoot `
             -StagingRoot $childSensitiveBuildDirectory
-        $recheckedTaskSourceCommit = ([string](& git -C $repoRoot rev-parse HEAD)).Trim()
-        $recheckedTaskSourceBranch = ([string](& git -C $repoRoot branch --show-current)).Trim()
-        $expectedCheckoutBranch = if ($ReleaseBuilder) { '' } else { $taskSourceBranch }
-        if ($LASTEXITCODE -ne 0 -or
-            $sourceSnapshot.Commit -cne $taskSourceCommit -or
-            $recheckedTaskSourceCommit -cne $taskSourceCommit -or
-            $recheckedTaskSourceBranch -cne $expectedCheckoutBranch) {
+        $recheckedTaskSourceIdentity = Get-AtlasoSourceCheckoutIdentity -RepositoryRoot $repoRoot
+        if ($sourceSnapshot.Commit -cne $taskSourceCommit -or
+            $recheckedTaskSourceIdentity.Commit -cne $taskSourceCommit -or
+            [bool]$recheckedTaskSourceIdentity.Detached -ne $taskSourceDetached -or
+            (-not $taskSourceDetached -and
+                $recheckedTaskSourceIdentity.Branch -cne $taskSourceBranch)) {
             throw 'The VMware image build source checkout changed during snapshot admission.'
         }
         $null = Protect-AtlasoSourceSnapshot `
