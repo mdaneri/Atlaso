@@ -217,13 +217,15 @@ The wrapper resolves an explicit `-OnePasswordEnvironmentId` first and otherwise
 checkout-local, Git-ignored `.atlaso-local/onepassword-environment-id`; use `-EnvironmentIdFile` for another selector
 file. When `-SshPassword` and/or `-BootstrapAdminPassword` is omitted, it retrieves only the corresponding exact,
 unique, concealed `DEFAULT_ROOT_PASSWORD` and/or `DEFAULT_ADMIN_PASSWORD` through the supported bounded Windows
-1Password SDK desktop integration. Both explicit parameters accept `SecureString` and override their own Environment
-default independently. With no account or Python selectors, the bridge uses the single local 1Password CLI account and
+1Password SDK integration. Both explicit parameters accept `SecureString` and override their own Environment default
+independently. An explicit `-OnePasswordServiceAccountTokenFile` selects current-user DPAPI service-account
+authentication; otherwise an explicit `-OnePasswordAccount` preserves desktop authorization. With neither selector,
+the checkout-local DPAPI token file is preferred before single-account desktop discovery. The bridge uses
 standard GIL-enabled Windows x64 CPython 3.14 registered with the Windows launcher. Current Python Install
 Manager bracketed architecture selectors are accepted alongside legacy launcher and vendor-tagged registrations;
 known x86, unsupported architectures or versions, malformed entries, and missing executables remain ineligible. Explicit
-`-OnePasswordAccount` and `-OnePasswordPython` values remain authoritative. Caller `DEFAULT_*` variables, local `.env`
-files, repository password defaults, interactive
+`-OnePasswordPython` remains authoritative. Caller `DEFAULT_*` and `OP_SERVICE_ACCOUNT_TOKEN` variables, plaintext
+token files, local `.env` files, repository password defaults, interactive
 prompts, ambiguous or non-concealed variables, and invalid values are rejected. The child returns only current-user
 DPAPI ciphertext, and its task-owned files are removed before network preparation, output cleanup, ISO remastering,
 Packer initialization, or other image mutation. Sanitized failures do not print the Environment ID, account input, or
@@ -1563,13 +1565,15 @@ single-line `.atlaso-local/onepassword-environment-id` file ignored by Git. It v
 repository SHA-256 pin before invoking `op`, requires the Environments-enabled beta CLI installed under
 `C:\Program Files\1Password CLI`, validates `op run --environment`, and cryptographically verifies the retrieved
 certificate/key pair before mutation. For each omitted `-AdminPassword` or `-RootPassword`, it independently retrieves
-only the corresponding exact concealed default through the supported 1Password SDK desktop integration. An explicit
-`SecureString` remains authoritative for that credential. By default, the wrapper selects the single local 1Password
-CLI account and standard GIL-enabled Windows x64 CPython 3.14 registered with the Windows launcher. Current
+only the corresponding exact concealed default through the supported 1Password SDK integration. An explicit
+`SecureString` remains authoritative for that credential. By default, the wrapper prefers the checkout-local
+current-user DPAPI service-account token before single-account desktop discovery and selects standard GIL-enabled
+Windows x64 CPython 3.14 registered with the Windows launcher. Current
 Python Install Manager bracketed architecture selectors, legacy launcher forms, and vendor tags remain supported;
 known x86 and unsupported or malformed entries remain ineligible.
-`-OnePasswordAccount` and `-OnePasswordPython` remain explicit overrides; zero or multiple accounts and a missing
-compatible runtime fail before VMware mutation. The parent
+`-OnePasswordServiceAccountTokenFile`, `-OnePasswordAccount`, and `-OnePasswordPython` remain explicit overrides; an
+explicit token file takes precedence over an explicit desktop account. Without a token, zero or multiple desktop
+accounts fail closed. A missing compatible runtime fails before VMware mutation. The parent
 receives only current-user DPAPI ciphertext; a second bounded child stages the DPAPI-protected OVF environment into the
 exact new VMX. There are no interactive password prompts, caller-environment fallbacks, repository defaults, or local
 `.env` inputs. SDK or credential failure occurs before network preparation, cleanup, disk reset, or cloning, and
@@ -1622,13 +1626,12 @@ helper. A normal test VM created with the default key provisioning uses the exis
 ```
 
 For an appliance created with `-SkipSshKeyProvisioning`, or another appliance that retains password-backed sudo, pass
-the exact 1Password Environment ID and approved 1Password account name or ID:
+the exact 1Password Environment ID. The checkout-local DPAPI service-account token is selected automatically:
 
 ```powershell
 .\scripts\windows\vmware\deploy-wheel.ps1 `
   -IpAddress 192.168.167.10 `
   -OnePasswordEnvironmentId '<atlaso-environment-id>' `
-  -OnePasswordAccount '<account-name-or-id>' `
   -OnePasswordPython '<path-to-python-3.14.exe>'
 ```
 
@@ -1641,27 +1644,30 @@ when the address is already known; the explicitly identified normal test VM then
   -VmxPath "image\vmware-workstation\test-vms\Atlaso-PR-<number>-test-vm\Atlaso-PR-<number>-test-vm.vmx" `
   -UseVmwareGuestInfoHostKey `
   -OnePasswordEnvironmentId '<atlaso-environment-id>' `
-  -OnePasswordAccount '<account-name-or-id>' `
   -OnePasswordPython '<path-to-python-3.14.exe>'
 ```
 
 Do not pipe the VMX path or put it on a separate line by itself; PowerShell will try to execute the `.vmx` file. Before
-using the password-backed path, authenticate the local 1Password integration, verify that exactly one Environment named
-`Atlaso` exists, and confirm that `DEFAULT_ADMIN_PASSWORD` is present and concealed without reading its value. Copy the
-opaque Environment ID from that exact Environment and pass it with the account name or ID used by the desktop app.
+using the password-backed path, verify that exactly one Environment named `Atlaso` exists and confirm that
+`DEFAULT_ADMIN_PASSWORD` is present and concealed without reading its value. Copy the opaque Environment ID from that
+exact Environment. Configure the service-account token with the lifecycle guide's secure setup helper, or pass
+`-OnePasswordAccount '<account-name-or-id>'` to retain desktop authorization.
 The parent performs local build and input preparation without the credential, then invokes one isolated Python child.
 Atlaso temporarily consumes one immutable `onepassword-sdk 0.4.1` Windows x64 CPython 3.14 compatibility wheel from
 `mdaneri/onepassword-sdk-python`. The checked-in manifest binds the release URL, filename, size, SHA-256, upstream
 source identity, attestation workflow, wheel tag, and MIT license. The script validates that asset and selects standard
 GIL-enabled Windows x64 CPython 3.14 before build or deployment work; `-OnePasswordPython` is only an explicit override.
 Python 3.10 through 3.13, x86, ARM64, and free-threaded `3.14t` fail closed.
-The supported 1Password SDK prompts for desktop authorization and returns the exact concealed variable only inside that
-child, which uses it directly for Paramiko without putting it in an environment variable. Python starts with `-I -S`
+The supported 1Password SDK authenticates non-interactively from the checkout-local DPAPI service-account token by
+default. An explicit `-OnePasswordAccount` retains desktop authorization. The token is decrypted only by a bounded
+launcher and supplied to the immediate Python process as `OP_SERVICE_ACCOUNT_TOKEN`; Python removes that environment
+entry before Environment retrieval. The exact concealed password remains only inside that child and is used directly
+for Paramiko without putting it in an environment variable. Python starts with `-I -S`
 and prepends only its explicit dependency directory, so `sitecustomize`, `usercustomize`, executable `.pth` hooks, and
 inherited `PYTHONPATH` cannot observe the value. The helper fails closed when SDK preparation, authorization,
-Environment access, the unique variable, or masking is unavailable. It never accepts a password argument, local `.env`
-file, or the retired `ATLASO_DEPLOY_SSH_PASSWORD` fallback. Stable `op run` does not support the beta-only Environment
-flag and is not used by this workflow.
+Environment access, the unique variable, or masking is unavailable. It never accepts a password or token argument,
+plaintext token file, local `.env` file, or the retired `ATLASO_DEPLOY_SSH_PASSWORD` fallback. Stable `op run` does not
+support the beta-only Environment flag and is not used by this workflow.
 
 The shared VMware credential bridge has one supported retained-state controller:
 `scripts/windows/vmware/reset-atlaso-onepassword-credential-bridge.ps1`; follow the
@@ -1697,8 +1703,8 @@ trust switch, use the normal test wrapper's printed key and fingerprint to updat
 non-PTY stdout and
 stderr concurrently so a verbose remote failure cannot block on one channel and enforces the separate
 `-DeploymentTimeoutSeconds` remote-command deadline; the remote readiness retry keeps
-its independent `-ReadinessTimeoutSeconds` allowance. Desktop authorization and exact Environment retrieval each use
-the deployment deadline too. The build downloads Paramiko, the pinned 1Password SDK, and every transitive dependency
+its independent `-ReadinessTimeoutSeconds` allowance. Authentication and exact Environment retrieval each use the
+deployment deadline too. The build downloads Paramiko, the pinned 1Password SDK, and every transitive dependency
 from the seven-day, hash-verified `requirements-onepassword-deploy.lock`. The compatibility wheel is downloaded only
 from its fixed immutable GitHub release URL with bounded redirects, time, size, filename, and SHA-256 checks before the
 remaining locked wheels are staged. The child installs that runtime into a

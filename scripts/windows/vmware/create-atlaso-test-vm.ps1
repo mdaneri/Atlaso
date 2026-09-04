@@ -104,6 +104,11 @@ Optional 1Password account name or ID approved for desktop SDK authorization
 when either first-boot credential is omitted. The single CLI account is used
 when this selector is omitted.
 
+.PARAMETER OnePasswordServiceAccountTokenFile
+Optional current-user DPAPI ciphertext file. An explicit token file takes
+precedence over OnePasswordAccount. When both are omitted, the Git-ignored
+checkout-local default is preferred before desktop account discovery.
+
 .PARAMETER OnePasswordPython
 Optional standard GIL-enabled Windows x64 CPython 3.14 executable used by the supported Windows
 1Password SDK bridge. The highest compatible Windows-registered runtime is used
@@ -153,6 +158,11 @@ minutes for the 15-minute offline-cleanup gate, disk preparation, and bootstrap 
 )]
 [Diagnostics.CodeAnalysis.SuppressMessageAttribute(
     'PSAvoidUsingPlainTextForPassword',
+    'OnePasswordServiceAccountTokenFile',
+    Justification = 'Path to current-user DPAPI ciphertext, not a plaintext token.'
+)]
+[Diagnostics.CodeAnalysis.SuppressMessageAttribute(
+    'PSAvoidUsingPlainTextForPassword',
     'OnePasswordPython',
     Justification = 'Path to the approved Python interpreter, not a password.'
 )]
@@ -185,6 +195,7 @@ param(
     [switch]$TrustRootCa,
     [string]$OnePasswordEnvironmentId = '',
     [string]$OnePasswordAccount = '',
+    [string]$OnePasswordServiceAccountTokenFile = '',
     [string]$OnePasswordPython = '',
     [Alias('OnePasswordEnvironmentIdFile')]
     [string]$EnvironmentIdFile = '',
@@ -198,6 +209,9 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
+if ($env:OP_SERVICE_ACCOUNT_TOKEN) {
+    throw 'OP_SERVICE_ACCOUNT_TOKEN must not be supplied by the caller; use -OnePasswordServiceAccountTokenFile.'
+}
 
 # Preserve the established default-enabled and bare-switch interface without a
 # default-true switch declaration, which PowerShell cannot distinguish safely.
@@ -341,6 +355,15 @@ Exact new normal-test-VM VMX path for the Stage action.
 .PARAMETER TimeoutSeconds
 Positive deadline after which the complete op/secret-child process tree is
 terminated so the caller can enter signer scrub and VM rollback.
+
+.PARAMETER AuthenticationMode
+Use desktop authorization or the current-user DPAPI service-account token.
+
+.PARAMETER ServiceAccountTokenFile
+Validated ciphertext file used only by the bounded service-account wrapper.
+
+.PARAMETER RepositoryRoot
+Atlaso checkout that owns the permitted .atlaso-local token storage boundary.
 #>
 function Invoke-OnePasswordDevelopmentCaChild {
     param(
@@ -349,21 +372,44 @@ function Invoke-OnePasswordDevelopmentCaChild {
         [Parameter(Mandatory = $true)][ValidateSet('Validate', 'Stage')][string]$Action,
         [Parameter(Mandatory = $true)][string]$CertificatePath,
         [string]$VmxPath = '',
+        [Parameter(Mandatory = $true)][ValidateSet('desktop', 'service-account')]
+        [string]$AuthenticationMode,
+        [AllowEmptyString()][string]$ServiceAccountTokenFile = '',
+        [Parameter(Mandatory = $true)][string]$RepositoryRoot,
         [Parameter(Mandatory = $true)][ValidateRange(1, 3600)][int]$TimeoutSeconds
     )
 
     $powerShellPath = (Get-Process -Id $PID).Path
-    $childPath = Join-Path $PSScriptRoot 'Invoke-AtlasoDevelopmentCaSecret.ps1'
-    $arguments = @(
-        'run', '--environment', $EnvironmentId, '--',
-        $powerShellPath, '-NoProfile', '-NonInteractive', '-File', $childPath,
-        '-Action', $Action, '-CertificatePath', $CertificatePath
-    )
-    if ($Action -eq 'Stage') {
-        $arguments += @('-VmxPath', $VmxPath)
+    if ($AuthenticationMode -eq 'service-account') {
+        $filePath = $powerShellPath
+        $childPath = Join-Path $PSScriptRoot 'Invoke-AtlasoDevelopmentCaWithServiceAccount.ps1'
+        $arguments = @(
+            '-NoLogo', '-NoProfile', '-NonInteractive', '-File', $childPath,
+            '-TokenFile', $ServiceAccountTokenFile,
+            '-RepositoryRoot', $RepositoryRoot,
+            '-OpPath', $OpPath,
+            '-EnvironmentId', $EnvironmentId,
+            '-Action', $Action,
+            '-CertificatePath', $CertificatePath
+        )
+        if ($Action -eq 'Stage') {
+            $arguments += @('-VmxPath', $VmxPath)
+        }
+    }
+    else {
+        $filePath = $OpPath
+        $childPath = Join-Path $PSScriptRoot 'Invoke-AtlasoDevelopmentCaSecret.ps1'
+        $arguments = @(
+            'run', '--environment', $EnvironmentId, '--',
+            $powerShellPath, '-NoProfile', '-NonInteractive', '-File', $childPath,
+            '-Action', $Action, '-CertificatePath', $CertificatePath
+        )
+        if ($Action -eq 'Stage') {
+            $arguments += @('-VmxPath', $VmxPath)
+        }
     }
     Invoke-AtlasoBoundedProcess `
-        -FilePath $OpPath `
+        -FilePath $filePath `
         -ArgumentList $arguments `
         -TimeoutSeconds $TimeoutSeconds `
         -Action "The bounded 1Password development-CA $Action child" | Out-Null
@@ -618,6 +664,9 @@ Opaque ID of the already pinned and verified Atlaso Environment.
 .PARAMETER OnePasswordAccount
 Account name or ID used for desktop SDK authorization when a default is needed.
 
+.PARAMETER OnePasswordServiceAccountTokenFile
+Optional current-user DPAPI ciphertext file selected ahead of desktop authorization.
+
 .PARAMETER OnePasswordPython
 Standard GIL-enabled Windows x64 CPython 3.14 executable used when a default is needed.
 
@@ -648,6 +697,11 @@ Positive deadline for dependency and credential children.
 function New-AtlasoTestVmCredentialBridgeState {
     [Diagnostics.CodeAnalysis.SuppressMessageAttribute(
         'PSAvoidUsingPlainTextForPassword',
+        'OnePasswordServiceAccountTokenFile',
+        Justification = 'Path to current-user DPAPI ciphertext, not a plaintext token.'
+    )]
+    [Diagnostics.CodeAnalysis.SuppressMessageAttribute(
+        'PSAvoidUsingPlainTextForPassword',
         'OnePasswordCliPath',
         Justification = 'Path to the approved 1Password CLI executable, not a password.'
     )]
@@ -655,6 +709,7 @@ function New-AtlasoTestVmCredentialBridgeState {
         [Parameter(Mandatory = $true)][string]$RepositoryRoot,
         [Parameter(Mandatory = $true)][string]$EnvironmentId,
         [string]$OnePasswordAccount = '',
+        [string]$OnePasswordServiceAccountTokenFile = '',
         [string]$OnePasswordPython = '',
         [string]$OnePasswordCliPath = '',
         [SecureString]$AdminPassword,
@@ -703,7 +758,7 @@ function New-AtlasoTestVmCredentialBridgeState {
         )
 
         $resolvedPython = ''
-        $resolvedAccount = ''
+        $authentication = [pscustomobject]@{ Mode = 'desktop'; TokenFile = ''; Account = '' }
         $dependencyPath = ''
         if ($needsDefaults) {
             $resolvedPython = Resolve-OnePasswordTestVmPython `
@@ -714,7 +769,9 @@ function New-AtlasoTestVmCredentialBridgeState {
                 -RepositoryRoot $RepositoryRoot `
                 -BridgeRoot $bridgeRoot `
                 -TimeoutSeconds $TimeoutSeconds
-            $resolvedAccount = Resolve-OnePasswordTestVmAccount `
+            $authentication = Resolve-AtlasoOnePasswordAuthentication `
+                -RepositoryRoot $RepositoryRoot `
+                -ServiceAccountTokenFile $OnePasswordServiceAccountTokenFile `
                 -Account $OnePasswordAccount `
                 -TimeoutSeconds $TimeoutSeconds `
                 -CliPath $OnePasswordCliPath
@@ -727,13 +784,16 @@ function New-AtlasoTestVmCredentialBridgeState {
             '-RequestPath', $requestPath,
             '-StatusPath', $statusPath,
             '-OvfBundlePath', $ovfBundlePath,
+            '-RepositoryRoot', $RepositoryRoot,
             '-TimeoutSeconds', "$TimeoutSeconds"
         )
         if ($needsDefaults) {
             $arguments += @(
                 '-PythonCommand', $resolvedPython,
                 '-DependencyPath', $dependencyPath,
-                '-OnePasswordAccount', $resolvedAccount,
+                '-OnePasswordAuthenticationMode', $authentication.Mode,
+                '-OnePasswordAccount', $authentication.Account,
+                '-OnePasswordServiceAccountTokenFile', $authentication.TokenFile,
                 '-EnvironmentId', $EnvironmentId
             )
         }
@@ -2994,6 +3054,7 @@ $developmentRootCaCertificatePem = Get-Content -LiteralPath $developmentRootCaCe
 $developmentRootCaFingerprint = Get-AtlasoDevelopmentRootCaFingerprint `
     -CertificatePath $developmentRootCaCertificatePath
 $resolvedOpPath = ''
+$onePasswordAuthentication = $null
 $resolvedVmrunPath = ''
 if ($NoStart) {
     throw '-NoStart is not supported for normal test VMs because first boot must consume and scrub the shared development signing key.'
@@ -3022,6 +3083,12 @@ if (-not $WhatIfPreference) {
         -EnvironmentIdFile $EnvironmentIdFile `
         -RepositoryRoot $repoRoot
     $resolvedOpPath = Resolve-OnePasswordCliPath
+    $onePasswordAuthentication = Resolve-AtlasoOnePasswordAuthentication `
+        -RepositoryRoot $repoRoot `
+        -ServiceAccountTokenFile $OnePasswordServiceAccountTokenFile `
+        -Account $OnePasswordAccount `
+        -TimeoutSeconds $TimeoutSeconds `
+        -CliPath $resolvedOpPath
     Assert-OnePasswordDevelopmentCaBridge `
         -EnvironmentId $OnePasswordEnvironmentId `
         -OpPath $resolvedOpPath `
@@ -3033,6 +3100,9 @@ if (-not $WhatIfPreference) {
         -OpPath $resolvedOpPath `
         -Action Validate `
         -CertificatePath $developmentRootCaCertificatePath `
+        -AuthenticationMode $onePasswordAuthentication.Mode `
+        -ServiceAccountTokenFile $onePasswordAuthentication.TokenFile `
+        -RepositoryRoot $repoRoot `
         -TimeoutSeconds $TimeoutSeconds
 }
 
@@ -3060,7 +3130,8 @@ if (-not $WhatIfPreference) {
     $credentialBridgeState = New-AtlasoTestVmCredentialBridgeState `
         -RepositoryRoot $repoRoot `
         -EnvironmentId $OnePasswordEnvironmentId `
-        -OnePasswordAccount $OnePasswordAccount `
+        -OnePasswordAccount $onePasswordAuthentication.Account `
+        -OnePasswordServiceAccountTokenFile $onePasswordAuthentication.TokenFile `
         -OnePasswordPython $OnePasswordPython `
         -OnePasswordCliPath $resolvedOpPath `
         -AdminPassword $AdminPassword `
@@ -3276,6 +3347,9 @@ if (-not $WhatIfPreference) {
                 -Action Stage `
                 -CertificatePath $developmentRootCaCertificatePath `
                 -VmxPath $targetVmx `
+                -AuthenticationMode $onePasswordAuthentication.Mode `
+                -ServiceAccountTokenFile $onePasswordAuthentication.TokenFile `
+                -RepositoryRoot $repoRoot `
                 -TimeoutSeconds $TimeoutSeconds
         }
         catch {

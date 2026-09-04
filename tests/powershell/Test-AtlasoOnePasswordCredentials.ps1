@@ -485,6 +485,7 @@ try {
             $recoveryJob.RootProcess.StartTime.ToUniversalTime().ToFileTimeUtc()
         ProcessOwnershipPhase        = 'assigned'
     }
+    [void][System.IO.Directory]::CreateDirectory((Split-Path -Parent $cleanupMarkerPath))
     Write-AtlasoDurableJsonFile -Path $cleanupMarkerPath -Payload $recoveryMarker
     $recoveryJob.Resume()
     & $credentialModule {

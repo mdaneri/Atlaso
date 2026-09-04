@@ -624,15 +624,16 @@ The following cross-cutting boundaries always apply:
   ASCII letters, digits, `/`, `.`, `_`, and `-`, with no `.` or `..` components. Keep key/agent authentication and the
   supported Windows 1Password SDK password bridge on this shared path contract, and serialize every key-backed
   remote shell argument explicitly. The bridge must bind the exact verified `Atlaso` Environment's concealed
-  `DEFAULT_ADMIN_PASSWORD` variable only inside the bounded deployment child, bound desktop authorization and
+  `DEFAULT_ADMIN_PASSWORD` variable only inside the bounded deployment child, bind 1Password authorization and
   Environment retrieval to the deployment timeout, stage its complete runtime from the generated seven-day
   hash-verified deployment lock with standard GIL-enabled Windows x64 CPython 3.14. Verify the exact immutable
   compatibility-wheel URL, filename, size, SHA-256, and GitHub release host chain before credentials or VMware
   activity; install it with
   index access disabled, preserve known-host verification, and fail
-  closed for missing SDK support, desktop authorization, Environment, variable, masking, or redaction. Never use a
-  password argument,
-  local `.env`, caller-provided `DEFAULT_ADMIN_PASSWORD`, or the retired `ATLASO_DEPLOY_SSH_PASSWORD` fallback.
+  closed for missing SDK support, authorization, Environment, variable, masking, or redaction. Prefer the
+  checkout-local current-user DPAPI service-account token, retain explicit-account desktop authorization as fallback,
+  and never use a password or token argument, plaintext token file, local `.env`, caller-provided
+  `OP_SERVICE_ACCOUNT_TOKEN` or `DEFAULT_ADMIN_PASSWORD`, or the retired `ATLASO_DEPLOY_SSH_PASSWORD` fallback.
 - Every task-owned VMware test VM used for pull-request validation derives its identity from the exact positive
   pull-request number through `Atlaso-PR-<number>-<purpose>[-<collision-safe-suffix>]`. Sanitize the short purpose and
   optional suffix through the shared VMware identity helper. Keep the VMware `displayName`, canonical output or
@@ -659,6 +660,10 @@ The following cross-cutting boundaries always apply:
   documentation, and GitHub surfaces; use current-user DPAPI between bounded children. Reject caller environment
   fallbacks, repository defaults, local `.env` files, and interactive password prompts. Credential failure must precede
   network preparation, cleanup, disk reset, and cloning, while `-WhatIf` remains credential-free.
+  Prefer the checkout-local current-user DPAPI service-account token and retain explicit `-OnePasswordAccount` desktop
+  authorization as fallback. Decrypt the token only inside a bounded child, expose it only to the immediate SDK or
+  `op run` process, and remove the SDK environment copy immediately after client initialization. Reject plaintext token
+  files and caller-provided `OP_SERVICE_ACCOUNT_TOKEN`.
   The VMware Photon image wrapper reuses this exact pinned Environment selector and bounded SDK/DPAPI foundation for
   omitted `-SshPassword` and `-BootstrapAdminPassword`, mapped respectively to concealed `DEFAULT_ROOT_PASSWORD` and
   `DEFAULT_ADMIN_PASSWORD`. Explicit `SecureString` values remain independently authoritative. Complete credential
@@ -915,8 +920,10 @@ The following cross-cutting boundaries always apply:
   keys. Authenticate through the plugin, verify the named Environment before access, and store secret values there as
   concealed variables. For supported Windows
   subprocess use, bind that exact Environment by its opaque ID through the supported 1Password SDK inside the bounded
-  child process; never read the value into agent-visible output. Never fall back to chat, repository files, local
-  `.env` files, shell arguments, jobs,
+  child process; never read the value into agent-visible output. A service-account token may be stored only as
+  current-user DPAPI ciphertext in the Git-ignored checkout-local path, with current-user-and-SYSTEM access, and may be
+  decrypted only inside a bounded child. Never fall back to chat, plaintext repository files, local `.env` files,
+  shell arguments, jobs,
   audits, logs, screenshots, or documentation; if the 1Password plugin or the `Atlaso` Environment is unavailable, stop
   and request maintainer direction.
   DEFAULT_ROOT_PASSWORD contains the default root password for any new deployed environment.

@@ -51,7 +51,7 @@ provenance, and acceptance evidence remains PR-numbered. See the
 
 Password-backed Windows build and test helpers require standard GIL-enabled x64 CPython 3.14. Until 1Password ships
 an eligible official wheel, Atlaso verifies one immutable, attested compatibility release from the public
-`mdaneri/onepassword-sdk-python` fork by exact URL, filename, size, and SHA-256 before desktop authorization or VMware
+`mdaneri/onepassword-sdk-python` fork by exact URL, filename, size, and SHA-256 before 1Password authorization or VMware
 activity. The wheel is never checked into Atlaso or published to PyPI.
 When a restricted build network supplies the credential-free `PipGlobalIndex` and `PipGlobalIndexUrl` pair, Atlaso
 uses that same resolved pair for both the host-side hash-locked 1Password dependency closure and the guest Photon build;

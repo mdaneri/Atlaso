@@ -32,6 +32,10 @@ Optional Hyper-V service switch used by the workstation smoke test. Defaults to 
 Optional 1Password Environment ID. Omission uses the checkout-local selector file.
 .PARAMETER OnePasswordAccount
 Optional 1Password account selector. Omission requires one uniquely signed-in CLI account.
+.PARAMETER OnePasswordServiceAccountTokenFile
+Optional current-user DPAPI ciphertext file. An explicit token file takes
+precedence over OnePasswordAccount; the checkout-local default is preferred
+before desktop discovery when both are omitted.
 .PARAMETER OnePasswordPython
 Optional supported Python executable. Omission discovers standard Windows x64 CPython 3.14.
 .PARAMETER ProxmoxRunnerLabel
@@ -63,6 +67,11 @@ Allow replacement of the exact approved output directory.
 )]
 [Diagnostics.CodeAnalysis.SuppressMessageAttribute(
     'PSAvoidUsingPlainTextForPassword',
+    'OnePasswordServiceAccountTokenFile',
+    Justification = 'Path to current-user DPAPI ciphertext, not a plaintext token.'
+)]
+[Diagnostics.CodeAnalysis.SuppressMessageAttribute(
+    'PSAvoidUsingPlainTextForPassword',
     'OnePasswordPython',
     Justification = 'Executable selector for the isolated SDK runtime, not a password.'
 )]
@@ -84,6 +93,7 @@ param(
     [string]$ServiceSwitch = '',
     [string]$OnePasswordEnvironmentId = '',
     [string]$OnePasswordAccount = '',
+    [string]$OnePasswordServiceAccountTokenFile = '',
     [string]$OnePasswordPython = '',
     [string]$ProxmoxRunnerLabel = '',
     [string]$KvmRunnerLabel = '',
@@ -97,6 +107,9 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
+if ($env:OP_SERVICE_ACCOUNT_TOKEN) {
+    throw 'OP_SERVICE_ACCOUNT_TOKEN must not be supplied by the caller; use -OnePasswordServiceAccountTokenFile.'
+}
 if ($Release -and $Prerelease) {
     throw '-Release and -Prerelease are mutually exclusive publishing modes.'
 }
@@ -118,6 +131,7 @@ if ($Release -or $Prerelease) {
             -ServiceSwitch $ServiceSwitch `
             -OnePasswordEnvironmentId $OnePasswordEnvironmentId `
             -OnePasswordAccount $OnePasswordAccount `
+            -OnePasswordServiceAccountTokenFile $OnePasswordServiceAccountTokenFile `
             -OnePasswordPython $OnePasswordPython `
             -CandidateOnly:$CandidateOnly `
             -NoWait:$NoWait

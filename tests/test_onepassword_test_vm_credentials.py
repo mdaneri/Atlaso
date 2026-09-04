@@ -37,6 +37,7 @@ def _run_child(
     *,
     admin_override: bool = False,
     root_override: bool = False,
+    authentication: str = "desktop",
 ) -> tuple[subprocess.CompletedProcess[str], dict[str, str]]:
     """Run the extracted SDK child against a synthetic Environment.
 
@@ -45,6 +46,7 @@ def _run_child(
         mode: Synthetic SDK response scenario.
         admin_override: Whether the administrator value is already DPAPI protected.
         root_override: Whether the root value is already DPAPI protected.
+        authentication: SDK authentication mode to exercise.
 
     Returns:
         Completed process and any protected output document.
@@ -57,9 +59,12 @@ def _run_child(
     valid_root = secret + "-root"
     (package_path / "__init__.py").write_text(
         f'''import asyncio
+import os
 
 class DesktopAuth:
     def __init__(self, account_name):
+        if "{authentication}" == "service-account":
+            raise RuntimeError("DesktopAuth must not be invoked")
         self.account_name = account_name
 
 class Variable:
@@ -99,6 +104,10 @@ class Environments:
 class Client:
     @staticmethod
     async def authenticate(**kwargs):
+        if "{authentication}" == "service-account" and kwargs.get("auth") != "ops_{'A' * 100}":
+            raise RuntimeError("wrong service-account token")
+        if os.environ.get("OP_SERVICE_ACCOUNT_TOKEN"):
+            raise RuntimeError("service-account token remained in the environment")
         if "{mode}" == "hang-auth":
             await asyncio.sleep(3600)
         if "{mode}" == "denied":
@@ -127,6 +136,8 @@ class Client:
     environment = os.environ.copy()
     environment["DEFAULT_ADMIN_PASSWORD"] = "caller-admin-must-not-be-used"
     environment["DEFAULT_ROOT_PASSWORD"] = "caller-root-must-not-be-used"
+    if authentication == "service-account":
+        environment["OP_SERVICE_ACCOUNT_TOKEN"] = "ops_" + "A" * 100
     result = subprocess.run(
         [
             sys.executable,
@@ -135,6 +146,8 @@ class Client:
             str(child_path),
             "--dependency-path",
             str(dependency_path),
+            "--onepassword-authentication",
+            authentication,
             "--onepassword-account",
             "atlaso-test-account",
             "--onepassword-environment-id",
@@ -244,3 +257,43 @@ def test_explicit_overrides_remain_independently_authoritative(
     assert result.returncode == 0
     assert set(output) == expected_fields
     assert all(value.startswith("protected-") for value in output.values())
+
+
+def test_service_account_authentication_avoids_desktop_auth_and_clears_environment(
+    tmp_path: Path,
+) -> None:
+    """Authenticate directly with the service token and remove its environment copy.
+
+    Args:
+        tmp_path: Isolated directory for the extracted child and fake packages.
+    """
+    result, output = _run_child(
+        tmp_path,
+        "success",
+        authentication="service-account",
+    )
+
+    assert result.returncode == 0
+    assert set(output) == {"AdminPasswordCiphertext", "RootPasswordCiphertext"}
+    assert "ops_" not in result.stdout + result.stderr
+
+
+@pytest.mark.parametrize("mode", ["denied", "wrong-environment"])
+def test_service_account_revocation_or_environment_denial_fails_closed(
+    tmp_path: Path, mode: str
+) -> None:
+    """Reject a revoked token or missing exact-Environment grant without output.
+
+    Args:
+        tmp_path: Isolated directory for the extracted child and fake packages.
+        mode: Simulated service-account authorization failure.
+    """
+    result, output = _run_child(
+        tmp_path,
+        mode,
+        authentication="service-account",
+    )
+
+    assert result.returncode == 20
+    assert not output
+    assert "ops_" not in result.stdout + result.stderr

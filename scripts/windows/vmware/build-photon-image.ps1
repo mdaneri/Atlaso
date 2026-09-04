@@ -21,6 +21,10 @@ OnePasswordEnvironmentIdFile name remains available as an alias.
 Optional 1Password account name or ID approved for desktop SDK authorization
 when either credential is omitted. The single CLI account is used when this
 selector is omitted.
+.PARAMETER OnePasswordServiceAccountTokenFile
+Optional current-user DPAPI ciphertext file. An explicit token file takes
+precedence over OnePasswordAccount. When both are omitted, the Git-ignored
+checkout-local default is preferred before desktop account discovery.
 .PARAMETER OnePasswordPython
 Optional standard GIL-enabled Windows x64 CPython 3.14 executable used by the locked Windows
 1Password SDK runtime. The highest compatible Windows-registered runtime is
@@ -168,6 +172,11 @@ Reject ISO-only preparation because the retained ISO would contain reusable cred
 )]
 [Diagnostics.CodeAnalysis.SuppressMessageAttribute(
     'PSAvoidUsingPlainTextForPassword',
+    'OnePasswordServiceAccountTokenFile',
+    Justification = 'Path to current-user DPAPI ciphertext, not a plaintext token.'
+)]
+[Diagnostics.CodeAnalysis.SuppressMessageAttribute(
+    'PSAvoidUsingPlainTextForPassword',
     'OnePasswordPython',
     Justification = 'Executable selector for the isolated SDK runtime, not a password.'
 )]
@@ -190,6 +199,7 @@ param(
     [Alias('OnePasswordEnvironmentIdFile')]
     [string]$EnvironmentIdFile = '',
     [string]$OnePasswordAccount = '',
+    [string]$OnePasswordServiceAccountTokenFile = '',
     [string]$OnePasswordPython = '',
     [ValidateRange(1, 3600)]
     [int]$CredentialTimeoutSeconds = 300,
@@ -270,6 +280,9 @@ param(
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
+if ($env:OP_SERVICE_ACCOUNT_TOKEN) {
+    throw 'OP_SERVICE_ACCOUNT_TOKEN must not be supplied by the caller; use -OnePasswordServiceAccountTokenFile.'
+}
 if ($PrepareIsoOnly) {
     throw 'PrepareIsoOnly is not supported because a retained remastered ISO would contain reusable build credentials. Run Packer validation or a build so the ISO can be deleted after the bounded consumer exits.'
 }
@@ -2005,6 +2018,7 @@ else {
         -RepositoryRoot $repoRoot `
         -EnvironmentId $resolvedEnvironmentId `
         -OnePasswordAccount $OnePasswordAccount `
+        -OnePasswordServiceAccountTokenFile $OnePasswordServiceAccountTokenFile `
         -OnePasswordPython $OnePasswordPython `
         -AdminPassword $BootstrapAdminPassword `
         -RootPassword $SshPassword `
@@ -2275,7 +2289,7 @@ else {
             'SshPassword', 'BootstrapAdminPassword',
             'PipGlobalIndex', 'PipGlobalIndexUrl',
             'OnePasswordEnvironmentId', 'EnvironmentIdFile',
-            'OnePasswordAccount', 'OnePasswordPython',
+            'OnePasswordAccount', 'OnePasswordServiceAccountTokenFile', 'OnePasswordPython',
             'CredentialTimeoutSeconds', 'ImageBuildTimeoutSeconds',
             'BuildStateRoot',
             'CredentialBundlePath', 'CredentialChild',
