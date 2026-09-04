@@ -1763,6 +1763,11 @@ def test_vmware_release_snapshot_preserves_attached_or_detached_identity() -> No
 
     assert "Get-AtlasoSourceCheckoutIdentity" in initial_admission
     assert "$taskSourceIdentity.Detached" in initial_admission
+    assert "-not $ReleaseBuilder" in initial_admission
+    assert "$taskSourceIdentity.Detached -or" in initial_admission
+    assert "$taskSourceIdentity.Branch -cne [string]$builderIdentity.SourceBranch" in (
+        initial_admission
+    )
     assert "$taskSourceDetached = [bool]$taskSourceIdentity.Detached" in initial_admission
     assert "'(detached-release)'" in initial_admission
     assert "Get-AtlasoSourceCheckoutIdentity" in snapshot_recheck

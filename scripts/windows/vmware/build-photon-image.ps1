@@ -1981,8 +1981,10 @@ else {
     $taskSourceCommit = [string]$builderIdentity.SourceCommit
     $taskSourceIdentity = Get-AtlasoSourceCheckoutIdentity -RepositoryRoot $repoRoot
     if ($taskSourceIdentity.Commit -cne $taskSourceCommit -or
-        (-not $ReleaseBuilder -and
-            $taskSourceIdentity.Branch -cne [string]$builderIdentity.SourceBranch)) {
+        (-not $ReleaseBuilder -and (
+                $taskSourceIdentity.Detached -or
+                $taskSourceIdentity.Branch -cne [string]$builderIdentity.SourceBranch
+            ))) {
         throw 'The VMware image build source checkout changed before snapshot admission.'
     }
     # Release production supports the documented attached checkout and a
