@@ -46,13 +46,16 @@ def sha256(path: str) -> str:
     return hashlib.sha256(Path(path).read_bytes()).hexdigest()
 
 
-def test_data_disk_policies_remain_lf_in_windows_checkouts(tmp_path: Path) -> None:
-    """Materialize shell-sourced image policies with Windows conversion enabled.
+def test_image_build_inputs_remain_lf_in_windows_checkouts(tmp_path: Path) -> None:
+    """Materialize line-ending-sensitive image inputs with Windows conversion enabled.
 
     Args:
         tmp_path: Pytest-provided isolated checkout destination.
     """
-    policies = (Path("image/common/data-disks.conf"),)
+    policies = (
+        Path("image/common/data-disks.conf"),
+        Path("image/common/guest-agents/atlaso-qemu-guest-agent.spec"),
+    )
     checkout = tmp_path / "checkout"
     checkout.mkdir()
     completed = subprocess.run(

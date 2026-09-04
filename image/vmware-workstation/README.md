@@ -169,7 +169,8 @@ communicator `HOME` and pip cache with root-owned, mode-`0700` directories insid
 before `configure` can start `mkvenv`. It clears inherited `PIP_*` and `XDG_CONFIG_HOME` values, pins pip to the
 generated root-owned configuration, and then restores only the admitted index without echoing it. Exit cleanup
 removes only that invocation root. The RPM builder copies QEMU 10.2's linked guest agent from its `build/qga` target
-directory.
+directory. Repository attributes keep the RPM spec LF-only in Windows checkouts so `rpmbuild` cannot turn a blank
+section line into a carriage-return command.
 Because that Atlaso-built RPM is not a repository-signed package, the provisioner downloads its `glib` and `systemd`
 runtime dependency closure in a separate signature-checked Photon transaction, then stages the pinned local RPM
 directly. No transaction bypasses repository GPG checks, and the completed root-owned offline closure remains bound by

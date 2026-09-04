@@ -14,6 +14,7 @@ image/inventory-linux/external/overlay/usr/share/atlaso/*.ppm binary
 
 image/common/sudoers.d/* text eol=lf
 image/common/systemd/* text eol=lf
+image/common/guest-agents/atlaso-qemu-guest-agent.spec text eol=lf
 
 # First boot sources these platform policies as shell input.
 image/common/data-disks.conf text eol=lf
