@@ -36,6 +36,8 @@ Atlaso runs on Photon OS 5.0. VMware Workstation is the canonical image-build, l
 validated OVF/OVA supports VMware deployment and is the source artifact for KVM and Proxmox VE imports; Hyper-V uses a
 portable ZIP converted from that same appliance image. Canonical Workstation builds reserve their temporary static
 builder address outside VMware DHCP before Packer starts, so concurrent clean worktrees do not reuse one endpoint.
+Build preflight checks VMware-generated paths against a 240-character budget; choose a shorter `-StagingRoot` for
+virtualization prereleases or a shorter canonical `-OutputDirectory` parent for direct image builds when rejected.
 Protected release finalization and stable promotion admit exactly one version-derived Hyper-V ZIP; suffix-compatible
 aliases or additional archives fail before signing or publication.
 Visible builds repair exact missing Atlaso library registrations before starting Workstation, while full artifact

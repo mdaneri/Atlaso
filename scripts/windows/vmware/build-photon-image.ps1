@@ -2017,6 +2017,19 @@ else {
         [System.IO.Path]::GetFullPath($SharedSourceDirectory)
     }
     $resolvedEnvironmentId = ''
+    # After mandatory artifact admission and recovery, reject these paths before
+    # credential-pair preparation. Reuse this resolution for parent cleanup.
+    $outerCleanupPackerDirectory = $canonicalPackerDirectory
+    $outerCleanupOutputDirectory = Resolve-WorkstationOutputDirectory `
+        -PackerDirectory $outerCleanupPackerDirectory `
+        -OutputDirectory $OutputDirectory `
+        -VmName $VmName
+    $outerCleanupOutputDirectory = Assert-AtlasoVmwareBuilderOutputDirectory `
+        -OutputDirectory $outerCleanupOutputDirectory `
+        -Identity $builderIdentity
+    Assert-AtlasoVmwareBuilderPathBudget `
+        -OutputDirectory $outerCleanupOutputDirectory `
+        -Identity $builderIdentity
     if ($needsOnePasswordDefaults) {
         $resolvedEnvironmentId = Resolve-AtlasoOnePasswordEnvironmentId `
             -EnvironmentId $OnePasswordEnvironmentId `
@@ -2052,14 +2065,6 @@ else {
     $childBuilderAddressReservationPath = Join-Path $builderReservationPendingRoot (
         "builder-address-reservation-$([guid]::NewGuid().ToString('N')).json"
     )
-    $outerCleanupPackerDirectory = $canonicalPackerDirectory
-    $outerCleanupOutputDirectory = Resolve-WorkstationOutputDirectory `
-        -PackerDirectory $outerCleanupPackerDirectory `
-        -OutputDirectory $OutputDirectory `
-        -VmName $VmName
-    $outerCleanupOutputDirectory = Assert-AtlasoVmwareBuilderOutputDirectory `
-        -OutputDirectory $outerCleanupOutputDirectory `
-        -Identity $builderIdentity
     $preparedIsoLeaf = if ($PSBoundParameters.ContainsKey('PreparedIsoPath') -and
         -not [string]::IsNullOrWhiteSpace($PreparedIsoPath)) {
         [System.IO.Path]::GetFileName($PreparedIsoPath)
@@ -2847,6 +2852,7 @@ $workstationOutputDirectory = Resolve-WorkstationOutputDirectory `
 $workstationOutputDirectory = Assert-AtlasoVmwareBuilderOutputDirectory `
     -OutputDirectory $workstationOutputDirectory `
     -Identity $builderIdentity
+Assert-AtlasoVmwareBuilderPathBudget -OutputDirectory $workstationOutputDirectory -Identity $builderIdentity
 $builderIdentityManifestPath = Get-AtlasoVmwareBuilderIdentityManifestPath `
     -OutputDirectory $workstationOutputDirectory
 $builderOutputExists = Test-Path -LiteralPath $workstationOutputDirectory

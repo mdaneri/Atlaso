@@ -290,6 +290,39 @@ if ($defaultRoot -cne $expectedDefaultRoot -or
 }
 $retainedRoot = Join-Path $RepositoryRoot ('.atlaso-local\virtualization-release-test-' + [guid]::NewGuid().ToString('N'))
 try {
+    $layoutIdentity = [pscustomobject]@{ Name = 'Atlaso-Release-layout-fixture' }
+    $layoutOperation = Join-Path $retainedRoot 'layout'
+    $compactOutput = Join-Path $layoutOperation $layoutIdentity.Name
+    $legacyOutput = Join-Path (Join-Path $layoutOperation 'vmware-build') $layoutIdentity.Name
+    $selectedOutput = & $releaseScope {
+        param($Operation, $Identity)
+        Resolve-AtlasoVirtualizationBuilderOutput -Operation $Operation -Identity $Identity
+    } $layoutOperation $layoutIdentity
+    if ($selectedOutput -cne $compactOutput -or (Test-Path -LiteralPath $layoutOperation)) {
+        throw 'New builder layout must be compact and selected without mutation.'
+    }
+    New-Item -ItemType Directory -Path (Split-Path -Parent $legacyOutput) -Force | Out-Null
+    foreach ($retainedPath in @($legacyOutput, "$legacyOutput.builder-identity.json", "$legacyOutput.builder-identity.json.lock")) {
+        [IO.File]::WriteAllText($retainedPath, 'retained-state')
+        $selectedOutput = & $releaseScope {
+            param($Operation, $Identity)
+            Resolve-AtlasoVirtualizationBuilderOutput -Operation $Operation -Identity $Identity
+        } $layoutOperation $layoutIdentity
+        if ($selectedOutput -cne $legacyOutput) { throw 'Retained legacy ownership state was ignored.' }
+        Remove-Item -LiteralPath $retainedPath
+    }
+    New-Item -ItemType Directory -Path $legacyOutput -Force | Out-Null
+    New-Item -ItemType Directory -Path $compactOutput -Force | Out-Null
+    try {
+        & $releaseScope {
+            param($Operation, $Identity)
+            Resolve-AtlasoVirtualizationBuilderOutput -Operation $Operation -Identity $Identity
+        } $layoutOperation $layoutIdentity
+        throw 'Ambiguous retained builder layouts were accepted.'
+    }
+    catch {
+        if ($_.Exception.Message -notlike '*Both compact and legacy*') { throw }
+    }
     New-Item -ItemType Directory -Path (Join-Path $retainedRoot 'virtualization-v0.9.304-rc.7') -Force | Out-Null
     New-Item -ItemType Directory -Path (Join-Path $retainedRoot 'virtualization-v0.9.303-rc.99') -Force | Out-Null
     $discoveredRetained = @(& $releaseScope {
@@ -528,6 +561,11 @@ if ($releaseModule.Contains('PrereleaseIdentifier') -or $ovaExporter.Contains('P
     throw 'The removed PrereleaseIdentifier interface remains in release code or help.'
 }
 $summaryIndex = $releaseModule.IndexOf("Write-Host 'Virtualization prerelease preflight:'")
+$budgetIndex = $releaseModule.IndexOf('    Assert-AtlasoVmwareBuilderPathBudget', $releaseModule.IndexOf('function Invoke-AtlasoVirtualizationPrerelease'))
+$credentialIndex = $releaseModule.IndexOf('    $OnePasswordEnvironmentId = Resolve-AtlasoOnePasswordEnvironmentId', $releaseModule.IndexOf('function Invoke-AtlasoVirtualizationPrerelease'))
+if ($budgetIndex -lt 0 -or $budgetIndex -gt $credentialIndex -or $budgetIndex -gt $summaryIndex) {
+    throw 'VMware path preflight must precede credential resolution and release staging/downloads.'
+}
 $stagingMutationIndex = $releaseModule.IndexOf(
     '$operation = Resolve-AtlasoVirtualizationStagingDirectory',
     $releaseModule.IndexOf('function Invoke-AtlasoVirtualizationPrerelease')

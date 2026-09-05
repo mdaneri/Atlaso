@@ -802,6 +802,10 @@ The following cross-cutting boundaries always apply:
   redaction. On timeout, terminate only the Packer process tree and honor `-PackerOnError cleanup` through the checked
   exact-root cleanup; preserve exact artifacts for other failure selections. Never print connection credentials or VMX
   contents, and do not mask a start-handoff failure with an arbitrary delay.
+- Before new credential retrieval, enforce the shared 240-character generated VMware path budget, including UUID memory
+  files and lock directories. Prerelease preflight must check before source downloads; use the compact
+  direct-under-operation builder layout for new outputs, preserve retained legacy layout and ownership state, and
+  reject ambiguous layouts without moving or deleting artifacts.
 - Before any canonical VMware Photon builder starts, atomically reserve one temporary static IPv4 address from the
   configured per-host pool. Parse the selected vmnet's exact `vmnetdhcp.conf` subnet, reject a pool or explicit address
   that overlaps a VMware DHCP range or fixed address, and exclude observed non-ICMP use. Serialize the durable ledger

@@ -321,4 +321,42 @@ catch {
     if ($_.Exception.Message -eq 'A generic displayName was accepted for a PR-owned builder.') { throw }
 }
 
+$pathIdentity = New-AtlasoVmwareBuilderIdentity -ReleaseVersion '0.9.311' -SourceCommit ('a' * 40)
+$volumeRoot = [IO.Path]::GetPathRoot([IO.Path]::GetFullPath($OutputDirectory))
+# The nvram lock is the longest name-based generated path. Exercise the real
+# budget without creating long fixtures or depending on the CI checkout depth.
+$suffixLength = ("\$($pathIdentity.Name)\$($pathIdentity.Name).nvram.lck\D00000.lck").Length
+$parent = $volumeRoot + ('p' * (240 - $volumeRoot.Length - $suffixLength))
+$budgetOutput = Join-Path $parent $pathIdentity.Name
+Assert-AtlasoVmwareBuilderPathBudget -OutputDirectory $budgetOutput -Identity $pathIdentity
+try {
+    Assert-AtlasoVmwareBuilderPathBudget -OutputDirectory (Join-Path ($parent + 'p') $pathIdentity.Name) -Identity $pathIdentity
+    throw 'An over-budget generated VMware path was accepted.'
+}
+catch {
+    if ($_.Exception.Message -notlike '*240-character build budget*shorter -OutputDirectory*') { throw }
+}
+# Reproduce the reported 235-character VMX and verify that eliminating the
+# redundant vmware-build component admits the same canonical identity.
+$reportedParent = $volumeRoot + ('p' * (235 - $volumeRoot.Length - 2 * $pathIdentity.Name.Length - 6))
+$reportedOutput = Join-Path $reportedParent $pathIdentity.Name
+try {
+    Assert-AtlasoVmwareBuilderPathBudget -OutputDirectory $reportedOutput -Identity $pathIdentity
+    throw 'The reported release path was accepted.'
+}
+catch {
+    if ($_.Exception.Message -notlike '*240-character build budget*') { throw }
+}
+$compactParent = $reportedParent.Substring(0, $reportedParent.Length - '\vmware-build'.Length)
+Assert-AtlasoVmwareBuilderPathBudget -OutputDirectory (Join-Path $compactParent $pathIdentity.Name) -Identity $pathIdentity
+$shortIdentity = [pscustomobject]@{ Name = 'vm' }
+$memoryParent = $volumeRoot + ('p' * (190 - $volumeRoot.Length))
+try {
+    Assert-AtlasoVmwareBuilderPathBudget -OutputDirectory (Join-Path $memoryParent 'vm') -Identity $shortIdentity
+    throw 'An over-budget UUID memory lock path was accepted.'
+}
+catch {
+    if ($_.Exception.Message -notlike '*00000000-0000-0000-0000-000000000000.vmem*') { throw }
+}
+
 Write-Output 'Atlaso VMware builder identity tests passed.'
