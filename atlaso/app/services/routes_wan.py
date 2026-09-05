@@ -371,7 +371,12 @@ def route_to_dict(route: Route) -> dict:
 
 
 def nat_eligible_target_names(interfaces: list[PhysicalInterface], vlans: list[VlanInterface]) -> set[str]:
-    """Return enabled IPv4 lab targets with available VLAN trunk parents."""
+    """Return enabled IPv4 lab targets with available VLAN trunk parents.
+
+    Args:
+        interfaces: Saved physical interfaces with current inventory availability.
+        vlans: Saved VLAN interfaces whose parent state determines eligibility.
+    """
     parents = {item.name: item for item in interfaces}
     names = {
         item.name for item in interfaces
@@ -389,7 +394,12 @@ def nat_eligible_target_names(interfaces: list[PhysicalInterface], vlans: list[V
 
 
 def validate_nat_interface_names(inbound: object, outbound: str) -> list[str]:
-    """Reject target names that cannot be serialized into the helper configuration."""
+    """Reject target names that cannot be serialized into the helper configuration.
+
+    Args:
+        inbound: Untrusted ingress names to validate before serialization.
+        outbound: Saved outbound name; an empty legacy value remains reviewable.
+    """
     if not isinstance(inbound, list) or any(not isinstance(name, str) for name in inbound):
         return ["NAT inbound interfaces must be a list of interface/VLAN names."]
     if outbound and not re.fullmatch(r"[A-Za-z0-9_.:-]{1,80}", outbound):
@@ -400,7 +410,15 @@ def validate_nat_interface_names(inbound: object, outbound: str) -> list[str]:
 
 
 def validate_nat_ingress(inbound: object, outbound: str, target_names: set[str], *, required: bool = True, check_availability: bool = True) -> list[str]:
-    """Validate syntax always, and require available membership only for active input."""
+    """Validate syntax always, and require available membership only for active input.
+
+    Args:
+        inbound: Explicit ingress target names supplied by the caller.
+        outbound: Distinct outbound target name.
+        target_names: Currently eligible IPv4 lab targets.
+        required: Require a nonempty ingress list for new or enabled rules.
+        check_availability: Check current target eligibility while retaining syntax enforcement.
+    """
     syntax_errors = validate_nat_interface_names(inbound, outbound)
     if syntax_errors:
         return syntax_errors
@@ -589,6 +607,7 @@ def validate_wan_state(
     """Validate wan state.
 
     Args:
+        allow_legacy_nat_ingress: Preserve unscoped legacy archive rows for review without inferring ingress.
         routes: Routes supplied by the caller.
         policies: Policies supplied by the caller.
         target_names: Target names supplied by the caller.

@@ -296,7 +296,11 @@ def test_api_allows_nat_on_access_interface(client):
 
 
 def test_nat_api_requires_reviewed_ingress_and_preserves_legacy_disable(client):
-    """Reject invalid boundaries and retain disabled legacy rules without inference."""
+    """Reject invalid boundaries and retain disabled legacy rules without inference.
+
+    Args:
+        client: HTTP client for exercising NAT request validation.
+    """
     from sqlalchemy import select
 
     from atlaso.app.database import SessionLocal
@@ -441,7 +445,11 @@ def test_api_default_route_contract_and_canonical_readback(client):
 
 
 def test_disabled_nat_api_always_validates_interface_syntax(client):
-    """Disabling relaxes availability, without admitting malformed target names."""
+    """Disabling relaxes availability, without admitting malformed target names.
+
+    Args:
+        client: HTTP client for exercising NAT request validation.
+    """
     token, _ = create_token(client, scopes=["read:wan", "write:wan"])
     headers = {"Authorization": f"Bearer {token}"}
     payload = dict(name="Syntax control", source="any", inbound_interfaces=["eth2"], outbound_interface="eth1.20")

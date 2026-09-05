@@ -579,6 +579,7 @@ def build_router(dependencies: RoutesWanApiDependencies) -> RoutesWanApiRouter:
         """Validate nat rule payload.
 
         Args:
+            creating: Require an explicit available boundary for a new rule.
             payload: Validated request or operation payload.
             db: Active database session.
 

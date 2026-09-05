@@ -21,7 +21,11 @@ from atlaso.app.services.settings_archive import (
 
 
 def test_nat_ingress_archive_round_trip_and_legacy_review(client):
-    """Keep explicit membership and retain scope-less legacy rows for later review."""
+    """Keep explicit membership and retain scope-less legacy rows for later review.
+
+    Args:
+        client: HTTP fixture initializing the archive database.
+    """
     from atlaso.app.services.routes_wan import save_routes_wan_settings
     from atlaso.app.ui import routes_wan_context
 
@@ -419,7 +423,11 @@ def test_routes_wan_archive_legacy_inference_preserves_admin_down_topology(
 
 
 def test_archive_rejects_malformed_disabled_nat_ingress(client):
-    """Archive restore enforces syntax even when the NAT feature is disabled."""
+    """Archive restore enforces syntax even when the NAT feature is disabled.
+
+    Args:
+        client: HTTP fixture initializing the archive database.
+    """
     with SessionLocal() as db:
         archive = deepcopy(export_settings_archive(db, actor="test"))
     _disable_routes_and_nat_rows(archive)

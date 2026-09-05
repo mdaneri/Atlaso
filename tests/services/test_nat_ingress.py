@@ -15,14 +15,24 @@ from tests.test_appliance_helper import load_helper_module
 
 
 def target(name, **changes):
-    """Build an explicitly eligible IPv4 lab target."""
+    """Build an explicitly eligible IPv4 lab target.
+
+    Args:
+        name: Interface name for the eligible target fixture.
+        **changes: Additional target metadata for the scenario.
+    """
     return dict(name=name, role="access", kind="physical", ip_cidr="192.0.2.1/24",
                 routing_domain="lab", route_allowed=True, nat_allowed=True, **changes)
 
 
 @pytest.mark.parametrize("source,expression", [("any", ""), ("10.0.0.0/24", "ip saddr 10.0.0.0/24 ")])
 def test_both_renderers_require_ingress_and_preserve_address_scope(source, expression):
-    """An iifname match excludes local output and every unselected ingress."""
+    """An iifname match excludes local output and every unselected ingress.
+
+    Args:
+        source: Source selector exercised by both renderers.
+        expression: Expected nftables source-address predicate.
+    """
     rule = NatRule(name="Scoped", inbound_interfaces=["eth3", "eth2"], source=source,
                    outbound_interface="eth1", enabled=True, masquerade=True, priority=100)
     config = render_wan_config([], nat_rules=[rule], targets=[target(n) for n in ["eth1", "eth2", "eth3"]],
@@ -75,7 +85,12 @@ def test_eligibility_tracks_parent_state_and_preserves_flagged_access():
 
 
 def test_database_upgrade_retains_enabled_legacy_rule(tmp_path, monkeypatch):
-    """Adding the nullable-free ingress column preserves the legacy rule unchanged."""
+    """Adding the nullable-free ingress column preserves the legacy rule unchanged.
+
+    Args:
+        tmp_path: Isolated directory for the legacy database.
+        monkeypatch: Fixture replacing the application database engine.
+    """
     import atlaso.app.database as database
 
     engine = create_engine(f"sqlite:///{tmp_path / 'legacy.db'}")
@@ -92,7 +107,11 @@ def test_database_upgrade_retains_enabled_legacy_rule(tmp_path, monkeypatch):
 
 @pytest.mark.parametrize("bad", ["eth2\nfield=value", "eth2\rfield=value", "eth2,eth3", 'eth2"', "eth2;", "a" * 81, "", "eth2\x00"])
 def test_disabled_ingress_syntax_never_reaches_config(bad):
-    """Dormant rows retain unavailable identities, never malformed configuration text."""
+    """Dormant rows retain unavailable identities, never malformed configuration text.
+
+    Args:
+        bad: Malformed interface name that must never reach configuration text.
+    """
     assert validate_nat_ingress([bad], "eth1", set(), required=False, check_availability=False)
     assert not validate_nat_ingress(["missing_155d011d14.22"], "eth1", set(), required=False, check_availability=False)
     rule = NatRule(name="Dormant", source="any", outbound_interface="eth1", inbound_interfaces=[bad],

@@ -634,7 +634,11 @@ def test_routes_wan_autosave_endpoints_and_apply_task(client):
 
 
 def test_disabled_nat_form_always_validates_interface_syntax(client):
-    """The form keeps dormant missing identities but rejects unsafe names."""
+    """The form keeps dormant missing identities but rejects unsafe names.
+
+    Args:
+        client: HTTP client for exercising the authenticated NAT form.
+    """
     from sqlalchemy import select
 
     from atlaso.app.database import SessionLocal
