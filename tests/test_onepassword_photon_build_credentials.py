@@ -56,6 +56,8 @@ def test_photon_package_source_pair_is_resolved_once_and_shared_safely() -> None
     credential_preflight = wrapper.index(
         "$credentialPair = Get-AtlasoOnePasswordCredentialPair `"
     )
+    path_preflight = wrapper.index("    Assert-AtlasoVmwareBuilderPathBudget `")
+    assert wrapper.index("$outerCleanupOutputDirectory = Resolve-WorkstationOutputDirectory") < path_preflight < credential_preflight
     assert resolver < artifact < credential_preflight
     assert "-PipGlobalIndex $resolvedPackageSource.PipGlobalIndex `" in wrapper
     assert "-PipGlobalIndexUrl $resolvedPackageSource.PipGlobalIndexUrl `" in wrapper

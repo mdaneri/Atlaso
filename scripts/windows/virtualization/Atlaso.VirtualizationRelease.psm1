@@ -339,6 +339,42 @@ function Get-AtlasoVirtualizationRetainedOperationTags {
 
 <#
 .SYNOPSIS
+Select a compact builder layout without relocating retained output or ownership state.
+.PARAMETER Operation
+Absolute selected release-candidate operation directory, which may not exist yet.
+.PARAMETER Identity
+Validated canonical release-builder identity.
+#>
+function Resolve-AtlasoVirtualizationBuilderOutput {
+    param(
+        [Parameter(Mandatory = $true)][string]$Operation,
+        [Parameter(Mandatory = $true)][psobject]$Identity
+    )
+
+    $compact = Join-Path $Operation $Identity.Name
+    $legacy = Join-Path (Join-Path $Operation 'vmware-build') $Identity.Name
+    $retained = @(
+        foreach ($output in @($compact, $legacy)) {
+            $manifest = Get-AtlasoVmwareBuilderIdentityManifestPath -OutputDirectory $output
+            # A stopped/failed build can leave only its sibling claim or manifest.
+            # Those still select its original layout; they are not disposable hints.
+            if ((Test-Path -LiteralPath $output) -or (Test-Path -LiteralPath $manifest) -or
+                (Test-Path -LiteralPath "$manifest.lock")) {
+                $output
+            }
+        }
+    )
+    if ($retained.Count -gt 1) {
+        throw 'Both compact and legacy VMware builder layouts contain retained state. Preserve both and resolve the ambiguous operation before retrying.'
+    }
+    if ($retained.Count -eq 1) {
+        return $retained[0]
+    }
+    return $compact
+}
+
+<#
+.SYNOPSIS
 Inventories canonical remote virtualization prerelease tag names.
 .PARAMETER RepoRoot
 Exact Atlaso checkout root.
@@ -975,6 +1011,21 @@ function Invoke-AtlasoVirtualizationPrerelease {
             -RemoteTagNames $remoteTagNames `
             -ReleaseTagNames $releaseTagNames
     }
+    $builderIdentity = New-AtlasoVmwareBuilderIdentity `
+        -ReleaseVersion $identity.Version `
+        -SourceCommit $identity.Commit
+    $builderOutput = ''
+    # A verified retained candidate needs no builder. Do not strand publication
+    # recovery by imposing a new build-path requirement on those immutable bytes.
+    if (-not (Test-Path -LiteralPath (Join-Path (Join-Path $resolvedStagingRoot $tag) 'candidate'))) {
+        $builderOutput = Resolve-AtlasoVirtualizationBuilderOutput `
+            -Operation (Join-Path $resolvedStagingRoot $tag) `
+            -Identity $builderIdentity
+        Assert-AtlasoVmwareBuilderPathBudget `
+            -OutputDirectory $builderOutput `
+            -Identity $builderIdentity `
+            -Remediation 'Choose a shorter absolute -StagingRoot. Preserve any retained operation for explicit recovery.'
+    }
     $resolvedSwitches = Resolve-AtlasoVirtualizationHyperVSwitches `
         -ManagementSwitch $ManagementSwitch `
         -ServiceSwitch $ServiceSwitch
@@ -1124,11 +1175,10 @@ function Invoke-AtlasoVirtualizationPrerelease {
         }
     }
     if (-not $reuseCandidate) {
-    $buildRoot = Join-Path $operation 'vmware-build'
-    $builderIdentity = New-AtlasoVmwareBuilderIdentity `
-        -ReleaseVersion $identity.Version `
-        -SourceCommit $identity.Commit
-    $builderOutput = Join-Path $buildRoot $builderIdentity.Name
+    $currentBuilderOutput = Resolve-AtlasoVirtualizationBuilderOutput -Operation $operation -Identity $builderIdentity
+    if ($currentBuilderOutput -cne $builderOutput) {
+        throw 'The retained VMware builder layout changed after preflight. Preserve the operation and retry.'
+    }
     $vmx = Join-Path $builderOutput "$($builderIdentity.Name).vmx"
     $requiresBuild = -not (Test-Path -LiteralPath $vmx -PathType Leaf)
     $existingProvenance = $null

@@ -319,6 +319,49 @@ function Assert-AtlasoVmwareBuilderOutputDirectory {
 
 <#
 .SYNOPSIS
+Reject builder paths that exceed VMware's generated-file path budget before mutation.
+.PARAMETER OutputDirectory
+Canonical absolute builder output directory.
+.PARAMETER Identity
+Validated builder identity used for VMX and sidecar filenames.
+.PARAMETER Remediation
+Non-secret instruction naming the caller's supported shorter-path parameter.
+#>
+function Assert-AtlasoVmwareBuilderPathBudget {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)][string]$OutputDirectory,
+        [Parameter(Mandatory = $true)][psobject]$Identity,
+        [string]$Remediation = 'Choose a shorter -OutputDirectory parent while retaining the canonical builder directory name.'
+    )
+
+    $resolvedOutput = Assert-AtlasoVmwareBuilderOutputDirectory -OutputDirectory $OutputDirectory -Identity $Identity
+    $name = [string]$Identity.Name
+    # Workstation 26 fails to create a 248-character lock directory even when
+    # Windows long paths are enabled. Leave seven characters of headroom, and
+    # account for UUID memory files: their names can exceed a short VMX leaf.
+    $leaves = @(
+        "$name.vmx", "$name.vmxf", "$name.nvram", "$name.vmsd",
+        '00000000-0000-0000-0000-000000000000.vmem',
+        '00000000-0000-0000-0000-000000000000.vmss',
+        'disk.vmdk', 'disk-1.vmdk', 'disk-s999.vmdk', 'disk-1-s999.vmdk'
+    )
+    $paths = @(
+        foreach ($leaf in $leaves) {
+            Join-Path $resolvedOutput $leaf
+            Join-Path $resolvedOutput "$leaf.lck\D00000.lck"
+        }
+        "$resolvedOutput.builder-identity.json.lock"
+    )
+    foreach ($path in $paths) {
+        if ($path.Length -gt 240) {
+            throw "VMware generated path exceeds the 240-character build budget ($($path.Length) characters): $path. $Remediation Windows LongPathsEnabled does not remove this VMware limit. Retained artifacts were not moved or deleted."
+        }
+    }
+}
+
+<#
+.SYNOPSIS
 Write one durable non-secret builder ownership manifest.
 
 .PARAMETER Path
@@ -531,6 +574,7 @@ function Assert-AtlasoVmwareBuilderVmx {
 }
 
 Export-ModuleMember -Function @(
+    'Assert-AtlasoVmwareBuilderPathBudget',
     'Assert-AtlasoVmwareBuilderIdentityManifest',
     'Assert-AtlasoVmwareBuilderOwnershipManifest',
     'Assert-AtlasoVmwareBuilderOutputDirectory',

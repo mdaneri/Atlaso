@@ -378,6 +378,18 @@ The resolved credential selectors are forwarded unchanged to both the fresh imag
 The image-builder handoff uses named parameters and deliberately leaves both `SecureString` credential parameters
 unbound so the reviewed 1Password defaults remain authoritative.
 
+New builders live directly at `<StagingRoot>\<rc-tag>\<builder-name>\<builder-name>.vmx`; the redundant `vmware-build`
+directory is omitted. Canonical names, ownership manifests, output claims, and provenance are unchanged. A retained
+legacy output, sibling manifest, or claim keeps its original `vmware-build` layout. If both layouts contain state,
+preflight stops for explicit recovery; it never moves, deletes, or adopts that state automatically.
+
+Before credential selection or release downloads, new build preflight checks generated VMX, sidecar, disk, UUID memory,
+and lock paths against a conservative 240-character budget. VMware Workstation can fail creating lock directories even
+with Windows long-path support enabled. The error identifies the generated path and recommends a shorter absolute
+`-StagingRoot`; direct Photon builds recommend a shorter `-OutputDirectory` parent while retaining the canonical
+builder leaf. Existing candidate verification and publication retries do not require a new builder path. Preserve
+retained operations when selecting a different staging root; do not manually delete locks or rename owned builders.
+
 Preflight prints the synchronized version and selected tag, staging root, switch names, and selector-source labels
 before creating staging directories or starting build activity. It never prints Environment IDs, account values,
 credentials, credential material, or secret-bearing paths. If the resolved staging root contains exactly one valid
