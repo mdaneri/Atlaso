@@ -190,6 +190,9 @@ VLAN reaches that network directly. A supplied gateway must use the same address
 clients remain compatible with `POST` or `PATCH /api/v1/routes` requests
 that use canonical `0.0.0.0/0` or `::/0`; those payloads must also include the required same-family gateway.
 
+The NAT wizard uses the shared tag editor for inbound interfaces. Add each target with the suggestion menu or keyboard;
+remove a tag to remove that target. Multiple selections remain visible when returning from Manage source groups.
+
 The **NAT** wizard creates explicit IPv4 masquerade rules. In **Translation**, select one or more **Inbound
 interfaces or VLANs** and a different **Outbound interface or VLAN**. Both sides require enabled IPv4 lab targets;
 VLANs also require an available, enabled trunk parent. Dedicated management-role and unused targets are excluded.
@@ -321,6 +324,3 @@ These captures show responsive layouts and useful operational states referenced 
 *Figure: VLAN Interfaces with canonical role data in the verified responsive state.*
 
 <!-- END GENERATED ADDITIONAL SCREENSHOTS -->
-
-The NAT wizard uses the shared tag editor for inbound interfaces. Add each target with the suggestion menu or keyboard;
-remove a tag to remove that target. Multiple selections remain visible when returning from Manage source groups.
