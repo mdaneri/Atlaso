@@ -19,7 +19,7 @@ from scripts import verify_virtualization_guest_wheel as verifier
 SOURCE_COMMIT = "a" * 40
 
 
-@pytest.mark.parametrize("mutation", ["valid", "marker", "ssh", "identity", "package", "mode", "missing"])
+@pytest.mark.parametrize("mutation", ["valid", "marker", "ssh", "identity", "package", "mode", "missing", "initialization_lock"])
 def test_read_only_template_state_verification(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, mutation: str,
 ) -> None:
@@ -63,6 +63,9 @@ def test_read_only_template_state_verification(
                     entry.size = len(value)
                     entry.mode = 0o666 if mutation == "mode" else 0o600
                     archive.addfile(entry, io.BytesIO(value))
+            return []
+        if commands[1].startswith("download /var/lib/atlaso/vmware-ovf-initializing "):
+            Path(commands[1].split(" ", 2)[2]).write_bytes(b"changed" if mutation == "initialization_lock" else b"")
             return []
         assert commands[1].startswith("download /etc/atlaso/atlaso.env ")
         identity = "consumed-secret" if mutation == "identity" else "INITIALIZATION_REQUIRED"

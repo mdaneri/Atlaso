@@ -10,12 +10,12 @@ import stat
 from pathlib import Path
 
 STAGING = "var/lib/atlaso/first-boot-packages"
+INITIALIZATION_LOCK = "var/lib/atlaso/vmware-ovf-initializing"
 FORBIDDEN = (
     "var/lib/atlaso-privileged/guest-agent/guest-agent.applied",
     "var/lib/atlaso/vmware-ovf-customization.applied",
     "var/lib/atlaso/vmware-ovf-customization.pending",
     "var/lib/atlaso/vmware-no-ovf-initialization.applied",
-    "var/lib/atlaso/vmware-ovf-initializing",
     "var/lib/atlaso/vmware-ovf-network-review.json",
     "var/lib/atlaso/vmware-ovf-network-correction.json",
     "var/lib/atlaso/first-boot-https.applied",
@@ -71,6 +71,15 @@ def verify(root: Path) -> None:
             )
     if list((root / "etc/ssh").glob("ssh_host_*")):
         raise SystemExit("Template contains generated SSH host identity")
+    # Provisioning pre-seeds this empty handshake to hold services until deployed
+    # customization finishes. Its presence is required, not evidence of a boot.
+    lock = root / INITIALIZATION_LOCK
+    if not lock.is_file() or lock.is_symlink():
+        raise SystemExit("Template initialization lock is missing or unsafe")
+    info = lock.lstat()
+    if (info.st_uid != 0 or info.st_gid != 0 or stat.S_IMODE(info.st_mode) != 0o640
+            or info.st_nlink != 1 or info.st_size != 0):
+        raise SystemExit("Template initialization lock is not pristine")
     staging = root / STAGING
     if not staging.is_dir() or staging.is_symlink():
         raise SystemExit("Template offline guest-tool staging is missing or unsafe")

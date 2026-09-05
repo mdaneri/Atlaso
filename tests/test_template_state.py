@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import importlib.util
+import os
 from pathlib import Path
 
 import pytest
@@ -35,6 +36,40 @@ def _packages() -> dict[str, bytes]:
 def test_complete_offline_inventory_passes() -> None:
     """Both providers and all inventoried dependencies remain available."""
     STATE.verify_files(_packages())
+
+
+@pytest.mark.skipif(os.name == "nt", reason="Requires Linux ownership and permission semantics")
+@pytest.mark.parametrize("lock_state", ["pristine", "missing", "changed", "permissions"])
+def test_complete_template_preserves_preseeded_lock(tmp_path: Path, lock_state: str) -> None:
+    """The construction fixture accepts only the untouched first-boot handshake.
+
+    Args:
+        tmp_path: Isolated complete template filesystem.
+        lock_state: Expected pre-seeded lock or a consumed/changed variant.
+    """
+    if os.getuid() != 0:
+        pytest.skip("Template verification requires root-owned fixtures")
+    staging = tmp_path / STATE.STAGING
+    staging.mkdir(parents=True, mode=0o700)
+    for provider in ("qemu", "hyperv"):
+        (staging / provider).mkdir(mode=0o700)
+    for name, content in _packages().items():
+        target = staging / name
+        target.write_bytes(content)
+        target.chmod(0o600)
+    environment = tmp_path / "etc/atlaso/atlaso.env"
+    environment.parent.mkdir(parents=True)
+    environment.write_text("".join(f"{name}=INITIALIZATION_REQUIRED\n" for name in (
+        "ATLASO_SECRET_KEY", "ATLASO_SECRETS_KEY", "ATLASO_BOOTSTRAP_ADMIN_PASSWORD")))
+    lock = tmp_path / STATE.INITIALIZATION_LOCK
+    if lock_state != "missing":
+        lock.write_bytes(b"changed" if lock_state == "changed" else b"")
+        lock.chmod(0o666 if lock_state == "permissions" else 0o640)
+    if lock_state == "pristine":
+        STATE.verify(tmp_path)
+    else:
+        with pytest.raises(SystemExit, match="initialization lock"):
+            STATE.verify(tmp_path)
 
 
 @pytest.mark.parametrize(

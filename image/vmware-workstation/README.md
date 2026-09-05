@@ -489,8 +489,11 @@ third-party notices from the installed environment.
 
 The selector is enabled during construction but runs only on a deployed appliance. Final OS updates, cleanup,
 zero-filling, and compaction retain both offline closures. Final checks require their exact checksum inventories and
-unconsumed provider-selection, OVF-customization, HTTPS-initialization, and deployment-identity state. Machine IDs,
-SSH host keys, credentials, build accounts, and build-only files are scrubbed. A failed final check prevents successful
+unconsumed provider-selection, OVF-customization, HTTPS-initialization, and deployment-identity state.
+The pre-seeded `/var/lib/atlaso/vmware-ovf-initializing` lock must remain empty, root-owned, and mode `0640`; it holds
+services for deployed first boot and is distinct from a completed customization marker.
+Machine IDs, SSH host keys, credentials, build accounts, and build-only files are scrubbed. A failed final check prevents
+successful
 completion and shutdown evidence from being treated as a reusable template.
 
 After Packer shutdown and compaction, the wrapper proves the exact VMX is powered off and records its final VMX and

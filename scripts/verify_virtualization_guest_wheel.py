@@ -1310,9 +1310,13 @@ def _verify_uninitialized_template(disk: Path, filesystem: str, repo_root: Path)
         raise SystemExit("Exported template contains generated SSH host identity")
     _verify_guest_path_metadata(
         disk, filesystem,
-        {"/usr/bin/vmtoolsd": 0o755, f"/{verifier.STAGING}/SHA256SUMS": 0o600},
+        {"/usr/bin/vmtoolsd": 0o755, f"/{verifier.STAGING}/SHA256SUMS": 0o600,
+         f"/{verifier.INITIALIZATION_LOCK}": 0o640},
     )
     with tempfile.TemporaryDirectory(prefix="atlaso-template-state-") as temporary:
+        if _download_guest_file(disk, filesystem, f"/{verifier.INITIALIZATION_LOCK}",
+                                Path(temporary) / "initialization-lock") != b"":
+            raise SystemExit("Exported template initialization lock is not pristine")
         archive_path = Path(temporary) / "guest-tools.tar"
         _guestfish(
             disk, [mount, f"tar-out /{verifier.STAGING} {archive_path.as_posix()}"]
