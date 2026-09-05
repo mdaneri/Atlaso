@@ -503,6 +503,8 @@ identity, ownership, snapshot, disk roles, and unchanged hashes. Export rechecks
 rechecks them after disposable VMware and Hyper-V smoke tests. Protected disk inspection verifies the offline package
 inventories and untouched first-boot state without booting the source.
 
+The powered-off check discovers `vmrun.exe` in the standard `Program Files` or `Program Files (x86)` VMware installation
+before falling back to `PATH`.
 A running or ambiguously identified export source is rejected without automatic shutdown or repair. Preserve it and
 rebuild a fresh source through the wrapper. Likewise, preserve and rebuild legacy templates without the contract,
 templates with consumed initialization state, changed payloads, or mismatched software. Never boot an old template to

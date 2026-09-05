@@ -24,8 +24,15 @@ function Assert-AtlasoTemplatePoweredOff {
         [string]$VmrunPath = ''
     )
     if (-not $VmrunPath) {
-        $VmrunPath = Join-Path ${env:ProgramFiles} 'VMware\VMware Workstation\vmrun.exe'
-        if (-not (Test-Path -LiteralPath $VmrunPath -PathType Leaf)) {
+        foreach ($programRoot in @(${env:ProgramFiles}, ${env:ProgramFiles(x86)})) {
+            if ([string]::IsNullOrWhiteSpace($programRoot)) { continue }
+            $candidate = Join-Path $programRoot 'VMware\VMware Workstation\vmrun.exe'
+            if (Test-Path -LiteralPath $candidate -PathType Leaf) {
+                $VmrunPath = $candidate
+                break
+            }
+        }
+        if (-not $VmrunPath) {
             $VmrunPath = (Get-Command vmrun -CommandType Application -ErrorAction Stop).Source
         }
     }

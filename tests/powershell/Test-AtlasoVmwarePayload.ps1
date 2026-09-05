@@ -290,14 +290,50 @@ $payloadScope = Get-Module Atlaso.VmwarePayload
     #>
     function script:Get-AtlasoWorkstationRunningVmxPath {
         param([string]$VmrunPath, [datetime]$Deadline)
-        if ($VmrunPath -ne 'fixture-vmrun' -or $Deadline -le (Get-Date)) { throw 'Invalid bounded inventory request' }
+        if ($VmrunPath -ne $script:TestExpectedVmrun -or $Deadline -le (Get-Date)) { throw 'Invalid bounded inventory request' }
         if ($script:TestInventoryFailure) { throw 'Inventory unavailable' }
         return $script:TestRunningVmx
     }
     $script:TestInventoryFailure = $false
     $script:TestRunningVmx = @()
+    $script:TestExpectedVmrun = 'fixture-vmrun'
 }
 Assert-AtlasoTemplatePoweredOff -VmxPath $releaseVmxPath -VmrunPath 'fixture-vmrun'
+& $payloadScope {
+    $script:TestExpectedVmrun = Join-Path ${env:ProgramFiles(x86)} 'VMware\VMware Workstation\vmrun.exe'
+    <#
+    .SYNOPSIS
+    Simulate a standard x86-only VMware installation without PATH discovery.
+    .PARAMETER LiteralPath
+    Exact executable path being probed.
+    .PARAMETER PathType
+    Required ordinary executable file classification.
+    #>
+    function script:Test-Path {
+        param([string]$LiteralPath, [string]$PathType)
+        return $PathType -ceq 'Leaf' -and $LiteralPath -ceq $script:TestExpectedVmrun
+    }
+    <#
+    .SYNOPSIS
+    Reject PATH lookup when the standard installation should have been found.
+    .PARAMETER Name
+    Executable command name.
+    .PARAMETER CommandType
+    Executable command classification.
+    #>
+    function script:Get-Command {
+        [CmdletBinding()]
+        param([string]$Name, [string]$CommandType)
+        throw "Unexpected PATH lookup for $Name ($CommandType)"
+    }
+}
+try { Assert-AtlasoTemplatePoweredOff -VmxPath $releaseVmxPath }
+finally {
+    & $payloadScope {
+        Remove-Item Function:Test-Path, Function:Get-Command
+        $script:TestExpectedVmrun = 'fixture-vmrun'
+    }
+}
 & $payloadScope { param($Path) $script:TestRunningVmx = @($Path) } $releaseVmxPath
 try {
     Assert-AtlasoTemplatePoweredOff -VmxPath $releaseVmxPath -VmrunPath 'fixture-vmrun'
