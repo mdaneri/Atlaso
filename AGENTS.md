@@ -575,6 +575,15 @@ The following cross-cutting boundaries always apply:
   Windows smokes pass; it never publishes or reclassifies that draft. Only the protected hosted finalizer may sign,
   attest, and publish the prerelease.
 - The maintainer workstation and any explicitly approved ephemeral Windows alternative are trusted virtualization
+  producers. Install the exact signed software wheel and complete hash-verified offline CPython 3.14 wheelhouse during
+  template construction. Preserve installed VMware Tools, both offline QEMU/Hyper-V RPM closures, and untouched
+  deployment initialization through final updates, cleanup, shutdown, and compaction. Never restart a completed source
+  template for software installation, provider selection, customization, or export preparation. Require powered-off
+  identity and final VMX/payload hashes before export and recheck them after export and disposable-import smokes.
+  Require the schema-v3 completed-template contract and exact verified software identity for retained reuse, candidate
+  acceptance, and protected publication. Preserve and reject legacy or consumed templates with rebuild instructions;
+  never retrofit them by booting or rewriting provenance. Published releases remain immutable.
+- The maintainer workstation and any explicitly approved ephemeral Windows alternative are trusted virtualization
   producers while building a release. They receive no signing key, and the protected hosted finalizer independently
   verifies software-source binding, selected privileged assets, provenance, exact virtualization bytes, and publication
   state as defense in depth; it is not a reproducible Photon image builder and does not claim to authenticate the entire

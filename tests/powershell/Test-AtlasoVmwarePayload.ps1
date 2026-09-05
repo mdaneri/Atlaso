@@ -159,6 +159,13 @@ function Write-TestProvenance {
     $provenance = [ordered]@{
         schema_version       = $SchemaVersion
         source_commit        = ('a' * 40)
+        template_contract    = [ordered]@{
+            schema_version = 1
+            state = 'uninitialized'
+            software_source = [ordered]@{
+                source_commit = ('a' * 40)
+            }
+        }
         tracked_source_dirty = $false
         source_snapshot      = [ordered]@{
             schema_version = 1
@@ -254,6 +261,64 @@ $null = Assert-AtlasoVmwarePayloadProvenance `
     -VmxPath $releaseVmxPath `
     -ProvenancePath $releaseProvenancePath `
     -RequireReleaseBuilder
+$completeProvenance = Get-Content -LiteralPath $releaseProvenancePath -Raw
+foreach ($mutation in @('legacy', 'consumed', 'software')) {
+    $invalid = $completeProvenance | ConvertFrom-Json
+    if ($mutation -ceq 'legacy') { $invalid.PSObject.Properties.Remove('template_contract') }
+    elseif ($mutation -ceq 'consumed') { $invalid.template_contract.state = 'initialized' }
+    else { $invalid.template_contract.software_source.source_commit = ('b' * 40) }
+    [IO.File]::WriteAllText($releaseProvenancePath, ($invalid | ConvertTo-Json -Depth 8))
+    try {
+        $null = Assert-AtlasoVmwarePayloadProvenance -VmxPath $releaseVmxPath -RequireReleaseBuilder
+        throw "Incompatible completed-template contract accepted: $mutation"
+    }
+    catch {
+        if ($_.Exception.Message -notmatch 'lacks.*(contract|published-software)') { throw }
+    }
+    [IO.File]::WriteAllText($releaseProvenancePath, $completeProvenance)
+}
+
+$payloadScope = Get-Module Atlaso.VmwarePayload
+& $payloadScope {
+    <#
+    .SYNOPSIS
+    Return a controlled inventory for powered-off admission tests.
+    .PARAMETER VmrunPath
+    Unused fixture executable selector.
+    .PARAMETER Deadline
+    Bounded inventory deadline supplied by production.
+    #>
+    function script:Get-AtlasoWorkstationRunningVmxPath {
+        param([string]$VmrunPath, [datetime]$Deadline)
+        if ($VmrunPath -ne 'fixture-vmrun' -or $Deadline -le (Get-Date)) { throw 'Invalid bounded inventory request' }
+        if ($script:TestInventoryFailure) { throw 'Inventory unavailable' }
+        return $script:TestRunningVmx
+    }
+    $script:TestInventoryFailure = $false
+    $script:TestRunningVmx = @()
+}
+Assert-AtlasoTemplatePoweredOff -VmxPath $releaseVmxPath -VmrunPath 'fixture-vmrun'
+& $payloadScope { param($Path) $script:TestRunningVmx = @($Path) } $releaseVmxPath
+try {
+    Assert-AtlasoTemplatePoweredOff -VmxPath $releaseVmxPath -VmrunPath 'fixture-vmrun'
+    throw 'A running source template was accepted.'
+}
+catch { if ($_.Exception.Message -notlike '*source template is running*') { throw } }
+& $payloadScope { $script:TestRunningVmx = @(); $script:TestInventoryFailure = $true }
+try {
+    Assert-AtlasoTemplatePoweredOff -VmxPath $releaseVmxPath -VmrunPath 'fixture-vmrun'
+    throw 'A source with unknown power state was accepted.'
+}
+catch { if ($_.Exception.Message -cne 'Inventory unavailable') { throw } }
+& $payloadScope { $script:TestInventoryFailure = $false }
+$lockPath = Join-Path $releaseOutput 'template.lck'
+New-Item -ItemType Directory -Path $lockPath | Out-Null
+try {
+    Assert-AtlasoTemplatePoweredOff -VmxPath $releaseVmxPath -VmrunPath 'fixture-vmrun'
+    throw 'A locked source template was accepted.'
+}
+catch { if ($_.Exception.Message -notlike '*powered-off state is ambiguous*') { throw } }
+Remove-Item -LiteralPath $lockPath
 try {
     $null = Assert-AtlasoVmwarePayloadProvenance `
         -VmxPath $vmxPath `
@@ -340,28 +405,15 @@ catch {
 }
 
 $provenancePath = Write-TestProvenance -VmxPath $vmxPath -Layout $layout
-$deploymentSourcePath = Join-Path $OutputDirectory 'virtualization-source.json'
-[System.IO.File]::WriteAllText(
-    $deploymentSourcePath,
-    "{`"schema_version`":1}`n",
-    [System.Text.UTF8Encoding]::new($false)
-)
-[System.IO.File]::AppendAllText(
-    $systemDisk,
-    'deployed-application-wheel',
-    [System.Text.UTF8Encoding]::new($false)
-)
-$refreshed = Update-AtlasoVmwarePayloadProvenance `
-    -VmxPath $vmxPath `
-    -DeploymentSourcePath $deploymentSourcePath `
-    -ProvenancePath $provenancePath
-if ($refreshed.payload_state -cne 'software-deployed' -or
-    $refreshed.deployment_source_name -cne 'virtualization-source.json' -or
-    $refreshed.deployment_source_sha256 -cne (
-        Get-FileHash -LiteralPath $deploymentSourcePath -Algorithm SHA256
-    ).Hash.ToLowerInvariant()) {
-    throw 'Refreshed VMware payload provenance did not bind the deployed source metadata.'
+[System.IO.File]::AppendAllText($systemDisk, 'changed-payload', [Text.UTF8Encoding]::new($false))
+try {
+    $null = Assert-AtlasoVmwarePayloadProvenance -VmxPath $vmxPath -RequireTemplate
+    throw 'A changed completed-template payload was accepted.'
 }
-$null = Assert-AtlasoVmwarePayloadProvenance -VmxPath $vmxPath -ProvenancePath $provenancePath
-
+catch {
+    if ($_.Exception.Message -notlike '*does not match the verified*') { throw }
+}
+if (Get-Command Update-AtlasoVmwarePayloadProvenance -ErrorAction SilentlyContinue) {
+    throw 'Completed-template provenance must have no deployment refresh operation.'
+}
 Write-Output 'Atlaso VMware payload layout and provenance tests passed.'

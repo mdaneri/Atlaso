@@ -19,6 +19,68 @@ from scripts import verify_virtualization_guest_wheel as verifier
 SOURCE_COMMIT = "a" * 40
 
 
+@pytest.mark.parametrize("mutation", ["valid", "marker", "ssh", "identity", "package", "mode", "missing"])
+def test_read_only_template_state_verification(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, mutation: str,
+) -> None:
+    """Protected disk verification rejects consumed state and altered offline tools.
+
+    Args:
+        tmp_path: Private downloaded guest archive directory.
+        monkeypatch: Controlled read-only guestfish responses.
+        mutation: Disk defect to admit or reject.
+    """
+    packages = {"qemu/atlaso-qemu-guest-agent-1.rpm": b"qemu", "hyperv/hyper-v-1.rpm": b"hyperv"}
+    packages["SHA256SUMS"] = "".join(
+        f"{hashlib.sha256(value).hexdigest()}  {name}\n" for name, value in packages.items()
+    ).encode()
+    if mutation == "package":
+        packages["qemu/atlaso-qemu-guest-agent-1.rpm"] = b"changed"
+    elif mutation == "missing":
+        del packages["hyperv/hyper-v-1.rpm"]
+
+    def guestfish(_disk: Path, commands: list[str]) -> list[str]:
+        """Emulate only reads from a mounted immutable guest filesystem.
+
+        Args:
+            _disk: Fixture disk path.
+            commands: Explicit read-only guest commands.
+        """
+        assert commands[0] == "mount-ro /dev/sda /"
+        if commands[1].startswith("exists "):
+            return ["true" if mutation == "marker" else "false", "false"]
+        if commands[1] == "ls /etc/ssh":
+            return ["ssh_host_ed25519_key"] if mutation == "ssh" else []
+        if commands[1].startswith("tar-out "):
+            destination = Path(commands[1].split(" ", 2)[2])
+            with tarfile.open(destination, "w") as archive:
+                for name in (".", "qemu", "hyperv"):
+                    entry = tarfile.TarInfo(name)
+                    entry.type, entry.mode = tarfile.DIRTYPE, 0o700
+                    archive.addfile(entry)
+                for name, value in packages.items():
+                    entry = tarfile.TarInfo(name)
+                    entry.size = len(value)
+                    entry.mode = 0o666 if mutation == "mode" else 0o600
+                    archive.addfile(entry, io.BytesIO(value))
+            return []
+        assert commands[1].startswith("download /etc/atlaso/atlaso.env ")
+        identity = "consumed-secret" if mutation == "identity" else "INITIALIZATION_REQUIRED"
+        Path(commands[1].split(" ", 2)[2]).write_text("".join(
+            f"{name}={identity}\n" for name in ("ATLASO_SECRET_KEY", "ATLASO_SECRETS_KEY", "ATLASO_BOOTSTRAP_ADMIN_PASSWORD")
+        ))
+        return []
+
+    monkeypatch.setattr(verifier, "_guestfish", guestfish)
+    monkeypatch.setattr(verifier, "_verify_guest_path_metadata", lambda *_args: None)
+    arguments = (tmp_path / "photon.vmdk", "/dev/sda", Path(__file__).resolve().parents[1])
+    if mutation == "valid":
+        assert verifier._verify_uninitialized_template(*arguments) == 2
+    else:
+        with pytest.raises(SystemExit):
+            verifier._verify_uninitialized_template(*arguments)
+
+
 def _metadata_output(
     commands: list[str], overrides: dict[str, tuple[int, int, int]] | None = None
 ) -> list[str] | None:
@@ -107,6 +169,7 @@ def bypass_system_content(monkeypatch: pytest.MonkeyPatch) -> None:
         verifier, "_verify_deployed_system_content", lambda *_arguments: 0
     )
     monkeypatch.setattr(verifier, "_verify_python_runtime", lambda *_arguments: 2)
+    monkeypatch.setattr(verifier, "_verify_uninitialized_template", lambda *_arguments: 3)
 
 
 def _wheel(path: Path) -> tuple[Path, dict[str, bytes]]:

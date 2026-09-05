@@ -671,11 +671,27 @@ printf '{\n  "schema_version": 1,\n  "version": "%s",\n  "bootstrap": true,\n  "
 ln -sfn "releases/bootstrap-$ATLASO_RELEASE_VERSION" "$ATLASO_HOME/current"
 ln -sfn "current/.venv" "$ATLASO_HOME/.venv"
 write_pip_config "$ATLASO_HOME/.venv/pip.conf"
+if [ -n "${ATLASO_SOFTWARE_MANIFEST_SHA256:-}" ]; then
+  [ "$ATLASO_BOOTSTRAP_PYTHON_ABI" = "cp314" ] || { echo "Published software requires CPython 3.14." >&2; exit 2; }
+  published_wheel=$(python3 "$ATLASO_HOME/image/common/scripts/verify-template-software.py" \
+    --root /tmp/atlaso-software --manifest-sha256 "$ATLASO_SOFTWARE_MANIFEST_SHA256" \
+    --version "$ATLASO_RELEASE_VERSION" --commit "$ATLASO_SOFTWARE_SOURCE_COMMIT")
+  # The signed wheelhouse is authoritative even when a host pip mirror is configured.
+  PIP_CONFIG_FILE=/dev/null "$ATLASO_HOME/.venv/bin/python" -m pip install \
+    --no-index --no-compile --require-hashes --find-links /tmp/atlaso-software/wheelhouse/cp314 \
+    --requirement /tmp/atlaso-software/wheelhouse/cp314/requirements-wheelhouse.lock
+  PIP_CONFIG_FILE=/dev/null "$ATLASO_HOME/.venv/bin/python" -m pip install \
+    --no-index --no-compile --no-deps "$published_wheel"
+  install -o root -g root -m 0644 /tmp/atlaso-software/virtualization-source.json "$ATLASO_RELEASE_DIR/virtualization-source.json"
+else
 "$ATLASO_HOME/.venv/bin/python" -m pip install \
   --no-compile \
   --require-hashes \
   --requirement "$ATLASO_HOME/requirements-appliance.lock"
 "$ATLASO_HOME/.venv/bin/python" -m pip install --no-compile --no-deps "$ATLASO_HOME"
+fi
+"$ATLASO_HOME/.venv/bin/python" -m pip check
+rm -rf /tmp/atlaso-software
 ATLASO_LOGICAL_SITE_PACKAGES="$("$ATLASO_HOME/.venv/bin/python" -c 'import sysconfig; print(sysconfig.get_path("purelib"))')"
 ATLASO_SITE_PACKAGES="$(
   python3 "$BOOTSTRAP_VENV_VALIDATOR" \
@@ -1039,6 +1055,8 @@ if find /etc/ssh -maxdepth 1 -type f -name 'ssh_host_*' -print -quit | grep -q .
   echo "Final Photon update left reusable host identity material in the image." >&2
   exit 2
 fi
+python3 "$ATLASO_HOME/image/common/scripts/verify-template-state.py"
+rpm -q open-vm-tools >/dev/null
 write_build_info
 run_tdnf "Final Photon package cache cleanup" clean all
 rm -rf /var/cache/tdnf/* "$PIP_CACHE_DIR" /root/.cache/pip \

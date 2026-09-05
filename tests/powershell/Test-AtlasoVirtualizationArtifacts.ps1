@@ -222,6 +222,7 @@ param(
     [switch]$ReleaseBuilder,
     [string]$ReleaseVersion = '',
     [string]$ReleaseSourceCommit = '',
+    [string]$VirtualizationSourceDirectory = '',
     [string]$OutputDirectory = '',
     [switch]$Headless,
     [switch]$EnableRealSystemAdapters
@@ -239,6 +240,7 @@ param(
     ReleaseBuilder = [bool]$ReleaseBuilder
     ReleaseVersion = $ReleaseVersion
     ReleaseSourceCommit = $ReleaseSourceCommit
+    VirtualizationSourceDirectory = $VirtualizationSourceDirectory
     OutputDirectory = $OutputDirectory
     Headless = [bool]$Headless
     EnableRealSystemAdapters = [bool]$EnableRealSystemAdapters
@@ -252,6 +254,7 @@ param(
             -BuilderScriptPath $ScriptPath `
             -ReleaseVersion '0.9.306' `
             -ReleaseSourceCommit '0123456789abcdef0123456789abcdef01234567' `
+            -VirtualizationSourceDirectory 'verified-software-input' `
             -OutputDirectory $OutputPath `
             -OnePasswordEnvironmentId 'environment-selector' `
             -OnePasswordAccount 'account-selector' `
@@ -265,6 +268,7 @@ param(
         -not $builderInvocation.ReleaseBuilder -or
         $builderInvocation.ReleaseVersion -cne '0.9.306' -or
         $builderInvocation.ReleaseSourceCommit -cne '0123456789abcdef0123456789abcdef01234567' -or
+        $builderInvocation.VirtualizationSourceDirectory -cne 'verified-software-input' -or
         $builderInvocation.OutputDirectory -cne (Join-Path $builderInvocationRoot 'output') -or
         -not $builderInvocation.Headless -or
         -not $builderInvocation.EnableRealSystemAdapters -or
@@ -528,14 +532,9 @@ foreach ($required in @(
         'Invoke-AtlasoVirtualizationPrereleaseFinalizer',
         '-ExpectedSourceCommit $identity.Commit',
         '-RequireCleanSource',
-        'The retained VMware image is incomplete and will be rebuilt',
-        'Update-AtlasoVmwarePayloadProvenance',
-        "Value -ceq 'software-deployed'",
-        'Start-AtlasoVirtualizationDeploymentVm',
-        'Stop-AtlasoVirtualizationDeploymentVm',
-        "'getGuestIPAddress', `$resolvedVmx, '-wait'",
-        "'stop', `$resolvedVmx, 'soft'",
-        'Proven shutdown is required before hashing or exporting',
+        'Assert-AtlasoTemplatePoweredOff',
+        'VirtualizationSourceDirectory = $VirtualizationSourceDirectory',
+        'Assert-AtlasoTemplateSoftwareIdentity',
         'Existing virtualization Release $tag is misclassified',
         'A published prerelease may need hosted attestation',
         'elseif ($releaseState.isDraft)',
@@ -584,10 +583,16 @@ foreach ($secretMarker in @(
 }
 $releaseSourceChecks = ([regex]::Matches(
         $releaseModule,
-        '-ExpectedSourceCommit \$identity\.Commit\s+`\s*\r?\n\s*-RequireCleanSource'
+        '-ExpectedSourceCommit \$identity\.Commit(?:\s+`\s*\r?\n\s*|\s+)-RequireCleanSource'
     )).Count
 if ($releaseSourceChecks -ne 2) {
     throw 'Virtualization production must enforce exact clean build provenance on reuse and after build.'
+}
+foreach ($forbidden in @('Start-AtlasoVirtualizationDeploymentVm', 'Stop-AtlasoVirtualizationDeploymentVm',
+        'Update-AtlasoVmwarePayloadProvenance', 'deploy-wheel.ps1', 'getGuestIPAddress')) {
+    if ($releaseModule.Contains($forbidden)) {
+        throw "Completed-template production contains a deployment operation: $forbidden"
+    }
 }
 $candidateVerificationIndex = $releaseModule.IndexOf("'--verify-existing', `$candidate")
 $exportIndex = $releaseModule.IndexOf("'scripts\windows\vmware\export-ovf.ps1'")
