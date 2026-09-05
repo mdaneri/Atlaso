@@ -631,3 +631,26 @@ def test_routes_wan_autosave_endpoints_and_apply_task(client):
         assert "ip rule add from 192.168.50.0/24 table 200" in (job.result or "")
         assert "ip route replace 0.0.0.0/0 via 192.168.20.254 dev eth1.20 metric 120 table 200" in (job.result or "")
         assert "tc qdisc replace dev eth1.20" in (job.result or "")
+
+
+def test_disabled_nat_form_always_validates_interface_syntax(client):
+    """The form keeps dormant missing identities but rejects unsafe names."""
+    from sqlalchemy import select
+
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import NatRule
+
+    login(client)
+    page = client.get("/routes-wan")
+    csrf = re.search(r'name="csrf" value="([^"]+)"', page.text).group(1)
+    payload = dict(name="Form syntax control", source="any", inbound_interfaces=["eth2"],
+                   outbound_interface="eth1.20", masquerade="on", priority="100", csrf=csrf)
+    created = client.post("/routes-wan/nat-rules", data=payload, follow_redirects=False)
+    assert created.status_code == 303, created.text
+    with SessionLocal() as db:
+        rule_id = db.scalar(select(NatRule.id).where(NatRule.name == payload["name"]))
+    url = f"/routes-wan/nat-rules/{rule_id}/edit"
+    for bad in ["eth2\nfield=value", "eth2\rfield=value", "eth2,eth3", 'eth2"', "a" * 81]:
+        for field, value in [("inbound_interfaces", [bad]), ("outbound_interface", bad)]:
+            assert client.post(url, data={**payload, field: value}, follow_redirects=False).status_code == 422
+    assert client.post(url, data={**payload, "inbound_interfaces": ["missing_155d011d14.22"]}, follow_redirects=False).status_code == 303

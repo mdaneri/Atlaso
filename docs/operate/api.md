@@ -257,3 +257,7 @@ Clients must supply reviewed ingress membership when creating or enabling rules;
 interfaces. Responses return the saved array, including an empty array for legacy rows awaiting review. A disabled
 legacy update may retain an empty scope. Source Group and CIDR values restrict addresses within the selected ingress.
 All writes save desired state; global Appliance Apply owns enforcement.
+
+Inbound and outbound names always use 1–80 ASCII letters, digits, underscores, dots, colons, or hyphens, including for
+disabled rows and settings archives. Disabling a rule relaxes target availability checks only; it does not relax name
+syntax or ingress-list structure.

@@ -416,3 +416,15 @@ def test_routes_wan_archive_legacy_inference_preserves_admin_down_topology(
     feature_state = _archive_routes_wan_feature_state(archive["data"])
 
     assert feature_state.routing_enabled is True
+
+
+def test_archive_rejects_malformed_disabled_nat_ingress(client):
+    """Archive restore enforces syntax even when the NAT feature is disabled."""
+    with SessionLocal() as db:
+        archive = deepcopy(export_settings_archive(db, actor="test"))
+    _disable_routes_and_nat_rows(archive)
+    for bad in ["eth2\nfield=value", "eth2,eth3", "a" * 81]:
+        candidate = deepcopy(archive)
+        candidate["data"]["nat_rules"][0]["inbound_interfaces"] = [bad]
+        with SessionLocal() as db, pytest.raises(ValueError, match="canonical interface"):
+            restore_settings_archive(db, candidate)

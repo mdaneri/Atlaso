@@ -388,16 +388,29 @@ def nat_eligible_target_names(interfaces: list[PhysicalInterface], vlans: list[V
     return names
 
 
-def validate_nat_ingress(inbound: object, outbound: str, target_names: set[str], *, required: bool = True) -> list[str]:
-    """Validate explicit ingress membership without inferring a legacy scope."""
+def validate_nat_interface_names(inbound: object, outbound: str) -> list[str]:
+    """Reject target names that cannot be serialized into the helper configuration."""
     if not isinstance(inbound, list) or any(not isinstance(name, str) for name in inbound):
         return ["NAT inbound interfaces must be a list of interface/VLAN names."]
+    if outbound and not re.fullmatch(r"[A-Za-z0-9_.:-]{1,80}", outbound):
+        return ["NAT outbound interface must use a canonical interface name of at most 80 characters."]
+    if any(not re.fullmatch(r"[A-Za-z0-9_.:-]{1,80}", name) for name in inbound):
+        return ["NAT inbound interfaces must use canonical interface names of at most 80 characters."]
+    return []
+
+
+def validate_nat_ingress(inbound: object, outbound: str, target_names: set[str], *, required: bool = True, check_availability: bool = True) -> list[str]:
+    """Validate syntax always, and require available membership only for active input."""
+    syntax_errors = validate_nat_interface_names(inbound, outbound)
+    if syntax_errors:
+        return syntax_errors
+    assert isinstance(inbound, list)
     if not inbound:
         return ["Select at least one inbound interface or VLAN; legacy NAT rules require explicit review."] if required else []
     if len(inbound) > 128 or len(set(inbound)) != len(inbound):
         return ["NAT inbound interfaces must be unique and contain at most 128 targets."]
     for name in inbound:
-        if name not in target_names:
+        if check_availability and name not in target_names:
             return [f"NAT inbound target {name} is unavailable; select an enabled non-management IPv4 interface or VLAN."]
         if name == outbound:
             return ["NAT inbound and outbound interfaces must be different."]
@@ -1072,6 +1085,9 @@ def render_wan_config(
 
     lines.extend(["", "[nat_rules]"])
     for rule in sorted(nat_rules, key=lambda item: item.priority):
+        ingress_errors = validate_nat_interface_names(rule.inbound_interfaces or [], rule.outbound_interface)
+        if ingress_errors:
+            raise ValueError(ingress_errors[0])
         lines.extend(
             [
                 f"nat={rule.name}",

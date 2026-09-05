@@ -922,8 +922,8 @@ def build_router(dependencies: RoutesWanUiDependencies) -> RoutesWanUiRouter:
         parsed = validate_nat_rule_form_values(name, source, outbound_interface, priority, masquerade, db, validate_target=enabled == "on")
         if isinstance(parsed, Response):
             return parsed
-        ingress_errors = validate_nat_ingress(inbound_interfaces, outbound_interface, {target["name"] for target in wan_nat_targets_from_route_targets(wan_route_targets(db))}, required=enabled == "on")
-        if ingress_errors and enabled == "on":
+        ingress_errors = validate_nat_ingress(inbound_interfaces, outbound_interface, {target["name"] for target in wan_nat_targets_from_route_targets(wan_route_targets(db))}, required=enabled == "on", check_availability=enabled == "on")
+        if ingress_errors:
             return Response(ingress_errors[0], status_code=422, media_type="text/plain")
         name_value, source_value, outbound_value, masquerade_value, priority_value = parsed
         rule.name = name_value

@@ -88,3 +88,24 @@ def test_database_upgrade_retains_enabled_legacy_rule(tmp_path, monkeypatch):
         assert "inbound_interfaces" in {column["name"] for column in inspect(connection).get_columns("nat_rules")}
         assert connection.execute(text("SELECT name, enabled, inbound_interfaces FROM nat_rules")).one() == ("Legacy", 1, "[]")
     engine.dispose()
+
+
+@pytest.mark.parametrize("bad", ["eth2\nfield=value", "eth2\rfield=value", "eth2,eth3", 'eth2"', "eth2;", "a" * 81, "", "eth2\x00"])
+def test_disabled_ingress_syntax_never_reaches_config(bad):
+    """Dormant rows retain unavailable identities, never malformed configuration text."""
+    assert validate_nat_ingress([bad], "eth1", set(), required=False, check_availability=False)
+    assert not validate_nat_ingress(["missing_155d011d14.22"], "eth1", set(), required=False, check_availability=False)
+    rule = NatRule(name="Dormant", source="any", outbound_interface="eth1", inbound_interfaces=[bad],
+                   enabled=False, masquerade=True, priority=100)
+    with pytest.raises(ValueError, match="canonical interface"):
+        render_wan_config([], nat_rules=[rule], settings=RoutesWanSettings(False, False, False))
+
+
+def test_safe_invalid_or_legacy_boundaries_remain_reviewable():
+    """Syntax guards leave safe legacy and semantic errors visible for explicit review."""
+    for inbound, outbound in [([], ""), (["eth2"], "eth2"), (["missing_155d011d14.22"], "eth1")]:
+        rule = NatRule(name="Review", source="any", inbound_interfaces=inbound, outbound_interface=outbound,
+                       enabled=False, masquerade=True, priority=100)
+        config = render_wan_config([], nat_rules=[rule], settings=RoutesWanSettings(False, False, False))
+        assert "nat=Review" in config
+        assert "masquerade comment" not in config

@@ -1752,8 +1752,8 @@ class NatRuleCreate(BaseModel):
     name: Annotated[str, Field(description='Stable operator-facing name of this resource.')] = Field(min_length=1, max_length=120)
     enabled: Annotated[bool, Field(description='Whether the resource is enabled in saved Atlaso state.')] = True
     source: Annotated[str, Field(description='Validated network or address value for source in this nat rule resource.')] = Field(default="any", min_length=1, max_length=240)
-    inbound_interfaces: list[str] = Field(default_factory=list, max_length=128, description="Explicit enabled non-management IPv4 ingress interface/VLAN names. Required for new or enabled rules; the outbound target must not appear here. Empty legacy scope requires administrator review.")
-    outbound_interface: Annotated[str, Field(description='Requested outbound interface value for this nat rule resource.')] = Field(min_length=1, max_length=80)
+    inbound_interfaces: list[Annotated[str, Field(min_length=1, max_length=80, pattern=r"^[A-Za-z0-9_.:-]+$", description="Canonical physical interface or VLAN name.")]] = Field(default_factory=list, max_length=128, description="Explicit enabled non-management IPv4 ingress interface/VLAN names. Required for new or enabled rules; the outbound target must not appear here. Empty legacy scope requires administrator review.")
+    outbound_interface: Annotated[str, Field(description='Requested outbound interface value for this nat rule resource.')] = Field(min_length=1, max_length=80, pattern=r"^[A-Za-z0-9_.:-]+$")
     masquerade: Annotated[bool, Field(description='Whether masquerade is enabled for this nat rule resource.')] = True
     priority: Annotated[int, Field(description='Requested priority value for this nat rule resource.')] = Field(default=100, ge=0)
     description: Annotated[str | None, Field(description='Operator-facing purpose or context for this resource.')] = None

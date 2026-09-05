@@ -438,3 +438,20 @@ def test_api_default_route_contract_and_canonical_readback(client):
     )
     assert updated.status_code == 200, updated.text
     assert updated.json()["destination_cidr"] == "::/0"
+
+
+def test_disabled_nat_api_always_validates_interface_syntax(client):
+    """Disabling relaxes availability, without admitting malformed target names."""
+    token, _ = create_token(client, scopes=["read:wan", "write:wan"])
+    headers = {"Authorization": f"Bearer {token}"}
+    payload = dict(name="Syntax control", source="any", inbound_interfaces=["eth2"], outbound_interface="eth1.20")
+    created = client.post("/api/v1/nat/rules", headers=headers, json=payload)
+    assert created.status_code == 201, created.text
+    url = f"/api/v1/nat/rules/{created.json()['id']}"
+    for bad in ["eth2\nfield=value", "eth2\rfield=value", "eth2,eth3", 'eth2"', "a" * 81]:
+        for field, value in [("inbound_interfaces", [bad]), ("outbound_interface", bad)]:
+            rejected = client.patch(url, headers=headers, json={**payload, "enabled": False, field: value})
+            assert rejected.status_code == 422, rejected.text
+    control = client.patch(url, headers=headers, json={**payload, "enabled": False, "inbound_interfaces": ["missing_155d011d14.22"]})
+    assert control.status_code == 200, control.text
+    assert control.json()["inbound_interfaces"] == ["missing_155d011d14.22"]

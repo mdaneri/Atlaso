@@ -2529,8 +2529,9 @@ def _validate_archive_relationships(data: dict[str, list[dict[str, Any]]]) -> No
         ingress_errors = validate_nat_ingress(
             row.get("inbound_interfaces", []), str(row.get("outbound_interface") or ""),
             nat_eligible_target_names(archived_interfaces, archived_vlans), required=False,
+            check_availability=bool(row.get("enabled", True) and effective_nat_enabled),
         )
-        if ingress_errors and (row.get("enabled", True) and effective_nat_enabled or not isinstance(row.get("inbound_interfaces", []), list)):
+        if ingress_errors:
             raise ValueError(f"The settings archive NAT ingress is invalid: {ingress_errors[0]}")
         enabled = row.get("enabled", True)
         if not isinstance(enabled, bool):

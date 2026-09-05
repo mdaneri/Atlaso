@@ -597,8 +597,8 @@ def build_router(dependencies: RoutesWanApiDependencies) -> RoutesWanApiRouter:
             raise HTTPException(status_code=422, detail=source_errors[0])
         if (creating or payload.enabled) and payload.outbound_interface not in nat_outbound_target_names(db):
             raise HTTPException(status_code=422, detail="Choose an access physical interface or enabled VLAN interface with an IP CIDR.")
-        ingress_errors = validate_nat_ingress(payload.inbound_interfaces, payload.outbound_interface, nat_outbound_target_names(db), required=creating or payload.enabled)
-        if ingress_errors and (creating or payload.enabled):
+        ingress_errors = validate_nat_ingress(payload.inbound_interfaces, payload.outbound_interface, nat_outbound_target_names(db), required=creating or payload.enabled, check_availability=creating or payload.enabled)
+        if ingress_errors:
             raise HTTPException(status_code=422, detail=ingress_errors[0])
         if not payload.masquerade:
             raise HTTPException(status_code=422, detail="NAT v1 supports masquerade only.")

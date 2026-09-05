@@ -5138,7 +5138,7 @@
         "type": "object"
       },
       "NatRuleCreate": {
-        "description": "Fields accepted when creating a nat rule resource.\n\nAttributes:\n    name: Stable operator-facing name of this resource.\n    enabled: Whether the resource is enabled in saved Atlaso state.\n    source: Validated network or address value for source in this nat rule resource.\n    outbound_interface: Requested outbound interface value for this nat rule resource.\n    masquerade: Whether masquerade is enabled for this nat rule resource.\n    priority: Requested priority value for this nat rule resource.\n    description: Operator-facing purpose or context for this resource.",
+        "description": "Fields accepted when creating a nat rule resource.\n\nAttributes:\n    name: Stable operator-facing name of this resource.\n    enabled: Whether the resource is enabled in saved Atlaso state.\n    source: Validated network or address value for source in this nat rule resource.\n    inbound_interfaces: Explicit eligible ingress targets, distinct from the outbound target.\n    outbound_interface: Requested outbound interface value for this nat rule resource.\n    masquerade: Whether masquerade is enabled for this nat rule resource.\n    priority: Requested priority value for this nat rule resource.\n    description: Operator-facing purpose or context for this resource.",
         "properties": {
           "description": {
             "anyOf": [
@@ -5161,6 +5161,10 @@
           "inbound_interfaces": {
             "description": "Explicit enabled non-management IPv4 ingress interface/VLAN names. Required for new or enabled rules; the outbound target must not appear here. Empty legacy scope requires administrator review.",
             "items": {
+              "description": "Canonical physical interface or VLAN name.",
+              "maxLength": 80,
+              "minLength": 1,
+              "pattern": "^[A-Za-z0-9_.:-]+$",
               "type": "string"
             },
             "maxItems": 128,
@@ -5184,6 +5188,7 @@
             "description": "Requested outbound interface value for this nat rule resource.",
             "maxLength": 80,
             "minLength": 1,
+            "pattern": "^[A-Za-z0-9_.:-]+$",
             "title": "Outbound Interface",
             "type": "string"
           },
@@ -5239,6 +5244,10 @@
           "inbound_interfaces": {
             "description": "Explicit enabled non-management IPv4 ingress interface/VLAN names. Required for new or enabled rules; the outbound target must not appear here. Empty legacy scope requires administrator review.",
             "items": {
+              "description": "Canonical physical interface or VLAN name.",
+              "maxLength": 80,
+              "minLength": 1,
+              "pattern": "^[A-Za-z0-9_.:-]+$",
               "type": "string"
             },
             "maxItems": 128,
@@ -5262,6 +5271,7 @@
             "description": "Requested outbound interface value for this nat rule resource.",
             "maxLength": 80,
             "minLength": 1,
+            "pattern": "^[A-Za-z0-9_.:-]+$",
             "title": "Outbound Interface",
             "type": "string"
           },
