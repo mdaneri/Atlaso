@@ -7,6 +7,8 @@ Prompts without echo when Token is omitted, validates the bounded 1Password
 service-account token contract without displaying the value, and atomically
 writes only current-user DPAPI ciphertext. The file ACL is restricted to the
 current Windows user and SYSTEM with inherited access disabled.
+Also creates the checkout-local Environment ID file when missing, after verifying
+the pinned Atlaso identity. Existing Environment ID files are preserved.
 
 .PARAMETER Token
 Optional service-account token supplied as a SecureString. When omitted, the
@@ -19,6 +21,11 @@ Optional exact destination. The default is the Git-ignored
 .PARAMETER Force
 Explicitly authorize replacing an existing safe token file during rotation.
 
+.PARAMETER EnvironmentId
+Opaque ID of the exact Atlaso Environment. Prompts when omitted and the
+checkout-local .atlaso-local/onepassword-environment-id file does not exist.
+An existing file must contain the pinned Atlaso ID and is never overwritten.
+
 .EXAMPLE
 ./scripts/windows/vmware/initialize-onepassword-service-account.ps1
 
@@ -29,6 +36,7 @@ Explicitly authorize replacing an existing safe token file during rotation.
 param(
     [SecureString]$Token,
     [AllowEmptyString()][string]$TokenFile = '',
+    [Alias('OnePasswordEnvironmentId')][string]$EnvironmentId = '',
     [switch]$Force
 )
 
@@ -59,6 +67,10 @@ if (-not $resolvedTokenFile.StartsWith(
     throw 'The 1Password service-account token must be stored beneath this checkout''s .atlaso-local directory.'
 }
 $parentPath = [System.IO.Path]::GetDirectoryName($resolvedTokenFile)
+$environmentIdPath = Join-Path $atlasoLocalRoot 'onepassword-environment-id'
+if ($resolvedTokenFile.Equals($environmentIdPath, [System.StringComparison]::OrdinalIgnoreCase)) {
+    throw 'The token destination must differ from the Environment ID file.'
+}
 if ([string]::IsNullOrWhiteSpace($parentPath)) {
     throw 'The 1Password service-account token destination must have a parent directory.'
 }
@@ -99,6 +111,28 @@ if (Test-Path -LiteralPath $resolvedTokenFile) {
     }
 }
 
+# Validate the selector before creating directories or prompting for a token.
+# Force applies only to token rotation and must never replace the selector.
+$createEnvironmentId = -not (Test-Path -LiteralPath $environmentIdPath)
+if ($PSBoundParameters.ContainsKey('EnvironmentId')) {
+    Assert-AtlasoOnePasswordEnvironmentId -EnvironmentId $EnvironmentId
+}
+if ($createEnvironmentId) {
+    if (-not $PSBoundParameters.ContainsKey('EnvironmentId')) {
+        $EnvironmentId = Read-Host -Prompt 'Atlaso 1Password Environment ID'
+    }
+    Assert-AtlasoOnePasswordEnvironmentId -EnvironmentId $EnvironmentId
+}
+else {
+    $environmentItem = Get-Item -LiteralPath $environmentIdPath -Force
+    if ($environmentItem.PSIsContainer -or
+        ($environmentItem.Attributes -band [System.IO.FileAttributes]::ReparsePoint) -ne 0) {
+        throw 'The existing 1Password Environment ID path must be a regular local file.'
+    }
+    $storedEnvironmentId = Resolve-AtlasoOnePasswordEnvironmentId -RepositoryRoot $repositoryRoot
+    Assert-AtlasoOnePasswordEnvironmentId -EnvironmentId $storedEnvironmentId
+}
+
 if (Test-Path -LiteralPath $parentPath) {
     $parentItem = Get-Item -LiteralPath $parentPath -Force
     if (-not $parentItem.PSIsContainer -or
@@ -134,6 +168,9 @@ $tokenText = $null
 $temporaryPath = Join-Path $parentPath (
     ".onepassword-service-account-token.$([guid]::NewGuid().ToString('N')).tmp"
 )
+$temporaryEnvironmentPath = Join-Path $atlasoLocalRoot (
+    ".onepassword-environment-id.$([guid]::NewGuid().ToString('N')).tmp"
+)
 try {
     $tokenText = ConvertFrom-SecureString -SecureString $Token -AsPlainText
     if ($tokenText -notmatch '^ops_[A-Za-z0-9_-]{80,8188}$') {
@@ -162,6 +199,16 @@ try {
     }
     Set-Acl -LiteralPath $temporaryPath -AclObject $acl
 
+    if ($createEnvironmentId) {
+        [System.IO.File]::WriteAllText(
+            $temporaryEnvironmentPath,
+            $EnvironmentId,
+            [System.Text.UTF8Encoding]::new($false)
+        )
+        # Atomic no-replace publication also preserves a concurrently created file.
+        [System.IO.File]::Move($temporaryEnvironmentPath, $environmentIdPath, $false)
+        Write-Output "Stored Atlaso Environment ID at $environmentIdPath"
+    }
     [System.IO.File]::Move($temporaryPath, $resolvedTokenFile, [bool]$Force)
     $null = Assert-AtlasoOnePasswordServiceAccountTokenFile -Path $resolvedTokenFile
     Write-Output "Stored current-user DPAPI ciphertext at $resolvedTokenFile"
@@ -171,5 +218,8 @@ finally {
     $ciphertext = $null
     if (Test-Path -LiteralPath $temporaryPath -PathType Leaf) {
         [System.IO.File]::Delete($temporaryPath)
+    }
+    if (Test-Path -LiteralPath $temporaryEnvironmentPath -PathType Leaf) {
+        [System.IO.File]::Delete($temporaryEnvironmentPath)
     }
 }

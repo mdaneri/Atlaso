@@ -22,6 +22,18 @@ or rotate the service-account token in the 1Password portal, then enter it once 
 .\scripts\windows\vmware\initialize-onepassword-service-account.ps1
 ```
 
+On first use, the helper also prompts for the opaque ID of the exact `Atlaso` Environment and creates the Git-ignored
+`.atlaso-local\onepassword-environment-id` file. To supply the ID explicitly, use:
+
+```powershell
+.\scripts\windows\vmware\initialize-onepassword-service-account.ps1 -EnvironmentId '<Atlaso Environment ID>'
+```
+
+`-OnePasswordEnvironmentId` is an alias for `-EnvironmentId`. The helper validates the ID against Atlaso's pinned
+identity before storing configuration. An existing Environment ID file is validated and preserved, including with
+`-Force`; it must contain exactly one non-empty line identifying the pinned Environment. Invalid selectors fail before
+token storage. The ID file belongs to the checkout containing the script, independently of a custom `-TokenFile` path.
+
 The helper validates the service-account token shape and stores only current-user DPAPI ciphertext at the Git-ignored
 `.atlaso-local\onepassword-service-account-token.dpapi` path. The file is usable only by the same Windows user on the
 same machine; its ACL allows only that user and SYSTEM. Never put the plaintext token in Git, `.env`, a PowerShell
