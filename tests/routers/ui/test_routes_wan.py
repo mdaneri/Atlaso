@@ -660,4 +660,9 @@ def test_disabled_nat_form_always_validates_interface_syntax(client):
     for bad in ["eth2\nfield=value", "eth2\rfield=value", "eth2,eth3", 'eth2"', "a" * 81]:
         for field, value in [("inbound_interfaces", [bad]), ("outbound_interface", bad)]:
             assert client.post(url, data={**payload, field: value}, follow_redirects=False).status_code == 422
-    assert client.post(url, data={**payload, "inbound_interfaces": ["missing_155d011d14.22"]}, follow_redirects=False).status_code == 303
+    assert client.post(url, data={**payload, "inbound_interfaces": ["missing_155d011d14.22"], "outbound_interface": "missing_155d011d15.20"}, follow_redirects=False).status_code == 303
+    with SessionLocal() as db:
+        retained = db.get(NatRule, rule_id)
+        assert retained.outbound_interface == "missing_155d011d15.20"
+        assert retained.inbound_interfaces == ["missing_155d011d14.22"]
+        assert retained.enabled is False

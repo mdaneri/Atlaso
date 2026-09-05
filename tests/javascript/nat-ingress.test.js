@@ -70,3 +70,21 @@ test("dormant edits preserve missing ingress while enabling requires current tar
   assert.match(context.routesWanNatIngressError(["missing_abc.20"], "eth1", ["eth1"], false), /available/);
   assert.match(source, /\["translation", "state"\]\.includes\(step\.id\)/);
 });
+
+
+test("outbound dropdown preserves unavailable saved identities through edit", () => {
+  const select = { options: [{ value: "eth1", dataset: {} }], value: "", add(option) { this.options.push(option); },
+    querySelectorAll() { return this.options.filter((option) => option.dataset.unavailable); } };
+  function Option(label, value) { this.text = label; this.value = value; this.dataset = {}; this.remove = () => { select.options = select.options.filter((option) => option !== this); }; }
+  const context = vm.createContext({ Option });
+  vm.runInContext(extract("restoreNatOutboundSelection"), context);
+  context.restoreNatOutboundSelection(select, "missing_abc.20");
+  assert.equal(select.value, "missing_abc.20");
+  assert.match(select.options[1].text, /unavailable/);
+  context.restoreNatOutboundSelection(select, "eth1");
+  assert.equal(select.value, "eth1");
+  assert.equal(select.options.length, 1);
+  context.restoreNatOutboundSelection(select, "");
+  assert.equal(select.value, "");
+  assert.equal(select.options[1].text, "Needs outbound review");
+});

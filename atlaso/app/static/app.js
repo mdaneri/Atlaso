@@ -7290,6 +7290,16 @@ function routesWanField(form, name) {
   return form.elements.namedItem(name);
 }
 
+function restoreNatOutboundSelection(select, savedValue) {
+  select.querySelectorAll("[data-unavailable]").forEach((option) => option.remove());
+  if (![...select.options].some((option) => option.value === savedValue)) {
+    const option = new Option(savedValue ? `${savedValue} (unavailable)` : "Needs outbound review", savedValue);
+    option.dataset.unavailable = "true";
+    select.add(option);
+  }
+  select.value = savedValue;
+}
+
 function routesWanNatIngressError(selected, outbound, available, dormantEdit = false) {
   if (!dormantEdit && !selected.length) return "Select at least one inbound interface or VLAN.";
   if (selected.some((name) => name === outbound || (!dormantEdit && !available.includes(name)))) {
@@ -8162,13 +8172,16 @@ function initializeRoutesWanWizards() {
     const natInboundValues = () => tagEditorValues(natInboundEditor);
     const syncNatIngress = () => {
       if (!natInboundEditor) return;
-      const outbound = routesWanField(form, "outbound_interface")?.value;
+      const outboundSelect = routesWanField(form, "outbound_interface");
+      const outbound = outboundSelect?.value;
+      if (outboundSelect) outboundSelect.required = !(/\/nat-rules\/\d+\/edit$/.test(form.getAttribute("action") || "") && !routesWanField(form, "enabled")?.checked);
       natInboundEditor.querySelectorAll("[data-tag-option]").forEach((option) => {
         option.disabled = option.dataset.tagOption === outbound;
       });
     };
     routesWanField(form, "outbound_interface")?.addEventListener("change", syncNatIngress);
     natInboundEditor?.addEventListener("tag-editor:change", syncNatIngress);
+    routesWanField(form, "enabled")?.addEventListener("change", syncNatIngress);
     natSourceMode?.addEventListener("change", syncNatSource);
     natGroup?.addEventListener("change", syncNatSource);
     natCidrs?.addEventListener("input", syncNatSource);
@@ -8258,7 +8271,11 @@ function initializeRoutesWanWizards() {
         const inbound = natInboundEditor?.querySelector("[data-tag-entry]");
         const available = [...(natInboundEditor?.querySelectorAll("[data-tag-option]") || [])].map((option) => option.dataset.tagOption);
         const dormantEdit = /\/nat-rules\/\d+\/edit$/.test(form.getAttribute("action") || "") && !routesWanField(form, "enabled")?.checked;
-        const ingressError = routesWanNatIngressError(natInboundValues(), routesWanField(form, "outbound_interface")?.value, available, dormantEdit);
+        const outbound = routesWanField(form, "outbound_interface");
+        if (!dormantEdit && !available.includes(outbound?.value)) {
+          return { valid: false, message: "Choose an available outbound interface or VLAN.", field: outbound };
+        }
+        const ingressError = routesWanNatIngressError(natInboundValues(), outbound?.value, available, dormantEdit);
         if (ingressError) {
           return { valid: false, message: ingressError, field: inbound };
         }
@@ -8306,11 +8323,18 @@ function initializeRoutesWanWizards() {
         } else if (kind === "nat") {
           setRoutesWanField(form, "name", row?.name || "");
           setRoutesWanField(form, "description", row?.description || "");
-          setRoutesWanField(form, "outbound_interface", row?.outbound_interface || routesWanField(form, "outbound_interface")?.options?.[0]?.value || "");
+          const outboundSelect = routesWanField(form, "outbound_interface");
+          if (row && outboundSelect instanceof HTMLSelectElement) {
+            restoreNatOutboundSelection(outboundSelect, row.outbound_interface || "");
+          } else {
+            outboundSelect?.querySelectorAll("[data-unavailable]").forEach((option) => option.remove());
+            setRoutesWanField(form, "outbound_interface", outboundSelect?.options?.[0]?.value || "");
+          }
           natInboundEditor?.atlasoTagEditor?.setValues(row?.inbound_interfaces || []);
           syncNatIngress();
           setRoutesWanField(form, "priority", row?.priority ?? 100);
           setRoutesWanField(form, "enabled", row?.enabled ?? true);
+          syncNatIngress();
           const sourceValue = row?.source || "any";
           if (natSourceMode instanceof HTMLSelectElement) natSourceMode.value = sourceValue.toLowerCase() === "any" ? "any" : sourceValue.toLowerCase().startsWith("group:") ? "group" : "cidrs";
           if (natGroup instanceof HTMLSelectElement && sourceValue.toLowerCase().startsWith("group:")) natGroup.value = sourceValue;
