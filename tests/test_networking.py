@@ -429,6 +429,11 @@ def test_sync_host_inventory_cleans_removed_nic_bindings_and_retargets_survivors
         assert "disabled VLAN eth1.22" in (audit.detail or "")
         assert "disabled KMS / KMIP" in (audit.detail or "")
         assert "Missing physical interface cleanup" in caplog.text
+        from atlaso.app.services.networking import _cleanup_missing_interface_references
+
+        assert _cleanup_missing_interface_references(db, {removed.name: removed.name}) == []
+        db.flush()
+        assert len(db.execute(select(AuditEvent).where(AuditEvent.action == "cleanup_missing_physical_interface_bindings")).scalars().all()) == 1
         from atlaso.app.services.management_bindings import applied_management_bindings
 
         assert applied_management_bindings(db) == [

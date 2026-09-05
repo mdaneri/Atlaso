@@ -621,11 +621,13 @@ def _cleanup_missing_interface_references(db: Session, missing_renames: dict[str
         if rule.outbound_interface in unavailable_targets or unavailable_targets.intersection(rule.inbound_interfaces or []):
             # Bind missing members to their inert identity before live NIC names are reused.
             # Preserve all members and enabled state so Apply requires explicit review.
+            previous_targets = (rule.outbound_interface, list(rule.inbound_interfaces or []))
             rule.outbound_interface = target_replacements.get(rule.outbound_interface, rule.outbound_interface)
             rule.inbound_interfaces = [
                 target_replacements.get(name, name) for name in rule.inbound_interfaces or []
             ]
-            details.append(f"NAT rule {rule.name} requires review: a selected interface is missing")
+            if previous_targets != (rule.outbound_interface, rule.inbound_interfaces):
+                details.append(f"NAT rule {rule.name} requires review: a selected interface is missing")
 
     for rule in db.execute(select(RoutingRule)).scalars().all():
         removed_bindings = []

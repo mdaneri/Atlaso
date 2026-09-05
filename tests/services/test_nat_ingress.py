@@ -105,6 +105,37 @@ def test_database_upgrade_retains_enabled_legacy_rule(tmp_path, monkeypatch):
     engine.dispose()
 
 
+def test_concurrent_nat_column_upgrade(tmp_path):
+    """Both startup processes can upgrade the same legacy NAT table.
+
+    Args:
+        tmp_path: Isolated directory for the shared legacy database.
+    """
+    from concurrent.futures import ThreadPoolExecutor
+    from threading import Barrier
+
+    from atlaso.app import database
+
+    engine = create_engine(f"sqlite:///{tmp_path / 'concurrent-nat.db'}", connect_args={"timeout": 10})
+    with engine.begin() as connection:
+        connection.execute(text("CREATE TABLE nat_rules (id INTEGER PRIMARY KEY, name TEXT, enabled BOOLEAN)"))
+        connection.execute(text("INSERT INTO nat_rules VALUES (1, 'Legacy', 1)"))
+    ready = Barrier(2)
+
+    def upgrade():
+        """Race two independent service connections at the schema boundary."""
+        ready.wait()
+        database._create_database_schema(engine)
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        futures = [executor.submit(upgrade) for _ in range(2)]
+        for future in futures:
+            future.result()
+    with engine.connect() as connection:
+        assert connection.execute(text("SELECT name, enabled, inbound_interfaces FROM nat_rules")).one() == ("Legacy", 1, "[]")
+    engine.dispose()
+
+
 @pytest.mark.parametrize("bad", ["eth2\nfield=value", "eth2\rfield=value", "eth2,eth3", 'eth2"', "eth2;", "a" * 81, "", "eth2\x00"])
 def test_disabled_ingress_syntax_never_reaches_config(bad):
     """Dormant rows retain unavailable identities, never malformed configuration text.

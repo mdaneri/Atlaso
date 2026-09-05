@@ -196,6 +196,10 @@ Disabled edits may retain empty or unavailable ingress while changing metadata. 
 a saved unavailable target instead of replacing it during a metadata edit. Enabling the rule in the State step
 requires a complete, currently eligible ingress selection before Review.
 
+Startup upgrades preserve legacy NAT rows under the database schema lock, including concurrent web and worker startup.
+Missing-target cleanup records an audit warning when saved selectors change; repeated refreshes of the same missing
+target do not duplicate the warning.
+
 The **NAT** wizard creates explicit IPv4 masquerade rules. In **Translation**, select one or more **Inbound
 interfaces or VLANs** and a different **Outbound interface or VLAN**. Both sides require enabled IPv4 lab targets;
 VLANs also require an available, enabled trunk parent. Dedicated management-role and unused targets are excluded.
