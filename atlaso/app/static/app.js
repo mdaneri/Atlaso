@@ -7290,9 +7290,9 @@ function routesWanField(form, name) {
   return form.elements.namedItem(name);
 }
 
-function routesWanNatIngressError(selected, outbound, available) {
-  if (!selected.length) return "Select at least one inbound interface or VLAN.";
-  if (selected.some((name) => name === outbound || !available.includes(name))) {
+function routesWanNatIngressError(selected, outbound, available, dormantEdit = false) {
+  if (!dormantEdit && !selected.length) return "Select at least one inbound interface or VLAN.";
+  if (selected.some((name) => name === outbound || (!dormantEdit && !available.includes(name)))) {
     return "Select available inbound targets different from the outbound interface.";
   }
   return "";
@@ -8253,11 +8253,12 @@ function initializeRoutesWanWizards() {
           return { valid: false, message: "Routing source and destination must be different.", field: destination };
         }
       }
-      if (kind === "nat" && step.id === "translation") {
+      if (kind === "nat" && ["translation", "state"].includes(step.id)) {
         syncNatSource();
         const inbound = natInboundEditor?.querySelector("[data-tag-entry]");
         const available = [...(natInboundEditor?.querySelectorAll("[data-tag-option]") || [])].map((option) => option.dataset.tagOption);
-        const ingressError = routesWanNatIngressError(natInboundValues(), routesWanField(form, "outbound_interface")?.value, available);
+        const dormantEdit = /\/nat-rules\/\d+\/edit$/.test(form.getAttribute("action") || "") && !routesWanField(form, "enabled")?.checked;
+        const ingressError = routesWanNatIngressError(natInboundValues(), routesWanField(form, "outbound_interface")?.value, available, dormantEdit);
         if (ingressError) {
           return { valid: false, message: ingressError, field: inbound };
         }

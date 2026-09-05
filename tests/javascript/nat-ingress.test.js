@@ -59,3 +59,14 @@ test("source-group return restores the shared ingress tag editor", () => {
     { values: { inbound_interfaces: ["eth2", "missing_abc.20"] } }, "input");
   assert.deepEqual(restored, ["eth2", "missing_abc.20"]);
 });
+
+
+test("dormant edits preserve missing ingress while enabling requires current targets", () => {
+  const context = vm.createContext({});
+  vm.runInContext(extract("routesWanNatIngressError"), context);
+  assert.equal(context.routesWanNatIngressError([], "eth1", ["eth1"], true), "");
+  assert.equal(context.routesWanNatIngressError(["missing_abc.20"], "eth1", ["eth1"], true), "");
+  assert.match(context.routesWanNatIngressError([], "eth1", ["eth1"], false), /at least one/);
+  assert.match(context.routesWanNatIngressError(["missing_abc.20"], "eth1", ["eth1"], false), /available/);
+  assert.match(source, /\["translation", "state"\]\.includes\(step\.id\)/);
+});

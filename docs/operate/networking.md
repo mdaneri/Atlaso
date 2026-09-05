@@ -192,6 +192,8 @@ that use canonical `0.0.0.0/0` or `::/0`; those payloads must also include the r
 
 The NAT wizard uses the shared tag editor for inbound interfaces. Add each target with the suggestion menu or keyboard;
 remove a tag to remove that target. Multiple selections remain visible when returning from Manage source groups.
+Disabled edits may retain empty or unavailable ingress while changing metadata. Enabling the rule in the State step
+requires a complete, currently eligible ingress selection before Review.
 
 The **NAT** wizard creates explicit IPv4 masquerade rules. In **Translation**, select one or more **Inbound
 interfaces or VLANs** and a different **Outbound interface or VLAN**. Both sides require enabled IPv4 lab targets;
