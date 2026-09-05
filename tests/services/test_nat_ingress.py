@@ -25,6 +25,17 @@ def target(name, **changes):
                 routing_domain="lab", route_allowed=True, nat_allowed=True, **changes)
 
 
+def test_saved_nat_physical_identity_is_bounded():
+    """Preserve provenance without allowing line-oriented configuration injection."""
+    metadata = dict(nat_physical_interface="eth2", nat_physical_mac="00:11:22:33:44:55")
+    rendered = render_wan_config([], targets=[target("eth2", **metadata)])
+    assert "  nat_physical_interface=eth2\n" in rendered
+    assert "  nat_physical_mac=00:11:22:33:44:55\n" in rendered
+    for field in metadata:
+        with pytest.raises(ValueError, match="identity is invalid"):
+            render_wan_config([], targets=[target("eth2", **{**metadata, field: "eth2\ninjected=true"})])
+
+
 @pytest.mark.parametrize("source,expression", [("any", ""), ("10.0.0.0/24", "ip saddr 10.0.0.0/24 ")])
 def test_both_renderers_require_ingress_and_preserve_address_scope(source, expression):
     """An iifname match excludes local output and every unselected ingress.

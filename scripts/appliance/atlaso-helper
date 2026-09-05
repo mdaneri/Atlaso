@@ -9288,11 +9288,12 @@ def _wan_source_expr(source: str) -> str:
     return f"ip saddr {{ {', '.join(values)} }} "
 
 
-def _render_wan_nat_config(nat_rules: list[dict[str, str]]) -> str:
+def _render_wan_nat_config(nat_rules: list[dict[str, str]], interface_indexes: dict[str, int] | None = None) -> str:
     """Render WAN nat config.
 
     Args:
         nat_rules: Nat rules consumed by render WAN nat config.
+        interface_indexes: Verified runtime indexes, omitted only for the offline preview.
     """
     lines = [
         "# Managed by Atlaso. Local changes may be overwritten.",
@@ -9308,9 +9309,13 @@ def _render_wan_nat_config(nat_rules: list[dict[str, str]]) -> str:
         if not inbound:
             raise ValueError("NAT rendering requires an explicit inbound scope.")
         ingress_expr = 'iifname { ' + ', '.join('"' + name + '"' for name in sorted(inbound)) + ' } '
+        identity_expr = ""
+        if interface_indexes is not None:
+            indexes = ", ".join(str(interface_indexes[name]) for name in sorted(inbound))
+            identity_expr = f'meta iif {{ {indexes} }} meta oif {interface_indexes[rule["outbound_interface"]]} '
         source = rule.get("source_resolved") or rule.get("source") or "any"
         comment = str(rule.get("name", "Atlaso NAT")).replace('"', "'")
-        lines.append(f'    {ingress_expr}{_wan_source_expr(source)}oifname "{rule["outbound_interface"]}" masquerade comment "{comment}"')
+        lines.append(f'    {identity_expr}{ingress_expr}{_wan_source_expr(source)}oifname "{rule["outbound_interface"]}" masquerade comment "{comment}"')
     lines.extend(["  }", "}", ""])
     return "\n".join(lines)
 
@@ -9997,32 +10002,56 @@ def _install_wan_runtime(config_path: Path) -> None:
         raise ValueError("Routes & WAN boot replay service could not be enabled")
 
 
-def _install_wan_nat_service() -> None:
-    """Perform install WAN nat service.
+def _retire_wan_nat_service() -> None:
+    """Retire raw nft replay so boot always rechecks the saved NIC identity."""
+    if WAN_NAT_SERVICE_PATH.exists():
+        result = _run(["systemctl", "disable", "--now", "atlaso-nat.service"])
+        if result.returncode:
+            raise ValueError("Could not retire the legacy NAT boot replay service")
+        WAN_NAT_SERVICE_PATH.unlink()
+        _fsync_directory(WAN_NAT_SERVICE_PATH.parent)
+        result = _run(["systemctl", "daemon-reload"])
+        if result.returncode:
+            raise ValueError("Could not reload the retired NAT boot replay service")
 
+
+def _wan_nat_interface_indexes(parsed: dict[str, list[dict[str, str]]], rules: list[dict[str, str]]) -> dict[str, int]:
+    """Bind active NAT selectors to the intended physical NIC and current index.
+
+    Args:
+        parsed: Saved or staged WAN configuration containing physical identities.
+        rules: Effective NAT rules whose interface identities must be checked.
     """
-    WAN_NAT_SERVICE_PATH.write_text(
-        "\n".join(
-            [
-                "[Unit]",
-                "Description=Atlaso routing and WAN NAT",
-                "After=network-online.target",
-                "Wants=network-online.target",
-                "",
-                "[Service]",
-                "Type=oneshot",
-                f"ExecStart=/usr/sbin/nft -f {WAN_NAT_CONFIG_PATH}",
-                "RemainAfterExit=yes",
-                "",
-                "[Install]",
-                "WantedBy=multi-user.target",
-                "",
-            ]
-        ),
-        encoding="utf-8",
-    )
-    _run(["systemctl", "daemon-reload"])
-    _run(["systemctl", "enable", "--now", "atlaso-nat.service"])
+    targets = {target["name"]: target for target in parsed["targets"]}
+    names: set[str] = set()
+    for rule in rules:
+        if _wan_bool(rule.get("enabled", ""), default=True):
+            names.update(name.strip() for name in rule.get("inbound_interfaces", "").split(",") if name.strip())
+            names.add(rule["outbound_interface"])
+    indexes: dict[str, int] = {}
+    for name in sorted(names):
+        target = targets.get(name, {})
+        parent = target.get("nat_physical_interface", "")
+        expected_mac = target.get("nat_physical_mac", "").lower()
+        if not _valid_network_interface_name(name) or not _valid_network_interface_name(parent) or not re.fullmatch(r"(?:[0-9a-f]{2}:){5}[0-9a-f]{2}", expected_mac):
+            raise ValueError(f"NAT target {name} requires a saved physical identity; review and apply its configuration")
+        # Indexes bind the live kernel device; MAC validation prevents a boot replay
+        # from resolving an old selector to a replacement physical NIC.
+        try:
+            index_before = int((SYSTEMD_NETWORK_INTERFACE_DIR / name / "ifindex").read_text(encoding="utf-8").strip())
+            actual_mac = (SYSTEMD_NETWORK_INTERFACE_DIR / parent / "address").read_text(encoding="utf-8").strip().lower()
+            if name != parent:
+                parent_index = int((SYSTEMD_NETWORK_INTERFACE_DIR / parent / "ifindex").read_text(encoding="utf-8").strip())
+                link_index = int((SYSTEMD_NETWORK_INTERFACE_DIR / name / "iflink").read_text(encoding="utf-8").strip())
+                if target.get("kind") != "vlan" or link_index != parent_index:
+                    raise ValueError("VLAN parent identity changed")
+            index_after = int((SYSTEMD_NETWORK_INTERFACE_DIR / name / "ifindex").read_text(encoding="utf-8").strip())
+        except (OSError, ValueError) as exc:
+            raise ValueError(f"NAT target {name} is unavailable; review its physical identity") from exc
+        if actual_mac != expected_mac or index_before <= 0 or index_before != index_after:
+            raise ValueError(f"NAT target {name} changed physical identity; review and apply its configuration")
+        indexes[name] = index_after
+    return indexes
 
 
 def _apply_wan_nat(parsed: dict[str, list[dict[str, str]]]) -> int:
@@ -10037,7 +10066,17 @@ def _apply_wan_nat(parsed: dict[str, list[dict[str, str]]]) -> int:
         if feature_settings["effective_nat_enabled"]
         else []
     )
-    nat_config = _render_wan_nat_config(effective_rules)
+    identity_error = ""
+    try:
+        _retire_wan_nat_service()
+        indexes = _wan_nat_interface_indexes(parsed, effective_rules)
+    except ValueError as exc:
+        # Retire the currently applied NAT table even when invalid desired selectors
+        # prevent a normal Apply. Never leave a stale name-only binding active.
+        identity_error = str(exc)
+        effective_rules = []
+        indexes = {}
+    nat_config = _render_wan_nat_config(effective_rules, indexes)
     validation = _validate_wan_nat_config(nat_config)
     print(validation.stdout, end="")
     print(validation.stderr, end="", file=sys.stderr)
@@ -10053,7 +10092,9 @@ def _apply_wan_nat(parsed: dict[str, list[dict[str, str]]]) -> int:
     print(apply_result.stderr, end="", file=sys.stderr)
     if apply_result.returncode != 0:
         return apply_result.returncode
-    _install_wan_nat_service()
+    if identity_error:
+        print(identity_error, file=sys.stderr)
+        return 1
     return 0
 
 
@@ -10110,6 +10151,13 @@ def _handle_wan(action: str, args: list[str]) -> int:
         return 2
     errors = _wan_config_errors(config_path)
     if errors:
+        if action == "restore":
+            # An obsolete saved config must not retain last boot's NAT table.
+            retired = _parse_wan_config(config_path)
+            retired["nat_rules"] = []
+            retirement_result = _apply_wan_nat(retired)
+            if retirement_result:
+                return retirement_result
         for error in errors:
             print(error, file=sys.stderr)
         return 2

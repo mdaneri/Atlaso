@@ -5349,6 +5349,8 @@ def wan_routing_targets(db: Session) -> list[dict[str, str]]:
             {
                 "name": interface.name,
                 "nat_allowed": interface.name in eligible_nat,
+                "nat_physical_interface": interface.name,
+                "nat_physical_mac": interface.mac_address or "",
                 "kind": "physical",
                 "role": role,
                 "ip_cidr": interface.ip_cidr or "",
@@ -5380,6 +5382,8 @@ def wan_routing_targets(db: Session) -> list[dict[str, str]]:
             {
                 "name": vlan.name,
                 "nat_allowed": vlan.name in eligible_nat,
+                "nat_physical_interface": vlan.parent_interface,
+                "nat_physical_mac": parent.mac_address if parent else "",
                 "kind": "vlan",
                 "role": role,
                 "ip_cidr": vlan.ip_cidr or "",

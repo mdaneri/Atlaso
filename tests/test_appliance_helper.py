@@ -5733,12 +5733,16 @@ def wan_config_text(
             "[targets]",
             "target=eth1.20",
             "  kind=vlan",
+            "  nat_physical_interface=eth1",
+            "  nat_physical_mac=00:11:22:33:44:01",
             f"  role={target_role}",
             "  nat_allowed=true",
             f"  ip_cidr={ipv4_cidr}",
             f"  ipv6_cidr={ipv6_cidr}",
             "target=eth2",
             "  kind=physical",
+            "  nat_physical_interface=eth2",
+            "  nat_physical_mac=00:11:22:33:44:02",
             "  role=access",
             "  nat_allowed=true",
             "  ip_cidr=192.168.50.1/24",
@@ -8669,6 +8673,14 @@ def test_wan_helper_apply_routes_nat_and_netem(monkeypatch, tmp_path):
     config_path.write_text(wan_config_text(), encoding="utf-8")
     nat_dir = tmp_path / "nftables.d"
     service_path = tmp_path / "atlaso-nat.service"
+    service_path.write_text("legacy raw nft replay", encoding="utf-8")
+    sysfs = tmp_path / "net"
+    for name, index, mac in [("eth1", 2, "00:11:22:33:44:01"), ("eth1.20", 4, "00:11:22:33:44:01"), ("eth2", 3, "00:11:22:33:44:02")]:
+        (sysfs / name).mkdir(parents=True)
+        (sysfs / name / "ifindex").write_text(str(index), encoding="utf-8")
+        (sysfs / name / "address").write_text(mac, encoding="utf-8")
+    monkeypatch.setattr(helper, "SYSTEMD_NETWORK_INTERFACE_DIR", sysfs)
+    (sysfs / "eth1.20" / "iflink").write_text("2", encoding="utf-8")
     runtime_dir = tmp_path / "etc" / "atlaso" / "wan"
     runtime_path = runtime_dir / "atlaso-wan.conf"
     replay_service_path = tmp_path / "atlaso-wan.service"
@@ -8717,7 +8729,9 @@ def test_wan_helper_apply_routes_nat_and_netem(monkeypatch, tmp_path):
     assert ["ip", "rule", "add", "from", "192.168.20.0/24", "table", "200", "priority", "2000"] in commands
     assert ["ip", "route", "replace", "10.20.0.0/24", "dev", "eth1.20", "metric", "120", "table", "200"] in commands
     assert ["tc", "qdisc", "replace", "dev", "eth1.20", "root", "netem", "delay", "100ms", "10ms", "loss", "0.5%", "rate", "100mbit"] in commands
-    assert service_path.exists()
+    assert not service_path.exists()
+    assert ["systemctl", "disable", "--now", "atlaso-nat.service"] in commands
+    assert "meta iif { 3 } meta oif 4" in (nat_dir / "atlaso-nat.nft").read_text(encoding="utf-8")
     assert runtime_path.read_text(encoding="utf-8") == config_path.read_text(
         encoding="utf-8"
     )

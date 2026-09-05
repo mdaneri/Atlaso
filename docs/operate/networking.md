@@ -200,6 +200,13 @@ Startup upgrades preserve legacy NAT rows under the database schema lock, includ
 Missing-target cleanup records an audit warning when saved selectors change; repeated refreshes of the same missing
 target do not duplicate the warning.
 
+Applied NAT matches the current kernel interface indexes as well as the selected names. A replacement NIC cannot
+inherit the old rule merely by receiving the same Linux name. WAN boot replay verifies each target's saved physical
+MAC (the parent NIC for a VLAN), then resolves fresh indexes. Missing or changed identities retire the applied NAT
+table and report an error while preserving the saved rules for review. Legacy saved runtime configurations without
+physical identity need review and a fresh Apply. The legacy standalone NAT replay service is retired; the WAN replay
+service owns restoration so stale indexes are never loaded directly at boot.
+
 The **NAT** wizard creates explicit IPv4 masquerade rules. In **Translation**, select one or more **Inbound
 interfaces or VLANs** and a different **Outbound interface or VLAN**. Both sides require enabled IPv4 lab targets;
 VLANs also require an available, enabled trunk parent. Dedicated management-role and unused targets are excluded.

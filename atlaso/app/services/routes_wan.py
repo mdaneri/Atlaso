@@ -996,12 +996,20 @@ def render_wan_config(
         "[targets]",
     ]
     for target in targets:
+        nat_parent = str(target.get("nat_physical_interface") or "")
+        nat_mac = str(target.get("nat_physical_mac") or "").lower()
+        if nat_parent and not re.fullmatch(r"[A-Za-z0-9_.:-]{1,80}", nat_parent):
+            raise ValueError("NAT physical interface identity is invalid")
+        if nat_mac and not re.fullmatch(r"(?:[0-9a-f]{2}:){5}[0-9a-f]{2}", nat_mac):
+            raise ValueError("NAT physical MAC identity is invalid")
         lines.extend(
             [
                 f"target={target['name']}",
                 f"  kind={target.get('kind', '')}",
                 f"  role={target.get('role', '')}",
                 f"  nat_allowed={_bool_value(bool(target.get('nat_allowed', False)))}",
+                f"  nat_physical_interface={nat_parent}",
+                f"  nat_physical_mac={nat_mac}",
                 f"  ip_cidr={target.get('ip_cidr', '')}",
                 f"  ipv6_cidr={target.get('ipv6_cidr', '')}",
                 f"  gateway={target.get('gateway', '')}",
