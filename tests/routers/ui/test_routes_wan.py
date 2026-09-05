@@ -21,6 +21,9 @@ def test_routes_wan_policy_form_renders(client):
     assert "Static routes choose a destination path" in response.text
     assert "Routing permissions control forwarding" in response.text
     assert "Routing Permissions" in response.text
+    assert 'data-nat-inbound-editor' in response.text
+    assert 'data-tag-name="inbound_interfaces"' in response.text
+    assert 'name="inbound_interfaces" multiple' not in response.text
     assert "NAT Rules" in response.text
     assert "WAN Policies" in response.text
     assert "Routes &amp; WAN Simulation has pending appliance changes" in response.text

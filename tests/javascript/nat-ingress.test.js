@@ -20,11 +20,11 @@ function extract(name) {
 test("ingress selection rejects empty, unavailable, and outbound targets", () => {
   const context = vm.createContext({});
   vm.runInContext(extract("routesWanNatIngressError"), context);
-  const option = (value, fields = {}) => ({ value, selected: true, disabled: false, dataset: {}, ...fields });
-  assert.match(context.routesWanNatIngressError([], "eth1"), /at least one/);
-  assert.match(context.routesWanNatIngressError([option("eth1")], "eth1"), /different/);
-  assert.match(context.routesWanNatIngressError([option("eth2", { dataset: { unavailable: "true" } })], "eth1"), /available/);
-  assert.equal(context.routesWanNatIngressError([option("eth2"), option("eth3")], "eth1"), "");
+  const available = ["eth1", "eth2", "eth3"];
+  assert.match(context.routesWanNatIngressError([], "eth1", available), /at least one/);
+  assert.match(context.routesWanNatIngressError(["eth1"], "eth1", available), /different/);
+  assert.match(context.routesWanNatIngressError(["missing"], "eth1", available), /available/);
+  assert.equal(context.routesWanNatIngressError(["eth2", "eth3"], "eth1", available), "");
 });
 
 test("inline enable submits every ingress member and the masquerade switch", async () => {
@@ -38,12 +38,24 @@ test("inline enable submits every ingress member and the masquerade switch", asy
 });
 
 test("source-group handoff preserves all selected ingress members", () => {
-  const context = vm.createContext({});
+  const context = vm.createContext({ tagEditorValues: () => ["eth2", "eth3"] });
   vm.runInContext(extract("captureSourceGroupWizardDraft"), context);
   const draft = context.captureSourceGroupWizardDraft({
-    elements: [{ name: "inbound_interfaces", multiple: true, selectedOptions: [{ value: "eth2" }, { value: "eth3" }] }],
+    elements: [{ name: "inbound_interfaces", type: "hidden", value: "eth2" }, { name: "inbound_interfaces", type: "hidden", value: "eth3" }],
+    querySelectorAll: () => [{ dataset: { tagName: "inbound_interfaces" } }],
     getAttribute: () => "/routes-wan/nat-rules/4/edit",
   });
   assert.deepEqual(Array.from(draft.values.inbound_interfaces), ["eth2", "eth3"]);
   assert.equal(draft.editId, "4");
+});
+
+
+test("source-group return restores the shared ingress tag editor", () => {
+  let restored;
+  const editor = { atlasoTagEditor: { setValues: (values) => { restored = values; } } };
+  const context = vm.createContext({ CSS: { escape: (name) => name }, window: { setTimeout: () => {} } });
+  vm.runInContext(extract("applySourceGroupWizardDraft"), context);
+  context.applySourceGroupWizardDraft({ querySelector: () => editor, querySelectorAll: () => [] },
+    { values: { inbound_interfaces: ["eth2", "missing_abc.20"] } }, "input");
+  assert.deepEqual(restored, ["eth2", "missing_abc.20"]);
 });

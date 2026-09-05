@@ -4872,6 +4872,9 @@ function captureSourceGroupWizardDraft(form) {
       values[control.name] = control.value;
     }
   });
+  form.querySelectorAll("[data-tag-editor]").forEach((editor) => {
+    values[editor.dataset.tagName] = tagEditorValues(editor);
+  });
   const editMatch = String(form.getAttribute("action") || "").match(/\/(?:rules|nat-rules)\/(\d+)\/edit$/);
   return { values, editId: editMatch ? editMatch[1] : String(values.record_id || ""), savedAt: Date.now() };
 }
@@ -4879,6 +4882,11 @@ function captureSourceGroupWizardDraft(form) {
 function applySourceGroupWizardDraft(form, draft, focusSelector) {
   const missingSourceGroupControls = [];
   Object.entries(draft.values || {}).forEach(([name, value]) => {
+    const editor = form.querySelector(`[data-tag-editor][data-tag-name="${CSS.escape(name)}"]`);
+    if (editor?.atlasoTagEditor && Array.isArray(value)) {
+      editor.atlasoTagEditor.setValues(value);
+      return;
+    }
     const controls = [...form.querySelectorAll(`[name="${CSS.escape(name)}"]`)];
     if (!controls.length) return;
     const control = controls[0];
@@ -7282,10 +7290,9 @@ function routesWanField(form, name) {
   return form.elements.namedItem(name);
 }
 
-function routesWanNatIngressError(options, outbound) {
-  const selected = [...options].filter((option) => option.selected);
+function routesWanNatIngressError(selected, outbound, available) {
   if (!selected.length) return "Select at least one inbound interface or VLAN.";
-  if (selected.some((option) => option.value === outbound || option.disabled || option.dataset.unavailable === "true")) {
+  if (selected.some((name) => name === outbound || !available.includes(name))) {
     return "Select available inbound targets different from the outbound interface.";
   }
   return "";
@@ -8068,7 +8075,7 @@ function routesWanWizardErrorTarget(form, kind, message) {
   };
   const match = (mappings[kind] || []).find(([needle]) => lower.includes(needle));
   if (!match) return {};
-  return { field: routesWanField(form, match[1]), step: match[2] };
+  return { field: match[1] === "inbound_interfaces" ? form.querySelector("[data-nat-inbound-editor] [data-tag-entry]") : routesWanField(form, match[1]), step: match[2] };
 }
 
 function initializeRoutesWanWizards() {
@@ -8150,13 +8157,18 @@ function initializeRoutesWanWizards() {
           : "any";
       setRoutesWanField(form, "source", value);
     };
+    const natInboundEditor = form.querySelector("[data-nat-inbound-editor]");
+    if (natInboundEditor) initializeTagEditors(form);
+    const natInboundValues = () => tagEditorValues(natInboundEditor);
     const syncNatIngress = () => {
-      if (kind !== "nat") return;
-      const inbound = routesWanField(form, "inbound_interfaces");
+      if (!natInboundEditor) return;
       const outbound = routesWanField(form, "outbound_interface")?.value;
-      for (const option of inbound?.options || []) option.disabled = option.value === outbound;
+      natInboundEditor.querySelectorAll("[data-tag-option]").forEach((option) => {
+        option.disabled = option.dataset.tagOption === outbound;
+      });
     };
     routesWanField(form, "outbound_interface")?.addEventListener("change", syncNatIngress);
+    natInboundEditor?.addEventListener("tag-editor:change", syncNatIngress);
     natSourceMode?.addEventListener("change", syncNatSource);
     natGroup?.addEventListener("change", syncNatSource);
     natCidrs?.addEventListener("input", syncNatSource);
@@ -8197,7 +8209,7 @@ function initializeRoutesWanWizards() {
       } else if (kind === "nat") {
         syncNatSource();
         const outbound = routesWanField(form, "outbound_interface");
-        setRoutesWanReview(form, "nat-inbound", [...(routesWanField(form, "inbound_interfaces")?.selectedOptions || [])].map((option) => option.textContent.trim()).join(", ") || "Needs ingress review");
+        setRoutesWanReview(form, "nat-inbound", natInboundValues().join(", ") || "Needs ingress review");
         setRoutesWanReview(form, "nat-name", routesWanField(form, "name")?.value);
         setRoutesWanReview(form, "nat-source", routesWanField(form, "source")?.value);
         setRoutesWanReview(form, "nat-outbound", `IPv4 masquerade through ${outbound?.selectedOptions?.[0]?.textContent?.trim() || outbound?.value}`);
@@ -8243,8 +8255,9 @@ function initializeRoutesWanWizards() {
       }
       if (kind === "nat" && step.id === "translation") {
         syncNatSource();
-        const inbound = routesWanField(form, "inbound_interfaces");
-        const ingressError = routesWanNatIngressError(inbound?.options || [], routesWanField(form, "outbound_interface")?.value);
+        const inbound = natInboundEditor?.querySelector("[data-tag-entry]");
+        const available = [...(natInboundEditor?.querySelectorAll("[data-tag-option]") || [])].map((option) => option.dataset.tagOption);
+        const ingressError = routesWanNatIngressError(natInboundValues(), routesWanField(form, "outbound_interface")?.value, available);
         if (ingressError) {
           return { valid: false, message: ingressError, field: inbound };
         }
@@ -8293,18 +8306,7 @@ function initializeRoutesWanWizards() {
           setRoutesWanField(form, "name", row?.name || "");
           setRoutesWanField(form, "description", row?.description || "");
           setRoutesWanField(form, "outbound_interface", row?.outbound_interface || routesWanField(form, "outbound_interface")?.options?.[0]?.value || "");
-          const inbound = routesWanField(form, "inbound_interfaces");
-          if (inbound instanceof HTMLSelectElement) {
-            inbound.querySelectorAll("[data-unavailable]").forEach((option) => option.remove());
-            for (const name of row?.inbound_interfaces || []) {
-              if (![...inbound.options].some((option) => option.value === name)) {
-                const option = new Option(`${name} (unavailable)`, name);
-                option.dataset.unavailable = "true";
-                inbound.add(option);
-              }
-            }
-            for (const option of inbound.options) option.selected = (row?.inbound_interfaces || []).includes(option.value);
-          }
+          natInboundEditor?.atlasoTagEditor?.setValues(row?.inbound_interfaces || []);
           syncNatIngress();
           setRoutesWanField(form, "priority", row?.priority ?? 100);
           setRoutesWanField(form, "enabled", row?.enabled ?? true);

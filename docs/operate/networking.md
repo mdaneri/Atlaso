@@ -321,3 +321,6 @@ These captures show responsive layouts and useful operational states referenced 
 *Figure: VLAN Interfaces with canonical role data in the verified responsive state.*
 
 <!-- END GENERATED ADDITIONAL SCREENSHOTS -->
+
+The NAT wizard uses the shared tag editor for inbound interfaces. Add each target with the suggestion menu or keyboard;
+remove a tag to remove that target. Multiple selections remain visible when returning from Manage source groups.
