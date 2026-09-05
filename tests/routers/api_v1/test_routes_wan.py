@@ -282,6 +282,7 @@ def test_api_allows_nat_on_access_interface(client):
         headers={"Authorization": f"Bearer {token}"},
         json={
             "name": "Access NAT",
+            "inbound_interfaces": ["eth1.20"],
             "source": "192.168.50.0/24",
             "outbound_interface": "eth2",
             "masquerade": True,
@@ -292,6 +293,55 @@ def test_api_allows_nat_on_access_interface(client):
 
     assert response.status_code == 201, response.text
     assert response.json()["outbound_interface"] == "eth2"
+
+
+def test_nat_api_requires_reviewed_ingress_and_preserves_legacy_disable(client):
+    """Reject invalid boundaries and retain disabled legacy rules without inference."""
+    from sqlalchemy import select
+
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import NatRule, PhysicalInterface
+    from atlaso.app.services.routes_wan import save_routes_wan_settings
+    from atlaso.app.ui import routes_wan_context
+
+    token, _ = create_token(client, scopes=["read:wan", "write:wan"])
+    headers = {"Authorization": f"Bearer {token}"}
+    payload = dict(name="Ingress API", source="any", outbound_interface="eth1.20", enabled=True)
+    for inbound in [[], ["eth0"], ["eth1.20"], ["missing"], ["eth2", "eth2"]]:
+        response = client.post("/api/v1/nat/rules", headers=headers, json={**payload, "inbound_interfaces": inbound})
+        assert response.status_code == 422, response.text
+    response = client.post("/api/v1/nat/rules", headers=headers, json={**payload, "inbound_interfaces": ["eth2"]})
+    assert response.status_code == 201, response.text
+    rule_id = response.json()["id"]
+    assert response.json()["inbound_interfaces"] == ["eth2"]
+    assert client.get(f"/api/v1/nat/rules/{rule_id}", headers=headers).json()["inbound_interfaces"] == ["eth2"]
+    with SessionLocal() as db:
+        interface = db.scalar(select(PhysicalInterface).where(PhysicalInterface.name == "eth2"))
+        interface.admin_state = "down"
+        save_routes_wan_settings(db, routing_enabled=True, nat_enabled=True, wan_simulation_enabled=False)
+        db.commit()
+        context = routes_wan_context(db)
+        assert any("inbound target eth2" in error for error in context["wan_validation_errors"])
+        assert 'oifname "eth1.20" masquerade' not in context["wan_config_preview"]
+    disabled_missing = client.patch(f"/api/v1/nat/rules/{rule_id}", headers=headers,
+                                    json={**payload, "enabled": False, "inbound_interfaces": ["eth2"]})
+    assert disabled_missing.status_code == 200, disabled_missing.text
+    assert disabled_missing.json()["inbound_interfaces"] == ["eth2"]
+    assert client.patch(f"/api/v1/nat/rules/{rule_id}", headers=headers,
+                        json={**payload, "inbound_interfaces": ["eth2"]}).status_code == 422
+    with SessionLocal() as db:
+        interface = db.scalar(select(PhysicalInterface).where(PhysicalInterface.name == "eth2"))
+        interface.admin_state = "up"
+        rule = db.get(NatRule, rule_id)
+        rule.enabled = True
+        rule.inbound_interfaces = []
+        db.commit()
+    legacy = client.get(f"/api/v1/nat/rules/{rule_id}", headers=headers).json()
+    assert legacy["enabled"] is True and legacy["inbound_interfaces"] == []
+    disabled = client.patch(f"/api/v1/nat/rules/{rule_id}", headers=headers, json={**payload, "enabled": False})
+    assert disabled.status_code == 200, disabled.text
+    rejected = client.patch(f"/api/v1/nat/rules/{rule_id}", headers=headers, json=payload)
+    assert rejected.status_code == 422
 
 
 def test_api_default_route_contract_and_canonical_readback(client):

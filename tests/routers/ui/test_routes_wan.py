@@ -567,6 +567,7 @@ def test_routes_wan_autosave_endpoints_and_apply_task(client):
             "masquerade": "on",
             "priority": "110",
             "description": "NAT through test WAN",
+            "inbound_interfaces": ["eth1.20"],
             "enabled": "on",
             "csrf": csrf,
         },

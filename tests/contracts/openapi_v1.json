@@ -5158,6 +5158,15 @@
             "title": "Enabled",
             "type": "boolean"
           },
+          "inbound_interfaces": {
+            "description": "Explicit enabled non-management IPv4 ingress interface/VLAN names. Required for new or enabled rules; the outbound target must not appear here. Empty legacy scope requires administrator review.",
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 128,
+            "title": "Inbound Interfaces",
+            "type": "array"
+          },
           "masquerade": {
             "default": true,
             "description": "Whether masquerade is enabled for this nat rule resource.",
@@ -5226,6 +5235,15 @@
             "description": "Unique database identifier assigned to this resource.",
             "title": "Id",
             "type": "integer"
+          },
+          "inbound_interfaces": {
+            "description": "Explicit enabled non-management IPv4 ingress interface/VLAN names. Required for new or enabled rules; the outbound target must not appear here. Empty legacy scope requires administrator review.",
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 128,
+            "title": "Inbound Interfaces",
+            "type": "array"
           },
           "masquerade": {
             "default": true,

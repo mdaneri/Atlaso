@@ -32,7 +32,9 @@ impairment behavior only; they must not be used as an interface classification.
   routes install into the lab route table.
 - Routing permissions for lab forwarding. Route-role networks forward to other route-role networks by default; access
   networks need explicit routing rules.
-- IPv4 outbound masquerade NAT rules rendered as the Atlaso-owned `table ip atlaso_nat`.
+- IPv4 outbound masquerade NAT rules rendered as the Atlaso-owned `table ip atlaso_nat`, with explicit inbound
+  interface/VLAN membership and one distinct outbound target. Legacy unscoped rules remain saved but require review
+  before enablement or active NAT apply.
 - NAT outbound interfaces can be access physical interfaces with IPv4 CIDRs or enabled VLAN interfaces with IPv4 CIDRs;
   NAT eligibility is not inferred from an interface role.
 - IPv4 and IPv6 packet forwarding follow the global Routing switch. NAT is effective only when both Routing and NAT

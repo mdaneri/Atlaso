@@ -1,0 +1,90 @@
+"""Verify NAT ingress boundaries across desired state, rendering, and upgrade."""
+
+import pytest
+from sqlalchemy import create_engine, inspect, text
+
+from atlaso.app.models import NatRule, PhysicalInterface, VlanInterface
+from atlaso.app.services.routes_wan import (
+    RoutesWanSettings,
+    nat_eligible_target_names,
+    render_wan_config,
+    validate_nat_ingress,
+    validate_wan_state,
+)
+from tests.test_appliance_helper import load_helper_module
+
+
+def target(name, **changes):
+    """Build an explicitly eligible IPv4 lab target."""
+    return dict(name=name, role="access", kind="physical", ip_cidr="192.0.2.1/24",
+                routing_domain="lab", route_allowed=True, nat_allowed=True, **changes)
+
+
+@pytest.mark.parametrize("source,expression", [("any", ""), ("10.0.0.0/24", "ip saddr 10.0.0.0/24 ")])
+def test_both_renderers_require_ingress_and_preserve_address_scope(source, expression):
+    """An iifname match excludes local output and every unselected ingress."""
+    rule = NatRule(name="Scoped", inbound_interfaces=["eth3", "eth2"], source=source,
+                   outbound_interface="eth1", enabled=True, masquerade=True, priority=100)
+    config = render_wan_config([], nat_rules=[rule], targets=[target(n) for n in ["eth1", "eth2", "eth3"]],
+                               settings=RoutesWanSettings(True, True, False))
+    expected = 'iifname { "eth2", "eth3" } ' + expression + 'oifname "eth1" masquerade'
+    assert expected in config
+    helper = load_helper_module()
+    rendered = helper._render_wan_nat_config([dict(name="Scoped", enabled="true", inbound_interfaces="eth3,eth2",
+                                                 outbound_interface="eth1", source=source)])
+    assert expected in rendered
+
+
+def test_legacy_scope_is_retained_but_cannot_render_or_validate():
+    """No upgrade or disabled-rule path invents ingress membership."""
+    rule = NatRule(name="Legacy", source="any", outbound_interface="eth1", enabled=True,
+                   masquerade=True, priority=100)
+    assert any("explicit review" in error for error in validate_wan_state([], [], {"eth1"}, [rule], {"eth1"}))
+    config = render_wan_config([], nat_rules=[rule], targets=[target("eth1")], settings=RoutesWanSettings(True, True, False))
+    assert "inbound_interfaces=" in config
+    assert 'oifname "eth1" masquerade' not in config
+    with pytest.raises(ValueError, match="explicit inbound"):
+        load_helper_module()._render_wan_nat_config([dict(name="Legacy", outbound_interface="eth1")])
+    rule.enabled = False
+    assert not validate_wan_state([], [], {"eth1"}, [rule], {"eth1"})
+
+
+def test_ingress_rejects_empty_management_duplicates_and_outbound():
+    """Require a reviewed set of distinct eligible ingress targets."""
+    eligible = {"eth1", "eth2"}
+    for inbound in [[], ["eth0"], ["eth1"], ["eth2", "eth2"], "eth2", [None]]:
+        assert validate_nat_ingress(inbound, "eth1", eligible)
+    assert not validate_nat_ingress(["eth2"], "eth1", eligible)
+
+
+def test_eligibility_tracks_parent_state_and_preserves_flagged_access():
+    """Down, missing, trunk, unused, and dedicated management cannot enter NAT."""
+    physical = PhysicalInterface(name="eth2", role="access", mode="access", admin_state="up",
+                                 oper_state="up", ip_cidr="192.0.2.1/24", access_management_ui_enabled=True)
+    parent = PhysicalInterface(name="eth1", role="access", mode="trunk", admin_state="up", oper_state="up")
+    vlan = VlanInterface(name="eth1.20", parent_interface="eth1", role="route", enabled=True, ip_cidr="10.0.0.1/24")
+    assert nat_eligible_target_names([physical, parent], [vlan]) == {"eth2", "eth1.20"}
+    for field, value in [("admin_state", "down"), ("oper_state", "missing"), ("role", "management"), ("role", "unused"), ("mode", "trunk")]:
+        previous = getattr(physical, field)
+        setattr(physical, field, value)
+        assert "eth2" not in nat_eligible_target_names([physical, parent], [vlan])
+        setattr(physical, field, previous)
+    parent.admin_state = "down"
+    assert nat_eligible_target_names([physical, parent], [vlan]) == {"eth2"}
+    assert nat_eligible_target_names([physical], [vlan]) == {"eth2"}
+
+
+def test_database_upgrade_retains_enabled_legacy_rule(tmp_path, monkeypatch):
+    """Adding the nullable-free ingress column preserves the legacy rule unchanged."""
+    import atlaso.app.database as database
+
+    engine = create_engine(f"sqlite:///{tmp_path / 'legacy.db'}")
+    with engine.begin() as connection:
+        connection.execute(text("CREATE TABLE nat_rules (id INTEGER PRIMARY KEY, name TEXT, enabled BOOLEAN)"))
+        connection.execute(text("INSERT INTO nat_rules VALUES (1, 'Legacy', 1)"))
+    monkeypatch.setattr(database, "engine", engine)
+    database.init_db()
+    with engine.connect() as connection:
+        assert "inbound_interfaces" in {column["name"] for column in inspect(connection).get_columns("nat_rules")}
+        assert connection.execute(text("SELECT name, enabled, inbound_interfaces FROM nat_rules")).one() == ("Legacy", 1, "[]")
+    engine.dispose()

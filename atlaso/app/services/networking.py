@@ -618,12 +618,14 @@ def _cleanup_missing_interface_references(db: Session, missing_renames: dict[str
                 details.append(f"disabled route {route.destination_cidr}: interface {old_interface} is missing")
 
     for rule in db.execute(select(NatRule)).scalars().all():
-        if rule.outbound_interface in unavailable_targets:
-            old_interface = rule.outbound_interface
-            rule.outbound_interface = ""
-            if rule.enabled:
-                rule.enabled = False
-                details.append(f"disabled NAT rule {rule.name}: outbound interface {old_interface} is missing")
+        if rule.outbound_interface in unavailable_targets or unavailable_targets.intersection(rule.inbound_interfaces or []):
+            # Bind missing members to their inert identity before live NIC names are reused.
+            # Preserve all members and enabled state so Apply requires explicit review.
+            rule.outbound_interface = target_replacements.get(rule.outbound_interface, rule.outbound_interface)
+            rule.inbound_interfaces = [
+                target_replacements.get(name, name) for name in rule.inbound_interfaces or []
+            ]
+            details.append(f"NAT rule {rule.name} requires review: a selected interface is missing")
 
     for rule in db.execute(select(RoutingRule)).scalars().all():
         removed_bindings = []
@@ -762,6 +764,12 @@ def _retarget_interface_references(db: Session, renames: dict[str, str]) -> None
             current = getattr(row, field_name)
             if current in expanded_renames:
                 setattr(row, field_name, expanded_renames[current])
+
+    for rule in db.execute(select(NatRule)).scalars().all():
+        # Follow the same MAC-bound rename as egress without dropping unavailable members.
+        rule.inbound_interfaces = [
+            expanded_renames.get(name, name) for name in rule.inbound_interfaces or []
+        ]
 
     list_targets = [
         (DnsSettings, "listen_interface"),

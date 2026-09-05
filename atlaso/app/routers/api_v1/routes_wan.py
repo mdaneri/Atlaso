@@ -47,8 +47,10 @@ from atlaso.app.services.routes_wan import (
     default_route_family,
     ensure_routes_wan_settings,
     has_default_route_conflict,
+    nat_eligible_target_names,
     route_gateway_target_error,
     save_routes_wan_settings,
+    validate_nat_ingress,
     validate_nat_source,
 )
 
@@ -557,13 +559,7 @@ def build_router(dependencies: RoutesWanApiDependencies) -> RoutesWanApiRouter:
         """
         interfaces = db.execute(select(PhysicalInterface).order_by(PhysicalInterface.name)).scalars().all()
         vlans = db.execute(select(VlanInterface).order_by(VlanInterface.name)).scalars().all()
-        names = {
-            interface.name
-            for interface in interfaces
-            if interface.ip_cidr and interface.oper_state != "missing" and normalize_interface_mode(interface.mode) != "trunk"
-        }
-        names.update({vlan.name for vlan in vlans if vlan.enabled and vlan.ip_cidr})
-        return names
+        return nat_eligible_target_names(list(interfaces), list(vlans))
 
 
     def nat_source_group_ids(db: Session) -> set[str]:
@@ -579,7 +575,7 @@ def build_router(dependencies: RoutesWanApiDependencies) -> RoutesWanApiRouter:
         return {str(group.get("id", "")) for group in state["groups"]}
 
 
-    def validate_nat_rule_payload(payload: NatRuleCreate, db: Session) -> None:
+    def validate_nat_rule_payload(payload: NatRuleCreate, db: Session, *, creating: bool = False) -> None:
         """Validate nat rule payload.
 
         Args:
@@ -599,8 +595,11 @@ def build_router(dependencies: RoutesWanApiDependencies) -> RoutesWanApiRouter:
         source_errors = validate_nat_source(payload.source, nat_source_group_ids(db), source_groups)
         if source_errors:
             raise HTTPException(status_code=422, detail=source_errors[0])
-        if payload.outbound_interface not in nat_outbound_target_names(db):
+        if (creating or payload.enabled) and payload.outbound_interface not in nat_outbound_target_names(db):
             raise HTTPException(status_code=422, detail="Choose an access physical interface or enabled VLAN interface with an IP CIDR.")
+        ingress_errors = validate_nat_ingress(payload.inbound_interfaces, payload.outbound_interface, nat_outbound_target_names(db), required=creating or payload.enabled)
+        if ingress_errors and (creating or payload.enabled):
+            raise HTTPException(status_code=422, detail=ingress_errors[0])
         if not payload.masquerade:
             raise HTTPException(status_code=422, detail="NAT v1 supports masquerade only.")
 
@@ -634,7 +633,7 @@ def build_router(dependencies: RoutesWanApiDependencies) -> RoutesWanApiRouter:
             db: Active database session used by the operation.
         """
         acquire_network_objects_write_lock(db)
-        validate_nat_rule_payload(payload, db)
+        validate_nat_rule_payload(payload, db, creating=True)
         rule = NatRule(**payload.model_dump())
         db.add(rule)
         try:
@@ -643,7 +642,7 @@ def build_router(dependencies: RoutesWanApiDependencies) -> RoutesWanApiRouter:
             db.rollback()
             raise HTTPException(status_code=409, detail=f"NAT rule {rule.name} already exists") from None
         db.refresh(rule)
-        record_audit(db, actor=identity.username, action="create_nat_rule", resource_type="nat_rule", resource_id=str(rule.id))
+        record_audit(db, actor=identity.username, action="create_nat_rule", resource_type="nat_rule", resource_id=str(rule.id), detail=f"inbound={rule.inbound_interfaces or []}; outbound={rule.outbound_interface}; source={rule.source}")
         return NatRuleResponse.model_validate(rule)
 
 
@@ -691,7 +690,7 @@ def build_router(dependencies: RoutesWanApiDependencies) -> RoutesWanApiRouter:
             db.rollback()
             raise HTTPException(status_code=409, detail=f"NAT rule {rule.name} already exists") from None
         db.refresh(rule)
-        record_audit(db, actor=identity.username, action="update_nat_rule", resource_type="nat_rule", resource_id=str(rule.id))
+        record_audit(db, actor=identity.username, action="update_nat_rule", resource_type="nat_rule", resource_id=str(rule.id), detail=f"inbound={rule.inbound_interfaces or []}; outbound={rule.outbound_interface}; source={rule.source}")
         return NatRuleResponse.model_validate(rule)
 
 

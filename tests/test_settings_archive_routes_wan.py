@@ -20,6 +20,31 @@ from atlaso.app.services.settings_archive import (
 )
 
 
+def test_nat_ingress_archive_round_trip_and_legacy_review(client):
+    """Keep explicit membership and retain scope-less legacy rows for later review."""
+    from atlaso.app.services.routes_wan import save_routes_wan_settings
+    from atlaso.app.ui import routes_wan_context
+
+    with SessionLocal() as db:
+        save_routes_wan_settings(db, routing_enabled=True, nat_enabled=True, wan_simulation_enabled=False)
+        db.commit()
+        archive = export_settings_archive(db, actor="test")
+        assert archive["data"]["nat_rules"][0]["inbound_interfaces"] == ["eth2"]
+        restore_settings_archive(db, archive)
+        assert db.scalar(select(NatRule)).inbound_interfaces == ["eth2"]
+        legacy = deepcopy(archive)
+        legacy["data"]["nat_rules"][0].pop("inbound_interfaces")
+        restore_settings_archive(db, legacy)
+        rule = db.scalar(select(NatRule))
+        assert rule.enabled and rule.inbound_interfaces == []
+        assert any("explicit review" in error for error in routes_wan_context(db)["wan_validation_errors"])
+        invalid = deepcopy(archive)
+        invalid["data"]["nat_rules"][0]["inbound_interfaces"] = ["eth0"]
+        with pytest.raises(ValueError, match="NAT ingress"):
+            restore_settings_archive(db, invalid)
+        assert db.scalar(select(NatRule)).inbound_interfaces == []
+
+
 def _set_routes_wan_setting(archive: dict, *, key: str, value: bool) -> None:
     """Set one routes-and-WAN setting row in an archive payload.
 

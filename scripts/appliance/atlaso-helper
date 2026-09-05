@@ -9162,10 +9162,28 @@ def _wan_config_errors(path: Path) -> list[str]:
                         f"Removed main-table default {destination or '<missing>'} metric cannot be negative."
                     )
     for rule in parsed["nat_rules"] if effective_nat_enabled else []:
+        if not _wan_bool(rule.get("enabled", ""), default=True):
+            continue
         name = rule.get("name", "")
         if not name:
             errors.append("NAT rule is missing a name.")
         outbound = rule.get("outbound_interface", "")
+        inbound = [name.strip() for name in rule.get("inbound_interfaces", "").split(",") if name.strip()]
+        if not inbound:
+            errors.append(f"NAT rule {name or '<missing>'} requires explicit inbound interfaces; review the legacy rule.")
+        if len(inbound) > 128 or len(set(inbound)) != len(inbound):
+            errors.append(f"NAT rule {name or '<missing>'} has invalid duplicate or excessive inbound targets.")
+        for ingress in inbound:
+            target = targets.get(ingress, {})
+            if (not target or target.get("routing_domain") == "management"
+                    or target.get("role") not in {"access", "route"}
+                    or not target.get("ip_cidr")
+                    or not _wan_bool(target.get("nat_allowed", "false"))):
+                errors.append(f"NAT rule {name or '<missing>'} inbound target {ingress} is unavailable or ineligible.")
+            if ingress == outbound:
+                errors.append(f"NAT rule {name or '<missing>'} inbound and outbound targets must differ.")
+        if outbound in targets and not _wan_bool(targets[outbound].get("nat_allowed", "false")):
+            errors.append(f"NAT rule {name or '<missing>'} outbound target is unavailable or ineligible.")
         if outbound not in targets:
             errors.append(f"NAT rule {name or '<missing>'} must use an access physical interface or enabled VLAN with an IP CIDR.")
         elif targets[outbound].get("routing_domain", "lab") == "management" or not _wan_bool(
@@ -9286,9 +9304,13 @@ def _render_wan_nat_config(nat_rules: list[dict[str, str]]) -> str:
     ]
     enabled_rules = [rule for rule in nat_rules if _wan_bool(rule.get("enabled", ""), default=True)]
     for rule in sorted(enabled_rules, key=lambda item: int(item.get("priority", "100") or "100")):
+        inbound = [name.strip() for name in rule.get("inbound_interfaces", "").split(",") if name.strip()]
+        if not inbound:
+            raise ValueError("NAT rendering requires an explicit inbound scope.")
+        ingress_expr = 'iifname { ' + ', '.join('"' + name + '"' for name in sorted(inbound)) + ' } '
         source = rule.get("source_resolved") or rule.get("source") or "any"
         comment = str(rule.get("name", "Atlaso NAT")).replace('"', "'")
-        lines.append(f'    {_wan_source_expr(source)}oifname "{rule["outbound_interface"]}" masquerade comment "{comment}"')
+        lines.append(f'    {ingress_expr}{_wan_source_expr(source)}oifname "{rule["outbound_interface"]}" masquerade comment "{comment}"')
     lines.extend(["  }", "}", ""])
     return "\n".join(lines)
 

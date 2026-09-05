@@ -370,6 +370,40 @@ def route_to_dict(route: Route) -> dict:
     }
 
 
+def nat_eligible_target_names(interfaces: list[PhysicalInterface], vlans: list[VlanInterface]) -> set[str]:
+    """Return enabled IPv4 lab targets with available VLAN trunk parents."""
+    parents = {item.name: item for item in interfaces}
+    names = {
+        item.name for item in interfaces
+        if item.role in {"access", "route"} and item.admin_state == "up"
+        and item.oper_state != "missing" and normalize_interface_mode(item.mode) == "access"
+        and item.ip_cidr
+    }
+    for vlan in vlans:
+        parent = parents.get(vlan.parent_interface)
+        if (vlan.enabled and vlan.role in {"access", "route"} and vlan.ip_cidr
+                and parent is not None and parent.admin_state == "up"
+                and parent.oper_state != "missing" and normalize_interface_mode(parent.mode) == "trunk"):
+            names.add(vlan.name)
+    return names
+
+
+def validate_nat_ingress(inbound: object, outbound: str, target_names: set[str], *, required: bool = True) -> list[str]:
+    """Validate explicit ingress membership without inferring a legacy scope."""
+    if not isinstance(inbound, list) or any(not isinstance(name, str) for name in inbound):
+        return ["NAT inbound interfaces must be a list of interface/VLAN names."]
+    if not inbound:
+        return ["Select at least one inbound interface or VLAN; legacy NAT rules require explicit review."] if required else []
+    if len(inbound) > 128 or len(set(inbound)) != len(inbound):
+        return ["NAT inbound interfaces must be unique and contain at most 128 targets."]
+    for name in inbound:
+        if name not in target_names:
+            return [f"NAT inbound target {name} is unavailable; select an enabled non-management IPv4 interface or VLAN."]
+        if name == outbound:
+            return ["NAT inbound and outbound interfaces must be different."]
+    return []
+
+
 def nat_rule_to_dict(rule: NatRule) -> dict:
     """Return nat rule to dict.
 
@@ -381,6 +415,7 @@ def nat_rule_to_dict(rule: NatRule) -> dict:
         "name": rule.name,
         "enabled": rule.enabled,
         "source": rule.source,
+        "inbound_interfaces": rule.inbound_interfaces or [],
         "outbound_interface": rule.outbound_interface,
         "masquerade": rule.masquerade,
         "priority": rule.priority,
@@ -536,6 +571,7 @@ def validate_wan_state(
     routing_enabled: bool = True,
     nat_enabled: bool = True,
     wan_simulation_enabled: bool = True,
+    allow_legacy_nat_ingress: bool = False,
 ) -> list[str]:
     """Validate wan state.
 
@@ -623,6 +659,7 @@ def validate_wan_state(
             seen_nat_names.add(normalized_name)
             if rule.enabled:
                 errors.extend(validate_nat_source(rule.source, source_group_ids, source_groups))
+                errors.extend(validate_nat_ingress(rule.inbound_interfaces or [], rule.outbound_interface, wan_target_names, required=not allow_legacy_nat_ingress))
             if rule.enabled and rule.outbound_interface not in wan_target_names:
                 errors.append(f"NAT rule {rule.name} must use an access physical interface or enabled VLAN with an IP CIDR.")
             if rule.priority < 0:
@@ -932,6 +969,7 @@ def render_wan_config(
                 f"target={target['name']}",
                 f"  kind={target.get('kind', '')}",
                 f"  role={target.get('role', '')}",
+                f"  nat_allowed={_bool_value(bool(target.get('nat_allowed', False)))}",
                 f"  ip_cidr={target.get('ip_cidr', '')}",
                 f"  ipv6_cidr={target.get('ipv6_cidr', '')}",
                 f"  gateway={target.get('gateway', '')}",
@@ -1039,6 +1077,7 @@ def render_wan_config(
                 f"nat={rule.name}",
                 f"  enabled={_bool_value(rule.enabled)}",
                 f"  source={rule.source}",
+                f"  inbound_interfaces={','.join(rule.inbound_interfaces or [])}",
                 f"  source_resolved={_nat_source_resolved(rule, source_groups)}",
                 f"  outbound_interface={rule.outbound_interface}",
                 f"  masquerade={_bool_value(rule.masquerade)}",
@@ -1080,9 +1119,14 @@ def render_wan_config(
         [item for item in nat_rules if item.enabled and settings.effective_nat_enabled],
         key=lambda item: item.priority,
     ):
+        eligible_nat = {str(target['name']) for target in targets if target.get('nat_allowed', False) and target.get('routing_domain') != 'management' and target.get('ip_cidr')}
+        if rule.outbound_interface not in eligible_nat or validate_nat_ingress(rule.inbound_interfaces or [], rule.outbound_interface, eligible_nat):
+            # Invalid desired state remains reviewable without previewing a broad rule.
+            continue
         source_expr = _nft_source_expr(_nat_source_resolved(rule, source_groups))
+        ingress_expr = 'iifname { ' + ', '.join('"' + name + '"' for name in sorted(rule.inbound_interfaces)) + ' } '
         comment = rule.name.replace('"', "'")
-        lines.append(f'    {source_expr}oifname "{rule.outbound_interface}" masquerade comment "{comment}"')
+        lines.append(f'    {ingress_expr}{source_expr}oifname "{rule.outbound_interface}" masquerade comment "{comment}"')
     lines.extend(["  }", "}", "", "[commands]"])
 
     forwarding_value = 1 if settings.routing_enabled else 0

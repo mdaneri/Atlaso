@@ -387,6 +387,7 @@ def seed_initial_data(
             NatRule(
                 name="SiteA outbound WAN",
                 source="192.168.50.0/24",
+                inbound_interfaces=["eth2"],
                 outbound_interface="eth1.20",
                 masquerade=True,
                 priority=100,

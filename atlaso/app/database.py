@@ -393,6 +393,9 @@ def init_db() -> None:
     _create_database_schema(engine)
     with engine.begin() as connection:
         _reconcile_authentication_lifetime_columns(connection)
+        # Preserve legacy rules without guessing which ingress networks were intended.
+        if "inbound_interfaces" not in {column["name"] for column in inspect(connection).get_columns("nat_rules")}:
+            connection.execute(text("ALTER TABLE nat_rules ADD COLUMN inbound_interfaces JSON NOT NULL DEFAULT '[]'"))
         if engine.dialect.name == "sqlite":
             connection.execute(
                 text(

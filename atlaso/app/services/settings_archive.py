@@ -178,6 +178,8 @@ from atlaso.app.services.routes_wan import (
     RoutesWanSettings,
     canonical_route_destination,
     ensure_routes_wan_settings,
+    nat_eligible_target_names,
+    validate_nat_ingress,
     validate_nat_source,
     validate_wan_state,
 )
@@ -2524,6 +2526,12 @@ def _validate_archive_relationships(data: dict[str, list[dict[str, Any]]]) -> No
         )
 
     for row_index, row in enumerate(data.get("nat_rules", []), start=1):
+        ingress_errors = validate_nat_ingress(
+            row.get("inbound_interfaces", []), str(row.get("outbound_interface") or ""),
+            nat_eligible_target_names(archived_interfaces, archived_vlans), required=False,
+        )
+        if ingress_errors and (row.get("enabled", True) and effective_nat_enabled or not isinstance(row.get("inbound_interfaces", []), list)):
+            raise ValueError(f"The settings archive NAT ingress is invalid: {ingress_errors[0]}")
         enabled = row.get("enabled", True)
         if not isinstance(enabled, bool):
             raise ValueError(
@@ -2592,9 +2600,8 @@ def _validate_archive_relationships(data: dict[str, list[dict[str, Any]]]) -> No
             NatRule(**_model_kwargs_with_scalar_defaults(NatRule, row))
             for row in data.get("nat_rules", [])
         ],
-        wan_target_names={
-            name for name, families in route_target_families.items() if "ipv4" in families
-        },
+        wan_target_names=nat_eligible_target_names(archived_interfaces, archived_vlans),
+        allow_legacy_nat_ingress=True,
         source_groups=firewall_source_groups,
         routing_rules=[
             RoutingRule(**_model_kwargs_with_scalar_defaults(RoutingRule, row))
@@ -4241,6 +4248,10 @@ def _validate_archive_model_scalar_types(
             expected_type = column.type.python_type
         except NotImplementedError:
             continue
+        if model is NatRule and column.name == "inbound_interfaces":
+            expected_type = list
+            if not isinstance(value, list) or any(not isinstance(name, str) for name in value):
+                raise ValueError("NAT inbound interfaces must be a list of interface/VLAN names.")
         valid_type = (
             type(value) is expected_type
             if expected_type in {bool, int, str}
