@@ -529,3 +529,5 @@ The disposable VMware smoke import explicitly binds its adapters to the selected
 Cleanup uses the shared Workstation inventory and running-VM checks before removing only the owned import.
 The local smoke import supplies its OVF environment through the shared Workstation serializer,
 with credentials confined to the protected disposable VM directory until first-boot cleanup.
+The smoke check allows up to three minutes for appliance services to become active after SSH is available;
+a readiness timeout reports service states and still fails acceptance.

@@ -117,7 +117,7 @@ def _run_root(client: Any, secret: SecretInput, script: str) -> None:
     """
 
     command = "sudo -S -p '' sh -s"
-    _stdin, stdout, stderr = client.exec_command(command, timeout=180)
+    _stdin, stdout, stderr = client.exec_command(command, timeout=240)
     _stdin.write(secret.password + "\n")
     _stdin.write(script)
     _stdin.channel.shutdown_write()
@@ -138,6 +138,20 @@ def _validation_script(platform: str) -> str:
 
     common = r"""
 set -eu
+# SSH and its published host key precede completion of appliance initialization.
+ready=false
+for attempt in $(seq 1 60); do
+  if systemctl is-active --quiet atlaso-data-disks.service atlaso.service atlaso-worker.service nginx.service; then
+    ready=true
+    break
+  fi
+  sleep 3
+done
+if [ "$ready" != true ]; then
+  systemctl show -p Id -p ActiveState -p SubState -p Result atlaso-data-disks.service atlaso.service atlaso-worker.service nginx.service >&2
+  exit 1
+fi
+set -x
 test "$(find /sys/class/net -mindepth 1 -maxdepth 1 ! -name lo | wc -l)" -eq 2
 test "$(lsblk -dn -o TYPE | awk '$1 == "disk" { count++ } END { print count + 0 }')" -eq 4
 test ! -e /var/lib/atlaso/first-boot-packages
