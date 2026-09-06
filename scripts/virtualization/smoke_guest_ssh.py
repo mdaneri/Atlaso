@@ -144,7 +144,8 @@ for attempt in $(seq 1 60); do
   if systemctl is-active --quiet atlaso-data-disks.service &&
      systemctl is-active --quiet atlaso.service &&
      systemctl is-active --quiet atlaso-worker.service &&
-     systemctl is-active --quiet nginx.service; then
+     systemctl is-active --quiet nginx.service &&
+     curl -fsS --max-time 2 http://127.0.0.1:8000/openapi.json >/dev/null 2>&1; then
     ready=true
     break
   fi
