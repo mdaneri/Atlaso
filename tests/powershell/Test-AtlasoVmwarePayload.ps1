@@ -349,12 +349,35 @@ catch { if ($_.Exception.Message -cne 'Inventory unavailable') { throw } }
 & $payloadScope { $script:TestInventoryFailure = $false }
 $lockPath = Join-Path $releaseOutput 'template.lck'
 New-Item -ItemType Directory -Path $lockPath | Out-Null
+Assert-AtlasoTemplatePoweredOff -VmxPath $releaseVmxPath -VmrunPath 'fixture-vmrun'
+if (-not (Test-Path -LiteralPath $lockPath -PathType Container)) { throw 'Empty lock directory was mutated.' }
+$lockFile = Join-Path $lockPath 'M44110.lck'
+Set-Content -LiteralPath $lockFile -Value 'provider-owned lock'
 try {
     Assert-AtlasoTemplatePoweredOff -VmxPath $releaseVmxPath -VmrunPath 'fixture-vmrun'
     throw 'A locked source template was accepted.'
 }
 catch { if ($_.Exception.Message -notlike '*powered-off state is ambiguous*') { throw } }
+Remove-Item -LiteralPath $lockFile
 Remove-Item -LiteralPath $lockPath
+Set-Content -LiteralPath $lockPath -Value 'standalone lock'
+try {
+    Assert-AtlasoTemplatePoweredOff -VmxPath $releaseVmxPath -VmrunPath 'fixture-vmrun'
+    throw 'A standalone lock file was accepted.'
+}
+catch { if ($_.Exception.Message -notlike '*powered-off state is ambiguous*') { throw } }
+Remove-Item -LiteralPath $lockPath
+if ($IsWindows) {
+    $lockTarget = Join-Path $releaseOutput 'empty-lock-target'
+    New-Item -ItemType Directory -Path $lockTarget | Out-Null
+    New-Item -ItemType Junction -Path $lockPath -Target $lockTarget | Out-Null
+    try {
+        Assert-AtlasoTemplatePoweredOff -VmxPath $releaseVmxPath -VmrunPath 'fixture-vmrun'
+        throw 'A redirected lock directory was accepted.'
+    }
+    catch { if ($_.Exception.Message -notlike '*powered-off state is ambiguous*') { throw } }
+    finally { Remove-Item -LiteralPath $lockPath; Remove-Item -LiteralPath $lockTarget }
+}
 try {
     $null = Assert-AtlasoVmwarePayloadProvenance `
         -VmxPath $vmxPath `

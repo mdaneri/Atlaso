@@ -49,8 +49,17 @@ function Assert-AtlasoTemplatePoweredOff {
     if ((Get-AtlasoPathIdentity -Path $vmx.FullName -Description 'source template') -cne $identity) {
         throw 'The source template identity changed during powered-off verification.'
     }
-    if (@(Get-ChildItem -LiteralPath $vmx.DirectoryName -Filter '*.lck' -Force).Count -gt 0) {
-        throw 'The source template has VMware locks; powered-off state is ambiguous.'
+    foreach ($lock in @(Get-ChildItem -LiteralPath $vmx.DirectoryName -Filter '*.lck' -Force -ErrorAction Stop)) {
+        # Packer removes lock files after shutdown but can leave their empty
+        # directories. Admit only that residue; never delete or follow a lock.
+        if (-not $lock.PSIsContainer -or ($lock.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) {
+            throw 'The source template has VMware locks; powered-off state is ambiguous.'
+        }
+        $lockIdentity = Get-AtlasoPathIdentity -Path $lock.FullName -Description 'VMware lock directory'
+        if (@(Get-ChildItem -LiteralPath $lock.FullName -Force -ErrorAction Stop).Count -gt 0 -or
+            (Get-AtlasoPathIdentity -Path $lock.FullName -Description 'VMware lock directory') -cne $lockIdentity) {
+            throw 'The source template has VMware locks; powered-off state is ambiguous.'
+        }
     }
     if (@(Get-ChildItem -LiteralPath $vmx.DirectoryName -Filter '*.vmss' -Force).Count -gt 0 -or
         @(Get-Content -LiteralPath $vmx.FullName | Where-Object { $_ -match '^\s*checkpoint\.vmState\s*=\s*"[^"]+"' }).Count -gt 0) {

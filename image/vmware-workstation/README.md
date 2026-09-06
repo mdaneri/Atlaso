@@ -511,7 +511,9 @@ rechecks them after disposable VMware and Hyper-V smoke tests. Protected disk in
 inventories and untouched first-boot state without booting the source.
 
 The powered-off check discovers `vmrun.exe` in the standard `Program Files` or `Program Files (x86)` VMware installation
-before falling back to `PATH`.
+before falling back to `PATH`. Empty ordinary `*.lck` directories left after Packer removes their lock files do not
+block admission and are left untouched. Lock files, nonempty lock directories, reparse points, unavailable inventory,
+running VMs, and suspended state still fail closed.
 A running or ambiguously identified export source is rejected without automatic shutdown or repair. Preserve it and
 rebuild a fresh source through the wrapper. Likewise, preserve and rebuild legacy templates without the contract,
 templates with consumed initialization state, changed payloads, or mismatched software. Never boot an old template to

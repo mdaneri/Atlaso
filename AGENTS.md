@@ -583,6 +583,8 @@ The following cross-cutting boundaries always apply:
   deployment initialization through final updates, cleanup, shutdown, and compaction. Never restart a completed source
   template for software installation, provider selection, customization, or export preparation. Require powered-off
   identity and final VMX/payload hashes before export and recheck them after export and disposable-import smokes.
+  Empty ordinary lock directories left by Packer are admissible without mutation; lock files, nonempty directories,
+  reparse points, unavailable running inventory, and suspended state remain blocking.
   Require the schema-v3 completed-template contract and exact verified software identity for retained reuse, candidate
   acceptance, and protected publication. Preserve and reject legacy or consumed templates with rebuild instructions;
   never retrofit them by booting or rewriting provenance. Published releases remain immutable.
