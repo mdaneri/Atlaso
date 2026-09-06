@@ -521,8 +521,9 @@ handle rejects reparse points and files; the kernel refuses nonempty directories
 once deletion is pending. The wrapper then rechecks power state and requires no remaining lock entries before
 publishing provenance. It never removes actual lock contents.
 Provenance generation pins the output path and holds ordinary read handles for the VMX and both payload disks,
-excluding writes and deletion throughout hashing, publication, and verification. It repeats strict powered-off and
-lock checks before hashing, before writing provenance, and after verification; a new lock aborts finalization.
+excluding writes and deletion throughout hashing, staged-document verification, and publication. It validates a
+temporary document and repeats the strict powered-off/lock check before replacing provenance. A lock appearing
+during either hashing pass preserves existing provenance and cannot leave a new success document.
 Export and retained-template admission remain read-only and reject all lock entries, even empty directories, plus
 unavailable inventory, running VMs, and suspended state.
 A running or ambiguously identified export source is rejected without automatic shutdown or repair. Preserve it and

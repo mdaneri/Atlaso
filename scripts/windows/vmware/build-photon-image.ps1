@@ -2802,10 +2802,25 @@ function Write-AtlasoVmwareBuildProvenance {
         }
         $provenancePath = [System.IO.Path]::ChangeExtension($vmx.FullName, 'provenance.json')
         $json = $provenance | ConvertTo-Json -Depth 5
-        Assert-AtlasoTemplatePoweredOff -VmxPath $vmx.FullName -VmrunPath $VmrunPath
+        $stagedPath = Join-Path $OutputDirectory ('.provenance-' + [guid]::NewGuid().ToString('N') + '.tmp')
+        $staged = [IO.FileStream]::new($stagedPath, [IO.FileMode]::CreateNew, [IO.FileAccess]::ReadWrite,
+            ([IO.FileShare]::Read -bor [IO.FileShare]::Delete))
+        try {
+            $bytes = [Text.UTF8Encoding]::new($false).GetBytes("$json`n")
+            $staged.Write($bytes, 0, $bytes.Length)
+            $staged.Flush($true)
+            $null = Assert-AtlasoVmwarePayloadProvenance -VmxPath $vmx.FullName -ProvenancePath $stagedPath
+            Assert-AtlasoTemplatePoweredOff -VmxPath $vmx.FullName -VmrunPath $VmrunPath
+        }
+        finally {
+            try {
+                [Atlaso.WorkstationFileIdentity]::DiscardStagedFile($staged.SafeFileHandle, $stagedPath)
+            }
+            finally { $staged.Dispose() }
+        }
+        # Commit only after staged readback, the final power/lock check, and
+        # identity-bound temporary-file cleanup all succeed. Inputs remain pinned.
         [System.IO.File]::WriteAllText($provenancePath, "$json`n", [System.Text.UTF8Encoding]::new($false))
-        $null = Assert-AtlasoVmwarePayloadProvenance -VmxPath $vmx.FullName -ProvenancePath $provenancePath
-        Assert-AtlasoTemplatePoweredOff -VmxPath $vmx.FullName -VmrunPath $VmrunPath
         Write-Host "VMware build provenance: $provenancePath ($($provenance.source_commit), source snapshot $($provenance.source_snapshot.sha256))"
     }
     finally {

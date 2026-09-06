@@ -64,6 +64,25 @@ namespace Atlaso
         [DllImport("kernel32.dll", SetLastError = true)]
         private static extern bool SetFileInformationByHandle(
             SafeFileHandle file, int informationClass, ref byte information, uint size);
+        public static void DiscardStagedFile(SafeFileHandle staged, string source)
+        {
+            // Compare the still-open staging object with a no-follow deletion
+            // handle, so cleanup cannot delete a replacement at the random path.
+            using (SafeFileHandle handle = CreateFileW(source, FileReadAttributes | 0x10000,
+                FileShareRead | FileShareWrite, IntPtr.Zero, OpenExisting, 0x00200000, IntPtr.Zero))
+            {
+                if (handle.IsInvalid) throw new Win32Exception(Marshal.GetLastWin32Error());
+                ByHandleFileInformation expected, actual;
+                if (!GetFileInformationByHandle(staged, out expected) || !GetFileInformationByHandle(handle, out actual))
+                    throw new Win32Exception(Marshal.GetLastWin32Error());
+                if (expected.VolumeSerialNumber != actual.VolumeSerialNumber ||
+                    expected.FileIndexHigh != actual.FileIndexHigh || expected.FileIndexLow != actual.FileIndexLow)
+                    throw new InvalidOperationException("The staged provenance identity changed.");
+                byte delete = 1;
+                if (!SetFileInformationByHandle(handle, 4, ref delete, 1))
+                    throw new Win32Exception(Marshal.GetLastWin32Error());
+            }
+        }
         private sealed class DirectoryPins : IDisposable
         {
             internal readonly System.Collections.Generic.List<SafeFileHandle> Handles =

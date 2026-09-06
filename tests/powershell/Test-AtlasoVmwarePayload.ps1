@@ -660,6 +660,21 @@ if ($IsWindows) {
     $script:HashMutationMode = 'write'
     $script:ProtectedPayloadPaths = @($releaseVmxPath, $releaseOsDisk, $releaseSystemDisk)
     $script:ProvenanceLateLock = Join-Path $releaseOutput 'during-hash.lck'
+    $script:LateValidationLock = $false
+    <#
+    .SYNOPSIS
+    Inject a late lock after the real staged provenance validation rehashes its payloads.
+    .PARAMETER VmxPath
+    Synthetic VMX path.
+    .PARAMETER ProvenancePath
+    Staged document being validated.
+    #>
+    function Assert-AtlasoVmwarePayloadProvenance {
+        param([string]$VmxPath, [string]$ProvenancePath)
+        $result = Atlaso.VmwarePayload\Assert-AtlasoVmwarePayloadProvenance -VmxPath $VmxPath -ProvenancePath $ProvenancePath
+        if ($script:LateValidationLock) { [IO.File]::WriteAllText($script:ProvenanceLateLock, 'late validation lock') }
+        return $result
+    }
     <#
     .SYNOPSIS
     Probe writes or create a lock during real provenance hashing.
@@ -703,9 +718,33 @@ if ($IsWindows) {
         if ([IO.File]::ReadAllText($releaseProvenancePath) -cne $preservedProvenance) {
             throw 'Failed finalization replaced existing provenance.'
         }
+        Remove-Item -LiteralPath $script:ProvenanceLateLock
+        $script:LateValidationLock = $true
+        # Make the candidate differ so byte preservation detects an early overwrite.
+        $writerArguments.SourceInventoryFileCount = 2
+        foreach ($existing in @($true, $false)) {
+            if (-not $existing) { Remove-Item -LiteralPath $releaseProvenancePath }
+            try {
+                Write-AtlasoVmwareBuildProvenance @writerArguments
+                throw 'A lock created during final provenance validation was accepted.'
+            }
+            catch { if ($_.Exception.Message -notlike '*powered-off state is ambiguous*') { throw } }
+            if ($existing) {
+                if ([IO.File]::ReadAllText($releaseProvenancePath) -cne $preservedProvenance) {
+                    throw 'Late validation failure replaced existing provenance.'
+                }
+            }
+            elseif (Test-Path -LiteralPath $releaseProvenancePath) { throw 'Late validation failure published new provenance.' }
+            if (@(Get-ChildItem -LiteralPath $releaseOutput -Filter '.provenance-*.tmp' -Force).Count -ne 0) {
+                throw 'Failed finalization leaked a staged document.'
+            }
+            Remove-Item -LiteralPath $script:ProvenanceLateLock
+        }
     }
     finally {
         Remove-Item Function:Get-FileHash, Function:Assert-AtlasoSourceSnapshot, Function:Assert-AtlasoVmwareBuilderVmx
+        Remove-Item Function:Assert-AtlasoVmwarePayloadProvenance
+        Import-Module $modulePath -Force
         if (Test-Path -LiteralPath $script:ProvenanceLateLock) { Remove-Item -LiteralPath $script:ProvenanceLateLock }
         [IO.File]::WriteAllText($releaseProvenancePath, $completeProvenance)
     }
