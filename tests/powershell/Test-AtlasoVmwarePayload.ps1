@@ -577,6 +577,111 @@ if ($IsWindows) {
         Remove-Item -LiteralPath $lockPath
     }
 }
+if ($IsWindows) {
+    # Load only the real provenance writer, without starting the build wrapper.
+    $wrapperPath = Join-Path $RepositoryRoot 'scripts/windows/vmware/build-photon-image.ps1'
+    $writerAst = [Management.Automation.Language.Parser]::ParseFile($wrapperPath, [ref]$null, [ref]$null).Find({
+        param($Node)
+        $Node -is [Management.Automation.Language.FunctionDefinitionAst] -and $Node.Name -eq 'Write-AtlasoVmwareBuildProvenance'
+    }, $true)
+    . ([scriptblock]::Create($writerAst.Extent.Text))
+    <#
+    .SYNOPSIS
+    Isolate finalization from separately tested source staging.
+    .PARAMETER Root
+    Synthetic snapshot root.
+    .PARAMETER ExpectedSha256
+    Synthetic inventory digest.
+    .PARAMETER ExpectedFileCount
+    Synthetic inventory count.
+    #>
+    function Assert-AtlasoSourceSnapshot {
+        param([string]$Root, [string]$ExpectedSha256, [int]$ExpectedFileCount)
+        $null = $Root, $ExpectedSha256, $ExpectedFileCount
+    }
+    <#
+    .SYNOPSIS
+    Isolate finalization from separately tested builder identity admission.
+    .PARAMETER VmxPath
+    Synthetic VMX path.
+    .PARAMETER OutputDirectory
+    Synthetic output directory.
+    .PARAMETER Identity
+    Synthetic builder identity.
+    #>
+    function Assert-AtlasoVmwareBuilderVmx {
+        param([string]$VmxPath, [string]$OutputDirectory, [psobject]$Identity)
+        $null = $OutputDirectory, $Identity
+        return $VmxPath
+    }
+    $writerIdentity = [pscustomobject]@{
+        Kind = 'release'; Name = $releaseBuilderName; Repository = ''; PullRequestNumber = 0
+        SourceBranch = ''; SourceCommit = ('a' * 40); CollisionSuffix = ''; ReleaseVersion = '0.9.250'; WorkflowRunId = 0
+    }
+    $writerArguments = @{
+        OutputDirectory = $releaseOutput; VmName = $releaseBuilderName; RepoRoot = $RepositoryRoot
+        SourceCommit = ('a' * 40); SourceSnapshotRoot = $OutputDirectory; SourceInventorySha256 = ('b' * 64)
+        SourceInventoryFileCount = 1; BuilderIdentity = $writerIdentity; VmrunPath = 'fixture-vmrun'
+        SoftwareSource = (($completeProvenance | ConvertFrom-Json).template_contract.software_source)
+    }
+    $script:HashMutationDone = $false
+    $script:HashMutationMode = 'write'
+    $script:ProtectedPayloadPaths = @($releaseVmxPath, $releaseOsDisk, $releaseSystemDisk)
+    $script:ProvenanceLateLock = Join-Path $releaseOutput 'during-hash.lck'
+    <#
+    .SYNOPSIS
+    Probe writes or create a lock during real provenance hashing.
+    .PARAMETER LiteralPath
+    File being hashed.
+    .PARAMETER Algorithm
+    Requested digest algorithm.
+    #>
+    function Get-FileHash {
+        [Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSAvoidOverwritingBuiltInCmdlets', '',
+            Justification = 'Fixture probes mutation during hashing and removes the mock in finally.')]
+        [CmdletBinding()]
+        param([string]$LiteralPath, [string]$Algorithm)
+        if (-not $script:HashMutationDone) {
+            $script:HashMutationDone = $true
+            if ($script:HashMutationMode -eq 'lock') {
+                [IO.File]::WriteAllText($script:ProvenanceLateLock, 'late provider lock')
+            }
+            else {
+                foreach ($path in $script:ProtectedPayloadPaths) {
+                    try { $writer = [IO.File]::Open($path, [IO.FileMode]::Open, [IO.FileAccess]::Write, [IO.FileShare]::ReadWrite) }
+                    catch [IO.IOException] { continue }
+                    $writer.Dispose()
+                    throw 'Provenance hashing allowed an input writer.'
+                }
+            }
+        }
+        Microsoft.PowerShell.Utility\Get-FileHash -LiteralPath $LiteralPath -Algorithm $Algorithm
+    }
+    try {
+        Write-AtlasoVmwareBuildProvenance @writerArguments
+        if (-not $script:HashMutationDone) { throw 'The hashing exclusion probe did not run.' }
+        $preservedProvenance = [IO.File]::ReadAllText($releaseProvenancePath)
+        $script:HashMutationDone = $false
+        $script:HashMutationMode = 'lock'
+        try {
+            Write-AtlasoVmwareBuildProvenance @writerArguments
+            throw 'Provenance accepted a lock created during hashing.'
+        }
+        catch { if ($_.Exception.Message -notlike '*powered-off state is ambiguous*') { throw } }
+        if ([IO.File]::ReadAllText($releaseProvenancePath) -cne $preservedProvenance) {
+            throw 'Failed finalization replaced existing provenance.'
+        }
+    }
+    finally {
+        Remove-Item Function:Get-FileHash, Function:Assert-AtlasoSourceSnapshot, Function:Assert-AtlasoVmwareBuilderVmx
+        if (Test-Path -LiteralPath $script:ProvenanceLateLock) { Remove-Item -LiteralPath $script:ProvenanceLateLock }
+        [IO.File]::WriteAllText($releaseProvenancePath, $completeProvenance)
+    }
+    foreach ($path in $script:ProtectedPayloadPaths) {
+        $writer = [IO.File]::Open($path, [IO.FileMode]::Open, [IO.FileAccess]::Write, [IO.FileShare]::ReadWrite)
+        $writer.Dispose()
+    }
+}
 try {
     $null = Assert-AtlasoVmwarePayloadProvenance `
         -VmxPath $vmxPath `

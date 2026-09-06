@@ -518,8 +518,12 @@ output directory and all ancestors against replacement before enumeration and th
 A no-follow Windows deletion
 handle rejects reparse points and files; the kernel refuses nonempty directories and excludes new child creation
 once deletion is pending. The wrapper then rechecks power state and requires no remaining lock entries before
-publishing provenance. It never removes actual lock contents. Export and retained-template admission remain read-only
-and reject all lock entries, even empty directories, plus unavailable inventory, running VMs, and suspended state.
+publishing provenance. It never removes actual lock contents.
+Provenance generation pins the output path and holds ordinary read handles for the VMX and both payload disks,
+excluding writes and deletion throughout hashing, publication, and verification. It repeats strict powered-off and
+lock checks before hashing, before writing provenance, and after verification; a new lock aborts finalization.
+Export and retained-template admission remain read-only and reject all lock entries, even empty directories, plus
+unavailable inventory, running VMs, and suspended state.
 A running or ambiguously identified export source is rejected without automatic shutdown or repair. Preserve it and
 rebuild a fresh source through the wrapper. Likewise, preserve and rebuild legacy templates without the contract,
 templates with consumed initialization state, changed payloads, or mismatched software. Never boot an old template to

@@ -107,6 +107,22 @@ namespace Atlaso
             }
             catch { pins.Dispose(); throw; }
         }
+        public static SafeFileHandle PinOrdinaryReadFile(string path)
+        {
+            SafeFileHandle handle = CreateFileW(path, 0x80000000, FileShareRead,
+                IntPtr.Zero, OpenExisting, 0x00200000, IntPtr.Zero);
+            try
+            {
+                if (handle.IsInvalid) throw new Win32Exception(Marshal.GetLastWin32Error());
+                ByHandleFileInformation information;
+                if (!GetFileInformationByHandle(handle, out information))
+                    throw new Win32Exception(Marshal.GetLastWin32Error());
+                if ((information.FileAttributes & (0x10 | 0x400)) != 0)
+                    throw new InvalidOperationException("Expected an ordinary file.");
+                return handle;
+            }
+            catch { handle.Dispose(); throw; }
+        }
         public static void RemoveEmptyOrdinaryDirectory(string path)
         {
             // DELETE access plus a no-follow handle binds deletion to this exact

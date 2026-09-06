@@ -3213,7 +3213,7 @@ def test_module_keeps_inventory_work_out_of_normal_delete_path() -> None:
     implementation = re.sub(r"<#.*?#>\s*", "", module, flags=re.DOTALL)
     # Allow the bounded shutdown verifier, directory pins, and atomic retirement without
     # restoring global inventory reconciliation to root-scoped deletion.
-    assert len(implementation.splitlines()) < 1_420
+    assert len(implementation.splitlines()) < 1_440
 
 
 def test_development_ca_cleanup_releases_recovery_inside_provider_proof() -> None:
