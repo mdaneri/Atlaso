@@ -55,6 +55,9 @@ function Assert-AtlasoTemplatePoweredOff {
     }
     if ($RemoveEmptyBuilderLockDirectories) {
         foreach ($lock in @(Get-ChildItem -LiteralPath $vmx.DirectoryName -Filter '*.lck' -Force -ErrorAction Stop)) {
+            # Native filtering can match an unrelated entry through its 8.3 alias.
+            # Only the actual long name authorizes lock-directory retirement.
+            if (-not $lock.Name.EndsWith('.lck', [StringComparison]::OrdinalIgnoreCase)) { continue }
             # This opt-in belongs only to the completed builder, after its output
             # ownership check. Native deletion is atomic with the emptiness check;
             # export never cleans or accepts a surviving lock directory.
@@ -70,7 +73,8 @@ function Assert-AtlasoTemplatePoweredOff {
             throw 'The source template identity changed during powered-off verification.'
         }
     }
-    if (@(Get-ChildItem -LiteralPath $vmx.DirectoryName -Filter '*.lck' -Force -ErrorAction Stop).Count -gt 0) {
+    if (@(Get-ChildItem -LiteralPath $vmx.DirectoryName -Filter '*.lck' -Force -ErrorAction Stop |
+            Where-Object { $_.Name.EndsWith('.lck', [StringComparison]::OrdinalIgnoreCase) }).Count -gt 0) {
         throw 'The source template has VMware locks; powered-off state is ambiguous.'
     }
     if (@(Get-ChildItem -LiteralPath $vmx.DirectoryName -Filter '*.vmss' -Force).Count -gt 0 -or

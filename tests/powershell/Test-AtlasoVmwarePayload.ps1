@@ -369,6 +369,45 @@ if ($IsWindows) {
     if (-not (Test-Path -LiteralPath $lockPath -PathType Container)) { throw 'Read-only admission mutated a lock.' }
     Assert-AtlasoTemplatePoweredOff -VmxPath $releaseVmxPath -VmrunPath 'fixture-vmrun' -RemoveEmptyBuilderLockDirectories
     if (Test-Path -LiteralPath $lockPath) { throw 'Builder left an empty lock directory.' }
+    $aliasPath = Join-Path $releaseOutput 'unrelated.lckbackup'
+    $upperLockPath = Join-Path $releaseOutput 'template.LCK'
+    New-Item -ItemType Directory -Path $aliasPath | Out-Null
+    New-Item -ItemType Directory -Path $upperLockPath | Out-Null
+    & $payloadScope {
+        param($AliasPath)
+        $script:ShortNameAliasPath = $AliasPath
+        <#
+        .SYNOPSIS
+        Emulate a native filter matching an unrelated directory through its short name.
+        .PARAMETER LiteralPath
+        Directory to enumerate.
+        .PARAMETER Filter
+        Optional enumeration filter.
+        .PARAMETER Force
+        Include hidden entries.
+        #>
+        function script:Get-ChildItem {
+            [CmdletBinding()]
+            param([string]$LiteralPath, [string]$Filter, [switch]$Force)
+            $entries = @(Microsoft.PowerShell.Management\Get-ChildItem @PSBoundParameters)
+            if ($Filter -ceq '*.lck') {
+                $entries = @($entries | Where-Object { $_.FullName -ne $script:ShortNameAliasPath })
+                $entries += Get-Item -LiteralPath $script:ShortNameAliasPath -ErrorAction Stop
+            }
+            return $entries
+        }
+    } $aliasPath
+    try {
+        Assert-AtlasoTemplatePoweredOff -VmxPath $releaseVmxPath -VmrunPath 'fixture-vmrun' -RemoveEmptyBuilderLockDirectories
+        if (-not (Test-Path -LiteralPath $aliasPath -PathType Container)) { throw 'Builder deleted a short-name alias match.' }
+        if (Test-Path -LiteralPath $upperLockPath) { throw 'Builder did not retire an uppercase lock directory.' }
+        Assert-AtlasoTemplatePoweredOff -VmxPath $releaseVmxPath -VmrunPath 'fixture-vmrun'
+    }
+    finally {
+        & $payloadScope { Remove-Item Function:Get-ChildItem }
+        Remove-Item -LiteralPath $aliasPath
+        if (Test-Path -LiteralPath $upperLockPath) { Remove-Item -LiteralPath $upperLockPath }
+    }
     New-Item -ItemType Directory -Path $lockPath | Out-Null
     $lockFile = Join-Path $lockPath 'M44110.lck'
     Set-Content -LiteralPath $lockFile -Value 'provider-owned lock'
