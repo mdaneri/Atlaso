@@ -844,4 +844,40 @@ if ($null -eq $cleanupGuard) {
     }
 }
 
+$shutdownTreeGuard = $smokeAst.Find({
+        param($node)
+        $node -is [System.Management.Automation.Language.ForEachStatementAst] -and
+        $node.Extent.Text.Contains('$postStopDescendants.Keys')
+    }, $true)
+if ($null -eq $shutdownTreeGuard) {
+    throw 'VMware smoke must bind post-stop descendants to the pre-stop tree.'
+}
+foreach ($mutation in @('valid', 'added', 'replaced')) {
+    $preStopDescendants = @{ 'test.vmx' = 'old-vmx'; 'disk.vmdk' = 'owned-disk' }
+    $postStopDescendants = @{ 'test.vmx' = 'new-vmx'; 'disk.vmdk' = 'owned-disk' }
+    $vmxRelativePath = 'test.vmx'
+    if ($mutation -eq 'added') { $postStopDescendants['unowned.txt'] = 'unowned-file' }
+    if ($mutation -eq 'replaced') { $postStopDescendants['disk.vmdk'] = 'replacement-disk' }
+    $rejected = $false
+    try { . ([scriptblock]::Create($shutdownTreeGuard.Extent.Text)) }
+    catch { $rejected = $true }
+    if ($rejected -ne ($mutation -ne 'valid')) {
+        throw "Post-stop tree guard admitted the wrong ownership state: $mutation"
+    }
+}
+$shutdownContentGuard = $smokeAst.Find({
+        param($node)
+        $node -is [System.Management.Automation.Language.IfStatementAst] -and
+        $node.Clauses[0].Item1.Extent.Text -eq '$preStopVmxContent -cne $postStopVmxContent'
+    }, $true)
+if ($null -eq $shutdownContentGuard) {
+    throw 'VMware smoke must verify replacement VMX content before accepting its file ID.'
+}
+$preStopVmxContent = 'scsi0:0.fileName = "owned.vmdk"'
+$postStopVmxContent = 'scsi0:0.fileName = "unowned.vmdk"'
+$contentRejected = $false
+try { . ([scriptblock]::Create($shutdownContentGuard.Extent.Text)) }
+catch { $contentRejected = $true }
+if (-not $contentRejected) { throw 'Post-stop content guard admitted replaced disk bindings.' }
+
 Write-Host 'Hyper-V virtualization artifact contract test passed.'

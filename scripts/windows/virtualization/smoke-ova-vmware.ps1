@@ -537,6 +537,12 @@ finally {
         }
     }
     if ($vmStarted -and $vmRootSafeToRemove) {
+        # Bind cleanup to the pre-stop tree. Only the two shutdown flags may
+        # change in a replacement VMX; new or replaced siblings are not ours.
+        $preStopDescendants = Get-AtlasoVmwareDescendantIdentity -DirectoryPath $vmRoot
+        $preStopVmxContent = @(Get-Content -LiteralPath $vmxPath | Where-Object {
+                $_ -notmatch '^\s*(cleanShutdown|softPowerOff)\s*='
+            }) -join "`n"
         & $vmrun -T ws stop $vmxPath hard 2>$null | Out-Null
         if ($LASTEXITCODE -ne 0) {
             $vmRootSafeToRemove = $false
@@ -547,7 +553,30 @@ finally {
         if ((Get-AtlasoWindowsFileId -Path $vmRoot) -ne $vmRootId) {
             throw 'The VMware smoke root changed during shutdown.'
         }
-        $vmxId = Get-AtlasoWindowsFileId -Path $vmxPath
+        $postStopVmxId = Get-AtlasoWindowsFileId -Path $vmxPath
+        $postStopDescendants = Get-AtlasoVmwareDescendantIdentity -DirectoryPath $vmRoot
+        $vmxRelativePath = [IO.Path]::GetRelativePath($vmRoot, $vmxPath)
+        foreach ($entry in $postStopDescendants.Keys) {
+            if (-not $preStopDescendants.ContainsKey($entry) -or
+                ($entry -cne $vmxRelativePath -and
+                    $postStopDescendants[$entry] -cne $preStopDescendants[$entry])) {
+                throw 'The VMware smoke tree changed during shutdown; its files were preserved.'
+            }
+        }
+        $postStopVmxContent = @(Get-Content -LiteralPath $vmxPath | Where-Object {
+                $_ -notmatch '^\s*(cleanShutdown|softPowerOff)\s*='
+            }) -join "`n"
+        if ($preStopVmxContent -cne $postStopVmxContent) {
+            throw 'The VMware smoke VMX content changed during shutdown; its files were preserved.'
+        }
+        Assert-AtlasoVmwareVmIdentity -DirectoryPath $vmRoot -VmxPath $vmxPath `
+            -Name $Name -DirectoryId $vmRootId -VmxId $postStopVmxId
+        if ($null -ne $providerIdentity) {
+            $null = Get-AtlasoVmwareSmokeVmxNetworkIdentity -VmxPath $vmxPath `
+                -ManagementVmnet $ManagementVmnet -ServiceVmnet $ServiceVmnet `
+                -ExpectedIdentity $providerIdentity
+        }
+        $vmxId = $postStopVmxId
     }
     if ($vmRootSafeToRemove -and (Test-Path -LiteralPath $vmxPath)) {
         $runningVmPaths = @(& $vmrun -T ws list 2>$null)

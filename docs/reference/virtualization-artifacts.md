@@ -528,6 +528,8 @@ unexpected draft fails closed for explicit operator recovery.
 The disposable VMware smoke import explicitly binds its adapters to the selected existing VMnets.
 Cleanup uses the shared Workstation inventory and running-VM checks before removing only the owned import.
 If initial network-identity capture fails, cleanup retains the last verified VMX identity to stop the owned import.
+After shutdown, cleanup verifies the captured directory inventory and VMX contents before accepting a replacement
+VMX; only shutdown-status flags may change. Unexpected replacements or added files are preserved and fail cleanup.
 The protected read-only verifier checks offline-package names, entry types, sizes, and the 256-entry limit
 (including directories) before exporting the guest-tool tree, then rechecks the archive inventory.
 The local smoke import supplies its OVF environment through the shared Workstation serializer,
