@@ -513,7 +513,9 @@ inventories and untouched first-boot state without booting the source.
 The powered-off check discovers `vmrun.exe` in the standard `Program Files` or `Program Files (x86)` VMware installation
 before falling back to `PATH`. After Packer succeeds and output ownership is revalidated, the builder atomically
 removes empty ordinary `*.lck` directories left when Packer deletes their lock files. Only actual directory names
-ending in `.lck` qualify; matches through Windows short-name aliases are preserved. A no-follow Windows deletion
+ending in `.lck` qualify; matches through Windows short-name aliases are preserved. The builder pins the ordinary
+output directory and all ancestors against replacement before enumeration and through final verification.
+A no-follow Windows deletion
 handle rejects reparse points and files; the kernel refuses nonempty directories and excludes new child creation
 once deletion is pending. The wrapper then rechecks power state and requires no remaining lock entries before
 publishing provenance. It never removes actual lock contents. Export and retained-template admission remain read-only

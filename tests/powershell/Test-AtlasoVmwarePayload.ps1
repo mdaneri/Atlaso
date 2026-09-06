@@ -369,6 +369,61 @@ if ($IsWindows) {
     if (-not (Test-Path -LiteralPath $lockPath -PathType Container)) { throw 'Read-only admission mutated a lock.' }
     Assert-AtlasoTemplatePoweredOff -VmxPath $releaseVmxPath -VmrunPath 'fixture-vmrun' -RemoveEmptyBuilderLockDirectories
     if (Test-Path -LiteralPath $lockPath) { throw 'Builder left an empty lock directory.' }
+    New-Item -ItemType Directory -Path $lockPath | Out-Null
+    & $payloadScope {
+        param($Root)
+        $script:PinnedOutputRoot = $Root
+        $script:BlockedRootMoves = 0
+        <#
+        .SYNOPSIS
+        Attempt output-root and ancestor replacement after lock enumeration.
+        .PARAMETER LiteralPath
+        Directory to enumerate.
+        .PARAMETER Filter
+        Optional enumeration filter.
+        .PARAMETER Force
+        Include hidden entries.
+        #>
+        function script:Get-ChildItem {
+            [CmdletBinding()]
+            param([string]$LiteralPath, [string]$Filter, [switch]$Force)
+            $entries = @(Microsoft.PowerShell.Management\Get-ChildItem @PSBoundParameters)
+            if ($Filter -ceq '*.lck' -and $entries.Count -gt 0) {
+                foreach ($root in @($script:PinnedOutputRoot, (Split-Path $script:PinnedOutputRoot -Parent))) {
+                    $moved = $root + '-replacement-test'
+                    try { [IO.Directory]::Move($root, $moved) }
+                    catch [IO.IOException] { $script:BlockedRootMoves++; continue }
+                    # Restore fixture paths if the guard regresses before failing.
+                    [IO.Directory]::Move($moved, $root)
+                    throw 'A directory ancestor could be replaced during lock retirement.'
+                }
+            }
+            return $entries
+        }
+    } $releaseOutput
+    try {
+        Assert-AtlasoTemplatePoweredOff -VmxPath $releaseVmxPath -VmrunPath 'fixture-vmrun' -RemoveEmptyBuilderLockDirectories
+        if ((& $payloadScope { $script:BlockedRootMoves }) -ne 2) { throw 'Both directory replacement probes must run.' }
+        if (Test-Path -LiteralPath $lockPath) { throw 'Pinned builder did not retire its empty lock.' }
+    }
+    finally { & $payloadScope { Remove-Item Function:Get-ChildItem } }
+    # Pins must release after success, while a pre-existing redirected root fails.
+    $movedOutput = $releaseOutput + '-replacement-test'
+    [IO.Directory]::Move($releaseOutput, $movedOutput)
+    [IO.Directory]::Move($movedOutput, $releaseOutput)
+    $redirectedOutput = $releaseOutput + '-junction-test'
+    New-Item -ItemType Directory -Path $lockPath | Out-Null
+    New-Item -ItemType Junction -Path $redirectedOutput -Target $releaseOutput | Out-Null
+    try {
+        $redirectedVmx = Join-Path $redirectedOutput (Split-Path $releaseVmxPath -Leaf)
+        try {
+            Assert-AtlasoTemplatePoweredOff -VmxPath $redirectedVmx -VmrunPath 'fixture-vmrun' -RemoveEmptyBuilderLockDirectories
+            throw 'A redirected output root was accepted for deletion.'
+        }
+        catch { if ($_.Exception.Message -notlike '*Expected an ordinary directory path*') { throw } }
+        if (-not (Test-Path -LiteralPath $lockPath)) { throw 'A redirected output root lost its lock directory.' }
+    }
+    finally { Remove-Item -LiteralPath $redirectedOutput; Remove-Item -LiteralPath $lockPath }
     $aliasPath = Join-Path $releaseOutput 'unrelated.lckbackup'
     $upperLockPath = Join-Path $releaseOutput 'template.LCK'
     New-Item -ItemType Directory -Path $aliasPath | Out-Null

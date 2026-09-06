@@ -64,6 +64,49 @@ namespace Atlaso
         [DllImport("kernel32.dll", SetLastError = true)]
         private static extern bool SetFileInformationByHandle(
             SafeFileHandle file, int informationClass, ref byte information, uint size);
+        private sealed class DirectoryPins : IDisposable
+        {
+            internal readonly System.Collections.Generic.List<SafeFileHandle> Handles =
+                new System.Collections.Generic.List<SafeFileHandle>();
+            public void Dispose()
+            {
+                for (int i = Handles.Count - 1; i >= 0; --i) Handles[i].Dispose();
+                Handles.Clear();
+            }
+        }
+        public static IDisposable PinOrdinaryDirectoryPath(string path)
+        {
+            var pins = new DirectoryPins();
+            try
+            {
+                string fullPath = System.IO.Path.GetFullPath(path);
+                string current = System.IO.Path.GetPathRoot(fullPath);
+                string[] components = fullPath.Substring(current.Length).Split(
+                    new char[] { '\\', '/' }, StringSplitOptions.RemoveEmptyEntries);
+                // Pin from the volume/share root down. Denying delete sharing
+                // prevents ancestor rename/replacement before opening each child;
+                // no-follow attribute checks reject pre-existing junctions too.
+                for (int i = -1; i < components.Length; ++i)
+                {
+                    if (i >= 0) current = System.IO.Path.Combine(current, components[i]);
+                    // LIST_DIRECTORY makes sharing restrictions effective; an
+                    // attributes-only handle does not exclude rename operations.
+                    SafeFileHandle handle = CreateFileW(current, FileReadAttributes | 0x1,
+                        FileShareRead, IntPtr.Zero, OpenExisting,
+                        BackupSemantics | 0x00200000, IntPtr.Zero);
+                    pins.Handles.Add(handle);
+                    if (handle.IsInvalid) throw new Win32Exception(Marshal.GetLastWin32Error());
+                    ByHandleFileInformation information;
+                    if (!GetFileInformationByHandle(handle, out information))
+                        throw new Win32Exception(Marshal.GetLastWin32Error());
+                    if ((information.FileAttributes & 0x10) == 0 ||
+                        (information.FileAttributes & 0x400) != 0)
+                        throw new InvalidOperationException("Expected an ordinary directory path.");
+                }
+                return pins;
+            }
+            catch { pins.Dispose(); throw; }
+        }
         public static void RemoveEmptyOrdinaryDirectory(string path)
         {
             // DELETE access plus a no-follow handle binds deletion to this exact
