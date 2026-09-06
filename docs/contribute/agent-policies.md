@@ -481,6 +481,9 @@ Terminal order:
   root, descendant, and target identities before provider operations; a new or replaced entry or root blocks recursive
   removal. Query checked `vmrun` running output, match an exact target or filesystem alias by identity, stop through
   checked `vmrun` when needed, and verify inactivity. Use checked `vmrun deleteVM` only for a well-formed exact in-scope
+  registration. A successful cleanup-owned stop may admit an atomic VMX rewrite only when every assignment except
+  validated `cleanShutdown`/`softPowerOff` booleans remains unchanged. Bind the stopped identity and hash under a read
+  lock while retaining every other root/descendant identity; reject all other replacements. Verify the exact in-scope
   registration and verify the target VMX is absent. Immediately before each deletion, repeat the target identity and
   identity-aware running check, confirm the scoped registration, and verify the recursive VMX set contains only the
   validated surviving targets.

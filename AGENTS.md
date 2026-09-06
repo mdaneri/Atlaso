@@ -522,6 +522,9 @@ The following cross-cutting boundaries always apply:
   descendant, and target identities before provider operations; a new or replaced entry or root blocks recursive
   deletion. Use checked `vmrun` running output to stop an exact target, matching filesystem aliases by identity, and
   verify it is inactive. Current Workstation automation has no unregister-only operation, so use checked
+  cleanup's narrow shutdown rewrite admission only after its own successful stop: preserve every VMX assignment except
+  validated `cleanShutdown`/`softPowerOff` booleans, bind the stopped identity and hash under a read lock, and retain all
+  other root/descendant identities. No other replacement is admitted. Use checked
   `vmrun deleteVM` only for a well-formed exact in-scope registration and verify that the VMX is absent. Immediately
   before each provider deletion, repeat the target identity and identity-aware running check, confirm the exact scoped
   registration, and verify the recursive VMX set still contains only validated targets.
