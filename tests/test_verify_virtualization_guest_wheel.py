@@ -19,7 +19,7 @@ from scripts import verify_virtualization_guest_wheel as verifier
 SOURCE_COMMIT = "a" * 40
 
 
-@pytest.mark.parametrize("mutation", ["valid", "marker", "ssh", "identity", "package", "mode", "missing", "initialization_lock"])
+@pytest.mark.parametrize("mutation", ["valid", "marker", "ssh", "identity", "package", "mode", "missing", "initialization_lock", "oversize", "directories"])
 def test_read_only_template_state_verification(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, mutation: str,
 ) -> None:
@@ -51,7 +51,29 @@ def test_read_only_template_state_verification(
             return ["true" if mutation == "marker" else "false", "false"]
         if commands[1] == "ls /etc/ssh":
             return ["ssh_host_ed25519_key"] if mutation == "ssh" else []
+        staging = "/var/lib/atlaso/first-boot-packages"
+        if commands[1] == f"ls {staging}":
+            return ["SHA256SUMS", "hyperv", "qemu"]
+        if commands[1].startswith(f"ls {staging}/"):
+            if mutation == "directories":
+                return [f"directory-{index}" for index in range(257)]
+            provider = commands[1].rsplit("/", 1)[1]
+            return [name.split("/", 1)[1] for name in packages if name.startswith(provider + "/")]
+        if commands[1].startswith("echo ATLASO-TOOL:"):
+            output = []
+            for offset in range(1, len(commands), 2):
+                output.append(commands[offset].removeprefix("echo "))
+                path = commands[offset + 1].removeprefix("lstatns ")
+                name = path.removeprefix(staging + "/")
+                directory = path == staging or name in {"hyperv", "qemu"}
+                mode = stat.S_IFDIR if directory else stat.S_IFREG
+                size = 0 if directory else len(packages[name])
+                if mutation == "oversize" and not directory:
+                    size = 2_147_483_648
+                output.extend((f"st_mode: {mode}", f"st_size: {size}"))
+            return output
         if commands[1].startswith("tar-out "):
+            assert mutation not in {"oversize", "directories"}, "Unbounded guest tree was exported"
             destination = Path(commands[1].split(" ", 2)[2])
             with tarfile.open(destination, "w") as archive:
                 for name in (".", "qemu", "hyperv"):

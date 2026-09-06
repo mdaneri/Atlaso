@@ -1286,6 +1286,57 @@ def _verify_python_runtime(
     return 2
 
 
+def _bound_guest_tool_tree(disk: Path, mount: str, staging: str) -> None:
+    """Bound the immutable guest tree before exporting any package bytes.
+
+    Args:
+        disk: Read-only system disk.
+        mount: Validated read-only mount command.
+        staging: Absolute offline-package directory.
+    """
+    root_entries = _guestfish(disk, [mount, f"ls {staging}"])
+    if sorted(root_entries) != ["SHA256SUMS", "hyperv", "qemu"]:
+        raise SystemExit("Unexpected template guest-tool root inventory")
+    paths = [(staging, True), (f"{staging}/SHA256SUMS", False)]
+    for provider in ("hyperv", "qemu"):
+        directory = f"{staging}/{provider}"
+        paths.append((directory, True))
+        entries = _guestfish(disk, [mount, f"ls {directory}"])
+        if len(paths) + len(entries) > 256:
+            raise SystemExit("Template guest-tool inventory exceeds verification limits")
+        for name in entries:
+            if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._+-]*\.rpm", name):
+                raise SystemExit("Unexpected template guest-tool package name")
+            paths.append((f"{directory}/{name}", False))
+    commands = [mount]
+    for index, (path, _) in enumerate(paths):
+        commands.extend((f"echo ATLASO-TOOL:{index}", f"lstatns {path}"))
+    records: dict[int, dict[str, int]] = {}
+    current = -1
+    for line in _guestfish(disk, commands):
+        if line.startswith("ATLASO-TOOL:"):
+            current = int(line.split(":", 1)[1])
+            if current in records or current not in range(len(paths)):
+                raise SystemExit("Ambiguous template guest-tool metadata")
+            records[current] = {}
+        elif current >= 0:
+            key, separator, value = line.partition(":")
+            if separator and key in {"st_mode", "st_size"}:
+                if key in records[current]:
+                    raise SystemExit("Duplicate template guest-tool metadata")
+                records[current][key] = int(value.strip())
+    total_bytes = 0
+    for index, (_, directory_expected) in enumerate(paths):
+        record = records.get(index, {})
+        mode, size = record.get("st_mode", 0), record.get("st_size", -1)
+        if size < 0 or (not stat.S_ISDIR(mode) if directory_expected else not stat.S_ISREG(mode)):
+            raise SystemExit("Unsafe template guest-tool entry before export")
+        if not directory_expected:
+            total_bytes += size
+            if not 0 < size < MAXIMUM_TEMPLATE_RPM_BYTES or total_bytes > 1_073_741_824:
+                raise SystemExit("Template guest-tool inventory exceeds verification limits")
+
+
 def _verify_uninitialized_template(disk: Path, filesystem: str, repo_root: Path) -> int:
     """Independently inspect unconsumed first-boot state in the powered-off OS disk.
 
@@ -1318,6 +1369,7 @@ def _verify_uninitialized_template(disk: Path, filesystem: str, repo_root: Path)
                                 Path(temporary) / "initialization-lock") != b"":
             raise SystemExit("Exported template initialization lock is not pristine")
         archive_path = Path(temporary) / "guest-tools.tar"
+        _bound_guest_tool_tree(disk, mount, f"/{verifier.STAGING}")
         _guestfish(
             disk, [mount, f"tar-out /{verifier.STAGING} {archive_path.as_posix()}"]
         )
@@ -1325,9 +1377,9 @@ def _verify_uninitialized_template(disk: Path, filesystem: str, repo_root: Path)
         directories = set()
         total_bytes = 0
         with tarfile.open(archive_path, "r:") as archive:
-            for member in archive:
+            for member_count, member in enumerate(archive, start=1):
                 total_bytes += member.size
-                if total_bytes > 1_073_741_824 or len(files) > 256:
+                if total_bytes > 1_073_741_824 or member_count > 256:
                     raise SystemExit("Template guest-tool inventory exceeds verification limits")
                 name = member.name.removeprefix("./").rstrip("/")
                 if name in {"", "."}:
