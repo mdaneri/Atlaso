@@ -141,7 +141,10 @@ set -eu
 # SSH and its published host key precede completion of appliance initialization.
 ready=false
 for attempt in $(seq 1 60); do
-  if systemctl is-active --quiet atlaso-data-disks.service atlaso.service atlaso-worker.service nginx.service; then
+  if systemctl is-active --quiet atlaso-data-disks.service &&
+     systemctl is-active --quiet atlaso.service &&
+     systemctl is-active --quiet atlaso-worker.service &&
+     systemctl is-active --quiet nginx.service; then
     ready=true
     break
   fi
