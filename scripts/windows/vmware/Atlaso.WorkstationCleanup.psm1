@@ -324,6 +324,41 @@ function Get-AtlasoVmxDisplayName {
 }
 <#
 .SYNOPSIS
+Hash VMX configuration while excluding only validated shutdown-state flags.
+
+.PARAMETER Path
+Exact VMX whose configuration must survive a checked provider stop.
+#>
+function Get-AtlasoVmxShutdownInvariant {
+    param([Parameter(Mandatory = $true)][string]$Path)
+    $entries = [System.Collections.Generic.SortedDictionary[string, string]]::new([System.StringComparer]::Ordinal)
+    $seen = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
+    foreach ($line in Get-Content -LiteralPath $Path -ErrorAction Stop) {
+        if ($line -match '^\s*(#.*)?$') { continue }
+        if ($line -notmatch '^\s*([A-Za-z0-9_.:-]+)\s*=\s*"([^"\r\n]*)"\s*$') {
+            throw "VMware shutdown identity requires well-formed VMX assignments; artifacts were preserved: $Path"
+        }
+        $key = $Matches[1].ToLowerInvariant()
+        $value = $Matches[2]
+        if (-not $seen.Add($key)) {
+            throw "VMware shutdown identity rejects duplicate VMX assignments; artifacts were preserved: $Path"
+        }
+        # Workstation rewrites these two booleans while stopping. Every other
+        # assignment, including disks, UUIDs, MACs, and guest-info, remains bound.
+        if ($key -in @('cleanshutdown', 'softpoweroff')) {
+            if ($value -notmatch '^(?i:TRUE|FALSE)$') {
+                throw "VMware shutdown identity rejects malformed power-state flags; artifacts were preserved: $Path"
+            }
+            continue
+        }
+        $entries.Add($key, $value)
+    }
+    Get-AtlasoVmxDisplayName -Path $Path | Out-Null
+    $canonical = $entries | ConvertTo-Json -Compress -Depth 3
+    return [Convert]::ToHexString([System.Security.Cryptography.SHA256]::HashData([System.Text.Encoding]::UTF8.GetBytes($canonical)))
+}
+<#
+.SYNOPSIS
 Normalize one path line returned by vmrun.
 
 .PARAMETER InventoryLine
@@ -1071,16 +1106,27 @@ Validated cleanup target VMX.
 
 .PARAMETER TargetIdentity
 Optional earlier identity that still identifies the running target.
+
+.PARAMETER ExpectedIdentity
+When supplied, require this exact filesystem identity immediately before stopping.
+
+.PARAMETER PassThru
+Return whether this invocation performed the checked stop operation.
 #>
 function Confirm-AtlasoWorkstationVmInactive {
     param(
         [Parameter(Mandatory = $true)][string]$VmrunPath,
         [Parameter(Mandatory = $true)][string]$VmxPath,
-        [Parameter(Mandatory = $false)][AllowEmptyString()][string]$TargetIdentity = ''
+        [Parameter(Mandatory = $false)][AllowEmptyString()][string]$TargetIdentity = '',
+        [Parameter(Mandatory = $false)][AllowEmptyString()][string]$ExpectedIdentity = '',
+        [Parameter(Mandatory = $false)][switch]$PassThru
     )
     $runningPaths = @(Get-AtlasoWorkstationVmPaths -VmrunPath $VmrunPath -State running)
     $runningTargets = @($runningPaths | Where-Object { Test-AtlasoRunningPathMatchesTarget -RunningPath $_ -VmxPath $VmxPath -TargetIdentity $TargetIdentity })
     if ($runningTargets.Count -gt 0) {
+        if ($ExpectedIdentity -and (Get-AtlasoPathIdentity -Path $VmxPath -Description 'VMware cleanup target') -ne $ExpectedIdentity) {
+            throw "VMware Workstation VMX was replaced before stop; artifacts were preserved: $VmxPath"
+        }
         Invoke-AtlasoVmrunChecked `
             -VmrunPath $VmrunPath `
             -Arguments @('-T', 'ws', 'stop', $runningTargets[0], 'hard') `
@@ -1088,6 +1134,7 @@ function Confirm-AtlasoWorkstationVmInactive {
     }
     $remainingPaths = @(Get-AtlasoWorkstationVmPaths -VmrunPath $VmrunPath -State running)
     if (@($remainingPaths | Where-Object { Test-AtlasoRunningPathMatchesTarget -RunningPath $_ -VmxPath $VmxPath -TargetIdentity $TargetIdentity }).Count -gt 0) { throw "VMware Workstation VM remains running after stop succeeded: $VmxPath" }
+    if ($PassThru) { return $runningTargets.Count -gt 0 }
 }
 
 <#
@@ -1406,10 +1453,15 @@ function Remove-AtlasoWorkstationVmArtifacts {
     $snapshot = Get-AtlasoRootSnapshot -RemovalRoot $resolvedRemovalRoot
     $validatedTargetIdentities = @{}
     $validatedTargetHashes = @{}
+    $validatedShutdownInvariants = @{}
     foreach ($resolvedVmxPath in $resolvedVmxPaths) {
         $relativeVmxPath = [System.IO.Path]::GetRelativePath($resolvedRemovalRoot, $resolvedVmxPath)
         $validatedTargetIdentities[$resolvedVmxPath] = $snapshot.Items[$relativeVmxPath]
         $validatedTargetHashes[$resolvedVmxPath] = Get-AtlasoFileSha256 -Path $resolvedVmxPath
+        $validatedShutdownInvariants[$resolvedVmxPath] = Get-AtlasoVmxShutdownInvariant -Path $resolvedVmxPath
+        if ((Get-AtlasoFileSha256 -Path $resolvedVmxPath) -cne $validatedTargetHashes[$resolvedVmxPath]) {
+            throw "VMware Workstation VMX changed during cleanup admission; artifacts were preserved: $resolvedVmxPath"
+        }
     }
     if (-not $PSCmdlet.ShouldProcess($resolvedRemovalRoot, 'Stop and delete VMware Workstation VM artifacts')) {
         return
@@ -1419,7 +1471,30 @@ function Remove-AtlasoWorkstationVmArtifacts {
     foreach ($resolvedVmxPath in $resolvedVmxPaths) {
         if ((Get-AtlasoPathIdentity -Path $resolvedVmxPath -Description 'VMware cleanup target') -ne $validatedTargetIdentities[$resolvedVmxPath]) { throw "VMware Workstation VMX was replaced after root validation; artifacts were preserved: $resolvedVmxPath" }
         Test-AtlasoWorkstationVmxRegistered -InventoryPath $inventoryPath -VmxPath $resolvedVmxPath -ScopeRoot $resolvedRemovalRoot | Out-Null
-        Confirm-AtlasoWorkstationVmInactive -VmrunPath $VmrunPath -VmxPath $resolvedVmxPath
+        $stopped = Confirm-AtlasoWorkstationVmInactive -VmrunPath $VmrunPath -VmxPath $resolvedVmxPath `
+            -ExpectedIdentity $validatedTargetIdentities[$resolvedVmxPath] -PassThru
+        if ($stopped) {
+            # Bind the stopped file only across our successful provider transition,
+            # after proving all non-power configuration and every other artifact
+            # unchanged. Later replacements still fail the ordinary identity gates.
+            Assert-AtlasoPathHasNoReparsePoint -Path $resolvedVmxPath
+            $stoppedLock = [System.IO.File]::Open($resolvedVmxPath, 'Open', 'Read', 'Read')
+            try {
+                $stoppedIdentity = Get-AtlasoPathIdentity -Path $resolvedVmxPath -Description 'stopped VMware cleanup target'
+                if ((Get-AtlasoVmxShutdownInvariant -Path $resolvedVmxPath) -cne $validatedShutdownInvariants[$resolvedVmxPath]) {
+                    throw "VMware Workstation VMX configuration changed during stop; artifacts were preserved: $resolvedVmxPath"
+                }
+                $stoppedHash = Get-AtlasoFileSha256 -Path $resolvedVmxPath
+                $relativeVmxPath = [System.IO.Path]::GetRelativePath($resolvedRemovalRoot, $resolvedVmxPath)
+                $snapshot.Items[$relativeVmxPath] = $stoppedIdentity
+                Assert-AtlasoRootSnapshotUnreplaced -RemovalRoot $resolvedRemovalRoot -Snapshot $snapshot
+                $validatedTargetIdentities[$resolvedVmxPath] = $stoppedIdentity
+                $validatedTargetHashes[$resolvedVmxPath] = $stoppedHash
+            }
+            finally {
+                $stoppedLock.Dispose()
+            }
+        }
     }
     $providerRemovedRoot = $false
     $deletedVmxPaths = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)

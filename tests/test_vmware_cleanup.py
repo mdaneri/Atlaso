@@ -178,6 +178,7 @@ def _write_fake_vmrun(
     stop_exit: int = 0,
     delete_exit: int = 0,
     stop_sticky: bool = False,
+    replace_on_stop: str | None = None,
     delete_sticky: bool = False,
     replace_after_delete: bool = False,
     remove_root_after_delete: bool = False,
@@ -205,6 +206,7 @@ def _write_fake_vmrun(
         stop_exit: Exit code to return for stop commands.
         delete_exit: Exit code to return for deleteVM commands.
         stop_sticky: If true, keep a stopped VM running in fake state.
+        replace_on_stop: Optional replacement VMX text written during stop.
         delete_sticky: If true, keep deleteVM from removing files.
         replace_after_delete: If true, rewrite the VMX after deleteVM.
         remove_root_after_delete: If true, remove the VMX parent after deleteVM.
@@ -357,6 +359,10 @@ if command == "stop":
         raise SystemExit(exit_code)
     if os.environ["ATLASO_FAKE_VMRUN_STOP_STICKY"] != "1":
         write_paths("running", [path for path in read_paths("running") if not same_path(path, target)])
+    if os.environ["ATLASO_FAKE_VMRUN_REPLACE_ON_STOP"]:
+        replacement = Path(target).with_suffix(".shutdown.tmp")
+        replacement.write_text(os.environ["ATLASO_FAKE_VMRUN_REPLACE_ON_STOP"], encoding="utf-8")
+        replacement.replace(target)
     raise SystemExit(0)
 
 if command == "deleteVM":
@@ -415,6 +421,7 @@ raise SystemExit(64)
             "ATLASO_FAKE_VMRUN_STOP_EXIT": str(stop_exit),
             "ATLASO_FAKE_VMRUN_DELETE_EXIT": str(delete_exit),
             "ATLASO_FAKE_VMRUN_STOP_STICKY": "1" if stop_sticky else "0",
+            "ATLASO_FAKE_VMRUN_REPLACE_ON_STOP": replace_on_stop or "",
             "ATLASO_FAKE_VMRUN_DELETE_STICKY": "1" if delete_sticky else "0",
             "ATLASO_FAKE_VMRUN_REPLACE_AFTER_DELETE": "1" if replace_after_delete else "0",
             "ATLASO_FAKE_VMRUN_REMOVE_ROOT_AFTER_DELETE": "1" if remove_root_after_delete else "0",
@@ -705,6 +712,57 @@ def test_running_registered_vm_is_stopped_hard_before_delete(tmp_path: Path) -> 
     delete = next(command for command in commands if command[2] == "deleteVM")
     assert stop[-1] == "hard"
     assert commands.index(stop) < commands.index(delete)
+
+
+@pytest.mark.parametrize(
+    ("replacement", "succeeds"),
+    [
+        ('cleanShutdown = "TRUE"\ndisplayName = "Atlaso-Test"\n', True),
+        ('displayName = "Atlaso-Test"\n', True),
+        ('displayName = "Another VM"\n', False),
+        ('displayName = "Atlaso-Test"\nscsi0:0.fileName = "other.vmdk"\n', False),
+        ('displayName = "Atlaso-Test"\nuuid.bios = "different"\n', False),
+        ('displayName = "Atlaso-Test"\ndisplayName = "Atlaso-Test"\n', False),
+        ('displayName = "Atlaso-Test"\ncleanShutdown = "invalid"\n', False),
+    ],
+)
+def test_shutdown_replacement_requires_unchanged_vm_configuration(
+    tmp_path: Path, replacement: str, succeeds: bool
+) -> None:
+    """Accept only a stopped VM's power-state rewrite, preserving foreign replacements.
+
+    Args:
+        tmp_path: Pytest temporary directory path.
+        replacement: VMX text atomically published by the simulated provider stop.
+        succeeds: Whether the replacement preserves the admitted configuration.
+    """
+    root = tmp_path / "artifacts" / "vm"
+    vmx = root / "Atlaso.vmx"
+    _write_vmx(vmx, "Atlaso-Test", 'cleanShutdown = "FALSE"')
+    vmrun, environment, log, _ = _write_fake_vmrun(
+        tmp_path / "fake",
+        [vmx],
+        running=True,
+        registered=True,
+        replace_on_stop=replacement,
+    )
+    result = _run_root_cleanup(
+        tmp_path,
+        removal_root=root,
+        expected_root=root,
+        vmrun_path=vmrun,
+        environment=environment,
+    )
+    commands = [command[2] for command in _commands(log)]
+    assert "stop" in commands
+    if succeeds:
+        assert result.returncode == 0, result.stdout + result.stderr
+        assert not root.exists()
+        assert commands.count("deleteVM") == 1
+    else:
+        assert result.returncode != 0
+        assert "deleteVM" not in commands
+        assert vmx.read_text(encoding="utf-8") == replacement
 
 
 def test_running_hard_link_alias_is_matched_by_filesystem_identity(tmp_path: Path) -> None:
@@ -3153,7 +3211,9 @@ def test_module_keeps_inventory_work_out_of_normal_delete_path() -> None:
     assert stale_repair.index("if ($OnVerified)", replacement_verification) < replacement_unlock
     assert stale_repair.count("Get-Process vmware -ErrorAction SilentlyContinue") >= 5
     implementation = re.sub(r"<#.*?#>\s*", "", module, flags=re.DOTALL)
-    assert len(implementation.splitlines()) < 1_260
+    # Allow the bounded shutdown-identity verifier without restoring global
+    # inventory reconciliation to the ordinary root-scoped deletion path.
+    assert len(implementation.splitlines()) < 1_340
 
 
 def test_development_ca_cleanup_releases_recovery_inside_provider_proof() -> None:
