@@ -3332,7 +3332,7 @@ if (-not $ValidateOnly -and -not $PrepareIsoOnly) {
     if ($null -ne $softwareInventory) {
         $null = Assert-AtlasoSourceSnapshot -Root $softwareInventory.Root -ExpectedSha256 $softwareInventory.Sha256 -ExpectedFileCount $softwareInventory.FileCount
     }
-    Assert-AtlasoTemplatePoweredOff -VmxPath (Join-Path $workstationOutputDirectory "$VmName.vmx") -VmrunPath $VmrunPath
+    Assert-AtlasoTemplatePoweredOff -VmxPath (Join-Path $workstationOutputDirectory "$VmName.vmx") -VmrunPath $VmrunPath -RemoveEmptyBuilderLockDirectories
     Write-AtlasoVmwareBuildProvenance `
         -OutputDirectory $workstationOutputDirectory `
         -VmName $VmName `

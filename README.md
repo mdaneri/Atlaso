@@ -42,7 +42,7 @@ Protected release finalization and stable promotion admit exactly one version-de
 aliases or additional archives fail before signing or publication.
 Visible builds repair exact missing Atlaso library registrations before starting Workstation, while full artifact
 cleanup retains its checked post-network-preflight boundary.
-Completed-template checks tolerate empty ordinary lock directories left by Packer while rejecting actual lock contents.
+Successful builders atomically remove empty Packer lock directories; export retains strict read-only lock checks.
 Failure cleanup verifies Workstation's shutdown-only VMX rewrite before adopting its stopped file identity; unrelated
 configuration changes and replacements still preserve the artifacts and reservation for recovery.
 

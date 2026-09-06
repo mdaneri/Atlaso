@@ -61,74 +61,28 @@ namespace Atlaso
             SafeFileHandle file,
             out ByHandleFileInformation information
         );
-        [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
-        private static extern IntPtr FindFirstChangeNotificationW(string path, bool subtree, uint filter);
         [DllImport("kernel32.dll", SetLastError = true)]
-        private static extern bool FindCloseChangeNotification(IntPtr handle);
-        [DllImport("kernel32.dll", SetLastError = true)]
-        private static extern uint WaitForSingleObject(IntPtr handle, uint milliseconds);
-        public sealed class DirectoryObservation : IDisposable
+        private static extern bool SetFileInformationByHandle(
+            SafeFileHandle file, int informationClass, ref byte information, uint size);
+        public static void RemoveEmptyOrdinaryDirectory(string path)
         {
-            private SafeFileHandle directory;
-            private IntPtr notification = new IntPtr(-1);
-            public DirectoryObservation(string path)
-            {
-                directory = OpenOrdinaryDirectory(path);
-                // The directory handle pins the final path component. A separate
-                // kernel notification detects child creation/deletion, which a
-                // directory object's sharing mode does not prevent.
-                notification = FindFirstChangeNotificationW(path, false, 0x3);
-                if (notification == new IntPtr(-1))
-                {
-                    int error = Marshal.GetLastWin32Error();
-                    directory.Dispose();
-                    throw new Win32Exception(error);
-                }
-            }
-            public void AssertUnchanged()
-            {
-                uint status = WaitForSingleObject(notification, 0);
-                if (status == 0x102) return; // WAIT_TIMEOUT: no child-name change.
-                if (status == 0xFFFFFFFF) throw new Win32Exception(Marshal.GetLastWin32Error());
-                throw new InvalidOperationException("VMware lock-directory contents changed during admission.");
-            }
-            public void Dispose()
-            {
-                if (notification != new IntPtr(-1))
-                {
-                    FindCloseChangeNotification(notification);
-                    notification = new IntPtr(-1);
-                }
-                directory.Dispose();
-            }
-        }
-        public static DirectoryObservation ObserveOrdinaryDirectory(string path)
-        {
-            return new DirectoryObservation(path);
-        }
-        public static SafeFileHandle OpenOrdinaryDirectory(string path)
-        {
-            // Do not follow a replacement junction or allow rename/reparse writes
-            // while a caller inspects a directory obtained from a stale listing.
-            SafeFileHandle handle = CreateFileW(path, FileReadAttributes,
+            // DELETE access plus a no-follow handle binds deletion to this exact
+            // ordinary directory. The kernel rejects nonempty directories and
+            // delete-pending state excludes new children until handle close.
+            using (SafeFileHandle handle = CreateFileW(path, FileReadAttributes | 0x10000,
                 FileShareRead, IntPtr.Zero, OpenExisting,
-                BackupSemantics | 0x00200000, IntPtr.Zero);
-            try
+                BackupSemantics | 0x00200000, IntPtr.Zero))
             {
-                if (handle.IsInvalid)
-                    throw new Win32Exception(Marshal.GetLastWin32Error());
+                if (handle.IsInvalid) throw new Win32Exception(Marshal.GetLastWin32Error());
                 ByHandleFileInformation information;
                 if (!GetFileInformationByHandle(handle, out information))
                     throw new Win32Exception(Marshal.GetLastWin32Error());
                 if ((information.FileAttributes & 0x10) == 0 ||
                     (information.FileAttributes & 0x400) != 0)
                     throw new InvalidOperationException("Expected an ordinary directory.");
-                return handle;
-            }
-            catch
-            {
-                handle.Dispose();
-                throw;
+                byte delete = 1;
+                if (!SetFileInformationByHandle(handle, 4, ref delete, 1))
+                    throw new Win32Exception(Marshal.GetLastWin32Error());
             }
         }
         public static string Get(string path)

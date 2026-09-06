@@ -13,6 +13,9 @@ $script:SystemPayloadBytes = 20GB
 <#
 .SYNOPSIS
 Prove a completed template is inactive without starting or stopping it.
+.PARAMETER RemoveEmptyBuilderLockDirectories
+Retire only empty ordinary lock directories after a successful, ownership-verified
+Packer build. Omit for read-only export or retained-template validation.
 .PARAMETER VmxPath
 Exact source template whose inactive state is required.
 .PARAMETER VmrunPath
@@ -21,7 +24,8 @@ Optional VMware vmrun executable; discovered from the standard installation othe
 function Assert-AtlasoTemplatePoweredOff {
     param(
         [Parameter(Mandatory = $true)][string]$VmxPath,
-        [string]$VmrunPath = ''
+        [string]$VmrunPath = '',
+        [switch]$RemoveEmptyBuilderLockDirectories
     )
     if (-not $VmrunPath) {
         foreach ($programRoot in @(${env:ProgramFiles}, ${env:ProgramFiles(x86)})) {
@@ -49,22 +53,25 @@ function Assert-AtlasoTemplatePoweredOff {
     if ((Get-AtlasoPathIdentity -Path $vmx.FullName -Description 'source template') -cne $identity) {
         throw 'The source template identity changed during powered-off verification.'
     }
-    foreach ($lock in @(Get-ChildItem -LiteralPath $vmx.DirectoryName -Filter '*.lck' -Force -ErrorAction Stop)) {
-        # Packer removes lock files after shutdown but can leave their empty
-        # directories. Admit only that residue; never delete or follow a lock.
-        try {
-            $lockHandle = [Atlaso.WorkstationFileIdentity]::ObserveOrdinaryDirectory($lock.FullName)
+    if ($RemoveEmptyBuilderLockDirectories) {
+        foreach ($lock in @(Get-ChildItem -LiteralPath $vmx.DirectoryName -Filter '*.lck' -Force -ErrorAction Stop)) {
+            # This opt-in belongs only to the completed builder, after its output
+            # ownership check. Native deletion is atomic with the emptiness check;
+            # export never cleans or accepts a surviving lock directory.
+            try { [Atlaso.WorkstationFileIdentity]::RemoveEmptyOrdinaryDirectory($lock.FullName) }
+            catch { throw 'The source template has VMware locks; powered-off state is ambiguous.' }
         }
-        catch {
-            throw 'The source template has VMware locks; powered-off state is ambiguous.'
-        }
-        try {
-            if (@(Get-ChildItem -LiteralPath $lock.FullName -Force -ErrorAction Stop).Count -gt 0) {
-                throw 'The source template has VMware locks; powered-off state is ambiguous.'
+        foreach ($running in @(Get-AtlasoWorkstationRunningVmxPath -VmrunPath $VmrunPath -Deadline (Get-Date).AddSeconds(30))) {
+            if ((Get-AtlasoPathIdentity -Path $running -Description 'running VMware VMX') -ceq $identity) {
+                throw 'The completed source template is running. Preserve it and rebuild; export never initializes or repairs templates.'
             }
-            $lockHandle.AssertUnchanged()
         }
-        finally { $lockHandle.Dispose() }
+        if ((Get-AtlasoPathIdentity -Path $vmx.FullName -Description 'source template') -cne $identity) {
+            throw 'The source template identity changed during powered-off verification.'
+        }
+    }
+    if (@(Get-ChildItem -LiteralPath $vmx.DirectoryName -Filter '*.lck' -Force -ErrorAction Stop).Count -gt 0) {
+        throw 'The source template has VMware locks; powered-off state is ambiguous.'
     }
     if (@(Get-ChildItem -LiteralPath $vmx.DirectoryName -Filter '*.vmss' -Force).Count -gt 0 -or
         @(Get-Content -LiteralPath $vmx.FullName | Where-Object { $_ -match '^\s*checkpoint\.vmState\s*=\s*"[^"]+"' }).Count -gt 0) {
