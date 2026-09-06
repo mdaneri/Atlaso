@@ -415,6 +415,46 @@ if ($IsWindows) {
         Remove-Item -LiteralPath $lockPath
         Remove-Item -LiteralPath $lockTarget
     }
+    foreach ($transient in @($false, $true)) {
+        New-Item -ItemType Directory -Path $lockPath | Out-Null
+        & $payloadScope {
+            param($LockPath, $Transient)
+            $script:PopulateLockPath = $LockPath
+            $script:TransientLock = $Transient
+            <#
+            .SYNOPSIS
+            Populate an empty lock directory after its children were enumerated.
+            .PARAMETER LiteralPath
+            Directory to enumerate.
+            .PARAMETER Filter
+            Optional enumeration filter.
+            .PARAMETER Force
+            Include hidden entries.
+            #>
+            function script:Get-ChildItem {
+                [CmdletBinding()]
+                param([string]$LiteralPath, [string]$Filter, [switch]$Force)
+                $entries = @(Microsoft.PowerShell.Management\Get-ChildItem @PSBoundParameters)
+                if ($LiteralPath -ceq $script:PopulateLockPath) {
+                    $child = Join-Path $LiteralPath 'concurrent.lck'
+                    [IO.File]::WriteAllText($child, 'lock')
+                    if ($script:TransientLock) { [IO.File]::Delete($child) }
+                }
+                return $entries
+            }
+        } $lockPath $transient
+        try {
+            Assert-AtlasoTemplatePoweredOff -VmxPath $releaseVmxPath -VmrunPath 'fixture-vmrun'
+            throw 'Concurrent lock-directory population was accepted.'
+        }
+        catch { if ($_.Exception.Message -notlike '*contents changed during admission*') { throw } }
+        finally {
+            & $payloadScope { Remove-Item Function:Get-ChildItem }
+            $child = Join-Path $lockPath 'concurrent.lck'
+            if (Test-Path -LiteralPath $child) { Remove-Item -LiteralPath $child }
+            Remove-Item -LiteralPath $lockPath
+        }
+    }
 }
 try {
     $null = Assert-AtlasoVmwarePayloadProvenance `

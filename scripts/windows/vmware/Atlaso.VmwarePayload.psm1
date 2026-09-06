@@ -53,7 +53,7 @@ function Assert-AtlasoTemplatePoweredOff {
         # Packer removes lock files after shutdown but can leave their empty
         # directories. Admit only that residue; never delete or follow a lock.
         try {
-            $lockHandle = [Atlaso.WorkstationFileIdentity]::OpenOrdinaryDirectory($lock.FullName)
+            $lockHandle = [Atlaso.WorkstationFileIdentity]::ObserveOrdinaryDirectory($lock.FullName)
         }
         catch {
             throw 'The source template has VMware locks; powered-off state is ambiguous.'
@@ -62,6 +62,7 @@ function Assert-AtlasoTemplatePoweredOff {
             if (@(Get-ChildItem -LiteralPath $lock.FullName -Force -ErrorAction Stop).Count -gt 0) {
                 throw 'The source template has VMware locks; powered-off state is ambiguous.'
             }
+            $lockHandle.AssertUnchanged()
         }
         finally { $lockHandle.Dispose() }
     }

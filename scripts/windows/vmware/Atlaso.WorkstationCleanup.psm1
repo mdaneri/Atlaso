@@ -61,6 +61,51 @@ namespace Atlaso
             SafeFileHandle file,
             out ByHandleFileInformation information
         );
+        [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+        private static extern IntPtr FindFirstChangeNotificationW(string path, bool subtree, uint filter);
+        [DllImport("kernel32.dll", SetLastError = true)]
+        private static extern bool FindCloseChangeNotification(IntPtr handle);
+        [DllImport("kernel32.dll", SetLastError = true)]
+        private static extern uint WaitForSingleObject(IntPtr handle, uint milliseconds);
+        public sealed class DirectoryObservation : IDisposable
+        {
+            private SafeFileHandle directory;
+            private IntPtr notification = new IntPtr(-1);
+            public DirectoryObservation(string path)
+            {
+                directory = OpenOrdinaryDirectory(path);
+                // The directory handle pins the final path component. A separate
+                // kernel notification detects child creation/deletion, which a
+                // directory object's sharing mode does not prevent.
+                notification = FindFirstChangeNotificationW(path, false, 0x3);
+                if (notification == new IntPtr(-1))
+                {
+                    int error = Marshal.GetLastWin32Error();
+                    directory.Dispose();
+                    throw new Win32Exception(error);
+                }
+            }
+            public void AssertUnchanged()
+            {
+                uint status = WaitForSingleObject(notification, 0);
+                if (status == 0x102) return; // WAIT_TIMEOUT: no child-name change.
+                if (status == 0xFFFFFFFF) throw new Win32Exception(Marshal.GetLastWin32Error());
+                throw new InvalidOperationException("VMware lock-directory contents changed during admission.");
+            }
+            public void Dispose()
+            {
+                if (notification != new IntPtr(-1))
+                {
+                    FindCloseChangeNotification(notification);
+                    notification = new IntPtr(-1);
+                }
+                directory.Dispose();
+            }
+        }
+        public static DirectoryObservation ObserveOrdinaryDirectory(string path)
+        {
+            return new DirectoryObservation(path);
+        }
         public static SafeFileHandle OpenOrdinaryDirectory(string path)
         {
             // Do not follow a replacement junction or allow rename/reparse writes

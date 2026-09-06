@@ -514,8 +514,10 @@ The powered-off check discovers `vmrun.exe` in the standard `Program Files` or `
 before falling back to `PATH`. Empty ordinary `*.lck` directories left after Packer removes their lock files do not
 block admission and are left untouched. Lock files, nonempty lock directories, reparse points, unavailable inventory,
 running VMs, and suspended state still fail closed.
-The check holds a no-follow Windows directory handle that excludes writes and replacement while enumerating residue;
-it never trusts cached directory attributes from the earlier listing.
+The check pins each directory with a no-follow Windows handle and arms native child-name change notifications before
+enumeration. Any concurrent child creation or deletion blocks admission, including a lock created and removed during
+the check. Directory-object sharing prevents replacement but does not block child writes; the notification supplies
+that detection. Cached attributes from the earlier listing are never trusted.
 A running or ambiguously identified export source is rejected without automatic shutdown or repair. Preserve it and
 rebuild a fresh source through the wrapper. Likewise, preserve and rebuild legacy templates without the contract,
 templates with consumed initialization state, changed payloads, or mismatched software. Never boot an old template to
