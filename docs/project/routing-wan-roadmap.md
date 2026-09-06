@@ -35,6 +35,9 @@ impairment behavior only; they must not be used as an interface classification.
 - IPv4 outbound masquerade NAT rules rendered as the Atlaso-owned `table ip atlaso_nat`, with explicit inbound
   interface/VLAN membership and one distinct outbound target. Legacy unscoped rules remain saved but require review
   before enablement or active NAT apply.
+  Management-handoff rollback retires NAT from legacy snapshots without ingress or physical-identity provenance,
+  while restoring their prior routing, forwarding, and WAN simulation settings. It preserves the original snapshot
+  and persists the normalized runtime for safe boot replay; modern scoped snapshots retain their NAT identity checks.
 - NAT outbound interfaces can be access physical interfaces with IPv4 CIDRs or enabled VLAN interfaces with IPv4 CIDRs;
   NAT eligibility is not inferred from an interface role.
 - IPv4 and IPv6 packet forwarding follow the global Routing switch. NAT is effective only when both Routing and NAT

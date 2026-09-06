@@ -1084,7 +1084,10 @@ def test_management_handoff_applies_and_restores_coupled_wan(monkeypatch):
     Args:
         monkeypatch: Pytest fixture used to isolate helper execution.
     """
+    from contextlib import nullcontext
+
     helper = load_helper_module()
+    monkeypatch.setattr(helper, "_management_handoff_wan_rollback_config", nullcontext)
     calls = []
     monkeypatch.setattr(
         helper,
@@ -1115,7 +1118,10 @@ def test_management_handoff_wan_failure_is_truthful(monkeypatch):
     Args:
         monkeypatch: Pytest fixture used to inject helper failures.
     """
+    from contextlib import nullcontext
+
     helper = load_helper_module()
+    monkeypatch.setattr(helper, "_management_handoff_wan_rollback_config", nullcontext)
     monkeypatch.setattr(helper, "_handle_wan", lambda *_args: 1)
 
     with pytest.raises(ValueError, match="candidate Routes & WAN apply failed"):

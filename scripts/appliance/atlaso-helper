@@ -21638,6 +21638,68 @@ def _apply_management_handoff_wan(payload: dict) -> None:
         raise ValueError("candidate Routes & WAN apply failed")
 
 
+@contextmanager
+def _management_handoff_wan_rollback_config(rollback_path: str):
+    """Retire unprovable legacy NAT without discarding other rollback intent.
+
+    Args:
+        rollback_path: Last-applied WAN snapshot staged for this handoff.
+
+    Yields:
+        Validated original path or an isolated normalized rollback config.
+    """
+    path = _validate_wan_config_path(rollback_path)
+    parsed = _parse_wan_config(path)
+    targets = {target.get("name"): target for target in parsed["targets"]}
+    legacy_nat = False
+    for rule in parsed["nat_rules"]:
+        if not _wan_bool(rule.get("enabled", ""), default=True):
+            continue
+        inbound = [name.strip() for name in rule.get("inbound_interfaces", "").split(",") if name.strip()]
+        names = [*inbound, rule.get("outbound_interface", "")]
+        if not inbound or any(
+            not targets.get(name, {}).get("nat_physical_interface")
+            or not targets.get(name, {}).get("nat_physical_mac")
+            for name in names
+        ):
+            legacy_nat = True
+            break
+    if not legacy_nat:
+        yield path
+        return
+
+    # Never infer old NAT boundaries from the candidate or today's hardware.
+    # Freeze inferred feature gates before retiring NAT so routing still rolls back.
+    settings = _wan_feature_settings(parsed)
+    lines = []
+    section = ""
+    for line in path.read_text(encoding="utf-8").splitlines():
+        stripped = line.strip()
+        if stripped.startswith("[") and stripped.endswith("]"):
+            section = stripped.strip("[]")
+        if section not in {"nat_rules", "feature_settings"}:
+            lines.append(line)
+    lines.extend(["", "[nat_rules]", "", "[feature_settings]"])
+    lines.extend(
+        f"{key}={str(settings[key]).lower()}"
+        for key in ("routing_enabled", "nat_enabled", "wan_simulation_enabled")
+    )
+    # Keep staging beside the admitted snapshot, never in a system temp root.
+    temporary = None
+    try:
+        with tempfile.NamedTemporaryFile(
+            mode="w", encoding="utf-8", suffix=".conf", prefix="wan-rollback-",
+            dir=path.parent, delete=False,
+        ) as handle:
+            temporary = Path(handle.name)
+            handle.write("\n".join(lines) + "\n")
+        os.chmod(temporary, 0o600)
+        yield temporary
+    finally:
+        if temporary is not None:
+            temporary.unlink(missing_ok=True)
+
+
 def _restore_management_handoff_wan(state: dict, commands: list[dict[str, object]]) -> None:
     """Restore the last-applied Routes & WAN runtime when it joined the handoff.
 
@@ -21648,11 +21710,12 @@ def _restore_management_handoff_wan(state: dict, commands: list[dict[str, object
     rollback_path = str(state.get("wan_rollback_config_path") or "")
     if not rollback_path:
         return
-    result = _handle_wan("apply", [rollback_path])
+    with _management_handoff_wan_rollback_config(rollback_path) as config_path:
+        result = _handle_wan("apply", [str(config_path)])
     commands.append(
         {
             "stage": "WAN rollback",
-            "command": ["atlaso-helper", "wan", "apply", rollback_path],
+            "command": ["atlaso-helper", "wan", "apply", str(config_path)],
             "returncode": result,
         }
     )
