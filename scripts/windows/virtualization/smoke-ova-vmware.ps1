@@ -310,6 +310,7 @@ foreach ($ownedDirectory in @($vmRoot, $validationRoot)) {
     }
 }
 $vmStarted = $false
+$providerIdentity = $null
 $vmRootId = Get-AtlasoWindowsFileId -Path $vmRoot
 $vmxId = ''
 Import-Module (Join-Path $repoRoot 'scripts/windows/vmware/Atlaso.WorkstationCleanup.psm1') -Force
@@ -515,9 +516,11 @@ finally {
         }
         $vmRootSafeToRemove = $false
     }
-    if ($vmStarted -and (Get-AtlasoWindowsFileId -Path $vmRoot) -eq $vmRootId) {
+    if ($vmStarted -and $null -ne $providerIdentity -and
+        (Get-AtlasoWindowsFileId -Path $vmRoot) -eq $vmRootId) {
         # Guest-info updates and shutdown also replace the provider-owned VMX.
         # Require the captured NIC identity before accepting its current file ID.
+        # If capture failed, retain the last verified file ID for guarded cleanup.
         $null = Get-AtlasoVmwareSmokeVmxNetworkIdentity -VmxPath $vmxPath `
             -ManagementVmnet $ManagementVmnet -ServiceVmnet $ServiceVmnet `
             -ExpectedIdentity $providerIdentity

@@ -814,4 +814,34 @@ if ($vmwareSmoke.Contains('getGuestIPAddress')) {
     throw 'VMware smoke still trusts the unqualified VMware Tools guest address result.'
 }
 
+# Exercise the actual cleanup guard under StrictMode when startup succeeded but
+# generated-MAC capture failed. It must skip revalidation and retain the VMX ID.
+$smokeAst = [System.Management.Automation.Language.Parser]::ParseInput($vmwareSmoke, [ref]$null, [ref]$null)
+$identityInitializer = $smokeAst.Find({
+        param($node)
+        $node -is [System.Management.Automation.Language.AssignmentStatementAst] -and
+        $node.Left.Extent.Text -eq '$providerIdentity' -and $node.Right.Extent.Text -eq '$null'
+    }, $true)
+if ($null -eq $identityInitializer) {
+    throw 'VMware smoke must initialize provider identity before startup can fail.'
+}
+$cleanupGuard = $smokeAst.Find({
+        param($node)
+        $node -is [System.Management.Automation.Language.IfStatementAst] -and
+        $node.Clauses[0].Item1.Extent.Text.Contains('$vmStarted -and') -and
+        $node.Extent.Text.Contains('-ExpectedIdentity $providerIdentity')
+    }, $true)
+if ($null -eq $cleanupGuard) {
+    throw 'Could not identify VMware smoke cleanup network revalidation.'
+}
+& {
+    . ([scriptblock]::Create($identityInitializer.Extent.Text))
+    $vmStarted = $true
+    $vmxId = 'last-verified-vmx-id'
+    . ([scriptblock]::Create($cleanupGuard.Extent.Text))
+    if ($vmxId -ne 'last-verified-vmx-id') {
+        throw 'Failed network capture replaced the verified cleanup VMX identity.'
+    }
+}
+
 Write-Host 'Hyper-V virtualization artifact contract test passed.'

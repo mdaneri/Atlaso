@@ -527,6 +527,7 @@ unexpected draft fails closed for explicit operator recovery.
 
 The disposable VMware smoke import explicitly binds its adapters to the selected existing VMnets.
 Cleanup uses the shared Workstation inventory and running-VM checks before removing only the owned import.
+If initial network-identity capture fails, cleanup retains the last verified VMX identity to stop the owned import.
 The local smoke import supplies its OVF environment through the shared Workstation serializer,
 with credentials confined to the protected disposable VM directory until first-boot cleanup.
 The smoke check allows 21 minutes after SSH becomes available for the 20-minute storage initialization
