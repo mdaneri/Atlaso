@@ -385,11 +385,31 @@ try {
         ('ethernet1.vnet = "' + $ServiceVmnet + '"')
     )
     [IO.File]::WriteAllLines($vmxPath, $vmxLines, [Text.UTF8Encoding]::new($false))
+    # Local OVF Tool imports do not preserve the supplied OVF environment.
+    # Restrict the disposable VM directory before storing first-boot credentials.
+    Set-Acl -LiteralPath $vmRoot -AclObject $configAcl
+    . (Join-Path $repoRoot 'scripts/windows/vmware/Atlaso.WorkstationFirstBoot.ps1')
+    $ovfEnvironment = New-AtlasoWorkstationOvfEnvironment -Fqdn $fqdn `
+        -AdminPassword $Credential.Password -RootPassword $Credential.Password
+    try {
+        Set-AtlasoWorkstationOvfEnvironment -VmxPath $vmxPath -OvfEnvironment $ovfEnvironment
+    }
+    finally {
+        $ovfEnvironment = $null
+    }
     & $vmrun -T ws start $vmxPath nogui | Out-Null
     if ($LASTEXITCODE -ne 0) {
         throw 'vmrun could not start the imported OVA.'
     }
     $vmStarted = $true
+    # Workstation replaces the VMX while assigning startup metadata. Rebind only
+    # after confirming the invocation-owned directory survived that transition.
+    if ((Get-AtlasoWindowsFileId -Path $vmRoot) -ne $vmRootId) {
+        throw 'The VMware smoke root changed during startup.'
+    }
+    $vmxId = Get-AtlasoWindowsFileId -Path $vmxPath
+    Assert-AtlasoVmwareVmIdentity -DirectoryPath $vmRoot -VmxPath $vmxPath `
+        -Name $Name -DirectoryId $vmRootId -VmxId $vmxId
     # Workstation assigns generated MAC addresses when it first starts the import.
     $providerIdentity = Get-AtlasoVmwareSmokeVmxNetworkIdentity `
         -VmxPath $vmxPath `
@@ -495,6 +515,14 @@ finally {
         }
         $vmRootSafeToRemove = $false
     }
+    if ($vmStarted -and (Get-AtlasoWindowsFileId -Path $vmRoot) -eq $vmRootId) {
+        # Guest-info updates and shutdown also replace the provider-owned VMX.
+        # Require the captured NIC identity before accepting its current file ID.
+        $null = Get-AtlasoVmwareSmokeVmxNetworkIdentity -VmxPath $vmxPath `
+            -ManagementVmnet $ManagementVmnet -ServiceVmnet $ServiceVmnet `
+            -ExpectedIdentity $providerIdentity
+        $vmxId = Get-AtlasoWindowsFileId -Path $vmxPath
+    }
     if ($vmxId -and $vmRootId) {
         try {
             Assert-AtlasoVmwareVmIdentity -DirectoryPath $vmRoot -VmxPath $vmxPath `
@@ -511,6 +539,12 @@ finally {
             $vmRootSafeToRemove = $false
             $cleanupFailure = 'vmrun could not stop the disposable VMware smoke VM; its files were preserved.'
         }
+    }
+    if ($vmStarted -and $vmRootSafeToRemove) {
+        if ((Get-AtlasoWindowsFileId -Path $vmRoot) -ne $vmRootId) {
+            throw 'The VMware smoke root changed during shutdown.'
+        }
+        $vmxId = Get-AtlasoWindowsFileId -Path $vmxPath
     }
     if ($vmRootSafeToRemove -and (Test-Path -LiteralPath $vmxPath)) {
         $runningVmPaths = @(& $vmrun -T ws list 2>$null)
