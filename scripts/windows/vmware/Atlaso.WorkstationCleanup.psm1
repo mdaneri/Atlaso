@@ -61,6 +61,108 @@ namespace Atlaso
             SafeFileHandle file,
             out ByHandleFileInformation information
         );
+        [DllImport("kernel32.dll", SetLastError = true)]
+        private static extern bool SetFileInformationByHandle(
+            SafeFileHandle file, int informationClass, ref byte information, uint size);
+        public static void DiscardStagedFile(SafeFileHandle staged, string source)
+        {
+            // Compare the still-open staging object with a no-follow deletion
+            // handle, so cleanup cannot delete a replacement at the random path.
+            using (SafeFileHandle handle = CreateFileW(source, FileReadAttributes | 0x10000,
+                FileShareRead | FileShareWrite, IntPtr.Zero, OpenExisting, 0x00200000, IntPtr.Zero))
+            {
+                if (handle.IsInvalid) throw new Win32Exception(Marshal.GetLastWin32Error());
+                ByHandleFileInformation expected, actual;
+                if (!GetFileInformationByHandle(staged, out expected) || !GetFileInformationByHandle(handle, out actual))
+                    throw new Win32Exception(Marshal.GetLastWin32Error());
+                if (expected.VolumeSerialNumber != actual.VolumeSerialNumber ||
+                    expected.FileIndexHigh != actual.FileIndexHigh || expected.FileIndexLow != actual.FileIndexLow)
+                    throw new InvalidOperationException("The staged provenance identity changed.");
+                byte delete = 1;
+                if (!SetFileInformationByHandle(handle, 4, ref delete, 1))
+                    throw new Win32Exception(Marshal.GetLastWin32Error());
+            }
+        }
+        private sealed class DirectoryPins : IDisposable
+        {
+            internal readonly System.Collections.Generic.List<SafeFileHandle> Handles =
+                new System.Collections.Generic.List<SafeFileHandle>();
+            public void Dispose()
+            {
+                for (int i = Handles.Count - 1; i >= 0; --i) Handles[i].Dispose();
+                Handles.Clear();
+            }
+        }
+        public static IDisposable PinOrdinaryDirectoryPath(string path)
+        {
+            var pins = new DirectoryPins();
+            try
+            {
+                string fullPath = System.IO.Path.GetFullPath(path);
+                string current = System.IO.Path.GetPathRoot(fullPath);
+                string[] components = fullPath.Substring(current.Length).Split(
+                    new char[] { '\\', '/' }, StringSplitOptions.RemoveEmptyEntries);
+                // Pin from the volume/share root down. Denying delete sharing
+                // prevents ancestor rename/replacement before opening each child;
+                // no-follow attribute checks reject pre-existing junctions too.
+                for (int i = -1; i < components.Length; ++i)
+                {
+                    if (i >= 0) current = System.IO.Path.Combine(current, components[i]);
+                    // LIST_DIRECTORY makes sharing restrictions effective; an
+                    // attributes-only handle does not exclude rename operations.
+                    SafeFileHandle handle = CreateFileW(current, FileReadAttributes | 0x1,
+                        FileShareRead, IntPtr.Zero, OpenExisting,
+                        BackupSemantics | 0x00200000, IntPtr.Zero);
+                    pins.Handles.Add(handle);
+                    if (handle.IsInvalid) throw new Win32Exception(Marshal.GetLastWin32Error());
+                    ByHandleFileInformation information;
+                    if (!GetFileInformationByHandle(handle, out information))
+                        throw new Win32Exception(Marshal.GetLastWin32Error());
+                    if ((information.FileAttributes & 0x10) == 0 ||
+                        (information.FileAttributes & 0x400) != 0)
+                        throw new InvalidOperationException("Expected an ordinary directory path.");
+                }
+                return pins;
+            }
+            catch { pins.Dispose(); throw; }
+        }
+        public static SafeFileHandle PinOrdinaryReadFile(string path)
+        {
+            SafeFileHandle handle = CreateFileW(path, 0x80000000, FileShareRead,
+                IntPtr.Zero, OpenExisting, 0x00200000, IntPtr.Zero);
+            try
+            {
+                if (handle.IsInvalid) throw new Win32Exception(Marshal.GetLastWin32Error());
+                ByHandleFileInformation information;
+                if (!GetFileInformationByHandle(handle, out information))
+                    throw new Win32Exception(Marshal.GetLastWin32Error());
+                if ((information.FileAttributes & (0x10 | 0x400)) != 0)
+                    throw new InvalidOperationException("Expected an ordinary file.");
+                return handle;
+            }
+            catch { handle.Dispose(); throw; }
+        }
+        public static void RemoveEmptyOrdinaryDirectory(string path)
+        {
+            // DELETE access plus a no-follow handle binds deletion to this exact
+            // ordinary directory. The kernel rejects nonempty directories and
+            // delete-pending state excludes new children until handle close.
+            using (SafeFileHandle handle = CreateFileW(path, FileReadAttributes | 0x10000,
+                FileShareRead, IntPtr.Zero, OpenExisting,
+                BackupSemantics | 0x00200000, IntPtr.Zero))
+            {
+                if (handle.IsInvalid) throw new Win32Exception(Marshal.GetLastWin32Error());
+                ByHandleFileInformation information;
+                if (!GetFileInformationByHandle(handle, out information))
+                    throw new Win32Exception(Marshal.GetLastWin32Error());
+                if ((information.FileAttributes & 0x10) == 0 ||
+                    (information.FileAttributes & 0x400) != 0)
+                    throw new InvalidOperationException("Expected an ordinary directory.");
+                byte delete = 1;
+                if (!SetFileInformationByHandle(handle, 4, ref delete, 1))
+                    throw new Win32Exception(Marshal.GetLastWin32Error());
+            }
+        }
         public static string Get(string path)
         {
             using (SafeFileHandle handle = CreateFileW(

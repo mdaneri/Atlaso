@@ -511,7 +511,21 @@ rechecks them after disposable VMware and Hyper-V smoke tests. Protected disk in
 inventories and untouched first-boot state without booting the source.
 
 The powered-off check discovers `vmrun.exe` in the standard `Program Files` or `Program Files (x86)` VMware installation
-before falling back to `PATH`.
+before falling back to `PATH`. After Packer succeeds and output ownership is revalidated, the builder atomically
+removes empty ordinary `*.lck` directories left when Packer deletes their lock files. Only actual directory names
+ending in `.lck` qualify; matches through Windows short-name aliases are preserved. The builder pins the ordinary
+output directory and all ancestors against replacement during ownership admission and through provenance completion.
+Lock retirement also compares the pinned output-directory identity with the identity captured before admission.
+A no-follow Windows deletion
+handle rejects reparse points and files; the kernel refuses nonempty directories and excludes new child creation
+once deletion is pending. The wrapper then rechecks power state and requires no remaining lock entries before
+publishing provenance. It never removes actual lock contents.
+Provenance generation pins the output path and holds ordinary read handles for the VMX and both payload disks,
+excluding writes and deletion throughout hashing, staged-document verification, and publication. It validates a
+temporary document and repeats the strict powered-off/lock check before replacing provenance. A lock appearing
+during either hashing pass preserves existing provenance and cannot leave a new success document.
+Export and retained-template admission remain read-only and reject all lock entries, even empty directories, plus
+unavailable inventory, running VMs, and suspended state.
 A running or ambiguously identified export source is rejected without automatic shutdown or repair. Preserve it and
 rebuild a fresh source through the wrapper. Likewise, preserve and rebuild legacy templates without the contract,
 templates with consumed initialization state, changed payloads, or mismatched software. Never boot an old template to

@@ -583,6 +583,10 @@ The following cross-cutting boundaries always apply:
   deployment initialization through final updates, cleanup, shutdown, and compaction. Never restart a completed source
   template for software installation, provider selection, customization, or export preparation. Require powered-off
   identity and final VMX/payload hashes before export and recheck them after export and disposable-import smokes.
+  Only the ownership-verified successful builder may atomically remove empty ordinary lock directories using
+  no-follow deletion handles. Nonempty directories, lock files, and reparse points fail closed. Recheck power state
+  and require no surviving lock entries before provenance. Export and retained-template admission remain read-only
+  and reject every lock entry, including empty directories.
   Require the schema-v3 completed-template contract and exact verified software identity for retained reuse, candidate
   acceptance, and protected publication. Preserve and reject legacy or consumed templates with rebuild instructions;
   never retrofit them by booting or rewriting provenance. Published releases remain immutable.
