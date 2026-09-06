@@ -273,3 +273,19 @@ def test_initial_and_post_reboot_phases_split_provider_revalidation(
     ) == 0
     assert client.command == ""
     assert "Atlaso hyperv guest smoke test passed." in capsys.readouterr().out
+
+
+def test_readiness_covers_storage_unit_and_outer_command() -> None:
+    """Keep the smoke deadline beyond supported storage startup and inside SSH."""
+    root = Path(__file__).resolve().parents[1]
+    unit = (root / "image/common/systemd/atlaso-data-disks.service").read_text()
+    timeout = next(line.split("=", 1)[1] for line in unit.splitlines()
+                   if line.startswith("TimeoutStartSec="))
+    assert timeout.endswith("min")
+    assert smoke.SERVICE_READINESS_SECONDS >= int(timeout[:-3]) * 60 + 60
+    assert smoke.ROOT_COMMAND_TIMEOUT_SECONDS >= smoke.SERVICE_READINESS_SECONDS + 60
+    for platform in ("vmware", "hyperv"):
+        script = smoke._validation_script(platform)
+        assert str(smoke.SERVICE_READINESS_SECONDS) in script
+        assert "/proc/uptime" in script
+        assert "__READINESS_SECONDS__" not in script

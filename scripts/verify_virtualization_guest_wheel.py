@@ -8,6 +8,7 @@ import configparser
 import csv
 import gzip
 import hashlib
+import importlib.util
 import io
 import json
 import re
@@ -1285,6 +1286,154 @@ def _verify_python_runtime(
     return 2
 
 
+def _bound_guest_tool_tree(disk: Path, mount: str, staging: str) -> None:
+    """Bound the immutable guest tree before exporting any package bytes.
+
+    Args:
+        disk: Read-only system disk.
+        mount: Validated read-only mount command.
+        staging: Absolute offline-package directory.
+    """
+    root_entries = _guestfish(disk, [mount, f"ls {staging}"])
+    if sorted(root_entries) != ["SHA256SUMS", "hyperv", "qemu"]:
+        raise SystemExit("Unexpected template guest-tool root inventory")
+    paths = [(staging, True), (f"{staging}/SHA256SUMS", False)]
+    for provider in ("hyperv", "qemu"):
+        directory = f"{staging}/{provider}"
+        paths.append((directory, True))
+        entries = _guestfish(disk, [mount, f"ls {directory}"])
+        if len(paths) + len(entries) > 256:
+            raise SystemExit("Template guest-tool inventory exceeds verification limits")
+        for name in entries:
+            if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._+-]*\.rpm", name):
+                raise SystemExit("Unexpected template guest-tool package name")
+            paths.append((f"{directory}/{name}", False))
+    commands = [mount]
+    for index, (path, _) in enumerate(paths):
+        commands.extend((f"echo ATLASO-TOOL:{index}", f"lstatns {path}"))
+    records: dict[int, dict[str, int]] = {}
+    current = -1
+    for line in _guestfish(disk, commands):
+        if line.startswith("ATLASO-TOOL:"):
+            current = int(line.split(":", 1)[1])
+            if current in records or current not in range(len(paths)):
+                raise SystemExit("Ambiguous template guest-tool metadata")
+            records[current] = {}
+        elif current >= 0:
+            key, separator, value = line.partition(":")
+            if separator and key in {"st_mode", "st_size"}:
+                if key in records[current]:
+                    raise SystemExit("Duplicate template guest-tool metadata")
+                records[current][key] = int(value.strip())
+    total_bytes = 0
+    for index, (_, directory_expected) in enumerate(paths):
+        record = records.get(index, {})
+        mode, size = record.get("st_mode", 0), record.get("st_size", -1)
+        if size < 0 or (not stat.S_ISDIR(mode) if directory_expected else not stat.S_ISREG(mode)):
+            raise SystemExit("Unsafe template guest-tool entry before export")
+        if not directory_expected:
+            total_bytes += size
+            if not 0 < size < MAXIMUM_TEMPLATE_RPM_BYTES or total_bytes > 1_073_741_824:
+                raise SystemExit("Template guest-tool inventory exceeds verification limits")
+
+
+def _verify_uninitialized_template(disk: Path, filesystem: str, repo_root: Path) -> int:
+    """Independently inspect unconsumed first-boot state in the powered-off OS disk.
+
+    Args:
+        disk: Read-only Photon payload.
+        filesystem: Validated root filesystem device.
+        repo_root: Verifier checkout containing the shared template contract.
+    """
+    specification = importlib.util.spec_from_file_location(
+        "template_state", repo_root / "image/common/scripts/verify-template-state.py"
+    )
+    assert specification is not None and specification.loader is not None
+    verifier = importlib.util.module_from_spec(specification)
+    specification.loader.exec_module(verifier)
+    mount = f"mount-ro {filesystem} /"
+    for name in verifier.FORBIDDEN:
+        result = _guestfish(disk, [mount, f"exists /{name}", f"is-symlink /{name}"])
+        if result != ["false", "false"]:
+            raise SystemExit(f"Exported template contains deployment state: /{name}")
+    ssh_entries = _guestfish(disk, [mount, "ls /etc/ssh"])
+    if any(name.startswith("ssh_host_") for name in ssh_entries):
+        raise SystemExit("Exported template contains generated SSH host identity")
+    _verify_guest_path_metadata(
+        disk, filesystem,
+        {"/usr/bin/vmtoolsd": 0o755, f"/{verifier.STAGING}/SHA256SUMS": 0o600,
+         f"/{verifier.INITIALIZATION_LOCK}": 0o640},
+    )
+    with tempfile.TemporaryDirectory(prefix="atlaso-template-state-") as temporary:
+        if _download_guest_file(disk, filesystem, f"/{verifier.INITIALIZATION_LOCK}",
+                                Path(temporary) / "initialization-lock") != b"":
+            raise SystemExit("Exported template initialization lock is not pristine")
+        archive_path = Path(temporary) / "guest-tools.tar"
+        _bound_guest_tool_tree(disk, mount, f"/{verifier.STAGING}")
+        _guestfish(
+            disk, [mount, f"tar-out /{verifier.STAGING} {archive_path.as_posix()}"]
+        )
+        files = {}
+        directories = set()
+        total_bytes = 0
+        with tarfile.open(archive_path, "r:") as archive:
+            for member_count, member in enumerate(archive, start=1):
+                total_bytes += member.size
+                if total_bytes > 1_073_741_824 or member_count > 256:
+                    raise SystemExit("Template guest-tool inventory exceeds verification limits")
+                name = member.name.removeprefix("./").rstrip("/")
+                if name in {"", "."}:
+                    if (
+                        not member.isdir()
+                        or member.uid != 0
+                        or member.gid != 0
+                        or member.mode != 0o700
+                    ):
+                        raise SystemExit("Unsafe template guest-tool root")
+                    continue
+                if member.uid != 0 or member.gid != 0:
+                    raise SystemExit("Template guest tools are not root-owned")
+                if member.isdir() and member.mode == 0o700 and name not in directories:
+                    directories.add(name)
+                elif (
+                    member.isfile()
+                    and member.mode == 0o600
+                    and name not in files
+                    and 0 < member.size < MAXIMUM_TEMPLATE_RPM_BYTES
+                ):
+                    stream = archive.extractfile(member)
+                    assert stream is not None
+                    files[name] = stream.read()
+                else:
+                    raise SystemExit("Template guest tools contain unsafe entries")
+        if directories != {"hyperv", "qemu"}:
+            raise SystemExit(
+                "Template guest-tool directories are incomplete or unexpected"
+            )
+        verifier.verify_files(files)
+        environment = _download_guest_file(
+            disk, filesystem, "/etc/atlaso/atlaso.env", Path(temporary) / "environment"
+        )
+        for name in (
+            "ATLASO_SECRET_KEY",
+            "ATLASO_SECRETS_KEY",
+            "ATLASO_BOOTSTRAP_ADMIN_PASSWORD",
+        ):
+            matches = [
+                line
+                for line in environment.decode().splitlines()
+                if line.startswith(name + "=")
+            ]
+            if matches != [name + "=INITIALIZATION_REQUIRED"]:
+                raise SystemExit(
+                    "Exported template contains initialized application identity"
+                )
+    return len(files) - 1
+
+
+MAXIMUM_TEMPLATE_RPM_BYTES = 536_870_912
+
+
 def verify_installed_environment(
     asset_root: Path,
     wheel: Path,
@@ -1330,7 +1479,10 @@ def verify_installed_environment(
         runtime_archive_path = Path(temporary) / "bin.tar"
         _guestfish(
             disk,
-            [mount, f"tar-out {(venv / 'bin').as_posix()} {runtime_archive_path.as_posix()}"],
+            [
+                mount,
+                f"tar-out {(venv / 'bin').as_posix()} {runtime_archive_path.as_posix()}",
+            ],
         )
         _verify_runtime_archive(runtime_archive_path, venv, console_scripts)
     system_files_verified = _verify_deployed_system_content(
@@ -1343,7 +1495,12 @@ def verify_installed_environment(
         source_commit,
         repo_root.resolve(strict=True),
     )
+    guest_tool_packages_verified = _verify_uninitialized_template(
+        payloads["photon_os"], _filesystem(payloads["photon_os"]), repo_root
+    )
     return {
+        "guest_tool_packages_verified": guest_tool_packages_verified,
+        "template_state": "uninitialized",
         "schema_version": 1,
         "kind": "atlaso-installed-environment-verification",
         "wheel_sha256": expected_digest,

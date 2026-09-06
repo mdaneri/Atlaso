@@ -13,6 +13,22 @@ Atlaso builds and validates one appliance template with VMware Workstation. A re
 canonical OVA for VMware, Proxmox VE, and KVM, plus one Hyper-V ZIP converted from the same OVA payload. The import
 helpers normalize target-specific VM configuration without changing the source OVA.
 
+The lifecycle is **verify published software → construct the complete template → verify and shut down → export →
+test disposable imports**. The published application wheel and complete CPython 3.14 wheelhouse are installed during
+construction. After final shutdown and compaction, the source template never restarts for software installation,
+provider selection, customization, or export preparation. Export and smoke tests revalidate its final hashes.
+
+| Platform | Completed template | Deployed first boot |
+| --- | --- | --- |
+| VMware | Installed `open-vm-tools` | Retain and enable VMware Tools |
+| KVM/QEMU/Proxmox | QEMU agent RPM and complete verified offline dependencies | Install locally and enable the agent |
+| Hyper-V | Photon Hyper-V RPMs and complete verified offline dependencies | Install locally and enable required daemons |
+
+All tools survive construction, final Photon updates, cleanup, and export. Only deployed appliances select a provider
+and remove unused packages. The selector installs from the verified local RPM closures, verifies required services,
+and commits selection before retryable staging cleanup. A failed detection, install, or service check blocks application
+readiness. See [first boot guest-agent selection](#first-boot-guest-agent-selection) for the transaction behavior.
+
 The guest-neutral Photon provisioner installs Atlaso's system-wide PowerShell profile in the canonical root reported
 by the reviewed package layout. Current images use `/usr/share/powershell`; the older
 `/opt/microsoft/powershell/7` root remains an explicitly supported compatibility layout. VMware builds and derived
@@ -55,6 +71,17 @@ records the snapshot inventory digest in schema-v3 VMX provenance. OVA export re
 derived only from the validated OVA and therefore inherits it. Protected finalization still verifies the signed
 software-source sidecar, privileged assets, artifact bytes, and publication identity independently. Those checks are
 defense in depth around the source-bound producer output, not a replacement for the snapshot boundary.
+
+Schema-v3 also carries `template_contract`: schema version `1`, state `uninitialized`, and the exact verified
+`software_source` identity. That identity binds the software tag, version, source commit, manifest and bundle digests,
+application-wheel path and digest, and `cp314` ABI. It is copied into OVA provenance and required during retained
+template reuse, candidate validation, and protected publication. Protected read-only disk inspection additionally
+checks the guest-tool inventories and absence of consumed provider selection, OVF customization, HTTPS initialization,
+machine IDs, SSH host keys, and application identity. Provenance alone cannot replace those disk checks.
+
+Older schema-v3 templates without this contract, previously booted templates, changed disks, mismatched software, and
+incomplete retained candidates are preserved and rejected with rebuild instructions. Never retrofit them by starting
+them or rewriting their provenance. Existing published release bytes remain immutable.
 
 The shared machine contract is UEFI with Secure Boot disabled, four virtual CPUs, 4096 MiB RAM, two NICs, one SCSI
 controller, and four ordered disks:
@@ -248,6 +275,12 @@ as created by that invocation.
 
 ## First boot guest-agent selection
 
+Atlaso retains its checksum-pinned QEMU guest-agent build. Photon 5.0's published `qemu` build disables the guest
+agent, so installing that emulator package does not supply the required `qemu-ga` daemon. Atlaso builds only the agent
+RPM from the pinned upstream source and stages its complete Photon dependency closure; it does not add the full
+emulator to the appliance. See the [Photon QEMU specification](https://github.com/vmware/photon/blob/5.0/SPECS/qemu/qemu.spec)
+and the checked-in `image/common/guest-agents` build inputs.
+
 The image carries locked offline RPM closures under `/var/lib/atlaso/first-boot-packages`. A provider-neutral service
 runs before data-disk initialization, networking handoff, nginx, Atlaso, and the worker. It does not use a network
 repository. Both the canonical VMware producer and its derived Hyper-V artifact therefore inherit the same shared
@@ -354,7 +387,8 @@ python -m pip install --require-hashes --requirement requirements-virtualization
 ./scripts/windows/vmware/export-ovf.ps1 -Prerelease
 ```
 
-The command verifies and extracts the exact published software bundle, builds the canonical VMware template, derives
+The command verifies and extracts the exact published software bundle, installs it while building the canonical
+VMware template, exports that checked powered-off template directly, derives
 Hyper-V from that OVA, runs both Windows smokes, creates the annotated tag before the draft Release, uploads without
 clobbering, and waits for the exact newly dispatched hosted-finalizer run to succeed before verifying publication.
 The intermediate VMware builder uses a deterministic version-and-source-commit identity and records that identity in
@@ -374,9 +408,24 @@ selector file, prefers the checkout-local current-user DPAPI service-account tok
 discovers a standard Windows x64 CPython 3.14 runtime. The retained `-StagingRoot`, `-ManagementSwitch`,
 `-ServiceSwitch`, `-OnePasswordEnvironmentId`, `-OnePasswordServiceAccountTokenFile`, `-OnePasswordAccount`, and
 `-OnePasswordPython` parameters remain authoritative overrides.
-The resolved credential selectors are forwarded unchanged to both the fresh image build and exact-wheel deployment.
+The resolved credential selectors are forwarded unchanged to the fresh image build. The producer performs no
+post-build address discovery or SSH wheel deployment on the source template.
 The image-builder handoff uses named parameters and deliberately leaves both `SecureString` credential parameters
 unbound so the reviewed 1Password defaults remain authoritative.
+
+For production-path acceptance without creating a virtualization tag or Release, use the matching signed software
+release from its clean source checkout:
+
+```powershell
+./scripts/windows/vmware/export-ovf.ps1 -Prerelease -CandidateOnly
+```
+
+Before merge, validate development construction and deployment using PR-owned test VMs. Protected candidate production
+still requires the matching successful `main` software release; do not weaken that binding to test a feature branch.
+Both Windows smokes import separate disposable VMware and Hyper-V VMs, verify offline provider initialization,
+unique identity, cleanup, services and host-facing `/openapi.json`, then reboot and recheck persistent readiness.
+The source stays powered off and its VMX and payload hashes must remain unchanged after export and smoke completion.
+These Windows checks establish candidate acceptance. Actual KVM and Proxmox tests remain mandatory for stable promotion.
 
 New builders live directly at `<StagingRoot>\<rc-tag>\<builder-name>\<builder-name>.vmx`; the redundant `vmware-build`
 directory is omitted. Canonical names, ownership manifests, output claims, and provenance are unchanged. A retained
@@ -404,6 +453,13 @@ and byte-validates the complete cached software source against freshly downloade
 retained candidate is independently
 revalidated and reused byte-for-byte; only an absent candidate enters the image-build, OVA-export, and Hyper-V
 conversion path. Pre-verification network downloads are invocation-temporary and never reused after interruption.
+Repeat the same `-Prerelease -CandidateOnly` command to reuse an exact valid candidate, or omit `-CandidateOnly` only
+when publication is intended. If verification rejects retained software, template, or candidate state, preserve that
+operation for diagnosis and rebuild under a new explicitly selected owned staging root. A running source, unprovable
+power state, consumed initialization marker, or incompatible contract cannot be repaired by starting or SSH-deploying
+to the template. See the
+[Photon image guide](https://github.com/mdaneri/Atlaso/blob/main/image/vmware-workstation/README.md#completed-template-lifecycle)
+for the explicit verified software input and construction checks.
 Before signing, the hosted finalizer requires the OVA provenance's software tag, manifest, bundle, application-wheel, and
 Python-ABI fields to exactly match the verified software-source sidecar. A retry after only one signed-index file was
 uploaded reconstructs the deterministic pair, verifies the retained byte without clobbering it, and uploads only the
@@ -468,3 +524,16 @@ sanitize it after its single `--ephemeral` job. If a retry finds a complete exis
 its exact candidate asset inventory and routes it directly back to protected finalization; it never schedules a fresh
 ephemeral Windows build whose timestamp-bearing bytes could conflict with the retained draft. An incomplete or
 unexpected draft fails closed for explicit operator recovery.
+
+The disposable VMware smoke import explicitly binds its adapters to the selected existing VMnets.
+Cleanup uses the shared Workstation inventory and running-VM checks before removing only the owned import.
+If initial network-identity capture fails, cleanup retains the last verified VMX identity to stop the owned import.
+After shutdown, cleanup verifies the captured directory inventory and VMX contents before accepting a replacement
+VMX; only shutdown-status flags may change. Unexpected replacements or added files are preserved and fail cleanup.
+The protected read-only verifier checks offline-package names, entry types, sizes, and the 256-entry limit
+(including directories) before exporting the guest-tool tree, then rechecks the archive inventory.
+The local smoke import supplies its OVF environment through the shared Workstation serializer,
+with credentials confined to the protected disposable VM directory until first-boot cleanup.
+The smoke check allows 21 minutes after SSH becomes available for the 20-minute storage initialization
+window plus application readiness, with a 22-minute outer SSH-command timeout;
+a readiness timeout reports service states and still fails acceptance.

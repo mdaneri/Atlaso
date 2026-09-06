@@ -570,7 +570,9 @@ def _validate_evidence(
     vmware_names = {
         path.name
         for path in asset_root.iterdir()
-        if path.name.lower().endswith((".ova", ".ovf", ".mf", ".vmdk", "-provenance.json"))
+        if path.name.lower().endswith(
+            (".ova", ".ovf", ".mf", ".vmdk", "-provenance.json")
+        )
     }
     # The protected signer independently opens the OVA, validates its manifest,
     # topology, payload digests, and embedded provenance, and requires every
@@ -624,6 +626,16 @@ def _validate_evidence(
     ):
         raise SystemExit(
             "OVA provenance does not bind the exact software-release source evidence"
+        )
+    contract = provenance.get("template_contract")
+    if (
+        not isinstance(contract, dict)
+        or contract.get("schema_version") != 1
+        or contract.get("state") != "uninitialized"
+        or contract.get("software_source") != source
+    ):
+        raise SystemExit(
+            "OVA lacks matching uninitialized-template construction evidence"
         )
     ova = next(asset_root.glob("*.ova"))
     hyperv = asset_root / f"atlaso-v{version}-hyperv-x86_64.zip"

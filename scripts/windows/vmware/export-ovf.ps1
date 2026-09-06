@@ -1325,6 +1325,8 @@ Atlaso repository containing the recorded source commit.
 Normalized OVF descriptor whose payload references are recorded.
 .PARAMETER SourceCommit
 Exact clean source commit from VMware build provenance.
+.PARAMETER TemplateContract
+Completed source-template construction contract.
 .PARAMETER VirtualizationSourceMetadata
 Optional verified software-release source metadata bound into the OVA.
 #>
@@ -1333,6 +1335,7 @@ function Write-AtlasoOvaProvenance {
         [Parameter(Mandatory = $true)][string]$RepoRoot,
         [Parameter(Mandatory = $true)][string]$OvfPath,
         [Parameter(Mandatory = $true)][string]$SourceCommit,
+        [Parameter(Mandatory = $true)][psobject]$TemplateContract,
         [string]$VirtualizationSourceMetadata = ''
     )
 
@@ -1400,6 +1403,7 @@ function Write-AtlasoOvaProvenance {
         }
     }
     $provenance = [ordered]@{
+        template_contract = $TemplateContract
         schema_version  = 1
         kind            = 'atlaso-vmware-ova-provenance'
         product_version = $versionMatch.Groups['version'].Value
@@ -1420,6 +1424,7 @@ function Write-AtlasoOvaProvenance {
             throw 'Virtualization source metadata must be an ordinary file.'
         }
         $source = Get-Content -LiteralPath $sourceItem.FullName -Raw | ConvertFrom-Json
+        Assert-AtlasoTemplateSoftwareIdentity -TemplateContract $TemplateContract -SoftwareSource $source
         if ($source.schema_version -ne 1 -or
             $source.kind -ne 'atlaso-virtualization-source' -or
             $source.version -ne $provenance.product_version -or
@@ -1815,6 +1820,7 @@ if ([string]::IsNullOrWhiteSpace($SourceVmxPath)) {
     throw 'Low-level OVF export requires an explicit -SourceVmxPath with verified builder provenance.'
 }
 $resolvedSourceVmx = (Resolve-Path -LiteralPath $SourceVmxPath).Path
+Assert-AtlasoTemplatePoweredOff -VmxPath $resolvedSourceVmx
 $releaseTag = ''
 $buildProvenance = $null
 if ($publishReleaseAssets) {
@@ -1822,9 +1828,17 @@ if ($publishReleaseAssets) {
     $buildProvenance = Assert-AtlasoReleaseProvenance -RepoRoot $repoRoot -Tag $releaseTag -SourceVmxPath $resolvedSourceVmx
 }
 else {
-    $buildProvenance = Assert-AtlasoVmwarePayloadProvenance -VmxPath $resolvedSourceVmx
+    $buildProvenance = Assert-AtlasoVmwarePayloadProvenance -VmxPath $resolvedSourceVmx -RequireTemplate
 }
 $callerSpecifiedOutputDirectory = $PSBoundParameters.ContainsKey('OutputDirectory')
+if ($VirtualizationSourceMetadata) {
+    $sourceItem = Get-Item -LiteralPath $VirtualizationSourceMetadata -ErrorAction Stop
+    if ($sourceItem.PSIsContainer -or ($sourceItem.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) {
+        throw 'Virtualization source metadata must be an ordinary file.'
+    }
+    $exportSource = Get-Content -LiteralPath $sourceItem.FullName -Raw | ConvertFrom-Json
+    Assert-AtlasoTemplateSoftwareIdentity -TemplateContract $buildProvenance.template_contract -SoftwareSource $exportSource
+}
 $outputPlan = Resolve-AtlasoOvfOutputPlan `
     -RepoRoot $repoRoot `
     -OutputDirectory $OutputDirectory `
@@ -1837,11 +1851,14 @@ $resolvedTar = if ($NoOva) { '' } else { Resolve-TarPath -Path $TarPath }
 Clear-AtlasoOvfOutputDirectory -OutputPlan $outputPlan -Release:$publishReleaseAssets -Force:$Force
 New-Item -ItemType Directory -Force -Path $resolvedOutputDirectory | Out-Null
 
+Assert-AtlasoTemplatePoweredOff -VmxPath $resolvedSourceVmx
 & $resolvedOvfTool --acceptAllEulas $resolvedSourceVmx $resolvedOutputDirectory
 if ($LASTEXITCODE -ne 0) {
     throw "ovftool failed with exit code $LASTEXITCODE."
 }
 
+$null = Assert-AtlasoVmwarePayloadProvenance -VmxPath $resolvedSourceVmx -RequireTemplate
+Assert-AtlasoTemplatePoweredOff -VmxPath $resolvedSourceVmx
 $ovfPath = Get-OvfDescriptorPath -OutputDirectory $resolvedOutputDirectory
 $ovfPackageDirectory = Split-Path -Parent $ovfPath
 Add-AtlasoOvfProperties -OvfPath $ovfPath -Name $Name
@@ -1851,6 +1868,7 @@ Assert-AtlasoCanonicalOvf -RepoRoot $repoRoot -OvfPath $ovfPath
 $provenancePath = Write-AtlasoOvaProvenance `
     -RepoRoot $repoRoot `
     -OvfPath $ovfPath `
+    -TemplateContract $buildProvenance.template_contract `
     -SourceCommit ([string]$buildProvenance.source_commit) `
     -VirtualizationSourceMetadata $VirtualizationSourceMetadata
 $manifestPath = Update-OvfManifest -OvfDirectory $ovfPackageDirectory

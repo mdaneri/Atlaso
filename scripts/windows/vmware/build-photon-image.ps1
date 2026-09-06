@@ -85,6 +85,8 @@ Select a deterministic local/test builder identity that requires no pull request
 Optional collision-safe suffix for concurrent pull-request or local/test builders.
 .PARAMETER ReleaseBuilder
 Select the protected version-and-commit-bound release builder identity.
+.PARAMETER VirtualizationSourceDirectory
+Prepared signed software directory installed during construction; required for release builders.
 .PARAMETER ReleaseVersion
 Strict synchronized version for a protected release builder.
 .PARAMETER ReleaseSourceCommit
@@ -231,6 +233,7 @@ param(
     [switch]$LocalBuilder,
     [string]$CollisionSuffix = '',
     [switch]$ReleaseBuilder,
+    [string]$VirtualizationSourceDirectory = '',
     [string]$ReleaseVersion = '',
     [string]$ReleaseSourceCommit = '',
     [ValidateRange(1, [long]::MaxValue)]
@@ -1036,6 +1039,10 @@ function Complete-AtlasoPhotonBuildCleanup {
             $ExpectedRootIdentity) {
             throw 'Photon cleanup root identity changed immediately before deletion.'
         }
+        $softwareRoot = Join-Path $resolvedRoot 'sensitive-build\software'
+        if (Test-Path -LiteralPath $softwareRoot -PathType Container) {
+            Unprotect-AtlasoSourceSnapshot -Root $softwareRoot
+        }
         $snapshotRoot = Join-Path $resolvedRoot 'sensitive-build\source'
         if (Test-Path -LiteralPath $snapshotRoot -PathType Container) {
             Unprotect-AtlasoSourceSnapshot -Root $snapshotRoot
@@ -1620,6 +1627,9 @@ else {
         -PendingRoot $builderReservationPendingRoot `
         -StateIdentity $BuilderHandoffStateIdentity `
         -PendingIdentity $BuilderHandoffPendingIdentity
+}
+if ($ReleaseBuilder -and [string]::IsNullOrWhiteSpace($VirtualizationSourceDirectory)) {
+    throw 'Release construction requires -VirtualizationSourceDirectory. Rebuild with verified published software; do not boot a completed template.'
 }
 $identityRepositoryRoot = if ($CredentialChild) {
     if ([string]::IsNullOrWhiteSpace($TaskRepositoryRoot)) {
@@ -2224,6 +2234,26 @@ else {
                 $recheckedTaskSourceIdentity.Branch -cne $taskSourceBranch)) {
             throw 'The VMware image build source checkout changed during snapshot admission.'
         }
+        $softwareSnapshot = $null
+        if ($VirtualizationSourceDirectory) {
+            $softwareRoot = Join-Path $childSensitiveBuildDirectory 'software'
+            # Signature verification precedes copying; reauthentication of the copy
+            # closes input changes during transfer before denying write access.
+            $verifySoftwareArguments = @(
+                (Join-Path $sourceSnapshot.Root 'scripts\prepare_virtualization_source.py'),
+                '--verify-existing', $VirtualizationSourceDirectory,
+                '--trust-key', (Join-Path $sourceSnapshot.Root 'image\common\update-trust\atlaso-release-2026-01.pem'),
+                '--expected-version', $ReleaseVersion, '--expected-commit', $sourceSnapshot.Commit
+            )
+            & python @verifySoftwareArguments | Out-Null
+            if ($LASTEXITCODE -ne 0) { throw 'Published software input authentication failed.' }
+            Copy-Item -LiteralPath $VirtualizationSourceDirectory -Destination $softwareRoot -Recurse -ErrorAction Stop
+            $verifySoftwareArguments[2] = $softwareRoot
+            & python @verifySoftwareArguments | Out-Null
+            if ($LASTEXITCODE -ne 0) { throw 'Staged published software authentication failed.' }
+            $softwareSnapshot = Get-AtlasoSourceSnapshotInventory -Root $softwareRoot
+            $null = Protect-AtlasoSourceSnapshot -Root $softwareRoot -ExpectedSha256 $softwareSnapshot.Sha256 -ExpectedFileCount $softwareSnapshot.FileCount
+        }
         $null = Protect-AtlasoSourceSnapshot `
             -Root $sourceSnapshot.Root `
             -ExpectedSha256 $sourceSnapshot.Sha256 `
@@ -2292,6 +2322,9 @@ else {
             '-SourceInventorySha256', $sourceSnapshot.Sha256,
             '-SourceInventoryFileCount', $sourceSnapshot.FileCount.ToString()
         )
+        if ($null -ne $softwareSnapshot) {
+            $childArguments += @('-VirtualizationSourceDirectory', $softwareSnapshot.Root)
+        }
         if ($ReleaseBuilder) {
             $childArguments += @('-VerifiedSourceCommit', $builderIdentity.SourceCommit)
         }
@@ -2303,6 +2336,7 @@ else {
             )
         }
         $excludedParameters = @(
+            'VirtualizationSourceDirectory',
             'SshPassword', 'BootstrapAdminPassword',
             'PipGlobalIndex', 'PipGlobalIndexUrl',
             'OnePasswordEnvironmentId', 'EnvironmentIdFile',
@@ -2681,6 +2715,8 @@ Commit-derived source tree used by Packer.
 Deterministic staged-source inventory SHA-256.
 .PARAMETER SourceInventoryFileCount
 Number of regular files in the staged-source inventory.
+.PARAMETER SoftwareSource
+Authenticated published software identity, or null for development source builds.
 .PARAMETER BuilderIdentity
 Validated task, local/test, or release identity bound to the output and VMX.
 #>
@@ -2693,7 +2729,8 @@ function Write-AtlasoVmwareBuildProvenance {
         [Parameter(Mandatory = $true)][string]$SourceSnapshotRoot,
         [Parameter(Mandatory = $true)][ValidatePattern('^[0-9a-f]{64}$')][string]$SourceInventorySha256,
         [Parameter(Mandatory = $true)][ValidateRange(1, [int]::MaxValue)][int]$SourceInventoryFileCount,
-        [Parameter(Mandatory = $true)][psobject]$BuilderIdentity
+        [Parameter(Mandatory = $true)][psobject]$BuilderIdentity,
+        [AllowNull()][psobject]$SoftwareSource = $null
     )
 
     $null = $RepoRoot
@@ -2711,6 +2748,7 @@ function Write-AtlasoVmwareBuildProvenance {
     $vmx = Get-Item -LiteralPath $resolvedVmx -ErrorAction Stop
     $payloadLayout = @(Get-AtlasoVmwarePayloadLayout -VmxPath $vmx.FullName -RequireExactlyTwoVmdks)
     $provenance = [ordered]@{
+        template_contract    = [ordered]@{ schema_version = 1; state = 'uninitialized'; software_source = $SoftwareSource }
         schema_version       = 3
         source_commit        = $SourceCommit
         tracked_source_dirty = $false
@@ -3056,10 +3094,30 @@ if (-not $ValidateOnly -and -not $PrepareIsoOnly -and -not $SkipNetworkCheck) {
     }
 }
 
+$softwareManifestSha256 = ''
+$softwareSource = $null
+$softwareInventory = $null
+if ($VirtualizationSourceDirectory) {
+    $expectedSoftwareRoot = [System.IO.Path]::GetFullPath((Join-Path $sensitiveBuildRoot 'software'))
+    if (-not ([System.IO.Path]::GetFullPath($VirtualizationSourceDirectory)).Equals($expectedSoftwareRoot, [StringComparison]::OrdinalIgnoreCase)) {
+        throw 'Published software escaped the invocation-owned input root.'
+    }
+    $sourceJson = & python (Join-Path $SourceSnapshotRoot 'scripts\prepare_virtualization_source.py') `
+        --verify-existing $VirtualizationSourceDirectory `
+        --trust-key (Join-Path $SourceSnapshotRoot 'image\common\update-trust\atlaso-release-2026-01.pem') `
+        --expected-version $ReleaseVersion --expected-commit $SourceCommit
+    if ($LASTEXITCODE -ne 0) { throw 'Published software changed before Packer admission.' }
+    $softwareSource = ($sourceJson -join [Environment]::NewLine) | ConvertFrom-Json
+    $softwareManifestSha256 = [string]$softwareSource.release_manifest_sha256
+    $softwareInventory = Get-AtlasoSourceSnapshotInventory -Root $VirtualizationSourceDirectory
+}
 $packerVariables = @{
     vmnet_name         = $VmnetName
     service_vmnet_name = $ServiceVmnetName
     headless           = [bool]$Headless
+    virtualization_source_directory = $VirtualizationSourceDirectory
+    software_manifest_sha256 = $softwareManifestSha256
+    software_source_commit = $SourceCommit
     source_root        = $SourceSnapshotRoot
 }
 
@@ -3271,6 +3329,10 @@ if (-not $ValidateOnly -and -not $PrepareIsoOnly) {
         -Path $builderIdentityManifestPath `
         -OutputDirectory $workstationOutputDirectory `
         -Identity $builderIdentity
+    if ($null -ne $softwareInventory) {
+        $null = Assert-AtlasoSourceSnapshot -Root $softwareInventory.Root -ExpectedSha256 $softwareInventory.Sha256 -ExpectedFileCount $softwareInventory.FileCount
+    }
+    Assert-AtlasoTemplatePoweredOff -VmxPath (Join-Path $workstationOutputDirectory "$VmName.vmx") -VmrunPath $VmrunPath
     Write-AtlasoVmwareBuildProvenance `
         -OutputDirectory $workstationOutputDirectory `
         -VmName $VmName `
@@ -3279,7 +3341,8 @@ if (-not $ValidateOnly -and -not $PrepareIsoOnly) {
         -SourceSnapshotRoot $SourceSnapshotRoot `
         -SourceInventorySha256 $SourceInventorySha256 `
         -SourceInventoryFileCount $SourceInventoryFileCount `
-        -BuilderIdentity $builderIdentity
+        -BuilderIdentity $builderIdentity `
+        -SoftwareSource $softwareSource
 }
 }
 finally {

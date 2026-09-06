@@ -166,6 +166,7 @@ def stage(
             )
         sources.append(source)
         source_document = _json_object(source, "software release source metadata")
+        verify_template_contract(ova_root, source_document)
         if (
             source_document.get("schema_version") != 1
             or source_document.get("kind") != "atlaso-virtualization-source"
@@ -284,9 +285,7 @@ def verify_staged_candidate(
         raise SystemExit("retained candidate contains a non-file or symlink entry")
 
     names = {path.name for path in entries}
-    vmware_names = {
-        name for name in names if name.lower().endswith(VMWARE_SUFFIXES)
-    }
+    vmware_names = {name for name in names if name.lower().endswith(VMWARE_SUFFIXES)}
     verify_vmware_release_assets(
         root,
         vmware_names,
@@ -332,6 +331,7 @@ def verify_staged_candidate(
             "retained software release source metadata does not match the candidate identity"
         )
 
+    verify_template_contract(root, source_document)
     for helper in RELEASE_HELPERS:
         helper_source = _ordinary_asset(helper, "virtualization import helper")
         if _sha256(helper_source) != _sha256(root / helper.name):
@@ -368,6 +368,26 @@ def _ordinary_sources(paths: list[Path]) -> list[Path]:
     """
 
     return [_ordinary_asset(path, "VMware OVA package asset") for path in paths]
+
+
+def verify_template_contract(root: Path, source: dict) -> None:
+    """Reject legacy or differently bound candidates without changing their bytes.
+
+    Args:
+        root: Validated flat OVF package directory.
+        source: Freshly authenticated software-source identity.
+    """
+    provenance = _json_object(root / "atlaso-provenance.json", "OVA provenance")
+    contract = provenance.get("template_contract")
+    if (
+        not isinstance(contract, dict)
+        or contract.get("schema_version") != 1
+        or contract.get("state") != "uninitialized"
+        or contract.get("software_source") != source
+    ):
+        raise SystemExit(
+            "Candidate lacks matching uninitialized-template evidence; preserve it and rebuild"
+        )
 
 
 def main(argv: list[str] | None = None) -> int:

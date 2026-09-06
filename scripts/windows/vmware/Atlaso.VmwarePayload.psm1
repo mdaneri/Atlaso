@@ -4,9 +4,85 @@ Validate canonical Atlaso VMware payload layout and build provenance.
 #>
 
 Set-StrictMode -Version Latest
+Import-Module (Join-Path $PSScriptRoot 'Atlaso.WorkstationReadiness.psm1')
+Import-Module (Join-Path $PSScriptRoot 'Atlaso.WorkstationCleanup.psm1')
 
 $script:PhotonPayloadBytes = 40GB
 $script:SystemPayloadBytes = 20GB
+
+<#
+.SYNOPSIS
+Prove a completed template is inactive without starting or stopping it.
+.PARAMETER VmxPath
+Exact source template whose inactive state is required.
+.PARAMETER VmrunPath
+Optional VMware vmrun executable; discovered from the standard installation otherwise.
+#>
+function Assert-AtlasoTemplatePoweredOff {
+    param(
+        [Parameter(Mandatory = $true)][string]$VmxPath,
+        [string]$VmrunPath = ''
+    )
+    if (-not $VmrunPath) {
+        foreach ($programRoot in @(${env:ProgramFiles}, ${env:ProgramFiles(x86)})) {
+            if ([string]::IsNullOrWhiteSpace($programRoot)) { continue }
+            $candidate = Join-Path $programRoot 'VMware\VMware Workstation\vmrun.exe'
+            if (Test-Path -LiteralPath $candidate -PathType Leaf) {
+                $VmrunPath = $candidate
+                break
+            }
+        }
+        if (-not $VmrunPath) {
+            $VmrunPath = (Get-Command vmrun -CommandType Application -ErrorAction Stop).Source
+        }
+    }
+    $vmx = Get-Item -LiteralPath $VmxPath -ErrorAction Stop
+    if (($vmx.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) {
+        throw 'The source template VMX must be an ordinary file.'
+    }
+    $identity = Get-AtlasoPathIdentity -Path $vmx.FullName -Description 'source template'
+    foreach ($running in @(Get-AtlasoWorkstationRunningVmxPath -VmrunPath $VmrunPath -Deadline (Get-Date).AddSeconds(30))) {
+        if ((Get-AtlasoPathIdentity -Path $running -Description 'running VMware VMX') -ceq $identity) {
+            throw 'The completed source template is running. Preserve it and rebuild; export never initializes or repairs templates.'
+        }
+    }
+    if ((Get-AtlasoPathIdentity -Path $vmx.FullName -Description 'source template') -cne $identity) {
+        throw 'The source template identity changed during powered-off verification.'
+    }
+    if (@(Get-ChildItem -LiteralPath $vmx.DirectoryName -Filter '*.lck' -Force).Count -gt 0) {
+        throw 'The source template has VMware locks; powered-off state is ambiguous.'
+    }
+    if (@(Get-ChildItem -LiteralPath $vmx.DirectoryName -Filter '*.vmss' -Force).Count -gt 0 -or
+        @(Get-Content -LiteralPath $vmx.FullName | Where-Object { $_ -match '^\s*checkpoint\.vmState\s*=\s*"[^"]+"' }).Count -gt 0) {
+        throw 'The source template has suspended state; rebuild a fully shut-down template.'
+    }
+}
+
+<#
+.SYNOPSIS
+Bind export inputs to the software installed during template construction.
+.PARAMETER TemplateContract
+Completed-template contract from validated builder provenance.
+.PARAMETER SoftwareSource
+Verified software-source metadata selected for this export.
+#>
+function Assert-AtlasoTemplateSoftwareIdentity {
+    param(
+        [Parameter(Mandatory = $true)][psobject]$TemplateContract,
+        [Parameter(Mandatory = $true)][psobject]$SoftwareSource
+    )
+    $boundSource = $TemplateContract.software_source
+    if ($null -eq $boundSource -or
+        @($boundSource.PSObject.Properties).Count -ne @($SoftwareSource.PSObject.Properties).Count) {
+        throw 'The template lacks exact construction-time software-source evidence. Preserve it and rebuild.'
+    }
+    foreach ($property in $SoftwareSource.PSObject.Properties) {
+        $boundProperty = $boundSource.PSObject.Properties[$property.Name]
+        if ($null -eq $boundProperty -or [string]$boundProperty.Value -cne [string]$property.Value) {
+            throw 'The template contains different software-source evidence. Preserve it and rebuild.'
+        }
+    }
+}
 
 <#
 .SYNOPSIS
@@ -138,6 +214,8 @@ Optional explicit provenance document path.
 Optional exact source commit required by a release caller.
 .PARAMETER RequireCleanSource
 Reject provenance recorded from a dirty tracked source tree.
+.PARAMETER RequireTemplate
+Require the completed uninitialized template contract.
 .PARAMETER RequireReleaseBuilder
 Reject provenance that was not produced by a protected release builder.
 #>
@@ -147,7 +225,8 @@ function Assert-AtlasoVmwarePayloadProvenance {
         [string]$ProvenancePath = '',
         [string]$ExpectedSourceCommit = '',
         [switch]$RequireCleanSource,
-        [switch]$RequireReleaseBuilder
+        [switch]$RequireReleaseBuilder,
+        [switch]$RequireTemplate
     )
 
     $vmx = Get-Item -LiteralPath $VmxPath -ErrorAction Stop
@@ -184,6 +263,20 @@ function Assert-AtlasoVmwarePayloadProvenance {
     }
     if ($RequireCleanSource -and [bool]$provenance.tracked_source_dirty) {
         throw 'VMware build provenance records a dirty tracked source tree.'
+    }
+    if ($RequireTemplate -or $RequireReleaseBuilder) {
+        if ($RequireReleaseBuilder -and [string]$provenance.builder_identity.kind -cne 'release') {
+            throw 'Protected virtualization release work requires release-builder provenance.'
+        }
+        $contractProperty = $provenance.PSObject.Properties['template_contract']
+        if ($null -eq $contractProperty -or $null -eq $contractProperty.Value -or
+            $contractProperty.Value.schema_version -ne 1 -or $contractProperty.Value.state -cne 'uninitialized') {
+            throw 'Retained template lacks the uninitialized-template contract. Preserve it and rebuild with current tooling.'
+        }
+        if ($RequireReleaseBuilder -and ($null -eq $contractProperty.Value.software_source -or
+                $contractProperty.Value.software_source.source_commit -cne $provenance.source_commit)) {
+            throw 'Release template lacks matching construction-time published-software evidence. Rebuild; do not retrofit it.'
+        }
     }
     $identity = $provenance.builder_identity
     $vmxStem = [System.IO.Path]::GetFileNameWithoutExtension($vmx.Name)
@@ -284,103 +377,11 @@ function Assert-AtlasoVmwarePayloadProvenance {
     return $provenance
 }
 
-<#
-.SYNOPSIS
-Refresh role-bound VMware provenance after an admitted software deployment.
-.PARAMETER VmxPath
-VMX file whose current payload bytes are recorded.
-.PARAMETER DeploymentSourcePath
-Verified virtualization-source metadata that identifies the deployed software.
-.PARAMETER ProvenancePath
-Optional explicit provenance document path.
-#>
-function Update-AtlasoVmwarePayloadProvenance {
-    param(
-        [Parameter(Mandatory = $true)][string]$VmxPath,
-        [Parameter(Mandatory = $true)][string]$DeploymentSourcePath,
-        [string]$ProvenancePath = ''
-    )
-
-    $vmx = Get-Item -LiteralPath $VmxPath -ErrorAction Stop
-    $source = Get-Item -LiteralPath $DeploymentSourcePath -ErrorAction Stop
-    if ($source.PSIsContainer) {
-        throw 'VMware deployment-source provenance must identify one file.'
-    }
-    if ([string]::IsNullOrWhiteSpace($ProvenancePath)) {
-        $ProvenancePath = [System.IO.Path]::ChangeExtension($vmx.FullName, 'provenance.json')
-    }
-    try {
-        $previous = Get-Content -LiteralPath $ProvenancePath -Raw -ErrorAction Stop | ConvertFrom-Json
-    }
-    catch {
-        throw "VMware build provenance cannot be refreshed: $($_.Exception.Message)"
-    }
-    if ($previous.schema_version -ne 3 -or
-        [string]$previous.source_commit -notmatch '^[0-9a-f]{40}$' -or
-        $null -eq $previous.tracked_source_dirty -or
-        [bool]$previous.tracked_source_dirty -or
-        $null -eq $previous.source_snapshot -or
-        [int]$previous.source_snapshot.schema_version -ne 1 -or
-        [int]$previous.source_snapshot.file_count -le 0 -or
-        [string]$previous.source_snapshot.sha256 -notmatch '^[0-9a-f]{64}$' -or
-        $null -eq $previous.builder_identity) {
-        throw 'VMware build provenance cannot be refreshed because its source identity is invalid.'
-    }
-
-    $payloadLayout = @(Get-AtlasoVmwarePayloadLayout -VmxPath $vmx.FullName -RequireExactlyTwoVmdks)
-    $provenance = [ordered]@{
-        schema_version                   = 3
-        source_commit                    = [string]$previous.source_commit
-        tracked_source_dirty             = [bool]$previous.tracked_source_dirty
-        source_snapshot                  = [ordered]@{
-            schema_version = [int]$previous.source_snapshot.schema_version
-            file_count     = [int]$previous.source_snapshot.file_count
-            sha256         = [string]$previous.source_snapshot.sha256
-        }
-        builder_identity                 = $previous.builder_identity
-        payload_state                    = 'software-deployed'
-        deployment_source_name           = $source.Name
-        deployment_source_sha256         = (Get-FileHash -LiteralPath $source.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
-        vmx                              = [ordered]@{
-            name   = $vmx.Name
-            bytes  = $vmx.Length
-            sha256 = (Get-FileHash -LiteralPath $vmx.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
-        }
-        payload_disks                    = @($payloadLayout | ForEach-Object {
-                [ordered]@{
-                    role           = $_.Role
-                    scsi_unit      = $_.ScsiUnit
-                    name           = $_.File.Name
-                    capacity_bytes = $_.CapacityBytes
-                    bytes          = $_.File.Length
-                    sha256         = (Get-FileHash -LiteralPath $_.File.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
-                }
-            })
-    }
-    $temporaryPath = "$ProvenancePath.$([guid]::NewGuid().ToString('N')).tmp"
-    try {
-        [System.IO.File]::WriteAllText(
-            $temporaryPath,
-            (($provenance | ConvertTo-Json -Depth 5) + "`n"),
-            [System.Text.UTF8Encoding]::new($false)
-        )
-        Move-Item -LiteralPath $temporaryPath -Destination $ProvenancePath -Force
-    }
-    finally {
-        if (Test-Path -LiteralPath $temporaryPath) {
-            Remove-Item -LiteralPath $temporaryPath -Force
-        }
-    }
-    $result = Assert-AtlasoVmwarePayloadProvenance `
-        -VmxPath $vmx.FullName `
-        -ProvenancePath $ProvenancePath
-    return $result
-}
-
 Export-ModuleMember -Function @(
+    'Assert-AtlasoTemplateSoftwareIdentity',
+    'Assert-AtlasoTemplatePoweredOff',
     'Assert-AtlasoVmwarePayloadProvenance',
     'Get-AtlasoVmxValue',
     'Get-AtlasoVmwarePayloadLayout',
-    'Get-AtlasoVmdkCapacityBytes',
-    'Update-AtlasoVmwarePayloadProvenance'
+    'Get-AtlasoVmdkCapacityBytes'
 )

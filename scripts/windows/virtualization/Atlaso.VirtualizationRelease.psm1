@@ -37,87 +37,6 @@ function Resolve-AtlasoVirtualizationVmrunPath {
 
 <#
 .SYNOPSIS
-Start the exact release VM and return its bounded usable guest address.
-.PARAMETER VmrunPath
-Resolved vmrun executable.
-.PARAMETER VmxPath
-Exact canonical VMX to start and query.
-.PARAMETER TimeoutSeconds
-Shared upper bound for start and guest-address readiness.
-#>
-function Start-AtlasoVirtualizationDeploymentVm {
-    param(
-        [Parameter(Mandatory = $true)][string]$VmrunPath,
-        [Parameter(Mandatory = $true)][string]$VmxPath,
-        [ValidateRange(30, 900)][int]$TimeoutSeconds = 300
-    )
-
-    $resolvedVmx = (Resolve-Path -LiteralPath $VmxPath -ErrorAction Stop).Path
-    $deadline = (Get-Date).AddSeconds($TimeoutSeconds)
-    $running = @(Get-AtlasoWorkstationRunningVmxPath -VmrunPath $VmrunPath -Deadline $deadline)
-    if ($resolvedVmx -notin $running) {
-        $start = Invoke-AtlasoWorkstationVmrunBounded `
-            -VmrunPath $VmrunPath `
-            -Arguments @('-T', 'ws', 'start', $resolvedVmx, 'nogui') `
-            -Deadline $deadline
-        if ($start.TimedOut -or $start.ExitCode -ne 0) {
-            throw 'The canonical VMware release VM could not be started within the deployment deadline.'
-        }
-    }
-    $address = Invoke-AtlasoWorkstationVmrunBounded `
-        -VmrunPath $VmrunPath `
-        -Arguments @('-T', 'ws', 'getGuestIPAddress', $resolvedVmx, '-wait') `
-        -Deadline $deadline
-    $ip = $address.StdOut.Trim()
-    if ($address.TimedOut -or $address.ExitCode -ne 0 -or
-        $ip -notmatch '^\d+\.\d+\.\d+\.\d+$' -or $ip -like '169.254.*') {
-        throw 'The canonical VMware release VM did not report a usable IPv4 address within the deployment deadline.'
-    }
-    return $ip
-}
-
-<#
-.SYNOPSIS
-Shut down the exact release VM and prove it is no longer running.
-.PARAMETER VmrunPath
-Resolved vmrun executable.
-.PARAMETER VmxPath
-Exact canonical VMX whose shutdown is verified.
-.PARAMETER TimeoutSeconds
-Upper bound for soft shutdown and provider readback.
-#>
-function Stop-AtlasoVirtualizationDeploymentVm {
-    param(
-        [Parameter(Mandatory = $true)][string]$VmrunPath,
-        [Parameter(Mandatory = $true)][string]$VmxPath,
-        [ValidateRange(30, 600)][int]$TimeoutSeconds = 180
-    )
-
-    $resolvedVmx = (Resolve-Path -LiteralPath $VmxPath -ErrorAction Stop).Path
-    $deadline = (Get-Date).AddSeconds($TimeoutSeconds)
-    $running = @(Get-AtlasoWorkstationRunningVmxPath -VmrunPath $VmrunPath -Deadline $deadline)
-    if ($resolvedVmx -notin $running) {
-        return
-    }
-    $stop = Invoke-AtlasoWorkstationVmrunBounded `
-        -VmrunPath $VmrunPath `
-        -Arguments @('-T', 'ws', 'stop', $resolvedVmx, 'soft') `
-        -Deadline $deadline
-    if ($stop.TimedOut -or $stop.ExitCode -ne 0) {
-        throw 'The canonical VMware release VM did not accept bounded soft shutdown.'
-    }
-    do {
-        $running = @(Get-AtlasoWorkstationRunningVmxPath -VmrunPath $VmrunPath -Deadline $deadline)
-        if ($resolvedVmx -notin $running) {
-            return
-        }
-        Start-Sleep -Seconds 1
-    } while ((Get-Date) -lt $deadline)
-    throw 'The canonical VMware release VM remained running after bounded soft shutdown.'
-}
-
-<#
-.SYNOPSIS
 Runs GitHub CLI and rejects a failed invocation.
 .PARAMETER Arguments
 Arguments passed to GitHub CLI.
@@ -844,6 +763,8 @@ function Invoke-AtlasoVirtualizationPrereleaseFinalizer {
 <#
 .SYNOPSIS
 Invokes the canonical VMware release image builder with named parameters.
+.PARAMETER VirtualizationSourceDirectory
+Exact verified published software input installed during template construction.
 .PARAMETER BuilderScriptPath
 Exact path to the canonical VMware image-builder script.
 .PARAMETER ReleaseVersion
@@ -885,6 +806,7 @@ function Invoke-AtlasoVirtualizationReleaseImageBuilder {
     )]
     [CmdletBinding()]
     param(
+        [Parameter(Mandatory = $true)][string]$VirtualizationSourceDirectory,
         [Parameter(Mandatory = $true)][string]$BuilderScriptPath,
         [Parameter(Mandatory = $true)][string]$ReleaseVersion,
         [Parameter(Mandatory = $true)][string]$ReleaseSourceCommit,
@@ -898,6 +820,7 @@ function Invoke-AtlasoVirtualizationReleaseImageBuilder {
     # Named splatting is a credential boundary: positional binding would send
     # the release version into the builder's SecureString password parameter.
     $buildArguments = @{
+        VirtualizationSourceDirectory = $VirtualizationSourceDirectory
         ReleaseBuilder           = $true
         ReleaseVersion           = $ReleaseVersion
         ReleaseSourceCommit      = $ReleaseSourceCommit
@@ -1183,22 +1106,13 @@ function Invoke-AtlasoVirtualizationPrerelease {
     $requiresBuild = -not (Test-Path -LiteralPath $vmx -PathType Leaf)
     $existingProvenance = $null
     if (-not $requiresBuild) {
-        try {
-            $existingProvenance = Assert-AtlasoVmwarePayloadProvenance `
-                -VmxPath $vmx `
-                -ExpectedSourceCommit $identity.Commit `
-                -RequireCleanSource `
-                -RequireReleaseBuilder
-        }
-        catch {
-            # Re-entering the wrapper is required so it can recover any durable
-            # sensitive-build marker before replacing the partial output.
-            Write-Warning "The retained VMware image is incomplete and will be rebuilt: $($_.Exception.Message)"
-            $requiresBuild = $true
-        }
+        Assert-AtlasoTemplatePoweredOff -VmxPath $vmx
+        $existingProvenance = Assert-AtlasoVmwarePayloadProvenance `
+            -VmxPath $vmx -ExpectedSourceCommit $identity.Commit -RequireCleanSource -RequireReleaseBuilder
     }
     if ($requiresBuild) {
         Invoke-AtlasoVirtualizationReleaseImageBuilder `
+            -VirtualizationSourceDirectory $sourceInput `
             -BuilderScriptPath (Join-Path $RepoRoot 'scripts\windows\vmware\build-photon-image.ps1') `
             -ReleaseVersion $identity.Version `
             -ReleaseSourceCommit $identity.Commit `
@@ -1216,64 +1130,8 @@ function Invoke-AtlasoVirtualizationPrerelease {
             -RequireCleanSource `
             -RequireReleaseBuilder
     }
-    $wheel = Join-Path $sourceInput ([string]$source.application_wheel -replace '/', '\')
-    $sourceMetadataSha256 = (Get-FileHash -LiteralPath $sourceMetadata -Algorithm SHA256).Hash.ToLowerInvariant()
-    $payloadStateProperty = $existingProvenance.PSObject.Properties['payload_state']
-    $sourceNameProperty = $existingProvenance.PSObject.Properties['deployment_source_name']
-    $sourceHashProperty = $existingProvenance.PSObject.Properties['deployment_source_sha256']
-    $alreadyDeployed = (
-        $null -ne $payloadStateProperty -and
-        $payloadStateProperty.Value -ceq 'software-deployed' -and
-        $null -ne $sourceNameProperty -and
-        $sourceNameProperty.Value -ceq (Split-Path -Leaf $sourceMetadata) -and
-        $null -ne $sourceHashProperty -and
-        $sourceHashProperty.Value -ceq $sourceMetadataSha256
-    )
-    if ($null -ne $payloadStateProperty -and -not $alreadyDeployed) {
-        throw 'The retained VMware image is bound to different deployed software-source metadata.'
-    }
-    if (-not $alreadyDeployed) {
-        $deploymentVmrun = Resolve-AtlasoVirtualizationVmrunPath
-        $deployArguments = @{
-            RepoRoot = $RepoRoot
-            VmxPath = $vmx
-            SkipBuild = $true
-            WheelPath = $wheel
-            RuntimeDependencyDirectory = (Join-Path $sourceInput 'wheelhouse\cp314')
-        }
-        $deployArguments.OnePasswordEnvironmentId = $OnePasswordEnvironmentId
-        $deployArguments.OnePasswordAccount = $OnePasswordAccount
-        $deployArguments.OnePasswordServiceAccountTokenFile = $OnePasswordServiceAccountTokenFile
-        $deployArguments.OnePasswordPython = $OnePasswordPython
-        try {
-            $deployArguments.IpAddress = Start-AtlasoVirtualizationDeploymentVm `
-                -VmrunPath $deploymentVmrun `
-                -VmxPath $vmx
-            & (Join-Path $RepoRoot 'scripts\windows\vmware\deploy-wheel.ps1') @deployArguments
-            if ($LASTEXITCODE -ne 0) {
-                throw 'Exact published application-wheel deployment failed.'
-            }
-        }
-        finally {
-            # Proven shutdown is required before hashing or exporting mutable
-            # VMware disks, including after a failed deployment attempt.
-            Stop-AtlasoVirtualizationDeploymentVm `
-                -VmrunPath $deploymentVmrun `
-                -VmxPath $vmx
-        }
-        # Deployment mutates the system-content VMDK. Publish its new exact bytes
-        # before export so the exporter never validates stale build-time hashes.
-        $existingProvenance = Update-AtlasoVmwarePayloadProvenance `
-            -VmxPath $vmx `
-            -DeploymentSourcePath $sourceMetadata
-    }
-    else {
-        # A resumed post-deployment image must also remain powered off while its
-        # bound bytes are hashed and exported.
-        Stop-AtlasoVirtualizationDeploymentVm `
-            -VmrunPath (Resolve-AtlasoVirtualizationVmrunPath) `
-            -VmxPath $vmx
-    }
+    Assert-AtlasoTemplatePoweredOff -VmxPath $vmx
+    Assert-AtlasoTemplateSoftwareIdentity -TemplateContract $existingProvenance.template_contract -SoftwareSource $source
     $name = "atlaso-v$($identity.Version)"
     & (Join-Path $RepoRoot 'scripts\windows\vmware\export-ovf.ps1') `
         -SourceVmxPath $vmx -Name $name -Force -VirtualizationSourceMetadata $sourceMetadata
@@ -1295,6 +1153,8 @@ function Invoke-AtlasoVirtualizationPrerelease {
     if ($hypervZip.Count -ne 1) {
         throw 'Hyper-V conversion did not produce exactly one package.'
     }
+    Assert-AtlasoTemplatePoweredOff -VmxPath $vmx
+    $null = Assert-AtlasoVmwarePayloadProvenance -VmxPath $vmx -ExpectedSourceCommit $identity.Commit -RequireReleaseBuilder
     $smokeText = 'A!a1' + [Convert]::ToBase64String(
         [Security.Cryptography.RandomNumberGenerator]::GetBytes(32)
     )
@@ -1317,8 +1177,11 @@ function Invoke-AtlasoVirtualizationPrerelease {
     }
     finally {
         $smokeCredential = $null
+        if ($null -ne $smokePassword) { $smokePassword.Dispose() }
         $smokePassword = $null
         $smokeText = $null
+        Assert-AtlasoTemplatePoweredOff -VmxPath $vmx
+        $null = Assert-AtlasoVmwarePayloadProvenance -VmxPath $vmx -ExpectedSourceCommit $identity.Commit -RequireReleaseBuilder
     }
     $evidencePath = Join-Path $operation 'windows-smoke-evidence.json'
     [ordered]@{

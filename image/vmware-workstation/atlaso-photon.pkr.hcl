@@ -35,6 +35,24 @@ variable "output_directory" {
   }
 }
 
+variable "virtualization_source_directory" {
+  type        = string
+  description = "Protected verified software input directory, empty for development source builds."
+  default     = ""
+}
+
+variable "software_manifest_sha256" {
+  type        = string
+  description = "Host-authenticated software release manifest SHA-256, empty for development."
+  default     = ""
+}
+
+variable "software_source_commit" {
+  type        = string
+  description = "Exact admitted source commit for published software verification."
+  default     = ""
+}
+
 variable "source_root" {
   type        = string
   description = "Absolute commit-derived Atlaso source snapshot used by every image provisioner."
@@ -342,8 +360,15 @@ build {
     destination = "/tmp/atlaso-src/image/common/powershell"
   }
 
+  provisioner "file" {
+    source      = var.virtualization_source_directory != "" ? var.virtualization_source_directory : "${var.source_root}/image/common/guest-agents"
+    destination = "/tmp/atlaso-software"
+  }
+
   provisioner "shell" {
     environment_vars = [
+      "ATLASO_SOFTWARE_MANIFEST_SHA256=${var.software_manifest_sha256}",
+      "ATLASO_SOFTWARE_SOURCE_COMMIT=${var.software_source_commit}",
       "ATLASO_GUEST_PLATFORM=vmware",
       "ATLASO_SYSTEM_CONTENT_DISK=true",
       "ATLASO_ROOT_SCSI_TUPLE=0:0:0",
