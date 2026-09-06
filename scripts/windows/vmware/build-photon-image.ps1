@@ -3347,25 +3347,31 @@ if (-not $ValidateOnly -and -not $PrepareIsoOnly) {
 }
 
 if (-not $ValidateOnly -and -not $PrepareIsoOnly) {
-    $null = Assert-AtlasoVmwareBuilderIdentityManifest `
-        -Path $builderIdentityManifestPath `
-        -OutputDirectory $workstationOutputDirectory `
-        -Identity $builderIdentity
-    if ($null -ne $softwareInventory) {
-        $null = Assert-AtlasoSourceSnapshot -Root $softwareInventory.Root -ExpectedSha256 $softwareInventory.Sha256 -ExpectedFileCount $softwareInventory.FileCount
+    # Admit ownership while the exact output root and its ancestors are pinned,
+    # and retain that identity boundary through retirement and provenance emission.
+    $finalizationPins = [Atlaso.WorkstationFileIdentity]::PinOrdinaryDirectoryPath($workstationOutputDirectory)
+    try {
+        $null = Assert-AtlasoVmwareBuilderIdentityManifest `
+            -Path $builderIdentityManifestPath `
+            -OutputDirectory $workstationOutputDirectory `
+            -Identity $builderIdentity
+        if ($null -ne $softwareInventory) {
+            $null = Assert-AtlasoSourceSnapshot -Root $softwareInventory.Root -ExpectedSha256 $softwareInventory.Sha256 -ExpectedFileCount $softwareInventory.FileCount
+        }
+        Assert-AtlasoTemplatePoweredOff -VmxPath (Join-Path $workstationOutputDirectory "$VmName.vmx") -VmrunPath $VmrunPath -RemoveEmptyBuilderLockDirectories
+        Write-AtlasoVmwareBuildProvenance `
+            -OutputDirectory $workstationOutputDirectory `
+            -VmName $VmName `
+            -RepoRoot $repoRoot `
+            -SourceCommit $SourceCommit `
+            -SourceSnapshotRoot $SourceSnapshotRoot `
+            -SourceInventorySha256 $SourceInventorySha256 `
+            -SourceInventoryFileCount $SourceInventoryFileCount `
+            -BuilderIdentity $builderIdentity `
+            -SoftwareSource $softwareSource `
+            -VmrunPath $VmrunPath
     }
-    Assert-AtlasoTemplatePoweredOff -VmxPath (Join-Path $workstationOutputDirectory "$VmName.vmx") -VmrunPath $VmrunPath -RemoveEmptyBuilderLockDirectories
-    Write-AtlasoVmwareBuildProvenance `
-        -OutputDirectory $workstationOutputDirectory `
-        -VmName $VmName `
-        -RepoRoot $repoRoot `
-        -SourceCommit $SourceCommit `
-        -SourceSnapshotRoot $SourceSnapshotRoot `
-        -SourceInventorySha256 $SourceInventorySha256 `
-        -SourceInventoryFileCount $SourceInventoryFileCount `
-        -BuilderIdentity $builderIdentity `
-        -SoftwareSource $softwareSource `
-        -VmrunPath $VmrunPath
+    finally { $finalizationPins.Dispose() }
 }
 }
 finally {

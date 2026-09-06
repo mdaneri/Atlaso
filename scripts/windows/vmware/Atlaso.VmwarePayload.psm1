@@ -44,6 +44,7 @@ function Assert-AtlasoTemplatePoweredOff {
     if (($vmx.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) {
         throw 'The source template VMX must be an ordinary file.'
     }
+    $rootIdentity = Get-AtlasoPathIdentity -Path $vmx.DirectoryName -Description 'source template directory'
     $identity = Get-AtlasoPathIdentity -Path $vmx.FullName -Description 'source template'
     foreach ($running in @(Get-AtlasoWorkstationRunningVmxPath -VmrunPath $VmrunPath -Deadline (Get-Date).AddSeconds(30))) {
         if ((Get-AtlasoPathIdentity -Path $running -Description 'running VMware VMX') -ceq $identity) {
@@ -57,6 +58,9 @@ function Assert-AtlasoTemplatePoweredOff {
     try {
         if ($RemoveEmptyBuilderLockDirectories) {
             $directoryPins = [Atlaso.WorkstationFileIdentity]::PinOrdinaryDirectoryPath($vmx.DirectoryName)
+            if ((Get-AtlasoPathIdentity -Path $vmx.DirectoryName -Description 'source template directory') -cne $rootIdentity) {
+                throw 'The source template directory identity changed before lock retirement.'
+            }
             if ((Get-AtlasoPathIdentity -Path $vmx.FullName -Description 'source template') -cne $identity) {
                 throw 'The source template identity changed before lock retirement.'
             }

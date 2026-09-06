@@ -514,7 +514,8 @@ The powered-off check discovers `vmrun.exe` in the standard `Program Files` or `
 before falling back to `PATH`. After Packer succeeds and output ownership is revalidated, the builder atomically
 removes empty ordinary `*.lck` directories left when Packer deletes their lock files. Only actual directory names
 ending in `.lck` qualify; matches through Windows short-name aliases are preserved. The builder pins the ordinary
-output directory and all ancestors against replacement before enumeration and through final verification.
+output directory and all ancestors against replacement during ownership admission and through provenance completion.
+Lock retirement also compares the pinned output-directory identity with the identity captured before admission.
 A no-follow Windows deletion
 handle rejects reparse points and files; the kernel refuses nonempty directories and excludes new child creation
 once deletion is pending. The wrapper then rechecks power state and requires no remaining lock entries before

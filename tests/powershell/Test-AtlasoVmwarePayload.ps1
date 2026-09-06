@@ -295,6 +295,11 @@ if ($IsWindows) {
             param([string]$VmrunPath, [datetime]$Deadline)
             if ($VmrunPath -ne $script:TestExpectedVmrun -or $Deadline -le (Get-Date)) { throw 'Invalid bounded inventory request' }
             if ($script:TestInventoryFailure) { throw 'Inventory unavailable' }
+            if ($null -ne $script:TestInventoryCallback) {
+                $callback = $script:TestInventoryCallback
+                $script:TestInventoryCallback = $null
+                & $callback
+            }
             if ($script:TestLateLockPath) {
                 $script:TestInventoryCalls++
                 if ($script:TestInventoryCalls -eq 2) {
@@ -305,6 +310,7 @@ if ($IsWindows) {
             return $script:TestRunningVmx
         }
         $script:TestInventoryFailure = $false
+        $script:TestInventoryCallback = $null
         $script:TestRunningVmx = @()
         $script:TestExpectedVmrun = 'fixture-vmrun'
         $script:TestLateLockPath = ''
@@ -425,6 +431,32 @@ if ($IsWindows) {
     }
     finally { Remove-Item -LiteralPath $redirectedOutput; Remove-Item -LiteralPath $lockPath }
     $aliasPath = Join-Path $releaseOutput 'unrelated.lckbackup'
+    $replacedOutput = $releaseOutput + '-identity-test'
+    $replacementProbe = {
+        [IO.Directory]::Move($releaseOutput, $replacedOutput)
+        New-Item -ItemType Directory -Path $releaseOutput | Out-Null
+        $originalVmx = Join-Path $replacedOutput (Split-Path $releaseVmxPath -Leaf)
+        New-Item -ItemType HardLink -Path $releaseVmxPath -Target $originalVmx | Out-Null
+        New-Item -ItemType Directory -Path $lockPath | Out-Null
+    }.GetNewClosure()
+    & $payloadScope { param($Callback) $script:TestInventoryCallback = $Callback } $replacementProbe
+    try {
+        try {
+            Assert-AtlasoTemplatePoweredOff -VmxPath $releaseVmxPath -VmrunPath 'fixture-vmrun' -RemoveEmptyBuilderLockDirectories
+            throw 'A replacement root with the original VMX identity was admitted.'
+        }
+        catch { if ($_.Exception.Message -notlike '*directory identity changed*') { throw } }
+        if (-not (Test-Path -LiteralPath $lockPath)) { throw 'An unadmitted replacement root lost its lock.' }
+    }
+    finally {
+        & $payloadScope { $script:TestInventoryCallback = $null }
+        if (Test-Path -LiteralPath $replacedOutput) {
+            Remove-Item -LiteralPath $lockPath
+            Remove-Item -LiteralPath $releaseVmxPath
+            Remove-Item -LiteralPath $releaseOutput
+            [IO.Directory]::Move($replacedOutput, $releaseOutput)
+        }
+    }
     $upperLockPath = Join-Path $releaseOutput 'template.LCK'
     New-Item -ItemType Directory -Path $aliasPath | Out-Null
     New-Item -ItemType Directory -Path $upperLockPath | Out-Null
