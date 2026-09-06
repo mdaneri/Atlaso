@@ -42,6 +42,8 @@ Protected release finalization and stable promotion admit exactly one version-de
 aliases or additional archives fail before signing or publication.
 Visible builds repair exact missing Atlaso library registrations before starting Workstation, while full artifact
 cleanup retains its checked post-network-preflight boundary.
+Failure cleanup verifies Workstation's shutdown-only VMX rewrite before adopting its stopped file identity; unrelated
+configuration changes and replacements still preserve the artifacts and reservation for recovery.
 
 Contributor-created VMware lifecycle and acceptance VMs use pull-request-owned identities so validation artifacts
 remain traceable and cleanup cannot adopt a shared or provisional VM name. Task-owned Photon builders follow the same

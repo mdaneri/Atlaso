@@ -120,6 +120,13 @@ logs bypass output redaction. Console lines that can contain generated connectio
 are displayed. Workstation may atomically rewrite the VMX during power-on; the monitor accepts a new file identity only
 when exact provider inventory proves that the expected VMX path is the running builder.
 
+Checked failure cleanup also handles Workstation's atomic VMX rewrite during its own successful stop operation.
+It verifies the complete VMX configuration with only the validated `cleanShutdown` and `softPowerOff` booleans excluded,
+then binds the stopped file identity and hash while denying writers and replacements. The artifact root and all other
+entries retain their original identity checks. Changed disks, UUIDs, guest-info, duplicate assignments, malformed flags,
+or a replacement outside that checked stop transition still preserve the artifacts and fail cleanup. A provisioning
+disconnect remains a build failure; do not set `expect_disconnect` or add a disconnect exit code to accept it.
+
 The shared provisioner stages `pyproject.toml` with `scripts/version.py`, parses `[project].version` as
 TOML, and requires the repository's strict `X.Y.Z` release format before it creates
 `/opt/atlaso/releases/bootstrap-<version>`. If that metadata is missing, unreadable, malformed, or invalid, the build
