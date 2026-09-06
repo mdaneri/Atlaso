@@ -3211,9 +3211,9 @@ def test_module_keeps_inventory_work_out_of_normal_delete_path() -> None:
     assert stale_repair.index("if ($OnVerified)", replacement_verification) < replacement_unlock
     assert stale_repair.count("Get-Process vmware -ErrorAction SilentlyContinue") >= 5
     implementation = re.sub(r"<#.*?#>\s*", "", module, flags=re.DOTALL)
-    # Allow the bounded shutdown-identity verifier without restoring global
-    # inventory reconciliation to the ordinary root-scoped deletion path.
-    assert len(implementation.splitlines()) < 1_340
+    # Allow the bounded shutdown verifier and no-follow directory handle without
+    # restoring global inventory reconciliation to root-scoped deletion.
+    assert len(implementation.splitlines()) < 1_370
 
 
 def test_development_ca_cleanup_releases_recovery_inside_provider_proof() -> None:

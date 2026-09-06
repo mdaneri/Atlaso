@@ -61,6 +61,31 @@ namespace Atlaso
             SafeFileHandle file,
             out ByHandleFileInformation information
         );
+        public static SafeFileHandle OpenOrdinaryDirectory(string path)
+        {
+            // Do not follow a replacement junction or allow rename/reparse writes
+            // while a caller inspects a directory obtained from a stale listing.
+            SafeFileHandle handle = CreateFileW(path, FileReadAttributes,
+                FileShareRead, IntPtr.Zero, OpenExisting,
+                BackupSemantics | 0x00200000, IntPtr.Zero);
+            try
+            {
+                if (handle.IsInvalid)
+                    throw new Win32Exception(Marshal.GetLastWin32Error());
+                ByHandleFileInformation information;
+                if (!GetFileInformationByHandle(handle, out information))
+                    throw new Win32Exception(Marshal.GetLastWin32Error());
+                if ((information.FileAttributes & 0x10) == 0 ||
+                    (information.FileAttributes & 0x400) != 0)
+                    throw new InvalidOperationException("Expected an ordinary directory.");
+                return handle;
+            }
+            catch
+            {
+                handle.Dispose();
+                throw;
+            }
+        }
         public static string Get(string path)
         {
             using (SafeFileHandle handle = CreateFileW(

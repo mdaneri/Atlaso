@@ -377,6 +377,44 @@ if ($IsWindows) {
     }
     catch { if ($_.Exception.Message -notlike '*powered-off state is ambiguous*') { throw } }
     finally { Remove-Item -LiteralPath $lockPath; Remove-Item -LiteralPath $lockTarget }
+    New-Item -ItemType Directory -Path $lockPath | Out-Null
+    New-Item -ItemType Directory -Path $lockTarget | Out-Null
+    & $payloadScope {
+        param($LockPath, $TargetPath)
+        $script:SwapLockPath = $LockPath
+        $script:SwapTargetPath = $TargetPath
+        <#
+        .SYNOPSIS
+        Replace an enumerated lock directory before admission consumes its cached entry.
+        .PARAMETER LiteralPath
+        Directory to enumerate.
+        .PARAMETER Filter
+        Optional enumeration filter.
+        .PARAMETER Force
+        Include hidden entries.
+        #>
+        function script:Get-ChildItem {
+            [CmdletBinding()]
+            param([string]$LiteralPath, [string]$Filter, [switch]$Force)
+            $entries = @(Microsoft.PowerShell.Management\Get-ChildItem @PSBoundParameters)
+            if ($Filter -ceq '*.lck') {
+                foreach ($entry in $entries) { $null = $entry.Attributes }
+                Remove-Item -LiteralPath $script:SwapLockPath
+                New-Item -ItemType Junction -Path $script:SwapLockPath -Target $script:SwapTargetPath | Out-Null
+            }
+            return $entries
+        }
+    } $lockPath $lockTarget
+    try {
+        Assert-AtlasoTemplatePoweredOff -VmxPath $releaseVmxPath -VmrunPath 'fixture-vmrun'
+        throw 'A lock directory replaced by a junction after enumeration was accepted.'
+    }
+    catch { if ($_.Exception.Message -notlike '*powered-off state is ambiguous*') { throw } }
+    finally {
+        & $payloadScope { Remove-Item Function:Get-ChildItem }
+        Remove-Item -LiteralPath $lockPath
+        Remove-Item -LiteralPath $lockTarget
+    }
 }
 try {
     $null = Assert-AtlasoVmwarePayloadProvenance `
