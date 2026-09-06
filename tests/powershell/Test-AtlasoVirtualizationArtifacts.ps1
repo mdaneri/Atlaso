@@ -83,6 +83,7 @@ $vmxFixture = Join-Path ([IO.Path]::GetTempPath()) ('atlaso-smoke-identity-' + [
 try {
     $leaseAddresses = @(Get-AtlasoVmwareDhcpLeaseAddress `
             -LeaseText @(
+                '',
                 'lease 198.51.100.20 {',
                 '  hardware ethernet 00:0c:29:44:55:66;',
                 '}',
