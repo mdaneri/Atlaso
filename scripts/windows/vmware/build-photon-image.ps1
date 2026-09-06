@@ -2701,6 +2701,8 @@ function Get-Ipv4AddressFromSubnetOffset {
 <#
 .SYNOPSIS
 Write and verify role-bound VMware build provenance.
+.PARAMETER VmrunPath
+Optional VMware executable used for powered-off checks throughout provenance generation.
 .PARAMETER OutputDirectory
 Completed Packer artifact directory.
 .PARAMETER VmName
@@ -2730,7 +2732,8 @@ function Write-AtlasoVmwareBuildProvenance {
         [Parameter(Mandatory = $true)][ValidatePattern('^[0-9a-f]{64}$')][string]$SourceInventorySha256,
         [Parameter(Mandatory = $true)][ValidateRange(1, [int]::MaxValue)][int]$SourceInventoryFileCount,
         [Parameter(Mandatory = $true)][psobject]$BuilderIdentity,
-        [AllowNull()][psobject]$SoftwareSource = $null
+        [AllowNull()][psobject]$SoftwareSource = $null,
+        [string]$VmrunPath = ''
     )
 
     $null = $RepoRoot
@@ -2741,55 +2744,89 @@ function Write-AtlasoVmwareBuildProvenance {
         -Root $SourceSnapshotRoot `
         -ExpectedSha256 $SourceInventorySha256 `
         -ExpectedFileCount $SourceInventoryFileCount
-    $resolvedVmx = Assert-AtlasoVmwareBuilderVmx `
-        -VmxPath (Join-Path $OutputDirectory "$VmName.vmx") `
-        -OutputDirectory $OutputDirectory `
-        -Identity $BuilderIdentity
-    $vmx = Get-Item -LiteralPath $resolvedVmx -ErrorAction Stop
-    $payloadLayout = @(Get-AtlasoVmwarePayloadLayout -VmxPath $vmx.FullName -RequireExactlyTwoVmdks)
-    $provenance = [ordered]@{
-        template_contract    = [ordered]@{ schema_version = 1; state = 'uninitialized'; software_source = $SoftwareSource }
-        schema_version       = 3
-        source_commit        = $SourceCommit
-        tracked_source_dirty = $false
-        source_snapshot      = [ordered]@{
-            schema_version = 1
-            file_count     = $SourceInventoryFileCount
-            sha256         = $SourceInventorySha256
+    $directoryPins = [Atlaso.WorkstationFileIdentity]::PinOrdinaryDirectoryPath($OutputDirectory)
+    $filePins = [Collections.Generic.List[IDisposable]]::new()
+    try {
+        $filePins.Add([Atlaso.WorkstationFileIdentity]::PinOrdinaryReadFile((Join-Path $OutputDirectory "$VmName.vmx")))
+        $resolvedVmx = Assert-AtlasoVmwareBuilderVmx `
+            -VmxPath (Join-Path $OutputDirectory "$VmName.vmx") `
+            -OutputDirectory $OutputDirectory `
+            -Identity $BuilderIdentity
+        $vmx = Get-Item -LiteralPath $resolvedVmx -ErrorAction Stop
+        $payloadLayout = @(Get-AtlasoVmwarePayloadLayout -VmxPath $vmx.FullName -RequireExactlyTwoVmdks)
+        foreach ($payload in $payloadLayout) {
+            $filePins.Add([Atlaso.WorkstationFileIdentity]::PinOrdinaryReadFile($payload.File.FullName))
         }
-        builder_identity     = [ordered]@{
-            schema_version      = 1
-            kind                = [string]$BuilderIdentity.Kind
-            name                = [string]$BuilderIdentity.Name
-            repository          = [string]$BuilderIdentity.Repository
-            pull_request_number = [int]$BuilderIdentity.PullRequestNumber
-            source_branch       = [string]$BuilderIdentity.SourceBranch
-            source_commit       = [string]$BuilderIdentity.SourceCommit
-            collision_suffix    = [string]$BuilderIdentity.CollisionSuffix
-            release_version     = [string]$BuilderIdentity.ReleaseVersion
-            workflow_run_id     = [long]$BuilderIdentity.WorkflowRunId
+        # Opening these handles fails if a writer already owns any input. They
+        # exclude later writes/deletion through hashing, publication, and readback.
+        # Revalidate under those handles before reading any provenance bytes.
+        Assert-AtlasoTemplatePoweredOff -VmxPath $vmx.FullName -VmrunPath $VmrunPath
+        $payloadLayout = @(Get-AtlasoVmwarePayloadLayout -VmxPath $vmx.FullName -RequireExactlyTwoVmdks)
+        $provenance = [ordered]@{
+            template_contract    = [ordered]@{ schema_version = 1; state = 'uninitialized'; software_source = $SoftwareSource }
+            schema_version       = 3
+            source_commit        = $SourceCommit
+            tracked_source_dirty = $false
+            source_snapshot      = [ordered]@{
+                schema_version = 1
+                file_count     = $SourceInventoryFileCount
+                sha256         = $SourceInventorySha256
+            }
+            builder_identity     = [ordered]@{
+                schema_version      = 1
+                kind                = [string]$BuilderIdentity.Kind
+                name                = [string]$BuilderIdentity.Name
+                repository          = [string]$BuilderIdentity.Repository
+                pull_request_number = [int]$BuilderIdentity.PullRequestNumber
+                source_branch       = [string]$BuilderIdentity.SourceBranch
+                source_commit       = [string]$BuilderIdentity.SourceCommit
+                collision_suffix    = [string]$BuilderIdentity.CollisionSuffix
+                release_version     = [string]$BuilderIdentity.ReleaseVersion
+                workflow_run_id     = [long]$BuilderIdentity.WorkflowRunId
+            }
+            vmx                  = [ordered]@{
+                name   = $vmx.Name
+                bytes  = $vmx.Length
+                sha256 = (Get-FileHash -LiteralPath $vmx.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
+            }
+            payload_disks        = @($payloadLayout | ForEach-Object {
+                    [ordered]@{
+                        role           = $_.Role
+                        scsi_unit      = $_.ScsiUnit
+                        name           = $_.File.Name
+                        capacity_bytes = $_.CapacityBytes
+                        bytes          = $_.File.Length
+                        sha256         = (Get-FileHash -LiteralPath $_.File.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
+                    }
+                })
         }
-        vmx                  = [ordered]@{
-            name   = $vmx.Name
-            bytes  = $vmx.Length
-            sha256 = (Get-FileHash -LiteralPath $vmx.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
+        $provenancePath = [System.IO.Path]::ChangeExtension($vmx.FullName, 'provenance.json')
+        $json = $provenance | ConvertTo-Json -Depth 5
+        $stagedPath = Join-Path $OutputDirectory ('.provenance-' + [guid]::NewGuid().ToString('N') + '.tmp')
+        $staged = [IO.FileStream]::new($stagedPath, [IO.FileMode]::CreateNew, [IO.FileAccess]::ReadWrite,
+            ([IO.FileShare]::Read -bor [IO.FileShare]::Delete))
+        try {
+            $bytes = [Text.UTF8Encoding]::new($false).GetBytes("$json`n")
+            $staged.Write($bytes, 0, $bytes.Length)
+            $staged.Flush($true)
+            $null = Assert-AtlasoVmwarePayloadProvenance -VmxPath $vmx.FullName -ProvenancePath $stagedPath
+            Assert-AtlasoTemplatePoweredOff -VmxPath $vmx.FullName -VmrunPath $VmrunPath
         }
-        payload_disks        = @($payloadLayout | ForEach-Object {
-                [ordered]@{
-                    role           = $_.Role
-                    scsi_unit      = $_.ScsiUnit
-                    name           = $_.File.Name
-                    capacity_bytes = $_.CapacityBytes
-                    bytes          = $_.File.Length
-                    sha256         = (Get-FileHash -LiteralPath $_.File.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
-                }
-            })
+        finally {
+            try {
+                [Atlaso.WorkstationFileIdentity]::DiscardStagedFile($staged.SafeFileHandle, $stagedPath)
+            }
+            finally { $staged.Dispose() }
+        }
+        # Commit only after staged readback, the final power/lock check, and
+        # identity-bound temporary-file cleanup all succeed. Inputs remain pinned.
+        [System.IO.File]::WriteAllText($provenancePath, "$json`n", [System.Text.UTF8Encoding]::new($false))
+        Write-Host "VMware build provenance: $provenancePath ($($provenance.source_commit), source snapshot $($provenance.source_snapshot.sha256))"
     }
-    $provenancePath = [System.IO.Path]::ChangeExtension($vmx.FullName, 'provenance.json')
-    $json = $provenance | ConvertTo-Json -Depth 5
-    [System.IO.File]::WriteAllText($provenancePath, "$json`n", [System.Text.UTF8Encoding]::new($false))
-    $null = Assert-AtlasoVmwarePayloadProvenance -VmxPath $vmx.FullName -ProvenancePath $provenancePath
-    Write-Host "VMware build provenance: $provenancePath ($($provenance.source_commit), source snapshot $($provenance.source_snapshot.sha256))"
+    finally {
+        foreach ($pin in $filePins) { $pin.Dispose() }
+        $directoryPins.Dispose()
+    }
 }
 
 <#
@@ -3325,24 +3362,31 @@ if (-not $ValidateOnly -and -not $PrepareIsoOnly) {
 }
 
 if (-not $ValidateOnly -and -not $PrepareIsoOnly) {
-    $null = Assert-AtlasoVmwareBuilderIdentityManifest `
-        -Path $builderIdentityManifestPath `
-        -OutputDirectory $workstationOutputDirectory `
-        -Identity $builderIdentity
-    if ($null -ne $softwareInventory) {
-        $null = Assert-AtlasoSourceSnapshot -Root $softwareInventory.Root -ExpectedSha256 $softwareInventory.Sha256 -ExpectedFileCount $softwareInventory.FileCount
+    # Admit ownership while the exact output root and its ancestors are pinned,
+    # and retain that identity boundary through retirement and provenance emission.
+    $finalizationPins = [Atlaso.WorkstationFileIdentity]::PinOrdinaryDirectoryPath($workstationOutputDirectory)
+    try {
+        $null = Assert-AtlasoVmwareBuilderIdentityManifest `
+            -Path $builderIdentityManifestPath `
+            -OutputDirectory $workstationOutputDirectory `
+            -Identity $builderIdentity
+        if ($null -ne $softwareInventory) {
+            $null = Assert-AtlasoSourceSnapshot -Root $softwareInventory.Root -ExpectedSha256 $softwareInventory.Sha256 -ExpectedFileCount $softwareInventory.FileCount
+        }
+        Assert-AtlasoTemplatePoweredOff -VmxPath (Join-Path $workstationOutputDirectory "$VmName.vmx") -VmrunPath $VmrunPath -RemoveEmptyBuilderLockDirectories
+        Write-AtlasoVmwareBuildProvenance `
+            -OutputDirectory $workstationOutputDirectory `
+            -VmName $VmName `
+            -RepoRoot $repoRoot `
+            -SourceCommit $SourceCommit `
+            -SourceSnapshotRoot $SourceSnapshotRoot `
+            -SourceInventorySha256 $SourceInventorySha256 `
+            -SourceInventoryFileCount $SourceInventoryFileCount `
+            -BuilderIdentity $builderIdentity `
+            -SoftwareSource $softwareSource `
+            -VmrunPath $VmrunPath
     }
-    Assert-AtlasoTemplatePoweredOff -VmxPath (Join-Path $workstationOutputDirectory "$VmName.vmx") -VmrunPath $VmrunPath
-    Write-AtlasoVmwareBuildProvenance `
-        -OutputDirectory $workstationOutputDirectory `
-        -VmName $VmName `
-        -RepoRoot $repoRoot `
-        -SourceCommit $SourceCommit `
-        -SourceSnapshotRoot $SourceSnapshotRoot `
-        -SourceInventorySha256 $SourceInventorySha256 `
-        -SourceInventoryFileCount $SourceInventoryFileCount `
-        -BuilderIdentity $builderIdentity `
-        -SoftwareSource $softwareSource
+    finally { $finalizationPins.Dispose() }
 }
 }
 finally {

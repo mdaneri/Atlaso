@@ -278,83 +278,481 @@ foreach ($mutation in @('legacy', 'consumed', 'software')) {
     [IO.File]::WriteAllText($releaseProvenancePath, $completeProvenance)
 }
 
-$payloadScope = Get-Module Atlaso.VmwarePayload
-& $payloadScope {
-    <#
-    .SYNOPSIS
-    Return a controlled inventory for powered-off admission tests.
-    .PARAMETER VmrunPath
-    Unused fixture executable selector.
-    .PARAMETER Deadline
-    Bounded inventory deadline supplied by production.
-    #>
-    function script:Get-AtlasoWorkstationRunningVmxPath {
-        param([string]$VmrunPath, [datetime]$Deadline)
-        if ($VmrunPath -ne $script:TestExpectedVmrun -or $Deadline -le (Get-Date)) { throw 'Invalid bounded inventory request' }
-        if ($script:TestInventoryFailure) { throw 'Inventory unavailable' }
-        return $script:TestRunningVmx
-    }
-    $script:TestInventoryFailure = $false
-    $script:TestRunningVmx = @()
-    $script:TestExpectedVmrun = 'fixture-vmrun'
-}
-Assert-AtlasoTemplatePoweredOff -VmxPath $releaseVmxPath -VmrunPath 'fixture-vmrun'
-& $payloadScope {
-    $script:TestExpectedVmrun = Join-Path ${env:ProgramFiles(x86)} 'VMware\VMware Workstation\vmrun.exe'
-    <#
-    .SYNOPSIS
-    Simulate a standard x86-only VMware installation without PATH discovery.
-    .PARAMETER LiteralPath
-    Exact executable path being probed.
-    .PARAMETER PathType
-    Required ordinary executable file classification.
-    #>
-    function script:Test-Path {
-        param([string]$LiteralPath, [string]$PathType)
-        return $PathType -ceq 'Leaf' -and $LiteralPath -ceq $script:TestExpectedVmrun
-    }
-    <#
-    .SYNOPSIS
-    Reject PATH lookup when the standard installation should have been found.
-    .PARAMETER Name
-    Executable command name.
-    .PARAMETER CommandType
-    Executable command classification.
-    #>
-    function script:Get-Command {
-        [CmdletBinding()]
-        param([string]$Name, [string]$CommandType)
-        throw "Unexpected PATH lookup for $Name ($CommandType)"
-    }
-}
-try { Assert-AtlasoTemplatePoweredOff -VmxPath $releaseVmxPath }
-finally {
+# Powered-off admission uses Windows filesystem identities and native deletion.
+# Keep portable layout/provenance cases outside this platform boundary.
+if ($IsWindows) {
+    $payloadScope = Get-Module Atlaso.VmwarePayload
     & $payloadScope {
-        Remove-Item Function:Test-Path, Function:Get-Command
+        <#
+        .SYNOPSIS
+        Return a controlled inventory for powered-off admission tests.
+        .PARAMETER VmrunPath
+        Unused fixture executable selector.
+        .PARAMETER Deadline
+        Bounded inventory deadline supplied by production.
+        #>
+        function script:Get-AtlasoWorkstationRunningVmxPath {
+            param([string]$VmrunPath, [datetime]$Deadline)
+            if ($VmrunPath -ne $script:TestExpectedVmrun -or $Deadline -le (Get-Date)) { throw 'Invalid bounded inventory request' }
+            if ($script:TestInventoryFailure) { throw 'Inventory unavailable' }
+            if ($null -ne $script:TestInventoryCallback) {
+                $callback = $script:TestInventoryCallback
+                $script:TestInventoryCallback = $null
+                & $callback
+            }
+            if ($script:TestLateLockPath) {
+                $script:TestInventoryCalls++
+                if ($script:TestInventoryCalls -eq 2) {
+                    New-Item -ItemType Directory -Path $script:TestLateLockPath | Out-Null
+                    [IO.File]::WriteAllText((Join-Path $script:TestLateLockPath 'late.lck'), 'lock')
+                }
+            }
+            return $script:TestRunningVmx
+        }
+        $script:TestInventoryFailure = $false
+        $script:TestInventoryCallback = $null
+        $script:TestRunningVmx = @()
         $script:TestExpectedVmrun = 'fixture-vmrun'
+        $script:TestLateLockPath = ''
+        $script:TestInventoryCalls = 0
+    }
+    Assert-AtlasoTemplatePoweredOff -VmxPath $releaseVmxPath -VmrunPath 'fixture-vmrun'
+    & $payloadScope {
+        $script:TestExpectedVmrun = Join-Path ${env:ProgramFiles(x86)} 'VMware\VMware Workstation\vmrun.exe'
+        <#
+        .SYNOPSIS
+        Simulate a standard x86-only VMware installation without PATH discovery.
+        .PARAMETER LiteralPath
+        Exact executable path being probed.
+        .PARAMETER PathType
+        Required ordinary executable file classification.
+        #>
+        function script:Test-Path {
+            param([string]$LiteralPath, [string]$PathType)
+            return $PathType -ceq 'Leaf' -and $LiteralPath -ceq $script:TestExpectedVmrun
+        }
+        <#
+        .SYNOPSIS
+        Reject PATH lookup when the standard installation should have been found.
+        .PARAMETER Name
+        Executable command name.
+        .PARAMETER CommandType
+        Executable command classification.
+        #>
+        function script:Get-Command {
+            [CmdletBinding()]
+            param([string]$Name, [string]$CommandType)
+            throw "Unexpected PATH lookup for $Name ($CommandType)"
+        }
+    }
+    try { Assert-AtlasoTemplatePoweredOff -VmxPath $releaseVmxPath }
+    finally {
+        & $payloadScope {
+            Remove-Item Function:Test-Path, Function:Get-Command
+            $script:TestExpectedVmrun = 'fixture-vmrun'
+        }
+    }
+    & $payloadScope { param($Path) $script:TestRunningVmx = @($Path) } $releaseVmxPath
+    try {
+        Assert-AtlasoTemplatePoweredOff -VmxPath $releaseVmxPath -VmrunPath 'fixture-vmrun'
+        throw 'A running source template was accepted.'
+    }
+    catch { if ($_.Exception.Message -notlike '*source template is running*') { throw } }
+    & $payloadScope { $script:TestRunningVmx = @(); $script:TestInventoryFailure = $true }
+    try {
+        Assert-AtlasoTemplatePoweredOff -VmxPath $releaseVmxPath -VmrunPath 'fixture-vmrun'
+        throw 'A source with unknown power state was accepted.'
+    }
+    catch { if ($_.Exception.Message -cne 'Inventory unavailable') { throw } }
+    & $payloadScope { $script:TestInventoryFailure = $false }
+    $lockPath = Join-Path $releaseOutput 'template.lck'
+    New-Item -ItemType Directory -Path $lockPath | Out-Null
+    try {
+        Assert-AtlasoTemplatePoweredOff -VmxPath $releaseVmxPath -VmrunPath 'fixture-vmrun'
+        throw 'Read-only admission accepted an empty lock directory.'
+    }
+    catch { if ($_.Exception.Message -notlike '*powered-off state is ambiguous*') { throw } }
+    if (-not (Test-Path -LiteralPath $lockPath -PathType Container)) { throw 'Read-only admission mutated a lock.' }
+    Assert-AtlasoTemplatePoweredOff -VmxPath $releaseVmxPath -VmrunPath 'fixture-vmrun' -RemoveEmptyBuilderLockDirectories
+    if (Test-Path -LiteralPath $lockPath) { throw 'Builder left an empty lock directory.' }
+    New-Item -ItemType Directory -Path $lockPath | Out-Null
+    & $payloadScope {
+        param($Root)
+        $script:PinnedOutputRoot = $Root
+        $script:BlockedRootMoves = 0
+        <#
+        .SYNOPSIS
+        Attempt output-root and ancestor replacement after lock enumeration.
+        .PARAMETER LiteralPath
+        Directory to enumerate.
+        .PARAMETER Filter
+        Optional enumeration filter.
+        .PARAMETER Force
+        Include hidden entries.
+        #>
+        function script:Get-ChildItem {
+            [CmdletBinding()]
+            param([string]$LiteralPath, [string]$Filter, [switch]$Force)
+            $entries = @(Microsoft.PowerShell.Management\Get-ChildItem @PSBoundParameters)
+            if ($Filter -ceq '*.lck' -and $entries.Count -gt 0) {
+                foreach ($root in @($script:PinnedOutputRoot, (Split-Path $script:PinnedOutputRoot -Parent))) {
+                    $moved = $root + '-replacement-test'
+                    try { [IO.Directory]::Move($root, $moved) }
+                    catch [IO.IOException] { $script:BlockedRootMoves++; continue }
+                    # Restore fixture paths if the guard regresses before failing.
+                    [IO.Directory]::Move($moved, $root)
+                    throw 'A directory ancestor could be replaced during lock retirement.'
+                }
+            }
+            return $entries
+        }
+    } $releaseOutput
+    try {
+        Assert-AtlasoTemplatePoweredOff -VmxPath $releaseVmxPath -VmrunPath 'fixture-vmrun' -RemoveEmptyBuilderLockDirectories
+        if ((& $payloadScope { $script:BlockedRootMoves }) -ne 2) { throw 'Both directory replacement probes must run.' }
+        if (Test-Path -LiteralPath $lockPath) { throw 'Pinned builder did not retire its empty lock.' }
+    }
+    finally { & $payloadScope { Remove-Item Function:Get-ChildItem } }
+    # Pins must release after success, while a pre-existing redirected root fails.
+    $movedOutput = $releaseOutput + '-replacement-test'
+    [IO.Directory]::Move($releaseOutput, $movedOutput)
+    [IO.Directory]::Move($movedOutput, $releaseOutput)
+    $redirectedOutput = $releaseOutput + '-junction-test'
+    New-Item -ItemType Directory -Path $lockPath | Out-Null
+    New-Item -ItemType Junction -Path $redirectedOutput -Target $releaseOutput | Out-Null
+    try {
+        $redirectedVmx = Join-Path $redirectedOutput (Split-Path $releaseVmxPath -Leaf)
+        try {
+            Assert-AtlasoTemplatePoweredOff -VmxPath $redirectedVmx -VmrunPath 'fixture-vmrun' -RemoveEmptyBuilderLockDirectories
+            throw 'A redirected output root was accepted for deletion.'
+        }
+        catch { if ($_.Exception.Message -notlike '*Expected an ordinary directory path*') { throw } }
+        if (-not (Test-Path -LiteralPath $lockPath)) { throw 'A redirected output root lost its lock directory.' }
+    }
+    finally { Remove-Item -LiteralPath $redirectedOutput; Remove-Item -LiteralPath $lockPath }
+    $aliasPath = Join-Path $releaseOutput 'unrelated.lckbackup'
+    $replacedOutput = $releaseOutput + '-identity-test'
+    $replacementProbe = {
+        [IO.Directory]::Move($releaseOutput, $replacedOutput)
+        New-Item -ItemType Directory -Path $releaseOutput | Out-Null
+        $originalVmx = Join-Path $replacedOutput (Split-Path $releaseVmxPath -Leaf)
+        New-Item -ItemType HardLink -Path $releaseVmxPath -Target $originalVmx | Out-Null
+        New-Item -ItemType Directory -Path $lockPath | Out-Null
+    }.GetNewClosure()
+    & $payloadScope { param($Callback) $script:TestInventoryCallback = $Callback } $replacementProbe
+    try {
+        try {
+            Assert-AtlasoTemplatePoweredOff -VmxPath $releaseVmxPath -VmrunPath 'fixture-vmrun' -RemoveEmptyBuilderLockDirectories
+            throw 'A replacement root with the original VMX identity was admitted.'
+        }
+        catch { if ($_.Exception.Message -notlike '*directory identity changed*') { throw } }
+        if (-not (Test-Path -LiteralPath $lockPath)) { throw 'An unadmitted replacement root lost its lock.' }
+    }
+    finally {
+        & $payloadScope { $script:TestInventoryCallback = $null }
+        if (Test-Path -LiteralPath $replacedOutput) {
+            Remove-Item -LiteralPath $lockPath
+            Remove-Item -LiteralPath $releaseVmxPath
+            Remove-Item -LiteralPath $releaseOutput
+            [IO.Directory]::Move($replacedOutput, $releaseOutput)
+        }
+    }
+    $upperLockPath = Join-Path $releaseOutput 'template.LCK'
+    New-Item -ItemType Directory -Path $aliasPath | Out-Null
+    New-Item -ItemType Directory -Path $upperLockPath | Out-Null
+    & $payloadScope {
+        param($AliasPath)
+        $script:ShortNameAliasPath = $AliasPath
+        <#
+        .SYNOPSIS
+        Emulate a native filter matching an unrelated directory through its short name.
+        .PARAMETER LiteralPath
+        Directory to enumerate.
+        .PARAMETER Filter
+        Optional enumeration filter.
+        .PARAMETER Force
+        Include hidden entries.
+        #>
+        function script:Get-ChildItem {
+            [CmdletBinding()]
+            param([string]$LiteralPath, [string]$Filter, [switch]$Force)
+            $entries = @(Microsoft.PowerShell.Management\Get-ChildItem @PSBoundParameters)
+            if ($Filter -ceq '*.lck') {
+                $entries = @($entries | Where-Object { $_.FullName -ne $script:ShortNameAliasPath })
+                $entries += Get-Item -LiteralPath $script:ShortNameAliasPath -ErrorAction Stop
+            }
+            return $entries
+        }
+    } $aliasPath
+    try {
+        Assert-AtlasoTemplatePoweredOff -VmxPath $releaseVmxPath -VmrunPath 'fixture-vmrun' -RemoveEmptyBuilderLockDirectories
+        if (-not (Test-Path -LiteralPath $aliasPath -PathType Container)) { throw 'Builder deleted a short-name alias match.' }
+        if (Test-Path -LiteralPath $upperLockPath) { throw 'Builder did not retire an uppercase lock directory.' }
+        Assert-AtlasoTemplatePoweredOff -VmxPath $releaseVmxPath -VmrunPath 'fixture-vmrun'
+    }
+    finally {
+        & $payloadScope { Remove-Item Function:Get-ChildItem }
+        Remove-Item -LiteralPath $aliasPath
+        if (Test-Path -LiteralPath $upperLockPath) { Remove-Item -LiteralPath $upperLockPath }
+    }
+    New-Item -ItemType Directory -Path $lockPath | Out-Null
+    $lockFile = Join-Path $lockPath 'M44110.lck'
+    Set-Content -LiteralPath $lockFile -Value 'provider-owned lock'
+    try {
+        Assert-AtlasoTemplatePoweredOff -VmxPath $releaseVmxPath -VmrunPath 'fixture-vmrun' -RemoveEmptyBuilderLockDirectories
+        throw 'A locked source template was accepted.'
+    }
+    catch { if ($_.Exception.Message -notlike '*powered-off state is ambiguous*') { throw } }
+    Remove-Item -LiteralPath $lockFile
+    Remove-Item -LiteralPath $lockPath
+    Set-Content -LiteralPath $lockPath -Value 'standalone lock'
+    try {
+        Assert-AtlasoTemplatePoweredOff -VmxPath $releaseVmxPath -VmrunPath 'fixture-vmrun' -RemoveEmptyBuilderLockDirectories
+        throw 'A standalone lock file was accepted.'
+    }
+    catch { if ($_.Exception.Message -notlike '*powered-off state is ambiguous*') { throw } }
+    Remove-Item -LiteralPath $lockPath
+    if ($IsWindows) {
+        $lockTarget = Join-Path $releaseOutput 'empty-lock-target'
+        New-Item -ItemType Directory -Path $lockTarget | Out-Null
+        New-Item -ItemType Junction -Path $lockPath -Target $lockTarget | Out-Null
+        try {
+            Assert-AtlasoTemplatePoweredOff -VmxPath $releaseVmxPath -VmrunPath 'fixture-vmrun' -RemoveEmptyBuilderLockDirectories
+            throw 'A redirected lock directory was accepted.'
+        }
+        catch { if ($_.Exception.Message -notlike '*powered-off state is ambiguous*') { throw } }
+        finally { Remove-Item -LiteralPath $lockPath; Remove-Item -LiteralPath $lockTarget }
+        New-Item -ItemType Directory -Path $lockPath | Out-Null
+        New-Item -ItemType Directory -Path $lockTarget | Out-Null
+        & $payloadScope {
+            param($LockPath, $TargetPath)
+            $script:SwapLockPath = $LockPath
+            $script:SwapTargetPath = $TargetPath
+            <#
+            .SYNOPSIS
+            Replace an enumerated lock directory before admission consumes its cached entry.
+            .PARAMETER LiteralPath
+            Directory to enumerate.
+            .PARAMETER Filter
+            Optional enumeration filter.
+            .PARAMETER Force
+            Include hidden entries.
+            #>
+            function script:Get-ChildItem {
+                [CmdletBinding()]
+                param([string]$LiteralPath, [string]$Filter, [switch]$Force)
+                $entries = @(Microsoft.PowerShell.Management\Get-ChildItem @PSBoundParameters)
+                if ($Filter -ceq '*.lck') {
+                    foreach ($entry in $entries) { $null = $entry.Attributes }
+                    Remove-Item -LiteralPath $script:SwapLockPath
+                    New-Item -ItemType Junction -Path $script:SwapLockPath -Target $script:SwapTargetPath | Out-Null
+                }
+                return $entries
+            }
+        } $lockPath $lockTarget
+        try {
+            Assert-AtlasoTemplatePoweredOff -VmxPath $releaseVmxPath -VmrunPath 'fixture-vmrun' -RemoveEmptyBuilderLockDirectories
+            throw 'A lock directory replaced by a junction after enumeration was accepted.'
+        }
+        catch { if ($_.Exception.Message -notlike '*powered-off state is ambiguous*') { throw } }
+        finally {
+            & $payloadScope { Remove-Item Function:Get-ChildItem }
+            Remove-Item -LiteralPath $lockPath
+            Remove-Item -LiteralPath $lockTarget
+        }
+        New-Item -ItemType Directory -Path $lockPath | Out-Null
+        & $payloadScope {
+            param($LockPath)
+            $script:PopulateLockPath = $LockPath
+            <#
+            .SYNOPSIS
+            Populate a lock directory after root enumeration but before atomic removal.
+            .PARAMETER LiteralPath
+            Directory to enumerate.
+            .PARAMETER Filter
+            Optional enumeration filter.
+            .PARAMETER Force
+            Include hidden entries.
+            #>
+            function script:Get-ChildItem {
+                [CmdletBinding()]
+                param([string]$LiteralPath, [string]$Filter, [switch]$Force)
+                $entries = @(Microsoft.PowerShell.Management\Get-ChildItem @PSBoundParameters)
+                if ($Filter -ceq '*.lck' -and $entries.Count -gt 0) {
+                    $child = Join-Path $script:PopulateLockPath 'concurrent.lck'
+                    [IO.File]::WriteAllText($child, 'lock')
+                }
+                return $entries
+            }
+        } $lockPath
+        try {
+            Assert-AtlasoTemplatePoweredOff -VmxPath $releaseVmxPath -VmrunPath 'fixture-vmrun' -RemoveEmptyBuilderLockDirectories
+            throw 'Concurrent lock-directory population was accepted.'
+        }
+        catch { if ($_.Exception.Message -notlike '*powered-off state is ambiguous*') { throw } }
+        finally {
+            & $payloadScope { Remove-Item Function:Get-ChildItem }
+            $child = Join-Path $lockPath 'concurrent.lck'
+            if (Test-Path -LiteralPath $child) { Remove-Item -LiteralPath $child }
+            Remove-Item -LiteralPath $lockPath
+        }
+    }
+    & $payloadScope { param($Path) $script:TestLateLockPath = $Path } $lockPath
+    try {
+        Assert-AtlasoTemplatePoweredOff -VmxPath $releaseVmxPath -VmrunPath 'fixture-vmrun' -RemoveEmptyBuilderLockDirectories
+        throw 'A lock created during final power-state verification was accepted.'
+    }
+    catch { if ($_.Exception.Message -notlike '*powered-off state is ambiguous*') { throw } }
+    finally {
+        & $payloadScope { $script:TestLateLockPath = '' }
+        Remove-Item -LiteralPath (Join-Path $lockPath 'late.lck')
+        Remove-Item -LiteralPath $lockPath
     }
 }
-& $payloadScope { param($Path) $script:TestRunningVmx = @($Path) } $releaseVmxPath
-try {
-    Assert-AtlasoTemplatePoweredOff -VmxPath $releaseVmxPath -VmrunPath 'fixture-vmrun'
-    throw 'A running source template was accepted.'
+if ($IsWindows) {
+    # Load only the real provenance writer, without starting the build wrapper.
+    $wrapperPath = Join-Path $RepositoryRoot 'scripts/windows/vmware/build-photon-image.ps1'
+    $writerAst = [Management.Automation.Language.Parser]::ParseFile($wrapperPath, [ref]$null, [ref]$null).Find({
+        param($Node)
+        $Node -is [Management.Automation.Language.FunctionDefinitionAst] -and $Node.Name -eq 'Write-AtlasoVmwareBuildProvenance'
+    }, $true)
+    . ([scriptblock]::Create($writerAst.Extent.Text))
+    <#
+    .SYNOPSIS
+    Isolate finalization from separately tested source staging.
+    .PARAMETER Root
+    Synthetic snapshot root.
+    .PARAMETER ExpectedSha256
+    Synthetic inventory digest.
+    .PARAMETER ExpectedFileCount
+    Synthetic inventory count.
+    #>
+    function Assert-AtlasoSourceSnapshot {
+        param([string]$Root, [string]$ExpectedSha256, [int]$ExpectedFileCount)
+        $null = $Root, $ExpectedSha256, $ExpectedFileCount
+    }
+    <#
+    .SYNOPSIS
+    Isolate finalization from separately tested builder identity admission.
+    .PARAMETER VmxPath
+    Synthetic VMX path.
+    .PARAMETER OutputDirectory
+    Synthetic output directory.
+    .PARAMETER Identity
+    Synthetic builder identity.
+    #>
+    function Assert-AtlasoVmwareBuilderVmx {
+        param([string]$VmxPath, [string]$OutputDirectory, [psobject]$Identity)
+        $null = $OutputDirectory, $Identity
+        return $VmxPath
+    }
+    $writerIdentity = [pscustomobject]@{
+        Kind = 'release'; Name = $releaseBuilderName; Repository = ''; PullRequestNumber = 0
+        SourceBranch = ''; SourceCommit = ('a' * 40); CollisionSuffix = ''; ReleaseVersion = '0.9.250'; WorkflowRunId = 0
+    }
+    $writerArguments = @{
+        OutputDirectory = $releaseOutput; VmName = $releaseBuilderName; RepoRoot = $RepositoryRoot
+        SourceCommit = ('a' * 40); SourceSnapshotRoot = $OutputDirectory; SourceInventorySha256 = ('b' * 64)
+        SourceInventoryFileCount = 1; BuilderIdentity = $writerIdentity; VmrunPath = 'fixture-vmrun'
+        SoftwareSource = (($completeProvenance | ConvertFrom-Json).template_contract.software_source)
+    }
+    $script:HashMutationDone = $false
+    $script:HashMutationMode = 'write'
+    $script:ProtectedPayloadPaths = @($releaseVmxPath, $releaseOsDisk, $releaseSystemDisk)
+    $script:ProvenanceLateLock = Join-Path $releaseOutput 'during-hash.lck'
+    $script:LateValidationLock = $false
+    <#
+    .SYNOPSIS
+    Inject a late lock after the real staged provenance validation rehashes its payloads.
+    .PARAMETER VmxPath
+    Synthetic VMX path.
+    .PARAMETER ProvenancePath
+    Staged document being validated.
+    #>
+    function Assert-AtlasoVmwarePayloadProvenance {
+        param([string]$VmxPath, [string]$ProvenancePath)
+        $result = Atlaso.VmwarePayload\Assert-AtlasoVmwarePayloadProvenance -VmxPath $VmxPath -ProvenancePath $ProvenancePath
+        if ($script:LateValidationLock) { [IO.File]::WriteAllText($script:ProvenanceLateLock, 'late validation lock') }
+        return $result
+    }
+    <#
+    .SYNOPSIS
+    Probe writes or create a lock during real provenance hashing.
+    .PARAMETER LiteralPath
+    File being hashed.
+    .PARAMETER Algorithm
+    Requested digest algorithm.
+    #>
+    function Get-FileHash {
+        [Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSAvoidOverwritingBuiltInCmdlets', '',
+            Justification = 'Fixture probes mutation during hashing and removes the mock in finally.')]
+        [CmdletBinding()]
+        param([string]$LiteralPath, [string]$Algorithm)
+        if (-not $script:HashMutationDone) {
+            $script:HashMutationDone = $true
+            if ($script:HashMutationMode -eq 'lock') {
+                [IO.File]::WriteAllText($script:ProvenanceLateLock, 'late provider lock')
+            }
+            else {
+                foreach ($path in $script:ProtectedPayloadPaths) {
+                    try { $writer = [IO.File]::Open($path, [IO.FileMode]::Open, [IO.FileAccess]::Write, [IO.FileShare]::ReadWrite) }
+                    catch [IO.IOException] { continue }
+                    $writer.Dispose()
+                    throw 'Provenance hashing allowed an input writer.'
+                }
+            }
+        }
+        Microsoft.PowerShell.Utility\Get-FileHash -LiteralPath $LiteralPath -Algorithm $Algorithm
+    }
+    try {
+        Write-AtlasoVmwareBuildProvenance @writerArguments
+        if (-not $script:HashMutationDone) { throw 'The hashing exclusion probe did not run.' }
+        $preservedProvenance = [IO.File]::ReadAllText($releaseProvenancePath)
+        $script:HashMutationDone = $false
+        $script:HashMutationMode = 'lock'
+        try {
+            Write-AtlasoVmwareBuildProvenance @writerArguments
+            throw 'Provenance accepted a lock created during hashing.'
+        }
+        catch { if ($_.Exception.Message -notlike '*powered-off state is ambiguous*') { throw } }
+        if ([IO.File]::ReadAllText($releaseProvenancePath) -cne $preservedProvenance) {
+            throw 'Failed finalization replaced existing provenance.'
+        }
+        Remove-Item -LiteralPath $script:ProvenanceLateLock
+        $script:LateValidationLock = $true
+        # Make the candidate differ so byte preservation detects an early overwrite.
+        $writerArguments.SourceInventoryFileCount = 2
+        foreach ($existing in @($true, $false)) {
+            if (-not $existing) { Remove-Item -LiteralPath $releaseProvenancePath }
+            try {
+                Write-AtlasoVmwareBuildProvenance @writerArguments
+                throw 'A lock created during final provenance validation was accepted.'
+            }
+            catch { if ($_.Exception.Message -notlike '*powered-off state is ambiguous*') { throw } }
+            if ($existing) {
+                if ([IO.File]::ReadAllText($releaseProvenancePath) -cne $preservedProvenance) {
+                    throw 'Late validation failure replaced existing provenance.'
+                }
+            }
+            elseif (Test-Path -LiteralPath $releaseProvenancePath) { throw 'Late validation failure published new provenance.' }
+            if (@(Get-ChildItem -LiteralPath $releaseOutput -Filter '.provenance-*.tmp' -Force).Count -ne 0) {
+                throw 'Failed finalization leaked a staged document.'
+            }
+            Remove-Item -LiteralPath $script:ProvenanceLateLock
+        }
+    }
+    finally {
+        Remove-Item Function:Get-FileHash, Function:Assert-AtlasoSourceSnapshot, Function:Assert-AtlasoVmwareBuilderVmx
+        Remove-Item Function:Assert-AtlasoVmwarePayloadProvenance
+        Import-Module $modulePath -Force
+        if (Test-Path -LiteralPath $script:ProvenanceLateLock) { Remove-Item -LiteralPath $script:ProvenanceLateLock }
+        [IO.File]::WriteAllText($releaseProvenancePath, $completeProvenance)
+    }
+    foreach ($path in $script:ProtectedPayloadPaths) {
+        $writer = [IO.File]::Open($path, [IO.FileMode]::Open, [IO.FileAccess]::Write, [IO.FileShare]::ReadWrite)
+        $writer.Dispose()
+    }
 }
-catch { if ($_.Exception.Message -notlike '*source template is running*') { throw } }
-& $payloadScope { $script:TestRunningVmx = @(); $script:TestInventoryFailure = $true }
-try {
-    Assert-AtlasoTemplatePoweredOff -VmxPath $releaseVmxPath -VmrunPath 'fixture-vmrun'
-    throw 'A source with unknown power state was accepted.'
-}
-catch { if ($_.Exception.Message -cne 'Inventory unavailable') { throw } }
-& $payloadScope { $script:TestInventoryFailure = $false }
-$lockPath = Join-Path $releaseOutput 'template.lck'
-New-Item -ItemType Directory -Path $lockPath | Out-Null
-try {
-    Assert-AtlasoTemplatePoweredOff -VmxPath $releaseVmxPath -VmrunPath 'fixture-vmrun'
-    throw 'A locked source template was accepted.'
-}
-catch { if ($_.Exception.Message -notlike '*powered-off state is ambiguous*') { throw } }
-Remove-Item -LiteralPath $lockPath
 try {
     $null = Assert-AtlasoVmwarePayloadProvenance `
         -VmxPath $vmxPath `
