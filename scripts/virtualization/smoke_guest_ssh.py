@@ -16,6 +16,10 @@ import time
 from dataclasses import dataclass
 from typing import Any
 
+# Storage initialization permits 20 minutes; allow another minute for the API.
+SERVICE_READINESS_SECONDS = 21 * 60
+ROOT_COMMAND_TIMEOUT_SECONDS = SERVICE_READINESS_SECONDS + 60
+
 
 class SmokeError(RuntimeError):
     """Report a sanitized virtualization smoke-test failure."""
@@ -117,7 +121,7 @@ def _run_root(client: Any, secret: SecretInput, script: str) -> None:
     """
 
     command = "sudo -S -p '' sh -s"
-    _stdin, stdout, stderr = client.exec_command(command, timeout=240)
+    _stdin, stdout, stderr = client.exec_command(command, timeout=ROOT_COMMAND_TIMEOUT_SECONDS)
     _stdin.write(secret.password + "\n")
     _stdin.write(script)
     _stdin.channel.shutdown_write()
@@ -140,7 +144,8 @@ def _validation_script(platform: str) -> str:
 set -eu
 # SSH and its published host key precede completion of appliance initialization.
 ready=false
-for attempt in $(seq 1 60); do
+deadline=$(( $(cut -d. -f1 /proc/uptime) + __READINESS_SECONDS__ ))
+while [ "$(cut -d. -f1 /proc/uptime)" -lt "$deadline" ]; do
   if systemctl is-active --quiet atlaso-data-disks.service &&
      systemctl is-active --quiet atlaso.service &&
      systemctl is-active --quiet atlaso-worker.service &&
@@ -189,7 +194,7 @@ done
 ! systemctl is-active --quiet qemu-guest-agent.service
 """,
     }[platform]
-    return common + provider + "printf 'atlaso-guest-smoke-ok\\n'\n"
+    return common.replace("__READINESS_SECONDS__", str(SERVICE_READINESS_SECONDS)) + provider + "printf 'atlaso-guest-smoke-ok\\n'\n"
 
 
 def _front_door_fingerprint(host: str) -> str:
