@@ -160,6 +160,7 @@ def _assets(path: Path, version: str = "0.9.217") -> None:
     }
     members = _members()
     provenance = json.loads(members.pop("atlaso-provenance.json"))
+    provenance["template_contract"] = {"schema_version": 1, "state": "uninitialized", "software_source": source}
     provenance["product_version"] = version
     provenance["software_release_source"] = {
         "tag": source["source_software_tag"],

@@ -790,7 +790,15 @@ Terminal order:
   job. Pass those bounded verified inputs through the current workflow run, and acquire the shared Pages lock only for
   the protected signing, Release publication, channel mutation, and live publication verification stages.
 - Virtualization publication is separate. A clean Windows workstation consumes the exact signed `vX.Y.Z` bundle,
-  deploys its application wheel and CPython 3.14 wheelhouse without rebuilding them, produces and smokes the OVA and
+  installs its exact application wheel and complete hash-verified offline CPython 3.14 wheelhouse during template
+  construction without rebuilding them. Preserve installed VMware Tools, both verified offline QEMU/Hyper-V RPM
+  closures, and untouched deployment initialization through final updates, cleanup, shutdown, and compaction. Never
+  restart a completed template for installation, provider selection, customization, or export preparation. Prove the
+  exact source powered off before hashing and export; recheck its VMX and payload hashes after export and disposable
+  imported-VM smoke tests. Require the schema-v3 completed-template contract and exact verified software identity during
+  retained reuse, candidate acceptance, and protected publication. Preserve and reject legacy, incomplete, or consumed
+  templates with rebuild instructions; never boot or rewrite their provenance to retrofit them. The producer exports
+  and smokes the OVA and
   derived Hyper-V ZIP, and creates an automatically selected annotated `virtualization-vX.Y.Z-rc.N` draft. Preflight
   resumes exactly one retained current-version staging operation or selects one greater than the maximum canonical
   ordinal inventoried across remote tags and every GitHub Release. It freezes that identity before mutation and reports

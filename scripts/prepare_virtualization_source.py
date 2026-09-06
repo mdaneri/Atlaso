@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import importlib.util
 import json
 import os
 import re
@@ -171,7 +172,9 @@ def prepare(
     existing_output = False
     if output.exists():
         if output.is_symlink() or not output.is_dir():
-            raise SystemExit("virtualization source output must be an ordinary directory")
+            raise SystemExit(
+                "virtualization source output must be an ordinary directory"
+            )
         if any(output.iterdir()):
             existing_output = True
         else:
@@ -248,7 +251,9 @@ def prepare(
             )
         required_prefixes = {"wheelhouse/cp314/requirements-wheelhouse.lock"}
         if not required_prefixes.issubset(selected_names):
-            raise SystemExit("release bundle is missing the CPython 3.14 wheelhouse lock")
+            raise SystemExit(
+                "release bundle is missing the CPython 3.14 wheelhouse lock"
+            )
         wheel_path = staging_root.joinpath(*PurePosixPath(wheel_names[0]).parts)
         source = {
             "schema_version": 1,
@@ -262,15 +267,16 @@ def prepare(
             "application_wheel_sha256": _sha256(wheel_path),
             "python_abi": "cp314",
         }
+        (staging_root / "release-manifest.json").write_bytes(raw_manifest)
+        (staging_root / "release-manifest.json.sig").write_bytes(raw_signature)
         source_path = staging_root / "virtualization-source.json"
         source_path.write_text(
-            json.dumps(
-                source, sort_keys=True, separators=(",", ":"), ensure_ascii=True
-            )
+            json.dumps(source, sort_keys=True, separators=(",", ":"), ensure_ascii=True)
             + "\n",
             encoding="utf-8",
             newline="\n",
         )
+        verify_directory(staging_root, trust_key_path, expected_version, expected_commit)
         if existing_output:
             if _verified_tree(output) != _verified_tree(staging_root):
                 raise SystemExit(
@@ -295,6 +301,35 @@ def prepare(
     }
 
 
+def verify_directory(root: Path, trust_key: Path, version: str, commit: str) -> dict:
+    """Authenticate a retained software directory before builder admission.
+
+    Args:
+        root: Prepared software input directory.
+        trust_key: Exact admitted public signing key.
+        version: Required software version.
+        commit: Required software source commit.
+    """
+    manifest = _ordinary_file(
+        root / "release-manifest.json", "release manifest"
+    ).read_bytes()
+    signature = _ordinary_file(
+        root / "release-manifest.json.sig", "release signature"
+    ).read_bytes()
+    if signature_document(signature)["key_id"] != trust_key.stem:
+        raise SystemExit("release signature does not use the selected named trust key")
+    verify_signed_json(
+        manifest, signature, trust_dir=trust_key.parent, document_kind="release"
+    )
+    specification = importlib.util.spec_from_file_location(
+        "template_software", ROOT / "image/common/scripts/verify-template-software.py"
+    )
+    assert specification is not None and specification.loader is not None
+    verifier = importlib.util.module_from_spec(specification)
+    specification.loader.exec_module(verifier)
+    return verifier.verify(root, hashlib.sha256(manifest).hexdigest(), version, commit)
+
+
 def main(argv: list[str] | None = None) -> int:
     """Run the command-line interface.
 
@@ -303,14 +338,35 @@ def main(argv: list[str] | None = None) -> int:
     """
 
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--manifest", type=Path, required=True)
-    parser.add_argument("--signature", type=Path, required=True)
-    parser.add_argument("--bundle", type=Path, required=True)
+    parser.add_argument("--verify-existing", type=Path)
+    parser.add_argument("--manifest", type=Path)
+    parser.add_argument("--signature", type=Path)
+    parser.add_argument("--bundle", type=Path)
     parser.add_argument("--trust-key", type=Path, required=True)
-    parser.add_argument("--output", type=Path, required=True)
+    parser.add_argument("--output", type=Path)
     parser.add_argument("--expected-version", required=True)
     parser.add_argument("--expected-commit", required=True)
     args = parser.parse_args(argv)
+    if args.verify_existing is not None:
+        print(
+            json.dumps(
+                verify_directory(
+                    args.verify_existing,
+                    args.trust_key,
+                    args.expected_version,
+                    args.expected_commit,
+                ),
+                sort_keys=True,
+            )
+        )
+        return 0
+    if any(
+        value is None
+        for value in (args.manifest, args.signature, args.bundle, args.output)
+    ):
+        parser.error(
+            "preparation requires --manifest, --signature, --bundle, and --output"
+        )
     result = prepare(
         manifest_path=args.manifest,
         signature_path=args.signature,

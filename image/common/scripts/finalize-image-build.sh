@@ -68,5 +68,6 @@ fi
 rm -f -- /opt/atlaso/image/common/scripts/finalize-image-build.sh /opt/atlaso/bin/atlaso-finalize-image-build
 [ ! -e /opt/atlaso/image/common/scripts/finalize-image-build.sh ] || exit 2
 [ ! -e /opt/atlaso/bin/atlaso-finalize-image-build ] || exit 2
+python3 /opt/atlaso/image/common/scripts/verify-template-state.py
 sync
 systemctl poweroff

@@ -69,7 +69,7 @@ Expected ethernet0 management adapter MAC address.
 #>
 function Get-AtlasoVmwareDhcpLeaseAddress {
     param(
-        [Parameter(Mandatory = $true)][AllowEmptyCollection()][string[]]$LeaseText,
+        [Parameter(Mandatory = $true)][AllowEmptyCollection()][AllowEmptyString()][string[]]$LeaseText,
         [Parameter(Mandatory = $true)][string]$ManagementMac
     )
 

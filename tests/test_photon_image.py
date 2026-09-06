@@ -1958,7 +1958,7 @@ def test_vmware_packer_requires_proven_builder_identity() -> None:
     assert wrapper.count("-LocalBuilder:$LocalBuilder `") == 7
     assert "RequireReleaseBuilder" in payload_module
     assert export.count("-RequireReleaseBuilder") == 1
-    assert release.count("-RequireReleaseBuilder") == 2
+    assert release.count("-RequireReleaseBuilder") == 4
     build_invocation = wrapper.index("Invoke-AtlasoPhotonImageBuild `")
     assert (
         "-OutputDirectory $workstationOutputDirectory `"

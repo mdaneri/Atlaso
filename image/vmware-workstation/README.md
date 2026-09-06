@@ -444,7 +444,77 @@ second appliance NIC should attach to a different Workstation network.
 Create or adjust missing lifecycle vmnets in VMware Virtual Network Editor. The scripts intentionally do not rewrite
 global Workstation vmnet configuration because `vnetlib.exe` behavior is version-sensitive and can affect unrelated VMs.
 
+## Completed-template lifecycle
+
+The release lifecycle is **verify published software → construct the complete template → verify and shut down →
+export → test disposable imports**. VMware Workstation is the canonical builder. Export the powered-off template
+directly to OVA and derive the Hyper-V package from that OVA. A completed source template must never start again for
+software installation, provider selection, customization, or export preparation.
+
+Protected `-ReleaseBuilder` construction requires `-VirtualizationSourceDirectory`, containing inputs prepared from
+the matching signed software release. The normal prerelease producer supplies this automatically. For a direct build,
+from the exact clean release checkout, first download that release's manifest, signature, and bundle into an owned
+directory beneath the configured worktree root, then run:
+
+```powershell
+$version = (python -c "import tomllib; print(tomllib.load(open('pyproject.toml', 'rb'))['project']['version'])").Trim()
+$commit = (git rev-parse HEAD).Trim()
+$inputs = Join-Path $PWD 'artifacts/software-input'
+python scripts/prepare_virtualization_source.py `
+  --manifest "artifacts/software-release/release-manifest.json" `
+  --signature "artifacts/software-release/release-manifest.json.sig" `
+  --bundle "artifacts/software-release/atlaso-appliance-$version.tar.gz" `
+  --trust-key "image/common/update-trust/atlaso-release-2026-01.pem" `
+  --expected-version $version --expected-commit $commit --output $inputs
+if ($LASTEXITCODE -ne 0) { throw 'Software verification failed' }
+.\scripts\windows\vmware\build-photon-image.ps1 -ReleaseBuilder `
+  -ReleaseVersion $version -ReleaseSourceCommit $commit `
+  -VirtualizationSourceDirectory $inputs -Headless
+```
+
+Use the checked-in named trust key matching the signed manifest; never substitute a downloaded key. The wrapper
+authenticates the inputs, copies them into invocation-owned protected staging, and revalidates the exact inventory
+before consumption and completion. Provisioning installs the complete CPython 3.14 dependency wheelhouse offline with
+hash verification, then installs the exact published Atlaso wheel without rebuilding it or downloading replacements.
+Missing, altered, wrong-version, wrong-commit, or incompatible inputs fail construction. Ordinary development builds
+without this input retain source installation. Both paths preserve the physical bootstrap virtualenv and the
+`/opt/atlaso/current` and `/opt/atlaso/.venv` compatibility links, validate installed dependencies, and generate
+third-party notices from the installed environment.
+
+| Platform | Completed template | Deployed first boot |
+| --- | --- | --- |
+| VMware | Installed `open-vm-tools` | Retain and enable VMware Tools |
+| KVM/QEMU/Proxmox | QEMU agent RPM and complete verified offline dependencies | Install locally and enable the agent |
+| Hyper-V | Photon Hyper-V RPMs and complete verified offline dependencies | Install locally and enable required daemons |
+
+The selector is enabled during construction but runs only on a deployed appliance. Final OS updates, cleanup,
+zero-filling, and compaction retain both offline closures. Final checks require their exact checksum inventories and
+unconsumed provider-selection, OVF-customization, HTTPS-initialization, and deployment-identity state.
+The pre-seeded `/var/lib/atlaso/vmware-ovf-initializing` lock must remain empty, root-owned, and mode `0640`; it holds
+services for deployed first boot and is distinct from a completed customization marker.
+Machine IDs, SSH host keys, credentials, build accounts, and build-only files are scrubbed. A failed final check prevents
+successful
+completion and shutdown evidence from being treated as a reusable template.
+
+After Packer shutdown and compaction, the wrapper proves the exact VMX is powered off and records its final VMX and
+payload hashes. Schema-v3 provenance includes `template_contract` with schema version `1`, state `uninitialized`, and
+the verified `software_source` for release builds. Retained reuse requires that contract, exact source and software
+identity, ownership, snapshot, disk roles, and unchanged hashes. Export rechecks power state and hashes; the producer
+rechecks them after disposable VMware and Hyper-V smoke tests. Protected disk inspection verifies the offline package
+inventories and untouched first-boot state without booting the source.
+
+The powered-off check discovers `vmrun.exe` in the standard `Program Files` or `Program Files (x86)` VMware installation
+before falling back to `PATH`.
+A running or ambiguously identified export source is rejected without automatic shutdown or repair. Preserve it and
+rebuild a fresh source through the wrapper. Likewise, preserve and rebuild legacy templates without the contract,
+templates with consumed initialization state, changed payloads, or mismatched software. Never boot an old template to
+install missing software or rewrite its provenance to make it acceptable. Previously published releases stay immutable.
+See [portable virtualization artifacts](../../docs/reference/virtualization-artifacts.md#protected-release-runners)
+for candidate-only, retry, and production acceptance commands.
+
 ## Local Wheel Deploy
+
+Use only a disposable deployed VM for this workflow. It is never an export preparation step for a completed template.
 
 After a code change that does not require rebuilding the Photon image, deploy a fresh Atlaso wheel to a running VMware
 test appliance with:

@@ -31,25 +31,28 @@ def _canonical(value: object) -> bytes:
 
 
 def _release_fixture(
-    tmp_path: Path, *, unsafe_member: str = ""
+    tmp_path: Path, *, unsafe_member: str = "", lock_override: bytes | None = None,
 ) -> tuple[Path, Path, Path, Path]:
     """Create one minimal valid signed software Release fixture.
 
     Args:
         tmp_path: Temporary directory provided by pytest.
         unsafe_member: Optional unsafe archive member to include.
+        lock_override: Optional signed dependency lock defect.
     """
 
     members = {
         f"packages/atlaso-{VERSION}-py3-none-any.whl": b"exact-application-wheel",
-        "wheelhouse/cp314/requirements-wheelhouse.lock": b"atlaso==0.9.237 --hash=sha256:"
-        + b"b" * 64,
+        "wheelhouse/cp314/requirements-wheelhouse.lock": b"dependency==1 --hash=sha256:"
+        + hashlib.sha256(b"exact-dependency-wheel").hexdigest().encode(),
         "wheelhouse/cp314/dependency-1-py3-none-any.whl": b"exact-dependency-wheel",
         "requirements-appliance.lock": b"dependency==1 --hash=sha256:" + b"c" * 64,
         "bundle-metadata.json": b"{}\n",
     }
     if unsafe_member:
         members[unsafe_member] = b"unsafe"
+    if lock_override is not None:
+        members["wheelhouse/cp314/requirements-wheelhouse.lock"] = lock_override
     bundle = tmp_path / f"atlaso-appliance-{VERSION}.tar.gz"
     with tarfile.open(bundle, "w:gz") as archive:
         for name, content in members.items():
@@ -135,6 +138,29 @@ def test_extracts_exact_signed_cp314_inputs_and_records_digests(tmp_path: Path) 
     )
 
 
+@pytest.mark.parametrize("lock", [
+    b"dependency @ https://example.invalid/dependency.whl",
+    b"--index-url https://example.invalid/simple",
+    b"dependency==1 --hash=sha256:" + b"f" * 64,
+    b"# incomplete lock\n",
+])
+def test_signed_lock_cannot_download_or_omit_dependencies(tmp_path: Path, lock: bytes) -> None:
+    """Even signed inputs must supply a complete closed offline install set.
+
+    Args:
+        tmp_path: Private software staging root.
+        lock: Non-offline or incomplete dependency specification.
+    """
+    manifest, signature, bundle, trust = _release_fixture(tmp_path, lock_override=lock)
+    output = tmp_path / "verified"
+    with pytest.raises(SystemExit, match="(offline hash lock|complete locked dependency set)"):
+        source_preparer.prepare(
+            manifest_path=manifest, signature_path=signature, bundle_path=bundle,
+            trust_key_path=trust, output=output, expected_version=VERSION, expected_commit=COMMIT,
+        )
+    assert not output.exists()
+
+
 def test_rejects_changed_bundle_and_changed_resume_destination(tmp_path: Path) -> None:
     """Digest mismatches and changed cached release inputs fail closed.
 
@@ -193,10 +219,65 @@ def test_exact_cached_source_is_revalidated_and_reused(tmp_path: Path) -> None:
     first = source_preparer.prepare(**arguments)
     second = source_preparer.prepare(**arguments)
     assert second == first
+    verified = source_preparer.verify_directory(output, trust, VERSION, COMMIT)
+    assert verified["application_wheel_sha256"] == first["application_wheel_sha256"]
 
     Path(first["application_wheel"]).write_bytes(b"locally changed wheel")
     with pytest.raises(SystemExit, match="does not exactly match"):
         source_preparer.prepare(**arguments)
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    [
+        "missing",
+        "extra",
+        "wheel",
+        "metadata",
+        "manifest",
+        "signature",
+        "version",
+        "commit",
+    ],
+)
+def test_builder_reauthenticates_complete_source(tmp_path: Path, mutation: str) -> None:
+    """Builder admission rejects changed bytes, identity, or transfer inventory.
+
+    Args:
+        tmp_path: Isolated test input root.
+        mutation: Corruption applied after valid signed input preparation.
+    """
+    manifest, signature, bundle, trust = _release_fixture(tmp_path)
+    output = tmp_path / "verified"
+    result = source_preparer.prepare(
+        manifest_path=manifest,
+        signature_path=signature,
+        bundle_path=bundle,
+        trust_key_path=trust,
+        output=output,
+        expected_version=VERSION,
+        expected_commit=COMMIT,
+    )
+    if mutation == "missing":
+        (output / "wheelhouse/cp314/dependency-1-py3-none-any.whl").unlink()
+    elif mutation == "extra":
+        (output / "unexpected.whl").write_bytes(b"extra")
+    elif mutation == "wheel":
+        Path(result["application_wheel"]).write_bytes(b"tampered")
+    elif mutation == "metadata":
+        (output / "virtualization-source.json").write_text("{}")
+    elif mutation in {"manifest", "signature"}:
+        target = output / (
+            "release-manifest.json" + (".sig" if mutation == "signature" else "")
+        )
+        target.write_bytes(b"{}")
+    with pytest.raises((SystemExit, ValueError)):
+        source_preparer.verify_directory(
+            output,
+            trust,
+            "0.9.238" if mutation == "version" else VERSION,
+            "b" * 40 if mutation == "commit" else COMMIT,
+        )
 
 
 def test_rejects_signed_unsafe_archive_member(tmp_path: Path) -> None:

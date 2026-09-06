@@ -83,6 +83,7 @@ $vmxFixture = Join-Path ([IO.Path]::GetTempPath()) ('atlaso-smoke-identity-' + [
 try {
     $leaseAddresses = @(Get-AtlasoVmwareDhcpLeaseAddress `
             -LeaseText @(
+                '',
                 'lease 198.51.100.20 {',
                 '  hardware ethernet 00:0c:29:44:55:66;',
                 '}',
@@ -222,6 +223,7 @@ param(
     [switch]$ReleaseBuilder,
     [string]$ReleaseVersion = '',
     [string]$ReleaseSourceCommit = '',
+    [string]$VirtualizationSourceDirectory = '',
     [string]$OutputDirectory = '',
     [switch]$Headless,
     [switch]$EnableRealSystemAdapters
@@ -239,6 +241,7 @@ param(
     ReleaseBuilder = [bool]$ReleaseBuilder
     ReleaseVersion = $ReleaseVersion
     ReleaseSourceCommit = $ReleaseSourceCommit
+    VirtualizationSourceDirectory = $VirtualizationSourceDirectory
     OutputDirectory = $OutputDirectory
     Headless = [bool]$Headless
     EnableRealSystemAdapters = [bool]$EnableRealSystemAdapters
@@ -252,6 +255,7 @@ param(
             -BuilderScriptPath $ScriptPath `
             -ReleaseVersion '0.9.306' `
             -ReleaseSourceCommit '0123456789abcdef0123456789abcdef01234567' `
+            -VirtualizationSourceDirectory 'verified-software-input' `
             -OutputDirectory $OutputPath `
             -OnePasswordEnvironmentId 'environment-selector' `
             -OnePasswordAccount 'account-selector' `
@@ -265,6 +269,7 @@ param(
         -not $builderInvocation.ReleaseBuilder -or
         $builderInvocation.ReleaseVersion -cne '0.9.306' -or
         $builderInvocation.ReleaseSourceCommit -cne '0123456789abcdef0123456789abcdef01234567' -or
+        $builderInvocation.VirtualizationSourceDirectory -cne 'verified-software-input' -or
         $builderInvocation.OutputDirectory -cne (Join-Path $builderInvocationRoot 'output') -or
         -not $builderInvocation.Headless -or
         -not $builderInvocation.EnableRealSystemAdapters -or
@@ -528,14 +533,9 @@ foreach ($required in @(
         'Invoke-AtlasoVirtualizationPrereleaseFinalizer',
         '-ExpectedSourceCommit $identity.Commit',
         '-RequireCleanSource',
-        'The retained VMware image is incomplete and will be rebuilt',
-        'Update-AtlasoVmwarePayloadProvenance',
-        "Value -ceq 'software-deployed'",
-        'Start-AtlasoVirtualizationDeploymentVm',
-        'Stop-AtlasoVirtualizationDeploymentVm',
-        "'getGuestIPAddress', `$resolvedVmx, '-wait'",
-        "'stop', `$resolvedVmx, 'soft'",
-        'Proven shutdown is required before hashing or exporting',
+        'Assert-AtlasoTemplatePoweredOff',
+        'VirtualizationSourceDirectory = $VirtualizationSourceDirectory',
+        'Assert-AtlasoTemplateSoftwareIdentity',
         'Existing virtualization Release $tag is misclassified',
         'A published prerelease may need hosted attestation',
         'elseif ($releaseState.isDraft)',
@@ -584,10 +584,16 @@ foreach ($secretMarker in @(
 }
 $releaseSourceChecks = ([regex]::Matches(
         $releaseModule,
-        '-ExpectedSourceCommit \$identity\.Commit\s+`\s*\r?\n\s*-RequireCleanSource'
+        '-ExpectedSourceCommit \$identity\.Commit(?:\s+`\s*\r?\n\s*|\s+)-RequireCleanSource'
     )).Count
 if ($releaseSourceChecks -ne 2) {
     throw 'Virtualization production must enforce exact clean build provenance on reuse and after build.'
+}
+foreach ($forbidden in @('Start-AtlasoVirtualizationDeploymentVm', 'Stop-AtlasoVirtualizationDeploymentVm',
+        'Update-AtlasoVmwarePayloadProvenance', 'deploy-wheel.ps1', 'getGuestIPAddress')) {
+    if ($releaseModule.Contains($forbidden)) {
+        throw "Completed-template production contains a deployment operation: $forbidden"
+    }
 }
 $candidateVerificationIndex = $releaseModule.IndexOf("'--verify-existing', `$candidate")
 $exportIndex = $releaseModule.IndexOf("'scripts\windows\vmware\export-ovf.ps1'")
@@ -649,12 +655,11 @@ foreach ($required in @(
         'Assert-AtlasoVmwareVmIdentity',
         'Get-AtlasoVmwareDescendantIdentity',
         'Get-AtlasoVmwareInventoryPathById',
-        '$ownedDescendantIds.ContainsKey($_)',
         'The pre-provider VMware smoke root identity changed',
         '$partialDescendants.ContainsKey($_)',
         'unexpected VMX set',
         'unexpected display name',
-        'root identity changed after provider deletion',
+        'Remove-AtlasoWorkstationVmArtifacts',
         '"--configFile=$ovfToolConfigPath"',
         '$configAcl.SetAccessRuleProtection($true, $false)',
         'Remove-Item -LiteralPath $ovfToolConfigPath -Force',
@@ -733,7 +738,10 @@ foreach ($required in @(
     }
 }
 foreach ($required in @(
-        'listRegisteredVM',
+        'Remove-AtlasoWorkstationVmArtifacts',
+        'readVariable $vmxPath runtimeConfig',
+        'ethernet0.connectionType = "custom"',
+        'ethernet1.connectionType = "custom"',
         'C:\Program Files\VMware\VMware Workstation\vmrun.exe',
         'C:\Program Files (x86)\VMware\VMware Workstation\vmrun.exe',
         'Get-Command vmrun',
@@ -805,5 +813,71 @@ foreach ($required in @(
 if ($vmwareSmoke.Contains('getGuestIPAddress')) {
     throw 'VMware smoke still trusts the unqualified VMware Tools guest address result.'
 }
+
+# Exercise the actual cleanup guard under StrictMode when startup succeeded but
+# generated-MAC capture failed. It must skip revalidation and retain the VMX ID.
+$smokeAst = [System.Management.Automation.Language.Parser]::ParseInput($vmwareSmoke, [ref]$null, [ref]$null)
+$identityInitializer = $smokeAst.Find({
+        param($node)
+        $node -is [System.Management.Automation.Language.AssignmentStatementAst] -and
+        $node.Left.Extent.Text -eq '$providerIdentity' -and $node.Right.Extent.Text -eq '$null'
+    }, $true)
+if ($null -eq $identityInitializer) {
+    throw 'VMware smoke must initialize provider identity before startup can fail.'
+}
+$cleanupGuard = $smokeAst.Find({
+        param($node)
+        $node -is [System.Management.Automation.Language.IfStatementAst] -and
+        $node.Clauses[0].Item1.Extent.Text.Contains('$vmStarted -and') -and
+        $node.Extent.Text.Contains('-ExpectedIdentity $providerIdentity')
+    }, $true)
+if ($null -eq $cleanupGuard) {
+    throw 'Could not identify VMware smoke cleanup network revalidation.'
+}
+& {
+    . ([scriptblock]::Create($identityInitializer.Extent.Text))
+    $vmStarted = $true
+    $vmxId = 'last-verified-vmx-id'
+    . ([scriptblock]::Create($cleanupGuard.Extent.Text))
+    if ($vmxId -ne 'last-verified-vmx-id') {
+        throw 'Failed network capture replaced the verified cleanup VMX identity.'
+    }
+}
+
+$shutdownTreeGuard = $smokeAst.Find({
+        param($node)
+        $node -is [System.Management.Automation.Language.ForEachStatementAst] -and
+        $node.Extent.Text.Contains('$postStopDescendants.Keys')
+    }, $true)
+if ($null -eq $shutdownTreeGuard) {
+    throw 'VMware smoke must bind post-stop descendants to the pre-stop tree.'
+}
+foreach ($mutation in @('valid', 'added', 'replaced')) {
+    $preStopDescendants = @{ 'test.vmx' = 'old-vmx'; 'disk.vmdk' = 'owned-disk' }
+    $postStopDescendants = @{ 'test.vmx' = 'new-vmx'; 'disk.vmdk' = 'owned-disk' }
+    $vmxRelativePath = 'test.vmx'
+    if ($mutation -eq 'added') { $postStopDescendants['unowned.txt'] = 'unowned-file' }
+    if ($mutation -eq 'replaced') { $postStopDescendants['disk.vmdk'] = 'replacement-disk' }
+    $rejected = $false
+    try { . ([scriptblock]::Create($shutdownTreeGuard.Extent.Text)) }
+    catch { $rejected = $true }
+    if ($rejected -ne ($mutation -ne 'valid')) {
+        throw "Post-stop tree guard admitted the wrong ownership state: $mutation"
+    }
+}
+$shutdownContentGuard = $smokeAst.Find({
+        param($node)
+        $node -is [System.Management.Automation.Language.IfStatementAst] -and
+        $node.Clauses[0].Item1.Extent.Text -eq '$preStopVmxContent -cne $postStopVmxContent'
+    }, $true)
+if ($null -eq $shutdownContentGuard) {
+    throw 'VMware smoke must verify replacement VMX content before accepting its file ID.'
+}
+$preStopVmxContent = 'scsi0:0.fileName = "owned.vmdk"'
+$postStopVmxContent = 'scsi0:0.fileName = "unowned.vmdk"'
+$contentRejected = $false
+try { . ([scriptblock]::Create($shutdownContentGuard.Extent.Text)) }
+catch { $contentRejected = $true }
+if (-not $contentRejected) { throw 'Post-stop content guard admitted replaced disk bindings.' }
 
 Write-Host 'Hyper-V virtualization artifact contract test passed.'

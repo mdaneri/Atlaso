@@ -156,6 +156,19 @@ def test_verifies_retained_complete_candidate_without_rebuilding(tmp_path: Path)
         ),
         encoding="utf-8",
     )
+    members = {path.name: path.read_bytes() for path in ova_root.iterdir() if path.suffix != ".ova"}
+    provenance = json.loads(members["atlaso-provenance.json"])
+    provenance["template_contract"] = {
+        "schema_version": 1, "state": "uninitialized", "software_source": json.loads(source.read_text()),
+    }
+    members["atlaso-provenance.json"] = json.dumps(provenance).encode()
+    members["atlaso.mf"] = "".join(
+        f"SHA256({name})= {hashlib.sha256(content).hexdigest()}\n"
+        for name, content in sorted(members.items()) if name != "atlaso.mf"
+    ).encode()
+    for name, content in members.items():
+        (ova_root / name).write_bytes(content)
+    _write_ova(ova, members)
     evidence = tmp_path / "windows-smoke-evidence.json"
     evidence.write_text(
         json.dumps(
@@ -267,3 +280,20 @@ def test_staging_command_is_directly_executable() -> None:
     assert result.returncode == 0, result.stderr
     assert "--ova-directory" in result.stdout
     assert "--verify-existing" in result.stdout
+
+
+@pytest.mark.parametrize("contract", [None, {"schema_version": 1, "state": "initialized"},
+                                      {"schema_version": 1, "state": "uninitialized", "software_source": {"source_commit": "b" * 40}}])
+def test_retained_template_contract_is_required(tmp_path: Path, contract: dict | None) -> None:
+    """Retained candidates cannot acquire missing or mismatched template evidence.
+
+    Args:
+        tmp_path: Retained candidate directory.
+        contract: Legacy, consumed, or differently bound evidence.
+    """
+    path = tmp_path / "atlaso-provenance.json"
+    path.write_text(json.dumps({"template_contract": contract}))
+    before = path.read_bytes()
+    with pytest.raises(SystemExit, match="preserve it and rebuild"):
+        staging.verify_template_contract(tmp_path, {"source_commit": "a" * 40})
+    assert path.read_bytes() == before
