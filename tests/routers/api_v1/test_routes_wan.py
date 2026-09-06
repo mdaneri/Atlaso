@@ -181,8 +181,18 @@ def test_wan_status_reports_only_effective_feature_state(client):
             NatRule(
                 name="Status NAT",
                 source="192.168.20.0/24",
+                inbound_interfaces=["eth1.20", "eth3"],
                 outbound_interface="eth2",
                 enabled=True,
+            )
+        )
+        db.add(
+            NatRule(
+                name="Disabled status NAT",
+                source="any",
+                inbound_interfaces=["eth4"],
+                outbound_interface="eth5",
+                enabled=False,
             )
         )
         save_routes_wan_settings(
@@ -224,7 +234,7 @@ def test_wan_status_reports_only_effective_feature_state(client):
 
     all_enabled = client.get("/api/v1/wan/status", headers=headers)
     assert all_enabled.json()["active_policy_count"] == 1
-    assert all_enabled.json()["managed_interfaces"] == ["eth1.20", "eth2"]
+    assert all_enabled.json()["managed_interfaces"] == ["eth1.20", "eth2", "eth3"]
 
 
 def test_sufficient_scopes_allow_wan_policy_creation_and_audit(client):

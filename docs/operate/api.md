@@ -193,8 +193,8 @@ Services `start`, `stop`, and `restart` operations reject `routing` with HTTP 42
 must use the `wan` Appliance Apply unit.
 
 `GET /api/v1/wan/status` reports active policy assignments only while WAN Simulation is enabled. Its managed-interface
-list includes enabled NAT rules only while both Routing and NAT are enabled, so preserved inactive rows are not reported
-as active runtime intent.
+list includes both inbound and outbound interfaces of enabled NAT rules only while both Routing and NAT are enabled,
+so preserved inactive rows are not reported as active runtime intent. Shared interfaces appear once in the sorted list.
 
 Legacy `/api/v1/dns/apply`, `/api/v1/dhcp/apply`, and `/api/v1/firewall/apply` routes remain available for compatibility
 but are intentionally absent from Swagger because they predate the reviewed global workflow. New clients must save

@@ -752,7 +752,11 @@ def build_router(dependencies: RoutesWanApiDependencies) -> RoutesWanApiRouter:
             )
         return WanStatusResponse(
             active_policy_count=len(routes),
-            managed_interfaces=sorted({route.interface_name for route in routes} | {rule.outbound_interface for rule in nat_rules}),
+            managed_interfaces=sorted(
+                {route.interface_name for route in routes}
+                | {rule.outbound_interface for rule in nat_rules}
+                | {name for rule in nat_rules for name in rule.inbound_interfaces}
+            ),
             dry_run=SystemAdapter().dry_run,
         )
 
