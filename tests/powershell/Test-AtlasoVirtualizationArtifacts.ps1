@@ -738,6 +738,7 @@ foreach ($required in @(
 }
 foreach ($required in @(
         'Remove-AtlasoWorkstationVmArtifacts',
+        'readVariable $vmxPath runtimeConfig',
         'ethernet0.connectionType = "custom"',
         'ethernet1.connectionType = "custom"',
         'C:\Program Files\VMware\VMware Workstation\vmrun.exe',

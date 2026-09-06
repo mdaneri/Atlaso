@@ -419,9 +419,9 @@ try {
     $expectedHostKey = ''
     while ([DateTimeOffset]::UtcNow -lt $hostKeyDeadline -and
         $expectedHostKey -notmatch '^ssh-ed25519 [A-Za-z0-9+/]+={0,2}$') {
-        $expectedHostKey = [string](& $vmrun -T ws readVariable $vmxPath guestVar `
+        $expectedHostKey = [string](& $vmrun -T ws readVariable $vmxPath runtimeConfig `
                 guestinfo.atlaso.test_vm_ssh_host_ed25519_public_key 2>$null)
-        $expectedHostKey = $expectedHostKey.Trim()
+        $expectedHostKey = $expectedHostKey.Trim().Trim('"')
         if ($expectedHostKey -notmatch '^ssh-ed25519 [A-Za-z0-9+/]+={0,2}$') {
             Start-Sleep -Seconds 5
         }
