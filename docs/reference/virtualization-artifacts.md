@@ -524,3 +524,6 @@ sanitize it after its single `--ephemeral` job. If a retry finds a complete exis
 its exact candidate asset inventory and routes it directly back to protected finalization; it never schedules a fresh
 ephemeral Windows build whose timestamp-bearing bytes could conflict with the retained draft. An incomplete or
 unexpected draft fails closed for explicit operator recovery.
+
+The disposable VMware smoke import explicitly binds its adapters to the selected existing VMnets.
+Cleanup uses the shared Workstation inventory and running-VM checks before removing only the owned import.

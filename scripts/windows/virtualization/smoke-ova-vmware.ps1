@@ -8,9 +8,9 @@ Temporary appliance credential used only through the smoke helper standard-input
 .PARAMETER Name
 Unique smoke-test VM name.
 .PARAMETER ManagementVmnet
-Existing VMware vmnet mapped to the management adapter.
+Existing VMware vmnet explicitly assigned to the imported management adapter.
 .PARAMETER ServiceVmnet
-Existing VMware vmnet mapped to the services adapter.
+Existing VMware vmnet explicitly assigned to the imported services adapter.
 .PARAMETER OutputRoot
 Repository-owned directory that receives the disposable smoke VM.
 .PARAMETER OvfToolPath
@@ -25,8 +25,8 @@ param(
     [Parameter(Mandatory = $true)][string]$OvaPath,
     [Parameter(Mandatory = $true)][PSCredential]$Credential,
     [string]$Name = 'Atlaso-Ova-Smoke',
-    [string]$ManagementVmnet = 'VMnet8',
-    [string]$ServiceVmnet = 'VMnet1',
+    [ValidatePattern('^VMnet[0-9]+$')][string]$ManagementVmnet = 'VMnet8',
+    [ValidatePattern('^VMnet[0-9]+$')][string]$ServiceVmnet = 'VMnet1',
     [string]$OutputRoot = '',
     [string]$OvfToolPath = '',
     [string]$VmrunPath = '',
@@ -312,8 +312,7 @@ foreach ($ownedDirectory in @($vmRoot, $validationRoot)) {
 $vmStarted = $false
 $vmRootId = Get-AtlasoWindowsFileId -Path $vmRoot
 $vmxId = ''
-$ownedDescendantIds = $null
-$ownedRegisteredPaths = @()
+Import-Module (Join-Path $repoRoot 'scripts/windows/vmware/Atlaso.WorkstationCleanup.psm1') -Force
 try {
     $contractOutput = @(& $python `
             (Join-Path $repoRoot 'scripts\virtualization\validate_ova.py') `
@@ -374,15 +373,28 @@ try {
     $vmxId = Get-AtlasoWindowsFileId -Path $vmxPath
     Assert-AtlasoVmwareVmIdentity -DirectoryPath $vmRoot -VmxPath $vmxPath `
         -Name $Name -DirectoryId $vmRootId -VmxId $vmxId
-    $providerIdentity = Get-AtlasoVmwareSmokeVmxNetworkIdentity `
-        -VmxPath $vmxPath `
-        -ManagementVmnet $ManagementVmnet `
-        -ServiceVmnet $ServiceVmnet
+    # OVF Tool may emit bridged NICs for local imports despite network mappings.
+    # Bind only the disposable imported VM to the selected existing vmnets.
+    $vmxLines = @(Get-Content -LiteralPath $vmxPath | Where-Object {
+            $_ -notmatch '^ethernet[01]\.(connectionType|vnet)\s*='
+        })
+    $vmxLines += @(
+        'ethernet0.connectionType = "custom"',
+        ('ethernet0.vnet = "' + $ManagementVmnet + '"'),
+        'ethernet1.connectionType = "custom"',
+        ('ethernet1.vnet = "' + $ServiceVmnet + '"')
+    )
+    [IO.File]::WriteAllLines($vmxPath, $vmxLines, [Text.UTF8Encoding]::new($false))
     & $vmrun -T ws start $vmxPath nogui | Out-Null
     if ($LASTEXITCODE -ne 0) {
         throw 'vmrun could not start the imported OVA.'
     }
     $vmStarted = $true
+    # Workstation assigns generated MAC addresses when it first starts the import.
+    $providerIdentity = Get-AtlasoVmwareSmokeVmxNetworkIdentity `
+        -VmxPath $vmxPath `
+        -ManagementVmnet $ManagementVmnet `
+        -ServiceVmnet $ServiceVmnet
     $hostKeyDeadline = [DateTimeOffset]::UtcNow.AddMinutes(15)
     $expectedHostKey = ''
     while ([DateTimeOffset]::UtcNow -lt $hostKeyDeadline -and
@@ -512,49 +524,10 @@ finally {
     if ($vmRootSafeToRemove -and (Test-Path -LiteralPath $vmxPath)) {
         Assert-AtlasoVmwareVmIdentity -DirectoryPath $vmRoot -VmxPath $vmxPath `
             -Name $Name -DirectoryId $vmRootId -VmxId $vmxId
-        $registeredBeforeDelete = @(& $vmrun -T ws listRegisteredVM 2>$null)
-        $registeredBeforeDeleteExitCode = $LASTEXITCODE
-        if ($registeredBeforeDeleteExitCode -ne 0) {
-            throw 'vmrun could not inventory registered VMs before deletion; files were preserved.'
-        }
-        $ownedRegisteredPaths = @(
-            Get-AtlasoVmwareInventoryPathById -Paths $registeredBeforeDelete -VmxId $vmxId
-        )
-        $ownedDescendantIds = Get-AtlasoVmwareDescendantIdentity -DirectoryPath $vmRoot
-        & $vmrun -T ws deleteVM $vmxPath 2>$null | Out-Null
-        if ($LASTEXITCODE -ne 0) {
-            $vmRootSafeToRemove = $false
-            $cleanupFailure = 'vmrun could not delete the disposable VMware smoke VM; its files were preserved.'
-        }
-    }
-    if ($vmRootSafeToRemove) {
-        $registeredVmPaths = @(& $vmrun -T ws listRegisteredVM 2>$null)
-        $registeredInventoryExitCode = $LASTEXITCODE
-        $registeredOwnedAlias = @($registeredVmPaths | Where-Object {
-                $candidate = $_.Trim().Trim('"')
-                $ownedRegisteredPaths -icontains $candidate
-            })
-        if ($registeredInventoryExitCode -ne 0 -or
-            (Test-Path -LiteralPath $vmxPath) -or
-            $registeredOwnedAlias.Count -ne 0) {
-            $vmRootSafeToRemove = $false
-            $cleanupFailure = 'vmrun could not prove the disposable VMware smoke VM was deleted; its files were preserved.'
-        }
-    }
-    if ($vmRootSafeToRemove -and (Test-Path -LiteralPath $vmRoot)) {
-        $rootItem = Get-Item -LiteralPath $vmRoot -Force
-        $currentDescendantIds = Get-AtlasoVmwareDescendantIdentity -DirectoryPath $vmRoot
-        $descendantChanged = @($currentDescendantIds.Keys | Where-Object {
-                -not $ownedDescendantIds.ContainsKey($_) -or
-                $ownedDescendantIds[$_] -ne $currentDescendantIds[$_]
-            }).Count -ne 0
-        if (($rootItem.Attributes -band [System.IO.FileAttributes]::ReparsePoint) -ne 0 -or
-            (Get-AtlasoWindowsFileId -Path $vmRoot) -ne $vmRootId -or
-            $descendantChanged -or
-            @(Get-ChildItem -LiteralPath $vmRoot -Filter '*.vmx' -File -Recurse -Force).Count -ne 0) {
-            throw 'VMware smoke root identity changed after provider deletion; its files were preserved.'
-        }
-        Remove-Item -LiteralPath $vmRoot -Recurse -Force
+        # Shared cleanup reads Workstation inventory.vmls and checks vmrun list;
+        # Workstation does not implement listRegisteredVM.
+        Remove-AtlasoWorkstationVmArtifacts -VmrunPath $vmrun `
+            -VmxPaths @($vmxPath) -RemovalRoot $vmRoot -Confirm:$false
     }
     if (Test-Path -LiteralPath $validationRoot) {
         Remove-Item -LiteralPath $validationRoot -Recurse -Force

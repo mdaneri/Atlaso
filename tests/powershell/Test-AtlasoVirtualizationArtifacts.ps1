@@ -654,12 +654,11 @@ foreach ($required in @(
         'Assert-AtlasoVmwareVmIdentity',
         'Get-AtlasoVmwareDescendantIdentity',
         'Get-AtlasoVmwareInventoryPathById',
-        '$ownedDescendantIds.ContainsKey($_)',
         'The pre-provider VMware smoke root identity changed',
         '$partialDescendants.ContainsKey($_)',
         'unexpected VMX set',
         'unexpected display name',
-        'root identity changed after provider deletion',
+        'Remove-AtlasoWorkstationVmArtifacts',
         '"--configFile=$ovfToolConfigPath"',
         '$configAcl.SetAccessRuleProtection($true, $false)',
         'Remove-Item -LiteralPath $ovfToolConfigPath -Force',
@@ -738,7 +737,9 @@ foreach ($required in @(
     }
 }
 foreach ($required in @(
-        'listRegisteredVM',
+        'Remove-AtlasoWorkstationVmArtifacts',
+        'ethernet0.connectionType = "custom"',
+        'ethernet1.connectionType = "custom"',
         'C:\Program Files\VMware\VMware Workstation\vmrun.exe',
         'C:\Program Files (x86)\VMware\VMware Workstation\vmrun.exe',
         'Get-Command vmrun',
