@@ -88,11 +88,20 @@ def test_dependabot_cli_requires_explicit_exception(capsys: pytest.CaptureFixtur
     "Pull request #999 cleanup", "Fix pull requests #999", "cleanup DONE", "(done) cleanup",
     "Cleanup Issue: #999", "Cleanup PR: #999", "Cleanup pull-request #999", "Cleanup #999",
     "Cleanup (#999)", "Cleanup owner/repo#999", "Cleanup # 999",
+    "Cleanup Issue 999", "Cleanup PR 999", "Follow up GH-999", "Fix GitHub: 999",
+    "Cleanup issues: 999, 998", "Cleanup PRs/999", "Cleanup pull-request 999",
+    "Cleanup pull_request: 999", "Cleanup pullrequest999", "https://github.com/owner/repo/issues/999",
+    "Cleanup Issue number 999", "Cleanup PR no. 999",
 ])
 def test_completed_title_rejects_existing_title_segments(description: str) -> None:
     """A retry must reuse the original description rather than append to a completed title."""
     with pytest.raises(ValueError, match="only the description"):
         completed_task_title(description, [747], [748])
+
+
+def test_completed_title_accepts_descriptive_numbers() -> None:
+    """Ordinary version numbers do not become traceability references."""
+    assert completed_task_title("Python 3.14", [747], [748]) == "Issue #747 · PR #748 · Python 3.14 · Done"
 
 
 @pytest.mark.parametrize("observed", ["Issue #747 · PR #748", "Issue #747 · PR #748 · …", "Issue #747 · PR #748 · Done · Done", "Issue #747 · PR #749 · Done"])

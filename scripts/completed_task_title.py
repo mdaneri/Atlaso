@@ -48,7 +48,11 @@ def completed_task_title(
     if title_units(identity + DONE_SUFFIX) > TITLE_BUDGET:
         raise ValueError("All issue/PR identifiers and Done exceed the title budget; maintainer direction is required.")
     description = " ".join(description.split())
-    if "·" in description or re.search(r"\bdone\b|#\s*\d", description, re.IGNORECASE):
+    if "·" in description or re.search(
+        r"\bdone\b|#\s*\d|\b(?:issues?|prs?|pull[\W_]*requests?|gh|github)"
+        r"[\W_]*(?:(?:number|no)[\W_]*)?\d",
+        description, re.IGNORECASE,
+    ):
         raise ValueError("Supply only the description, without traceability or completion segments.")
     # Truncate only descriptive words. Identifiers and the completion marker are never shortened.
     words = description.split()
