@@ -95,7 +95,8 @@ def test_login_and_dashboard_render(client):
     response = client.get("/ui/management/dashboard")
     assert response.status_code == 200
     assert "Atlaso" in response.text
-    assert "Routes &amp; WAN Simulation" in response.text
+    assert "Routing &amp; WAN" in response.text
+    assert "Traffic Publishing" in response.text
     assert "VCF Offline Depot" in response.text
     assert "HTTPS Repository" not in response.text
     assert "Users" in response.text
@@ -131,6 +132,7 @@ def test_login_and_dashboard_render(client):
         "/ui/management/physical-interfaces",
         "/ui/management/vlan-interfaces",
         "/ui/management/routes-wan",
+        "/ui/management/traffic-publishing",
         "/ui/management/firewall",
         "/ui/management/dns",
         "/ui/management/ntp",
@@ -1084,7 +1086,7 @@ def test_pwa_manifest_service_worker_and_offline_shell(client):
     assert "ATLASO_CACHE" in service_worker.text
     assert "atlaso-management-pwa-v" in service_worker.text
     assert "ATLASO_CACHE_PREFIX" in service_worker.text
-    assert 'const ATLASO_CACHE = `${ATLASO_CACHE_PREFIX}304`;' in service_worker.text
+    assert 'const ATLASO_CACHE = `${ATLASO_CACHE_PREFIX}305`;' in service_worker.text
     assert 'fetch(asset, { cache: "reload" })' in service_worker.text
     assert "Required precache request failed" in service_worker.text
     assert "key.startsWith(ATLASO_CACHE_PREFIX)" in service_worker.text
