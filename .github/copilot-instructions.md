@@ -138,6 +138,8 @@ New Tabulators must use `window.AtlasoUiPatterns.createGrid(...)`; every new or 
   For ordinary public tasks, enforce `task_title_done` with `scripts/completed_task_title.py` after all prior gates pass.
   Supply every linked issue and PR from verified task/GitHub evidence, not from a potentially truncated current title;
   use repeated `--issue` and `--pr` arguments and a short `--description` without traceability or completion segments.
+  For an issue-less GitHub-managed Dependabot PR, independently verify the documented dependency-update exception and
+  pass `--dependabot`; preserve every PR number and any linked issue that does exist. Ordinary tasks still require issues.
   The formatter puts all identifiers first, trims only the description to a conservative 60 UTF-16-unit budget, and
   retains exactly one " · Done" suffix. If the identifiers alone do not fit, keep completion blocked for maintainer
   direction; never drop an issue or PR. Use supported task-title controls to set the exact generated title, then read

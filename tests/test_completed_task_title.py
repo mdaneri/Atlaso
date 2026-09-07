@@ -57,6 +57,30 @@ def test_completed_title_never_truncates_overflowing_identifiers() -> None:
         completed_task_title("", list(range(100, 110)), [200])
 
 
+def test_completed_title_accepts_verified_dependabot_exception() -> None:
+    """GitHub-managed dependency PRs retain visible PR identity without an invented issue."""
+    assert completed_task_title("Dependencies", [], [750], dependabot=True) == "PR #750 · Dependencies · Done"
+    assert completed_task_title("", [747], [750], dependabot=True) == "Issue #747 · PR #750 · Done"
+
+
+@pytest.mark.parametrize("issues, prs", [([0], [750]), ([], []), ([], [-1])])
+def test_dependabot_exception_does_not_waive_identifier_validation(issues: list[int], prs: list[int]) -> None:
+    """The exception permits only an absent issue list, never invalid or absent PR identity."""
+    with pytest.raises(ValueError):
+        completed_task_title("", issues, prs, dependabot=True)
+
+
+def test_dependabot_cli_requires_explicit_exception(capsys: pytest.CaptureFixture[str]) -> None:
+    """Ordinary missing-issue input fails while explicit Dependabot readback succeeds."""
+    args = ["--pr", "750"]
+    assert main(args) == 1
+    assert "required" in capsys.readouterr().err
+    assert main([*args, "--dependabot"]) == 0
+    title = capsys.readouterr().out.strip()
+    assert title == "PR #750 · Done"
+    assert main([*args, "--dependabot", "--observed-title", title]) == 0
+
+
 @pytest.mark.parametrize("description", ["Cleanup · Done", "Done", "Done - Cleanup", "Cleanup · Issue #747"])
 def test_completed_title_rejects_existing_title_segments(description: str) -> None:
     """A retry must reuse the original description rather than append to a completed title."""

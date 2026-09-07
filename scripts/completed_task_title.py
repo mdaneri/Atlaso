@@ -18,7 +18,7 @@ def title_units(value: str) -> int:
 
 
 def completed_task_title(
-    description: str, issues: Sequence[int], pull_requests: Sequence[int]
+    description: str, issues: Sequence[int], pull_requests: Sequence[int], *, dependabot: bool = False
 ) -> str:
     """Keep every verified public identifier and completion marker visible.
 
@@ -26,6 +26,7 @@ def completed_task_title(
         description: Short description without issue/PR segments or a Done suffix.
         issues: Complete set of linked public issue numbers, verified by the caller.
         pull_requests: Complete set of linked public PR numbers, verified by the caller.
+        dependabot: Caller verified the GitHub-managed Dependabot issue exception applies.
 
     Raises:
         ValueError: Identifiers are missing, invalid, or cannot fit without loss.
@@ -35,8 +36,10 @@ def completed_task_title(
         ("Issue", "Issues", issues),
         ("PR", "PRs", pull_requests),
     ):
+        if singular == "Issue" and not values and dependabot:
+            continue
         if not values or any(type(value) is not int or value <= 0 for value in values):
-            raise ValueError("Every public completed task requires positive issue and PR numbers.")
+            raise ValueError("Positive issue and PR numbers are required except verified issue-less Dependabot tasks.")
         numbers = sorted(set(values))
         label = singular if len(numbers) == 1 else plural
         groups.append(label + " " + ", ".join(f"#{number}" for number in numbers))
@@ -65,12 +68,13 @@ def main(argv: Sequence[str] | None = None) -> int:
     """Print a title or verify supported-tool readback; never rename a task."""
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--description", default="", help="Description without traceability or Done segments.")
-    parser.add_argument("--issue", type=int, action="append", required=True)
+    parser.add_argument("--issue", type=int, action="append", default=[])
     parser.add_argument("--pr", type=int, action="append", required=True)
+    parser.add_argument("--dependabot", action="store_true", help="Caller verified the GitHub-managed Dependabot issue exception.")
     parser.add_argument("--observed-title", help="Exact title read back through a supported task tool.")
     args = parser.parse_args(argv)
     try:
-        expected = completed_task_title(args.description, args.issue, args.pr)
+        expected = completed_task_title(args.description, args.issue, args.pr, dependabot=args.dependabot)
         if args.observed_title is not None:
             verify_completed_task_title(expected, args.observed_title)
     except ValueError as exc:

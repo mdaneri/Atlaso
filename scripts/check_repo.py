@@ -1410,6 +1410,7 @@ VALIDATION_RESOURCE_POLICY_MARKERS = (
     "`-CleanupVmsOnly`",
     "`scripts/completed_task_title.py`",
     "`task_title_readback_verified`",
+    "`--dependabot`",
 )
 
 
