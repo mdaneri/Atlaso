@@ -65,6 +65,47 @@ def _set_routes_wan_setting(archive: dict, *, key: str, value: bool) -> None:
     rows.append({"key": key, "value": "true" if value else "false"})
 
 
+@pytest.mark.parametrize("missing_interface", ["eth2", "eth1"])
+def test_archive_round_trip_preserves_missing_nat_identity_for_review(client, missing_interface):
+    """Restore actual cleanup output without making missing NAT targets eligible.
+
+    Args:
+        client: HTTP fixture initializing the archive database.
+        missing_interface: Physical ingress or outbound VLAN parent that disappears.
+    """
+    from atlaso.app.models import PhysicalInterface
+    from atlaso.app.services.networking import _cleanup_missing_interface_references
+    from atlaso.app.services.routes_wan import save_routes_wan_settings
+    from atlaso.app.ui import routes_wan_context
+
+    with SessionLocal() as db:
+        save_routes_wan_settings(db, routing_enabled=True, nat_enabled=True, wan_simulation_enabled=False)
+        interface = db.scalar(select(PhysicalInterface).where(PhysicalInterface.name == missing_interface))
+        missing_name = f"missing_test_{missing_interface}"
+        interface.name = missing_name
+        interface.inventory_source = "host"
+        interface.oper_state = "missing"
+        _cleanup_missing_interface_references(db, {missing_interface: missing_name})
+        db.commit()
+        rule = db.scalar(select(NatRule))
+        original = (rule.enabled, list(rule.inbound_interfaces), rule.outbound_interface)
+        assert original[0]
+        archive = export_settings_archive(db, actor="test")
+        restore_settings_archive(db, archive)
+        rule = db.scalar(select(NatRule))
+        assert (rule.enabled, rule.inbound_interfaces, rule.outbound_interface) == original
+        context = routes_wan_context(db)
+        assert context["wan_validation_errors"]
+        assert f'oifname "{rule.outbound_interface}" masquerade' not in context["wan_config_preview"]
+        assert export_settings_archive(db, actor="test")["data"]["nat_rules"] == archive["data"]["nat_rules"]
+
+        unbacked = deepcopy(archive)
+        unbacked["data"]["nat_rules"][0]["inbound_interfaces"] = ["missing_unarchived"]
+        with pytest.raises(ValueError, match="NAT ingress"):
+            restore_settings_archive(db, unbacked)
+        assert db.scalar(select(NatRule)).inbound_interfaces == original[1]
+
+
 def _disable_routes_and_nat_rows(archive: dict) -> None:
     """Disable routes and NAT rows and introduce unresolved references.
 

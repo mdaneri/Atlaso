@@ -2525,10 +2525,25 @@ def _validate_archive_relationships(data: dict[str, list[dict[str, Any]]]) -> No
             optional=True,
         )
 
+    # Missing-NIC cleanup preserves enabled NAT intent for review. Admit only
+    # identities backed by inert archived inventory, never arbitrary missing names.
+    missing_nat_targets = {
+        item.name for item in archived_interfaces
+        if item.name.startswith("missing_") and item.inventory_source == "host"
+        and item.oper_state == "missing" and item.admin_state == "down"
+        and normalize_interface_role(item.role) == "unused"
+        and normalize_interface_mode(item.mode) == "unused"
+    }
+    missing_nat_targets.update(
+        item.name for item in archived_vlans
+        if not item.enabled and item.parent_interface in missing_nat_targets
+        and item.name == f"{item.parent_interface}.{item.vlan_id}"
+    )
+    archive_nat_targets = nat_eligible_target_names(archived_interfaces, archived_vlans) | missing_nat_targets
     for row_index, row in enumerate(data.get("nat_rules", []), start=1):
         ingress_errors = validate_nat_ingress(
             row.get("inbound_interfaces", []), str(row.get("outbound_interface") or ""),
-            nat_eligible_target_names(archived_interfaces, archived_vlans), required=False,
+            archive_nat_targets, required=False,
             check_availability=bool(row.get("enabled", True) and effective_nat_enabled),
         )
         if ingress_errors:
@@ -2541,6 +2556,7 @@ def _validate_archive_relationships(data: dict[str, list[dict[str, Any]]]) -> No
         if (
             effective_nat_enabled
             and enabled
+            and str(row.get("outbound_interface") or "") not in missing_nat_targets
             and "ipv4"
             not in route_target_families.get(
                 str(row.get("outbound_interface") or ""), set()
@@ -2601,7 +2617,7 @@ def _validate_archive_relationships(data: dict[str, list[dict[str, Any]]]) -> No
             NatRule(**_model_kwargs_with_scalar_defaults(NatRule, row))
             for row in data.get("nat_rules", [])
         ],
-        wan_target_names=nat_eligible_target_names(archived_interfaces, archived_vlans),
+        wan_target_names=archive_nat_targets,
         allow_legacy_nat_ingress=True,
         source_groups=firewall_source_groups,
         routing_rules=[

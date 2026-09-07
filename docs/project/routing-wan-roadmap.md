@@ -39,6 +39,9 @@ impairment behavior only; they must not be used as an interface classification.
   provenance while restoring prior routing, forwarding, and WAN simulation settings. Handoff preflight validates
   the same normalized rollback configuration before candidate mutation. Original snapshots remain intact; handoff
   rollback persists the normalized runtime, and modern scoped rules retain their NAT identity checks.
+  Settings archives preserve enabled NAT rules awaiting missing-NIC review when their selectors are backed by
+  archived inert physical-interface or disabled VLAN records. Restore preserves that intent; Appliance Apply still
+  rejects those targets until an administrator selects available interfaces.
 - NAT outbound interfaces can be access physical interfaces with IPv4 CIDRs or enabled VLAN interfaces with IPv4 CIDRs;
   NAT eligibility is not inferred from an interface role.
 - IPv4 and IPv6 packet forwarding follow the global Routing switch. NAT is effective only when both Routing and NAT
