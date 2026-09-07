@@ -109,6 +109,7 @@ def test_completed_title_accepts_descriptive_numbers() -> None:
 
 @pytest.mark.parametrize("description", [
     "Fix GitHub Actions on Python 3.14", "Support GitHub on Windows 11", "Handle PR metadata in v2",
+    "Fix GitHub 2FA login", "Pull 1Password credentials", "GitHub 3.14 compatibility",
 ])
 def test_completed_title_allows_numbers_unrelated_to_traceability(description: str) -> None:
     """A nearby product or metadata label does not turn a descriptive version into an ID."""
