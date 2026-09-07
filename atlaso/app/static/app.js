@@ -8692,6 +8692,7 @@ function initializeRefreshedSideStack(sideStack) {
   initializeNtpSettings(sideStack);
   initializeOidcProviderSettings(sideStack);
   initializeFirewallSettings(sideStack);
+  initializeTrafficPublishingSettings(sideStack);
   initializeDnsSettings(sideStack);
   initializeVcfBackupSettings(sideStack);
   initializeVcfRegistrySettings(sideStack);
