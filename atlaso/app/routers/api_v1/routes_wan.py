@@ -683,6 +683,10 @@ def build_router(dependencies: RoutesWanApiDependencies) -> RoutesWanApiRouter:
         rule = db.get(NatRule, rule_id)
         if not rule:
             raise HTTPException(status_code=404, detail="NAT rule not found")
+        # Older clients do not send the additive ingress field. Resolve omission
+        # under the network write lock before validating the resulting rule.
+        if "inbound_interfaces" not in payload.model_fields_set:
+            payload = payload.model_copy(update={"inbound_interfaces": list(rule.inbound_interfaces or [])})
         validate_nat_rule_payload(payload, db)
         for key, value in payload.model_dump().items():
             setattr(rule, key, value)

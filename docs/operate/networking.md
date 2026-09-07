@@ -206,6 +206,12 @@ MAC (the parent NIC for a VLAN), then resolves fresh indexes. Missing or changed
 table and report an error while preserving the saved rules for review. Legacy saved runtime configurations without
 physical identity need review and a fresh Apply. The legacy standalone NAT replay service is retired; the WAN replay
 service owns restoration so stale indexes are never loaded directly at boot.
+Every appliance control-plane start, including a live software upgrade, runs a privileged NAT-only reconciliation
+before application inventory refresh. It replaces existing name-only rules with verified index-bound rules or
+quarantines NAT when the last-applied snapshot lacks safe ingress or physical identity. The old raw replay service is
+disabled. This startup step preserves saved intent and leaves routes, forwarding, and WAN simulation unchanged;
+failure to retire the old service or replace the kernel table prevents control-plane startup. Boot WAN restoration
+is ordered before this step to avoid concurrent rewrites.
 
 The **NAT** wizard creates explicit IPv4 masquerade rules. In **Translation**, select one or more **Inbound
 interfaces or VLANs** and a different **Outbound interface or VLAN**. Both sides require enabled IPv4 lab targets;

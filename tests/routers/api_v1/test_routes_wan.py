@@ -361,6 +361,37 @@ def test_nat_api_requires_reviewed_ingress_and_preserves_legacy_disable(client):
     assert rejected.status_code == 422
 
 
+def test_nat_patch_preserves_omitted_ingress_and_distinguishes_explicit_empty(client):
+    """Retain saved scope for older clients while validating the effective rule.
+
+    Args:
+        client: HTTP client for exercising NAT request validation.
+    """
+    token, _ = create_token(client, scopes=["read:wan", "write:wan"])
+    headers = {"Authorization": f"Bearer {token}"}
+    payload = dict(name="Compatible NAT", source="any", outbound_interface="eth1.20", enabled=True)
+    created = client.post("/api/v1/nat/rules", headers=headers,
+                          json={**payload, "inbound_interfaces": ["eth2"]})
+    assert created.status_code == 201, created.text
+    url = f"/api/v1/nat/rules/{created.json()['id']}"
+    for enabled in (True, False, True):
+        updated = client.patch(url, headers=headers, json={**payload, "enabled": enabled})
+        assert updated.status_code == 200, updated.text
+        assert updated.json()["inbound_interfaces"] == ["eth2"]
+        assert client.get(url, headers=headers).json()["inbound_interfaces"] == ["eth2"]
+    # Omission still validates saved ingress against the new outbound target.
+    rejected = client.patch(url, headers=headers, json={**payload, "outbound_interface": "eth2"})
+    assert rejected.status_code == 422, rejected.text
+    rejected = client.patch(url, headers=headers, json={**payload, "inbound_interfaces": []})
+    assert rejected.status_code == 422, rejected.text
+    assert client.get(url, headers=headers).json()["inbound_interfaces"] == ["eth2"]
+    cleared = client.patch(url, headers=headers,
+                           json={**payload, "enabled": False, "inbound_interfaces": []})
+    assert cleared.status_code == 200, cleared.text
+    assert cleared.json()["inbound_interfaces"] == []
+    assert client.patch(url, headers=headers, json=payload).status_code == 422
+
+
 def test_api_default_route_contract_and_canonical_readback(client):
     """Preserve /0 API compatibility while enforcing default-route invariants.
 

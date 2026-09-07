@@ -126,7 +126,7 @@ COMMANDS: dict[str, set[str]] = {
         "apply-root-password",
     },
     "console": {"disable-services", "recover-management-plane", "restore-services", "status"},
-    "wan": {"validate", "apply", "restore"},
+    "wan": {"validate", "apply", "restore", "reconcile-nat"},
 }
 
 
@@ -168,6 +168,7 @@ SYSTEMD_RUN_CHILD_ENV = "ATLASO_HELPER_SYSTEMD_RUN_CHILD"
 SYSTEMD_RUN_ACTION_UNIT_PREFIX = "atlaso-helper-action"
 UPDATE_RELEASE_NOTES_URL_MAX_LENGTH = 2048
 NO_PATH_ACTIONS = {
+    ("wan", "reconcile-nat"),
     ("dnsmasq", "leases"),
     ("dnsmasq", "logs"),
     ("dnsmasq", "reload"),
@@ -10140,6 +10141,34 @@ def _apply_wan_forwarding(parsed: dict[str, list[dict[str, str]]]) -> int:
     return 0
 
 
+def _reconcile_startup_nat() -> int:
+    """Replace pre-upgrade NAT before application inventory reconciliation.
+
+    Use only last-applied intent, without changing routes, forwarding, qdiscs,
+    or saved desired state. An absent or invalid snapshot quarantines NAT.
+    Repeating this on service restart avoids relying on a migration marker that
+    could survive an application rollback while old rules are restored.
+    """
+    retired: dict[str, list[dict[str, str]]] = {
+        "feature_settings": [{"routing_enabled": "false", "nat_enabled": "false"}],
+        "targets": [],
+        "nat_rules": [],
+    }
+    if not WAN_RUNTIME_CONFIG_PATH.exists():
+        return _apply_wan_nat(retired)
+    try:
+        with _wan_replay_config(str(WAN_RUNTIME_CONFIG_PATH)) as replay_path:
+            errors = _wan_config_errors(replay_path)
+            if errors:
+                print("Startup NAT quarantined: " + "; ".join(errors), file=sys.stderr)
+                return _apply_wan_nat(retired)
+            parsed = _parse_wan_config(replay_path)
+    except (OSError, ValueError, UnicodeError) as exc:
+        print(f"Startup NAT quarantined: {exc}", file=sys.stderr)
+        return _apply_wan_nat(retired)
+    return _apply_wan_nat(parsed, allow_identity_quarantine=True)
+
+
 def _handle_wan(action: str, args: list[str], *, replay: bool = False) -> int:
     """Handle WAN.
 
@@ -10148,6 +10177,11 @@ def _handle_wan(action: str, args: list[str], *, replay: bool = False) -> int:
         args: Parsed command-line options consumed by the operation.
         replay: Internal handoff recovery flag; ordinary CLI Apply remains strict.
     """
+    if action == "reconcile-nat":
+        if args:
+            print("wan reconcile-nat does not accept a config path", file=sys.stderr)
+            return 2
+        return _reconcile_startup_nat()
     if len(args) != 1:
         print(f"wan {action} requires exactly one staged config path", file=sys.stderr)
         return 2

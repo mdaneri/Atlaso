@@ -253,8 +253,10 @@ and must not depend on browser pages or non-`/api/v1` protocol routes as generat
 `POST /api/v1/nat/rules` and `PATCH /api/v1/nat/rules/{rule_id}` accept `inbound_interfaces`, an array of explicit
 interface/VLAN names. New rules and enabled updates require at least one enabled IPv4 lab target different from
 `outbound_interface`. Existing paths, operation IDs, and `read:wan` / `write:wan` authorization remain unchanged.
-Clients must supply reviewed ingress membership when creating or enabling rules; an omitted field never means all
-interfaces. Responses return the saved array, including an empty array for legacy rows awaiting review. A disabled
+Clients must supply reviewed ingress membership when creating rules. PATCH preserves saved membership when the field
+is omitted and validates that membership when enabling or changing the outbound target. Explicit `[]` clears membership
+only on a disabled rule; an omitted field never means all interfaces. Responses return the saved array, including an
+empty array for legacy rows awaiting review. A disabled
 legacy update may retain an empty scope. The create-specific OpenAPI schema marks `inbound_interfaces` as required
 with at least one item, including for disabled new rules; update and response schemas preserve empty legacy scopes.
 Source Group and CIDR values restrict addresses within the selected ingress.

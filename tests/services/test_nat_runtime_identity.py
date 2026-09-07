@@ -1,10 +1,94 @@
 """Verify applied NAT identity survives neither NIC replacement nor unsafe replay."""
 
 import subprocess
+from pathlib import Path
 
 import pytest
 
 from tests.test_appliance_helper import load_helper_module, wan_config_text
+
+
+@pytest.mark.parametrize("snapshot", ["modern", "legacy", "missing", "invalid", "replaced"])
+def test_control_plane_start_reconciles_pre_upgrade_nat(runtime, monkeypatch, snapshot):
+    """Upgrade startup retires raw replay and fences active NAT before inventory.
+
+    Args:
+        runtime: Isolated helper and fake kernel inventory.
+        monkeypatch: Fixture capturing privileged commands.
+        snapshot: Last-applied snapshot or current identity to exercise.
+    """
+    helper, config, sysfs = runtime
+    baseline = config.read_text(encoding="utf-8")
+    if snapshot == "legacy":
+        config.write_text(baseline.replace("inbound_interfaces=eth2", "inbound_interfaces="), encoding="utf-8")
+    elif snapshot == "missing":
+        config.unlink()
+    elif snapshot == "invalid":
+        config.write_text(baseline.replace("route=10.20.0.0/24", "route=invalid"), encoding="utf-8")
+    elif snapshot == "replaced":
+        (sysfs / "eth2" / "address").write_text("00:11:22:33:44:99", encoding="utf-8")
+    saved = config.read_bytes() if config.exists() else None
+    helper.WAN_NAT_SERVICE_PATH.write_text("legacy raw replay", encoding="utf-8")
+    helper.WAN_NAT_CONFIG_PATH.write_text('iifname "eth2" masquerade', encoding="utf-8")
+    commands = []
+
+    def run(command):
+        """Capture service retirement and the kernel NAT replacement.
+
+        Args:
+            command: Privileged command supplied by the production helper.
+        """
+        commands.append(command)
+        return subprocess.CompletedProcess(command, 0, "", "")
+
+    monkeypatch.setattr(helper, "_run", run)
+    assert helper.main(["atlaso-helper", "wan", "reconcile-nat", "--real"]) == 0
+    assert commands[:2] == [["systemctl", "disable", "--now", "atlaso-nat.service"],
+                            ["systemctl", "daemon-reload"]]
+    assert commands[2:] == [["nft", "-f", str(helper.WAN_NAT_CONFIG_PATH)]]
+    assert not helper.WAN_NAT_SERVICE_PATH.exists()
+    applied = helper.WAN_NAT_CONFIG_PATH.read_text(encoding="utf-8")
+    if snapshot == "modern":
+        assert "meta iif { 3 } meta oif 4" in applied
+    else:
+        assert "masquerade" not in applied
+    assert (config.read_bytes() if config.exists() else None) == saved
+    assert helper.main(["atlaso-helper", "wan", "reconcile-nat", "--real"]) == 0
+    assert helper.WAN_NAT_CONFIG_PATH.read_text(encoding="utf-8") == applied
+
+
+@pytest.mark.parametrize("failure", ["retirement", "nft"])
+def test_startup_nat_failure_blocks_control_plane(runtime, monkeypatch, failure):
+    """The startup hook cannot report success while old runtime may remain.
+
+    Args:
+        runtime: Isolated helper and fake kernel inventory.
+        monkeypatch: Fixture injecting a failed privileged operation.
+        failure: Legacy service retirement or kernel table replacement failure.
+    """
+    helper, _config, _sysfs = runtime
+    helper.WAN_NAT_SERVICE_PATH.write_text("legacy raw replay", encoding="utf-8")
+
+    def run(command):
+        """Fail the selected privileged operation.
+
+        Args:
+            command: Command supplied by the production helper.
+        """
+        failed = command[:2] == (["systemctl", "disable"] if failure == "retirement" else ["nft", "-f"])
+        return subprocess.CompletedProcess(command, 1 if failed else 0, "", "")
+
+    monkeypatch.setattr(helper, "_run", run)
+    assert helper.main(["atlaso-helper", "wan", "reconcile-nat", "--real"]) != 0
+
+
+def test_startup_nat_hook_precedes_application_and_follows_boot_restore():
+    """Ship a blocking privileged hook in the unit installed by release updates."""
+    unit = (Path(__file__).resolve().parents[2] / "image/common/systemd/atlaso.service").read_text(encoding="utf-8")
+    hook = "ExecStartPre=+/opt/atlaso/bin/atlaso-helper wan reconcile-nat --real"
+    assert hook in unit
+    assert unit.index(hook) < unit.index("ExecStart=")
+    assert "atlaso-wan.service" in next(line for line in unit.splitlines() if line.startswith("After="))
 
 
 @pytest.fixture
