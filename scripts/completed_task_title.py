@@ -54,7 +54,8 @@ def completed_task_title(
     description = " ".join(description.split())
     if "·" in description or re.search(
         r"\bdone\b|#\s*\d+(?!\w|\.\d)|\b(?:issues?|prs?|pull(?:[\W_]*req(?:uest)?s?)?s?|gh|github)"
-        r"(?![a-z])[\W_]*(?:(?:number|no|id|ref|reference|tracked|as)\b[\W_]*)*\d+(?!\w|\.\d)",
+        r"(?![a-z])[\W_]*(?:(?:numbers?|nos?|ids?|identifiers?|refs?|references?|tracked|as)"
+        r"\b[\W_]*)*\d+(?!\w|\.\d)",
         description, re.IGNORECASE,
     ):
         raise ValueError("Supply only the description, without traceability or completion segments.")
