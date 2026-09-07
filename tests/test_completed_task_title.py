@@ -86,6 +86,8 @@ def test_dependabot_cli_requires_explicit_exception(capsys: pytest.CaptureFixtur
     "Cleanup · Done", "Done", "Done - Cleanup", "Cleanup · Issue #747",
     "Issue #999 cleanup", "Cleanup PR #999 Done", "fix issues#999", "Fix PRs #999, #998",
     "Pull request #999 cleanup", "Fix pull requests #999", "cleanup DONE", "(done) cleanup",
+    "Cleanup Issue: #999", "Cleanup PR: #999", "Cleanup pull-request #999", "Cleanup #999",
+    "Cleanup (#999)", "Cleanup owner/repo#999", "Cleanup # 999",
 ])
 def test_completed_title_rejects_existing_title_segments(description: str) -> None:
     """A retry must reuse the original description rather than append to a completed title."""
