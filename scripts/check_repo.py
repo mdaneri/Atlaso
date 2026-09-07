@@ -1318,6 +1318,7 @@ MERGE_HOLD_WITHDRAWAL_AFTER_HOLD = re.compile(
 
 ORDERED_TERMINAL_CLEANUP_MARKERS = {
     path: (
+        "`validation_resources_released`",
         "`remote_branch_absent`",
         "`worktree_removed`",
         "`task_title_done`",
@@ -1390,6 +1391,28 @@ TERMINAL_CLEANUP_ORDER_LINES = tuple(
     for position, marker in enumerate(
         next(iter(ORDERED_TERMINAL_CLEANUP_MARKERS.values())), start=1
     )
+)
+
+VALIDATION_RESOURCE_SECTION_ANCHORS = {
+    **TERMINAL_CLEANUP_SECTION_ANCHORS,
+    Path("docs/reference/vmware-workstation-lifecycle-testing.md"): (
+        "## Completed task resource cleanup"
+    ),
+}
+VALIDATION_RESOURCE_POLICY_MARKERS = (
+    "`validation_resource_inventory`",
+    "`validation_resource_release_evidence`",
+    "`validation_resource_inventory_empty`",
+    "`validation_resource_retention`",
+    "`validation_resource_cleanup_blocked`",
+    "`remove-atlaso-vm.ps1`",
+    "`remove-lifecycle-vms.ps1`",
+    "`-CleanupVmsOnly`",
+    "`Remove-AtlasoWorkstationArtifactRoot`",
+    "`Assert-AtlasoStrictDescendantPath`",
+    "`scripts/completed_task_title.py`",
+    "`task_title_readback_verified`",
+    "`--dependabot`",
 )
 
 
@@ -3273,6 +3296,32 @@ def check_agent_policy_gate(root: Path) -> list[Finding]:
                         + " -> ".join(ordered_markers),
                     )
                 )
+    return findings
+
+
+def check_validation_resource_policy(root: Path) -> list[Finding]:
+    """Keep resource handoff and release gates in each operative cleanup section.
+
+    Args:
+        root: Repository root containing the synchronized policy documents.
+    """
+    findings: list[Finding] = []
+    for relative_path, anchor in VALIDATION_RESOURCE_SECTION_ANCHORS.items():
+        path = root / relative_path
+        text, error = read_text(path)
+        if error is not None:
+            findings.append(Finding(path, "validation-resource policy is missing or unreadable"))
+            continue
+        assert text is not None
+        count, section = extract_required_policy_section(text, anchor)
+        if count != 1 or section is None:
+            findings.append(Finding(path, "validation-resource cleanup section must appear exactly once"))
+            continue
+        for marker in VALIDATION_RESOURCE_POLICY_MARKERS:
+            if marker not in section:
+                findings.append(Finding(path, f"validation-resource policy marker is missing: {marker}"))
+        if extract_terminal_cleanup_order(section) != TERMINAL_CLEANUP_ORDER_LINES:
+            findings.append(Finding(path, "validation-resource release must precede branch, worktree, and title cleanup"))
     return findings
 
 
@@ -5269,7 +5318,7 @@ def strip_markdown_nonoperative_content(text: str) -> str:
 
 
 def extract_terminal_cleanup_order(cleanup_section: str) -> tuple[str, ...] | None:
-    """Return the three numbered transitions following the terminal-order anchor.
+    """Return the numbered transitions following the terminal-order anchor.
 
     Args:
         cleanup_section: Canonical cleanup heading section or top-level list item.
@@ -5705,6 +5754,7 @@ def main(argv: list[str] | None = None) -> int:
     for path in files:
         findings.extend(check_file(path))
     findings.extend(check_agent_policy_gate(ROOT))
+    findings.extend(check_validation_resource_policy(ROOT))
     findings.extend(check_merge_authority_transfer_fixtures(ROOT))
     findings.extend(check_spark_worker_agent(ROOT))
     findings.extend(check_ui_pattern_foundation(ROOT))
