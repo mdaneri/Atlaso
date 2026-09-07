@@ -526,6 +526,13 @@ from atlaso.app.services.settings_archive import (
     export_settings_archive,
     restore_settings_archive,
 )
+from atlaso.app.services.traffic_publishing import (
+    NAT_CONFIG_PATH,
+    ensure_traffic_publishing_settings,
+    nat_targets,
+    render_nat_config,
+    validate_nat_rule,
+)
 from atlaso.app.services.update_sources import (
     ATLASO_CHANNELS,
     POWERSHELL_SOURCE_HOME_VALIDATION_MESSAGE,
@@ -5414,6 +5421,30 @@ def wan_nat_targets_from_route_targets(targets: list[dict[str, str]]) -> list[di
     return [target for target in targets if target.get("ip_cidr") and target.get("nat_allowed", False)]
 
 
+def traffic_publishing_context(db: Session) -> dict:
+    """Project reviewed source NAT intent without applying runtime translation.
+
+    Args:
+        db: Session containing desired rules, interfaces and shared Source Groups.
+    """
+    ensure_routes_wan_settings(db)
+    settings = ensure_traffic_publishing_settings(db)
+    rules = list(db.scalars(select(NatRule).order_by(NatRule.priority, NatRule.name)))
+    targets = nat_targets(list(db.scalars(select(PhysicalInterface))), list(db.scalars(select(VlanInterface))))
+    groups = firewall_source_group_state_for_db(db)["groups"]
+    errors = [error for rule in rules if rule.enabled for error in validate_nat_rule(rule, targets, groups)]
+    return {
+        "nat_rules": rules, "nat_rule_rows": [nat_rule_to_dict(rule) for rule in rules],
+        "wan_nat_targets": targets, "wan_nat_target_names": [target["name"] for target in targets],
+        "wan_source_groups": groups, "traffic_publishing_settings": settings,
+        "nat_config_path": NAT_CONFIG_PATH,
+        "nat_config_preview": render_nat_config(rules, targets, groups, settings),
+        "nat_validation_errors": errors if settings.effective_nat_enabled else [],
+        "nat_rule_validation_errors": errors,
+        "nat_status": "suspended" if settings.suspended else "disabled" if not settings.nat_enabled else "needs attention" if errors else "valid",
+    }
+
+
 def routes_wan_context(db: Session) -> dict:
     """Return routes wan context.
 
@@ -5457,12 +5488,8 @@ def routes_wan_context(db: Session) -> dict:
         nat_enabled=False,
         wan_simulation_enabled=False,
     )
-    nat_validation_errors = validate_wan_state(
-        *validation_args,
-        routing_enabled=False,
-        nat_enabled=True,
-        wan_simulation_enabled=False,
-    )
+    # The legacy settings response projects the canonical family-aware status.
+    nat_validation_errors = traffic_publishing_context(db)["nat_rule_validation_errors"]
     wan_simulation_validation_errors = validate_wan_state(
         *validation_args,
         routing_enabled=False,
@@ -5485,11 +5512,7 @@ def routes_wan_context(db: Session) -> dict:
             if feature_settings.routing_enabled
             else []
         ),
-        *(
-            nat_validation_errors
-            if feature_settings.effective_nat_enabled
-            else []
-        ),
+
         *(
             wan_simulation_validation_errors
             if feature_settings.wan_simulation_enabled
@@ -9421,6 +9444,7 @@ APPLIANCE_APPLY_UNIT_IDS = {
     "appliance_settings",
     "network",
     "wan",
+    "nat",
     "firewall",
     "dnsmasq",
     "esxi_pxe",
@@ -10743,6 +10767,7 @@ def appliance_apply_units(db: Session, *, reconcile: bool = True) -> list[dict[s
     appliance_settings = appliance_settings_context(db, reconcile_dns=reconcile)
     network = network_context(db)
     wan = routes_wan_context(db)
+    nat = traffic_publishing_context(db)
     firewall = firewall_context(db, reconcile=reconcile)
     dnsmasq = dnsmasq_context(db, reconcile=reconcile)
     esxi_pxe = esxi_pxe_context(db)
@@ -10818,14 +10843,13 @@ def appliance_apply_units(db: Session, *, reconcile: bool = True) -> list[dict[s
     wan_summary = [
         f"{len(wan['routes'])} routes",
         f"{len(wan['routing_rules'])} explicit routing rules",
-        f"{len(wan['nat_rules'])} NAT rules",
         f"{len(wan['policies'])} WAN policies",
     ]
     if wan_removed_routes:
         wan_summary.append(f"{len(wan_removed_routes)} route removals")
     wan_unit = make_appliance_apply_unit(
         unit_id="wan",
-        label="Routes & WAN Simulation",
+        label="Routing & WAN",
         page_url="/routes-wan",
         context=wan,
         summary=wan_summary,
@@ -10899,6 +10923,12 @@ def appliance_apply_units(db: Session, *, reconcile: bool = True) -> list[dict[s
             baseline=baselines.get("firewall"),
         ),
         wan_unit,
+        make_appliance_apply_unit(
+            unit_id="nat", label="Traffic Publishing", page_url="/traffic-publishing",
+            context=nat, summary=[f"{len(nat['nat_rules'])} source NAT rules", nat["nat_status"]],
+            validation_errors=nat["nat_validation_errors"], config_path=NAT_CONFIG_PATH,
+            config_preview=nat["nat_config_preview"], baseline=baselines.get("nat"),
+        ),
         make_appliance_apply_unit(
             unit_id="dnsmasq",
             label="DNS/DHCP (dnsmasq)",
@@ -13486,6 +13516,14 @@ def execute_appliance_apply_unit(
                 lambda: adapter.apply_wan_config(config_path),
             ]
         )
+    elif unit_id == "nat":
+        config_path = NAT_CONFIG_PATH
+        if not adapter.dry_run:
+            config_path = stage_appliance_apply_config(NAT_CONFIG_PATH, unit["raw_config_preview"])
+        results = run_adapter_steps([
+            lambda: adapter.validate_nat_config(config_path),
+            lambda: adapter.apply_nat_config(config_path),
+        ])
     elif unit_id == "firewall":
         settings = context["firewall_settings"]
         config_path = settings.config_path
@@ -16181,6 +16219,15 @@ def _submit_appliance_apply(
         and unit_map["local_users"]["changed"]
     ):
         selected_ids.add("local_users")
+    # Expand translation dependencies before deciding whether Network needs the
+    # protected management handoff. NAT snapshots must use applied target state.
+    if selected_ids.intersection({"wan", "network"}) and "nat" in unit_map:
+        selected_ids.add("nat")
+    nat_activation = unit_map.get("nat", {}).get("context", {}).get("traffic_publishing_settings")
+    if "nat" in selected_ids and getattr(nat_activation, "effective_nat_enabled", False):
+        for dependency in ("network", "wan"):
+            if unit_map.get(dependency, {}).get("changed"):
+                selected_ids.add(dependency)
     management_handoff = bool(
         (
             selected_ids.intersection(MANAGEMENT_HANDOFF_UNIT_IDS)
@@ -16203,6 +16250,8 @@ def _submit_appliance_apply(
             and "wan" in unit_map
         ):
             selected_ids.add("wan")
+    if selected_ids.intersection({"wan", "network"}) and "nat" in unit_map:
+        selected_ids.add("nat")
     if not selected_ids:
         detail = "Select at least one appliance change to submit."
         return JSONResponse({"detail": detail}, status_code=422) if wants_json else Response(detail, status_code=422, media_type="text/plain")
@@ -16442,6 +16491,7 @@ _routes_wan_ui = build_routes_wan_ui_router(
         render=render,
         appliance_apply_status=appliance_apply_status,
         routes_wan_context=routes_wan_context,
+        traffic_publishing_context=traffic_publishing_context,
         verify_csrf=verify_csrf,
         wan_route_targets=wan_route_targets,
         wan_nat_targets_from_route_targets=wan_nat_targets_from_route_targets,

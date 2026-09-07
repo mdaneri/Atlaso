@@ -9,6 +9,13 @@ status: current
 
 # Backup and restore
 
+Traffic Publishing archives include canonical NAT enablement and additive family, translation mode, and fixed-address
+fields. Legacy IPv4 rules retain their meaning; omitted ingress remains pending explicit review. Missing NIC selectors
+are retained only when backed by archived missing-host inventory and never become runtime-eligible on restore.
+Canonical NAT enablement takes precedence over a legacy Routes/WAN projection. Factory reset clears NAT rules,
+disables the NAT replay service, and establishes a disabled `nat` Apply baseline. See
+[Traffic Publishing](traffic-publishing.md) for the source-translation contract.
+
 Open **Backup and Restore** to protect Atlaso settings before maintenance and recover the control-plane configuration
 when needed.
 

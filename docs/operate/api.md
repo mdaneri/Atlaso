@@ -251,7 +251,7 @@ and must not depend on browser pages or non-`/api/v1` protocol routes as generat
 ## NAT ingress compatibility
 
 `POST /api/v1/nat/rules` and `PATCH /api/v1/nat/rules/{rule_id}` accept `inbound_interfaces`, an array of explicit
-interface/VLAN names. New rules and enabled updates require at least one enabled IPv4 lab target different from
+interface/VLAN names. New rules and enabled updates require at least one enabled same-family lab target different from
 `outbound_interface`. Existing paths, operation IDs, and `read:wan` / `write:wan` authorization remain unchanged.
 Clients must supply reviewed ingress membership when creating rules. PATCH preserves saved membership when the field
 is omitted and validates that membership when enabling or changing the outbound target. Explicit `[]` clears membership
@@ -261,6 +261,13 @@ legacy update may retain an empty scope. The create-specific OpenAPI schema mark
 with at least one item, including for disabled new rules; update and response schemas preserve empty legacy scopes.
 Source Group and CIDR values restrict addresses within the selected ingress.
 All writes save desired state; global Appliance Apply owns enforcement.
+
+Traffic Publishing adds `ip_family` (4 or 6), `translation_mode` (`masquerade` or `snat`), and `translated_address`.
+Fixed SNAT requires the exact same-family egress address; source CIDRs and Source Groups must match the chosen family.
+PATCH preserves omitted additive fields. The legacy `masquerade` response remains a mode projection. Canonical
+`GET`/`PUT /api/v1/traffic-publishing/settings` use Firewall read/write scopes and share one NAT setting with the
+deprecated Routes/WAN projection. Only Routing owns forwarding, and the separate `nat` Apply unit owns translation.
+See [Traffic Publishing](traffic-publishing.md) for settings, upgrade, and runtime recovery details.
 
 Inbound and outbound names always use 1–80 ASCII letters, digits, underscores, dots, colons, or hyphens, including for
 disabled rows and settings archives. Disabling a rule relaxes target availability checks only; it does not relax name

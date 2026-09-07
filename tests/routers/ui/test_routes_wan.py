@@ -15,22 +15,25 @@ def test_routes_wan_policy_form_renders(client):
     login(client)
     response = client.get("/routes-wan")
     assert response.status_code == 200
-    assert "Routes &amp; WAN Simulation" in response.text
+    assert "Routing &amp; WAN" in response.text
+    nat_page = client.get("/traffic-publishing")
+    assert nat_page.status_code == 200
+    assert "routes-wan-nat-table" not in response.text
     assert ">Static Routes</button>" in response.text
     assert ">Routing Permissions</button>" in response.text
     assert "Static routes choose a destination path" in response.text
     assert "Routing permissions control forwarding" in response.text
     assert "Routing Permissions" in response.text
-    assert 'data-nat-inbound-editor' in response.text
-    assert 'data-tag-name="inbound_interfaces"' in response.text
+    assert 'data-nat-inbound-editor' in nat_page.text
+    assert 'data-tag-name="inbound_interfaces"' in nat_page.text
     assert 'name="inbound_interfaces" multiple' not in response.text
-    assert "NAT Rules" in response.text
+    assert "Source NAT" in nat_page.text
     assert "WAN Policies" in response.text
-    assert "Routes &amp; WAN Simulation has pending appliance changes" in response.text
+    assert "Routing &amp; WAN has pending appliance changes" in response.text
     assert "Validation" in response.text
     assert "routes-wan-routes-table" in response.text
     assert "routes-wan-routing-table" in response.text
-    assert "routes-wan-nat-table" in response.text
+    assert "routes-wan-nat-table" in nat_page.text
     assert "routes-wan-policies-table" in response.text
     assert "auto route-role" in response.text
     assert "explicit access" in response.text
@@ -51,19 +54,19 @@ def test_routes_wan_policy_form_renders(client):
     for dialog_id in (
         "routes-wan-route-dialog",
         "routes-wan-routing-dialog",
-        "routes-wan-nat-dialog",
         "routes-wan-policy-dialog",
     ):
         assert f'id="{dialog_id}"' in response.text
-    assert response.text.count("data-routes-wan-wizard=") == 4
-    assert len(re.findall(r"<form\b[^>]*\bdata-atlaso-wizard(?:\s|>)", response.text)) == 4
-    assert response.text.count('class="vcf-sddc-wizard-rail"') >= 4
-    assert response.text.count('class="vcf-sddc-wizard-main"') >= 4
+    assert 'id="routes-wan-nat-dialog"' in nat_page.text
+    assert response.text.count("data-routes-wan-wizard=") == 3
+    assert len(re.findall(r"<form\b[^>]*\bdata-atlaso-wizard(?:\s|>)", response.text)) == 3
+    assert response.text.count('class="vcf-sddc-wizard-rail"') >= 3
+    assert response.text.count('class="vcf-sddc-wizard-main"') >= 3
     routes_template = Path("atlaso/app/templates/routes_wan.html").read_text(encoding="utf-8")
-    assert routes_template.count("resource_wizard(") == 4
+    assert routes_template.count("resource_wizard(") == 3
     assert "vcf-sddc-wizard-layout" not in routes_template
     assert "confirm-modal-head" not in routes_template
-    assert 'data-routes-wan-nat-source-mode' in response.text
+    assert 'data-routes-wan-nat-source-mode' in nat_page.text
     assert 'data-routes-wan-default-route' in response.text
     assert 'data-routes-wan-default-family' in response.text
     assert '<span>IP family</span>' in response.text
@@ -73,9 +76,11 @@ def test_routes_wan_policy_form_renders(client):
     assert 'class="form-grid route-path-choice-grid"' in response.text
     assert ".route-family-field[hidden]" in client.get("/static/app.css").text
     assert 'name="destination_cidr" required' in response.text
-    assert 'value="IPv4 masquerade" readonly' in response.text
+    assert 'name="ip_family"' in nat_page.text
+    assert 'name="translation_mode"' in nat_page.text
+    assert 'name="translated_address"' in nat_page.text
     assert "Europe WAN" in response.text
-    assert "SiteA outbound WAN" in response.text
+    assert "SiteA outbound WAN" in nat_page.text
     assert "eth1.20" in response.text
     assert "Routing &amp; WAN Settings" in response.text
     assert 'action="/ui/management/routes-wan/settings"' in response.text
@@ -83,7 +88,7 @@ def test_routes_wan_policy_form_renders(client):
     assert '[feature_settings]' in response.text
     assert "routing_enabled=false" in response.text
     assert "tc qdisc del" in response.text
-    assert "table ip atlaso_nat" in response.text
+    assert "[nat_rules]" in nat_page.text
     assert "Review appliance changes" in response.text
 
 
@@ -115,10 +120,9 @@ def test_routes_wan_settings_autosave_reports_suspended_nat(client):
     assert response.json()["effective_nat_enabled"] is False
     assert response.json()["feature_status"]["routing"] == "disabled"
     assert response.json()["feature_status"]["nat"] == "suspended"
-    refreshed = client.get("/routes-wan")
-    assert "Suspended until Routing is enabled." in refreshed.text
-    assert 'name="nat_enabled" aria-label="NAT enabled" checked disabled' in refreshed.text
-    assert 'name="nat_enabled" value="on" data-routes-wan-nat-fallback' in refreshed.text
+    refreshed = client.get("/traffic-publishing")
+    assert "NAT is suspended until Routing is enabled." in refreshed.text
+    assert 'name="nat_enabled" checked' in refreshed.text
 
     simulation_response = client.post(
         "/routes-wan/settings",
@@ -400,7 +404,7 @@ def test_routes_wan_wizards_respect_read_only_permissions(client):
     page = client.get("/routes-wan")
 
     assert page.status_code == 200
-    assert page.text.count('data-can-write="false"') == 4
+    assert page.text.count('data-can-write="false"') == 3
     assert 'data-routes-wan-wizard=' not in page.text
     assert 'id="routes-wan-route-dialog"' not in page.text
     assert 'id="routes-wan-routing-dialog"' not in page.text
@@ -460,6 +464,7 @@ def test_routes_wan_allows_ipv6_only_route_targets_but_not_nat_targets(client):
         "/routes-wan/nat-rules",
         data={
             "name": "IPv6-only outbound",
+            "inbound_interfaces": ["eth2"],
             "source": "192.168.50.0/24",
             "outbound_interface": "eth6",
             "masquerade": "on",
@@ -473,7 +478,7 @@ def test_routes_wan_allows_ipv6_only_route_targets_but_not_nat_targets(client):
 
     assert route_response.status_code == 303
     assert nat_response.status_code == 422
-    assert "Choose an access physical interface" in nat_response.text
+    assert "IPv4 interface or VLAN" in nat_response.text
     mgmt_route_response = client.post(
         "/routes-wan/routes",
         data={
@@ -608,11 +613,12 @@ def test_routes_wan_autosave_endpoints_and_apply_task(client):
     assert "non-management destination" in management_routing_response.text
     refreshed = client.get("/routes-wan")
     assert "Metro WAN" in refreshed.text
-    assert "Metro outbound" in refreshed.text
+    nat_page = client.get("/traffic-publishing")
+    assert "Metro outbound" in nat_page.text
     assert "SiteA to WAN" in refreshed.text
     assert "Default route" in refreshed.text
     assert "0.0.0.0/0" in refreshed.text
-    assert "ip saddr 192.168.50.0/24 oifname &#34;eth2&#34; masquerade" in refreshed.text
+    assert "source_resolved=192.168.50.0/24" in nat_page.text
     assert "ip rule add from 192.168.50.0/24 table 200" in refreshed.text
     assert "tc qdisc replace dev eth1.20" in refreshed.text
     with SessionLocal() as db:
@@ -630,7 +636,7 @@ def test_routes_wan_autosave_endpoints_and_apply_task(client):
         assert "wan" in (job.result or "")
         assert "NAT rules" in (job.result or "")
         assert "explicit routing rules" in (job.result or "")
-        assert "nft -f /etc/atlaso/nftables.d/atlaso-nat.nft" in (job.result or "")
+        assert '"unit_id": "nat"' in (job.result or "")
         assert "ip rule add from 192.168.50.0/24 table 200" in (job.result or "")
         assert "ip route replace 0.0.0.0/0 via 192.168.20.254 dev eth1.20 metric 120 table 200" in (job.result or "")
         assert "tc qdisc replace dev eth1.20" in (job.result or "")

@@ -127,6 +127,7 @@ COMMANDS: dict[str, set[str]] = {
     },
     "console": {"disable-services", "recover-management-plane", "restore-services", "status"},
     "wan": {"validate", "apply", "restore", "reconcile-nat"},
+    "nat": {"validate", "apply", "restore"},
 }
 
 
@@ -420,6 +421,9 @@ MANAGEMENT_HANDOFF_COMMIT_PATH = MANAGEMENT_HANDOFF_STATE_DIR / "last-commit.jso
 MANAGEMENT_HANDOFF_HOLDOVER_PREFIX = "00-0-atlaso-management-handoff-"
 MANAGEMENT_HANDOFF_APPLY_UNIT = "atlaso-management-handoff-apply.service"
 MANAGEMENT_HANDOFF_RECOVERY_UNIT = "atlaso-management-handoff-recovery.service"
+NAT_BOOT_ID_PATH = Path("/proc/sys/kernel/random/boot_id")
+NAT_APPLY_DIR = Path("/var/lib/atlaso/apply/nat")
+NAT_RUNTIME_CONFIG_PATH = Path("/etc/atlaso/traffic-publishing/atlaso-nat.conf")
 WAN_APPLY_DIR = Path("/var/lib/atlaso/apply/wan")
 APPLIANCE_UPDATE_APPLY_DIR = Path("/var/lib/atlaso/apply/appliance-update")
 APPLIANCE_UPDATE_INFO_PATH = Path("/etc/atlaso/update-info")
@@ -8898,7 +8902,7 @@ def _wan_route_is_active_management_default(
     return destination.prefixlen == 0
 
 
-def _wan_config_errors(path: Path) -> list[str]:
+def _wan_config_errors(path: Path, *, include_nat: bool = True) -> list[str]:
     """Perform WAN config errors.
 
     Args:
@@ -9162,12 +9166,20 @@ def _wan_config_errors(path: Path) -> list[str]:
                     errors.append(
                         f"Removed main-table default {destination or '<missing>'} metric cannot be negative."
                     )
-    for rule in parsed["nat_rules"] if effective_nat_enabled else []:
+    for rule in parsed["nat_rules"] if effective_nat_enabled and include_nat else []:
         if not _wan_bool(rule.get("enabled", ""), default=True):
             continue
         name = rule.get("name", "")
         if not name:
             errors.append("NAT rule is missing a name.")
+        family_text = rule.get("ip_family", "4")
+        if family_text not in {"4", "6"}:
+            errors.append("NAT IP family must be 4 or 6.")
+        family = 6 if family_text == "6" else 4
+        address_key = "ip_cidr" if family == 4 else "ipv6_cidr"
+        mode = rule.get("translation_mode", "masquerade")
+        if mode not in {"masquerade", "snat"}:
+            errors.append("NAT translation mode must be masquerade or snat.")
         outbound = rule.get("outbound_interface", "")
         inbound = [name.strip() for name in rule.get("inbound_interfaces", "").split(",") if name.strip()]
         if not inbound:
@@ -9178,7 +9190,7 @@ def _wan_config_errors(path: Path) -> list[str]:
             target = targets.get(ingress, {})
             if (not target or target.get("routing_domain") == "management"
                     or target.get("role") not in {"access", "route"}
-                    or not target.get("ip_cidr")
+                    or not target.get(address_key)
                     or not _wan_bool(target.get("nat_allowed", "false"))):
                 errors.append(f"NAT rule {name or '<missing>'} inbound target {ingress} is unavailable or ineligible.")
             if ingress == outbound:
@@ -9192,10 +9204,21 @@ def _wan_config_errors(path: Path) -> list[str]:
             default=True,
         ):
             errors.append(f"NAT rule {name or '<missing>'} cannot use management routing domain {outbound}.")
-        elif not targets[outbound].get("ip_cidr"):
-            errors.append(f"NAT rule {name or '<missing>'} must use an outbound interface with an IPv4 CIDR.")
-        if not _wan_bool(rule.get("masquerade", ""), default=True):
-            errors.append(f"NAT rule {name or '<missing>'} must use masquerade; destination NAT is not supported.")
+        elif not targets[outbound].get(address_key):
+            errors.append(f"NAT rule {name or '<missing>'} must use an outbound interface with an IPv{family} CIDR.")
+        translated = rule.get("translated_address", "")
+        if mode == "snat":
+            try:
+                address = ip_address(translated)
+                assigned = ip_interface(targets.get(outbound, {}).get(address_key, "")).ip
+                if address.version != family or address != assigned:
+                    raise ValueError("address mismatch")
+            except ValueError:
+                errors.append("Fixed SNAT requires a same-family address assigned to its egress target.")
+        elif translated:
+            errors.append("Masquerade cannot specify a fixed translated address.")
+        if mode == "masquerade" and not _wan_bool(rule.get("masquerade", "true"), default=True):
+            errors.append("Legacy non-masquerade NAT requires explicit translation review.")
         source = rule.get("source_resolved") or rule.get("source") or "any"
         if source.strip().lower() != "any":
             families: set[int] = set()
@@ -9209,8 +9232,8 @@ def _wan_config_errors(path: Path) -> list[str]:
                     errors.append(f"NAT rule {name or '<missing>'} source {value} is not a valid CIDR.")
                     continue
                 families.add(network.version)
-            if 6 in families:
-                errors.append(f"NAT rule {name or '<missing>'} uses IPv6; NAT v1 supports IPv4 masquerade only.")
+            if not families or families != {family}:
+                errors.append(f"NAT rule {name or '<missing>'} source must use IPv{family} only.")
         try:
             priority = int(rule.get("priority", "100"))
         except ValueError:
@@ -9290,35 +9313,45 @@ def _wan_source_expr(source: str) -> str:
 
 
 def _render_wan_nat_config(nat_rules: list[dict[str, str]], interface_indexes: dict[str, int] | None = None) -> str:
-    """Render WAN nat config.
+    """Render an atomic dual-family replacement, retaining reviewed NIC identities.
 
     Args:
-        nat_rules: Nat rules consumed by render WAN nat config.
-        interface_indexes: Verified runtime indexes, omitted only for the offline preview.
+        nat_rules: Validated source NAT intent, never raw nftables expressions.
+        interface_indexes: Live identity indexes; omitted only for offline validation.
     """
-    lines = [
-        "# Managed by Atlaso. Local changes may be overwritten.",
-        "table ip atlaso_nat",
-        "flush table ip atlaso_nat",
-        "table ip atlaso_nat {",
-        "  chain postrouting {",
-        "    type nat hook postrouting priority srcnat; policy accept;",
-    ]
-    enabled_rules = [rule for rule in nat_rules if _wan_bool(rule.get("enabled", ""), default=True)]
-    for rule in sorted(enabled_rules, key=lambda item: int(item.get("priority", "100") or "100")):
-        inbound = [name.strip() for name in rule.get("inbound_interfaces", "").split(",") if name.strip()]
-        if not inbound:
-            raise ValueError("NAT rendering requires an explicit inbound scope.")
-        ingress_expr = 'iifname { ' + ', '.join('"' + name + '"' for name in sorted(inbound)) + ' } '
-        identity_expr = ""
-        if interface_indexes is not None:
-            indexes = ", ".join(str(interface_indexes[name]) for name in sorted(inbound))
-            identity_expr = f'meta iif {{ {indexes} }} meta oif {interface_indexes[rule["outbound_interface"]]} '
-        source = rule.get("source_resolved") or rule.get("source") or "any"
-        comment = str(rule.get("name", "Atlaso NAT")).replace('"', "'")
-        lines.append(f'    {identity_expr}{ingress_expr}{_wan_source_expr(source)}oifname "{rule["outbound_interface"]}" masquerade comment "{comment}"')
-    lines.extend(["  }", "}", ""])
-    return "\n".join(lines)
+    lines = ["# Managed by Atlaso Traffic Publishing."]
+    for family, table_family in ((4, "ip"), (6, "ip6")):
+        lines.extend([f"table {table_family} atlaso_nat", f"flush table {table_family} atlaso_nat",
+                      f"table {table_family} atlaso_nat {{", "  chain postrouting {",
+                      "    type nat hook postrouting priority srcnat; policy accept;"])
+        rules = [rule for rule in nat_rules if _wan_bool(rule.get("enabled", ""), default=True)
+                 and rule.get("ip_family", "4") == str(family)]
+        for rule in sorted(rules, key=lambda item: int(item.get("priority", "100"))):
+            inbound = [name.strip() for name in rule.get("inbound_interfaces", "").split(",") if name.strip()]
+            outbound = rule["outbound_interface"]
+            if not inbound or any(not _valid_network_interface_name(name) for name in [*inbound, outbound]):
+                raise ValueError("NAT rendering requires valid explicit ingress and egress.")
+            ingress = 'iifname { ' + ', '.join('"' + name + '"' for name in sorted(inbound)) + ' } '
+            identity = ""
+            if interface_indexes is not None:
+                indexes = ", ".join(str(interface_indexes[name]) for name in sorted(inbound))
+                identity = f'meta iif {{ {indexes} }} meta oif {interface_indexes[outbound]} '
+            source = rule.get("source_resolved") or rule.get("source") or "any"
+            source_expr = ""
+            if source.lower() != "any":
+                values = [str(ip_network(value.strip(), strict=False)) for value in re.split(r"[\n,]+", source) if value.strip()]
+                if not values or any(ip_network(value).version != family for value in values):
+                    raise ValueError("NAT source family mismatch")
+                selector = values[0] if len(values) == 1 else "{ " + ", ".join(values) + " }"
+                source_expr = f"{table_family} saddr {selector} "
+            translation = "masquerade"
+            if rule.get("translation_mode", "masquerade") == "snat":
+                translation = "snat to " + str(ip_address(rule.get("translated_address", "")))
+            # JSON string encoding prevents names from escaping the nft comment string.
+            comment = json.dumps(str(rule.get("name", "Atlaso NAT")), ensure_ascii=True)
+            lines.append(f'    {identity}{ingress}{source_expr}oifname "{outbound}" {translation} comment {comment}')
+        lines.extend(["  }", "}"])
+    return "\n".join([*lines, ""])
 
 
 def _validate_wan_nat_config(nat_config: str) -> subprocess.CompletedProcess[str]:
@@ -10003,6 +10036,228 @@ def _install_wan_runtime(config_path: Path) -> None:
         raise ValueError("Routes & WAN boot replay service could not be enabled")
 
 
+def _nat_write(path: Path, content: str) -> None:
+    """Durably replace one root-owned NAT file.
+
+    Args:
+        path: Fixed managed destination.
+        content: Validated configuration or non-secret recovery state.
+    """
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = path.with_name(path.name + ".tmp")
+    temporary.write_text(content, encoding="utf-8")
+    os.chmod(temporary, 0o600)
+    _fsync_file(temporary)
+    temporary.replace(path)
+    _fsync_directory(path.parent)
+
+
+def _nat_observed_addresses(rules: list[dict[str, str]]) -> None:
+    """Require fixed translations to be present on the live egress interface.
+
+    Args:
+        rules: Effective reviewed source translation rules.
+    """
+    for rule in rules:
+        if not _wan_bool(rule.get("enabled", ""), default=True) or rule.get("translation_mode") != "snat":
+            continue
+        family = rule.get("ip_family", "4")
+        result = _run(["ip", "-j", "-" + family, "address", "show", "dev", rule["outbound_interface"]])
+        if result.returncode:
+            raise ValueError("Could not verify fixed SNAT egress address")
+        try:
+            assigned = {
+                ip_address(address["local"])
+                for interface in json.loads(result.stdout)
+                for address in interface.get("addr_info", [])
+                if not set(address.get("flags", [])).intersection({"tentative", "dadfailed"})
+            }
+            if ip_address(rule["translated_address"]) not in assigned:
+                raise ValueError("Fixed SNAT address is not assigned to the live egress interface")
+        except (KeyError, TypeError, json.JSONDecodeError) as exc:
+            raise ValueError("Could not verify fixed SNAT egress address") from exc
+
+
+def _nat_recover() -> None:
+    """Restore an interrupted NAT transaction before accepting further mutation."""
+    marker = NAT_RUNTIME_CONFIG_PATH.with_suffix(".recovery.json")
+    if not marker.exists():
+        return
+    recovery = json.loads(marker.read_text(encoding="utf-8"))
+    files = (NAT_RUNTIME_CONFIG_PATH, WAN_NAT_CONFIG_PATH, WAN_NAT_SERVICE_PATH)
+    if set(recovery.get("files", {})) != {str(path) for path in files}:
+        raise ValueError("NAT recovery inventory is invalid")
+    for path in files:
+        content = recovery["files"][str(path)]
+        if content is None:
+            path.unlink(missing_ok=True)
+            if path.parent.exists():
+                _fsync_directory(path.parent)
+        elif isinstance(content, str):
+            _nat_write(path, content)
+        else:
+            raise ValueError("NAT recovery content is invalid")
+    if NAT_RUNTIME_CONFIG_PATH.exists():
+        parsed = _parse_wan_config(NAT_RUNTIME_CONFIG_PATH)
+        rules = parsed["nat_rules"] if _wan_feature_settings(parsed)["effective_nat_enabled"] else []
+        try:
+            _nat_observed_addresses(rules)
+            program = _render_wan_nat_config(rules, _wan_nat_interface_indexes(parsed, rules))
+        except ValueError:
+            # A reboot or replacement NIC cannot inherit an old kernel selector.
+            program = _render_wan_nat_config([])
+    else:
+        program = recovery["files"][str(WAN_NAT_CONFIG_PATH)] or _render_wan_nat_config([])
+        if recovery.get("boot_id") != NAT_BOOT_ID_PATH.read_text(encoding="utf-8").strip():
+            program = _render_wan_nat_config([])
+    result = _run_with_input(["nft", "-f", "-"], program)
+    if result.returncode:
+        raise ValueError("NAT rollback could not restore the previous runtime table")
+    _nat_write(WAN_NAT_CONFIG_PATH, program)
+    reload_result = _run(["systemctl", "daemon-reload"])
+    operation = "enable" if recovery["enabled"] else "disable"
+    enable_result = _run(["systemctl", operation, "atlaso-nat.service"])
+    if reload_result.returncode or (enable_result.returncode and WAN_NAT_SERVICE_PATH.exists()):
+        raise ValueError("NAT rollback could not restore service enablement")
+    marker.unlink()
+    _fsync_directory(marker.parent)
+
+
+def _nat_quarantine() -> None:
+    """Clear both owned translation tables before reporting unsafe replay."""
+    empty = _render_wan_nat_config([])
+    if _run_with_input(["nft", "-f", "-"], empty).returncode:
+        raise ValueError("NAT replay quarantine failed; runtime state requires recovery")
+    _nat_write(WAN_NAT_CONFIG_PATH, empty)
+
+
+@contextmanager
+def _nat_transaction_lock():
+    """Serialize boot, startup and Apply against one root-owned NAT journal."""
+    if fcntl is None:
+        # Windows can exercise the pure helper contract without a Linux runtime.
+        yield
+        return
+    directory = NAT_RUNTIME_CONFIG_PATH.parent
+    directory.mkdir(parents=True, exist_ok=True)
+    directory_fd = os.open(directory, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+    try:
+        metadata = os.fstat(directory_fd)
+        if metadata.st_uid != 0 or metadata.st_mode & 0o022:
+            raise ValueError("NAT transaction directory is not root-owned and private")
+        descriptor = os.open(".apply.lock", os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW, 0o600, dir_fd=directory_fd)
+        with os.fdopen(descriptor, "a+b") as handle:
+            metadata = os.fstat(handle.fileno())
+            if metadata.st_uid != 0 or not stat.S_ISREG(metadata.st_mode) or metadata.st_mode & 0o022:
+                raise ValueError("NAT transaction lock is unsafe")
+            try:
+                fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except BlockingIOError as exc:
+                raise ValueError("NAT transaction is busy; retry after the active operation") from exc
+            try:
+                yield
+            finally:
+                fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+    finally:
+        os.close(directory_fd)
+
+
+def _handle_nat(action: str, args: list[str]) -> int:
+    """Admit a bounded NAT transaction before recovery or runtime mutation.
+
+    Args:
+        action: Allowlisted validation or mutation operation.
+        args: Exact staged or fixed runtime configuration path.
+    """
+    try:
+        with _nat_transaction_lock() if action != "validate" else nullcontext():
+            if action != "validate":
+                _nat_recover()
+                if action == "restore" and args == [str(NAT_RUNTIME_CONFIG_PATH)] and not NAT_RUNTIME_CONFIG_PATH.exists():
+                    print(json.dumps({"nat": "disabled", "reason": "No prior runtime after recovery"}))
+                    return 0
+            return _handle_nat_locked(action, args)
+    except (OSError, ValueError) as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
+
+
+def _handle_nat_locked(action: str, args: list[str]) -> int:
+    """Validate and transactionally apply the sole source-translation runtime.
+
+    Args:
+        action: Allowlisted validate, apply or boot restore action.
+        args: One admitted staged intent or fixed root-owned replay path.
+    """
+    if len(args) != 1:
+        print("nat requires exactly one managed config path", file=sys.stderr)
+        return 2
+    try:
+        path = Path(_validate_path(args[0])).resolve()
+        if path.suffix != ".conf" or not path.is_file() or not (path.is_relative_to(NAT_APPLY_DIR) or path == NAT_RUNTIME_CONFIG_PATH):
+            raise ValueError("NAT input must use its staged directory or fixed runtime file")
+        errors = _wan_config_errors(path)
+        if errors:
+            if action == "restore":
+                _nat_quarantine()
+                print(json.dumps({"nat": "quarantined", "reason": "Saved translation requires review"}))
+                return 0
+            raise ValueError("; ".join(errors))
+        parsed = _parse_wan_config(path)
+        rules = parsed["nat_rules"] if _wan_feature_settings(parsed)["effective_nat_enabled"] else []
+        program = _render_wan_nat_config(rules)
+        validation = _validate_wan_nat_config(program)
+        if validation.returncode:
+            raise ValueError("Staged nftables source translation validation failed")
+        if action == "validate":
+            print(json.dumps({"nat": "validation ok", "rules": len(rules)}))
+            return 0
+        # Never turn a replacement device name into a new reviewed ingress scope.
+        try:
+            indexes = _wan_nat_interface_indexes(parsed, rules)
+            _nat_observed_addresses(rules)
+            program = _render_wan_nat_config(rules, indexes)
+        except ValueError:
+            if action != "restore":
+                raise
+            _nat_quarantine()
+            print(json.dumps({"nat": "quarantined", "reason": "Interface identity or address changed; review and apply"}))
+            return 0
+        marker = NAT_RUNTIME_CONFIG_PATH.with_suffix(".recovery.json")
+        previous = {str(item): item.read_text(encoding="utf-8") if item.exists() else None
+                    for item in (NAT_RUNTIME_CONFIG_PATH, WAN_NAT_CONFIG_PATH, WAN_NAT_SERVICE_PATH)}
+        enabled = _run(["systemctl", "is-enabled", "atlaso-nat.service"]).returncode == 0
+        intent = path.read_text(encoding="utf-8")
+        _nat_write(marker, json.dumps({"files": previous, "enabled": enabled,
+                                     "boot_id": NAT_BOOT_ID_PATH.read_text(encoding="utf-8").strip()}))
+        try:
+            applied = _run_with_input(["nft", "-f", "-"], program)
+            if applied.returncode:
+                raise ValueError("Atomic nftables source translation replacement failed")
+            _nat_write(WAN_NAT_CONFIG_PATH, program)
+            _nat_write(NAT_RUNTIME_CONFIG_PATH, intent)
+            _nat_write(WAN_NAT_SERVICE_PATH, "\n".join([
+                "[Unit]", "Description=Atlaso Traffic Publishing source NAT",
+                "After=network-online.target atlaso-wan.service", "Wants=network-online.target",
+                "[Service]", "Type=oneshot",
+                f"ExecStart=/opt/atlaso/bin/atlaso-helper nat restore --real {NAT_RUNTIME_CONFIG_PATH}",
+                "RemainAfterExit=yes", "[Install]", "WantedBy=multi-user.target", "",
+            ]))
+            operation = "enable" if _wan_feature_settings(parsed)["nat_enabled"] else "disable"
+            if _run(["systemctl", "daemon-reload"]).returncode or _run(["systemctl", operation, "atlaso-nat.service"]).returncode:
+                raise ValueError("NAT boot replay enablement failed")
+            marker.unlink()
+            _fsync_directory(marker.parent)
+        except (OSError, ValueError):
+            _nat_recover()
+            raise
+        print(json.dumps({"nat": "apply complete", "rules": len(rules)}))
+        return 0
+    except (OSError, ValueError) as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
+
+
 def _retire_wan_nat_service() -> None:
     """Retire raw nft replay so boot always rechecks the saved NIC identity."""
     if WAN_NAT_SERVICE_PATH.exists():
@@ -10149,6 +10404,8 @@ def _reconcile_startup_nat() -> int:
     Repeating this on service restart avoids relying on a migration marker that
     could survive an application rollback while old rules are restored.
     """
+    if NAT_RUNTIME_CONFIG_PATH.exists() or NAT_RUNTIME_CONFIG_PATH.with_suffix(".recovery.json").exists():
+        return _handle_nat("restore", [str(NAT_RUNTIME_CONFIG_PATH)])
     retired: dict[str, list[dict[str, str]]] = {
         "feature_settings": [{"routing_enabled": "false", "nat_enabled": "false"}],
         "targets": [],
@@ -10204,10 +10461,13 @@ def _handle_wan_config(action: str, config_path: Path, *, replay: bool = False) 
         config_path: Admitted staged config or normalized replay snapshot.
         replay: Permit identity quarantine without skipping other recovery stages.
     """
-    errors = _wan_config_errors(config_path)
+    # Pre-split saved WAN snapshots still need the #336 identity quarantine.
+    # Newly rendered WAN input has no NAT section; the canonical NAT runtime
+    # always takes precedence once its independent Apply unit has succeeded.
+    legacy_nat = not NAT_RUNTIME_CONFIG_PATH.exists() and "[nat_rules]" in config_path.read_text(encoding="utf-8")
+    errors = _wan_config_errors(config_path, include_nat=legacy_nat)
     if errors:
-        if action == "restore":
-            # An obsolete saved config must not retain last boot's NAT table.
+        if action == "restore" and legacy_nat:
             retired = _parse_wan_config(config_path)
             retired["nat_rules"] = []
             retirement_result = _apply_wan_nat(retired)
@@ -10218,19 +10478,12 @@ def _handle_wan_config(action: str, config_path: Path, *, replay: bool = False) 
         return 2
     parsed = _parse_wan_config(config_path)
     feature_settings = _wan_feature_settings(parsed)
-    effective_nat_rules = (
-        parsed["nat_rules"]
-        if feature_settings["effective_nat_enabled"]
-        else []
-    )
-    nat_validation = _validate_wan_nat_config(
-        _render_wan_nat_config(effective_nat_rules)
-    )
+    if legacy_nat:
+        effective_nat_rules = parsed["nat_rules"] if feature_settings["effective_nat_enabled"] else []
+        validation = _validate_wan_nat_config(_render_wan_nat_config(effective_nat_rules))
+        if validation.returncode:
+            return validation.returncode
     if action == "validate":
-        print(nat_validation.stdout, end="")
-        print(nat_validation.stderr, end="", file=sys.stderr)
-        if nat_validation.returncode != 0:
-            return nat_validation.returncode
         print(
             json.dumps(
                 {
@@ -10251,9 +10504,10 @@ def _handle_wan_config(action: str, config_path: Path, *, replay: bool = False) 
         if WAN_RUNTIME_CONFIG_PATH.is_file()
         else None
     )
-    nat_result = _apply_wan_nat(parsed, allow_identity_quarantine=True) if replay else _apply_wan_nat(parsed)
-    if nat_result != 0:
-        return nat_result
+    if legacy_nat:
+        nat_result = _apply_wan_nat(parsed, allow_identity_quarantine=True) if replay else _apply_wan_nat(parsed)
+        if nat_result:
+            return nat_result
     forwarding_result = _apply_wan_forwarding(parsed)
     if forwarding_result != 0:
         return forwarding_result
@@ -20630,6 +20884,8 @@ def _management_handoff_runtime_paths(payload: dict) -> list[Path]:
         WAN_NAT_SERVICE_PATH,
         WAN_SYSCTL_PATH,
         WAN_RUNTIME_CONFIG_PATH,
+        NAT_RUNTIME_CONFIG_PATH,
+        NAT_RUNTIME_CONFIG_PATH.with_suffix(".recovery.json"),
         WAN_SERVICE_PATH,
         *_management_handoff_certificate_paths(payload),
         *_management_handoff_previous_certificate_paths(),
@@ -21853,6 +22109,15 @@ def _restore_management_handoff(state: dict) -> dict:
         "Routes & WAN rollback",
         lambda: _restore_management_handoff_wan(state, commands),
     )
+    if NAT_RUNTIME_CONFIG_PATH.exists():
+        def restore_nat() -> None:
+            """Rebuild prior NAT selectors after restoring Network and WAN."""
+            result = _handle_nat("restore", [str(NAT_RUNTIME_CONFIG_PATH)])
+            commands.append({"stage": "NAT rollback", "returncode": result})
+            if result:
+                raise ValueError("Traffic Publishing rollback failed")
+
+        attempt("Traffic Publishing rollback", restore_nat)
     attempt("firewall restore", lambda: _restore_management_handoff_firewall(state, commands))
 
     def validate_nginx() -> None:
@@ -22883,6 +23148,8 @@ def main(argv: list[str]) -> int:
         return _handle_management_front_door(action, normalized_args)
     if group == "management-handoff":
         return _handle_management_handoff(action, normalized_args)
+    if group == "nat":
+        return _handle_nat(action, normalized_args)
     if group == "wan":
         return _handle_wan(action, normalized_args)
     if group == "dnsmasq":

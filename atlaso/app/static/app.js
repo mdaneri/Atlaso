@@ -7512,6 +7512,35 @@ function initializeRoutesWanSettings(root = document) {
   });
 }
 
+function initializeTrafficPublishingSettings(root = document) {
+  root.querySelectorAll(`form[action="${managementUiPath("/traffic-publishing/settings")}"]`).forEach((form) => {
+    if (!(form instanceof HTMLFormElement) || form.dataset.natSettingsInitialized === "1") return;
+    form.dataset.natSettingsInitialized = "1";
+    form.addEventListener("atlaso:autosave-success", (event) => {
+      const payload = event.detail || {};
+      const errors = Array.isArray(payload.validation_errors) ? payload.validation_errors : [];
+      const status = root.querySelector("[data-nat-status]");
+      if (status) status.textContent = payload.suspended ? "suspended" : !payload.nat_enabled ? "disabled" : errors.length ? "needs attention" : "valid";
+      const validation = root.querySelector("[data-nat-validation-content]");
+      if (validation) {
+        validation.replaceChildren();
+        const messages = errors.length ? errors : [payload.suspended ? "NAT is suspended until Routing is enabled." : "Review source NAT intent before global Appliance Apply."];
+        messages.forEach((message) => {
+          const row = document.createElement("p");
+          row.className = errors.length ? "alert error" : "muted";
+          row.textContent = message;
+          validation.append(row);
+        });
+      }
+      const preview = root.querySelector("[data-nat-config-preview]");
+      if (preview && typeof payload.config_preview === "string") {
+        preview.textContent = payload.config_preview;
+        highlightConfigPreviewElement(preview);
+      }
+    });
+  });
+}
+
 function rememberRoutesWanTab(targetId) {
   try {
     window.localStorage.setItem("atlaso:routes-wan:active-tab", targetId);
@@ -7556,7 +7585,7 @@ async function deleteWanNatRuleFromMenu(row, csrf) {
     return;
   }
   try {
-    await postWanAction(managementUiPath(`/routes-wan/nat-rules/${data.id}/delete`), {}, csrf);
+    await postWanAction(managementUiPath(`/traffic-publishing/nat-rules/${data.id}/delete`), {}, csrf);
   } catch (error) {
     showWanMessage("routes-wan-nat-error", error instanceof Error ? error.message : "The NAT rule could not be deleted.");
   }
@@ -7802,11 +7831,13 @@ function initializeRoutesWanNatTable() {
           minWidth: 230,
         },
         {
-          title: "Masq",
-          field: "masquerade",
-          formatter: (cell) => cell.getRow().getData().is_new ? "" : atlasoBooleanFormatter(cell),
-          hozAlign: "center",
-          width: 90,
+          title: "Translation",
+          field: "translation_mode",
+          formatter: (cell) => {
+            const row = cell.getRow().getData();
+            return row.is_new ? "" : escapeHtml(`IPv${row.ip_family || 4} ${row.translation_mode || "masquerade"} ${row.translated_address || ""}`);
+          },
+          minWidth: 220,
           headerSort: false,
         },
         {
@@ -7824,7 +7855,7 @@ function initializeRoutesWanNatTable() {
           hozAlign: "center",
           width: 100,
           headerSort: false,
-          cellEdited: (cell) => saveWanEnabledState(cell, csrf, "/routes-wan/nat-rules", "routes-wan-nat-error", "The NAT rule could not be saved."),
+          cellEdited: (cell) => saveWanEnabledState(cell, csrf, "/traffic-publishing/nat-rules", "routes-wan-nat-error", "The NAT rule could not be saved."),
         },
         { title: "Description", field: "description", formatter: (cell) => cell.getRow().getData().is_new ? "" : escapeHtml(cell.getValue()), minWidth: 180 },
       ],
@@ -8089,6 +8120,10 @@ function routesWanWizardErrorTarget(form, kind, message) {
 }
 
 function initializeRoutesWanWizards() {
+  if (window.location.pathname === managementUiPath("/routes-wan") && window.location.hash === "#routes-wan-nat-panel") {
+    window.location.replace(managementUiPath("/traffic-publishing"));
+    return;
+  }
   const configurations = {
     route: {
       noun: "static route",
@@ -8116,13 +8151,13 @@ function initializeRoutesWanWizards() {
     },
     nat: {
       noun: "NAT rule",
-      createAction: managementUiPath("/routes-wan/nat-rules"),
-      editAction: (id) => managementUiPath(`/routes-wan/nat-rules/${id}/edit`),
+      createAction: managementUiPath("/traffic-publishing/nat-rules"),
+      editAction: (id) => managementUiPath(`/traffic-publishing/nat-rules/${id}/edit`),
       tab: "routes-wan-nat-panel",
       steps: [
-        { id: "identity", title: "Name the NAT rule", description: "Describe the explicit IPv4 outbound masquerade behavior." },
+        { id: "identity", title: "Name the NAT rule", description: "Review IPv4 or IPv6 source translation." },
         { id: "translation", title: "Choose translation", description: "Select the IPv4 source, outbound interface or VLAN, and priority." },
-        { id: "state", title: "Choose NAT rule state", description: "Enable outbound masquerade now or retain it disabled." },
+        { id: "state", title: "Choose NAT rule state", description: "Save source translation enabled or disabled." },
         { id: "review", title: "Review the NAT rule", description: "Confirm the explicit source and outbound translation boundary." },
       ],
     },
@@ -8176,9 +8211,31 @@ function initializeRoutesWanWizards() {
       const outbound = outboundSelect?.value;
       if (outboundSelect) outboundSelect.required = !(/\/nat-rules\/\d+\/edit$/.test(form.getAttribute("action") || "") && !routesWanField(form, "enabled")?.checked);
       natInboundEditor.querySelectorAll("[data-tag-option]").forEach((option) => {
-        option.disabled = option.dataset.tagOption === outbound;
+        const family = routesWanField(form, "ip_family")?.value || "4";
+        const familyAllowed = !option.dataset.natFamilies || option.dataset.natFamilies.split(",").includes(family);
+        option.disabled = option.dataset.tagOption === outbound || !familyAllowed;
+        option.hidden = !familyAllowed;
       });
     };
+    const syncNatTranslation = () => {
+      if (kind !== "nat") return;
+      const family = routesWanField(form, "ip_family")?.value || "4";
+      const outbound = routesWanField(form, "outbound_interface");
+      outbound?.querySelectorAll("option").forEach((option) => {
+        const eligible = !option.dataset.natFamilies || option.dataset.natFamilies.split(",").includes(family);
+        option.disabled = !eligible;
+        option.hidden = !eligible;
+      });
+      const fixed = routesWanField(form, "translation_mode")?.value === "snat";
+      const address = routesWanField(form, "translated_address");
+      const panel = form.querySelector("[data-nat-fixed-address]");
+      if (panel) panel.hidden = !fixed;
+      if (address) { address.disabled = !fixed; address.required = fixed; }
+      setRoutesWanField(form, "masquerade", fixed ? "off" : "on");
+      syncNatIngress();
+    };
+    routesWanField(form, "ip_family")?.addEventListener("change", syncNatTranslation);
+    routesWanField(form, "translation_mode")?.addEventListener("change", syncNatTranslation);
     routesWanField(form, "outbound_interface")?.addEventListener("change", syncNatIngress);
     natInboundEditor?.addEventListener("tag-editor:change", syncNatIngress);
     routesWanField(form, "enabled")?.addEventListener("change", syncNatIngress);
@@ -8225,7 +8282,7 @@ function initializeRoutesWanWizards() {
         setRoutesWanReview(form, "nat-inbound", natInboundValues().join(", ") || "Needs ingress review");
         setRoutesWanReview(form, "nat-name", routesWanField(form, "name")?.value);
         setRoutesWanReview(form, "nat-source", routesWanField(form, "source")?.value);
-        setRoutesWanReview(form, "nat-outbound", `IPv4 masquerade through ${outbound?.selectedOptions?.[0]?.textContent?.trim() || outbound?.value}`);
+        setRoutesWanReview(form, "nat-outbound", `IPv${routesWanField(form, "ip_family")?.value || "4"} ${routesWanField(form, "translation_mode")?.value || "masquerade"} ${routesWanField(form, "translated_address")?.value || ""} through ${outbound?.selectedOptions?.[0]?.textContent?.trim() || outbound?.value}`);
         setRoutesWanReview(form, "nat-priority", routesWanField(form, "priority")?.value);
         setRoutesWanReview(form, "nat-state", routesWanField(form, "enabled")?.checked ? "Enabled" : "Disabled");
       } else if (kind === "policy") {
@@ -8269,7 +8326,7 @@ function initializeRoutesWanWizards() {
       if (kind === "nat" && ["translation", "state"].includes(step.id)) {
         syncNatSource();
         const inbound = natInboundEditor?.querySelector("[data-tag-entry]");
-        const available = [...(natInboundEditor?.querySelectorAll("[data-tag-option]") || [])].map((option) => option.dataset.tagOption);
+        const available = [...(natInboundEditor?.querySelectorAll("[data-tag-option]") || [])].filter((option) => !option.hidden).map((option) => option.dataset.tagOption);
         const dormantEdit = /\/nat-rules\/\d+\/edit$/.test(form.getAttribute("action") || "") && !routesWanField(form, "enabled")?.checked;
         const outbound = routesWanField(form, "outbound_interface");
         if (!dormantEdit && !available.includes(outbound?.value)) {
@@ -8283,7 +8340,7 @@ function initializeRoutesWanWizards() {
           return { valid: false, message: "Choose an existing Source Group.", field: natGroup };
         }
         if (natSourceMode?.value === "cidrs" && !routesWanField(form, "source")?.value) {
-          return { valid: false, message: "Enter at least one IPv4 source CIDR.", field: natCidrs };
+          return { valid: false, message: "Enter at least one same-family source CIDR.", field: natCidrs };
         }
       }
       return true;
@@ -8321,6 +8378,10 @@ function initializeRoutesWanWizards() {
           setRoutesWanField(form, "priority", row?.priority ?? 100);
           setRoutesWanField(form, "enabled", row?.enabled ?? true);
         } else if (kind === "nat") {
+          setRoutesWanField(form, "ip_family", row?.ip_family || 4);
+          setRoutesWanField(form, "translation_mode", row?.translation_mode || "masquerade");
+          setRoutesWanField(form, "translated_address", row?.translated_address || "");
+          syncNatTranslation();
           setRoutesWanField(form, "name", row?.name || "");
           setRoutesWanField(form, "description", row?.description || "");
           const outboundSelect = routesWanField(form, "outbound_interface");
@@ -8360,7 +8421,7 @@ function initializeRoutesWanWizards() {
             return { ok: false, message, ...routesWanWizardErrorTarget(form, kind, message) };
           }
           rememberRoutesWanTab(config.tab);
-          window.history.replaceState(null, "", `${managementUiPath("/routes-wan")}#${config.tab}`);
+          window.history.replaceState(null, "", `${managementUiPath(kind === "nat" ? "/traffic-publishing" : "/routes-wan")}#${config.tab}`);
           window.location.reload();
           return { valid: true, close: false };
         } catch (_error) {
@@ -23427,6 +23488,7 @@ document.addEventListener("DOMContentLoaded", initializeRoutesWanNatTable);
 document.addEventListener("DOMContentLoaded", initializeRoutesWanPoliciesTable);
 document.addEventListener("DOMContentLoaded", initializeRoutesWanWizards);
 document.addEventListener("DOMContentLoaded", () => initializeRoutesWanSettings());
+document.addEventListener("DOMContentLoaded", () => initializeTrafficPublishingSettings());
 document.addEventListener("DOMContentLoaded", initializeSourceGroupWizardReturnFlow);
 document.addEventListener("DOMContentLoaded", initializePhysicalInterfacesTable);
 document.addEventListener("DOMContentLoaded", initializeApiTokensTable);

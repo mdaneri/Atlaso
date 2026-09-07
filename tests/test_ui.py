@@ -14379,7 +14379,7 @@ def test_global_appliance_apply_tracks_baselines_diffs_and_skips(client):
         assert baseline_job is not None
         steps = db.scalars(select(JobStep).where(JobStep.job_id == baseline_job.id)).all()
         assert {(step.component_key, step.status) for step in steps} == {
-            (unit_id, "succeeded") for unit_id in MANAGEMENT_HANDOFF_UNIT_IDS
+            (unit_id, "succeeded") for unit_id in (*MANAGEMENT_HANDOFF_UNIT_IDS, "nat")
         }
 
     firewall_page = client.get("/firewall")
@@ -16094,7 +16094,7 @@ def test_appliance_startup_initializes_factory_apply_baseline(monkeypatch, tmp_p
         review = test_client.get("/appliance-apply/review")
         assert review.status_code == 200
         assert review.json()["initial_apply_required"] is True
-        assert len(review.json()["units"]) == 16
+        assert len(review.json()["units"]) == 17
         assert all(unit["selected"] is unit["valid"] for unit in review.json()["units"])
         esxi_pxe_unit = next(
             unit for unit in review.json()["units"] if unit["id"] == "esxi_pxe"

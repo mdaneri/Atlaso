@@ -1737,10 +1737,11 @@ Terminal order:
 
 ## Routing And WAN
 
-- Routes & WAN Simulation owns static route desired state, IPv4 outbound masquerade NAT rules, and interface/VLAN-level
+- Routing & WAN owns static route desired state, forwarding, and interface/VLAN-level
   `tc/netem` latency/error simulation.
 - Persist the global Routing, NAT, and WAN Simulation switches as safe settings. Fresh install and factory reset are
-  off; missing legacy settings derive once from effective enabled rows. Keep every route, permission, NAT rule, WAN
+  off; legacy Routing/WAN settings derive once from effective enabled rows. Explicit legacy NAT intent migrates to the
+  canonical Traffic Publishing setting. Keep every route, permission, NAT rule, WAN
   policy, and assignment saved while its feature is off. Routing gates lab routes, rules, and IPv4/IPv6 forwarding;
   NAT is effective only with Routing; WAN Simulation is independent. Management reachability remains outside the lab
   Routing switch.
@@ -1754,26 +1755,29 @@ Terminal order:
   permits only one default per family. Destination-specific routes require a CIDR and may omit the gateway when directly
   connected. Preserve `/api/v1/routes` compatibility for callers that submit canonical `/0` CIDRs, and enforce the
   contract in browser validation, UI/API transports, desired-state validation, settings restore, and the WAN helper.
-- All Routing/WAN host mutation must go through the global `/ui/management/appliance-apply` `wan` unit. Do not add
-  route-specific,
+- Routing/WAN host mutation uses global `/ui/management/appliance-apply` `wan`; source NAT uses its separate `nat` unit.
+  Do not add route-specific,
   NAT-specific, or WAN-policy-specific apply routes or direct helper calls from edit forms.
 - The real apply path stages `/var/lib/atlaso/apply/wan/atlaso-wan.conf`; `atlaso-helper wan validate|apply` validates
-  targets, routes, NAT rules, and netem values before running `ip route`, `nft`, `sysctl`, and `tc`.
+  targets, routes, and netem values before running `ip route`, `sysctl`, and `tc`. Traffic Publishing stages its own NAT
+  input and owns nftables translation.
 - WAN impairment mode is v1 interface/VLAN-level only. Do not expose a route-specific WAN mode until it is fully
   implemented in the helper; track that design in `docs/project/routing-wan-roadmap.md`.
 - Atlaso has no `wan` interface role and must not infer NAT or internet connectivity from an interface role.
 - Physical and VLAN interfaces share exactly four roles: `management`, `access`, `route`, and `unused`. New UI, API,
   desired-state, and helper inputs reject retired or unknown roles. Bounded upgrade and settings-archive compatibility
   maps only the retired `services` and `storage` values to `access` without changing any other interface state.
-  `Routes & WAN Simulation` is the explicit routing/NAT/loss workflow, not an interface classification.
-- NAT v1 is explicit IPv4 masquerade only. Do not add destination NAT, port forwarding, automatic broad NAT, or
+  `Routing & WAN` and `Traffic Publishing` are explicit routing, translation, and loss workflows, not interface classes.
+- Traffic Publishing supports explicit IPv4/IPv6 masquerade and fixed SNAT to a same-family assigned egress address.
+  Do not add destination NAT, port forwarding, automatic broad NAT, or
   non-reviewable NAT inferred only from interface role. Route-role networks may forward to other route-role networks by
   default; access networks require explicit routing rules; management is never a route, NAT, or routing-permission
   target.
 - NAT requires one or more explicit inbound interfaces and one distinct outbound interface. Both sides use enabled,
-  available access-mode physical interfaces or enabled VLANs on available trunk parents, with IPv4 CIDRs and an access
-  or route role. The dedicated management role and IPv6-only targets are excluded; access-management flags do not
-  exclude an otherwise eligible lab target. Any source means any IPv4 source within the selected ingress; CIDRs and
+  available access-mode physical interfaces or enabled VLANs on available trunk parents, with matching-family CIDRs
+  and an access or route role. The dedicated management role and wrong-family targets are excluded;
+  access-management flags do not
+  exclude an otherwise eligible lab target. Any source means any same-family source within the selected ingress; CIDRs and
   shared source groups further restrict that boundary. Render every rule with `iifname` so appliance-local output
   cannot match. Preserve legacy unscoped rows for review and reject enabled apply until explicit ingress is selected.
   NAT remains explicit desired state reviewed through global apply; it is not inferred from an interface role.
@@ -1795,7 +1799,7 @@ Terminal order:
   table with factory/bootstrap records, invalidates all previous sessions, credentials, jobs, schedules, tokens, and
   audit history, then preflights and activates every factory apply unit through the dedicated reset transaction. Core
   routing, firewall, authentication, and management reachability must finish coherent; optional services must finish
-  disabled; desired/applied baselines must match for all 16 units with no follow-up Apply. Factory reset must reseed only
+  disabled; desired/applied baselines must match for all 17 units with no follow-up Apply. Factory reset must reseed only
   core defaults and must not recreate demo
   VLANs, trunk-only
   parent NIC posture, routes, NAT rules, WAN policies, DHCP scopes/reservations, firewall rules, CA requests, vSphere

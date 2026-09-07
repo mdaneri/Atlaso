@@ -83,6 +83,22 @@ class SystemAdapter:
         """
         return self._helper_result("wan", "validate", config_path, dry_run_message="dry-run: WAN config validation command recorded")
 
+    def validate_nat_config(self, config_path: str) -> AdapterResult:
+        """Validate staged source translation through the allowlisted helper.
+
+        Args:
+            config_path: Reviewed Traffic Publishing intent under the NAT staging root.
+        """
+        return self._helper_result("nat", "validate", config_path, dry_run_message="dry-run: NAT validation recorded")
+
+    def apply_nat_config(self, config_path: str) -> AdapterResult:
+        """Atomically apply source translation without changing forwarding.
+
+        Args:
+            config_path: Exact validated source translation snapshot.
+        """
+        return self._helper_result("nat", "apply", config_path, dry_run_message="dry-run: NAT apply recorded")
+
     def apply_wan_config(self, config_path: str) -> AdapterResult:
         """Update wan config.
 

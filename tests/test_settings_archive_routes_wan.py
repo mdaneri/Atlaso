@@ -8,7 +8,6 @@ from sqlalchemy import select
 from atlaso.app.database import SessionLocal
 from atlaso.app.models import NatRule, Route
 from atlaso.app.services.routes_wan import (
-    NAT_ENABLED_SETTING_KEY,
     ROUTING_ENABLED_SETTING_KEY,
     WAN_SIMULATION_ENABLED_SETTING_KEY,
 )
@@ -18,6 +17,7 @@ from atlaso.app.services.settings_archive import (
     export_settings_archive,
     restore_settings_archive,
 )
+from atlaso.app.services.traffic_publishing import NAT_ENABLED_SETTING_KEY
 
 
 def test_nat_ingress_archive_round_trip_and_legacy_review(client):
@@ -27,7 +27,7 @@ def test_nat_ingress_archive_round_trip_and_legacy_review(client):
         client: HTTP fixture initializing the archive database.
     """
     from atlaso.app.services.routes_wan import save_routes_wan_settings
-    from atlaso.app.ui import routes_wan_context
+    from atlaso.app.ui import traffic_publishing_context
 
     with SessionLocal() as db:
         save_routes_wan_settings(db, routing_enabled=True, nat_enabled=True, wan_simulation_enabled=False)
@@ -41,10 +41,10 @@ def test_nat_ingress_archive_round_trip_and_legacy_review(client):
         restore_settings_archive(db, legacy)
         rule = db.scalar(select(NatRule))
         assert rule.enabled and rule.inbound_interfaces == []
-        assert any("explicit review" in error for error in routes_wan_context(db)["wan_validation_errors"])
+        assert any("explicit review" in error for error in traffic_publishing_context(db)["nat_validation_errors"])
         invalid = deepcopy(archive)
         invalid["data"]["nat_rules"][0]["inbound_interfaces"] = ["eth0"]
-        with pytest.raises(ValueError, match="NAT ingress"):
+        with pytest.raises(ValueError, match="NAT target eth0"):
             restore_settings_archive(db, invalid)
         assert db.scalar(select(NatRule)).inbound_interfaces == []
 
@@ -76,7 +76,7 @@ def test_archive_round_trip_preserves_missing_nat_identity_for_review(client, mi
     from atlaso.app.models import PhysicalInterface
     from atlaso.app.services.networking import _cleanup_missing_interface_references
     from atlaso.app.services.routes_wan import save_routes_wan_settings
-    from atlaso.app.ui import routes_wan_context
+    from atlaso.app.ui import traffic_publishing_context
 
     with SessionLocal() as db:
         save_routes_wan_settings(db, routing_enabled=True, nat_enabled=True, wan_simulation_enabled=False)
@@ -94,14 +94,13 @@ def test_archive_round_trip_preserves_missing_nat_identity_for_review(client, mi
         restore_settings_archive(db, archive)
         rule = db.scalar(select(NatRule))
         assert (rule.enabled, rule.inbound_interfaces, rule.outbound_interface) == original
-        context = routes_wan_context(db)
-        assert context["wan_validation_errors"]
-        assert f'oifname "{rule.outbound_interface}" masquerade' not in context["wan_config_preview"]
+        context = traffic_publishing_context(db)
+        assert context["nat_validation_errors"]
         assert export_settings_archive(db, actor="test")["data"]["nat_rules"] == archive["data"]["nat_rules"]
 
         unbacked = deepcopy(archive)
         unbacked["data"]["nat_rules"][0]["inbound_interfaces"] = ["missing_unarchived"]
-        with pytest.raises(ValueError, match="NAT ingress"):
+        with pytest.raises(ValueError, match="NAT target missing_unarchived"):
             restore_settings_archive(db, unbacked)
         assert db.scalar(select(NatRule)).inbound_interfaces == original[1]
 
@@ -461,6 +460,22 @@ def test_routes_wan_archive_legacy_inference_preserves_admin_down_topology(
     feature_state = _archive_routes_wan_feature_state(archive["data"])
 
     assert feature_state.routing_enabled is True
+
+
+def test_archive_preserves_legacy_non_masquerade_review(client):
+    """Restoring dormant legacy rows must not silently enable masquerading.
+
+    Args:
+        client: HTTP fixture initializing the archive database.
+    """
+    with SessionLocal() as db:
+        archive = deepcopy(export_settings_archive(db, actor="test"))
+        _set_routes_wan_setting(archive, key=NAT_ENABLED_SETTING_KEY, value=False)
+        archive["data"]["nat_rules"][0].update(translation_mode="masquerade", masquerade=False)
+        restore_settings_archive(db, archive)
+        rule = db.scalar(select(NatRule))
+        assert rule.translation_mode == "masquerade"
+        assert rule.masquerade is False
 
 
 def test_archive_rejects_malformed_disabled_nat_ingress(client):
