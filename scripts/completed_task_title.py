@@ -14,7 +14,11 @@ DONE_SUFFIX = " · Done"
 
 
 def title_units(value: str) -> int:
-    """Count UTF-16 units so non-BMP descriptions fit desktop title limits."""
+    """Count UTF-16 units so non-BMP descriptions fit desktop title limits.
+
+    Args:
+        value: Title text whose UTF-16 length is measured.
+    """
     return len(value.encode("utf-16-le")) // 2
 
 
@@ -62,13 +66,22 @@ def completed_task_title(
 
 
 def verify_completed_task_title(expected: str, observed: str) -> None:
-    """Reject truncated, stale, or otherwise altered persisted title readback."""
+    """Reject truncated, stale, or otherwise altered persisted title readback.
+
+    Args:
+        expected: Canonical title generated from independently verified identifiers.
+        observed: Persisted title returned by supported task readback.
+    """
     if observed != expected:
         raise ValueError("Persisted title differs from the expected title; task_title_done remains blocked.")
 
 
 def main(argv: Sequence[str] | None = None) -> int:
-    """Print a title or verify supported-tool readback; never rename a task."""
+    """Print a title or verify supported-tool readback; never rename a task.
+
+    Args:
+        argv: Explicit CLI arguments, or None to use process arguments.
+    """
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--description", default="", help="Description without traceability or Done segments.")
     parser.add_argument("--issue", type=int, action="append", default=[])

@@ -47,7 +47,12 @@ def test_completed_title_validates_before_truncating_description() -> None:
 
 @pytest.mark.parametrize("issues, prs", [([], [1]), ([1], []), ([0], [1]), ([1], [-1]), ([True], [1])])
 def test_completed_title_rejects_invalid_identity(issues: list[int], prs: list[int]) -> None:
-    """Absent and nonpositive public identifiers block completion."""
+    """Absent and nonpositive public identifiers block completion.
+
+    Args:
+        issues: Issue-number inputs under validation.
+        prs: Pull-request-number inputs under validation.
+    """
     with pytest.raises(ValueError):
         completed_task_title("Cleanup", issues, prs)
 
@@ -66,13 +71,22 @@ def test_completed_title_accepts_verified_dependabot_exception() -> None:
 
 @pytest.mark.parametrize("issues, prs", [([0], [750]), ([], []), ([], [-1])])
 def test_dependabot_exception_does_not_waive_identifier_validation(issues: list[int], prs: list[int]) -> None:
-    """The exception permits only an absent issue list, never invalid or absent PR identity."""
+    """The exception permits only an absent issue list, never invalid or absent PR identity.
+
+    Args:
+        issues: Issue-number inputs under validation.
+        prs: Pull-request-number inputs under validation.
+    """
     with pytest.raises(ValueError):
         completed_task_title("", issues, prs, dependabot=True)
 
 
 def test_dependabot_cli_requires_explicit_exception(capsys: pytest.CaptureFixture[str]) -> None:
-    """Ordinary missing-issue input fails while explicit Dependabot readback succeeds."""
+    """Ordinary missing-issue input fails while explicit Dependabot readback succeeds.
+
+    Args:
+        capsys: Pytest capture fixture for CLI output and error assertions.
+    """
     args = ["--pr", "750"]
     assert main(args) == 1
     assert "required" in capsys.readouterr().err
@@ -97,7 +111,11 @@ def test_dependabot_cli_requires_explicit_exception(capsys: pytest.CaptureFixtur
     "Cleanup issue reference number 999", "Cleanup PR tracked as 999",
 ])
 def test_completed_title_rejects_existing_title_segments(description: str) -> None:
-    """A retry must reuse the original description rather than append to a completed title."""
+    """A retry must reuse the original description rather than append to a completed title.
+
+    Args:
+        description: Descriptive input exercised by the regression case.
+    """
     with pytest.raises(ValueError, match="only the description"):
         completed_task_title(description, [747], [748])
 
@@ -112,7 +130,11 @@ def test_completed_title_accepts_descriptive_numbers() -> None:
     "Fix GitHub 2FA login", "Pull 1Password credentials", "GitHub 3.14 compatibility",
 ])
 def test_completed_title_allows_numbers_unrelated_to_traceability(description: str) -> None:
-    """A nearby product or metadata label does not turn a descriptive version into an ID."""
+    """A nearby product or metadata label does not turn a descriptive version into an ID.
+
+    Args:
+        description: Descriptive input exercised by the regression case.
+    """
     title = completed_task_title(description, [747], [748])
     assert title.startswith("Issue #747 · PR #748 · ")
     assert title.endswith(" · Done")
@@ -120,13 +142,21 @@ def test_completed_title_allows_numbers_unrelated_to_traceability(description: s
 
 @pytest.mark.parametrize("observed", ["Issue #747 · PR #748", "Issue #747 · PR #748 · …", "Issue #747 · PR #748 · Done · Done", "Issue #747 · PR #749 · Done"])
 def test_completed_title_rejects_wrong_readback(observed: str) -> None:
-    """A successful rename request cannot substitute for exact persisted readback."""
+    """A successful rename request cannot substitute for exact persisted readback.
+
+    Args:
+        observed: Persisted title returned by supported task readback.
+    """
     with pytest.raises(ValueError, match="remains blocked"):
         verify_completed_task_title(completed_task_title("", [747], [748]), observed)
 
 
 def test_completed_title_cli_readback_is_idempotent(capsys: pytest.CaptureFixture[str]) -> None:
-    """Retries verify one canonical suffix without duplicating it."""
+    """Retries verify one canonical suffix without duplicating it.
+
+    Args:
+        capsys: Pytest capture fixture for CLI output and error assertions.
+    """
     args = ["--issue", "747", "--pr", "748"]
     assert main(args) == 0
     title = capsys.readouterr().out.strip()

@@ -13,7 +13,11 @@ from scripts.check_repo import (
 
 
 def write_resource_policies(root: Path) -> None:
-    """Write minimal valid resource contracts for all required entry points."""
+    """Write minimal valid resource contracts for all required entry points.
+
+    Args:
+        root: Isolated root containing generated policy documents.
+    """
     for relative, anchor in VALIDATION_RESOURCE_SECTION_ANCHORS.items():
         prefix = "" if anchor.startswith("#") else "  "
         lines = [anchor, "", *(prefix + marker for marker in VALIDATION_RESOURCE_POLICY_MARKERS)]
@@ -24,7 +28,11 @@ def write_resource_policies(root: Path) -> None:
 
 
 def test_resource_policy_accepts_complete_contract(tmp_path: Path) -> None:
-    """The same operative contract is valid in headings and nested checklist items."""
+    """The same operative contract is valid in headings and nested checklist items.
+
+    Args:
+        tmp_path: Pytest-owned directory for isolated policy fixtures.
+    """
     write_resource_policies(tmp_path)
     assert check_validation_resource_policy(tmp_path) == []
 
@@ -35,7 +43,14 @@ def test_resource_policy_accepts_complete_contract(tmp_path: Path) -> None:
 def test_resource_policy_rejects_missing_or_hidden_requirement(
     tmp_path: Path, relative: Path, marker: str, replacement: str
 ) -> None:
-    """Every ownership, retention, tooling, and readback requirement must be operative."""
+    """Every ownership, retention, tooling, and readback requirement must be operative.
+
+    Args:
+        tmp_path: Pytest-owned directory for isolated policy fixtures.
+        relative: Repository-relative policy document selected for mutation.
+        marker: Required operative policy marker under test.
+        replacement: Removal or hidden form replacing the required marker.
+    """
     write_resource_policies(tmp_path)
     path = tmp_path / relative
     prefix = "" if VALIDATION_RESOURCE_SECTION_ANCHORS[relative].startswith("#") else "  "
@@ -57,7 +72,13 @@ def test_resource_policy_rejects_missing_or_hidden_requirement(
 def test_resource_policy_requires_release_before_terminal_cleanup(
     tmp_path: Path, relative: Path, mutation: str
 ) -> None:
-    """Resource release cannot be omitted, postponed, or hidden by an extra transition."""
+    """Resource release cannot be omitted, postponed, or hidden by an extra transition.
+
+    Args:
+        tmp_path: Pytest-owned directory for isolated policy fixtures.
+        relative: Repository-relative policy document selected for mutation.
+        mutation: Invalid terminal ordering variant applied to the fixture.
+    """
     write_resource_policies(tmp_path)
     path = tmp_path / relative
     prefix = "" if VALIDATION_RESOURCE_SECTION_ANCHORS[relative].startswith("#") else "  "
@@ -81,7 +102,12 @@ def test_resource_policy_requires_release_before_terminal_cleanup(
 
 @pytest.mark.parametrize("relative", VALIDATION_RESOURCE_SECTION_ANCHORS)
 def test_resource_policy_requires_document_and_unique_section(tmp_path: Path, relative: Path) -> None:
-    """Missing documents and ambiguous operative sections fail closed."""
+    """Missing documents and ambiguous operative sections fail closed.
+
+    Args:
+        tmp_path: Pytest-owned directory for isolated policy fixtures.
+        relative: Repository-relative policy document selected for mutation.
+    """
     write_resource_policies(tmp_path)
     path = tmp_path / relative
     text = path.read_text(encoding="utf-8")
