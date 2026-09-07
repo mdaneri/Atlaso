@@ -260,6 +260,8 @@ Use `remove-atlaso-vm.ps1` with the exact VMX and expected name after independen
 `remove-lifecycle-vms.ps1` or the lifecycle wrapper's `-CleanupVmsOnly` for the exact PR-owned lab. These VM-only paths
 retain the result root; after preserving evidence and verifying ownership and quiescence, release that exact root with
 `Remove-AtlasoWorkstationArtifactRoot` using its exact configured-root binding as documented in the lifecycle guide.
+First use `Assert-AtlasoStrictDescendantPath` against independently configured permitted and canonical lifecycle roots;
+derive the expected lab path separately from validated task/PR identity, never from the candidate manifest path.
 Preserve existing identity, filesystem, shared-disk, provider-state, process-termination, and recovery safeguards.
 Release associated resources through their owning tools; VM removal alone does not prove reservations, claims,
 or recovery state released.

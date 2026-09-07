@@ -404,6 +404,8 @@ Use `remove-atlaso-vm.ps1` with the exact VMX and expected name after independen
 `remove-lifecycle-vms.ps1` or the lifecycle wrapper's `-CleanupVmsOnly` for the exact PR-owned lab. These VM-only paths
 retain the result root; after preserving evidence and verifying ownership and quiescence, release that exact root with
 `Remove-AtlasoWorkstationArtifactRoot` using its exact configured-root binding as documented in the lifecycle guide.
+First use `Assert-AtlasoStrictDescendantPath` against independently configured permitted and canonical lifecycle roots;
+derive the expected lab path separately from validated task/PR identity, never from the candidate manifest path.
 Preserve existing identity, filesystem, shared-disk, provider-state, process-termination, and recovery safeguards.
 Release associated resources through their owning tools; VM removal alone does not prove reservations, claims,
 or recovery state released.
@@ -468,18 +470,43 @@ provider deletion or recursive filesystem commands.
 VM-only cleanup deliberately leaves the lab result root, including `plan.json`, `vmware-identity.json`, and logs.
 Before releasing that root, preserve sanitized validation and ownership evidence outside it, independently bind the
 absolute root to the originating task and recorded lab manifest, verify no VMX remains, and verify all lab helpers
-and recovery activity have finished. A path or PR-shaped name alone is insufficient. Import the existing module and
-use its exact-root parameter set with the same verified absolute path for both root arguments:
+and recovery activity have finished. A path or PR-shaped name alone is insufficient. Independently read the supported
+configured permitted root, verify the registered task worktree and its exclusive ownership, and derive the canonical
+lifecycle parent as `test-results/vmware-workstation-lifecycle` beneath that worktree. Do not derive either trusted root
+from lifecycle metadata. Independently verify the PR, purpose, and collision suffix against the task's creation evidence.
+Use those identities to derive the expected lab path separately from the candidate manifest path:
 
 ```powershell
+$ErrorActionPreference = 'Stop'
 Import-Module ./scripts/windows/vmware/Atlaso.WorkstationCleanup.psm1 -Force
+Import-Module ./scripts/windows/vmware/Atlaso.VmwareTestIdentity.psm1 -Force
+Assert-AtlasoStrictDescendantPath `
+  -ParentPath $configuredPermittedRoot -ChildPath $verifiedTaskWorktree `
+  -FailureMessage 'Task worktree is outside the configured permitted root'
+$canonicalLifecycleParent = Join-Path $verifiedTaskWorktree 'test-results/vmware-workstation-lifecycle'
+Assert-AtlasoStrictDescendantPath `
+  -ParentPath $verifiedTaskWorktree -ChildPath $canonicalLifecycleParent `
+  -FailureMessage 'Lifecycle parent is outside the verified task worktree'
+$verifiedLabIdentity = New-AtlasoVmwareTestIdentity `
+  -PullRequestNumber $verifiedPr -Purpose $verifiedPurpose -CollisionSuffix $verifiedCollisionSuffix
+$expectedLabRoot = Join-Path $canonicalLifecycleParent $verifiedLabIdentity.Name
+Assert-AtlasoStrictDescendantPath `
+  -ParentPath $canonicalLifecycleParent -ChildPath $expectedLabRoot `
+  -FailureMessage 'Expected lab is outside the canonical lifecycle parent'
+$candidateLabRoot = [System.IO.Path]::GetFullPath($manifestBoundLabRoot)
+if (-not $candidateLabRoot.Equals($expectedLabRoot, [System.StringComparison]::OrdinalIgnoreCase)) {
+  throw 'Candidate lab does not match independently derived task identity'
+}
 Remove-AtlasoWorkstationArtifactRoot `
   -VmrunPath $verifiedVmrunPath `
-  -ExpectedRemovalRoot $manifestBoundLabRoot `
-  -RemovalRoot $manifestBoundLabRoot
+  -ExpectedRemovalRoot $expectedLabRoot `
+  -RemovalRoot $candidateLabRoot
 ```
 
-The caller supplies these values from independently verified provider and ownership evidence. This existing helper
+The caller supplies the configured root and verified task/provider identities from independent supported configuration
+and ownership readback. Missing, ambiguous, outside-root, or reparse-point state blocks this sequence. The candidate
+manifest path must equal the independently derived expected path; never feed that candidate back as its own expected
+root. Run the containment assertions even on an already-absent retry. This existing helper
 supports VM-free residual roots and already-absent retries, retains filesystem identity and provider-state safeguards,
 and confines missing-registration handling to the exact root. Do not substitute its broader `-ArtifactParentRoot`
 parameter set or aggregate artifact cleanup for this lab-specific release. Read back root and registration absence;
