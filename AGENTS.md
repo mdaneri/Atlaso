@@ -298,9 +298,12 @@ This resource gate does not waive the existing merge, issue, post-merge, or priv
 branch/worktree cleanup. Earlier per-operation sensitive-material cleanup and recovery remain mandatory.
 
 Use `remove-atlaso-vm.ps1` with the exact VMX and expected name after independently verifying ownership; use
-`remove-lifecycle-vms.ps1` or the lifecycle wrapper's `-CleanupVmsOnly` for the exact PR-owned lab. Preserve existing
-identity, filesystem, shared-disk, provider-state, process-termination, and recovery safeguards. Release associated
-resources through their owning tools; VM removal alone does not prove reservations, claims, or recovery state released.
+`remove-lifecycle-vms.ps1` or the lifecycle wrapper's `-CleanupVmsOnly` for the exact PR-owned lab. These VM-only paths
+retain the result root; after preserving evidence and verifying ownership and quiescence, release that exact root with
+`Remove-AtlasoWorkstationArtifactRoot` using its exact configured-root binding as documented in the lifecycle guide.
+Preserve existing identity, filesystem, shared-disk, provider-state, process-termination, and recovery safeguards.
+Release associated resources through their owning tools; VM removal alone does not prove reservations, claims,
+or recovery state released.
 Never delete shared, reusable, permanent, user-created, differently owned, or ambiguous resources.
 
 The cleanup-ready handoff includes the inventory and durable, sanitized `validation_resource_release_evidence`:

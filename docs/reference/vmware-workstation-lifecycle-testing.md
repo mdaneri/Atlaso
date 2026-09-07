@@ -401,9 +401,12 @@ This resource gate does not waive the existing merge, issue, post-merge, or priv
 branch/worktree cleanup. Earlier per-operation sensitive-material cleanup and recovery remain mandatory.
 
 Use `remove-atlaso-vm.ps1` with the exact VMX and expected name after independently verifying ownership; use
-`remove-lifecycle-vms.ps1` or the lifecycle wrapper's `-CleanupVmsOnly` for the exact PR-owned lab. Preserve existing
-identity, filesystem, shared-disk, provider-state, process-termination, and recovery safeguards. Release associated
-resources through their owning tools; VM removal alone does not prove reservations, claims, or recovery state released.
+`remove-lifecycle-vms.ps1` or the lifecycle wrapper's `-CleanupVmsOnly` for the exact PR-owned lab. These VM-only paths
+retain the result root; after preserving evidence and verifying ownership and quiescence, release that exact root with
+`Remove-AtlasoWorkstationArtifactRoot` using its exact configured-root binding as documented in the lifecycle guide.
+Preserve existing identity, filesystem, shared-disk, provider-state, process-termination, and recovery safeguards.
+Release associated resources through their owning tools; VM removal alone does not prove reservations, claims,
+or recovery state released.
 Never delete shared, reusable, permanent, user-created, differently owned, or ambiguous resources.
 
 The cleanup-ready handoff includes the inventory and durable, sanitized `validation_resource_release_evidence`:
@@ -461,6 +464,26 @@ For a lifecycle lab, use `scripts/windows/vmware/invoke-lifecycle-test.ps1 -Clea
 with those same identities and the recorded `-Purpose` when it differs from the default. Preserve the lab ownership
 plan as evidence before removal. These paths reuse `Atlaso.WorkstationCleanup.psm1`; do not replace them with raw
 provider deletion or recursive filesystem commands.
+
+VM-only cleanup deliberately leaves the lab result root, including `plan.json`, `vmware-identity.json`, and logs.
+Before releasing that root, preserve sanitized validation and ownership evidence outside it, independently bind the
+absolute root to the originating task and recorded lab manifest, verify no VMX remains, and verify all lab helpers
+and recovery activity have finished. A path or PR-shaped name alone is insufficient. Import the existing module and
+use its exact-root parameter set with the same verified absolute path for both root arguments:
+
+```powershell
+Import-Module ./scripts/windows/vmware/Atlaso.WorkstationCleanup.psm1 -Force
+Remove-AtlasoWorkstationArtifactRoot `
+  -VmrunPath $verifiedVmrunPath `
+  -ExpectedRemovalRoot $manifestBoundLabRoot `
+  -RemovalRoot $manifestBoundLabRoot
+```
+
+The caller supplies these values from independently verified provider and ownership evidence. This existing helper
+supports VM-free residual roots and already-absent retries, retains filesystem identity and provider-state safeguards,
+and confines missing-registration handling to the exact root. Do not substitute its broader `-ArtifactParentRoot`
+parameter set or aggregate artifact cleanup for this lab-specific release. Read back root and registration absence;
+an already-absent return still requires the same ownership evidence and independent readback before release is recorded.
 
 Builder-address release, output claims, and credential-bridge recovery retain their owning wrapper/module's existing
 release and retry paths. Do not erase their ledgers or recovery markers to simulate completion, and do not start a new

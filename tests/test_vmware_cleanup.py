@@ -599,6 +599,37 @@ Write-Host 'CLEANUP SUCCEEDED'
     return _run_script(wrapper, environment=environment)
 
 
+@pytest.mark.parametrize("root_exists", [True, False])
+def test_exact_lifecycle_result_root_cleanup_without_vmx(tmp_path: Path, root_exists: bool) -> None:
+    """The existing root helper releases retained evidence without touching sibling labs.
+
+    Args:
+        tmp_path: Isolated fake-provider and lifecycle result roots.
+        root_exists: Exercise both residual cleanup and an already-absent retry.
+    """
+    root = tmp_path / "results" / "Atlaso-PR-750-lifecycle-fixture"
+    sibling = root.parent / "Atlaso-PR-751-lifecycle-other"
+    sibling.mkdir(parents=True)
+    sentinel = sibling / "plan.json"
+    sentinel.write_text('{"owner": "other-task"}', encoding="utf-8")
+    preserved = tmp_path / "preserved-evidence.json"
+    preserved.write_text('{"verified": true}', encoding="utf-8")
+    if root_exists:
+        root.mkdir()
+        (root / "plan.json").write_text('{"pull_request_number": 750}', encoding="utf-8")
+        (root / "vmware-identity.json").write_text('{"vms": []}', encoding="utf-8")
+        (root / "validation.log").write_text("validation evidence copied", encoding="utf-8")
+    vmrun, environment, log, _ = _write_fake_vmrun(tmp_path / "fake", [], registered=False)
+    result = _run_root_cleanup(
+        tmp_path, removal_root=root, expected_root=root, vmrun_path=vmrun, environment=environment,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert not root.exists()
+    assert sentinel.read_text(encoding="utf-8") == '{"owner": "other-task"}'
+    assert preserved.read_text(encoding="utf-8") == '{"verified": true}'
+    assert all(command[2] not in {"stop", "deleteVM"} for command in _commands(log))
+
+
 def _run_stale_registration_repair(
     tmp_path: Path,
     *,

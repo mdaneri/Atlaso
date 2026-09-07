@@ -1408,6 +1408,7 @@ VALIDATION_RESOURCE_POLICY_MARKERS = (
     "`remove-atlaso-vm.ps1`",
     "`remove-lifecycle-vms.ps1`",
     "`-CleanupVmsOnly`",
+    "`Remove-AtlasoWorkstationArtifactRoot`",
     "`scripts/completed_task_title.py`",
     "`task_title_readback_verified`",
     "`--dependabot`",
