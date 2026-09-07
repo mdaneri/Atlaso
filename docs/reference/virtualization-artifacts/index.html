@@ -2544,6 +2544,23 @@
     </span>
   </a>
   
+    <nav class="md-nav" aria-label="Import on Hyper-V">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#hyper-v-conversion-and-zip-size" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Hyper-V conversion and ZIP size
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
 </li>
       
         <li class="md-nav__item">
@@ -3528,6 +3545,23 @@
     </span>
   </a>
   
+    <nav class="md-nav" aria-label="Import on Hyper-V">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#hyper-v-conversion-and-zip-size" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Hyper-V conversion and ZIP size
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
 </li>
       
         <li class="md-nav__item">
@@ -3922,6 +3956,35 @@ destination, creates a Generation 2 VM with Secure Boot off, attaches two select
 disks, and applies the shared CPU and memory contract. Existing VM names, destinations, unsafe paths, malformed
 manifests, checksum failures, and conflicting topology are rejected. Failure cleanup removes only resources recorded
 as created by that invocation.</p>
+<h3 id="hyper-v-conversion-and-zip-size">Hyper-V conversion and ZIP size<a class="headerlink" href="#hyper-v-conversion-and-zip-size" title="Permanent link">&para;</a></h3>
+<p>The Hyper-V ZIP artifact is built from the validated OVA payload and keeps raw payload-to-VHDX ordering, two dynamic
+payload VHDX files, 2 MiB VHDX blocks, two 500 GiB data disks, and the same four-slot SCSI topology as the OVA.
+The final archive creation uses .NET <code>System.IO.Compression.ZipArchive</code> in streaming create mode and retains ZIP64 support.
+This avoids buffering multi-GiB disk members in memory.</p>
+<p>Raw VHDX file length can exceed 2 GiB and still be valid. The release asset limit applies to the final ZIP:</p>
+<ul>
+<li><strong>empty VHDX members</strong> are rejected before disk inspection and archive creation;</li>
+<li>a <strong>non-empty final Hyper-V ZIP of 2,147,483,648 bytes or more</strong> is rejected as an oversized publish candidate.</li>
+</ul>
+<p>Export and protected publication also cap the combined uncompressed package at 8 GiB to bound extraction space.
+Protected validation retains the separate 1 MiB metadata-member limit, exact package inventory, checksums, source
+binding, disk topology, and guest-visible byte comparisons. A raw disk crossing 2 GiB alone does not fail publication.</p>
+<p>When a check fails, keep the completed source template powered off:</p>
+<ul>
+<li>if a raw VHDX is empty, investigate the converter output and revalidate the source OVA before
+  retrying;</li>
+<li>if only the final ZIP is oversized, review candidate evidence and rebuild from a validated source after reducing
+  content where supported by policy.</li>
+</ul>
+<p>For diagnostics, capture and retain:</p>
+<ul>
+<li>reported converter version, dynamic subformat, and block size;</li>
+<li>reported virtual capacity and raw byte length for each VHDX;</li>
+<li>ZIP member <code>uncompressed_bytes</code> and <code>compressed_bytes</code>;</li>
+<li>final archive byte size.</li>
+</ul>
+<p>At final import time or release troubleshooting, use PowerShell 7.4+ (<code>pwsh</code>) and <code>Expand-Archive</code> for zip inspection;
+raw extraction and import paths may need more temporary space than the downloaded ZIP size.</p>
 <h2 id="first-boot-guest-agent-selection">First boot guest-agent selection<a class="headerlink" href="#first-boot-guest-agent-selection" title="Permanent link">&para;</a></h2>
 <p>Atlaso retains its checksum-pinned QEMU guest-agent build. Photon 5.0's published <code>qemu</code> build disables the guest
 agent, so installing that emulator package does not supply the required <code>qemu-ga</code> daemon. Atlaso builds only the agent
@@ -4132,7 +4195,8 @@ for diagnosis rather than claiming a later name match. KVM rollback preserves ev
 libvirt inventory proves that the exact domain is absent. Every smoke identity and storage namespace must be dedicated to
 the release invocation so cleanup can remain limited to resources created by that invocation. Stable publication waits
 for both Linux platform smokes and refuses an asset at or above the repository's existing 2 GiB limit rather than
-producing multipart output.</p>
+producing multipart output. Raw VHDX members are validated separately for format and capacity before the final ZIP
+size check.</p>
 <p>As an optional alternative, <strong>Produce virtualization candidate on ephemeral Windows</strong> runs the same producer with
 <code>-CandidateOnly</code> on a temporary Windows runner whose exact release-specific label is
 <code>atlaso-windows-virtualization-vX-Y-Z-rc-N</code>. The Windows job has read-only repository authority
