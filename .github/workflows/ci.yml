@@ -172,6 +172,9 @@ jobs:
       - name: Verify portable virtualization PowerShell contract
         shell: pwsh
         run: ./tests/powershell/Test-AtlasoVirtualizationArtifacts.ps1
+      - name: Verify VMware launcher console isolation
+        shell: pwsh
+        run: ./tests/powershell/Test-AtlasoVmrunConsoleIsolation.ps1
       - name: Validate the canonical Photon Packer target with authenticated plugin downloads
         if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
         env:

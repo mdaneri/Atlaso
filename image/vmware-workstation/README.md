@@ -933,7 +933,9 @@ Every post-staging VMware operation has its own process-tree deadline. Before st
 per-user cleanup marker through a Windows write-through atomic rename, so the marker reaches disk before the VMX signer
 assignment. The wrapper publishes the marker path to rollback only after that rename succeeds. A failure before any
 credential or signer child starts preserves the original error and rolls back only invocation-owned VM artifacts;
-normal GUI and headless starts launch `vmrun` without redirected standard streams. The short-lived PowerShell launcher
+normal GUI and headless starts launch `vmrun` with `DETACHED_PROCESS` and handle inheritance disabled. Detaching the
+console is required because Windows console inheritance is separate from ordinary handle inheritance.
+The short-lived PowerShell launcher
 therefore remains the only writer to the bounded wrapper pipes; detached `vmware.exe` and `vmware-vmx.exe` descendants
 cannot retain them after the launcher exits. Root-process and redirected-stream completion are independently bounded,
 and an unexpected retained writer fails closed while preserving diagnostics already copied from the root launcher.
