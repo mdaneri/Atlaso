@@ -3956,6 +3956,20 @@ destination, creates a Generation 2 VM with Secure Boot off, attaches two select
 disks, and applies the shared CPU and memory contract. Existing VM names, destinations, unsafe paths, malformed
 manifests, checksum failures, and conflicting topology are rejected. Failure cleanup removes only resources recorded
 as created by that invocation.</p>
+<p>Choose a short <code>DestinationRoot</code>: the importer creates <code>&lt;DestinationRoot&gt;\&lt;Name&gt;</code> once and passes its parent to
+<code>New-VM</code>, which appends the name itself. Before creating directories or copying disks, admission checks disk paths,
+UUID-based configuration/state files under <code>Virtual Machines</code>, snapshot paths, and a 64-character provider filename
+reserve for Smart Paging against a conservative <strong>240-character full-path budget</strong>. This is an Atlaso safety budget,
+not a promise that Windows long-path support changes Hyper-V limits. A Windows host reproduction accepted a
+190-character VM directory but rejected 195 characters with Smart Paging error <code>0x800700CE</code>; configuration files added
+another 59 characters. Shorten the selected destination or VM name when admission reports an over-budget path.</p>
+<p>Hyper-V smoke uses <code>&lt;OutputRoot&gt;\.hv-&lt;128-bit compact identifier&gt;\p</code> for extraction and places the imported VM beside
+<code>p</code>. Its preflight checks ZIP member paths and reserves the larger provider layout used by older ZIP importers before
+extracting anything. <code>OutputRoot</code> must remain beneath the checkout's <code>artifacts\virtualization-smoke</code> directory. It
+never moves retained operations, falls back to an OS temporary directory, or changes host policy to fit a path.
+An import failure retains the original exception together with any importer and smoke cleanup diagnostics. If no exact
+created VM identity was returned, files remain for investigation even when a later inventory contains no matching VM.
+Existing root, descendant, reparse-point, and exact-VM cleanup checks remain mandatory.</p>
 <h3 id="hyper-v-conversion-and-zip-size">Hyper-V conversion and ZIP size<a class="headerlink" href="#hyper-v-conversion-and-zip-size" title="Permanent link">&para;</a></h3>
 <p>The Hyper-V ZIP artifact is built from the validated OVA payload and keeps raw payload-to-VHDX ordering, two dynamic
 payload VHDX files, 2 MiB VHDX blocks, two 500 GiB data disks, and the same four-slot SCSI topology as the OVA.
