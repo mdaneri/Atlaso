@@ -1,6 +1,11 @@
 <#
 .SYNOPSIS
 Convert the exact validated Atlaso OVA into one versioned Hyper-V ZIP.
+.DESCRIPTION
+Creates dynamic VHDX disks with 2 MiB blocks and streams them into a ZIP with ZIP64
+support. Raw disk members may exceed 2 GiB; the final published ZIP must remain
+strictly below 2 GiB. Reports conversion settings, disk capacities and file sizes,
+compressed member sizes, and the final archive size before publication.
 .PARAMETER OvaPath
 Canonical Atlaso VMware OVA input.
 .PARAMETER OutputRoot
@@ -33,6 +38,8 @@ if ($sourceOva.PSIsContainer -or
     throw 'The canonical OVA input must be an ordinary file, not a directory or reparse point.'
 }
 $qemuImg = Resolve-AtlasoQemuImgPath -Path $QemuImgPath
+$qemuVersion = (Invoke-AtlasoQemuImg -QemuImgPath $qemuImg -Arguments @('--version') | Select-Object -First 1)
+Write-Host "Hyper-V converter: $qemuVersion; format=vhdx; subformat=dynamic; block_size=2097152"
 $python = Resolve-AtlasoPythonPath -Path $PythonPath
 $outputDirectory = Resolve-AtlasoHyperVOutputRoot -RepoRoot $repoRoot -OutputRoot $OutputRoot
 
@@ -168,11 +175,7 @@ try {
     }
     $partialArchive = Join-Path $operationRoot $archiveName
     $packageFiles = @(Get-ChildItem -LiteralPath $packageRoot -File | Sort-Object Name | ForEach-Object FullName)
-    Compress-Archive -LiteralPath $packageFiles -DestinationPath $partialArchive -CompressionLevel Optimal
-    $archive = Get-Item -LiteralPath $partialArchive -ErrorAction Stop
-    if ($archive.Length -le 0 -or $archive.Length -ge 2147483648) {
-        throw 'The Hyper-V ZIP is empty or exceeds the existing GitHub asset limit.'
-    }
+    New-AtlasoHyperVArchive -Files $packageFiles -DestinationPath $partialArchive
     Move-Item -LiteralPath $partialArchive -Destination $archivePath -Force
     Get-Item -LiteralPath $archivePath
 }
