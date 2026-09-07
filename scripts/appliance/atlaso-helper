@@ -29,7 +29,7 @@ import tempfile
 import time
 import uuid
 from collections.abc import Callable
-from contextlib import contextmanager
+from contextlib import contextmanager, nullcontext
 from datetime import datetime, timezone
 from ipaddress import IPv4Network, IPv6Network, ip_address, ip_interface, ip_network
 from pathlib import Path, PurePosixPath
@@ -10149,6 +10149,19 @@ def _handle_wan(action: str, args: list[str]) -> int:
     except ValueError as exc:
         print(str(exc), file=sys.stderr)
         return 2
+    if action == "restore":
+        with _wan_replay_config(str(config_path)) as replay_path:
+            return _handle_wan_config(action, replay_path)
+    return _handle_wan_config(action, config_path)
+
+
+def _handle_wan_config(action: str, config_path: Path) -> int:
+    """Validate and execute WAN intent from an admitted or normalized path.
+
+    Args:
+        action: Validated WAN operation.
+        config_path: Admitted staged config or normalized replay snapshot.
+    """
     errors = _wan_config_errors(config_path)
     if errors:
         if action == "restore":
@@ -20480,13 +20493,17 @@ def _management_handoff_validation_errors(payload: dict) -> list[str]:
         value = str(payload.get(field) or "")
         if not value:
             continue
-        wan_path = Path(value)
-        errors.extend(f"{label}: {error}" for error in _wan_config_errors(wan_path))
-        parsed_wan = _parse_wan_config(wan_path)
-        if _wan_feature_settings(parsed_wan)["effective_nat_enabled"]:
-            nat_validation = _validate_wan_nat_config(_render_wan_nat_config(parsed_wan["nat_rules"]))
-            if nat_validation.returncode != 0:
-                errors.append(f"{label}: {(nat_validation.stderr or nat_validation.stdout).strip()}")
+        replay = _wan_replay_config(value) if field == "wan_rollback_config_path" else nullcontext(Path(value))
+        with replay as wan_path:
+            wan_errors = _wan_config_errors(wan_path)
+            errors.extend(f"{label}: {error}" for error in wan_errors)
+            if wan_errors:
+                continue
+            parsed_wan = _parse_wan_config(wan_path)
+            if _wan_feature_settings(parsed_wan)["effective_nat_enabled"]:
+                nat_validation = _validate_wan_nat_config(_render_wan_nat_config(parsed_wan["nat_rules"]))
+                if nat_validation.returncode != 0:
+                    errors.append(f"{label}: {(nat_validation.stderr or nat_validation.stdout).strip()}")
     return [error for error in errors if error]
 
 
@@ -21639,11 +21656,11 @@ def _apply_management_handoff_wan(payload: dict) -> None:
 
 
 @contextmanager
-def _management_handoff_wan_rollback_config(rollback_path: str):
+def _wan_replay_config(rollback_path: str):
     """Retire unprovable legacy NAT without discarding other rollback intent.
 
     Args:
-        rollback_path: Last-applied WAN snapshot staged for this handoff.
+        rollback_path: Last-applied WAN snapshot for boot or handoff recovery.
 
     Yields:
         Validated original path or an isolated normalized rollback config.
@@ -21651,9 +21668,10 @@ def _management_handoff_wan_rollback_config(rollback_path: str):
     path = _validate_wan_config_path(rollback_path)
     parsed = _parse_wan_config(path)
     targets = {target.get("name"): target for target in parsed["targets"]}
-    legacy_nat = False
+    retained_nat = []
     for rule in parsed["nat_rules"]:
         if not _wan_bool(rule.get("enabled", ""), default=True):
+            retained_nat.append(rule)
             continue
         inbound = [name.strip() for name in rule.get("inbound_interfaces", "").split(",") if name.strip()]
         names = [*inbound, rule.get("outbound_interface", "")]
@@ -21662,9 +21680,9 @@ def _management_handoff_wan_rollback_config(rollback_path: str):
             or not targets.get(name, {}).get("nat_physical_mac")
             for name in names
         ):
-            legacy_nat = True
-            break
-    if not legacy_nat:
+            continue
+        retained_nat.append(rule)
+    if len(retained_nat) == len(parsed["nat_rules"]):
         yield path
         return
 
@@ -21677,13 +21695,18 @@ def _management_handoff_wan_rollback_config(rollback_path: str):
         stripped = line.strip()
         if stripped.startswith("[") and stripped.endswith("]"):
             section = stripped.strip("[]")
-        if section not in {"nat_rules", "feature_settings"}:
+        if section != "nat_rules":
             lines.append(line)
-    lines.extend(["", "[nat_rules]", "", "[feature_settings]"])
-    lines.extend(
-        f"{key}={str(settings[key]).lower()}"
-        for key in ("routing_enabled", "nat_enabled", "wan_simulation_enabled")
-    )
+    lines.extend(["", "[nat_rules]"])
+    for rule in retained_nat:
+        lines.append(f"nat={rule['name']}")
+        lines.extend(f"{key}={value}" for key, value in rule.items() if key != "name")
+    if not parsed["feature_settings"]:
+        lines.extend(["", "[feature_settings]"])
+        lines.extend(
+            f"{key}={str(settings[key]).lower()}"
+            for key in ("routing_enabled", "nat_enabled", "wan_simulation_enabled")
+        )
     # Keep staging beside the admitted snapshot, never in a system temp root.
     temporary = None
     try:
@@ -21710,7 +21733,7 @@ def _restore_management_handoff_wan(state: dict, commands: list[dict[str, object
     rollback_path = str(state.get("wan_rollback_config_path") or "")
     if not rollback_path:
         return
-    with _management_handoff_wan_rollback_config(rollback_path) as config_path:
+    with _wan_replay_config(rollback_path) as config_path:
         result = _handle_wan("apply", [str(config_path)])
     commands.append(
         {

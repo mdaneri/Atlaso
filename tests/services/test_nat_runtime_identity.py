@@ -116,21 +116,34 @@ def test_obsolete_ingress_config_retires_nat_on_restore(runtime):
     """
     helper, config, _sysfs = runtime
     assert helper._apply_wan_nat(helper._parse_wan_config(config)) == 0
-    config.write_text(config.read_text(encoding="utf-8").replace("inbound_interfaces=eth2", "inbound_interfaces="), encoding="utf-8")
+    config.write_text(
+        config.read_text(encoding="utf-8").replace("inbound_interfaces=eth2", "inbound_interfaces=")
+        .replace("route=10.20.0.0/24", "route=invalid"), encoding="utf-8",
+    )
     assert helper._handle_wan("restore", [str(config)]) == 2
     assert "masquerade" not in helper.WAN_NAT_CONFIG_PATH.read_text(encoding="utf-8")
 
 
 @pytest.mark.parametrize("legacy_field", ["inbound_interfaces", "nat_physical_mac", None])
-def test_management_rollback_restores_wan_with_legacy_nat_retired(runtime, monkeypatch, legacy_field):
+@pytest.mark.parametrize("entrypoint", ["rollback", "boot"])
+@pytest.mark.parametrize("explicit_settings", [False, True])
+def test_management_rollback_restores_wan_with_legacy_nat_retired(runtime, monkeypatch, legacy_field, entrypoint, explicit_settings):
     """Replay old routes and forwarding without restoring unscoped NAT.
 
     Args:
         runtime: Isolated helper and kernel inventory.
         monkeypatch: Fixture intercepting non-NAT runtime operations.
         legacy_field: Provenance removed from the baseline, or a modern snapshot.
+        entrypoint: Recovery entry point that must restore the non-NAT runtime.
+        explicit_settings: Preserve saved switches rather than legacy inference.
     """
     helper, config, _sysfs = runtime
+    if explicit_settings:
+        config.write_text(
+            config.read_text(encoding="utf-8")
+            + "\n[feature_settings]\nrouting_enabled=true\nnat_enabled=true\nwan_simulation_enabled=false\n",
+            encoding="utf-8",
+        )
     candidate = helper._parse_wan_config(config)
     assert helper._apply_wan_nat(candidate) == 0
     baseline = "\n".join(
@@ -154,12 +167,16 @@ def test_management_rollback_restores_wan_with_legacy_nat_retired(runtime, monke
         lambda path: persisted.write_text(path.read_text(encoding="utf-8"), encoding="utf-8"),
     )
     evidence = []
-    helper._restore_management_handoff_wan({"wan_rollback_config_path": str(config)}, evidence)
-
-    assert evidence[0]["returncode"] == 0
+    if entrypoint == "rollback":
+        helper._restore_management_handoff_wan({"wan_rollback_config_path": str(config)}, evidence)
+        assert evidence[0]["returncode"] == 0
+        replay = helper._parse_wan_config(persisted)
+        assert helper._wan_config_errors(persisted) == []
+    else:
+        assert helper._handle_wan("restore", [str(config)]) == 0
+        replay = restored["_apply_wan_forwarding"]
+        assert not persisted.exists()
     assert len(restored) == 4
-    replay = helper._parse_wan_config(persisted)
-    assert helper._wan_config_errors(persisted) == []
     assert replay["routes"] == candidate["routes"]
     assert replay["wan_policies"] == candidate["wan_policies"]
     assert helper._wan_feature_settings(replay) == helper._wan_feature_settings(candidate)
@@ -167,6 +184,59 @@ def test_management_rollback_restores_wan_with_legacy_nat_retired(runtime, monke
     assert bool(replay["nat_rules"]) == (legacy_field is None)
     assert ("masquerade" in helper.WAN_NAT_CONFIG_PATH.read_text(encoding="utf-8")) == (legacy_field is None)
     assert config.read_text(encoding="utf-8") == baseline
+    assert not list(config.parent.glob("wan-rollback-*.conf"))
+
+
+def test_wan_replay_retains_modern_rules_alongside_legacy_nat(runtime):
+    """Retire only unprovable rows when a snapshot also contains scoped NAT.
+
+    Args:
+        runtime: Isolated helper and kernel inventory.
+    """
+    helper, config, _sysfs = runtime
+    modern_rules = helper._parse_wan_config(config)["nat_rules"]
+    config.write_text(
+        config.read_text(encoding="utf-8").replace(
+            "[wan_policies]", "nat=Legacy\nenabled=true\noutbound_interface=eth1.20\n[wan_policies]",
+        ), encoding="utf-8",
+    )
+    with helper._wan_replay_config(str(config)) as replay_path:
+        replay = helper._parse_wan_config(replay_path)
+        assert replay["nat_rules"] == modern_rules
+        assert helper._wan_config_errors(replay_path) == []
+        assert helper._apply_wan_nat(replay) == 0
+    assert "masquerade" in helper.WAN_NAT_CONFIG_PATH.read_text(encoding="utf-8")
+
+
+@pytest.mark.parametrize("candidate_legacy", [False, True])
+def test_handoff_preflight_normalizes_only_legacy_rollback(runtime, monkeypatch, candidate_legacy):
+    """Admit safe recovery snapshots while still rejecting unscoped candidates.
+
+    Args:
+        runtime: Isolated helper and kernel inventory.
+        monkeypatch: Fixture isolating unrelated preflight layers.
+        candidate_legacy: Whether the candidate also has an invalid NAT scope.
+    """
+    helper, config, _sysfs = runtime
+    modern = config.read_text(encoding="utf-8")
+    legacy = modern.replace("inbound_interfaces=eth2", "inbound_interfaces=")
+    config.write_text(legacy, encoding="utf-8")
+    candidate = config.parent / "candidate.conf"
+    candidate.write_text(legacy if candidate_legacy else modern, encoding="utf-8")
+    monkeypatch.setattr(helper, "WAN_APPLY_DIR", config.parent)
+    for operation in ("_network_config_errors", "_appliance_settings_config_errors", "_public_services_config_errors"):
+        monkeypatch.setattr(helper, operation, lambda *_args, **_kwargs: [])
+    monkeypatch.setattr(helper, "_validate_firewall_config", lambda *_args: subprocess.CompletedProcess([], 0, "", ""))
+    errors = helper._management_handoff_validation_errors({
+        "network_config_path": "network.conf", "firewall_config_path": "firewall.nft",
+        "appliance_settings_config_path": "settings.conf", "public_services_config_path": "public.conf",
+        "wan_config_path": str(candidate), "wan_rollback_config_path": str(config),
+    })
+    assert not any(error.startswith("WAN rollback:") for error in errors)
+    assert bool(errors) == candidate_legacy
+    if candidate_legacy:
+        assert any(error.startswith("WAN candidate:") and "requires explicit inbound" in error for error in errors)
+    assert config.read_text(encoding="utf-8") == legacy
     assert not list(config.parent.glob("wan-rollback-*.conf"))
 
 
