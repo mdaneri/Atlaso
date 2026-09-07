@@ -49,7 +49,7 @@ def completed_task_title(
         raise ValueError("All issue/PR identifiers and Done exceed the title budget; maintainer direction is required.")
     description = " ".join(description.split())
     if "·" in description or re.search(
-        r"\bdone\b|#\s*\d|\b(?:issues?|prs?|pull[\W_]*requests?|gh|github)"
+        r"\bdone\b|#\s*\d|\b(?:issues?|prs?|pull(?:[\W_]*requests?)?s?|gh|github)"
         r"[\W_]*(?:(?:number|no)[\W_]*)?\d",
         description, re.IGNORECASE,
     ):
