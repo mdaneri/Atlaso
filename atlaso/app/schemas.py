@@ -1735,13 +1735,14 @@ class RouteResponse(RouteCreate):
     wan_policy: Annotated[WanPolicyResponse | None, Field(description='Returned wan policy value for this route resource.')] = None
 
 
-class NatRuleCreate(BaseModel):
-    """Fields accepted when creating a nat rule resource.
+class NatRuleUpdate(BaseModel):
+    """Fields accepted when updating a NAT rule, including dormant legacy rows.
 
     Attributes:
         name: Stable operator-facing name of this resource.
         enabled: Whether the resource is enabled in saved Atlaso state.
         source: Validated network or address value for source in this nat rule resource.
+        inbound_interfaces: Explicit eligible ingress targets, distinct from the outbound target.
         outbound_interface: Requested outbound interface value for this nat rule resource.
         masquerade: Whether masquerade is enabled for this nat rule resource.
         priority: Requested priority value for this nat rule resource.
@@ -1751,13 +1752,24 @@ class NatRuleCreate(BaseModel):
     name: Annotated[str, Field(description='Stable operator-facing name of this resource.')] = Field(min_length=1, max_length=120)
     enabled: Annotated[bool, Field(description='Whether the resource is enabled in saved Atlaso state.')] = True
     source: Annotated[str, Field(description='Validated network or address value for source in this nat rule resource.')] = Field(default="any", min_length=1, max_length=240)
-    outbound_interface: Annotated[str, Field(description='Requested outbound interface value for this nat rule resource.')] = Field(min_length=1, max_length=80)
+    inbound_interfaces: list[Annotated[str, Field(min_length=1, max_length=80, pattern=r"^[A-Za-z0-9_.:-]+$", description="Canonical physical interface or VLAN name.")]] = Field(default_factory=list, max_length=128, description="Explicit enabled non-management IPv4 ingress interface/VLAN names. Required for new or enabled rules; the outbound target must not appear here. Empty legacy scope requires administrator review.")
+    outbound_interface: Annotated[str, Field(description='Requested outbound interface value for this nat rule resource.')] = Field(min_length=1, max_length=80, pattern=r"^[A-Za-z0-9_.:-]+$")
     masquerade: Annotated[bool, Field(description='Whether masquerade is enabled for this nat rule resource.')] = True
     priority: Annotated[int, Field(description='Requested priority value for this nat rule resource.')] = Field(default=100, ge=0)
     description: Annotated[str | None, Field(description='Operator-facing purpose or context for this resource.')] = None
 
 
-class NatRuleResponse(NatRuleCreate):
+class NatRuleCreate(NatRuleUpdate):
+    """Fields required to create a NAT rule with an explicit ingress boundary.
+
+    Attributes:
+        inbound_interfaces: One or more eligible ingress targets for every new rule.
+    """
+
+    inbound_interfaces: list[Annotated[str, Field(min_length=1, max_length=80, pattern=r"^[A-Za-z0-9_.:-]+$", description="Canonical physical interface or VLAN name.")]] = Field(min_length=1, max_length=128, description="Required nonempty array of eligible non-management IPv4 ingress interface/VLAN names, including when creating a disabled rule. The outbound target must not appear here.")
+
+
+class NatRuleResponse(NatRuleUpdate):
     """Fields returned by the Atlaso nat rule API.
 
     Attributes:

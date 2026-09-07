@@ -181,8 +181,18 @@ def test_wan_status_reports_only_effective_feature_state(client):
             NatRule(
                 name="Status NAT",
                 source="192.168.20.0/24",
+                inbound_interfaces=["eth1.20", "eth3"],
                 outbound_interface="eth2",
                 enabled=True,
+            )
+        )
+        db.add(
+            NatRule(
+                name="Disabled status NAT",
+                source="any",
+                inbound_interfaces=["eth4"],
+                outbound_interface="eth5",
+                enabled=False,
             )
         )
         save_routes_wan_settings(
@@ -224,7 +234,7 @@ def test_wan_status_reports_only_effective_feature_state(client):
 
     all_enabled = client.get("/api/v1/wan/status", headers=headers)
     assert all_enabled.json()["active_policy_count"] == 1
-    assert all_enabled.json()["managed_interfaces"] == ["eth1.20", "eth2"]
+    assert all_enabled.json()["managed_interfaces"] == ["eth1.20", "eth2", "eth3"]
 
 
 def test_sufficient_scopes_allow_wan_policy_creation_and_audit(client):
@@ -282,6 +292,7 @@ def test_api_allows_nat_on_access_interface(client):
         headers={"Authorization": f"Bearer {token}"},
         json={
             "name": "Access NAT",
+            "inbound_interfaces": ["eth1.20"],
             "source": "192.168.50.0/24",
             "outbound_interface": "eth2",
             "masquerade": True,
@@ -292,6 +303,93 @@ def test_api_allows_nat_on_access_interface(client):
 
     assert response.status_code == 201, response.text
     assert response.json()["outbound_interface"] == "eth2"
+
+
+def test_nat_api_requires_reviewed_ingress_and_preserves_legacy_disable(client):
+    """Reject invalid boundaries and retain disabled legacy rules without inference.
+
+    Args:
+        client: HTTP client for exercising NAT request validation.
+    """
+    from sqlalchemy import select
+
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import NatRule, PhysicalInterface
+    from atlaso.app.services.routes_wan import save_routes_wan_settings
+    from atlaso.app.ui import routes_wan_context
+
+    token, _ = create_token(client, scopes=["read:wan", "write:wan"])
+    headers = {"Authorization": f"Bearer {token}"}
+    payload = dict(name="Ingress API", source="any", outbound_interface="eth1.20", enabled=True)
+    for enabled in (True, False):
+        assert client.post("/api/v1/nat/rules", headers=headers, json={**payload, "enabled": enabled}).status_code == 422
+        assert client.post("/api/v1/nat/rules", headers=headers, json={**payload, "enabled": enabled, "inbound_interfaces": []}).status_code == 422
+    for inbound in [[], ["eth0"], ["eth1.20"], ["missing"], ["eth2", "eth2"]]:
+        response = client.post("/api/v1/nat/rules", headers=headers, json={**payload, "inbound_interfaces": inbound})
+        assert response.status_code == 422, response.text
+    response = client.post("/api/v1/nat/rules", headers=headers, json={**payload, "inbound_interfaces": ["eth2"]})
+    assert response.status_code == 201, response.text
+    rule_id = response.json()["id"]
+    assert response.json()["inbound_interfaces"] == ["eth2"]
+    assert client.get(f"/api/v1/nat/rules/{rule_id}", headers=headers).json()["inbound_interfaces"] == ["eth2"]
+    with SessionLocal() as db:
+        interface = db.scalar(select(PhysicalInterface).where(PhysicalInterface.name == "eth2"))
+        interface.admin_state = "down"
+        save_routes_wan_settings(db, routing_enabled=True, nat_enabled=True, wan_simulation_enabled=False)
+        db.commit()
+        context = routes_wan_context(db)
+        assert any("inbound target eth2" in error for error in context["wan_validation_errors"])
+        assert 'oifname "eth1.20" masquerade' not in context["wan_config_preview"]
+    disabled_missing = client.patch(f"/api/v1/nat/rules/{rule_id}", headers=headers,
+                                    json={**payload, "enabled": False, "inbound_interfaces": ["eth2"]})
+    assert disabled_missing.status_code == 200, disabled_missing.text
+    assert disabled_missing.json()["inbound_interfaces"] == ["eth2"]
+    assert client.patch(f"/api/v1/nat/rules/{rule_id}", headers=headers,
+                        json={**payload, "inbound_interfaces": ["eth2"]}).status_code == 422
+    with SessionLocal() as db:
+        interface = db.scalar(select(PhysicalInterface).where(PhysicalInterface.name == "eth2"))
+        interface.admin_state = "up"
+        rule = db.get(NatRule, rule_id)
+        rule.enabled = True
+        rule.inbound_interfaces = []
+        db.commit()
+    legacy = client.get(f"/api/v1/nat/rules/{rule_id}", headers=headers).json()
+    assert legacy["enabled"] is True and legacy["inbound_interfaces"] == []
+    disabled = client.patch(f"/api/v1/nat/rules/{rule_id}", headers=headers, json={**payload, "enabled": False})
+    assert disabled.status_code == 200, disabled.text
+    rejected = client.patch(f"/api/v1/nat/rules/{rule_id}", headers=headers, json=payload)
+    assert rejected.status_code == 422
+
+
+def test_nat_patch_preserves_omitted_ingress_and_distinguishes_explicit_empty(client):
+    """Retain saved scope for older clients while validating the effective rule.
+
+    Args:
+        client: HTTP client for exercising NAT request validation.
+    """
+    token, _ = create_token(client, scopes=["read:wan", "write:wan"])
+    headers = {"Authorization": f"Bearer {token}"}
+    payload = dict(name="Compatible NAT", source="any", outbound_interface="eth1.20", enabled=True)
+    created = client.post("/api/v1/nat/rules", headers=headers,
+                          json={**payload, "inbound_interfaces": ["eth2"]})
+    assert created.status_code == 201, created.text
+    url = f"/api/v1/nat/rules/{created.json()['id']}"
+    for enabled in (True, False, True):
+        updated = client.patch(url, headers=headers, json={**payload, "enabled": enabled})
+        assert updated.status_code == 200, updated.text
+        assert updated.json()["inbound_interfaces"] == ["eth2"]
+        assert client.get(url, headers=headers).json()["inbound_interfaces"] == ["eth2"]
+    # Omission still validates saved ingress against the new outbound target.
+    rejected = client.patch(url, headers=headers, json={**payload, "outbound_interface": "eth2"})
+    assert rejected.status_code == 422, rejected.text
+    rejected = client.patch(url, headers=headers, json={**payload, "inbound_interfaces": []})
+    assert rejected.status_code == 422, rejected.text
+    assert client.get(url, headers=headers).json()["inbound_interfaces"] == ["eth2"]
+    cleared = client.patch(url, headers=headers,
+                           json={**payload, "enabled": False, "inbound_interfaces": []})
+    assert cleared.status_code == 200, cleared.text
+    assert cleared.json()["inbound_interfaces"] == []
+    assert client.patch(url, headers=headers, json=payload).status_code == 422
 
 
 def test_api_default_route_contract_and_canonical_readback(client):
@@ -388,3 +486,24 @@ def test_api_default_route_contract_and_canonical_readback(client):
     )
     assert updated.status_code == 200, updated.text
     assert updated.json()["destination_cidr"] == "::/0"
+
+
+def test_disabled_nat_api_always_validates_interface_syntax(client):
+    """Disabling relaxes availability, without admitting malformed target names.
+
+    Args:
+        client: HTTP client for exercising NAT request validation.
+    """
+    token, _ = create_token(client, scopes=["read:wan", "write:wan"])
+    headers = {"Authorization": f"Bearer {token}"}
+    payload = dict(name="Syntax control", source="any", inbound_interfaces=["eth2"], outbound_interface="eth1.20")
+    created = client.post("/api/v1/nat/rules", headers=headers, json=payload)
+    assert created.status_code == 201, created.text
+    url = f"/api/v1/nat/rules/{created.json()['id']}"
+    for bad in ["eth2\nfield=value", "eth2\rfield=value", "eth2,eth3", 'eth2"', "a" * 81]:
+        for field, value in [("inbound_interfaces", [bad]), ("outbound_interface", bad)]:
+            rejected = client.patch(url, headers=headers, json={**payload, "enabled": False, field: value})
+            assert rejected.status_code == 422, rejected.text
+    control = client.patch(url, headers=headers, json={**payload, "enabled": False, "inbound_interfaces": ["missing_155d011d14.22"]})
+    assert control.status_code == 200, control.text
+    assert control.json()["inbound_interfaces"] == ["missing_155d011d14.22"]

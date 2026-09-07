@@ -178,6 +178,8 @@ from atlaso.app.services.routes_wan import (
     RoutesWanSettings,
     canonical_route_destination,
     ensure_routes_wan_settings,
+    nat_eligible_target_names,
+    validate_nat_ingress,
     validate_nat_source,
     validate_wan_state,
 )
@@ -2523,7 +2525,29 @@ def _validate_archive_relationships(data: dict[str, list[dict[str, Any]]]) -> No
             optional=True,
         )
 
+    # Missing-NIC cleanup preserves enabled NAT intent for review. Admit only
+    # identities backed by inert archived inventory, never arbitrary missing names.
+    missing_nat_targets = {
+        item.name for item in archived_interfaces
+        if item.name.startswith("missing_") and item.inventory_source == "host"
+        and item.oper_state == "missing" and item.admin_state == "down"
+        and normalize_interface_role(item.role) == "unused"
+        and normalize_interface_mode(item.mode) == "unused"
+    }
+    missing_nat_targets.update(
+        item.name for item in archived_vlans
+        if not item.enabled and item.parent_interface in missing_nat_targets
+        and item.name == f"{item.parent_interface}.{item.vlan_id}"
+    )
+    archive_nat_targets = nat_eligible_target_names(archived_interfaces, archived_vlans) | missing_nat_targets
     for row_index, row in enumerate(data.get("nat_rules", []), start=1):
+        ingress_errors = validate_nat_ingress(
+            row.get("inbound_interfaces", []), str(row.get("outbound_interface") or ""),
+            archive_nat_targets, required=False,
+            check_availability=bool(row.get("enabled", True) and effective_nat_enabled),
+        )
+        if ingress_errors:
+            raise ValueError(f"The settings archive NAT ingress is invalid: {ingress_errors[0]}")
         enabled = row.get("enabled", True)
         if not isinstance(enabled, bool):
             raise ValueError(
@@ -2532,6 +2556,7 @@ def _validate_archive_relationships(data: dict[str, list[dict[str, Any]]]) -> No
         if (
             effective_nat_enabled
             and enabled
+            and str(row.get("outbound_interface") or "") not in missing_nat_targets
             and "ipv4"
             not in route_target_families.get(
                 str(row.get("outbound_interface") or ""), set()
@@ -2592,9 +2617,8 @@ def _validate_archive_relationships(data: dict[str, list[dict[str, Any]]]) -> No
             NatRule(**_model_kwargs_with_scalar_defaults(NatRule, row))
             for row in data.get("nat_rules", [])
         ],
-        wan_target_names={
-            name for name, families in route_target_families.items() if "ipv4" in families
-        },
+        wan_target_names=archive_nat_targets,
+        allow_legacy_nat_ingress=True,
         source_groups=firewall_source_groups,
         routing_rules=[
             RoutingRule(**_model_kwargs_with_scalar_defaults(RoutingRule, row))
@@ -4241,6 +4265,10 @@ def _validate_archive_model_scalar_types(
             expected_type = column.type.python_type
         except NotImplementedError:
             continue
+        if model is NatRule and column.name == "inbound_interfaces":
+            expected_type = list
+            if not isinstance(value, list) or any(not isinstance(name, str) for name in value):
+                raise ValueError("NAT inbound interfaces must be a list of interface/VLAN names.")
         valid_type = (
             type(value) is expected_type
             if expected_type in {bool, int, str}

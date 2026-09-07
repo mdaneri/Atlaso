@@ -1459,6 +1459,8 @@ Terminal order:
   disappears, mark the missing physical interface inert, set dependent VLANs disabled/admin down where modeled, remove
   the missing interface and derived IP addresses from service listeners, disable services left without any listener, and
   log/audit the cleanup so operators are not trapped behind invalid appliance-apply state.
+  Preserve NAT ingress and egress selections when a target disappears. Report enabled affected rules as invalid for
+  explicit administrator review; never silently drop ingress members, infer replacements, or disable the saved rule.
 - Real network apply is Photon `systemd-networkd` backed. It may install Atlaso-owned `.network`/`.netdev` files under
   `/etc/systemd/network/`, reload networkd, reconfigure non-management links, create/update desired VLAN links, and
   delete VLAN links explicitly derived from successful Atlaso network apply history. The appliance image's default
@@ -1768,9 +1770,13 @@ Terminal order:
   non-reviewable NAT inferred only from interface role. Route-role networks may forward to other route-role networks by
   default; access networks require explicit routing rules; management is never a route, NAT, or routing-permission
   target.
-- NAT outbound targets must be access physical interfaces with an IPv4 CIDR or enabled VLAN interfaces with an IPv4
-  CIDR. IPv6-only interfaces are not valid NAT outbound targets. NAT is explicit desired state and remains reviewed
-  through global apply; it is not inferred from an interface role.
+- NAT requires one or more explicit inbound interfaces and one distinct outbound interface. Both sides use enabled,
+  available access-mode physical interfaces or enabled VLANs on available trunk parents, with IPv4 CIDRs and an access
+  or route role. The dedicated management role and IPv6-only targets are excluded; access-management flags do not
+  exclude an otherwise eligible lab target. Any source means any IPv4 source within the selected ingress; CIDRs and
+  shared source groups further restrict that boundary. Render every rule with `iifname` so appliance-local output
+  cannot match. Preserve legacy unscoped rows for review and reject enabled apply until explicit ingress is selected.
+  NAT remains explicit desired state reviewed through global apply; it is not inferred from an interface role.
 - Validate live Routing/WAN state with `ip route`, `ip -6 route`, `ip rule`, `tc qdisc show`, `nft list ruleset`,
   `sysctl net.ipv4.ip_forward`, and `sysctl net.ipv6.conf.all.forwarding` after applying on Photon.
 

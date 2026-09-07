@@ -23,6 +23,7 @@ test("Source Group wizard draft captures add and edit state without CSRF", () =>
   vm.runInContext(`${functionSource("captureSourceGroupWizardDraft")}; this.capture = captureSourceGroupWizardDraft;`, context);
   const form = {
     action: { value: "accept" },
+    querySelectorAll: () => [],
     getAttribute: (name) => name === "action" ? "/ui/management/firewall/rules/42/edit" : null,
     elements: [
       { name: "csrf", type: "hidden", value: "secret" },
