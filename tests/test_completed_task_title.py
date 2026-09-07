@@ -107,6 +107,16 @@ def test_completed_title_accepts_descriptive_numbers() -> None:
     assert completed_task_title("Python 3.14", [747], [748]) == "Issue #747 · PR #748 · Python 3.14 · Done"
 
 
+@pytest.mark.parametrize("description", [
+    "Fix GitHub Actions on Python 3.14", "Support GitHub on Windows 11", "Handle PR metadata in v2",
+])
+def test_completed_title_allows_numbers_unrelated_to_traceability(description: str) -> None:
+    """A nearby product or metadata label does not turn a descriptive version into an ID."""
+    title = completed_task_title(description, [747], [748])
+    assert title.startswith("Issue #747 · PR #748 · ")
+    assert title.endswith(" · Done")
+
+
 @pytest.mark.parametrize("observed", ["Issue #747 · PR #748", "Issue #747 · PR #748 · …", "Issue #747 · PR #748 · Done · Done", "Issue #747 · PR #749 · Done"])
 def test_completed_title_rejects_wrong_readback(observed: str) -> None:
     """A successful rename request cannot substitute for exact persisted readback."""
