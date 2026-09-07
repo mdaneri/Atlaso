@@ -8,7 +8,8 @@ Existing Hyper-V switch for the management adapter.
 .PARAMETER ServiceSwitch
 Existing Hyper-V switch for the services adapter. Defaults to the management switch.
 .PARAMETER DestinationRoot
-Host directory beneath which a new VM-specific directory is created.
+Host directory beneath which one VM-specific directory is created. Generated paths
+must fit the 240-character budget, including reserved Hyper-V provider suffixes.
 .PARAMETER Start
 Start the imported virtual machine after its topology passes post-creation verification.
 #>
@@ -186,6 +187,30 @@ foreach ($component in $relativeRoot.Split(
     }
 }
 $vmRoot = [System.IO.Path]::GetFullPath((Join-Path $destinationRootPath $Name))
+# New-VM appends Name itself. Budget its generated files as well as copied disks
+# before creating directories or copying bytes. Reserve 64 characters for provider
+# filenames, including Smart Paging's internal suffix; LongPathsEnabled does not
+# remove VMMS path limits.
+$generatedPaths = @(
+    Join-Path $vmRoot ('x' * 64)
+    foreach ($directory in @('Virtual Machines', 'Snapshots')) {
+        foreach ($extension in @('vmcx', 'vmgs', 'vmrs')) {
+            Join-Path $vmRoot "$directory\00000000-0000-0000-0000-000000000000.$extension"
+        }
+    }
+    foreach ($disk in $manifestDisks) {
+        Join-Path $vmRoot $disk.file
+        Join-Path $vmRoot "$($disk.file).rct"
+        Join-Path $vmRoot "$($disk.file).mrt"
+        $diskStem = [System.IO.Path]::GetFileNameWithoutExtension([string]$disk.file)
+        Join-Path $vmRoot "$diskStem-00000000-0000-0000-0000-000000000000.avhdx.rct"
+    }
+)
+foreach ($generatedPath in $generatedPaths) {
+    if ($generatedPath.Length -gt 240) {
+        throw "Hyper-V generated path exceeds the 240-character budget ($($generatedPath.Length) characters): $generatedPath. Choose a shorter -DestinationRoot or -Name. No VM or disk copies were created."
+    }
+}
 $destinationPrefix = $destinationRootPath.TrimEnd([System.IO.Path]::DirectorySeparatorChar) +
     [System.IO.Path]::DirectorySeparatorChar
 if (-not $vmRoot.StartsWith($destinationPrefix, [System.StringComparison]::OrdinalIgnoreCase)) {
@@ -226,7 +251,7 @@ try {
         -Name $Name `
         -Generation 2 `
         -NoVHD `
-        -Path $vmRoot `
+        -Path $destinationRootPath `
         -MemoryStartupBytes 4GB `
         -SwitchName $ManagementSwitch
     $vmCreated = $true
@@ -291,8 +316,11 @@ catch {
             $vmRemovalVerified = $true
         }
         catch {
-            throw "Hyper-V import failed and its exact created VM could not be removed; files were preserved. " +
-                "Cleanup error: $($_.Exception.Message) Original error: $($importFailure.Exception.Message)"
+            throw [System.InvalidOperationException]::new(
+                ("Hyper-V import failed and its exact created VM could not be removed; files were preserved. " +
+                    "Cleanup error: $($_.Exception.Message) Original error: $($importFailure.Exception.Message)"),
+                $importFailure.Exception
+            )
         }
     }
     if ($vmRootCreated -and $vmRemovalVerified -and (Test-Path -LiteralPath $vmRoot)) {
@@ -316,8 +344,11 @@ catch {
             }
         }
         catch {
-            throw "Hyper-V import failed and its VM directory could not be safely removed; files were preserved. " +
-                "Cleanup error: $($_.Exception.Message) Original error: $($importFailure.Exception.Message)"
+            throw [System.InvalidOperationException]::new(
+                ("Hyper-V import failed and its VM directory could not be safely removed; files were preserved. " +
+                    "Cleanup error: $($_.Exception.Message) Original error: $($importFailure.Exception.Message)"),
+                $importFailure.Exception
+            )
         }
     }
     throw $importFailure

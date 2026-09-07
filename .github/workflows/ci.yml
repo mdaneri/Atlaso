@@ -171,7 +171,9 @@ jobs:
           python-version: '3.14'
       - name: Verify portable virtualization PowerShell contract
         shell: pwsh
-        run: ./tests/powershell/Test-AtlasoVirtualizationArtifacts.ps1
+        run: |
+          ./tests/powershell/Test-AtlasoVirtualizationArtifacts.ps1
+          ./tests/powershell/Test-AtlasoHyperVPaths.ps1
       - name: Verify VMware launcher console isolation
         shell: pwsh
         run: |

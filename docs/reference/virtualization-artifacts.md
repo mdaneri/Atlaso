@@ -279,6 +279,22 @@ disks, and applies the shared CPU and memory contract. Existing VM names, destin
 manifests, checksum failures, and conflicting topology are rejected. Failure cleanup removes only resources recorded
 as created by that invocation.
 
+Choose a short `DestinationRoot`: the importer creates `<DestinationRoot>\<Name>` once and passes its parent to
+`New-VM`, which appends the name itself. Before creating directories or copying disks, admission checks disk paths,
+UUID-based configuration/state files under `Virtual Machines`, snapshot paths, and a 64-character provider filename
+reserve for Smart Paging against a conservative **240-character full-path budget**. This is an Atlaso safety budget,
+not a promise that Windows long-path support changes Hyper-V limits. A Windows host reproduction accepted a
+190-character VM directory but rejected 195 characters with Smart Paging error `0x800700CE`; configuration files added
+another 59 characters. Shorten the selected destination or VM name when admission reports an over-budget path.
+
+Hyper-V smoke uses `<OutputRoot>\.hv-<128-bit compact identifier>\p` for extraction and places the imported VM beside
+`p`. Its preflight checks ZIP member paths and reserves the larger provider layout used by older ZIP importers before
+extracting anything. `OutputRoot` must remain beneath the checkout's `artifacts\virtualization-smoke` directory. It
+never moves retained operations, falls back to an OS temporary directory, or changes host policy to fit a path.
+An import failure retains the original exception together with any importer and smoke cleanup diagnostics. If no exact
+created VM identity was returned, files remain for investigation even when a later inventory contains no matching VM.
+Existing root, descendant, reparse-point, and exact-VM cleanup checks remain mandatory.
+
 ### Hyper-V conversion and ZIP size
 
 The Hyper-V ZIP artifact is built from the validated OVA payload and keeps raw payload-to-VHDX ordering, two dynamic

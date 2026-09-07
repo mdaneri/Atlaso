@@ -39,9 +39,10 @@ def test_completed_title_handles_unicode_and_whitespace() -> None:
     assert "\n" not in title
 
 
-def test_completed_title_does_not_turn_truncated_description_into_second_done() -> None:
-    """Keeping a single descriptive word must not create a duplicate completion segment."""
-    assert completed_task_title("Done " + "x" * 100, [747], [748]) == "Issue #747 · PR #748 · Done"
+def test_completed_title_validates_before_truncating_description() -> None:
+    """Truncation cannot hide an invalid completion marker in descriptive input."""
+    with pytest.raises(ValueError, match="only the description"):
+        completed_task_title("x" * 100 + " Done", [747], [748])
 
 
 @pytest.mark.parametrize("issues, prs", [([], [1]), ([1], []), ([0], [1]), ([1], [-1]), ([True], [1])])
@@ -81,7 +82,11 @@ def test_dependabot_cli_requires_explicit_exception(capsys: pytest.CaptureFixtur
     assert main([*args, "--dependabot", "--observed-title", title]) == 0
 
 
-@pytest.mark.parametrize("description", ["Cleanup · Done", "Done", "Done - Cleanup", "Cleanup · Issue #747"])
+@pytest.mark.parametrize("description", [
+    "Cleanup · Done", "Done", "Done - Cleanup", "Cleanup · Issue #747",
+    "Issue #999 cleanup", "Cleanup PR #999 Done", "fix issues#999", "Fix PRs #999, #998",
+    "Pull request #999 cleanup", "Fix pull requests #999", "cleanup DONE", "(done) cleanup",
+])
 def test_completed_title_rejects_existing_title_segments(description: str) -> None:
     """A retry must reuse the original description rather than append to a completed title."""
     with pytest.raises(ValueError, match="only the description"):
