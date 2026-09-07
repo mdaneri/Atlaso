@@ -3,18 +3,33 @@
 Verify real vmrun launcher console isolation with a surviving native descendant.
 .PARAMETER RepositoryRoot
 Checkout containing the production launcher.
+.PARAMETER StateRoot
+Existing caller-approved task-state directory for all generated fixture files.
 .PARAMETER HarnessRoot
 Private fixture directory passed only to the hidden console harness.
 #>
 [CmdletBinding()]
 param(
     [string]$RepositoryRoot = (Resolve-Path (Join-Path $PSScriptRoot '..\..')).Path,
+    [Parameter(Mandatory = $true)][string]$StateRoot,
     [string]$HarnessRoot = ''
 )
 $ErrorActionPreference = 'Stop'
 if (-not $IsWindows) { throw 'This regression requires Windows.' }
+$stateDirectory = Get-Item -LiteralPath $StateRoot -ErrorAction Stop
+if (-not $stateDirectory.PSIsContainer -or
+    ($stateDirectory.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) {
+    throw 'Fixture state root must be an existing ordinary directory.'
+}
+$StateRoot = $stateDirectory.FullName
 $pwsh = (Get-Process -Id $PID).Path
 if ($HarnessRoot) {
+    $harnessDirectory = Get-Item -LiteralPath $HarnessRoot -ErrorAction Stop
+    if (-not $harnessDirectory.PSIsContainer -or
+        ($harnessDirectory.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0 -or
+        $harnessDirectory.Parent.FullName -ne $StateRoot) {
+        throw 'Harness must be an ordinary immediate child of the approved state root.'
+    }
     try {
         . (Join-Path $RepositoryRoot 'scripts/windows/vmware/Atlaso.WorkstationFirstBoot.ps1')
         $env:ATLASO_CONSOLE_FIXTURE_ROOT = $HarnessRoot
@@ -48,7 +63,7 @@ if ($HarnessRoot) {
     }
     return
 }
-$fixtureRoot = Join-Path ([IO.Path]::GetTempPath()) ('atlaso-console-' + [guid]::NewGuid().ToString('N'))
+$fixtureRoot = Join-Path $StateRoot ('atlaso-console-' + [guid]::NewGuid().ToString('N'))
 $harness = $null
 try {
     New-Item -ItemType Directory -Path $fixtureRoot | Out-Null
@@ -84,7 +99,8 @@ public static class VmrunFixture {
     # a pipe-only test runner would otherwise miss console inheritance entirely.
     $harness = Start-Process -FilePath $pwsh -WindowStyle Hidden -PassThru -ArgumentList @(
         '-NoLogo', '-NoProfile', '-NonInteractive', '-File', ('"' + $PSCommandPath + '"'),
-        '-RepositoryRoot', ('"' + $RepositoryRoot + '"'), '-HarnessRoot', ('"' + $fixtureRoot + '"')
+        '-RepositoryRoot', ('"' + $RepositoryRoot + '"'),
+        '-StateRoot', ('"' + $StateRoot + '"'), '-HarnessRoot', ('"' + $fixtureRoot + '"')
     )
     if (-not $harness.WaitForExit(60000)) { throw 'Console regression harness exceeded its deadline.' }
     if (Test-Path (Join-Path $fixtureRoot 'failed')) {
