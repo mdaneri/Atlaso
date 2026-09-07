@@ -40,6 +40,9 @@ PRERELEASE_TAG_PATTERN = re.compile(
 STABLE_TAG_PATTERN = re.compile(r"^virtualization-v([0-9]+\.[0-9]+\.[0-9]+)$")
 HYPERV_DATA_DISK_BYTES = 536_870_912_000
 MAXIMUM_HYPERV_METADATA_BYTES = 1_048_576
+# Bound total extraction independently of compressed release-asset size. Four
+# formerly capped 2 GiB disks had roughly this same maximum unpacked footprint.
+MAXIMUM_HYPERV_EXPANDED_BYTES = 8 * 1024**3
 RELEASE_HELPERS = {
     "import-atlaso-proxmox.sh": "scripts/virtualization/templates/import-atlaso-proxmox.sh",
     "import-atlaso-kvm.sh": "scripts/virtualization/templates/import-atlaso-kvm.sh",
@@ -410,13 +413,19 @@ def _validate_hyperv_archive(
                 or member.flag_bits & 0x1
                 or (unix_mode and (unix_mode & 0o170000) not in (0, 0o100000))
                 or member.file_size <= 0
-                or member.file_size >= MAXIMUM_GITHUB_ASSET_BYTES
                 or (
                     member.filename not in disk_contract
                     and member.file_size > MAXIMUM_HYPERV_METADATA_BYTES
                 )
             ):
                 raise SystemExit(f"Hyper-V ZIP contains an unsafe member: {member.filename}")
+        expanded_bytes = sum(member.file_size for member in members)
+        if expanded_bytes > MAXIMUM_HYPERV_EXPANDED_BYTES:
+            raise SystemExit(
+                "Hyper-V ZIP exceeds the extraction budget: "
+                f"uncompressed_bytes={expanded_bytes}; "
+                f"limit_bytes={MAXIMUM_HYPERV_EXPANDED_BYTES}"
+            )
         try:
             manifest = json.loads(archive.read("manifest.json"))
         except (UnicodeDecodeError, json.JSONDecodeError, KeyError) as exc:

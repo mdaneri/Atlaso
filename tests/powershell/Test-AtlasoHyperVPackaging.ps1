@@ -137,6 +137,18 @@ try {
     }
     finally { $module.SessionState.PSVariable.Set('MaximumGitHubAssetBytes', [long]2147483648) }
 
+    $module.SessionState.PSVariable.Set('MaximumHyperVExpandedBytes', [long]8192)
+    try {
+        New-AtlasoHyperVArchive -Files @($member) -DestinationPath (Join-Path $fixtureRoot 'exact-budget.zip')
+        $module.SessionState.PSVariable.Set('MaximumHyperVExpandedBytes', [long]8191)
+        $overBudget = Join-Path $fixtureRoot 'over-budget.zip'
+        Assert-PackagingFailure {
+            New-AtlasoHyperVArchive -Files @($member) -DestinationPath $overBudget
+        } '*extraction budget*uncompressed_bytes=8192*limit_bytes=8191*'
+        if (Test-Path -LiteralPath $overBudget) { throw 'Exceeded extraction budget created a ZIP.' }
+    }
+    finally { $module.SessionState.PSVariable.Set('MaximumHyperVExpandedBytes', [long]8589934592) }
+
     if ($IncludeLargeFiles) {
         $largeFile = Join-Path $fixtureRoot 'large.bin'
         $stream = [IO.File]::Open($largeFile, [IO.FileMode]::CreateNew, [IO.FileAccess]::ReadWrite, [IO.FileShare]::None)

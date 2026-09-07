@@ -4,7 +4,8 @@ Convert the exact validated Atlaso OVA into one versioned Hyper-V ZIP.
 .DESCRIPTION
 Creates dynamic VHDX disks with 2 MiB blocks and streams them into a ZIP with ZIP64
 support. Raw disk members may exceed 2 GiB; the final published ZIP must remain
-strictly below 2 GiB. Reports conversion settings, disk capacities and file sizes,
+strictly below 2 GiB and the combined uncompressed package may not exceed 8 GiB.
+Reports conversion settings, disk capacities and file sizes,
 compressed member sizes, and the final archive size before publication.
 .PARAMETER OvaPath
 Canonical Atlaso VMware OVA input.

@@ -6,6 +6,7 @@ Validate the canonical Atlaso OVA and build its constrained Hyper-V package.
 Set-StrictMode -Version Latest
 
 $script:MaximumGitHubAssetBytes = 2147483648
+$script:MaximumHyperVExpandedBytes = 8589934592
 
 <#
 .SYNOPSIS
@@ -279,6 +280,13 @@ function New-AtlasoHyperVArchive {
             -not $names.Add($member.Name)) {
             throw "ZIP members must be ordinary files with unique names: $($member.FullName)"
         }
+    }
+    # Match protected validation's aggregate extraction budget while allowing one
+    # disk to exceed 2 GiB. This preserves a bounded hosted-runner disk footprint.
+    [long]$expandedBytes = 0
+    foreach ($member in $members) { $expandedBytes += $member.Length }
+    if ($expandedBytes -gt $script:MaximumHyperVExpandedBytes) {
+        throw "Hyper-V ZIP exceeds the extraction budget: uncompressed_bytes=$expandedBytes; limit_bytes=$script:MaximumHyperVExpandedBytes. Reduce the template payload during construction and rebuild."
     }
     # Compress-Archive uses Update mode, which buffers entries in memory and cannot
     # handle large VHDX members. Create mode streams DEFLATE and emits ZIP64 as needed.

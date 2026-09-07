@@ -291,6 +291,10 @@ Raw VHDX file length can exceed 2 GiB and still be valid. The release asset limi
 - **empty VHDX members** are rejected before disk inspection and archive creation;
 - a **non-empty final Hyper-V ZIP of 2,147,483,648 bytes or more** is rejected as an oversized publish candidate.
 
+Export and protected publication also cap the combined uncompressed package at 8 GiB to bound extraction space.
+Protected validation retains the separate 1 MiB metadata-member limit, exact package inventory, checksums, source
+binding, disk topology, and guest-visible byte comparisons. A raw disk crossing 2 GiB alone does not fail publication.
+
 When a check fails, keep the completed source template powered off:
 
 - if a raw VHDX is empty, investigate the converter output and revalidate the source OVA before
