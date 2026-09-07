@@ -197,6 +197,9 @@ def test_nat_boot_rebuilds_indexes_and_disabling_retires_runtime(tmp_path, monke
     staged.write_text(intent)
     assert helper._handle_nat("apply", [str(staged)]) == 0
     assert "meta iif { 11 }" in programs[-1]
+    unit = helper.WAN_NAT_SERVICE_PATH.read_text()
+    assert "After=network-online.target atlaso-wan.service" in unit
+    assert "Before=atlaso.service" in unit
     indexes["eth1"] = 99
     helper.NAT_BOOT_ID_PATH.write_text("boot-2")
     assert helper._handle_nat("restore", [str(helper.NAT_RUNTIME_CONFIG_PATH)]) == 0

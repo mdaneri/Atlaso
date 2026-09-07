@@ -10239,6 +10239,8 @@ def _handle_nat_locked(action: str, args: list[str]) -> int:
             _nat_write(WAN_NAT_SERVICE_PATH, "\n".join([
                 "[Unit]", "Description=Atlaso Traffic Publishing source NAT",
                 "After=network-online.target atlaso-wan.service", "Wants=network-online.target",
+                # Atlaso's pre-start also reconciles NAT; order both boot paths before taking the nonblocking lock.
+                "Before=atlaso.service",
                 "[Service]", "Type=oneshot",
                 f"ExecStart=/opt/atlaso/bin/atlaso-helper nat restore --real {NAT_RUNTIME_CONFIG_PATH}",
                 "RemainAfterExit=yes", "[Install]", "WantedBy=multi-user.target", "",

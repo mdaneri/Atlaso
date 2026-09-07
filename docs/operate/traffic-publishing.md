@@ -40,6 +40,9 @@ does not configure destination NAT, port forwarding, proxies, address pools, or 
 
 ## Verify and recover
 
+At boot, the NAT replay service runs after Routing & WAN and before Atlaso startup. Atlaso's subsequent startup
+reconciliation therefore verifies the saved NAT state without racing the replay service.
+
 Inspect the global task result and `nft list table ip atlaso_nat` and `nft list table ip6 atlaso_nat` on the appliance.
 Use traffic from a selected ingress to verify the translated source and return path. Also verify that another ingress,
 the dedicated management interface, the wrong family, and appliance-local traffic do not match. Existing connection
