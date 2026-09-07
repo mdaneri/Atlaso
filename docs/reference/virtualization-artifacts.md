@@ -279,6 +279,39 @@ disks, and applies the shared CPU and memory contract. Existing VM names, destin
 manifests, checksum failures, and conflicting topology are rejected. Failure cleanup removes only resources recorded
 as created by that invocation.
 
+### Hyper-V conversion and ZIP size
+
+The Hyper-V ZIP artifact is built from the validated OVA payload and keeps raw payload-to-VHDX ordering, two dynamic
+payload VHDX files, 2 MiB VHDX blocks, two 500 GiB data disks, and the same four-slot SCSI topology as the OVA.
+The final archive creation uses .NET `System.IO.Compression.ZipArchive` in streaming create mode and retains ZIP64 support.
+This avoids buffering multi-GiB disk members in memory.
+
+Raw VHDX file length can exceed 2 GiB and still be valid. The release asset limit applies to the final ZIP:
+
+- **empty VHDX members** are rejected before disk inspection and archive creation;
+- a **non-empty final Hyper-V ZIP of 2,147,483,648 bytes or more** is rejected as an oversized publish candidate.
+
+Export and protected publication also cap the combined uncompressed package at 8 GiB to bound extraction space.
+Protected validation retains the separate 1 MiB metadata-member limit, exact package inventory, checksums, source
+binding, disk topology, and guest-visible byte comparisons. A raw disk crossing 2 GiB alone does not fail publication.
+
+When a check fails, keep the completed source template powered off:
+
+- if a raw VHDX is empty, investigate the converter output and revalidate the source OVA before
+  retrying;
+- if only the final ZIP is oversized, review candidate evidence and rebuild from a validated source after reducing
+  content where supported by policy.
+
+For diagnostics, capture and retain:
+
+- reported converter version, dynamic subformat, and block size;
+- reported virtual capacity and raw byte length for each VHDX;
+- ZIP member `uncompressed_bytes` and `compressed_bytes`;
+- final archive byte size.
+
+At final import time or release troubleshooting, use PowerShell 7.4+ (`pwsh`) and `Expand-Archive` for zip inspection;
+raw extraction and import paths may need more temporary space than the downloaded ZIP size.
+
 ## First boot guest-agent selection
 
 Atlaso retains its checksum-pinned QEMU guest-agent build. Photon 5.0's published `qemu` build disables the guest
@@ -519,7 +552,8 @@ for diagnosis rather than claiming a later name match. KVM rollback preserves ev
 libvirt inventory proves that the exact domain is absent. Every smoke identity and storage namespace must be dedicated to
 the release invocation so cleanup can remain limited to resources created by that invocation. Stable publication waits
 for both Linux platform smokes and refuses an asset at or above the repository's existing 2 GiB limit rather than
-producing multipart output.
+producing multipart output. Raw VHDX members are validated separately for format and capacity before the final ZIP
+size check.
 
 As an optional alternative, **Produce virtualization candidate on ephemeral Windows** runs the same producer with
 `-CandidateOnly` on a temporary Windows runner whose exact release-specific label is
