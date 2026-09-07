@@ -39,6 +39,8 @@ impairment behavior only; they must not be used as an interface classification.
   provenance while restoring prior routing, forwarding, and WAN simulation settings. Handoff preflight validates
   the same normalized rollback configuration before candidate mutation. Original snapshots remain intact; handoff
   rollback persists the normalized runtime, and modern scoped rules retain their NAT identity checks.
+  If a saved NIC identity is absent or replaced during recovery, Atlaso reports NAT quarantine and restores the
+  remaining WAN state only after clearing the NAT table successfully. Ordinary Apply still fails on identity mismatch.
   Settings archives preserve enabled NAT rules awaiting missing-NIC review when their selectors are backed by
   archived inert physical-interface or disabled VLAN records. Restore preserves that intent; Appliance Apply still
   rejects those targets until an administrator selects available interfaces.

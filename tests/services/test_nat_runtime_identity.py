@@ -52,7 +52,7 @@ def test_replaced_physical_nic_cannot_replay_nat(runtime, replaced):
     (sysfs / replacement_target / "ifindex").write_text("9", encoding="utf-8")
     (sysfs / replaced / "address").write_text("00:11:22:33:44:99", encoding="utf-8")
     assert "meta iif { 9 }" not in applied and "meta oif 9" not in applied
-    assert helper._handle_wan("restore", [str(config)]) == 1
+    assert helper._apply_wan_nat(helper._parse_wan_config(config)) == 1
     assert "masquerade" not in helper.WAN_NAT_CONFIG_PATH.read_text(encoding="utf-8")
     assert helper._parse_wan_config(config)["nat_rules"] == parsed["nat_rules"]
 
@@ -259,3 +259,80 @@ def test_legacy_wan_rollback_still_rejects_invalid_routes(runtime, monkeypatch):
         helper._restore_management_handoff_wan({"wan_rollback_config_path": str(config)}, evidence)
     assert evidence[0]["returncode"] == 2
     assert not list(config.parent.glob("wan-rollback-*.conf"))
+
+
+@pytest.mark.parametrize("entrypoint", ["boot", "rollback", "apply"])
+@pytest.mark.parametrize("identity_failure", ["missing", "replaced"])
+def test_identity_quarantine_continues_only_recovery(runtime, monkeypatch, capsys, entrypoint, identity_failure):
+    """Quarantine stale NAT while replaying other WAN layers, keeping Apply strict.
+
+    Args:
+        runtime: Isolated helper and kernel inventory.
+        monkeypatch: Fixture isolating non-NAT runtime stages.
+        capsys: Fixture capturing explicit quarantine diagnostics.
+        entrypoint: Boot, handoff rollback, or ordinary desired-state Apply.
+        identity_failure: Missing NIC or replacement with a different MAC.
+    """
+    helper, config, sysfs = runtime
+    baseline = config.read_text(encoding="utf-8")
+    assert helper._apply_wan_nat(helper._parse_wan_config(config)) == 0
+    if identity_failure == "missing":
+        (sysfs / "eth2" / "ifindex").unlink()
+    else:
+        (sysfs / "eth2" / "address").write_text("00:11:22:33:44:99", encoding="utf-8")
+    calls = []
+    for operation in (
+        "_apply_wan_forwarding", "_apply_wan_target_routes",
+        "_apply_wan_policy_rules", "_apply_wan_routes_and_qdiscs",
+    ):
+        monkeypatch.setattr(helper, operation, lambda *_args, operation=operation: calls.append(operation) or 0)
+    monkeypatch.setattr(helper, "_install_wan_runtime", lambda *_args: calls.append("persist"))
+    if entrypoint == "rollback":
+        evidence = []
+        helper._restore_management_handoff_wan({"wan_rollback_config_path": str(config)}, evidence)
+        assert evidence[0]["returncode"] == 0
+        assert calls[-1] == "persist"
+    else:
+        result = helper._handle_wan("restore" if entrypoint == "boot" else "apply", [str(config)])
+        assert result == (1 if entrypoint == "apply" else 0)
+    assert len(calls) == {"boot": 4, "rollback": 5, "apply": 0}[entrypoint]
+    if entrypoint != "apply":
+        assert '"nat": "quarantined"' in capsys.readouterr().out
+    assert "masquerade" not in helper.WAN_NAT_CONFIG_PATH.read_text(encoding="utf-8")
+    assert config.read_text(encoding="utf-8") == baseline
+
+
+def test_recovery_cannot_continue_when_nat_quarantine_fails(runtime, monkeypatch):
+    """A failed kernel table replacement still blocks recovery.
+
+    Args:
+        runtime: Isolated helper and kernel inventory.
+        monkeypatch: Fixture injecting a failed nft command.
+    """
+    helper, config, sysfs = runtime
+    (sysfs / "eth2" / "address").write_text("00:11:22:33:44:99", encoding="utf-8")
+    monkeypatch.setattr(helper, "_run", lambda command: subprocess.CompletedProcess(command, 7, "", "failed"))
+    calls = []
+    monkeypatch.setattr(helper, "_apply_wan_forwarding", lambda *_args: calls.append("forwarding") or 0)
+    assert helper._handle_wan("restore", [str(config)]) == 7
+    assert not calls
+
+
+def test_recovery_cannot_ignore_legacy_nat_service_retirement_failure(runtime, monkeypatch):
+    """Do not treat an unsafe old boot service as a recoverable NIC mismatch.
+
+    Args:
+        runtime: Isolated helper and kernel inventory.
+        monkeypatch: Fixture injecting a failed service retirement.
+    """
+    helper, config, _sysfs = runtime
+
+    def fail_retirement():
+        """Simulate inability to disable the legacy raw nft boot unit."""
+        raise ValueError("Could not retire the legacy NAT boot replay service")
+
+    monkeypatch.setattr(helper, "_retire_wan_nat_service", fail_retirement)
+    calls = []
+    monkeypatch.setattr(helper, "_apply_wan_forwarding", lambda *_args: calls.append("forwarding") or 0)
+    assert helper._handle_wan("restore", [str(config)]) == 1
+    assert not calls

@@ -10054,11 +10054,12 @@ def _wan_nat_interface_indexes(parsed: dict[str, list[dict[str, str]]], rules: l
     return indexes
 
 
-def _apply_wan_nat(parsed: dict[str, list[dict[str, str]]]) -> int:
+def _apply_wan_nat(parsed: dict[str, list[dict[str, str]]], *, allow_identity_quarantine: bool = False) -> int:
     """Perform apply WAN nat.
 
     Args:
         parsed: Parsed consumed by apply WAN nat.
+        allow_identity_quarantine: Continue recovery after successfully clearing identity-invalid NAT.
     """
     feature_settings = _wan_feature_settings(parsed)
     effective_rules = (
@@ -10067,8 +10068,10 @@ def _apply_wan_nat(parsed: dict[str, list[dict[str, str]]]) -> int:
         else []
     )
     identity_error = ""
+    legacy_service_retired = False
     try:
         _retire_wan_nat_service()
+        legacy_service_retired = True
         indexes = _wan_nat_interface_indexes(parsed, effective_rules)
     except ValueError as exc:
         # Retire the currently applied NAT table even when invalid desired selectors
@@ -10094,6 +10097,9 @@ def _apply_wan_nat(parsed: dict[str, list[dict[str, str]]]) -> int:
         return apply_result.returncode
     if identity_error:
         print(identity_error, file=sys.stderr)
+        if allow_identity_quarantine and legacy_service_retired:
+            print(json.dumps({"nat": "quarantined", "reason": identity_error}, sort_keys=True))
+            return 0
         return 1
     return 0
 
@@ -10134,12 +10140,13 @@ def _apply_wan_forwarding(parsed: dict[str, list[dict[str, str]]]) -> int:
     return 0
 
 
-def _handle_wan(action: str, args: list[str]) -> int:
+def _handle_wan(action: str, args: list[str], *, replay: bool = False) -> int:
     """Handle WAN.
 
     Args:
         action: Action consumed by handle WAN.
         args: Parsed command-line options consumed by the operation.
+        replay: Internal handoff recovery flag; ordinary CLI Apply remains strict.
     """
     if len(args) != 1:
         print(f"wan {action} requires exactly one staged config path", file=sys.stderr)
@@ -10151,16 +10158,17 @@ def _handle_wan(action: str, args: list[str]) -> int:
         return 2
     if action == "restore":
         with _wan_replay_config(str(config_path)) as replay_path:
-            return _handle_wan_config(action, replay_path)
-    return _handle_wan_config(action, config_path)
+            return _handle_wan_config(action, replay_path, replay=True)
+    return _handle_wan_config(action, config_path, replay=replay)
 
 
-def _handle_wan_config(action: str, config_path: Path) -> int:
+def _handle_wan_config(action: str, config_path: Path, *, replay: bool = False) -> int:
     """Validate and execute WAN intent from an admitted or normalized path.
 
     Args:
         action: Validated WAN operation.
         config_path: Admitted staged config or normalized replay snapshot.
+        replay: Permit identity quarantine without skipping other recovery stages.
     """
     errors = _wan_config_errors(config_path)
     if errors:
@@ -10209,7 +10217,7 @@ def _handle_wan_config(action: str, config_path: Path) -> int:
         if WAN_RUNTIME_CONFIG_PATH.is_file()
         else None
     )
-    nat_result = _apply_wan_nat(parsed)
+    nat_result = _apply_wan_nat(parsed, allow_identity_quarantine=True) if replay else _apply_wan_nat(parsed)
     if nat_result != 0:
         return nat_result
     forwarding_result = _apply_wan_forwarding(parsed)
@@ -21734,7 +21742,7 @@ def _restore_management_handoff_wan(state: dict, commands: list[dict[str, object
     if not rollback_path:
         return
     with _wan_replay_config(rollback_path) as config_path:
-        result = _handle_wan("apply", [str(config_path)])
+        result = _handle_wan("apply", [str(config_path)], replay=True)
     commands.append(
         {
             "stage": "WAN rollback",

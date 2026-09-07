@@ -1092,7 +1092,7 @@ def test_management_handoff_applies_and_restores_coupled_wan(monkeypatch):
     monkeypatch.setattr(
         helper,
         "_handle_wan",
-        lambda action, args: calls.append((action, args[0])) or 0,
+        lambda action, args, **_kwargs: calls.append((action, args[0])) or 0,
     )
 
     helper._apply_management_handoff_wan({"wan_config_path": "/candidate.conf"})
@@ -1122,7 +1122,7 @@ def test_management_handoff_wan_failure_is_truthful(monkeypatch):
 
     helper = load_helper_module()
     monkeypatch.setattr(helper, "_wan_replay_config", nullcontext)
-    monkeypatch.setattr(helper, "_handle_wan", lambda *_args: 1)
+    monkeypatch.setattr(helper, "_handle_wan", lambda *_args, **_kwargs: 1)
 
     with pytest.raises(ValueError, match="candidate Routes & WAN apply failed"):
         helper._apply_management_handoff_wan({"wan_config_path": "/candidate.conf"})
