@@ -3604,7 +3604,18 @@ impairment behavior only; they must not be used as an interface classification.<
   routes install into the lab route table.</li>
 <li>Routing permissions for lab forwarding. Route-role networks forward to other route-role networks by default; access
   networks need explicit routing rules.</li>
-<li>IPv4 outbound masquerade NAT rules rendered as the Atlaso-owned <code>table ip atlaso_nat</code>.</li>
+<li>IPv4 outbound masquerade NAT rules rendered as the Atlaso-owned <code>table ip atlaso_nat</code>, with explicit inbound
+  interface/VLAN membership and one distinct outbound target. Legacy unscoped rules remain saved but require review
+  before enablement or active NAT apply.
+  Boot replay and management-handoff recovery retire legacy NAT rules without ingress or physical-identity
+  provenance while restoring prior routing, forwarding, and WAN simulation settings. Handoff preflight validates
+  the same normalized rollback configuration before candidate mutation. Original snapshots remain intact; handoff
+  rollback persists the normalized runtime, and modern scoped rules retain their NAT identity checks.
+  If a saved NIC identity is absent or replaced during recovery, Atlaso reports NAT quarantine and restores the
+  remaining WAN state only after clearing the NAT table successfully. Ordinary Apply still fails on identity mismatch.
+  Settings archives preserve enabled NAT rules awaiting missing-NIC review when their selectors are backed by
+  archived inert physical-interface or disabled VLAN records. Restore preserves that intent; Appliance Apply still
+  rejects those targets until an administrator selects available interfaces.</li>
 <li>NAT outbound interfaces can be access physical interfaces with IPv4 CIDRs or enabled VLAN interfaces with IPv4 CIDRs;
   NAT eligibility is not inferred from an interface role.</li>
 <li>IPv4 and IPv6 packet forwarding follow the global Routing switch. NAT is effective only when both Routing and NAT
