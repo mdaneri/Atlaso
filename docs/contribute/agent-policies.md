@@ -1802,7 +1802,8 @@ Terminal order:
   NAT is effective only with Routing; WAN Simulation is independent. Management reachability remains outside the lab
   Routing switch.
 - Label path entries **Static Routes** and forwarding authorization **Routing Permissions**. Keep Static Routes,
-  explicit Routing Permissions, NAT Rules, and WAN Policies as wizard-backed Tabulator collections using the ESX
+  explicit Routing Permissions, and WAN Policies on Routing & WAN, with Source NAT on Traffic Publishing.
+  All four remain wizard-backed Tabulator collections using the ESX
   Storage reference. Add launches from the bottom row; edit launches from row double-click or its context action;
   generated route-role permissions remain read-only; and ordinary persisted Enabled state remains directly editable.
 - Keep **Default route** mutually exclusive with **Destination CIDR** in the Static Route wizard. Default mode requires

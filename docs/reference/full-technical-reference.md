@@ -850,26 +850,34 @@ after the dedicated complete factory-reset transaction, nginx serves public HTTP
 loopback upstream and does not expose a management HTTPS listener. See
 [Web terminal](../operate/web-terminal.md) for the operator flow and security boundaries.
 
-Routes & WAN Simulation stages `/var/lib/atlaso/apply/wan/atlaso-wan.conf` and owns static lab route desired state,
-routing permissions, IPv4 masquerade NAT rules, and interface/VLAN-level `tc/netem` WAN impairment. Atlaso has no `wan`
-interface role: WAN Simulation is an explicit traffic-behavior workflow, not an interface classification, and NAT
-eligibility is never inferred from role. Physical Interfaces owns optional static management IPv4 and IPv6 gateways and
+Routing & WAN stages `/var/lib/atlaso/apply/wan/atlaso-wan.conf` and owns static lab route desired state,
+routing permissions, IPv4/IPv6 forwarding, and interface/VLAN-level `tc/netem` WAN impairment. Atlaso has no `wan`
+interface role: WAN Simulation is an explicit traffic-behavior workflow, not an interface classification.
+Physical Interfaces owns optional static management IPv4 and IPv6 gateways and
 installs each configured default in both the main table and policy-routing table `100`; IPv6 accepts an on-link or
 link-local gateway. Physical and VLAN interfaces accept only `management`, `access`, `route`, or `unused`; startup and
 settings-archive compatibility map the retired `services` and `storage` values to `access` without altering other
 interface state. Routes & WAN owns non-management route gateways in table `200`, so management and lab traffic can
 use different default gateways without forwarding through management. Routes can target non-management access physical
 interfaces and enabled VLANs with IPv4, IPv6, or dual-stack CIDRs. Route-role networks forward to other route-role
-networks by default; access networks require explicit routing rules. NAT v1 is explicit IPv4 outbound masquerade only;
-there is no destination NAT or port forwarding, and the outbound interface must have an IPv4 CIDR. Route-specific WAN
+networks by default; access networks require explicit routing rules. Traffic Publishing separately owns IPv4 and IPv6
+source NAT: interface-address masquerade or fixed SNAT to an assigned same-family egress address. Explicit distinct
+ingress and egress targets must be enabled, addressed access or route physical interfaces or eligible VLANs;
+dedicated management targets are excluded. This does not implement destination NAT, port forwarding, pools, or NPTv6.
+Route-specific WAN
 impairment is roadmap work tracked in `docs/routing-wan-roadmap.md`; v1 exposes only interface/VLAN-level impairment.
-The browser labels path records **Static Routes** and forwarding rules **Routing Permissions**. All four resource grids
+The browser labels path records **Static Routes** and forwarding rules **Routing Permissions**. The three Routing & WAN
+resource grids and Traffic Publishing's separate Source NAT grid
 use the shared reviewed add/edit wizard structure, while persisted Enabled state remains directly editable and generated
-route-role permissions remain read-only. The right-rail **Routing & WAN Settings** card saves three independent global
-switches. Fresh and factory state is off. Routing gates lab routes, rules, and IPv4/IPv6 forwarding; NAT is effective
+route-role permissions remain read-only. The right-rail **Routing & WAN Settings** card saves Routing and WAN Simulation;
+Traffic Publishing owns the canonical NAT switch. Fresh and factory state is off. Routing gates lab routes, rules,
+and IPv4/IPv6 forwarding; NAT is effective
 only with Routing; WAN Simulation independently gates `tc/netem`. Disabling a feature preserves every SQLite row and
-assignment while the helper clears its runtime state. Every edit remains desired state until the global `wan` apply
-unit is submitted. The Services and local-console Routing row mirrors the saved Routing switch. Services enable and
+assignment while the helper clears its runtime state. Every edit remains desired state until global Appliance Apply:
+`wan` owns Routing/WAN and `nat` owns source translation. NAT stages `/var/lib/atlaso/apply/nat/atlaso-nat.conf`, verifies
+live interface identity and fixed-address ownership, atomically replaces both Atlaso NAT tables, and maintains a durable
+recovery journal and ordered boot replay. See [Traffic Publishing](../operate/traffic-publishing.md).
+The Services and local-console Routing row mirrors the saved Routing switch. Services enable and
 disable actions update that desired state; direct Routing start, stop, and restart actions are rejected because only
 Appliance Apply may mutate forwarding runtime state. The WAN status API likewise counts only globally active, enabled
 WAN assignments and effective NAT interfaces instead of preserved inactive rows.
@@ -1079,7 +1087,7 @@ Restoring a settings archive replaces desired-state configuration in the control
 mutation to the global `Appliance Apply` workflow. Complete factory reset is a separate crash-safe transaction. It
 removes every database record—including identities, password hashes, API tokens, jobs, schedules, audit history,
 archives, and desired/applied state—and creates a private candidate containing only factory/bootstrap records. Atlaso
-copies the previous apply baselines into that candidate long enough to derive removals, preflights all 16 generated unit
+copies the previous apply baselines into that candidate long enough to derive removals, preflights all 17 generated unit
 configurations, activates them in dependency order, writes matching clean baselines, and atomically replaces the active
 SQLite database. A new appliance-instance ID invalidates every earlier session. Core routing, firewall, authentication,
 and management state finish enabled and coherent; optional services finish disabled; no follow-up Apply is pending.
