@@ -73,6 +73,17 @@ def test_dual_stack_rules_keep_explicit_ingress_and_fixed_egress(family, mode, t
         assert validate_nat_rule(candidate, targets, [])
 
 
+def test_nat_validation_returns_fixed_parser_error_messages():
+    """Parser failures expose actionable field guidance without exception text."""
+    targets = nat_targets(interfaces(), [])
+    value = "invalid-input-sentinel"
+    source_errors = validate_nat_rule(rule(source=value), targets, [])
+    address_errors = validate_nat_rule(rule(translation_mode="snat", translated_address=value), targets, [])
+    assert source_errors == ["NAT source is invalid; select a valid Source Group or IPv4 addresses or CIDRs."]
+    assert address_errors == ["Fixed SNAT requires a valid same-family address assigned to the selected egress interface."]
+    assert value not in " ".join([*source_errors, *address_errors])
+
+
 def test_invalid_ingress_family_and_disabled_target_are_rejected():
     """Unselected, management, wrong-family and dormant targets cannot widen scope."""
     rows = interfaces()

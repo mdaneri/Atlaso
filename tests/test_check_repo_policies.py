@@ -9065,8 +9065,8 @@ def test_agent_policy_gate_ignores_quoted_terminal_order(tmp_path: Path) -> None
         )
 
 
-def test_agent_policy_gate_rejects_fourth_terminal_transition(tmp_path: Path) -> None:
-    """Verify that the terminal lifecycle contains exactly three transitions.
+def test_agent_policy_gate_rejects_fifth_terminal_transition(tmp_path: Path) -> None:
+    """Verify that the terminal lifecycle contains exactly four transitions.
 
     Args:
         tmp_path: Temporary directory provided by pytest for isolated filesystem state.
@@ -9087,7 +9087,7 @@ def test_agent_policy_gate_rejects_fourth_terminal_transition(tmp_path: Path) ->
                         expected_order,
                         expected_order
                         + f"\n{order_prefix}{' ' * permitted_indent}"
-                        + f"4{delimiter} archived",
+                        + f"5{delimiter} archived",
                         1,
                     ),
                     encoding="utf-8",

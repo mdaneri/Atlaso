@@ -564,6 +564,7 @@ def _run_root_cleanup(
     environment: dict[str, str],
     artifact_parent: Path | None = None,
     expected_root: Path | None = None,
+    canonical_parent_guard: Path | None = None,
 ) -> subprocess.CompletedProcess[str]:
     """Invoke the whole-root cleanup entry point.
 
@@ -574,6 +575,7 @@ def _run_root_cleanup(
         environment: Environment used to invoke the cleanup command.
         artifact_parent: Optional artifact parent root for binding mode.
         expected_root: Optional expected configured cleanup root for validation mode.
+        canonical_parent_guard: Independently derived parent checked before exact-root cleanup.
     """
     if (artifact_parent is None) == (expected_root is None):
         raise ValueError("Select exactly one root binding")
@@ -584,9 +586,15 @@ def _run_root_cleanup(
     )
     wrapper = tmp_path / "cleanup.ps1"
     module = VMWARE_SCRIPT_ROOT / "Atlaso.WorkstationCleanup.psm1"
+    guard = (
+        f"Assert-AtlasoStrictDescendantPath -ParentPath '{canonical_parent_guard}' "
+        f"-ChildPath '{expected_root}' -FailureMessage 'Outside canonical lifecycle parent'\n"
+        if canonical_parent_guard is not None else ""
+    )
     wrapper.write_text(
         f"""$ErrorActionPreference = 'Stop'
 Import-Module '{module}' -Force
+{guard}
 Remove-AtlasoWorkstationArtifactRoot `
     -VmrunPath '{vmrun_path}' `
     {binding} `
@@ -597,6 +605,69 @@ Write-Host 'CLEANUP SUCCEEDED'
         encoding="utf-8",
     )
     return _run_script(wrapper, environment=environment)
+
+
+@pytest.mark.parametrize("root_exists", [True, False])
+def test_exact_lifecycle_result_root_cleanup_without_vmx(tmp_path: Path, root_exists: bool) -> None:
+    """The existing root helper releases retained evidence without touching sibling labs.
+
+    Args:
+        tmp_path: Isolated fake-provider and lifecycle result roots.
+        root_exists: Exercise both residual cleanup and an already-absent retry.
+    """
+    root = tmp_path / "results" / "Atlaso-PR-750-lifecycle-fixture"
+    sibling = root.parent / "Atlaso-PR-751-lifecycle-other"
+    sibling.mkdir(parents=True)
+    sentinel = sibling / "plan.json"
+    sentinel.write_text('{"owner": "other-task"}', encoding="utf-8")
+    preserved = tmp_path / "preserved-evidence.json"
+    preserved.write_text('{"verified": true}', encoding="utf-8")
+    if root_exists:
+        root.mkdir()
+        (root / "plan.json").write_text('{"pull_request_number": 750}', encoding="utf-8")
+        (root / "vmware-identity.json").write_text('{"vms": []}', encoding="utf-8")
+        (root / "validation.log").write_text("validation evidence copied", encoding="utf-8")
+    vmrun, environment, log, _ = _write_fake_vmrun(tmp_path / "fake", [], registered=False)
+    result = _run_root_cleanup(
+        tmp_path, removal_root=root, expected_root=root, canonical_parent_guard=root.parent,
+        vmrun_path=vmrun, environment=environment,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert not root.exists()
+    assert sentinel.read_text(encoding="utf-8") == '{"owner": "other-task"}'
+    assert preserved.read_text(encoding="utf-8") == '{"verified": true}'
+    assert all(command[2] not in {"stop", "deleteVM"} for command in _commands(log))
+
+
+@pytest.mark.parametrize("target_kind", ["outside", "parent", "sibling", "different_lab"])
+def test_lifecycle_result_root_requires_independent_parent_and_identity(tmp_path: Path, target_kind: str) -> None:
+    """Independent canonical containment and exact identity reject altered manifest paths.
+
+    Args:
+        tmp_path: Isolated fake-provider filesystem.
+        target_kind: Unsafe candidate relation to the independently configured lifecycle parent.
+    """
+    parent = tmp_path / "results" / "lifecycle"
+    expected = parent / "Atlaso-PR-750-lifecycle-fixture"
+    candidates = {
+        "outside": tmp_path / "unrelated",
+        "parent": parent,
+        "sibling": parent.with_name("lifecycle-other"),
+        "different_lab": parent / "Atlaso-PR-751-lifecycle-other",
+    }
+    candidate = candidates[target_kind]
+    candidate.mkdir(parents=True)
+    sentinel = candidate / "preserve.txt"
+    sentinel.write_text("unrelated data", encoding="utf-8")
+    vmrun, environment, log, _ = _write_fake_vmrun(tmp_path / "fake", [], registered=False)
+    result = _run_root_cleanup(
+        tmp_path, removal_root=candidate,
+        expected_root=expected if target_kind == "different_lab" else candidate, canonical_parent_guard=parent,
+        vmrun_path=vmrun, environment=environment,
+    )
+    assert result.returncode != 0
+    assert sentinel.read_text(encoding="utf-8") == "unrelated data"
+    assert not _commands(log)
 
 
 def _run_stale_registration_repair(

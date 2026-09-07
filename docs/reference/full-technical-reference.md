@@ -508,6 +508,13 @@ that have auto-merge enabled and report `BEHIND`. Each request includes the obse
 push causes GitHub to reject the stale update instead of merging over it. Forks, conflicted branches, and pull requests
 without auto-merge are never updated by this workflow.
 
+Post-merge cleanup first requires independently verified `validation_resources_released`, using the originating task's
+bounded resource inventory and durable cleanup evidence. Retention, ambiguous ownership, or failed release blocks
+branch/worktree cleanup and Done. The [completed-task policy](../contribute/agent-policies.md#completed-task-cleanup)
+names the existing removal tools and preserves required validation evidence outside disposable roots. Public completed
+titles use `scripts/completed_task_title.py` to keep every linked issue and PR visible alongside the " · Done" suffix;
+the controller verifies exact persisted title readback before recording `task_title_done`.
+
 Post-merge cleanup never assumes ownership merely because default merge authority applied. For an existing ordinary
 pull request, the controller verifies the exact merge, reachable merge commit, closed issue, and completed post-merge
 activity, then evaluates remote-branch ownership independently from local checkout/worktree ownership. It preserves a

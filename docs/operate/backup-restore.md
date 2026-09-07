@@ -16,9 +16,6 @@ Canonical NAT enablement takes precedence over a legacy Routes/WAN projection. F
 disables the NAT replay service, and establishes a disabled `nat` Apply baseline. See
 [Traffic Publishing](traffic-publishing.md) for the source-translation contract.
 
-Open **Backup and Restore** to protect Atlaso settings before maintenance and recover the control-plane configuration
-when needed.
-
 <!-- BEGIN GENERATED INTERFACE OVERVIEW -->
 ## Interface overview
 
@@ -29,6 +26,9 @@ This verified appliance view provides visual orientation before you begin.
 *Figure: Backup and Restore in the verified clean-appliance desktop state.*
 
 <!-- END GENERATED INTERFACE OVERVIEW -->
+
+Open **Backup and Restore** to protect Atlaso settings before maintenance and recover the control-plane configuration
+when needed.
 
 ## Create a backup
 

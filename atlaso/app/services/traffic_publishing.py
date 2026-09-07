@@ -185,8 +185,8 @@ def validate_nat_rule(rule: NatRule, targets: list[dict[str, Any]], source_group
             values = [value.strip() for value in re.split(r"[\n,]+", source) if value.strip()]
             if not values or any(ip_network(value, strict=False).version != family for value in values):
                 raise ValueError(f"NAT source must contain only IPv{family} addresses or CIDRs.")
-    except ValueError as exc:
-        errors.append(str(exc))
+    except ValueError:
+        errors.append(f"NAT source is invalid; select a valid Source Group or IPv{family} addresses or CIDRs.")
     if mode == "snat":
         try:
             translated = ip_address(rule.translated_address or "")
@@ -195,8 +195,8 @@ def validate_nat_rule(rule: NatRule, targets: list[dict[str, Any]], source_group
             target = eligible.get(rule.outbound_interface)
             if active and (target is None or translated != ip_interface(target["ip_cidr" if family == 4 else "ipv6_cidr"]).ip):
                 raise ValueError("Fixed SNAT address must be assigned to the selected egress interface.")
-        except ValueError as exc:
-            errors.append(str(exc))
+        except ValueError:
+            errors.append("Fixed SNAT requires a valid same-family address assigned to the selected egress interface.")
     elif rule.translated_address:
         errors.append("Interface-address masquerade cannot specify a fixed translated address.")
     if (rule.priority or 0) < 0:
