@@ -243,22 +243,71 @@ runtime.
   or user-created worktree, or an ambiguous target. If an existing task is outside the configured root, preserve it and
   obtain maintainer direction instead of moving or deleting it automatically.
 
+Passing tests does not permit indefinite retention of disposable validation infrastructure. Inventory resources as
+they are created in a bounded `validation_resource_inventory`, binding each resource to its task, repository, source
+commit, PR when present, exact path or provider identity, and existing ownership manifest. Names alone never prove
+ownership. Include PR-numbered test VMs, lifecycle VMs, local and PR builders, disposable clones, address reservations,
+output claims, task-created disks and temporary networks, artifact/test roots, helper processes, credential-bridge
+recovery state, locks, and external test resources.
+
+The originating task releases these resources through existing supported cleanup paths once required validation
+evidence is preserved, the PR is terminal, and no review, deployment, release, diagnosis, retry, or maintainer activity
+needs the environment. Failed or interrupted validation may retain resources only while diagnosis or retry needs them.
+This resource gate does not waive the existing merge, issue, post-merge, or private-remediation prerequisites for
+branch/worktree cleanup. Earlier per-operation sensitive-material cleanup and recovery remain mandatory.
+
+Use `remove-atlaso-vm.ps1` with the exact VMX and expected name after independently verifying ownership; use
+`remove-lifecycle-vms.ps1` or the lifecycle wrapper's `-CleanupVmsOnly` for the exact PR-owned lab. Preserve existing
+identity, filesystem, shared-disk, provider-state, process-termination, and recovery safeguards. Release associated
+resources through their owning tools; VM removal alone does not prove reservations, claims, or recovery state released.
+Never delete shared, reusable, permanent, user-created, differently owned, or ambiguous resources.
+
+The cleanup-ready handoff includes the inventory and durable, sanitized `validation_resource_release_evidence`:
+the cleanup entry point and result, exact resource identities, and verified absence of each disposable resource,
+VM registration and path, reservation, claim, process, lock, and temporary root. Preserve required validation and
+ownership evidence outside every root scheduled for deletion, on a permitted durable task/controller evidence surface.
+The primary-checkout controller independently reads back the exact resource states before recording
+`validation_resources_released` and before branch/worktree cleanup. For no resources, require an explicitly verified
+`validation_resource_inventory_empty` statement; missing evidence is never proof of absence. If another owner must
+perform teardown, hand off this bounded inventory and require the same ownership checks and independent readback.
+
+Record explicit maintainer retention or a proven active downstream need as `validation_resource_retention`, with
+the exact resource, owner, reason, and retry condition. Any unresolved retention, failure, unsupported cleanup path,
+or ambiguous ownership records `validation_resource_cleanup_blocked`, preserves uncertain resources and recovery
+evidence, and keeps the task actionable. Do not delete the branch/worktree or mark Done to hide a blocked resource gate.
+Track missing cleanup capabilities separately; never substitute ad hoc deletion or broad VMware inventory cleanup.
+
+For ordinary public tasks, enforce `task_title_done` with `scripts/completed_task_title.py` after all prior gates pass.
+Supply every linked issue and PR from verified task/GitHub evidence, not from a potentially truncated current title;
+use repeated `--issue` and `--pr` arguments and a short `--description` without traceability or completion segments.
+The formatter puts all identifiers first, trims only the description to a conservative 60 UTF-16-unit budget, and
+retains exactly one " · Done" suffix. If the identifiers alone do not fit, keep completion blocked for maintainer
+direction; never drop an issue or PR. Use supported task-title controls to set the exact generated title, then read
+the persisted title through a supported task read tool and rerun the same formatter inputs with `--observed-title`.
+Record `task_title_readback_verified` only when verification succeeds. A rename acknowledgement alone is insufficient.
+A stale, truncated, missing, or duplicated completion marker blocks Done and requires an idempotent title-only retry
+after revalidating earlier gates. Do not repeat destructive cleanup on a title retry. If title controls are unavailable,
+retain the existing capability-evidence exception. Private remediation keeps its sanitized title and private evidence;
+never pass advisory identifiers to this public formatter, and still require exact supported-tool title readback.
+
 Terminal order:
 
-1. `remote_branch_absent`
-2. `worktree_removed`
-3. `task_title_done`
+1. `validation_resources_released`
+2. `remote_branch_absent`
+3. `worktree_removed`
+4. `task_title_done`
 
-- Complete `remote_branch_absent` first. If the same-repository task branch exists, require its ref to equal the recorded
-  pull-request head SHA and atomically delete only that ref with an expected-SHA lease such as
+- Complete `remote_branch_absent` after verified resource release. If the same-repository task branch exists, require
+  its ref to equal the recorded pull-request head SHA and atomically delete only that ref with an expected-SHA lease
+  such as
   `--force-with-lease=refs/heads/BRANCH:HEAD_SHA`. A lease rejection or unavailable atomic guard blocks cleanup.
   Verify absence after deletion. An already absent ref satisfies the gate. Do not enable repository-wide automatic
   branch deletion.
-- Private remediation fulfills that first state through `advisory_remote_branch_absent`. On private surfaces, bind the
+- Private remediation fulfills that branch state through `advisory_remote_branch_absent`. On private surfaces, bind the
   advisory's exact temporary fork, private pull request, branch, task, and recorded head SHA. Delete only that ref with
   the same atomic expected-SHA lease when it still equals the head, privately verify absence, and require the same
   identity and merge proof for an already absent ref. Never delete the temporary fork or change advisory state.
-- Complete `worktree_removed` second by first proving that the exact local task branch is absent or still equals the
+- Complete `worktree_removed` third by first proving that the exact local task branch is absent or still equals the
   recorded pull-request head and is referenced only by the target worktree. Use `git worktree remove`, follow it with
   affected-repository stale-registration pruning, and verify that both the absolute path and registration are absent.
   Then require the exact local task branch to be unreferenced by every registered worktree, delete only that ref when

@@ -26,7 +26,9 @@ Every repository change starts with a labeled issue and ends with a reviewed pul
 focused local tests, documentation validation, applicable repository checks, and `git diff --check` before delivery.
 GitHub CI owns the complete Python test suite. Automated contributors keep the originating task active to follow
 current-head checks, comments, reviews, and review threads through completion. After an authorized merge and all
-post-merge activity, the primary-checkout controller deletes the task-owned GitHub branch with an atomic expected-SHA
+post-merge activity, the originating task releases its disposable validation resources using existing ownership-safe
+tools and preserves durable evidence. The primary-checkout controller independently verifies resource release before
+it deletes the task-owned GitHub branch with an atomic expected-SHA
 lease, removes the Codex worktree, deletes the exact local task branch, and only then appends " · Done" to the task title.
 Interrupted cleanup can resume
 after worktree removal only with the same task, head, and merge evidence. Primary-checkout tasks instead restore a
