@@ -780,7 +780,8 @@ open a wide review modal. There is no separate appliance-apply page; a direct GE
 `/ui/management/appliance-apply` redirects to the
 Dashboard and opens the same modal. The workflow:
 
-- lists changed apply units such as Local Users, Appliance Settings, Network, Routing & WAN, Traffic Publishing, DNS/DHCP, ESXi
+- lists changed apply units such as Local Users, Appliance Settings, Network, Routing & WAN, Traffic Publishing,
+  DNS/DHCP, ESXi
   PXE, ESX Storage, Firewall, Certificate Authority, KMS, Managed LDAP, VCF Backups, VCF Offline Depot, VCF Private
   Registry, and Public Services;
 - checks changed valid units by default;
