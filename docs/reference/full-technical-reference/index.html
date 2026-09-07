@@ -4537,6 +4537,12 @@ Repository auto-merge remains a separate explicit maintainer choice per pull req
 that have auto-merge enabled and report <code>BEHIND</code>. Each request includes the observed head SHA, so a concurrent contributor
 push causes GitHub to reject the stale update instead of merging over it. Forks, conflicted branches, and pull requests
 without auto-merge are never updated by this workflow.</p>
+<p>Post-merge cleanup first requires independently verified <code>validation_resources_released</code>, using the originating task's
+bounded resource inventory and durable cleanup evidence. Retention, ambiguous ownership, or failed release blocks
+branch/worktree cleanup and Done. The <a href="../../contribute/agent-policies/#completed-task-cleanup">completed-task policy</a>
+names the existing removal tools and preserves required validation evidence outside disposable roots. Public completed
+titles use <code>scripts/completed_task_title.py</code> to keep every linked issue and PR visible alongside the " · Done" suffix;
+the controller verifies exact persisted title readback before recording <code>task_title_done</code>.</p>
 <p>Post-merge cleanup never assumes ownership merely because default merge authority applied. For an existing ordinary
 pull request, the controller verifies the exact merge, reachable merge commit, closed issue, and completed post-merge
 activity, then evaluates remote-branch ownership independently from local checkout/worktree ownership. It preserves a
