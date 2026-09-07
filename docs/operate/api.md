@@ -255,7 +255,9 @@ interface/VLAN names. New rules and enabled updates require at least one enabled
 `outbound_interface`. Existing paths, operation IDs, and `read:wan` / `write:wan` authorization remain unchanged.
 Clients must supply reviewed ingress membership when creating or enabling rules; an omitted field never means all
 interfaces. Responses return the saved array, including an empty array for legacy rows awaiting review. A disabled
-legacy update may retain an empty scope. Source Group and CIDR values restrict addresses within the selected ingress.
+legacy update may retain an empty scope. The create-specific OpenAPI schema marks `inbound_interfaces` as required
+with at least one item, including for disabled new rules; update and response schemas preserve empty legacy scopes.
+Source Group and CIDR values restrict addresses within the selected ingress.
 All writes save desired state; global Appliance Apply owns enforcement.
 
 Inbound and outbound names always use 1–80 ASCII letters, digits, underscores, dots, colons, or hyphens, including for

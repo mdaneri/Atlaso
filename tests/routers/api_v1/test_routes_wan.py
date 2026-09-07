@@ -321,6 +321,9 @@ def test_nat_api_requires_reviewed_ingress_and_preserves_legacy_disable(client):
     token, _ = create_token(client, scopes=["read:wan", "write:wan"])
     headers = {"Authorization": f"Bearer {token}"}
     payload = dict(name="Ingress API", source="any", outbound_interface="eth1.20", enabled=True)
+    for enabled in (True, False):
+        assert client.post("/api/v1/nat/rules", headers=headers, json={**payload, "enabled": enabled}).status_code == 422
+        assert client.post("/api/v1/nat/rules", headers=headers, json={**payload, "enabled": enabled, "inbound_interfaces": []}).status_code == 422
     for inbound in [[], ["eth0"], ["eth1.20"], ["missing"], ["eth2", "eth2"]]:
         response = client.post("/api/v1/nat/rules", headers=headers, json={**payload, "inbound_interfaces": inbound})
         assert response.status_code == 422, response.text

@@ -26,6 +26,7 @@ from atlaso.app.openapi import DocumentedAPIRoute
 from atlaso.app.schemas import (
     NatRuleCreate,
     NatRuleResponse,
+    NatRuleUpdate,
     RouteCreate,
     RouteResponse,
     RoutesWanSettingsResponse,
@@ -575,7 +576,7 @@ def build_router(dependencies: RoutesWanApiDependencies) -> RoutesWanApiRouter:
         return {str(group.get("id", "")) for group in state["groups"]}
 
 
-    def validate_nat_rule_payload(payload: NatRuleCreate, db: Session, *, creating: bool = False) -> None:
+    def validate_nat_rule_payload(payload: NatRuleUpdate, db: Session, *, creating: bool = False) -> None:
         """Validate nat rule payload.
 
         Args:
@@ -666,7 +667,7 @@ def build_router(dependencies: RoutesWanApiDependencies) -> RoutesWanApiRouter:
 
 
     @router.patch("/nat/rules/{rule_id}", response_model=NatRuleResponse, tags=["NAT"], operation_id="updateNatRule")
-    def update_nat_rule(rule_id: Annotated[int, ApiPath(description='Unique identifier of the rule record addressed by this operation.')], payload: NatRuleCreate, identity: Annotated[Identity, Depends(require_scope("write:wan"))], db: Session = Depends(get_db)) -> NatRuleResponse:
+    def update_nat_rule(rule_id: Annotated[int, ApiPath(description='Unique identifier of the rule record addressed by this operation.')], payload: NatRuleUpdate, identity: Annotated[Identity, Depends(require_scope("write:wan"))], db: Session = Depends(get_db)) -> NatRuleResponse:
         """Update Nat Rule.
 
         Requires the `write:wan` API scope. The operation updates saved Atlaso state and does not bypass

@@ -1735,8 +1735,8 @@ class RouteResponse(RouteCreate):
     wan_policy: Annotated[WanPolicyResponse | None, Field(description='Returned wan policy value for this route resource.')] = None
 
 
-class NatRuleCreate(BaseModel):
-    """Fields accepted when creating a nat rule resource.
+class NatRuleUpdate(BaseModel):
+    """Fields accepted when updating a NAT rule, including dormant legacy rows.
 
     Attributes:
         name: Stable operator-facing name of this resource.
@@ -1759,7 +1759,17 @@ class NatRuleCreate(BaseModel):
     description: Annotated[str | None, Field(description='Operator-facing purpose or context for this resource.')] = None
 
 
-class NatRuleResponse(NatRuleCreate):
+class NatRuleCreate(NatRuleUpdate):
+    """Fields required to create a NAT rule with an explicit ingress boundary.
+
+    Attributes:
+        inbound_interfaces: One or more eligible ingress targets for every new rule.
+    """
+
+    inbound_interfaces: list[Annotated[str, Field(min_length=1, max_length=80, pattern=r"^[A-Za-z0-9_.:-]+$", description="Canonical physical interface or VLAN name.")]] = Field(min_length=1, max_length=128, description="Required nonempty array of eligible non-management IPv4 ingress interface/VLAN names, including when creating a disabled rule. The outbound target must not appear here.")
+
+
+class NatRuleResponse(NatRuleUpdate):
     """Fields returned by the Atlaso nat rule API.
 
     Attributes:
