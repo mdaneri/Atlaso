@@ -72,6 +72,12 @@ derived only from the validated OVA and therefore inherits it. Protected finaliz
 software-source sidecar, privileged assets, artifact bytes, and publication identity independently. Those checks are
 defense in depth around the source-bound producer output, not a replacement for the snapshot boundary.
 
+Published-software verification runs with Python's `-B` option before source ACL protection and again before Packer
+admission. Imports cannot create bytecode in the admitted snapshot, including when the caller sets a Python cache
+prefix; no `PYTHONDONTWRITEBYTECODE` workaround is required. The complete file inventory remains authoritative.
+An inventory mismatch still blocks construction: preserve the failure evidence and investigate changed or added files
+instead of excluding caches or accepting a new baseline.
+
 Schema-v3 also carries `template_contract`: schema version `1`, state `uninitialized`, and the exact verified
 `software_source` identity. That identity binds the software tag, version, source commit, manifest and bundle digests,
 application-wheel path and digest, and `cp314` ABI. It is copied into OVA provenance and required during retained
