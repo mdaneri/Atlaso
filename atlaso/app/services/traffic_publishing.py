@@ -122,7 +122,7 @@ def nat_targets(interfaces: list[PhysicalInterface], vlans: list[VlanInterface])
                        "nat_physical_mac": parent.mac_address or "", "ip_cidr": item.ip_cidr or "",
                        "ipv6_cidr": item.ipv6_cidr or "", "ip_families": families,
                        "label": f"{item.name} / {item.role} / IPv" + ", IPv".join(map(str, families))})
-    return result
+    return sorted(result, key=lambda target: (target["name"], target["kind"]))
 
 
 def resolved_nat_source(source: str, source_groups: list[dict[str, Any]]) -> str:

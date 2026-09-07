@@ -73,6 +73,15 @@ def test_dual_stack_rules_keep_explicit_ingress_and_fixed_egress(family, mode, t
         assert validate_nat_rule(candidate, targets, [])
 
 
+def test_nat_snapshot_is_stable_across_database_row_order():
+    """Unchanged targets must not create false pending or stale queued snapshots."""
+    rows = interfaces()
+    settings = TrafficPublishingSettings(True, True)
+    forward = render_nat_config([rule()], nat_targets(rows, []), [], settings)
+    reverse = render_nat_config([rule()], nat_targets(list(reversed(rows)), []), [], settings)
+    assert forward == reverse
+
+
 def test_nat_validation_returns_fixed_parser_error_messages():
     """Parser failures expose actionable field guidance without exception text."""
     targets = nat_targets(interfaces(), [])

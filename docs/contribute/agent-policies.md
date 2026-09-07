@@ -1543,7 +1543,7 @@ Terminal order:
 - A static management-to-access physical-interface mutation captures valid IPv4 and IPv6 gateways before clearing
   management-only fields and stages enabled canonical defaults for the converted access target in the same transaction.
   Reuse equivalent routes, reject conflicting family defaults with complete rollback, warn without inventing missing
-  gateways, audit both Network and Routes & WAN Simulation, and mark Appliance Settings dependent. A migrated route not
+  gateways, audit both Network and Routing & WAN, and mark Appliance Settings dependent. A migrated route not
   present in the last-applied WAN baseline selects WAN into the existing protected management handoff with a validated
   rollback config; it does not create another host-mutation path.
 

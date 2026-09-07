@@ -93,7 +93,7 @@ For a static `management` to `access` role change, Atlaso captures valid saved I
 those management-only fields. The same PATCH transaction stages or enables the equivalent family default Route on the
 converted interface. An equivalent saved default is reused; a different existing family default returns `409` and
 rolls back the interface, routes, dependencies, and audit rows. A missing gateway creates no route. Clients should warn
-operators that off-subnet routing may be unavailable, then review both Network and Routes & WAN Simulation before
+operators that off-subnet routing may be unavailable, then review both Network and Routing & WAN before
 submitting global Appliance Apply. The PATCH never mutates host routes directly.
 
 Changing a physical interface's IPv4 or IPv6 CIDR automatically refreshes dependent desired-state addresses for DNS,
