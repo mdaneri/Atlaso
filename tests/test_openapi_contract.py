@@ -442,3 +442,21 @@ def test_api_routes_have_response_models_or_documented_204(client):
             responses = operation["responses"]
             assert responses
             assert any("content" in response or status_code == "204" for status_code, response in responses.items())
+def test_nat_creation_requires_ingress_without_breaking_legacy_schemas(client):
+    """Publish creation-only ingress constraints while preserving dormant rows.
+
+    Args:
+        client: HTTP client providing the generated OpenAPI document.
+    """
+    schema = client.get("/openapi.json").json()
+    components = schema["components"]["schemas"]
+    create_ref = schema["paths"]["/api/v1/nat/rules"]["post"]["requestBody"]["content"]["application/json"]["schema"]["$ref"]
+    update_ref = schema["paths"]["/api/v1/nat/rules/{rule_id}"]["patch"]["requestBody"]["content"]["application/json"]["schema"]["$ref"]
+    create = components[create_ref.rsplit("/", 1)[-1]]
+    update = components[update_ref.rsplit("/", 1)[-1]]
+    assert "inbound_interfaces" in create["required"]
+    assert create["properties"]["inbound_interfaces"]["minItems"] == 1
+    assert create["properties"]["inbound_interfaces"]["maxItems"] == 128
+    assert "inbound_interfaces" not in update["required"]
+    assert update["properties"]["inbound_interfaces"].get("minItems", 0) == 0
+    assert components["NatRuleResponse"]["properties"]["inbound_interfaces"].get("minItems", 0) == 0

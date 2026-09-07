@@ -171,13 +171,25 @@ jobs:
           python-version: '3.14'
       - name: Verify portable virtualization PowerShell contract
         shell: pwsh
-        run: ./tests/powershell/Test-AtlasoVirtualizationArtifacts.ps1
+        run: |
+          ./tests/powershell/Test-AtlasoVirtualizationArtifacts.ps1
+          ./tests/powershell/Test-AtlasoHyperVPaths.ps1
       - name: Verify VMware launcher console isolation
         shell: pwsh
         run: |
           $stateRoot = Join-Path $env:GITHUB_WORKSPACE 'test-results/vmrun-console'
           New-Item -ItemType Directory -Path $stateRoot -Force | Out-Null
           ./tests/powershell/Test-AtlasoVmrunConsoleIsolation.ps1 -StateRoot $stateRoot
+      - name: Install locked source-verification test dependencies
+        run: python -m pip install --require-hashes -r requirements-dev.lock
+      - name: Verify published software preserves the Windows source snapshot
+        shell: pwsh
+        run: |
+          $stateRoot = Join-Path $env:GITHUB_WORKSPACE 'test-results/source-verification'
+          New-Item -ItemType Directory -Path $stateRoot -Force | Out-Null
+          $env:TEMP = $stateRoot
+          $env:TMP = $stateRoot
+          python -B -m pytest tests/test_prepare_virtualization_source.py -k production_software_verification --basetemp "$stateRoot/pytest"
       - name: Validate the canonical Photon Packer target with authenticated plugin downloads
         if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
         env:

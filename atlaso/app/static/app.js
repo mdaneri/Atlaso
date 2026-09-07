@@ -4864,11 +4864,16 @@ function captureSourceGroupWizardDraft(form) {
   const values = {};
   [...form.elements].forEach((control) => {
     if (!control.name || control.name === "csrf") return;
-    if (control.type === "checkbox") {
+    if (control.multiple) {
+      values[control.name] = [...control.selectedOptions].map((option) => option.value);
+    } else if (control.type === "checkbox") {
       values[control.name] = Boolean(control.checked);
     } else if (control.type !== "radio" || control.checked) {
       values[control.name] = control.value;
     }
+  });
+  form.querySelectorAll("[data-tag-editor]").forEach((editor) => {
+    values[editor.dataset.tagName] = tagEditorValues(editor);
   });
   const editMatch = String(form.getAttribute("action") || "").match(/\/(?:rules|nat-rules)\/(\d+)\/edit$/);
   return { values, editId: editMatch ? editMatch[1] : String(values.record_id || ""), savedAt: Date.now() };
@@ -4877,6 +4882,11 @@ function captureSourceGroupWizardDraft(form) {
 function applySourceGroupWizardDraft(form, draft, focusSelector) {
   const missingSourceGroupControls = [];
   Object.entries(draft.values || {}).forEach(([name, value]) => {
+    const editor = form.querySelector(`[data-tag-editor][data-tag-name="${CSS.escape(name)}"]`);
+    if (editor?.atlasoTagEditor && Array.isArray(value)) {
+      editor.atlasoTagEditor.setValues(value);
+      return;
+    }
     const controls = [...form.querySelectorAll(`[name="${CSS.escape(name)}"]`)];
     if (!controls.length) return;
     const control = controls[0];
@@ -4885,6 +4895,13 @@ function applySourceGroupWizardDraft(form, draft, focusSelector) {
       return;
     }
     if (control instanceof HTMLSelectElement) {
+      if (control.multiple && Array.isArray(value)) {
+        for (const option of control.options) option.selected = value.includes(option.value);
+        if (value.some((name) => ![...control.options].some((option) => option.value === name))) {
+          missingSourceGroupControls.push(control);
+        }
+        return;
+      }
       const optionExists = [...control.options].some((option) => option.value === String(value));
       control.value = optionExists ? String(value) : "";
       if (!optionExists && value) {
@@ -4896,7 +4913,7 @@ function applySourceGroupWizardDraft(form, draft, focusSelector) {
   });
   form.querySelectorAll("select, textarea, input").forEach((control) => control.dispatchEvent(new Event("change", { bubbles: true })));
   missingSourceGroupControls.forEach((control) => {
-    control.setCustomValidity("The previously selected Source Group is no longer available. Choose a current value.");
+    control.setCustomValidity("A previously selected Source Group or inbound target is no longer available. Choose a current value.");
     control.addEventListener("change", () => control.setCustomValidity(""), { once: true });
   });
   window.setTimeout(() => form.querySelector(focusSelector)?.focus(), 0);
@@ -7203,10 +7220,14 @@ async function postWanAction(url, data, csrf, options = {}) {
     if (key === "destination_cidr" && defaultRouteSelected) {
       continue;
     }
-    if (["enabled", "default_route"].includes(key)) {
+    if (["enabled", "default_route", "masquerade"].includes(key)) {
       if (value === true || ["1", "on", "true", "yes"].includes(String(value).toLowerCase())) {
         body.set(key, "on");
       }
+      continue;
+    }
+    if (key === "inbound_interfaces" && Array.isArray(value)) {
+      value.forEach((name) => body.append(key, name));
       continue;
     }
     body.set(key, value ?? "");
@@ -7267,6 +7288,24 @@ function routesWanAddButton(kind, label) {
 
 function routesWanField(form, name) {
   return form.elements.namedItem(name);
+}
+
+function restoreNatOutboundSelection(select, savedValue) {
+  select.querySelectorAll("[data-unavailable]").forEach((option) => option.remove());
+  if (![...select.options].some((option) => option.value === savedValue)) {
+    const option = new Option(savedValue ? `${savedValue} (unavailable)` : "Needs outbound review", savedValue);
+    option.dataset.unavailable = "true";
+    select.add(option);
+  }
+  select.value = savedValue;
+}
+
+function routesWanNatIngressError(selected, outbound, available, dormantEdit = false) {
+  if (!dormantEdit && !selected.length) return "Select at least one inbound interface or VLAN.";
+  if (selected.some((name) => name === outbound || (!dormantEdit && !available.includes(name)))) {
+    return "Select available inbound targets different from the outbound interface.";
+  }
+  return "";
 }
 
 function routesWanAddressFamily(value) {
@@ -7745,10 +7784,16 @@ function initializeRoutesWanNatTable() {
           minWidth: 160,
         },
         {
-          title: "Source",
+          title: "Source addresses",
           field: "source",
           formatter: (cell) => cell.getRow().getData().is_new ? "" : escapeHtml(cell.getValue()),
           minWidth: 170,
+        },
+        {
+          title: "Inbound",
+          field: "inbound_interfaces",
+          formatter: (cell) => cell.getRow().getData().is_new ? "" : escapeHtml((cell.getValue() || []).join(", ") || "Needs ingress review"),
+          minWidth: 180,
         },
         {
           title: "Outbound",
@@ -8019,6 +8064,7 @@ function routesWanWizardErrorTarget(form, kind, message) {
       ["priority", "priority", "direction"],
     ],
     nat: [
+      ["inbound", "inbound_interfaces", "translation"],
       ["name", "name", "identity"],
       ["source", "source", "translation"],
       ["outbound", "outbound_interface", "translation"],
@@ -8039,7 +8085,7 @@ function routesWanWizardErrorTarget(form, kind, message) {
   };
   const match = (mappings[kind] || []).find(([needle]) => lower.includes(needle));
   if (!match) return {};
-  return { field: routesWanField(form, match[1]), step: match[2] };
+  return { field: match[1] === "inbound_interfaces" ? form.querySelector("[data-nat-inbound-editor] [data-tag-entry]") : routesWanField(form, match[1]), step: match[2] };
 }
 
 function initializeRoutesWanWizards() {
@@ -8112,8 +8158,8 @@ function initializeRoutesWanWizards() {
     const syncNatSource = () => {
       if (kind !== "nat" || !(natSourceMode instanceof HTMLSelectElement)) return;
       const mode = natSourceMode.value;
-      if (natGroupPanel instanceof HTMLElement) natGroupPanel.hidden = mode !== "group";
-      if (natCidrsPanel instanceof HTMLElement) natCidrsPanel.hidden = mode !== "cidrs";
+      if (natGroupPanel instanceof HTMLElement) { natGroupPanel.hidden = mode !== "group"; natGroupPanel.classList.toggle("hidden", mode !== "group"); }
+      if (natCidrsPanel instanceof HTMLElement) { natCidrsPanel.hidden = mode !== "cidrs"; natCidrsPanel.classList.toggle("hidden", mode !== "cidrs"); }
       const value = mode === "group"
         ? (natGroup instanceof HTMLSelectElement ? natGroup.value : "")
         : mode === "cidrs"
@@ -8121,6 +8167,21 @@ function initializeRoutesWanWizards() {
           : "any";
       setRoutesWanField(form, "source", value);
     };
+    const natInboundEditor = form.querySelector("[data-nat-inbound-editor]");
+    if (natInboundEditor) initializeTagEditors(form);
+    const natInboundValues = () => tagEditorValues(natInboundEditor);
+    const syncNatIngress = () => {
+      if (!natInboundEditor) return;
+      const outboundSelect = routesWanField(form, "outbound_interface");
+      const outbound = outboundSelect?.value;
+      if (outboundSelect) outboundSelect.required = !(/\/nat-rules\/\d+\/edit$/.test(form.getAttribute("action") || "") && !routesWanField(form, "enabled")?.checked);
+      natInboundEditor.querySelectorAll("[data-tag-option]").forEach((option) => {
+        option.disabled = option.dataset.tagOption === outbound;
+      });
+    };
+    routesWanField(form, "outbound_interface")?.addEventListener("change", syncNatIngress);
+    natInboundEditor?.addEventListener("tag-editor:change", syncNatIngress);
+    routesWanField(form, "enabled")?.addEventListener("change", syncNatIngress);
     natSourceMode?.addEventListener("change", syncNatSource);
     natGroup?.addEventListener("change", syncNatSource);
     natCidrs?.addEventListener("input", syncNatSource);
@@ -8161,6 +8222,7 @@ function initializeRoutesWanWizards() {
       } else if (kind === "nat") {
         syncNatSource();
         const outbound = routesWanField(form, "outbound_interface");
+        setRoutesWanReview(form, "nat-inbound", natInboundValues().join(", ") || "Needs ingress review");
         setRoutesWanReview(form, "nat-name", routesWanField(form, "name")?.value);
         setRoutesWanReview(form, "nat-source", routesWanField(form, "source")?.value);
         setRoutesWanReview(form, "nat-outbound", `IPv4 masquerade through ${outbound?.selectedOptions?.[0]?.textContent?.trim() || outbound?.value}`);
@@ -8204,8 +8266,19 @@ function initializeRoutesWanWizards() {
           return { valid: false, message: "Routing source and destination must be different.", field: destination };
         }
       }
-      if (kind === "nat" && step.id === "translation") {
+      if (kind === "nat" && ["translation", "state"].includes(step.id)) {
         syncNatSource();
+        const inbound = natInboundEditor?.querySelector("[data-tag-entry]");
+        const available = [...(natInboundEditor?.querySelectorAll("[data-tag-option]") || [])].map((option) => option.dataset.tagOption);
+        const dormantEdit = /\/nat-rules\/\d+\/edit$/.test(form.getAttribute("action") || "") && !routesWanField(form, "enabled")?.checked;
+        const outbound = routesWanField(form, "outbound_interface");
+        if (!dormantEdit && !available.includes(outbound?.value)) {
+          return { valid: false, message: "Choose an available outbound interface or VLAN.", field: outbound };
+        }
+        const ingressError = routesWanNatIngressError(natInboundValues(), outbound?.value, available, dormantEdit);
+        if (ingressError) {
+          return { valid: false, message: ingressError, field: inbound };
+        }
         if (natSourceMode?.value === "group" && !routesWanField(form, "source")?.value) {
           return { valid: false, message: "Choose an existing Source Group.", field: natGroup };
         }
@@ -8250,9 +8323,18 @@ function initializeRoutesWanWizards() {
         } else if (kind === "nat") {
           setRoutesWanField(form, "name", row?.name || "");
           setRoutesWanField(form, "description", row?.description || "");
-          setRoutesWanField(form, "outbound_interface", row?.outbound_interface || routesWanField(form, "outbound_interface")?.options?.[0]?.value || "");
+          const outboundSelect = routesWanField(form, "outbound_interface");
+          if (row && outboundSelect instanceof HTMLSelectElement) {
+            restoreNatOutboundSelection(outboundSelect, row.outbound_interface || "");
+          } else {
+            outboundSelect?.querySelectorAll("[data-unavailable]").forEach((option) => option.remove());
+            setRoutesWanField(form, "outbound_interface", outboundSelect?.options?.[0]?.value || "");
+          }
+          natInboundEditor?.atlasoTagEditor?.setValues(row?.inbound_interfaces || []);
+          syncNatIngress();
           setRoutesWanField(form, "priority", row?.priority ?? 100);
           setRoutesWanField(form, "enabled", row?.enabled ?? true);
+          syncNatIngress();
           const sourceValue = row?.source || "any";
           if (natSourceMode instanceof HTMLSelectElement) natSourceMode.value = sourceValue.toLowerCase() === "any" ? "any" : sourceValue.toLowerCase().startsWith("group:") ? "group" : "cidrs";
           if (natGroup instanceof HTMLSelectElement && sourceValue.toLowerCase().startsWith("group:")) natGroup.value = sourceValue;

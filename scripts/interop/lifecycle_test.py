@@ -1551,6 +1551,7 @@ def configure_routes_nat(client: HttpClient, args: argparse.Namespace, policy: d
         route = client.json_request("POST", "/api/v1/routes", json_body=route_payload)
     nat_payload = {
         "name": "Lifecycle SiteA outbound WAN",
+        "inbound_interfaces": [args.site_interface],
         "enabled": True,
         "source": site_source,
         "outbound_interface": args.wan_interface,

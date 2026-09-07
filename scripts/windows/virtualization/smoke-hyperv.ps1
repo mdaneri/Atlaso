@@ -11,6 +11,7 @@ Existing Hyper-V switch for the management adapter.
 Existing Hyper-V switch for the services adapter.
 .PARAMETER OutputRoot
 Repository-owned directory that receives disposable extracted and VM files.
+Generated extraction and VM paths must fit the 240-character Hyper-V budget.
 .PARAMETER PythonPath
 Optional Python executable with Paramiko installed.
 #>
@@ -159,10 +160,43 @@ $existingVm = @(Get-VM -ErrorAction Stop | Where-Object Name -eq $Name)
 if ($existingVm.Count -ne 0) {
     throw "The Hyper-V smoke-test VM already exists: $Name"
 }
-$operationRoot = Join-Path $resolvedRoot ('.hyperv-smoke-' + [guid]::NewGuid().ToString('N'))
-$packageRoot = Join-Path $operationRoot 'package'
-$vmRoot = Join-Path $operationRoot 'vm'
-New-Item -ItemType Directory -Path $packageRoot -Force | Out-Null
+# Keep all 128 random bits in a compact filename-safe identifier. Never relocate
+# retained operations or escape the caller-approved root to evade provider limits.
+$operationId = [Convert]::ToBase64String([guid]::NewGuid().ToByteArray()).TrimEnd('=').Replace('+', '-').Replace('/', '_')
+$operationRoot = Join-Path $resolvedRoot ('.hv-' + $operationId)
+$packageRoot = Join-Path $operationRoot 'p'
+$vmRoot = $operationRoot
+if ($Name -notmatch '^[A-Za-z0-9][A-Za-z0-9_. -]*$' -or $Name -in @('.', '..', 'p')) {
+    throw 'Name must be a simple Hyper-V name distinct from the extracted package directory p.'
+}
+# Older verified ZIPs contain the importer that repeats Name in New-VM -Path.
+# Budget that larger layout too, before extraction or provider mutation.
+$providerRoot = Join-Path (Join-Path $vmRoot $Name) $Name
+$generatedPaths = [System.Collections.Generic.List[string]]::new()
+$generatedPaths.Add((Join-Path $providerRoot ('x' * 64)))
+$archive = [System.IO.Compression.ZipFile]::OpenRead($sourceZip.FullName)
+try {
+    foreach ($entry in $archive.Entries) {
+        if ($entry.FullName -ne $entry.Name -or -not $entry.Name -or
+            $entry.Name -in @('.', '..') -or $entry.Name.Contains(':') -or $entry.Name.Contains('\')) {
+            throw 'The Hyper-V smoke ZIP must contain only ordinary top-level package members.'
+        }
+        $generatedPaths.Add((Join-Path $packageRoot $entry.Name))
+        $generatedPaths.Add((Join-Path (Join-Path $vmRoot $Name) $entry.Name))
+        if ([System.IO.Path]::GetExtension($entry.Name) -eq '.vhdx') {
+            $diskStem = [System.IO.Path]::GetFileNameWithoutExtension($entry.Name)
+            $generatedPaths.Add((Join-Path (Join-Path $vmRoot $Name) "$diskStem-00000000-0000-0000-0000-000000000000.avhdx.rct"))
+        }
+    }
+}
+finally { $archive.Dispose() }
+foreach ($generatedPath in $generatedPaths) {
+    if ($generatedPath.Length -gt 240) {
+        throw "Hyper-V smoke generated path exceeds the 240-character budget ($($generatedPath.Length) characters): $generatedPath. Choose a shorter -OutputRoot beneath $allowedRoot or a shorter -Name. No files were extracted or VM created."
+    }
+}
+New-Item -ItemType Directory -Path $operationRoot -ErrorAction Stop | Out-Null
+New-Item -ItemType Directory -Path $packageRoot -ErrorAction Stop | Out-Null
 $operationRootItem = Get-Item -LiteralPath $operationRoot -Force -ErrorAction Stop
 if (($operationRootItem.Attributes -band [System.IO.FileAttributes]::ReparsePoint) -ne 0) {
     throw 'The Hyper-V smoke operation root became a reparse point.'
@@ -172,6 +206,7 @@ $ownedDescendantIds = Get-AtlasoHyperVSmokeDescendantIdentity -DirectoryPath $op
 $vmCreated = $false
 $createdVm = $null
 $importAttempted = $false
+$smokeFailure = $null
 try {
     Expand-Archive -LiteralPath $sourceZip.FullName -DestinationPath $packageRoot
     $ownedDescendantIds = Get-AtlasoHyperVSmokeDescendantIdentity -DirectoryPath $operationRoot
@@ -267,6 +302,10 @@ try {
         -ServiceSwitch $ServiceSwitch `
         -ExpectedIdentity $networkIdentity | Out-Null
 }
+catch {
+    $smokeFailure = $_
+    throw
+}
 finally {
     $cleanupFailure = ''
     if ($importAttempted -and -not $vmCreated) {
@@ -326,6 +365,12 @@ finally {
         }
     }
     if ($cleanupFailure) {
+        if ($null -ne $smokeFailure) {
+            throw [System.InvalidOperationException]::new(
+                "Hyper-V smoke failed. Original error: $($smokeFailure.Exception.Message) Cleanup error: $cleanupFailure",
+                $smokeFailure.Exception
+            )
+        }
         throw $cleanupFailure
     }
 }

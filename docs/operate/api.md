@@ -193,8 +193,8 @@ Services `start`, `stop`, and `restart` operations reject `routing` with HTTP 42
 must use the `wan` Appliance Apply unit.
 
 `GET /api/v1/wan/status` reports active policy assignments only while WAN Simulation is enabled. Its managed-interface
-list includes enabled NAT rules only while both Routing and NAT are enabled, so preserved inactive rows are not reported
-as active runtime intent.
+list includes both inbound and outbound interfaces of enabled NAT rules only while both Routing and NAT are enabled,
+so preserved inactive rows are not reported as active runtime intent. Shared interfaces appear once in the sorted list.
 
 Legacy `/api/v1/dns/apply`, `/api/v1/dhcp/apply`, and `/api/v1/firewall/apply` routes remain available for compatibility
 but are intentionally absent from Swagger because they predate the reviewed global workflow. New clients must save
@@ -247,3 +247,21 @@ boot consoles in tickets, logs, screenshots, or automation output.
 Atlaso preserves existing operation IDs, request and response shapes, authentication behavior, and versioned paths
 within the published compatibility contract. Additive fields may appear. Clients should ignore unknown response fields
 and must not depend on browser pages or non-`/api/v1` protocol routes as generated REST-client contracts.
+
+## NAT ingress compatibility
+
+`POST /api/v1/nat/rules` and `PATCH /api/v1/nat/rules/{rule_id}` accept `inbound_interfaces`, an array of explicit
+interface/VLAN names. New rules and enabled updates require at least one enabled IPv4 lab target different from
+`outbound_interface`. Existing paths, operation IDs, and `read:wan` / `write:wan` authorization remain unchanged.
+Clients must supply reviewed ingress membership when creating rules. PATCH preserves saved membership when the field
+is omitted and validates that membership when enabling or changing the outbound target. Explicit `[]` clears membership
+only on a disabled rule; an omitted field never means all interfaces. Responses return the saved array, including an
+empty array for legacy rows awaiting review. A disabled
+legacy update may retain an empty scope. The create-specific OpenAPI schema marks `inbound_interfaces` as required
+with at least one item, including for disabled new rules; update and response schemas preserve empty legacy scopes.
+Source Group and CIDR values restrict addresses within the selected ingress.
+All writes save desired state; global Appliance Apply owns enforcement.
+
+Inbound and outbound names always use 1–80 ASCII letters, digits, underscores, dots, colons, or hyphens, including for
+disabled rows and settings archives. Disabling a rule relaxes target availability checks only; it does not relax name
+syntax or ingress-list structure.

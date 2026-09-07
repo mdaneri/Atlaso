@@ -190,11 +190,50 @@ VLAN reaches that network directly. A supplied gateway must use the same address
 clients remain compatible with `POST` or `PATCH /api/v1/routes` requests
 that use canonical `0.0.0.0/0` or `::/0`; those payloads must also include the required same-family gateway.
 
-The **NAT** wizard creates explicit IPv4 masquerade rules. Choose Any, an existing Source Group, or IPv4 source CIDRs,
-then select an eligible IPv4-bearing access interface or enabled VLAN. **Manage source groups** opens
-[Network Objects](network-objects.md), preserves the tab-local NAT draft, and restores it with fresh choices on return.
-Atlaso does not infer an outbound target
-from an interface role and does not provide destination NAT, port forwarding, or IPv6 NAT in v1.
+The NAT wizard uses the shared tag editor for inbound interfaces. Add each target with the suggestion menu or keyboard;
+remove a tag to remove that target. Multiple selections remain visible when returning from Manage source groups.
+Disabled edits may retain empty or unavailable ingress while changing metadata. The outbound dropdown also preserves
+a saved unavailable target instead of replacing it during a metadata edit. Enabling the rule in the State step
+requires a complete, currently eligible ingress selection before Review.
+
+Startup upgrades preserve legacy NAT rows under the database schema lock, including concurrent web and worker startup.
+Missing-target cleanup records an audit warning when saved selectors change; repeated refreshes of the same missing
+target do not duplicate the warning.
+
+Applied NAT matches the current kernel interface indexes as well as the selected names. A replacement NIC cannot
+inherit the old rule merely by receiving the same Linux name. WAN boot replay verifies each target's saved physical
+MAC (the parent NIC for a VLAN), then resolves fresh indexes. Missing or changed identities retire the applied NAT
+table and report an error while preserving the saved rules for review. Legacy saved runtime configurations without
+physical identity need review and a fresh Apply. The legacy standalone NAT replay service is retired; the WAN replay
+service owns restoration so stale indexes are never loaded directly at boot.
+Every appliance control-plane start, including a live software upgrade, runs a privileged NAT-only reconciliation
+before application inventory refresh. It replaces existing name-only rules with verified index-bound rules or
+quarantines NAT when the last-applied snapshot lacks safe ingress or physical identity. The old raw replay service is
+disabled. This startup step preserves saved intent and leaves routes, forwarding, and WAN simulation unchanged;
+failure to retire the old service or replace the kernel table prevents control-plane startup. Boot WAN restoration
+is ordered before this step to avoid concurrent rewrites.
+
+The **NAT** wizard creates explicit IPv4 masquerade rules. In **Translation**, select one or more **Inbound
+interfaces or VLANs** and a different **Outbound interface or VLAN**. Both sides require enabled IPv4 lab targets;
+VLANs also require an available, enabled trunk parent. Dedicated management-role and unused targets are excluded.
+Access networks that also publish the management UI remain eligible access networks.
+
+**Any IPv4 source** means any IPv4 source arriving on the selected inbound targets. **Source Group** and **IPv4 CIDRs**
+further restrict source addresses inside that ingress scope. The grid and Review show both boundaries. Ordinary NAT
+rules never match appliance-originated traffic because that traffic has no inbound interface.
+**Manage source groups** opens [Network Objects](network-objects.md), preserves the tab-local NAT draft, and restores
+it with fresh choices on return. Atlaso does not infer ingress or egress from an interface role and does not provide
+destination NAT, port forwarding, or IPv6 NAT in v1.
+
+Upgrade and settings restore preserve legacy rules without ingress membership. Enabled legacy rules show **Needs ingress
+review** and block the active NAT apply unit until the administrator selects the intended inbound targets. Disabled
+legacy rules remain disabled and cannot be enabled without review. A removed, disabled, or role-ineligible target makes
+the boundary invalid; edit the rule to select its replacement explicitly. No upgrade silently selects every lab network.
+
+After global Appliance Apply, inspect `nft list table ip atlaso_nat`: every masquerade rule must contain `iifname` and
+`oifname`, plus an IPv4 source expression only when configured. Verify traffic from selected and unselected ingress
+networks separately. To retire translation, disable the rule and submit the global changes; the saved scope remains
+available for later review.
 
 The **WAN Policies** wizard groups delay/capacity settings separately from packet loss and error effects. Assigning a
 policy to a Static Route identifies its target interface or VLAN; WAN Simulation v1 impairs all traffic on that target,

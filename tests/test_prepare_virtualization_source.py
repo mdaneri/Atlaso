@@ -6,6 +6,10 @@ import base64
 import hashlib
 import io
 import json
+import os
+import shutil
+import subprocess
+import sys
 import tarfile
 from pathlib import Path
 
@@ -17,7 +21,7 @@ from scripts import prepare_virtualization_source as source_preparer
 
 VERSION = "0.9.237"
 COMMIT = "a" * 40
-KEY_ID = "test-release-key"
+KEY_ID = "atlaso-release-2026-01"
 
 
 def _canonical(value: object) -> bytes:
@@ -136,6 +140,122 @@ def test_extracts_exact_signed_cp314_inputs_and_records_digests(tmp_path: Path) 
         source["application_wheel_sha256"]
         == hashlib.sha256(wheel.read_bytes()).hexdigest()
     )
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="Windows source ACL contract")
+@pytest.mark.parametrize(
+    "bytecode_environment", ["legacy", "unset", "empty", "enabled", "prefix", "external-prefix"],
+)
+def test_production_software_verification_preserves_source_inventory(
+    tmp_path: Path, bytecode_environment: str,
+) -> None:
+    """Run the real parent and child verification blocks against signed fixtures.
+
+    Args:
+        tmp_path: Isolated source, software, and diagnostic root.
+        bytecode_environment: Caller bytecode setting, including a cache inside source.
+    """
+    pwsh = shutil.which("pwsh")
+    if pwsh is None:
+        pytest.skip("PowerShell 7 is required")
+    repository = Path(__file__).resolve().parents[1]
+    manifest, signature, bundle, trust = _release_fixture(tmp_path)
+    software = tmp_path / "verified"
+    source_preparer.prepare(
+        manifest_path=manifest, signature_path=signature, bundle_path=bundle,
+        trust_key_path=trust, output=software, expected_version=VERSION,
+        expected_commit=COMMIT,
+    )
+    source = tmp_path / "source"
+    # Copy tracked Python sources only to form a fresh, writable import fixture.
+    # Inventory comparisons below include every file, including any added cache.
+    paths = subprocess.check_output(
+        ["git", "ls-files", "atlaso/*.py", "scripts/prepare_virtualization_source.py",
+         "image/common/scripts/verify-template-software.py"],
+        cwd=repository, text=True,
+    ).splitlines()
+    for relative in paths:
+        target = source / relative
+        target.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(repository / relative, target)
+    trust_target = source / "image/common/update-trust" / trust.name
+    trust_target.parent.mkdir(parents=True)
+    shutil.copyfile(trust, trust_target)
+    wrapper = (repository / "scripts/windows/vmware/build-photon-image.ps1").read_text()
+    parent = wrapper.split("        $softwareSnapshot = $null\n", 1)[1].split(
+        "        $pipGlobalIndexSecure =", 1,
+    )[0]
+    child = wrapper.split("$softwareManifestSha256 = ''\n", 1)[1].split(
+        "$packerVariables =", 1,
+    )[0]
+    if bytecode_environment == "legacy":
+        parent = parent.replace("& python -B ", "& python ")
+    harness = tmp_path / "verify.ps1"
+    harness.write_text(
+        """param($RepositoryRoot, $SourceRoot, $SoftwareRoot, $TestRoot, $Version, $Commit)
+Set-StrictMode -Version Latest
+$ErrorActionPreference = 'Stop'
+Import-Module (Join-Path $RepositoryRoot 'scripts/windows/vmware/Atlaso.SourceSnapshot.psm1')
+$before = Get-AtlasoSourceSnapshotInventory -Root $SourceRoot
+$before | ConvertTo-Json -Depth 5 | Set-Content (Join-Path $TestRoot 'before.json')
+$sourceSnapshot = [pscustomobject]@{
+    Root = $SourceRoot; Sha256 = $before.Sha256; FileCount = $before.FileCount; Commit = $Commit
+}
+$VirtualizationSourceDirectory = $SoftwareRoot
+$ReleaseVersion = $Version
+$childSensitiveBuildDirectory = $TestRoot
+$softwareRoot = Join-Path $TestRoot 'software'
+try {
+""" + parent + """
+$SourceSnapshotRoot = $SourceRoot
+$SourceCommit = $Commit
+$sensitiveBuildRoot = $TestRoot
+$VirtualizationSourceDirectory = $softwareRoot
+1..2 | ForEach-Object {
+""" + child + """
+    $null = Assert-AtlasoSourceSnapshot -Root $SourceRoot -ExpectedSha256 $before.Sha256 -ExpectedFileCount $before.FileCount
+}
+} finally {
+    Get-AtlasoSourceSnapshotInventory -Root $SourceRoot | ConvertTo-Json -Depth 5 | Set-Content (Join-Path $TestRoot 'after.json')
+    Unprotect-AtlasoSourceSnapshot -Root $SourceRoot
+    if (Test-Path -LiteralPath $softwareRoot) { Unprotect-AtlasoSourceSnapshot -Root $softwareRoot }
+}
+""", encoding="utf-8",
+    )
+    environment = os.environ.copy()
+    environment.pop("PYTHONDONTWRITEBYTECODE", None)
+    environment.pop("PYTHONPYCACHEPREFIX", None)
+    environment["PATH"] = str(Path(sys.executable).parent) + os.pathsep + environment["PATH"]
+    environment["TEMP"] = environment["TMP"] = str(tmp_path)
+    if bytecode_environment in {"empty", "enabled"}:
+        environment["PYTHONDONTWRITEBYTECODE"] = "1" if bytecode_environment == "enabled" else ""
+    if bytecode_environment == "prefix":
+        environment["PYTHONPYCACHEPREFIX"] = str(source / "redirected-cache")
+    if bytecode_environment == "external-prefix":
+        environment["PYTHONPYCACHEPREFIX"] = str(tmp_path / "external-cache")
+    result = subprocess.run(
+        [pwsh, "-NoProfile", "-NonInteractive", "-File", str(harness),
+         str(repository), str(source), str(software), str(tmp_path), VERSION, COMMIT],
+        env=environment, capture_output=True, text=True, check=False, timeout=120,
+    )
+    before = json.loads((tmp_path / "before.json").read_text(encoding="utf-8-sig"))
+    after = json.loads((tmp_path / "after.json").read_text(encoding="utf-8-sig"))
+    added = sorted(set(after["Records"]) - set(before["Records"]))
+    if bytecode_environment == "legacy":
+        assert result.returncode != 0
+        assert "no longer matches its admitted byte inventory" in result.stderr
+        assert not set(before["Records"]) - set(after["Records"])
+        assert {record.split("\t")[0] for record in added} == {
+            "atlaso/__pycache__/__init__.cpython-314.pyc",
+            "atlaso/app/__pycache__/__init__.cpython-314.pyc",
+            "atlaso/app/services/__pycache__/__init__.cpython-314.pyc",
+            "atlaso/app/services/__pycache__/release_updates.cpython-314.pyc",
+            "image/common/scripts/__pycache__/verify-template-software.cpython-314.pyc",
+        }
+        return
+    assert result.returncode == 0, result.stdout + result.stderr + repr(added)
+    assert after == before
+    assert not (tmp_path / "external-cache").exists()
 
 
 @pytest.mark.parametrize("lock", [

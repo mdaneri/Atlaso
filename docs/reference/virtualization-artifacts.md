@@ -72,6 +72,12 @@ derived only from the validated OVA and therefore inherits it. Protected finaliz
 software-source sidecar, privileged assets, artifact bytes, and publication identity independently. Those checks are
 defense in depth around the source-bound producer output, not a replacement for the snapshot boundary.
 
+Published-software verification runs with Python's `-B` option before source ACL protection and again before Packer
+admission. Imports cannot create bytecode in the admitted snapshot, including when the caller sets a Python cache
+prefix; no `PYTHONDONTWRITEBYTECODE` workaround is required. The complete file inventory remains authoritative.
+An inventory mismatch still blocks construction: preserve the failure evidence and investigate changed or added files
+instead of excluding caches or accepting a new baseline.
+
 Schema-v3 also carries `template_contract`: schema version `1`, state `uninitialized`, and the exact verified
 `software_source` identity. That identity binds the software tag, version, source commit, manifest and bundle digests,
 application-wheel path and digest, and `cp314` ABI. It is copied into OVA provenance and required during retained
@@ -272,6 +278,55 @@ destination, creates a Generation 2 VM with Secure Boot off, attaches two select
 disks, and applies the shared CPU and memory contract. Existing VM names, destinations, unsafe paths, malformed
 manifests, checksum failures, and conflicting topology are rejected. Failure cleanup removes only resources recorded
 as created by that invocation.
+
+Choose a short `DestinationRoot`: the importer creates `<DestinationRoot>\<Name>` once and passes its parent to
+`New-VM`, which appends the name itself. Before creating directories or copying disks, admission checks disk paths,
+UUID-based configuration/state files under `Virtual Machines`, snapshot paths, and a 64-character provider filename
+reserve for Smart Paging against a conservative **240-character full-path budget**. This is an Atlaso safety budget,
+not a promise that Windows long-path support changes Hyper-V limits. A Windows host reproduction accepted a
+190-character VM directory but rejected 195 characters with Smart Paging error `0x800700CE`; configuration files added
+another 59 characters. Shorten the selected destination or VM name when admission reports an over-budget path.
+
+Hyper-V smoke uses `<OutputRoot>\.hv-<128-bit compact identifier>\p` for extraction and places the imported VM beside
+`p`. Its preflight checks ZIP member paths and reserves the larger provider layout used by older ZIP importers before
+extracting anything. `OutputRoot` must remain beneath the checkout's `artifacts\virtualization-smoke` directory. It
+never moves retained operations, falls back to an OS temporary directory, or changes host policy to fit a path.
+An import failure retains the original exception together with any importer and smoke cleanup diagnostics. If no exact
+created VM identity was returned, files remain for investigation even when a later inventory contains no matching VM.
+Existing root, descendant, reparse-point, and exact-VM cleanup checks remain mandatory.
+
+### Hyper-V conversion and ZIP size
+
+The Hyper-V ZIP artifact is built from the validated OVA payload and keeps raw payload-to-VHDX ordering, two dynamic
+payload VHDX files, 2 MiB VHDX blocks, two 500 GiB data disks, and the same four-slot SCSI topology as the OVA.
+The final archive creation uses .NET `System.IO.Compression.ZipArchive` in streaming create mode and retains ZIP64 support.
+This avoids buffering multi-GiB disk members in memory.
+
+Raw VHDX file length can exceed 2 GiB and still be valid. The release asset limit applies to the final ZIP:
+
+- **empty VHDX members** are rejected before disk inspection and archive creation;
+- a **non-empty final Hyper-V ZIP of 2,147,483,648 bytes or more** is rejected as an oversized publish candidate.
+
+Export and protected publication also cap the combined uncompressed package at 8 GiB to bound extraction space.
+Protected validation retains the separate 1 MiB metadata-member limit, exact package inventory, checksums, source
+binding, disk topology, and guest-visible byte comparisons. A raw disk crossing 2 GiB alone does not fail publication.
+
+When a check fails, keep the completed source template powered off:
+
+- if a raw VHDX is empty, investigate the converter output and revalidate the source OVA before
+  retrying;
+- if only the final ZIP is oversized, review candidate evidence and rebuild from a validated source after reducing
+  content where supported by policy.
+
+For diagnostics, capture and retain:
+
+- reported converter version, dynamic subformat, and block size;
+- reported virtual capacity and raw byte length for each VHDX;
+- ZIP member `uncompressed_bytes` and `compressed_bytes`;
+- final archive byte size.
+
+At final import time or release troubleshooting, use PowerShell 7.4+ (`pwsh`) and `Expand-Archive` for zip inspection;
+raw extraction and import paths may need more temporary space than the downloaded ZIP size.
 
 ## First boot guest-agent selection
 
@@ -513,7 +568,8 @@ for diagnosis rather than claiming a later name match. KVM rollback preserves ev
 libvirt inventory proves that the exact domain is absent. Every smoke identity and storage namespace must be dedicated to
 the release invocation so cleanup can remain limited to resources created by that invocation. Stable publication waits
 for both Linux platform smokes and refuses an asset at or above the repository's existing 2 GiB limit rather than
-producing multipart output.
+producing multipart output. Raw VHDX members are validated separately for format and capacity before the final ZIP
+size check.
 
 As an optional alternative, **Produce virtualization candidate on ephemeral Windows** runs the same producer with
 `-CandidateOnly` on a temporary Windows runner whose exact release-specific label is

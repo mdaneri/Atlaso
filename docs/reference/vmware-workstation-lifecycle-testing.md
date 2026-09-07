@@ -385,6 +385,138 @@ pwsh -ExecutionPolicy Bypass `
 The plan-only command does not prompt for passwords or create a protected credential bundle because the emitted plan
 does not consume credentials.
 
+## Completed task resource cleanup
+
+Passing tests does not permit indefinite retention of disposable validation infrastructure. Inventory resources as
+they are created in a bounded `validation_resource_inventory`, binding each resource to its task, repository, source
+commit, PR when present, exact path or provider identity, and existing ownership manifest. Names alone never prove
+ownership. Include PR-numbered test VMs, lifecycle VMs, local and PR builders, disposable clones, address reservations,
+output claims, task-created disks and temporary networks, artifact/test roots, helper processes, credential-bridge
+recovery state, locks, and external test resources.
+
+The originating task releases these resources through existing supported cleanup paths once required validation
+evidence is preserved, the PR is terminal, and no review, deployment, release, diagnosis, retry, or maintainer activity
+needs the environment. Failed or interrupted validation may retain resources only while diagnosis or retry needs them.
+This resource gate does not waive the existing merge, issue, post-merge, or private-remediation prerequisites for
+branch/worktree cleanup. Earlier per-operation sensitive-material cleanup and recovery remain mandatory.
+
+Use `remove-atlaso-vm.ps1` with the exact VMX and expected name after independently verifying ownership; use
+`remove-lifecycle-vms.ps1` or the lifecycle wrapper's `-CleanupVmsOnly` for the exact PR-owned lab. These VM-only paths
+retain the result root; after preserving evidence and verifying ownership and quiescence, release that exact root with
+`Remove-AtlasoWorkstationArtifactRoot` using its exact configured-root binding as documented in the lifecycle guide.
+First use `Assert-AtlasoStrictDescendantPath` against independently configured permitted and canonical lifecycle roots;
+derive the expected lab path separately from validated task/PR identity, never from the candidate manifest path.
+Preserve existing identity, filesystem, shared-disk, provider-state, process-termination, and recovery safeguards.
+Release associated resources through their owning tools; VM removal alone does not prove reservations, claims,
+or recovery state released.
+Never delete shared, reusable, permanent, user-created, differently owned, or ambiguous resources.
+
+The cleanup-ready handoff includes the inventory and durable, sanitized `validation_resource_release_evidence`:
+the cleanup entry point and result, exact resource identities, and verified absence of each disposable resource,
+VM registration and path, reservation, claim, process, lock, and temporary root. Preserve required validation and
+ownership evidence outside every root scheduled for deletion, on a permitted durable task/controller evidence surface.
+The primary-checkout controller independently reads back the exact resource states before recording
+`validation_resources_released` and before branch/worktree cleanup. For no resources, require an explicitly verified
+`validation_resource_inventory_empty` statement; missing evidence is never proof of absence. If another owner must
+perform teardown, hand off this bounded inventory and require the same ownership checks and independent readback.
+
+Record explicit maintainer retention or a proven active downstream need as `validation_resource_retention`, with
+the exact resource, owner, reason, and retry condition. Any unresolved retention, failure, unsupported cleanup path,
+or ambiguous ownership records `validation_resource_cleanup_blocked`, preserves uncertain resources and recovery
+evidence, and keeps the task actionable. Do not delete the branch/worktree or mark Done to hide a blocked resource gate.
+Track missing cleanup capabilities separately; never substitute ad hoc deletion or broad VMware inventory cleanup.
+
+For ordinary public tasks, enforce `task_title_done` with `scripts/completed_task_title.py` after all prior gates pass.
+Supply every linked issue and PR from verified task/GitHub evidence, not from a potentially truncated current title;
+use repeated `--issue` and `--pr` arguments and a short `--description` without traceability or completion segments.
+For an issue-less GitHub-managed Dependabot PR, independently verify the documented dependency-update exception and
+pass `--dependabot`; preserve every PR number and any linked issue that does exist. Ordinary tasks still require issues.
+The formatter puts all identifiers first, trims only the description to a conservative 60 UTF-16-unit budget, and
+retains exactly one " · Done" suffix. If the identifiers alone do not fit, keep completion blocked for maintainer
+direction; never drop an issue or PR. Use supported task-title controls to set the exact generated title, then read
+the persisted title through a supported task read tool and rerun the same formatter inputs with `--observed-title`.
+Record `task_title_readback_verified` only when verification succeeds. A rename acknowledgement alone is insufficient.
+A stale, truncated, missing, or duplicated completion marker blocks Done and requires an idempotent title-only retry
+after revalidating earlier gates. Do not repeat destructive cleanup on a title retry. If title controls are unavailable,
+retain the existing capability-evidence exception. Private remediation keeps its sanitized title and private evidence;
+never pass advisory identifiers to this public formatter, and still require exact supported-tool title readback.
+
+Terminal order:
+
+1. `validation_resources_released`
+2. `remote_branch_absent`
+3. `worktree_removed`
+4. `task_title_done`
+
+The [completed-task controller policy](../contribute/agent-policies.md#completed-task-cleanup) owns the remaining
+branch, worktree, and title transitions. Resource release also applies to a terminal closed-unmerged or retained-open
+PR once its environment is no longer needed; it does not authorize branch/worktree deletion or Done for that task.
+
+### Supported removal entry points
+
+Run the existing PowerShell 7 entry points from the task checkout before removing it. For an individual test VM or
+disposable builder, use `scripts/windows/vmware/remove-atlaso-vm.ps1 -VmxPath <exact-vmx> -ExpectedName <canonical-name>`.
+Verify the creation/ownership manifest, exact VMX path, and matching `displayName` first: the script's optional
+name check is not a substitute for the caller's complete ownership proof. Add `-AllowImageOutputRemoval` only for
+intentional removal of an independently verified disposable task-owned builder under the protected image-output root;
+it never authorizes removal of a reusable template or wider output directory.
+
+For a lifecycle lab, use `scripts/windows/vmware/invoke-lifecycle-test.ps1 -CleanupVmsOnly` with the exact
+`-PullRequestNumber` and `-CollisionSuffix` reported by the run, or `scripts/windows/vmware/remove-lifecycle-vms.ps1`
+with those same identities and the recorded `-Purpose` when it differs from the default. Preserve the lab ownership
+plan as evidence before removal. These paths reuse `Atlaso.WorkstationCleanup.psm1`; do not replace them with raw
+provider deletion or recursive filesystem commands.
+
+VM-only cleanup deliberately leaves the lab result root, including `plan.json`, `vmware-identity.json`, and logs.
+Before releasing that root, preserve sanitized validation and ownership evidence outside it, independently bind the
+absolute root to the originating task and recorded lab manifest, verify no VMX remains, and verify all lab helpers
+and recovery activity have finished. A path or PR-shaped name alone is insufficient. Independently read the supported
+configured permitted root, verify the registered task worktree and its exclusive ownership, and derive the canonical
+lifecycle parent as `test-results/vmware-workstation-lifecycle` beneath that worktree. Do not derive either trusted root
+from lifecycle metadata. Independently verify the PR, purpose, and collision suffix against the task's creation evidence.
+Use those identities to derive the expected lab path separately from the candidate manifest path:
+
+```powershell
+$ErrorActionPreference = 'Stop'
+Import-Module ./scripts/windows/vmware/Atlaso.WorkstationCleanup.psm1 -Force
+Import-Module ./scripts/windows/vmware/Atlaso.VmwareTestIdentity.psm1 -Force
+Assert-AtlasoStrictDescendantPath `
+  -ParentPath $configuredPermittedRoot -ChildPath $verifiedTaskWorktree `
+  -FailureMessage 'Task worktree is outside the configured permitted root'
+$canonicalLifecycleParent = Join-Path $verifiedTaskWorktree 'test-results/vmware-workstation-lifecycle'
+Assert-AtlasoStrictDescendantPath `
+  -ParentPath $verifiedTaskWorktree -ChildPath $canonicalLifecycleParent `
+  -FailureMessage 'Lifecycle parent is outside the verified task worktree'
+$verifiedLabIdentity = New-AtlasoVmwareTestIdentity `
+  -PullRequestNumber $verifiedPr -Purpose $verifiedPurpose -CollisionSuffix $verifiedCollisionSuffix
+$expectedLabRoot = Join-Path $canonicalLifecycleParent $verifiedLabIdentity.Name
+Assert-AtlasoStrictDescendantPath `
+  -ParentPath $canonicalLifecycleParent -ChildPath $expectedLabRoot `
+  -FailureMessage 'Expected lab is outside the canonical lifecycle parent'
+$candidateLabRoot = [System.IO.Path]::GetFullPath($manifestBoundLabRoot)
+if (-not $candidateLabRoot.Equals($expectedLabRoot, [System.StringComparison]::OrdinalIgnoreCase)) {
+  throw 'Candidate lab does not match independently derived task identity'
+}
+Remove-AtlasoWorkstationArtifactRoot `
+  -VmrunPath $verifiedVmrunPath `
+  -ExpectedRemovalRoot $expectedLabRoot `
+  -RemovalRoot $candidateLabRoot
+```
+
+The caller supplies the configured root and verified task/provider identities from independent supported configuration
+and ownership readback. Missing, ambiguous, outside-root, or reparse-point state blocks this sequence. The candidate
+manifest path must equal the independently derived expected path; never feed that candidate back as its own expected
+root. Run the containment assertions even on an already-absent retry. This existing helper
+supports VM-free residual roots and already-absent retries, retains filesystem identity and provider-state safeguards,
+and confines missing-registration handling to the exact root. Do not substitute its broader `-ArtifactParentRoot`
+parameter set or aggregate artifact cleanup for this lab-specific release. Read back root and registration absence;
+an already-absent return still requires the same ownership evidence and independent readback before release is recorded.
+
+Builder-address release, output claims, and credential-bridge recovery retain their owning wrapper/module's existing
+release and retry paths. Do not erase their ledgers or recovery markers to simulate completion, and do not start a new
+build merely to trigger recovery. If no supported bounded cleanup-only path applies, record the blocked resource and
+track the missing capability separately. A successful VM-removal command does not waive independent absence checks.
+
 ## Cleanup Safety
 
 Workstation cleanup is authoritative only for an exact Atlaso artifact root. It rejects filesystem roots, sibling or
