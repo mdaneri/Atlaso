@@ -24,6 +24,7 @@ from atlaso.app.services.routes_wan import (
     has_default_route_conflict,
     route_gateway_target_error,
     save_routes_wan_settings,
+    validate_nat_ingress,
     validate_nat_source,
 )
 from atlaso.app.services.routes_wan import (
@@ -416,6 +417,8 @@ def build_router(dependencies: RoutesWanUiDependencies) -> RoutesWanUiRouter:
         priority: str,
         masquerade: str | None,
         db: Session,
+        *,
+        validate_target: bool = True,
     ) -> tuple[str, str, str, bool, int] | Response:
         """Validate nat rule form values.
 
@@ -426,6 +429,7 @@ def build_router(dependencies: RoutesWanUiDependencies) -> RoutesWanUiRouter:
             priority: Ordering priority assigned to the item.
             masquerade: Masquerade supplied by the caller.
             db: Active database session.
+            validate_target: Require current target eligibility for new or enabled rules.
 
         Returns:
             The validate nat rule form values result.
@@ -440,7 +444,7 @@ def build_router(dependencies: RoutesWanUiDependencies) -> RoutesWanUiRouter:
             return Response(source_errors[0], status_code=422, media_type="text/plain")
         target_names = {target["name"] for target in wan_nat_targets_from_route_targets(wan_route_targets(db))}
         outbound_value = outbound_interface.strip()
-        if outbound_value not in target_names:
+        if validate_target and outbound_value not in target_names:
             return Response("Choose an access physical interface or enabled VLAN interface with an IP CIDR.", status_code=422, media_type="text/plain")
         masquerade_value = masquerade == "on"
         if not masquerade_value:
@@ -814,6 +818,7 @@ def build_router(dependencies: RoutesWanUiDependencies) -> RoutesWanUiRouter:
         name: str = Form(""),
         source: str = Form("any"),
         outbound_interface: str = Form(""),
+        inbound_interfaces: list[str] = Form([]),
         masquerade: str | None = Form(None),
         priority: str = Form("100"),
         description: str = Form(""),
@@ -829,6 +834,7 @@ def build_router(dependencies: RoutesWanUiDependencies) -> RoutesWanUiRouter:
             name: Name of the target object.
             source: Source path, address, or record to process.
             outbound_interface: Outbound interface supplied by the caller.
+            inbound_interfaces: Explicit ingress interface/VLAN membership.
             masquerade: Masquerade supplied by the caller.
             priority: Ordering priority assigned to the item.
             description: Human-readable description of the resource.
@@ -845,11 +851,15 @@ def build_router(dependencies: RoutesWanUiDependencies) -> RoutesWanUiRouter:
         parsed = validate_nat_rule_form_values(name, source, outbound_interface, priority, masquerade, db)
         if isinstance(parsed, Response):
             return parsed
+        ingress_errors = validate_nat_ingress(inbound_interfaces, outbound_interface, {target["name"] for target in wan_nat_targets_from_route_targets(wan_route_targets(db))}, required=True)
+        if ingress_errors:
+            return Response(ingress_errors[0], status_code=422, media_type="text/plain")
         name_value, source_value, outbound_value, masquerade_value, priority_value = parsed
         rule = NatRule(
             name=name_value,
             source=source_value,
             outbound_interface=outbound_value,
+            inbound_interfaces=inbound_interfaces,
             masquerade=masquerade_value,
             priority=priority_value,
             description=description.strip() or None,
@@ -861,7 +871,7 @@ def build_router(dependencies: RoutesWanUiDependencies) -> RoutesWanUiRouter:
         except IntegrityError:
             db.rollback()
             return Response(f"NAT rule {rule.name} already exists.", status_code=409, media_type="text/plain")
-        record_audit(db, actor=identity.username, action="create_nat_rule", resource_type="nat_rule", resource_id=str(rule.id))
+        record_audit(db, actor=identity.username, action="create_nat_rule", resource_type="nat_rule", resource_id=str(rule.id), detail=f"inbound={rule.inbound_interfaces or []}; outbound={rule.outbound_interface}; source={rule.source}")
         return RedirectResponse("/routes-wan", status_code=303)
 
 
@@ -872,6 +882,7 @@ def build_router(dependencies: RoutesWanUiDependencies) -> RoutesWanUiRouter:
         name: str = Form(""),
         source: str = Form("any"),
         outbound_interface: str = Form(""),
+        inbound_interfaces: list[str] = Form([]),
         masquerade: str | None = Form(None),
         priority: str = Form("100"),
         description: str = Form(""),
@@ -888,6 +899,7 @@ def build_router(dependencies: RoutesWanUiDependencies) -> RoutesWanUiRouter:
             name: Name of the target object.
             source: Source path, address, or record to process.
             outbound_interface: Outbound interface supplied by the caller.
+            inbound_interfaces: Explicit ingress interface/VLAN membership.
             masquerade: Masquerade supplied by the caller.
             priority: Ordering priority assigned to the item.
             description: Human-readable description of the resource.
@@ -907,13 +919,17 @@ def build_router(dependencies: RoutesWanUiDependencies) -> RoutesWanUiRouter:
         rule = db.get(NatRule, rule_id)
         if not rule:
             raise HTTPException(status_code=404, detail="NAT rule not found")
-        parsed = validate_nat_rule_form_values(name, source, outbound_interface, priority, masquerade, db)
+        parsed = validate_nat_rule_form_values(name, source, outbound_interface, priority, masquerade, db, validate_target=enabled == "on")
         if isinstance(parsed, Response):
             return parsed
+        ingress_errors = validate_nat_ingress(inbound_interfaces, outbound_interface, {target["name"] for target in wan_nat_targets_from_route_targets(wan_route_targets(db))}, required=enabled == "on", check_availability=enabled == "on")
+        if ingress_errors:
+            return Response(ingress_errors[0], status_code=422, media_type="text/plain")
         name_value, source_value, outbound_value, masquerade_value, priority_value = parsed
         rule.name = name_value
         rule.source = source_value
         rule.outbound_interface = outbound_value
+        rule.inbound_interfaces = inbound_interfaces
         rule.masquerade = masquerade_value
         rule.priority = priority_value
         rule.description = description.strip() or None
@@ -924,7 +940,7 @@ def build_router(dependencies: RoutesWanUiDependencies) -> RoutesWanUiRouter:
         except IntegrityError:
             db.rollback()
             return Response(f"NAT rule {rule.name} already exists.", status_code=409, media_type="text/plain")
-        record_audit(db, actor=identity.username, action="update_nat_rule", resource_type="nat_rule", resource_id=str(rule.id))
+        record_audit(db, actor=identity.username, action="update_nat_rule", resource_type="nat_rule", resource_id=str(rule.id), detail=f"inbound={rule.inbound_interfaces or []}; outbound={rule.outbound_interface}; source={rule.source}")
         return RedirectResponse("/routes-wan", status_code=303)
 
 

@@ -502,6 +502,7 @@ from atlaso.app.services.routes_wan import (
     ensure_routes_wan_settings,
     generated_route_role_rules,
     mirrored_management_default_routes,
+    nat_eligible_target_names,
     nat_rule_to_dict,
     render_wan_config,
     route_to_dict,
@@ -5331,6 +5332,7 @@ def wan_routing_targets(db: Session) -> list[dict[str, str]]:
     """
     interfaces = db.execute(select(PhysicalInterface).order_by(PhysicalInterface.name)).scalars().all()
     vlans = db.execute(select(VlanInterface).order_by(VlanInterface.parent_interface, VlanInterface.vlan_id)).scalars().all()
+    eligible_nat = nat_eligible_target_names(list(interfaces), list(vlans))
     interfaces_by_name = {interface.name: interface for interface in interfaces}
     targets: list[dict[str, str]] = []
     for interface in interfaces:
@@ -5346,6 +5348,9 @@ def wan_routing_targets(db: Session) -> list[dict[str, str]]:
         targets.append(
             {
                 "name": interface.name,
+                "nat_allowed": interface.name in eligible_nat,
+                "nat_physical_interface": interface.name,
+                "nat_physical_mac": interface.mac_address or "",
                 "kind": "physical",
                 "role": role,
                 "ip_cidr": interface.ip_cidr or "",
@@ -5376,6 +5381,9 @@ def wan_routing_targets(db: Session) -> list[dict[str, str]]:
         targets.append(
             {
                 "name": vlan.name,
+                "nat_allowed": vlan.name in eligible_nat,
+                "nat_physical_interface": vlan.parent_interface,
+                "nat_physical_mac": parent.mac_address if parent else "",
                 "kind": "vlan",
                 "role": role,
                 "ip_cidr": vlan.ip_cidr or "",
@@ -5403,7 +5411,7 @@ def wan_nat_targets_from_route_targets(targets: list[dict[str, str]]) -> list[di
     Args:
         targets: Targets consumed by WAN nat targets from route targets.
     """
-    return [target for target in targets if target.get("ip_cidr")]
+    return [target for target in targets if target.get("ip_cidr") and target.get("nat_allowed", False)]
 
 
 def routes_wan_context(db: Session) -> dict:

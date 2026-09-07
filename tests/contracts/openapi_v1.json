@@ -5138,7 +5138,7 @@
         "type": "object"
       },
       "NatRuleCreate": {
-        "description": "Fields accepted when creating a nat rule resource.\n\nAttributes:\n    name: Stable operator-facing name of this resource.\n    enabled: Whether the resource is enabled in saved Atlaso state.\n    source: Validated network or address value for source in this nat rule resource.\n    outbound_interface: Requested outbound interface value for this nat rule resource.\n    masquerade: Whether masquerade is enabled for this nat rule resource.\n    priority: Requested priority value for this nat rule resource.\n    description: Operator-facing purpose or context for this resource.",
+        "description": "Fields required to create a NAT rule with an explicit ingress boundary.\n\nAttributes:\n    inbound_interfaces: One or more eligible ingress targets for every new rule.",
         "properties": {
           "description": {
             "anyOf": [
@@ -5158,6 +5158,20 @@
             "title": "Enabled",
             "type": "boolean"
           },
+          "inbound_interfaces": {
+            "description": "Required nonempty array of eligible non-management IPv4 ingress interface/VLAN names, including when creating a disabled rule. The outbound target must not appear here.",
+            "items": {
+              "description": "Canonical physical interface or VLAN name.",
+              "maxLength": 80,
+              "minLength": 1,
+              "pattern": "^[A-Za-z0-9_.:-]+$",
+              "type": "string"
+            },
+            "maxItems": 128,
+            "minItems": 1,
+            "title": "Inbound Interfaces",
+            "type": "array"
+          },
           "masquerade": {
             "default": true,
             "description": "Whether masquerade is enabled for this nat rule resource.",
@@ -5175,6 +5189,7 @@
             "description": "Requested outbound interface value for this nat rule resource.",
             "maxLength": 80,
             "minLength": 1,
+            "pattern": "^[A-Za-z0-9_.:-]+$",
             "title": "Outbound Interface",
             "type": "string"
           },
@@ -5196,6 +5211,7 @@
         },
         "required": [
           "name",
+          "inbound_interfaces",
           "outbound_interface"
         ],
         "title": "NatRuleCreate",
@@ -5227,6 +5243,19 @@
             "title": "Id",
             "type": "integer"
           },
+          "inbound_interfaces": {
+            "description": "Explicit enabled non-management IPv4 ingress interface/VLAN names. Required for new or enabled rules; the outbound target must not appear here. Empty legacy scope requires administrator review.",
+            "items": {
+              "description": "Canonical physical interface or VLAN name.",
+              "maxLength": 80,
+              "minLength": 1,
+              "pattern": "^[A-Za-z0-9_.:-]+$",
+              "type": "string"
+            },
+            "maxItems": 128,
+            "title": "Inbound Interfaces",
+            "type": "array"
+          },
           "masquerade": {
             "default": true,
             "description": "Whether masquerade is enabled for this nat rule resource.",
@@ -5244,6 +5273,7 @@
             "description": "Requested outbound interface value for this nat rule resource.",
             "maxLength": 80,
             "minLength": 1,
+            "pattern": "^[A-Za-z0-9_.:-]+$",
             "title": "Outbound Interface",
             "type": "string"
           },
@@ -5269,6 +5299,84 @@
           "id"
         ],
         "title": "NatRuleResponse",
+        "type": "object"
+      },
+      "NatRuleUpdate": {
+        "description": "Fields accepted when updating a NAT rule, including dormant legacy rows.\n\nAttributes:\n    name: Stable operator-facing name of this resource.\n    enabled: Whether the resource is enabled in saved Atlaso state.\n    source: Validated network or address value for source in this nat rule resource.\n    inbound_interfaces: Explicit eligible ingress targets, distinct from the outbound target.\n    outbound_interface: Requested outbound interface value for this nat rule resource.\n    masquerade: Whether masquerade is enabled for this nat rule resource.\n    priority: Requested priority value for this nat rule resource.\n    description: Operator-facing purpose or context for this resource.",
+        "properties": {
+          "description": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Operator-facing purpose or context for this resource.",
+            "title": "Description"
+          },
+          "enabled": {
+            "default": true,
+            "description": "Whether the resource is enabled in saved Atlaso state.",
+            "title": "Enabled",
+            "type": "boolean"
+          },
+          "inbound_interfaces": {
+            "description": "Explicit enabled non-management IPv4 ingress interface/VLAN names. Required for new or enabled rules; the outbound target must not appear here. Empty legacy scope requires administrator review.",
+            "items": {
+              "description": "Canonical physical interface or VLAN name.",
+              "maxLength": 80,
+              "minLength": 1,
+              "pattern": "^[A-Za-z0-9_.:-]+$",
+              "type": "string"
+            },
+            "maxItems": 128,
+            "title": "Inbound Interfaces",
+            "type": "array"
+          },
+          "masquerade": {
+            "default": true,
+            "description": "Whether masquerade is enabled for this nat rule resource.",
+            "title": "Masquerade",
+            "type": "boolean"
+          },
+          "name": {
+            "description": "Stable operator-facing name of this resource.",
+            "maxLength": 120,
+            "minLength": 1,
+            "title": "Name",
+            "type": "string"
+          },
+          "outbound_interface": {
+            "description": "Requested outbound interface value for this nat rule resource.",
+            "maxLength": 80,
+            "minLength": 1,
+            "pattern": "^[A-Za-z0-9_.:-]+$",
+            "title": "Outbound Interface",
+            "type": "string"
+          },
+          "priority": {
+            "default": 100,
+            "description": "Requested priority value for this nat rule resource.",
+            "minimum": 0.0,
+            "title": "Priority",
+            "type": "integer"
+          },
+          "source": {
+            "default": "any",
+            "description": "Validated network or address value for source in this nat rule resource.",
+            "maxLength": 240,
+            "minLength": 1,
+            "title": "Source",
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "outbound_interface"
+        ],
+        "title": "NatRuleUpdate",
         "type": "object"
       },
       "OidcClientCreate": {
@@ -14487,7 +14595,7 @@
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/NatRuleCreate"
+                "$ref": "#/components/schemas/NatRuleUpdate"
               }
             }
           },

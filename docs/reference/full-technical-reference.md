@@ -1286,7 +1286,7 @@ curl -s \
   }'
 ```
 
-Create an outbound NAT rule:
+Create an outbound NAT rule after configuring eligible IPv4 lab targets `eth2` (inbound) and `eth1.20` (outbound):
 
 ```bash
 curl -s \
@@ -1297,6 +1297,7 @@ curl -s \
   -d '{
     "name": "SiteA outbound WAN",
     "source": "192.168.50.0/24",
+    "inbound_interfaces": ["eth2"],
     "outbound_interface": "eth1.20",
     "masquerade": true,
     "priority": 100

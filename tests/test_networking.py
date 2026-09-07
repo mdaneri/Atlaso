@@ -354,7 +354,7 @@ def test_sync_host_inventory_cleans_removed_nic_bindings_and_retargets_survivors
                 VlanInterface(parent_interface="eth2", name="eth2.50", vlan_id=50, ip_cidr="192.168.50.1/24"),
                 Route(destination_cidr="10.50.0.0/24", interface_name="eth2.50"),
                 Route(destination_cidr="10.22.0.0/24", interface_name="eth1.22"),
-                NatRule(name="removed outbound", source="192.168.22.0/24", outbound_interface="eth1.22"),
+                NatRule(name="removed outbound", source="192.168.22.0/24", inbound_interfaces=["eth2.50"], outbound_interface="eth1.22"),
                 RoutingRule(name="removed route permission", source_interface="eth1.22", destination_interface="eth2.50"),
                 RoutingRule(name="survivor route permission", source_interface="eth2.50", destination_interface="eth2"),
                 DhcpSettings(enabled=True),
@@ -392,8 +392,9 @@ def test_sync_host_inventory_cleans_removed_nic_bindings_and_retargets_survivors
         assert removed_route.interface_name == f"{removed.name}.22"
         assert removed_route.enabled is False
         nat_rule = db.execute(select(NatRule).where(NatRule.name == "removed outbound")).scalar_one()
-        assert nat_rule.enabled is False
-        assert nat_rule.outbound_interface == ""
+        assert nat_rule.enabled is True
+        assert nat_rule.outbound_interface == f"{removed.name}.22"
+        assert nat_rule.inbound_interfaces == ["eth1.50"]
         removed_routing_rule = db.execute(select(RoutingRule).where(RoutingRule.name == "removed route permission")).scalar_one()
         assert removed_routing_rule.enabled is False
         assert removed_routing_rule.source_interface == f"{removed.name}.22"
@@ -428,6 +429,11 @@ def test_sync_host_inventory_cleans_removed_nic_bindings_and_retargets_survivors
         assert "disabled VLAN eth1.22" in (audit.detail or "")
         assert "disabled KMS / KMIP" in (audit.detail or "")
         assert "Missing physical interface cleanup" in caplog.text
+        from atlaso.app.services.networking import _cleanup_missing_interface_references
+
+        assert _cleanup_missing_interface_references(db, {removed.name: removed.name}) == []
+        db.flush()
+        assert len(db.execute(select(AuditEvent).where(AuditEvent.action == "cleanup_missing_physical_interface_bindings")).scalars().all()) == 1
         from atlaso.app.services.management_bindings import applied_management_bindings
 
         assert applied_management_bindings(db) == [

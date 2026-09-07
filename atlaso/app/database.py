@@ -77,6 +77,7 @@ def _create_database_schema(bind: Engine) -> None:
             connection.exec_driver_sql("BEGIN IMMEDIATE")
             try:
                 Base.metadata.create_all(bind=connection)
+                _reconcile_nat_ingress_column(connection)
             except Exception:
                 connection.rollback()
                 raise
@@ -89,8 +90,22 @@ def _create_database_schema(bind: Engine) -> None:
                 {"lock_id": ATLASO_SCHEMA_LOCK_ID},
             )
             Base.metadata.create_all(bind=connection)
+            _reconcile_nat_ingress_column(connection)
         return
-    Base.metadata.create_all(bind=bind)
+    with bind.begin() as connection:
+        Base.metadata.create_all(bind=connection)
+        _reconcile_nat_ingress_column(connection)
+
+
+def _reconcile_nat_ingress_column(connection: Connection) -> None:
+    """Upgrade legacy NAT rows while holding the startup schema lock.
+
+    Args:
+        connection: Connection owning the serialized schema transaction.
+    """
+    # Preserve legacy rules without guessing which ingress networks were intended.
+    if "inbound_interfaces" not in {column["name"] for column in inspect(connection).get_columns("nat_rules")}:
+        connection.execute(text("ALTER TABLE nat_rules ADD COLUMN inbound_interfaces JSON NOT NULL DEFAULT '[]'"))
 
 
 def _reconcile_vcf_depot_job_queue(connection: Connection) -> None:

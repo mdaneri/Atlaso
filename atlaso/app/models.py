@@ -5,6 +5,7 @@ from enum import StrEnum
 from uuid import uuid4
 
 from sqlalchemy import (
+    JSON,
     Boolean,
     CheckConstraint,
     DateTime,
@@ -385,6 +386,7 @@ class NatRule(Base):
         name: Operator-facing name of the resource.
         enabled: Whether the resource is enabled.
         source: Persisted source for the natrule resource.
+        inbound_interfaces: Explicit ingress boundary; an empty legacy list requires review.
         outbound_interface: Persisted outbound interface for the natrule resource.
         masquerade: Persisted masquerade for the natrule resource.
         priority: Persisted priority for the natrule resource.
@@ -399,6 +401,7 @@ class NatRule(Base):
     name: Mapped[str] = mapped_column(String(120), unique=True, index=True)
     enabled: Mapped[bool] = mapped_column(Boolean, default=True)
     source: Mapped[str] = mapped_column(String(240), default="any")
+    inbound_interfaces: Mapped[list[str]] = mapped_column(JSON, default=list)
     outbound_interface: Mapped[str] = mapped_column(String(80), index=True)
     masquerade: Mapped[bool] = mapped_column(Boolean, default=True)
     priority: Mapped[int] = mapped_column(Integer, default=100)
