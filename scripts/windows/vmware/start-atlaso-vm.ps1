@@ -5,8 +5,9 @@ Start one exact Atlaso VMware Workstation VM without propagating launcher output
 .DESCRIPTION
 Resolves the supported vmrun executable, starts the requested exact VMX in GUI
 or headless mode, and waits only for the vmrun root process. The vmrun child is
-started without redirected standard streams so a successfully detached VMware
-GUI or VMX process cannot retain the calling wrapper's output pipes.
+started detached from the launcher console and without inherited handles so a
+successfully detached VMware GUI or VMX process cannot retain the calling
+wrapper's output pipes.
 
 .PARAMETER VmxPath
 Existing exact VMX to start.
@@ -51,7 +52,7 @@ function Resolve-VmrunPath {
 
 <#
 .SYNOPSIS
-Start vmrun without inheriting this launcher's standard handles.
+Start vmrun without inheriting this launcher's console or standard handles.
 
 .PARAMETER FilePath
 Exact resolved vmrun executable.
@@ -77,6 +78,7 @@ namespace Atlaso
 {
     public static class DetachedVmrun
     {
+        private const uint DetachedProcess = 0x00000008;
         [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
         private struct StartupInformation
         {
@@ -174,7 +176,7 @@ namespace Atlaso
                 IntPtr.Zero,
                 IntPtr.Zero,
                 false,
-                0,
+                DetachedProcess,
                 IntPtr.Zero,
                 null,
                 ref startup,
@@ -203,8 +205,9 @@ namespace Atlaso
 
 $resolvedVmxPath = (Resolve-Path -LiteralPath $VmxPath).Path
 $resolvedVmrun = Resolve-VmrunPath -Path $VmrunPath
-# CreateProcess receives inheritHandles=false, so neither vmrun nor any VMware
-# process it detaches can receive the bounded wrapper's redirected pipe handles.
+# Handle inheritance and console inheritance are separate Windows contracts.
+# Detach the console as well as disabling handle inheritance, otherwise vmrun
+# can pass the wrapper's standard handles to a long-lived VMware descendant.
 $process = Start-AtlasoVmrunWithoutInheritedHandles `
     -FilePath $resolvedVmrun `
     -ArgumentList @('-T', 'ws', 'start', $resolvedVmxPath, $Mode)
