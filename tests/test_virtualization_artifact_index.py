@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import base64
+import copy
 import hashlib
 import json
 import os
@@ -21,6 +22,76 @@ from tests.test_virtualization_ova import _members, _write_ova
 ROOT = Path(__file__).resolve().parents[1]
 REAL_COMPARE_VIRTUAL_DISKS = builder._compare_virtual_disks
 REAL_CREATE_BLANK_RAW_DISK = builder._create_blank_raw_disk
+
+
+@pytest.mark.parametrize(
+    ("scope", "size", "failure"),
+    [
+        ("disk", 0, "unsafe member"),
+        ("disk", 2**31 - 1, None),
+        ("disk", 2**31, None),
+        ("disk", 3_365_928_960, None),
+        ("disk", 2**32 + 1, None),
+        ("total", 8 * 1024**3, None),
+        ("total", 8 * 1024**3 + 1, "extraction budget"),
+        ("metadata", 1_048_577, "unsafe member"),
+    ],
+)
+def test_hyperv_member_sizes_use_bounded_extraction_budget(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    scope: str,
+    size: int,
+    failure: str | None,
+) -> None:
+    """Large disks pass admission while oversized extraction and metadata fail.
+
+    Args:
+        tmp_path: Fixture directory.
+        monkeypatch: Replace only central-directory admission size observations.
+        scope: Disk, aggregate, or metadata size boundary under test.
+        size: Synthetic uncompressed byte count.
+        failure: Expected refusal, or None to exercise the remaining validator.
+    """
+
+    assets = tmp_path / "assets"
+    _assets(assets)
+    archive_path = assets / "atlaso-v0.9.217-hyperv-x86_64.zip"
+    with zipfile.ZipFile(archive_path) as archive:
+        manifest = json.loads(archive.read("manifest.json"))
+    real_infolist = zipfile.ZipFile.infolist
+
+    def sized_members(archive: zipfile.ZipFile) -> list[zipfile.ZipInfo]:
+        """Copy admission metadata without altering the small extraction fixtures.
+
+        Args:
+            archive: Real fixture ZIP being inspected.
+        """
+
+        members = [copy.copy(member) for member in real_infolist(archive)]
+        target = "manifest.json" if scope == "metadata" else "photon-os.vhdx"
+        other_bytes = sum(member.file_size for member in members if member.filename != target)
+        for member in members:
+            if member.filename == target:
+                member.file_size = size - other_bytes if scope == "total" else size
+        return members
+
+    monkeypatch.setattr(zipfile.ZipFile, "infolist", sized_members)
+    arguments = {
+        "ova_payload_root": assets,
+        "version": "0.9.217",
+        "commit": "a" * 40,
+        "ova_sha256": manifest["source"]["ova_sha256"],
+        "ova_payloads": [
+            {"role": "photon_os", "file": "photon.vmdk", "virtual_size_bytes": 40 * 1024**3},
+            {"role": "atlaso_system", "file": "system.vmdk", "virtual_size_bytes": 20 * 1024**3},
+        ],
+    }
+    if failure:
+        with pytest.raises(SystemExit, match=failure):
+            builder._validate_hyperv_archive(archive_path, **arguments)
+    else:
+        builder._validate_hyperv_archive(archive_path, **arguments)
 
 
 @pytest.fixture(autouse=True)
@@ -1041,14 +1112,16 @@ def test_stable_index_requires_both_linux_platform_proofs(tmp_path: Path) -> Non
     assert builder.main(arguments) == 0
 
 
+@pytest.mark.parametrize("asset_suffix", [".ova", "-hyperv-x86_64.zip"])
 def test_refuses_incomplete_or_oversized_artifact_set(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, asset_suffix: str
 ) -> None:
     """A missing helper or asset at the GitHub limit blocks index publication.
 
     Args:
         tmp_path: Temporary directory provided by pytest.
         monkeypatch: Pytest fixture used to simulate an oversized asset.
+        asset_suffix: Published OVA or Hyper-V ZIP whose size is bounded.
     """
 
     assets = tmp_path / "assets"
@@ -1081,7 +1154,7 @@ def test_refuses_incomplete_or_oversized_artifact_set(
     (assets / "import-atlaso-kvm.sh").write_bytes(
         (ROOT / builder.RELEASE_HELPERS["import-atlaso-kvm.sh"]).read_bytes()
     )
-    ova = assets / "atlaso-v0.9.217.ova"
+    oversized_asset = assets / f"atlaso-v0.9.217{asset_suffix}"
     real_stat = Path.stat
 
     def fake_stat(path: Path, *, follow_symlinks: bool = True) -> os.stat_result:
@@ -1093,7 +1166,7 @@ def test_refuses_incomplete_or_oversized_artifact_set(
         """
 
         result = real_stat(path, follow_symlinks=follow_symlinks)
-        if path == ova:
+        if path == oversized_asset:
             values = list(result)
             values[6] = builder.MAXIMUM_GITHUB_ASSET_BYTES
             return type(result)(values)

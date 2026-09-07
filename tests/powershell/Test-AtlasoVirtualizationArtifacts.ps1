@@ -880,4 +880,6 @@ try { . ([scriptblock]::Create($shutdownContentGuard.Extent.Text)) }
 catch { $contentRejected = $true }
 if (-not $contentRejected) { throw 'Post-stop content guard admitted replaced disk bindings.' }
 
+& (Join-Path $PSScriptRoot 'Test-AtlasoHyperVPackaging.ps1') -RepositoryRoot $RepositoryRoot
+
 Write-Host 'Hyper-V virtualization artifact contract test passed.'
