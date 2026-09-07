@@ -1,6 +1,10 @@
 <#
 .SYNOPSIS
 Build or validate the supported Atlaso VMware Workstation Photon image.
+.DESCRIPTION
+Authenticates published software with Python bytecode writing disabled before
+source ACL protection and again before Packer admission. Verification preserves
+the complete admitted source inventory without caller environment configuration.
 .PARAMETER IsoUrl
 Pinned Photon HTTPS source URL, local path, or local file URI.
 .PARAMETER IsoChecksum
@@ -2245,11 +2249,13 @@ else {
                 '--trust-key', (Join-Path $sourceSnapshot.Root 'image\common\update-trust\atlaso-release-2026-01.pem'),
                 '--expected-version', $ReleaseVersion, '--expected-commit', $sourceSnapshot.Commit
             )
-            & python @verifySoftwareArguments | Out-Null
+            # Imports must not add bytecode to the admitted, still-writable tree.
+            # The interpreter flag also overrides caller cache-prefix settings.
+            & python -B @verifySoftwareArguments | Out-Null
             if ($LASTEXITCODE -ne 0) { throw 'Published software input authentication failed.' }
             Copy-Item -LiteralPath $VirtualizationSourceDirectory -Destination $softwareRoot -Recurse -ErrorAction Stop
             $verifySoftwareArguments[2] = $softwareRoot
-            & python @verifySoftwareArguments | Out-Null
+            & python -B @verifySoftwareArguments | Out-Null
             if ($LASTEXITCODE -ne 0) { throw 'Staged published software authentication failed.' }
             $softwareSnapshot = Get-AtlasoSourceSnapshotInventory -Root $softwareRoot
             $null = Protect-AtlasoSourceSnapshot -Root $softwareRoot -ExpectedSha256 $softwareSnapshot.Sha256 -ExpectedFileCount $softwareSnapshot.FileCount
@@ -3139,7 +3145,7 @@ if ($VirtualizationSourceDirectory) {
     if (-not ([System.IO.Path]::GetFullPath($VirtualizationSourceDirectory)).Equals($expectedSoftwareRoot, [StringComparison]::OrdinalIgnoreCase)) {
         throw 'Published software escaped the invocation-owned input root.'
     }
-    $sourceJson = & python (Join-Path $SourceSnapshotRoot 'scripts\prepare_virtualization_source.py') `
+    $sourceJson = & python -B (Join-Path $SourceSnapshotRoot 'scripts\prepare_virtualization_source.py') `
         --verify-existing $VirtualizationSourceDirectory `
         --trust-key (Join-Path $SourceSnapshotRoot 'image\common\update-trust\atlaso-release-2026-01.pem') `
         --expected-version $ReleaseVersion --expected-commit $SourceCommit
