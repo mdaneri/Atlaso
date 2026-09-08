@@ -301,6 +301,7 @@ class Cleanup:
 
     def local_state(self) -> None:
         """Protect active, dirty, locked, shared, replaced, or ambiguously absent worktrees."""
+        self.require_direct_task_ref()
         inventory = self.worktrees()
         targets = [item for item in inventory if Path(item["worktree"]) == self.target]
         owners = [item for item in inventory if item.get("branch") == f"refs/heads/{self.branch}"]
@@ -313,6 +314,9 @@ class Cleanup:
             require(len(targets) == 1 and owners == targets, "Worktree/local branch registration is not exclusive.")
             require("locked" not in targets[0] and "prunable" not in targets[0], "Locked or prunable worktree must be reconciled first.")
             require(targets[0].get("HEAD") == self.head, "Worktree HEAD differs from recorded PR head.")
+            entries = self.git("-C", str(self.target), "ls-files", "-v", "-z").split("\0")
+            require(all(not entry or (not entry[0].islower() and entry[0] != "S") for entry in entries),
+                    "Index assume-unchanged or skip-worktree flags block cleanup; reconcile tracked content first.")
             require(not self.git("-C", str(self.target), "status", "--porcelain", "--untracked-files=all"),
                     "Dirty or untracked worktree content blocks cleanup.")
         else:
@@ -327,6 +331,11 @@ class Cleanup:
             require(not local, "Local branch reappeared after its absence gate; preserve it and revalidate ownership.")
         if "worktree_removed" in self.gates:
             require(not self.target.exists() and not targets, "Worktree reappeared after removal; preserve it.")
+
+    def require_direct_task_ref(self) -> None:
+        """Reject even dangling symbolic branches before accepting absence or deleting a ref."""
+        symbolic = self.command(["git", "symbolic-ref", "--quiet", f"refs/heads/{self.branch}"], allowed=(0, 1))
+        require(not symbolic, "Symbolic task ref blocks cleanup; preserve its target and reconcile branch ownership.")
 
     def validate_resource_identity(self, resource: dict) -> None:
         """Require repository/PR binding, an exact locator, and durable original manifest bytes."""
@@ -563,9 +572,11 @@ class Cleanup:
                 "Local branch is referenced by a worktree; preserve it.")
         local = self.git("for-each-ref", "--format=%(objectname)", f"refs/heads/{self.branch}")
         require(local in {"", self.head}, "Local branch changed after worktree removal.")
+        self.require_direct_task_ref()
         if local:
             self.record("local_branch_removal_prepared")
-            self.git("update-ref", "-d", f"refs/heads/{self.branch}", self.head)
+            self.git("update-ref", "--no-deref", "-d", f"refs/heads/{self.branch}", self.head)
+        self.require_direct_task_ref()
         require(not self.git("for-each-ref", "--format=%(objectname)", f"refs/heads/{self.branch}"),
                 "Local task ref still exists; resume local-ref removal only.")
         self.record("local_task_branch_absent")

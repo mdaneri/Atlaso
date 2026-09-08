@@ -179,6 +179,8 @@ completed list only after the prospective record has been flushed, fsynced, and 
 record or conflicting history requires independent evidence reconciliation before another invocation can proceed.
 Every eligibility check also verifies all effective Git push URLs; a separate fork push URL or extra destination blocks
 cleanup even when the fetch URL names the correct repository.
+Symbolic task refs, including dangling refs, block cleanup. Local deletion never dereferences the task ref. Index
+`assume-unchanged` and `skip-worktree` flags also block cleanup because they can hide edits from Git's cleanliness checks.
 Large controller evidence and snapshots are stored as bounded, hashed `.evidence` files; cumulative journals contain
 their references and remain within the same 64 MiB recovery limit. Preserve both file types. A retry verifies referenced
 payloads before continuing, and prepared transition records are persisted before destructive owning-tool or Git actions.

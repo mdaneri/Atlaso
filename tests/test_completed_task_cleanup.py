@@ -346,6 +346,34 @@ def test_external_ownership_manifest_is_refused(cleanup: Cleanup) -> None:
     assert not cleanup.evidence.exists()
 
 
+@pytest.mark.parametrize("dangling", [False, True])
+def test_symbolic_task_ref_preserves_backup(cleanup: Cleanup, dangling: bool) -> None:
+    """A task alias must never delete an unrelated branch or count as an absent ref."""
+    cleanup.git("worktree", "remove", str(cleanup.target))
+    if not dangling:
+        cleanup.git("update-ref", "refs/heads/backup", cleanup.head)
+    cleanup.git("symbolic-ref", f"refs/heads/{cleanup.branch}", "refs/heads/backup")
+    with pytest.raises(Refusal, match="Symbolic task ref"):
+        cleanup.run()
+    assert cleanup.git("symbolic-ref", f"refs/heads/{cleanup.branch}") == "refs/heads/backup"
+    if not dangling:
+        assert cleanup.git("rev-parse", "refs/heads/backup") == cleanup.head
+    assert cleanup.git("ls-remote", "--refs", "origin", f"refs/heads/{cleanup.branch}")
+
+
+@pytest.mark.parametrize("flag", ["--assume-unchanged", "--skip-worktree"])
+def test_index_hidden_edits_preserved(cleanup: Cleanup, flag: str) -> None:
+    """Git status alone cannot authorize removal when index flags hide user content."""
+    cleanup.git("-C", str(cleanup.target), "update-index", flag, "source.txt")
+    source = cleanup.target / "source.txt"
+    source.write_text("hidden user edit", encoding="utf-8")
+    assert not cleanup.git("-C", str(cleanup.target), "status", "--porcelain")
+    with pytest.raises(Refusal, match="Index assume-unchanged"):
+        cleanup.run()
+    assert source.read_text(encoding="utf-8") == "hidden user edit"
+    assert cleanup.git("ls-remote", "--refs", "origin", f"refs/heads/{cleanup.branch}")
+
+
 def test_preview_does_not_mutate(cleanup: Cleanup) -> None:
     """Preview performs no fetch, journal write, resource release, ref mutation, or rename."""
     cleanup.execute = False

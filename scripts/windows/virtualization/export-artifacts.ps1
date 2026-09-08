@@ -32,6 +32,7 @@ Set-StrictMode -Version Latest
 
 $repoRoot = (Resolve-Path -LiteralPath (Join-Path $PSScriptRoot '..\..\..')).Path
 Import-Module (Join-Path $PSScriptRoot 'Atlaso.VirtualizationArtifacts.psm1') -Force
+Import-Module (Join-Path $PSScriptRoot 'Atlaso.StorageCapacity.psm1') -Force
 
 $sourceOva = Get-Item -LiteralPath $OvaPath -ErrorAction Stop
 if ($sourceOva.PSIsContainer -or
@@ -44,6 +45,9 @@ Write-Host "Hyper-V converter: $qemuVersion; format=vhdx; subformat=dynamic; blo
 $python = Resolve-AtlasoPythonPath -Path $PythonPath
 $outputDirectory = Resolve-AtlasoHyperVOutputRoot -RepoRoot $repoRoot -OutputRoot $OutputRoot
 
+Assert-AtlasoStorageCapacity -Stage 'Hyper-V conversion' -Components @(
+    [pscustomobject]@{ Path=$outputDirectory; Name='OVA extraction, VHDX conversion and ZIP'; Bytes=70GB }
+)
 New-Item -ItemType Directory -Path $outputDirectory -Force | Out-Null
 $outputDirectoryItem = Get-Item -LiteralPath $outputDirectory -Force
 if (($outputDirectoryItem.Attributes -band [System.IO.FileAttributes]::ReparsePoint) -ne 0) {
@@ -82,6 +86,7 @@ try {
     }
 
     $diskRecords = @()
+    $completedVhdxBytes = 0L
     foreach ($payload in $payloads) {
         $inputName = [string]$payload.file
         if ([System.IO.Path]::GetFileName($inputName) -ne $inputName) {
@@ -90,6 +95,11 @@ try {
         $roleName = if ([string]$payload.role -eq 'photon_os') { 'photon-os' } else { 'atlaso-system' }
         $outputName = "$roleName.vhdx"
         $outputPath = Join-Path $packageRoot $outputName
+        Assert-AtlasoStorageCapacity -Stage "Hyper-V $roleName conversion" -Components @(
+            # Completed files already reduce reported free space. Retain at least
+            # the ZIP-stage budget while discounting only validated output bytes.
+            [pscustomobject]@{ Path=$outputDirectory; Name='remaining VHDX conversion and ZIP'; Bytes=[Math]::Max(8GB, 64GB - $completedVhdxBytes) }
+        )
         Invoke-AtlasoQemuImg -QemuImgPath $qemuImg -Arguments @(
             'convert', '-p', '-f', 'vmdk', '-O', 'vhdx',
             '-o', 'subformat=dynamic,block_size=2097152',
@@ -108,6 +118,7 @@ try {
             bytes              = (Get-Item -LiteralPath $outputPath).Length
             sha256             = (Get-FileHash -LiteralPath $outputPath -Algorithm SHA256).Hash.ToLowerInvariant()
         }
+        $completedVhdxBytes += [long]$diskRecords[-1].bytes
     }
 
     foreach ($dataDisk in @(
@@ -176,6 +187,9 @@ try {
     }
     $partialArchive = Join-Path $operationRoot $archiveName
     $packageFiles = @(Get-ChildItem -LiteralPath $packageRoot -File | Sort-Object Name | ForEach-Object FullName)
+    Assert-AtlasoStorageCapacity -Stage 'Hyper-V ZIP creation' -Components @(
+        [pscustomobject]@{ Path=$outputDirectory; Name='ZIP output'; Bytes=8GB }
+    )
     New-AtlasoHyperVArchive -Files $packageFiles -DestinationPath $partialArchive
     Move-Item -LiteralPath $partialArchive -Destination $archivePath -Force
     Get-Item -LiteralPath $archivePath

@@ -14,6 +14,8 @@ Import-Module (Join-Path $PSScriptRoot '..\vmware\Atlaso.VmwarePayload.psm1') -F
 Import-Module (Join-Path $PSScriptRoot '..\vmware\Atlaso.WorkstationReadiness.psm1') -Force
 Import-Module (Join-Path $PSScriptRoot '..\vmware\Atlaso.VmwareBuilderIdentity.psm1') -Force
 Import-Module (Join-Path $PSScriptRoot '..\vmware\Atlaso.OnePasswordCredentials.psm1') -Force
+Import-Module (Join-Path $PSScriptRoot 'Atlaso.VirtualizationCapacity.psm1') -Force
+Import-Module (Join-Path $PSScriptRoot 'Atlaso.SmokeConsole.psm1') -Force
 
 <#
 .SYNOPSIS
@@ -601,15 +603,14 @@ function Get-AtlasoVirtualizationSourceIdentity {
     if ($LASTEXITCODE -ne 0 -or $commit -notmatch '^[0-9a-f]{40}$') {
         throw 'Could not resolve the exact source commit.'
     }
-    & git -C $RepoRoot fetch origin main --no-tags
-    if ($LASTEXITCODE -ne 0) {
-        throw 'Could not refresh protected main.'
-    }
-    & git -C $RepoRoot merge-base --is-ancestor $commit origin/main
-    if ($LASTEXITCODE -ne 0) {
+    # Admission must be read-only, including Git metadata, until capacity passes.
+    $comparison = [string](Invoke-AtlasoReleaseGh -Arguments @(
+        'api', "repos/$Repository/compare/$commit...main", '--jq', '.status'
+    ))
+    if ($comparison.Trim() -notin @('ahead', 'identical')) {
         throw 'The source commit is no longer reachable from origin/main.'
     }
-    $version = [string](& python (Join-Path $RepoRoot 'scripts\version.py') get --root $RepoRoot)
+    $version = [string](& python -B (Join-Path $RepoRoot 'scripts\version.py') get --root $RepoRoot)
     $version = $version.Trim()
     if ($LASTEXITCODE -ne 0 -or $version -notmatch '^\d+\.\d+\.\d+$') {
         throw 'Could not resolve the synchronized Atlaso version.'
@@ -630,6 +631,7 @@ function Get-AtlasoVirtualizationSourceIdentity {
         throw "Automatic software Release $softwareTag is missing or misclassified."
     }
     $assetNames = @($release.assets | ForEach-Object { [string]$_.name })
+    $sourceDownloadBytes = 0L
     foreach ($required in @(
         "atlaso-appliance-$version.tar.gz",
         'release-manifest.json',
@@ -638,6 +640,12 @@ function Get-AtlasoVirtualizationSourceIdentity {
         if ($required -notin $assetNames) {
             throw "Automatic software Release $softwareTag is missing $required."
         }
+        $matchingAssets = @($release.assets | Where-Object name -CEQ $required)
+        if ($matchingAssets.Count -ne 1 -or $null -eq $matchingAssets[0].size -or
+            [long]$matchingAssets[0].size -le 0 -or [long]$matchingAssets[0].size -gt (2GB - $sourceDownloadBytes)) {
+            throw "Software Release $softwareTag has missing, ambiguous, or over-budget source asset sizes; the supported download estimate is 2 GiB. No payload was downloaded."
+        }
+        $sourceDownloadBytes += [long]$matchingAssets[0].size
     }
     $countText = [string](Invoke-AtlasoReleaseGh -Arguments @(
         'api', '--method', 'GET', "repos/$Repository/actions/workflows/ci.yml/runs",
@@ -863,6 +871,8 @@ Optional supported Python executable. Omission discovers standard Windows x64 CP
 Return after dispatch instead of waiting for hosted publication.
 .PARAMETER CandidateOnly
 Stop after producing and smoking the candidate set without changing GitHub.
+.PARAMETER SmokeConsoleMinutes
+Bounded diagnostic console access; a nonzero value cannot produce release evidence.
 #>
 function Invoke-AtlasoVirtualizationPrerelease {
     [Diagnostics.CodeAnalysis.SuppressMessageAttribute(
@@ -897,6 +907,7 @@ function Invoke-AtlasoVirtualizationPrerelease {
         [string]$OnePasswordAccount = '',
         [string]$OnePasswordServiceAccountTokenFile = '',
         [string]$OnePasswordPython = '',
+        [ValidateRange(0, 30)][int]$SmokeConsoleMinutes = 0,
         [switch]$CandidateOnly,
         [switch]$NoWait
     )
@@ -952,6 +963,54 @@ function Invoke-AtlasoVirtualizationPrerelease {
     $resolvedSwitches = Resolve-AtlasoVirtualizationHyperVSwitches `
         -ManagementSwitch $ManagementSwitch `
         -ServiceSwitch $ServiceSwitch
+    $plannedOperation = Join-Path $resolvedStagingRoot $tag
+    $plannedSource = Join-Path $plannedOperation 'verified-source'
+    $capacityResume = 'Build'
+    $sourceEstimate = 16GB
+    $retainedSourceVerified = $false
+    if (Test-Path -LiteralPath $plannedSource) {
+        & python -B (Join-Path $RepoRoot 'scripts/prepare_virtualization_source.py') `
+            --verify-existing $plannedSource `
+            --trust-key (Join-Path $RepoRoot 'image/common/update-trust/atlaso-release-2026-01.pem') `
+            --expected-version $identity.Version --expected-commit $identity.Commit | Out-Null
+        if ($LASTEXITCODE -ne 0) { throw 'Retained signed source failed read-only capacity preflight verification.' }
+        $sourceEstimate = [long]((Get-ChildItem -LiteralPath $plannedSource -Recurse -File |
+            Measure-Object -Property Length -Sum).Sum)
+        $retainedSourceVerified = $true
+    }
+    if (Test-Path -LiteralPath (Join-Path $plannedOperation 'candidate')) {
+        if ($SmokeConsoleMinutes -gt 0) {
+            throw 'A retained successful candidate is publication-only. Use direct VMware diagnostic smoke on its exact OVA; existing evidence was preserved.'
+        }
+        if (-not (Test-Path -LiteralPath $plannedSource)) {
+            throw 'Retained candidate has no signed source for read-only preflight verification.'
+        }
+        & python -B (Join-Path $RepoRoot 'scripts/stage_virtualization_release.py') `
+            --verify-existing (Join-Path $plannedOperation 'candidate') `
+            --source-metadata (Join-Path $plannedSource 'virtualization-source.json') `
+            --version $identity.Version --commit $identity.Commit | Out-Null
+        if ($LASTEXITCODE -ne 0) { throw 'Retained candidate failed read-only capacity preflight verification.' }
+        $capacityResume = 'Candidate'
+    }
+    elseif (Test-Path -LiteralPath (Join-Path $builderOutput "$($builderIdentity.Name).vmx")) {
+        $plannedVmx = Join-Path $builderOutput "$($builderIdentity.Name).vmx"
+        Assert-AtlasoTemplatePoweredOff -VmxPath $plannedVmx
+        $plannedProvenance = Assert-AtlasoVmwarePayloadProvenance -VmxPath $plannedVmx `
+            -ExpectedSourceCommit $identity.Commit -RequireCleanSource -RequireReleaseBuilder
+        if (-not (Test-Path -LiteralPath $plannedSource)) {
+            throw 'Retained template has no signed source for read-only preflight verification.'
+        }
+        Assert-AtlasoTemplateSoftwareIdentity -TemplateContract $plannedProvenance.template_contract `
+            -SoftwareSource (Get-Content -LiteralPath (Join-Path $plannedSource 'virtualization-source.json') -Raw | ConvertFrom-Json)
+        $capacityResume = 'Template'
+    }
+    $storagePlan = @(Get-AtlasoVirtualizationStoragePlan -RepoRoot $RepoRoot -Operation $plannedOperation `
+        -BuilderOutput $builderOutput -Resume $capacityResume -SourceBytes $sourceEstimate `
+        -RetainedSource:$retainedSourceVerified)
+    Assert-AtlasoVirtualizationStoragePlan -Plan $storagePlan -Stage 0
+    if ($SmokeConsoleMinutes -gt 0) {
+        $null = Get-Command 1password-mcp -ErrorAction Stop
+    }
     $environmentSource = if ($OnePasswordEnvironmentId) { 'explicit parameter' } else { 'checkout-local selector file' }
     $authenticationSource = if ($OnePasswordServiceAccountTokenFile) {
         'explicit service-account token file'
@@ -986,6 +1045,9 @@ function Invoke-AtlasoVirtualizationPrerelease {
     }
     $ManagementSwitch = $resolvedSwitches.Management
     $ServiceSwitch = $resolvedSwitches.Service
+    if ($SmokeConsoleMinutes -gt 0) {
+        Assert-AtlasoSmokeConsoleAvailable -RepoRoot $RepoRoot -EnvironmentId $OnePasswordEnvironmentId
+    }
 
     Write-Host 'Virtualization prerelease preflight:'
     Write-Host "  Version/tag: $($identity.Version) / $tag"
@@ -1111,6 +1173,7 @@ function Invoke-AtlasoVirtualizationPrerelease {
             -VmxPath $vmx -ExpectedSourceCommit $identity.Commit -RequireCleanSource -RequireReleaseBuilder
     }
     if ($requiresBuild) {
+        Assert-AtlasoVirtualizationStoragePlan -Plan $storagePlan -Stage 1
         Invoke-AtlasoVirtualizationReleaseImageBuilder `
             -VirtualizationSourceDirectory $sourceInput `
             -BuilderScriptPath (Join-Path $RepoRoot 'scripts\windows\vmware\build-photon-image.ps1') `
@@ -1133,6 +1196,7 @@ function Invoke-AtlasoVirtualizationPrerelease {
     Assert-AtlasoTemplatePoweredOff -VmxPath $vmx
     Assert-AtlasoTemplateSoftwareIdentity -TemplateContract $existingProvenance.template_contract -SoftwareSource $source
     $name = "atlaso-v$($identity.Version)"
+    Assert-AtlasoVirtualizationStoragePlan -Plan $storagePlan -Stage 2
     & (Join-Path $RepoRoot 'scripts\windows\vmware\export-ovf.ps1') `
         -SourceVmxPath $vmx -Name $name -Force -VirtualizationSourceMetadata $sourceMetadata
     if ($LASTEXITCODE -ne 0) {
@@ -1144,6 +1208,7 @@ function Invoke-AtlasoVirtualizationPrerelease {
         -Source $ovaPath `
         -Destination (Join-Path $ovaRoot "$name.ova")
     $hypervRoot = Join-Path $RepoRoot "artifacts\virtualization\$tag"
+    Assert-AtlasoVirtualizationStoragePlan -Plan $storagePlan -Stage 3
     & (Join-Path $RepoRoot 'scripts\windows\virtualization\export-artifacts.ps1') `
         -OvaPath $ovaPath -OutputRoot $hypervRoot -Force
     if ($LASTEXITCODE -ne 0) {
@@ -1155,6 +1220,8 @@ function Invoke-AtlasoVirtualizationPrerelease {
     }
     Assert-AtlasoTemplatePoweredOff -VmxPath $vmx
     $null = Assert-AtlasoVmwarePayloadProvenance -VmxPath $vmx -ExpectedSourceCommit $identity.Commit -RequireReleaseBuilder
+    $consoleSession = $null
+    $consoleCleanupVerified = $false
     $smokeText = 'A!a1' + [Convert]::ToBase64String(
         [Security.Cryptography.RandomNumberGenerator]::GetBytes(32)
     )
@@ -1166,16 +1233,34 @@ function Invoke-AtlasoVirtualizationPrerelease {
         $smokePassword.MakeReadOnly()
         $smokeCredential = [PSCredential]::new('admin', $smokePassword)
         $smokeRoot = Join-Path $RepoRoot "artifacts\virtualization-smoke\$tag"
-        & (Join-Path $RepoRoot 'scripts\windows\virtualization\smoke-ova-vmware.ps1') -OvaPath $ovaPath -Credential $smokeCredential -ManagementVmnet $ManagementVmnet -ServiceVmnet $ServiceVmnet -OutputRoot (Join-Path $smokeRoot 'vmware')
+        Assert-AtlasoVirtualizationStoragePlan -Plan $storagePlan -Stage 4
+        $consoleArguments = @{}
+        if ($SmokeConsoleMinutes -gt 0) {
+            $consoleRunId = [guid]::NewGuid().ToString('N')
+            $consoleName = 'Atlaso-Ova-Console-' + $consoleRunId.Substring(0, 12)
+            $consoleSession = New-AtlasoSmokeConsoleSession -RepoRoot $RepoRoot -Operation $operation `
+                -EnvironmentId $OnePasswordEnvironmentId -RunId $consoleRunId `
+                -VmRoot (Join-Path (Join-Path $smokeRoot 'vmware') $consoleName)
+            $smokeCredential = $consoleSession.Credential
+            $consoleArguments = @{
+                Name=$consoleName; ConsoleHoldMinutes=$SmokeConsoleMinutes
+                ConsoleVariable=$consoleSession.Variable; ConsoleCleanupVerified=[ref]$consoleCleanupVerified
+            }
+        }
+        & (Join-Path $RepoRoot 'scripts\windows\virtualization\smoke-ova-vmware.ps1') -OvaPath $ovaPath -Credential $smokeCredential -ManagementVmnet $ManagementVmnet -ServiceVmnet $ServiceVmnet -OutputRoot (Join-Path $smokeRoot 'vmware') @consoleArguments
         if ($LASTEXITCODE -ne 0) {
             throw 'VMware smoke failed.'
         }
+        Assert-AtlasoVirtualizationStoragePlan -Plan $storagePlan -Stage 5
         & (Join-Path $RepoRoot 'scripts\windows\virtualization\smoke-hyperv.ps1') -ZipPath $hypervZip[0].FullName -ManagementSwitch $ManagementSwitch -ServiceSwitch $ServiceSwitch -OutputRoot (Join-Path $smokeRoot 'hyperv')
         if ($LASTEXITCODE -ne 0) {
             throw 'Hyper-V smoke failed.'
         }
     }
     finally {
+        if ($null -ne $consoleSession) {
+            Complete-AtlasoSmokeConsoleSession -Session $consoleSession -CleanupVerified $consoleCleanupVerified
+        }
         $smokeCredential = $null
         if ($null -ne $smokePassword) { $smokePassword.Dispose() }
         $smokePassword = $null
@@ -1184,6 +1269,7 @@ function Invoke-AtlasoVirtualizationPrerelease {
         $null = Assert-AtlasoVmwarePayloadProvenance -VmxPath $vmx -ExpectedSourceCommit $identity.Commit -RequireReleaseBuilder
     }
     $evidencePath = Join-Path $operation 'windows-smoke-evidence.json'
+    Assert-AtlasoVirtualizationStoragePlan -Plan $storagePlan -Stage 6
     [ordered]@{
         schema_version = 1
         kind = 'atlaso-windows-virtualization-smoke'

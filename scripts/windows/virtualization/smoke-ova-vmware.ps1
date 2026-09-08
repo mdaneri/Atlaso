@@ -19,6 +19,12 @@ Optional VMware OVF Tool executable path.
 Optional vmrun executable path.
 .PARAMETER PythonPath
 Optional Python executable with Paramiko installed.
+.PARAMETER ConsoleHoldMinutes
+Diagnostic-only console window after power-on, from 1 through 30 minutes; zero runs ordinary smoke.
+.PARAMETER ConsoleVariable
+Exact concealed per-run variable in the verified Atlaso 1Password Environment.
+.PARAMETER ConsoleCleanupVerified
+Caller-owned flag set only after successful identity-verified VM and artifact cleanup.
 #>
 [CmdletBinding()]
 param(
@@ -30,11 +36,17 @@ param(
     [string]$OutputRoot = '',
     [string]$OvfToolPath = '',
     [string]$VmrunPath = '',
-    [string]$PythonPath = ''
+    [string]$PythonPath = '',
+    [ValidateRange(0, 30)][int]$ConsoleHoldMinutes = 0,
+    [string]$ConsoleVariable = '',
+    [ref]$ConsoleCleanupVerified
 )
 
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
+if ($ConsoleHoldMinutes -gt 0 -and $ConsoleVariable -cnotmatch '^ATLASO_SMOKE_CONSOLE_[0-9A-F]{32}$') {
+    throw 'Diagnostic console access requires one isolated concealed 1Password run variable.'
+}
 
 <#
 .SYNOPSIS
@@ -320,6 +332,7 @@ function Invoke-AtlasoVmwareSmokeGuestPhase {
 
 $repoRoot = (Resolve-Path -LiteralPath (Join-Path $PSScriptRoot '..\..\..')).Path
 Import-Module (Join-Path $PSScriptRoot 'Atlaso.VirtualizationSmokeIdentity.psm1') -Force
+Import-Module (Join-Path $PSScriptRoot 'Atlaso.StorageCapacity.psm1') -Force
 if ($Name -notmatch '^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$') {
     throw 'VMware smoke-test Name must be one safe filesystem component.'
 }
@@ -391,6 +404,9 @@ $validationRoot = Join-Path $resolvedRoot ('.ova-validation-' + [guid]::NewGuid(
 if (Test-Path -LiteralPath $vmRoot) {
     throw "VMware smoke-test destination already exists: $vmRoot"
 }
+Assert-AtlasoStorageCapacity -Stage 'VMware smoke import' -Components @(
+    [pscustomobject]@{ Path=$resolvedRoot; Name='payload import, validation, guest growth and 4 GiB memory'; Bytes=84GB }
+)
 New-Item -ItemType Directory -Path $vmRoot -Force | Out-Null
 New-Item -ItemType Directory -Path $validationRoot -Force | Out-Null
 foreach ($ownedDirectory in @($vmRoot, $validationRoot)) {
@@ -488,6 +504,9 @@ try {
     finally {
         $ovfEnvironment = $null
     }
+    Assert-AtlasoStorageCapacity -Stage 'VMware smoke startup' -Components @(
+        [pscustomobject]@{ Path=$vmRoot; Name='4 GiB memory and guest disk growth'; Bytes=20GB }
+    )
     & $vmrun -T ws start $vmxPath nogui | Out-Null
     if ($LASTEXITCODE -ne 0) {
         throw 'vmrun could not start the imported OVA.'
@@ -506,6 +525,15 @@ try {
         -VmxPath $vmxPath `
         -ManagementVmnet $ManagementVmnet `
         -ServiceVmnet $ServiceVmnet
+    if ($ConsoleHoldMinutes -gt 0) {
+        $consoleDeadline = [DateTimeOffset]::UtcNow.AddMinutes($ConsoleHoldMinutes)
+        Write-Host "Console diagnostic VM: $vmxPath; account=root; Atlaso Environment variable=$ConsoleVariable"
+        Write-Host "Diagnostic window ends at $($consoleDeadline.ToString('o')); cleanup follows. This run is never release evidence."
+        while ([DateTimeOffset]::UtcNow -lt $consoleDeadline) {
+            Start-Sleep -Seconds 5
+        }
+        throw 'Diagnostic console window completed; run ordinary smoke again on a fresh import before publication.'
+    }
     $hostKeyDeadline = [DateTimeOffset]::UtcNow.AddMinutes(15)
     Write-Host "VMware/initial import complete; waiting for guest host-key publication: VMX=$vmxPath MAC=$($providerIdentity.ManagementMac) vmnet=$ManagementVmnet deadline=900s"
     $nextHostKeyProgress = [DateTimeOffset]::UtcNow.AddSeconds(30)
@@ -684,6 +712,9 @@ finally {
     }
     if ($cleanupFailure) {
         throw $cleanupFailure
+    }
+    if ($null -ne $ConsoleCleanupVerified -and -not (Test-Path -LiteralPath $vmRoot)) {
+        $ConsoleCleanupVerified.Value = $true
     }
 }
 

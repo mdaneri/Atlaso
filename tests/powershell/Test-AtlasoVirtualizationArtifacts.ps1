@@ -626,7 +626,7 @@ $releaseSourceChecks = ([regex]::Matches(
         $releaseModule,
         '-ExpectedSourceCommit \$identity\.Commit(?:\s+`\s*\r?\n\s*|\s+)-RequireCleanSource'
     )).Count
-if ($releaseSourceChecks -ne 2) {
+if ($releaseSourceChecks -ne 3) {
     throw 'Virtualization production must enforce exact clean build provenance on reuse and after build.'
 }
 foreach ($forbidden in @('Start-AtlasoVirtualizationDeploymentVm', 'Stop-AtlasoVirtualizationDeploymentVm',

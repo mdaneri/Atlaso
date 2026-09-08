@@ -38,6 +38,9 @@ precedence over OnePasswordAccount; the checkout-local default is preferred
 before desktop discovery when both are omitted.
 .PARAMETER OnePasswordPython
 Optional supported Python executable. Omission discovers standard Windows x64 CPython 3.14.
+.PARAMETER SmokeConsoleMinutes
+Opt into a 1-to-30-minute VMware console diagnostic using a concealed per-run 1Password variable.
+The diagnostic always stops before successful smoke evidence or publication; zero selects normal release validation.
 .PARAMETER ProxmoxRunnerLabel
 Release-specific label of the approved ephemeral Proxmox runner.
 .PARAMETER KvmRunnerLabel
@@ -95,6 +98,7 @@ param(
     [string]$OnePasswordAccount = '',
     [string]$OnePasswordServiceAccountTokenFile = '',
     [string]$OnePasswordPython = '',
+    [ValidateRange(0, 30)][int]$SmokeConsoleMinutes = 0,
     [string]$ProxmoxRunnerLabel = '',
     [string]$KvmRunnerLabel = '',
     [switch]$NoWait,
@@ -133,6 +137,7 @@ if ($Release -or $Prerelease) {
             -OnePasswordAccount $OnePasswordAccount `
             -OnePasswordServiceAccountTokenFile $OnePasswordServiceAccountTokenFile `
             -OnePasswordPython $OnePasswordPython `
+            -SmokeConsoleMinutes $SmokeConsoleMinutes `
             -CandidateOnly:$CandidateOnly `
             -NoWait:$NoWait
         return
@@ -140,7 +145,7 @@ if ($Release -or $Prerelease) {
     if (-not $FromPrerelease -or -not $ProxmoxRunnerLabel -or -not $KvmRunnerLabel) {
         throw '-Release requires -FromPrerelease, -ProxmoxRunnerLabel, and -KvmRunnerLabel.'
     }
-    if ($StagingRoot -or $ManagementSwitch -or $ServiceSwitch -or $CandidateOnly) {
+    if ($StagingRoot -or $ManagementSwitch -or $ServiceSwitch -or $CandidateOnly -or $SmokeConsoleMinutes) {
         throw 'Prerelease build and Windows smoke parameters do not apply to -Release.'
     }
     Invoke-AtlasoVirtualizationStablePromotion `
@@ -151,6 +156,7 @@ if ($Release -or $Prerelease) {
         -NoWait:$NoWait
     return
 }
+if ($SmokeConsoleMinutes -gt 0) { throw '-SmokeConsoleMinutes requires -Prerelease.' }
 
 $publishReleaseAssets = $false
 
@@ -1848,6 +1854,10 @@ $resolvedOutputDirectory = $outputPlan.OutputDirectory
 $resolvedOvfTool = Resolve-OvfToolPath -Path $OvfToolPath
 $resolvedTar = if ($NoOva) { '' } else { Resolve-TarPath -Path $TarPath }
 
+Import-Module (Join-Path $PSScriptRoot '../virtualization/Atlaso.StorageCapacity.psm1') -Force
+Assert-AtlasoStorageCapacity -Stage 'OVF export' -Components @(
+    [pscustomobject]@{ Path=$resolvedOutputDirectory; Name='payload export and OVA staging'; Bytes=68GB }
+)
 Clear-AtlasoOvfOutputDirectory -OutputPlan $outputPlan -Release:$publishReleaseAssets -Force:$Force
 New-Item -ItemType Directory -Force -Path $resolvedOutputDirectory | Out-Null
 
@@ -1876,6 +1886,11 @@ $manifestPath = Update-OvfManifest -OvfDirectory $ovfPackageDirectory
 $ovaPath = ''
 if (-not $NoOva) {
     $ovaPath = Join-Path (Split-Path -Parent $resolvedOutputDirectory) "$Name.ova"
+    $archiveEstimate = [long]((Get-ChildItem -LiteralPath $ovfPackageDirectory -File |
+        Measure-Object -Property Length -Sum).Sum) + 1MB
+    Assert-AtlasoStorageCapacity -Stage 'OVA archive creation' -Components @(
+        [pscustomobject]@{ Path=$resolvedOutputDirectory; Name='OVA archive'; Bytes=$archiveEstimate }
+    )
     New-OvaArchive -OvfDirectory $ovfPackageDirectory -OvaPath $ovaPath -ResolvedTarPath $resolvedTar
     Assert-AtlasoCanonicalOva -RepoRoot $repoRoot -OvaPath $ovaPath
 }
