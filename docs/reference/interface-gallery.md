@@ -543,7 +543,7 @@ Figure: Web terminal connected to the verified Photon appliance in the responsiv
 
 Route: `/ui/management/traffic-publishing`
 
-![Atlaso Traffic Publishing showing explicit eth2 ingress, eth3 egress, and enabled source NAT.](../assets/screenshots/traffic-publishing-desktop.webp)
+![Atlaso Traffic Publishing with source NAT rules and a viewport-filling grid above the footer.](../assets/screenshots/traffic-publishing-desktop.webp)
 
 Figure: Traffic Publishing with reviewed IPv4 masquerade and the canonical NAT setting.
 
