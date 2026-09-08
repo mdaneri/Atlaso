@@ -899,19 +899,35 @@ if ($null -eq $phaseFunction) { throw 'Missing provider-owned SSH retry boundary
         $events.Add('network')
         if ($events.Contains('ssh')) { throw 'fixture-address-changed' }
     }
+    $nativePython = (Get-Command python -ErrorAction Stop).Source
     $python = {
         $events.Add('ssh')
-        $global:LASTEXITCODE = 75
+        & $nativePython -c "raise SystemExit($nativeExitCode)"
     }
     $identity = [pscustomobject]@{
         ManagementMac = '00:0c:29:11:22:33'; HostInterfaceIndex = 8; Address = '192.0.2.20'
     }
-    $failure = ''
-    try { Invoke-AtlasoVmwareSmokeGuestPhase -Phase initial -Identity $identity | Out-Null }
-    catch { $failure = $_.Exception.Message }
-    if ($failure -ne 'fixture-address-changed' -or
-        ($events -join ',') -ne 'nics,filesystem,network,ssh,nics,filesystem,network') {
-        throw 'Address drift did not stop the next authenticated attempt at provider admission.'
+    foreach ($nativePreference in @($true, $false)) {
+        foreach ($nativeExitCode in @(75, 2)) {
+            $PSNativeCommandUseErrorActionPreference = $nativePreference
+            $events.Clear()
+            $failure = ''
+            try { Invoke-AtlasoVmwareSmokeGuestPhase -Phase initial -Identity $identity | Out-Null }
+            catch { $failure = $_.Exception.Message }
+            if ($PSNativeCommandUseErrorActionPreference -ne $nativePreference) {
+                throw 'Smoke validation changed the caller native-error preference.'
+            }
+            if ($nativeExitCode -eq 75) {
+                if ($failure -ne 'fixture-address-changed' -or
+                    ($events -join ',') -ne 'nics,filesystem,network,ssh,nics,filesystem,network') {
+                    throw 'Address drift did not stop the next authenticated attempt at provider admission.'
+                }
+            }
+            elseif ($failure -notmatch 'authenticated guest validation failed' -or
+                ($events -join ',') -ne 'nics,filesystem,network,ssh') {
+                throw 'Terminal native child failure was retried or accepted.'
+            }
+        }
     }
 }
 $identityInitializer = $smokeAst.Find({

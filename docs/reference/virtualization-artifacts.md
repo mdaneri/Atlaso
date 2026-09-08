@@ -416,6 +416,8 @@ the same binding is revalidated after reboot.
 VMware SSH admission requires a currently `Reachable` management neighbor. Cached `Stale`, `Delay`, and `Probe`
 entries are probe candidates only; expired, malformed, or unbounded DHCP leases are excluded. Each failed SSH
 transport attempt returns to the Windows wrapper for another identity check under the same 15-minute phase deadline.
+The wrapper handles the child retry status explicitly even when PowerShell native-error promotion is enabled, and
+preserves the caller's preference; other nonzero child results remain terminal.
 Loss of MAC-bound address ownership receives at most a 20-second neighbor refresh window before an explicit identity
 failure. A changed address is never silently substituted, including during initial boot. Correct the reported network
 condition and start a new disposable smoke attempt. Host-key or authentication rejection is terminal.

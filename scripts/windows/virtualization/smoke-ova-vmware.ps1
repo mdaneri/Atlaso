@@ -292,8 +292,17 @@ function Invoke-AtlasoVmwareSmokeGuestPhase {
         $arguments = @('--host', [string]$Identity.Address, '--host-key', $expectedHostKey,
             '--platform', 'vmware', '--phase', $Phase, '--single-connect-attempt')
         if ($Fingerprint) { $arguments += @('--expected-tls-fingerprint', $Fingerprint) }
-        $result = @($secret | & $python (Join-Path $repoRoot 'scripts\virtualization\smoke_guest_ssh.py') @arguments)
-        $exitCode = $LASTEXITCODE
+        # Exit 75 is the child protocol's transport-pending result, not a
+        # PowerShell error. Preserve the caller's native error preference.
+        $previousNativeExitPreference = $PSNativeCommandUseErrorActionPreference
+        try {
+            $PSNativeCommandUseErrorActionPreference = $false
+            $result = @($secret | & $python (Join-Path $repoRoot 'scripts\virtualization\smoke_guest_ssh.py') @arguments)
+            $exitCode = $LASTEXITCODE
+        }
+        finally {
+            $PSNativeCommandUseErrorActionPreference = $previousNativeExitPreference
+        }
         if ($exitCode -eq 0) { return $result }
         if ($exitCode -ne 75) { throw "VMware/$Phase authenticated guest validation failed; see the sanitized child category." }
         Start-Sleep -Seconds ([Math]::Min(5, $remaining))
