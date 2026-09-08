@@ -2974,6 +2974,17 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#worktree-1password-configuration" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Worktree 1Password configuration
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#focused-local-validation-and-pull-request-follow-through" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
@@ -3725,6 +3736,17 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#worktree-1password-configuration" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Worktree 1Password configuration
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#focused-local-validation-and-pull-request-follow-through" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
@@ -4198,6 +4220,27 @@ runtime.</p>
   status linked to its trusted run, retain diagnostic names for bot-triggered <code>pull_request</code> jobs, and keep trusted and
   diagnostic events in separate concurrency groups so diagnostic work cannot cancel trusted publication. Never grant
   candidate workflow revisions status-write permission.</li>
+</ul>
+<h3 id="worktree-1password-configuration">Worktree 1Password configuration<a class="headerlink" href="#worktree-1password-configuration" title="Permanent link">&para;</a></h3>
+<ul>
+<li>During same-Windows-host, same-user task-worktree setup, resolve the primary checkout from Git's common-directory
+  and worktree inventory, and use the already verified task worktree beneath the configured Codex root as destination.
+  Follow the canonical
+  <a href="../../reference/vmware-workstation-lifecycle-testing/#reuse-primary-checkout-configuration-in-a-task-worktree">worktree configuration procedure</a>.</li>
+<li>Seed only missing <code>.atlaso-local/onepassword-environment-id</code> and
+  <code>.atlaso-local/onepassword-service-account-token.dpapi</code> files from validated primary-checkout originals. Require
+  containment, ordinary single-link files, no reparse points, the pinned Atlaso Environment, and the existing token
+  owner/ACL contract. Establish current-user-and-SYSTEM destination permissions before copying without replacement;
+  preserve source bytes and ciphertext, and verify the destination with the existing helpers before use.</li>
+<li>Reuse valid destination configuration and preserve explicit authentication choices. Conflicting or invalid state
+  requires maintainer direction, never automatic overwrite, ACL repair of existing files, or token rotation. Local
+  validation does not prove decryption or authorization: the supported bounded child must authenticate and verify the
+  exact Environment before the consuming workflow mutates VMware or network state. Unavailable unattended credentials
+  require a precise non-secret prerequisite, never an implicit desktop switch or a plaintext chat prompt.</li>
+<li>Never copy the remaining <code>.atlaso-local</code> tree, including runtime caches, secrets staging, logs, cleanup markers, or
+  reservations. Never decrypt/re-encrypt for copying or print selector/token contents. Keep the copies Git-ignored and
+  out of commits, PRs, release artifacts, and logs. Task cleanup owns only the copied files and must preserve the
+  primary checkout's originals. This procedure reuses the supported authentication path; it adds no runtime fallback.</li>
 </ul>
 <h3 id="focused-local-validation-and-pull-request-follow-through">Focused local validation and pull-request follow-through<a class="headerlink" href="#focused-local-validation-and-pull-request-follow-through" title="Permanent link">&para;</a></h3>
 <ul>
