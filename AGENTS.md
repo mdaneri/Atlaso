@@ -274,6 +274,14 @@ the linked issue or issues. Keep it accurate to the exact merged head and exclud
 
 ## Completed Task Cleanup
 
+Agents and the primary-checkout cleanup controller must use `scripts/cleanup-completed-task.ps1` for eligible
+completed ordinary task worktrees. Run `pwsh -NoProfile -File scripts/cleanup-completed-task.ps1` with absolute
+`-Handoff`, `-Evidence`, and `-Config` inputs: omit `-Execute` for read-only preview, then add it for execution with
+fresh live controller evidence. Follow the [command and bridge contract](docs/contribute/completed-task-cleanup.md).
+Never replace a failed or refused command with ad hoc deletion; preserve remaining resources and report its exact
+retry condition. Unsupported policy exceptions retain their existing safeguards and require the documented controller
+workflow; this command does not waive ownership, resource-release, terminal-order, or title-readback gates.
+
 An ordinary implementation task becomes cleanup-ready only after its pull request is merged, the merge commit is
 reachable from current `origin/main`, the linked issue is closed, applicable post-merge workflows are complete, and no
 review, deployment, release, or maintainer activity remains. Private remediation uses `advisory_cleanup_ready` instead

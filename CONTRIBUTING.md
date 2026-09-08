@@ -200,6 +200,14 @@ state changes and advisory merges still require the explicit authorization and p
 
 ### Completed task cleanup
 
+Agents and the primary-checkout cleanup controller must use `scripts/cleanup-completed-task.ps1` for eligible
+completed ordinary task worktrees. Run `pwsh -NoProfile -File scripts/cleanup-completed-task.ps1` with absolute
+`-Handoff`, `-Evidence`, and `-Config` inputs: omit `-Execute` for read-only preview, then add it for execution with
+fresh live controller evidence. Follow the [command and bridge contract](docs/contribute/completed-task-cleanup.md).
+Never replace a failed or refused command with ad hoc deletion; preserve remaining resources and report its exact
+retry condition. Unsupported policy exceptions retain their existing safeguards and require the documented controller
+workflow; this command does not waive ownership, resource-release, terminal-order, or title-readback gates.
+
 After all post-merge work is complete, a worktree-backed originating task sends a `cleanup-ready` handoff to a cleanup
 controller running from the primary checkout. The handoff identifies the repository, task and title, pull request,
 task-owned branch, absolute worktree path, pull-request head SHA, and merge commit SHA. The controller waits for an

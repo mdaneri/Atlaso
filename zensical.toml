@@ -79,6 +79,7 @@ nav = [
     { "Windows image-build WSL environment" = "contribute/windows-image-build-wsl.md" },
     { "UI design guide" = "contribute/ui-design-guide.md" },
     { "Detailed agent policies" = "contribute/agent-policies.md" },
+    { "Completed task cleanup command" = "contribute/completed-task-cleanup.md" },
   ] },
   { "Project" = [
     { "Overview" = "project/index.md" },
