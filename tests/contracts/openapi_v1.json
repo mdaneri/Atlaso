@@ -5159,7 +5159,7 @@
             "type": "boolean"
           },
           "inbound_interfaces": {
-            "description": "Required nonempty array of eligible non-management IPv4 ingress interface/VLAN names, including when creating a disabled rule. The outbound target must not appear here.",
+            "description": "Required nonempty array of eligible non-management ingress interface/VLAN names matching ip_family, including when creating a disabled rule. The outbound target must not appear here.",
             "items": {
               "description": "Canonical physical interface or VLAN name.",
               "maxLength": 80,
@@ -5172,9 +5172,19 @@
             "title": "Inbound Interfaces",
             "type": "array"
           },
+          "ip_family": {
+            "default": 4,
+            "description": "Requested NAT translation family for dual-stack mode (`4` or `6`).",
+            "enum": [
+              4,
+              6
+            ],
+            "title": "Ip Family",
+            "type": "integer"
+          },
           "masquerade": {
             "default": true,
-            "description": "Whether masquerade is enabled for this nat rule resource.",
+            "description": "Legacy compatibility mirror of `translation_mode == \"masquerade\"`. Keep in sync when updating legacy integrations.",
             "title": "Masquerade",
             "type": "boolean"
           },
@@ -5206,6 +5216,23 @@
             "maxLength": 240,
             "minLength": 1,
             "title": "Source",
+            "type": "string"
+          },
+          "translated_address": {
+            "default": "",
+            "description": "Canonical translated address value for SNAT translation. Empty while masquerade mode is active.",
+            "maxLength": 240,
+            "title": "Translated Address",
+            "type": "string"
+          },
+          "translation_mode": {
+            "default": "masquerade",
+            "description": "Canonical translation mode. Use `masquerade` for legacy behavior and `snat` for translated-address mode.",
+            "enum": [
+              "masquerade",
+              "snat"
+            ],
+            "title": "Translation Mode",
             "type": "string"
           }
         },
@@ -5244,7 +5271,7 @@
             "type": "integer"
           },
           "inbound_interfaces": {
-            "description": "Explicit enabled non-management IPv4 ingress interface/VLAN names. Required for new or enabled rules; the outbound target must not appear here. Empty legacy scope requires administrator review.",
+            "description": "Explicit enabled non-management ingress interface/VLAN names matching ip_family. Required for new or enabled rules; the outbound target must not appear here. Empty legacy scope requires administrator review.",
             "items": {
               "description": "Canonical physical interface or VLAN name.",
               "maxLength": 80,
@@ -5256,9 +5283,19 @@
             "title": "Inbound Interfaces",
             "type": "array"
           },
+          "ip_family": {
+            "default": 4,
+            "description": "Requested NAT translation family for dual-stack mode (`4` or `6`).",
+            "enum": [
+              4,
+              6
+            ],
+            "title": "Ip Family",
+            "type": "integer"
+          },
           "masquerade": {
             "default": true,
-            "description": "Whether masquerade is enabled for this nat rule resource.",
+            "description": "Legacy compatibility mirror of `translation_mode == \"masquerade\"`. Keep in sync when updating legacy integrations.",
             "title": "Masquerade",
             "type": "boolean"
           },
@@ -5291,6 +5328,23 @@
             "minLength": 1,
             "title": "Source",
             "type": "string"
+          },
+          "translated_address": {
+            "default": "",
+            "description": "Canonical translated address value for SNAT translation. Empty while masquerade mode is active.",
+            "maxLength": 240,
+            "title": "Translated Address",
+            "type": "string"
+          },
+          "translation_mode": {
+            "default": "masquerade",
+            "description": "Canonical translation mode. Use `masquerade` for legacy behavior and `snat` for translated-address mode.",
+            "enum": [
+              "masquerade",
+              "snat"
+            ],
+            "title": "Translation Mode",
+            "type": "string"
           }
         },
         "required": [
@@ -5302,7 +5356,7 @@
         "type": "object"
       },
       "NatRuleUpdate": {
-        "description": "Fields accepted when updating a NAT rule, including dormant legacy rows.\n\nAttributes:\n    name: Stable operator-facing name of this resource.\n    enabled: Whether the resource is enabled in saved Atlaso state.\n    source: Validated network or address value for source in this nat rule resource.\n    inbound_interfaces: Explicit eligible ingress targets, distinct from the outbound target.\n    outbound_interface: Requested outbound interface value for this nat rule resource.\n    masquerade: Whether masquerade is enabled for this nat rule resource.\n    priority: Requested priority value for this nat rule resource.\n    description: Operator-facing purpose or context for this resource.",
+        "description": "Fields accepted when updating a NAT rule, including dormant legacy rows.\n\nAttributes:\n    name: Stable operator-facing name of this resource.\n    enabled: Whether the resource is enabled in saved Atlaso state.\n    source: Validated network or address value for source in this nat rule resource.\n    inbound_interfaces: Explicit eligible ingress targets, distinct from the outbound target.\n    ip_family: Requested IP family for translation (`4` for IPv4, `6` for IPv6).\n    translation_mode: Requested translation mode for the nat rule resource.\n    translated_address: Requested translated address value for SNAT-style rules.\n    outbound_interface: Requested outbound interface value for this nat rule resource.\n    masquerade: Whether masquerade is enabled for this nat rule resource.\n    priority: Requested priority value for this nat rule resource.\n    description: Operator-facing purpose or context for this resource.",
         "properties": {
           "description": {
             "anyOf": [
@@ -5323,7 +5377,7 @@
             "type": "boolean"
           },
           "inbound_interfaces": {
-            "description": "Explicit enabled non-management IPv4 ingress interface/VLAN names. Required for new or enabled rules; the outbound target must not appear here. Empty legacy scope requires administrator review.",
+            "description": "Explicit enabled non-management ingress interface/VLAN names matching ip_family. Required for new or enabled rules; the outbound target must not appear here. Empty legacy scope requires administrator review.",
             "items": {
               "description": "Canonical physical interface or VLAN name.",
               "maxLength": 80,
@@ -5335,9 +5389,19 @@
             "title": "Inbound Interfaces",
             "type": "array"
           },
+          "ip_family": {
+            "default": 4,
+            "description": "Requested NAT translation family for dual-stack mode (`4` or `6`).",
+            "enum": [
+              4,
+              6
+            ],
+            "title": "Ip Family",
+            "type": "integer"
+          },
           "masquerade": {
             "default": true,
-            "description": "Whether masquerade is enabled for this nat rule resource.",
+            "description": "Legacy compatibility mirror of `translation_mode == \"masquerade\"`. Keep in sync when updating legacy integrations.",
             "title": "Masquerade",
             "type": "boolean"
           },
@@ -5369,6 +5433,23 @@
             "maxLength": 240,
             "minLength": 1,
             "title": "Source",
+            "type": "string"
+          },
+          "translated_address": {
+            "default": "",
+            "description": "Canonical translated address value for SNAT translation. Empty while masquerade mode is active.",
+            "maxLength": 240,
+            "title": "Translated Address",
+            "type": "string"
+          },
+          "translation_mode": {
+            "default": "masquerade",
+            "description": "Canonical translation mode. Use `masquerade` for legacy behavior and `snat` for translated-address mode.",
+            "enum": [
+              "masquerade",
+              "snat"
+            ],
+            "title": "Translation Mode",
             "type": "string"
           }
         },
@@ -7065,12 +7146,13 @@
             "type": "boolean"
           },
           "nat_enabled": {
-            "description": "Whether saved Atlaso IPv4 masquerade rules are enabled; NAT remains suspended while routing is disabled.",
+            "deprecated": true,
+            "description": "Canonical projection for traffic publishing enablement; retain for backward compatibility.",
             "title": "Nat Enabled",
             "type": "boolean"
           },
           "routing_enabled": {
-            "description": "Whether Atlaso lab routes, routing permissions, and IPv4/IPv6 packet forwarding are enabled in saved desired state.",
+            "description": "Whether Atlaso lab routes, routing permissions, and dual-stack packet forwarding are enabled in saved desired state.",
             "title": "Routing Enabled",
             "type": "boolean"
           },
@@ -7090,15 +7172,16 @@
         "type": "object"
       },
       "RoutesWanSettingsUpdate": {
-        "description": "Global desired-state activation fields for Routes and WAN features.\n\nAttributes:\n    routing_enabled: Whether Atlaso lab routing and packet forwarding are desired.\n    nat_enabled: Whether saved IPv4 masquerade rules are desired when routing is enabled.\n    wan_simulation_enabled: Whether saved tc/netem assignments are desired.",
+        "description": "Global desired-state activation fields for Routes and WAN features.\n\nAttributes:\n    routing_enabled: Whether Atlaso lab routing and packet forwarding are desired.\n    nat_enabled: Canonical Traffic Publishing projection; prefer TrafficPublishingSettings schemas.\n    wan_simulation_enabled: Whether saved tc/netem assignments are desired.",
         "properties": {
           "nat_enabled": {
-            "description": "Whether saved Atlaso IPv4 masquerade rules are enabled; NAT remains suspended while routing is disabled.",
+            "deprecated": true,
+            "description": "Canonical projection for traffic publishing enablement; retain for backward compatibility.",
             "title": "Nat Enabled",
             "type": "boolean"
           },
           "routing_enabled": {
-            "description": "Whether Atlaso lab routes, routing permissions, and IPv4/IPv6 packet forwarding are enabled in saved desired state.",
+            "description": "Whether Atlaso lab routes, routing permissions, and dual-stack packet forwarding are enabled in saved desired state.",
             "title": "Routing Enabled",
             "type": "boolean"
           },
@@ -7415,6 +7498,52 @@
           }
         },
         "title": "SettingsUpdate",
+        "type": "object"
+      },
+      "TrafficPublishingSettingsResponse": {
+        "description": "Canonical traffic publishing response fields returned by the Routes and WAN settings API.",
+        "properties": {
+          "effective_nat_enabled": {
+            "description": "True only when both routing_enabled and nat_enabled are true.",
+            "title": "Effective Nat Enabled",
+            "type": "boolean"
+          },
+          "nat_enabled": {
+            "default": false,
+            "description": "Whether saved dual-stack traffic publishing rules are enabled.",
+            "title": "Nat Enabled",
+            "type": "boolean"
+          },
+          "routing_enabled": {
+            "description": "Whether Atlaso lab routes, routing permissions, and dual-stack packet forwarding are enabled in saved desired state.",
+            "title": "Routing Enabled",
+            "type": "boolean"
+          },
+          "suspended": {
+            "default": false,
+            "description": "Whether traffic publishing controls are currently suspended by routing or maintenance policy.",
+            "title": "Suspended",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "routing_enabled",
+          "effective_nat_enabled"
+        ],
+        "title": "TrafficPublishingSettingsResponse",
+        "type": "object"
+      },
+      "TrafficPublishingSettingsUpdate": {
+        "description": "Canonical traffic publishing controls accepted by the Routes and WAN settings API.",
+        "properties": {
+          "nat_enabled": {
+            "default": false,
+            "description": "Whether saved dual-stack traffic publishing rules are enabled.",
+            "title": "Nat Enabled",
+            "type": "boolean"
+          }
+        },
+        "title": "TrafficPublishingSettingsUpdate",
         "type": "object"
       },
       "VcfBackupStatusResponse": {
@@ -17477,6 +17606,88 @@
         "summary": "Update App Settings",
         "tags": [
           "Settings"
+        ]
+      }
+    },
+    "/api/v1/traffic-publishing/settings": {
+      "get": {
+        "description": "Read canonical Traffic Publishing desired state.\n\nRequires `read:firewall`. Routing is a read-only projection of its separate owner.\nEffective enablement and suspension describe desired state, not live host health.",
+        "operationId": "getTrafficPublishingSettings",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TrafficPublishingSettingsResponse"
+                }
+              }
+            },
+            "description": "Read canonical Traffic Publishing desired state. The response body matches the documented success schema."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "The request parameters or body failed Atlaso validation. The response includes a request ID that can be correlated with operational logs."
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Get Traffic Publishing Settings",
+        "tags": [
+          "NAT"
+        ]
+      },
+      "put": {
+        "description": "Save canonical source NAT activation intent.\n\nRequires `write:firewall`. This atomically changes the same setting projected by\nlegacy Routes/WAN clients, preserves all rules and never changes Routing. Host\ntranslation changes only through the global `nat` Appliance Apply unit. NAT\nremains suspended while Routing is off. Validation failures use ProblemDetails.",
+        "operationId": "updateTrafficPublishingSettings",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TrafficPublishingSettingsUpdate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TrafficPublishingSettingsResponse"
+                }
+              }
+            },
+            "description": "Save canonical source NAT activation intent. The response body matches the documented success schema."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "The request parameters or body failed Atlaso validation. The response includes a request ID that can be correlated with operational logs."
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Update Traffic Publishing Settings",
+        "tags": [
+          "NAT"
         ]
       }
     },

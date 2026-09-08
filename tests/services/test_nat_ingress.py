@@ -5,11 +5,14 @@ from sqlalchemy import create_engine, inspect, text
 
 from atlaso.app.models import NatRule, PhysicalInterface, VlanInterface
 from atlaso.app.services.routes_wan import (
-    RoutesWanSettings,
     nat_eligible_target_names,
     render_wan_config,
     validate_nat_ingress,
     validate_wan_state,
+)
+from atlaso.app.services.traffic_publishing import (
+    TrafficPublishingSettings,
+    render_nat_config,
 )
 from tests.test_appliance_helper import load_helper_module
 
@@ -46,10 +49,10 @@ def test_both_renderers_require_ingress_and_preserve_address_scope(source, expre
     """
     rule = NatRule(name="Scoped", inbound_interfaces=["eth3", "eth2"], source=source,
                    outbound_interface="eth1", enabled=True, masquerade=True, priority=100)
-    config = render_wan_config([], nat_rules=[rule], targets=[target(n) for n in ["eth1", "eth2", "eth3"]],
-                               settings=RoutesWanSettings(True, True, False))
+    config = render_nat_config([rule], [], [], TrafficPublishingSettings(True, True))
     expected = 'iifname { "eth2", "eth3" } ' + expression + 'oifname "eth1" masquerade'
-    assert expected in config
+    assert "inbound_interfaces=eth3,eth2" in config
+    assert "[nat_rules]" not in render_wan_config([], nat_rules=[rule])
     helper = load_helper_module()
     rendered = helper._render_wan_nat_config([dict(name="Scoped", enabled="true", inbound_interfaces="eth3,eth2",
                                                  outbound_interface="eth1", source=source)])
@@ -61,10 +64,10 @@ def test_legacy_scope_is_retained_but_cannot_render_or_validate():
     rule = NatRule(name="Legacy", source="any", outbound_interface="eth1", enabled=True,
                    masquerade=True, priority=100)
     assert any("explicit review" in error for error in validate_wan_state([], [], {"eth1"}, [rule], {"eth1"}))
-    config = render_wan_config([], nat_rules=[rule], targets=[target("eth1")], settings=RoutesWanSettings(True, True, False))
+    config = render_nat_config([rule], [], [], TrafficPublishingSettings(True, True))
     assert "inbound_interfaces=" in config
     assert 'oifname "eth1" masquerade' not in config
-    with pytest.raises(ValueError, match="explicit inbound"):
+    with pytest.raises(ValueError, match="explicit ingress"):
         load_helper_module()._render_wan_nat_config([dict(name="Legacy", outbound_interface="eth1")])
     rule.enabled = False
     assert not validate_wan_state([], [], {"eth1"}, [rule], {"eth1"})
@@ -159,7 +162,7 @@ def test_disabled_ingress_syntax_never_reaches_config(bad):
     rule = NatRule(name="Dormant", source="any", outbound_interface="eth1", inbound_interfaces=[bad],
                    enabled=False, masquerade=True, priority=100)
     with pytest.raises(ValueError, match="canonical interface"):
-        render_wan_config([], nat_rules=[rule], settings=RoutesWanSettings(False, False, False))
+        render_nat_config([rule], [], [], TrafficPublishingSettings(False, False))
 
 
 def test_safe_invalid_or_legacy_boundaries_remain_reviewable():
@@ -167,6 +170,6 @@ def test_safe_invalid_or_legacy_boundaries_remain_reviewable():
     for inbound, outbound in [([], ""), (["eth2"], "eth2"), (["missing_155d011d14.22"], "eth1")]:
         rule = NatRule(name="Review", source="any", inbound_interfaces=inbound, outbound_interface=outbound,
                        enabled=False, masquerade=True, priority=100)
-        config = render_wan_config([], nat_rules=[rule], settings=RoutesWanSettings(False, False, False))
+        config = render_nat_config([rule], [], [], TrafficPublishingSettings(False, False))
         assert "nat=Review" in config
         assert "masquerade comment" not in config

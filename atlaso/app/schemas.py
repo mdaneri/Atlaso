@@ -1743,6 +1743,9 @@ class NatRuleUpdate(BaseModel):
         enabled: Whether the resource is enabled in saved Atlaso state.
         source: Validated network or address value for source in this nat rule resource.
         inbound_interfaces: Explicit eligible ingress targets, distinct from the outbound target.
+        ip_family: Requested IP family for translation (`4` for IPv4, `6` for IPv6).
+        translation_mode: Requested translation mode for the nat rule resource.
+        translated_address: Requested translated address value for SNAT-style rules.
         outbound_interface: Requested outbound interface value for this nat rule resource.
         masquerade: Whether masquerade is enabled for this nat rule resource.
         priority: Requested priority value for this nat rule resource.
@@ -1752,9 +1755,32 @@ class NatRuleUpdate(BaseModel):
     name: Annotated[str, Field(description='Stable operator-facing name of this resource.')] = Field(min_length=1, max_length=120)
     enabled: Annotated[bool, Field(description='Whether the resource is enabled in saved Atlaso state.')] = True
     source: Annotated[str, Field(description='Validated network or address value for source in this nat rule resource.')] = Field(default="any", min_length=1, max_length=240)
-    inbound_interfaces: list[Annotated[str, Field(min_length=1, max_length=80, pattern=r"^[A-Za-z0-9_.:-]+$", description="Canonical physical interface or VLAN name.")]] = Field(default_factory=list, max_length=128, description="Explicit enabled non-management IPv4 ingress interface/VLAN names. Required for new or enabled rules; the outbound target must not appear here. Empty legacy scope requires administrator review.")
+    inbound_interfaces: list[Annotated[str, Field(min_length=1, max_length=80, pattern=r"^[A-Za-z0-9_.:-]+$", description="Canonical physical interface or VLAN name.")]] = Field(default_factory=list, max_length=128, description="Explicit enabled non-management ingress interface/VLAN names matching ip_family. Required for new or enabled rules; the outbound target must not appear here. Empty legacy scope requires administrator review.")
+    ip_family: Annotated[
+        Literal[4, 6],
+        Field(description="Requested NAT translation family for dual-stack mode (`4` or `6`)."),
+    ] = 4
+    translation_mode: Annotated[
+        Literal["masquerade", "snat"],
+        Field(description="Canonical translation mode. Use `masquerade` for legacy behavior and `snat` for translated-address mode."),
+    ] = "masquerade"
+    translated_address: Annotated[
+        str,
+        Field(
+            description="Canonical translated address value for SNAT translation. Empty while masquerade mode is active.",
+            max_length=240,
+        ),
+    ] = ""
     outbound_interface: Annotated[str, Field(description='Requested outbound interface value for this nat rule resource.')] = Field(min_length=1, max_length=80, pattern=r"^[A-Za-z0-9_.:-]+$")
-    masquerade: Annotated[bool, Field(description='Whether masquerade is enabled for this nat rule resource.')] = True
+    masquerade: Annotated[
+        bool,
+        Field(
+            description=(
+                "Legacy compatibility mirror of `translation_mode == \"masquerade\"`. "
+                "Keep in sync when updating legacy integrations."
+            ),
+        ),
+    ] = True
     priority: Annotated[int, Field(description='Requested priority value for this nat rule resource.')] = Field(default=100, ge=0)
     description: Annotated[str | None, Field(description='Operator-facing purpose or context for this resource.')] = None
 
@@ -1766,7 +1792,7 @@ class NatRuleCreate(NatRuleUpdate):
         inbound_interfaces: One or more eligible ingress targets for every new rule.
     """
 
-    inbound_interfaces: list[Annotated[str, Field(min_length=1, max_length=80, pattern=r"^[A-Za-z0-9_.:-]+$", description="Canonical physical interface or VLAN name.")]] = Field(min_length=1, max_length=128, description="Required nonempty array of eligible non-management IPv4 ingress interface/VLAN names, including when creating a disabled rule. The outbound target must not appear here.")
+    inbound_interfaces: list[Annotated[str, Field(min_length=1, max_length=80, pattern=r"^[A-Za-z0-9_.:-]+$", description="Canonical physical interface or VLAN name.")]] = Field(min_length=1, max_length=128, description="Required nonempty array of eligible non-management ingress interface/VLAN names matching ip_family, including when creating a disabled rule. The outbound target must not appear here.")
 
 
 class NatRuleResponse(NatRuleUpdate):
@@ -1781,22 +1807,59 @@ class NatRuleResponse(NatRuleUpdate):
     id: Annotated[int, Field(description='Unique database identifier assigned to this resource.')]
 
 
+class TrafficPublishingSettingsUpdate(BaseModel):
+    """Canonical traffic publishing controls accepted by the Routes and WAN settings API."""
+
+    nat_enabled: Annotated[
+        bool,
+        Field(
+            default=False,
+            description="Whether saved dual-stack traffic publishing rules are enabled.",
+        ),
+    ]
+
+
+class TrafficPublishingSettingsResponse(TrafficPublishingSettingsUpdate):
+    """Canonical traffic publishing response fields returned by the Routes and WAN settings API."""
+
+    routing_enabled: Annotated[
+        bool,
+        Field(description="Whether Atlaso lab routes, routing permissions, and dual-stack packet forwarding are enabled in saved desired state."),
+    ]
+    effective_nat_enabled: Annotated[
+        bool,
+        Field(description="True only when both routing_enabled and nat_enabled are true."),
+    ]
+    suspended: Annotated[
+        bool,
+        Field(
+            description="Whether traffic publishing controls are currently suspended by routing or maintenance policy.",
+            default=False,
+        ),
+    ]
+
+
 class RoutesWanSettingsUpdate(BaseModel):
     """Global desired-state activation fields for Routes and WAN features.
 
     Attributes:
         routing_enabled: Whether Atlaso lab routing and packet forwarding are desired.
-        nat_enabled: Whether saved IPv4 masquerade rules are desired when routing is enabled.
+        nat_enabled: Canonical Traffic Publishing projection; prefer TrafficPublishingSettings schemas.
         wan_simulation_enabled: Whether saved tc/netem assignments are desired.
     """
 
     routing_enabled: Annotated[
         bool,
-        Field(description="Whether Atlaso lab routes, routing permissions, and IPv4/IPv6 packet forwarding are enabled in saved desired state."),
+        Field(description="Whether Atlaso lab routes, routing permissions, and dual-stack packet forwarding are enabled in saved desired state."),
     ]
     nat_enabled: Annotated[
         bool,
-        Field(description="Whether saved Atlaso IPv4 masquerade rules are enabled; NAT remains suspended while routing is disabled."),
+        Field(
+            description=(
+                "Canonical projection for traffic publishing enablement; retain for backward compatibility."
+            ),
+            deprecated=True,
+        ),
     ]
     wan_simulation_enabled: Annotated[
         bool,
