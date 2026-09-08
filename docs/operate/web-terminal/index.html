@@ -3764,6 +3764,12 @@ fallback is required but unavailable; unscoped IPv6 link-local lease resolvers a
 lease or configure explicit DNS upstreams before retrying.</p>
 <p>The Public Services renderer merges terminal routes into an existing HTTPS listener when CA or depot routes already use
 the same address. It must emit only one <code>/static/</code> location per nginx server block.</p>
+<p>First-boot management HTTPS and ordinary Appliance Settings apply both supply nginx's actual listener address to
+Atlaso through <code>X-Atlaso-Listener-Address</code>. This keeps an enabled management terminal usable with the bootstrap
+configuration. If the selected and applied addresses are correct but the terminal returns 404 on an older appliance,
+check that <code>/etc/atlaso/nginx/sites.d/management.conf</code> sets this header to <code>$server_addr</code> in its HTTPS proxy location.
+Reconcile Appliance Settings through global appliance apply to regenerate an older configuration. Do not substitute a
+client-supplied header or relax terminal listener authorization.</p>
 <p>If apply fails, inspect the Public Services child task and validate
 <code>/var/lib/atlaso/apply/public-services/atlaso-public-services.conf</code>. On the appliance, validate nginx with <code>nginx -t</code>,
 confirm <code>atlaso.service</code> is active, and verify the selected address separately:</p>
