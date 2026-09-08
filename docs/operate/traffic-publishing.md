@@ -74,6 +74,9 @@ control-plane startup rebuild selectors using current interface indexes. A repla
 fixed address, quarantines translation and requires review. The saved desired rule is preserved. Do not hand-edit
 `/etc/atlaso/nftables.d/atlaso-nat.nft`; the managed include path remains stable.
 
+Management handoff rollback restores Firewall before replaying NAT, so a firewall ruleset replacement cannot erase
+the restored source translations.
+
 ## Upgrade, archives, and API compatibility
 
 Existing IPv4 rules gain `ip_family=4`, `translation_mode=masquerade`, and an empty `translated_address`. Existing

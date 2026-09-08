@@ -22112,6 +22112,8 @@ def _restore_management_handoff(state: dict) -> dict:
         "Routes & WAN rollback",
         lambda: _restore_management_handoff_wan(state, commands),
     )
+    # Firewall restoration flushes the ruleset; replay canonical NAT after that final flush.
+    attempt("firewall restore", lambda: _restore_management_handoff_firewall(state, commands))
     if NAT_RUNTIME_CONFIG_PATH.exists():
         def restore_nat() -> None:
             """Rebuild prior NAT selectors after restoring Network and WAN."""
@@ -22121,7 +22123,6 @@ def _restore_management_handoff(state: dict) -> dict:
                 raise ValueError("Traffic Publishing rollback failed")
 
         attempt("Traffic Publishing rollback", restore_nat)
-    attempt("firewall restore", lambda: _restore_management_handoff_firewall(state, commands))
 
     def validate_nginx() -> None:
         if _nginx_binary() is None or _nginx_test_command().returncode != 0:
