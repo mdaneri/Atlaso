@@ -668,8 +668,8 @@ function dnsRecordsGridHeight(tableElement, viewportWidth = window.innerWidth, v
   return Math.max(300, availableHeight);
 }
 
-function resizeDnsRecordsTableElement(tableElement) {
-  const height = dnsRecordsGridHeight(tableElement);
+function resizeDnsRecordsTableElement(tableElement, viewportHeight = window.innerHeight) {
+  const height = dnsRecordsGridHeight(tableElement, window.innerWidth, viewportHeight);
   const nextHeight = height === null ? "" : `${height}px`;
   if (tableElement.style.height === nextHeight) {
     return false;
@@ -7909,7 +7909,8 @@ function initializeRoutesWanNatTable() {
     }).table;
     if (table) {
       const resize = () => {
-        if (resizeDnsRecordsTableElement(tableElement)) table.redraw(true);
+        const footerHeight = document.querySelector(".management-info-footnote")?.getBoundingClientRect().height || 0;
+        if (resizeDnsRecordsTableElement(tableElement, window.innerHeight - footerHeight)) table.redraw(true);
       };
       let resizeFrame = 0;
       const scheduleResize = () => {
