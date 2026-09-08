@@ -35,10 +35,11 @@ This verified appliance view provides visual orientation before you begin.
    **Outbound interface or VLAN** with addresses in that family.
 4. Select any same-family source, a shared Source Group, or explicit same-family source CIDRs. A Source Group must
    resolve entirely within the selected family. These selectors restrict addresses inside the selected ingress;
-   they never grant access from another interface. **Manage source groups** opens Network Objects in a new tab. Return to the wizard to refresh
-   the source-group choices while preserving the rule draft.
+   they never grant access from another interface. **Manage source groups** opens Network Objects in a new tab.
+   Return to the wizard to refresh the source-group choices while preserving the rule draft.
 5. Select **Interface-address masquerade**, or **Fixed SNAT** and choose the exact same-family address assigned to the egress
-   target. The address selector refreshes when the family or egress changes and does not accept arbitrary text. Fixed SNAT does not assign an address or create a pool. IPv6 translation is stateful NAT66.
+   target. The address selector refreshes when the family or egress changes and does not accept arbitrary text.
+   Fixed SNAT does not assign an address or create a pool. IPv6 translation is stateful NAT66.
 6. Review the family, ingress, source, egress, translation, priority, and enabled state, then save.
 7. Enable **NAT enabled** and enable Routing in **Routing & WAN** when forwarding is intended. Both switches default
    off. Routing is the sole owner of IPv4 and IPv6 forwarding. NAT intent remains saved and visibly suspended while

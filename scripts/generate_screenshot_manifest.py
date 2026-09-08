@@ -48,6 +48,13 @@ CAPTURE_OVERRIDES = {
         for stem in ("traffic-publishing-desktop", "traffic-publishing-responsive",
                      "traffic-publishing-wizard-desktop", "traffic-publishing-wizard-responsive")
     },
+    "traffic-publishing-desktop": {
+        "viewport": "1600x1000",
+        "alt": "Atlaso Traffic Publishing with source NAT rules and a viewport-filling grid above the footer.",
+        "source_commit": "ff0b3a727b6139cadb29931275914b0f82e9a2e0",
+        "atlaso_version": "0.9.324",
+        "capture_method": "codex-in-app-browser",
+    },
     **{
         stem: {
             "source_commit": "1d5bf935b499+working-tree",
