@@ -82,10 +82,12 @@ the restored source translations.
 ## Upgrade, archives, and API compatibility
 
 Existing IPv4 rules gain `ip_family=4`, `translation_mode=masquerade`, and an empty `translated_address`. Existing
-explicit NAT enablement migrates to the single `traffic_publishing.nat_enabled` setting. A rule without explicit
-ingress stays saved for review and cannot become active until its ingress is selected. Archives preserve rules and
-missing identities backed by archived host inventory; restoring them does not make those identities runtime-eligible.
-Factory reset disables NAT and clears its desired rules through the normal reset and Apply lifecycle.
+explicit NAT enablement migrates to the single `traffic_publishing.nat_enabled` setting. When neither global switch
+exists, enabled legacy NAT rules preserve inferred activation; explicit disable and factory reset still take
+precedence. A rule without explicit ingress stays saved for review and cannot become active until its ingress is
+selected. Archives preserve rules and missing identities backed by archived host inventory; restoring them does not
+make those identities runtime-eligible. Factory reset disables NAT and clears its desired rules through the normal
+reset and Apply lifecycle.
 
 `GET` and `PUT /api/v1/traffic-publishing/settings` use `read:firewall` and `write:firewall`. The response exposes
 `nat_enabled`, `routing_enabled`, `effective_nat_enabled`, and `suspended`; only `nat_enabled` is writable. These are

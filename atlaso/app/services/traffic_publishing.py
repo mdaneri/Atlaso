@@ -45,7 +45,7 @@ class TrafficPublishingSettings:
 
 
 def ensure_traffic_publishing_settings(db: Session, *, force_disabled: bool = False) -> TrafficPublishingSettings:
-    """Migrate an explicit legacy switch once; new installations default off.
+    """Migrate explicit or inferred legacy intent once; empty installations default off.
 
     Args:
         db: Transaction that owns the desired-state read or mutation.
@@ -56,7 +56,10 @@ def ensure_traffic_publishing_settings(db: Session, *, force_disabled: bool = Fa
     row = rows.get(NAT_ENABLED_SETTING_KEY)
     if row is None:
         legacy = rows.get(LEGACY_NAT_ENABLED_SETTING_KEY)
-        row = Setting(key=NAT_ENABLED_SETTING_KEY, value=legacy.value if legacy else "false")
+        inferred = not force_disabled and db.scalar(
+            select(NatRule.id).where(NatRule.enabled.is_(True)).limit(1)
+        ) is not None
+        row = Setting(key=NAT_ENABLED_SETTING_KEY, value=legacy.value if legacy else str(inferred).lower())
         db.add(row)
     if force_disabled:
         row.value = "false"

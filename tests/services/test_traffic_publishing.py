@@ -270,3 +270,31 @@ def test_fixed_snat_requires_observed_egress_address(monkeypatch, family, addres
     observed.clear()
     with pytest.raises(ValueError, match="not assigned"):
         helper._nat_observed_addresses([candidate])
+
+
+@pytest.mark.parametrize("enabled,explicit,force_disabled,expected", [
+    (True, None, False, True), (False, None, False, False),
+    (True, "false", False, False), (False, "true", False, True),
+    (True, None, True, False),
+])
+def test_legacy_nat_inference_preserves_intent(enabled, explicit, force_disabled, expected):
+    """Migrate old rows once without overriding explicit switches or factory reset.
+
+    Args:
+        enabled: Legacy rule activation state.
+        explicit: Optional legacy global switch.
+        force_disabled: Whether factory reset overrides migration.
+        expected: Canonical activation expected after migration.
+    """
+    engine = create_engine("sqlite:///:memory:")
+    Base.metadata.create_all(engine)
+    with Session(engine) as db:
+        db.add(rule(enabled=enabled))
+        if explicit is not None:
+            db.add(Setting(key=LEGACY_NAT_ENABLED_SETTING_KEY, value=explicit))
+        db.flush()
+        assert ensure_traffic_publishing_settings(db, force_disabled=force_disabled).nat_enabled is expected
+        for item in db.scalars(select(NatRule)):
+            item.enabled = not enabled
+        db.flush()
+        assert ensure_traffic_publishing_settings(db).nat_enabled is expected
