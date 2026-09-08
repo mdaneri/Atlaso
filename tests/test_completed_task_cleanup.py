@@ -421,6 +421,44 @@ def test_live_title_must_match_recorded_title(cleanup: Cleanup, monkeypatch: pyt
     assert not cleanup.evidence.exists()
 
 
+@pytest.mark.parametrize("description", [None, True, 123, [], {}])
+def test_invalid_description_refuses_before_release(cleanup: Cleanup, description: object) -> None:
+    """Malformed title input cannot reach a controller or release a validation resource."""
+    handoff = dict(cleanup.handoff, description=description)
+    handoff["resources"] = [resource_identity(cleanup, "preserve")]
+    cleanup.handoff_path.write_text(json.dumps(handoff), encoding="utf-8")
+    with pytest.raises(Refusal, match="description must be a string"):
+        Cleanup(cleanup.handoff_path, cleanup.evidence, cleanup.config, True, cleanup.controller)
+    assert not cleanup.controller.calls
+    assert cleanup.target.exists()
+    assert not cleanup.evidence.exists()
+
+
+def test_lost_resource_evidence_blocks_aggregate_gate(cleanup: Cleanup, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Evidence lost after release blocks ref and worktree removal despite resource absence."""
+    cleanup.handoff["resources"] = [resource_identity(cleanup, "lost-evidence")]
+    original = cleanup.controller.call
+    inspections = 0
+
+    def lost_evidence(operation: str, payload: dict) -> dict:
+        """Preserve initial evidence but invalidate it on the final aggregate inspection."""
+        nonlocal inspections
+        result = original(operation, payload)
+        if operation == "resource.inspect":
+            inspections += 1
+            if inspections >= 3:
+                result["evidence_preserved"] = False
+        return result
+
+    monkeypatch.setattr(cleanup.controller, "call", lost_evidence)
+    with pytest.raises(Refusal, match="Aggregate resource absence"):
+        cleanup.run()
+    assert "resource.release" in cleanup.controller.calls
+    assert "validation_resources_released" not in cleanup.gates
+    assert cleanup.target.exists()
+    assert cleanup.git("ls-remote", "--refs", "origin", "refs/heads/" + cleanup.branch)
+
+
 def test_earlier_resource_reappearance_blocks_aggregate_gate(cleanup: Cleanup, monkeypatch: pytest.MonkeyPatch) -> None:
     """A resource reappearing while another is processed prevents the aggregate release gate."""
     cleanup.handoff["resources"] = [resource_identity(cleanup, "first"), resource_identity(cleanup, "second")]

@@ -29,7 +29,7 @@ Provide a UTF-8 JSON handoff with these schema-1 fields:
 | Field | Required evidence |
 | --- | --- |
 | `schema` | Integer `1`. |
-| `task_id`, `description` | Exact Codex task identity and short description without traceability segments. |
+| `task_id`, `description` | Exact Codex task identity and short string description without traceability segments; title formatting is validated before resource release. |
 | `task_title` | Exact current title recorded by the originating task in the cleanup-ready handoff. |
 | `repository` | Exact public same-repository GitHub `owner/name`. |
 | `primary_checkout`, `worktree` | Absolute paths independently verified against Git registration. |
@@ -133,7 +133,8 @@ credential bridges, processes, and configuration require their own documented re
 substitute broad deletion or stop unrelated processes. Return `success: true` only after that tool succeeds. The script
 requests another independent `resource.inspect`; release acknowledgement alone cannot complete the resource gate.
 Generated trees are removed by this command and still receive independent absence readback.
-Before recording the aggregate resource-release gate, the command reinspects every resource. Later eligibility
+Before recording the aggregate resource-release gate, the command reinspects every resource, including whether its
+durable evidence survived release. Later eligibility
 checks repeat that aggregate readback and require completed remote/local ref gates to remain absent, even if a
 recreated ref points to the original SHA. Reappearance blocks completion and preserves the recreated resource/ref.
 

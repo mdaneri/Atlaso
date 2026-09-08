@@ -134,6 +134,11 @@ class Cleanup:
         self.resource_evidence: list[dict] = []
         require(isinstance(self.handoff["task_title"], str) and 0 < len(self.handoff["task_title"]) <= 512,
                 "A bounded recorded current task title is required.")
+        require(isinstance(self.handoff["description"], str), "Task description must be a string.")
+        try:
+            self.expected_title = completed_task_title(self.handoff["description"], self.handoff["issues"], [self.handoff["pr"]])
+        except ValueError as exc:
+            raise Refusal(str(exc)) from exc
 
     def command(self, args: list[str], *, allowed: tuple[int, ...] = (0,)) -> str:
         """Run argument arrays with bounded time; never publish arbitrary child output on failure."""
@@ -180,7 +185,7 @@ class Cleanup:
         allowed_titles = {self.handoff["task_title"]}
         if not self.target.exists() and not self.git("for-each-ref", "--format=%(objectname)", f"refs/heads/{self.branch}") \
                 and not self.git("ls-remote", "--refs", "origin", f"refs/heads/{self.branch}"):
-            allowed_titles.add(completed_task_title(self.handoff["description"], self.handoff["issues"], [self.handoff["pr"]]))
+            allowed_titles.add(self.expected_title)
         require(result.get("observed_title") in allowed_titles,
                 "Live task title differs from the recorded handoff title; revalidate task identity.")
         self.resource_evidence.append({"operation": "task.inspect", "evidence_refs": result["evidence_refs"]})
@@ -302,7 +307,8 @@ class Cleanup:
             self.validate_resource_identity(resource)
             result = self.controller.call("resource.inspect", {"resource": resource, "handoff_sha256": self.digest})
             require(result.get("absent") is True and result.get("ownership_verified") is True
-                    and result.get("inactive") is True and result.get("retained") is False,
+                    and result.get("inactive") is True and result.get("retained") is False
+                    and result.get("evidence_preserved") is True,
                     "Aggregate resource absence readback failed; preserve remaining resources and retry inspection.")
             if resource.get("path"):
                 require(not ordinary(Path(resource["path"])).exists(), "An inventoried resource path reappeared.")
@@ -406,10 +412,7 @@ class Cleanup:
         self.resources()
         self.proposed += [{"remote_ref": self.branch, "expected_sha": self.head},
                           {"worktree": str(self.target), "local_ref": self.branch}]
-        try:
-            expected = completed_task_title(self.handoff["description"], self.handoff["issues"], [self.handoff["pr"]])
-        except ValueError as exc:
-            raise Refusal(str(exc)) from exc
+        expected = self.expected_title
         self.proposed.append({"task_id": self.handoff["task_id"], "title": expected})
         if not self.execute:
             return {"status": "preview", "proposed": self.proposed, "gates": [], "handoff_sha256": self.digest}
