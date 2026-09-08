@@ -20,6 +20,7 @@ from pathlib import Path
 from scripts.completed_task_files import (
     FileRefusal,
     WindowsFiles,
+    ensure_durable_directory,
     publish_durable_file,
     read_bounded_regular,
 )
@@ -414,7 +415,7 @@ class Cleanup:
         prospective = [*self.gates, gate]
         if self.execute:
             ordinary(self.evidence)
-            self.evidence.mkdir(parents=True, exist_ok=True)
+            ensure_durable_directory(self.evidence)
             # Large snapshots and controller references remain separate from the small
             # cumulative gate journal, so every record we publish remains recoverable.
             references = []

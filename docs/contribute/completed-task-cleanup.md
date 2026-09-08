@@ -189,6 +189,9 @@ payloads before continuing, and prepared transition records are persisted before
 Journal and payload publication uses Windows `MoveFileExW` with `MOVEFILE_WRITE_THROUGH`, or a rename followed by a
 parent-directory fsync on POSIX. A gate is reported only after that publication succeeds; file-content fsync alone is
 insufficient. See the [Windows move contract](https://learn.microsoft.com/en-us/windows/win32/api/winbase/nf-winbase-movefileexw).
+Each missing evidence-directory component is first created under a pending sibling name and durably published through
+the same parent before journals are written. A surviving `.atlaso-cleanup-directory.pending` sibling blocks retry until
+independently reconciled. POSIX retries also fsync the parent of an existing evidence directory.
 Windows inputs reject trailing-dot/space, reserved-device, and short-name aliases before containment checks. An absent
 remote `main` produces a structured refusal, including any already recorded gates.
 

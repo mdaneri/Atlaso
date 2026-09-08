@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import stat
 import subprocess
 from pathlib import Path
 
@@ -20,6 +21,7 @@ from scripts.completed_task_cleanup import (
 from scripts.completed_task_files import (
     FileRefusal,
     WindowsFiles,
+    ensure_durable_directory,
     publish_durable_file,
     read_bounded_regular,
 )
@@ -185,10 +187,56 @@ def test_fresh_process_retry_recovers_completed_gates(cleanup: Cleanup, monkeypa
     assert cleanup.controller.calls.count("resource.release") == releases
 
 
+def test_durable_directory_publishes_every_new_parent(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Nested evidence roots publish each directory entry before any child can be journaled."""
+    from scripts import completed_task_files
+
+    original = completed_task_files.publish_durable_file
+    published = []
+
+    def publish(source: Path, destination: Path) -> None:
+        """Record native durable directory publication and verify parent-first ordering."""
+        assert source.is_dir() and source.parent == destination.parent
+        original(source, destination)
+        published.append(destination)
+
+    monkeypatch.setattr(completed_task_files, "publish_durable_file", publish)
+    target = tmp_path / "new-parent" / "evidence"
+    ensure_durable_directory(target)
+    assert published == [target.parent, target]
+    assert target.is_dir()
+    ensure_durable_directory(target)
+    assert len(published) == 2
+
+
+def test_directory_publication_failure_blocks_cleanup(cleanup: Cleanup, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Failure to persist the evidence root cannot be followed by resource or ref mutation."""
+    from scripts import completed_task_files
+
+    def fail_publication(source: Path, destination: Path) -> None:
+        """Leave the staged directory for independent reconciliation."""
+        raise FileRefusal("directory publication failed")
+
+    monkeypatch.setattr(completed_task_files, "publish_durable_file", fail_publication)
+    with pytest.raises(FileRefusal, match="directory publication failed"):
+        cleanup.run()
+    assert not cleanup.gates
+    assert "resource.release" not in cleanup.controller.calls
+    assert cleanup.target.exists()
+    assert cleanup.git("ls-remote", "--refs", "origin", f"refs/heads/{cleanup.branch}")
+    with pytest.raises(FileRefusal, match="Pending evidence-directory"):
+        cleanup.run()
+
+
 def test_failed_journal_write_does_not_publish_gate(cleanup: Cleanup, monkeypatch: pytest.MonkeyPatch) -> None:
     """An fsync failure leaves an explicit incomplete journal and no claimed completed gate."""
+    original = os.fsync
+
     def failed_fsync(descriptor: int) -> None:
         """Model a storage failure while persisting transition evidence."""
+        if stat.S_ISDIR(os.fstat(descriptor).st_mode):
+            original(descriptor)
+            return
         raise OSError("fixture fsync failure")
 
     monkeypatch.setattr(os, "fsync", failed_fsync)

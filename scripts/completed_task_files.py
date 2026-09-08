@@ -33,6 +33,26 @@ def publish_durable_file(source: Path, destination: Path) -> None:
             os.close(descriptor)
 
 
+def ensure_durable_directory(path: Path) -> None:
+    """Publish each newly created directory through its parent before trusting child journals."""
+    pending = path.with_name(f".{path.name}.atlaso-cleanup-directory.pending")
+    if pending.exists():
+        raise FileRefusal("Pending evidence-directory publication requires independent reconciliation before retry.")
+    if not path.exists():
+        ensure_durable_directory(path.parent)
+        pending.mkdir()
+        publish_durable_file(pending, path)
+    if not path.is_dir():
+        raise FileRefusal("Evidence directory is not an ordinary directory.")
+    if os.name != "nt" and path != path.parent:
+        # Also repair durability on a retry after rename succeeded but parent fsync failed.
+        descriptor = os.open(path.parent, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+        try:
+            os.fsync(descriptor)
+        finally:
+            os.close(descriptor)
+
+
 def read_bounded_regular(path: Path, limit: int) -> bytes:
     """Read a small ordinary file without following its link or accepting growth/replacement."""
     before = path.lstat()
