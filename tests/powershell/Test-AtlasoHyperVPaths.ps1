@@ -20,11 +20,16 @@ Supply deterministic capacity without querying or changing host storage.
 .PARAMETER FilePath
 Existing destination ancestor queried by storage admission.
 #>
-function Get-Volume {
+$previousGlobalVolume = Get-Item Function:global:Get-Volume -ErrorAction SilentlyContinue
+$volumeFixture = {
     [CmdletBinding()] param([string]$FilePath)
     if (-not (Test-Path -LiteralPath $FilePath)) { throw 'Capacity queried a nonexistent ancestor.' }
     [pscustomobject]@{ UniqueId='fixture-volume'; SizeRemaining=$HyperVFixture.FreeBytes }
-}
+}.GetNewClosure()
+# Imported modules resolve commands in the global session, not this test script's
+# scope. Bind the shared mutable fixture explicitly so admission never reads the
+# runner's real free space, regardless of which tests imported the module first.
+Set-Item Function:global:Get-Volume -Value $volumeFixture
 
 <#
 .SYNOPSIS
@@ -197,6 +202,11 @@ try {
     if (Test-Path -LiteralPath $memberOutput) { throw 'Smoke extracted an over-budget ZIP member.' }
 }
 finally {
+    if ($null -ne $previousGlobalVolume) {
+        Set-Item Function:global:Get-Volume -Value $previousGlobalVolume.ScriptBlock
+    } else {
+        Remove-Item Function:global:Get-Volume
+    }
     # All provider commands in this fixture are mocks; these newly allocated roots
     # contain only this test's files. Never follow replacement/reparse descendants.
     foreach ($root in @($fixtureRoot, $smokeOutput)) {
