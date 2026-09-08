@@ -17,6 +17,8 @@ def test_nat_browser_autosave_and_safe_legacy_bookmarks(client):
     login(client)
     page = client.get("/ui/management/traffic-publishing")
     assert page.status_code == 200
+    assert 'target="_blank" rel="noopener" data-source-group-manage="nat-rule"' in page.text
+    assert '<select name="translated_address"' in page.text
     csrf = page.text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
     for method in (client.get, client.head):
         response = method("/ui/management/routes-wan/nat-rules", follow_redirects=False)

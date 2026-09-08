@@ -4921,6 +4921,40 @@ function applySourceGroupWizardDraft(form, draft, focusSelector) {
 
 async function initializeSourceGroupWizardReturnFlow() {
   document.querySelectorAll("[data-source-group-manage]").forEach((link) => {
+    if (link.dataset.sourceGroupManage === "nat-rule" && link.target === "_blank") {
+      const form = link.closest("form");
+      let refreshNeeded = false;
+      let refreshing = false;
+      link.addEventListener("click", () => { refreshNeeded = true; });
+      const refresh = async () => {
+        if (!refreshNeeded || refreshing || document.visibilityState === "hidden") return;
+        refreshing = true;
+        try {
+          const response = await fetch(window.location.pathname, {
+            credentials: "same-origin",
+            cache: "no-store",
+            headers: { Accept: "text/html", "X-Requested-With": "Atlaso" },
+          });
+          if (!response.ok) throw new Error("Source Groups could not be refreshed.");
+          const nextDocument = new DOMParser().parseFromString(await response.text(), "text/html");
+          const current = form?.querySelector("[data-routes-wan-nat-group]");
+          const updated = nextDocument.querySelector("[data-routes-wan-nat-group]");
+          if (!current || !updated) throw new Error("Source Groups response is incomplete.");
+          const selected = current.value;
+          current.replaceChildren(...[...updated.options].map((option) => option.cloneNode(true)));
+          current.value = selected;
+          current.dispatchEvent(new Event("change", { bubbles: true }));
+          refreshNeeded = false;
+        } catch (_error) {
+          showTransientGridStatus("Source Groups could not be refreshed. Your rule draft is preserved; return to this tab to retry.");
+        } finally {
+          refreshing = false;
+        }
+      };
+      window.addEventListener("focus", refresh);
+      document.addEventListener("visibilitychange", refresh);
+      return;
+    }
     link.dataset.sourceGroupDraftReady = "true";
     link.addEventListener("click", (event) => {
       const token = link.dataset.sourceGroupManage || "";
@@ -8119,6 +8153,14 @@ function routesWanWizardErrorTarget(form, kind, message) {
   return { field: match[1] === "inbound_interfaces" ? form.querySelector("[data-nat-inbound-editor] [data-tag-entry]") : routesWanField(form, match[1]), step: match[2] };
 }
 
+function syncNatTranslatedAddress(select, outbound, family, preferred = select.value) {
+  const option = outbound?.selectedOptions?.[0];
+  const assigned = option && !option.disabled ? option.dataset[family === "6" ? "natIpv6" : "natIpv4"] || "" : "";
+  select.replaceChildren(new Option(assigned ? "Choose an assigned address" : "No assigned address available", ""));
+  if (assigned) select.add(new Option(assigned, assigned));
+  select.value = assigned && preferred === assigned ? assigned : "";
+}
+
 function initializeRoutesWanWizards() {
   if (window.location.pathname === managementUiPath("/routes-wan") && window.location.hash === "#routes-wan-nat-panel") {
     window.location.replace(managementUiPath("/traffic-publishing"));
@@ -8217,7 +8259,7 @@ function initializeRoutesWanWizards() {
         option.hidden = !familyAllowed;
       });
     };
-    const syncNatTranslation = () => {
+    const syncNatTranslation = (preferredAddress) => {
       if (kind !== "nat") return;
       const family = routesWanField(form, "ip_family")?.value || "4";
       const outbound = routesWanField(form, "outbound_interface");
@@ -8229,14 +8271,18 @@ function initializeRoutesWanWizards() {
       const fixed = routesWanField(form, "translation_mode")?.value === "snat";
       const address = routesWanField(form, "translated_address");
       const panel = form.querySelector("[data-nat-fixed-address]");
-      if (panel) panel.hidden = !fixed;
-      if (address) { address.disabled = !fixed; address.required = fixed; }
+      if (panel) { panel.hidden = !fixed; panel.classList.toggle("hidden", !fixed); }
+      if (address instanceof HTMLSelectElement) {
+        syncNatTranslatedAddress(address, outbound, family, typeof preferredAddress === "string" ? preferredAddress : address.value);
+        address.disabled = !fixed;
+        address.required = fixed;
+      }
       setRoutesWanField(form, "masquerade", fixed ? "off" : "on");
       syncNatIngress();
     };
     routesWanField(form, "ip_family")?.addEventListener("change", syncNatTranslation);
     routesWanField(form, "translation_mode")?.addEventListener("change", syncNatTranslation);
-    routesWanField(form, "outbound_interface")?.addEventListener("change", syncNatIngress);
+    routesWanField(form, "outbound_interface")?.addEventListener("change", syncNatTranslation);
     natInboundEditor?.addEventListener("tag-editor:change", syncNatIngress);
     routesWanField(form, "enabled")?.addEventListener("change", syncNatIngress);
     natSourceMode?.addEventListener("change", syncNatSource);
@@ -8380,8 +8426,7 @@ function initializeRoutesWanWizards() {
         } else if (kind === "nat") {
           setRoutesWanField(form, "ip_family", row?.ip_family || 4);
           setRoutesWanField(form, "translation_mode", row?.translation_mode || "masquerade");
-          setRoutesWanField(form, "translated_address", row?.translated_address || "");
-          syncNatTranslation();
+
           setRoutesWanField(form, "name", row?.name || "");
           setRoutesWanField(form, "description", row?.description || "");
           const outboundSelect = routesWanField(form, "outbound_interface");
@@ -8391,6 +8436,7 @@ function initializeRoutesWanWizards() {
             outboundSelect?.querySelectorAll("[data-unavailable]").forEach((option) => option.remove());
             setRoutesWanField(form, "outbound_interface", outboundSelect?.options?.[0]?.value || "");
           }
+          syncNatTranslation(row?.translated_address || "");
           natInboundEditor?.atlasoTagEditor?.setValues(row?.inbound_interfaces || []);
           syncNatIngress();
           setRoutesWanField(form, "priority", row?.priority ?? 100);
