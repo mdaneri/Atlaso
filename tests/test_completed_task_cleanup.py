@@ -1686,7 +1686,7 @@ def test_uninventoried_ignored_file_blocks_before_remote_deletion(cleanup: Clean
     """
     (cleanup.repo / ".git/info/exclude").write_text("secret.txt\n", encoding="utf-8")
     (cleanup.target / "secret.txt").write_text("fixture only", encoding="utf-8")
-    with pytest.raises(Refusal, match="Unreleased ignored"):
+    with pytest.raises(Refusal, match="Unreleased file remains"):
         cleanup.run()
     assert cleanup.git("ls-remote", "--refs", "origin", "refs/heads/" + cleanup.branch)
 
