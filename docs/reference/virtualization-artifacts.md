@@ -46,8 +46,10 @@ omits build, export, conversion, and smoke allocations. Retained source, templat
 candidate bytes must pass their existing validation before the smaller resume plan is admitted. An invalid retained
 operation is preserved and rejected, never relocated automatically.
 
-The workflow repeats admission before each heavy stage using the remaining plan. Direct OVF export, Hyper-V conversion,
-and smoke entry points also check capacity; the standalone packaged Hyper-V importer uses actual VHDX file lengths
+The workflow repeats admission before each heavy stage using the remaining plan. Hyper-V conversion discounts validated
+completed VHDX bytes from subsequent conversion checks while retaining the ZIP output budget. Direct OVF export,
+Hyper-V conversion and smoke entry points also check capacity; the standalone packaged Hyper-V importer uses actual
+VHDX file lengths
 for disk copies, checks again before each copy and VM creation/start, and separately budgets the observed 4 GiB VMRS
 allocation, 16 GiB guest growth, and 2 GiB metadata/headroom. Thus 4 GiB alone is not the total required free space.
 Capacity checks do not reserve space against concurrent processes. Later provider allocation errors retain their

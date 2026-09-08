@@ -86,6 +86,7 @@ try {
     }
 
     $diskRecords = @()
+    $completedVhdxBytes = 0L
     foreach ($payload in $payloads) {
         $inputName = [string]$payload.file
         if ([System.IO.Path]::GetFileName($inputName) -ne $inputName) {
@@ -95,7 +96,9 @@ try {
         $outputName = "$roleName.vhdx"
         $outputPath = Join-Path $packageRoot $outputName
         Assert-AtlasoStorageCapacity -Stage "Hyper-V $roleName conversion" -Components @(
-            [pscustomobject]@{ Path=$outputDirectory; Name='remaining VHDX conversion and ZIP'; Bytes=64GB }
+            # Completed files already reduce reported free space. Retain at least
+            # the ZIP-stage budget while discounting only validated output bytes.
+            [pscustomobject]@{ Path=$outputDirectory; Name='remaining VHDX conversion and ZIP'; Bytes=[Math]::Max(8GB, 64GB - $completedVhdxBytes) }
         )
         Invoke-AtlasoQemuImg -QemuImgPath $qemuImg -Arguments @(
             'convert', '-p', '-f', 'vmdk', '-O', 'vhdx',
@@ -115,6 +118,7 @@ try {
             bytes              = (Get-Item -LiteralPath $outputPath).Length
             sha256             = (Get-FileHash -LiteralPath $outputPath -Algorithm SHA256).Hash.ToLowerInvariant()
         }
+        $completedVhdxBytes += [long]$diskRecords[-1].bytes
     }
 
     foreach ($dataDisk in @(

@@ -92,4 +92,39 @@ $releaseModule = Get-Module Atlaso.VirtualizationRelease
     }
 } $RepositoryRoot $operation
 if (Test-Path -LiteralPath $operation) { throw 'Failed initial admission created operation output.' }
+
+# Evaluate the actual exporter admission command at an initially admitted boundary:
+# 72 GiB free, 6 GiB extracted, then a validated 6 GiB first payload. The second
+# check must discount that completed allocation while still refusing new pressure.
+$exportAst = [Management.Automation.Language.Parser]::ParseFile(
+    (Join-Path $RepositoryRoot 'scripts/windows/virtualization/export-artifacts.ps1'), [ref]$null, [ref]$null)
+$conversionChecks = @($exportAst.FindAll({
+    param($Node)
+    $Node -is [Management.Automation.Language.CommandAst] -and
+    $Node.GetCommandName() -eq 'Assert-AtlasoStorageCapacity' -and
+    $Node.Extent.Text -like '*remaining VHDX conversion and ZIP*'
+}, $true))
+if ($conversionChecks.Count -ne 1) { throw 'Expected one actual per-payload capacity check.' }
+$checkConversion = [scriptblock]::Create($conversionChecks[0].Extent.Text)
+& {
+    $outputDirectory = $RepositoryRoot
+    $roleName = 'fixture'
+    $completedVhdxBytes = 0L
+    $freeBytes = 66GB
+    Set-Item function:Assert-AtlasoStorageCapacity -Value {
+        param($Stage, $Components)
+        if ([long]$Components[0].Bytes + 2GB -gt $freeBytes) { throw 'EXPECTED_CONVERSION_CAPACITY_REFUSAL' }
+    }
+    & $checkConversion
+    $completedVhdxBytes = 6GB
+    $freeBytes = 60GB
+    & $checkConversion
+    $freeBytes--
+    try {
+        & $checkConversion
+        throw 'Concurrent space consumption was not refused.'
+    } catch {
+        if ($_.Exception.Message -cne 'EXPECTED_CONVERSION_CAPACITY_REFUSAL') { throw }
+    }
+}
 Write-Host 'Virtualization capacity and initial-admission regression tests passed.'
