@@ -138,7 +138,7 @@ def cleanup(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Cleanup:
         if arguments == ["git", "remote", "get-url", "--push", "--all", "origin"]:
             return "https://github.com/example/Atlaso.git"
         if arguments[:3] == ["gh", "pr", "view"]:
-            return json.dumps({"closingIssuesReferences": [{"number": 760}]})
+            return json.dumps({"closingIssuesReferences": [{"number": 760, "url": "https://github.com/example/Atlaso/issues/760"}]})
         return command(arguments, **kwargs)
 
     def api(endpoint: str) -> object:
@@ -163,6 +163,51 @@ def cleanup(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Cleanup:
     monkeypatch.setattr(instance, "command", external)
     monkeypatch.setattr(instance, "api", api)
     return instance
+
+
+def test_nonlocal_closing_issue_refuses(cleanup: Cleanup, monkeypatch: pytest.MonkeyPatch) -> None:
+    """A closed local issue cannot substitute for a foreign issue with the same number.
+
+    Args:
+        cleanup: Disposable task with a closed local issue numbered 760.
+        monkeypatch: Fixture for replacing only the authoritative closing-reference response.
+    """
+    original = cleanup.command
+
+    def foreign_issue(arguments: list[str], **kwargs: object) -> str:
+        """Return a different repository's issue while preserving its colliding number.
+
+        Args:
+            arguments: Command argument array intercepted by the test.
+            **kwargs: Execution options forwarded to the original adapter.
+        """
+        if arguments[:3] == ["gh", "pr", "view"]:
+            return json.dumps({"closingIssuesReferences": [{"number": 760, "url": "https://github.com/other/repo/issues/760"}]})
+        return original(arguments, **kwargs)
+
+    monkeypatch.setattr(cleanup, "command", foreign_issue)
+    with pytest.raises(Refusal, match="Closing issue repository identity"):
+        cleanup.run()
+    assert cleanup.target.exists() and not cleanup.gates
+
+
+def test_git_invisible_nested_metadata_preserved(cleanup: Cleanup) -> None:
+    """A reserved .git file inside an admitted source directory blocks filesystem release.
+
+    Args:
+        cleanup: Disposable worktree used to reproduce Git-invisible nested metadata.
+    """
+    nested = cleanup.target / "nested"
+    nested.mkdir()
+    cleanup.git("-C", str(cleanup.target), "mv", "source.txt", "nested/source.txt")
+    cleanup.git("-C", str(cleanup.target), "commit", "-m", "nested source fixture")
+    metadata = nested / ".git"
+    metadata.write_text("gitdir: retained-clone-metadata\n", encoding="utf-8")
+    assert not cleanup.git("-C", str(cleanup.target), "status", "--porcelain", "--untracked-files=all")
+    with pytest.raises(Refusal, match="Unreleased file remains"):
+        cleanup.verify_directory_release()
+    assert metadata.read_text(encoding="utf-8") == "gitdir: retained-clone-metadata\n"
+    assert not cleanup.gates
 
 
 def test_eligible_cleanup_and_title_only_retry(cleanup: Cleanup) -> None:

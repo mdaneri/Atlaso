@@ -389,6 +389,9 @@ class Cleanup:
                 "Only an ordinary same-repository main PR is eligible.")
         issues = json.loads(self.command(["gh", "pr", "view", str(self.handoff["pr"]), "--repo", f"github.com/{self.repository}",
                                          "--json", "closingIssuesReferences"]))["closingIssuesReferences"]
+        require(all(isinstance(item, dict) and item.get("url") ==
+                    f"https://github.com/{self.repository}/issues/{item.get('number')}" for item in issues),
+                "Closing issue repository identity differs; reconcile nonlocal issue references before cleanup.")
         require(sorted(item["number"] for item in issues) == sorted(self.handoff["issues"]) and issues,
                 "Complete linked issue identity is missing or changed.")
         for item in issues:
@@ -592,8 +595,13 @@ class Cleanup:
         if not self.target.exists():
             return
         tracked = self.git("-C", str(self.target), "ls-files", "-z").split("\0")
+        source_files = {Path(entry) for entry in tracked if entry}
         source_directories = {parent for entry in tracked if entry for parent in Path(entry).parents}
-        for parent, directories, _ in os.walk(self.target, followlinks=False):
+        for parent, directories, files in os.walk(self.target, followlinks=False):
+            for name in files:
+                path = ordinary(Path(parent) / name)
+                require(path.relative_to(self.target) in source_files or path == self.target / ".git",
+                        "Unreleased file remains outside tracked source; reconcile its inventory and owning-tool release.")
             for name in directories:
                 path = ordinary(Path(parent) / name)
                 require(path.relative_to(self.target) in source_directories,

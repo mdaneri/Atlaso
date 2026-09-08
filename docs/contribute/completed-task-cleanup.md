@@ -21,6 +21,10 @@ repair; a later configuration rewrite preserves already recorded cleanup gates i
 The active configuration uses the pinned regular-file reader with a 1 MiB limit before TOML parsing.
 Child commands stream stdout and stderr through a combined 4 MiB cap with a 90-second execution timeout. Excess output
 terminates the child and produces a sanitized refusal; inspect the tool directly before retrying.
+Closing issue references must name this same repository through their canonical GitHub issue URLs. A matching issue
+number in another repository cannot satisfy the local closure gate.
+Before worktree removal, filesystem enumeration admits only tracked source files and the root worktree `.git` file.
+Nested `.git` metadata and other Git-invisible files require inventory reconciliation before cleanup can continue.
 Execution holds an exclusive per-task operating-system lock from before eligibility through the final result, and
 reloads durable gates after acquiring it. A concurrent controller refuses immediately and may retry after the owner exits.
 The lock hashes a canonical GitHub repository, exact task ID, and PR identity, independently of handoff whitespace,
