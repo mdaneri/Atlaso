@@ -57,6 +57,16 @@ def cleanup_lock(root: Path, digest: str):
             os.close(descriptor)
 
 
+def sync_directory(path: Path) -> None:
+    """Persist visible POSIX entries before trusting a recovered rename; Windows publishes write-through."""
+    if os.name != "nt":
+        descriptor = os.open(path, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+        try:
+            os.fsync(descriptor)
+        finally:
+            os.close(descriptor)
+
+
 def publish_durable_file(source: Path, destination: Path) -> None:
     """Publish a flushed same-directory file and durably commit its directory entry."""
     if source.parent != destination.parent or destination.exists():
@@ -70,11 +80,7 @@ def publish_durable_file(source: Path, destination: Path) -> None:
             raise FileRefusal("Write-through evidence publication failed; reconcile pending evidence before retry.")
     else:
         source.rename(destination)
-        descriptor = os.open(destination.parent, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0))
-        try:
-            os.fsync(descriptor)
-        finally:
-            os.close(descriptor)
+        sync_directory(destination.parent)
 
 
 def ensure_durable_directory(path: Path) -> None:

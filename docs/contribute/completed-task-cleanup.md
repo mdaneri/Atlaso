@@ -23,6 +23,8 @@ Execution holds an exclusive per-task operating-system lock from before eligibil
 reloads durable gates after acquiring it. A concurrent controller refuses immediately and may retry after the owner exits.
 The lock hashes a canonical GitHub repository, exact task ID, and PR identity, independently of handoff whitespace,
 key ordering, or evidence location. Evidence journals retain their original raw-byte handoff digest binding.
+On POSIX, recovery flushes the evidence directory before trusting visible journals: a previous rename may have
+succeeded while its directory flush failed. A repeated flush failure refuses recovery without accepting those gates.
 Windows uses a named mutex; POSIX keeps a single-link `.atlaso-cleanup-<digest>.lock` coordination file beneath the configured
 root and releases its advisory lock on exit. Preserve that inode to prevent split ownership. Preview remains read-only.
 Generated-directory release additionally requires Windows. The controller supplies fresh task evidence through

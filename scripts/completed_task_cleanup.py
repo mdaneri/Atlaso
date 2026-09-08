@@ -24,6 +24,7 @@ from scripts.completed_task_files import (
     ensure_durable_directory,
     publish_durable_file,
     read_bounded_regular,
+    sync_directory,
 )
 from scripts.completed_task_title import (
     completed_task_title,
@@ -175,6 +176,9 @@ class Cleanup:
                 "An incomplete journal write requires independent evidence reconciliation before retry.")
         records = list(self.evidence.glob(f"{self.digest}-*.json"))
         require(len(records) <= 1000, "Oversized cleanup journal; reconcile evidence before retry.")
+        if records:
+            # A rename may be visible after its directory fsync failed in the previous process.
+            sync_directory(ordinary(self.evidence))
         histories = []
         for path in records:
             ordinary(path)

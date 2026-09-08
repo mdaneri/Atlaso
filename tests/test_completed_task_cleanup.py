@@ -249,6 +249,39 @@ def test_failed_journal_write_does_not_publish_gate(cleanup: Cleanup, monkeypatc
         Cleanup(cleanup.handoff_path, cleanup.evidence, cleanup.config, True, cleanup.controller)
 
 
+def test_visible_journal_requires_recovery_flush(cleanup: Cleanup, monkeypatch: pytest.MonkeyPatch) -> None:
+    """A visible rename with a failed directory flush cannot become a trusted gate on restart."""
+    from scripts import completed_task_cleanup
+
+    original_sync = completed_task_cleanup.sync_directory
+
+    def failed_publication(source: Path, destination: Path) -> None:
+        """Model POSIX rename succeeding before its parent-directory fsync fails."""
+        source.rename(destination)
+        raise OSError("fixture directory flush failure")
+
+    monkeypatch.setattr(completed_task_cleanup, "publish_durable_file", failed_publication)
+    with pytest.raises(OSError, match="directory flush failure"):
+        cleanup.record("validation_resources_released")
+    assert not cleanup.gates
+    assert list(cleanup.evidence.glob("*.json"))
+    flushed = []
+
+    def failed_recovery(path: Path) -> None:
+        """Refuse to trust the visible entry while storage still rejects durability."""
+        flushed.append(path)
+        raise OSError("fixture recovery flush failure")
+
+    monkeypatch.setattr(completed_task_cleanup, "sync_directory", failed_recovery)
+    with pytest.raises(OSError, match="recovery flush failure"):
+        Cleanup(cleanup.handoff_path, cleanup.evidence, cleanup.config, True, cleanup.controller)
+    assert flushed == [cleanup.evidence]
+    assert cleanup.target.exists() and not cleanup.controller.calls
+    monkeypatch.setattr(completed_task_cleanup, "sync_directory", original_sync)
+    retry = Cleanup(cleanup.handoff_path, cleanup.evidence, cleanup.config, True, cleanup.controller)
+    assert retry.gates == ["validation_resources_released"]
+
+
 def test_failed_durable_publication_does_not_publish_gate(cleanup: Cleanup, monkeypatch: pytest.MonkeyPatch) -> None:
     """A failure publishing the directory entry cannot advance reported cleanup gates."""
     def failed_publication(source: Path, destination: Path) -> None:
