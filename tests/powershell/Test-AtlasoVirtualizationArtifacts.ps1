@@ -854,9 +854,39 @@ if ($vmwareSmoke.Contains('getGuestIPAddress')) {
     throw 'VMware smoke still trusts the unqualified VMware Tools guest address result.'
 }
 
-# Exercise the actual cleanup guard under StrictMode when startup succeeded but
-# generated-MAC capture failed. It must skip revalidation and retain the VMX ID.
+# Exercise production probe, SSH admission, and cleanup boundaries under StrictMode.
 $smokeAst = [System.Management.Automation.Language.Parser]::ParseInput($vmwareSmoke, [ref]$null, [ref]$null)
+$probeLoop = $smokeAst.Find({
+        param($node)
+        $node -is [System.Management.Automation.Language.ForEachStatementAst] -and
+        $node.Variable.VariablePath.UserPath -eq 'leaseAddress'
+    }, $true)
+if ($null -eq $probeLoop) { throw 'Missing interface-scoped neighbor probe loop.' }
+& {
+    $nativePython = (Get-Command python -ErrorAction Stop).Source
+    $leaseAddresses = @('192.0.2.20', '192.0.2.21')
+    $sourceAddresses = @('192.0.2.1')
+    $probes = [System.Collections.Generic.List[string]]::new()
+    $ping = {
+        if (($args[0..7] -join ' ') -ne '-4 -S 192.0.2.1 -n 1 -w 1000 192.0.2.20' -and
+            ($args[0..7] -join ' ') -ne '-4 -S 192.0.2.1 -n 1 -w 1000 192.0.2.21') {
+            throw 'Neighbor probe lost its fixed host interface or bounded target.'
+        }
+        $probes.Add([string]$args[7])
+        & $nativePython -c "raise SystemExit($nativeExitCode)"
+    }
+    foreach ($nativePreference in @($true, $false)) {
+        foreach ($nativeExitCode in @(0, 1)) {
+            $PSNativeCommandUseErrorActionPreference = $nativePreference
+            $probes.Clear()
+            . ([scriptblock]::Create($probeLoop.Extent.Text))
+            if (($probes -join ',') -ne ($leaseAddresses -join ',') -or
+                $PSNativeCommandUseErrorActionPreference -ne $nativePreference) {
+                throw 'An unanswered probe aborted discovery or changed the caller native-error preference.'
+            }
+        }
+    }
+}
 $phaseFunction = $smokeAst.Find({
         param($node)
         $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and

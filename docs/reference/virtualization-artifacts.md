@@ -418,6 +418,8 @@ entries are probe candidates only; expired, malformed, or unbounded DHCP leases 
 transport attempt returns to the Windows wrapper for another identity check under the same 15-minute phase deadline.
 The wrapper handles the child retry status explicitly even when PowerShell native-error promotion is enabled, and
 preserves the caller's preference; other nonzero child results remain terminal.
+Unanswered ICMP probes also preserve that preference and continue to refreshed neighbor evaluation; ICMP success
+alone never admits an address.
 Loss of MAC-bound address ownership receives at most a 20-second neighbor refresh window before an explicit identity
 failure. A changed address is never silently substituted, including during initial boot. Correct the reported network
 condition and start a new disposable smoke attempt. Host-key or authentication rejection is terminal.

@@ -231,7 +231,15 @@ function Wait-AtlasoVmwareSmokeNetworkIdentity {
         if ($sourceAddresses.Count -eq 1 -and $leaseAddresses.Count -gt 0) {
             $ping = Join-Path $env:SystemRoot 'System32\PING.EXE'
             foreach ($leaseAddress in $leaseAddresses) {
-                & $ping -4 -S $sourceAddresses[0] -n 1 -w 1000 $leaseAddress 2>$null | Out-Null
+                # ICMP failure does not reject refreshed MAC-bound neighbor evidence.
+                $previousNativeExitPreference = $PSNativeCommandUseErrorActionPreference
+                try {
+                    $PSNativeCommandUseErrorActionPreference = $false
+                    & $ping -4 -S $sourceAddresses[0] -n 1 -w 1000 $leaseAddress 2>$null | Out-Null
+                }
+                finally {
+                    $PSNativeCommandUseErrorActionPreference = $previousNativeExitPreference
+                }
             }
             $identity = Resolve-AtlasoVmwareSmokeAddressIdentity `
                 -VmxIdentity $vmxIdentity `
