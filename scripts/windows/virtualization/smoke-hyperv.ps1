@@ -136,6 +136,7 @@ function Wait-AtlasoHyperVSmokeNetworkIdentity {
 
 $repoRoot = (Resolve-Path -LiteralPath (Join-Path $PSScriptRoot '..\..\..')).Path
 Import-Module (Join-Path $PSScriptRoot 'Atlaso.VirtualizationSmokeIdentity.psm1') -Force
+Import-Module (Join-Path $PSScriptRoot 'Atlaso.StorageCapacity.psm1') -Force
 $sourceZip = Get-Item -LiteralPath $ZipPath -Force -ErrorAction Stop
 if ($sourceZip.PSIsContainer -or
     ($sourceZip.Attributes -band [System.IO.FileAttributes]::ReparsePoint) -ne 0) {
@@ -175,6 +176,8 @@ $providerRoot = Join-Path (Join-Path $vmRoot $Name) $Name
 $generatedPaths = [System.Collections.Generic.List[string]]::new()
 $generatedPaths.Add((Join-Path $providerRoot ('x' * 64)))
 $archive = [System.IO.Compression.ZipFile]::OpenRead($sourceZip.FullName)
+$expandedBytes = 0L
+$diskCopyBytes = 0L
 try {
     foreach ($entry in $archive.Entries) {
         if ($entry.FullName -ne $entry.Name -or -not $entry.Name -or
@@ -182,8 +185,11 @@ try {
             throw 'The Hyper-V smoke ZIP must contain only ordinary top-level package members.'
         }
         $generatedPaths.Add((Join-Path $packageRoot $entry.Name))
+        $expandedBytes += $entry.Length
+        if ($expandedBytes -gt 8GB) { throw 'Hyper-V expanded package exceeds the supported 8 GiB capacity estimate.' }
         $generatedPaths.Add((Join-Path (Join-Path $vmRoot $Name) $entry.Name))
         if ([System.IO.Path]::GetExtension($entry.Name) -eq '.vhdx') {
+            $diskCopyBytes += $entry.Length
             $diskStem = [System.IO.Path]::GetFileNameWithoutExtension($entry.Name)
             $generatedPaths.Add((Join-Path (Join-Path $vmRoot $Name) "$diskStem-00000000-0000-0000-0000-000000000000.avhdx.rct"))
         }
@@ -195,6 +201,11 @@ foreach ($generatedPath in $generatedPaths) {
         throw "Hyper-V smoke generated path exceeds the 240-character budget ($($generatedPath.Length) characters): $generatedPath. Choose a shorter -OutputRoot beneath $allowedRoot or a shorter -Name. No files were extracted or VM created."
     }
 }
+Assert-AtlasoStorageCapacity -Stage 'Hyper-V extraction and import' -Components @(
+    [pscustomobject]@{ Path=$operationRoot; Name='ZIP extraction'; Bytes=$expandedBytes }
+    [pscustomobject]@{ Path=$operationRoot; Name='VHDX copies'; Bytes=$diskCopyBytes }
+    [pscustomobject]@{ Path=$operationRoot; Name='VMRS memory, metadata and guest disk growth'; Bytes=20GB }
+)
 New-Item -ItemType Directory -Path $operationRoot -ErrorAction Stop | Out-Null
 New-Item -ItemType Directory -Path $packageRoot -ErrorAction Stop | Out-Null
 $operationRootItem = Get-Item -LiteralPath $operationRoot -Force -ErrorAction Stop
@@ -215,6 +226,10 @@ try {
         throw 'The Hyper-V ZIP does not contain Import-Atlaso.ps1.'
     }
     $importAttempted = $true
+    Assert-AtlasoStorageCapacity -Stage 'Hyper-V import and startup' -Components @(
+        [pscustomobject]@{ Path=$operationRoot; Name='VHDX copies'; Bytes=$diskCopyBytes }
+        [pscustomobject]@{ Path=$operationRoot; Name='VMRS memory, metadata and guest disk growth'; Bytes=20GB }
+    )
     $createdVmMatches = @(
         & $importer `
             -Name $Name `

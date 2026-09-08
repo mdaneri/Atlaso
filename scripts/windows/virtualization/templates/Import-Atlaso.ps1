@@ -44,6 +44,42 @@ function Get-AtlasoHyperVWindowsFileId {
 
 <#
 .SYNOPSIS
+Checks destination capacity before copying disks, creating a VM, or starting it.
+.PARAMETER DestinationPath
+Previously validated ordinary destination directory, which may not yet exist.
+.PARAMETER RemainingDiskBytes
+Actual file lengths of the disk copies that remain to be allocated.
+#>
+function Assert-AtlasoHyperVImportCapacity {
+    param(
+        [Parameter(Mandatory = $true)][string]$DestinationPath,
+        [Parameter(Mandatory = $true)][ValidateRange(0, 8589934592)][long]$RemainingDiskBytes
+    )
+    $existingPath = $DestinationPath
+    while (-not (Test-Path -LiteralPath $existingPath)) {
+        $existingPath = Split-Path -Path $existingPath -Parent
+        if (-not $existingPath) { throw 'Hyper-V capacity check could not resolve a destination ancestor.' }
+    }
+    $volumes = @(Get-Volume -FilePath $existingPath -ErrorAction Stop)
+    if ($volumes.Count -ne 1 -or -not $volumes[0].UniqueId -or
+        $null -eq $volumes[0].SizeRemaining) {
+        throw "Hyper-V destination capacity is unavailable: $DestinationPath. No new allocation was admitted."
+    }
+    $free = [long]$volumes[0].SizeRemaining
+    if ($free -lt 0) { throw "Hyper-V destination free-space evidence is invalid: $DestinationPath" }
+    # Disk virtual capacities do not describe physical copy sizes. Include the
+    # observed 4 GiB VMRS allocation independently, plus first-boot disk growth.
+    $required = $RemainingDiskBytes + 4GB + 16GB + 2GB
+    $shortfall = [Math]::Max(0L, $required - $free)
+    Write-Host "Hyper-V capacity: path=$DestinationPath volume=$($volumes[0].UniqueId) free=$free required=$required shortfall=$shortfall"
+    Write-Host "  disk copies=$RemainingDiskBytes; VMRS=4294967296; guest growth=17179869184; metadata/headroom=2147483648"
+    if ($shortfall -gt 0) {
+        throw "Insufficient Hyper-V destination capacity: $DestinationPath; volume=$($volumes[0].UniqueId); free=$free required=$required shortfall=$shortfall. Free space or select another -DestinationRoot. Existing artifacts were preserved."
+    }
+}
+
+<#
+.SYNOPSIS
 Snapshots every non-reparse descendant beneath an importer-owned VM root.
 .PARAMETER DirectoryPath
 Importer-owned VM directory to inventory.
@@ -221,6 +257,12 @@ if (Test-Path -LiteralPath $vmRoot) {
 }
 
 $vmRootCreated = $false
+$remainingDiskBytes = 0L
+foreach ($disk in $manifestDisks) {
+    $remainingDiskBytes += (Get-Item -LiteralPath (Join-Path $packageRoot.FullName $disk.file)).Length
+    if ($remainingDiskBytes -gt 8GB) { throw 'Hyper-V disk copies exceed the supported 8 GiB package estimate.' }
+}
+Assert-AtlasoHyperVImportCapacity -DestinationPath $vmRoot -RemainingDiskBytes $remainingDiskBytes
 $vmRootId = ''
 $ownedDescendantIds = @{}
 $vmCreated = $false
@@ -235,7 +277,9 @@ try {
     $vmRootId = Get-AtlasoHyperVWindowsFileId -Path $vmRoot
     foreach ($disk in $manifestDisks) {
         $destinationDisk = Join-Path $vmRoot $disk.file
+        Assert-AtlasoHyperVImportCapacity -DestinationPath $vmRoot -RemainingDiskBytes $remainingDiskBytes
         Copy-Item -LiteralPath (Join-Path $packageRoot.FullName $disk.file) -Destination $destinationDisk
+        $remainingDiskBytes -= (Get-Item -LiteralPath $destinationDisk).Length
         # Capture each completed invocation-owned copy before another operation
         # can fail; an unrecorded partial copy is preserved rather than guessed.
         $ownedDescendantIds[[string]$disk.file] = Get-AtlasoHyperVWindowsFileId -Path $destinationDisk
@@ -247,6 +291,7 @@ try {
         }
     }
 
+    Assert-AtlasoHyperVImportCapacity -DestinationPath $vmRoot -RemainingDiskBytes 0
     $vm = New-VM `
         -Name $Name `
         -Generation 2 `
@@ -292,6 +337,7 @@ try {
         throw 'The created Hyper-V VM does not match the required generation, CPU, memory, or firmware contract.'
     }
     if ($Start) {
+        Assert-AtlasoHyperVImportCapacity -DestinationPath $vmRoot -RemainingDiskBytes 0
         Start-VM -VM $verifiedVm | Out-Null
     }
     $verifiedVm

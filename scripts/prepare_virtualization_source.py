@@ -29,6 +29,8 @@ COMMIT_PATTERN = re.compile(r"^[0-9a-f]{40}$")
 SEMVER_PATTERN = re.compile(r"^[0-9]+\.[0-9]+\.[0-9]+$")
 DIGEST_PATTERN = re.compile(r"^[0-9a-f]{64}$")
 MAXIMUM_MEMBER_BYTES = 2_147_483_647
+MAXIMUM_SOURCE_BYTES = 16 * 1024**3
+SOURCE_RECORD_RESERVE_BYTES = 1024**2
 
 
 def _sha256(path: Path) -> str:
@@ -210,13 +212,29 @@ def prepare(
                 raise SystemExit(
                     "release bundle members do not exactly match the signed content hashes"
                 )
-            for name, member in sorted(archive_files.items()):
-                if not (
+            selected_files = {
+                name: member
+                for name, member in archive_files.items()
+                if (
                     name.startswith("packages/")
                     or name.startswith("wheelhouse/cp314/")
                     or name in {"requirements-appliance.lock", "bundle-metadata.json"}
-                ):
-                    continue
+                )
+            }
+            # Compressed asset limits do not bound expanded storage. Admit the
+            # complete selected tree before writing any archive payload, keeping
+            # signed metadata and the generated identity within the planner's cap.
+            source_bytes = (
+                sum(member.size for member in selected_files.values())
+                + len(raw_manifest)
+                + len(raw_signature)
+                + SOURCE_RECORD_RESERVE_BYTES
+            )
+            if source_bytes > MAXIMUM_SOURCE_BYTES:
+                raise SystemExit(
+                    "selected release source exceeds the 16 GiB expansion budget"
+                )
+            for name, member in sorted(selected_files.items()):
                 extracted = archive.extractfile(member)
                 if extracted is None:
                     raise SystemExit(f"release bundle member is unreadable: {name}")

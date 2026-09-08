@@ -107,6 +107,57 @@ def _release_fixture(
     return manifest, signature, bundle, trust
 
 
+@pytest.mark.parametrize("shortfall", [0, 1])
+def test_source_expansion_admission_precedes_payload_extraction(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, shortfall: int,
+) -> None:
+    """Admit exact aggregate capacity and refuse one byte short before extraction.
+
+    Args:
+        tmp_path: Isolated signed bundle and source destination.
+        monkeypatch: Restore the scaled source budget and extraction spy.
+        shortfall: Bytes removed from the exact aggregate capacity boundary.
+    """
+    manifest, signature, bundle, trust = _release_fixture(tmp_path)
+    with tarfile.open(bundle, "r:gz") as archive:
+        declared_bytes = sum(member.size for member in archive.getmembers())
+    required = (
+        declared_bytes + manifest.stat().st_size + signature.stat().st_size
+        + source_preparer.SOURCE_RECORD_RESERVE_BYTES
+    )
+    monkeypatch.setattr(source_preparer, "MAXIMUM_SOURCE_BYTES", required - shortfall)
+    original_extract = tarfile.TarFile.extractfile
+    extracted: list[str] = []
+
+    def observe_extract(archive: tarfile.TarFile, member: tarfile.TarInfo):
+        """Record payload extraction after admission.
+
+        Args:
+            archive: Verified archive whose selected payload is being opened.
+            member: Declared member requested by source reconstruction.
+        """
+        extracted.append(member.name)
+        return original_extract(archive, member)
+
+    monkeypatch.setattr(tarfile.TarFile, "extractfile", observe_extract)
+    output = tmp_path / "verified"
+    arguments = dict(
+        manifest_path=manifest, signature_path=signature, bundle_path=bundle,
+        trust_key_path=trust, output=output,
+        expected_version=VERSION, expected_commit=COMMIT,
+    )
+    if shortfall:
+        with pytest.raises(SystemExit, match="16 GiB expansion budget"):
+            source_preparer.prepare(**arguments)
+        assert not extracted
+        assert not output.exists()
+        assert not list(tmp_path.glob(".verified.partial-*"))
+    else:
+        source_preparer.prepare(**arguments)
+        assert extracted
+        assert output.is_dir()
+
+
 def test_extracts_exact_signed_cp314_inputs_and_records_digests(tmp_path: Path) -> None:
     """The producer consumes the published wheel and wheelhouse without rebuilding.
 
