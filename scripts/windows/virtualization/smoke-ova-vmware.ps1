@@ -155,6 +155,8 @@ Expected vmnet mapped to ethernet1.
 Previously captured VMX and address identity that must remain unchanged.
 .PARAMETER Deadline
 Absolute readiness deadline for host-neighbor discovery.
+.PARAMETER Phase
+Initial or post-reboot discovery phase for sanitized progress.
 #>
 function Wait-AtlasoVmwareSmokeNetworkIdentity {
     param(
@@ -162,10 +164,17 @@ function Wait-AtlasoVmwareSmokeNetworkIdentity {
         [Parameter(Mandatory = $true)][string]$ManagementVmnet,
         [Parameter(Mandatory = $true)][string]$ServiceVmnet,
         [Parameter(Mandatory = $true)][object]$ExpectedIdentity,
-        [Parameter(Mandatory = $true)][DateTimeOffset]$Deadline
+        [Parameter(Mandatory = $true)][DateTimeOffset]$Deadline,
+        [ValidateSet('initial', 'post-reboot')][string]$Phase = 'initial'
     )
 
+    $discoveryStarted = [DateTimeOffset]::UtcNow
+    $nextProgress = $discoveryStarted
     while ([DateTimeOffset]::UtcNow -lt $Deadline) {
+        if ([DateTimeOffset]::UtcNow -ge $nextProgress) {
+            Write-Host "VMware/$Phase network admission: VMX=$VmxPath MAC=$($ExpectedIdentity.ManagementMac) vmnet=$ManagementVmnet elapsed=$([int]([DateTimeOffset]::UtcNow - $discoveryStarted).TotalSeconds)s remaining=$([int]($Deadline - [DateTimeOffset]::UtcNow).TotalSeconds)s"
+            $nextProgress = [DateTimeOffset]::UtcNow.AddSeconds(30)
+        }
         $vmxIdentity = Get-AtlasoVmwareSmokeVmxNetworkIdentity `
             -VmxPath $VmxPath `
             -ManagementVmnet $ManagementVmnet `
@@ -178,7 +187,7 @@ function Wait-AtlasoVmwareSmokeNetworkIdentity {
             -NetworkAdapters $networkAdapters `
             -Neighbors $neighbors `
             -ExpectedIdentity $ExpectedIdentity `
-            -AllowMissingAddress
+            -AllowMissingAddress -RequireReachable
         if ($identity.Address) {
             return $identity
         }
@@ -200,6 +209,17 @@ function Wait-AtlasoVmwareSmokeNetworkIdentity {
         $leaseAddresses = @(Get-AtlasoVmwareDhcpLeaseAddress `
                 -LeaseText $leaseText `
                 -ManagementMac $vmxIdentity.ManagementMac)
+        $cachedAddresses = @(Get-AtlasoSmokeUsableIPv4Address -Addresses @(
+                $neighbors | Where-Object {
+                    [int]$_.InterfaceIndex -eq $identity.HostInterfaceIndex -and
+                    ([string]$_.LinkLayerAddress -replace '[:-]', '') -ieq
+                        ($vmxIdentity.ManagementMac -replace ':', '')
+                } | ForEach-Object { [string]$_.IPAddress }
+            ))
+        $leaseAddresses = @(@($leaseAddresses) + @($cachedAddresses) | Sort-Object -Unique)
+        if ($leaseAddresses.Count -gt 16) {
+            throw 'VMware management discovery has too many ambiguous DHCP/neighbor candidates.'
+        }
         $sourceAddresses = @(Get-AtlasoSmokeUsableIPv4Address -Addresses @(
                 Get-NetIPAddress -AddressFamily IPv4 `
                     -InterfaceIndex $identity.HostInterfaceIndex `
@@ -218,14 +238,58 @@ function Wait-AtlasoVmwareSmokeNetworkIdentity {
                 -NetworkAdapters $networkAdapters `
                 -Neighbors @(Get-NetNeighbor -AddressFamily IPv4 -ErrorAction SilentlyContinue) `
                 -ExpectedIdentity $ExpectedIdentity `
-                -AllowMissingAddress
+                -AllowMissingAddress -RequireReachable
             if ($identity.Address) {
                 return $identity
             }
         }
         Start-Sleep -Seconds 5
     }
-    throw 'The VMware ethernet0 management MAC did not resolve to one usable IPv4 neighbor before the deadline.'
+    throw 'VMware management identity unavailable or changed: ethernet0 has no currently reachable MAC-bound IPv4 neighbor before the deadline.'
+}
+
+<#
+.SYNOPSIS
+Return each SSH transport retry to fresh host-side management identity admission.
+.PARAMETER Phase
+Initial or post-reboot validation phase.
+.PARAMETER Identity
+Captured VMX, NIC, vmnet, host-interface and address identity; never retargeted.
+.PARAMETER Fingerprint
+Previously accepted TLS identity for the post-reboot phase.
+#>
+function Invoke-AtlasoVmwareSmokeGuestPhase {
+    param(
+        [Parameter(Mandatory = $true)][ValidateSet('initial', 'post-reboot')][string]$Phase,
+        [Parameter(Mandatory = $true)][object]$Identity,
+        [string]$Fingerprint = ''
+    )
+
+    $started = [DateTimeOffset]::UtcNow
+    $deadline = $started.AddMinutes(15)
+    while ([DateTimeOffset]::UtcNow -lt $deadline) {
+        Assert-AtlasoVmwareVmIdentity -DirectoryPath $vmRoot -VmxPath $vmxPath `
+            -Name $Name -DirectoryId $vmRootId -VmxId $vmxId
+        # Never let the child hide address movement in a fixed-host retry loop.
+        # Lost ownership gets only a short neighbor refresh window, not 15 minutes.
+        $admissionDeadline = [DateTimeOffset]::UtcNow.AddSeconds(20)
+        if ($admissionDeadline -gt $deadline) { $admissionDeadline = $deadline }
+        $null = Wait-AtlasoVmwareSmokeNetworkIdentity -VmxPath $vmxPath `
+            -ManagementVmnet $ManagementVmnet -ServiceVmnet $ServiceVmnet `
+            -ExpectedIdentity $Identity -Deadline $admissionDeadline -Phase $Phase
+        $remaining = [int][Math]::Max(0, ($deadline - [DateTimeOffset]::UtcNow).TotalSeconds)
+        if ($remaining -eq 0) { break }
+        Write-Host "VMware/$Phase SSH admission: VMX=$vmxPath MAC=$($Identity.ManagementMac) vmnet=$ManagementVmnet interface=$($Identity.HostInterfaceIndex) target=$($Identity.Address) elapsed=$([int]([DateTimeOffset]::UtcNow - $started).TotalSeconds)s remaining=${remaining}s"
+        $arguments = @('--host', [string]$Identity.Address, '--host-key', $expectedHostKey,
+            '--platform', 'vmware', '--phase', $Phase, '--single-connect-attempt')
+        if ($Fingerprint) { $arguments += @('--expected-tls-fingerprint', $Fingerprint) }
+        $result = @($secret | & $python (Join-Path $repoRoot 'scripts\virtualization\smoke_guest_ssh.py') @arguments)
+        $exitCode = $LASTEXITCODE
+        if ($exitCode -eq 0) { return $result }
+        if ($exitCode -ne 75) { throw "VMware/$Phase authenticated guest validation failed; see the sanitized child category." }
+        Start-Sleep -Seconds ([Math]::Min(5, $remaining))
+    }
+    throw "VMware/$Phase SSH transport readiness timed out after 900 seconds at $($Identity.Address); identity was revalidated before each attempt."
 }
 
 $repoRoot = (Resolve-Path -LiteralPath (Join-Path $PSScriptRoot '..\..\..')).Path
@@ -417,6 +481,8 @@ try {
         -ManagementVmnet $ManagementVmnet `
         -ServiceVmnet $ServiceVmnet
     $hostKeyDeadline = [DateTimeOffset]::UtcNow.AddMinutes(15)
+    Write-Host "VMware/initial import complete; waiting for guest host-key publication: VMX=$vmxPath MAC=$($providerIdentity.ManagementMac) vmnet=$ManagementVmnet deadline=900s"
+    $nextHostKeyProgress = [DateTimeOffset]::UtcNow.AddSeconds(30)
     $expectedHostKey = ''
     while ([DateTimeOffset]::UtcNow -lt $hostKeyDeadline -and
         $expectedHostKey -notmatch '^ssh-ed25519 [A-Za-z0-9+/]+={0,2}$') {
@@ -424,6 +490,10 @@ try {
                 guestinfo.atlaso.test_vm_ssh_host_ed25519_public_key 2>$null)
         $expectedHostKey = $expectedHostKey.Trim().Trim('"')
         if ($expectedHostKey -notmatch '^ssh-ed25519 [A-Za-z0-9+/]+={0,2}$') {
+            if ([DateTimeOffset]::UtcNow -ge $nextHostKeyProgress) {
+                Write-Host "VMware/initial guest host-key publication pending: remaining=$([int]($hostKeyDeadline - [DateTimeOffset]::UtcNow).TotalSeconds)s"
+                $nextHostKeyProgress = [DateTimeOffset]::UtcNow.AddSeconds(30)
+            }
             Start-Sleep -Seconds 5
         }
     }
@@ -445,19 +515,12 @@ try {
         -VmxIdentity $vmxIdentity `
         -NetworkAdapters @(Get-NetAdapter -IncludeHidden -ErrorAction Stop) `
         -Neighbors @(Get-NetNeighbor -AddressFamily IPv4 -ErrorAction Stop) `
-        -ExpectedIdentity $networkIdentity
+        -ExpectedIdentity $networkIdentity -RequireReachable
     $secret = @{
         username = $Credential.UserName
         password = $Credential.GetNetworkCredential().Password
     } | ConvertTo-Json -Compress
-    $initialOutput = @($secret | & $python (Join-Path $repoRoot 'scripts\virtualization\smoke_guest_ssh.py') `
-            '--host' ([string]$networkIdentity.Address) `
-            '--host-key' $expectedHostKey `
-            '--platform' 'vmware' `
-            '--phase' 'initial')
-    if ($LASTEXITCODE -ne 0) {
-        throw 'Initial VMware OVA guest validation failed.'
-    }
+    $initialOutput = @(Invoke-AtlasoVmwareSmokeGuestPhase -Phase 'initial' -Identity $networkIdentity)
     $tlsFingerprint = [string]($initialOutput | Select-Object -Last 1)
     if ($tlsFingerprint -notmatch '^[0-9a-f]{64}$') {
         throw 'Initial VMware guest validation did not return one canonical TLS fingerprint.'
@@ -467,15 +530,10 @@ try {
         -ManagementVmnet $ManagementVmnet `
         -ServiceVmnet $ServiceVmnet `
         -ExpectedIdentity $networkIdentity `
-        -Deadline ([DateTimeOffset]::UtcNow.AddMinutes(15))
-    $postOutput = @($secret | & $python (Join-Path $repoRoot 'scripts\virtualization\smoke_guest_ssh.py') `
-            '--host' ([string]$networkIdentity.Address) `
-            '--host-key' $expectedHostKey `
-            '--platform' 'vmware' `
-            '--phase' 'post-reboot' `
-            '--expected-tls-fingerprint' $tlsFingerprint)
-    if ($LASTEXITCODE -ne 0 -or
-        ($postOutput -join "`n") -notmatch 'Atlaso vmware guest smoke test passed\.') {
+        -Deadline ([DateTimeOffset]::UtcNow.AddMinutes(15)) -Phase 'post-reboot'
+    $postOutput = @(Invoke-AtlasoVmwareSmokeGuestPhase -Phase 'post-reboot' `
+            -Identity $networkIdentity -Fingerprint $tlsFingerprint)
+    if (($postOutput -join "`n") -notmatch 'Atlaso vmware guest smoke test passed\.') {
         throw 'Post-reboot VMware OVA guest validation failed.'
     }
     $vmxIdentity = Get-AtlasoVmwareSmokeVmxNetworkIdentity `

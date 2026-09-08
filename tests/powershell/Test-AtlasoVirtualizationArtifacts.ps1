@@ -88,12 +88,18 @@ try {
                 '  hardware ethernet 00:0c:29:44:55:66;',
                 '}',
                 'lease 192.0.2.20 {',
+                '  ends 0 2099/01/01 00:00:00;',
                 '  hardware ethernet 00:0c:29:11:22:33;',
                 '}'
             ) `
             -ManagementMac '00:0c:29:11:22:33')
     if ($leaseAddresses.Count -ne 1 -or $leaseAddresses[0] -ne '192.0.2.20') {
         throw 'VMware DHCP lease parsing did not retain only the ethernet0 management address candidate.'
+    }
+    foreach ($leaseEnd in @('ends 0 2000/01/01 00:00:00;', 'ends never;', 'ends malformed;', '')) {
+        $rejectedLeases = @(Get-AtlasoVmwareDhcpLeaseAddress -ManagementMac '00:0c:29:11:22:33' `
+                -LeaseText @('lease 192.0.2.99 {', 'hardware ethernet 00:0c:29:11:22:33;', $leaseEnd, '}'))
+        if ($rejectedLeases.Count -ne 0) { throw 'Expired or unbounded lease became a discovery candidate.' }
     }
     [IO.File]::WriteAllLines($vmxFixture, @(
             'ethernet0.vnet = "VMnet8"',
@@ -128,6 +134,40 @@ try {
     if ($vmwareIdentity.Address -ne '192.0.2.20' -or
         $vmwareIdentity.ManagementMac -ne '00:0c:29:11:22:33') {
         throw 'Services-first VMware neighbor evidence did not select ethernet0 on the management vmnet.'
+    }
+    $hostEvidence = @([pscustomobject]@{
+            Name = 'VMware Network Adapter VMnet8'; InterfaceDescription = '';
+            ifIndex = 8; Status = 'Up'
+        })
+    foreach ($state in @('Stale', 'Delay', 'Probe', 'Incomplete', 'Unreachable')) {
+        $unready = Resolve-AtlasoVmwareSmokeAddressIdentity -VmxIdentity $vmxIdentity `
+            -NetworkAdapters $hostEvidence -ExpectedIdentity $vmwareIdentity `
+            -RequireReachable -AllowMissingAddress -Neighbors @([pscustomobject]@{
+                InterfaceIndex = 8; IPAddress = '192.0.2.20';
+                LinkLayerAddress = '00-0c-29-11-22-33'; State = $state
+            })
+        if ($unready.Address) { throw "Cached neighbor state $state was admitted for authentication." }
+    }
+    foreach ($case in @('changed', 'conflicting', 'ambiguous')) {
+        $evidence = @([pscustomobject]@{
+                InterfaceIndex = 8; IPAddress = if ($case -eq 'changed') { '192.0.2.21' } else { '192.0.2.20' };
+                LinkLayerAddress = '00-0c-29-11-22-33'; State = 'Reachable'
+            })
+        if ($case -ne 'changed') {
+            $evidence += [pscustomobject]@{
+                InterfaceIndex = 8; IPAddress = if ($case -eq 'ambiguous') { '192.0.2.21' } else { '192.0.2.20' };
+                LinkLayerAddress = if ($case -eq 'ambiguous') { '00-0c-29-11-22-33' } else { '00-0c-29-aa-bb-cc' };
+                State = 'Reachable'
+            }
+        }
+        $refused = $false
+        try {
+            $null = Resolve-AtlasoVmwareSmokeAddressIdentity -VmxIdentity $vmxIdentity `
+                -NetworkAdapters $hostEvidence -Neighbors $evidence `
+                -ExpectedIdentity $vmwareIdentity -RequireReachable
+        }
+        catch { $refused = $true }
+        if (-not $refused) { throw "Unsafe $case management ownership was admitted." }
     }
     try {
         $driftedVmwareIdentity = $vmwareIdentity.PSObject.Copy()
@@ -804,7 +844,7 @@ foreach ($required in @(
         'Get-AtlasoVmwareDhcpLeaseAddress',
         '& $ping -4 -S',
         'Get-NetNeighbor -AddressFamily IPv4',
-        "'--phase' 'post-reboot'"
+        "-Phase 'post-reboot'"
     )) {
     if (-not $vmwareSmoke.Contains($required)) {
         throw "VMware smoke is missing a provider-bound management identity marker: $required"

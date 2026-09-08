@@ -413,6 +413,19 @@ mismatched, or
 changing management MAC/address evidence fails the smoke run before the SSH or `/openapi.json` result is accepted, and
 the same binding is revalidated after reboot.
 
+VMware SSH admission requires a currently `Reachable` management neighbor. Cached `Stale`, `Delay`, and `Probe`
+entries are probe candidates only; expired, malformed, or unbounded DHCP leases are excluded. Each failed SSH
+transport attempt returns to the Windows wrapper for another identity check under the same 15-minute phase deadline.
+Loss of MAC-bound address ownership receives at most a 20-second neighbor refresh window before an explicit identity
+failure. A changed address is never silently substituted, including during initial boot. Correct the reported network
+condition and start a new disposable smoke attempt. Host-key or authentication rejection is terminal.
+
+Progress identifies the provider, initial or post-reboot phase, VMX, management MAC/vmnet/host interface, target and
+elapsed/remaining SSH wait. Child progress uses standard error so the initial TLS fingerprint remains the sole standard
+output result. `Transfer Completed` from OVF Tool proves only import completion; guest disk/service/OpenAPI checks and
+post-reboot validation must still pass. The original stale-address report did not establish what moved the guest address;
+the fixed-host retry loop and admission of cached neighbor state are independently reproducible from the smoke helpers.
+
 ## Validate and recover
 
 After first boot, verify all of the following before adopting the VM:
