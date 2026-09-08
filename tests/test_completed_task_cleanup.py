@@ -714,6 +714,21 @@ def test_title_retry_after_task_history_pruned(cleanup: Cleanup, monkeypatch: py
     assert retry.run()["status"] == "complete"
 
 
+@pytest.mark.parametrize("name", ["tâche-日本語", pytest.param("task\nline", marks=pytest.mark.skipif(os.name == "nt", reason="Windows forbids newline paths"))])
+def test_verbatim_worktree_paths(cleanup: Cleanup, name: str) -> None:
+    """Git's NUL porcelain preserves Unicode and newline paths through complete cleanup."""
+    target = cleanup.root / name
+    cleanup.git("worktree", "move", str(cleanup.target), str(target))
+    cleanup.target = target
+    cleanup.handoff["worktree"] = str(target)
+    cleanup.handoff_path.write_text(json.dumps(cleanup.handoff), encoding="utf-8")
+    cleanup.digest = hashlib.sha256(cleanup.handoff_path.read_bytes()).hexdigest()
+    cleanup.git("config", "core.quotePath", "true")
+    assert any(item["worktree"] == target.as_posix() for item in cleanup.worktrees())
+    assert cleanup.run()["status"] == "complete"
+    assert not target.exists()
+
+
 def test_config_and_primary_protection(cleanup: Cleanup) -> None:
     """Missing configuration and primary-checkout targets never gain deletion authority."""
     cleanup.config.write_text("[desktop]\n", encoding="utf-8")

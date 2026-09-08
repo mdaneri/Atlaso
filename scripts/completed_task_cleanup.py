@@ -220,9 +220,9 @@ class Cleanup:
 
     def worktrees(self) -> list[dict[str, str]]:
         """Read Git's authoritative registration inventory without pruning it."""
-        blocks = self.git("worktree", "list", "--porcelain").split("\n\n")
+        blocks = self.git("worktree", "list", "--porcelain", "-z").split("\0\0")
         return [dict(line.split(" ", 1) if " " in line else (line, "")
-                     for line in block.splitlines()) for block in blocks if block]
+                     for line in block.split("\0") if line) for block in blocks if block]
 
     def task(self) -> None:
         """Require the controller to independently reread ownership, holds, activity, and inventory."""

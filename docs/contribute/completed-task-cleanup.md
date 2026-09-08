@@ -12,6 +12,7 @@ status: current
 Use `scripts/cleanup-completed-task.ps1` from the primary checkout for eligible completed ordinary tasks.
 It requires Python 3.14, Git, authenticated GitHub CLI, and a live cleanup controller with supported Codex task tools.
 Git's worktree inventory and common directory identify the primary checkout before worktree-root configuration is read.
+The inventory uses NUL-delimited porcelain so Unicode and other supported path characters are preserved verbatim.
 A primary-checkout target is directed to its restoration workflow even when that configuration is unavailable or unsafe.
 For non-primary targets, a `desktop` value that is not a TOML table produces a structured refusal directing configuration
 repair; a later configuration rewrite preserves already recorded cleanup gates in the refusal result.
