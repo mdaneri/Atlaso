@@ -857,6 +857,58 @@ if ($vmwareSmoke.Contains('getGuestIPAddress')) {
 # Exercise the actual cleanup guard under StrictMode when startup succeeded but
 # generated-MAC capture failed. It must skip revalidation and retain the VMX ID.
 $smokeAst = [System.Management.Automation.Language.Parser]::ParseInput($vmwareSmoke, [ref]$null, [ref]$null)
+$phaseFunction = $smokeAst.Find({
+        param($node)
+        $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and
+        $node.Name -eq 'Invoke-AtlasoVmwareSmokeGuestPhase'
+    }, $true)
+if ($null -eq $phaseFunction) { throw 'Missing provider-owned SSH retry boundary.' }
+& {
+    . ([scriptblock]::Create($phaseFunction.Extent.Text))
+    $vmRoot = 'fixture-root'
+    $vmxPath = 'fixture.vmx'
+    $Name = 'Atlaso-PR-765-fixture'
+    $vmRootId = 'root-id'
+    $vmxId = 'vmx-id'
+    $ManagementVmnet = 'VMnet8'
+    $ServiceVmnet = 'VMnet1'
+    $expectedHostKey = 'fixture-public-key'
+    $secret = 'fixture-envelope'
+    $repoRoot = $RepositoryRoot
+    $events = [System.Collections.Generic.List[string]]::new()
+    <#
+    .SYNOPSIS
+    Record filesystem admission without accessing any VM.
+    #>
+    function Assert-AtlasoVmwareVmIdentity { $events.Add('filesystem') }
+    <#
+    .SYNOPSIS
+    Reject simulated address drift after one transport failure.
+    #>
+    function Wait-AtlasoVmwareSmokeNetworkIdentity {
+        $events.Add('network')
+        if ($events.Contains('ssh')) { throw 'fixture-address-changed' }
+    }
+    <#
+    .SYNOPSIS
+    Avoid real delays in the retry regression.
+    #>
+    function Start-Sleep { }
+    $python = {
+        $events.Add('ssh')
+        $global:LASTEXITCODE = 75
+    }
+    $identity = [pscustomobject]@{
+        ManagementMac = '00:0c:29:11:22:33'; HostInterfaceIndex = 8; Address = '192.0.2.20'
+    }
+    $failure = ''
+    try { Invoke-AtlasoVmwareSmokeGuestPhase -Phase initial -Identity $identity | Out-Null }
+    catch { $failure = $_.Exception.Message }
+    if ($failure -ne 'fixture-address-changed' -or
+        ($events -join ',') -ne 'filesystem,network,ssh,filesystem,network') {
+        throw 'Address drift did not stop the next authenticated attempt at provider admission.'
+    }
+}
 $identityInitializer = $smokeAst.Find({
         param($node)
         $node -is [System.Management.Automation.Language.AssignmentStatementAst] -and
