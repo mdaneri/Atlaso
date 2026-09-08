@@ -206,6 +206,48 @@ def test_separate_push_destination_blocks_cleanup(cleanup: Cleanup, monkeypatch:
     assert not cleanup.evidence.exists()
 
 
+@pytest.mark.skipif(os.name != "nt", reason="Win32 path normalization")
+@pytest.mark.parametrize("suffix", [".", " "])
+def test_win32_alias_removal_scope_is_rejected(cleanup: Cleanup, suffix: str) -> None:
+    """Trailing dots/spaces cannot disguise a protected checkout from lexical containment."""
+    resource = resource_identity(cleanup, "alias-vm")
+    with pytest.raises(Refusal, match="Win32-normalized"):
+        cleanup.removal_scopes(resource, {"removal_scopes": [str(cleanup.target) + suffix]})
+    assert cleanup.target.exists()
+
+
+def test_cumulative_evidence_uses_recoverable_references(cleanup: Cleanup, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Multiple accepted payloads never inflate the cumulative journal beyond its restore limit."""
+    from scripts import completed_task_cleanup as command
+
+    monkeypatch.setattr(command, "MAX_EVIDENCE_BYTES", 6000)
+    cleanup.resource_evidence = [{"snapshot": "a" * 4000}, {"snapshot": "b" * 4000}]
+    cleanup.record("cleanup_prepared")
+    records = list(cleanup.evidence.glob("*.json"))
+    assert records and all(path.stat().st_size <= 6000 for path in records)
+    assert len(list(cleanup.evidence.glob("*.evidence"))) == 2
+    retry = Cleanup(cleanup.handoff_path, cleanup.evidence, cleanup.config, True, cleanup.controller)
+    assert retry.gates == ["cleanup_prepared"]
+
+
+def test_remote_main_disappearing_after_release_is_refused(cleanup: Cleanup, monkeypatch: pytest.MonkeyPatch) -> None:
+    """An empty successful ls-remote result preserves structured failure after earlier gates."""
+    original = cleanup.command
+
+    def vanished(arguments: list[str], **kwargs: object) -> str:
+        """Remove main's advertised ref only after the aggregate resource gate."""
+        if arguments == ["git", "ls-remote", "--refs", "origin", "refs/heads/main"] \
+                and "validation_resources_released" in cleanup.gates:
+            return ""
+        return original(arguments, **kwargs)
+
+    monkeypatch.setattr(cleanup, "command", vanished)
+    with pytest.raises(Refusal, match="Main changed"):
+        cleanup.run()
+    assert "validation_resources_released" in cleanup.gates
+    assert cleanup.target.exists()
+
+
 def test_preview_does_not_mutate(cleanup: Cleanup) -> None:
     """Preview performs no fetch, journal write, resource release, ref mutation, or rename."""
     cleanup.execute = False

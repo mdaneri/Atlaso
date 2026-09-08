@@ -170,6 +170,11 @@ completed list only after the prospective record has been flushed, fsynced, and 
 record or conflicting history requires independent evidence reconciliation before another invocation can proceed.
 Every eligibility check also verifies all effective Git push URLs; a separate fork push URL or extra destination blocks
 cleanup even when the fetch URL names the correct repository.
+Large controller evidence and snapshots are stored as bounded, hashed `.evidence` files; cumulative journals contain
+their references and remain within the same 64 MiB recovery limit. Preserve both file types. A retry verifies referenced
+payloads before continuing, and prepared transition records are persisted before destructive owning-tool or Git actions.
+Windows inputs reject trailing-dot/space, reserved-device, and short-name aliases before containment checks. An absent
+remote `main` produces a structured refusal, including any already recorded gates.
 
 An absent worktree with absent registration may resume exact matching local-ref cleanup. A fully removed branch and
 worktree may retry title-only completion without repeating destructive operations. A path absent while registration

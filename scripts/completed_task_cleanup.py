@@ -23,6 +23,8 @@ from scripts.completed_task_title import (
     verify_completed_task_title,
 )
 
+MAX_EVIDENCE_BYTES = 64 * 1024 * 1024
+
 
 class Refusal(RuntimeError):
     """A failed gate whose remaining resources must be preserved."""
@@ -38,6 +40,11 @@ def ordinary(path: Path) -> Path:
     """Reject relative paths, aliases, links, and reparse ancestors, including absent retries."""
     require(path.is_absolute(), "Supply an absolute path.")
     require(not any(part in {".", ".."} for part in path.parts), "Path traversal is forbidden.")
+    if os.name == "nt":
+        require(not str(path).startswith(("\\\\?\\", "\\\\.\\"))
+                and not os.path.isreserved(str(path))
+                and not any(part.endswith((".", " ")) or re.search(r"~[0-9]", part) for part in path.parts[1:]),
+                "Win32-normalized path aliases are forbidden; supply the ordinary long path.")
     for item in [*reversed(path.parents), path]:
         try:
             info = item.lstat()
@@ -150,7 +157,7 @@ class Cleanup:
         histories = []
         for path in records:
             ordinary(path)
-            require(path.stat().st_nlink == 1 and path.stat().st_size <= 67108864, "Invalid cleanup journal file identity or size.")
+            require(path.stat().st_nlink == 1 and path.stat().st_size <= MAX_EVIDENCE_BYTES, "Invalid cleanup journal file identity or size.")
             record = json.loads(path.read_text(encoding="utf-8"))
             require(isinstance(record, dict) and record.get("handoff_sha256") == self.digest
                     and record.get("task_id") == self.handoff["task_id"]
@@ -162,6 +169,15 @@ class Cleanup:
             require(record["gates"][:len(self.gates)] == self.gates, "Conflicting cleanup journal histories; reconcile evidence.")
             self.gates = record["gates"]
             self.resource_evidence = record["resource_evidence"]
+        for item in self.resource_evidence:
+            if isinstance(item, dict) and "evidence_file" in item:
+                require(set(item) == {"evidence_file", "sha256"} and isinstance(item["sha256"], str)
+                        and re.fullmatch(r"[0-9a-f]{64}", item["sha256"])
+                        and item["evidence_file"] == f"{item['sha256']}.evidence", "Invalid preserved evidence reference.")
+                blob = ordinary(self.evidence / item["evidence_file"])
+                require(blob.stat().st_nlink == 1 and blob.stat().st_size <= MAX_EVIDENCE_BYTES
+                        and hashlib.sha256(blob.read_bytes()).hexdigest() == item["sha256"],
+                        "Preserved evidence is missing or changed; reconcile before retry.")
 
     def verify_push_urls(self) -> None:
         """Validate every effective push destination independently of origin's fetch URL."""
@@ -265,7 +281,8 @@ class Cleanup:
         main = self.api("git/ref/heads/main")["object"]["sha"]
         comparison = self.api(f"compare/{self.merge}...{main}")
         require(comparison["status"] in {"ahead", "identical"}, "Squash commit is not reachable from current main.")
-        require(self.git("ls-remote", "--refs", "origin", "refs/heads/main").split()[0] == main,
+        remote_main = self.git("ls-remote", "--refs", "origin", "refs/heads/main").split()
+        require(remote_main and remote_main[0] == main,
                 "Main changed during verification; retry fresh eligibility.")
         # The live controller identifies the applicable chain; task() verifies exact runs
         # without conflating unrelated manual dispatches that happen to share the merge SHA.
@@ -376,11 +393,34 @@ class Cleanup:
         if self.execute:
             ordinary(self.evidence)
             self.evidence.mkdir(parents=True, exist_ok=True)
+            # Large snapshots and controller references remain separate from the small
+            # cumulative gate journal, so every record we publish remains recoverable.
+            references = []
+            for item in self.resource_evidence:
+                if set(item) == {"evidence_file", "sha256"}:
+                    references.append(item)
+                    continue
+                payload = json.dumps(item).encode("utf-8")
+                require(len(payload) <= MAX_EVIDENCE_BYTES, "Evidence payload exceeds the recoverable limit; preserve resources.")
+                digest = hashlib.sha256(payload).hexdigest()
+                blob = self.evidence / f"{digest}.evidence"
+                if blob.exists():
+                    ordinary(blob)
+                    require(blob.stat().st_nlink == 1 and blob.read_bytes() == payload, "Evidence payload identity changed.")
+                else:
+                    with blob.open("xb") as stream:
+                        stream.write(payload)
+                        stream.flush()
+                        os.fsync(stream.fileno())
+                references.append({"evidence_file": blob.name, "sha256": digest})
+            self.resource_evidence = references
+            payload = json.dumps({"handoff_sha256": self.digest, "task_id": self.handoff["task_id"],
+                                  "gates": prospective, "resource_evidence": references}).encode("utf-8")
+            require(len(payload) <= MAX_EVIDENCE_BYTES, "Journal exceeds the recoverable limit; preserve resources.")
             destination = self.evidence / f"{self.digest}-{uuid.uuid4()}.json"
             pending = destination.with_suffix(".pending")
-            with pending.open("x", encoding="utf-8") as stream:
-                json.dump({"handoff_sha256": self.digest, "task_id": self.handoff["task_id"],
-                           "gates": prospective, "resource_evidence": self.resource_evidence}, stream)
+            with pending.open("xb") as stream:
+                stream.write(payload)
                 stream.flush()
                 os.fsync(stream.fileno())
             pending.rename(destination)
@@ -462,6 +502,7 @@ class Cleanup:
                 require(all(inspected.get(key) is True for key in
                             ("ownership_verified", "inactive", "supported_cleanup", "evidence_preserved"))
                         and inspected.get("retained") is False, "Resource release eligibility changed.")
+                self.record(f"resource_release_prepared:{identity}")
                 released = self.controller.call("resource.release", {"resource": resource, "handoff_sha256": self.digest,
                                                                       "removal_scopes": scopes})
                 require(released.get("success") is True, "Owning tool failed or refused resource release; preserve remaining resources.")
@@ -492,6 +533,7 @@ class Cleanup:
         self.eligibility()
         if self.git("ls-remote", "--refs", "origin", f"refs/heads/{self.branch}"):
             self.verify_push_urls()
+            self.record("remote_branch_removal_prepared")
             self.git("push", "origin", f"--force-with-lease=refs/heads/{self.branch}:{self.head}",
                      f":refs/heads/{self.branch}")
         require(not self.git("ls-remote", "--refs", "origin", f"refs/heads/{self.branch}"), "Remote ref absence verification failed.")
@@ -502,6 +544,7 @@ class Cleanup:
             # must independently account for all ignored files before this transition.
             ignored = self.git("-C", str(self.target), "ls-files", "--others", "--ignored", "--exclude-standard")
             require(not ignored, "Ignored validation/configuration files remain; release them through their owning tools first.")
+            self.record("worktree_removal_prepared")
             self.git("worktree", "remove", str(self.target))
         require(not self.target.exists() and not any(Path(item["worktree"]) == self.target for item in self.worktrees()),
                 "Worktree path or registration remains; retry only after independent reconciliation.")
@@ -511,6 +554,7 @@ class Cleanup:
         local = self.git("for-each-ref", "--format=%(objectname)", f"refs/heads/{self.branch}")
         require(local in {"", self.head}, "Local branch changed after worktree removal.")
         if local:
+            self.record("local_branch_removal_prepared")
             self.git("update-ref", "-d", f"refs/heads/{self.branch}", self.head)
         require(not self.git("for-each-ref", "--format=%(objectname)", f"refs/heads/{self.branch}"),
                 "Local task ref still exists; resume local-ref removal only.")
