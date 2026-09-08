@@ -94,7 +94,8 @@ supported-tool reads for that request, then writes exactly one JSON line to stdi
 ```
 
 That minimal example illustrates framing only; each operation requires the complete result below. Responses are
-bounded to 256 KiB and 120 seconds. A mismatched nonce, missing field, error, EOF, or timeout refuses the transition.
+bounded to 256 KiB and 120 seconds. A non-object JSON response, mismatched nonce, missing field, error, EOF, or timeout
+refuses the transition with a structured result that retains the completed gates.
 Never pipe a saved response sequence into execution. The bridge is a trusted controller boundary, not authentication
 against a malicious operator who can write stdin or edit the program. Keep the originating task idle and unpinned for
 the entire reconciliation; a maintainer restarting it must stop cleanup first. Fresh snapshots do not provide a

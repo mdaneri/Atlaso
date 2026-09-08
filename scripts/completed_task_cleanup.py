@@ -81,6 +81,7 @@ class Controller:
             raise Refusal("Controller response timed out; rerun with a live controller.") from exc
         require(0 < len(line) <= 262144, "Controller response missing or oversized.")
         response = json.loads(line)
+        require(isinstance(response, dict), "Controller response must be a JSON object; retry with the live controller.")
         require(response.get("id") == request_id, "Controller response does not match the fresh request.")
         require(response.get("error") is None, "Controller refused the operation; preserve resources and inspect controller evidence.")
         result = response.get("result")

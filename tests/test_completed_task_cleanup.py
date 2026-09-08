@@ -345,6 +345,18 @@ def test_controller_rejects_saved_response(monkeypatch: pytest.MonkeyPatch, caps
     assert emitted["kind"] == "controller_request" and emitted["id"] != "old-request"
 
 
+@pytest.mark.parametrize("value", [None, True, 123, "response", [], ["response"]])
+def test_controller_rejects_non_object_json(monkeypatch: pytest.MonkeyPatch, value: object) -> None:
+    """Valid JSON of the wrong shape produces a structured refusal instead of AttributeError."""
+    import io
+
+    from scripts.completed_task_cleanup import Controller
+
+    monkeypatch.setattr("sys.stdin", io.StringIO(json.dumps(value) + "\n"))
+    with pytest.raises(Refusal, match="must be a JSON object"):
+        Controller().call("task.title", {"task_id": "fixture-task"})
+
+
 def test_changed_handoff_blocks_before_mutation(cleanup: Cleanup) -> None:
     """A replaced durable handoff cannot be used after its original digest was admitted."""
     cleanup.handoff_path.write_text("{}", encoding="utf-8")
@@ -352,6 +364,32 @@ def test_changed_handoff_blocks_before_mutation(cleanup: Cleanup) -> None:
         cleanup.run()
     assert cleanup.target.exists()
     assert not cleanup.evidence.exists()
+
+
+def test_main_preserves_gates_on_late_controller_refusal(monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture) -> None:
+    """The CLI returns completed gate evidence when malformed input arrives at the final title request."""
+    import io
+
+    from scripts import completed_task_cleanup as command
+
+    class LateRequest:
+        """Model already completed transitions without deleting real fixture resources."""
+
+        gates = ["validation_resources_released", "remote_branch_absent", "worktree_removed"]
+        proposed = []
+
+        def run(self) -> dict:
+            """Exercise the real bridge parser at the final protocol boundary."""
+            return command.Controller().call("task.title", {"task_id": "fixture-task"})
+
+    monkeypatch.setattr(command, "Cleanup", lambda *args: LateRequest())
+    monkeypatch.setattr("sys.argv", ["cleanup", "--handoff", "fixture", "--evidence", "fixture", "--config", "fixture"])
+    monkeypatch.setattr("sys.stdin", io.StringIO("[]\n"))
+    assert command.main() == 1
+    result = json.loads(capsys.readouterr().out.splitlines()[-1])
+    assert result["status"] == "refused"
+    assert result["gates"] == LateRequest.gates
+    assert "JSON object" in result["retry_condition"]
 
 
 @pytest.mark.parametrize("field", ["repository", "pr", "ownership_manifest", "provider_id", "cleanup_tool"])
