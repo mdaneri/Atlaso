@@ -139,6 +139,36 @@ class Cleanup:
             self.expected_title = completed_task_title(self.handoff["description"], self.handoff["issues"], [self.handoff["pr"]])
         except ValueError as exc:
             raise Refusal(str(exc)) from exc
+        self.restore_gates()
+
+    def restore_gates(self) -> None:
+        """Recover a single monotonic journal history before permitting any retry transition."""
+        require(not list(self.evidence.glob(f"{self.digest}-*.pending")),
+                "An incomplete journal write requires independent evidence reconciliation before retry.")
+        records = list(self.evidence.glob(f"{self.digest}-*.json"))
+        require(len(records) <= 1000, "Oversized cleanup journal; reconcile evidence before retry.")
+        histories = []
+        for path in records:
+            ordinary(path)
+            require(path.stat().st_nlink == 1 and path.stat().st_size <= 67108864, "Invalid cleanup journal file identity or size.")
+            record = json.loads(path.read_text(encoding="utf-8"))
+            require(isinstance(record, dict) and record.get("handoff_sha256") == self.digest
+                    and record.get("task_id") == self.handoff["task_id"]
+                    and isinstance(record.get("gates"), list) and all(isinstance(gate, str) for gate in record["gates"])
+                    and isinstance(record.get("resource_evidence"), list), "Invalid cleanup journal binding.")
+            histories.append(record)
+        histories.sort(key=lambda record: len(record["gates"]))
+        for record in histories:
+            require(record["gates"][:len(self.gates)] == self.gates, "Conflicting cleanup journal histories; reconcile evidence.")
+            self.gates = record["gates"]
+            self.resource_evidence = record["resource_evidence"]
+
+    def verify_push_urls(self) -> None:
+        """Validate every effective push destination independently of origin's fetch URL."""
+        urls = self.git("remote", "get-url", "--push", "--all", "origin").splitlines()
+        require(urls and all(url in {f"https://github.com/{self.repository}.git", f"https://github.com/{self.repository}",
+                                    f"git@github.com:{self.repository}.git"} for url in urls),
+                "Origin push URLs differ from the exact same-repository destination; preserve all refs.")
 
     def command(self, args: list[str], *, allowed: tuple[int, ...] = (0,)) -> str:
         """Run argument arrays with bounded time; never publish arbitrary child output on failure."""
@@ -216,6 +246,7 @@ class Cleanup:
         remote = self.git("remote", "get-url", "origin")
         require(remote in {f"https://github.com/{self.repository}.git", f"https://github.com/{self.repository}",
                            f"git@github.com:{self.repository}.git"}, "Origin differs from the exact same-repository GitHub identity.")
+        self.verify_push_urls()
         pr = self.api(f"pulls/{self.handoff['pr']}")
         require(pr["merged"] is True and pr["merge_commit_sha"] == self.merge and pr["head"]["sha"] == self.head,
                 "Merged PR/head/squash identity is unproven.")
@@ -247,8 +278,7 @@ class Cleanup:
                     "Origin main changed during fetch; repeat eligibility before deletion.")
             self.git("merge-base", "--is-ancestor", self.merge, "refs/remotes/origin/main")
             self.task()
-        if "validation_resources_released" in self.gates:
-            self.verify_resources_absent()
+        self.verify_resources_absent(completed_only=True)
         self.local_state()
 
     def local_state(self) -> None:
@@ -308,9 +338,12 @@ class Cleanup:
             require(isinstance(resource.get("cleanup_tool"), str) and resource["cleanup_tool"].strip(),
                     "Specialized resource requires its exact supported owning cleanup tool.")
 
-    def verify_resources_absent(self) -> None:
+    def verify_resources_absent(self, *, completed_only: bool = False) -> None:
         """Revisit the entire inventory so earlier resources cannot silently reappear."""
         for resource in self.handoff["resources"]:
+            if completed_only and "validation_resources_released" not in self.gates \
+                    and f"resource_released:{resource['id']}" not in self.gates:
+                continue
             self.validate_resource_identity(resource)
             result = self.controller.call("resource.inspect", {"resource": resource, "handoff_sha256": self.digest})
             require(result.get("absent") is True and result.get("ownership_verified") is True
@@ -337,23 +370,33 @@ class Cleanup:
 
     def record(self, gate: str) -> None:
         """Durably preserve completed gates before the next transition; no evidence writes in preview."""
-        self.gates.append(gate)
+        if gate in self.gates:
+            return
+        prospective = [*self.gates, gate]
         if self.execute:
             ordinary(self.evidence)
             self.evidence.mkdir(parents=True, exist_ok=True)
             destination = self.evidence / f"{self.digest}-{uuid.uuid4()}.json"
-            with destination.open("x", encoding="utf-8") as stream:
+            pending = destination.with_suffix(".pending")
+            with pending.open("x", encoding="utf-8") as stream:
                 json.dump({"handoff_sha256": self.digest, "task_id": self.handoff["task_id"],
-                           "gates": self.gates, "resource_evidence": self.resource_evidence}, stream)
+                           "gates": prospective, "resource_evidence": self.resource_evidence}, stream)
                 stream.flush()
                 os.fsync(stream.fileno())
+            pending.rename(destination)
+        self.gates = prospective
 
     def resources(self) -> None:
         """Delegate specialized resources to their owning tools and demand independent absence readback."""
         identities: set[str] = set()
         for resource in self.handoff["resources"]:
             self.validate_resource_identity(resource)
+        self.verify_resources_absent(completed_only=True)
+        if "validation_resources_released" in self.gates:
+            return
         for resource in self.handoff["resources"]:
+            if f"resource_released:{resource['id']}" in self.gates:
+                continue
             require(isinstance(resource, dict) and set(resource) <= {
                 "id", "kind", "task_id", "source_commit", "path", "root_identity", "provider_id",
                 "ownership_manifest", "cleanup_tool", "repository", "pr"}, "Resource fields differ from the bounded sanitized schema.")
@@ -448,6 +491,7 @@ class Cleanup:
             return {"status": "preview", "proposed": self.proposed, "gates": [], "handoff_sha256": self.digest}
         self.eligibility()
         if self.git("ls-remote", "--refs", "origin", f"refs/heads/{self.branch}"):
+            self.verify_push_urls()
             self.git("push", "origin", f"--force-with-lease=refs/heads/{self.branch}:{self.head}",
                      f":refs/heads/{self.branch}")
         require(not self.git("ls-remote", "--refs", "origin", f"refs/heads/{self.branch}"), "Remote ref absence verification failed.")

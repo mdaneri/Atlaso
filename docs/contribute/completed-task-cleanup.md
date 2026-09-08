@@ -164,6 +164,12 @@ Exit zero means a successful preview or completed execution; inspect the JSON `s
 and `status: "refused"` give an actionable `retry_condition` and completed gates. Durable JSON evidence records bind
 each transition and prepared generated-tree inventory to the original handoff digest. Preserve the original handoff
 and controller evidence references alongside these records. Never use a journal's claimed gate to skip live checks.
+Each fresh invocation recovers the matching monotonic journal history and rechecks the continued absence of completed
+resources and refs. Reappearance refuses cleanup rather than authorizing a second deletion. Gates enter the reported
+completed list only after the prospective record has been flushed, fsynced, and published. An interrupted `.pending`
+record or conflicting history requires independent evidence reconciliation before another invocation can proceed.
+Every eligibility check also verifies all effective Git push URLs; a separate fork push URL or extra destination blocks
+cleanup even when the fetch URL names the correct repository.
 
 An absent worktree with absent registration may resume exact matching local-ref cleanup. A fully removed branch and
 worktree may retry title-only completion without repeating destructive operations. A path absent while registration

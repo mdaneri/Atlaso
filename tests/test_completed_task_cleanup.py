@@ -100,6 +100,8 @@ def cleanup(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Cleanup:
         """Retain real Git mutations and return deterministic remote-service evidence."""
         if arguments[:4] == ["git", "remote", "get-url", "origin"]:
             return "https://github.com/example/Atlaso.git"
+        if arguments == ["git", "remote", "get-url", "--push", "--all", "origin"]:
+            return "https://github.com/example/Atlaso.git"
         if arguments[:3] == ["gh", "pr", "view"]:
             return json.dumps({"closingIssuesReferences": [{"number": 760}]})
         return command(arguments, **kwargs)
@@ -135,6 +137,73 @@ def test_eligible_cleanup_and_title_only_retry(cleanup: Cleanup) -> None:
     assert not cleanup.git("for-each-ref", "--format=%(objectname)", "refs/heads/" + cleanup.branch)
     assert list(cleanup.evidence.glob("*.json"))
     assert cleanup.run()["status"] == "complete"
+
+
+@pytest.mark.parametrize("reappeared", ["remote", "resource", "none"])
+def test_fresh_process_retry_recovers_completed_gates(cleanup: Cleanup, monkeypatch: pytest.MonkeyPatch, reappeared: str) -> None:
+    """A newly constructed CLI instance cannot repeat deletion after a failed title transition."""
+    cleanup.handoff["resources"] = [resource_identity(cleanup, "retry-resource")]
+    cleanup.handoff_path.write_text(json.dumps(cleanup.handoff), encoding="utf-8")
+    cleanup.digest = hashlib.sha256(cleanup.handoff_path.read_bytes()).hexdigest()
+    original = cleanup.controller.call
+
+    def fail_title(operation: str, payload: dict) -> dict:
+        """Stop after durable deletion gates but before the supported title operation."""
+        if operation == "task.title":
+            raise Refusal("title unavailable")
+        return original(operation, payload)
+
+    monkeypatch.setattr(cleanup.controller, "call", fail_title)
+    with pytest.raises(Refusal, match="title unavailable"):
+        cleanup.run()
+    if reappeared == "remote":
+        cleanup.git("push", "origin", f"{cleanup.head}:refs/heads/{cleanup.branch}")
+    elif reappeared == "resource":
+        cleanup.controller.resource_absent = False
+    monkeypatch.setattr(cleanup.controller, "call", original)
+    retry = Cleanup(cleanup.handoff_path, cleanup.evidence, cleanup.config, True, cleanup.controller)
+    monkeypatch.setattr(retry, "command", cleanup.command)
+    monkeypatch.setattr(retry, "api", cleanup.api)
+    assert "worktree_removed" in retry.gates
+    releases = cleanup.controller.calls.count("resource.release")
+    if reappeared == "none":
+        assert retry.run()["status"] == "complete"
+    else:
+        with pytest.raises(Refusal, match="reappeared|Aggregate resource absence"):
+            retry.run()
+    assert cleanup.controller.calls.count("resource.release") == releases
+
+
+def test_failed_journal_write_does_not_publish_gate(cleanup: Cleanup, monkeypatch: pytest.MonkeyPatch) -> None:
+    """An fsync failure leaves an explicit incomplete journal and no claimed completed gate."""
+    def failed_fsync(descriptor: int) -> None:
+        """Model a storage failure while persisting transition evidence."""
+        raise OSError("fixture fsync failure")
+
+    monkeypatch.setattr(os, "fsync", failed_fsync)
+    with pytest.raises(OSError, match="fixture fsync failure"):
+        cleanup.record("validation_resources_released")
+    assert "validation_resources_released" not in cleanup.gates
+    with pytest.raises(Refusal, match="incomplete journal write"):
+        Cleanup(cleanup.handoff_path, cleanup.evidence, cleanup.config, True, cleanup.controller)
+
+
+@pytest.mark.parametrize("urls", ["https://github.com/other/Atlaso.git", "https://github.com/example/Atlaso.git\nhttps://github.com/other/Atlaso.git"])
+def test_separate_push_destination_blocks_cleanup(cleanup: Cleanup, monkeypatch: pytest.MonkeyPatch, urls: str) -> None:
+    """A matching fetch URL does not authorize deletion at a fork or additional push URL."""
+    original = cleanup.command
+
+    def redirected(arguments: list[str], **kwargs: object) -> str:
+        """Keep the verified fetch remote while substituting effective push destinations."""
+        if arguments == ["git", "remote", "get-url", "--push", "--all", "origin"]:
+            return urls
+        return original(arguments, **kwargs)
+
+    monkeypatch.setattr(cleanup, "command", redirected)
+    with pytest.raises(Refusal, match="push URLs differ"):
+        cleanup.run()
+    assert cleanup.target.exists()
+    assert not cleanup.evidence.exists()
 
 
 def test_preview_does_not_mutate(cleanup: Cleanup) -> None:
