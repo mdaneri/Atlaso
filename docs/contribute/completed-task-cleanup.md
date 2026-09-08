@@ -11,6 +11,8 @@ status: current
 
 Use `scripts/cleanup-completed-task.ps1` from the primary checkout for eligible completed ordinary tasks.
 It requires Python 3.14, Git, authenticated GitHub CLI, and a live cleanup controller with supported Codex task tools.
+The PowerShell entry point uses isolated Python startup with site initialization disabled and binds the `scripts`
+package directly to its checked-in script directory, ignoring inherited Python paths and startup hooks.
 Git's worktree inventory and common directory identify the primary checkout before worktree-root configuration is read.
 The inventory uses NUL-delimited porcelain so Unicode and other supported path characters are preserved verbatim.
 A primary-checkout target is directed to its restoration workflow even when that configuration is unavailable or unsafe.
@@ -222,6 +224,7 @@ Generated-tree deletion repeats resource-specific ownership, inactivity, retenti
 after task eligibility reconciliation, immediately before recording its prepared gate and removing the checked tree.
 Generated snapshots reject `.git` entries and bare-repository structures (`HEAD`, `objects`, and `refs` or `packed-refs`)
 at any depth. These repositories require separate inventory and their owning cleanup workflow.
+Nested `.atlaso-local` credential/recovery directories are also preserved for their owning cleanup workflow.
 Recovered journals and blobs use the same regular-file reader with the 64 MiB evidence limit. Before final ref/worktree
 removal, every remaining directory must be a parent of tracked source; empty ignored or untracked directories require
 inventory reconciliation and owning-tool release because Git's cleanliness checks do not report them.

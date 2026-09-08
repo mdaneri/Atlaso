@@ -22,7 +22,14 @@ param(
     [switch]$Execute
 )
 $ErrorActionPreference = 'Stop'
-$arguments = @('-B', '-m', 'scripts.completed_task_cleanup', '--handoff', $Handoff,
+$bootstrap = @'
+import runpy, sys, types
+package = types.ModuleType("scripts")
+package.__path__ = [sys.argv.pop(1)]
+sys.modules["scripts"] = package
+runpy.run_module("scripts.completed_task_cleanup", run_name="__main__")
+'@
+$arguments = @('-I', '-S', '-B', '-c', $bootstrap, $PSScriptRoot, '--handoff', $Handoff,
     '--evidence', $Evidence, '--config', $Config)
 if ($Execute) { $arguments += '--execute' }
 & python @arguments

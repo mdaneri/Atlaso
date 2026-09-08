@@ -141,6 +141,7 @@ class Cleanup:
                 "Preserve the handoff outside the target, beneath the configured root first.")
         require(self.handoff.get("schema") == 1, "Unsupported handoff schema.")
         self.branch = self.handoff["branch"]
+        require(isinstance(self.branch, str), "Branch must be a string containing the exact task-owned ref.")
         self.head = self.handoff["head"]
         self.merge = self.handoff["merge"]
         self.repository = self.handoff["repository"]
@@ -547,6 +548,8 @@ class Cleanup:
                     snapshot = files.snapshot(path)
                     require(not any(".git" in {part.casefold() for part in Path(entry).parts} for entry in snapshot),
                             "Nested repositories are not generated output trees.")
+                    require(not any(".atlaso-local" in {part.casefold() for part in Path(entry).parts} for entry in snapshot),
+                            "Nested credential/recovery roots require their owning cleanup workflow.")
                     children: dict[Path, set[str]] = {}
                     for entry in snapshot:
                         relative_entry = Path(entry)

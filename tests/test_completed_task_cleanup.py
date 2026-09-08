@@ -800,6 +800,53 @@ def test_title_response_rechecks_full_eligibility(cleanup: Cleanup, monkeypatch:
     assert "task_title_done" not in cleanup.gates
 
 
+@pytest.mark.parametrize("branch", [None, 42, True, [], {}])
+def test_branch_type_refused(cleanup: Cleanup, branch: object) -> None:
+    """Malformed branch values receive a structured refusal before string operations."""
+    path = cleanup.root / "invalid-branch.json"
+    path.write_text(json.dumps({**cleanup.handoff, "branch": branch}), encoding="utf-8")
+    with pytest.raises(Refusal, match="Branch must be a string"):
+        Cleanup(path, cleanup.evidence, cleanup.config, True, cleanup.controller)
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Windows generated-tree contract")
+def test_nested_recovery_root_preserved(cleanup: Cleanup) -> None:
+    """Recovery directories anywhere under generated output require their own release path."""
+    path = cleanup.target / "cache"
+    recovery = path / "nested" / ".atlaso-local"
+    recovery.mkdir(parents=True)
+    marker = recovery / "recovery.json"
+    marker.write_text("fixture recovery state", encoding="utf-8")
+    (cleanup.repo / ".git/info/exclude").write_text("cache/\n", encoding="utf-8")
+    identity = WindowsFiles().snapshot(path)["."]["identity"]
+    cleanup.handoff["resources"] = [{**resource_identity(cleanup, "recovery-cache", "generated_tree"),
+                                     "path": str(path), "root_identity": identity}]
+    with pytest.raises(Refusal, match="Nested credential/recovery"):
+        cleanup.run()
+    assert marker.read_text() == "fixture recovery state"
+    assert "resource_release_prepared:recovery-cache" not in cleanup.gates
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Windows PowerShell entry point")
+def test_wrapper_ignores_external_python_imports(cleanup: Cleanup) -> None:
+    """Inherited startup hooks and a regular scripts package cannot replace the checked-in command."""
+    external = cleanup.root / "external-python"
+    package = external / "scripts"
+    package.mkdir(parents=True)
+    marker = external / "executed.txt"
+    injected = f"from pathlib import Path; Path({str(marker)!r}).write_text('external')\n"
+    (external / "sitecustomize.py").write_text(injected, encoding="utf-8")
+    (package / "__init__.py").write_text(injected, encoding="utf-8")
+    (package / "completed_task_cleanup.py").write_text(injected, encoding="utf-8")
+    wrapper = Path(__file__).resolve().parents[1] / "scripts" / "cleanup-completed-task.ps1"
+    result = subprocess.run(["pwsh", "-NoProfile", "-File", str(wrapper), "-Handoff", str(cleanup.root / "missing.json"),
+                             "-Evidence", str(cleanup.evidence), "-Config", str(cleanup.config)],
+                            env={**os.environ, "PYTHONPATH": str(external)}, capture_output=True, text=True, timeout=20)
+    assert result.returncode != 0
+    assert json.loads(result.stdout)["status"] == "refused"
+    assert not marker.exists()
+
+
 def test_config_and_primary_protection(cleanup: Cleanup) -> None:
     """Missing configuration and primary-checkout targets never gain deletion authority."""
     cleanup.config.write_text("[desktop]\n", encoding="utf-8")
