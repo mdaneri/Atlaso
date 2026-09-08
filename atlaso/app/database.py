@@ -98,14 +98,24 @@ def _create_database_schema(bind: Engine) -> None:
 
 
 def _reconcile_nat_ingress_column(connection: Connection) -> None:
-    """Upgrade legacy NAT rows while holding the startup schema lock.
+    """Upgrade legacy NAT rows with additive NAT translation columns while holding the startup schema lock.
 
     Args:
         connection: Connection owning the serialized schema transaction.
     """
     # Preserve legacy rules without guessing which ingress networks were intended.
-    if "inbound_interfaces" not in {column["name"] for column in inspect(connection).get_columns("nat_rules")}:
+    nat_rule_columns = {column["name"] for column in inspect(connection).get_columns("nat_rules")}
+    if "inbound_interfaces" not in nat_rule_columns:
         connection.execute(text("ALTER TABLE nat_rules ADD COLUMN inbound_interfaces JSON NOT NULL DEFAULT '[]'"))
+    # Add additive NAT translation metadata while preserving legacy rows.
+    if "ip_family" not in nat_rule_columns:
+        connection.execute(text("ALTER TABLE nat_rules ADD COLUMN ip_family INTEGER NOT NULL DEFAULT 4"))
+    if "translation_mode" not in nat_rule_columns:
+        connection.execute(
+            text("ALTER TABLE nat_rules ADD COLUMN translation_mode VARCHAR(16) NOT NULL DEFAULT 'masquerade'")
+        )
+    if "translated_address" not in nat_rule_columns:
+        connection.execute(text("ALTER TABLE nat_rules ADD COLUMN translated_address VARCHAR(240) NOT NULL DEFAULT ''"))
 
 
 def _reconcile_vcf_depot_job_queue(connection: Connection) -> None:

@@ -9,6 +9,12 @@ status: current
 
 # Router architecture
 
+Traffic Publishing settings and NAT transports remain registered by the `routes_wan` domain routers to preserve the
+existing NAT operation IDs and facades. `services/traffic_publishing.py` owns canonical NAT settings, eligibility,
+family validation, and helper snapshots. The `nat` Apply unit has its own baseline and helper transaction. Routing/WAN
+projects the deprecated NAT settings field through that owner; it never persists a second switch. The normalized
+OpenAPI and route inventory include the canonical Traffic Publishing browser and API routes plus legacy NAT bridges.
+
 Atlaso is moving its monolithic UI and API v1 route implementations into product-domain modules in staged work under
 issue #317. The application-facing modules `atlaso/app/ui.py` and `atlaso/app/api/v1.py` remain stable compatibility and
 aggregation facades throughout that migration. Phase 1 established the registries and contract baselines. Phase 2

@@ -179,14 +179,18 @@ from atlaso.app.services.routes_wan import (
     canonical_route_destination,
     ensure_routes_wan_settings,
     nat_eligible_target_names,
-    validate_nat_ingress,
-    validate_nat_source,
     validate_wan_state,
 )
 from atlaso.app.services.service_dns_defaults import (
     reconcile_factory_service_identities,
 )
 from atlaso.app.services.service_registry import SERVICE_STATE_IDS
+from atlaso.app.services.traffic_publishing import (
+    LEGACY_NAT_ENABLED_SETTING_KEY,
+    NAT_ENABLED_SETTING_KEY,
+    nat_targets,
+    validate_nat_rule,
+)
 from atlaso.app.services.update_sources import (
     UPDATE_SOURCE_KINDS,
     validate_managed_package,
@@ -220,6 +224,7 @@ SAFE_SETTING_KEYS = {
     LOCAL_USERS_PASSWORD_POLICY_KEY,
     NTP_NTS_RESTORATION_SETTING_KEY,
     *ROUTES_WAN_SETTING_KEYS,
+    NAT_ENABLED_SETTING_KEY, LEGACY_NAT_ENABLED_SETTING_KEY,
 }
 
 SCALAR_TABLES = {
@@ -1922,7 +1927,7 @@ def _archive_routes_wan_feature_state(
     settings = {
         str(row.get("key") or ""): row
         for row in data.get("settings", [])
-        if str(row.get("key") or "").startswith("routes_wan.")
+        if str(row.get("key") or "").startswith(("routes_wan.", "traffic_publishing."))
     }
     inferred = _infer_routes_wan_feature_state(data)
     return RoutesWanSettings(
@@ -1932,6 +1937,8 @@ def _archive_routes_wan_feature_state(
             else inferred.routing_enabled
         ),
         nat_enabled=(
+            _parse_archive_setting_bool(settings[NAT_ENABLED_SETTING_KEY]["value"])
+            if NAT_ENABLED_SETTING_KEY in settings else
             _parse_archive_setting_bool(settings["routes_wan.nat_enabled"]["value"])
             if "routes_wan.nat_enabled" in settings
             else inferred.nat_enabled
@@ -2219,7 +2226,6 @@ def _validate_archive_relationships(data: dict[str, list[dict[str, Any]]]) -> No
         raise ValueError(
             "The settings archive Source Groups state is invalid."
         ) from exc
-    firewall_source_group_ids = {str(group.get("id") or "") for group in firewall_source_groups}
     for name, row in vlan_interfaces.items():
         parent = physical_interfaces.get(str(row.get("parent_interface") or ""))
         if (
@@ -2540,39 +2546,28 @@ def _validate_archive_relationships(data: dict[str, list[dict[str, Any]]]) -> No
         and item.name == f"{item.parent_interface}.{item.vlan_id}"
     )
     archive_nat_targets = nat_eligible_target_names(archived_interfaces, archived_vlans) | missing_nat_targets
+    traffic_targets = nat_targets(archived_interfaces, archived_vlans)
     for row_index, row in enumerate(data.get("nat_rules", []), start=1):
-        ingress_errors = validate_nat_ingress(
-            row.get("inbound_interfaces", []), str(row.get("outbound_interface") or ""),
-            archive_nat_targets, required=False,
-            check_availability=bool(row.get("enabled", True) and effective_nat_enabled),
-        )
-        if ingress_errors:
-            raise ValueError(f"The settings archive NAT ingress is invalid: {ingress_errors[0]}")
         enabled = row.get("enabled", True)
         if not isinstance(enabled, bool):
-            raise ValueError(
-                f"The settings archive row {row_index} in 'nat_rules' has an invalid enabled value."
-            )
-        if (
-            effective_nat_enabled
-            and enabled
-            and str(row.get("outbound_interface") or "") not in missing_nat_targets
-            and "ipv4"
-            not in route_target_families.get(
-                str(row.get("outbound_interface") or ""), set()
-            )
-        ):
-            raise ValueError(
-                f"The settings archive row {row_index} in 'nat_rules' has an ineligible outbound interface."
-            )
-        if effective_nat_enabled and enabled and validate_nat_source(
-            str(row.get("source") or ""),
-            firewall_source_group_ids,
-            firewall_source_groups,
-        ):
-            raise ValueError(
-                f"The settings archive row {row_index} in 'nat_rules' has an invalid source."
-            )
+            raise ValueError("Settings archive NAT enabled must be a boolean.")
+        candidate = NatRule(**{key: value for key, value in row.items() if key in NatRule.__table__.columns.keys()})
+        candidate.enabled = bool(enabled and effective_nat_enabled)
+        candidate.ip_family = row.get("ip_family", 4)
+        candidate.translation_mode = row.get("translation_mode", "masquerade")
+        candidate.translated_address = row.get("translated_address", "")
+        candidate.source = row.get("source", "any")
+        # Preserve only missing identities proven by the archived host inventory.
+        # This admission list is local to import; runtime eligibility stays strict.
+        retained_targets = [
+            {"name": name, "ip_families": [candidate.ip_family],
+             "ip_cidr": candidate.translated_address + "/32" if candidate.ip_family == 4 and candidate.translated_address else "",
+             "ipv6_cidr": candidate.translated_address + "/128" if candidate.ip_family == 6 and candidate.translated_address else ""}
+            for name in missing_nat_targets
+        ]
+        errors = validate_nat_rule(candidate, [*traffic_targets, *retained_targets], firewall_source_groups, allow_legacy=True)
+        if errors:
+            raise ValueError(f"Settings archive NAT row {row_index} is invalid: {errors[0]}")
 
     for row_index, row in enumerate(data.get("routing_rules", []), start=1):
         enabled = row.get("enabled", True)
@@ -2628,7 +2623,7 @@ def _validate_archive_relationships(data: dict[str, list[dict[str, Any]]]) -> No
         route_target_cidrs=route_target_cidrs,
         management_target_names=management_target_names,
         routing_enabled=archive_routes_wan_settings.routing_enabled,
-        nat_enabled=effective_nat_enabled,
+        nat_enabled=False,
         wan_simulation_enabled=archive_routes_wan_settings.wan_simulation_enabled,
     )
     if wan_errors:
@@ -3981,7 +3976,7 @@ def _validate_archive_relationships(data: dict[str, list[dict[str, Any]]]) -> No
             raise ValueError(
                 "The settings archive NTPsec NTS restoration marker is invalid."
             )
-        if setting_key in ROUTES_WAN_SETTING_KEYS and str(
+        if setting_key in (ROUTES_WAN_SETTING_KEYS | {NAT_ENABLED_SETTING_KEY, LEGACY_NAT_ENABLED_SETTING_KEY}) and str(
             row.get("value") or ""
         ).strip().lower() not in {"true", "false"}:
             raise ValueError(
@@ -4484,7 +4479,10 @@ def _model_kwargs(model: type, row: dict[str, Any], *, exclude: set[str] | None 
     """
     excluded = {"id", "created_at", "updated_at", *(exclude or set())}
     column_names = {column.name for column in model.__table__.columns if not isinstance(column.type, SqlDateTime)}
-    return {key: value for key, value in row.items() if key in column_names and key not in excluded}
+    payload = {key: value for key, value in row.items() if key in column_names and key not in excluded}
+    if model is NatRule and payload.get("translation_mode") == "snat":
+        payload["masquerade"] = False
+    return payload
 
 
 def _model_kwargs_with_scalar_defaults(

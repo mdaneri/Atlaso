@@ -37,6 +37,7 @@ MANAGEMENT_ROUTE_ROOTS = frozenset(
         "openid-connect",
         "physical-interfaces",
         "routes-wan",
+        "traffic-publishing",
         "server-time",
         "services",
         "settings",

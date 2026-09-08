@@ -107,7 +107,7 @@ listener can bind to it.
 The default configuration remains `eth0` as the dedicated management interface with the switch disabled on all access
 interfaces. To use one network for both planes, change `eth0` from management to access; Atlaso enables its management UI
 switch as part of that conversion. Before saving, the review lists each static IPv4 or IPv6 management gateway that
-will leave the management-only fields. Atlaso stages an enabled family default under **Routes & WAN Simulation** on the
+will leave the management-only fields. Atlaso stages an enabled family default under **Routing & WAN** on the
 converted access interface, reuses an equivalent saved default without duplication, and blocks the complete edit when
 a different default already owns that family. If no prior gateway exists, the review warns that Atlaso will not invent
 one and off-subnet routing may be unavailable. The interface, route rows, dependent state, and Network and route audit
@@ -132,7 +132,7 @@ When an Apply changes an effective management interface, address, gateway, or li
 bundles Network with Firewall, Certificate Authority, Appliance Settings, and Public Services. The old management path
 stays active while the candidate network, policy routes, firewall, certificate/nginx configuration, Atlaso loopback
 upstream, and host-facing `/openapi.json` complete bounded readiness checks. Only then does Atlaso retire the old path.
-When the desired role conversion also staged a management-gateway default, **Routes & WAN Simulation** joins that same
+When the desired role conversion also staged a management-gateway default, **Routing & WAN** joins that same
 recoverable handoff. Its candidate and last-applied rollback configs are validated before mutation; failure restores
 the prior lab routes and the old management path together. Adding, editing, disabling, or removing a default on an
 already-applied flagged management listener also starts this handoff even when Network itself has no pending edit.
@@ -145,7 +145,7 @@ observed addresses. Unapplied access-management flags do not publish a new admin
 or address edits do not demote the old listener to `/ui/public`. Cancelling, reverting, or rolling back the candidate
 therefore leaves the previous management browser path authoritative and the pending desired state recoverable.
 
-A fresh first Apply still submits all 16 initialized components, but an unchanged Network snapshot does not invoke this
+A fresh first Apply submits all 17 initialized components, but an unchanged Network snapshot does not invoke this
 protected handoff. Its ordinary Appliance Settings step proves the existing Atlaso loopback upstream, reloads nginx
 without restarting Atlaso, and proves the guest-local front door before Network begins. A failed proof restores the
 prior nginx and systemd configuration and stops the sequential task; it is not treated as a reconnect delay. The
@@ -190,45 +190,9 @@ VLAN reaches that network directly. A supplied gateway must use the same address
 clients remain compatible with `POST` or `PATCH /api/v1/routes` requests
 that use canonical `0.0.0.0/0` or `::/0`; those payloads must also include the required same-family gateway.
 
-The NAT wizard uses the shared tag editor for inbound interfaces. Add each target with the suggestion menu or keyboard;
-remove a tag to remove that target. Multiple selections remain visible when returning from Manage source groups.
-Disabled edits may retain empty or unavailable ingress while changing metadata. The outbound dropdown also preserves
-a saved unavailable target instead of replacing it during a metadata edit. Enabling the rule in the State step
-requires a complete, currently eligible ingress selection before Review.
-
-Startup upgrades preserve legacy NAT rows under the database schema lock, including concurrent web and worker startup.
-Missing-target cleanup records an audit warning when saved selectors change; repeated refreshes of the same missing
-target do not duplicate the warning.
-
-Applied NAT matches the current kernel interface indexes as well as the selected names. A replacement NIC cannot
-inherit the old rule merely by receiving the same Linux name. WAN boot replay verifies each target's saved physical
-MAC (the parent NIC for a VLAN), then resolves fresh indexes. Missing or changed identities retire the applied NAT
-table and report an error while preserving the saved rules for review. Legacy saved runtime configurations without
-physical identity need review and a fresh Apply. The legacy standalone NAT replay service is retired; the WAN replay
-service owns restoration so stale indexes are never loaded directly at boot.
-Every appliance control-plane start, including a live software upgrade, runs a privileged NAT-only reconciliation
-before application inventory refresh. It replaces existing name-only rules with verified index-bound rules or
-quarantines NAT when the last-applied snapshot lacks safe ingress or physical identity. The old raw replay service is
-disabled. This startup step preserves saved intent and leaves routes, forwarding, and WAN simulation unchanged;
-failure to retire the old service or replace the kernel table prevents control-plane startup. Boot WAN restoration
-is ordered before this step to avoid concurrent rewrites.
-
-The **NAT** wizard creates explicit IPv4 masquerade rules. In **Translation**, select one or more **Inbound
-interfaces or VLANs** and a different **Outbound interface or VLAN**. Both sides require enabled IPv4 lab targets;
-VLANs also require an available, enabled trunk parent. Dedicated management-role and unused targets are excluded.
-Access networks that also publish the management UI remain eligible access networks.
-
-**Any IPv4 source** means any IPv4 source arriving on the selected inbound targets. **Source Group** and **IPv4 CIDRs**
-further restrict source addresses inside that ingress scope. The grid and Review show both boundaries. Ordinary NAT
-rules never match appliance-originated traffic because that traffic has no inbound interface.
-**Manage source groups** opens [Network Objects](network-objects.md), preserves the tab-local NAT draft, and restores
-it with fresh choices on return. Atlaso does not infer ingress or egress from an interface role and does not provide
-destination NAT, port forwarding, or IPv6 NAT in v1.
-
-Upgrade and settings restore preserve legacy rules without ingress membership. Enabled legacy rules show **Needs ingress
-review** and block the active NAT apply unit until the administrator selects the intended inbound targets. Disabled
-legacy rules remain disabled and cannot be enabled without review. A removed, disabled, or role-ineligible target makes
-the boundary invalid; edit the rule to select its replacement explicitly. No upgrade silently selects every lab network.
+Source NAT rules now live on [Traffic Publishing](traffic-publishing.md). That guide covers the dual-stack wizard,
+explicit ingress, fixed SNAT, eligibility, upgrade, and boot recovery. Routing & WAN retains static routes, routing
+permissions, and interface-level WAN policies.
 
 After global Appliance Apply, inspect `nft list table ip atlaso_nat`: every masquerade rule must contain `iifname` and
 `oifname`, plus an IPv4 source expression only when configured. Verify traffic from selected and unselected ingress
@@ -239,15 +203,11 @@ The **WAN Policies** wizard groups delay/capacity settings separately from packe
 policy to a Static Route identifies its target interface or VLAN; WAN Simulation v1 impairs all traffic on that target,
 not only traffic matching the route destination.
 
-The **Routing & WAN Settings** card controls the three global activation boundaries. **Routing enabled** owns Atlaso
-lab routes, routing permissions, and both IPv4 and IPv6 packet forwarding. **NAT enabled** owns the Atlaso IPv4
-masquerade table only while Routing is also enabled; when Routing is off, NAT remains selected and visibly
-**suspended**. **WAN Simulation enabled** independently owns the saved `tc/netem` assignments. Fresh installs and
-factory reset start with all three switches off. Disabling a feature preserves every saved row and assignment, and
-inactive-row errors do not block Appliance Apply until that feature is enabled again.
-
-Saving a switch or any resource does not change Photon. Review the rendered configuration and submit the global
-**Routes & WAN Simulation** unit through Appliance Apply when the complete desired state is ready.
+The **Routing & WAN Settings** card controls Routing and WAN Simulation. Routing owns lab routes, routing permissions,
+and IPv4/IPv6 forwarding; WAN Simulation independently owns saved `tc/netem` assignments. Traffic Publishing owns
+NAT enablement and remains suspended while Routing is off. Fresh installs and factory reset start all switches off;
+disabling them preserves their saved rows. Saving does not change Photon. Submit the **Routing & WAN** (`wan`) and
+**Traffic Publishing** (`nat`) units through global Appliance Apply after reviewing their configuration.
 The Routing row on the Services page and local console changes the same saved **Routing enabled** switch. Direct
 Routing start, stop, and restart actions are unavailable because runtime forwarding changes only through Appliance
 Apply.
@@ -325,13 +285,13 @@ These captures show responsive layouts and useful operational states referenced 
 
 ### Routes and WAN simulation
 
-![Atlaso Routes and WAN Simulation showing disabled routing, a checked but unavailable NAT switch, and the suspended status.](../assets/screenshots/routes-wan-clean-desktop.webp)
+![Atlaso Routing & WAN with routing enabled, WAN simulation disabled, and no NAT controls.](../assets/screenshots/routes-wan-clean-desktop.webp)
 
-*Figure: Routes and WAN Simulation with global routing disabled and the saved NAT choice visibly suspended.*
+*Figure: Routing & WAN owns forwarding and WAN simulation; source NAT is configured in Traffic Publishing.*
 
-![Atlaso Routes and WAN Simulation showing disabled routing, a checked but unavailable NAT switch, and the suspended status.](../assets/screenshots/routes-wan-clean-responsive.webp)
+![Atlaso Routing & WAN with routing enabled, WAN simulation disabled, and no NAT controls.](../assets/screenshots/routes-wan-clean-responsive.webp)
 
-*Figure: Routes and WAN Simulation with global routing disabled and the saved NAT choice visibly suspended.*
+*Figure: Routing & WAN owns forwarding and WAN simulation; source NAT is configured in Traffic Publishing.*
 
 ### VLAN interfaces
 

@@ -18,6 +18,7 @@ ADDITIONAL_BEGIN = "<!-- BEGIN GENERATED ADDITIONAL SCREENSHOTS -->"
 ADDITIONAL_END = "<!-- END GENERATED ADDITIONAL SCREENSHOTS -->"
 
 PRIMARY_IMAGES = {
+    "operate/traffic-publishing.md": "traffic-publishing-desktop.webp",
     "getting-started/index.md": "login-desktop.webp",
     "operate/dashboard.md": "dashboard-clean-desktop.webp",
     "operate/navigation.md": "primary-navigation-expanded-desktop.webp",

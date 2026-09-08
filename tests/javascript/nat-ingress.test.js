@@ -88,3 +88,42 @@ test("outbound dropdown preserves unavailable saved identities through edit", ()
   assert.equal(select.value, "");
   assert.equal(select.options[1].text, "Needs outbound review");
 });
+const natAddressContext = vm.createContext({ Option: function (text, value) { this.text = text; this.value = value; } });
+vm.runInContext(extract("syncNatTranslatedAddress"), natAddressContext);
+test("fixed SNAT choices follow the egress and family and reject arbitrary values", () => {
+  const select = { value: "gibberish", options: [], replaceChildren(...options) { this.options = options; }, add(option) { this.options.push(option); } };
+  const outbound = { selectedOptions: [{ dataset: { natIpv4: "198.18.20.1", natIpv6: "fd75:3:20::1" } }] };
+  natAddressContext.syncNatTranslatedAddress(select, outbound, "4");
+  assert.equal(select.value, "");
+  assert.deepEqual(select.options.map((option) => option.value), ["", "198.18.20.1"]);
+  natAddressContext.syncNatTranslatedAddress(select, outbound, "6", "fd75:3:20::1");
+  assert.equal(select.value, "fd75:3:20::1");
+  outbound.selectedOptions[0].disabled = true;
+  natAddressContext.syncNatTranslatedAddress(select, outbound, "6");
+  assert.equal(select.value, "");
+  assert.equal(select.options.length, 1);
+});
+
+
+test("dormant fixed SNAT preserves its saved unavailable address until explicitly changed", () => {
+  const select = { value: "", options: [], replaceChildren(...options) { this.options = options; }, add(option) { this.options.push(option); } };
+  const outbound = { selectedOptions: [{ dataset: {} }] };
+  for (const family of ["4", "6"]) {
+    const saved = family === "4" ? "198.18.20.1" : "fd75:3:20::1";
+    natAddressContext.syncNatTranslatedAddress(select, outbound, family, saved, saved);
+    assert.equal(select.value, saved);
+    assert.match(select.options[1].text, /unavailable/);
+    natAddressContext.syncNatTranslatedAddress(select, outbound, family);
+    assert.equal(select.value, "");
+    assert.equal(select.options.length, 1);
+  }
+  assert.match(source, /savedNatAddress = row\?\.translated_address/);
+  assert.match(source, /const changeNatTranslation = \(\) => \{\s*savedNatAddress = "";/);
+});
+
+
+test("editing an active unavailable rule can reach State before availability is enforced", () => {
+  assert.match(source, /step\.id === "translation" \|\| !routesWanField\(form, "enabled"\)\?\.checked/);
+  assert.match(source, /Choose an assigned translated address or disable the rule/);
+  assert.match(source, /"enabled"\)\?\.addEventListener\("change", \(\) => syncNatTranslation\(\)\)/);
+});

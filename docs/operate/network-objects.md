@@ -62,7 +62,7 @@ the shared confirmation dialog to remove the unreferenced object. **Any** cannot
 ## Apply and archive behavior
 
 Saving a Source Group changes desired state only. Firewall-rule and managed-assignment consumers remain enforced through
-the **Firewall** Appliance Apply unit; NAT consumers remain enforced through **Routes & WAN Simulation**. Atlaso keeps
+the **Firewall** Appliance Apply unit; NAT consumers are enforced through **Traffic Publishing** (`nat`). Atlaso keeps
 the established `firewall.managed_source_groups` settings-archive shape, object identifiers, nested references, and
 assignments, so current archives round-trip without migration.
 

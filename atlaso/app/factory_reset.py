@@ -134,6 +134,7 @@ class _ValidationOnlyAdapter(SystemAdapter):
             "apply_ldap_config",
             "apply_local_users_config",
             "apply_network_config",
+            "apply_nat_config",
             "apply_ntpd_config",
             "apply_public_services_config",
             "apply_vcf_backup_config",

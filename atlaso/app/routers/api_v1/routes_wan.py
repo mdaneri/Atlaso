@@ -31,6 +31,8 @@ from atlaso.app.schemas import (
     RouteResponse,
     RoutesWanSettingsResponse,
     RoutesWanSettingsUpdate,
+    TrafficPublishingSettingsResponse,
+    TrafficPublishingSettingsUpdate,
     WanPolicyCreate,
     WanPolicyResponse,
     WanStatusResponse,
@@ -51,8 +53,12 @@ from atlaso.app.services.routes_wan import (
     nat_eligible_target_names,
     route_gateway_target_error,
     save_routes_wan_settings,
-    validate_nat_ingress,
-    validate_nat_source,
+)
+from atlaso.app.services.traffic_publishing import (
+    ensure_traffic_publishing_settings,
+    nat_targets,
+    save_traffic_publishing_settings,
+    validate_nat_rule,
 )
 
 Endpoint = Callable[..., Any]
@@ -80,6 +86,52 @@ def build_router(dependencies: RoutesWanApiDependencies) -> RoutesWanApiRouter:
     """
     router = APIRouter(prefix="/api/v1", route_class=DocumentedAPIRoute)
     setting_value = dependencies.setting_value
+
+    @router.get("/traffic-publishing/settings", response_model=TrafficPublishingSettingsResponse,
+                tags=["NAT"], operation_id="getTrafficPublishingSettings")
+    def get_traffic_publishing_settings(
+        identity: Annotated[Identity, Depends(require_scope("read:firewall"))],
+        db: Session = Depends(get_db),
+    ) -> TrafficPublishingSettingsResponse:
+        """Read canonical Traffic Publishing desired state.
+
+        Requires `read:firewall`. Routing is a read-only projection of its separate owner.
+        Effective enablement and suspension describe desired state, not live host health.
+
+        Args:
+            identity: Identity with permission to inspect Traffic Publishing.
+            db: Database session containing the canonical settings.
+        """
+        ensure_routes_wan_settings(db)
+        return TrafficPublishingSettingsResponse(**ensure_traffic_publishing_settings(db).as_dict())
+
+    @router.put("/traffic-publishing/settings", response_model=TrafficPublishingSettingsResponse,
+                tags=["NAT"], operation_id="updateTrafficPublishingSettings")
+    def update_traffic_publishing_settings(
+        payload: TrafficPublishingSettingsUpdate,
+        identity: Annotated[Identity, Depends(require_scope("write:firewall"))],
+        db: Session = Depends(get_db),
+    ) -> TrafficPublishingSettingsResponse:
+        """Save canonical source NAT activation intent.
+
+        Requires `write:firewall`. This atomically changes the same setting projected by
+        legacy Routes/WAN clients, preserves all rules and never changes Routing. Host
+        translation changes only through the global `nat` Appliance Apply unit. NAT
+        remains suspended while Routing is off. Validation failures use ProblemDetails.
+
+        Args:
+            payload: Reviewed NAT activation intent.
+            identity: Identity with permission to edit Traffic Publishing.
+            db: Transaction containing settings and the audit record.
+        """
+        acquire_network_objects_write_lock(db)
+        ensure_routes_wan_settings(db)
+        settings = save_traffic_publishing_settings(db, nat_enabled=payload.nat_enabled)
+        record_audit(db, actor=identity.username, action="update_traffic_publishing_settings",
+                     resource_type="traffic_publishing_settings", resource_id="global",
+                     detail=f"nat_enabled={settings.nat_enabled}")
+        db.commit()
+        return TrafficPublishingSettingsResponse(**settings.as_dict())
 
     @router.get(
         "/routes-wan/settings",
@@ -594,16 +646,16 @@ def build_router(dependencies: RoutesWanApiDependencies) -> RoutesWanApiRouter:
                 list(db.execute(select(VlanInterface)).scalars().all()),
             ),
         )["groups"]
-        source_errors = validate_nat_source(payload.source, nat_source_group_ids(db), source_groups)
-        if source_errors:
-            raise HTTPException(status_code=422, detail=source_errors[0])
-        if (creating or payload.enabled) and payload.outbound_interface not in nat_outbound_target_names(db):
-            raise HTTPException(status_code=422, detail="Choose an access physical interface or enabled VLAN interface with an IP CIDR.")
-        ingress_errors = validate_nat_ingress(payload.inbound_interfaces, payload.outbound_interface, nat_outbound_target_names(db), required=creating or payload.enabled, check_availability=creating or payload.enabled)
-        if ingress_errors:
-            raise HTTPException(status_code=422, detail=ingress_errors[0])
-        if not payload.masquerade:
-            raise HTTPException(status_code=422, detail="NAT v1 supports masquerade only.")
+        targets = nat_targets(list(db.scalars(select(PhysicalInterface))), list(db.scalars(select(VlanInterface))))
+        if "translation_mode" in payload.model_fields_set:
+            payload.masquerade = payload.translation_mode == "masquerade"
+        candidate = NatRule(**payload.model_dump())
+        errors = validate_nat_rule(candidate, targets, source_groups, creating=creating)
+        if errors:
+            raise HTTPException(status_code=422, detail=errors[0])
+        if "translation_mode" not in payload.model_fields_set and not payload.masquerade:
+            raise HTTPException(status_code=422, detail="Select fixed SNAT and an assigned translated address.")
+        payload.masquerade = payload.translation_mode == "masquerade"
 
 
     @router.get("/nat/rules", response_model=list[NatRuleResponse], tags=["NAT"], operation_id="listNatRules")
@@ -685,8 +737,10 @@ def build_router(dependencies: RoutesWanApiDependencies) -> RoutesWanApiRouter:
             raise HTTPException(status_code=404, detail="NAT rule not found")
         # Older clients do not send the additive ingress field. Resolve omission
         # under the network write lock before validating the resulting rule.
-        if "inbound_interfaces" not in payload.model_fields_set:
-            payload = payload.model_copy(update={"inbound_interfaces": list(rule.inbound_interfaces or [])})
+        if "translation_mode" not in payload.model_fields_set and not payload.masquerade and rule.translation_mode == "masquerade":
+            raise HTTPException(status_code=422, detail="Select fixed SNAT and an assigned translated address.")
+        omitted = {key: getattr(rule, key) for key in ("inbound_interfaces", "ip_family", "translation_mode", "translated_address") if key not in payload.model_fields_set}
+        payload = payload.model_copy(update=omitted)
         validate_nat_rule_payload(payload, db)
         for key, value in payload.model_dump().items():
             setattr(rule, key, value)

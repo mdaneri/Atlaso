@@ -9,10 +9,14 @@ status: roadmap
 
 # Routing And WAN Roadmap
 
-Atlaso Routing/WAN v1 is intentionally appliance-owned and conservative. Desired state is edited on
+Current source translation is documented in [Traffic Publishing](../operate/traffic-publishing.md), including IPv6
+masquerade and fixed SNAT. The original v1 scope below records the pre-split design; destination NAT and NPTv6 remain
+separate future work.
+
+Atlaso Routing/WAN v1 was intentionally appliance-owned and conservative. Desired state is edited on
 `/ui/management/routes-wan`; host mutation happens only through the global `/ui/management/appliance-apply` `wan` unit.
 
-The current UI presents four wizard-backed collections: **Static Routes**, **Routing Permissions**, **NAT**, and
+The original v1 UI presented four wizard-backed collections: **Static Routes**, **Routing Permissions**, **NAT**, and
 **WAN Policies**. Static Routes define paths in the lab route table. Routing Permissions separately define forwarding
 between interface/VLAN networks. Add/edit changes are reviewed before one desired-state save, while ordinary Enabled
 state remains directly editable and generated route-role permissions remain read-only. A non-grid
@@ -22,7 +26,7 @@ all three are off on fresh install and factory reset.
 Atlaso has no `wan` interface role. The `wan` apply-unit name and WAN Simulation UI describe explicit routing, NAT, and
 impairment behavior only; they must not be used as an interface classification.
 
-## Current V1 Scope
+## Original V1 Scope
 
 - Static route desired state rendered to `/var/lib/atlaso/apply/wan/atlaso-wan.conf`.
 - Explicit IPv4 and IPv6 default-route wizard paths that persist canonical `0.0.0.0/0` and `::/0`, require a
@@ -87,11 +91,11 @@ The likely implementation shape is:
 
 ## NAT Roadmap
 
-NAT v1 is explicit IPv4 masquerade only. Future NAT work can consider:
+Original NAT v1 supported IPv4 masquerade only. Current source NAT also supports IPv6 and fixed SNAT. Future work can consider:
 
 - Destination NAT and port forwarding with clear listener ownership.
 - Per-rule counters or status readback.
-- IPv6 routing is supported through `ip -6 route`; IPv6 NAT/NPT remains future work only if a concrete lab use case
+- NPTv6 remains future work only if a concrete lab use case
   justifies it.
 
 Do not infer broad NAT automatically from interface roles. NAT must remain an explicit desired-state rule reviewed
