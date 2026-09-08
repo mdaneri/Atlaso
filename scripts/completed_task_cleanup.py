@@ -32,6 +32,7 @@ from scripts.completed_task_title import (
 )
 
 MAX_EVIDENCE_BYTES = 64 * 1024 * 1024
+MAX_CHILD_BYTES = 4 * 1024 * 1024
 
 
 class Refusal(RuntimeError):
@@ -205,21 +206,56 @@ class Cleanup:
     def verify_push_urls(self) -> None:
         """Validate every effective push destination independently of origin's fetch URL."""
         urls = self.git("remote", "get-url", "--push", "--all", "origin").splitlines()
-        require(urls and all(url in {f"https://github.com/{self.repository}.git", f"https://github.com/{self.repository}",
-                                    f"git@github.com:{self.repository}.git"} for url in urls),
+        require(urls and all(url in {f"https://github.com/{self.repository}.git", f"https://github.com/{self.repository}"}
+                            for url in urls),
                 "Origin push URLs differ from the exact same-repository destination; preserve all refs.")
 
     def command(self, args: list[str], *, allowed: tuple[int, ...] = (0,)) -> str:
-        """Run argument arrays with bounded time; never publish arbitrary child output on failure."""
+        """Cap streamed stdout and stderr together; never publish arbitrary child output on failure."""
         env = {**os.environ, "GIT_OPTIONAL_LOCKS": "0", "PYTHONDONTWRITEBYTECODE": "1"}
+        output = bytearray()
+        count = 0
+        lock = threading.Lock()
+        failed = threading.Event()
         try:
-            result = subprocess.run(args, cwd=self.repo, env=env, capture_output=True,
-                                    text=True, encoding="utf-8", timeout=90, check=False)
+            process = subprocess.Popen(args, cwd=self.repo, env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+
+            def drain(stream, keep: bool) -> None:
+                """Drain bounded chunks concurrently so neither child pipe can deadlock the other."""
+                nonlocal count
+                try:
+                    with stream:
+                        while chunk := stream.read(65536):
+                            with lock:
+                                count += len(chunk)
+                                if count > MAX_CHILD_BYTES:
+                                    failed.set()
+                                    process.kill()
+                                    return
+                                if keep:
+                                    output.extend(chunk)
+                except OSError:
+                    failed.set()
+
+            readers = [threading.Thread(target=drain, args=(stream, keep), daemon=True)
+                       for stream, keep in ((process.stdout, True), (process.stderr, False))]
+            for reader in readers:
+                reader.start()
+            try:
+                process.wait(timeout=90)
+                for reader in readers:
+                    reader.join(timeout=1)
+                require(not failed.is_set() and not any(reader.is_alive() for reader in readers),
+                        "Child output exceeded the bounded capture or could not close; inspect the tool directly before retry.")
+            finally:
+                if process.poll() is None:
+                    process.kill()
+                process.wait(timeout=5)
         except (OSError, subprocess.TimeoutExpired) as exc:
             raise Refusal(f"{args[0]} could not complete; verify tool availability and execution policy before retry.") from exc
-        require(result.returncode in allowed,
-                f"{args[0]} failed with exit {result.returncode}; preserve remaining resources and inspect the tool directly.")
-        return result.stdout.strip()
+        require(process.returncode in allowed,
+                f"{args[0]} failed with exit {process.returncode}; preserve remaining resources and inspect the tool directly.")
+        return output.decode("utf-8").strip()
 
     def git(self, *args: str) -> str:
         """Read or mutate only this controller's verified repository."""
@@ -289,8 +325,8 @@ class Cleanup:
         require(configured_root(self.config) == self.root, "Configured root changed; restart preview.")
         self.git("check-ref-format", "--branch", self.branch)
         remote = self.git("remote", "get-url", "origin")
-        require(remote in {f"https://github.com/{self.repository}.git", f"https://github.com/{self.repository}",
-                           f"git@github.com:{self.repository}.git"}, "Origin differs from the exact same-repository GitHub identity.")
+        require(remote in {f"https://github.com/{self.repository}.git", f"https://github.com/{self.repository}"},
+                "Origin must use the exact same-repository GitHub HTTPS URL; configure HTTPS before retry.")
         self.verify_push_urls()
         pr = self.api(f"pulls/{self.handoff['pr']}")
         require(pr["merged"] is True and pr["merge_commit_sha"] == self.merge and pr["head"]["sha"] == self.head,

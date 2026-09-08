@@ -325,6 +325,36 @@ def test_separate_push_destination_blocks_cleanup(cleanup: Cleanup, monkeypatch:
     assert not cleanup.evidence.exists()
 
 
+@pytest.mark.parametrize("push_only", [False, True])
+def test_ssh_origin_refuses_before_remote_mutation(cleanup: Cleanup, monkeypatch: pytest.MonkeyPatch, push_only: bool) -> None:
+    """SSH endpoint overrides cannot turn a matching literal URL into remote deletion authority."""
+    original = cleanup.command
+    monkeypatch.setenv("GIT_SSH_COMMAND", "untrusted-ssh-override")
+
+    def ssh_origin(arguments: list[str], **kwargs: object) -> str:
+        """Supply the formerly accepted SSH spelling for fetch or only push."""
+        expected = (["git", "remote", "get-url", "--push", "--all", "origin"] if push_only
+                    else ["git", "remote", "get-url", "origin"])
+        if arguments == expected:
+            return "git@github.com:example/Atlaso.git"
+        return original(arguments, **kwargs)
+
+    monkeypatch.setattr(cleanup, "command", ssh_origin)
+    with pytest.raises(Refusal, match="HTTPS|push URLs differ"):
+        cleanup.run()
+    assert cleanup.target.exists() and not cleanup.evidence.exists()
+
+
+@pytest.mark.parametrize("stream", ["stdout", "stderr"])
+def test_child_output_is_bounded(cleanup: Cleanup, monkeypatch: pytest.MonkeyPatch, stream: str) -> None:
+    """A noisy real child is terminated at the combined byte cap without exposing its output."""
+    monkeypatch.setattr("scripts.completed_task_cleanup.MAX_CHILD_BYTES", 65536)
+    code = f"import sys\nwhile True: sys.{stream}.buffer.write(b'x' * 65536); sys.{stream}.buffer.flush()"
+    with pytest.raises(Refusal, match="bounded capture"):
+        cleanup.command([sys.executable, "-I", "-S", "-c", code])
+    assert cleanup.command([sys.executable, "-I", "-S", "-c", "print('ok')"]) == "ok"
+
+
 @pytest.mark.skipif(os.name != "nt", reason="Win32 path normalization")
 @pytest.mark.parametrize("suffix", [".", " "])
 def test_win32_alias_removal_scope_is_rejected(cleanup: Cleanup, suffix: str) -> None:

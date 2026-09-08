@@ -19,6 +19,8 @@ A primary-checkout target is directed to its restoration workflow even when that
 For non-primary targets, a `desktop` value that is not a TOML table produces a structured refusal directing configuration
 repair; a later configuration rewrite preserves already recorded cleanup gates in the refusal result.
 The active configuration uses the pinned regular-file reader with a 1 MiB limit before TOML parsing.
+Child commands stream stdout and stderr through a combined 4 MiB cap with a 90-second execution timeout. Excess output
+terminates the child and produces a sanitized refusal; inspect the tool directly before retrying.
 Execution holds an exclusive per-task operating-system lock from before eligibility through the final result, and
 reloads durable gates after acquiring it. A concurrent controller refuses immediately and may retry after the owner exits.
 The lock hashes a canonical GitHub repository, exact task ID, and PR identity, independently of handoff whitespace,
@@ -195,6 +197,8 @@ Each fresh invocation recovers the matching monotonic journal history and rechec
 resources and refs. Reappearance refuses cleanup rather than authorizing a second deletion. Gates enter the reported
 completed list only after the prospective record has been flushed, fsynced, and published. An interrupted `.pending`
 record or conflicting history requires independent evidence reconciliation before another invocation can proceed.
+Fetch and push URLs must use the exact GitHub HTTPS repository URL. SSH origins are refused because local SSH commands
+and host configuration can redirect transport independently of Git's reported URL; configure HTTPS before retrying.
 Every eligibility check also verifies all effective Git push URLs; a separate fork push URL or extra destination blocks
 cleanup even when the fetch URL names the correct repository.
 Symbolic task refs, including dangling refs, block cleanup. Local deletion never dereferences the task ref. Index
