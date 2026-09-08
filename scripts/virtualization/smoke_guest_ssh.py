@@ -25,6 +25,10 @@ class SmokeError(RuntimeError):
     """Report a sanitized virtualization smoke-test failure."""
 
 
+class ConnectionPending(SmokeError):
+    """Return control to the provider for fresh identity admission before retry."""
+
+
 @dataclass(frozen=True)
 class SecretInput:
     """Hold credentials consumed only from standard input."""
@@ -73,22 +77,32 @@ def parse_host_public_key(value: str) -> tuple[str, bytes]:
     return fields[0], blob
 
 
-def _connect(host: str, secret: SecretInput, *, expected_key: tuple[str, bytes]) -> Any:
+def _connect(
+    host: str, secret: SecretInput, *, expected_key: tuple[str, bytes],
+    single_attempt: bool = False, context: str = "guest",
+) -> Any:
     """Open a bounded SSH connection after installing the artifact-bound host key.
 
     Args:
         host: Guest address.
         secret: Standard-input credential envelope.
         expected_key: Parsed provenance-bound host key.
+        single_attempt: Return retryable transport failure to the provider wrapper.
+        context: Validated platform and phase for non-secret progress.
     """
 
     import paramiko  # type: ignore[import-untyped]  # Paramiko does not publish complete type metadata.
 
-    deadline = time.monotonic() + 900
+    started = time.monotonic()
+    deadline = started + 900
     last_error: Exception | None = None
     key_type, key_blob = expected_key
     trusted_key = paramiko.PKey.from_type_string(key_type, key_blob)
     while time.monotonic() < deadline:
+        elapsed = int(time.monotonic() - started)
+        budget = 45 if single_attempt else 900
+        print(f"{context}: SSH target={host} elapsed={elapsed}s "
+              f"remaining={max(0, budget - elapsed)}s", file=sys.stderr, flush=True)
         client = paramiko.SSHClient()
         client.get_host_keys().add(host, key_type, trusted_key)
         client.set_missing_host_key_policy(paramiko.RejectPolicy())
@@ -104,9 +118,17 @@ def _connect(host: str, secret: SecretInput, *, expected_key: tuple[str, bytes])
                 banner_timeout=15,
             )
             return client
+        except (paramiko.BadHostKeyException, paramiko.AuthenticationException) as exc:
+            client.close()
+            raise SmokeError(f"{context}: SSH identity or authentication rejected.") from exc
         except (OSError, paramiko.SSHException) as exc:
             client.close()
             last_error = exc
+            if single_attempt:
+                raise ConnectionPending(
+                    f"{context}: SSH transport pending ({type(exc).__name__}); "
+                    "provider identity must be revalidated before retry."
+                ) from exc
             time.sleep(5)
     raise SmokeError(f"The guest did not become SSH-ready within 15 minutes: {type(last_error).__name__}")
 
@@ -251,6 +273,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--platform", choices=("vmware", "hyperv"), required=True)
     parser.add_argument("--phase", choices=("initial", "post-reboot"), required=True)
     parser.add_argument("--expected-tls-fingerprint")
+    parser.add_argument("--single-connect-attempt", action="store_true")
     args = parser.parse_args(argv)
     if args.phase == "initial" and args.expected_tls_fingerprint is not None:
         parser.error("The initial phase cannot accept a prior TLS fingerprint.")
@@ -262,8 +285,12 @@ def main(argv: list[str] | None = None) -> int:
     secret = load_secret_input()
     expected_host_key = parse_host_public_key(args.host_key)
     try:
-        client = _connect(args.host, secret, expected_key=expected_host_key)
+        context = f"{args.platform}/{args.phase}"
+        client = _connect(args.host, secret, expected_key=expected_host_key,
+                          single_attempt=args.single_connect_attempt, context=context)
         try:
+            print(f"{context}: SSH authenticated; validating disks, services and OpenAPI "
+                  f"(deadline={SERVICE_READINESS_SECONDS}s).", file=sys.stderr, flush=True)
             script = _validation_script(args.platform)
             _run_root(client, secret, script)
             certificate = _front_door_fingerprint(args.host)
@@ -282,6 +309,9 @@ def main(argv: list[str] | None = None) -> int:
             return 0
         if certificate != args.expected_tls_fingerprint:
             raise SmokeError("The host-facing TLS identity changed across the appliance reboot.")
+    except ConnectionPending as exc:
+        print(str(exc), file=sys.stderr, flush=True)
+        return 75
     except SmokeError as exc:
         parser.error(str(exc))
     print(f"Atlaso {args.platform} guest smoke test passed.")

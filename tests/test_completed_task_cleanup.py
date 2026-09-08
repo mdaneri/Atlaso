@@ -597,6 +597,35 @@ def test_resource_identity_must_be_complete(cleanup: Cleanup, field: str) -> Non
     assert cleanup.target.exists()
 
 
+@pytest.mark.parametrize("defect", ["duplicate", "kind", "extra", "task", "source", "ancestry"])
+def test_entire_inventory_is_validated_before_release(cleanup: Cleanup, defect: str) -> None:
+    """A malformed later resource cannot cause partial release of an earlier valid resource."""
+    first, later = resource_identity(cleanup, "first-valid"), resource_identity(cleanup, "later-invalid")
+    if defect == "duplicate":
+        later["id"] = first["id"]
+    elif defect == "kind":
+        later["kind"] = "unsupported"
+    elif defect == "extra":
+        later["unexpected"] = True
+    elif defect == "task":
+        later["task_id"] = "other-owner"
+    elif defect == "source":
+        later["source_commit"] = "invalid"
+    else:
+        later["source_commit"] = "0" * 40
+    cleanup.handoff["resources"] = [first, later]
+    with pytest.raises(Refusal):
+        cleanup.resources()
+    assert "resource.release" not in cleanup.controller.calls
+    assert not cleanup.gates
+    assert cleanup.target.exists()
+    # The same full preflight also applies when recovering earlier completed gates.
+    cleanup.gates = ["resource_released:first-valid"]
+    with pytest.raises(Refusal):
+        cleanup.resources()
+    assert "resource.release" not in cleanup.controller.calls
+
+
 def test_live_title_must_match_recorded_title(cleanup: Cleanup, monkeypatch: pytest.MonkeyPatch) -> None:
     """A controller's generic identity assertion cannot replace exact task-title readback."""
     original = cleanup.controller.call

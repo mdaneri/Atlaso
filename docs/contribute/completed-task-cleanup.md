@@ -126,6 +126,9 @@ does not infer semantic ownership or maintainer intent from task titles.
 
 ### Resource inspection and owning tools
 
+The entire inventory passes schema, unique-ID, task/source ownership, and source-ancestry preflight before any resource
+can be released. This includes entries whose release gates were recovered; duplicate IDs cannot reuse an earlier gate.
+
 For `resource.inspect`, independently check the exact resource/provider, manifest, process/boot identity where
 applicable, and surviving reservations/claims/recovery state. Return literal booleans `ownership_verified`, `inactive`,
 `retained`, `supported_cleanup`, `evidence_preserved`, and `absent`. Preserve durable sanitized evidence outside every

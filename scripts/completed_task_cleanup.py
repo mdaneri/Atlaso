@@ -433,12 +433,6 @@ class Cleanup:
         identities: set[str] = set()
         for resource in self.handoff["resources"]:
             self.validate_resource_identity(resource)
-        self.verify_resources_absent(completed_only=True)
-        if "validation_resources_released" in self.gates:
-            return
-        for resource in self.handoff["resources"]:
-            if f"resource_released:{resource['id']}" in self.gates:
-                continue
             require(isinstance(resource, dict) and set(resource) <= {
                 "id", "kind", "task_id", "source_commit", "path", "root_identity", "provider_id",
                 "ownership_manifest", "cleanup_tool", "repository", "pr"}, "Resource fields differ from the bounded sanitized schema.")
@@ -457,6 +451,13 @@ class Cleanup:
                     and re.fullmatch(r"[0-9a-f]{40}", resource["source_commit"]),
                     "Resource ownership/source identity differs from this task.")
             self.git("merge-base", "--is-ancestor", resource["source_commit"], self.head)
+        self.verify_resources_absent(completed_only=True)
+        if "validation_resources_released" in self.gates:
+            return
+        for resource in self.handoff["resources"]:
+            identity = resource["id"]
+            if f"resource_released:{identity}" in self.gates:
+                continue
             result = self.controller.call("resource.inspect", {"resource": resource, "handoff_sha256": self.digest})
             require(result.get("ownership_verified") is True and result.get("inactive") is True
                     and result.get("retained") is False and result.get("supported_cleanup") is True,
