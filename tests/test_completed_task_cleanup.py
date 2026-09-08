@@ -7,6 +7,7 @@ import json
 import os
 import stat
 import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -21,6 +22,7 @@ from scripts.completed_task_cleanup import (
 from scripts.completed_task_files import (
     FileRefusal,
     WindowsFiles,
+    cleanup_lock,
     ensure_durable_directory,
     publish_durable_file,
     read_bounded_regular,
@@ -727,6 +729,41 @@ def test_verbatim_worktree_paths(cleanup: Cleanup, name: str) -> None:
     assert any(item["worktree"] == target.as_posix() for item in cleanup.worktrees())
     assert cleanup.run()["status"] == "complete"
     assert not target.exists()
+
+
+def test_exclusive_cleanup_lock_between_processes(cleanup: Cleanup) -> None:
+    """A second interpreter cannot enter cleanup while the same handoff is owned."""
+    code = """import sys
+from pathlib import Path
+from scripts.completed_task_files import cleanup_lock, FileRefusal
+try:
+    with cleanup_lock(Path(sys.argv[1]), sys.argv[2]):
+        print('acquired')
+except FileRefusal:
+    print('blocked')
+"""
+    arguments = [sys.executable, "-B", "-c", code, str(cleanup.root), cleanup.digest]
+    environment = {**os.environ, "PYTHONPATH": str(Path(__file__).resolve().parents[1])}
+    with cleanup_lock(cleanup.root, cleanup.digest):
+        result = subprocess.run(arguments, env=environment, capture_output=True, text=True, timeout=15, check=True)
+        assert result.stdout.strip() == "blocked"
+    result = subprocess.run(arguments, env=environment, capture_output=True, text=True, timeout=15, check=True)
+    assert result.stdout.strip() == "acquired"
+
+
+def test_stale_instance_refreshes_journal_under_lock(cleanup: Cleanup, monkeypatch: pytest.MonkeyPatch) -> None:
+    """An instance created before another completes recovers its gates after taking ownership."""
+    cleanup.handoff["resources"] = [resource_identity(cleanup, "serialized-resource")]
+    cleanup.handoff_path.write_text(json.dumps(cleanup.handoff), encoding="utf-8")
+    cleanup.digest = hashlib.sha256(cleanup.handoff_path.read_bytes()).hexdigest()
+    stale = Cleanup(cleanup.handoff_path, cleanup.evidence, cleanup.config, True, cleanup.controller)
+    monkeypatch.setattr(stale, "command", cleanup.command)
+    monkeypatch.setattr(stale, "api", cleanup.api)
+    assert not stale.gates
+    assert cleanup.run()["status"] == "complete"
+    releases = cleanup.controller.calls.count("resource.release")
+    assert stale.run()["status"] == "complete"
+    assert cleanup.controller.calls.count("resource.release") == releases
 
 
 def test_config_and_primary_protection(cleanup: Cleanup) -> None:

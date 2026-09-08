@@ -20,6 +20,7 @@ from pathlib import Path
 from scripts.completed_task_files import (
     FileRefusal,
     WindowsFiles,
+    cleanup_lock,
     ensure_durable_directory,
     publish_durable_file,
     read_bounded_regular,
@@ -601,6 +602,16 @@ class Cleanup:
             self.record("validation_resources_released")
 
     def run(self) -> dict:
+        """Hold exclusive handoff ownership and refresh journals before executing any transition."""
+        if not self.execute:
+            return self.reconcile()
+        with cleanup_lock(self.root, self.digest):
+            self.gates = []
+            self.resource_evidence = []
+            self.restore_gates()
+            return self.reconcile()
+
+    def reconcile(self) -> dict:
         """Reconcile ordered transitions from live evidence, including interrupted and title-only retries."""
         self.eligibility()
         if self.execute:

@@ -13,6 +13,50 @@ class FileRefusal(RuntimeError):
     """Filesystem identity or platform cannot support checked deletion."""
 
 
+@contextmanager
+def cleanup_lock(root: Path, digest: str):
+    """Serialize destructive runs for one handoff across processes without waiting on another controller."""
+    if len(digest) != 64 or any(character not in "0123456789abcdef" for character in digest):
+        raise FileRefusal("Invalid cleanup lock identity.")
+    if os.name == "nt":
+        kernel = ctypes.WinDLL("kernel32", use_last_error=True)
+        kernel.CreateMutexW.argtypes = [ctypes.c_void_p, ctypes.c_int, ctypes.c_wchar_p]
+        kernel.CreateMutexW.restype = ctypes.c_void_p
+        kernel.WaitForSingleObject.argtypes = [ctypes.c_void_p, ctypes.c_uint32]
+        kernel.WaitForSingleObject.restype = ctypes.c_uint32
+        kernel.ReleaseMutex.argtypes = [ctypes.c_void_p]
+        kernel.CloseHandle.argtypes = [ctypes.c_void_p]
+        handle = kernel.CreateMutexW(None, False, f"Global\\Atlaso.CompletedTaskCleanup.{digest}")
+        if not handle:
+            raise FileRefusal("Cannot acquire cleanup coordination handle; preserve resources.")
+        acquired = False
+        try:
+            acquired = kernel.WaitForSingleObject(handle, 0) in (0, 0x80)
+            if not acquired:
+                raise FileRefusal("Another cleanup controller owns this handoff; retry after it exits.")
+            yield
+        finally:
+            if acquired:
+                kernel.ReleaseMutex(handle)
+            kernel.CloseHandle(handle)
+    else:
+        import fcntl
+
+        # Keep the lock inode: unlinking it would let a later controller lock a different inode.
+        descriptor = os.open(root / f".atlaso-cleanup-{digest}.lock", os.O_CREAT | os.O_RDWR | os.O_NOFOLLOW, 0o600)
+        try:
+            info = os.fstat(descriptor)
+            if not stat.S_ISREG(info.st_mode) or info.st_nlink != 1:
+                raise FileRefusal("Cleanup lock must be an ordinary single-link coordination file.")
+            try:
+                fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except BlockingIOError as exc:
+                raise FileRefusal("Another cleanup controller owns this handoff; retry after it exits.") from exc
+            yield
+        finally:
+            os.close(descriptor)
+
+
 def publish_durable_file(source: Path, destination: Path) -> None:
     """Publish a flushed same-directory file and durably commit its directory entry."""
     if source.parent != destination.parent or destination.exists():
