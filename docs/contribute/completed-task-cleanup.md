@@ -202,6 +202,9 @@ Ownership manifests use the same bounded reader. Windows pins no-follow file and
 POSIX uses a nonblocking no-follow open. Both verify regular single-link identity and recheck size after reading.
 Generated-tree deletion repeats resource-specific ownership, inactivity, retention, capability, and evidence checks
 after task eligibility reconciliation, immediately before recording its prepared gate and removing the checked tree.
+Recovered journals and blobs use the same regular-file reader with the 64 MiB evidence limit. Before final ref/worktree
+removal, every remaining directory must be a parent of tracked source; empty ignored or untracked directories require
+inventory reconciliation and owning-tool release because Git's cleanliness checks do not report them.
 
 Execution guards still apply. A tool refusal such as “blocked by policy” is evidence of an execution refusal, not proof
 of a specific Atlaso policy breach. Record the exact rejected operation on the controller's durable evidence surface,

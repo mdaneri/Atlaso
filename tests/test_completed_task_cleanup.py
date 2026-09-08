@@ -744,6 +744,44 @@ def test_bounded_reader_rechecks_size(tmp_path: Path, monkeypatch: pytest.Monkey
         read_bounded_regular(path, 256)
 
 
+@pytest.mark.parametrize("ignored", [False, True])
+def test_empty_directory_requires_release(cleanup: Cleanup, ignored: bool) -> None:
+    """An empty Git-invisible lock/artifact directory cannot disappear with its worktree."""
+    path = cleanup.target / "empty-lock"
+    path.mkdir()
+    if ignored:
+        (cleanup.repo / ".git/info/exclude").write_text("empty-lock/\n", encoding="utf-8")
+    assert not cleanup.git("-C", str(cleanup.target), "status", "--porcelain", "--untracked-files=all")
+    with pytest.raises(Refusal, match="Unreleased directory"):
+        cleanup.run()
+    assert path.is_dir()
+    assert "remote_branch_absent" not in cleanup.gates
+    assert cleanup.git("ls-remote", "--refs", "origin", f"refs/heads/{cleanup.branch}")
+
+
+def test_tracked_parent_directories_are_allowed(cleanup: Cleanup) -> None:
+    """Ordinary source layout is distinguished from unrelated empty directories."""
+    directory = cleanup.target / "source" / "nested"
+    directory.mkdir(parents=True)
+    (directory / "tracked.txt").write_text("source", encoding="utf-8")
+    cleanup.git("-C", str(cleanup.target), "add", "source/nested/tracked.txt")
+    cleanup.verify_directory_release()
+
+
+@pytest.mark.parametrize("kind", ["journal", "blob"])
+def test_recovery_rejects_nonregular_evidence(cleanup: Cleanup, kind: str) -> None:
+    """A matching recovery filename cannot cause a special-file read before retry refusal."""
+    cleanup.resource_evidence.append({"operation": "test", "evidence_refs": ["preserved"]})
+    cleanup.record("cleanup_prepared")
+    path = next(cleanup.evidence.glob("*.json" if kind == "journal" else "*.evidence"))
+    path.unlink()
+    path.mkdir()
+    with pytest.raises(FileRefusal, match="bounded regular single-link"):
+        Cleanup(cleanup.handoff_path, cleanup.evidence, cleanup.config, True, cleanup.controller)
+    assert cleanup.target.exists()
+    assert cleanup.git("ls-remote", "--refs", "origin", f"refs/heads/{cleanup.branch}")
+
+
 def test_uninventoried_ignored_file_blocks_before_remote_deletion(cleanup: Cleanup) -> None:
     """Ignored user/configuration files cannot slip through Git's clean-worktree check."""
     (cleanup.repo / ".git/info/exclude").write_text("secret.txt\n", encoding="utf-8")

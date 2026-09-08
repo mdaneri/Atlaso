@@ -170,8 +170,7 @@ class Cleanup:
         histories = []
         for path in records:
             ordinary(path)
-            require(path.stat().st_nlink == 1 and path.stat().st_size <= MAX_EVIDENCE_BYTES, "Invalid cleanup journal file identity or size.")
-            record = json.loads(path.read_text(encoding="utf-8"))
+            record = json.loads(read_bounded_regular(path, MAX_EVIDENCE_BYTES))
             require(isinstance(record, dict) and record.get("handoff_sha256") == self.digest
                     and record.get("task_id") == self.handoff["task_id"]
                     and isinstance(record.get("gates"), list) and all(isinstance(gate, str) for gate in record["gates"])
@@ -188,8 +187,7 @@ class Cleanup:
                         and re.fullmatch(r"[0-9a-f]{64}", item["sha256"])
                         and item["evidence_file"] == f"{item['sha256']}.evidence", "Invalid preserved evidence reference.")
                 blob = ordinary(self.evidence / item["evidence_file"])
-                require(blob.stat().st_nlink == 1 and blob.stat().st_size <= MAX_EVIDENCE_BYTES
-                        and hashlib.sha256(blob.read_bytes()).hexdigest() == item["sha256"],
+                require(hashlib.sha256(read_bounded_regular(blob, MAX_EVIDENCE_BYTES)).hexdigest() == item["sha256"],
                         "Preserved evidence is missing or changed; reconcile before retry.")
 
     def verify_push_urls(self) -> None:
@@ -430,7 +428,7 @@ class Cleanup:
                 blob = self.evidence / f"{digest}.evidence"
                 if blob.exists():
                     ordinary(blob)
-                    require(blob.stat().st_nlink == 1 and blob.read_bytes() == payload, "Evidence payload identity changed.")
+                    require(read_bounded_regular(blob, MAX_EVIDENCE_BYTES) == payload, "Evidence payload identity changed.")
                 else:
                     staged_blob = self.evidence / f"{self.digest}-{uuid.uuid4()}-evidence.pending"
                     with staged_blob.open("xb") as stream:
@@ -464,6 +462,18 @@ class Cleanup:
                     "Resource removal scopes intersect; reconcile ownership before releasing any resource.")
             scopes[resource["id"]] = current
         return scopes
+
+    def verify_directory_release(self) -> None:
+        """Reject filesystem directories Git cannot report, including empty locks and artifacts."""
+        if not self.target.exists():
+            return
+        tracked = self.git("-C", str(self.target), "ls-files", "-z").split("\0")
+        source_directories = {parent for entry in tracked if entry for parent in Path(entry).parents}
+        for parent, directories, _ in os.walk(self.target, followlinks=False):
+            for name in directories:
+                path = ordinary(Path(parent) / name)
+                require(path.relative_to(self.target) in source_directories,
+                        "Unreleased directory remains outside tracked source; reconcile its inventory and owning-tool release.")
 
     def resources(self) -> None:
         """Delegate specialized resources to their owning tools and demand independent absence readback."""
@@ -563,6 +573,7 @@ class Cleanup:
                 self.record(f"resource_released:{identity}")
         if self.execute:
             self.verify_resources_absent()
+            self.verify_directory_release()
             if self.target.exists():
                 require(not self.git("-C", str(self.target), "ls-files", "--others", "--ignored", "--exclude-standard"),
                         "Unreleased ignored files remain; resource inventory/release is incomplete.")
@@ -581,6 +592,7 @@ class Cleanup:
         if not self.execute:
             return {"status": "preview", "proposed": self.proposed, "gates": [], "handoff_sha256": self.digest}
         self.eligibility()
+        self.verify_directory_release()
         if self.git("ls-remote", "--refs", "origin", f"refs/heads/{self.branch}"):
             self.verify_push_urls()
             self.record("remote_branch_removal_prepared")
@@ -590,6 +602,7 @@ class Cleanup:
         self.record("remote_branch_absent")
         self.eligibility()
         if self.target.exists():
+            self.verify_directory_release()
             # Git's non-forced removal protects tracked/untracked edits; the controller
             # must independently account for all ignored files before this transition.
             ignored = self.git("-C", str(self.target), "ls-files", "--others", "--ignored", "--exclude-standard")
