@@ -3879,7 +3879,7 @@ from request headers.</p>
 <p>Initial protocol defaults are a 60-second authorization code, five-minute ID and access tokens, two-minute clock skew,
 RS256, mandatory PKCE S256, and scopes <code>openid profile email groups</code>.</p>
 <h2 id="dependency-decision">Dependency decision<a class="headerlink" href="#dependency-decision" title="Permanent link">&para;</a></h2>
-<p>The runtime lock includes Authlib 1.7.2. RSA/JWK handling remains fixed to <code>joserfc</code>, RS256, and an explicit <code>kid</code>; no
+<p>The runtime lock includes Authlib 1.8.0. RSA/JWK handling remains fixed to <code>joserfc</code>, RS256, and an explicit <code>kid</code>; no
 algorithm negotiation is accepted.</p>
 <h2 id="authorization-code-browser-flow">Authorization Code browser flow<a class="headerlink" href="#authorization-code-browser-flow" title="Permanent link">&para;</a></h2>
 <p>Only <code>response_type=code</code>, query response mode, confidential <code>client_secret_basic</code>, and PKCE <code>S256</code> are accepted. Every

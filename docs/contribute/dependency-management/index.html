@@ -3595,7 +3595,9 @@ satisfies the input declarations, change the input constraint through a reviewed
 required release reaches seven full days.</p>
 <p>The Windows candidate job installs the release-tools and virtualization-smoke locks into one interpreter. Their input
 manifests therefore pin shared runtime packages compatibly so the second installation cannot replace part of the
-already validated release-tool environment.</p>
+already validated release-tool environment.
+Keep both cryptography and CFFI pins aligned when updating either environment, regenerate the locks, and run
+<code>tests/test_virtualization_smoke_guest.py</code> to check their shared package versions.</p>
 <p>Protected appliance, promotion, Inventory Linux, and virtualization publication jobs intentionally run without a
 writable Actions cache scope. Their <code>actions/setup-python</code> steps therefore do not enable the built-in pip cache, because
 that option always registers a post-job cache save. This cache-free setup does not relax dependency integrity: every
