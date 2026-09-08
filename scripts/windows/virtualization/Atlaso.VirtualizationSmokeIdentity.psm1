@@ -66,11 +66,15 @@ Raw VMware DHCP lease-file content.
 
 .PARAMETER ManagementMac
 Expected ethernet0 management adapter MAC address.
+
+.PARAMETER Now
+UTC instant used to reject expired lease candidates.
 #>
 function Get-AtlasoVmwareDhcpLeaseAddress {
     param(
         [Parameter(Mandatory = $true)][AllowEmptyCollection()][AllowEmptyString()][string[]]$LeaseText,
-        [Parameter(Mandatory = $true)][string]$ManagementMac
+        [Parameter(Mandatory = $true)][string]$ManagementMac,
+        [DateTimeOffset]$Now = [DateTimeOffset]::UtcNow
     )
 
     $expectedMac = ConvertTo-AtlasoSmokeMacAddress -MacAddress $ManagementMac
@@ -81,6 +85,18 @@ function Get-AtlasoVmwareDhcpLeaseAddress {
         '(?im)^\s*hardware\s+ethernet\s+(?<mac>[0-9a-f]{2}(?::[0-9a-f]{2}){5})\s*;'
     )
     $addresses = foreach ($lease in $leasePattern.Matches(($LeaseText -join "`n"))) {
+        $body = $lease.Groups['body'].Value
+        # Leases nominate probe targets, never authenticated destinations. Old or
+        # incomplete records must not keep resurrecting a retired DHCP address.
+        $ends = [regex]::Matches($body, '(?im)^\s*ends\s+\d\s+(?<date>\d{4}/\d{2}/\d{2} \d{2}:\d{2}:\d{2})\s*;')
+        $expiry = [DateTimeOffset]::MinValue
+        if ($ends.Count -ne 1 -or
+            -not [DateTimeOffset]::TryParseExact($ends[0].Groups['date'].Value,
+                'yyyy/MM/dd HH:mm:ss', [Globalization.CultureInfo]::InvariantCulture,
+                [Globalization.DateTimeStyles]::AssumeUniversal, [ref]$expiry) -or
+            $expiry -le $Now -or $body -match '(?im)^\s*binding state (?:free|abandoned|expired)\s*;') {
+            continue
+        }
         $macMatch = $macPattern.Match($lease.Groups['body'].Value)
         if ($macMatch.Success -and
             (ConvertTo-AtlasoSmokeMacAddress -MacAddress $macMatch.Groups['mac'].Value) -eq $expectedMac) {
@@ -274,6 +290,9 @@ Previously captured complete identity that the current evidence must match.
 
 .PARAMETER AllowMissingAddress
 Permit no usable neighbor entry while readiness polling continues.
+
+.PARAMETER RequireReachable
+Admit only currently reachable neighbors; cached stale entries remain probe candidates only.
 #>
 function Resolve-AtlasoVmwareSmokeAddressIdentity {
     param(
@@ -281,7 +300,8 @@ function Resolve-AtlasoVmwareSmokeAddressIdentity {
         [Parameter(Mandatory = $true)][AllowEmptyCollection()][object[]]$NetworkAdapters,
         [Parameter(Mandatory = $true)][AllowEmptyCollection()][object[]]$Neighbors,
         [AllowNull()][object]$ExpectedIdentity = $null,
-        [switch]$AllowMissingAddress
+        [switch]$AllowMissingAddress,
+        [switch]$RequireReachable
     )
 
     $expectedName = "VMware Network Adapter $($VmxIdentity.ManagementNetwork)"
@@ -297,6 +317,7 @@ function Resolve-AtlasoVmwareSmokeAddressIdentity {
     $matchingNeighbors = @($Neighbors | Where-Object {
             [int]$_.InterfaceIndex -eq [int]$hostAdapters[0].ifIndex -and
             [string]$_.State -notin @('Incomplete', 'Unreachable') -and
+            (-not $RequireReachable -or [string]$_.State -eq 'Reachable') -and
             $_.LinkLayerAddress -and
             (ConvertTo-AtlasoSmokeMacAddress -MacAddress ([string]$_.LinkLayerAddress)) -eq $managementMac
         })
