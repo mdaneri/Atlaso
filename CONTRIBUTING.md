@@ -65,6 +65,11 @@ configured worktree root or another explicit maintainer-configured permitted roo
 the permitted roots, preserve its state, report the exact conflict, and obtain maintainer direction instead of moving
 or deleting it automatically.
 
+For same-host, same-user Windows worktrees, follow the
+[1Password configuration reuse procedure](docs/reference/vmware-workstation-lifecycle-testing.md#reuse-primary-checkout-configuration-in-a-task-worktree)
+to seed only missing validated selector and DPAPI token files from the verified primary checkout. Preserve existing
+configuration and explicit authentication choices; never copy the entire `.atlaso-local` directory.
+
 1. Fork the repository or create a branch from current `main`. For private vulnerability remediation, use only the
    advisory's temporary private fork and follow `SECURITY.md`.
 2. Create or identify the labeled issue, then describe the intended approach. For private vulnerability remediation,

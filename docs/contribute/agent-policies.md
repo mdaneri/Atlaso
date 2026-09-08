@@ -129,6 +129,27 @@ runtime.
   diagnostic events in separate concurrency groups so diagnostic work cannot cancel trusted publication. Never grant
   candidate workflow revisions status-write permission.
 
+### Worktree 1Password configuration
+
+- During same-Windows-host, same-user task-worktree setup, resolve the primary checkout from Git's common-directory
+  and worktree inventory, and use the already verified task worktree beneath the configured Codex root as destination.
+  Follow the canonical
+  [worktree configuration procedure](../reference/vmware-workstation-lifecycle-testing.md#reuse-primary-checkout-configuration-in-a-task-worktree).
+- Seed only missing `.atlaso-local/onepassword-environment-id` and
+  `.atlaso-local/onepassword-service-account-token.dpapi` files from validated primary-checkout originals. Require
+  containment, ordinary single-link files, no reparse points, the pinned Atlaso Environment, and the existing token
+  owner/ACL contract. Establish current-user-and-SYSTEM destination permissions before copying without replacement;
+  preserve source bytes and ciphertext, and verify the destination with the existing helpers before use.
+- Reuse valid destination configuration and preserve explicit authentication choices. Conflicting or invalid state
+  requires maintainer direction, never automatic overwrite, ACL repair of existing files, or token rotation. Local
+  validation does not prove decryption or authorization: the supported bounded child must authenticate and verify the
+  exact Environment before the consuming workflow mutates VMware or network state. Unavailable unattended credentials
+  require a precise non-secret prerequisite, never an implicit desktop switch or a plaintext chat prompt.
+- Never copy the remaining `.atlaso-local` tree, including runtime caches, secrets staging, logs, cleanup markers, or
+  reservations. Never decrypt/re-encrypt for copying or print selector/token contents. Keep the copies Git-ignored and
+  out of commits, PRs, release artifacts, and logs. Task cleanup owns only the copied files and must preserve the
+  primary checkout's originals. This procedure reuses the supported authentication path; it adds no runtime fallback.
+
 ### Focused local validation and pull-request follow-through
 
 - This section governs ordinary pull requests. Temporary-private-fork remediation uses the security-specific

@@ -101,6 +101,25 @@ permitted root, preserve its state: do not move or delete it automatically, and 
 maintainer-directed migration or cleanup. If a safe dedicated worktree cannot be established, stop for maintainer
 direction instead of continuing in the primary checkout.
 
+### Worktree 1Password configuration
+
+When preparing a task worktree on the same Windows host under the same user, discover the verified primary checkout
+from Git's common-directory and worktree inventory. Check only its `.atlaso-local/onepassword-environment-id` and
+`.atlaso-local/onepassword-service-account-token.dpapi` for reuse in the verified task worktree's own Git-ignored
+`.atlaso-local` directory. Follow the
+[worktree configuration procedure](docs/reference/vmware-workstation-lifecycle-testing.md#reuse-primary-checkout-configuration-in-a-task-worktree).
+Validate source and destination containment, ordinary single-link file identity, absence of reparse points, the pinned
+Atlaso Environment, and the token's current-user ownership and restricted ACLs. Prepare restrictive destination
+permissions before copying each missing file without replacement; preserve source bytes and DPAPI ciphertext unchanged.
+Reuse valid existing destination configuration and explicit authentication selections. Never overwrite conflicting or
+invalid configuration automatically, decrypt or re-encrypt merely to copy, display selector/token contents, or copy the
+rest of `.atlaso-local`, including caches, logs, staging, recovery markers, and reservations.
+
+Verify copied configuration through the existing credential helpers before use, retaining bounded-child decryption
+and exact Environment authorization. If unattended authentication cannot be established, report the precise non-secret
+prerequisite instead of silently selecting desktop approval or requesting plaintext in chat. Keep configuration out of
+Git, release artifacts, and logs. The task owns only its copies; cleanup must preserve the primary checkout's originals.
+
 ### Unrelated issue discoveries
 
 Keep each pull request limited to its linked issue scope. When work reveals a reproducible or otherwise evidence-backed

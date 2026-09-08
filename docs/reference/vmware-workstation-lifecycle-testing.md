@@ -56,6 +56,61 @@ its environment copy before Environment retrieval. A missing, corrupt, wrong-use
 token fails before VMware or network mutation. If the original token was not retained, rotate it in the portal and use
 the secure setup prompt; the portal does not provide a local token filename.
 
+### Reuse primary-checkout configuration in a task worktree
+
+When preparing a task worktree under the same Windows user on the same host, reuse the primary checkout's validated
+configuration before starting unattended work. This is a setup procedure for the existing authentication path; the
+VMware wrappers do not automatically copy configuration. A token path in the primary checkout cannot be passed
+directly to a task-worktree consumer: token resolution requires containment beneath the consuming checkout's own
+`.atlaso-local` directory.
+
+1. Resolve the primary checkout using `git rev-parse --path-format=absolute --git-common-dir` and
+   `git worktree list --porcelain`. Cross-check the common Git directory against the primary checkout's Git metadata
+   and the same repository's inventory; do not infer the source from a branch named `main` or a conventional path.
+   Use the already verified task worktree beneath the configured Codex `git-worktree-root` as destination. Stop for
+   maintainer direction if either identity, repository relationship, user/host binding, or permitted root is ambiguous.
+2. Inspect only these two named paths beneath each checkout's `.atlaso-local` directory:
+   `onepassword-environment-id` and `onepassword-service-account-token.dpapi`. Validate path-component containment,
+   ordinary directories and single-link regular files, and absence of reparse points along both paths before reading
+   or copying. Verify the destination paths are Git-ignored with `git check-ignore`; reject tracked configuration.
+   Preserve valid existing destination files. Do not overwrite, repair permissions on, or rotate invalid or conflicting
+   files automatically. A valid destination token need not have identical ciphertext to the primary token.
+3. Import `scripts/windows/vmware/Atlaso.OnePasswordCredentials.psm1` from the verified task checkout. For each
+   selector being reused, capture `Resolve-AtlasoOnePasswordEnvironmentId -RepositoryRoot <verified-checkout>` into a
+   local variable and pass it directly to `Assert-AtlasoOnePasswordEnvironmentId`, retaining the built-in identity pin.
+   Never emit that variable. For each token, capture or discard the result of
+   `Resolve-AtlasoOnePasswordServiceAccountTokenFile -RepositoryRoot <verified-checkout>` with its exact `-TokenFile`
+   path so a missing file fails explicitly. This enforces containment and invokes
+   `Assert-AtlasoOnePasswordServiceAccountTokenFile` for bounded ciphertext size, a single hard link, current-user
+   ownership, disabled inherited access, and access restricted to the current user and SYSTEM. These helpers do not
+   replace the preceding filesystem checks for the selector and every ancestor.
+4. Before writing any copy, prepare restrictive destination directory permissions for the current user and SYSTEM.
+   If an existing directory is unsafe or ambiguous, stop without changing it. Copy each missing, validated named file
+   with no-replacement semantics, retaining its bytes exactly. Do not decrypt/re-encrypt the token or change either
+   source file. Ensure the copied token has current-user ownership, inheritance disabled, and explicit read access
+   for only the current user and SYSTEM; verify the existing token ACL contract before use. Recheck identities and
+   destination absence immediately before copying, and reject concurrent replacement instead of overwriting it.
+   Never recursively copy `.atlaso-local`: caches, secrets staging, logs, cleanup markers, reservations, and other
+   runtime state remain owned by their original checkout.
+5. Revalidate the destination paths, byte preservation, selector pin, and token through the same helpers. Report only
+   non-secret success or prerequisite categories, never selector/token contents. Local file validation cannot prove
+   DPAPI decryptability, token validity, or Environment authorization. The intended supported workflow must complete
+   its bounded-child credential preflight against the exact `Atlaso` Environment before VMware or network mutation.
+   Decryption remains inside that child; do not decrypt for display or run a separate plaintext probe.
+6. Preserve the authentication precedence above, including explicit token paths, desktop accounts, Environment
+   selectors, and explicit credential inputs. When unattended authentication is selected, require the task-local token
+   before invoking a consumer that could otherwise discover a desktop account. Missing source files, invalid
+   selectors, unsafe ACLs, wrong-user/host ciphertext, revoked tokens, or denied Environment access must produce the
+   precise non-secret prerequisite and stop that unattended operation. Do not silently switch to desktop approval or
+   request plaintext in chat. A maintainer can separately choose the secure initialization/rotation prompt above or
+   explicit desktop authorization.
+
+Repeated setup copies nothing when the destination is already valid. Keep configuration out of commits, pull requests,
+release artifacts, and logs. Record ownership of only the task's copied configuration; later task-worktree cleanup
+must never remove or alter the primary checkout's originals.
+
+### Wheel-only deployment authentication
+
 For a wheel-only deployment to the canonical test VM, use `scripts/windows/vmware/deploy-wheel.ps1` with the secure
 Windows 1Password handoff documented in the [full technical reference](full-technical-reference.md). Verify the unique
 `Atlaso` Environment and concealed `DEFAULT_ADMIN_PASSWORD` variable by name, then pass its opaque Environment ID
