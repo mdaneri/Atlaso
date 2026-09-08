@@ -4,7 +4,8 @@ from __future__ import annotations
 
 import ctypes
 import os
-from contextlib import contextmanager
+import stat
+from contextlib import ExitStack, contextmanager
 from pathlib import Path
 
 
@@ -30,6 +31,33 @@ def publish_durable_file(source: Path, destination: Path) -> None:
             os.fsync(descriptor)
         finally:
             os.close(descriptor)
+
+
+def read_bounded_regular(path: Path, limit: int) -> bytes:
+    """Read a small ordinary file without following its link or accepting growth/replacement."""
+    before = path.lstat()
+    if not stat.S_ISREG(before.st_mode) or before.st_nlink != 1 or before.st_size > limit:
+        raise FileRefusal("Evidence input must be a bounded regular single-link file.")
+    with ExitStack() as stack:
+        if os.name == "nt":
+            files = WindowsFiles()
+            stack.enter_context(files.ancestors(path))
+            stack.enter_context(files.opened(path))
+            stream = stack.enter_context(path.open("rb"))
+        else:
+            descriptor = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+            stream = stack.enter_context(os.fdopen(descriptor, "rb"))
+        opened = os.fstat(stream.fileno())
+        if not stat.S_ISREG(opened.st_mode) or opened.st_nlink != 1 or opened.st_size > limit \
+                or (opened.st_dev, opened.st_ino) != (before.st_dev, before.st_ino):
+            raise FileRefusal("Evidence input identity or size changed before reading.")
+        payload = stream.read(limit + 1)
+        after = os.fstat(stream.fileno())
+        if len(payload) > limit or len(payload) != opened.st_size \
+                or (after.st_dev, after.st_ino, after.st_size, after.st_mtime_ns, after.st_nlink) != \
+                   (opened.st_dev, opened.st_ino, opened.st_size, opened.st_mtime_ns, 1):
+            raise FileRefusal("Evidence input changed during its bounded read.")
+        return payload
 
 
 class WindowsFiles:

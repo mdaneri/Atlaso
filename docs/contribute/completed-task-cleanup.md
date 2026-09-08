@@ -198,6 +198,10 @@ remains, changed ref, failed resource release, or stale title keeps the task act
 through supported tools, then rerun. Successful earlier deletion cannot be rolled back by the command.
 The title-capability exception preserves its capability evidence and still records the literal `task_title_done` gate.
 Handoff inputs must be regular single-link files no larger than 256 KiB; validation precedes the bounded payload read.
+Ownership manifests use the same bounded reader. Windows pins no-follow file and ancestor handles during the read;
+POSIX uses a nonblocking no-follow open. Both verify regular single-link identity and recheck size after reading.
+Generated-tree deletion repeats resource-specific ownership, inactivity, retention, capability, and evidence checks
+after task eligibility reconciliation, immediately before recording its prepared gate and removing the checked tree.
 
 Execution guards still apply. A tool refusal such as “blocked by policy” is evidence of an execution refusal, not proof
 of a specific Atlaso policy breach. Record the exact rejected operation on the controller's durable evidence surface,

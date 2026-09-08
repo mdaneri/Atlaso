@@ -17,7 +17,12 @@ import tomllib
 import uuid
 from pathlib import Path
 
-from scripts.completed_task_files import FileRefusal, WindowsFiles, publish_durable_file
+from scripts.completed_task_files import (
+    FileRefusal,
+    WindowsFiles,
+    publish_durable_file,
+    read_bounded_regular,
+)
 from scripts.completed_task_title import (
     completed_task_title,
     verify_completed_task_title,
@@ -60,13 +65,7 @@ def read_handoff(path: Path) -> bytes:
     info = ordinary(path).stat()
     require(stat.S_ISREG(info.st_mode) and info.st_nlink == 1 and info.st_size <= 262144,
             "Handoff must be a bounded regular single-link file.")
-    with path.open("rb") as stream:
-        opened = os.fstat(stream.fileno())
-        require(stat.S_ISREG(opened.st_mode) and (opened.st_dev, opened.st_ino) == (info.st_dev, info.st_ino),
-                "Handoff file identity changed before reading; preserve resources.")
-        raw = stream.read(262145)
-    require(len(raw) <= 262144, "Handoff exceeds the bounded evidence limit.")
-    return raw
+    return read_bounded_regular(path, 262144)
 
 
 def beneath(path: Path, root: Path) -> bool:
@@ -369,8 +368,7 @@ class Cleanup:
             if isinstance(candidate, dict) and candidate.get("path"):
                 require(not path.is_relative_to(ordinary(Path(candidate["path"]))),
                         "Ownership manifest lies inside a resource removal root.")
-        require(path.stat().st_size <= 262144, "Ownership manifest exceeds the bounded evidence limit.")
-        require(hashlib.sha256(path.read_bytes()).hexdigest() == manifest["sha256"],
+        require(hashlib.sha256(read_bounded_regular(path, 262144)).hexdigest() == manifest["sha256"],
                 "Original resource ownership manifest changed or is unproven.")
         if resource["kind"] == "generated_tree":
             require(resource.get("path") and isinstance(resource.get("root_identity"), list)
@@ -532,6 +530,11 @@ class Cleanup:
                         self.eligibility()
                         self.validate_resource_identity(resource)
                         require(self.inventory_scopes() == inventory_scopes, "Inventory scopes changed before release.")
+                        inspected = self.controller.call("resource.inspect", {"resource": resource, "handoff_sha256": self.digest})
+                        require(all(inspected.get(key) is True for key in
+                                    ("ownership_verified", "inactive", "supported_cleanup", "evidence_preserved"))
+                                and inspected.get("retained") is False and inspected.get("absent") is False,
+                                "Generated resource release eligibility changed; preserve the tree.")
                         self.resource_evidence.append(self.proposed[-1])
                         self.record(f"resource_release_prepared:{identity}")
                         files.remove(path, snapshot)

@@ -17,7 +17,12 @@ from scripts.completed_task_cleanup import (
     ordinary,
     read_handoff,
 )
-from scripts.completed_task_files import FileRefusal, WindowsFiles, publish_durable_file
+from scripts.completed_task_files import (
+    FileRefusal,
+    WindowsFiles,
+    publish_durable_file,
+    read_bounded_regular,
+)
 
 
 class Bridge:
@@ -661,6 +666,82 @@ def test_generated_resource_integrates_with_real_git(cleanup: Cleanup, monkeypat
     assert cleanup.run()["status"] == "complete"
     assert not path.exists()
     assert cleanup.gates.index("resource_released:generated-cache") < cleanup.gates.index("remote_branch_absent")
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Windows no-follow handle contract")
+@pytest.mark.parametrize("field", ["ownership_verified", "inactive", "retained", "supported_cleanup", "evidence_preserved"])
+def test_generated_resource_fresh_eligibility(cleanup: Cleanup, monkeypatch: pytest.MonkeyPatch, field: str) -> None:
+    """A tree becoming active, retained, or unowned after initial inspection survives cleanup."""
+    path = cleanup.target / "cache"
+    path.mkdir()
+    content = path / "result.txt"
+    content.write_text("preserve", encoding="utf-8")
+    (cleanup.repo / ".git/info/exclude").write_text("cache/\n", encoding="utf-8")
+    identity = WindowsFiles().snapshot(path)["."]["identity"]
+    cleanup.handoff["resources"] = [{**resource_identity(cleanup, "cache", "generated_tree"),
+                                     "path": str(path), "root_identity": identity}]
+    original = cleanup.controller.call
+    inspections = 0
+
+    def changed(operation: str, payload: dict) -> dict:
+        """Withdraw one resource-specific guarantee on the final fresh readback."""
+        nonlocal inspections
+        result = original(operation, payload)
+        if operation == "resource.inspect":
+            inspections += 1
+            result["absent"] = False
+            if inspections > 1:
+                result[field] = field == "retained"
+        return result
+
+    monkeypatch.setattr(cleanup.controller, "call", changed)
+    with pytest.raises(Refusal, match="Generated resource release eligibility changed"):
+        cleanup.run()
+    assert content.read_text() == "preserve"
+    assert "resource_release_prepared:cache" not in cleanup.gates
+    assert cleanup.git("ls-remote", "--refs", "origin", f"refs/heads/{cleanup.branch}")
+
+
+@pytest.mark.parametrize("kind", ["directory", "oversized", "hardlink"])
+def test_manifest_requires_bounded_regular_file(cleanup: Cleanup, kind: str) -> None:
+    """Malformed manifest objects are rejected before release rather than read without bounds."""
+    resource = resource_identity(cleanup, "invalid-manifest")
+    path = Path(resource["ownership_manifest"]["path"])
+    if kind == "directory":
+        path.unlink()
+        path.mkdir()
+    elif kind == "oversized":
+        path.write_bytes(b"x" * 262145)
+    else:
+        path.with_suffix(".alias").hardlink_to(path)
+    cleanup.handoff["resources"] = [resource]
+    with pytest.raises(FileRefusal, match="bounded regular single-link"):
+        cleanup.resources()
+    assert "resource.release" not in cleanup.controller.calls
+
+
+def test_bounded_reader_rechecks_size(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """A size change observed after the read cannot authorize manifest hash acceptance."""
+    path = tmp_path / "evidence.json"
+    path.write_bytes(b"small")
+    assert read_bounded_regular(path, 256) == b"small"
+    original = os.fstat
+    calls = 0
+
+    def changed(descriptor: int) -> os.stat_result:
+        """Model growth at the post-read identity check."""
+        nonlocal calls
+        calls += 1
+        result = original(descriptor)
+        if calls == 2:
+            fields = list(result)
+            fields[6] += 1
+            return os.stat_result(fields)
+        return result
+
+    monkeypatch.setattr(os, "fstat", changed)
+    with pytest.raises(FileRefusal, match="changed during"):
+        read_bounded_regular(path, 256)
 
 
 def test_uninventoried_ignored_file_blocks_before_remote_deletion(cleanup: Cleanup) -> None:
