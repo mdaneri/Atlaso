@@ -1660,13 +1660,22 @@ def test_management_handoff_rollback_preserves_nat_after_firewall(monkeypatch, t
     tables = {"candidate"}
 
     def restore_firewall(*_args):
-        """Model the ruleset flush in both firewall rollback branches."""
+        """Model the ruleset flush in both firewall rollback branches.
+
+        Args:
+            *_args: Ignored rollback state and command evidence.
+        """
         tables.clear()
         if prior_firewall:
             tables.add("firewall")
 
     def restore_nat(operation, arguments):
-        """Model replay of both prior canonical NAT families."""
+        """Model replay of both prior canonical NAT families.
+
+        Args:
+            operation: Requested NAT helper operation.
+            arguments: Prior snapshot path passed for replay.
+        """
         assert operation == "restore"
         assert arguments == [str(runtime)]
         tables.update({"ip atlaso_nat", "ip6 atlaso_nat"})

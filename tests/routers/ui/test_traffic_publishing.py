@@ -138,6 +138,12 @@ def test_firewall_apply_replays_unchanged_nat_after_ruleset_replacement(client, 
     original_units = ui.appliance_apply_units
 
     def settled_management_units(*args, **kwargs):
+        """Isolate the NAT dependency from management handoff admission.
+
+        Args:
+            *args: Positional arguments forwarded to the real unit planner.
+            **kwargs: Named arguments forwarded to the real unit planner.
+        """
         units = original_units(*args, **kwargs)
         for unit in units:
             if unit["id"] == "network":

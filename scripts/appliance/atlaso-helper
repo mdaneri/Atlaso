@@ -8731,11 +8731,12 @@ def _validate_wan_config_path(path_value: str) -> Path:
     return path
 
 
-def _parse_wan_config(path: Path) -> dict[str, list[dict[str, str]]]:
+def _parse_wan_config(path: Path, *, content: str | None = None) -> dict[str, list[dict[str, str]]]:
     """Parse WAN config.
 
     Args:
-        path: Filesystem path read, validated, or updated by the operation.
+        path: Filesystem path read when content is not supplied.
+        content: Captured immutable input shared with validation and persistence.
     """
     sections: dict[str, list[dict[str, str]]] = {
         "feature_settings": [],
@@ -8760,7 +8761,7 @@ def _parse_wan_config(path: Path) -> dict[str, list[dict[str, str]]]:
         "nat_rules": "nat",
         "wan_policies": "policy",
     }
-    for raw_line in path.read_text(encoding="utf-8").splitlines():
+    for raw_line in (path.read_text(encoding="utf-8") if content is None else content).splitlines():
         line = raw_line.strip()
         if not line or line.startswith("#"):
             continue
@@ -8902,14 +8903,18 @@ def _wan_route_is_active_management_default(
     return destination.prefixlen == 0
 
 
-def _wan_config_errors(path: Path, *, include_nat: bool = True) -> list[str]:
+def _wan_config_errors(
+    path: Path, *, include_nat: bool = True, parsed: dict[str, list[dict[str, str]]] | None = None,
+) -> list[str]:
     """Perform WAN config errors.
 
     Args:
         path: Filesystem path read, validated, or updated by the operation.
         include_nat: Validate legacy NAT rows when canonical NAT is not managed separately.
+        parsed: Captured parsed snapshot; omit only for path-based legacy callers.
     """
-    parsed = _parse_wan_config(path)
+    if parsed is None:
+        parsed = _parse_wan_config(path)
     feature_settings = _wan_feature_settings(parsed)
     routing_enabled = feature_settings["routing_enabled"]
     effective_nat_enabled = feature_settings["effective_nat_enabled"]
@@ -10197,14 +10202,16 @@ def _handle_nat_locked(action: str, args: list[str]) -> int:
         path = Path(_validate_path(args[0])).resolve()
         if path.suffix != ".conf" or not path.is_file() or not (path.is_relative_to(NAT_APPLY_DIR) or path == NAT_RUNTIME_CONFIG_PATH):
             raise ValueError("NAT input must use its staged directory or fixed runtime file")
-        errors = _wan_config_errors(path)
+        # The staging account can replace the path; every phase must use these same bytes.
+        intent = path.read_text(encoding="utf-8")
+        parsed = _parse_wan_config(path, content=intent)
+        errors = _wan_config_errors(path, parsed=parsed)
         if errors:
             if action == "restore":
                 _nat_quarantine()
                 print(json.dumps({"nat": "quarantined", "reason": "Saved translation requires review"}))
                 return 0
             raise ValueError("; ".join(errors))
-        parsed = _parse_wan_config(path)
         rules = parsed["nat_rules"] if _wan_feature_settings(parsed)["effective_nat_enabled"] else []
         program = _render_wan_nat_config(rules)
         validation = _validate_wan_nat_config(program)
@@ -10228,7 +10235,6 @@ def _handle_nat_locked(action: str, args: list[str]) -> int:
         previous = {str(item): item.read_text(encoding="utf-8") if item.exists() else None
                     for item in (NAT_RUNTIME_CONFIG_PATH, WAN_NAT_CONFIG_PATH, WAN_NAT_SERVICE_PATH)}
         enabled = _run(["systemctl", "is-enabled", "atlaso-nat.service"]).returncode == 0
-        intent = path.read_text(encoding="utf-8")
         _nat_write(marker, json.dumps({"files": previous, "enabled": enabled,
                                      "boot_id": NAT_BOOT_ID_PATH.read_text(encoding="utf-8").strip()}))
         try:

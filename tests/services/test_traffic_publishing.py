@@ -298,3 +298,50 @@ def test_legacy_nat_inference_preserves_intent(enabled, explicit, force_disabled
             item.enabled = not enabled
         db.flush()
         assert ensure_traffic_publishing_settings(db).nat_enabled is expected
+
+
+def test_nat_apply_uses_one_snapshot_when_staged_path_changes(tmp_path, monkeypatch):
+    """Path replacement after validation cannot change applied or persisted intent.
+
+    Args:
+        tmp_path: Task-owned isolated managed filesystem.
+        monkeypatch: Bounded fake privileged operations and injected file failure.
+    """
+    helper = load_helper_module()
+    monkeypatch.setattr(helper, "_nat_transaction_lock", nullcontext)
+    paths = {"NAT_APPLY_DIR": tmp_path, "NAT_RUNTIME_CONFIG_PATH": tmp_path / "runtime.conf",
+             "WAN_NAT_CONFIG_PATH": tmp_path / "nat.nft", "WAN_NAT_SERVICE_PATH": tmp_path / "nat.service",
+             "NAT_BOOT_ID_PATH": tmp_path / "boot-id"}
+    for name, path in paths.items():
+        monkeypatch.setattr(helper, name, path)
+    paths["NAT_BOOT_ID_PATH"].write_text("boot-1")
+    old = render_nat_config([], nat_targets(interfaces(), []), [], TrafficPublishingSettings(False, True))
+    paths["NAT_RUNTIME_CONFIG_PATH"].write_text(old)
+    paths["WAN_NAT_CONFIG_PATH"].write_text(helper._render_wan_nat_config([]))
+    paths["WAN_NAT_SERVICE_PATH"].write_text("prior unit")
+    staged = tmp_path / "candidate.conf"
+    staged.write_text(render_nat_config([rule()], nat_targets(interfaces(), []), [], TrafficPublishingSettings(True, True)))
+    programs = []
+    monkeypatch.setattr(helper, "_run", lambda cmd: subprocess.CompletedProcess(cmd, 0, "", ""))
+    monkeypatch.setattr(helper, "_run_with_input", lambda cmd, text: (programs.append(text) or subprocess.CompletedProcess(cmd, 0, "", "")))
+    monkeypatch.setattr(helper, "_validate_wan_nat_config", lambda text: subprocess.CompletedProcess([], 0, "", ""))
+    monkeypatch.setattr(helper, "_wan_nat_interface_indexes", lambda parsed, rules: {"eth1": 11, "eth2": 22})
+    captured = staged.read_text()
+    validate = helper._wan_config_errors
+
+    def replace_after_validation(path, **kwargs):
+        """Replace the service-owned stage after checking the captured input.
+
+        Args:
+            path: Staged input whose contents can be replaced concurrently.
+            **kwargs: Captured parsed snapshot forwarded to policy validation.
+        """
+        errors = validate(path, **kwargs)
+        path.write_text(old)
+        return errors
+
+    monkeypatch.setattr(helper, "_wan_config_errors", replace_after_validation)
+    assert helper._handle_nat("apply", [str(staged)]) == 0
+    assert "masquerade" in programs[0]
+    assert staged.read_text() == old
+    assert paths["NAT_RUNTIME_CONFIG_PATH"].read_text() == captured

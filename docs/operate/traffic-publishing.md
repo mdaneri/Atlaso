@@ -65,7 +65,8 @@ Use traffic from a selected ingress to verify the translated source and return p
 the dedicated management interface, the wrong family, and appliance-local traffic do not match. Existing connection
 tracking can retain an established flow's prior translation; use new connections when testing changed rules.
 
-The NAT helper validates the captured configuration, verifies each physical MAC and live interface index, and verifies
+The NAT helper captures staged input once and uses that same snapshot for validation, rendering, and persistence.
+It validates the captured configuration, verifies each physical MAC and live interface index, and verifies
 that a fixed address is actually assigned to the live egress. It atomically replaces the two Atlaso-owned NAT tables
 without replacing unrelated nftables tables. A durable recovery record restores the previous configuration, runtime
 program, and service enablement if persistence or activation fails. Failed recovery remains actionable.
