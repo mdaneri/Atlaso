@@ -17,7 +17,7 @@ import tomllib
 import uuid
 from pathlib import Path
 
-from scripts.completed_task_files import FileRefusal, WindowsFiles
+from scripts.completed_task_files import FileRefusal, WindowsFiles, publish_durable_file
 from scripts.completed_task_title import (
     completed_task_title,
     verify_completed_task_title,
@@ -408,10 +408,12 @@ class Cleanup:
                     ordinary(blob)
                     require(blob.stat().st_nlink == 1 and blob.read_bytes() == payload, "Evidence payload identity changed.")
                 else:
-                    with blob.open("xb") as stream:
+                    staged_blob = self.evidence / f"{self.digest}-{uuid.uuid4()}-evidence.pending"
+                    with staged_blob.open("xb") as stream:
                         stream.write(payload)
                         stream.flush()
                         os.fsync(stream.fileno())
+                    publish_durable_file(staged_blob, blob)
                 references.append({"evidence_file": blob.name, "sha256": digest})
             self.resource_evidence = references
             payload = json.dumps({"handoff_sha256": self.digest, "task_id": self.handoff["task_id"],
@@ -423,7 +425,7 @@ class Cleanup:
                 stream.write(payload)
                 stream.flush()
                 os.fsync(stream.fileno())
-            pending.rename(destination)
+            publish_durable_file(pending, destination)
         self.gates = prospective
 
     def resources(self) -> None:

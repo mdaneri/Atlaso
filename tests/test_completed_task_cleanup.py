@@ -11,7 +11,7 @@ from pathlib import Path
 import pytest
 
 from scripts.completed_task_cleanup import Cleanup, Refusal, configured_root, ordinary
-from scripts.completed_task_files import FileRefusal, WindowsFiles
+from scripts.completed_task_files import FileRefusal, WindowsFiles, publish_durable_file
 
 
 class Bridge:
@@ -186,6 +186,31 @@ def test_failed_journal_write_does_not_publish_gate(cleanup: Cleanup, monkeypatc
     assert "validation_resources_released" not in cleanup.gates
     with pytest.raises(Refusal, match="incomplete journal write"):
         Cleanup(cleanup.handoff_path, cleanup.evidence, cleanup.config, True, cleanup.controller)
+
+
+def test_failed_durable_publication_does_not_publish_gate(cleanup: Cleanup, monkeypatch: pytest.MonkeyPatch) -> None:
+    """A failure publishing the directory entry cannot advance reported cleanup gates."""
+    def failed_publication(source: Path, destination: Path) -> None:
+        """Model the durable rename failing after file contents have been flushed."""
+        raise FileRefusal("fixture durable publication failure")
+
+    monkeypatch.setattr("scripts.completed_task_cleanup.publish_durable_file", failed_publication)
+    with pytest.raises(FileRefusal, match="durable publication failure"):
+        cleanup.record("remote_branch_absent")
+    assert "remote_branch_absent" not in cleanup.gates
+    assert list(cleanup.evidence.glob("*.pending"))
+
+
+def test_durable_file_publication_preserves_existing_destination(tmp_path: Path) -> None:
+    """The native publication path moves a staged file without replacing existing evidence."""
+    source, destination = tmp_path / "staged", tmp_path / "published"
+    source.write_bytes(b"evidence")
+    publish_durable_file(source, destination)
+    assert not source.exists() and destination.read_bytes() == b"evidence"
+    source.write_bytes(b"different")
+    with pytest.raises(FileRefusal, match="new name"):
+        publish_durable_file(source, destination)
+    assert destination.read_bytes() == b"evidence"
 
 
 @pytest.mark.parametrize("urls", ["https://github.com/other/Atlaso.git", "https://github.com/example/Atlaso.git\nhttps://github.com/other/Atlaso.git"])

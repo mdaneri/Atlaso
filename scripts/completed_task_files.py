@@ -12,6 +12,26 @@ class FileRefusal(RuntimeError):
     """Filesystem identity or platform cannot support checked deletion."""
 
 
+def publish_durable_file(source: Path, destination: Path) -> None:
+    """Publish a flushed same-directory file and durably commit its directory entry."""
+    if source.parent != destination.parent or destination.exists():
+        raise FileRefusal("Evidence publication requires a new name in the same directory.")
+    if os.name == "nt":
+        kernel = ctypes.WinDLL("kernel32", use_last_error=True)
+        kernel.MoveFileExW.argtypes = [ctypes.c_wchar_p, ctypes.c_wchar_p, ctypes.c_uint32]
+        kernel.MoveFileExW.restype = ctypes.c_int
+        # WRITE_THROUGH waits for the move to reach disk; omit replacement/copy flags.
+        if not kernel.MoveFileExW(str(source), str(destination), 0x8):
+            raise FileRefusal("Write-through evidence publication failed; reconcile pending evidence before retry.")
+    else:
+        source.rename(destination)
+        descriptor = os.open(destination.parent, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0))
+        try:
+            os.fsync(descriptor)
+        finally:
+            os.close(descriptor)
+
+
 class WindowsFiles:
     """Pin ancestors and delete only the exact no-follow object whose identity was checked."""
 

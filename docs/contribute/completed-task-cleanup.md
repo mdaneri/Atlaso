@@ -173,6 +173,9 @@ cleanup even when the fetch URL names the correct repository.
 Large controller evidence and snapshots are stored as bounded, hashed `.evidence` files; cumulative journals contain
 their references and remain within the same 64 MiB recovery limit. Preserve both file types. A retry verifies referenced
 payloads before continuing, and prepared transition records are persisted before destructive owning-tool or Git actions.
+Journal and payload publication uses Windows `MoveFileExW` with `MOVEFILE_WRITE_THROUGH`, or a rename followed by a
+parent-directory fsync on POSIX. A gate is reported only after that publication succeeds; file-content fsync alone is
+insufficient. See the [Windows move contract](https://learn.microsoft.com/en-us/windows/win32/api/winbase/nf-winbase-movefileexw).
 Windows inputs reject trailing-dot/space, reserved-device, and short-name aliases before containment checks. An absent
 remote `main` produces a structured refusal, including any already recorded gates.
 
