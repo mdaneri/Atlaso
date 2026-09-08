@@ -35,12 +35,15 @@ class Bridge:
             result.update(handoff_sha256=payload["sha256"], evidence_refs=["test-only-independent-readback"])
             result["inventory_empty_verified"] = True
             result["observed_title"] = self.title or payload["handoff"]["task_title"]
+            result["post_merge_runs"] = [{"id": 1, "run_attempt": 1, "workflow_id": 10,
+                                          "head_sha": payload["handoff"]["merge"], "event": "push"}]
             if self.block:
                 result[self.block] = False
             return result
         if operation == "resource.inspect":
             return {"ownership_verified": True, "inactive": True, "retained": False,
-                    "supported_cleanup": True, "evidence_preserved": True, "absent": self.resource_absent}
+                    "supported_cleanup": True, "evidence_preserved": True, "absent": self.resource_absent,
+                    "removal_scopes": []}
         if operation == "resource.release":
             self.resource_absent = self.release_ok
             return {"success": self.release_ok}
@@ -112,7 +115,9 @@ def cleanup(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Cleanup:
             return {"object": {"sha": merge}}
         if endpoint.startswith("compare/"):
             return {"status": "identical"}
-        return {"total_count": 1, "workflow_runs": [{"status": "completed", "conclusion": "success"}]}
+        assert endpoint == "actions/runs/1"
+        return {"id": 1, "run_attempt": 1, "workflow_id": 10, "head_sha": merge, "event": "push",
+                "repository": {"full_name": "example/Atlaso"}, "status": "completed", "conclusion": "success"}
 
     monkeypatch.setattr(instance, "command", external)
     monkeypatch.setattr(instance, "api", api)
@@ -194,6 +199,58 @@ def test_incomplete_resource_release_blocks_ref_deletion(cleanup: Cleanup) -> No
     assert cleanup.target.exists()
     assert cleanup.git("ls-remote", "--refs", "origin", "refs/heads/" + cleanup.branch)
     assert "task.title" not in cleanup.controller.calls
+
+
+@pytest.mark.parametrize("protected", ["target", "repo", "root", "evidence"])
+def test_owning_scope_cannot_remove_checkout_or_evidence(cleanup: Cleanup, monkeypatch: pytest.MonkeyPatch, protected: str) -> None:
+    """A VMX locator cannot hide an owning tool's broader destructive directory."""
+    cleanup.handoff["resources"] = [resource_identity(cleanup, "broad-vm")]
+    original = cleanup.controller.call
+
+    def broad_scope(operation: str, payload: dict) -> dict:
+        """Report the actual owning-tool scope, independently of the resource locator."""
+        result = original(operation, payload)
+        if operation == "resource.inspect":
+            result["removal_scopes"] = [str(getattr(cleanup, protected))]
+        return result
+
+    monkeypatch.setattr(cleanup.controller, "call", broad_scope)
+    with pytest.raises(Refusal, match="[Rr]emoval scope"):
+        cleanup.run()
+    assert "resource.release" not in cleanup.controller.calls
+    assert cleanup.target.exists() and cleanup.repo.exists()
+
+
+def test_unrelated_manual_workflow_does_not_block_cleanup(cleanup: Cleanup, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Only the controller's applicable run identities are checked, not same-SHA manual runs."""
+    original = cleanup.api
+
+    def unrelated(endpoint: str) -> object:
+        """A failed manual run sharing the commit is not part of the applicable chain."""
+        if endpoint.startswith("actions/runs?"):
+            return {"total_count": 1, "workflow_runs": [{"status": "completed", "conclusion": "failure"}]}
+        return original(endpoint)
+
+    monkeypatch.setattr(cleanup, "api", unrelated)
+    assert cleanup.run()["status"] == "complete"
+
+
+@pytest.mark.parametrize("field,value", [("conclusion", "failure"), ("run_attempt", 2), ("workflow_id", 11)])
+def test_applicable_run_must_match_successful_identity(cleanup: Cleanup, monkeypatch: pytest.MonkeyPatch, field: str, value: object) -> None:
+    """A changed attempt, wrong workflow, or failed applicable run cannot pass cleanup."""
+    original = cleanup.api
+
+    def changed(endpoint: str) -> object:
+        """Substitute one invalid field in the direct GitHub run readback."""
+        result = original(endpoint)
+        if endpoint == "actions/runs/1":
+            result[field] = value
+        return result
+
+    monkeypatch.setattr(cleanup, "api", changed)
+    with pytest.raises(Refusal, match="Applicable post-merge run"):
+        cleanup.run()
+    assert not cleanup.evidence.exists()
 
 
 def test_resume_after_worktree_removed_before_local_ref(cleanup: Cleanup) -> None:
@@ -446,7 +503,7 @@ def test_lost_resource_evidence_blocks_aggregate_gate(cleanup: Cleanup, monkeypa
         result = original(operation, payload)
         if operation == "resource.inspect":
             inspections += 1
-            if inspections >= 3:
+            if inspections >= 4:
                 result["evidence_preserved"] = False
         return result
 
@@ -471,7 +528,7 @@ def test_earlier_resource_reappearance_blocks_aggregate_gate(cleanup: Cleanup, m
         result = original(operation, payload)
         if operation == "resource.inspect" and payload["resource"]["id"] == "first":
             first_inspections += 1
-            if first_inspections >= 3:
+            if first_inspections >= 4:
                 result["absent"] = False
         return result
 

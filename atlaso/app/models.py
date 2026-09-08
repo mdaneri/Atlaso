@@ -387,7 +387,10 @@ class NatRule(Base):
         enabled: Whether the resource is enabled.
         source: Persisted source for the natrule resource.
         inbound_interfaces: Explicit ingress boundary; an empty legacy list requires review.
+        ip_family: NAT translation family selector (`4` or `6`).
         outbound_interface: Persisted outbound interface for the natrule resource.
+        translation_mode: Requested translation mode for the saved nat rule.
+        translated_address: Requested translated network address; this defaults to empty for legacy masquerade.
         masquerade: Persisted masquerade for the natrule resource.
         priority: Persisted priority for the natrule resource.
         description: Operator-facing purpose or context for the resource.
@@ -402,7 +405,10 @@ class NatRule(Base):
     enabled: Mapped[bool] = mapped_column(Boolean, default=True)
     source: Mapped[str] = mapped_column(String(240), default="any")
     inbound_interfaces: Mapped[list[str]] = mapped_column(JSON, default=list)
+    ip_family: Mapped[int] = mapped_column(Integer, default=4)
     outbound_interface: Mapped[str] = mapped_column(String(80), index=True)
+    translation_mode: Mapped[str] = mapped_column(String(16), default="masquerade")
+    translated_address: Mapped[str] = mapped_column(String(240), default="")
     masquerade: Mapped[bool] = mapped_column(Boolean, default=True)
     priority: Mapped[int] = mapped_column(Integer, default=100)
     description: Mapped[str | None] = mapped_column(Text, nullable=True)

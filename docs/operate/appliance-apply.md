@@ -8,8 +8,7 @@ status: current
 
 # Apply appliance changes
 
-Use Appliance Apply after editing Atlaso settings to enforce selected desired state on the Photon appliance. The review
-is global: one submission can apply related changes from several service pages in a controlled order.
+Appliance Apply enforces selected desired state from multiple service pages in one ordered Photon submission.
 
 <!-- BEGIN GENERATED INTERFACE OVERVIEW -->
 ## Interface overview
@@ -55,11 +54,13 @@ flowchart LR
 
 Atlaso groups related settings into apply units. DNS and DHCP share one `DNS/DHCP (dnsmasq)` unit. Web Terminal changes
 can require **Appliance Settings**, **Public Services**, and **Firewall**. A management-to-access conversion with a
-gateway change also selects **Routes & WAN Simulation** with Network and uses the protected handoff. A WAN-only change
+gateway change also selects **Routing & WAN** with Network and uses the protected handoff. A WAN-only change
 to a mirrored management default uses the same handoff. Each WAN unit executes from its captured snapshot.
 
-The Routes & WAN unit owns the global Routing, NAT, and WAN Simulation switches. Turning one off makes Apply remove its
-Atlaso-owned runtime state while preserving saved rows. NAT reports **suspended** when NAT is on but Routing is off.
+The `wan` unit owns Routing and WAN Simulation. The separate **Traffic Publishing** (`nat`) unit owns source
+translation and its baseline. Turning a feature off removes its Atlaso-owned runtime state while preserving saved rows.
+NAT reports **suspended** when NAT is on but Routing is off. Network or WAN submissions include NAT reconciliation;
+activating NAT also includes changed target and Routing dependencies before management-handoff classification.
 
 ## Review pending changes
 
@@ -195,5 +196,4 @@ prevents a queued task from applying state that the administrator did not inspec
 ## Complete technical contents
 
 No original section was removed. See the
-[Appliance Apply technical reference](../reference/appliance-apply-technical.md) for backend ownership, unit contracts,
-staging, helper execution, baselines, recovery, and interface expectations.
+[technical reference](../reference/appliance-apply-technical.md) for implementation and recovery contracts.

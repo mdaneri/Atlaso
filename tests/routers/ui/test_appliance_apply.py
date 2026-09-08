@@ -1351,6 +1351,7 @@ def test_management_move_forces_partial_dependency_selection_into_handoff(client
         assert all(
             unit["management_handoff"]["management_handoff"] == "committed"
             for unit in payload["units"]
+            if unit["unit_id"] in payload["management_handoff_units"]
         )
 
 
@@ -2059,7 +2060,7 @@ def test_appliance_apply_json_submission_returns_master_with_live_child_status(c
     assert payload["status_url"] == f"/tasks/{payload['job_id']}/status"
     assert payload["task"]["type"] == "appliance-apply"
     assert [(step["component_key"], step["status"]) for step in payload["task"]["_children"]] == [
-        ("wan", "pending")
+        ("wan", "pending"), ("nat", "pending")
     ]
 
     status_response = client.get(payload["status_url"])
@@ -2067,7 +2068,7 @@ def test_appliance_apply_json_submission_returns_master_with_live_child_status(c
     task = status_response.json()["task"]
     assert task["status"] == "succeeded"
     assert [(step["component_key"], step["status"]) for step in task["_children"]] == [
-        ("wan", "succeeded")
+        ("wan", "succeeded"), ("nat", "succeeded")
     ]
 
 

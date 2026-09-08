@@ -14,6 +14,7 @@ access, Kickstart markers, connection URIs, VCF Helper imports, reveal auditing,
 - [DNS](dns.md)
 - [DHCP](dhcp.md)
 - [Firewall](firewall.md)
+- [Traffic Publishing](../operate/traffic-publishing.md)
 - [NTP and NTS](ntp.md)
 - [Public Services](public-services.md)
 - [Certificate Authority](certificate-authority.md)

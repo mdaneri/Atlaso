@@ -56,18 +56,17 @@ def test_feature_settings_render_full_saved_intent_with_effective_gates():
     )
 
     assert "routing_enabled=false" in config
-    assert "nat_enabled=true" in config
-    assert "effective_nat_enabled=false" in config
+    assert "nat_enabled=" not in config
     assert "wan_simulation_enabled=true" in config
     assert "route=10.20.0.0/24" in config
-    assert "nat=Lab NAT" in config
+    assert "nat=Lab NAT" not in config
     assert "policy=Slow WAN" in config
     assert "ip route replace 10.20.0.0/24" not in config
     assert "ip route del 192.0.2.0/24 dev eth1 table 200" in config
     assert 'for priority in $(seq 2000 2099); do ip rule del priority "$priority"' in config
     assert 'for priority in $(seq 2000 2099); do ip -6 rule del priority "$priority"' in config
     assert "masquerade comment \"Lab NAT\"" not in config
-    assert "nft -f /etc/atlaso/nftables.d/atlaso-nat.nft" in config
+    assert "nft -f /etc/atlaso/nftables.d/atlaso-nat.nft" not in config
     assert "tc qdisc replace dev eth1 root netem delay 100ms" in config
     assert "net.ipv4.ip_forward=0" in config
     assert "net.ipv6.conf.all.forwarding=0" in config
@@ -326,7 +325,7 @@ def test_fresh_settings_default_off_and_legacy_rows_infer_once(client):
         db.flush()
 
         nat_only = ensure_routes_wan_settings(db)
-        assert nat_only == RoutesWanSettings(True, True, False)
+        assert nat_only == RoutesWanSettings(True, False, False)
 
         db.execute(delete(Setting).where(Setting.key.in_(ROUTES_WAN_SETTING_KEYS)))
         route.enabled = True
@@ -334,7 +333,7 @@ def test_fresh_settings_default_off_and_legacy_rows_infer_once(client):
         db.flush()
 
         inferred = ensure_routes_wan_settings(db)
-        assert inferred == RoutesWanSettings(True, True, True)
+        assert inferred == RoutesWanSettings(True, False, True)
         route.enabled = False
         nat.enabled = False
         policy.enabled = False
@@ -387,7 +386,7 @@ def test_settings_archives_round_trip_explicit_and_infer_legacy_switches(client)
 
         factory_reset_desired_state(db)
         restore_settings_archive(db, legacy_archive)
-        assert ensure_routes_wan_settings(db) == RoutesWanSettings(True, True, True)
+        assert ensure_routes_wan_settings(db) == RoutesWanSettings(True, False, True)
 
 
 def test_default_route_helpers_and_renderer_use_canonical_semantics():

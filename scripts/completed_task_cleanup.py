@@ -179,6 +179,17 @@ class Cleanup:
             require(result.get(field) is True, f"task.inspect.{field} is unproven; obtain fresh supported-tool evidence.")
         require(isinstance(result.get("evidence_refs"), list) and result["evidence_refs"],
                 "Controller must identify durable sanitized evidence for its independent checks.")
+        runs = result.get("post_merge_runs")
+        require(isinstance(runs, list) and 0 < len(runs) <= 100, "Applicable post-merge run identities are required.")
+        for identity in runs:
+            require(isinstance(identity, dict) and set(identity) == {"id", "run_attempt", "workflow_id", "head_sha", "event"}
+                    and all(type(identity[key]) is int and identity[key] > 0 for key in ("id", "run_attempt", "workflow_id")),
+                    "Invalid applicable post-merge run identity.")
+            run = self.api(f"actions/runs/{identity['id']}")
+            require(all(run.get(key) == value for key, value in identity.items())
+                    and run.get("repository", {}).get("full_name") == self.repository
+                    and run.get("status") == "completed" and run.get("conclusion") == "success",
+                    "Applicable post-merge run changed, remains incomplete, or was unsuccessful.")
         if not self.handoff["resources"]:
             require(result.get("inventory_empty_verified") is True,
                     "Explicit validation_resource_inventory_empty verification is required.")
@@ -225,12 +236,8 @@ class Cleanup:
         require(comparison["status"] in {"ahead", "identical"}, "Squash commit is not reachable from current main.")
         require(self.git("ls-remote", "--refs", "origin", "refs/heads/main").split()[0] == main,
                 "Main changed during verification; retry fresh eligibility.")
-        # Controller also checks chained workflows and downstream activity. This direct read
-        # catches incomplete/failed exact-merge runs without treating an empty list as success.
-        runs = self.api(f"actions/runs?head_sha={self.merge}&per_page=100")
-        require(0 < runs["total_count"] <= 100, "Missing or oversized post-merge workflow evidence.")
-        require(all(run["status"] == "completed" and run["conclusion"] in {"success", "skipped"}
-                    for run in runs["workflow_runs"]), "Post-merge workflows remain incomplete or unsuccessful.")
+        # The live controller identifies the applicable chain; task() verifies exact runs
+        # without conflating unrelated manual dispatches that happen to share the merge SHA.
         self.task()
         self.local_state()
         if self.execute:
@@ -313,6 +320,21 @@ class Cleanup:
             if resource.get("path"):
                 require(not ordinary(Path(resource["path"])).exists(), "An inventoried resource path reappeared.")
 
+    def removal_scopes(self, resource: dict, result: dict) -> list[str]:
+        """Protect checkouts and durable evidence from broader owning-tool removal directories."""
+        scopes = result.get("removal_scopes")
+        require(isinstance(scopes, list) and len(scopes) <= 100 and all(isinstance(value, str) for value in scopes),
+                "Owning tool must report every exact filesystem removal scope.")
+        require(scopes or not resource.get("path"), "A filesystem resource requires a removal scope.")
+        protected = [self.repo, self.target, self.evidence, self.handoff_path, self.config]
+        protected.extend(Path(item["ownership_manifest"]["path"]) for item in self.handoff["resources"])
+        for value in scopes:
+            scope = ordinary(Path(value))
+            require(beneath(scope, self.root), "Removal scope must be beneath the configured root.")
+            require(not any(ordinary(path).is_relative_to(scope) for path in protected),
+                    "Removal scope contains a checkout or preserved evidence; use a narrower owning-tool scope.")
+        return scopes
+
     def record(self, gate: str) -> None:
         """Durably preserve completed gates before the next transition; no evidence writes in preview."""
         self.gates.append(gate)
@@ -356,6 +378,8 @@ class Cleanup:
                     "Resource ownership, inactivity, retention, or owning cleanup capability blocks release.")
             require(result.get("evidence_preserved") is True, "Preserve resource evidence outside every removal root first.")
             require(type(result.get("absent")) is bool, "Resource absence must be independently observed.")
+            if resource["kind"] != "generated_tree":
+                self.removal_scopes(resource, result)
             self.proposed.append({"resource": identity, "action": "release through verified owning tool"})
             generated = resource.get("kind") == "generated_tree"
             if generated:
@@ -390,7 +414,13 @@ class Cleanup:
                 require(not generated, "Controller could not independently verify generated-tree absence.")
                 self.eligibility()
                 self.validate_resource_identity(resource)
-                released = self.controller.call("resource.release", {"resource": resource, "handoff_sha256": self.digest})
+                inspected = self.controller.call("resource.inspect", {"resource": resource, "handoff_sha256": self.digest})
+                scopes = self.removal_scopes(resource, inspected)
+                require(all(inspected.get(key) is True for key in
+                            ("ownership_verified", "inactive", "supported_cleanup", "evidence_preserved"))
+                        and inspected.get("retained") is False, "Resource release eligibility changed.")
+                released = self.controller.call("resource.release", {"resource": resource, "handoff_sha256": self.digest,
+                                                                      "removal_scopes": scopes})
                 require(released.get("success") is True, "Owning tool failed or refused resource release; preserve remaining resources.")
                 result = self.controller.call("resource.inspect", {"resource": resource, "handoff_sha256": self.digest})
             if self.execute:

@@ -1,0 +1,105 @@
+{% extends "base.html" %}
+{% from "partials/resource_wizard.html" import resource_wizard %}
+{% block page_title %}Traffic Publishing{% endblock %}
+{% block content %}
+<section class="split-workspace">
+  <div class="panel wide-panel">
+    <div class="panel-head"><div><h2>Traffic Publishing</h2><p class="muted">Publish reviewed source translation for IPv4 and IPv6 lab traffic.</p></div></div>
+    <div id="routes-wan-nat-error" class="alert error hidden"></div>
+      <div id="routes-wan-nat-panel" class="tab-panel active">
+        <div class="section-head compact-section-head">
+          <div>
+            <h3>Source NAT</h3>
+            <p class="muted">Configure reviewed dual-stack source translation desired state through the reviewed add/edit wizard.</p>
+          </div>
+          <span class="status-pill muted">{{ nat_rules|length }} rules</span>
+        </div>
+        <div
+          id="routes-wan-nat-table"
+          class="tabulator-shell routes-wan-table"
+          data-nat-rules='{{ nat_rule_rows | tojson }}'
+          data-nat-target-options='{{ wan_nat_targets | tojson }}'
+          data-source-groups='{{ wan_source_groups | tojson }}'
+          data-csrf="{{ csrf_token }}"
+          data-can-write="{{ 'true' if routes_wan_can_write else 'false' }}"
+          data-fallback-id="routes-wan-nat-fallback"
+        ></div>
+        <table id="routes-wan-nat-fallback" class="data-table dns-fallback-table">
+          <thead>
+            <tr><th>Name</th><th>Inbound</th><th>Source addresses</th><th>Outbound</th><th>Translation</th><th>Priority</th><th>Status</th><th>Description</th><th>Actions</th></tr>
+          </thead>
+          <tbody>
+            {% for rule in nat_rules %}
+              <tr>
+                <td>{{ rule.name }}</td>
+                <td>{{ (rule.inbound_interfaces or []) | join(", ") or "Needs ingress review" }}</td>
+                <td>{{ rule.source }}</td>
+                <td>{{ rule.outbound_interface }}</td>
+                <td>IPv{{ rule.ip_family }} {{ rule.translation_mode }} {{ rule.translated_address }}</td>
+                <td>{{ rule.priority }}</td>
+                <td><span class="status-pill {{ 'good' if rule.enabled else 'muted' }}">{{ "enabled" if rule.enabled else "disabled" }}</span></td>
+                <td>{{ rule.description or "" }}</td>
+                <td>
+                  {% if routes_wan_can_write %}
+                  <form
+                    action="{{ management_ui_root }}/traffic-publishing/nat-rules/{{ rule.id }}/delete"
+                    method="post"
+                    data-confirm-modal
+                    data-confirm-title="Delete NAT rule {{ rule.name }}?"
+                    data-confirm-message="This removes the NAT rule from Atlaso desired state. It will not touch the appliance until global appliance apply runs."
+                    data-confirm-label="Delete NAT rule"
+                  >
+                    <input type="hidden" name="csrf" value="{{ csrf_token }}">
+                    <button class="button tiny danger" type="submit">Delete</button>
+                  </form>
+                  {% else %}<span class="muted">Read only</span>{% endif %}
+                </td>
+              </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+
+  </div>
+  <aside class="side-stack">
+    {% include "partials/appliance_apply_status.html" %}
+    <div class="panel"><h2>Source NAT Settings</h2>
+      <form class="form-stack" action="{{ management_ui_root }}/traffic-publishing/settings" method="post" {% if routes_wan_can_write %}data-autosave-form data-autosave-status-id="nat-settings-status"{% endif %}>
+        <input type="hidden" name="csrf" value="{{ csrf_token }}">
+        <label class="switch-field"><span class="field-label"><span>NAT enabled</span><button type="button" class="help-icon" data-help="Saves source translation intent. Routing owns forwarding; translation is suspended while Routing is off. Global Appliance Apply changes the host.">i</button></span><input class="switch-input" type="checkbox" name="nat_enabled" {{ 'checked' if traffic_publishing_settings.nat_enabled else '' }} {{ 'disabled' if not routes_wan_can_write else '' }}><span class="switch-track" aria-hidden="true"></span></label>
+        <p id="nat-settings-status" class="autosave-status" aria-live="polite">{{ nat_status }}</p>
+        {% if routes_wan_can_write %}<noscript><button class="button" type="submit">Update source NAT settings</button></noscript>{% endif %}
+      </form>
+      <p class="muted">Routing is {{ 'enabled' if traffic_publishing_settings.routing_enabled else 'disabled' }}. <a href="{{ management_ui_root }}/routes-wan">Review Routing &amp; WAN</a></p>
+    </div>
+    <div class="panel"><div class="panel-head"><h2>Validation</h2><span class="status-pill" data-nat-status>{{ nat_status }}</span></div>
+      <div data-nat-validation-content>
+      {% for error in nat_validation_errors %}<div class="alert error">{{ error }}</div>{% endfor %}
+      {% if not nat_validation_errors %}<p class="muted">{{ 'NAT is suspended until Routing is enabled.' if traffic_publishing_settings.suspended else 'Review source NAT intent before global Appliance Apply.' }}</p>{% endif %}
+      </div>
+      {% set preview_label = "source NAT config" %}
+      {% set preview_path = nat_config_path %}
+      {% set preview_title = "Traffic Publishing configuration" %}
+      {% set preview_text = nat_config_preview %}
+      {% set preview_data_attr = "data-nat-config-preview" %}
+      {% include "partials/config_preview_action.html" %}
+    </div>
+  </aside>
+</section>
+{% if routes_wan_can_write %}
+{% set nat_steps = [
+  {"id": "identity", "label": "Identity", "summary": "Name and purpose"},
+  {"id": "translation", "label": "Translation", "summary": "Source and outbound target"},
+  {"id": "state", "label": "State", "summary": "Enable or disable"},
+  {"id": "review", "label": "Review", "summary": "Confirm translation"}
+] %}
+{% call resource_wizard("routes-wan-nat-dialog", "routes-wan-wizard", management_ui_root ~ "/traffic-publishing/nat-rules", nat_steps, "Add NAT rule", "Describe the reviewed IPv4 or IPv6 source translation.", "Add NAT rule", form_data_value="nat") %}
+    <input type="hidden" name="csrf" value="{{ csrf_token }}"><input type="hidden" name="source" value="any"><input type="hidden" name="masquerade" value="on">
+        <section class="vcf-sddc-step-page" data-atlaso-wizard-step="identity"><div class="form-stack"><label><span class="field-label"><span>Name</span><button class="help-icon" type="button" data-help="Unique operator-facing name for this outbound NAT rule.">i</button></span><input name="name" maxlength="120" required></label><label><span class="field-label"><span>Description</span><button class="help-icon" type="button" data-help="Why this source traffic needs outbound masquerade on the selected interface.">i</button></span><textarea name="description" rows="3" maxlength="1000"></textarea></label></div></section>
+        <section class="vcf-sddc-step-page hidden" data-atlaso-wizard-step="translation"><div class="form-grid"><label><span class="field-label"><span>IP family</span><button class="help-icon" type="button" data-help="IPv4 source NAT or stateful IPv6 NAT66. All selected targets and source addresses must match this family.">i</button></span><select name="ip_family"><option value="4">IPv4</option><option value="6">IPv6</option></select></label><div class="form-field nat-inbound-field"><span class="field-label"><span>Inbound interfaces or VLANs</span><button class="help-icon" type="button" data-help="Select every intended same-family ingress target. Source addresses are restricted within these networks. The outbound target is excluded, and appliance-originated traffic is never matched.">i</button></span><div class="tag-editor" data-tag-editor data-tag-name="inbound_interfaces" data-nat-inbound-editor><div class="tag-editor-tags" data-tag-list></div><input class="tag-editor-input" type="text" data-tag-entry autocomplete="off" aria-label="Inbound interfaces or VLANs" placeholder="Add inbound interface..."><button class="tag-add-button" type="button" data-tag-menu-toggle aria-label="Add inbound interface">+</button><div class="tag-suggestions" data-tag-menu hidden>{% for target in wan_nat_targets %}<button type="button" data-nat-families="{{ target.ip_families | join(',') }}" data-tag-option="{{ target.name }}" data-tag-label="{{ target.label }}"><strong>{{ target.name }}</strong><small>{{ target.label }}</small></button>{% endfor %}</div></div></div><label><span class="field-label"><span>Source type</span><button class="help-icon" type="button" data-help="Restrict source addresses within the selected inbound targets: any same-family address, a Source Group, or explicit Source CIDRs.">i</button></span><select data-routes-wan-nat-source-mode><option value="any">Any same-family source</option><option value="group">Source Group</option><option value="cidrs">Source CIDRs</option></select></label><label data-routes-wan-nat-source-group hidden><span class="field-label"><span>Source Group</span><button class="help-icon" type="button" data-help="Existing Source Group expanded and validated when Traffic Publishing desired state is rendered.">i</button></span><select data-routes-wan-nat-group>{% for group in wan_source_groups %}<option value="group:{{ group.id }}">{{ group.name }}</option>{% endfor %}</select></label><label data-routes-wan-nat-source-cidrs hidden><span class="field-label"><span>same-family source CIDRs</span><button class="help-icon" type="button" data-help="Comma- or line-separated networks matching the selected IP family.">i</button></span><textarea rows="3" data-routes-wan-nat-cidrs placeholder="192.168.50.0/24"></textarea></label><label><span class="field-label"><span>Outbound interface or VLAN</span><button class="help-icon" type="button" data-help="Non-management access physical interface or enabled VLAN with a matching IP family. Atlaso does not infer this from an interface role.">i</button></span><select name="outbound_interface" required>{% for target in wan_nat_targets %}<option data-nat-families="{{ target.ip_families | join(',') }}" data-nat-ipv4="{{ target.ip_cidr.split('/')[0] }}" data-nat-ipv6="{{ target.ipv6_cidr.split('/')[0] }}" value="{{ target.name }}">{{ target.label }}</option>{% endfor %}</select></label><label><span class="field-label"><span>Translation</span><button class="help-icon" type="button" data-help="Masquerade uses the egress interface address. Fixed SNAT requires an address assigned to that same interface.">i</button></span><select name="translation_mode"><option value="masquerade">Interface-address masquerade</option><option value="snat">Fixed SNAT</option></select></label><label data-nat-fixed-address hidden><span class="field-label"><span>Translated address</span><button class="help-icon" type="button" data-help="Choose an address assigned to the selected egress interface in the selected family.">i</button></span><select name="translated_address" disabled><option value="">Choose an assigned address</option></select></label><label><span class="field-label"><span>Priority</span><button class="help-icon" type="button" data-help="Non-negative ordering value for this Atlaso-owned NAT rule.">i</button></span><input type="number" name="priority" min="0" value="100" required></label></div><a class="button ghost compact-button" href="{{ management_ui_path('/network-objects') }}" target="_blank" rel="noopener" data-source-group-manage="nat-rule" title="Open Network Objects in a new tab">Manage source groups (new tab)</a><p class="muted">Return to this browser tab to continue your rule. The wizard stays open.</p></section>
+        <section class="vcf-sddc-step-page hidden" data-atlaso-wizard-step="state"><label class="switch-field"><span class="field-label"><span>NAT rule enabled</span><button class="help-icon" type="button" data-help="Enabled NAT rules enter rendered desired state. nftables and forwarding change only through global appliance apply.">i</button></span><input class="switch-input" type="checkbox" name="enabled" checked><span class="switch-track" aria-hidden="true"></span></label></section>
+        <section class="vcf-sddc-step-page hidden" data-atlaso-wizard-step="review"><div class="settings-list"><div><span>Rule</span><strong data-routes-wan-review="nat-name"></strong></div><div><span>Inbound scope</span><strong data-routes-wan-review="nat-inbound"></strong></div><div><span>Source addresses</span><code data-routes-wan-review="nat-source"></code></div><div><span>Outbound translation</span><strong data-routes-wan-review="nat-outbound"></strong></div><div><span>Priority</span><strong data-routes-wan-review="nat-priority"></strong></div><div><span>State</span><strong data-routes-wan-review="nat-state"></strong></div></div><p class="muted">Saving changes desired state only. Source translation changes through global appliance apply.</p></section>
+{% endcall %}
+
+{% endif %}
+{% endblock %}

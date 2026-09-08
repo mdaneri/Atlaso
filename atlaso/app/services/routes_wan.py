@@ -23,6 +23,10 @@ from atlaso.app.services.firewall import (
     source_group_to_rule_source,
 )
 from atlaso.app.services.networking import normalize_interface_mode
+from atlaso.app.services.traffic_publishing import (
+    ensure_traffic_publishing_settings,
+    save_traffic_publishing_settings,
+)
 
 WAN_CONFIG_PATH = "/var/lib/atlaso/apply/wan/atlaso-wan.conf"
 WAN_MODES = ["interface"]
@@ -40,7 +44,6 @@ WAN_SIMULATION_ENABLED_SETTING_KEY = "routes_wan.wan_simulation_enabled"
 ROUTES_WAN_SETTING_KEYS = frozenset(
     {
         ROUTING_ENABLED_SETTING_KEY,
-        NAT_ENABLED_SETTING_KEY,
         WAN_SIMULATION_ENABLED_SETTING_KEY,
     }
 )
@@ -173,7 +176,6 @@ def ensure_routes_wan_settings(
     inferred = RoutesWanSettings() if force_disabled else infer_routes_wan_settings(db)
     inferred_values = {
         ROUTING_ENABLED_SETTING_KEY: inferred.routing_enabled,
-        NAT_ENABLED_SETTING_KEY: inferred.nat_enabled,
         WAN_SIMULATION_ENABLED_SETTING_KEY: inferred.wan_simulation_enabled,
     }
     for key, inferred_value in inferred_values.items():
@@ -188,7 +190,7 @@ def ensure_routes_wan_settings(
     db.flush()
     return RoutesWanSettings(
         routing_enabled=_setting_bool(rows[ROUTING_ENABLED_SETTING_KEY].value),
-        nat_enabled=_setting_bool(rows[NAT_ENABLED_SETTING_KEY].value),
+        nat_enabled=ensure_traffic_publishing_settings(db, force_disabled=force_disabled).nat_enabled,
         wan_simulation_enabled=_setting_bool(rows[WAN_SIMULATION_ENABLED_SETTING_KEY].value),
     )
 
@@ -209,9 +211,9 @@ def save_routes_wan_settings(
         wan_simulation_enabled: Whether Atlaso WAN impairment is desired.
     """
     ensure_routes_wan_settings(db)
+    save_traffic_publishing_settings(db, nat_enabled=nat_enabled)
     values = {
         ROUTING_ENABLED_SETTING_KEY: routing_enabled,
-        NAT_ENABLED_SETTING_KEY: nat_enabled,
         WAN_SIMULATION_ENABLED_SETTING_KEY: wan_simulation_enabled,
     }
     rows = {
@@ -447,6 +449,9 @@ def nat_rule_to_dict(rule: NatRule) -> dict:
         "enabled": rule.enabled,
         "source": rule.source,
         "inbound_interfaces": rule.inbound_interfaces or [],
+        "ip_family": rule.ip_family or 4,
+        "translation_mode": rule.translation_mode or "masquerade",
+        "translated_address": rule.translated_address or "",
         "outbound_interface": rule.outbound_interface,
         "masquerade": rule.masquerade,
         "priority": rule.priority,
@@ -985,13 +990,11 @@ def render_wan_config(
     )
     lines = [
         "# Managed by Atlaso. Local changes may be overwritten.",
-        "# Desired route, NAT, and WAN simulation state for Photon appliances.",
+        "# Desired routing and WAN simulation state for Photon appliances.",
         "",
         "[feature_settings]",
         f"routing_enabled={_bool_value(settings.routing_enabled)}",
-        f"nat_enabled={_bool_value(settings.nat_enabled)}",
         f"wan_simulation_enabled={_bool_value(settings.wan_simulation_enabled)}",
-        f"effective_nat_enabled={_bool_value(settings.effective_nat_enabled)}",
         "",
         "[targets]",
     ]
@@ -1110,25 +1113,6 @@ def render_wan_config(
             ]
         )
 
-    lines.extend(["", "[nat_rules]"])
-    for rule in sorted(nat_rules, key=lambda item: item.priority):
-        ingress_errors = validate_nat_interface_names(rule.inbound_interfaces or [], rule.outbound_interface)
-        if ingress_errors:
-            raise ValueError(ingress_errors[0])
-        lines.extend(
-            [
-                f"nat={rule.name}",
-                f"  enabled={_bool_value(rule.enabled)}",
-                f"  source={rule.source}",
-                f"  inbound_interfaces={','.join(rule.inbound_interfaces or [])}",
-                f"  source_resolved={_nat_source_resolved(rule, source_groups)}",
-                f"  outbound_interface={rule.outbound_interface}",
-                f"  masquerade={_bool_value(rule.masquerade)}",
-                f"  priority={rule.priority}",
-                f"  description={(rule.description or '').replace(chr(10), ' ')}",
-            ]
-        )
-
     lines.extend(["", "[wan_policies]"])
     for policy in policies:
         lines.extend(
@@ -1152,25 +1136,9 @@ def render_wan_config(
             f"management={MANAGEMENT_ROUTE_TABLE_ID} {MANAGEMENT_ROUTE_TABLE_NAME}",
             f"lab={LAB_ROUTE_TABLE_ID} {LAB_ROUTE_TABLE_NAME}",
             "",
-            "[rendered_nftables_nat]",
-            "table ip atlaso_nat {",
-            "  chain postrouting {",
-            "    type nat hook postrouting priority srcnat; policy accept;",
+            "[commands]",
         ]
     )
-    for rule in sorted(
-        [item for item in nat_rules if item.enabled and settings.effective_nat_enabled],
-        key=lambda item: item.priority,
-    ):
-        eligible_nat = {str(target['name']) for target in targets if target.get('nat_allowed', False) and target.get('routing_domain') != 'management' and target.get('ip_cidr')}
-        if rule.outbound_interface not in eligible_nat or validate_nat_ingress(rule.inbound_interfaces or [], rule.outbound_interface, eligible_nat):
-            # Invalid desired state remains reviewable without previewing a broad rule.
-            continue
-        source_expr = _nft_source_expr(_nat_source_resolved(rule, source_groups))
-        ingress_expr = 'iifname { ' + ', '.join('"' + name + '"' for name in sorted(rule.inbound_interfaces)) + ' } '
-        comment = rule.name.replace('"', "'")
-        lines.append(f'    {ingress_expr}{source_expr}oifname "{rule.outbound_interface}" masquerade comment "{comment}"')
-    lines.extend(["  }", "}", "", "[commands]"])
 
     forwarding_value = 1 if settings.routing_enabled else 0
     lines.append(
@@ -1244,7 +1212,6 @@ def render_wan_config(
             lines.append(f"ip route del default dev {target['name']}  # no static management IPv4 gateway configured")
         if management and target.get("ipv6_cidr") and not target.get("ipv6_gateway"):
             lines.append(f"ip -6 route del default dev {target['name']}  # no static management IPv6 gateway configured")
-    lines.append("nft -f /etc/atlaso/nftables.d/atlaso-nat.nft")
 
     for route in routes:
         destination_cidr = canonical_route_destination(route.destination_cidr)

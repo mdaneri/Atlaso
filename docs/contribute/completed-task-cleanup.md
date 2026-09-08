@@ -112,6 +112,11 @@ with cleanup-ready, an absent resource with ownership, or an empty workflow resp
 Return `handoff_sha256`, nonempty durable sanitized `evidence_refs`, and each of these fields as literal `true` only
 after verification: `identity_verified`, `exclusive_ownership_verified`, `idle`, `unpinned`, `holds_clear`,
 `downstream_clear`, `inventory_verified`, `post_merge_complete`, `reviews_complete`, and `supported_tools_used`.
+Return a nonempty `post_merge_runs` list for the complete applicable post-merge chain. Each entry contains exactly
+`id`, `run_attempt`, `workflow_id`, `head_sha`, and `event`, bound through the source CI and downstream handoffs.
+The command independently reads each run and requires matching identity and successful completion. Include applicable
+manual recovery runs, but exclude unrelated manual dispatches merely sharing the merge SHA. Preserve the chain's
+applicability evidence in `evidence_refs`; run selection must not omit failed or pending required work.
 For an empty inventory, also return `inventory_empty_verified: true` after explicitly verifying
 `validation_resource_inventory_empty`.
 Also return the exact supported-tool `observed_title`. It must match the handoff's `task_title`; a title-only retry
@@ -125,6 +130,12 @@ For `resource.inspect`, independently check the exact resource/provider, manifes
 applicable, and surviving reservations/claims/recovery state. Return literal booleans `ownership_verified`, `inactive`,
 `retained`, `supported_cleanup`, `evidence_preserved`, and `absent`. Preserve durable sanitized evidence outside every
 removal root. For no resources, task inspection must explicitly verify `validation_resource_inventory_empty`.
+For specialized resources, also return `removal_scopes`: every absolute filesystem path the owning tool will remove,
+including derived parent directories, disks, and auxiliary roots. An explicit empty list is valid only for a provider
+operation with no filesystem removal. Scopes must lie beneath the configured root and cannot contain either checkout,
+the handoff, configuration, evidence directory, or any ownership manifest. The command repeats this inspection before
+release and passes the validated scopes to `resource.release`; the controller must bind the owning-tool invocation to
+those exact scopes and refuse if its operation would remove anything beyond them.
 
 For `resource.release`, call only the resource's existing supported owning tool with exact identity arguments:
 `remove-atlaso-vm.ps1`, `remove-lifecycle-vms.ps1`/`-CleanupVmsOnly`, or the documented
