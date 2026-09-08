@@ -19,8 +19,10 @@ A primary-checkout target is directed to its restoration workflow even when that
 For non-primary targets, a `desktop` value that is not a TOML table produces a structured refusal directing configuration
 repair; a later configuration rewrite preserves already recorded cleanup gates in the refusal result.
 The active configuration uses the pinned regular-file reader with a 1 MiB limit before TOML parsing.
-Execution holds an exclusive per-handoff operating-system lock from before eligibility through the final result, and
+Execution holds an exclusive per-task operating-system lock from before eligibility through the final result, and
 reloads durable gates after acquiring it. A concurrent controller refuses immediately and may retry after the owner exits.
+The lock hashes a canonical GitHub repository, exact task ID, and PR identity, independently of handoff whitespace,
+key ordering, or evidence location. Evidence journals retain their original raw-byte handoff digest binding.
 Windows uses a named mutex; POSIX keeps a single-link `.atlaso-cleanup-<digest>.lock` coordination file beneath the configured
 root and releases its advisory lock on exit. Preserve that inode to prevent split ownership. Preview remains read-only.
 Generated-directory release additionally requires Windows. The controller supplies fresh task evidence through

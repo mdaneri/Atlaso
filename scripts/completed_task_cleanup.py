@@ -150,6 +150,11 @@ class Cleanup:
         require(self.branch not in {"main", "gh-pages"} and not self.branch.startswith("-"), "Protected branch target.")
         require(not self.branch.endswith("/") and "*" not in self.branch, "An exact branch ref is required.")
         require(type(self.handoff["pr"]) is int and self.handoff["pr"] > 0, "Exact positive PR identity required.")
+        require(isinstance(self.handoff["task_id"], str) and 0 < len(self.handoff["task_id"]) <= 512,
+                "A bounded exact task identity is required.")
+        # Evidence remains byte-bound, but alternate handoff serializations must share exclusion.
+        lock_identity = ["github.com", self.repository.lower(), self.handoff["task_id"], self.handoff["pr"]]
+        self.lock_digest = hashlib.sha256(json.dumps(lock_identity, separators=(",", ":")).encode("utf-8")).hexdigest()
         require(isinstance(self.handoff["resources"], list) and len(self.handoff["resources"]) <= 100,
                 "A bounded validation resource inventory is required, including an explicit empty list.")
         self.gates: list[str] = []
@@ -605,10 +610,10 @@ class Cleanup:
             self.record("validation_resources_released")
 
     def run(self) -> dict:
-        """Hold exclusive handoff ownership and refresh journals before executing any transition."""
+        """Hold exclusive task ownership and refresh journals before executing any transition."""
         if not self.execute:
             return self.reconcile()
-        with cleanup_lock(self.root, self.digest):
+        with cleanup_lock(self.root, self.lock_digest):
             self.gates = []
             self.resource_evidence = []
             self.restore_gates()

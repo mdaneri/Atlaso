@@ -15,7 +15,7 @@ class FileRefusal(RuntimeError):
 
 @contextmanager
 def cleanup_lock(root: Path, digest: str):
-    """Serialize destructive runs for one handoff across processes without waiting on another controller."""
+    """Serialize destructive runs for one canonical task identity across processes without waiting."""
     if len(digest) != 64 or any(character not in "0123456789abcdef" for character in digest):
         raise FileRefusal("Invalid cleanup lock identity.")
     if os.name == "nt":
@@ -33,7 +33,7 @@ def cleanup_lock(root: Path, digest: str):
         try:
             acquired = kernel.WaitForSingleObject(handle, 0) in (0, 0x80)
             if not acquired:
-                raise FileRefusal("Another cleanup controller owns this handoff; retry after it exits.")
+                raise FileRefusal("Another cleanup controller owns this task; retry after it exits.")
             yield
         finally:
             if acquired:
@@ -51,7 +51,7 @@ def cleanup_lock(root: Path, digest: str):
             try:
                 fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
             except BlockingIOError as exc:
-                raise FileRefusal("Another cleanup controller owns this handoff; retry after it exits.") from exc
+                raise FileRefusal("Another cleanup controller owns this task; retry after it exits.") from exc
             yield
         finally:
             os.close(descriptor)

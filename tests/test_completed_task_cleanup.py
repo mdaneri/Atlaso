@@ -731,20 +731,28 @@ def test_verbatim_worktree_paths(cleanup: Cleanup, name: str) -> None:
     assert not target.exists()
 
 
-def test_exclusive_cleanup_lock_between_processes(cleanup: Cleanup) -> None:
-    """A second interpreter cannot enter cleanup while the same handoff is owned."""
+@pytest.mark.parametrize("alternate", [False, True])
+def test_exclusive_cleanup_lock_between_processes(cleanup: Cleanup, alternate: bool) -> None:
+    """A second interpreter cannot enter cleanup even with differently serialized handoff bytes."""
+    handoff = cleanup.handoff_path
+    if alternate:
+        handoff = cleanup.root / "alternate-handoff.json"
+        handoff.write_text(json.dumps(dict(reversed(list(cleanup.handoff.items()))), indent=4), encoding="utf-8")
+        assert hashlib.sha256(handoff.read_bytes()).hexdigest() != cleanup.digest
     code = """import sys
 from pathlib import Path
-from scripts.completed_task_files import cleanup_lock, FileRefusal
+from scripts.completed_task_cleanup import Cleanup, Controller
+from scripts.completed_task_files import FileRefusal
 try:
-    with cleanup_lock(Path(sys.argv[1]), sys.argv[2]):
-        print('acquired')
+    cleanup = Cleanup(Path(sys.argv[1]), Path(sys.argv[2]), Path(sys.argv[3]), True, Controller())
+    cleanup.reconcile = lambda: print('acquired')
+    cleanup.run()
 except FileRefusal:
     print('blocked')
 """
-    arguments = [sys.executable, "-B", "-c", code, str(cleanup.root), cleanup.digest]
+    arguments = [sys.executable, "-B", "-c", code, str(handoff), str(cleanup.root / "alternate-evidence"), str(cleanup.config)]
     environment = {**os.environ, "PYTHONPATH": str(Path(__file__).resolve().parents[1])}
-    with cleanup_lock(cleanup.root, cleanup.digest):
+    with cleanup_lock(cleanup.root, cleanup.lock_digest):
         result = subprocess.run(arguments, env=environment, capture_output=True, text=True, timeout=15, check=True)
         assert result.stdout.strip() == "blocked"
     result = subprocess.run(arguments, env=environment, capture_output=True, text=True, timeout=15, check=True)
