@@ -9191,3 +9191,10 @@ dialog.has-expanded-monaco .confirm-modal-panel {
     font-size: 8pt;
   }
 }
+
+#routes-wan-nat-table {
+  height: 420px;
+  min-height: 300px;
+  max-width: 100%;
+  overflow: hidden;
+}

@@ -7820,7 +7820,7 @@ function initializeRoutesWanNatTable() {
       data: rows,
       index: "id",
       layout: "fitColumns",
-      height: "420px",
+      height: "100%",
       rowHeight: 28,
       placeholder: "No NAT rules configured.",
       reactiveData: false,
@@ -7897,7 +7897,7 @@ function initializeRoutesWanNatTable() {
         markNewRecordRow(row, "name");
       },
     };
-    window.AtlasoUiPatterns.createGrid({
+    const table = window.AtlasoUiPatterns.createGrid({
       element: tableElement,
       pattern: "wizard-backed",
       permission: {
@@ -7907,6 +7907,23 @@ function initializeRoutesWanNatTable() {
       onOpenRow: canWrite ? (rowData) => editRow(rowData) : null,
       options: atlasoGridOptions14,
     }).table;
+    if (table) {
+      const resize = () => {
+        if (resizeDnsRecordsTableElement(tableElement)) table.redraw(true);
+      };
+      let resizeFrame = 0;
+      const scheduleResize = () => {
+        window.cancelAnimationFrame(resizeFrame);
+        resizeFrame = window.requestAnimationFrame(resize);
+      };
+      table.on("tableBuilt", scheduleResize);
+      window.addEventListener("resize", scheduleResize);
+      if (typeof ResizeObserver !== "undefined") {
+        const observer = new ResizeObserver(scheduleResize);
+        observer.observe(tableElement.closest(".wide-panel") || tableElement);
+      }
+      scheduleResize();
+    }
   } catch (error) {
     showWanMessage("routes-wan-nat-error", error instanceof Error ? error.message : "Tabulator could not render. Showing the fallback table.");
   }

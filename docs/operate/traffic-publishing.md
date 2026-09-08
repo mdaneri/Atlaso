@@ -9,7 +9,7 @@ status: current
 
 # Traffic Publishing
 
-Use **Network â†’ Traffic Publishing** at `/ui/management/traffic-publishing` to configure source NAT. **Routing & WAN**
+Use **Traffic Publishing** at `/ui/management/traffic-publishing` to configure source NAT. **Routing & WAN**
 at `/ui/management/routes-wan` owns static routes, routing permissions, forwarding, and WAN simulation. Traffic
 Publishing requires Firewall read permission; changing its browser settings or rules requires Firewall write permission.
 
@@ -29,7 +29,8 @@ This verified appliance view provides visual orientation before you begin.
 1. Configure two distinct addressed lab targets in Physical Interfaces or VLAN Interfaces. Use enabled `access` or
    `route` targets. A VLAN also needs an available, enabled trunk parent. Dedicated management, unused, missing,
    disabled, and unaddressed targets are excluded. Access-management flags do not exclude an eligible access target.
-2. Add a rule from the Source NAT grid's bottom row, or open an existing rule to edit it.
+2. The desktop grid fills the available viewport height and resizes with its panel. Narrow layouts use a compact height.
+   Add a rule from the Source NAT grid's bottom row, or open an existing rule to edit it.
 3. Select **IP family**: IPv4 or IPv6. Select every intended **Inbound interface or VLAN** and one distinct
    **Outbound interface or VLAN** with addresses in that family.
 4. Select any same-family source, a shared Source Group, or explicit same-family source CIDRs. A Source Group must
