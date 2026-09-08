@@ -23,7 +23,12 @@ class FakePlugin:
         self.writes = 0
 
     def tool(self, name: str, arguments: dict[str, Any]) -> dict[str, Any]:
-        """Simulate metadata admission and concealed variable creation."""
+        """Simulate metadata admission and concealed variable creation.
+
+        Args:
+            name: Supported 1Password tool name to invoke.
+            arguments: Tool arguments, which may contain a concealed credential.
+        """
         if not self.available:
             raise RuntimeError("fixture-sensitive-provider-error")
         if name == "authenticate":
@@ -45,7 +50,11 @@ class FakePlugin:
 
 @pytest.fixture
 def plugin(monkeypatch: pytest.MonkeyPatch) -> FakePlugin:
-    """Pin the test Environment independently of production account configuration."""
+    """Pin the test Environment independently of production account configuration.
+
+    Args:
+        monkeypatch: Pytest fixture restoring the isolated configuration and provider replacements.
+    """
     monkeypatch.setattr(
         console,
         "ENVIRONMENT_DIGEST",
@@ -55,7 +64,11 @@ def plugin(monkeypatch: pytest.MonkeyPatch) -> FakePlugin:
 
 
 def test_parallel_run_names_and_values_are_isolated(plugin: FakePlugin) -> None:
-    """Independent runs cannot overwrite defaults or share their generated credential."""
+    """Independent runs cannot overwrite defaults or share their generated credential.
+
+    Args:
+        plugin: Isolated plugin session used for Environment admission and publication.
+    """
     first = console.publish(plugin, plugin.environment, "a" * 32)
     second = console.publish(plugin, plugin.environment, "b" * 32)
     assert first != second
@@ -66,7 +79,11 @@ def test_parallel_run_names_and_values_are_isolated(plugin: FakePlugin) -> None:
 
 
 def test_duplicate_run_refuses_before_another_write(plugin: FakePlugin) -> None:
-    """A repeated identity preserves its existing secret instead of appending a duplicate."""
+    """A repeated identity preserves its existing secret instead of appending a duplicate.
+
+    Args:
+        plugin: Isolated plugin session used for Environment admission and publication.
+    """
     console.publish(plugin, plugin.environment, "a" * 32)
     with pytest.raises(ValueError, match="already exists"):
         console.publish(plugin, plugin.environment, "a" * 32)
@@ -79,14 +96,24 @@ def test_duplicate_run_refuses_before_another_write(plugin: FakePlugin) -> None:
 def test_invalid_identity_precedes_provider_writes(
     plugin: FakePlugin, environment: str, run: str
 ) -> None:
-    """Neither an unexpected Environment nor a malformed run may receive credentials."""
+    """Neither an unexpected Environment nor a malformed run may receive credentials.
+
+    Args:
+        plugin: Isolated plugin session used for Environment admission and publication.
+        environment: Candidate Environment identifier used to exercise admission refusal.
+        run: Candidate run identifier used to exercise admission refusal.
+    """
     with pytest.raises(ValueError):
         console.publish(plugin, environment, run)
     assert plugin.writes == 0
 
 
 def test_environment_readback_must_match(plugin: FakePlugin) -> None:
-    """A changed Environment listing cannot silently select a similarly named target."""
+    """A changed Environment listing cannot silently select a similarly named target.
+
+    Args:
+        plugin: Isolated plugin session used for Environment admission and publication.
+    """
     plugin.environment = "wrong-environment"
     with pytest.raises(ValueError, match="unavailable"):
         console.publish(plugin, "fixture-environment", "a" * 32)
@@ -94,7 +121,11 @@ def test_environment_readback_must_match(plugin: FakePlugin) -> None:
 
 
 def test_unavailable_plugin_precedes_publication(plugin: FakePlugin) -> None:
-    """Missing authentication does not fall back to defaults or plaintext transport."""
+    """Missing authentication does not fall back to defaults or plaintext transport.
+
+    Args:
+        plugin: Isolated plugin session used for Environment admission and publication.
+    """
     plugin.available = False
     with pytest.raises(RuntimeError):
         console.publish(plugin, plugin.environment, "a" * 32)
@@ -104,10 +135,20 @@ def test_unavailable_plugin_precedes_publication(plugin: FakePlugin) -> None:
 def test_cli_failure_does_not_print_provider_detail(
     monkeypatch: pytest.MonkeyPatch, tmp_path, capsys
 ) -> None:
-    """The command boundary suppresses arbitrary provider exception material."""
+    """The command boundary suppresses arbitrary provider exception material.
+
+    Args:
+        monkeypatch: Pytest fixture restoring the isolated configuration and provider replacements.
+        tmp_path: Invocation-owned temporary directory for the protected output fixture.
+        capsys: Pytest capture fixture used to check provider-detail redaction.
+    """
 
     def unavailable(_executable: str) -> None:
-        """Fail like a secret-bearing SDK exception before returning a session."""
+        """Fail like a secret-bearing SDK exception before returning a session.
+
+        Args:
+            _executable: Ignored executable argument accepted by the failing provider fixture.
+        """
         raise RuntimeError("fixture-sensitive-provider-error")
 
     monkeypatch.setattr(console, "Plugin", unavailable)

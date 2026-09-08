@@ -23,7 +23,11 @@ class Plugin:
     """A private stdio session to the installed, authenticated 1Password plugin."""
 
     def __init__(self, executable: str) -> None:
-        """Start the plugin inside the caller's non-breakaway Windows job."""
+        """Start the plugin inside the caller's non-breakaway Windows job.
+
+        Args:
+            executable: Installed 1Password MCP executable to launch privately.
+        """
         self.process = subprocess.Popen(
             [executable],
             stdin=subprocess.PIPE,
@@ -45,13 +49,22 @@ class Plugin:
         self.send({"jsonrpc": "2.0", "method": "notifications/initialized"})
 
     def send(self, message: dict[str, Any]) -> None:
-        """Send protocol data privately, including concealed variable values."""
+        """Send protocol data privately, including concealed variable values.
+
+        Args:
+            message: JSON-RPC envelope written only to the private plugin pipe.
+        """
         assert self.process.stdin is not None
         self.process.stdin.write(json.dumps(message) + "\n")
         self.process.stdin.flush()
 
     def rpc(self, method: str, params: dict[str, Any]) -> dict[str, Any]:
-        """Read one bounded response; the Windows job owns the wall-clock limit."""
+        """Read one bounded response; the Windows job owns the wall-clock limit.
+
+        Args:
+            method: JSON-RPC method expected to return the matching response.
+            params: Private parameters for the requested protocol method.
+        """
         self.sequence += 1
         self.send(
             {"jsonrpc": "2.0", "id": self.sequence, "method": method, "params": params}
@@ -69,7 +82,12 @@ class Plugin:
             return result["result"]
 
     def tool(self, name: str, arguments: dict[str, Any]) -> dict[str, Any]:
-        """Decode a supported plugin tool without exposing its raw response."""
+        """Decode a supported plugin tool without exposing its raw response.
+
+        Args:
+            name: Supported 1Password tool name to invoke.
+            arguments: Tool arguments, which may contain a concealed credential.
+        """
         result = self.rpc("tools/call", {"name": name, "arguments": arguments})
         if result.get("isError"):
             raise RuntimeError("1Password operation failed")
@@ -95,7 +113,12 @@ class Plugin:
 
 
 def verify_environment(plugin: Plugin, environment_id: str) -> str:
-    """Prove plugin authorization and exact Environment identity without mutation."""
+    """Prove plugin authorization and exact Environment identity without mutation.
+
+    Args:
+        plugin: Isolated plugin session used for Environment admission and publication.
+        environment_id: Pinned Atlaso Environment identifier to verify before use.
+    """
     if hashlib.sha256(environment_id.encode()).hexdigest() != ENVIRONMENT_DIGEST:
         raise ValueError("Unexpected Environment")
     account_id = plugin.tool("authenticate", {})["account_id"]
@@ -109,7 +132,13 @@ def verify_environment(plugin: Plugin, environment_id: str) -> str:
 
 
 def publish(plugin: Plugin, environment_id: str, run_id: str) -> str:
-    """Create an isolated concealed variable after exact Environment admission."""
+    """Create an isolated concealed variable after exact Environment admission.
+
+    Args:
+        plugin: Isolated plugin session used for Environment admission and publication.
+        environment_id: Pinned Atlaso Environment identifier to verify before use.
+        run_id: Fresh lowercase UUID without separators for the disposable VM run.
+    """
     if not re.fullmatch(r"[0-9a-f]{32}", run_id):
         raise ValueError("Invalid run identity")
     account_id = verify_environment(plugin, environment_id)
@@ -133,7 +162,11 @@ def publish(plugin: Plugin, environment_id: str, run_id: str) -> str:
 
 
 def protect(value: str) -> str:
-    """Encrypt the credential for the current Windows user without disk plaintext."""
+    """Encrypt the credential for the current Windows user without disk plaintext.
+
+    Args:
+        value: Generated credential to protect for the current Windows identity.
+    """
 
     class Blob(ctypes.Structure):
         """Windows DATA_BLOB layout."""
