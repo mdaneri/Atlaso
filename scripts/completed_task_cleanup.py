@@ -672,8 +672,7 @@ class Cleanup:
             except ValueError as exc:
                 raise Refusal(str(exc)) from exc
             self.record("task_title_readback_verified")
-        self.verify_resources_absent()
-        self.local_state()
+        self.eligibility()
         self.record("task_title_done")
         return {"status": "complete", "gates": self.gates, "handoff_sha256": self.digest}
 

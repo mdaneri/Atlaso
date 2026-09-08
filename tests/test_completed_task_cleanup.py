@@ -766,6 +766,40 @@ def test_stale_instance_refreshes_journal_under_lock(cleanup: Cleanup, monkeypat
     assert cleanup.controller.calls.count("resource.release") == releases
 
 
+@pytest.mark.parametrize("change", ["holds_clear", "idle", "downstream_clear", "issue", "workflow"])
+def test_title_response_rechecks_full_eligibility(cleanup: Cleanup, monkeypatch: pytest.MonkeyPatch, change: str) -> None:
+    """Task or GitHub changes during title readback cannot receive the terminal gate."""
+    original_call, original_api = cleanup.controller.call, cleanup.api
+    after_title = False
+
+    def title(operation: str, payload: dict) -> dict:
+        """Withdraw eligibility only after the successful title response."""
+        nonlocal after_title
+        result = original_call(operation, payload)
+        if operation == "task.title":
+            after_title = True
+            if change not in {"issue", "workflow"}:
+                cleanup.controller.block = change
+        return result
+
+    def changed_api(endpoint: str) -> object:
+        """Model independently observed issue/workflow changes during title mutation."""
+        result = original_api(endpoint)
+        if after_title and isinstance(result, dict):
+            if change == "issue" and endpoint.startswith("issues/"):
+                result["state"] = "open"
+            if change == "workflow" and endpoint.startswith("actions/runs/"):
+                result["status"] = "in_progress"
+        return result
+
+    monkeypatch.setattr(cleanup.controller, "call", title)
+    monkeypatch.setattr(cleanup, "api", changed_api)
+    with pytest.raises(Refusal):
+        cleanup.run()
+    assert "task_title_readback_verified" in cleanup.gates
+    assert "task_title_done" not in cleanup.gates
+
+
 def test_config_and_primary_protection(cleanup: Cleanup) -> None:
     """Missing configuration and primary-checkout targets never gain deletion authority."""
     cleanup.config.write_text("[desktop]\n", encoding="utf-8")

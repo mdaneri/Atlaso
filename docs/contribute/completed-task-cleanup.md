@@ -210,7 +210,8 @@ worktree may retry title-only completion without repeating destructive operation
 remains, changed ref, failed resource release, or stale title keeps the task actionable. Reconcile that exact condition
 through supported tools, then rerun. Successful earlier deletion cannot be rolled back by the command.
 The title-capability exception preserves its capability evidence and still records the literal `task_title_done` gate.
-After the title response, resource and Git/worktree absence are checked again before that terminal gate is recorded.
+After the title response, full task/GitHub eligibility and resource/Git/worktree absence are checked again before that
+terminal gate is recorded, including holds, task/downstream activity, issue closure, and post-merge workflow state.
 Reappearance leaves cleanup refused and the recreated object preserved, even if the title readback itself succeeded.
 Resource ancestry verification is durably recorded against the exact handoff before release. A recovered released-resource
 gate uses that evidence, so title-only retries do not require squash-merged task objects that Git maintenance has pruned.
