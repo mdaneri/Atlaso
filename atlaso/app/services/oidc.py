@@ -412,8 +412,8 @@ def provider_validation_errors(
         errors.append("OIDC access tokens must use the fixed five-minute lifetime.")
     if provider.id_token_lifetime_seconds != OIDC_TOKEN_LIFETIME_SECONDS:
         errors.append("OIDC ID tokens must use the fixed five-minute lifetime.")
-    if AUTHLIB_VERSION != "1.7.2":
-        errors.append("OIDC protocol readiness requires Authlib 1.7.2.")
+    if AUTHLIB_VERSION != "1.8.0":
+        errors.append("OIDC protocol readiness requires Authlib 1.8.0.")
     return errors
 
 

@@ -4,7 +4,7 @@
 #
 #    pip-compile --allow-unsafe --generate-hashes --index-url=https://pypi.org/simple --no-emit-index-url --output-file=requirements-appliance.lock --strip-extras --uploaded-prior-to=P7D pyproject.toml requirements-appliance-bootstrap.in
 #
-# atlaso-declarations-sha256: 705ff1688f98ef11c791d94807c7ddd7c9e8a3de14f05452e262cdb42653adf7
+# atlaso-declarations-sha256: b37e78e90872928c1a6c97d69c43a82cdfa72fa033b9c16a4e1d1e515fb00d57
 annotated-doc==0.0.4 \
     --hash=sha256:571ac1dc6991c450b25a9c2d84a3705e2ae7a53467b5d111c24fa8baabbed320 \
     --hash=sha256:fbcda96e87e9c92ad167c2e53839e57503ecfda18804ea28102353485033faa4
@@ -52,9 +52,9 @@ argon2-cffi-bindings==25.1.0 \
     --hash=sha256:da0c79c23a63723aa5d782250fbf51b768abca630285262fb5144ba5ae01e520 \
     --hash=sha256:e2fd3bfbff3c5d74fef31a722f729bf93500910db650c925c2d6ef879a7e51cb
     # via argon2-cffi
-authlib==1.7.2 \
-    --hash=sha256:2cea25fefcd4e7173bdf1372c0afc265c8034b23a8cd5dcb6a9164b826c64231 \
-    --hash=sha256:3e1faedc9d87e7d56a164eca3ccb6ace0d61b94abe83e92242f8dc8bba9b4a9f
+authlib==1.8.0 \
+    --hash=sha256:88aebbd9af6757e14e912d5dc007ae1dc1f3e27e3b2152ce7c552ee2c3b3c121 \
+    --hash=sha256:f3ecd5f1da737262fb53bf1a4d95c4ea1ad9dd509316587a255c99ab1838a4f0
     # via atlaso (pyproject.toml)
 bcrypt==5.0.0 \
     --hash=sha256:046ad6db88edb3c5ece4369af997938fb1c19d6a699b9c1b27b0db432faae4c4 \
