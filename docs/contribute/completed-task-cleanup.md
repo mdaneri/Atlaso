@@ -204,6 +204,8 @@ worktree may retry title-only completion without repeating destructive operation
 remains, changed ref, failed resource release, or stale title keeps the task actionable. Reconcile that exact condition
 through supported tools, then rerun. Successful earlier deletion cannot be rolled back by the command.
 The title-capability exception preserves its capability evidence and still records the literal `task_title_done` gate.
+After the title response, resource and Git/worktree absence are checked again before that terminal gate is recorded.
+Reappearance leaves cleanup refused and the recreated object preserved, even if the title readback itself succeeded.
 Handoff inputs must be regular single-link files no larger than 256 KiB; validation precedes the bounded payload read.
 Ownership manifests use the same bounded reader. Windows pins no-follow file and ancestor handles during the read;
 POSIX uses a nonblocking no-follow open. Both verify regular single-link identity and recheck size after reading.

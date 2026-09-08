@@ -640,6 +640,41 @@ def test_late_nontable_config_preserves_gates(cleanup: Cleanup, monkeypatch: pyt
     assert not cleanup.git("ls-remote", "--refs", "origin", f"refs/heads/{cleanup.branch}")
 
 
+@pytest.mark.parametrize("reappeared", ["remote", "local", "worktree", "resource"])
+def test_title_response_rechecks_absence(cleanup: Cleanup, monkeypatch: pytest.MonkeyPatch, reappeared: str) -> None:
+    """Reappearance during the supported title call prevents terminal completion."""
+    if reappeared == "resource":
+        cleanup.handoff["resources"] = [resource_identity(cleanup, "reappearing")]
+        cleanup.controller.resource_absent = True
+    original = cleanup.controller.call
+
+    def changed(operation: str, payload: dict) -> dict:
+        """Return successful title readback after recreating a previously absent task object."""
+        result = original(operation, payload)
+        if operation == "task.title":
+            if reappeared == "remote":
+                cleanup.git("push", "origin", f"{cleanup.head}:refs/heads/{cleanup.branch}")
+            elif reappeared == "local":
+                cleanup.git("update-ref", f"refs/heads/{cleanup.branch}", cleanup.head)
+            elif reappeared == "worktree":
+                cleanup.target.mkdir()
+            else:
+                cleanup.controller.resource_absent = False
+        return result
+
+    monkeypatch.setattr(cleanup.controller, "call", changed)
+    with pytest.raises(Refusal):
+        cleanup.run()
+    assert "task_title_done" not in cleanup.gates
+    assert "task_title_readback_verified" in cleanup.gates
+    if reappeared == "remote":
+        assert cleanup.git("ls-remote", "--refs", "origin", f"refs/heads/{cleanup.branch}")
+    elif reappeared == "local":
+        assert cleanup.git("rev-parse", f"refs/heads/{cleanup.branch}") == cleanup.head
+    elif reappeared == "worktree":
+        assert cleanup.target.exists()
+
+
 def test_config_and_primary_protection(cleanup: Cleanup) -> None:
     """Missing configuration and primary-checkout targets never gain deletion authority."""
     cleanup.config.write_text("[desktop]\n", encoding="utf-8")
