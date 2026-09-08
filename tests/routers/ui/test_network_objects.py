@@ -219,7 +219,7 @@ def test_network_objects_create_update_preserves_identifier_and_shared_apply_sem
         db.commit()
 
     firewall = client.get("/firewall")
-    routes_wan = client.get("/routes-wan")
+    routes_wan = client.get("/traffic-publishing")
     assert "Application networks" in firewall.text
     assert "Application networks" in routes_wan.text
     assert f'<option value="{source_group["id"]}">Application networks</option>' in firewall.text

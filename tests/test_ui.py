@@ -1160,8 +1160,8 @@ def test_shared_ui_pattern_shell_and_wizard_contracts(client):
     base = (templates / "base.html").read_text(encoding="utf-8")
     public_base = (templates / "public_portal_base.html").read_text(encoding="utf-8")
     for shell, app_asset in (
-        (base, "/static/app.js?v=issues-515-519-12-513-328-1-595-6-605-1-606-607-1-660-4"),
-        (public_base, "/static/app.js?v=issues-515-519-12-513-328-1-595-6-605-1-606-607-1-660-4"),
+        (base, "/static/app.js?v=issue-721-2"),
+        (public_base, "/static/app.js?v=issues-515-519-12-513-328-1-595-6-605-1-606-607-1-660-4-662-663-3-682-1"),
         (base, "/static/appliance-apply-polling.js?v=issue-420-6"),
     ):
         assert shell.index("/static/vendor/tabulator/tabulator.min.js") < shell.index(
@@ -1820,7 +1820,7 @@ def test_monitor_page_renders_template_and_browser_assets(client):
     assert "swagger-link-icon" in page.text
     assert "/static/app.css?v=issues-515-519-10-605-1-660-3" in page.text
     assert "/static/ui-patterns.js?v=atlaso-ui-foundation-20260726-10" in page.text
-    assert "/static/app.js?v=issues-515-519-12-513-328-1-595-6-605-1-606-607-1-660-4" in page.text
+    assert "/static/app.js?v=issue-721-2" in page.text
     app_css = client.get("/static/app.css")
     assert app_css.status_code == 200
     assert ".split-workspace > .wide-panel" in app_css.text
@@ -5390,7 +5390,7 @@ def test_settings_archive_preflight_rejects_invalid_collection_row_and_required_
     for setting in archive["data"]["settings"]:
         if setting["key"] in {
             "routes_wan.routing_enabled",
-            "routes_wan.nat_enabled",
+            "traffic_publishing.nat_enabled",
             "routes_wan.wan_simulation_enabled",
         }:
             setting["value"] = "true"
@@ -6543,9 +6543,9 @@ def test_settings_archive_preflight_rejects_invalid_collection_row_and_required_
         (enabled_non_trunk_vlan, "has an ineligible parent interface"),
         (enabled_missing_route_target, "has an ineligible target interface"),
         (enabled_ineligible_route_target, "has an ineligible target interface"),
-        (enabled_missing_nat_target, "has an ineligible outbound interface"),
-        (enabled_ipv6_only_nat_target, "has an ineligible outbound interface"),
-        (enabled_missing_nat_source_group, "has an invalid source"),
+        (enabled_missing_nat_target, "NAT target .* is unavailable"),
+        (enabled_ipv6_only_nat_target, "NAT target .* is unavailable"),
+        (enabled_missing_nat_source_group, "NAT source is invalid"),
         (missing_firewall_source_group, "has an invalid source or destination"),
         (enabled_missing_routing_target, "has an ineligible interface"),
         (enabled_identical_routing_targets, "has identical source and destination interfaces"),
@@ -6685,7 +6685,9 @@ def test_settings_archive_preflight_rejects_invalid_collection_row_and_required_
         disabled_missing_route_target["data"]["routes"]
     )
     archive_summary(disabled_missing_nat_target)
-    archive_summary(disabled_missing_nat_source_group)
+    # Disabled NAT intent may retain unavailable interfaces, but source references must remain valid.
+    with pytest.raises(ValueError, match="NAT source is invalid"):
+        archive_summary(disabled_missing_nat_source_group)
     archive_summary(disabled_missing_routing_target)
     archive_summary(disabled_missing_dhcp_target)
     archive_summary(disabled_missing_service_target)
@@ -7998,7 +8000,6 @@ def test_esxi_kickstarts_round_trip_in_settings_archive(client, monkeypatch, tmp
         save_custom_variable_definition,
     )
     from atlaso.app.services.routes_wan import (
-        NAT_ENABLED_SETTING_KEY,
         ROUTING_ENABLED_SETTING_KEY,
         WAN_SIMULATION_ENABLED_SETTING_KEY,
     )
@@ -8064,9 +8065,9 @@ def test_esxi_kickstarts_round_trip_in_settings_archive(client, monkeypatch, tmp
             "value": '[{"default_value":"firstdisk","description":"Preferred installation disk","id":"install_disk","name":"install_disk"}]',
         },
         {"key": NTP_NTS_RESTORATION_SETTING_KEY, "value": "complete"},
-        {"key": NAT_ENABLED_SETTING_KEY, "value": "false"},
         {"key": ROUTING_ENABLED_SETTING_KEY, "value": "false"},
         {"key": WAN_SIMULATION_ENABLED_SETTING_KEY, "value": "false"},
+        {"key": "traffic_publishing.nat_enabled", "value": "false"},
     ]
 
     with SessionLocal() as db:

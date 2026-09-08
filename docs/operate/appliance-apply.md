@@ -8,8 +8,7 @@ status: current
 
 # Apply appliance changes
 
-Use Appliance Apply after editing Atlaso settings to enforce selected desired state on the Photon appliance. The review
-is global: one submission can apply related changes from several service pages in a controlled order.
+Appliance Apply enforces selected desired state from multiple service pages in one ordered Photon submission.
 
 <!-- BEGIN GENERATED INTERFACE OVERVIEW -->
 ## Interface overview
@@ -197,5 +196,4 @@ prevents a queued task from applying state that the administrator did not inspec
 ## Complete technical contents
 
 No original section was removed. See the
-[Appliance Apply technical reference](../reference/appliance-apply-technical.md) for backend ownership, unit contracts,
-staging, helper execution, baselines, recovery, and interface expectations.
+[technical reference](../reference/appliance-apply-technical.md) for implementation and recovery contracts.

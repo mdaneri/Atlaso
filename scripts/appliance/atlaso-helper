@@ -8907,6 +8907,7 @@ def _wan_config_errors(path: Path, *, include_nat: bool = True) -> list[str]:
 
     Args:
         path: Filesystem path read, validated, or updated by the operation.
+        include_nat: Validate legacy NAT rows when canonical NAT is not managed separately.
     """
     parsed = _parse_wan_config(path)
     feature_settings = _wan_feature_settings(parsed)
