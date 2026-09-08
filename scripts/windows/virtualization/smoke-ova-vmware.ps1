@@ -268,8 +268,17 @@ function Invoke-AtlasoVmwareSmokeGuestPhase {
     $started = [DateTimeOffset]::UtcNow
     $deadline = $started.AddMinutes(15)
     while ([DateTimeOffset]::UtcNow -lt $deadline) {
+        # As in cleanup, guest-info updates legitimately replace the VMX. Bind
+        # its current file ID only after the owned root and both NICs still match.
+        if ((Get-AtlasoWindowsFileId -Path $vmRoot) -ne $vmRootId) {
+            throw 'The invocation-owned VMware smoke root identity changed.'
+        }
+        $null = Get-AtlasoVmwareSmokeVmxNetworkIdentity -VmxPath $vmxPath `
+            -ManagementVmnet $ManagementVmnet -ServiceVmnet $ServiceVmnet `
+            -ExpectedIdentity $Identity
+        $currentVmxId = Get-AtlasoWindowsFileId -Path $vmxPath
         Assert-AtlasoVmwareVmIdentity -DirectoryPath $vmRoot -VmxPath $vmxPath `
-            -Name $Name -DirectoryId $vmRootId -VmxId $vmxId
+            -Name $Name -DirectoryId $vmRootId -VmxId $currentVmxId
         # Never let the child hide address movement in a fixed-host retry loop.
         # Lost ownership gets only a short neighbor refresh window, not 15 minutes.
         $admissionDeadline = [DateTimeOffset]::UtcNow.AddSeconds(20)

@@ -864,18 +864,28 @@ $phaseFunction = $smokeAst.Find({
     }, $true)
 if ($null -eq $phaseFunction) { throw 'Missing provider-owned SSH retry boundary.' }
 & {
-    . ([scriptblock]::Create($phaseFunction.Extent.Text))
+    . ([scriptblock]::Create($phaseFunction.Extent.Text.Replace(
+                'Start-Sleep -Seconds ([Math]::Min(5, $remaining))', '')))
     $vmRoot = 'fixture-root'
     $vmxPath = 'fixture.vmx'
     $Name = 'Atlaso-PR-765-fixture'
     $vmRootId = 'root-id'
-    $vmxId = 'vmx-id'
     $ManagementVmnet = 'VMnet8'
     $ServiceVmnet = 'VMnet1'
     $expectedHostKey = 'fixture-public-key'
     $secret = 'fixture-envelope'
     $repoRoot = $RepositoryRoot
     $events = [System.Collections.Generic.List[string]]::new()
+    <#
+    .SYNOPSIS
+    Return the known root identity without filesystem access.
+    #>
+    function Get-AtlasoWindowsFileId { return 'root-id' }
+    <#
+    .SYNOPSIS
+    Record both-NIC identity admission before accepting a replaced VMX.
+    #>
+    function Get-AtlasoVmwareSmokeVmxNetworkIdentity { $events.Add('nics') }
     <#
     .SYNOPSIS
     Record filesystem admission without accessing any VM.
@@ -889,11 +899,6 @@ if ($null -eq $phaseFunction) { throw 'Missing provider-owned SSH retry boundary
         $events.Add('network')
         if ($events.Contains('ssh')) { throw 'fixture-address-changed' }
     }
-    <#
-    .SYNOPSIS
-    Avoid real delays in the retry regression.
-    #>
-    function Start-Sleep { }
     $python = {
         $events.Add('ssh')
         $global:LASTEXITCODE = 75
@@ -905,7 +910,7 @@ if ($null -eq $phaseFunction) { throw 'Missing provider-owned SSH retry boundary
     try { Invoke-AtlasoVmwareSmokeGuestPhase -Phase initial -Identity $identity | Out-Null }
     catch { $failure = $_.Exception.Message }
     if ($failure -ne 'fixture-address-changed' -or
-        ($events -join ',') -ne 'filesystem,network,ssh,filesystem,network') {
+        ($events -join ',') -ne 'nics,filesystem,network,ssh,nics,filesystem,network') {
         throw 'Address drift did not stop the next authenticated attempt at provider admission.'
     }
 }
