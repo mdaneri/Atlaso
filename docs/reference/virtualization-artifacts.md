@@ -22,6 +22,10 @@ The conservative planning estimates below are additional physical storage, in Gi
 capacity of the two empty 500 GiB data disks. Existing files already consume the reported free space and do not
 receive speculative cleanup credits.
 
+Source reconstruction checks the aggregate declared size of selected archive members before extracting any payload.
+The 16 GiB limit includes the signed manifest and signature plus a 1 MiB reserve for the generated source identity;
+compressed download sizes alone do not establish this expansion bound. Oversized bundles are rejected and preserved.
+
 | Component | Additional estimate | Lifetime |
 | --- | ---: | --- |
 | Signed software downloads | 2 | Source verification; larger or unknown GitHub asset sizes fail admission |
