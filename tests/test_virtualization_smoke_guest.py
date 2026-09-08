@@ -205,10 +205,17 @@ def test_windows_smoke_wrappers_keep_credentials_out_of_child_arguments() -> Non
         source = (root / "scripts/windows/virtualization" / name).read_text(encoding="utf-8")
         assert "ConvertTo-Json -Compress" in source
         assert "smoke_guest_ssh.py" in source
-        assert "'--host-key' $expectedHostKey" in source
-        assert "'--phase' 'initial'" in source
-        assert "'--phase' 'post-reboot'" in source
-        assert "'--expected-tls-fingerprint' $tlsFingerprint" in source
+        if name == "smoke-ova-vmware.ps1":
+            assert "'--host-key', $expectedHostKey" in source
+            assert "-Phase 'initial'" in source
+            assert "-Phase 'post-reboot'" in source
+            assert "-Fingerprint $tlsFingerprint" in source
+            assert "'--single-connect-attempt'" in source
+        else:
+            assert "'--host-key' $expectedHostKey" in source
+            assert "'--phase' 'initial'" in source
+            assert "'--phase' 'post-reboot'" in source
+            assert "'--expected-tls-fingerprint' $tlsFingerprint" in source
         assert "-pw" not in source
         assert "Remove-Item -LiteralPath" in source
 
@@ -289,3 +296,103 @@ def test_readiness_covers_storage_unit_and_outer_command() -> None:
         assert str(smoke.SERVICE_READINESS_SECONDS) in script
         assert "/proc/uptime" in script
         assert "__READINESS_SECONDS__" not in script
+
+
+@pytest.mark.parametrize("failure", ["transport", "authentication", "host-key", "success"])
+def test_single_ssh_attempt_retains_pin_and_returns_only_transport_for_retry(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], failure: str,
+) -> None:
+    """Provider retry must retain trust and never retry authentication rejection.
+
+    Args:
+        monkeypatch: Replace Paramiko's network client.
+        capsys: Capture sanitized diagnostics.
+        failure: Connection outcome under test.
+    """
+    import paramiko
+
+    calls: list[str] = []
+    keys = paramiko.HostKeys()
+
+    class Client:
+        """Capture the actual trust configuration without opening a socket."""
+
+        def get_host_keys(self) -> object:
+            """Return the trust store inspected after the attempt."""
+            return keys
+
+        def set_missing_host_key_policy(self, policy: object) -> None:
+            """Reject every fallback trust policy.
+
+            Args:
+                policy: Configured Paramiko policy.
+            """
+            assert isinstance(policy, paramiko.RejectPolicy)
+
+        def connect(self, host: str, **kwargs: object) -> None:
+            """Simulate the selected bounded connection outcome.
+
+            Args:
+                host: Fixed admitted destination.
+                **kwargs: Paramiko connection options.
+            """
+            calls.append(host)
+            assert kwargs["allow_agent"] is False
+            assert kwargs["look_for_keys"] is False
+            assert kwargs["timeout"] == 15
+            if failure == "transport":
+                raise OSError("secret exception detail")
+            if failure == "authentication":
+                raise paramiko.AuthenticationException("secret exception detail")
+            if failure == "host-key":
+                key = keys[host]["ssh-ed25519"]
+                raise paramiko.BadHostKeyException(host, key, key)
+
+        def close(self) -> None:
+            """Record cleanup for a failed attempt."""
+            calls.append("closed")
+
+    monkeypatch.setattr(paramiko, "SSHClient", Client)
+    monkeypatch.setattr(smoke.time, "sleep", lambda _seconds: pytest.fail("Child retried"))
+    expected = smoke.parse_host_public_key(HOST_KEY)
+    if failure == "success":
+        client = smoke._connect("192.0.2.20", smoke.SecretInput("admin", "private-fixture"),
+                                expected_key=expected, single_attempt=True, context="vmware/initial")
+        assert isinstance(client, Client)
+        assert calls == ["192.0.2.20"]
+    else:
+        category = smoke.ConnectionPending if failure == "transport" else smoke.SmokeError
+        with pytest.raises(category) as caught:
+            smoke._connect("192.0.2.20", smoke.SecretInput("admin", "private-fixture"),
+                           expected_key=expected, single_attempt=True, context="vmware/initial")
+        assert "secret exception detail" not in str(caught.value)
+        if failure != "transport":
+            assert not isinstance(caught.value, smoke.ConnectionPending)
+        assert calls == ["192.0.2.20", "closed"]
+    assert keys["192.0.2.20"]["ssh-ed25519"].asbytes() == expected[1]
+    output = capsys.readouterr()
+    assert output.out == ""
+    assert "vmware/initial: SSH target=192.0.2.20" in output.err
+    assert "private-fixture" not in output.err
+
+
+def test_pending_connection_returns_provider_retry_exit(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Only pre-authentication transport failure produces exit 75.
+
+    Args:
+        monkeypatch: Replace credential retrieval and the connection boundary.
+    """
+    def pending(*_args: object, **_kwargs: object) -> None:
+        """Simulate a transport wait without secret details.
+
+        Args:
+            *_args: Ignored connection arguments.
+            **_kwargs: Ignored trust and retry options.
+        """
+        raise smoke.ConnectionPending("transport pending")
+
+    monkeypatch.setattr(smoke, "load_secret_input", lambda: smoke.SecretInput("admin", "fixture"))
+    monkeypatch.setattr(smoke, "_connect", pending)
+    assert smoke.main(["--host", "192.0.2.20", "--host-key", HOST_KEY,
+                       "--platform", "vmware", "--phase", "initial",
+                       "--single-connect-attempt"]) == 75

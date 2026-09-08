@@ -88,12 +88,18 @@ try {
                 '  hardware ethernet 00:0c:29:44:55:66;',
                 '}',
                 'lease 192.0.2.20 {',
+                '  ends 0 2099/01/01 00:00:00;',
                 '  hardware ethernet 00:0c:29:11:22:33;',
                 '}'
             ) `
             -ManagementMac '00:0c:29:11:22:33')
     if ($leaseAddresses.Count -ne 1 -or $leaseAddresses[0] -ne '192.0.2.20') {
         throw 'VMware DHCP lease parsing did not retain only the ethernet0 management address candidate.'
+    }
+    foreach ($leaseEnd in @('ends 0 2000/01/01 00:00:00;', 'ends never;', 'ends malformed;', '')) {
+        $rejectedLeases = @(Get-AtlasoVmwareDhcpLeaseAddress -ManagementMac '00:0c:29:11:22:33' `
+                -LeaseText @('lease 192.0.2.99 {', 'hardware ethernet 00:0c:29:11:22:33;', $leaseEnd, '}'))
+        if ($rejectedLeases.Count -ne 0) { throw 'Expired or unbounded lease became a discovery candidate.' }
     }
     [IO.File]::WriteAllLines($vmxFixture, @(
             'ethernet0.vnet = "VMnet8"',
@@ -128,6 +134,40 @@ try {
     if ($vmwareIdentity.Address -ne '192.0.2.20' -or
         $vmwareIdentity.ManagementMac -ne '00:0c:29:11:22:33') {
         throw 'Services-first VMware neighbor evidence did not select ethernet0 on the management vmnet.'
+    }
+    $hostEvidence = @([pscustomobject]@{
+            Name = 'VMware Network Adapter VMnet8'; InterfaceDescription = '';
+            ifIndex = 8; Status = 'Up'
+        })
+    foreach ($state in @('Stale', 'Delay', 'Probe', 'Incomplete', 'Unreachable')) {
+        $unready = Resolve-AtlasoVmwareSmokeAddressIdentity -VmxIdentity $vmxIdentity `
+            -NetworkAdapters $hostEvidence -ExpectedIdentity $vmwareIdentity `
+            -RequireReachable -AllowMissingAddress -Neighbors @([pscustomobject]@{
+                InterfaceIndex = 8; IPAddress = '192.0.2.20';
+                LinkLayerAddress = '00-0c-29-11-22-33'; State = $state
+            })
+        if ($unready.Address) { throw "Cached neighbor state $state was admitted for authentication." }
+    }
+    foreach ($case in @('changed', 'conflicting', 'ambiguous')) {
+        $evidence = @([pscustomobject]@{
+                InterfaceIndex = 8; IPAddress = if ($case -eq 'changed') { '192.0.2.21' } else { '192.0.2.20' };
+                LinkLayerAddress = '00-0c-29-11-22-33'; State = 'Reachable'
+            })
+        if ($case -ne 'changed') {
+            $evidence += [pscustomobject]@{
+                InterfaceIndex = 8; IPAddress = if ($case -eq 'ambiguous') { '192.0.2.21' } else { '192.0.2.20' };
+                LinkLayerAddress = if ($case -eq 'ambiguous') { '00-0c-29-11-22-33' } else { '00-0c-29-aa-bb-cc' };
+                State = 'Reachable'
+            }
+        }
+        $refused = $false
+        try {
+            $null = Resolve-AtlasoVmwareSmokeAddressIdentity -VmxIdentity $vmxIdentity `
+                -NetworkAdapters $hostEvidence -Neighbors $evidence `
+                -ExpectedIdentity $vmwareIdentity -RequireReachable
+        }
+        catch { $refused = $true }
+        if (-not $refused) { throw "Unsafe $case management ownership was admitted." }
     }
     try {
         $driftedVmwareIdentity = $vmwareIdentity.PSObject.Copy()
@@ -804,7 +844,7 @@ foreach ($required in @(
         'Get-AtlasoVmwareDhcpLeaseAddress',
         '& $ping -4 -S',
         'Get-NetNeighbor -AddressFamily IPv4',
-        "'--phase' 'post-reboot'"
+        "-Phase 'post-reboot'"
     )) {
     if (-not $vmwareSmoke.Contains($required)) {
         throw "VMware smoke is missing a provider-bound management identity marker: $required"
@@ -814,9 +854,112 @@ if ($vmwareSmoke.Contains('getGuestIPAddress')) {
     throw 'VMware smoke still trusts the unqualified VMware Tools guest address result.'
 }
 
-# Exercise the actual cleanup guard under StrictMode when startup succeeded but
-# generated-MAC capture failed. It must skip revalidation and retain the VMX ID.
+# Exercise production probe, SSH admission, and cleanup boundaries under StrictMode.
 $smokeAst = [System.Management.Automation.Language.Parser]::ParseInput($vmwareSmoke, [ref]$null, [ref]$null)
+$probeLoop = $smokeAst.Find({
+        param($node)
+        $node -is [System.Management.Automation.Language.ForEachStatementAst] -and
+        $node.Variable.VariablePath.UserPath -eq 'leaseAddress'
+    }, $true)
+if ($null -eq $probeLoop) { throw 'Missing interface-scoped neighbor probe loop.' }
+& {
+    $nativePython = (Get-Command python -ErrorAction Stop).Source
+    $leaseAddresses = @('192.0.2.20', '192.0.2.21')
+    $sourceAddresses = @('192.0.2.1')
+    $probes = [System.Collections.Generic.List[string]]::new()
+    $ping = {
+        if (($args[0..7] -join ' ') -ne '-4 -S 192.0.2.1 -n 1 -w 1000 192.0.2.20' -and
+            ($args[0..7] -join ' ') -ne '-4 -S 192.0.2.1 -n 1 -w 1000 192.0.2.21') {
+            throw 'Neighbor probe lost its fixed host interface or bounded target.'
+        }
+        $probes.Add([string]$args[7])
+        & $nativePython -c "raise SystemExit($nativeExitCode)"
+    }
+    foreach ($nativePreference in @($true, $false)) {
+        foreach ($nativeExitCode in @(0, 1)) {
+            $PSNativeCommandUseErrorActionPreference = $nativePreference
+            $probes.Clear()
+            . ([scriptblock]::Create($probeLoop.Extent.Text))
+            if (($probes -join ',') -ne ($leaseAddresses -join ',') -or
+                $PSNativeCommandUseErrorActionPreference -ne $nativePreference) {
+                throw 'An unanswered probe aborted discovery or changed the caller native-error preference.'
+            }
+        }
+    }
+}
+$phaseFunction = $smokeAst.Find({
+        param($node)
+        $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and
+        $node.Name -eq 'Invoke-AtlasoVmwareSmokeGuestPhase'
+    }, $true)
+if ($null -eq $phaseFunction) { throw 'Missing provider-owned SSH retry boundary.' }
+& {
+    . ([scriptblock]::Create($phaseFunction.Extent.Text.Replace(
+                'Start-Sleep -Seconds ([Math]::Min(5, $remaining))', '')))
+    $vmRoot = 'fixture-root'
+    $vmxPath = 'fixture.vmx'
+    $Name = 'Atlaso-PR-765-fixture'
+    $vmRootId = 'root-id'
+    $ManagementVmnet = 'VMnet8'
+    $ServiceVmnet = 'VMnet1'
+    $expectedHostKey = 'fixture-public-key'
+    $secret = 'fixture-envelope'
+    $repoRoot = $RepositoryRoot
+    $events = [System.Collections.Generic.List[string]]::new()
+    <#
+    .SYNOPSIS
+    Return the known root identity without filesystem access.
+    #>
+    function Get-AtlasoWindowsFileId { return 'root-id' }
+    <#
+    .SYNOPSIS
+    Record both-NIC identity admission before accepting a replaced VMX.
+    #>
+    function Get-AtlasoVmwareSmokeVmxNetworkIdentity { $events.Add('nics') }
+    <#
+    .SYNOPSIS
+    Record filesystem admission without accessing any VM.
+    #>
+    function Assert-AtlasoVmwareVmIdentity { $events.Add('filesystem') }
+    <#
+    .SYNOPSIS
+    Reject simulated address drift after one transport failure.
+    #>
+    function Wait-AtlasoVmwareSmokeNetworkIdentity {
+        $events.Add('network')
+        if ($events.Contains('ssh')) { throw 'fixture-address-changed' }
+    }
+    $nativePython = (Get-Command python -ErrorAction Stop).Source
+    $python = {
+        $events.Add('ssh')
+        & $nativePython -c "raise SystemExit($nativeExitCode)"
+    }
+    $identity = [pscustomobject]@{
+        ManagementMac = '00:0c:29:11:22:33'; HostInterfaceIndex = 8; Address = '192.0.2.20'
+    }
+    foreach ($nativePreference in @($true, $false)) {
+        foreach ($nativeExitCode in @(75, 2)) {
+            $PSNativeCommandUseErrorActionPreference = $nativePreference
+            $events.Clear()
+            $failure = ''
+            try { Invoke-AtlasoVmwareSmokeGuestPhase -Phase initial -Identity $identity | Out-Null }
+            catch { $failure = $_.Exception.Message }
+            if ($PSNativeCommandUseErrorActionPreference -ne $nativePreference) {
+                throw 'Smoke validation changed the caller native-error preference.'
+            }
+            if ($nativeExitCode -eq 75) {
+                if ($failure -ne 'fixture-address-changed' -or
+                    ($events -join ',') -ne 'nics,filesystem,network,ssh,nics,filesystem,network') {
+                    throw 'Address drift did not stop the next authenticated attempt at provider admission.'
+                }
+            }
+            elseif ($failure -notmatch 'authenticated guest validation failed' -or
+                ($events -join ',') -ne 'nics,filesystem,network,ssh') {
+                throw 'Terminal native child failure was retried or accepted.'
+            }
+        }
+    }
+}
 $identityInitializer = $smokeAst.Find({
         param($node)
         $node -is [System.Management.Automation.Language.AssignmentStatementAst] -and
