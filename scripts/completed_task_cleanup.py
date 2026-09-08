@@ -121,7 +121,8 @@ class Cleanup:
         require(beneath(self.target, self.root), "Target is outside the configured worktree root.")
         require(beneath(evidence, self.root) and not evidence.is_relative_to(self.target),
                 "Evidence must survive outside the target, beneath the configured root.")
-        require(not handoff.is_relative_to(self.target), "Preserve the handoff outside the target first.")
+        require(beneath(handoff, self.root) and not handoff.is_relative_to(self.target),
+                "Preserve the handoff outside the target, beneath the configured root first.")
         require(self.target != self.repo, "Primary checkout deletion is forbidden; use its documented restoration workflow.")
         require(Path.cwd() == self.repo, "Run the command from the primary checkout.")
         require(self.handoff.get("schema") == 1, "Unsupported handoff schema.")
@@ -204,7 +205,7 @@ class Cleanup:
 
     def api(self, endpoint: str) -> object:
         """Read one GitHub endpoint using existing gh authentication."""
-        return json.loads(self.command(["gh", "api", f"repos/{self.repository}/{endpoint}"]))
+        return json.loads(self.command(["gh", "api", "--hostname", "github.com", f"repos/{self.repository}/{endpoint}"]))
 
     def worktrees(self) -> list[dict[str, str]]:
         """Read Git's authoritative registration inventory without pruning it."""
@@ -269,7 +270,7 @@ class Cleanup:
         require(pr["base"]["ref"] == "main" and pr["head"]["ref"] == self.branch
                 and pr["head"]["repo"] and pr["head"]["repo"]["full_name"] == self.repository,
                 "Only an ordinary same-repository main PR is eligible.")
-        issues = json.loads(self.command(["gh", "pr", "view", str(self.handoff["pr"]), "--repo", self.repository,
+        issues = json.loads(self.command(["gh", "pr", "view", str(self.handoff["pr"]), "--repo", f"github.com/{self.repository}",
                                          "--json", "closingIssuesReferences"]))["closingIssuesReferences"]
         require(sorted(item["number"] for item in issues) == sorted(self.handoff["issues"]) and issues,
                 "Complete linked issue identity is missing or changed.")

@@ -273,6 +273,40 @@ def test_remote_main_disappearing_after_release_is_refused(cleanup: Cleanup, mon
     assert cleanup.target.exists()
 
 
+def test_handoff_outside_permitted_root_is_refused(cleanup: Cleanup) -> None:
+    """An ordinary external handoff does not establish permitted durable evidence storage."""
+    outside = cleanup.root.parent / "external-handoff.json"
+    outside.write_bytes(cleanup.handoff_path.read_bytes())
+    with pytest.raises(Refusal, match="handoff outside the target, beneath the configured root"):
+        Cleanup(outside, cleanup.evidence, cleanup.config, True, cleanup.controller)
+    assert not cleanup.controller.calls
+    assert not cleanup.evidence.exists()
+
+
+def test_github_reads_ignore_environment_host(cleanup: Cleanup, monkeypatch: pytest.MonkeyPatch) -> None:
+    """API and PR reads name github.com even when the CLI default points to enterprise."""
+    monkeypatch.setenv("GH_HOST", "enterprise.example.invalid")
+    original = cleanup.command
+    calls = []
+
+    def capture(arguments: list[str], **kwargs: object) -> str:
+        """Capture host selection without sending fixture traffic to a remote service."""
+        if arguments[:2] == ["gh", "api"]:
+            calls.append(arguments)
+            return "{}"
+        if arguments[:3] == ["gh", "pr", "view"]:
+            calls.append(arguments)
+        return original(arguments, **kwargs)
+
+    monkeypatch.setattr(cleanup, "command", capture)
+    Cleanup.api(cleanup, "pulls/761")
+    cleanup.execute = False
+    cleanup.run()
+    assert calls[0] == ["gh", "api", "--hostname", "github.com", "repos/example/Atlaso/pulls/761"]
+    assert any(arguments[arguments.index("--repo") + 1] == "github.com/example/Atlaso"
+               for arguments in calls if "--repo" in arguments)
+
+
 def test_preview_does_not_mutate(cleanup: Cleanup) -> None:
     """Preview performs no fetch, journal write, resource release, ref mutation, or rename."""
     cleanup.execute = False

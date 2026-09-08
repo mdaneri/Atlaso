@@ -19,7 +19,7 @@ rollout editing, guessed server endpoint, administrative bypass, or execution-po
 
 The originating task records resources as they are created. Its `cleanup-ready` handoff must survive outside its
 worktree and every resource being removed, beneath the configured `desktop.git-worktree-root` or another explicitly
-permitted durable controller surface. This command currently accepts its evidence directory beneath that configured
+permitted durable controller surface. This command currently accepts its handoff and evidence directory beneath that configured
 root only. Read the exact supported Codex `config.toml`; never infer a worktree root from an existing path.
 The supplied configuration must be the active `CODEX_HOME/config.toml` (the standard user Codex directory when
 `CODEX_HOME` is unset), not a replacement supplied by the cleanup handoff.
@@ -162,6 +162,10 @@ not-applicable exception without claiming a visible Done suffix. A denied or fai
 not an unavailable capability.
 
 ## Failure and interrupted recovery
+
+All GitHub CLI evidence reads explicitly select `github.com`, independently of `GH_HOST`. The handoff must be an
+ordinary file beneath the configured worktree root and outside the target worktree; an arbitrary external or temporary
+path is not an approved durable handoff surface.
 
 Exit zero means a successful preview or completed execution; inspect the JSON `status` to distinguish them. Exit one
 and `status: "refused"` give an actionable `retry_condition` and completed gates. Durable JSON evidence records bind
