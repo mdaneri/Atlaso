@@ -1101,6 +1101,43 @@ def test_photon_provisioning_installs_default_nginx_management_proxy():
     assert "pair through public PyPI" in root_docs
 
 
+def test_photon_https_bootstrap_supplies_trusted_listener_identity(tmp_path, monkeypatch):
+    """Render the actual HTTPS proxy with nginx-owned listener identity.
+
+    Args:
+        tmp_path: Isolated nginx configuration directory.
+        monkeypatch: Pytest fixture redirecting all host paths into the test root.
+    """
+    import importlib.machinery
+
+    loader = importlib.machinery.SourceFileLoader(
+        "atlaso_bootstrap_https_listener_test", "scripts/appliance/atlaso-bootstrap-https"
+    )
+    spec = importlib.util.spec_from_loader(loader.name, loader)
+    bootstrap = importlib.util.module_from_spec(spec)
+    loader.exec_module(bootstrap)
+    monkeypatch.setattr(bootstrap, "NGINX_CONF_INCLUDE_PATH", tmp_path / "atlaso.conf")
+    monkeypatch.setattr(bootstrap, "NGINX_MANAGEMENT_PATH", tmp_path / "management.conf")
+    monkeypatch.setattr(bootstrap, "NGINX_MAIN_CONFIG_PATH", tmp_path / "nginx.conf")
+    # Redirect the renderer's hard-coded default-site removals as well as its outputs.
+    monkeypatch.setattr(bootstrap, "Path", lambda value: tmp_path / Path(value).name)
+    (tmp_path / "nginx.conf").write_text("events {}\nhttp {\n}\n", encoding="utf-8")
+
+    bootstrap.write_nginx_management_config(
+        fqdn="atlaso.example.test", cert_path="/test/management.crt", key_path="/test/management.key"
+    )
+
+    config = (tmp_path / "management.conf").read_text(encoding="utf-8")
+    https_server = config.split("listen 443 ssl default_server;", 1)[1]
+    proxy_location = https_server.split("location / {", 1)[1].split("}", 1)[0]
+    assert "proxy_set_header X-Atlaso-Listener-Address $server_addr;" in proxy_location
+    assert "$http_x_atlaso_listener_address" not in proxy_location
+    assert "proxy_pass http://127.0.0.1:8000;" in proxy_location
+    assert "proxy_set_header X-Forwarded-Proto https;" in proxy_location
+    assert "proxy_set_header Upgrade $http_upgrade;" in proxy_location
+    assert 'proxy_set_header Connection "upgrade";' in proxy_location
+
+
 def test_photon_https_bootstrap_publishes_exact_development_root_import_proof(
     tmp_path, monkeypatch
 ):

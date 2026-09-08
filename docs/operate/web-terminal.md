@@ -112,6 +112,13 @@ lease or configure explicit DNS upstreams before retrying.
 The Public Services renderer merges terminal routes into an existing HTTPS listener when CA or depot routes already use
 the same address. It must emit only one `/static/` location per nginx server block.
 
+First-boot management HTTPS and ordinary Appliance Settings apply both supply nginx's actual listener address to
+Atlaso through `X-Atlaso-Listener-Address`. This keeps an enabled management terminal usable with the bootstrap
+configuration. If the selected and applied addresses are correct but the terminal returns 404 on an older appliance,
+check that `/etc/atlaso/nginx/sites.d/management.conf` sets this header to `$server_addr` in its HTTPS proxy location.
+Reconcile Appliance Settings through global appliance apply to regenerate an older configuration. Do not substitute a
+client-supplied header or relax terminal listener authorization.
+
 If apply fails, inspect the Public Services child task and validate
 `/var/lib/atlaso/apply/public-services/atlaso-public-services.conf`. On the appliance, validate nginx with `nginx -t`,
 confirm `atlaso.service` is active, and verify the selected address separately:
