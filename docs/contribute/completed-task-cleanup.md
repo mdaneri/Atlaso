@@ -214,6 +214,8 @@ Ownership manifests use the same bounded reader. Windows pins no-follow file and
 POSIX uses a nonblocking no-follow open. Both verify regular single-link identity and recheck size after reading.
 Generated-tree deletion repeats resource-specific ownership, inactivity, retention, capability, and evidence checks
 after task eligibility reconciliation, immediately before recording its prepared gate and removing the checked tree.
+Generated snapshots reject `.git` entries and bare-repository structures (`HEAD`, `objects`, and `refs` or `packed-refs`)
+at any depth. These repositories require separate inventory and their owning cleanup workflow.
 Recovered journals and blobs use the same regular-file reader with the 64 MiB evidence limit. Before final ref/worktree
 removal, every remaining directory must be a parent of tracked source; empty ignored or untracked directories require
 inventory reconciliation and owning-tool release because Git's cleanliness checks do not report them.

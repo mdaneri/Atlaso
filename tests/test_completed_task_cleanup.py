@@ -957,6 +957,25 @@ def test_recovery_rejects_nonregular_evidence(cleanup: Cleanup, kind: str) -> No
     assert cleanup.git("ls-remote", "--refs", "origin", f"refs/heads/{cleanup.branch}")
 
 
+@pytest.mark.skipif(os.name != "nt", reason="Windows no-follow handle contract")
+@pytest.mark.parametrize("nested", [False, True])
+def test_generated_tree_preserves_bare_repository(cleanup: Cleanup, nested: bool) -> None:
+    """Bare clones at the root or nested beneath generated output need separate ownership cleanup."""
+    path = cleanup.target / "cache"
+    path.mkdir()
+    repository = path / "nested.git" if nested else path
+    cleanup.git("init", "--bare", str(repository))
+    (cleanup.repo / ".git/info/exclude").write_text("cache/\n", encoding="utf-8")
+    identity = WindowsFiles().snapshot(path)["."]["identity"]
+    cleanup.handoff["resources"] = [{**resource_identity(cleanup, "bare-cache", "generated_tree"),
+                                     "path": str(path), "root_identity": identity}]
+    with pytest.raises(Refusal, match="Bare repositories"):
+        cleanup.run()
+    assert cleanup.git("--git-dir", str(repository), "rev-parse", "--is-bare-repository") == "true"
+    assert "resource_release_prepared:bare-cache" not in cleanup.gates
+    assert cleanup.git("ls-remote", "--refs", "origin", f"refs/heads/{cleanup.branch}")
+
+
 def test_uninventoried_ignored_file_blocks_before_remote_deletion(cleanup: Cleanup) -> None:
     """Ignored user/configuration files cannot slip through Git's clean-worktree check."""
     (cleanup.repo / ".git/info/exclude").write_text("secret.txt\n", encoding="utf-8")

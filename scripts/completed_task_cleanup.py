@@ -546,6 +546,13 @@ class Cleanup:
                     snapshot = files.snapshot(path)
                     require(not any(".git" in {part.casefold() for part in Path(entry).parts} for entry in snapshot),
                             "Nested repositories are not generated output trees.")
+                    children: dict[Path, set[str]] = {}
+                    for entry in snapshot:
+                        relative_entry = Path(entry)
+                        children.setdefault(relative_entry.parent, set()).add(relative_entry.name.casefold())
+                    require(not any({"head", "objects", "refs"} <= names or {"head", "objects", "packed-refs"} <= names
+                                    for names in children.values()),
+                            "Bare repositories are not generated output trees; use their owning cleanup workflow.")
                     require(snapshot["."]["identity"] == resource["root_identity"],
                             "Generated root differs from its inventoried creation identity.")
                     self.proposed[-1] = {"resource": identity, "path": str(path), "entries": snapshot,
