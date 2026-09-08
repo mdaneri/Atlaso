@@ -547,7 +547,9 @@ The following cross-cutting boundaries always apply:
   IPv4 or IPv6 family plus a same-family next-hop gateway for defaults, persist canonical `0.0.0.0/0` or `::/0`, and
   allow only one default per family. Destination-specific routes keep a required CIDR and optional gateway for directly
   connected paths; API callers may continue to submit canonical `/0` CIDRs.
-  Static Routes, Routing Permissions, NAT Rules, and WAN Policies are wizard-backed Tabulator collections. Add launches
+  Static Routes, Routing Permissions, and WAN Policies belong to Routing & WAN; source NAT belongs to Traffic
+  Publishing and supports IPv4/IPv6 masquerade or fixed SNAT through its separate `nat` Apply unit. All four are
+  wizard-backed Tabulator collections. Add launches
   from the bottom row; edit launches from row double-click or the context menu; generated routing permissions remain
   read-only; and ordinary persisted **Enabled** state remains directly editable without host mutation.
 - Network Objects Source Groups use a full-height compact wizard-backed Tabulator. The add-row native button opens on
@@ -1045,7 +1047,7 @@ The following cross-cutting boundaries always apply:
   all sessions and credentials, activate coherent core defaults while disabling optional services, and preserve depot,
   backup, and managed ESX Storage payload paths. Persist a non-secret recovery marker before database replacement,
   make resume idempotent across interruption or reboot, validate all generated runtime configuration before activation,
-  scrub transient staging plus retained VCF Backup authorized keys and Web Terminal signing material, and leave all 16
+  scrub transient staging plus retained VCF Backup authorized keys and Web Terminal signing material, and leave all 17
   desired/applied baselines equal with no follow-up Apply workflow. Also remove retained KMIP operational state and
   Atlaso-synchronized package-source staging and registrations, fsyncing repository removal
   before the recovery marker advances. Require explicit keep-or-change choices for both

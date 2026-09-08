@@ -334,7 +334,7 @@ def test_single_ssh_attempt_retains_pin_and_returns_only_transport_for_retry(
 
             Args:
                 host: Fixed admitted destination.
-                kwargs: Paramiko connection options.
+                **kwargs: Paramiko connection options.
             """
             calls.append(host)
             assert kwargs["allow_agent"] is False
@@ -386,8 +386,8 @@ def test_pending_connection_returns_provider_retry_exit(monkeypatch: pytest.Monk
         """Simulate a transport wait without secret details.
 
         Args:
-            _args: Ignored connection arguments.
-            _kwargs: Ignored trust and retry options.
+            *_args: Ignored connection arguments.
+            **_kwargs: Ignored trust and retry options.
         """
         raise smoke.ConnectionPending("transport pending")
 

@@ -1636,6 +1636,63 @@ def test_management_handoff_rollback_continues_after_missing_snapshot(monkeypatc
     assert ["systemctl", "reload-or-restart", "nginx.service"] in commands
 
 
+
+@pytest.mark.parametrize("prior_firewall", [False, True])
+def test_management_handoff_rollback_preserves_nat_after_firewall(monkeypatch, tmp_path, prior_firewall):
+    """Keep both NAT families after rollback replaces or clears the firewall.
+
+    Args:
+        monkeypatch: Fixture isolating host services and simulated kernel state.
+        tmp_path: Directory holding the prior canonical NAT snapshot.
+        prior_firewall: Whether rollback restores a prior firewall program.
+    """
+    helper = load_helper_module()
+    runtime = tmp_path / "nat.conf"
+    runtime.write_text("prior NAT", encoding="utf-8")
+    monkeypatch.setattr(helper, "NAT_RUNTIME_CONFIG_PATH", runtime)
+    monkeypatch.setattr(helper, "NETWORKD_CONFIG_DIR", tmp_path)
+    monkeypatch.setattr(helper, "NETWORKD_MGMT_CONFIG_PATH", tmp_path / "absent.network")
+    for name in (
+        "_quiesce_management_handoff_firewall", "_restore_management_handoff_resolver",
+        "_restore_management_handoff_links", "_restore_management_handoff_wan",
+    ):
+        monkeypatch.setattr(helper, name, lambda *_args: None)
+    tables = {"candidate"}
+
+    def restore_firewall(*_args):
+        """Model the ruleset flush in both firewall rollback branches.
+
+        Args:
+            *_args: Ignored rollback state and command evidence.
+        """
+        tables.clear()
+        if prior_firewall:
+            tables.add("firewall")
+
+    def restore_nat(operation, arguments):
+        """Model replay of both prior canonical NAT families.
+
+        Args:
+            operation: Requested NAT helper operation.
+            arguments: Prior snapshot path passed for replay.
+        """
+        assert operation == "restore"
+        assert arguments == [str(runtime)]
+        tables.update({"ip atlaso_nat", "ip6 atlaso_nat"})
+        return 0
+
+    monkeypatch.setattr(helper, "_restore_management_handoff_firewall", restore_firewall)
+    monkeypatch.setattr(helper, "_handle_nat", restore_nat)
+    monkeypatch.setattr(helper, "_nginx_binary", lambda: "nginx")
+    monkeypatch.setattr(helper, "_nginx_test_command", lambda: subprocess.CompletedProcess([], 0))
+    monkeypatch.setattr(helper, "_run", lambda command: subprocess.CompletedProcess(command, 0))
+    monkeypatch.setattr(helper, "_management_handoff_readiness", lambda *_args: {"stable_samples": 3})
+
+    helper._restore_management_handoff({"snapshots": []})
+
+    assert tables == {"ip atlaso_nat", "ip6 atlaso_nat"} | ({"firewall"} if prior_firewall else set())
+
+
 def test_management_handoff_snapshot_restore_is_durable(monkeypatch, tmp_path):
     """Sync restored bytes and both replacement and removal directory entries.
 

@@ -316,7 +316,7 @@ def test_nat_api_requires_reviewed_ingress_and_preserves_legacy_disable(client):
     from atlaso.app.database import SessionLocal
     from atlaso.app.models import NatRule, PhysicalInterface
     from atlaso.app.services.routes_wan import save_routes_wan_settings
-    from atlaso.app.ui import routes_wan_context
+    from atlaso.app.ui import traffic_publishing_context
 
     token, _ = create_token(client, scopes=["read:wan", "write:wan"])
     headers = {"Authorization": f"Bearer {token}"}
@@ -337,9 +337,8 @@ def test_nat_api_requires_reviewed_ingress_and_preserves_legacy_disable(client):
         interface.admin_state = "down"
         save_routes_wan_settings(db, routing_enabled=True, nat_enabled=True, wan_simulation_enabled=False)
         db.commit()
-        context = routes_wan_context(db)
-        assert any("inbound target eth2" in error for error in context["wan_validation_errors"])
-        assert 'oifname "eth1.20" masquerade' not in context["wan_config_preview"]
+        context = traffic_publishing_context(db)
+        assert any("NAT target eth2" in error for error in context["nat_validation_errors"])
     disabled_missing = client.patch(f"/api/v1/nat/rules/{rule_id}", headers=headers,
                                     json={**payload, "enabled": False, "inbound_interfaces": ["eth2"]})
     assert disabled_missing.status_code == 200, disabled_missing.text

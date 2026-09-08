@@ -27,6 +27,7 @@ nav = [
     { "Appliance settings" = "operate/appliance-settings.md" },
     { "Network configuration" = "operate/networking.md" },
     { "Network Objects" = "operate/network-objects.md" },
+    { "Traffic Publishing" = "operate/traffic-publishing.md" },
     { "Local appliance console" = "operate/appliance-console.md" },
     { "Appliance Update" = "operate/appliance-update.md" },
     { "1Password bridge recovery" = "operate/onepassword-credential-bridge-recovery.md" },

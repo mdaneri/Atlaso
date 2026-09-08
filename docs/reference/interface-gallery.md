@@ -443,13 +443,13 @@ Figure: Public certificate requests remain contained in the narrow viewport.
 
 Route: `/ui/management/routes-wan`
 
-![Atlaso Routes and WAN Simulation showing disabled routing, a checked but unavailable NAT switch, and the suspended status.](../assets/screenshots/routes-wan-clean-desktop.webp)
+![Atlaso Routing & WAN with routing enabled, WAN simulation disabled, and no NAT controls.](../assets/screenshots/routes-wan-clean-desktop.webp)
 
-Figure: Routes and WAN Simulation with global routing disabled and the saved NAT choice visibly suspended.
+Figure: Routing & WAN owns forwarding and WAN simulation; source NAT is configured in Traffic Publishing.
 
-![Atlaso Routes and WAN Simulation showing disabled routing, a checked but unavailable NAT switch, and the suspended status.](../assets/screenshots/routes-wan-clean-responsive.webp)
+![Atlaso Routing & WAN with routing enabled, WAN simulation disabled, and no NAT controls.](../assets/screenshots/routes-wan-clean-responsive.webp)
 
-Figure: Routes and WAN Simulation with global routing disabled and the saved NAT choice visibly suspended.
+Figure: Routing & WAN owns forwarding and WAN simulation; source NAT is configured in Traffic Publishing.
 
 ## Routes Wan: Policies
 
@@ -538,6 +538,34 @@ Figure: Web terminal connected to the verified Photon appliance in the desktop v
 ![Atlaso Web terminal connected as the admin user in the responsive viewport.](../assets/screenshots/terminal-clean-responsive.webp)
 
 Figure: Web terminal connected to the verified Photon appliance in the responsive viewport.
+
+## Traffic Publishing
+
+Route: `/ui/management/traffic-publishing`
+
+![Atlaso Traffic Publishing with source NAT rules and a viewport-filling grid above the footer.](../assets/screenshots/traffic-publishing-desktop.webp)
+
+Figure: Traffic Publishing with reviewed IPv4 masquerade and the canonical NAT setting.
+
+![Atlaso Traffic Publishing showing explicit eth2 ingress, eth3 egress, and enabled source NAT.](../assets/screenshots/traffic-publishing-responsive.webp)
+
+Figure: Traffic Publishing with reviewed IPv4 masquerade and the canonical NAT setting.
+
+![Atlaso NAT translation step with aligned ingress labels, an assigned-address selector, and Manage source groups.](../assets/screenshots/traffic-publishing-translation-desktop.webp)
+
+Figure: Choose an assigned translated address and open source groups in a separate tab without leaving the wizard.
+
+![Atlaso NAT translation step with aligned ingress labels, an assigned-address selector, and Manage source groups.](../assets/screenshots/traffic-publishing-translation-responsive.webp)
+
+Figure: Choose an assigned translated address and open source groups in a separate tab without leaving the wizard.
+
+![Atlaso NAT wizard review showing IPv6 fixed SNAT, explicit ingress and egress, and the global Apply boundary.](../assets/screenshots/traffic-publishing-wizard-desktop.webp)
+
+Figure: Review an IPv6 fixed-SNAT rule before saving desired state.
+
+![Atlaso NAT wizard review showing IPv6 fixed SNAT, explicit ingress and egress, and the global Apply boundary.](../assets/screenshots/traffic-publishing-wizard-responsive.webp)
+
+Figure: Review an IPv6 fixed-SNAT rule before saving desired state.
 
 ## Users
 

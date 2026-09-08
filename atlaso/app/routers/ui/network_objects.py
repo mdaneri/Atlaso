@@ -44,7 +44,7 @@ from atlaso.app.ui_routes import MANAGEMENT_UI_ROOT
 Endpoint = Callable[..., Any]
 RETURN_TARGETS = {
     "firewall-rule": f"{MANAGEMENT_UI_ROOT}/firewall",
-    "nat-rule": f"{MANAGEMENT_UI_ROOT}/routes-wan",
+    "nat-rule": f"{MANAGEMENT_UI_ROOT}/traffic-publishing",
 }
 
 

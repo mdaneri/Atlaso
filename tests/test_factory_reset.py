@@ -33,6 +33,7 @@ from atlaso.app.models import (
     DnsRecord,
     DnsSettings,
     Job,
+    NatRule,
     PhysicalInterface,
     Setting,
     User,
@@ -1965,7 +1966,7 @@ def test_complete_factory_reset_replaces_database_and_establishes_baselines(
     )
 
     assert result["state"] == "succeeded"
-    assert result["applied_unit_count"] == 16
+    assert result["applied_unit_count"] == 17
     assert runtime_cleanup_calls == [True]
     assert not (state_directory / "request.json").exists()
     assert json.loads((state_directory / "last-result.json").read_text(encoding="utf-8"))["state"] == "succeeded"
@@ -2009,6 +2010,9 @@ def test_complete_factory_reset_replaces_database_and_establishes_baselines(
         from atlaso.app.ui import appliance_apply_units, load_appliance_apply_baselines
 
         verified_units = appliance_apply_units(db, reconcile=False)
+        nat_unit = next(unit for unit in verified_units if unit["id"] == "nat")
+        assert "nat_enabled=false" in nat_unit["config_preview"]
+        assert list(db.scalars(select(NatRule))) == []
         assert [unit["label"] for unit in verified_units if unit["changed"]] == []
         assert set(load_appliance_apply_baselines(db)) == {
             unit["id"] for unit in verified_units
@@ -2284,5 +2288,5 @@ def test_complete_factory_reset_resumes_after_post_replacement_interruption(
     )
 
     assert result["state"] == "succeeded"
-    assert result["applied_unit_count"] == 16
+    assert result["applied_unit_count"] == 17
     assert not (state_directory / "request.json").exists()

@@ -3915,6 +3915,7 @@ textarea {
 }
 
 .form-grid > label,
+.form-grid > .nat-inbound-field,
 .derived-field {
   display: grid;
   align-content: start;
@@ -4002,7 +4003,8 @@ label > span,
   margin-bottom: 5px;
 }
 
-.form-grid > label > .field-label {
+.form-grid > label > .field-label,
+.form-grid > .nat-inbound-field > .field-label {
   align-items: flex-start;
   min-height: 32px;
 }
@@ -9188,4 +9190,11 @@ dialog.has-expanded-monaco .confirm-modal-panel {
     min-width: 100%;
     font-size: 8pt;
   }
+}
+
+#routes-wan-nat-table {
+  height: 420px;
+  min-height: 300px;
+  max-width: 100%;
+  overflow: hidden;
 }

@@ -1,13 +1,13 @@
 {% extends "base.html" %}
 {% from "partials/resource_wizard.html" import resource_wizard %}
-{% block page_title %}Routes & WAN Simulation{% endblock %}
+{% block page_title %}Routing & WAN{% endblock %}
 {% block content %}
 <section class="split-workspace">
   <div class="panel wide-panel">
     <div class="panel-head">
       <div>
-        <h2>Routes & WAN Simulation</h2>
-        <p class="muted">Manage static route desired state, NAT, and interface-level WAN impairment policies before applying them to the appliance.</p>
+        <h2>Routing & WAN</h2>
+        <p class="muted">Manage static route desired state and interface-level WAN impairment policies before applying them to the appliance.</p>
       </div>
       <span class="status-pill muted">{{ routes|length }} routes</span>
     </div>
@@ -17,13 +17,11 @@
     {% endif %}
     <div id="routes-wan-route-error" class="alert error hidden"></div>
     <div id="routes-wan-routing-error" class="alert error hidden"></div>
-    <div id="routes-wan-nat-error" class="alert error hidden"></div>
     <div id="routes-wan-policy-error" class="alert error hidden"></div>
 
     <div class="tab-buttons" role="tablist" aria-label="Route and WAN tools" data-tab-storage-key="atlaso:routes-wan:active-tab">
       <button class="tab-button active" type="button" role="tab" data-tab-target="routes-wan-routes-panel" aria-controls="routes-wan-routes-panel" aria-selected="true">Static Routes</button>
       <button class="tab-button" type="button" role="tab" data-tab-target="routes-wan-routing-panel" aria-controls="routes-wan-routing-panel" aria-selected="false">Routing Permissions</button>
-      <button class="tab-button" type="button" role="tab" data-tab-target="routes-wan-nat-panel" aria-controls="routes-wan-nat-panel" aria-selected="false">NAT</button>
       <button class="tab-button" type="button" role="tab" data-tab-target="routes-wan-policies-panel" aria-controls="routes-wan-policies-panel" aria-selected="false">WAN Policies</button>
     </div>
 
@@ -149,58 +147,6 @@
         </table>
       </div>
 
-      <div id="routes-wan-nat-panel" class="tab-panel" role="tabpanel" hidden>
-        <div class="section-head compact-section-head">
-          <div>
-            <h3>NAT Rules</h3>
-            <p class="muted">Configure complete outbound IPv4 masquerade desired state through the reviewed add/edit wizard.</p>
-          </div>
-          <span class="status-pill muted">{{ nat_rules|length }} rules</span>
-        </div>
-        <div
-          id="routes-wan-nat-table"
-          class="tabulator-shell routes-wan-table"
-          data-nat-rules='{{ nat_rule_rows | tojson }}'
-          data-nat-target-options='{{ wan_nat_targets | tojson }}'
-          data-source-groups='{{ wan_source_groups | tojson }}'
-          data-csrf="{{ csrf_token }}"
-          data-can-write="{{ 'true' if routes_wan_can_write else 'false' }}"
-          data-fallback-id="routes-wan-nat-fallback"
-        ></div>
-        <table id="routes-wan-nat-fallback" class="data-table dns-fallback-table">
-          <thead>
-            <tr><th>Name</th><th>Inbound</th><th>Source addresses</th><th>Outbound</th><th>Masquerade</th><th>Priority</th><th>Status</th><th>Description</th><th>Actions</th></tr>
-          </thead>
-          <tbody>
-            {% for rule in nat_rules %}
-              <tr>
-                <td>{{ rule.name }}</td>
-                <td>{{ (rule.inbound_interfaces or []) | join(", ") or "Needs ingress review" }}</td>
-                <td>{{ rule.source }}</td>
-                <td>{{ rule.outbound_interface }}</td>
-                <td>{{ "yes" if rule.masquerade else "no" }}</td>
-                <td>{{ rule.priority }}</td>
-                <td><span class="status-pill {{ 'good' if rule.enabled else 'muted' }}">{{ "enabled" if rule.enabled else "disabled" }}</span></td>
-                <td>{{ rule.description or "" }}</td>
-                <td>
-                  <form
-                    action="{{ management_ui_root }}/routes-wan/nat-rules/{{ rule.id }}/delete"
-                    method="post"
-                    data-confirm-modal
-                    data-confirm-title="Delete NAT rule {{ rule.name }}?"
-                    data-confirm-message="This removes the NAT rule from Atlaso desired state. It will not touch the appliance until global appliance apply runs."
-                    data-confirm-label="Delete NAT rule"
-                  >
-                    <input type="hidden" name="csrf" value="{{ csrf_token }}">
-                    <button class="button tiny danger" type="submit">Delete</button>
-                  </form>
-                </td>
-              </tr>
-            {% endfor %}
-          </tbody>
-        </table>
-      </div>
-
       <div id="routes-wan-policies-panel" class="tab-panel" role="tabpanel" hidden>
         <div class="section-head compact-section-head">
           <div>
@@ -270,18 +216,11 @@
         {% if routes_wan_can_write %}data-autosave-form data-autosave-status-id="routes-wan-settings-autosave-status"{% endif %}
       >
         <input type="hidden" name="csrf" value="{{ csrf_token }}">
-        <input type="hidden" name="nat_enabled" value="{{ 'on' if routes_wan_settings.nat_enabled and not routes_wan_settings.routing_enabled else 'off' }}" data-routes-wan-nat-fallback>
         <label class="switch-field">
           <span class="field-label"><span>Routing enabled</span><button class="help-icon" type="button" data-help="Controls Atlaso lab routes, routing permissions, and IPv4/IPv6 packet forwarding. Management reachability remains protected separately.">i</button></span>
           <input class="switch-input" type="checkbox" name="routing_enabled" aria-label="Routing enabled" {{ "checked" if routes_wan_settings.routing_enabled else "" }} {{ "disabled" if not routes_wan_can_write else "" }}>
           <span class="switch-track" aria-hidden="true"></span>
           <span class="routes-wan-setting-state" data-routes-wan-feature-state="routing"><span class="status-pill {{ 'warn' if routes_wan_feature_status.routing == 'needs attention' else 'good' if routes_wan_feature_status.routing == 'valid' else 'muted' }}">{{ routes_wan_feature_status.routing }}</span></span>
-        </label>
-        <label class="switch-field">
-          <span class="field-label"><span>NAT enabled</span><button class="help-icon" type="button" data-help="Controls saved Atlaso IPv4 masquerade rules. NAT remains selected but is suspended whenever Routing is disabled.">i</button></span>
-          <input class="switch-input" type="checkbox" name="nat_enabled" aria-label="NAT enabled" {{ "checked" if routes_wan_settings.nat_enabled else "" }} {{ "disabled" if not routes_wan_can_write or not routes_wan_settings.routing_enabled else "" }}>
-          <span class="switch-track" aria-hidden="true"></span>
-          <span class="routes-wan-setting-state" data-routes-wan-feature-state="nat"><span class="status-pill {{ 'warn' if routes_wan_feature_status.nat in ['suspended', 'needs attention'] else 'good' if routes_wan_feature_status.nat == 'valid' else 'muted' }}">{{ routes_wan_feature_status.nat }}</span>{% if routes_wan_feature_status.nat == "suspended" %}<small class="field-hint" data-routes-wan-suspended-hint role="status">Suspended until Routing is enabled.</small>{% endif %}</span>
         </label>
         <label class="switch-field">
           <span class="field-label"><span>WAN Simulation enabled</span><button class="help-icon" type="button" data-help="Controls interface-level tc/netem state independently of packet forwarding. Saved policies and assignments remain available while disabled.">i</button></span>
@@ -368,20 +307,6 @@
         <section class="vcf-sddc-step-page hidden" data-atlaso-wizard-step="direction"><div class="form-grid"><label><span class="field-label"><span>Source interface or VLAN</span><button class="help-icon" type="button" data-help="Non-management network from which forwarded traffic originates.">i</button></span><select name="source_interface" required>{% for target in wan_route_targets %}<option value="{{ target.name }}">{{ target.label }}</option>{% endfor %}</select></label><label><span class="field-label"><span>Destination interface or VLAN</span><button class="help-icon" type="button" data-help="Different non-management network to which traffic may be forwarded.">i</button></span><select name="destination_interface" required>{% for target in wan_route_targets %}<option value="{{ target.name }}">{{ target.label }}</option>{% endfor %}</select></label><label><span class="field-label"><span>Priority</span><button class="help-icon" type="button" data-help="Non-negative ordering value recorded with the explicit forwarding permission.">i</button></span><input type="number" name="priority" min="0" value="100" required></label></div></section>
         <section class="vcf-sddc-step-page hidden" data-atlaso-wizard-step="state"><label class="switch-field"><span class="field-label"><span>Permission enabled</span><button class="help-icon" type="button" data-help="Enabled permissions enter forwarding desired state. Firewall and host forwarding change only through global appliance apply.">i</button></span><input class="switch-input" type="checkbox" name="enabled" checked><span class="switch-track" aria-hidden="true"></span></label></section>
         <section class="vcf-sddc-step-page hidden" data-atlaso-wizard-step="review"><div class="settings-list"><div><span>Permission</span><strong data-routes-wan-review="routing-name"></strong></div><div><span>Forwarding path</span><strong data-routes-wan-review="routing-path"></strong></div><div><span>Priority</span><strong data-routes-wan-review="routing-priority"></strong></div><div><span>State</span><strong data-routes-wan-review="routing-state"></strong></div></div><p class="muted">Management remains isolated. Saving changes desired state only; forwarding changes through global appliance apply.</p></section>
-{% endcall %}
-
-{% set nat_steps = [
-  {"id": "identity", "label": "Identity", "summary": "Name and purpose"},
-  {"id": "translation", "label": "Translation", "summary": "Source and outbound target"},
-  {"id": "state", "label": "State", "summary": "Enable or disable"},
-  {"id": "review", "label": "Review", "summary": "Confirm masquerade"}
-] %}
-{% call resource_wizard("routes-wan-nat-dialog", "routes-wan-wizard", management_ui_root ~ "/routes-wan/nat-rules", nat_steps, "Add NAT rule", "Describe the explicit IPv4 outbound masquerade behavior.", "Add NAT rule", form_data_value="nat") %}
-    <input type="hidden" name="csrf" value="{{ csrf_token }}"><input type="hidden" name="source" value="any"><input type="hidden" name="masquerade" value="on">
-        <section class="vcf-sddc-step-page" data-atlaso-wizard-step="identity"><div class="form-stack"><label><span class="field-label"><span>Name</span><button class="help-icon" type="button" data-help="Unique operator-facing name for this outbound NAT rule.">i</button></span><input name="name" maxlength="120" required></label><label><span class="field-label"><span>Description</span><button class="help-icon" type="button" data-help="Why this source traffic needs outbound masquerade on the selected interface.">i</button></span><textarea name="description" rows="3" maxlength="1000"></textarea></label></div></section>
-        <section class="vcf-sddc-step-page hidden" data-atlaso-wizard-step="translation"><div class="form-grid"><div class="form-field"><span class="field-label"><span>Inbound interfaces or VLANs</span><button class="help-icon" type="button" data-help="Select every intended IPv4 ingress target. Source addresses are restricted within these networks. The outbound target is excluded, and appliance-originated traffic is never matched.">i</button></span><div class="tag-editor" data-tag-editor data-tag-name="inbound_interfaces" data-nat-inbound-editor><div class="tag-editor-tags" data-tag-list></div><input class="tag-editor-input" type="text" data-tag-entry autocomplete="off" aria-label="Inbound interfaces or VLANs" placeholder="Add inbound interface..."><button class="tag-add-button" type="button" data-tag-menu-toggle aria-label="Add inbound interface">+</button><div class="tag-suggestions" data-tag-menu hidden>{% for target in wan_nat_targets %}<button type="button" data-tag-option="{{ target.name }}" data-tag-label="{{ target.label }}"><strong>{{ target.name }}</strong><small>{{ target.label }}</small></button>{% endfor %}</div></div></div><label><span class="field-label"><span>Source type</span><button class="help-icon" type="button" data-help="Restrict source addresses within the selected inbound targets: any IPv4 address, a Source Group, or explicit IPv4 CIDRs.">i</button></span><select data-routes-wan-nat-source-mode><option value="any">Any IPv4 source</option><option value="group">Source Group</option><option value="cidrs">IPv4 CIDRs</option></select></label><label data-routes-wan-nat-source-group hidden><span class="field-label"><span>Source Group</span><button class="help-icon" type="button" data-help="Existing Source Group expanded and validated when Routes &amp; WAN desired state is rendered.">i</button></span><select data-routes-wan-nat-group>{% for group in wan_source_groups %}<option value="group:{{ group.id }}">{{ group.name }}</option>{% endfor %}</select></label><label data-routes-wan-nat-source-cidrs hidden><span class="field-label"><span>IPv4 source CIDRs</span><button class="help-icon" type="button" data-help="Comma- or line-separated IPv4 networks. IPv6 NAT is not supported in v1.">i</button></span><textarea rows="3" data-routes-wan-nat-cidrs placeholder="192.168.50.0/24"></textarea></label><label><span class="field-label"><span>Outbound interface or VLAN</span><button class="help-icon" type="button" data-help="Non-management access physical interface or enabled VLAN with an IPv4 CIDR. Atlaso does not infer this from an interface role.">i</button></span><select name="outbound_interface" required>{% for target in wan_nat_targets %}<option value="{{ target.name }}">{{ target.label }}</option>{% endfor %}</select></label><label><span class="field-label"><span>Translation</span><button class="help-icon" type="button" data-help="NAT v1 supports explicit IPv4 masquerade only; destination NAT and port forwarding are not supported.">i</button></span><input value="IPv4 masquerade" readonly></label><label><span class="field-label"><span>Priority</span><button class="help-icon" type="button" data-help="Non-negative ordering value for this Atlaso-owned NAT rule.">i</button></span><input type="number" name="priority" min="0" value="100" required></label></div><a class="button ghost compact-button" href="{{ management_ui_path('/network-objects') }}?return_to=nat-rule" data-source-group-manage="nat-rule">Manage source groups</a></section>
-        <section class="vcf-sddc-step-page hidden" data-atlaso-wizard-step="state"><label class="switch-field"><span class="field-label"><span>NAT rule enabled</span><button class="help-icon" type="button" data-help="Enabled NAT rules enter rendered desired state. nftables and forwarding change only through global appliance apply.">i</button></span><input class="switch-input" type="checkbox" name="enabled" checked><span class="switch-track" aria-hidden="true"></span></label></section>
-        <section class="vcf-sddc-step-page hidden" data-atlaso-wizard-step="review"><div class="settings-list"><div><span>Rule</span><strong data-routes-wan-review="nat-name"></strong></div><div><span>Inbound scope</span><strong data-routes-wan-review="nat-inbound"></strong></div><div><span>Source addresses</span><code data-routes-wan-review="nat-source"></code></div><div><span>Outbound translation</span><strong data-routes-wan-review="nat-outbound"></strong></div><div><span>Priority</span><strong data-routes-wan-review="nat-priority"></strong></div><div><span>State</span><strong data-routes-wan-review="nat-state"></strong></div></div><p class="muted">Saving changes desired state only. nftables masquerade and IPv4 forwarding change through global appliance apply.</p></section>
 {% endcall %}
 
 {% set policy_steps = [

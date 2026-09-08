@@ -13,7 +13,15 @@ from sqlalchemy.orm import Session
 
 from atlaso.app.audit import record_audit
 from atlaso.app.database import get_db
-from atlaso.app.models import NatRule, Route, RoutingRule, ServiceState, WanPolicy
+from atlaso.app.models import (
+    NatRule,
+    PhysicalInterface,
+    Route,
+    RoutingRule,
+    ServiceState,
+    VlanInterface,
+    WanPolicy,
+)
 from atlaso.app.security import Identity, require_session_identity
 from atlaso.app.services.network_objects import acquire_network_objects_write_lock
 from atlaso.app.services.routes_wan import (
@@ -24,11 +32,15 @@ from atlaso.app.services.routes_wan import (
     has_default_route_conflict,
     route_gateway_target_error,
     save_routes_wan_settings,
-    validate_nat_ingress,
     validate_nat_source,
 )
 from atlaso.app.services.routes_wan import (
     default_route_family as route_default_family,
+)
+from atlaso.app.services.traffic_publishing import (
+    nat_targets,
+    save_traffic_publishing_settings,
+    validate_nat_rule,
 )
 from atlaso.app.ui_routes import MANAGEMENT_UI_ROOT
 
@@ -41,6 +53,7 @@ class RoutesWanUiDependencies:
     render: Endpoint
     appliance_apply_status: Endpoint
     routes_wan_context: Endpoint
+    traffic_publishing_context: Endpoint
     verify_csrf: Endpoint
     wan_route_targets: Endpoint
     wan_nat_targets_from_route_targets: Endpoint
@@ -73,6 +86,64 @@ def build_router(dependencies: RoutesWanUiDependencies) -> RoutesWanUiRouter:
     wan_route_targets = dependencies.wan_route_targets
     wan_nat_targets_from_route_targets = dependencies.wan_nat_targets_from_route_targets
     firewall_source_group_state_for_db = dependencies.firewall_source_group_state_for_db
+
+    @router.get("/traffic-publishing", response_class=HTMLResponse, response_model=None)
+    def traffic_publishing(request: Request, identity: Identity = Depends(require_session_identity), db: Session = Depends(get_db)) -> HTMLResponse:
+        """Show source NAT desired state authorized by read:firewall.
+
+        Args:
+            request: Management-plane browser request.
+            identity: Authenticated operator.
+            db: Saved configuration session.
+        """
+        if not identity.can("read:firewall"):
+            raise HTTPException(status_code=403, detail="Firewall read permission is required")
+        return cast(HTMLResponse, render(request, "traffic_publishing.html", {
+            "identity": identity, **dependencies.traffic_publishing_context(db),
+            "routes_wan_can_write": identity.can("write:firewall"),
+            "appliance_apply_status": appliance_apply_status(db, "nat"),
+        }))
+
+    @router.api_route("/routes-wan/nat-rules", methods=["GET", "HEAD"], response_model=None)
+    def legacy_nat_bookmark(identity: Identity = Depends(require_session_identity)) -> RedirectResponse:
+        """Redirect an eligible legacy NAT bookmark without replaying a mutation.
+
+        Args:
+            identity: Authenticated operator allowed to read the destination.
+        """
+        if not identity.can("read:firewall"):
+            raise HTTPException(status_code=403, detail="Firewall read permission is required")
+        return RedirectResponse(MANAGEMENT_UI_ROOT + "/traffic-publishing", status_code=302)
+
+    @router.post("/traffic-publishing/settings", response_model=None)
+    def update_traffic_publishing_settings_from_ui(
+        request: Request, nat_enabled: str | None = Form(None), csrf: str = Form(...),
+        identity: Identity = Depends(require_session_identity), db: Session = Depends(get_db),
+    ) -> RedirectResponse | JSONResponse:
+        """Save source NAT activation intent; global Apply owns enforcement.
+
+        Args:
+            request: Management browser request.
+            nat_enabled: Submitted desired activation switch.
+            csrf: Session-bound mutation token.
+            identity: Operator with write:firewall permission.
+            db: Atomic settings transaction.
+        """
+        verify_csrf(request, csrf)
+        if not identity.can("write:firewall"):
+            raise HTTPException(status_code=403, detail="Firewall write permission is required")
+        acquire_network_objects_write_lock(db)
+        settings = save_traffic_publishing_settings(db, nat_enabled=nat_enabled == "on")
+        record_audit(db, actor=identity.username, action="update_traffic_publishing_settings", resource_type="traffic_publishing_settings", resource_id="global", detail=f"nat_enabled={settings.nat_enabled}")
+        db.commit()
+        if request.headers.get("X-Atlaso-Autosave") == "1" or "application/json" in request.headers.get("accept", ""):
+            context = dependencies.traffic_publishing_context(db)
+            return JSONResponse({"status": "saved", **settings.as_dict(),
+                                 "valid": not context["nat_validation_errors"],
+                                 "validation_errors": context["nat_validation_errors"],
+                                 "config_path": context["nat_config_path"],
+                                 "config_preview": context["nat_config_preview"]})
+        return RedirectResponse(MANAGEMENT_UI_ROOT + "/traffic-publishing", status_code=303)
 
     @router.get("/routes-wan", response_class=HTMLResponse, response_model=None)
     def routes_wan(
@@ -134,13 +205,7 @@ def build_router(dependencies: RoutesWanUiDependencies) -> RoutesWanUiRouter:
         acquire_network_objects_write_lock(db)
         current_settings = ensure_routes_wan_settings(db)
         next_routing_enabled = routing_enabled == "on"
-        next_nat_enabled = (
-            nat_enabled == "on"
-            if nat_enabled in {"on", "off"}
-            else current_settings.nat_enabled
-            if not current_settings.routing_enabled or not next_routing_enabled
-            else False
-        )
+        next_nat_enabled = nat_enabled == "on" if nat_enabled in {"on", "off"} else current_settings.nat_enabled
         settings = save_routes_wan_settings(
             db,
             routing_enabled=next_routing_enabled,
@@ -812,6 +877,7 @@ def build_router(dependencies: RoutesWanUiDependencies) -> RoutesWanUiRouter:
         return RedirectResponse("/routes-wan", status_code=303)
 
 
+    @router.post("/traffic-publishing/nat-rules", response_model=None)
     @router.post("/routes-wan/nat-rules", response_model=None)
     def create_nat_rule_from_ui(
         request: Request,
@@ -820,6 +886,9 @@ def build_router(dependencies: RoutesWanUiDependencies) -> RoutesWanUiRouter:
         outbound_interface: str = Form(""),
         inbound_interfaces: list[str] = Form([]),
         masquerade: str | None = Form(None),
+        ip_family: int | None = Form(None),
+        translation_mode: str | None = Form(None),
+        translated_address: str | None = Form(None),
         priority: str = Form("100"),
         description: str = Form(""),
         enabled: str | None = Form(None),
@@ -835,7 +904,10 @@ def build_router(dependencies: RoutesWanUiDependencies) -> RoutesWanUiRouter:
             source: Source path, address, or record to process.
             outbound_interface: Outbound interface supplied by the caller.
             inbound_interfaces: Explicit ingress interface/VLAN membership.
-            masquerade: Masquerade supplied by the caller.
+            masquerade: Legacy masquerade flag.
+            ip_family: IPv4 or IPv6 family, preserving existing state when omitted.
+            translation_mode: Interface masquerade or fixed SNAT.
+            translated_address: Same-family address assigned to the egress target.
             priority: Ordering priority assigned to the item.
             description: Human-readable description of the resource.
             enabled: Whether the requested behavior is enabled.
@@ -847,24 +919,21 @@ def build_router(dependencies: RoutesWanUiDependencies) -> RoutesWanUiRouter:
             The endpoint response.
         """
         verify_csrf(request, csrf)
+        if request.url.path.startswith(MANAGEMENT_UI_ROOT + "/traffic-publishing") and not identity.can("write:firewall"):
+            raise HTTPException(status_code=403, detail="Firewall write permission is required")
         acquire_network_objects_write_lock(db)
-        parsed = validate_nat_rule_form_values(name, source, outbound_interface, priority, masquerade, db)
-        if isinstance(parsed, Response):
-            return parsed
-        ingress_errors = validate_nat_ingress(inbound_interfaces, outbound_interface, {target["name"] for target in wan_nat_targets_from_route_targets(wan_route_targets(db))}, required=True)
-        if ingress_errors:
-            return Response(ingress_errors[0], status_code=422, media_type="text/plain")
-        name_value, source_value, outbound_value, masquerade_value, priority_value = parsed
-        rule = NatRule(
-            name=name_value,
-            source=source_value,
-            outbound_interface=outbound_value,
-            inbound_interfaces=inbound_interfaces,
-            masquerade=masquerade_value,
-            priority=priority_value,
-            description=description.strip() or None,
-            enabled=enabled == "on",
-        )
+        priority_value = parse_int_form_value(priority.strip(), "Priority", default=100, minimum=0)
+        if isinstance(priority_value, Response):
+            return priority_value
+        rule = NatRule(name=name.strip(), source=source.strip() or "any", outbound_interface=outbound_interface,
+                       inbound_interfaces=inbound_interfaces, ip_family=4 if ip_family is None else ip_family,
+                       translation_mode=translation_mode or "masquerade", translated_address=translated_address or "",
+                       masquerade=(translation_mode or "masquerade") == "masquerade", priority=priority_value,
+                       description=description.strip() or None, enabled=enabled == "on")
+        targets = nat_targets(list(db.scalars(select(PhysicalInterface))), list(db.scalars(select(VlanInterface))))
+        errors = validate_nat_rule(rule, targets, firewall_source_group_state_for_db(db)["groups"], creating=True)
+        if not rule.name or errors:
+            return Response(errors[0] if errors else "NAT rule name is required.", status_code=422, media_type="text/plain")
         db.add(rule)
         try:
             db.commit()
@@ -872,9 +941,10 @@ def build_router(dependencies: RoutesWanUiDependencies) -> RoutesWanUiRouter:
             db.rollback()
             return Response(f"NAT rule {rule.name} already exists.", status_code=409, media_type="text/plain")
         record_audit(db, actor=identity.username, action="create_nat_rule", resource_type="nat_rule", resource_id=str(rule.id), detail=f"inbound={rule.inbound_interfaces or []}; outbound={rule.outbound_interface}; source={rule.source}")
-        return RedirectResponse("/routes-wan", status_code=303)
+        return RedirectResponse(MANAGEMENT_UI_ROOT + "/traffic-publishing", status_code=303)
 
 
+    @router.post("/traffic-publishing/nat-rules/{rule_id}/edit", response_model=None)
     @router.post("/routes-wan/nat-rules/{rule_id}/edit", response_model=None)
     def edit_nat_rule_from_ui(
         request: Request,
@@ -884,6 +954,9 @@ def build_router(dependencies: RoutesWanUiDependencies) -> RoutesWanUiRouter:
         outbound_interface: str = Form(""),
         inbound_interfaces: list[str] = Form([]),
         masquerade: str | None = Form(None),
+        ip_family: int | None = Form(None),
+        translation_mode: str | None = Form(None),
+        translated_address: str | None = Form(None),
         priority: str = Form("100"),
         description: str = Form(""),
         enabled: str | None = Form(None),
@@ -900,7 +973,10 @@ def build_router(dependencies: RoutesWanUiDependencies) -> RoutesWanUiRouter:
             source: Source path, address, or record to process.
             outbound_interface: Outbound interface supplied by the caller.
             inbound_interfaces: Explicit ingress interface/VLAN membership.
-            masquerade: Masquerade supplied by the caller.
+            masquerade: Legacy masquerade flag.
+            ip_family: IPv4 or IPv6 family, preserving existing state when omitted.
+            translation_mode: Interface masquerade or fixed SNAT.
+            translated_address: Same-family address assigned to the egress target.
             priority: Ordering priority assigned to the item.
             description: Human-readable description of the resource.
             enabled: Whether the requested behavior is enabled.
@@ -915,25 +991,35 @@ def build_router(dependencies: RoutesWanUiDependencies) -> RoutesWanUiRouter:
             HTTPException: If the request cannot be fulfilled.
         """
         verify_csrf(request, csrf)
+        if request.url.path.startswith(MANAGEMENT_UI_ROOT + "/traffic-publishing") and not identity.can("write:firewall"):
+            raise HTTPException(status_code=403, detail="Firewall write permission is required")
         acquire_network_objects_write_lock(db)
         rule = db.get(NatRule, rule_id)
         if not rule:
             raise HTTPException(status_code=404, detail="NAT rule not found")
-        parsed = validate_nat_rule_form_values(name, source, outbound_interface, priority, masquerade, db, validate_target=enabled == "on")
-        if isinstance(parsed, Response):
-            return parsed
-        ingress_errors = validate_nat_ingress(inbound_interfaces, outbound_interface, {target["name"] for target in wan_nat_targets_from_route_targets(wan_route_targets(db))}, required=enabled == "on", check_availability=enabled == "on")
-        if ingress_errors:
-            return Response(ingress_errors[0], status_code=422, media_type="text/plain")
-        name_value, source_value, outbound_value, masquerade_value, priority_value = parsed
-        rule.name = name_value
-        rule.source = source_value
-        rule.outbound_interface = outbound_value
+        priority_value = parse_int_form_value(priority.strip(), "Priority", default=100, minimum=0)
+        if isinstance(priority_value, Response):
+            return priority_value
+        rule.name = name.strip()
+        rule.source = source.strip() or "any"
+        rule.outbound_interface = outbound_interface
         rule.inbound_interfaces = inbound_interfaces
-        rule.masquerade = masquerade_value
+        rule.ip_family = rule.ip_family if ip_family is None else ip_family
+        rule.translation_mode = translation_mode or rule.translation_mode
+        rule.translated_address = rule.translated_address if translated_address is None else translated_address
+        if translation_mode == "masquerade":
+            rule.translated_address = ""
+        rule.masquerade = rule.translation_mode == "masquerade"
         rule.priority = priority_value
         rule.description = description.strip() or None
         rule.enabled = enabled == "on"
+        # no-autoflush prevents an invalid candidate from reaching persistence while targets are read.
+        with db.no_autoflush:
+            targets = nat_targets(list(db.scalars(select(PhysicalInterface))), list(db.scalars(select(VlanInterface))))
+            errors = validate_nat_rule(rule, targets, firewall_source_group_state_for_db(db)["groups"])
+        if not rule.name or errors:
+            db.rollback()
+            return Response(errors[0] if errors else "NAT rule name is required.", status_code=422, media_type="text/plain")
         db.add(rule)
         try:
             db.commit()
@@ -941,9 +1027,10 @@ def build_router(dependencies: RoutesWanUiDependencies) -> RoutesWanUiRouter:
             db.rollback()
             return Response(f"NAT rule {rule.name} already exists.", status_code=409, media_type="text/plain")
         record_audit(db, actor=identity.username, action="update_nat_rule", resource_type="nat_rule", resource_id=str(rule.id), detail=f"inbound={rule.inbound_interfaces or []}; outbound={rule.outbound_interface}; source={rule.source}")
-        return RedirectResponse("/routes-wan", status_code=303)
+        return RedirectResponse(MANAGEMENT_UI_ROOT + "/traffic-publishing", status_code=303)
 
 
+    @router.post("/traffic-publishing/nat-rules/{rule_id}/delete", response_model=None)
     @router.post("/routes-wan/nat-rules/{rule_id}/delete", response_model=None)
     def delete_nat_rule_from_ui(
         request: Request,
@@ -968,6 +1055,8 @@ def build_router(dependencies: RoutesWanUiDependencies) -> RoutesWanUiRouter:
             HTTPException: If the request cannot be fulfilled.
         """
         verify_csrf(request, csrf)
+        if request.url.path.startswith(MANAGEMENT_UI_ROOT + "/traffic-publishing") and not identity.can("write:firewall"):
+            raise HTTPException(status_code=403, detail="Firewall write permission is required")
         acquire_network_objects_write_lock(db)
         rule = db.get(NatRule, rule_id)
         if not rule:
@@ -975,7 +1064,7 @@ def build_router(dependencies: RoutesWanUiDependencies) -> RoutesWanUiRouter:
         db.delete(rule)
         db.commit()
         record_audit(db, actor=identity.username, action="delete_nat_rule", resource_type="nat_rule", resource_id=str(rule_id))
-        return RedirectResponse("/routes-wan", status_code=303)
+        return RedirectResponse(MANAGEMENT_UI_ROOT + "/traffic-publishing", status_code=303)
 
 
     @router.post("/routes-wan/policies", response_model=None)

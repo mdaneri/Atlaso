@@ -48,6 +48,7 @@ exemption changes without review. The management routes rendered by the current 
 /ui/management/openid-connect
 /ui/management/physical-interfaces
 /ui/management/routes-wan
+/ui/management/traffic-publishing
 /ui/management/services
 /ui/management/services/{service}/logs
 /ui/management/settings
@@ -116,6 +117,7 @@ read-only or unavailable surface has a mutation workflow.
 | `/ui/management/appliance-update` plus update-only browser hold — streams, repositories, modules, tasks, global indicator, parent/child maintenance status | Wizard-backed Tabulator plus non-grid settings, existing read-only Tasks Tabulator, and approved custom/other topbar/status surfaces; ESX Storage, Automation, DNS, account-menu topbar, Review appliance changes, Tasks hierarchy, and Appliance Apply live-task status references | Repository/module details, durable per-stream results, exact action reason, source data, positive-only global indicator, and shared Tasks fallback remain readable; during installation nginx supplies a self-contained no-JavaScript, no-store 503 page with bounded ordered task state | Authenticated positive-only indicator and admin write controls before admission; fresh-check install gate; shared deletion confirmation; update-only page requires no session while the control plane is unavailable and exposes no commands, credentials, or detailed errors; maintenance task boundary remains separate from global apply | Pass D/N/K/F/Z/V | E1–E8 |
 | `/ui/management/automation` — schedules, executions, managed scripts | Wizard-backed and read-only Tabulator; Automation Schedules reference | Truthful schedules, executions, and managed-scripts fallback tables added by #120 | Admin writes, shared discard/destructive confirmation, durable worker/task boundary; no direct host mutation | Pass D/N/K/F/Z/V | E1–E8 |
 | `/ui/management/routes-wan` — global settings, static routes, routing permissions, NAT, policies | Non-grid autosave settings plus wizard-backed Tabulator using four shared `resource_wizard(...)` dialogs; DNS settings and ESX Storage references | Three global switches, four paired fallback tables, and rendered feature-aware validation/config preview | Dual routes/WAN permission gate, reviewed add/edit, direct Enabled state, shared confirmations; generated permissions read-only; enforcement only through global `wan` apply | Pass D/N/K/F/Z/V | E1–E8 |
+| `/ui/management/traffic-publishing` — source NAT | Non-grid autosave plus wizard-backed Tabulator; Routing and WAN, DNS and ESX Storage references | NAT switch, family and mode, fallback and preview | Firewall permissions; global `nat` apply | Pass; deployed desktop/narrow grid and IPv6 wizard captures, real Apply and reboot verified | #721 |
 | `/ui/management/network-objects` — Source Groups and consumer usage | Full-height compact wizard-backed Tabulator using the ESX Storage grid/wizard, shared tag editor, and Audit Events workspace references | Source Group fallback, built-in Any, line-separated entries, consumers, and validation render in HTML; JavaScript enhances explicit entries with server-validated non-color tag states | Existing Firewall scopes; stable IDs; exclusive canonical `entries: ["any"]`; shared confirmation; in-use deletion conflict; no direct host mutation | Pass D/N/K/F/Z/V | E1–E8 |
 | `/ui/management/firewall` — operator and managed rules | Wizard-backed and direct-edit Tabulator plus non-grid settings; DNS/ESX Storage references | Rule and managed-rule fallbacks, validation, and preview | Role-gated edits; Network Objects return handoff; shared remove confirmation; global `firewall` apply only | Pass D/N/K/F/Z/V | E1–E8 |
 | `/ui/management/physical-interfaces` — observed and desired interfaces | Direct-edit Tabulator with the shared boolean glyph formatter; Physical Interfaces reference | Paired interface fallback with observed and desired values, including access management UI exposure | Role-gated desired-state edits; management-path lockout validation; confirmation for guarded state changes; global `network` apply only | Pass D/N/K/F/Z/V | E1–E8 |
@@ -208,7 +210,8 @@ Page templates covered by the route rows are `appliance_update.html`, `audit.htm
 `ca_requests.html`, `certificate_authority.html`, `dashboard.html`, `depot_browser.html`, `dhcp.html`, `dns.html`,
 `esx_storage.html`, `esxi_pxe.html`, `firewall.html`, `kms.html`, `ldap.html`, `login.html`, `logs.html`, `monitor.html`,
 `network_objects.html`, `ntp.html`, `physical_interfaces.html`, `placeholder.html`, `public_service_home.html`, `public_terminal.html`,
-`remote_terminal.html`, `routes_wan.html`, `services.html`, `settings.html`, `tasks.html`, `terminal.html`, `users.html`,
+`remote_terminal.html`, `traffic_publishing.html`,
+`routes_wan.html`, `services.html`, `settings.html`, `tasks.html`, `terminal.html`, `users.html`,
 `vaults.html`, `vcf_backups.html`, `vcf_helper.html`, `vcf_offline_depot.html`,
 `vcf_offline_depot_task_log.html`, `vcf_private_registry.html`, and `vlan_interfaces.html`.
 

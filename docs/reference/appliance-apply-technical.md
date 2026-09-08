@@ -84,7 +84,7 @@ Current apply units are:
 - Local Users
 - Network
 - Appliance Settings
-- Routes & WAN Simulation
+- Routing & WAN
 - Firewall
 - DNS/DHCP (dnsmasq)
 - ESXi PXE
@@ -185,7 +185,7 @@ configured management default to both the main table and management policy table
 with a configured default, it also writes the directly connected prefix as a scope-link route in table `100` before the
 source rule selects that table. This prevents same-subnet management replies from following the default gateway after a
 clean reboot. Non-management physical interfaces and VLANs cannot set these fields. IPv4 DHCP and IPv6 Disabled or
-Automatic clear the corresponding static gateway. Lab route gateways remain owned by Routes & WAN Simulation in table
+Automatic clear the corresponding static gateway. Lab route gateways remain owned by Routing & WAN in table
 `200`, allowing management and lab traffic to use different exits.
 
 When a static physical interface changes from `management` to `access`, the shared physical-interface domain service
@@ -193,7 +193,7 @@ captures valid IPv4 and IPv6 gateways before those management-only fields clear.
 creates enabled canonical `0.0.0.0/0` or `::/0` Route rows for the converted target, or enables and reuses an equivalent
 row. Any different saved default in that family rejects the complete mutation with no interface, route, dependency, or
 audit commit. Missing gateways create no route and produce a bounded routed-connectivity warning. The transaction marks
-Routes & WAN Simulation and Appliance Settings as dependent and records both interface and route audit evidence.
+Routing & WAN and Appliance Settings as dependent and records both interface and route audit evidence.
 
 For the Physical Interfaces DHCP-to-static action, Atlaso reads `ip -j -4 route show default`, accepts only a usable
 IPv4 route whose protocol is DHCP and whose device matches the row, and proposes the lowest-metric result. Browser
@@ -272,7 +272,7 @@ separate snapshotted certificate and key files, including when the protocol rema
 certificate rotates.
 
 If a management-to-access desired-state mutation introduces or enables a default route that differs from the
-last-applied WAN baseline, Routes & WAN Simulation becomes a sixth handoff participant. A standalone Routes & WAN
+last-applied WAN baseline, Routing & WAN becomes a sixth handoff participant. A standalone Routes & WAN
 submission also initiates the handoff when it adds, edits, disables, or removes a default mirrored through an effective
 flagged management listener. Any WAN unit captured with an otherwise protected management edit remains a participant
 even when its changes affect only lab routes, NAT, or simulation policy. Atlaso stages and validates the candidate WAN
@@ -364,8 +364,8 @@ at task start; desired-state edits saved during the helper's bounded readiness i
 
 ### Routes and WAN apply
 
-The real Routes & WAN Simulation apply path stages config at `/var/lib/atlaso/apply/wan/atlaso-wan.conf`. The `wan` unit
-owns static lab route desired state, routing permissions, IPv4 outbound masquerade NAT rules, and interface/VLAN-level
+The real Routing & WAN apply path stages config at `/var/lib/atlaso/apply/wan/atlaso-wan.conf`. The `wan` unit
+owns static lab route desired state, routing permissions, forwarding, and interface/VLAN-level
 WAN simulation through `tc/netem`; it does not represent an interface role. Atlaso has no `wan` interface role. The
 static management IPv4 gateway is installed as the main-table default so appliance-originated traffic can select a route
 before a source address exists, and is also installed in management table 100 for management source-policy routing.
@@ -373,7 +373,7 @@ Static routes may target IPv4-only, IPv6-only, or dual-stack non-management acce
 VLANs; IPv6 routes render through `ip -6 route`. Lab routes are installed in Atlaso table 200 so their gateways do not
 compete with the management default. A default on the effective flagged-access management listener is additionally
 installed in the main table for appliance-originated traffic. A successful apply copies the validated config to
-`/etc/atlaso/wan/atlaso-wan.conf` and enables `atlaso-wan.service`, which replays the route, rule, forwarding, NAT, and
+`/etc/atlaso/wan/atlaso-wan.conf` and enables `atlaso-wan.service`, which replays the route, rule, forwarding, and
 WAN-policy runtime after `network-online.target`; management-handoff rollback snapshots and restores both artifacts.
 The browser wizard derives explicit IPv4 or IPv6 defaults as canonical
 `0.0.0.0/0` or `::/0`, requires a same-family next hop that is on-link for the selected target (or IPv6 link-local),
@@ -381,33 +381,44 @@ and rejects a second default of the same family. The UI/API,
 settings-archive, desired-state, and helper validation layers enforce that contract; canonical `/0` API payloads remain
 compatible. UI, API, and archive mutations share a transaction lock so concurrent requests cannot each pass the
 one-default-per-family check before either write commits. Destination-specific routes continue to allow a blank gateway
-for directly connected networks. NAT v1 is
-explicit IPv4 masquerade only: no destination NAT, port forwarding, IPv6
-NAT, or automatic broad NAT is created from interface roles. Operators edit NAT rules on
-`/ui/management/routes-wan`, choose a
-non-management access physical interface or enabled VLAN with an IPv4 CIDR as the outbound interface, and review the
-rendered nftables table and command intent on the global apply page. Route-specific WAN impairment is planned but not
+for directly connected networks. Source translation is owned by the separate **Traffic Publishing** (`nat`) unit; see
+[the operator guide](../operate/traffic-publishing.md) for dual-stack rules and compatibility. Route-specific WAN
+impairment is planned but not
 exposed in v1; the design notes live in `docs/routing-wan-roadmap.md`.
 
 The `/ui/management/routes-wan` browser surface labels path entries **Static Routes** and forwarding authorization **Routing
-Permissions**. Static Routes, explicit Routing Permissions, NAT Rules, and WAN Policies retain Tabulator browse grids
+Permissions**. Static Routes, explicit Routing Permissions, and WAN Policies retain Tabulator browse grids
 but use the shared `resource_wizard(...)` structure and `createWizard(...)` behavior for reviewed add/edit flows.
 Wizard submission and direct Enabled changes update desired state only;
 they never invoke this helper or apply unit directly. Generated route-role permissions remain read-only.
 
-Through `atlaso-helper wan validate|apply`, the helper validates staged routes, routing rules, NAT rules, WAN targets,
+Through `atlaso-helper wan validate|apply`, the helper validates staged routes, routing rules, WAN targets,
 and netem policy values only for their active global feature. The staged `[feature_settings]` section carries
-`routing_enabled`, `nat_enabled`, and `wan_simulation_enabled` while retaining every saved resource row. Routing on
+`routing_enabled` and `wan_simulation_enabled` while retaining every saved resource row. Routing on
 sets `net.ipv4.ip_forward=1` and `net.ipv6.conf.all.forwarding=1`; Routing off sets both to `0`, removes Atlaso lab
 routes and rules, and leaves protected management table `100` behavior intact. NAT is effective only when Routing and
-NAT are both on; every other combination flushes Atlaso's NAT rules without changing saved intent. WAN Simulation
-independently applies or removes root `tc/netem` qdiscs. Apply installs
-`/etc/atlaso/nftables.d/atlaso-nat.nft`, applies source policy rules with `ip rule`, and applies static routes with
+NAT are both on; the `nat` unit otherwise clears Atlaso's NAT rules without changing saved intent. WAN Simulation
+independently applies or removes root `tc/netem` qdiscs. WAN Apply applies source policy rules with `ip rule` and
+static routes with
 `ip route replace ... table 200`. Removed route deletion is staged only when a route existed in the selected unit's
 last-applied baseline and is absent from current desired state. Management is never a route, NAT, or routing-permission
 target, and the Firewall unit generates explicit management-to-lab and lab-to-management forward drops.
 The same validator and apply path are reused when WAN joins a protected management handoff; this is not a second host
 mutation mechanism.
+
+### Traffic Publishing apply
+
+The `nat` unit stages `/var/lib/atlaso/apply/nat/atlaso-nat.conf`. `atlaso-helper nat validate|apply` independently
+validates same-family sources, explicit ingress and egress, and fixed SNAT address ownership. Apply verifies live
+MAC/index identity and assigned addresses before atomic dual-family nft replacement. It preserves the managed include
+`/etc/atlaso/nftables.d/atlaso-nat.nft` and unrelated tables. NAT never writes forwarding sysctls or WAN baselines.
+
+The durable recovery journal beside `/etc/atlaso/traffic-publishing/atlaso-nat.conf` records previous files and service
+enablement before mutation. Failed persistence restores previous runtime and files; interrupted recovery is retried at
+startup. `atlaso-nat.service` invokes `nat restore` after Network and WAN, rebuilding live selectors rather than loading
+stale kernel indexes. The legacy WAN replay bridge is used only until a canonical NAT runtime exists. Missing or
+changed identities quarantine translation; ordinary Apply rejects them. Management handoff snapshots include the NAT
+runtime and recovery record. Global Apply expands NAT dependencies before classifying management handoff requirements.
 
 ### DNS/DHCP apply
 
@@ -777,7 +788,7 @@ dedicated complete factory-reset transaction, nginx serves public HTTP/80 as a p
 not expose a management HTTPS listener.
 
 Complete factory reset is the sole exception to the ordinary Apply submission boundary. It reuses the same render,
-validation, execution ordering, and baseline code for all 16 units inside a root-owned, resumable transaction. It does
+validation, execution ordering, and baseline code for all 17 units inside a root-owned, resumable transaction. It does
 not create an Apply job or modal: success means the replacement database and runtime are already at the same clean
 baseline. The transaction scrubs retained VCF Backup authorized keys, the Web Terminal CA key pair, and pending terminal
 signing requests in addition to Apply staging. Its delay timer and runner share the transaction lock, and the durable

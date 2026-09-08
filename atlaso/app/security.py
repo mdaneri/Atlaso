@@ -182,6 +182,7 @@ UI_PATH_SCOPES = [
     ("/physical-interfaces", "read:interfaces", "write:interfaces"),
     ("/vlan-interfaces", "read:vlans", "write:vlans"),
     ("/network-objects", "read:firewall", "write:firewall"),
+    ("/traffic-publishing", "read:firewall", "write:firewall"),
     ("/routes-wan", "read:routes", "write:routes"),
     ("/firewall", "read:firewall", "write:firewall"),
     ("/dns", "read:dns", "write:dns"),
