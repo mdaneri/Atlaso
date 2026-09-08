@@ -15,7 +15,12 @@ class FileRefusal(RuntimeError):
 
 @contextmanager
 def cleanup_lock(root: Path, digest: str):
-    """Serialize destructive runs for one canonical task identity across processes without waiting."""
+    """Serialize destructive runs for one canonical task identity across processes without waiting.
+
+    Args:
+        root: Root directory that bounds the filesystem operation.
+        digest: Canonical task identity SHA-256 used to coordinate exclusive cleanup.
+    """
     if len(digest) != 64 or any(character not in "0123456789abcdef" for character in digest):
         raise FileRefusal("Invalid cleanup lock identity.")
     if os.name == "nt":
@@ -58,7 +63,11 @@ def cleanup_lock(root: Path, digest: str):
 
 
 def sync_directory(path: Path) -> None:
-    """Persist visible POSIX entries before trusting a recovered rename; Windows publishes write-through."""
+    """Persist visible POSIX entries before trusting a recovered rename; Windows publishes write-through.
+
+    Args:
+        path: Filesystem path examined by this operation.
+    """
     if os.name != "nt":
         descriptor = os.open(path, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
         try:
@@ -68,7 +77,12 @@ def sync_directory(path: Path) -> None:
 
 
 def publish_durable_file(source: Path, destination: Path) -> None:
-    """Publish a flushed same-directory file and durably commit its directory entry."""
+    """Publish a flushed same-directory file and durably commit its directory entry.
+
+    Args:
+        source: Staged same-directory entry whose contents were already flushed.
+        destination: Final path that must not replace an existing entry.
+    """
     if source.parent != destination.parent or destination.exists():
         raise FileRefusal("Evidence publication requires a new name in the same directory.")
     if os.name == "nt":
@@ -84,7 +98,11 @@ def publish_durable_file(source: Path, destination: Path) -> None:
 
 
 def ensure_durable_directory(path: Path) -> None:
-    """Publish each newly created directory through its parent before trusting child journals."""
+    """Publish each newly created directory through its parent before trusting child journals.
+
+    Args:
+        path: Filesystem path examined by this operation.
+    """
     pending = path.with_name(f".{path.name}.atlaso-cleanup-directory.pending")
     if pending.exists():
         raise FileRefusal("Pending evidence-directory publication requires independent reconciliation before retry.")
@@ -104,7 +122,12 @@ def ensure_durable_directory(path: Path) -> None:
 
 
 def read_bounded_regular(path: Path, limit: int) -> bytes:
-    """Read a small ordinary file without following its link or accepting growth/replacement."""
+    """Read a small ordinary file without following its link or accepting growth/replacement.
+
+    Args:
+        path: Filesystem path examined by this operation.
+        limit: Maximum permitted file size and number of bytes read.
+    """
     before = path.lstat()
     if not stat.S_ISREG(before.st_mode) or before.st_nlink != 1 or before.st_size > limit:
         raise FileRefusal("Evidence input must be a bounded regular single-link file.")
@@ -148,7 +171,13 @@ class WindowsFiles:
 
     @contextmanager
     def opened(self, path: Path, *, delete: bool = False, directory: bool = False):
-        """Deny replacement/writers while reading attributes or setting exact-object disposition."""
+        """Deny replacement/writers while reading attributes or setting exact-object disposition.
+
+        Args:
+            path: Filesystem path examined by this operation.
+            delete: Request deletion access while retaining the checked object handle.
+            directory: Whether the handle must refer to a directory.
+        """
         # READ_DATA/LIST_DIRECTORY makes the share restriction effective. OPEN_REPARSE_POINT
         # inspects the entry itself; BACKUP_SEMANTICS permits ordinary directory handles.
         handle = self.kernel.CreateFileW(str(path), 0x81 | (0x10000 if delete else 0),
@@ -172,7 +201,11 @@ class WindowsFiles:
 
     @contextmanager
     def ancestors(self, path: Path):
-        """Pin from volume root down so a checked ancestor cannot become a junction."""
+        """Pin from volume root down so a checked ancestor cannot become a junction.
+
+        Args:
+            path: Filesystem path examined by this operation.
+        """
         from contextlib import ExitStack
 
         with ExitStack() as stack:
@@ -181,11 +214,19 @@ class WindowsFiles:
             yield
 
     def snapshot(self, root: Path) -> dict[str, dict]:
-        """Capture an exact ordinary tree without following links or allowing ancestor replacement."""
+        """Capture an exact ordinary tree without following links or allowing ancestor replacement.
+
+        Args:
+            root: Root directory that bounds the filesystem operation.
+        """
         result: dict[str, dict] = {}
 
         def visit(path: Path) -> None:
-            """Keep a parent pinned while enumerating and inspecting its children."""
+            """Keep a parent pinned while enumerating and inspecting its children.
+
+            Args:
+                path: Filesystem path examined by this operation.
+            """
             if len(result) >= 50000 or len(path.relative_to(root).parts) > 128:
                 raise FileRefusal("Generated tree exceeds bounded inventory limits; split its owned resource inventory.")
             directory = path.is_dir()
@@ -201,7 +242,12 @@ class WindowsFiles:
         return result
 
     def remove(self, root: Path, expected: dict[str, dict]) -> None:
-        """Delete children then empty directories through matching no-follow handles."""
+        """Delete children then empty directories through matching no-follow handles.
+
+        Args:
+            root: Root directory that bounds the filesystem operation.
+            expected: Previously captured relative-path identity snapshot required before removal.
+        """
         if self.snapshot(root) != expected:
             raise FileRefusal("Generated output changed after inspection; obtain a fresh preview.")
         for relative in sorted(expected, key=lambda value: len(Path(value).parts), reverse=True):

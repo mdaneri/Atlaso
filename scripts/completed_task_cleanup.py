@@ -40,13 +40,22 @@ class Refusal(RuntimeError):
 
 
 def require(condition: object, message: str) -> None:
-    """Fail closed with a bounded, caller-authored diagnostic."""
+    """Fail closed with a bounded, caller-authored diagnostic.
+
+    Args:
+        condition: Gate expression that must be truthy to continue.
+        message: Sanitized refusal diagnostic for a failed gate.
+    """
     if not condition:
         raise Refusal(message)
 
 
 def ordinary(path: Path) -> Path:
-    """Reject relative paths, aliases, links, and reparse ancestors, including absent retries."""
+    """Reject relative paths, aliases, links, and reparse ancestors, including absent retries.
+
+    Args:
+        path: Filesystem path examined by this operation.
+    """
     require(path.is_absolute(), "Supply an absolute path.")
     require(not any(part in {".", ".."} for part in path.parts), "Path traversal is forbidden.")
     if os.name == "nt":
@@ -65,7 +74,11 @@ def ordinary(path: Path) -> Path:
 
 
 def read_handoff(path: Path) -> bytes:
-    """Reject special or oversized input before opening and bound the actual read as well."""
+    """Reject special or oversized input before opening and bound the actual read as well.
+
+    Args:
+        path: Filesystem path examined by this operation.
+    """
     info = ordinary(path).stat()
     require(stat.S_ISREG(info.st_mode) and info.st_nlink == 1 and info.st_size <= 262144,
             "Handoff must be a bounded regular single-link file.")
@@ -73,12 +86,21 @@ def read_handoff(path: Path) -> bytes:
 
 
 def beneath(path: Path, root: Path) -> bool:
-    """Compare complete canonical path components rather than string prefixes."""
+    """Compare complete canonical path components rather than string prefixes.
+
+    Args:
+        path: Filesystem path examined by this operation.
+        root: Root directory that bounds the filesystem operation.
+    """
     return path != root and path.is_relative_to(root)
 
 
 def configured_root(config: Path) -> Path:
-    """Read the supported desktop setting without inventing a default root."""
+    """Read the supported desktop setting without inventing a default root.
+
+    Args:
+        config: Active Codex configuration path used to resolve the permitted worktree root.
+    """
     active_config = Path(os.environ.get("CODEX_HOME", str(Path.home() / ".codex"))) / "config.toml"
     require(config == active_config, "Config must be the active CODEX_HOME/config.toml, not a handoff-supplied alternate.")
     desktop = tomllib.loads(read_bounded_regular(ordinary(config), 1024 * 1024).decode("utf-8")).get("desktop", {})
@@ -94,7 +116,12 @@ class Controller:
     """Require fresh nonce-bound responses from supported tools, never a saved preview."""
 
     def call(self, operation: str, payload: dict) -> dict:
-        """Emit one request and bound the wait for its matching live response."""
+        """Emit one request and bound the wait for its matching live response.
+
+        Args:
+            operation: Named controller operation requested by the cleanup protocol.
+            payload: Structured request fields bound to the current cleanup handoff.
+        """
         request_id = str(uuid.uuid4())
         print(json.dumps({"kind": "controller_request", "id": request_id,
                           "operation": operation, "payload": payload}), flush=True)
@@ -119,7 +146,15 @@ class Cleanup:
 
     def __init__(self, handoff: Path, evidence: Path, config: Path, execute: bool,
                  controller: Controller) -> None:
-        """Bind immutable handoff bytes and a durable evidence directory outside the target."""
+        """Bind immutable handoff bytes and a durable evidence directory outside the target.
+
+        Args:
+            handoff: Path to the immutable task handoff JSON document.
+            evidence: Durable evidence directory outside the worktree scheduled for removal.
+            config: Active Codex configuration path used to resolve the permitted worktree root.
+            execute: Whether to perform eligible transitions rather than return a read-only preview.
+            controller: Live bridge providing independently verified task and resource observations.
+        """
         self.execute = execute
         self.controller = controller
         raw = read_handoff(handoff)
@@ -211,7 +246,12 @@ class Cleanup:
                 "Origin push URLs differ from the exact same-repository destination; preserve all refs.")
 
     def command(self, args: list[str], *, allowed: tuple[int, ...] = (0,)) -> str:
-        """Cap streamed stdout and stderr together; never publish arbitrary child output on failure."""
+        """Cap streamed stdout and stderr together; never publish arbitrary child output on failure.
+
+        Args:
+            args: Argument array passed directly to the child without shell interpolation.
+            allowed: Child exit codes accepted by this operation.
+        """
         env = {**os.environ, "GIT_OPTIONAL_LOCKS": "0", "PYTHONDONTWRITEBYTECODE": "1"}
         output = bytearray()
         count = 0
@@ -221,7 +261,12 @@ class Cleanup:
             process = subprocess.Popen(args, cwd=self.repo, env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
 
             def drain(stream, keep: bool) -> None:
-                """Drain bounded chunks concurrently so neither child pipe can deadlock the other."""
+                """Drain bounded chunks concurrently so neither child pipe can deadlock the other.
+
+                Args:
+                    stream: Child output pipe drained under the combined byte limit.
+                    keep: Whether this pipe contributes to the returned stdout buffer.
+                """
                 nonlocal count
                 try:
                     with stream:
@@ -258,11 +303,19 @@ class Cleanup:
         return output.decode("utf-8").strip()
 
     def git(self, *args: str) -> str:
-        """Read or mutate only this controller's verified repository."""
+        """Read or mutate only this controller's verified repository.
+
+        Args:
+            *args: Git subcommand and arguments passed directly to the verified checkout.
+        """
         return self.command(["git", *args])
 
     def api(self, endpoint: str) -> object:
-        """Read one GitHub endpoint using existing gh authentication."""
+        """Read one GitHub endpoint using existing gh authentication.
+
+        Args:
+            endpoint: Repository-relative GitHub API endpoint to read.
+        """
         return json.loads(self.command(["gh", "api", "--hostname", "github.com", f"repos/{self.repository}/{endpoint}"]))
 
     def worktrees(self) -> list[dict[str, str]]:
@@ -402,7 +455,11 @@ class Cleanup:
         require(not symbolic, "Symbolic task ref blocks cleanup; preserve its target and reconcile branch ownership.")
 
     def validate_resource_identity(self, resource: dict) -> None:
-        """Require repository/PR binding, an exact locator, and durable original manifest bytes."""
+        """Require repository/PR binding, an exact locator, and durable original manifest bytes.
+
+        Args:
+            resource: Inventory entry containing ownership and resource identity evidence.
+        """
         required = {"id", "kind", "task_id", "source_commit", "repository", "pr", "ownership_manifest"}
         require(isinstance(resource, dict) and required <= set(resource), "Resource identity fields are incomplete.")
         require(resource["repository"] == self.repository and resource["pr"] == self.handoff["pr"],
@@ -430,7 +487,11 @@ class Cleanup:
                     "Specialized resource requires its exact supported owning cleanup tool.")
 
     def verify_resources_absent(self, *, completed_only: bool = False) -> None:
-        """Revisit the entire inventory so earlier resources cannot silently reappear."""
+        """Revisit the entire inventory so earlier resources cannot silently reappear.
+
+        Args:
+            completed_only: Restrict absence checks to resources whose release gate is already recorded.
+        """
         for resource in self.handoff["resources"]:
             if completed_only and "validation_resources_released" not in self.gates \
                     and f"resource_released:{resource['id']}" not in self.gates:
@@ -445,7 +506,12 @@ class Cleanup:
                 require(not ordinary(Path(resource["path"])).exists(), "An inventoried resource path reappeared.")
 
     def removal_scopes(self, resource: dict, result: dict) -> list[str]:
-        """Protect checkouts and durable evidence from broader owning-tool removal directories."""
+        """Protect checkouts and durable evidence from broader owning-tool removal directories.
+
+        Args:
+            resource: Inventory entry containing ownership and resource identity evidence.
+            result: Fresh controller observation containing the declared removal scopes.
+        """
         scopes = result.get("removal_scopes")
         require(isinstance(scopes, list) and len(scopes) <= 100 and all(isinstance(value, str) for value in scopes),
                 "Owning tool must report every exact filesystem removal scope.")
@@ -462,7 +528,11 @@ class Cleanup:
         return scopes
 
     def record(self, gate: str) -> None:
-        """Durably preserve completed gates before the next transition; no evidence writes in preview."""
+        """Durably preserve completed gates before the next transition; no evidence writes in preview.
+
+        Args:
+            gate: Exact transition identifier to persist or exercise in recovery.
+        """
         if gate in self.gates:
             return
         prospective = [*self.gates, gate]

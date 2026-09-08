@@ -41,7 +41,12 @@ class Bridge:
         self.title: str | None = None
 
     def call(self, operation: str, payload: dict) -> dict:
-        """Answer the bounded test protocol while allowing failed gates to be injected."""
+        """Answer the bounded test protocol while allowing failed gates to be injected.
+
+        Args:
+            operation: Named controller operation requested by the cleanup protocol.
+            payload: Structured request fields bound to the current cleanup handoff.
+        """
         self.calls.append(operation)
         if operation == "task.inspect":
             result = dict.fromkeys(("identity_verified", "exclusive_ownership_verified", "idle", "unpinned",
@@ -68,13 +73,23 @@ class Bridge:
 
 
 def git(path: Path, *arguments: str) -> str:
-    """Run real Git against only pytest-owned repository roots."""
+    """Run real Git against only pytest-owned repository roots.
+
+    Args:
+        path: Filesystem path examined by this operation.
+        *arguments: Child argument array intercepted by the fixture adapter.
+    """
     return subprocess.check_output(["git", "-C", str(path), *arguments], text=True, encoding="utf-8").strip()
 
 
 @pytest.fixture
 def cleanup(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Cleanup:
-    """Create a real merged disposable task; substitute only external GitHub/controller boundaries."""
+    """Create a real merged disposable task; substitute only external GitHub/controller boundaries.
+
+    Args:
+        tmp_path: Pytest-owned temporary directory beneath the task validation root.
+        monkeypatch: Pytest fixture for scoped substitutions restored after the test.
+    """
     root = tmp_path / "configured"
     root.mkdir()
     primary = tmp_path / "primary"
@@ -112,7 +127,12 @@ def cleanup(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Cleanup:
     command = instance.command
 
     def external(arguments: list[str], **kwargs: object) -> str:
-        """Retain real Git mutations and return deterministic remote-service evidence."""
+        """Retain real Git mutations and return deterministic remote-service evidence.
+
+        Args:
+            arguments: Child argument array intercepted by the fixture adapter.
+            **kwargs: Command execution options forwarded unchanged to the original adapter.
+        """
         if arguments[:4] == ["git", "remote", "get-url", "origin"]:
             return "https://github.com/example/Atlaso.git"
         if arguments == ["git", "remote", "get-url", "--push", "--all", "origin"]:
@@ -122,7 +142,11 @@ def cleanup(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Cleanup:
         return command(arguments, **kwargs)
 
     def api(endpoint: str) -> object:
-        """Supply exact PR/issue/main/workflow evidence independently of fixture handoff reads."""
+        """Supply exact PR/issue/main/workflow evidence independently of fixture handoff reads.
+
+        Args:
+            endpoint: Repository-relative GitHub API endpoint to read.
+        """
         if endpoint == "pulls/761":
             return {"merged": True, "merge_commit_sha": merge, "head": {"sha": head,
                     "ref": "enhancement/760-test", "repo": {"full_name": "example/Atlaso"}}, "base": {"ref": "main"}}
@@ -142,7 +166,11 @@ def cleanup(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Cleanup:
 
 
 def test_eligible_cleanup_and_title_only_retry(cleanup: Cleanup) -> None:
-    """Real leased ref deletion and Git worktree removal survive a complete retry."""
+    """Real leased ref deletion and Git worktree removal survive a complete retry.
+
+    Args:
+        cleanup: Disposable merged Git worktree with deterministic GitHub and controller adapters.
+    """
     result = cleanup.run()
     assert result["status"] == "complete"
     assert result["gates"].index("validation_resources_released") < result["gates"].index("remote_branch_absent")
@@ -156,14 +184,25 @@ def test_eligible_cleanup_and_title_only_retry(cleanup: Cleanup) -> None:
 
 @pytest.mark.parametrize("reappeared", ["remote", "resource", "none"])
 def test_fresh_process_retry_recovers_completed_gates(cleanup: Cleanup, monkeypatch: pytest.MonkeyPatch, reappeared: str) -> None:
-    """A newly constructed CLI instance cannot repeat deletion after a failed title transition."""
+    """A newly constructed CLI instance cannot repeat deletion after a failed title transition.
+
+    Args:
+        cleanup: Disposable merged Git worktree with deterministic GitHub and controller adapters.
+        monkeypatch: Pytest fixture for scoped substitutions restored after the test.
+        reappeared: Previously removed resource or ref recreated before recovery.
+    """
     cleanup.handoff["resources"] = [resource_identity(cleanup, "retry-resource")]
     cleanup.handoff_path.write_text(json.dumps(cleanup.handoff), encoding="utf-8")
     cleanup.digest = hashlib.sha256(cleanup.handoff_path.read_bytes()).hexdigest()
     original = cleanup.controller.call
 
     def fail_title(operation: str, payload: dict) -> dict:
-        """Stop after durable deletion gates but before the supported title operation."""
+        """Stop after durable deletion gates but before the supported title operation.
+
+        Args:
+            operation: Named controller operation requested by the cleanup protocol.
+            payload: Structured request fields bound to the current cleanup handoff.
+        """
         if operation == "task.title":
             raise Refusal("title unavailable")
         return original(operation, payload)
@@ -190,14 +229,24 @@ def test_fresh_process_retry_recovers_completed_gates(cleanup: Cleanup, monkeypa
 
 
 def test_durable_directory_publishes_every_new_parent(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """Nested evidence roots publish each directory entry before any child can be journaled."""
+    """Nested evidence roots publish each directory entry before any child can be journaled.
+
+    Args:
+        tmp_path: Pytest-owned temporary directory beneath the task validation root.
+        monkeypatch: Pytest fixture for scoped substitutions restored after the test.
+    """
     from scripts import completed_task_files
 
     original = completed_task_files.publish_durable_file
     published = []
 
     def publish(source: Path, destination: Path) -> None:
-        """Record native durable directory publication and verify parent-first ordering."""
+        """Record native durable directory publication and verify parent-first ordering.
+
+        Args:
+            source: Staged same-directory entry whose contents were already flushed.
+            destination: Final path that must not replace an existing entry.
+        """
         assert source.is_dir() and source.parent == destination.parent
         original(source, destination)
         published.append(destination)
@@ -212,11 +261,21 @@ def test_durable_directory_publishes_every_new_parent(tmp_path: Path, monkeypatc
 
 
 def test_directory_publication_failure_blocks_cleanup(cleanup: Cleanup, monkeypatch: pytest.MonkeyPatch) -> None:
-    """Failure to persist the evidence root cannot be followed by resource or ref mutation."""
+    """Failure to persist the evidence root cannot be followed by resource or ref mutation.
+
+    Args:
+        cleanup: Disposable merged Git worktree with deterministic GitHub and controller adapters.
+        monkeypatch: Pytest fixture for scoped substitutions restored after the test.
+    """
     from scripts import completed_task_files
 
     def fail_publication(source: Path, destination: Path) -> None:
-        """Leave the staged directory for independent reconciliation."""
+        """Leave the staged directory for independent reconciliation.
+
+        Args:
+            source: Staged same-directory entry whose contents were already flushed.
+            destination: Final path that must not replace an existing entry.
+        """
         raise FileRefusal("directory publication failed")
 
     monkeypatch.setattr(completed_task_files, "publish_durable_file", fail_publication)
@@ -231,11 +290,20 @@ def test_directory_publication_failure_blocks_cleanup(cleanup: Cleanup, monkeypa
 
 
 def test_failed_journal_write_does_not_publish_gate(cleanup: Cleanup, monkeypatch: pytest.MonkeyPatch) -> None:
-    """An fsync failure leaves an explicit incomplete journal and no claimed completed gate."""
+    """An fsync failure leaves an explicit incomplete journal and no claimed completed gate.
+
+    Args:
+        cleanup: Disposable merged Git worktree with deterministic GitHub and controller adapters.
+        monkeypatch: Pytest fixture for scoped substitutions restored after the test.
+    """
     original = os.fsync
 
     def failed_fsync(descriptor: int) -> None:
-        """Model a storage failure while persisting transition evidence."""
+        """Model a storage failure while persisting transition evidence.
+
+        Args:
+            descriptor: Open file descriptor whose durability operation is intercepted.
+        """
         if stat.S_ISDIR(os.fstat(descriptor).st_mode):
             original(descriptor)
             return
@@ -250,13 +318,23 @@ def test_failed_journal_write_does_not_publish_gate(cleanup: Cleanup, monkeypatc
 
 
 def test_visible_journal_requires_recovery_flush(cleanup: Cleanup, monkeypatch: pytest.MonkeyPatch) -> None:
-    """A visible rename with a failed directory flush cannot become a trusted gate on restart."""
+    """A visible rename with a failed directory flush cannot become a trusted gate on restart.
+
+    Args:
+        cleanup: Disposable merged Git worktree with deterministic GitHub and controller adapters.
+        monkeypatch: Pytest fixture for scoped substitutions restored after the test.
+    """
     from scripts import completed_task_cleanup
 
     original_sync = completed_task_cleanup.sync_directory
 
     def failed_publication(source: Path, destination: Path) -> None:
-        """Model POSIX rename succeeding before its parent-directory fsync fails."""
+        """Model POSIX rename succeeding before its parent-directory fsync fails.
+
+        Args:
+            source: Staged same-directory entry whose contents were already flushed.
+            destination: Final path that must not replace an existing entry.
+        """
         source.rename(destination)
         raise OSError("fixture directory flush failure")
 
@@ -268,7 +346,11 @@ def test_visible_journal_requires_recovery_flush(cleanup: Cleanup, monkeypatch: 
     flushed = []
 
     def failed_recovery(path: Path) -> None:
-        """Refuse to trust the visible entry while storage still rejects durability."""
+        """Refuse to trust the visible entry while storage still rejects durability.
+
+        Args:
+            path: Filesystem path examined by this operation.
+        """
         flushed.append(path)
         raise OSError("fixture recovery flush failure")
 
@@ -283,9 +365,19 @@ def test_visible_journal_requires_recovery_flush(cleanup: Cleanup, monkeypatch: 
 
 
 def test_failed_durable_publication_does_not_publish_gate(cleanup: Cleanup, monkeypatch: pytest.MonkeyPatch) -> None:
-    """A failure publishing the directory entry cannot advance reported cleanup gates."""
+    """A failure publishing the directory entry cannot advance reported cleanup gates.
+
+    Args:
+        cleanup: Disposable merged Git worktree with deterministic GitHub and controller adapters.
+        monkeypatch: Pytest fixture for scoped substitutions restored after the test.
+    """
     def failed_publication(source: Path, destination: Path) -> None:
-        """Model the durable rename failing after file contents have been flushed."""
+        """Model the durable rename failing after file contents have been flushed.
+
+        Args:
+            source: Staged same-directory entry whose contents were already flushed.
+            destination: Final path that must not replace an existing entry.
+        """
         raise FileRefusal("fixture durable publication failure")
 
     monkeypatch.setattr("scripts.completed_task_cleanup.publish_durable_file", failed_publication)
@@ -296,7 +388,11 @@ def test_failed_durable_publication_does_not_publish_gate(cleanup: Cleanup, monk
 
 
 def test_durable_file_publication_preserves_existing_destination(tmp_path: Path) -> None:
-    """The native publication path moves a staged file without replacing existing evidence."""
+    """The native publication path moves a staged file without replacing existing evidence.
+
+    Args:
+        tmp_path: Pytest-owned temporary directory beneath the task validation root.
+    """
     source, destination = tmp_path / "staged", tmp_path / "published"
     source.write_bytes(b"evidence")
     publish_durable_file(source, destination)
@@ -309,11 +405,22 @@ def test_durable_file_publication_preserves_existing_destination(tmp_path: Path)
 
 @pytest.mark.parametrize("urls", ["https://github.com/other/Atlaso.git", "https://github.com/example/Atlaso.git\nhttps://github.com/other/Atlaso.git"])
 def test_separate_push_destination_blocks_cleanup(cleanup: Cleanup, monkeypatch: pytest.MonkeyPatch, urls: str) -> None:
-    """A matching fetch URL does not authorize deletion at a fork or additional push URL."""
+    """A matching fetch URL does not authorize deletion at a fork or additional push URL.
+
+    Args:
+        cleanup: Disposable merged Git worktree with deterministic GitHub and controller adapters.
+        monkeypatch: Pytest fixture for scoped substitutions restored after the test.
+        urls: Effective push destinations returned by the intercepted Git query.
+    """
     original = cleanup.command
 
     def redirected(arguments: list[str], **kwargs: object) -> str:
-        """Keep the verified fetch remote while substituting effective push destinations."""
+        """Keep the verified fetch remote while substituting effective push destinations.
+
+        Args:
+            arguments: Child argument array intercepted by the fixture adapter.
+            **kwargs: Command execution options forwarded unchanged to the original adapter.
+        """
         if arguments == ["git", "remote", "get-url", "--push", "--all", "origin"]:
             return urls
         return original(arguments, **kwargs)
@@ -327,12 +434,23 @@ def test_separate_push_destination_blocks_cleanup(cleanup: Cleanup, monkeypatch:
 
 @pytest.mark.parametrize("push_only", [False, True])
 def test_ssh_origin_refuses_before_remote_mutation(cleanup: Cleanup, monkeypatch: pytest.MonkeyPatch, push_only: bool) -> None:
-    """SSH endpoint overrides cannot turn a matching literal URL into remote deletion authority."""
+    """SSH endpoint overrides cannot turn a matching literal URL into remote deletion authority.
+
+    Args:
+        cleanup: Disposable merged Git worktree with deterministic GitHub and controller adapters.
+        monkeypatch: Pytest fixture for scoped substitutions restored after the test.
+        push_only: Use SSH only for the effective push URL while keeping HTTPS fetch.
+    """
     original = cleanup.command
     monkeypatch.setenv("GIT_SSH_COMMAND", "untrusted-ssh-override")
 
     def ssh_origin(arguments: list[str], **kwargs: object) -> str:
-        """Supply the formerly accepted SSH spelling for fetch or only push."""
+        """Supply the formerly accepted SSH spelling for fetch or only push.
+
+        Args:
+            arguments: Child argument array intercepted by the fixture adapter.
+            **kwargs: Command execution options forwarded unchanged to the original adapter.
+        """
         expected = (["git", "remote", "get-url", "--push", "--all", "origin"] if push_only
                     else ["git", "remote", "get-url", "origin"])
         if arguments == expected:
@@ -347,7 +465,13 @@ def test_ssh_origin_refuses_before_remote_mutation(cleanup: Cleanup, monkeypatch
 
 @pytest.mark.parametrize("stream", ["stdout", "stderr"])
 def test_child_output_is_bounded(cleanup: Cleanup, monkeypatch: pytest.MonkeyPatch, stream: str) -> None:
-    """A noisy real child is terminated at the combined byte cap without exposing its output."""
+    """A noisy real child is terminated at the combined byte cap without exposing its output.
+
+    Args:
+        cleanup: Disposable merged Git worktree with deterministic GitHub and controller adapters.
+        monkeypatch: Pytest fixture for scoped substitutions restored after the test.
+        stream: Child output stream selected for the oversized-output regression.
+    """
     monkeypatch.setattr("scripts.completed_task_cleanup.MAX_CHILD_BYTES", 65536)
     code = f"import sys\nwhile True: sys.{stream}.buffer.write(b'x' * 65536); sys.{stream}.buffer.flush()"
     with pytest.raises(Refusal, match="bounded capture"):
@@ -358,7 +482,12 @@ def test_child_output_is_bounded(cleanup: Cleanup, monkeypatch: pytest.MonkeyPat
 @pytest.mark.skipif(os.name != "nt", reason="Win32 path normalization")
 @pytest.mark.parametrize("suffix", [".", " "])
 def test_win32_alias_removal_scope_is_rejected(cleanup: Cleanup, suffix: str) -> None:
-    """Trailing dots/spaces cannot disguise a protected checkout from lexical containment."""
+    """Trailing dots/spaces cannot disguise a protected checkout from lexical containment.
+
+    Args:
+        cleanup: Disposable merged Git worktree with deterministic GitHub and controller adapters.
+        suffix: Win32-normalized suffix used to disguise an otherwise protected path.
+    """
     resource = resource_identity(cleanup, "alias-vm")
     with pytest.raises(Refusal, match="Win32-normalized"):
         cleanup.removal_scopes(resource, {"removal_scopes": [str(cleanup.target) + suffix]})
@@ -366,7 +495,12 @@ def test_win32_alias_removal_scope_is_rejected(cleanup: Cleanup, suffix: str) ->
 
 
 def test_cumulative_evidence_uses_recoverable_references(cleanup: Cleanup, monkeypatch: pytest.MonkeyPatch) -> None:
-    """Multiple accepted payloads never inflate the cumulative journal beyond its restore limit."""
+    """Multiple accepted payloads never inflate the cumulative journal beyond its restore limit.
+
+    Args:
+        cleanup: Disposable merged Git worktree with deterministic GitHub and controller adapters.
+        monkeypatch: Pytest fixture for scoped substitutions restored after the test.
+    """
     from scripts import completed_task_cleanup as command
 
     monkeypatch.setattr(command, "MAX_EVIDENCE_BYTES", 6000)
@@ -380,11 +514,21 @@ def test_cumulative_evidence_uses_recoverable_references(cleanup: Cleanup, monke
 
 
 def test_remote_main_disappearing_after_release_is_refused(cleanup: Cleanup, monkeypatch: pytest.MonkeyPatch) -> None:
-    """An empty successful ls-remote result preserves structured failure after earlier gates."""
+    """An empty successful ls-remote result preserves structured failure after earlier gates.
+
+    Args:
+        cleanup: Disposable merged Git worktree with deterministic GitHub and controller adapters.
+        monkeypatch: Pytest fixture for scoped substitutions restored after the test.
+    """
     original = cleanup.command
 
     def vanished(arguments: list[str], **kwargs: object) -> str:
-        """Remove main's advertised ref only after the aggregate resource gate."""
+        """Remove main's advertised ref only after the aggregate resource gate.
+
+        Args:
+            arguments: Child argument array intercepted by the fixture adapter.
+            **kwargs: Command execution options forwarded unchanged to the original adapter.
+        """
         if arguments == ["git", "ls-remote", "--refs", "origin", "refs/heads/main"] \
                 and "validation_resources_released" in cleanup.gates:
             return ""
@@ -398,7 +542,11 @@ def test_remote_main_disappearing_after_release_is_refused(cleanup: Cleanup, mon
 
 
 def test_handoff_outside_permitted_root_is_refused(cleanup: Cleanup) -> None:
-    """An ordinary external handoff does not establish permitted durable evidence storage."""
+    """An ordinary external handoff does not establish permitted durable evidence storage.
+
+    Args:
+        cleanup: Disposable merged Git worktree with deterministic GitHub and controller adapters.
+    """
     outside = cleanup.root.parent / "external-handoff.json"
     outside.write_bytes(cleanup.handoff_path.read_bytes())
     with pytest.raises(Refusal, match="handoff outside the target, beneath the configured root"):
@@ -408,13 +556,23 @@ def test_handoff_outside_permitted_root_is_refused(cleanup: Cleanup) -> None:
 
 
 def test_github_reads_ignore_environment_host(cleanup: Cleanup, monkeypatch: pytest.MonkeyPatch) -> None:
-    """API and PR reads name github.com even when the CLI default points to enterprise."""
+    """API and PR reads name github.com even when the CLI default points to enterprise.
+
+    Args:
+        cleanup: Disposable merged Git worktree with deterministic GitHub and controller adapters.
+        monkeypatch: Pytest fixture for scoped substitutions restored after the test.
+    """
     monkeypatch.setenv("GH_HOST", "enterprise.example.invalid")
     original = cleanup.command
     calls = []
 
     def capture(arguments: list[str], **kwargs: object) -> str:
-        """Capture host selection without sending fixture traffic to a remote service."""
+        """Capture host selection without sending fixture traffic to a remote service.
+
+        Args:
+            arguments: Child argument array intercepted by the fixture adapter.
+            **kwargs: Command execution options forwarded unchanged to the original adapter.
+        """
         if arguments[:2] == ["gh", "api"]:
             calls.append(arguments)
             return "{}"
@@ -433,7 +591,13 @@ def test_github_reads_ignore_environment_host(cleanup: Cleanup, monkeypatch: pyt
 
 @pytest.mark.parametrize("kind", ["artifact", "generated_tree"])
 def test_scope_cannot_remove_another_inventoried_resource(cleanup: Cleanup, monkeypatch: pytest.MonkeyPatch, kind: str) -> None:
-    """An artifact cleanup cannot consume a VM before its own provider cleanup runs."""
+    """An artifact cleanup cannot consume a VM before its own provider cleanup runs.
+
+    Args:
+        cleanup: Disposable merged Git worktree with deterministic GitHub and controller adapters.
+        monkeypatch: Pytest fixture for scoped substitutions restored after the test.
+        kind: Parameterized input or resource category under test.
+    """
     artifact = resource_identity(cleanup, "artifact", kind)
     if kind == "generated_tree":
         artifact["root_identity"] = [1, 2, 3]
@@ -444,7 +608,12 @@ def test_scope_cannot_remove_another_inventoried_resource(cleanup: Cleanup, monk
     original = cleanup.controller.call
 
     def scopes(operation: str, payload: dict) -> dict:
-        """Report the artifact tool's complete recursive removal root."""
+        """Report the artifact tool's complete recursive removal root.
+
+        Args:
+            operation: Named controller operation requested by the cleanup protocol.
+            payload: Structured request fields bound to the current cleanup handoff.
+        """
         result = original(operation, payload)
         if operation == "resource.inspect":
             result["removal_scopes"] = [artifact["path"]]
@@ -458,7 +627,11 @@ def test_scope_cannot_remove_another_inventoried_resource(cleanup: Cleanup, monk
 
 
 def test_external_ownership_manifest_is_refused(cleanup: Cleanup) -> None:
-    """A matching hash outside the permitted durable root cannot authorize cleanup."""
+    """A matching hash outside the permitted durable root cannot authorize cleanup.
+
+    Args:
+        cleanup: Disposable merged Git worktree with deterministic GitHub and controller adapters.
+    """
     resource = resource_identity(cleanup, "external-manifest")
     outside = cleanup.root.parent / "external-owner.json"
     outside.write_bytes(Path(resource["ownership_manifest"]["path"]).read_bytes())
@@ -472,7 +645,12 @@ def test_external_ownership_manifest_is_refused(cleanup: Cleanup) -> None:
 
 @pytest.mark.parametrize("dangling", [False, True])
 def test_symbolic_task_ref_preserves_backup(cleanup: Cleanup, dangling: bool) -> None:
-    """A task alias must never delete an unrelated branch or count as an absent ref."""
+    """A task alias must never delete an unrelated branch or count as an absent ref.
+
+    Args:
+        cleanup: Disposable merged Git worktree with deterministic GitHub and controller adapters.
+        dangling: Point the symbolic ref at a missing target instead of the preserved backup.
+    """
     cleanup.git("worktree", "remove", str(cleanup.target))
     if not dangling:
         cleanup.git("update-ref", "refs/heads/backup", cleanup.head)
@@ -487,7 +665,12 @@ def test_symbolic_task_ref_preserves_backup(cleanup: Cleanup, dangling: bool) ->
 
 @pytest.mark.parametrize("flag", ["--assume-unchanged", "--skip-worktree"])
 def test_index_hidden_edits_preserved(cleanup: Cleanup, flag: str) -> None:
-    """Git status alone cannot authorize removal when index flags hide user content."""
+    """Git status alone cannot authorize removal when index flags hide user content.
+
+    Args:
+        cleanup: Disposable merged Git worktree with deterministic GitHub and controller adapters.
+        flag: Git index flag that can conceal a tracked-file modification.
+    """
     cleanup.git("-C", str(cleanup.target), "update-index", flag, "source.txt")
     source = cleanup.target / "source.txt"
     source.write_text("hidden user edit", encoding="utf-8")
@@ -500,7 +683,13 @@ def test_index_hidden_edits_preserved(cleanup: Cleanup, flag: str) -> None:
 
 @pytest.mark.parametrize("locator", ["provider", "auxiliary"])
 def test_complete_scope_inventory_precedes_release(cleanup: Cleanup, monkeypatch: pytest.MonkeyPatch, locator: str) -> None:
-    """Provider-only and auxiliary filesystem roots cannot be consumed by an earlier tool."""
+    """Provider-only and auxiliary filesystem roots cannot be consumed by an earlier tool.
+
+    Args:
+        cleanup: Disposable merged Git worktree with deterministic GitHub and controller adapters.
+        monkeypatch: Pytest fixture for scoped substitutions restored after the test.
+        locator: Resource locator variant used to test complete scope preflight.
+    """
     first = resource_identity(cleanup, "first")
     second = resource_identity(cleanup, "second")
     if locator == "auxiliary":
@@ -509,7 +698,12 @@ def test_complete_scope_inventory_precedes_release(cleanup: Cleanup, monkeypatch
     original = cleanup.controller.call
 
     def inspect(operation: str, payload: dict) -> dict:
-        """Expose overlapping tool scopes not present in the handoff's locators."""
+        """Expose overlapping tool scopes not present in the handoff's locators.
+
+        Args:
+            operation: Named controller operation requested by the cleanup protocol.
+            payload: Structured request fields bound to the current cleanup handoff.
+        """
         result = original(operation, payload)
         if operation == "resource.inspect":
             suffix = "shared" if payload["resource"]["id"] == "first" else "shared/auxiliary"
@@ -523,11 +717,21 @@ def test_complete_scope_inventory_precedes_release(cleanup: Cleanup, monkeypatch
 
 
 def test_unavailable_title_records_terminal_gate(cleanup: Cleanup, monkeypatch: pytest.MonkeyPatch) -> None:
-    """The capability exception retains evidence and the canonical terminal sequence."""
+    """The capability exception retains evidence and the canonical terminal sequence.
+
+    Args:
+        cleanup: Disposable merged Git worktree with deterministic GitHub and controller adapters.
+        monkeypatch: Pytest fixture for scoped substitutions restored after the test.
+    """
     original = cleanup.controller.call
 
     def unavailable(operation: str, payload: dict) -> dict:
-        """Return explicit supported-runtime capability evidence at the title stage."""
+        """Return explicit supported-runtime capability evidence at the title stage.
+
+        Args:
+            operation: Named controller operation requested by the cleanup protocol.
+            payload: Structured request fields bound to the current cleanup handoff.
+        """
         if operation == "task.title":
             return {"capability": "unavailable", "capability_evidence": "supported tool inventory has no title controls"}
         return original(operation, payload)
@@ -539,7 +743,13 @@ def test_unavailable_title_records_terminal_gate(cleanup: Cleanup, monkeypatch: 
 
 @pytest.mark.parametrize("kind", ["oversized", "directory"])
 def test_invalid_handoff_rejected_before_open(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, kind: str) -> None:
-    """Malformed input is refused without reading or opening the input payload."""
+    """Malformed input is refused without reading or opening the input payload.
+
+    Args:
+        tmp_path: Pytest-owned temporary directory beneath the task validation root.
+        monkeypatch: Pytest fixture for scoped substitutions restored after the test.
+        kind: Parameterized input or resource category under test.
+    """
     path = tmp_path / "handoff"
     if kind == "directory":
         path.mkdir()
@@ -547,7 +757,12 @@ def test_invalid_handoff_rejected_before_open(tmp_path: Path, monkeypatch: pytes
         path.write_bytes(b"x" * 262145)
 
     def forbidden_open(*args: object, **kwargs: object) -> None:
-        """Any attempt to open the rejected payload makes the regression fail."""
+        """Any attempt to open the rejected payload makes the regression fail.
+
+        Args:
+            *args: Argument array passed directly to the child without shell interpolation.
+            **kwargs: Command execution options forwarded unchanged to the original adapter.
+        """
         pytest.fail("invalid input was opened")
 
     monkeypatch.setattr(Path, "open", forbidden_open)
@@ -556,7 +771,11 @@ def test_invalid_handoff_rejected_before_open(tmp_path: Path, monkeypatch: pytes
 
 
 def test_preview_does_not_mutate(cleanup: Cleanup) -> None:
-    """Preview performs no fetch, journal write, resource release, ref mutation, or rename."""
+    """Preview performs no fetch, journal write, resource release, ref mutation, or rename.
+
+    Args:
+        cleanup: Disposable merged Git worktree with deterministic GitHub and controller adapters.
+    """
     cleanup.execute = False
     before = cleanup.git("show-ref")
     assert cleanup.run()["status"] == "preview"
@@ -569,7 +788,12 @@ def test_preview_does_not_mutate(cleanup: Cleanup) -> None:
 @pytest.mark.parametrize("field", ["idle", "unpinned", "holds_clear", "exclusive_ownership_verified",
                                   "inventory_verified", "post_merge_complete", "downstream_clear"])
 def test_live_task_refusals_preserve_everything(cleanup: Cleanup, field: str) -> None:
-    """Activity, pinning, holds, ownership, and unfinished downstream work fail before deletion."""
+    """Activity, pinning, holds, ownership, and unfinished downstream work fail before deletion.
+
+    Args:
+        cleanup: Disposable merged Git worktree with deterministic GitHub and controller adapters.
+        field: Evidence field altered or removed for this refusal case.
+    """
     cleanup.controller.block = field
     with pytest.raises(Refusal, match=field):
         cleanup.run()
@@ -579,7 +803,12 @@ def test_live_task_refusals_preserve_everything(cleanup: Cleanup, field: str) ->
 
 @pytest.mark.parametrize("mutation", ["dirty", "untracked", "locked", "remote", "local", "identity"])
 def test_changed_git_or_filesystem_state_blocks(cleanup: Cleanup, mutation: str) -> None:
-    """Concurrent ownership and content changes block all destructive transitions."""
+    """Concurrent ownership and content changes block all destructive transitions.
+
+    Args:
+        cleanup: Disposable merged Git worktree with deterministic GitHub and controller adapters.
+        mutation: Git or filesystem state mutation that must stop cleanup.
+    """
     if mutation == "dirty":
         (cleanup.target / "source.txt").write_text("user edits", encoding="utf-8")
     elif mutation == "untracked":
@@ -598,7 +827,13 @@ def test_changed_git_or_filesystem_state_blocks(cleanup: Cleanup, mutation: str)
 
 
 def resource_identity(cleanup: Cleanup, identity: str, kind: str = "vm") -> dict:
-    """Bind test-owned resources to durable fixture manifest bytes and exact provider identity."""
+    """Bind test-owned resources to durable fixture manifest bytes and exact provider identity.
+
+    Args:
+        cleanup: Disposable merged Git worktree with deterministic GitHub and controller adapters.
+        identity: Unique fixture resource identifier bound into its ownership manifest.
+        kind: Parameterized input or resource category under test.
+    """
     manifest = cleanup.root / f"{identity}-owner.json"
     manifest.write_text(json.dumps({"task_id": "test-task", "repository": cleanup.repository,
                                     "pr": cleanup.handoff["pr"], "provider_id": identity}), encoding="utf-8")
@@ -609,7 +844,11 @@ def resource_identity(cleanup: Cleanup, identity: str, kind: str = "vm") -> dict
 
 
 def test_incomplete_resource_release_blocks_ref_deletion(cleanup: Cleanup) -> None:
-    """A failed owning tool leaves the exact remote/local branches and worktree intact."""
+    """A failed owning tool leaves the exact remote/local branches and worktree intact.
+
+    Args:
+        cleanup: Disposable merged Git worktree with deterministic GitHub and controller adapters.
+    """
     cleanup.handoff["resources"] = [resource_identity(cleanup, "fixture-vm")]
     cleanup.controller.release_ok = False
     with pytest.raises(Refusal, match="Owning tool failed"):
@@ -621,12 +860,23 @@ def test_incomplete_resource_release_blocks_ref_deletion(cleanup: Cleanup) -> No
 
 @pytest.mark.parametrize("protected", ["target", "repo", "root", "evidence"])
 def test_owning_scope_cannot_remove_checkout_or_evidence(cleanup: Cleanup, monkeypatch: pytest.MonkeyPatch, protected: str) -> None:
-    """A VMX locator cannot hide an owning tool's broader destructive directory."""
+    """A VMX locator cannot hide an owning tool's broader destructive directory.
+
+    Args:
+        cleanup: Disposable merged Git worktree with deterministic GitHub and controller adapters.
+        monkeypatch: Pytest fixture for scoped substitutions restored after the test.
+        protected: Protected path category that the owning tool incorrectly claims for removal.
+    """
     cleanup.handoff["resources"] = [resource_identity(cleanup, "broad-vm")]
     original = cleanup.controller.call
 
     def broad_scope(operation: str, payload: dict) -> dict:
-        """Report the actual owning-tool scope, independently of the resource locator."""
+        """Report the actual owning-tool scope, independently of the resource locator.
+
+        Args:
+            operation: Named controller operation requested by the cleanup protocol.
+            payload: Structured request fields bound to the current cleanup handoff.
+        """
         result = original(operation, payload)
         if operation == "resource.inspect":
             result["removal_scopes"] = [str(getattr(cleanup, protected))]
@@ -640,11 +890,20 @@ def test_owning_scope_cannot_remove_checkout_or_evidence(cleanup: Cleanup, monke
 
 
 def test_unrelated_manual_workflow_does_not_block_cleanup(cleanup: Cleanup, monkeypatch: pytest.MonkeyPatch) -> None:
-    """Only the controller's applicable run identities are checked, not same-SHA manual runs."""
+    """Only the controller's applicable run identities are checked, not same-SHA manual runs.
+
+    Args:
+        cleanup: Disposable merged Git worktree with deterministic GitHub and controller adapters.
+        monkeypatch: Pytest fixture for scoped substitutions restored after the test.
+    """
     original = cleanup.api
 
     def unrelated(endpoint: str) -> object:
-        """A failed manual run sharing the commit is not part of the applicable chain."""
+        """A failed manual run sharing the commit is not part of the applicable chain.
+
+        Args:
+            endpoint: Repository-relative GitHub API endpoint to read.
+        """
         if endpoint.startswith("actions/runs?"):
             return {"total_count": 1, "workflow_runs": [{"status": "completed", "conclusion": "failure"}]}
         return original(endpoint)
@@ -655,11 +914,22 @@ def test_unrelated_manual_workflow_does_not_block_cleanup(cleanup: Cleanup, monk
 
 @pytest.mark.parametrize("field,value", [("conclusion", "failure"), ("run_attempt", 2), ("workflow_id", 11)])
 def test_applicable_run_must_match_successful_identity(cleanup: Cleanup, monkeypatch: pytest.MonkeyPatch, field: str, value: object) -> None:
-    """A changed attempt, wrong workflow, or failed applicable run cannot pass cleanup."""
+    """A changed attempt, wrong workflow, or failed applicable run cannot pass cleanup.
+
+    Args:
+        cleanup: Disposable merged Git worktree with deterministic GitHub and controller adapters.
+        monkeypatch: Pytest fixture for scoped substitutions restored after the test.
+        field: Evidence field altered or removed for this refusal case.
+        value: Malformed or mismatching evidence value supplied by the fixture.
+    """
     original = cleanup.api
 
     def changed(endpoint: str) -> object:
-        """Substitute one invalid field in the direct GitHub run readback."""
+        """Substitute one invalid field in the direct GitHub run readback.
+
+        Args:
+            endpoint: Repository-relative GitHub API endpoint to read.
+        """
         result = original(endpoint)
         if endpoint == "actions/runs/1":
             result[field] = value
@@ -672,7 +942,11 @@ def test_applicable_run_must_match_successful_identity(cleanup: Cleanup, monkeyp
 
 
 def test_resume_after_worktree_removed_before_local_ref(cleanup: Cleanup) -> None:
-    """Interrupted cleanup can finish only the exact unreferenced matching local ref."""
+    """Interrupted cleanup can finish only the exact unreferenced matching local ref.
+
+    Args:
+        cleanup: Disposable merged Git worktree with deterministic GitHub and controller adapters.
+    """
     cleanup.git("worktree", "remove", str(cleanup.target))
     assert cleanup.run()["status"] == "complete"
     assert not cleanup.git("for-each-ref", "--format=%(objectname)", "refs/heads/" + cleanup.branch)
@@ -680,18 +954,32 @@ def test_resume_after_worktree_removed_before_local_ref(cleanup: Cleanup) -> Non
 
 @pytest.mark.parametrize("value", ['"invalid"', "7", "true", "[]"])
 def test_nontable_desktop_config_is_refused(cleanup: Cleanup, value: str) -> None:
-    """Syntactically valid wrong-type configuration returns a repairable refusal."""
+    """Syntactically valid wrong-type configuration returns a repairable refusal.
+
+    Args:
+        cleanup: Disposable merged Git worktree with deterministic GitHub and controller adapters.
+        value: Malformed or mismatching evidence value supplied by the fixture.
+    """
     cleanup.config.write_text(f"desktop = {value}\n", encoding="utf-8")
     with pytest.raises(Refusal, match="desktop must be a TOML table"):
         configured_root(cleanup.config)
 
 
 def test_late_nontable_config_preserves_gates(cleanup: Cleanup, monkeypatch: pytest.MonkeyPatch) -> None:
-    """A config rewrite after remote deletion leaves the worktree and completed gate available for retry."""
+    """A config rewrite after remote deletion leaves the worktree and completed gate available for retry.
+
+    Args:
+        cleanup: Disposable merged Git worktree with deterministic GitHub and controller adapters.
+        monkeypatch: Pytest fixture for scoped substitutions restored after the test.
+    """
     original = cleanup.record
 
     def rewrite(gate: str) -> None:
-        """Change the active config only after the remote-absence gate is durable."""
+        """Change the active config only after the remote-absence gate is durable.
+
+        Args:
+            gate: Exact transition identifier to persist or exercise in recovery.
+        """
         original(gate)
         if gate == "remote_branch_absent":
             cleanup.config.write_text('desktop = "invalid"\n', encoding="utf-8")
@@ -707,14 +995,25 @@ def test_late_nontable_config_preserves_gates(cleanup: Cleanup, monkeypatch: pyt
 
 @pytest.mark.parametrize("reappeared", ["remote", "local", "worktree", "resource"])
 def test_title_response_rechecks_absence(cleanup: Cleanup, monkeypatch: pytest.MonkeyPatch, reappeared: str) -> None:
-    """Reappearance during the supported title call prevents terminal completion."""
+    """Reappearance during the supported title call prevents terminal completion.
+
+    Args:
+        cleanup: Disposable merged Git worktree with deterministic GitHub and controller adapters.
+        monkeypatch: Pytest fixture for scoped substitutions restored after the test.
+        reappeared: Previously removed resource or ref recreated before recovery.
+    """
     if reappeared == "resource":
         cleanup.handoff["resources"] = [resource_identity(cleanup, "reappearing")]
         cleanup.controller.resource_absent = True
     original = cleanup.controller.call
 
     def changed(operation: str, payload: dict) -> dict:
-        """Return successful title readback after recreating a previously absent task object."""
+        """Return successful title readback after recreating a previously absent task object.
+
+        Args:
+            operation: Named controller operation requested by the cleanup protocol.
+            payload: Structured request fields bound to the current cleanup handoff.
+        """
         result = original(operation, payload)
         if operation == "task.title":
             if reappeared == "remote":
@@ -742,7 +1041,12 @@ def test_title_response_rechecks_absence(cleanup: Cleanup, monkeypatch: pytest.M
 
 @pytest.mark.parametrize("kind", ["directory", "oversized"])
 def test_config_requires_bounded_regular_file(cleanup: Cleanup, kind: str) -> None:
-    """Active configuration cannot block on a special file or consume an unbounded payload."""
+    """Active configuration cannot block on a special file or consume an unbounded payload.
+
+    Args:
+        cleanup: Disposable merged Git worktree with deterministic GitHub and controller adapters.
+        kind: Parameterized input or resource category under test.
+    """
     if kind == "directory":
         cleanup.config.unlink()
         cleanup.config.mkdir()
@@ -753,14 +1057,24 @@ def test_config_requires_bounded_regular_file(cleanup: Cleanup, kind: str) -> No
 
 
 def test_title_retry_after_task_history_pruned(cleanup: Cleanup, monkeypatch: pytest.MonkeyPatch) -> None:
-    """Durable ancestry gates let title-only retries survive actual Git object pruning."""
+    """Durable ancestry gates let title-only retries survive actual Git object pruning.
+
+    Args:
+        cleanup: Disposable merged Git worktree with deterministic GitHub and controller adapters.
+        monkeypatch: Pytest fixture for scoped substitutions restored after the test.
+    """
     cleanup.handoff["resources"] = [resource_identity(cleanup, "pruned-resource")]
     cleanup.handoff_path.write_text(json.dumps(cleanup.handoff), encoding="utf-8")
     cleanup.digest = hashlib.sha256(cleanup.handoff_path.read_bytes()).hexdigest()
     original = cleanup.controller.call
 
     def failed_title(operation: str, payload: dict) -> dict:
-        """Interrupt after refs and worktree are durably absent."""
+        """Interrupt after refs and worktree are durably absent.
+
+        Args:
+            operation: Named controller operation requested by the cleanup protocol.
+            payload: Structured request fields bound to the current cleanup handoff.
+        """
         if operation == "task.title":
             raise Refusal("title unavailable")
         return original(operation, payload)
@@ -781,7 +1095,12 @@ def test_title_retry_after_task_history_pruned(cleanup: Cleanup, monkeypatch: py
 
 @pytest.mark.parametrize("name", ["tâche-日本語", pytest.param("task\nline", marks=pytest.mark.skipif(os.name == "nt", reason="Windows forbids newline paths"))])
 def test_verbatim_worktree_paths(cleanup: Cleanup, name: str) -> None:
-    """Git's NUL porcelain preserves Unicode and newline paths through complete cleanup."""
+    """Git's NUL porcelain preserves Unicode and newline paths through complete cleanup.
+
+    Args:
+        cleanup: Disposable merged Git worktree with deterministic GitHub and controller adapters.
+        name: Worktree directory spelling whose verbatim preservation is tested.
+    """
     target = cleanup.root / name
     cleanup.git("worktree", "move", str(cleanup.target), str(target))
     cleanup.target = target
@@ -796,7 +1115,12 @@ def test_verbatim_worktree_paths(cleanup: Cleanup, name: str) -> None:
 
 @pytest.mark.parametrize("alternate", [False, True])
 def test_exclusive_cleanup_lock_between_processes(cleanup: Cleanup, alternate: bool) -> None:
-    """A second interpreter cannot enter cleanup even with differently serialized handoff bytes."""
+    """A second interpreter cannot enter cleanup even with differently serialized handoff bytes.
+
+    Args:
+        cleanup: Disposable merged Git worktree with deterministic GitHub and controller adapters.
+        alternate: Use a differently serialized handoff to exercise shared task exclusion.
+    """
     handoff = cleanup.handoff_path
     if alternate:
         handoff = cleanup.root / "alternate-handoff.json"
@@ -823,7 +1147,12 @@ except FileRefusal:
 
 
 def test_stale_instance_refreshes_journal_under_lock(cleanup: Cleanup, monkeypatch: pytest.MonkeyPatch) -> None:
-    """An instance created before another completes recovers its gates after taking ownership."""
+    """An instance created before another completes recovers its gates after taking ownership.
+
+    Args:
+        cleanup: Disposable merged Git worktree with deterministic GitHub and controller adapters.
+        monkeypatch: Pytest fixture for scoped substitutions restored after the test.
+    """
     cleanup.handoff["resources"] = [resource_identity(cleanup, "serialized-resource")]
     cleanup.handoff_path.write_text(json.dumps(cleanup.handoff), encoding="utf-8")
     cleanup.digest = hashlib.sha256(cleanup.handoff_path.read_bytes()).hexdigest()
@@ -839,12 +1168,23 @@ def test_stale_instance_refreshes_journal_under_lock(cleanup: Cleanup, monkeypat
 
 @pytest.mark.parametrize("change", ["holds_clear", "idle", "downstream_clear", "issue", "workflow"])
 def test_title_response_rechecks_full_eligibility(cleanup: Cleanup, monkeypatch: pytest.MonkeyPatch, change: str) -> None:
-    """Task or GitHub changes during title readback cannot receive the terminal gate."""
+    """Task or GitHub changes during title readback cannot receive the terminal gate.
+
+    Args:
+        cleanup: Disposable merged Git worktree with deterministic GitHub and controller adapters.
+        monkeypatch: Pytest fixture for scoped substitutions restored after the test.
+        change: Concurrent state change introduced during the tested transition.
+    """
     original_call, original_api = cleanup.controller.call, cleanup.api
     after_title = False
 
     def title(operation: str, payload: dict) -> dict:
-        """Withdraw eligibility only after the successful title response."""
+        """Withdraw eligibility only after the successful title response.
+
+        Args:
+            operation: Named controller operation requested by the cleanup protocol.
+            payload: Structured request fields bound to the current cleanup handoff.
+        """
         nonlocal after_title
         result = original_call(operation, payload)
         if operation == "task.title":
@@ -854,7 +1194,11 @@ def test_title_response_rechecks_full_eligibility(cleanup: Cleanup, monkeypatch:
         return result
 
     def changed_api(endpoint: str) -> object:
-        """Model independently observed issue/workflow changes during title mutation."""
+        """Model independently observed issue/workflow changes during title mutation.
+
+        Args:
+            endpoint: Repository-relative GitHub API endpoint to read.
+        """
         result = original_api(endpoint)
         if after_title and isinstance(result, dict):
             if change == "issue" and endpoint.startswith("issues/"):
@@ -873,7 +1217,12 @@ def test_title_response_rechecks_full_eligibility(cleanup: Cleanup, monkeypatch:
 
 @pytest.mark.parametrize("branch", [None, 42, True, [], {}])
 def test_branch_type_refused(cleanup: Cleanup, branch: object) -> None:
-    """Malformed branch values receive a structured refusal before string operations."""
+    """Malformed branch values receive a structured refusal before string operations.
+
+    Args:
+        cleanup: Disposable merged Git worktree with deterministic GitHub and controller adapters.
+        branch: Malformed branch value used to exercise structured input refusal.
+    """
     path = cleanup.root / "invalid-branch.json"
     path.write_text(json.dumps({**cleanup.handoff, "branch": branch}), encoding="utf-8")
     with pytest.raises(Refusal, match="Branch must be a string"):
@@ -882,7 +1231,11 @@ def test_branch_type_refused(cleanup: Cleanup, branch: object) -> None:
 
 @pytest.mark.skipif(os.name != "nt", reason="Windows generated-tree contract")
 def test_nested_recovery_root_preserved(cleanup: Cleanup) -> None:
-    """Recovery directories anywhere under generated output require their own release path."""
+    """Recovery directories anywhere under generated output require their own release path.
+
+    Args:
+        cleanup: Disposable merged Git worktree with deterministic GitHub and controller adapters.
+    """
     path = cleanup.target / "cache"
     recovery = path / "nested" / ".atlaso-local"
     recovery.mkdir(parents=True)
@@ -900,7 +1253,11 @@ def test_nested_recovery_root_preserved(cleanup: Cleanup) -> None:
 
 @pytest.mark.skipif(os.name != "nt", reason="Windows PowerShell entry point")
 def test_wrapper_ignores_external_python_imports(cleanup: Cleanup) -> None:
-    """Inherited startup hooks and a regular scripts package cannot replace the checked-in command."""
+    """Inherited startup hooks and a regular scripts package cannot replace the checked-in command.
+
+    Args:
+        cleanup: Disposable merged Git worktree with deterministic GitHub and controller adapters.
+    """
     external = cleanup.root / "external-python"
     package = external / "scripts"
     package.mkdir(parents=True)
@@ -919,7 +1276,11 @@ def test_wrapper_ignores_external_python_imports(cleanup: Cleanup) -> None:
 
 
 def test_config_and_primary_protection(cleanup: Cleanup) -> None:
-    """Missing configuration and primary-checkout targets never gain deletion authority."""
+    """Missing configuration and primary-checkout targets never gain deletion authority.
+
+    Args:
+        cleanup: Disposable merged Git worktree with deterministic GitHub and controller adapters.
+    """
     cleanup.config.write_text("[desktop]\n", encoding="utf-8")
     with pytest.raises(Refusal, match="missing"):
         configured_root(cleanup.config)
@@ -929,7 +1290,11 @@ def test_config_and_primary_protection(cleanup: Cleanup) -> None:
 
 @pytest.mark.skipif(os.name != "nt", reason="Windows no-follow handle contract")
 def test_generated_tree_handles_delete_only_snapshot(tmp_path: Path) -> None:
-    """An ordinary output tree is removed through exact handles, while replacement is rejected."""
+    """An ordinary output tree is removed through exact handles, while replacement is rejected.
+
+    Args:
+        tmp_path: Pytest-owned temporary directory beneath the task validation root.
+    """
     root = tmp_path / "output"
     root.mkdir()
     child = root / "cache"
@@ -946,7 +1311,11 @@ def test_generated_tree_handles_delete_only_snapshot(tmp_path: Path) -> None:
 
 
 def test_primary_and_outside_root_are_refused(cleanup: Cleanup) -> None:
-    """Constructor rejects primary and out-of-root targets before invoking any controller."""
+    """Constructor rejects primary and out-of-root targets before invoking any controller.
+
+    Args:
+        cleanup: Disposable merged Git worktree with deterministic GitHub and controller adapters.
+    """
     handoff_path = cleanup.root / "bad-handoff.json"
     for target in (cleanup.repo, cleanup.root.parent / "unowned"):
         handoff_path.write_text(json.dumps({**cleanup.handoff, "worktree": str(target)}), encoding="utf-8")
@@ -957,7 +1326,13 @@ def test_primary_and_outside_root_are_refused(cleanup: Cleanup) -> None:
 
 @pytest.mark.parametrize("problem", ["missing", "unreadable", "unsafe"])
 def test_primary_target_precedes_root_resolution(cleanup: Cleanup, monkeypatch: pytest.MonkeyPatch, problem: str) -> None:
-    """Verified primary targets receive restoration guidance even when root configuration is unusable."""
+    """Verified primary targets receive restoration guidance even when root configuration is unusable.
+
+    Args:
+        cleanup: Disposable merged Git worktree with deterministic GitHub and controller adapters.
+        monkeypatch: Pytest fixture for scoped substitutions restored after the test.
+        problem: Missing or malformed configuration condition applied to the primary target.
+    """
     from scripts import completed_task_cleanup
 
     if problem == "missing":
@@ -971,7 +1346,11 @@ def test_primary_target_precedes_root_resolution(cleanup: Cleanup, monkeypatch: 
     handoff_path.write_text(json.dumps({**cleanup.handoff, "worktree": str(cleanup.repo)}), encoding="utf-8")
 
     def forbidden_root(config: Path) -> Path:
-        """Root configuration must not be consulted for the independently verified primary target."""
+        """Root configuration must not be consulted for the independently verified primary target.
+
+        Args:
+            config: Active Codex configuration path used to resolve the permitted worktree root.
+        """
         pytest.fail("primary target consulted worktree-root configuration")
 
     monkeypatch.setattr(completed_task_cleanup, "configured_root", forbidden_root)
@@ -982,12 +1361,22 @@ def test_primary_target_precedes_root_resolution(cleanup: Cleanup, monkeypatch: 
 
 
 def test_lease_rejects_remote_change_after_check(cleanup: Cleanup, monkeypatch: pytest.MonkeyPatch) -> None:
-    """The actual server-side lease protects a ref changed after all read-only observations."""
+    """The actual server-side lease protects a ref changed after all read-only observations.
+
+    Args:
+        cleanup: Disposable merged Git worktree with deterministic GitHub and controller adapters.
+        monkeypatch: Pytest fixture for scoped substitutions restored after the test.
+    """
     original = cleanup.command
     changed = False
 
     def race(arguments: list[str], **kwargs: object) -> str:
-        """Change the fixture ref immediately before its guarded deletion request."""
+        """Change the fixture ref immediately before its guarded deletion request.
+
+        Args:
+            arguments: Child argument array intercepted by the fixture adapter.
+            **kwargs: Command execution options forwarded unchanged to the original adapter.
+        """
         nonlocal changed
         if arguments[:3] == ["git", "push", "origin"] and not changed:
             changed = True
@@ -1003,11 +1392,21 @@ def test_lease_rejects_remote_change_after_check(cleanup: Cleanup, monkeypatch: 
 
 
 def test_title_failure_leaves_resumable_evidence(cleanup: Cleanup, monkeypatch: pytest.MonkeyPatch) -> None:
-    """A stale persisted title cannot mark completion after otherwise successful cleanup."""
+    """A stale persisted title cannot mark completion after otherwise successful cleanup.
+
+    Args:
+        cleanup: Disposable merged Git worktree with deterministic GitHub and controller adapters.
+        monkeypatch: Pytest fixture for scoped substitutions restored after the test.
+    """
     original = cleanup.controller.call
 
     def stale(operation: str, payload: dict) -> dict:
-        """Return an explicit stale title to exercise the final independent readback gate."""
+        """Return an explicit stale title to exercise the final independent readback gate.
+
+        Args:
+            operation: Named controller operation requested by the cleanup protocol.
+            payload: Structured request fields bound to the current cleanup handoff.
+        """
         if operation == "task.title":
             return {"persisted_readback": True, "observed_title": "old title"}
         return original(operation, payload)
@@ -1024,7 +1423,12 @@ def test_title_failure_leaves_resumable_evidence(cleanup: Cleanup, monkeypatch: 
 
 @pytest.mark.skipif(os.name != "nt", reason="Windows no-follow handle contract")
 def test_generated_resource_integrates_with_real_git(cleanup: Cleanup, monkeypatch: pytest.MonkeyPatch) -> None:
-    """Generated caches are inventoried and released before the remote-ref transition."""
+    """Generated caches are inventoried and released before the remote-ref transition.
+
+    Args:
+        cleanup: Disposable merged Git worktree with deterministic GitHub and controller adapters.
+        monkeypatch: Pytest fixture for scoped substitutions restored after the test.
+    """
     path = cleanup.target / "cache"
     path.mkdir()
     (path / "result.txt").write_text("generated", encoding="utf-8")
@@ -1035,7 +1439,12 @@ def test_generated_resource_integrates_with_real_git(cleanup: Cleanup, monkeypat
     original = cleanup.controller.call
 
     def inspect(operation: str, payload: dict) -> dict:
-        """Independently observe absence instead of trusting the cleanup result."""
+        """Independently observe absence instead of trusting the cleanup result.
+
+        Args:
+            operation: Named controller operation requested by the cleanup protocol.
+            payload: Structured request fields bound to the current cleanup handoff.
+        """
         result = original(operation, payload)
         if operation == "resource.inspect":
             result["absent"] = not path.exists()
@@ -1050,7 +1459,13 @@ def test_generated_resource_integrates_with_real_git(cleanup: Cleanup, monkeypat
 @pytest.mark.skipif(os.name != "nt", reason="Windows no-follow handle contract")
 @pytest.mark.parametrize("field", ["ownership_verified", "inactive", "retained", "supported_cleanup", "evidence_preserved"])
 def test_generated_resource_fresh_eligibility(cleanup: Cleanup, monkeypatch: pytest.MonkeyPatch, field: str) -> None:
-    """A tree becoming active, retained, or unowned after initial inspection survives cleanup."""
+    """A tree becoming active, retained, or unowned after initial inspection survives cleanup.
+
+    Args:
+        cleanup: Disposable merged Git worktree with deterministic GitHub and controller adapters.
+        monkeypatch: Pytest fixture for scoped substitutions restored after the test.
+        field: Evidence field altered or removed for this refusal case.
+    """
     path = cleanup.target / "cache"
     path.mkdir()
     content = path / "result.txt"
@@ -1063,7 +1478,12 @@ def test_generated_resource_fresh_eligibility(cleanup: Cleanup, monkeypatch: pyt
     inspections = 0
 
     def changed(operation: str, payload: dict) -> dict:
-        """Withdraw one resource-specific guarantee on the final fresh readback."""
+        """Withdraw one resource-specific guarantee on the final fresh readback.
+
+        Args:
+            operation: Named controller operation requested by the cleanup protocol.
+            payload: Structured request fields bound to the current cleanup handoff.
+        """
         nonlocal inspections
         result = original(operation, payload)
         if operation == "resource.inspect":
@@ -1083,7 +1503,12 @@ def test_generated_resource_fresh_eligibility(cleanup: Cleanup, monkeypatch: pyt
 
 @pytest.mark.parametrize("kind", ["directory", "oversized", "hardlink"])
 def test_manifest_requires_bounded_regular_file(cleanup: Cleanup, kind: str) -> None:
-    """Malformed manifest objects are rejected before release rather than read without bounds."""
+    """Malformed manifest objects are rejected before release rather than read without bounds.
+
+    Args:
+        cleanup: Disposable merged Git worktree with deterministic GitHub and controller adapters.
+        kind: Parameterized input or resource category under test.
+    """
     resource = resource_identity(cleanup, "invalid-manifest")
     path = Path(resource["ownership_manifest"]["path"])
     if kind == "directory":
@@ -1100,7 +1525,12 @@ def test_manifest_requires_bounded_regular_file(cleanup: Cleanup, kind: str) -> 
 
 
 def test_bounded_reader_rechecks_size(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """A size change observed after the read cannot authorize manifest hash acceptance."""
+    """A size change observed after the read cannot authorize manifest hash acceptance.
+
+    Args:
+        tmp_path: Pytest-owned temporary directory beneath the task validation root.
+        monkeypatch: Pytest fixture for scoped substitutions restored after the test.
+    """
     path = tmp_path / "evidence.json"
     path.write_bytes(b"small")
     assert read_bounded_regular(path, 256) == b"small"
@@ -1108,7 +1538,11 @@ def test_bounded_reader_rechecks_size(tmp_path: Path, monkeypatch: pytest.Monkey
     calls = 0
 
     def changed(descriptor: int) -> os.stat_result:
-        """Model growth at the post-read identity check."""
+        """Model growth at the post-read identity check.
+
+        Args:
+            descriptor: Open file descriptor whose durability operation is intercepted.
+        """
         nonlocal calls
         calls += 1
         result = original(descriptor)
@@ -1125,7 +1559,12 @@ def test_bounded_reader_rechecks_size(tmp_path: Path, monkeypatch: pytest.Monkey
 
 @pytest.mark.parametrize("ignored", [False, True])
 def test_empty_directory_requires_release(cleanup: Cleanup, ignored: bool) -> None:
-    """An empty Git-invisible lock/artifact directory cannot disappear with its worktree."""
+    """An empty Git-invisible lock/artifact directory cannot disappear with its worktree.
+
+    Args:
+        cleanup: Disposable merged Git worktree with deterministic GitHub and controller adapters.
+        ignored: Whether the fixture path is also excluded by Git ignore rules.
+    """
     path = cleanup.target / "empty-lock"
     path.mkdir()
     if ignored:
@@ -1139,7 +1578,11 @@ def test_empty_directory_requires_release(cleanup: Cleanup, ignored: bool) -> No
 
 
 def test_tracked_parent_directories_are_allowed(cleanup: Cleanup) -> None:
-    """Ordinary source layout is distinguished from unrelated empty directories."""
+    """Ordinary source layout is distinguished from unrelated empty directories.
+
+    Args:
+        cleanup: Disposable merged Git worktree with deterministic GitHub and controller adapters.
+    """
     directory = cleanup.target / "source" / "nested"
     directory.mkdir(parents=True)
     (directory / "tracked.txt").write_text("source", encoding="utf-8")
@@ -1149,7 +1592,12 @@ def test_tracked_parent_directories_are_allowed(cleanup: Cleanup) -> None:
 
 @pytest.mark.parametrize("kind", ["journal", "blob"])
 def test_recovery_rejects_nonregular_evidence(cleanup: Cleanup, kind: str) -> None:
-    """A matching recovery filename cannot cause a special-file read before retry refusal."""
+    """A matching recovery filename cannot cause a special-file read before retry refusal.
+
+    Args:
+        cleanup: Disposable merged Git worktree with deterministic GitHub and controller adapters.
+        kind: Parameterized input or resource category under test.
+    """
     cleanup.resource_evidence.append({"operation": "test", "evidence_refs": ["preserved"]})
     cleanup.record("cleanup_prepared")
     path = next(cleanup.evidence.glob("*.json" if kind == "journal" else "*.evidence"))
@@ -1164,7 +1612,12 @@ def test_recovery_rejects_nonregular_evidence(cleanup: Cleanup, kind: str) -> No
 @pytest.mark.skipif(os.name != "nt", reason="Windows no-follow handle contract")
 @pytest.mark.parametrize("nested", [False, True])
 def test_generated_tree_preserves_bare_repository(cleanup: Cleanup, nested: bool) -> None:
-    """Bare clones at the root or nested beneath generated output need separate ownership cleanup."""
+    """Bare clones at the root or nested beneath generated output need separate ownership cleanup.
+
+    Args:
+        cleanup: Disposable merged Git worktree with deterministic GitHub and controller adapters.
+        nested: Place the protected repository below the generated root instead of at its root.
+    """
     path = cleanup.target / "cache"
     path.mkdir()
     repository = path / "nested.git" if nested else path
@@ -1181,7 +1634,11 @@ def test_generated_tree_preserves_bare_repository(cleanup: Cleanup, nested: bool
 
 
 def test_uninventoried_ignored_file_blocks_before_remote_deletion(cleanup: Cleanup) -> None:
-    """Ignored user/configuration files cannot slip through Git's clean-worktree check."""
+    """Ignored user/configuration files cannot slip through Git's clean-worktree check.
+
+    Args:
+        cleanup: Disposable merged Git worktree with deterministic GitHub and controller adapters.
+    """
     (cleanup.repo / ".git/info/exclude").write_text("secret.txt\n", encoding="utf-8")
     (cleanup.target / "secret.txt").write_text("fixture only", encoding="utf-8")
     with pytest.raises(Refusal, match="Unreleased ignored"):
@@ -1190,7 +1647,11 @@ def test_uninventoried_ignored_file_blocks_before_remote_deletion(cleanup: Clean
 
 
 def test_supported_script_policy_cannot_disappear(tmp_path: Path) -> None:
-    """Each required controller policy rejects removed or comment-hidden command instructions."""
+    """Each required controller policy rejects removed or comment-hidden command instructions.
+
+    Args:
+        tmp_path: Pytest-owned temporary directory beneath the task validation root.
+    """
     from scripts.check_repo import (
         COMPLETED_TASK_COMMAND_MARKERS,
         check_completed_task_command_policy,
@@ -1207,7 +1668,12 @@ def test_supported_script_policy_cannot_disappear(tmp_path: Path) -> None:
 
 
 def test_controller_rejects_saved_response(monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture) -> None:
-    """A saved response cannot authorize a new invocation even if its result claims eligibility."""
+    """A saved response cannot authorize a new invocation even if its result claims eligibility.
+
+    Args:
+        monkeypatch: Pytest fixture for scoped substitutions restored after the test.
+        capsys: Pytest capture fixture for validating sanitized protocol output.
+    """
     import io
 
     from scripts.completed_task_cleanup import Controller
@@ -1221,7 +1687,12 @@ def test_controller_rejects_saved_response(monkeypatch: pytest.MonkeyPatch, caps
 
 @pytest.mark.parametrize("value", [None, True, 123, "response", [], ["response"]])
 def test_controller_rejects_non_object_json(monkeypatch: pytest.MonkeyPatch, value: object) -> None:
-    """Valid JSON of the wrong shape produces a structured refusal instead of AttributeError."""
+    """Valid JSON of the wrong shape produces a structured refusal instead of AttributeError.
+
+    Args:
+        monkeypatch: Pytest fixture for scoped substitutions restored after the test.
+        value: Malformed or mismatching evidence value supplied by the fixture.
+    """
     import io
 
     from scripts.completed_task_cleanup import Controller
@@ -1232,7 +1703,11 @@ def test_controller_rejects_non_object_json(monkeypatch: pytest.MonkeyPatch, val
 
 
 def test_changed_handoff_blocks_before_mutation(cleanup: Cleanup) -> None:
-    """A replaced durable handoff cannot be used after its original digest was admitted."""
+    """A replaced durable handoff cannot be used after its original digest was admitted.
+
+    Args:
+        cleanup: Disposable merged Git worktree with deterministic GitHub and controller adapters.
+    """
     cleanup.handoff_path.write_text("{}", encoding="utf-8")
     with pytest.raises(Refusal, match="Handoff changed"):
         cleanup.run()
@@ -1241,7 +1716,12 @@ def test_changed_handoff_blocks_before_mutation(cleanup: Cleanup) -> None:
 
 
 def test_main_preserves_gates_on_late_controller_refusal(monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture) -> None:
-    """The CLI returns completed gate evidence when malformed input arrives at the final title request."""
+    """The CLI returns completed gate evidence when malformed input arrives at the final title request.
+
+    Args:
+        monkeypatch: Pytest fixture for scoped substitutions restored after the test.
+        capsys: Pytest capture fixture for validating sanitized protocol output.
+    """
     import io
 
     from scripts import completed_task_cleanup as command
@@ -1268,7 +1748,12 @@ def test_main_preserves_gates_on_late_controller_refusal(monkeypatch: pytest.Mon
 
 @pytest.mark.parametrize("field", ["repository", "pr", "ownership_manifest", "provider_id", "cleanup_tool"])
 def test_resource_identity_must_be_complete(cleanup: Cleanup, field: str) -> None:
-    """Incomplete resources cannot reach any owning-tool release request."""
+    """Incomplete resources cannot reach any owning-tool release request.
+
+    Args:
+        cleanup: Disposable merged Git worktree with deterministic GitHub and controller adapters.
+        field: Evidence field altered or removed for this refusal case.
+    """
     resource = resource_identity(cleanup, "missing-field")
     resource.pop(field)
     cleanup.handoff["resources"] = [resource]
@@ -1280,7 +1765,12 @@ def test_resource_identity_must_be_complete(cleanup: Cleanup, field: str) -> Non
 
 @pytest.mark.parametrize("defect", ["duplicate", "kind", "extra", "task", "source", "ancestry"])
 def test_entire_inventory_is_validated_before_release(cleanup: Cleanup, defect: str) -> None:
-    """A malformed later resource cannot cause partial release of an earlier valid resource."""
+    """A malformed later resource cannot cause partial release of an earlier valid resource.
+
+    Args:
+        cleanup: Disposable merged Git worktree with deterministic GitHub and controller adapters.
+        defect: Inventory defect injected before any resource release can occur.
+    """
     first, later = resource_identity(cleanup, "first-valid"), resource_identity(cleanup, "later-invalid")
     if defect == "duplicate":
         later["id"] = first["id"]
@@ -1308,11 +1798,21 @@ def test_entire_inventory_is_validated_before_release(cleanup: Cleanup, defect: 
 
 
 def test_live_title_must_match_recorded_title(cleanup: Cleanup, monkeypatch: pytest.MonkeyPatch) -> None:
-    """A controller's generic identity assertion cannot replace exact task-title readback."""
+    """A controller's generic identity assertion cannot replace exact task-title readback.
+
+    Args:
+        cleanup: Disposable merged Git worktree with deterministic GitHub and controller adapters.
+        monkeypatch: Pytest fixture for scoped substitutions restored after the test.
+    """
     original = cleanup.controller.call
 
     def renamed(operation: str, payload: dict) -> dict:
-        """Simulate a concurrently renamed task while every other observation remains eligible."""
+        """Simulate a concurrently renamed task while every other observation remains eligible.
+
+        Args:
+            operation: Named controller operation requested by the cleanup protocol.
+            payload: Structured request fields bound to the current cleanup handoff.
+        """
         result = original(operation, payload)
         if operation == "task.inspect":
             result["observed_title"] = "Different task"
@@ -1326,7 +1826,12 @@ def test_live_title_must_match_recorded_title(cleanup: Cleanup, monkeypatch: pyt
 
 @pytest.mark.parametrize("description", [None, True, 123, [], {}])
 def test_invalid_description_refuses_before_release(cleanup: Cleanup, description: object) -> None:
-    """Malformed title input cannot reach a controller or release a validation resource."""
+    """Malformed title input cannot reach a controller or release a validation resource.
+
+    Args:
+        cleanup: Disposable merged Git worktree with deterministic GitHub and controller adapters.
+        description: Invalid task description used to test title validation.
+    """
     handoff = dict(cleanup.handoff, description=description)
     handoff["resources"] = [resource_identity(cleanup, "preserve")]
     cleanup.handoff_path.write_text(json.dumps(handoff), encoding="utf-8")
@@ -1338,13 +1843,23 @@ def test_invalid_description_refuses_before_release(cleanup: Cleanup, descriptio
 
 
 def test_lost_resource_evidence_blocks_aggregate_gate(cleanup: Cleanup, monkeypatch: pytest.MonkeyPatch) -> None:
-    """Evidence lost after release blocks ref and worktree removal despite resource absence."""
+    """Evidence lost after release blocks ref and worktree removal despite resource absence.
+
+    Args:
+        cleanup: Disposable merged Git worktree with deterministic GitHub and controller adapters.
+        monkeypatch: Pytest fixture for scoped substitutions restored after the test.
+    """
     cleanup.handoff["resources"] = [resource_identity(cleanup, "lost-evidence")]
     original = cleanup.controller.call
     inspections = 0
 
     def lost_evidence(operation: str, payload: dict) -> dict:
-        """Preserve initial evidence but invalidate it on the final aggregate inspection."""
+        """Preserve initial evidence but invalidate it on the final aggregate inspection.
+
+        Args:
+            operation: Named controller operation requested by the cleanup protocol.
+            payload: Structured request fields bound to the current cleanup handoff.
+        """
         nonlocal inspections
         result = original(operation, payload)
         if operation == "resource.inspect":
@@ -1363,12 +1878,22 @@ def test_lost_resource_evidence_blocks_aggregate_gate(cleanup: Cleanup, monkeypa
 
 
 def test_earlier_resource_reappearance_blocks_aggregate_gate(cleanup: Cleanup, monkeypatch: pytest.MonkeyPatch) -> None:
-    """A resource reappearing while another is processed prevents the aggregate release gate."""
+    """A resource reappearing while another is processed prevents the aggregate release gate.
+
+    Args:
+        cleanup: Disposable merged Git worktree with deterministic GitHub and controller adapters.
+        monkeypatch: Pytest fixture for scoped substitutions restored after the test.
+    """
     cleanup.handoff["resources"] = [resource_identity(cleanup, "first"), resource_identity(cleanup, "second")]
     original = cleanup.controller.call
 
     def reappeared(operation: str, payload: dict) -> dict:
-        """Make the first provider disappear, then reappear at final inventory readback."""
+        """Make the first provider disappear, then reappear at final inventory readback.
+
+        Args:
+            operation: Named controller operation requested by the cleanup protocol.
+            payload: Structured request fields bound to the current cleanup handoff.
+        """
         result = original(operation, payload)
         if operation == "resource.inspect" and payload["resource"]["id"] == "first" \
                 and "resource_released:second" in cleanup.gates:
@@ -1384,11 +1909,21 @@ def test_earlier_resource_reappearance_blocks_aggregate_gate(cleanup: Cleanup, m
 
 @pytest.mark.parametrize("gate", ["remote_branch_absent", "local_task_branch_absent"])
 def test_recreated_matching_ref_invalidates_completed_gate(cleanup: Cleanup, monkeypatch: pytest.MonkeyPatch, gate: str) -> None:
-    """Same-SHA ref recreation still invalidates a previously completed absence gate."""
+    """Same-SHA ref recreation still invalidates a previously completed absence gate.
+
+    Args:
+        cleanup: Disposable merged Git worktree with deterministic GitHub and controller adapters.
+        monkeypatch: Pytest fixture for scoped substitutions restored after the test.
+        gate: Exact transition identifier to persist or exercise in recovery.
+    """
     original = cleanup.record
 
     def recreate(completed: str) -> None:
-        """Recreate the exact ref after its successful absence journal record."""
+        """Recreate the exact ref after its successful absence journal record.
+
+        Args:
+            completed: Transition just recorded before the fixture recreates a removed ref.
+        """
         original(completed)
         if completed == gate:
             if gate == "remote_branch_absent":
@@ -1405,7 +1940,11 @@ def test_recreated_matching_ref_invalidates_completed_gate(cleanup: Cleanup, mon
 
 @pytest.mark.skipif(os.name != "nt", reason="Windows junction contract")
 def test_reparse_output_preserves_external_target(tmp_path: Path) -> None:
-    """Neither inspection nor generated-tree deletion follows a junction to another owner."""
+    """Neither inspection nor generated-tree deletion follows a junction to another owner.
+
+    Args:
+        tmp_path: Pytest-owned temporary directory beneath the task validation root.
+    """
     external = tmp_path / "external"
     external.mkdir()
     (external / "keep.txt").write_text("user owned", encoding="utf-8")
