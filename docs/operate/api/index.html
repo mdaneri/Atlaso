@@ -286,6 +286,8 @@
       
         
       
+        
+      
     
     
     
@@ -710,6 +712,8 @@
       
         
       
+        
+      
     
     
     
@@ -1093,6 +1097,40 @@
     
   
   Network Objects
+
+    
+  </span>
+  
+  
+    
+  
+  
+    <span class="md-status md-status--current"></span>
+  
+
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../traffic-publishing/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Traffic Publishing
 
     
   </span>
@@ -3745,6 +3783,8 @@
       
         
       
+        
+      
     
     
     
@@ -3860,7 +3900,7 @@ silently ignoring them.</p>
 those management-only fields. The same PATCH transaction stages or enables the equivalent family default Route on the
 converted interface. An equivalent saved default is reused; a different existing family default returns <code>409</code> and
 rolls back the interface, routes, dependencies, and audit rows. A missing gateway creates no route. Clients should warn
-operators that off-subnet routing may be unavailable, then review both Network and Routes &amp; WAN Simulation before
+operators that off-subnet routing may be unavailable, then review both Network and Routing &amp; WAN before
 submitting global Appliance Apply. The PATCH never mutates host routes directly.</p>
 <p>Changing a physical interface's IPv4 or IPv6 CIDR automatically refreshes dependent desired-state addresses for DNS,
 NTP/NTS, Certificate Authority, KMS, LDAP, OIDC, VCF services, ESX Storage, Web Terminal, matching DHCP scopes, and
@@ -4021,7 +4061,7 @@ within the published compatibility contract. Additive fields may appear. Clients
 and must not depend on browser pages or non-<code>/api/v1</code> protocol routes as generated REST-client contracts.</p>
 <h2 id="nat-ingress-compatibility">NAT ingress compatibility<a class="headerlink" href="#nat-ingress-compatibility" title="Permanent link">&para;</a></h2>
 <p><code>POST /api/v1/nat/rules</code> and <code>PATCH /api/v1/nat/rules/{rule_id}</code> accept <code>inbound_interfaces</code>, an array of explicit
-interface/VLAN names. New rules and enabled updates require at least one enabled IPv4 lab target different from
+interface/VLAN names. New rules and enabled updates require at least one enabled same-family lab target different from
 <code>outbound_interface</code>. Existing paths, operation IDs, and <code>read:wan</code> / <code>write:wan</code> authorization remain unchanged.
 Clients must supply reviewed ingress membership when creating rules. PATCH preserves saved membership when the field
 is omitted and validates that membership when enabling or changing the outbound target. Explicit <code>[]</code> clears membership
@@ -4031,6 +4071,12 @@ legacy update may retain an empty scope. The create-specific OpenAPI schema mark
 with at least one item, including for disabled new rules; update and response schemas preserve empty legacy scopes.
 Source Group and CIDR values restrict addresses within the selected ingress.
 All writes save desired state; global Appliance Apply owns enforcement.</p>
+<p>Traffic Publishing adds <code>ip_family</code> (4 or 6), <code>translation_mode</code> (<code>masquerade</code> or <code>snat</code>), and <code>translated_address</code>.
+Fixed SNAT requires the exact same-family egress address; source CIDRs and Source Groups must match the chosen family.
+PATCH preserves omitted additive fields. The legacy <code>masquerade</code> response remains a mode projection. Canonical
+<code>GET</code>/<code>PUT /api/v1/traffic-publishing/settings</code> use Firewall read/write scopes and share one NAT setting with the
+deprecated Routes/WAN projection. Only Routing owns forwarding, and the separate <code>nat</code> Apply unit owns translation.
+See <a href="../traffic-publishing/">Traffic Publishing</a> for settings, upgrade, and runtime recovery details.</p>
 <p>Inbound and outbound names always use 1–80 ASCII letters, digits, underscores, dots, colons, or hyphens, including for
 disabled rows and settings archives. Disabling a rule relaxes target availability checks only; it does not relax name
 syntax or ingress-list structure.</p>

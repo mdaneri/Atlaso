@@ -286,6 +286,8 @@
       
         
       
+        
+      
     
     
     
@@ -674,6 +676,8 @@
       
         
           
+        
+      
         
       
         
@@ -1246,6 +1250,40 @@
     
   
   Network Objects
+
+    
+  </span>
+  
+  
+    
+  
+  
+    <span class="md-status md-status--current"></span>
+  
+
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../traffic-publishing/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Traffic Publishing
 
     
   </span>
@@ -3667,6 +3705,8 @@
       
         
       
+        
+      
     
     
     
@@ -3710,8 +3750,7 @@
 
 
 <h1 id="apply-appliance-changes">Apply appliance changes<a class="headerlink" href="#apply-appliance-changes" title="Permanent link">&para;</a></h1>
-<p>Use Appliance Apply after editing Atlaso settings to enforce selected desired state on the Photon appliance. The review
-is global: one submission can apply related changes from several service pages in a controlled order.</p>
+<p>Appliance Apply enforces selected desired state from multiple service pages in one ordered Photon submission.</p>
 <!-- BEGIN GENERATED INTERFACE OVERVIEW -->
 <h2 id="interface-overview">Interface overview<a class="headerlink" href="#interface-overview" title="Permanent link">&para;</a></h2>
 <p>This verified appliance view provides visual orientation before you begin.</p>
@@ -3747,10 +3786,12 @@ before submitting it.</p>
     G --&gt; H[Verify appliance state]</code></pre>
 <p>Atlaso groups related settings into apply units. DNS and DHCP share one <code>DNS/DHCP (dnsmasq)</code> unit. Web Terminal changes
 can require <strong>Appliance Settings</strong>, <strong>Public Services</strong>, and <strong>Firewall</strong>. A management-to-access conversion with a
-gateway change also selects <strong>Routes &amp; WAN Simulation</strong> with Network and uses the protected handoff. A WAN-only change
+gateway change also selects <strong>Routing &amp; WAN</strong> with Network and uses the protected handoff. A WAN-only change
 to a mirrored management default uses the same handoff. Each WAN unit executes from its captured snapshot.</p>
-<p>The Routes &amp; WAN unit owns the global Routing, NAT, and WAN Simulation switches. Turning one off makes Apply remove its
-Atlaso-owned runtime state while preserving saved rows. NAT reports <strong>suspended</strong> when NAT is on but Routing is off.</p>
+<p>The <code>wan</code> unit owns Routing and WAN Simulation. The separate <strong>Traffic Publishing</strong> (<code>nat</code>) unit owns source
+translation and its baseline. Turning a feature off removes its Atlaso-owned runtime state while preserving saved rows.
+NAT reports <strong>suspended</strong> when NAT is on but Routing is off. Network or WAN submissions include NAT reconciliation;
+activating NAT also includes changed target and Routing dependencies before management-handoff classification.</p>
 <h2 id="review-pending-changes">Review pending changes<a class="headerlink" href="#review-pending-changes" title="Permanent link">&para;</a></h2>
 <ol>
 <li>Finish editing the desired state on the relevant service pages.</li>
@@ -3892,8 +3933,7 @@ prevents a queued task from applying state that the administrator did not inspec
 </ul>
 <h2 id="complete-technical-contents">Complete technical contents<a class="headerlink" href="#complete-technical-contents" title="Permanent link">&para;</a></h2>
 <p>No original section was removed. See the
-<a href="../../reference/appliance-apply-technical/">Appliance Apply technical reference</a> for backend ownership, unit contracts,
-staging, helper execution, baselines, recovery, and interface expectations.</p>
+<a href="../../reference/appliance-apply-technical/">technical reference</a> for implementation and recovery contracts.</p>
 
 
 

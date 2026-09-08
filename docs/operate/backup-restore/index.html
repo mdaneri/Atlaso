@@ -286,6 +286,8 @@
       
         
       
+        
+      
     
     
     
@@ -710,6 +712,8 @@
       
         
       
+        
+      
     
     
     
@@ -1093,6 +1097,40 @@
     
   
   Network Objects
+
+    
+  </span>
+  
+  
+    
+  
+  
+    <span class="md-status md-status--current"></span>
+  
+
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../traffic-publishing/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Traffic Publishing
 
     
   </span>
@@ -3613,6 +3651,8 @@
       
         
       
+        
+      
     
     
     
@@ -3656,8 +3696,12 @@
 
 
 <h1 id="backup-and-restore">Backup and restore<a class="headerlink" href="#backup-and-restore" title="Permanent link">&para;</a></h1>
-<p>Open <strong>Backup and Restore</strong> to protect Atlaso settings before maintenance and recover the control-plane configuration
-when needed.</p>
+<p>Traffic Publishing archives include canonical NAT enablement and additive family, translation mode, and fixed-address
+fields. Legacy IPv4 rules retain their meaning; omitted ingress remains pending explicit review. Missing NIC selectors
+are retained only when backed by archived missing-host inventory and never become runtime-eligible on restore.
+Canonical NAT enablement takes precedence over a legacy Routes/WAN projection. Factory reset clears NAT rules,
+disables the NAT replay service, and establishes a disabled <code>nat</code> Apply baseline. See
+<a href="../traffic-publishing/">Traffic Publishing</a> for the source-translation contract.</p>
 <!-- BEGIN GENERATED INTERFACE OVERVIEW -->
 <h2 id="interface-overview">Interface overview<a class="headerlink" href="#interface-overview" title="Permanent link">&para;</a></h2>
 <p>This verified appliance view provides visual orientation before you begin.</p>
@@ -3665,6 +3709,8 @@ when needed.</p>
 <p><em>Figure: Backup and Restore in the verified clean-appliance desktop state.</em></p>
 <!-- END GENERATED INTERFACE OVERVIEW -->
 
+<p>Open <strong>Backup and Restore</strong> to protect Atlaso settings before maintenance and recover the control-plane configuration
+when needed.</p>
 <h2 id="create-a-backup">Create a backup<a class="headerlink" href="#create-a-backup" title="Permanent link">&para;</a></h2>
 <ol>
 <li>Create a named backup before a high-risk configuration or update operation.</li>
@@ -3688,7 +3734,7 @@ upload the CA bundle again and review the registry settings before re-enabling i
 administrator explicitly chooses whether to keep or change both the bootstrap administrator and root passwords and
 confirms the destructive action, Atlaso creates a durable non-secret recovery marker, and the privileged runner pins
 that admitted root-owned state directory without following links before it stops database writers, builds a private
-replacement database, validates all generated runtime configuration, and activates the clean state for all 16 apply
+replacement database, validates all generated runtime configuration, and activates the clean state for all 17 apply
 units. Only after the candidate passes validation does Atlaso atomically replace the active database. The management
 plane restarts and the initiating browser is handed back to sign-in.</p>
 <p>Factory reset deliberately moves management admission to the applied factory binding (<code>eth0</code> at

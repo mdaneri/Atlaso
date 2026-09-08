@@ -18,7 +18,7 @@
         <link rel="prev" href="../networking/">
       
       
-        <link rel="next" href="../appliance-console/">
+        <link rel="next" href="../traffic-publishing/">
       
       
         
@@ -250,6 +250,8 @@
       
         
           
+        
+      
         
       
         
@@ -674,6 +676,8 @@
       
         
           
+        
+      
         
       
         
@@ -1233,6 +1237,40 @@
   
 </nav>
       
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../traffic-publishing/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Traffic Publishing
+
+    
+  </span>
+  
+  
+    
+  
+  
+    <span class="md-status md-status--current"></span>
+  
+
+  
+
+      </a>
     </li>
   
 
@@ -3613,6 +3651,8 @@
       
         
       
+        
+      
     
     
     
@@ -3697,7 +3737,7 @@ against another session adding a reference after the page was loaded. Remove or 
 the shared confirmation dialog to remove the unreferenced object. <strong>Any</strong> cannot be removed.</p>
 <h2 id="apply-and-archive-behavior">Apply and archive behavior<a class="headerlink" href="#apply-and-archive-behavior" title="Permanent link">&para;</a></h2>
 <p>Saving a Source Group changes desired state only. Firewall-rule and managed-assignment consumers remain enforced through
-the <strong>Firewall</strong> Appliance Apply unit; NAT consumers remain enforced through <strong>Routes &amp; WAN Simulation</strong>. Atlaso keeps
+the <strong>Firewall</strong> Appliance Apply unit; NAT consumers are enforced through <strong>Traffic Publishing</strong> (<code>nat</code>). Atlaso keeps
 the established <code>firewall.managed_source_groups</code> settings-archive shape, object identifiers, nested references, and
 assignments, so current archives round-trip without migration.</p>
 <p>The canonical collection route is <code>/ui/management/network-objects/source-groups</code>. Safe legacy <code>GET</code> and <code>HEAD</code> requests
@@ -3768,13 +3808,13 @@ the mutation while following the canonical location.</p>
         
         
           
-          <a href="../appliance-console/" class="md-footer__link md-footer__link--next" aria-label="Next: Local appliance console">
+          <a href="../traffic-publishing/" class="md-footer__link md-footer__link--next" aria-label="Next: Traffic Publishing">
             <div class="md-footer__title">
               <span class="md-footer__direction">
                 Next
               </span>
               <div class="md-ellipsis">
-                Local appliance console
+                Traffic Publishing
               </div>
             </div>
             <div class="md-footer__button md-icon">

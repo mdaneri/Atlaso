@@ -284,6 +284,8 @@
       
         
       
+        
+      
     
     
     
@@ -708,6 +710,8 @@
       
         
       
+        
+      
     
     
     
@@ -1088,6 +1092,40 @@
     
   
   Network Objects
+
+    
+  </span>
+  
+  
+    
+  
+  
+    <span class="md-status md-status--current"></span>
+  
+
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../operate/traffic-publishing/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Traffic Publishing
 
     
   </span>
@@ -3264,10 +3302,10 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
-  <a href="#current-v1-scope" class="md-nav__link">
+  <a href="#original-v1-scope" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
-        Current V1 Scope
+        Original V1 Scope
       </span>
     </span>
   </a>
@@ -3432,10 +3470,10 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
-  <a href="#current-v1-scope" class="md-nav__link">
+  <a href="#original-v1-scope" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
-        Current V1 Scope
+        Original V1 Scope
       </span>
     </span>
   </a>
@@ -3584,9 +3622,12 @@
 
 
 <h1 id="routing-and-wan-roadmap">Routing And WAN Roadmap<a class="headerlink" href="#routing-and-wan-roadmap" title="Permanent link">&para;</a></h1>
-<p>Atlaso Routing/WAN v1 is intentionally appliance-owned and conservative. Desired state is edited on
+<p>Current source translation is documented in <a href="../../operate/traffic-publishing/">Traffic Publishing</a>, including IPv6
+masquerade and fixed SNAT. The original v1 scope below records the pre-split design; destination NAT and NPTv6 remain
+separate future work.</p>
+<p>Atlaso Routing/WAN v1 was intentionally appliance-owned and conservative. Desired state is edited on
 <code>/ui/management/routes-wan</code>; host mutation happens only through the global <code>/ui/management/appliance-apply</code> <code>wan</code> unit.</p>
-<p>The current UI presents four wizard-backed collections: <strong>Static Routes</strong>, <strong>Routing Permissions</strong>, <strong>NAT</strong>, and
+<p>The original v1 UI presented four wizard-backed collections: <strong>Static Routes</strong>, <strong>Routing Permissions</strong>, <strong>NAT</strong>, and
 <strong>WAN Policies</strong>. Static Routes define paths in the lab route table. Routing Permissions separately define forwarding
 between interface/VLAN networks. Add/edit changes are reviewed before one desired-state save, while ordinary Enabled
 state remains directly editable and generated route-role permissions remain read-only. A non-grid
@@ -3594,7 +3635,7 @@ state remains directly editable and generated route-role permissions remain read
 all three are off on fresh install and factory reset.</p>
 <p>Atlaso has no <code>wan</code> interface role. The <code>wan</code> apply-unit name and WAN Simulation UI describe explicit routing, NAT, and
 impairment behavior only; they must not be used as an interface classification.</p>
-<h2 id="current-v1-scope">Current V1 Scope<a class="headerlink" href="#current-v1-scope" title="Permanent link">&para;</a></h2>
+<h2 id="original-v1-scope">Original V1 Scope<a class="headerlink" href="#original-v1-scope" title="Permanent link">&para;</a></h2>
 <ul>
 <li>Static route desired state rendered to <code>/var/lib/atlaso/apply/wan/atlaso-wan.conf</code>.</li>
 <li>Explicit IPv4 and IPv6 default-route wizard paths that persist canonical <code>0.0.0.0/0</code> and <code>::/0</code>, require a
@@ -3655,11 +3696,11 @@ destination without impairing all traffic on that interface. This is planned wor
 <li>Remove disabled or removed route impairment only when it appears in the last-applied baseline.</li>
 </ol>
 <h2 id="nat-roadmap">NAT Roadmap<a class="headerlink" href="#nat-roadmap" title="Permanent link">&para;</a></h2>
-<p>NAT v1 is explicit IPv4 masquerade only. Future NAT work can consider:</p>
+<p>Original NAT v1 supported IPv4 masquerade only. Current source NAT also supports IPv6 and fixed SNAT. Future work can consider:</p>
 <ul>
 <li>Destination NAT and port forwarding with clear listener ownership.</li>
 <li>Per-rule counters or status readback.</li>
-<li>IPv6 routing is supported through <code>ip -6 route</code>; IPv6 NAT/NPT remains future work only if a concrete lab use case
+<li>NPTv6 remains future work only if a concrete lab use case
   justifies it.</li>
 </ul>
 <p>Do not infer broad NAT automatically from interface roles. NAT must remain an explicit desired-state rule reviewed

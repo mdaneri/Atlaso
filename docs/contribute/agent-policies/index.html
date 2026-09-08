@@ -284,6 +284,8 @@
       
         
       
+        
+      
     
     
     
@@ -708,6 +710,8 @@
       
         
       
+        
+      
     
     
     
@@ -1088,6 +1092,40 @@
     
   
   Network Objects
+
+    
+  </span>
+  
+  
+    
+  
+  
+    <span class="md-status md-status--current"></span>
+  
+
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../operate/traffic-publishing/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Traffic Publishing
 
     
   </span>
@@ -5659,7 +5697,7 @@ never pass advisory identifiers to this public formatter, and still require exac
 <li>A static management-to-access physical-interface mutation captures valid IPv4 and IPv6 gateways before clearing
   management-only fields and stages enabled canonical defaults for the converted access target in the same transaction.
   Reuse equivalent routes, reject conflicting family defaults with complete rollback, warn without inventing missing
-  gateways, audit both Network and Routes &amp; WAN Simulation, and mark Appliance Settings dependent. A migrated route not
+  gateways, audit both Network and Routing &amp; WAN, and mark Appliance Settings dependent. A migrated route not
   present in the last-applied WAN baseline selects WAN into the existing protected management handoff with a validated
   rollback config; it does not create another host-mutation path.</li>
 </ul>
@@ -5909,15 +5947,17 @@ never pass advisory identifiers to this public formatter, and still require exac
 </ul>
 <h2 id="routing-and-wan">Routing And WAN<a class="headerlink" href="#routing-and-wan" title="Permanent link">&para;</a></h2>
 <ul>
-<li>Routes &amp; WAN Simulation owns static route desired state, IPv4 outbound masquerade NAT rules, and interface/VLAN-level
+<li>Routing &amp; WAN owns static route desired state, forwarding, and interface/VLAN-level
   <code>tc/netem</code> latency/error simulation.</li>
 <li>Persist the global Routing, NAT, and WAN Simulation switches as safe settings. Fresh install and factory reset are
-  off; missing legacy settings derive once from effective enabled rows. Keep every route, permission, NAT rule, WAN
+  off; legacy Routing/WAN settings derive once from effective enabled rows. Explicit legacy NAT intent migrates to the
+  canonical Traffic Publishing setting. Keep every route, permission, NAT rule, WAN
   policy, and assignment saved while its feature is off. Routing gates lab routes, rules, and IPv4/IPv6 forwarding;
   NAT is effective only with Routing; WAN Simulation is independent. Management reachability remains outside the lab
   Routing switch.</li>
 <li>Label path entries <strong>Static Routes</strong> and forwarding authorization <strong>Routing Permissions</strong>. Keep Static Routes,
-  explicit Routing Permissions, NAT Rules, and WAN Policies as wizard-backed Tabulator collections using the ESX
+  explicit Routing Permissions, and WAN Policies on Routing &amp; WAN, with Source NAT on Traffic Publishing.
+  All four remain wizard-backed Tabulator collections using the ESX
   Storage reference. Add launches from the bottom row; edit launches from row double-click or its context action;
   generated route-role permissions remain read-only; and ordinary persisted Enabled state remains directly editable.</li>
 <li>Keep <strong>Default route</strong> mutually exclusive with <strong>Destination CIDR</strong> in the Static Route wizard. Default mode requires
@@ -5926,26 +5966,29 @@ never pass advisory identifiers to this public formatter, and still require exac
   permits only one default per family. Destination-specific routes require a CIDR and may omit the gateway when directly
   connected. Preserve <code>/api/v1/routes</code> compatibility for callers that submit canonical <code>/0</code> CIDRs, and enforce the
   contract in browser validation, UI/API transports, desired-state validation, settings restore, and the WAN helper.</li>
-<li>All Routing/WAN host mutation must go through the global <code>/ui/management/appliance-apply</code> <code>wan</code> unit. Do not add
-  route-specific,
+<li>Routing/WAN host mutation uses global <code>/ui/management/appliance-apply</code> <code>wan</code>; source NAT uses its separate <code>nat</code> unit.
+  Do not add route-specific,
   NAT-specific, or WAN-policy-specific apply routes or direct helper calls from edit forms.</li>
 <li>The real apply path stages <code>/var/lib/atlaso/apply/wan/atlaso-wan.conf</code>; <code>atlaso-helper wan validate|apply</code> validates
-  targets, routes, NAT rules, and netem values before running <code>ip route</code>, <code>nft</code>, <code>sysctl</code>, and <code>tc</code>.</li>
+  targets, routes, and netem values before running <code>ip route</code>, <code>sysctl</code>, and <code>tc</code>. Traffic Publishing stages its own NAT
+  input and owns nftables translation.</li>
 <li>WAN impairment mode is v1 interface/VLAN-level only. Do not expose a route-specific WAN mode until it is fully
   implemented in the helper; track that design in <code>docs/project/routing-wan-roadmap.md</code>.</li>
 <li>Atlaso has no <code>wan</code> interface role and must not infer NAT or internet connectivity from an interface role.</li>
 <li>Physical and VLAN interfaces share exactly four roles: <code>management</code>, <code>access</code>, <code>route</code>, and <code>unused</code>. New UI, API,
   desired-state, and helper inputs reject retired or unknown roles. Bounded upgrade and settings-archive compatibility
   maps only the retired <code>services</code> and <code>storage</code> values to <code>access</code> without changing any other interface state.
-  <code>Routes &amp; WAN Simulation</code> is the explicit routing/NAT/loss workflow, not an interface classification.</li>
-<li>NAT v1 is explicit IPv4 masquerade only. Do not add destination NAT, port forwarding, automatic broad NAT, or
+  <code>Routing &amp; WAN</code> and <code>Traffic Publishing</code> are explicit routing, translation, and loss workflows, not interface classes.</li>
+<li>Traffic Publishing supports explicit IPv4/IPv6 masquerade and fixed SNAT to a same-family assigned egress address.
+  Do not add destination NAT, port forwarding, automatic broad NAT, or
   non-reviewable NAT inferred only from interface role. Route-role networks may forward to other route-role networks by
   default; access networks require explicit routing rules; management is never a route, NAT, or routing-permission
   target.</li>
 <li>NAT requires one or more explicit inbound interfaces and one distinct outbound interface. Both sides use enabled,
-  available access-mode physical interfaces or enabled VLANs on available trunk parents, with IPv4 CIDRs and an access
-  or route role. The dedicated management role and IPv6-only targets are excluded; access-management flags do not
-  exclude an otherwise eligible lab target. Any source means any IPv4 source within the selected ingress; CIDRs and
+  available access-mode physical interfaces or enabled VLANs on available trunk parents, with matching-family CIDRs
+  and an access or route role. The dedicated management role and wrong-family targets are excluded;
+  access-management flags do not
+  exclude an otherwise eligible lab target. Any source means any same-family source within the selected ingress; CIDRs and
   shared source groups further restrict that boundary. Render every rule with <code>iifname</code> so appliance-local output
   cannot match. Preserve legacy unscoped rows for review and reject enabled apply until explicit ingress is selected.
   NAT remains explicit desired state reviewed through global apply; it is not inferred from an interface role.</li>
@@ -5967,7 +6010,7 @@ never pass advisory identifiers to this public formatter, and still require exac
   table with factory/bootstrap records, invalidates all previous sessions, credentials, jobs, schedules, tokens, and
   audit history, then preflights and activates every factory apply unit through the dedicated reset transaction. Core
   routing, firewall, authentication, and management reachability must finish coherent; optional services must finish
-  disabled; desired/applied baselines must match for all 16 units with no follow-up Apply. Factory reset must reseed only
+  disabled; desired/applied baselines must match for all 17 units with no follow-up Apply. Factory reset must reseed only
   core defaults and must not recreate demo
   VLANs, trunk-only
   parent NIC posture, routes, NAT rules, WAN policies, DHCP scopes/reservations, firewall rules, CA requests, vSphere
