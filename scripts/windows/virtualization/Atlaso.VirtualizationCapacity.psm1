@@ -18,6 +18,8 @@ Resolved builder directory, required for a new build.
 Read-only verified entry point: Build, Template, or Candidate.
 .PARAMETER SourceBytes
 Conservative source expansion estimate, or verified retained source tree length.
+.PARAMETER RetainedSource
+The source tree passed read-only verification and reconstruction creates only a temporary comparison copy.
 #>
 function Get-AtlasoVirtualizationStoragePlan {
     param(
@@ -25,14 +27,15 @@ function Get-AtlasoVirtualizationStoragePlan {
         [Parameter(Mandatory)][string]$Operation,
         [string]$BuilderOutput = '',
         [ValidateSet('Build', 'Template', 'Candidate')][string]$Resume = 'Build',
-        [ValidateRange(1, 17179869184)][long]$SourceBytes = 16GB
+        [ValidateRange(1, 17179869184)][long]$SourceBytes = 16GB,
+        [switch]$RetainedSource
     )
     # Lifetimes represent peak simultaneous use, not the sum of sequential VMs.
     # End=7 retains output through candidate staging. Existing bytes are already
     # reflected in free space; only additional allocations enter this plan.
     $plan = @(
         [pscustomobject]@{ Path=$Operation; Name='signed source downloads'; Bytes=2GB; Start=0; End=0 }
-        [pscustomobject]@{ Path=$Operation; Name='verified source reconstruction'; Bytes=$SourceBytes; Start=0; End=7 }
+        [pscustomobject]@{ Path=$Operation; Name='verified source reconstruction'; Bytes=$SourceBytes; Start=0; End=$(if ($RetainedSource) { 0 } else { 7 }) }
     )
     if ($Resume -eq 'Candidate') { return $plan }
     if ($Resume -eq 'Build') {

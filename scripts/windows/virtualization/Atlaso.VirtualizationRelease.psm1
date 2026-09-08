@@ -967,6 +967,7 @@ function Invoke-AtlasoVirtualizationPrerelease {
     $plannedSource = Join-Path $plannedOperation 'verified-source'
     $capacityResume = 'Build'
     $sourceEstimate = 16GB
+    $retainedSourceVerified = $false
     if (Test-Path -LiteralPath $plannedSource) {
         & python -B (Join-Path $RepoRoot 'scripts/prepare_virtualization_source.py') `
             --verify-existing $plannedSource `
@@ -975,6 +976,7 @@ function Invoke-AtlasoVirtualizationPrerelease {
         if ($LASTEXITCODE -ne 0) { throw 'Retained signed source failed read-only capacity preflight verification.' }
         $sourceEstimate = [long]((Get-ChildItem -LiteralPath $plannedSource -Recurse -File |
             Measure-Object -Property Length -Sum).Sum)
+        $retainedSourceVerified = $true
     }
     if (Test-Path -LiteralPath (Join-Path $plannedOperation 'candidate')) {
         if ($SmokeConsoleMinutes -gt 0) {
@@ -1003,7 +1005,8 @@ function Invoke-AtlasoVirtualizationPrerelease {
         $capacityResume = 'Template'
     }
     $storagePlan = @(Get-AtlasoVirtualizationStoragePlan -RepoRoot $RepoRoot -Operation $plannedOperation `
-        -BuilderOutput $builderOutput -Resume $capacityResume -SourceBytes $sourceEstimate)
+        -BuilderOutput $builderOutput -Resume $capacityResume -SourceBytes $sourceEstimate `
+        -RetainedSource:$retainedSourceVerified)
     Assert-AtlasoVirtualizationStoragePlan -Plan $storagePlan -Stage 0
     if ($SmokeConsoleMinutes -gt 0) {
         $null = Get-Command 1password-mcp -ErrorAction Stop

@@ -45,6 +45,21 @@ if ([long](($candidate | Measure-Object -Property Bytes -Sum).Sum) -ne 3GB) {
 $templatePlan = @(Get-AtlasoVirtualizationStoragePlan -RepoRoot $RepositoryRoot -Operation $operation -Resume Template)
 if (@($templatePlan | Where-Object Start -EQ 1).Count) { throw 'Verified template reuse still budgets a new builder.' }
 
+foreach ($resume in @('Build', 'Template')) {
+    $retainedPlan = @(Get-AtlasoVirtualizationStoragePlan -RepoRoot $RepositoryRoot -Operation $operation `
+        -BuilderOutput $builder -Resume $resume -RetainedSource)
+    $reconstruction = @($retainedPlan | Where-Object Name -EQ 'verified source reconstruction')
+    if ($reconstruction.Count -ne 1 -or $reconstruction[0].End -ne 0) {
+        throw 'Retained source comparison copy survives its verification stage in the plan.'
+    }
+    Assert-AtlasoVirtualizationStoragePlan -Plan $retainedPlan
+    $retainedPeak = [long]((@(& $capacityModule { $script:CapturedComponents }) | Measure-Object Bytes -Sum).Sum)
+    $expectedPeak = if ($resume -eq 'Build') { 162GB } else { 94GB }
+    if ($retainedPeak -ne $expectedPeak) { throw "Retained $resume peak double-counts existing source bytes." }
+}
+$newSource = @($plan | Where-Object Name -EQ 'verified source reconstruction')
+if ($newSource[0].End -ne 7) { throw 'New source allocation was prematurely released.' }
+
 & $capacityModule {
     Set-Item function:script:Get-AtlasoStorageVolume -Value {
         param($Path)

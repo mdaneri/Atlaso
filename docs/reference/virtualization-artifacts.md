@@ -49,6 +49,8 @@ peak plus headroom is 180 GiB. A verified retained template omits new builder al
 omits build, export, conversion, and smoke allocations. Retained source, template provenance, powered-off state, and
 candidate bytes must pass their existing validation before the smaller resume plan is admitted. An invalid retained
 operation is preserved and rejected, never relocated automatically.
+When the source tree is already verified, only its temporary reconstruction copy is budgeted during source verification;
+that copy is removed before later stages. A newly created source tree remains allocated through candidate staging.
 
 The workflow repeats admission before each heavy stage using the remaining plan. Hyper-V conversion discounts validated
 completed VHDX bytes from subsequent conversion checks while retaining the ZIP output budget. Direct OVF export,
