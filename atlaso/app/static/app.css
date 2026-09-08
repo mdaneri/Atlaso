@@ -1754,8 +1754,7 @@ textarea {
   grid-template-columns: minmax(0, 1fr) 38px;
 }
 
-.esxi-boot-service-panel .form-grid > label > .field-label,
-.form-grid > .nat-inbound-field > .field-label {
+.esxi-boot-service-panel .form-grid > label > .field-label {
   min-height: 0;
 }
 
@@ -4004,7 +4003,8 @@ label > span,
   margin-bottom: 5px;
 }
 
-.form-grid > label > .field-label {
+.form-grid > label > .field-label,
+.form-grid > .nat-inbound-field > .field-label {
   align-items: flex-start;
   min-height: 32px;
 }

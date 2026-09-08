@@ -1102,7 +1102,7 @@ def test_pwa_manifest_service_worker_and_offline_shell(client):
     assert 'accept.includes("text/html")' in service_worker.text
     assert '!hasDownloadLikePath(url)' in service_worker.text
     assert "/static/vendor/monaco/atlaso-monaco.min.js?v=atlaso-monaco-20260806-7" in service_worker.text
-    assert "/static/app.css?v=issues-515-519-10-605-1-660-3-662-663-1-721-1" in service_worker.text
+    assert "/static/app.css?v=issues-515-519-10-605-1-660-3-662-663-1-721-2" in service_worker.text
     assert "/static/ui-patterns.js?v=atlaso-ui-foundation-20260726-10" in service_worker.text
     assert "/static/appliance-apply-polling.js?v=issue-420-6" in service_worker.text
     assert "/static/ui-routes.js?v=issue-287-1" in service_worker.text
@@ -1132,7 +1132,7 @@ def test_pwa_manifest_service_worker_and_offline_shell(client):
     )
     assert offline_stylesheet is not None
     assert offline_stylesheet.group(1) == (
-        "/static/app.css?v=issues-515-519-10-605-1-660-3-662-663-1-721-1"
+        "/static/app.css?v=issues-515-519-10-605-1-660-3-662-663-1-721-2"
     )
     assert f'"{offline_stylesheet.group(1)}"' in service_worker.text
 

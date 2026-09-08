@@ -4,7 +4,7 @@ const ATLASO_ASSETS = [
   "/manifest.webmanifest",
   "/favicon.ico",
   "/static/offline.html",
-  "/static/app.css?v=issues-515-519-10-605-1-660-3-662-663-1-721-1",
+  "/static/app.css?v=issues-515-519-10-605-1-660-3-662-663-1-721-2",
   "/static/ui-patterns.js?v=atlaso-ui-foundation-20260726-10",
   "/static/ui-routes.js?v=issue-287-1",
   "/static/appliance-apply-polling.js?v=issue-420-6",

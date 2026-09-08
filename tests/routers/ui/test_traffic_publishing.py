@@ -121,3 +121,41 @@ def test_suspended_nat_apply_keeps_routing_baseline_independent(client):
         baseline = load_appliance_apply_baselines(db)
         assert baseline.get("wan") == previous_wan
         assert "routing_enabled=false" in baseline["nat"]["config_preview"]
+
+
+def test_firewall_apply_replays_unchanged_nat_after_ruleset_replacement(client, monkeypatch):
+    """Keep NAT in the ordered job when Firewall replaces its kernel ruleset.
+
+    Args:
+        client: Synchronous dry-run Apply fixture.
+        monkeypatch: Isolate a Firewall-only update from first-boot management changes.
+    """
+    import json
+
+    from atlaso.app import ui
+    from atlaso.app.models import Job
+
+    original_units = ui.appliance_apply_units
+
+    def settled_management_units(*args, **kwargs):
+        units = original_units(*args, **kwargs)
+        for unit in units:
+            if unit["id"] == "network":
+                unit["management_handoff_required"] = False
+        return units
+
+    monkeypatch.setattr(ui, "appliance_apply_units", settled_management_units)
+
+    login(client)
+    page = client.get("/traffic-publishing")
+    csrf = page.text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
+    for selection in ("nat", "firewall"):
+        response = client.post("/appliance-apply", data={"csrf": csrf, "selected_units": selection},
+                               headers={"Accept": "application/json"})
+        assert response.status_code == 202
+        with SessionLocal() as db:
+            job = db.get(Job, response.json()["job_id"])
+            assert job.status == "succeeded"
+            if selection == "firewall":
+                assert json.loads(job.result)["selected_units"] == ["firewall", "nat"]
+                assert [step.component_key for step in sorted(job.steps, key=lambda step: step.position)] == ["firewall", "nat"]

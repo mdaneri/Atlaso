@@ -16221,7 +16221,8 @@ def _submit_appliance_apply(
         selected_ids.add("local_users")
     # Expand translation dependencies before deciding whether Network needs the
     # protected management handoff. NAT snapshots must use applied target state.
-    if selected_ids.intersection({"wan", "network"}) and "nat" in unit_map:
+    # Firewall replaces the ruleset, so replay NAT after it even when NAT is unchanged.
+    if selected_ids.intersection({"wan", "network", "firewall"}) and "nat" in unit_map:
         selected_ids.add("nat")
     nat_activation = unit_map.get("nat", {}).get("context", {}).get("traffic_publishing_settings")
     if "nat" in selected_ids and getattr(nat_activation, "effective_nat_enabled", False):
@@ -16250,7 +16251,7 @@ def _submit_appliance_apply(
             and "wan" in unit_map
         ):
             selected_ids.add("wan")
-    if selected_ids.intersection({"wan", "network"}) and "nat" in unit_map:
+    if selected_ids.intersection({"wan", "network", "firewall"}) and "nat" in unit_map:
         selected_ids.add("nat")
     if not selected_ids:
         detail = "Select at least one appliance change to submit."

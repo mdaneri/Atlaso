@@ -9,7 +9,7 @@ status: current
 
 # Traffic Publishing
 
-Use **Network → Traffic Publishing** at `/ui/management/traffic-publishing` to configure source NAT. **Routing & WAN**
+Use **Network â†’ Traffic Publishing** at `/ui/management/traffic-publishing` to configure source NAT. **Routing & WAN**
 at `/ui/management/routes-wan` owns static routes, routing permissions, forwarding, and WAN simulation. Traffic
 Publishing requires Firewall read permission; changing its browser settings or rules requires Firewall write permission.
 
@@ -44,7 +44,8 @@ This verified appliance view provides visual orientation before you begin.
    Routing is off; WAN simulation remains independent.
 8. Review global Appliance Apply and submit **Traffic Publishing** (`nat`). Changed Network and Routing dependencies
    join the submission so the translation snapshot matches target and forwarding state. Management changes retain
-   the protected management handoff.
+   the protected management handoff. Firewall Apply also replays Traffic Publishing after replacing the
+   firewall ruleset, even when NAT desired state is unchanged.
 
 Saving only changes desired state. There is no rule-specific Apply action. Disabled features preserve their rows.
 Every rendered rule includes explicit ingress selectors, so appliance-originated traffic cannot match it. This page
