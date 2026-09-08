@@ -79,7 +79,9 @@ def configured_root(config: Path) -> Path:
     active_config = Path(os.environ.get("CODEX_HOME", str(Path.home() / ".codex"))) / "config.toml"
     require(config == active_config, "Config must be the active CODEX_HOME/config.toml, not a handoff-supplied alternate.")
     with ordinary(config).open("rb") as stream:
-        value = tomllib.load(stream).get("desktop", {}).get("git-worktree-root")
+        desktop = tomllib.load(stream).get("desktop", {})
+    require(isinstance(desktop, dict), "desktop must be a TOML table; repair the active configuration before retry.")
+    value = desktop.get("git-worktree-root")
     require(isinstance(value, str) and value.strip(), "desktop.git-worktree-root is missing; configure it first.")
     root = ordinary(Path(value))
     require(root.is_dir() and root != Path(root.anchor), "Configured worktree root is unavailable or unsafe.")

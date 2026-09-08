@@ -613,6 +613,33 @@ def test_resume_after_worktree_removed_before_local_ref(cleanup: Cleanup) -> Non
     assert not cleanup.git("for-each-ref", "--format=%(objectname)", "refs/heads/" + cleanup.branch)
 
 
+@pytest.mark.parametrize("value", ['"invalid"', "7", "true", "[]"])
+def test_nontable_desktop_config_is_refused(cleanup: Cleanup, value: str) -> None:
+    """Syntactically valid wrong-type configuration returns a repairable refusal."""
+    cleanup.config.write_text(f"desktop = {value}\n", encoding="utf-8")
+    with pytest.raises(Refusal, match="desktop must be a TOML table"):
+        configured_root(cleanup.config)
+
+
+def test_late_nontable_config_preserves_gates(cleanup: Cleanup, monkeypatch: pytest.MonkeyPatch) -> None:
+    """A config rewrite after remote deletion leaves the worktree and completed gate available for retry."""
+    original = cleanup.record
+
+    def rewrite(gate: str) -> None:
+        """Change the active config only after the remote-absence gate is durable."""
+        original(gate)
+        if gate == "remote_branch_absent":
+            cleanup.config.write_text('desktop = "invalid"\n', encoding="utf-8")
+
+    monkeypatch.setattr(cleanup, "record", rewrite)
+    with pytest.raises(Refusal, match="desktop must be a TOML table"):
+        cleanup.run()
+    assert "remote_branch_absent" in cleanup.gates
+    assert "worktree_removed" not in cleanup.gates
+    assert cleanup.target.is_dir()
+    assert not cleanup.git("ls-remote", "--refs", "origin", f"refs/heads/{cleanup.branch}")
+
+
 def test_config_and_primary_protection(cleanup: Cleanup) -> None:
     """Missing configuration and primary-checkout targets never gain deletion authority."""
     cleanup.config.write_text("[desktop]\n", encoding="utf-8")
