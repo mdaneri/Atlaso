@@ -10,7 +10,13 @@ from pathlib import Path
 
 import pytest
 
-from scripts.completed_task_cleanup import Cleanup, Refusal, configured_root, ordinary
+from scripts.completed_task_cleanup import (
+    Cleanup,
+    Refusal,
+    configured_root,
+    ordinary,
+    read_handoff,
+)
 from scripts.completed_task_files import FileRefusal, WindowsFiles, publish_durable_file
 
 
@@ -372,6 +378,63 @@ def test_index_hidden_edits_preserved(cleanup: Cleanup, flag: str) -> None:
         cleanup.run()
     assert source.read_text(encoding="utf-8") == "hidden user edit"
     assert cleanup.git("ls-remote", "--refs", "origin", f"refs/heads/{cleanup.branch}")
+
+
+@pytest.mark.parametrize("locator", ["provider", "auxiliary"])
+def test_complete_scope_inventory_precedes_release(cleanup: Cleanup, monkeypatch: pytest.MonkeyPatch, locator: str) -> None:
+    """Provider-only and auxiliary filesystem roots cannot be consumed by an earlier tool."""
+    first = resource_identity(cleanup, "first")
+    second = resource_identity(cleanup, "second")
+    if locator == "auxiliary":
+        second["path"] = str(cleanup.root / "separate-locator")
+    cleanup.handoff["resources"] = [first, second]
+    original = cleanup.controller.call
+
+    def inspect(operation: str, payload: dict) -> dict:
+        """Expose overlapping tool scopes not present in the handoff's locators."""
+        result = original(operation, payload)
+        if operation == "resource.inspect":
+            suffix = "shared" if payload["resource"]["id"] == "first" else "shared/auxiliary"
+            result["removal_scopes"] = [str(cleanup.root / suffix)]
+        return result
+
+    monkeypatch.setattr(cleanup.controller, "call", inspect)
+    with pytest.raises(Refusal, match="scopes intersect"):
+        cleanup.resources()
+    assert "resource.release" not in cleanup.controller.calls
+
+
+def test_unavailable_title_records_terminal_gate(cleanup: Cleanup, monkeypatch: pytest.MonkeyPatch) -> None:
+    """The capability exception retains evidence and the canonical terminal sequence."""
+    original = cleanup.controller.call
+
+    def unavailable(operation: str, payload: dict) -> dict:
+        """Return explicit supported-runtime capability evidence at the title stage."""
+        if operation == "task.title":
+            return {"capability": "unavailable", "capability_evidence": "supported tool inventory has no title controls"}
+        return original(operation, payload)
+
+    monkeypatch.setattr(cleanup.controller, "call", unavailable)
+    assert cleanup.run()["gates"][-1] == "task_title_done"
+    assert any("capability_unavailable" in path.read_text() for path in cleanup.evidence.glob("*.evidence"))
+
+
+@pytest.mark.parametrize("kind", ["oversized", "directory"])
+def test_invalid_handoff_rejected_before_open(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, kind: str) -> None:
+    """Malformed input is refused without reading or opening the input payload."""
+    path = tmp_path / "handoff"
+    if kind == "directory":
+        path.mkdir()
+    else:
+        path.write_bytes(b"x" * 262145)
+
+    def forbidden_open(*args: object, **kwargs: object) -> None:
+        """Any attempt to open the rejected payload makes the regression fail."""
+        pytest.fail("invalid input was opened")
+
+    monkeypatch.setattr(Path, "open", forbidden_open)
+    with pytest.raises(Refusal, match="bounded regular"):
+        read_handoff(path)
 
 
 def test_preview_does_not_mutate(cleanup: Cleanup) -> None:
@@ -786,16 +849,13 @@ def test_earlier_resource_reappearance_blocks_aggregate_gate(cleanup: Cleanup, m
     """A resource reappearing while another is processed prevents the aggregate release gate."""
     cleanup.handoff["resources"] = [resource_identity(cleanup, "first"), resource_identity(cleanup, "second")]
     original = cleanup.controller.call
-    first_inspections = 0
 
     def reappeared(operation: str, payload: dict) -> dict:
         """Make the first provider disappear, then reappear at final inventory readback."""
-        nonlocal first_inspections
         result = original(operation, payload)
-        if operation == "resource.inspect" and payload["resource"]["id"] == "first":
-            first_inspections += 1
-            if first_inspections >= 4:
-                result["absent"] = False
+        if operation == "resource.inspect" and payload["resource"]["id"] == "first" \
+                and "resource_released:second" in cleanup.gates:
+            result["absent"] = False
         return result
 
     monkeypatch.setattr(cleanup.controller, "call", reappeared)

@@ -130,6 +130,8 @@ The entire inventory passes schema, unique-ID, task/source ownership, and source
 can be released. This includes entries whose release gates were recovered; duplicate IDs cannot reuse an earlier gate.
 Ownership manifests must also remain beneath the configured durable root. A removal scope cannot contain another
 inventoried resource's path; reconcile overlapping ownership through the existing owning tools before using this command.
+All resources' complete removal scopes are inspected before the first release, including provider-only resources and
+auxiliary paths. Intersecting scopes or later scope changes block release and require ownership reconciliation.
 
 For `resource.inspect`, independently check the exact resource/provider, manifest, process/boot identity where
 applicable, and surviving reservations/claims/recovery state. Return literal booleans `ownership_verified`, `inactive`,
@@ -194,6 +196,8 @@ An absent worktree with absent registration may resume exact matching local-ref 
 worktree may retry title-only completion without repeating destructive operations. A path absent while registration
 remains, changed ref, failed resource release, or stale title keeps the task actionable. Reconcile that exact condition
 through supported tools, then rerun. Successful earlier deletion cannot be rolled back by the command.
+The title-capability exception preserves its capability evidence and still records the literal `task_title_done` gate.
+Handoff inputs must be regular single-link files no larger than 256 KiB; validation precedes the bounded payload read.
 
 Execution guards still apply. A tool refusal such as “blocked by policy” is evidence of an execution refusal, not proof
 of a specific Atlaso policy breach. Record the exact rejected operation on the controller's durable evidence surface,

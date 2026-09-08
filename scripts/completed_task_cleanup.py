@@ -55,6 +55,20 @@ def ordinary(path: Path) -> Path:
     return path
 
 
+def read_handoff(path: Path) -> bytes:
+    """Reject special or oversized input before opening and bound the actual read as well."""
+    info = ordinary(path).stat()
+    require(stat.S_ISREG(info.st_mode) and info.st_nlink == 1 and info.st_size <= 262144,
+            "Handoff must be a bounded regular single-link file.")
+    with path.open("rb") as stream:
+        opened = os.fstat(stream.fileno())
+        require(stat.S_ISREG(opened.st_mode) and (opened.st_dev, opened.st_ino) == (info.st_dev, info.st_ino),
+                "Handoff file identity changed before reading; preserve resources.")
+        raw = stream.read(262145)
+    require(len(raw) <= 262144, "Handoff exceeds the bounded evidence limit.")
+    return raw
+
+
 def beneath(path: Path, root: Path) -> bool:
     """Compare complete canonical path components rather than string prefixes."""
     return path != root and path.is_relative_to(root)
@@ -104,8 +118,7 @@ class Cleanup:
         """Bind immutable handoff bytes and a durable evidence directory outside the target."""
         self.execute = execute
         self.controller = controller
-        raw = ordinary(handoff).read_bytes()
-        require(len(raw) <= 262144, "Handoff exceeds the bounded evidence limit.")
+        raw = read_handoff(handoff)
         self.digest = hashlib.sha256(raw).hexdigest()
         self.handoff = json.loads(raw)
         self.handoff_path = handoff
@@ -250,7 +263,7 @@ class Cleanup:
 
     def eligibility(self) -> None:
         """Independently verify live GitHub identity, issues, current main reachability, and task state."""
-        require(hashlib.sha256(ordinary(self.handoff_path).read_bytes()).hexdigest() == self.digest,
+        require(hashlib.sha256(read_handoff(self.handoff_path)).hexdigest() == self.digest,
                 "Handoff changed during execution; preserve remaining resources and restart verification.")
         require(configured_root(self.config) == self.root, "Configured root changed; restart preview.")
         ordinary(self.repo)
@@ -441,6 +454,19 @@ class Cleanup:
             publish_durable_file(pending, destination)
         self.gates = prospective
 
+    def inventory_scopes(self) -> dict[str, list[str]]:
+        """Inspect the complete scope inventory before any owning tool can consume another resource."""
+        scopes: dict[str, list[str]] = {}
+        for resource in self.handoff["resources"]:
+            result = ({"removal_scopes": [resource["path"]]} if resource["kind"] == "generated_tree" else
+                      self.controller.call("resource.inspect", {"resource": resource, "handoff_sha256": self.digest}))
+            current = self.removal_scopes(resource, result)
+            require(not any(Path(left).is_relative_to(Path(right)) or Path(right).is_relative_to(Path(left))
+                            for previous in scopes.values() for left in previous for right in current),
+                    "Resource removal scopes intersect; reconcile ownership before releasing any resource.")
+            scopes[resource["id"]] = current
+        return scopes
+
     def resources(self) -> None:
         """Delegate specialized resources to their owning tools and demand independent absence readback."""
         identities: set[str] = set()
@@ -464,9 +490,7 @@ class Cleanup:
                     and re.fullmatch(r"[0-9a-f]{40}", resource["source_commit"]),
                     "Resource ownership/source identity differs from this task.")
             self.git("merge-base", "--is-ancestor", resource["source_commit"], self.head)
-        for resource in self.handoff["resources"]:
-            if resource["kind"] == "generated_tree":
-                self.removal_scopes(resource, {"removal_scopes": [resource["path"]]})
+        inventory_scopes = self.inventory_scopes()
         self.verify_resources_absent(completed_only=True)
         if "validation_resources_released" in self.gates:
             return
@@ -481,7 +505,8 @@ class Cleanup:
             require(result.get("evidence_preserved") is True, "Preserve resource evidence outside every removal root first.")
             require(type(result.get("absent")) is bool, "Resource absence must be independently observed.")
             if resource["kind"] != "generated_tree":
-                self.removal_scopes(resource, result)
+                require(self.removal_scopes(resource, result) == inventory_scopes[identity],
+                        "Resource scopes changed after inventory preflight; reconcile before release.")
             self.proposed.append({"resource": identity, "action": "release through verified owning tool"})
             generated = resource.get("kind") == "generated_tree"
             if generated:
@@ -506,6 +531,7 @@ class Cleanup:
                     if self.execute:
                         self.eligibility()
                         self.validate_resource_identity(resource)
+                        require(self.inventory_scopes() == inventory_scopes, "Inventory scopes changed before release.")
                         self.resource_evidence.append(self.proposed[-1])
                         self.record(f"resource_release_prepared:{identity}")
                         files.remove(path, snapshot)
@@ -518,6 +544,8 @@ class Cleanup:
                 self.validate_resource_identity(resource)
                 inspected = self.controller.call("resource.inspect", {"resource": resource, "handoff_sha256": self.digest})
                 scopes = self.removal_scopes(resource, inspected)
+                require(scopes == inventory_scopes[identity] and self.inventory_scopes() == inventory_scopes,
+                        "Inventory scopes changed before release.")
                 require(all(inspected.get(key) is True for key in
                             ("ownership_verified", "inactive", "supported_cleanup", "evidence_preserved"))
                         and inspected.get("retained") is False, "Resource release eligibility changed.")
@@ -586,6 +614,8 @@ class Cleanup:
                                                      "handoff_sha256": self.digest})
         if result.get("capability") == "unavailable":
             require(result.get("capability_evidence"), "Unavailable title controls require explicit capability evidence.")
+            self.resource_evidence.append({"operation": "task.title", "disposition": "capability_unavailable",
+                                           "capability_evidence": result["capability_evidence"]})
             self.record("task_title_done:not_applicable")
         else:
             require(result.get("persisted_readback") is True, "Rename acknowledgement is not persisted title readback.")
@@ -594,7 +624,7 @@ class Cleanup:
             except ValueError as exc:
                 raise Refusal(str(exc)) from exc
             self.record("task_title_readback_verified")
-            self.record("task_title_done")
+        self.record("task_title_done")
         return {"status": "complete", "gates": self.gates, "handoff_sha256": self.digest}
 
 
