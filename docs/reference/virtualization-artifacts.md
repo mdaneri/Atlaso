@@ -9,6 +9,100 @@ status: current
 
 # Portable virtualization artifacts
 
+## Windows capacity admission
+
+`export-ovf.ps1 -Prerelease` checks free storage before it creates staging directories, retrieves credentials,
+downloads software, builds, exports, or mutates a VM. Read-only GitHub metadata and retained-artifact verification
+run first. The check resolves each destination to its actual Windows volume and calculates the largest remaining
+simultaneous allocation on that volume. Paths sharing a volume compete for the same free bytes; sequential VMware
+and Hyper-V smoke imports are not added together. Every summary identifies the paths, volume, free bytes, required
+bytes, components, and any shortfall.
+
+The conservative planning estimates below are additional physical storage, in GiB. They are not the virtual
+capacity of the two empty 500 GiB data disks. Existing files already consume the reported free space and do not
+receive speculative cleanup credits.
+
+| Component | Additional estimate | Lifetime |
+| --- | ---: | --- |
+| Signed software downloads | 2 | Source verification; larger or unknown GitHub asset sizes fail admission |
+| Reconstructed verified source | 16, or verified retained tree length | Source through staging |
+| Builder payload disks | 64 | Build through staging; includes the 40 + 20 GiB zero-fill high-water mark |
+| Builder compaction and memory | 64 | Build only |
+| Source snapshot, source copies, ISO and credential staging | Source estimate + 8 | Build only |
+| Verified ISO cache | 4 | Build through staging |
+| OVF/OVA outputs and staged OVA copy | 8 | Export through staging |
+| Export before asset-size admission | 60 | Export only |
+| Hyper-V ZIP | 2 | Conversion through staging |
+| Conversion extraction and VHDX scratch | 68 | Conversion only |
+| VMware smoke import, growth, validation and memory | 84 | VMware smoke only |
+| Hyper-V extraction, copies, growth and VMRS | 36 | Hyper-V smoke only |
+| Candidate copies and metadata | 8 | Candidate staging |
+| Operational headroom | 2 per volume | Every admission |
+
+These estimates cover the canonical four-disk pipeline, including payload zero filling and compaction, not an
+arbitrary workload inside a diagnostic guest. For a new build with every path on one volume, the current conservative
+peak plus headroom is 180 GiB. A verified retained template omits new builder allocations; a verified candidate
+omits build, export, conversion, and smoke allocations. Retained source, template provenance, powered-off state, and
+candidate bytes must pass their existing validation before the smaller resume plan is admitted. An invalid retained
+operation is preserved and rejected, never relocated automatically.
+
+The workflow repeats admission before each heavy stage using the remaining plan. Direct OVF export, Hyper-V conversion,
+and smoke entry points also check capacity; the standalone packaged Hyper-V importer uses actual VHDX file lengths
+for disk copies, checks again before each copy and VM creation/start, and separately budgets the observed 4 GiB VMRS
+allocation, 16 GiB guest growth, and 2 GiB metadata/headroom. Thus 4 GiB alone is not the total required free space.
+Capacity checks do not reserve space against concurrent processes. Later provider allocation errors retain their
+original diagnostic and the existing exact-identity cleanup safeguards.
+
+On refusal, free space through an ownership-verified cleanup procedure or choose a supported output location.
+`-StagingRoot` moves new prerelease staging and its builder only; it does not move checkout-local caches, OVF output,
+conversion output, or smoke roots. Use a checkout on an adequately sized volume for those outputs, and use
+`-DestinationRoot` for a standalone Hyper-V import. Do not move or delete a retained operation to evade admission.
+Keep the completed source template powered off and preserve its provenance plus valid OVA/ZIP evidence for retry.
+
+## Disposable VMware console diagnostics
+
+For a fresh diagnostic import with a securely retrievable console password, rerun the normal prerelease command
+with an explicit bounded window, for example:
+
+```powershell
+.\scripts\windows\vmware\export-ovf.ps1 -Prerelease `
+    -ManagementSwitch 'Atlaso-Mgmt' -ServiceSwitch 'Atlaso-Services' `
+    -SmokeConsoleMinutes 15
+```
+
+The window accepts 1 through 30 minutes. Omission runs ordinary release smoke. The installed 1Password plugin and
+unlocked, authorized desktop integration are required for concealed-variable publication. Existing checkout-local
+Environment selection and DPAPI-protected service-account configuration continue to authenticate the image builder;
+Environment publication uses the plugin because the SDK Environment interface is read-only. The workflow never
+overwrites `DEFAULT_ADMIN_PASSWORD`, `DEFAULT_ROOT_PASSWORD`, or another run's credential.
+
+Before starting the exact fresh `Atlaso-Ova-Console-<run>` VM, the bounded helper generates a unique password and
+stores it as concealed `ATLASO_SMOKE_CONSOLE_<full-run-id>` in the verified **Atlaso** Environment. The terminal prints
+only that variable name, the exact VM path, and the non-secret handoff record. Open **1Password > Developer > Atlaso**,
+select that variable, and reveal it privately in 1Password. Use account **root** on that VM's local console; the same
+temporary password also belongs to its bootstrap **admin** account. Retrieval is independent of guest networking and
+SSH. Root SSH remains disabled. Never copy the value into a command line, task report, screenshot, or `.env` file.
+
+The diagnostic window starts after power-on. At expiry, or ordinary interruption, the existing identity-verified
+smoke cleanup runs. Diagnostic runs always stop before successful smoke evidence or publication, even if the guest
+appears healthy; rerun ordinary smoke against a fresh import after troubleshooting. Source templates stay powered off
+and exported image bytes remain unchanged. A retained successful candidate is preserved and rejects diagnostic mode.
+
+`smoke-console-<run-id>.json` in the retained operation records the exact run, VM directory, variable, and retirement
+state without a password. The local credential exchange contains current-user DPAPI ciphertext only and is removed
+after handoff. A successful exact VM cleanup retires the credential by destroying its only guest identity. Its
+concealed 1Password record remains available as history: the current Environment plugin has no variable-deletion
+operation. After verifying the handoff is retired and its exact VM is absent, the operator may remove that one obsolete
+variable in 1Password. Do not append a duplicate variable as a supposed password rotation.
+
+If the host or controller is killed, or cleanup cannot verify ownership, retain the VM and its concealed credential
+for recovery. The recorded window is no longer an enforced deadline after controller termination; do not claim the
+guest was stopped or that its password was revoked. Perform the documented exact-VM cleanup with the recorded VMX
+and expected name, independently verify provider and filesystem absence, and only then retire the matching variable.
+Never identify a cleanup target from its display name alone. An incomplete diagnostic run is never release evidence.
+
+## Canonical artifact lifecycle
+
 Atlaso builds and validates one appliance template with VMware Workstation. A release publishes that template as the
 canonical OVA for VMware, Proxmox VE, and KVM, plus one Hyper-V ZIP converted from the same OVA payload. The import
 helpers normalize target-specific VM configuration without changing the source OVA.

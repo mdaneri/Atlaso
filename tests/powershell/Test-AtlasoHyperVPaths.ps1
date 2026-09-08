@@ -12,7 +12,19 @@ $fixtureRoot = Join-Path $RepositoryRoot ('test-results/hv-' + [guid]::NewGuid()
 $smokeOutput = Join-Path $RepositoryRoot ('artifacts/virtualization-smoke/test-' + [guid]::NewGuid().ToString('N'))
 $package = Join-Path $fixtureRoot 'p'
 New-Item -ItemType Directory -Path $package | Out-Null
-$HyperVFixture = @{ NewVmCalls = 0; AddUnknownFile = $false; ObservedPath = '' }
+$HyperVFixture = @{ NewVmCalls = 0; AddUnknownFile = $false; ObservedPath = ''; FreeBytes = 1TB }
+
+<#
+.SYNOPSIS
+Supply deterministic capacity without querying or changing host storage.
+.PARAMETER FilePath
+Existing destination ancestor queried by storage admission.
+#>
+function Get-Volume {
+    [CmdletBinding()] param([string]$FilePath)
+    if (-not (Test-Path -LiteralPath $FilePath)) { throw 'Capacity queried a nonexistent ancestor.' }
+    [pscustomobject]@{ UniqueId='fixture-volume'; SizeRemaining=$HyperVFixture.FreeBytes }
+}
 
 <#
 .SYNOPSIS
@@ -123,6 +135,15 @@ try {
     } | Set-Content -LiteralPath (Join-Path $package 'checksums.sha256')
     $importer = Join-Path $package 'Import-Atlaso.ps1'
     $name = 'Boundary'
+    $HyperVFixture.FreeBytes = 1GB
+    $lowSpaceRoot = Join-Path $fixtureRoot 'low-space'
+    Assert-HyperVFailure {
+        & $importer -Name $name -ManagementSwitch Management -DestinationRoot $lowSpaceRoot
+    } '*Insufficient Hyper-V destination capacity*' | Out-Null
+    if ($HyperVFixture.NewVmCalls -ne 0 -or (Test-Path -LiteralPath $lowSpaceRoot)) {
+        throw 'Low-space importer admission created files or called the provider.'
+    }
+    $HyperVFixture.FreeBytes = 1TB
     # Root + separator + 64-character provider reserve is exactly 240.
     $parent = Join-Path $fixtureRoot ('x' * (175 - $fixtureRoot.Length - $name.Length - 2))
     Assert-HyperVFailure { & $importer -Name $name -ManagementSwitch Management -DestinationRoot $parent } '*Original provider failure*' | Out-Null
@@ -148,6 +169,12 @@ try {
     $zip = Join-Path $fixtureRoot 'fixture.zip'
     Compress-Archive -LiteralPath (Join-Path $smokePackage 'Import-Atlaso.ps1') -DestinationPath $zip
     $smoke = Join-Path $RepositoryRoot 'scripts/windows/virtualization/smoke-hyperv.ps1'
+    $HyperVFixture.FreeBytes = 1GB
+    Assert-HyperVFailure {
+        & $smoke -ZipPath $zip -Name T -ManagementSwitch Management -ServiceSwitch Services -OutputRoot $smokeOutput -PythonPath (Get-Process -Id $PID).Path
+    } '*Storage admission failed*' | Out-Null
+    if (Test-Path -LiteralPath $smokeOutput) { throw 'Low-space smoke admission extracted files.' }
+    $HyperVFixture.FreeBytes = 1TB
     $errorRecord = Assert-HyperVFailure {
         & $smoke -ZipPath $zip -Name T -ManagementSwitch Management -ServiceSwitch Services -OutputRoot $smokeOutput -PythonPath (Get-Process -Id $PID).Path
     } '*Original import failure: 0x800700CE*importer cleanup retained descendants*Cleanup error:*exact created VM identity*preserved*'
