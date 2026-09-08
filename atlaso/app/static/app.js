@@ -8171,12 +8171,14 @@ function routesWanWizardErrorTarget(form, kind, message) {
   return { field: match[1] === "inbound_interfaces" ? form.querySelector("[data-nat-inbound-editor] [data-tag-entry]") : routesWanField(form, match[1]), step: match[2] };
 }
 
-function syncNatTranslatedAddress(select, outbound, family, preferred = select.value) {
+function syncNatTranslatedAddress(select, outbound, family, preferred = select.value, savedUnavailable = "") {
   const option = outbound?.selectedOptions?.[0];
   const assigned = option && !option.disabled ? option.dataset[family === "6" ? "natIpv6" : "natIpv4"] || "" : "";
   select.replaceChildren(new Option(assigned ? "Choose an assigned address" : "No assigned address available", ""));
   if (assigned) select.add(new Option(assigned, assigned));
-  select.value = assigned && preferred === assigned ? assigned : "";
+  const preserveUnavailable = savedUnavailable && preferred === savedUnavailable && preferred !== assigned;
+  if (preserveUnavailable) select.add(new Option(`${preferred} (unavailable; disabled rule only)`, preferred));
+  select.value = (assigned && preferred === assigned) || preserveUnavailable ? preferred : "";
 }
 
 function initializeRoutesWanWizards() {
@@ -8277,6 +8279,7 @@ function initializeRoutesWanWizards() {
         option.hidden = !familyAllowed;
       });
     };
+    let dormantNatAddress = "";
     const syncNatTranslation = (preferredAddress) => {
       if (kind !== "nat") return;
       const family = routesWanField(form, "ip_family")?.value || "4";
@@ -8291,16 +8294,22 @@ function initializeRoutesWanWizards() {
       const panel = form.querySelector("[data-nat-fixed-address]");
       if (panel) { panel.hidden = !fixed; panel.classList.toggle("hidden", !fixed); }
       if (address instanceof HTMLSelectElement) {
-        syncNatTranslatedAddress(address, outbound, family, typeof preferredAddress === "string" ? preferredAddress : address.value);
+        syncNatTranslatedAddress(address, outbound, family, typeof preferredAddress === "string" ? preferredAddress : address.value,
+          !routesWanField(form, "enabled")?.checked ? dormantNatAddress : "");
         address.disabled = !fixed;
         address.required = fixed;
       }
       setRoutesWanField(form, "masquerade", fixed ? "off" : "on");
       syncNatIngress();
     };
-    routesWanField(form, "ip_family")?.addEventListener("change", syncNatTranslation);
-    routesWanField(form, "translation_mode")?.addEventListener("change", syncNatTranslation);
-    routesWanField(form, "outbound_interface")?.addEventListener("change", syncNatTranslation);
+    const changeNatTranslation = () => {
+      dormantNatAddress = "";
+      syncNatTranslation();
+    };
+    routesWanField(form, "ip_family")?.addEventListener("change", changeNatTranslation);
+    routesWanField(form, "translation_mode")?.addEventListener("change", changeNatTranslation);
+    routesWanField(form, "outbound_interface")?.addEventListener("change", changeNatTranslation);
+    if (kind === "nat") routesWanField(form, "enabled")?.addEventListener("change", changeNatTranslation);
     natInboundEditor?.addEventListener("tag-editor:change", syncNatIngress);
     routesWanField(form, "enabled")?.addEventListener("change", syncNatIngress);
     natSourceMode?.addEventListener("change", syncNatSource);
@@ -8454,6 +8463,8 @@ function initializeRoutesWanWizards() {
             outboundSelect?.querySelectorAll("[data-unavailable]").forEach((option) => option.remove());
             setRoutesWanField(form, "outbound_interface", outboundSelect?.options?.[0]?.value || "");
           }
+          setRoutesWanField(form, "enabled", row?.enabled ?? true);
+          dormantNatAddress = row?.enabled === false ? row.translated_address || "" : "";
           syncNatTranslation(row?.translated_address || "");
           natInboundEditor?.atlasoTagEditor?.setValues(row?.inbound_interfaces || []);
           syncNatIngress();

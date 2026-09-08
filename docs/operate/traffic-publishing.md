@@ -40,6 +40,8 @@ This verified appliance view provides visual orientation before you begin.
 5. Select **Interface-address masquerade**, or **Fixed SNAT** and choose the exact same-family address assigned to the egress
    target. The address selector refreshes when the family or egress changes and does not accept arbitrary text.
    Fixed SNAT does not assign an address or create a pool. IPv6 translation is stateful NAT66.
+   Disabled saved rules retain unavailable translated addresses for unrelated edits. Enabling the rule or changing
+   its family, egress, or translation mode requires choosing an available address.
 6. Review the family, ingress, source, egress, translation, priority, and enabled state, then save.
 7. Enable **NAT enabled** and enable Routing in **Routing & WAN** when forwarding is intended. Both switches default
    off. Routing is the sole owner of IPv4 and IPv6 forwarding. NAT intent remains saved and visibly suspended while

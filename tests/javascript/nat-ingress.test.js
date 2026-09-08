@@ -103,3 +103,20 @@ test("fixed SNAT choices follow the egress and family and reject arbitrary value
   assert.equal(select.value, "");
   assert.equal(select.options.length, 1);
 });
+
+
+test("dormant fixed SNAT preserves its saved unavailable address until explicitly changed", () => {
+  const select = { value: "", options: [], replaceChildren(...options) { this.options = options; }, add(option) { this.options.push(option); } };
+  const outbound = { selectedOptions: [{ dataset: {} }] };
+  for (const family of ["4", "6"]) {
+    const saved = family === "4" ? "198.18.20.1" : "fd75:3:20::1";
+    natAddressContext.syncNatTranslatedAddress(select, outbound, family, saved, saved);
+    assert.equal(select.value, saved);
+    assert.match(select.options[1].text, /unavailable/);
+    natAddressContext.syncNatTranslatedAddress(select, outbound, family);
+    assert.equal(select.value, "");
+    assert.equal(select.options.length, 1);
+  }
+  assert.match(source, /dormantNatAddress = row\?\.enabled === false/);
+  assert.match(source, /const changeNatTranslation = \(\) => \{\s*dormantNatAddress = "";/);
+});
