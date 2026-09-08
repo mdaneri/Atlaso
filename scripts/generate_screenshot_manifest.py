@@ -21,6 +21,14 @@ CANONICAL_BROWSER_ROOTS = {
 CAPTURE_OVERRIDES = {
     **{
         stem: {
+            "source_commit": "8296a12b37df60084bc94d00be9c89cf1888237a",
+            "atlaso_version": "0.9.324",
+            "capture_method": "edge-browser",
+        }
+        for stem in ("traffic-publishing-translation-desktop", "traffic-publishing-translation-responsive")
+    },
+    **{
+        stem: {
             "route": "/ui/management/routes-wan",
             "state": "routing-enabled",
             "source_commit": "acff23cfa411719824a704f20a154877d74ef05b",
@@ -315,6 +323,12 @@ ROUTES = {
 }
 
 SPECIAL = {
+    **{
+        stem: ("/ui/management/traffic-publishing", "assigned-address-translation",
+               "Choose an assigned translated address and open source groups in a separate tab without leaving the wizard.",
+               "Atlaso NAT translation step with aligned ingress labels, an assigned-address selector, and Manage source groups.")
+        for stem in ("traffic-publishing-translation-desktop", "traffic-publishing-translation-responsive")
+    },
     **{
         stem: ("/ui/management/traffic-publishing", "applied-source-nat",
                "Traffic Publishing with reviewed IPv4 masquerade and the canonical NAT setting.",

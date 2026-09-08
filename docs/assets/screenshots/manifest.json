@@ -1309,6 +1309,34 @@
       "sensitive_data_reviewed": true
     },
     {
+      "path": "assets/screenshots/traffic-publishing-translation-desktop.webp",
+      "route": "/ui/management/traffic-publishing",
+      "state": "assigned-address-translation",
+      "viewport": "1600x1000",
+      "source_commit": "8296a12b37df60084bc94d00be9c89cf1888237a",
+      "atlaso_version": "0.9.324",
+      "caption": "Choose an assigned translated address and open source groups in a separate tab without leaving the wizard.",
+      "alt": "Atlaso NAT translation step with aligned ingress labels, an assigned-address selector, and Manage source groups.",
+      "capture_method": "edge-browser",
+      "documentation_page": "operate/traffic-publishing.md",
+      "brand_variant": "light",
+      "sensitive_data_reviewed": true
+    },
+    {
+      "path": "assets/screenshots/traffic-publishing-translation-responsive.webp",
+      "route": "/ui/management/traffic-publishing",
+      "state": "assigned-address-translation",
+      "viewport": "900x1200",
+      "source_commit": "8296a12b37df60084bc94d00be9c89cf1888237a",
+      "atlaso_version": "0.9.324",
+      "caption": "Choose an assigned translated address and open source groups in a separate tab without leaving the wizard.",
+      "alt": "Atlaso NAT translation step with aligned ingress labels, an assigned-address selector, and Manage source groups.",
+      "capture_method": "edge-browser",
+      "documentation_page": "operate/traffic-publishing.md",
+      "brand_variant": "light",
+      "sensitive_data_reviewed": true
+    },
+    {
       "path": "assets/screenshots/traffic-publishing-wizard-desktop.webp",
       "route": "/ui/management/traffic-publishing",
       "state": "ipv6-snat-review",

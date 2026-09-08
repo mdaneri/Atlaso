@@ -551,6 +551,14 @@ Figure: Traffic Publishing with reviewed IPv4 masquerade and the canonical NAT s
 
 Figure: Traffic Publishing with reviewed IPv4 masquerade and the canonical NAT setting.
 
+![Atlaso NAT translation step with aligned ingress labels, an assigned-address selector, and Manage source groups.](../assets/screenshots/traffic-publishing-translation-desktop.webp)
+
+Figure: Choose an assigned translated address and open source groups in a separate tab without leaving the wizard.
+
+![Atlaso NAT translation step with aligned ingress labels, an assigned-address selector, and Manage source groups.](../assets/screenshots/traffic-publishing-translation-responsive.webp)
+
+Figure: Choose an assigned translated address and open source groups in a separate tab without leaving the wizard.
+
 ![Atlaso NAT wizard review showing IPv6 fixed SNAT, explicit ingress and egress, and the global Apply boundary.](../assets/screenshots/traffic-publishing-wizard-desktop.webp)
 
 Figure: Review an IPv6 fixed-SNAT rule before saving desired state.
