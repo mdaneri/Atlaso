@@ -8279,15 +8279,15 @@ function initializeRoutesWanWizards() {
         option.hidden = !familyAllowed;
       });
     };
-    let dormantNatAddress = "";
+    let savedNatAddress = "";
     const syncNatTranslation = (preferredAddress) => {
       if (kind !== "nat") return;
       const family = routesWanField(form, "ip_family")?.value || "4";
       const outbound = routesWanField(form, "outbound_interface");
       outbound?.querySelectorAll("option").forEach((option) => {
         const eligible = !option.dataset.natFamilies || option.dataset.natFamilies.split(",").includes(family);
-        option.disabled = !eligible;
-        option.hidden = !eligible;
+        option.disabled = !eligible && option.value !== outbound.value;
+        option.hidden = !eligible && option.value !== outbound.value;
       });
       const fixed = routesWanField(form, "translation_mode")?.value === "snat";
       const address = routesWanField(form, "translated_address");
@@ -8295,7 +8295,7 @@ function initializeRoutesWanWizards() {
       if (panel) { panel.hidden = !fixed; panel.classList.toggle("hidden", !fixed); }
       if (address instanceof HTMLSelectElement) {
         syncNatTranslatedAddress(address, outbound, family, typeof preferredAddress === "string" ? preferredAddress : address.value,
-          !routesWanField(form, "enabled")?.checked ? dormantNatAddress : "");
+          savedNatAddress);
         address.disabled = !fixed;
         address.required = fixed;
       }
@@ -8303,13 +8303,13 @@ function initializeRoutesWanWizards() {
       syncNatIngress();
     };
     const changeNatTranslation = () => {
-      dormantNatAddress = "";
+      savedNatAddress = "";
       syncNatTranslation();
     };
     routesWanField(form, "ip_family")?.addEventListener("change", changeNatTranslation);
     routesWanField(form, "translation_mode")?.addEventListener("change", changeNatTranslation);
     routesWanField(form, "outbound_interface")?.addEventListener("change", changeNatTranslation);
-    if (kind === "nat") routesWanField(form, "enabled")?.addEventListener("change", changeNatTranslation);
+    if (kind === "nat") routesWanField(form, "enabled")?.addEventListener("change", () => syncNatTranslation());
     natInboundEditor?.addEventListener("tag-editor:change", syncNatIngress);
     routesWanField(form, "enabled")?.addEventListener("change", syncNatIngress);
     natSourceMode?.addEventListener("change", syncNatSource);
@@ -8400,10 +8400,17 @@ function initializeRoutesWanWizards() {
         syncNatSource();
         const inbound = natInboundEditor?.querySelector("[data-tag-entry]");
         const available = [...(natInboundEditor?.querySelectorAll("[data-tag-option]") || [])].filter((option) => !option.hidden).map((option) => option.dataset.tagOption);
-        const dormantEdit = /\/nat-rules\/\d+\/edit$/.test(form.getAttribute("action") || "") && !routesWanField(form, "enabled")?.checked;
+        const dormantEdit = /\/nat-rules\/\d+\/edit$/.test(form.getAttribute("action") || "")
+          && (step.id === "translation" || !routesWanField(form, "enabled")?.checked);
         const outbound = routesWanField(form, "outbound_interface");
         if (!dormantEdit && !available.includes(outbound?.value)) {
           return { valid: false, message: "Choose an available outbound interface or VLAN.", field: outbound };
+        }
+        const address = routesWanField(form, "translated_address");
+        const family = routesWanField(form, "ip_family")?.value || "4";
+        const assigned = outbound?.selectedOptions?.[0]?.dataset[family === "6" ? "natIpv6" : "natIpv4"] || "";
+        if (!dormantEdit && routesWanField(form, "translation_mode")?.value === "snat" && address?.value !== assigned) {
+          return { valid: false, message: "Choose an assigned translated address or disable the rule.", field: address };
         }
         const ingressError = routesWanNatIngressError(natInboundValues(), outbound?.value, available, dormantEdit);
         if (ingressError) {
@@ -8464,7 +8471,7 @@ function initializeRoutesWanWizards() {
             setRoutesWanField(form, "outbound_interface", outboundSelect?.options?.[0]?.value || "");
           }
           setRoutesWanField(form, "enabled", row?.enabled ?? true);
-          dormantNatAddress = row?.enabled === false ? row.translated_address || "" : "";
+          savedNatAddress = row?.translated_address || "";
           syncNatTranslation(row?.translated_address || "");
           natInboundEditor?.atlasoTagEditor?.setValues(row?.inbound_interfaces || []);
           syncNatIngress();

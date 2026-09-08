@@ -117,6 +117,13 @@ test("dormant fixed SNAT preserves its saved unavailable address until explicitl
     assert.equal(select.value, "");
     assert.equal(select.options.length, 1);
   }
-  assert.match(source, /dormantNatAddress = row\?\.enabled === false/);
-  assert.match(source, /const changeNatTranslation = \(\) => \{\s*dormantNatAddress = "";/);
+  assert.match(source, /savedNatAddress = row\?\.translated_address/);
+  assert.match(source, /const changeNatTranslation = \(\) => \{\s*savedNatAddress = "";/);
+});
+
+
+test("editing an active unavailable rule can reach State before availability is enforced", () => {
+  assert.match(source, /step\.id === "translation" \|\| !routesWanField\(form, "enabled"\)\?\.checked/);
+  assert.match(source, /Choose an assigned translated address or disable the rule/);
+  assert.match(source, /"enabled"\)\?\.addEventListener\("change", \(\) => syncNatTranslation\(\)\)/);
 });
