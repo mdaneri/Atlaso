@@ -4112,6 +4112,21 @@ matching management-vmnet neighbor entry. Services-first enumeration cannot choo
 mismatched, or
 changing management MAC/address evidence fails the smoke run before the SSH or <code>/openapi.json</code> result is accepted, and
 the same binding is revalidated after reboot.</p>
+<p>VMware SSH admission requires a currently <code>Reachable</code> management neighbor. Cached <code>Stale</code>, <code>Delay</code>, and <code>Probe</code>
+entries are probe candidates only; expired, malformed, or unbounded DHCP leases are excluded. Each failed SSH
+transport attempt returns to the Windows wrapper for another identity check under the same 15-minute phase deadline.
+The wrapper handles the child retry status explicitly even when PowerShell native-error promotion is enabled, and
+preserves the caller's preference; other nonzero child results remain terminal.
+Unanswered ICMP probes also preserve that preference and continue to refreshed neighbor evaluation; ICMP success
+alone never admits an address.
+Loss of MAC-bound address ownership receives at most a 20-second neighbor refresh window before an explicit identity
+failure. A changed address is never silently substituted, including during initial boot. Correct the reported network
+condition and start a new disposable smoke attempt. Host-key or authentication rejection is terminal.</p>
+<p>Progress identifies the provider, initial or post-reboot phase, VMX, management MAC/vmnet/host interface, target and
+elapsed/remaining SSH wait. Child progress uses standard error so the initial TLS fingerprint remains the sole standard
+output result. <code>Transfer Completed</code> from OVF Tool proves only import completion; guest disk/service/OpenAPI checks and
+post-reboot validation must still pass. The original stale-address report did not establish what moved the guest address;
+the fixed-host retry loop and admission of cached neighbor state are independently reproducible from the smoke helpers.</p>
 <h2 id="validate-and-recover">Validate and recover<a class="headerlink" href="#validate-and-recover" title="Permanent link">&para;</a></h2>
 <p>After first boot, verify all of the following before adopting the VM:</p>
 <ul>
