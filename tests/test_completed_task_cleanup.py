@@ -675,6 +675,45 @@ def test_title_response_rechecks_absence(cleanup: Cleanup, monkeypatch: pytest.M
         assert cleanup.target.exists()
 
 
+@pytest.mark.parametrize("kind", ["directory", "oversized"])
+def test_config_requires_bounded_regular_file(cleanup: Cleanup, kind: str) -> None:
+    """Active configuration cannot block on a special file or consume an unbounded payload."""
+    if kind == "directory":
+        cleanup.config.unlink()
+        cleanup.config.mkdir()
+    else:
+        cleanup.config.write_bytes(b"x" * (1024 * 1024 + 1))
+    with pytest.raises(FileRefusal, match="bounded regular single-link"):
+        configured_root(cleanup.config)
+
+
+def test_title_retry_after_task_history_pruned(cleanup: Cleanup, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Durable ancestry gates let title-only retries survive actual Git object pruning."""
+    cleanup.handoff["resources"] = [resource_identity(cleanup, "pruned-resource")]
+    cleanup.handoff_path.write_text(json.dumps(cleanup.handoff), encoding="utf-8")
+    cleanup.digest = hashlib.sha256(cleanup.handoff_path.read_bytes()).hexdigest()
+    original = cleanup.controller.call
+
+    def failed_title(operation: str, payload: dict) -> dict:
+        """Interrupt after refs and worktree are durably absent."""
+        if operation == "task.title":
+            raise Refusal("title unavailable")
+        return original(operation, payload)
+
+    monkeypatch.setattr(cleanup.controller, "call", failed_title)
+    with pytest.raises(Refusal, match="title unavailable"):
+        cleanup.run()
+    assert "resource_ancestry_verified:pruned-resource" in cleanup.gates
+    cleanup.git("reflog", "expire", "--expire=now", "--all")
+    cleanup.git("gc", "--prune=now")
+    cleanup.command(["git", "cat-file", "-e", cleanup.head], allowed=(1, 128))
+    monkeypatch.setattr(cleanup.controller, "call", original)
+    retry = Cleanup(cleanup.handoff_path, cleanup.evidence, cleanup.config, True, cleanup.controller)
+    monkeypatch.setattr(retry, "command", cleanup.command)
+    monkeypatch.setattr(retry, "api", cleanup.api)
+    assert retry.run()["status"] == "complete"
+
+
 def test_config_and_primary_protection(cleanup: Cleanup) -> None:
     """Missing configuration and primary-checkout targets never gain deletion authority."""
     cleanup.config.write_text("[desktop]\n", encoding="utf-8")

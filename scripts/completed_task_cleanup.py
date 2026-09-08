@@ -78,8 +78,7 @@ def configured_root(config: Path) -> Path:
     """Read the supported desktop setting without inventing a default root."""
     active_config = Path(os.environ.get("CODEX_HOME", str(Path.home() / ".codex"))) / "config.toml"
     require(config == active_config, "Config must be the active CODEX_HOME/config.toml, not a handoff-supplied alternate.")
-    with ordinary(config).open("rb") as stream:
-        desktop = tomllib.load(stream).get("desktop", {})
+    desktop = tomllib.loads(read_bounded_regular(ordinary(config), 1024 * 1024).decode("utf-8")).get("desktop", {})
     require(isinstance(desktop, dict), "desktop must be a TOML table; repair the active configuration before retry.")
     value = desktop.get("git-worktree-root")
     require(isinstance(value, str) and value.strip(), "desktop.git-worktree-root is missing; configure it first.")
@@ -505,8 +504,15 @@ class Cleanup:
             require(resource["task_id"] == self.handoff["task_id"]
                     and re.fullmatch(r"[0-9a-f]{40}", resource["source_commit"]),
                     "Resource ownership/source identity differs from this task.")
-            self.git("merge-base", "--is-ancestor", resource["source_commit"], self.head)
+            ancestry_gate = f"resource_ancestry_verified:{identity}"
+            if f"resource_released:{identity}" in self.gates:
+                require(ancestry_gate in self.gates, "Released resource lacks durable ancestry evidence; reconcile before retry.")
+            else:
+                self.git("merge-base", "--is-ancestor", resource["source_commit"], self.head)
         inventory_scopes = self.inventory_scopes()
+        if self.execute:
+            for resource in self.handoff["resources"]:
+                self.record(f"resource_ancestry_verified:{resource['id']}")
         self.verify_resources_absent(completed_only=True)
         if "validation_resources_released" in self.gates:
             return
