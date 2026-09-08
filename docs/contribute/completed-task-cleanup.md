@@ -128,6 +128,8 @@ does not infer semantic ownership or maintainer intent from task titles.
 
 The entire inventory passes schema, unique-ID, task/source ownership, and source-ancestry preflight before any resource
 can be released. This includes entries whose release gates were recovered; duplicate IDs cannot reuse an earlier gate.
+Ownership manifests must also remain beneath the configured durable root. A removal scope cannot contain another
+inventoried resource's path; reconcile overlapping ownership through the existing owning tools before using this command.
 
 For `resource.inspect`, independently check the exact resource/provider, manifest, process/boot identity where
 applicable, and surviving reservations/claims/recovery state. Return literal booleans `ownership_verified`, `inactive`,

@@ -341,6 +341,7 @@ class Cleanup:
                 and isinstance(manifest["sha256"], str) and re.fullmatch(r"[0-9a-f]{64}", manifest["sha256"]),
                 "Resource original ownership manifest identity is incomplete.")
         path = ordinary(Path(manifest["path"]))
+        require(beneath(path, self.root), "Ownership manifest must be beneath the configured durable root.")
         require(not path.is_relative_to(self.target), "Preserve the original ownership manifest outside the worktree.")
         for candidate in self.handoff["resources"]:
             if isinstance(candidate, dict) and candidate.get("path"):
@@ -379,11 +380,13 @@ class Cleanup:
         require(scopes or not resource.get("path"), "A filesystem resource requires a removal scope.")
         protected = [self.repo, self.target, self.evidence, self.handoff_path, self.config]
         protected.extend(Path(item["ownership_manifest"]["path"]) for item in self.handoff["resources"])
+        protected.extend(Path(item["path"]) for item in self.handoff["resources"]
+                         if item["id"] != resource["id"] and item.get("path"))
         for value in scopes:
             scope = ordinary(Path(value))
             require(beneath(scope, self.root), "Removal scope must be beneath the configured root.")
             require(not any(ordinary(path).is_relative_to(scope) for path in protected),
-                    "Removal scope contains a checkout or preserved evidence; use a narrower owning-tool scope.")
+                    "Removal scope contains a checkout, another resource, or preserved evidence; use a narrower owning-tool scope.")
         return scopes
 
     def record(self, gate: str) -> None:
@@ -452,6 +455,9 @@ class Cleanup:
                     and re.fullmatch(r"[0-9a-f]{40}", resource["source_commit"]),
                     "Resource ownership/source identity differs from this task.")
             self.git("merge-base", "--is-ancestor", resource["source_commit"], self.head)
+        for resource in self.handoff["resources"]:
+            if resource["kind"] == "generated_tree":
+                self.removal_scopes(resource, {"removal_scopes": [resource["path"]]})
         self.verify_resources_absent(completed_only=True)
         if "validation_resources_released" in self.gates:
             return

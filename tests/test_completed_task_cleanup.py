@@ -307,6 +307,45 @@ def test_github_reads_ignore_environment_host(cleanup: Cleanup, monkeypatch: pyt
                for arguments in calls if "--repo" in arguments)
 
 
+@pytest.mark.parametrize("kind", ["artifact", "generated_tree"])
+def test_scope_cannot_remove_another_inventoried_resource(cleanup: Cleanup, monkeypatch: pytest.MonkeyPatch, kind: str) -> None:
+    """An artifact cleanup cannot consume a VM before its own provider cleanup runs."""
+    artifact = resource_identity(cleanup, "artifact", kind)
+    if kind == "generated_tree":
+        artifact["root_identity"] = [1, 2, 3]
+    vm = resource_identity(cleanup, "nested-vm")
+    artifact["path"] = str(cleanup.root / "artifacts")
+    vm["path"] = str(cleanup.root / "artifacts" / "vm" / "guest.vmx")
+    cleanup.handoff["resources"] = [artifact, vm]
+    original = cleanup.controller.call
+
+    def scopes(operation: str, payload: dict) -> dict:
+        """Report the artifact tool's complete recursive removal root."""
+        result = original(operation, payload)
+        if operation == "resource.inspect":
+            result["removal_scopes"] = [artifact["path"]]
+        return result
+
+    monkeypatch.setattr(cleanup.controller, "call", scopes)
+    with pytest.raises(Refusal, match="another resource"):
+        cleanup.run()
+    assert "resource.release" not in cleanup.controller.calls
+    assert cleanup.target.exists()
+
+
+def test_external_ownership_manifest_is_refused(cleanup: Cleanup) -> None:
+    """A matching hash outside the permitted durable root cannot authorize cleanup."""
+    resource = resource_identity(cleanup, "external-manifest")
+    outside = cleanup.root.parent / "external-owner.json"
+    outside.write_bytes(Path(resource["ownership_manifest"]["path"]).read_bytes())
+    resource["ownership_manifest"]["path"] = str(outside)
+    cleanup.handoff["resources"] = [resource]
+    with pytest.raises(Refusal, match="Ownership manifest must be beneath"):
+        cleanup.resources()
+    assert "resource.release" not in cleanup.controller.calls
+    assert not cleanup.evidence.exists()
+
+
 def test_preview_does_not_mutate(cleanup: Cleanup) -> None:
     """Preview performs no fetch, journal write, resource release, ref mutation, or rename."""
     cleanup.execute = False
