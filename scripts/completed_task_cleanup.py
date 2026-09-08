@@ -103,7 +103,7 @@ class Cleanup:
         self.handoff_path = handoff
         require(isinstance(self.handoff, dict) and set(self.handoff) == {
             "schema", "primary_checkout", "worktree", "worktree_identity", "branch", "head", "merge",
-            "repository", "pr", "issues", "resources", "task_id", "description"},
+            "repository", "pr", "issues", "resources", "task_id", "description", "task_title"},
             "Handoff fields differ from the bounded sanitized schema.")
         self.root = configured_root(config)
         self.config = config
@@ -131,6 +131,8 @@ class Cleanup:
         self.gates: list[str] = []
         self.proposed: list[dict] = []
         self.resource_evidence: list[dict] = []
+        require(isinstance(self.handoff["task_title"], str) and 0 < len(self.handoff["task_title"]) <= 512,
+                "A bounded recorded current task title is required.")
 
     def command(self, args: list[str], *, allowed: tuple[int, ...] = (0,)) -> str:
         """Run argument arrays with bounded time; never publish arbitrary child output on failure."""
@@ -174,6 +176,12 @@ class Cleanup:
         if not self.handoff["resources"]:
             require(result.get("inventory_empty_verified") is True,
                     "Explicit validation_resource_inventory_empty verification is required.")
+        allowed_titles = {self.handoff["task_title"]}
+        if not self.target.exists() and not self.git("for-each-ref", "--format=%(objectname)", f"refs/heads/{self.branch}") \
+                and not self.git("ls-remote", "--refs", "origin", f"refs/heads/{self.branch}"):
+            allowed_titles.add(completed_task_title(self.handoff["description"], self.handoff["issues"], [self.handoff["pr"]]))
+        require(result.get("observed_title") in allowed_titles,
+                "Live task title differs from the recorded handoff title; revalidate task identity.")
         self.resource_evidence.append({"operation": "task.inspect", "evidence_refs": result["evidence_refs"]})
 
     def eligibility(self) -> None:
@@ -226,6 +234,9 @@ class Cleanup:
                     "Origin main changed during fetch; repeat eligibility before deletion.")
             self.git("merge-base", "--is-ancestor", self.merge, "refs/remotes/origin/main")
             self.task()
+        if "validation_resources_released" in self.gates:
+            self.verify_resources_absent()
+        self.local_state()
 
     def local_state(self) -> None:
         """Protect active, dirty, locked, shared, replaced, or ambiguously absent worktrees."""
@@ -249,6 +260,51 @@ class Cleanup:
         require(local in {"", self.head}, "Local branch changed; preserve it.")
         remote = self.git("ls-remote", "--refs", "origin", f"refs/heads/{self.branch}")
         require(not remote or remote.split()[0] == self.head, "Remote branch changed; expected-SHA cleanup is refused.")
+        if "remote_branch_absent" in self.gates:
+            require(not remote, "Remote branch reappeared after its absence gate; preserve it and revalidate ownership.")
+        if "local_task_branch_absent" in self.gates:
+            require(not local, "Local branch reappeared after its absence gate; preserve it and revalidate ownership.")
+        if "worktree_removed" in self.gates:
+            require(not self.target.exists() and not targets, "Worktree reappeared after removal; preserve it.")
+
+    def validate_resource_identity(self, resource: dict) -> None:
+        """Require repository/PR binding, an exact locator, and durable original manifest bytes."""
+        required = {"id", "kind", "task_id", "source_commit", "repository", "pr", "ownership_manifest"}
+        require(isinstance(resource, dict) and required <= set(resource), "Resource identity fields are incomplete.")
+        require(resource["repository"] == self.repository and resource["pr"] == self.handoff["pr"],
+                "Resource repository/PR identity differs from this handoff.")
+        require(any(isinstance(resource.get(key), str) and resource[key].strip() for key in ("path", "provider_id")),
+                "Resource requires an exact path or provider identity.")
+        manifest = resource["ownership_manifest"]
+        require(isinstance(manifest, dict) and set(manifest) == {"path", "sha256"}
+                and isinstance(manifest["sha256"], str) and re.fullmatch(r"[0-9a-f]{64}", manifest["sha256"]),
+                "Resource original ownership manifest identity is incomplete.")
+        path = ordinary(Path(manifest["path"]))
+        require(not path.is_relative_to(self.target), "Preserve the original ownership manifest outside the worktree.")
+        for candidate in self.handoff["resources"]:
+            if isinstance(candidate, dict) and candidate.get("path"):
+                require(not path.is_relative_to(ordinary(Path(candidate["path"]))),
+                        "Ownership manifest lies inside a resource removal root.")
+        require(path.stat().st_size <= 262144, "Ownership manifest exceeds the bounded evidence limit.")
+        require(hashlib.sha256(path.read_bytes()).hexdigest() == manifest["sha256"],
+                "Original resource ownership manifest changed or is unproven.")
+        if resource["kind"] == "generated_tree":
+            require(resource.get("path") and isinstance(resource.get("root_identity"), list)
+                    and len(resource["root_identity"]) == 3, "Generated root creation identity is incomplete.")
+        else:
+            require(isinstance(resource.get("cleanup_tool"), str) and resource["cleanup_tool"].strip(),
+                    "Specialized resource requires its exact supported owning cleanup tool.")
+
+    def verify_resources_absent(self) -> None:
+        """Revisit the entire inventory so earlier resources cannot silently reappear."""
+        for resource in self.handoff["resources"]:
+            self.validate_resource_identity(resource)
+            result = self.controller.call("resource.inspect", {"resource": resource, "handoff_sha256": self.digest})
+            require(result.get("absent") is True and result.get("ownership_verified") is True
+                    and result.get("inactive") is True and result.get("retained") is False,
+                    "Aggregate resource absence readback failed; preserve remaining resources and retry inspection.")
+            if resource.get("path"):
+                require(not ordinary(Path(resource["path"])).exists(), "An inventoried resource path reappeared.")
 
     def record(self, gate: str) -> None:
         """Durably preserve completed gates before the next transition; no evidence writes in preview."""
@@ -267,9 +323,11 @@ class Cleanup:
         """Delegate specialized resources to their owning tools and demand independent absence readback."""
         identities: set[str] = set()
         for resource in self.handoff["resources"]:
+            self.validate_resource_identity(resource)
+        for resource in self.handoff["resources"]:
             require(isinstance(resource, dict) and set(resource) <= {
                 "id", "kind", "task_id", "source_commit", "path", "root_identity", "provider_id",
-                "ownership_manifest", "cleanup_tool"}, "Resource fields differ from the bounded sanitized schema.")
+                "ownership_manifest", "cleanup_tool", "repository", "pr"}, "Resource fields differ from the bounded sanitized schema.")
             if "path" in resource:
                 resource_path = ordinary(Path(resource["path"]))
                 require(not self.evidence.is_relative_to(resource_path)
@@ -314,6 +372,7 @@ class Cleanup:
                                          "action": "remove exact generated tree through checked handles"}
                     if self.execute:
                         self.eligibility()
+                        self.validate_resource_identity(resource)
                         self.resource_evidence.append(self.proposed[-1])
                         self.record(f"resource_release_prepared:{identity}")
                         files.remove(path, snapshot)
@@ -323,6 +382,7 @@ class Cleanup:
             if self.execute and result.get("absent") is not True:
                 require(not generated, "Controller could not independently verify generated-tree absence.")
                 self.eligibility()
+                self.validate_resource_identity(resource)
                 released = self.controller.call("resource.release", {"resource": resource, "handoff_sha256": self.digest})
                 require(released.get("success") is True, "Owning tool failed or refused resource release; preserve remaining resources.")
                 result = self.controller.call("resource.inspect", {"resource": resource, "handoff_sha256": self.digest})
@@ -331,6 +391,7 @@ class Cleanup:
                         "Resource absence lacks independent readback; branch/worktree cleanup blocked.")
                 self.record(f"resource_released:{identity}")
         if self.execute:
+            self.verify_resources_absent()
             if self.target.exists():
                 require(not self.git("-C", str(self.target), "ls-files", "--others", "--ignored", "--exclude-standard"),
                         "Unreleased ignored files remain; resource inventory/release is incomplete.")

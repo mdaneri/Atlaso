@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import subprocess
@@ -22,6 +23,7 @@ class Bridge:
         self.block = ""
         self.resource_absent = False
         self.release_ok = True
+        self.title: str | None = None
 
     def call(self, operation: str, payload: dict) -> dict:
         """Answer the bounded test protocol while allowing failed gates to be injected."""
@@ -32,6 +34,7 @@ class Bridge:
                                    "reviews_complete", "supported_tools_used"), True)
             result.update(handoff_sha256=payload["sha256"], evidence_refs=["test-only-independent-readback"])
             result["inventory_empty_verified"] = True
+            result["observed_title"] = self.title or payload["handoff"]["task_title"]
             if self.block:
                 result[self.block] = False
             return result
@@ -42,6 +45,7 @@ class Bridge:
             self.resource_absent = self.release_ok
             return {"success": self.release_ok}
         assert operation == "task.title"
+        self.title = payload["expected_title"]
         return {"persisted_readback": True, "observed_title": payload["expected_title"]}
 
 
@@ -78,7 +82,8 @@ def cleanup(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Cleanup:
                "worktree_identity": [target.stat().st_dev, target.stat().st_ino],
                "branch": "enhancement/760-test", "head": head, "merge": merge,
                "repository": "example/Atlaso", "pr": 761, "issues": [760],
-               "resources": [], "task_id": "test-task", "description": "Cleanup"}
+               "resources": [], "task_id": "test-task", "description": "Cleanup",
+               "task_title": "Cleanup · Issue #760 · PR #761"}
     handoff_path = root / "handoff.json"
     handoff_path.write_text(json.dumps(handoff), encoding="utf-8")
     config = tmp_path / "config.toml"
@@ -169,10 +174,20 @@ def test_changed_git_or_filesystem_state_blocks(cleanup: Cleanup, mutation: str)
     assert cleanup.target.exists()
 
 
+def resource_identity(cleanup: Cleanup, identity: str, kind: str = "vm") -> dict:
+    """Bind test-owned resources to durable fixture manifest bytes and exact provider identity."""
+    manifest = cleanup.root / f"{identity}-owner.json"
+    manifest.write_text(json.dumps({"task_id": "test-task", "repository": cleanup.repository,
+                                    "pr": cleanup.handoff["pr"], "provider_id": identity}), encoding="utf-8")
+    return {"id": identity, "kind": kind, "task_id": "test-task", "source_commit": cleanup.head,
+            "repository": cleanup.repository, "pr": cleanup.handoff["pr"], "provider_id": identity,
+            "cleanup_tool": "fixture-owning-tool", "ownership_manifest": {
+                "path": str(manifest), "sha256": hashlib.sha256(manifest.read_bytes()).hexdigest()}}
+
+
 def test_incomplete_resource_release_blocks_ref_deletion(cleanup: Cleanup) -> None:
     """A failed owning tool leaves the exact remote/local branches and worktree intact."""
-    cleanup.handoff["resources"] = [{"id": "fixture-vm", "kind": "vm", "task_id": "test-task",
-                                     "source_commit": cleanup.head}]
+    cleanup.handoff["resources"] = [resource_identity(cleanup, "fixture-vm")]
     cleanup.controller.release_ok = False
     with pytest.raises(Refusal, match="Owning tool failed"):
         cleanup.run()
@@ -274,8 +289,8 @@ def test_generated_resource_integrates_with_real_git(cleanup: Cleanup, monkeypat
     (path / "result.txt").write_text("generated", encoding="utf-8")
     (cleanup.repo / ".git/info/exclude").write_text("cache/\n", encoding="utf-8")
     identity = WindowsFiles().snapshot(path)["."]["identity"]
-    cleanup.handoff["resources"] = [{"id": "generated-cache", "kind": "generated_tree", "path": str(path),
-                                     "root_identity": identity, "task_id": "test-task", "source_commit": cleanup.head}]
+    cleanup.handoff["resources"] = [{**resource_identity(cleanup, "generated-cache", "generated_tree"),
+                                     "path": str(path), "root_identity": identity}]
     original = cleanup.controller.call
 
     def inspect(operation: str, payload: dict) -> dict:
@@ -337,6 +352,79 @@ def test_changed_handoff_blocks_before_mutation(cleanup: Cleanup) -> None:
         cleanup.run()
     assert cleanup.target.exists()
     assert not cleanup.evidence.exists()
+
+
+@pytest.mark.parametrize("field", ["repository", "pr", "ownership_manifest", "provider_id", "cleanup_tool"])
+def test_resource_identity_must_be_complete(cleanup: Cleanup, field: str) -> None:
+    """Incomplete resources cannot reach any owning-tool release request."""
+    resource = resource_identity(cleanup, "missing-field")
+    resource.pop(field)
+    cleanup.handoff["resources"] = [resource]
+    with pytest.raises(Refusal):
+        cleanup.run()
+    assert "resource.release" not in cleanup.controller.calls
+    assert cleanup.target.exists()
+
+
+def test_live_title_must_match_recorded_title(cleanup: Cleanup, monkeypatch: pytest.MonkeyPatch) -> None:
+    """A controller's generic identity assertion cannot replace exact task-title readback."""
+    original = cleanup.controller.call
+
+    def renamed(operation: str, payload: dict) -> dict:
+        """Simulate a concurrently renamed task while every other observation remains eligible."""
+        result = original(operation, payload)
+        if operation == "task.inspect":
+            result["observed_title"] = "Different task"
+        return result
+
+    monkeypatch.setattr(cleanup.controller, "call", renamed)
+    with pytest.raises(Refusal, match="Live task title differs"):
+        cleanup.run()
+    assert not cleanup.evidence.exists()
+
+
+def test_earlier_resource_reappearance_blocks_aggregate_gate(cleanup: Cleanup, monkeypatch: pytest.MonkeyPatch) -> None:
+    """A resource reappearing while another is processed prevents the aggregate release gate."""
+    cleanup.handoff["resources"] = [resource_identity(cleanup, "first"), resource_identity(cleanup, "second")]
+    original = cleanup.controller.call
+    first_inspections = 0
+
+    def reappeared(operation: str, payload: dict) -> dict:
+        """Make the first provider disappear, then reappear at final inventory readback."""
+        nonlocal first_inspections
+        result = original(operation, payload)
+        if operation == "resource.inspect" and payload["resource"]["id"] == "first":
+            first_inspections += 1
+            if first_inspections >= 3:
+                result["absent"] = False
+        return result
+
+    monkeypatch.setattr(cleanup.controller, "call", reappeared)
+    with pytest.raises(Refusal, match="Aggregate resource absence"):
+        cleanup.run()
+    assert "validation_resources_released" not in cleanup.gates
+    assert cleanup.target.exists()
+
+
+@pytest.mark.parametrize("gate", ["remote_branch_absent", "local_task_branch_absent"])
+def test_recreated_matching_ref_invalidates_completed_gate(cleanup: Cleanup, monkeypatch: pytest.MonkeyPatch, gate: str) -> None:
+    """Same-SHA ref recreation still invalidates a previously completed absence gate."""
+    original = cleanup.record
+
+    def recreate(completed: str) -> None:
+        """Recreate the exact ref after its successful absence journal record."""
+        original(completed)
+        if completed == gate:
+            if gate == "remote_branch_absent":
+                cleanup.git("push", "origin", f"{cleanup.head}:refs/heads/{cleanup.branch}")
+            else:
+                cleanup.git("update-ref", f"refs/heads/{cleanup.branch}", cleanup.head)
+
+    monkeypatch.setattr(cleanup, "record", recreate)
+    with pytest.raises(Refusal, match="branch reappeared"):
+        cleanup.run()
+    assert "task.title" not in cleanup.controller.calls
+    assert "task_title_done" not in cleanup.gates
 
 
 @pytest.mark.skipif(os.name != "nt", reason="Windows junction contract")

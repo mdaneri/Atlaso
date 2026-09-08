@@ -30,6 +30,7 @@ Provide a UTF-8 JSON handoff with these schema-1 fields:
 | --- | --- |
 | `schema` | Integer `1`. |
 | `task_id`, `description` | Exact Codex task identity and short description without traceability segments. |
+| `task_title` | Exact current title recorded by the originating task in the cleanup-ready handoff. |
 | `repository` | Exact public same-repository GitHub `owner/name`. |
 | `primary_checkout`, `worktree` | Absolute paths independently verified against Git registration. |
 | `worktree_identity` | `[st_dev, st_ino]` recorded with Python `Path.stat()` when the task worktree was created. |
@@ -37,8 +38,12 @@ Provide a UTF-8 JSON handoff with these schema-1 fields:
 | `issues` | Every closing issue number returned by GitHub for this PR. |
 | `resources` | Complete bounded inventory, or explicit `[]` with independently verified empty-inventory evidence. |
 
-A resource has `id`, `kind`, `task_id`, `source_commit`, and its exact provider/path identity and original ownership
-manifest. Supported kinds are `generated_tree`, `vm`, `lifecycle`, `artifact`, `reservation`, `credential_bridge`,
+A resource requires `id`, `kind`, `task_id`, `source_commit`, matching `repository` and `pr`, and at least one exact
+`path` or `provider_id`. Its required `ownership_manifest` contains an absolute `path` and the original file's
+`sha256`; preserve that manifest outside the worktree and every removal root. The command verifies the manifest bytes,
+while the controller independently verifies its provenance and binding to the resource. Specialized resources also
+require the exact supported `cleanup_tool`. Every resource identity is checked before any resource is released.
+Supported kinds are `generated_tree`, `vm`, `lifecycle`, `artifact`, `reservation`, `credential_bridge`,
 `process`, and `configuration`. Specialized kinds require an existing supported owning tool; a kind name does not
 prove that capability. Preserve unsupported, retained, shared, permanent, user-created, active, or ambiguously owned
 resources and report the missing evidence or owning cleanup capability.
@@ -108,6 +113,8 @@ after verification: `identity_verified`, `exclusive_ownership_verified`, `idle`,
 `downstream_clear`, `inventory_verified`, `post_merge_complete`, `reviews_complete`, and `supported_tools_used`.
 For an empty inventory, also return `inventory_empty_verified: true` after explicitly verifying
 `validation_resource_inventory_empty`.
+Also return the exact supported-tool `observed_title`. It must match the handoff's `task_title`; a title-only retry
+may also observe the canonical completed title only after the worktree and both refs are independently absent.
 Missing capabilities must return a refusal. This is the controller's independent evidence attestation; the script
 does not infer semantic ownership or maintainer intent from task titles.
 
@@ -125,6 +132,9 @@ credential bridges, processes, and configuration require their own documented re
 substitute broad deletion or stop unrelated processes. Return `success: true` only after that tool succeeds. The script
 requests another independent `resource.inspect`; release acknowledgement alone cannot complete the resource gate.
 Generated trees are removed by this command and still receive independent absence readback.
+Before recording the aggregate resource-release gate, the command reinspects every resource. Later eligibility
+checks repeat that aggregate readback and require completed remote/local ref gates to remain absent, even if a
+recreated ref points to the original SHA. Reappearance blocks completion and preserves the recreated resource/ref.
 
 ### Completion title
 
