@@ -22,23 +22,23 @@ CAPTURE_OVERRIDES = {
     **{
         stem: {
             "route": "/ui/management/routes-wan",
-            "state": "suspended-nat",
-            "source_commit": "45b4c2c2d640+working-tree",
-            "atlaso_version": "0.9.275",
-            "caption": (
-                "Routes and WAN Simulation with global routing disabled and the saved "
-                "NAT choice visibly suspended."
-            ),
-            "alt": (
-                "Atlaso Routes and WAN Simulation showing disabled routing, a checked "
-                "but unavailable NAT switch, and the suspended status."
-            ),
-            "capture_method": "codex-in-app-browser",
+            "state": "routing-enabled",
+            "source_commit": "acff23cfa411719824a704f20a154877d74ef05b",
+            "atlaso_version": "0.9.324",
+            "caption": "Routing & WAN owns forwarding and WAN simulation; source NAT is configured in Traffic Publishing.",
+            "alt": "Atlaso Routing & WAN with routing enabled, WAN simulation disabled, and no NAT controls.",
+            "capture_method": "edge-browser",
         }
-        for stem in (
-            "routes-wan-clean-desktop",
-            "routes-wan-clean-responsive",
-        )
+        for stem in ("routes-wan-clean-desktop", "routes-wan-clean-responsive")
+    },
+    **{
+        stem: {
+            "source_commit": "acff23cfa411719824a704f20a154877d74ef05b",
+            "atlaso_version": "0.9.324",
+            "capture_method": "edge-browser",
+        }
+        for stem in ("traffic-publishing-desktop", "traffic-publishing-responsive",
+                     "traffic-publishing-wizard-desktop", "traffic-publishing-wizard-responsive")
     },
     **{
         stem: {
@@ -250,6 +250,7 @@ DOCUMENTATION_PAGES = {
     "operate/automation.md": ("automation-",),
     "operate/networking.md": ("physical-interfaces-", "routes-wan-", "vlan-interfaces-"),
     "operate/network-objects.md": ("network-objects-",),
+    "operate/traffic-publishing.md": ("traffic-publishing-",),
     "operate/web-terminal.md": ("terminal-",),
     "services/dns.md": ("dns-",),
     "services/dhcp.md": ("dhcp-",),
@@ -314,6 +315,18 @@ ROUTES = {
 }
 
 SPECIAL = {
+    **{
+        stem: ("/ui/management/traffic-publishing", "applied-source-nat",
+               "Traffic Publishing with reviewed IPv4 masquerade and the canonical NAT setting.",
+               "Atlaso Traffic Publishing showing explicit eth2 ingress, eth3 egress, and enabled source NAT.")
+        for stem in ("traffic-publishing-desktop", "traffic-publishing-responsive")
+    },
+    **{
+        stem: ("/ui/management/traffic-publishing", "ipv6-snat-review",
+               "Review an IPv6 fixed-SNAT rule before saving desired state.",
+               "Atlaso NAT wizard review showing IPv6 fixed SNAT, explicit ingress and egress, and the global Apply boundary.")
+        for stem in ("traffic-publishing-wizard-desktop", "traffic-publishing-wizard-responsive")
+    },
     "about-modal-desktop": (
         "/dashboard",
         "about-modal",

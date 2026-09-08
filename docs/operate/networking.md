@@ -285,13 +285,13 @@ These captures show responsive layouts and useful operational states referenced 
 
 ### Routes and WAN simulation
 
-![Atlaso Routes and WAN Simulation showing disabled routing, a checked but unavailable NAT switch, and the suspended status.](../assets/screenshots/routes-wan-clean-desktop.webp)
+![Atlaso Routing & WAN with routing enabled, WAN simulation disabled, and no NAT controls.](../assets/screenshots/routes-wan-clean-desktop.webp)
 
-*Figure: Routes and WAN Simulation with global routing disabled and the saved NAT choice visibly suspended.*
+*Figure: Routing & WAN owns forwarding and WAN simulation; source NAT is configured in Traffic Publishing.*
 
-![Atlaso Routes and WAN Simulation showing disabled routing, a checked but unavailable NAT switch, and the suspended status.](../assets/screenshots/routes-wan-clean-responsive.webp)
+![Atlaso Routing & WAN with routing enabled, WAN simulation disabled, and no NAT controls.](../assets/screenshots/routes-wan-clean-responsive.webp)
 
-*Figure: Routes and WAN Simulation with global routing disabled and the saved NAT choice visibly suspended.*
+*Figure: Routing & WAN owns forwarding and WAN simulation; source NAT is configured in Traffic Publishing.*
 
 ### VLAN interfaces
 

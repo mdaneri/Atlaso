@@ -13,6 +13,17 @@ Use **Network → Traffic Publishing** at `/ui/management/traffic-publishing` to
 at `/ui/management/routes-wan` owns static routes, routing permissions, forwarding, and WAN simulation. Traffic
 Publishing requires Firewall read permission; changing its browser settings or rules requires Firewall write permission.
 
+<!-- BEGIN GENERATED INTERFACE OVERVIEW -->
+## Interface overview
+
+This verified appliance view provides visual orientation before you begin.
+
+![Atlaso Traffic Publishing showing explicit eth2 ingress, eth3 egress, and enabled source NAT.](../assets/screenshots/traffic-publishing-desktop.webp)
+
+*Figure: Traffic Publishing with reviewed IPv4 masquerade and the canonical NAT setting.*
+
+<!-- END GENERATED INTERFACE OVERVIEW -->
+
 ## Configure source translation
 
 1. Configure two distinct addressed lab targets in Physical Interfaces or VLAN Interfaces. Use enabled `access` or
@@ -79,3 +90,24 @@ setting in the same desired-state transaction. It does not create a second NAT o
 
 Existing Routes/WAN NAT form submissions are internally handled and return a same-host `303` to Traffic Publishing;
 mutations are never replayed through `307` or `308`. Use the canonical Traffic Publishing bookmark for the rule grid.
+
+<!-- BEGIN GENERATED ADDITIONAL SCREENSHOTS -->
+## Additional verified states
+
+These captures show responsive layouts and useful operational states referenced by this page.
+
+### Traffic Publishing
+
+![Atlaso Traffic Publishing showing explicit eth2 ingress, eth3 egress, and enabled source NAT.](../assets/screenshots/traffic-publishing-responsive.webp)
+
+*Figure: Traffic Publishing with reviewed IPv4 masquerade and the canonical NAT setting.*
+
+![Atlaso NAT wizard review showing IPv6 fixed SNAT, explicit ingress and egress, and the global Apply boundary.](../assets/screenshots/traffic-publishing-wizard-desktop.webp)
+
+*Figure: Review an IPv6 fixed-SNAT rule before saving desired state.*
+
+![Atlaso NAT wizard review showing IPv6 fixed SNAT, explicit ingress and egress, and the global Apply boundary.](../assets/screenshots/traffic-publishing-wizard-responsive.webp)
+
+*Figure: Review an IPv6 fixed-SNAT rule before saving desired state.*
+
+<!-- END GENERATED ADDITIONAL SCREENSHOTS -->
