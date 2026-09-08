@@ -126,18 +126,17 @@ class Cleanup:
             "schema", "primary_checkout", "worktree", "worktree_identity", "branch", "head", "merge",
             "repository", "pr", "issues", "resources", "task_id", "description", "task_title"},
             "Handoff fields differ from the bounded sanitized schema.")
-        self.root = configured_root(config)
-        self.config = config
         self.repo = ordinary(Path(self.handoff["primary_checkout"]))
         self.target = ordinary(Path(self.handoff["worktree"]))
+        self.verify_primary_controller()
+        self.root = configured_root(config)
+        self.config = config
         self.evidence = ordinary(evidence)
         require(beneath(self.target, self.root), "Target is outside the configured worktree root.")
         require(beneath(evidence, self.root) and not evidence.is_relative_to(self.target),
                 "Evidence must survive outside the target, beneath the configured root.")
         require(beneath(handoff, self.root) and not handoff.is_relative_to(self.target),
                 "Preserve the handoff outside the target, beneath the configured root first.")
-        require(self.target != self.repo, "Primary checkout deletion is forbidden; use its documented restoration workflow.")
-        require(Path.cwd() == self.repo, "Run the command from the primary checkout.")
         require(self.handoff.get("schema") == 1, "Unsupported handoff schema.")
         self.branch = self.handoff["branch"]
         self.head = self.handoff["head"]
@@ -259,17 +258,23 @@ class Cleanup:
                 "Live task title differs from the recorded handoff title; revalidate task identity.")
         self.resource_evidence.append({"operation": "task.inspect", "evidence_refs": result["evidence_refs"]})
 
-    def eligibility(self) -> None:
-        """Independently verify live GitHub identity, issues, current main reachability, and task state."""
-        require(hashlib.sha256(read_handoff(self.handoff_path)).hexdigest() == self.digest,
-                "Handoff changed during execution; preserve remaining resources and restart verification.")
-        require(configured_root(self.config) == self.root, "Configured root changed; restart preview.")
-        ordinary(self.repo)
-        ordinary(self.target)
+    def verify_primary_controller(self) -> None:
+        """Independently classify the checkout before requiring configuration for non-primary cleanup."""
+        require(Path.cwd() == self.repo, "Run the command from the primary checkout.")
         inventory = self.worktrees()
         require(inventory and Path(inventory[0]["worktree"]) == self.repo, "Controller is not in Git's primary checkout.")
         common = Path(self.git("rev-parse", "--path-format=absolute", "--git-common-dir"))
         require(common == self.repo / ".git", "Ambiguous primary checkout common directory.")
+        require(self.target != self.repo, "Primary checkout deletion is forbidden; use its documented restoration workflow.")
+
+    def eligibility(self) -> None:
+        """Independently verify live GitHub identity, issues, current main reachability, and task state."""
+        require(hashlib.sha256(read_handoff(self.handoff_path)).hexdigest() == self.digest,
+                "Handoff changed during execution; preserve remaining resources and restart verification.")
+        ordinary(self.repo)
+        ordinary(self.target)
+        self.verify_primary_controller()
+        require(configured_root(self.config) == self.root, "Configured root changed; restart preview.")
         self.git("check-ref-format", "--branch", self.branch)
         remote = self.git("remote", "get-url", "origin")
         require(remote in {f"https://github.com/{self.repository}.git", f"https://github.com/{self.repository}",

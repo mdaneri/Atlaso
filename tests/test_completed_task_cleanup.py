@@ -650,6 +650,32 @@ def test_primary_and_outside_root_are_refused(cleanup: Cleanup) -> None:
     assert not cleanup.controller.calls
 
 
+@pytest.mark.parametrize("problem", ["missing", "unreadable", "unsafe"])
+def test_primary_target_precedes_root_resolution(cleanup: Cleanup, monkeypatch: pytest.MonkeyPatch, problem: str) -> None:
+    """Verified primary targets receive restoration guidance even when root configuration is unusable."""
+    from scripts import completed_task_cleanup
+
+    if problem == "missing":
+        cleanup.config.write_text("[desktop]\n", encoding="utf-8")
+    elif problem == "unreadable":
+        cleanup.config.unlink()
+        cleanup.config.mkdir()
+    else:
+        cleanup.config.write_text("[desktop]\ngit-worktree-root = " + json.dumps(cleanup.root.anchor), encoding="utf-8")
+    handoff_path = cleanup.root / "primary-handoff.json"
+    handoff_path.write_text(json.dumps({**cleanup.handoff, "worktree": str(cleanup.repo)}), encoding="utf-8")
+
+    def forbidden_root(config: Path) -> Path:
+        """Root configuration must not be consulted for the independently verified primary target."""
+        pytest.fail("primary target consulted worktree-root configuration")
+
+    monkeypatch.setattr(completed_task_cleanup, "configured_root", forbidden_root)
+    with pytest.raises(Refusal, match="documented restoration workflow"):
+        Cleanup(handoff_path, cleanup.evidence, cleanup.config, True, cleanup.controller)
+    assert cleanup.repo.is_dir() and cleanup.target.is_dir()
+    assert not cleanup.controller.calls
+
+
 def test_lease_rejects_remote_change_after_check(cleanup: Cleanup, monkeypatch: pytest.MonkeyPatch) -> None:
     """The actual server-side lease protects a ref changed after all read-only observations."""
     original = cleanup.command

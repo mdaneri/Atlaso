@@ -11,6 +11,8 @@ status: current
 
 Use `scripts/cleanup-completed-task.ps1` from the primary checkout for eligible completed ordinary tasks.
 It requires Python 3.14, Git, authenticated GitHub CLI, and a live cleanup controller with supported Codex task tools.
+Git's worktree inventory and common directory identify the primary checkout before worktree-root configuration is read.
+A primary-checkout target is directed to its restoration workflow even when that configuration is unavailable or unsafe.
 Generated-directory release additionally requires Windows. The controller supplies fresh task evidence through
 stdin; the command independently checks GitHub, Git, configuration, and filesystem state. No private Codex database,
 rollout editing, guessed server endpoint, administrative bypass, or execution-policy override is used.
