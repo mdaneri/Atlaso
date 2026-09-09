@@ -26,6 +26,8 @@ disable optional Git locks. Repository, index, object-store, namespace, and inje
 cannot redirect inspection or deletion away from the checked worktree. Normal on-disk Git configuration still applies.
 Every Git child explicitly sets `core.fsmonitor=false`, including cleanliness checks and worktree removal, so a stale
 monitor response cannot hide tracked edits from the cleanup gates.
+Git children also force `core.trustctime=true` and `core.checkStat=default` so on-disk configuration cannot suppress
+ctime and other normal stat comparisons for tracked files, including same-size edits with a preserved mtime.
 POSIX Git children also force `core.fileMode=true` so executable-bit-only edits remain visible even when repository
 configuration disables mode tracking. Windows retains its native file-mode behavior.
 Closing issue references must name this same repository through their canonical GitHub issue URLs. A matching issue

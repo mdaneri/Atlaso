@@ -165,6 +165,45 @@ def cleanup(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Cleanup:
     return instance
 
 
+@pytest.mark.parametrize("setting,disabled,expected", [
+    ("core.trustctime", "false", "true"), ("core.checkStat", "minimal", "default"),
+])
+def test_git_command_forces_complete_stat_checks(cleanup: Cleanup, setting: str, disabled: str, expected: str) -> None:
+    """Cleanup ignores repository settings that weaken tracked-file stat comparisons.
+
+    Args:
+        cleanup: Disposable checkout for inspecting the effective child configuration.
+        setting: Git stat-comparison configuration key overridden by cleanup.
+        disabled: On-disk value that omits change-detection information.
+        expected: Full-check value required in the actual Git child process.
+    """
+    git(cleanup.repo, "config", setting, disabled)
+    assert cleanup.command(["git", "config", "--get", setting]) == expected
+
+
+@pytest.mark.skipif(os.name == "nt", reason="POSIX inode-change timestamp semantics")
+def test_preserved_mtime_edit_is_detected(cleanup: Cleanup) -> None:
+    """An equal-size edit hidden by trustctime=false is preserved by cleanup.
+
+    Args:
+        cleanup: Disposable POSIX worktree with a refreshed index and an old file mtime.
+    """
+    source = cleanup.target / "source.txt"
+    old = source.stat().st_mtime_ns - 60_000_000_000
+    os.utime(source, ns=(old, old))
+    git(cleanup.target, "update-index", "--refresh")
+    git(cleanup.repo, "config", "core.trustctime", "false")
+    original_size = source.stat().st_size
+    source.write_bytes(b"x" * original_size)
+    os.utime(source, ns=(old, old))
+    assert not git(cleanup.target, "status", "--porcelain")
+    assert "source.txt" in cleanup.git("-C", str(cleanup.target), "status", "--porcelain")
+    with pytest.raises(Refusal):
+        cleanup.run()
+    assert source.read_bytes() == b"x" * original_size
+    assert not cleanup.gates
+
+
 def test_posix_git_command_forces_file_modes(cleanup: Cleanup, monkeypatch: pytest.MonkeyPatch) -> None:
     """The POSIX command path overrides a repository setting that hides mode changes.
 

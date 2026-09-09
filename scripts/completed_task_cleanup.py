@@ -259,7 +259,7 @@ class Cleanup:
         env.update(GIT_OPTIONAL_LOCKS="0", PYTHONDONTWRITEBYTECODE="1")
         if args[0] == "git":
             # A stale monitor can hide tracked changes from status and worktree remove alike.
-            overrides = ["-c", "core.fsmonitor=false"]
+            overrides = ["-c", "core.fsmonitor=false", "-c", "core.trustctime=true", "-c", "core.checkStat=default"]
             if os.name != "nt":
                 overrides += ["-c", "core.fileMode=true"]
             args = ["git", *overrides, *args[1:]]
