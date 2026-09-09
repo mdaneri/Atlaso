@@ -21,6 +21,9 @@ repair; a later configuration rewrite preserves already recorded cleanup gates i
 The active configuration uses the pinned regular-file reader with a 1 MiB limit before TOML parsing.
 Child commands stream stdout and stderr through a combined 4 MiB cap with a 90-second execution timeout. Excess output
 terminates the child and produces a sanitized refusal; inspect the tool directly before retrying.
+Child environments discard inherited `GIT_*` overrides except the credential prompt helper `GIT_ASKPASS`, then explicitly
+disable optional Git locks. Repository, index, object-store, namespace, and injected configuration overrides therefore
+cannot redirect inspection or deletion away from the checked worktree. Normal on-disk Git configuration still applies.
 Closing issue references must name this same repository through their canonical GitHub issue URLs. A matching issue
 number in another repository cannot satisfy the local closure gate.
 Before worktree removal, filesystem enumeration admits only tracked source files and the root worktree `.git` file.

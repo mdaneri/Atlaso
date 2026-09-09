@@ -165,6 +165,25 @@ def cleanup(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Cleanup:
     return instance
 
 
+@pytest.mark.parametrize("variable", ["GIT_INDEX_FILE", "GIT_DIR", "GIT_WORK_TREE", "GIT_CONFIG_COUNT"])
+def test_git_environment_cannot_hide_dirty_source(cleanup: Cleanup, monkeypatch: pytest.MonkeyPatch, variable: str) -> None:
+    """Inherited repository-shaping variables cannot redirect the checked worktree or index.
+
+    Args:
+        cleanup: Disposable task whose tracked source is modified after its merge.
+        monkeypatch: Fixture restoring the caller's environment after the test.
+        variable: Git override supplied to the cleanup controller process.
+    """
+    source = cleanup.target / "source.txt"
+    source.write_text("retain this uncommitted change", encoding="utf-8")
+    monkeypatch.setenv(variable, str(cleanup.root / "untrusted-override"))
+    assert "source.txt" in cleanup.git("-C", str(cleanup.target), "status", "--porcelain")
+    with pytest.raises(Refusal):
+        cleanup.run()
+    assert source.read_text(encoding="utf-8") == "retain this uncommitted change"
+    assert not cleanup.gates
+
+
 def test_nonlocal_closing_issue_refuses(cleanup: Cleanup, monkeypatch: pytest.MonkeyPatch) -> None:
     """A closed local issue cannot substitute for a foreign issue with the same number.
 

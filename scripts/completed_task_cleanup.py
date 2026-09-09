@@ -252,7 +252,11 @@ class Cleanup:
             args: Argument array passed directly to the child without shell interpolation.
             allowed: Child exit codes accepted by this operation.
         """
-        env = {**os.environ, "GIT_OPTIONAL_LOCKS": "0", "PYTHONDONTWRITEBYTECODE": "1"}
+        # Repository/index/config overrides must not redirect either inspection or deletion.
+        # Retain only the credential prompt helper; normal on-disk Git configuration still applies.
+        env = {key: value for key, value in os.environ.items()
+               if not key.upper().startswith("GIT_") or key.upper() == "GIT_ASKPASS"}
+        env.update(GIT_OPTIONAL_LOCKS="0", PYTHONDONTWRITEBYTECODE="1")
         output = bytearray()
         count = 0
         lock = threading.Lock()
