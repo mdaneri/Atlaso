@@ -1591,20 +1591,33 @@ def test_managed_factory_reset_retains_marker_until_readiness(tmp_path, monkeypa
         original_fstat = os.fstat
 
         def root_owned_fstat(descriptor):
-            """Model root ownership while retaining real marker content and mode."""
+            """Model root ownership while retaining real marker content and mode.
+
+            Args:
+                descriptor: Open marker descriptor passed to the real fstat.
+            """
             result = original_fstat(descriptor)
             return SimpleNamespace(st_mode=result.st_mode, st_uid=0, st_size=result.st_size)
 
         monkeypatch.setattr(helper_globals["os"], "fstat", root_owned_fstat)
 
     def session_command(command, **_kwargs):
-        """Provide stopped SSH and empty session inventories without host mutation."""
+        """Provide stopped SSH and empty session inventories without host mutation.
+
+        Args:
+            command: Helper command whose result is simulated.
+            **_kwargs: Ignored command execution options.
+        """
         return subprocess.CompletedProcess(command, 3 if "is-active" in command else 0, "", "")
 
     monkeypatch.setitem(helper_globals, "_run", session_command)
 
     def terminate_sessions(_adapter):
-        """Exercise real helper admission against the runner's durable phase."""
+        """Exercise real helper admission against the runner's durable phase.
+
+        Args:
+            _adapter: Adapter instance invoking the helper operation.
+        """
         assert json.loads((state_directory / "request.json").read_text(encoding="utf-8"))["state"] == "committing"
         login_cleanup_events.append("sessions terminated")
         return AdapterResult(

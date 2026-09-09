@@ -59,11 +59,13 @@ replacement database, validates all generated runtime configuration, and activat
 units. Only after the candidate passes validation does Atlaso atomically replace the active database. The management
 plane restarts and the initiating browser is handed back to sign-in.
 
-For either account, **Change password** opens the same password-dialog pattern used by Local Users. Enter and confirm
-the replacement, then select **Use password for reset**. This prepares it only for the final confirmed reset; closing
-the dialog does not change an operating-system password. The page displays a prepared status without the value.
-Cancel discards the current dialog edits, and **Keep current password** clears that account's prepared replacement.
-Passwords are not saved in browser storage. Without JavaScript, the original labeled password fields remain available.
+Choose **Keep current password** or **Change password** for each account, then select **Factory reset appliance**.
+Only accounts marked **Change password** are prompted, administrator first and root second, using the Local Users
+password-dialog pattern. Enter and confirm each replacement, then select **Continue**. Empty or mismatched entries
+show an inline error. Help appears only while its icon is hovered or keyboard-focused and stays within the dialog.
+The final destructive confirmation follows password collection. Canceling either dialog or final confirmation discards
+all prepared values without changing the account choices. Passwords are not saved in browser storage. Without
+JavaScript, the original labeled password fields remain available.
 
 Factory reset deliberately moves management admission to the applied factory binding (`eth0` at
 `192.168.49.1/24`) instead of keeping a retired pre-reset listener authorized. The replacement database, Network

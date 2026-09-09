@@ -21,12 +21,16 @@ function fixture() {
   class Form extends Element {}
   class Dialog extends Element {
     showModal() { this.open = true; }
-    close() { this.open = false; this.emit("close"); }
+    close(value) { this.returnValue = value; this.open = false; this.emit("close"); }
   }
   const form = new Form();
   const editor = new Form();
   const dialog = new Dialog();
   const title = new Element();
+  const error = new Element();
+  const confirmationCalls = [];
+  const final = { accepted: false };
+  form.requestSubmit = () => { form.submitted = true; };
   const cancel = new Element();
   const window = new Element();
   const password = new Element();
@@ -59,6 +63,7 @@ function fixture() {
       "factory-reset-password-modal": dialog,
       "factory-reset-password-dialog-form": editor,
       "factory-reset-password-title": title,
+      "factory-reset-password-error": error,
     })[id],
   };
   const source = fs.readFileSync(path.join(__dirname, "../../atlaso/app/static/app.js"), "utf8");
@@ -67,47 +72,73 @@ function fixture() {
   vm.runInNewContext(`${source.slice(start, end)}\ninitializeFactoryResetPasswords();`, {
     document, window, HTMLFormElement: Form, HTMLDialogElement: Dialog, HTMLInputElement: Element,
     initializePasswordToggles() {}, resetPasswordVisibility() {},
+    requestConfirmation: async (options) => { confirmationCalls.push(options); return final.accepted; },
   });
-  return { form, editor, dialog, cancel, password, confirmation, fields, accounts, window };
+  return { form, editor, dialog, cancel, password, confirmation, fields, accounts, window, error, confirmationCalls, final };
 }
 
+
+const settle = () => new Promise((resolve) => setImmediate(resolve));
 for (const account of ["admin", "root"]) {
-  test(`${account}: prepare, cancel edits, keep and page exit clear values`, () => {
+  test(`${account}: defer editor until reset and validate inline`, async () => {
     const f = fixture();
-    const a = f.accounts[account];
-    assert.equal(a.fields.hidden, true);
-    assert.equal(a.fields.classes.has("hidden"), true);
-    a.open.emit("click");
+    f.accounts[account].change.checked = true;
+    f.accounts[account].change.emit("change");
+    assert.equal(f.dialog.open, undefined);
+    assert.equal(f.accounts[account].fields.classes.has("hidden"), true);
+    f.form.emit("submit");
+    assert.equal(f.dialog.open, true);
+    f.editor.emit("submit");
+    assert.match(f.error.textContent, /Enter and confirm/);
     f.password.value = "synthetic-test-value";
     f.confirmation.value = "different";
     f.editor.emit("submit");
-    assert.equal(f.dialog.open, true);
-    assert.equal(f.fields[`${account}_password`].value, "");
+    assert.match(f.error.textContent, /does not match/);
     f.confirmation.value = f.password.value;
     f.editor.emit("submit");
-    assert.equal(f.dialog.open, false);
-    assert.equal(a.change.checked, true);
-    assert.equal(f.fields[`${account}_password`].value, "synthetic-test-value");
-    assert.equal(f.password.value, "");
-    a.open.emit("click");
-    f.password.value = "discard-this-edit";
-    f.cancel.emit("click");
-    assert.equal(f.fields[`${account}_password`].value, "synthetic-test-value");
-    assert.equal(f.password.value, "");
-    a.keep.checked = true;
-    a.keep.emit("change");
-    assert.equal(f.fields[`${account}_password`].value, "");
-    f.fields[`${account}_password`].value = "ephemeral";
-    f.window.emit("pagehide");
+    await settle();
+    assert.equal(f.confirmationCalls.length, 1);
+    assert.equal(f.form.submitted, undefined);
     assert.equal(f.fields[`${account}_password`].value, "");
   });
 }
-
-test("missing prepared password opens editor before reset confirmation", () => {
+test("both changes are collected in order before final confirmation", async () => {
   const f = fixture();
-  f.accounts.admin.change.checked = true;
+  f.accounts.admin.change.checked = f.accounts.root.change.checked = true;
+  f.final.accepted = true;
   f.form.emit("submit");
+  f.password.value = f.confirmation.value = "administrator-test";
+  f.editor.emit("submit");
+  await settle();
   assert.equal(f.dialog.open, true);
+  assert.equal(f.confirmationCalls.length, 0);
+  f.password.value = f.confirmation.value = "root-test";
+  f.editor.emit("submit");
+  await settle();
+  assert.equal(f.form.submitted, true);
+  assert.equal(f.fields.admin_password.value, "administrator-test");
+  assert.equal(f.fields.root_password.value, "root-test");
+  f.window.emit("pagehide");
+  assert.equal(f.fields.admin_password.value, "");
+  assert.equal(f.fields.root_password.value, "");
+});
+test("cancel during the second dialog discards both passwords", async () => {
+  const f = fixture();
+  f.accounts.admin.change.checked = f.accounts.root.change.checked = true;
+  f.form.emit("submit");
+  f.password.value = f.confirmation.value = "administrator-test";
+  f.editor.emit("submit");
+  await settle();
   f.cancel.emit("click");
-  assert.equal(f.accounts.admin.keep.checked, true);
+  await settle();
+  assert.equal(f.confirmationCalls.length, 0);
+  assert.equal(f.fields.admin_password.value, "");
+  assert.equal(f.accounts.admin.change.checked, true);
+});
+test("keep both goes directly to final confirmation", async () => {
+  const f = fixture();
+  f.form.emit("submit");
+  await settle();
+  assert.equal(f.dialog.open, undefined);
+  assert.equal(f.confirmationCalls.length, 1);
 });

@@ -128,10 +128,6 @@
           <label><span class="field-label"><span>New administrator password</span><button class="help-icon" type="button" data-help="Required only when Change password is selected. The value is staged in a mode-0600 transient file and never written to the database or reset marker.">i</button></span><input type="password" name="admin_password" autocomplete="new-password" aria-describedby="factory-reset-password-policy"></label>
           <label><span>Confirm administrator password</span><input type="password" name="admin_password_confirm" autocomplete="new-password" aria-describedby="factory-reset-password-policy"></label>
         </div>
-        <div data-reset-password-controls="admin" hidden>
-          <span class="muted" data-reset-password-status="admin" role="status">Current password will be kept.</span>
-          <button class="button secondary" type="button" data-reset-password-open="admin">Set administrator password</button>
-        </div>
         <fieldset>
           <legend><span class="field-label"><span>Root password</span><button class="help-icon" type="button" data-help="Keep the current Photon root password, or replace it during the protected factory-reset transaction. This does not enable root SSH.">i</button></span></legend>
           <div class="choice-list compact">
@@ -142,10 +138,6 @@
         <div class="form-grid" data-reset-password-fields="root">
           <label><span class="field-label"><span>New root password</span><button class="help-icon" type="button" data-help="Required only when Change password is selected. The value is passed to the constrained root helper through protected storage and stdin.">i</button></span><input type="password" name="root_password" autocomplete="new-password" aria-describedby="factory-reset-password-policy"></label>
           <label><span>Confirm root password</span><input type="password" name="root_password_confirm" autocomplete="new-password" aria-describedby="factory-reset-password-policy"></label>
-        </div>
-        <div data-reset-password-controls="root" hidden>
-          <span class="muted" data-reset-password-status="root" role="status">Current password will be kept.</span>
-          <button class="button secondary" type="button" data-reset-password-open="root">Set root password</button>
         </div>
         <button class="button danger" type="submit">Factory reset appliance</button>
       </form>
@@ -190,7 +182,7 @@
   {% endif %}
 </section>
 <dialog id="factory-reset-password-modal" class="confirm-modal" aria-labelledby="factory-reset-password-title" aria-describedby="factory-reset-password-message">
-  <form id="factory-reset-password-dialog-form" class="confirm-modal-panel form-stack" method="dialog">
+  <form id="factory-reset-password-dialog-form" class="confirm-modal-panel form-stack" method="dialog" novalidate>
     <div class="confirm-modal-body">
       <p class="kicker">Factory reset</p>
       <h2 id="factory-reset-password-title">Prepare password for factory reset</h2>
@@ -208,9 +200,10 @@
       </span>
     </label>
     {% endfor %}
+    <p id="factory-reset-password-error" class="form-error" role="alert"></p>
     <div class="confirm-modal-actions">
       <button class="button ghost" type="button" data-reset-password-cancel>Cancel</button>
-      <button class="button primary" type="submit">Use password for reset</button>
+      <button class="button primary" type="submit">Continue</button>
     </div>
   </form>
 </dialog>

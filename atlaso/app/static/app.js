@@ -5497,99 +5497,94 @@ function initializeFactoryResetPasswords() {
       || !(editor instanceof HTMLFormElement) || form.dataset.passwordDialogsReady) return;
   const password = editor.elements.namedItem("password");
   const confirmation = editor.elements.namedItem("confirmation");
-  if (!(password instanceof HTMLInputElement) || !(confirmation instanceof HTMLInputElement)) return;
-  let active = null;
-  let launcher = null;
-  const accountFields = (account) => ({
+  const error = document.getElementById("factory-reset-password-error");
+  let resolvePassword = null;
+  let busy = false;
+  const fields = (account) => ({
     password: form.elements.namedItem(`${account}_password`),
     confirmation: form.elements.namedItem(`${account}_password_confirm`),
-    keep: form.querySelector(`input[name="${account}_password_action"][value="keep"]`),
     change: form.querySelector(`input[name="${account}_password_action"][value="change"]`),
-    status: form.querySelector(`[data-reset-password-status="${account}"]`),
   });
-  const refresh = (account) => {
-    const fields = accountFields(account);
-    fields.status.textContent = fields.change.checked && fields.password.value
-      ? "Replacement password prepared for reset." : "Current password will be kept.";
-  };
-  const open = (account, source) => {
-    active = account;
-    launcher = source;
+  const clear = () => {
     editor.reset();
-    confirmation.setCustomValidity("");
     resetPasswordVisibility(editor);
-    document.getElementById("factory-reset-password-title").textContent = account === "admin"
-      ? "Prepare administrator password for reset" : "Prepare root password for reset";
-    modal.showModal();
-    password.focus();
+    error.textContent = "";
+    for (const account of ["admin", "root"]) {
+      fields(account).password.value = "";
+      fields(account).confirmation.value = "";
+    }
   };
   initializePasswordToggles(editor);
-  [password, confirmation].forEach((input) => input.addEventListener("input", () => {
-    confirmation.setCustomValidity("");
-  }));
+  editor.noValidate = true;
   editor.addEventListener("submit", (event) => {
     event.preventDefault();
-    confirmation.setCustomValidity(password.value === confirmation.value ? "" : "Password confirmation does not match.");
-    if (!editor.reportValidity() || !active) return;
-    const fields = accountFields(active);
-    fields.password.value = password.value;
-    fields.confirmation.value = confirmation.value;
-    fields.change.checked = true;
+    error.textContent = !password.value || !confirmation.value
+      ? "Enter and confirm the new password."
+      : password.value !== confirmation.value ? "Password confirmation does not match." : "";
+    if (error.textContent) {
+      (!password.value ? password : confirmation).focus();
+      return;
+    }
     modal.close("prepared");
   });
+  [password, confirmation].forEach((input) => input.addEventListener("input", () => { error.textContent = ""; }));
   modal.querySelector("[data-reset-password-cancel]").addEventListener("click", () => modal.close("cancel"));
   modal.addEventListener("close", () => {
-    if (active) {
-      const fields = accountFields(active);
-      if (!fields.password.value) fields.keep.checked = true;
-      refresh(active);
-    }
+    const result = modal.returnValue === "prepared" ? password.value : null;
     editor.reset();
     resetPasswordVisibility(editor);
-    confirmation.setCustomValidity("");
-    active = null;
-    launcher?.focus();
+    error.textContent = "";
+    resolvePassword?.(result);
+    resolvePassword = null;
   });
-  ["admin", "root"].forEach((account) => {
-    const fields = accountFields(account);
-    form.querySelector(`[data-reset-password-open="${account}"]`).addEventListener("click", (event) => open(account, event.currentTarget));
-    fields.change.addEventListener("change", () => {
-      if (fields.change.checked) open(account, fields.change);
-    });
-    fields.keep.addEventListener("change", () => {
-      if (!fields.keep.checked) return;
-      fields.password.value = "";
-      fields.confirmation.value = "";
-      refresh(account);
-    });
+  for (const account of ["admin", "root"]) {
     const fallback = form.querySelector(`[data-reset-password-fields="${account}"]`);
     fallback.hidden = true;
     fallback.classList.add("hidden");
-    form.querySelector(`[data-reset-password-controls="${account}"]`).hidden = false;
-  });
-  // Run before the shared destructive confirmation; no password is submitted by
-  // the editor, and the existing backend remains the password-policy authority.
-  form.addEventListener("submit", (event) => {
-    for (const account of ["admin", "root"]) {
-      const fields = accountFields(account);
-      if (fields.change.checked && !fields.password.value) {
-        event.preventDefault();
-        event.stopImmediatePropagation();
-        open(account, fields.change);
-        return;
+  }
+  // Collect only the requested changes, then use the shared final confirmation.
+  // Its one-shot confirmed flag also lets the shared submit handler pass through.
+  form.addEventListener("submit", async (event) => {
+    if (form.dataset.confirmed === "1") return;
+    event.preventDefault();
+    event.stopImmediatePropagation();
+    if (busy) return;
+    busy = true;
+    clear();
+    let confirmed = false;
+    try {
+      for (const account of ["admin", "root"]) {
+        if (!fields(account).change.checked) continue;
+        document.getElementById("factory-reset-password-title").textContent = account === "admin"
+          ? "New administrator password for reset" : "New root password for reset";
+        const value = await new Promise((resolve) => {
+          resolvePassword = resolve;
+          modal.returnValue = "";
+          modal.showModal();
+          password.focus();
+        });
+        if (value === null) return;
+        fields(account).password.value = value;
+        fields(account).confirmation.value = value;
+      }
+      confirmed = await requestConfirmation({
+        title: form.dataset.confirmTitle,
+        message: form.dataset.confirmMessage,
+        label: form.dataset.confirmLabel,
+      });
+      if (confirmed) {
+        form.dataset.confirmed = "1";
+        form.requestSubmit(event.submitter);
+      }
+    } finally {
+      busy = false;
+      if (!confirmed) {
+        clear();
+        event.submitter?.focus();
       }
     }
   }, true);
-  window.addEventListener("pagehide", () => {
-    editor.reset();
-    for (const account of ["admin", "root"]) {
-      const fields = accountFields(account);
-      fields.password.value = "";
-      fields.confirmation.value = "";
-      fields.keep.checked = true;
-      refresh(account);
-    }
-  });
+  window.addEventListener("pagehide", clear);
   form.dataset.passwordDialogsReady = "true";
 }
 

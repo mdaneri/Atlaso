@@ -4499,7 +4499,11 @@ def test_factory_reset_terminates_bounded_login_sessions(monkeypatch, tmp_path, 
         original_fstat = helper.os.fstat
 
         def root_owned_fstat(descriptor):
-            """Model the root-owned marker without bypassing phase admission."""
+            """Model the root-owned marker without bypassing phase admission.
+
+            Args:
+                descriptor: Open marker descriptor passed to the real fstat.
+            """
             result = original_fstat(descriptor)
             return SimpleNamespace(st_mode=result.st_mode, st_uid=0, st_size=result.st_size)
 
