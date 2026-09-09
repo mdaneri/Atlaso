@@ -1,6 +1,8 @@
 """Verify first-boot management source policy survives normal firewall rendering."""
 
 import json
+import threading
+from concurrent.futures import ThreadPoolExecutor
 
 import pytest
 from sqlalchemy import create_engine, select
@@ -174,3 +176,56 @@ def test_console_updates_untouched_bootstrap_family_before_apply(client, monkeyp
     monkeypatch.setattr(appliance_console, "_submit_console_apply", submit)
     monkeypatch.setattr(appliance_console, "_recover_management_plane", lambda _stage: None)
     appliance_console.configure_management("dhcp", "", "", mode, cidr, "", "192.0.2.53")
+
+
+def test_console_waits_for_operator_source_group_save(client, monkeypatch):
+    """Serialize console recovery before reads and retain a concurrent operator edit.
+
+    Args:
+        client: Initialized application database fixture.
+        monkeypatch: Replace privileged operations and observe transaction ordering.
+    """
+    from atlaso.app import appliance_console
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.services.network_objects import acquire_network_objects_write_lock
+
+    state = {
+        "groups": [{"id": "custom:bootstrap-management", "entries": ["0.0.0.0/0"],
+                    "bootstrap_entries": ["0.0.0.0/0"]}],
+        "assignments": {"mgmt-console": "custom:bootstrap-management"},
+    }
+    with SessionLocal() as db:
+        db.add(Setting(key=FIREWALL_SOURCE_GROUPS_SETTING_KEY, value=json.dumps(state)))
+        db.commit()
+
+    attempted = threading.Event()
+    acquired = threading.Event()
+
+    def lock(db):
+        assert not db.in_transaction(), "Console must acquire the lock before its first read"
+        attempted.set()
+        acquire_network_objects_write_lock(db)
+        acquired.set()
+
+    def apply(_units, **_kwargs):
+        with SessionLocal() as db:
+            row = db.scalar(select(Setting).where(Setting.key == FIREWALL_SOURCE_GROUPS_SETTING_KEY))
+            assert json.loads(row.value)["groups"][0]["entries"] == ["10.99.0.0/16"]
+        return "test-job"
+
+    monkeypatch.setattr(appliance_console, "acquire_network_objects_write_lock", lock)
+    monkeypatch.setattr(appliance_console, "_submit_console_apply", apply)
+    monkeypatch.setattr(appliance_console, "_recover_management_plane", lambda _stage: None)
+    with ThreadPoolExecutor(max_workers=1) as executor:
+        with SessionLocal() as operator:
+            acquire_network_objects_write_lock(operator)
+            row = operator.scalar(select(Setting).where(Setting.key == FIREWALL_SOURCE_GROUPS_SETTING_KEY))
+            state["groups"][0]["entries"] = ["10.99.0.0/16"]
+            row.value = json.dumps(state)
+            pending = executor.submit(appliance_console.configure_management,
+                                      "dhcp", "", "", "auto", "", "", "192.0.2.53")
+            assert attempted.wait(2)
+            assert not acquired.wait(0.1)
+            operator.commit()
+        pending.result(timeout=5)
+    assert acquired.is_set()

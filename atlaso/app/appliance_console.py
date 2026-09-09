@@ -83,6 +83,9 @@ from atlaso.app.services.firewall import (  # noqa: E402 - appliance environment
     FIREWALL_SOURCE_GROUPS_SETTING_KEY,
     update_bootstrap_management_ipv6,
 )
+from atlaso.app.services.network_objects import (  # noqa: E402 - appliance environment must load before configured imports.
+    acquire_network_objects_write_lock,
+)
 
 HELPER_PATH = Path("/opt/atlaso/bin/atlaso-helper")
 PHOTON_RELEASE_PATH = Path("/etc/photon-release")
@@ -1226,6 +1229,7 @@ def configure_management(
     dns_servers = validate_dns_servers(raw_dns_servers)
     _ensure_no_active_apply()
     with SessionLocal() as db:
+        acquire_network_objects_write_lock(db)
         interface = _management_interface(db)
         settings = db.scalar(select(ApplianceSettings).order_by(ApplianceSettings.id))
         if settings is None:

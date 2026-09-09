@@ -487,7 +487,8 @@ it from the final configured management network. Services interfaces remain outs
 Fresh appliance initialization retains these
 source and address-family restrictions in the **Bootstrap management** Source Group assigned to management admission,
 including physical and VLAN interfaces flagged for management UI, so normal Firewall Apply preserves them.
-Console IPv6 correction updates the address family of an untouched bootstrap group before Apply; an operator-saved
+Console IPv6 correction uses the shared Network Objects transaction lock before reading desired state, preserving
+concurrent operator saves. It updates the address family of an untouched bootstrap group before Apply; an operator-saved
 Source Group remains authoritative. Operators can subsequently edit that Source Group or its assignment;
 startup does not replace saved choices or migrate existing appliances.
 When validating a portable image, use a management subnet different from the builder's and verify SSH plus
