@@ -33,7 +33,7 @@ from contextlib import contextmanager, nullcontext
 from datetime import datetime, timezone
 from ipaddress import IPv4Network, IPv6Network, ip_address, ip_interface, ip_network
 from pathlib import Path, PurePosixPath
-from urllib.parse import unquote, urljoin, urlparse
+from urllib.parse import quote, unquote, urljoin, urlparse
 from urllib.request import HTTPRedirectHandler, Request, build_opener, urlopen
 
 try:
@@ -13543,6 +13543,29 @@ def _validate_release_content(release: dict, root: Path) -> None:
             raise ValueError(f"Atlaso release content SHA256 mismatch for {relative}")
 
 
+def _relocate_release_venv_scripts(venv_path: Path, previous_path: Path) -> None:
+    """Rebind generated launchers after a private environment is promoted.
+
+    Args:
+        venv_path: New absolute environment location.
+        previous_path: Absolute location used when its scripts were generated.
+    """
+    previous = os.fsencode(previous_path)
+    destination = os.fsencode(venv_path)
+    for path in (venv_path / "bin").glob("*"):
+        # Interpreter links and native binaries must never be rewritten. Pip's
+        # direct shebangs and long-path shell wrappers both embed the build path.
+        if path.is_symlink() or not path.is_file():
+            continue
+        content = path.read_bytes()
+        if b"\0" in content or not (
+            content.startswith(b"#!") or path.name in {"activate", "activate.csh", "activate.fish", "Activate.ps1"}
+        ):
+            continue
+        if previous in content:
+            path.write_bytes(content.replace(previous, destination))
+
+
 def _install_release_venv(release_root: Path, abi: str) -> list[dict]:
     """Perform install release venv.
 
@@ -13612,6 +13635,7 @@ def _install_release_venv(release_root: Path, abi: str) -> list[dict]:
     if venv_path.exists():
         shutil.rmtree(venv_path)
     os.replace(temporary_venv, venv_path)
+    _relocate_release_venv_scripts(venv_path, temporary_venv)
     for root, directories, files in os.walk(venv_path):
         for directory in directories:
             Path(root, directory).chmod(0o755)
@@ -13756,7 +13780,14 @@ def _service_command(action: str, *units: str) -> dict:
         *units: Additional positional arguments accepted by the callable.
     """
     systemctl = _command_path("systemctl") or "systemctl"
-    return _command_payload([systemctl, action, *units])
+    result = _command_payload([systemctl, action, *units])
+    if action == "is-active" and units:
+        # systemctl succeeds when any requested unit is active. Release and
+        # recovery gates require every named service, including the console.
+        states = str(result.get("stdout") or "").splitlines()
+        if len(states) != len(units) or any(state.strip() != "active" for state in states):
+            result = {**result, "success": False, "returncode": result.get("returncode") or 1}
+    return result
 
 
 def _wait_for_atlaso_health(timeout_seconds: int = 60) -> dict:
@@ -14178,6 +14209,9 @@ def _validated_release_recovery_context(finalizer: dict) -> dict[str, object]:
         Path("/etc/systemd/system/atlaso.service"),
         Path("/etc/systemd/system/atlaso-worker.service"),
         Path("/etc/systemd/system/atlaso-console.service"),
+        ATLASO_GUEST_AGENT_SELECTOR_PATH,
+        ATLASO_MACHINE_IDENTITY_INITIALIZER_PATH,
+        ATLASO_GUEST_AGENT_SELECT_UNIT_PATH,
         ATLASO_MOUNT_DATA_DISKS_PATH,
         ATLASO_DATA_DISK_UNIT_PATH,
         ATLASO_SERVICE_DATA_DISK_DROPIN_PATH,
@@ -14323,6 +14357,9 @@ def _complete_committed_release_activation(parsed: dict) -> dict:
         definitive = {
             **parsed,
             "status": "succeeded",
+            "success": True,
+            "error": "",
+            "failure_layer": "",
             "rolled_back": False,
             "service_health": True,
             "commands": commands,
@@ -15383,11 +15420,12 @@ def _render_appliance_update_status_html(snapshot: dict[str, object]) -> str:
             + "%</span></li>"
         )
     task_id = html.escape(str(snapshot.get("task_id") or ""))
+    refresh_target = "?job_id=" + quote(str(snapshot.get("task_id") or ""), safe="")
     progress = max(0, min(100, int(snapshot.get("progress_percent") or 0)))
     title = html.escape(phase_labels.get(phase, "Appliance update in progress"))
     return f"""<!doctype html>
 <html lang=\"en\"><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">
-<meta http-equiv=\"refresh\" content=\"3\"><title>{title} · Atlaso</title>
+<meta http-equiv=\"refresh\" content=\"3;url={refresh_target}\"><title>{title} · Atlaso</title>
 <style>:root{{color-scheme:dark;background:#07121f;color:#f4f7fb;font:16px system-ui,sans-serif}}body{{margin:0;min-height:100vh;display:grid;place-items:center;background:radial-gradient(circle at top,#17334f,#07121f 55%)}}main{{width:min(42rem,calc(100% - 2rem));background:#0d2033;border:1px solid #31506b;border-radius:1rem;padding:clamp(1.25rem,4vw,2.5rem);box-shadow:0 1rem 3rem #0008}}.brand{{font-weight:800;letter-spacing:.12em;color:#73d6ff}}h1{{font-size:clamp(1.5rem,4vw,2.25rem);margin:.75rem 0 .5rem}}p{{color:#bfd0df}}code{{word-break:break-all;color:#dff6ff}}progress{{width:100%;height:1rem;accent-color:#35bff5}}ol{{list-style:none;padding:0;margin:1.5rem 0 0;display:grid;gap:.65rem}}.step{{display:flex;justify-content:space-between;gap:1rem;align-items:center;border-top:1px solid #29445d;padding:.85rem 0}}small{{display:block;color:#a9bdcf;text-transform:capitalize;margin-top:.2rem}}.percent{{font-variant-numeric:tabular-nums}}footer{{font-size:.875rem;color:#9eb1c1;margin-top:1.5rem}}@media (prefers-contrast:more){{main{{border-width:2px}}}}</style></head>
 <body><main aria-labelledby=\"update-title\"><div class=\"brand\">ATLASO</div><h1 id=\"update-title\">{title}</h1>
 <p>The appliance control plane is temporarily unavailable while this durable task completes.</p><p>Task <code>{task_id}</code></p>
@@ -17160,8 +17198,9 @@ def _apply_atlaso_release(
             shutil.rmtree(staging)
         else:
             os.replace(content, release_root)
-            _fsync_directory(ATLASO_RELEASES_DIR)
             created_release_root = True
+            _relocate_release_venv_scripts(release_root / ".venv", content / ".venv")
+            _fsync_directory(ATLASO_RELEASES_DIR)
             shutil.rmtree(staging)
     except Exception:
         shutil.rmtree(staging, ignore_errors=True)

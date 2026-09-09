@@ -191,7 +191,7 @@ def test_update_status_page_escapes_bounded_task_content():
     assert "job_0123456789ab&lt;script&gt;" in rendered
     assert "Photon &lt;OS&gt;" in rendered
     assert "<script>" not in rendered
-    assert 'http-equiv="refresh" content="3"' in rendered
+    assert 'http-equiv="refresh" content="3;url=?job_id=job_0123456789ab%3Cscript%3E"' in rendered
     assert "<progress" in rendered
 
 

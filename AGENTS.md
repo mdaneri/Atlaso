@@ -966,6 +966,8 @@ The following cross-cutting boundaries always apply:
   positive state through transient, structurally invalid, or noncanonical polling failures, require `up_to_date`
   confirmations to carry zero changes, and clear only successfully installed streams. Optional signed release summaries
   must be bounded commit subjects and release links must be credential-free HTTPS of at most 2,048 characters.
+- Virtualenv launchers must survive both release staging moves, and every named readiness service must report active rather
+  than relying on systemctl's any-active exit status. Recovery must admit every first-boot asset installed by the release.
 - A signed Atlaso Release update succeeds only after durable candidate activation is proven: `current`, the compatibility
   virtualenv, signed receipt, finalizer, internal OpenAPI version, nginx management-front-door version, maintenance
   cleanup, nginx validation/reload, and required service state must agree. Restart the worker under a provisional
