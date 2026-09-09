@@ -399,6 +399,15 @@ def test_apply_projection_omits_detail_probes_and_preserves_validation(client, m
         original = getattr(ui.SystemAdapter, name)
 
         def observed(adapter, *args, _name=name, _original=original, **kwargs):
+            """Record a live detail probe without changing its result.
+
+            Args:
+                adapter: Adapter instance receiving the probe.
+                *args: Original positional probe arguments.
+                _name: Probe name captured for this wrapper.
+                _original: Original adapter implementation.
+                **kwargs: Original keyword probe arguments.
+            """
             calls.append(_name)
             return _original(adapter, *args, **kwargs)
 
@@ -417,6 +426,14 @@ def test_apply_projection_omits_detail_probes_and_preserves_validation(client, m
             original_context = getattr(ui, name)
 
             def detailed(*args, _original=original_context, _flag=flag, **kwargs):
+                """Restore detail retrieval for contract comparison.
+
+                Args:
+                    *args: Original positional context arguments.
+                    _original: Context implementation captured for this wrapper.
+                    _flag: Keyword controlling live detail retrieval.
+                    **kwargs: Original keyword context arguments.
+                """
                 kwargs[_flag] = True
                 return _original(*args, **kwargs)
 
@@ -443,6 +460,15 @@ def test_detail_contexts_keep_live_probes_by_default(client, monkeypatch):
         original = getattr(ui.SystemAdapter, name)
 
         def observed(adapter, *args, _name=name, _original=original, **kwargs):
+            """Record a live detail probe without changing its result.
+
+            Args:
+                adapter: Adapter instance receiving the probe.
+                *args: Original positional probe arguments.
+                _name: Probe name captured for this wrapper.
+                _original: Original adapter implementation.
+                **kwargs: Original keyword probe arguments.
+            """
             calls.append(_name)
             return _original(adapter, *args, **kwargs)
 
