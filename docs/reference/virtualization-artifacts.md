@@ -479,6 +479,14 @@ networking. The retry never exposes a password whose corresponding host state wa
 VMware continues into OVF-property customization. Hyper-V, KVM, and Proxmox use DHCP-first defaults and do not wait for
 VMware metadata. Use the appliance console to complete initial networking when DHCP is unavailable.
 
+DHCP-first images admit management SSH and HTTP/HTTPS only through the deployed management interface (`eth0`).
+The temporary VMware builder subnet is not retained as a source restriction. An explicitly supplied
+`ATLASO_MGMT_SOURCE_CIDR` remains an additional source restriction on that interface; static builds otherwise derive
+it from the final configured management network. Services interfaces remain outside this management admission.
+When validating a portable image, use a management subnet different from the builder's and verify SSH plus
+`/openapi.json` both on initial boot and after reboot. Existing exported images need a rebuilt artifact to receive
+this provisioning correction; changing an appliance software version alone does not replace their initial firewall.
+
 Before networking, every cloned appliance generates a new machine ID, OpenSSH host-key set, application secrets, and
 high-entropy administrator and root passwords. VMware replaces the generated passwords with its required OVF values
 and publishes the regenerated Ed25519 public host key through VMware guest-info for authenticated automation. KVM and
