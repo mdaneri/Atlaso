@@ -165,6 +165,38 @@ def cleanup(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Cleanup:
     return instance
 
 
+def test_posix_git_command_forces_file_modes(cleanup: Cleanup, monkeypatch: pytest.MonkeyPatch) -> None:
+    """The POSIX command path overrides a repository setting that hides mode changes.
+
+    Args:
+        cleanup: Disposable checkout with file-mode checking explicitly disabled.
+        monkeypatch: Fixture selecting only the command helper's POSIX platform branch.
+    """
+    from types import SimpleNamespace
+
+    git(cleanup.repo, "config", "core.fileMode", "false")
+    monkeypatch.setattr("scripts.completed_task_cleanup.os", SimpleNamespace(name="posix", environ=os.environ))
+    assert cleanup.command(["git", "config", "--get", "core.fileMode"]) == "true"
+
+
+@pytest.mark.skipif(os.name == "nt", reason="POSIX executable-bit semantics")
+def test_executable_bit_edit_is_preserved(cleanup: Cleanup) -> None:
+    """A mode-only edit hidden from ordinary Git still prevents cleanup.
+
+    Args:
+        cleanup: Disposable POSIX worktree with a tracked non-executable source file.
+    """
+    git(cleanup.repo, "config", "core.fileMode", "false")
+    source = cleanup.target / "source.txt"
+    source.chmod(source.stat().st_mode | stat.S_IXUSR)
+    assert not git(cleanup.target, "status", "--porcelain")
+    assert "source.txt" in cleanup.git("-C", str(cleanup.target), "status", "--porcelain")
+    with pytest.raises(Refusal):
+        cleanup.run()
+    assert source.stat().st_mode & stat.S_IXUSR
+    assert not cleanup.gates
+
+
 def test_stale_fsmonitor_cannot_hide_dirty_source(cleanup: Cleanup) -> None:
     """Cleanup bypasses the configured monitor for both status and removal subprocesses.
 
