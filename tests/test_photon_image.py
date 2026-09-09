@@ -1072,7 +1072,7 @@ def test_photon_provisioning_installs_default_nginx_management_proxy():
     assert 'log_step "system adapter dry-run mode: $ATLASO_DRY_RUN_SYSTEM_ADAPTERS"' in script
     assert "ATLASO_DRY_RUN_SYSTEM_ADAPTERS=$ATLASO_DRY_RUN_SYSTEM_ADAPTERS" in script
     assert 'ATLASO_MGMT_ACCESS_RULE="    iifname \\"$ATLASO_MGMT_INTERFACE\\" ip saddr $ATLASO_MGMT_SOURCE_CIDR tcp dport { 22, 80, 443 } accept comment \\"Atlaso management access\\""' in script
-    assert 'ATLASO_MGMT_ACCESS_RULE="    iifname \\"$ATLASO_MGMT_INTERFACE\\" tcp dport { 22, 80, 443 } accept comment \\"Atlaso management access\\""' in script
+    assert 'ATLASO_MGMT_ACCESS_RULE="    iifname \\"$ATLASO_MGMT_INTERFACE\\" meta nfproto ipv4 tcp dport { 22, 80, 443 } accept comment \\"Atlaso management access\\""' in script
     assert "$ATLASO_MGMT_ACCESS_RULE" in script
     assert 'install -o root -g root -m 0440 "$ATLASO_HOME/image/common/sudoers.d/atlaso-helper" /etc/sudoers.d/atlaso-helper' in script
     assert 'sed -i \'s/\\r$//\'' in script
@@ -1153,7 +1153,7 @@ def test_provisioning_firewall_uses_final_management_policy(
     )
     assert completed.returncode == 0, completed.stderr
     assert (tmp_path / "atlaso.env").read_text().strip() == f"ATLASO_MANAGEMENT_SOURCE_CIDR={expected_source}"
-    predicate = f" ip saddr {expected_source}" if expected_source else ""
+    predicate = f" ip saddr {expected_source}" if expected_source else " meta nfproto ipv4"
     assert completed.stdout.strip() == (
         f'iifname "eth0"{predicate} tcp dport {{ 22, 80, 443 }} accept comment "Atlaso management access"'
     )

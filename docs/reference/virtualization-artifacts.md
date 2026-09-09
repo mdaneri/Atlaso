@@ -479,7 +479,8 @@ networking. The retry never exposes a password whose corresponding host state wa
 VMware continues into OVF-property customization. Hyper-V, KVM, and Proxmox use DHCP-first defaults and do not wait for
 VMware metadata. Use the appliance console to complete initial networking when DHCP is unavailable.
 
-DHCP-first images admit management SSH and HTTP/HTTPS only through the deployed management interface (`eth0`).
+DHCP-first images admit management SSH and HTTP/HTTPS over IPv4 only through the deployed management interface
+(`eth0`). IPv6 management admission requires explicit deployment configuration.
 The temporary VMware builder subnet is not retained as a source restriction. An explicitly supplied
 `ATLASO_MGMT_SOURCE_CIDR` remains an additional source restriction on that interface; static builds otherwise derive
 it from the final configured management network. Services interfaces remain outside this management admission.

@@ -925,7 +925,7 @@ printf '\nATLASO_MANAGEMENT_SOURCE_CIDR=%s\n' "$ATLASO_MGMT_SOURCE_CIDR" >>/etc/
 if [ -n "$ATLASO_MGMT_SOURCE_CIDR" ]; then
   ATLASO_MGMT_ACCESS_RULE="    iifname \"$ATLASO_MGMT_INTERFACE\" ip saddr $ATLASO_MGMT_SOURCE_CIDR tcp dport { 22, 80, 443 } accept comment \"Atlaso management access\""
 else
-  ATLASO_MGMT_ACCESS_RULE="    iifname \"$ATLASO_MGMT_INTERFACE\" tcp dport { 22, 80, 443 } accept comment \"Atlaso management access\""
+  ATLASO_MGMT_ACCESS_RULE="    iifname \"$ATLASO_MGMT_INTERFACE\" meta nfproto ipv4 tcp dport { 22, 80, 443 } accept comment \"Atlaso management access\""
 fi
 install -d -o root -g root -m 0755 /etc/atlaso/nftables.d
 cat >/etc/atlaso/nftables.d/atlaso.nft <<EOF
