@@ -14870,6 +14870,16 @@ function restoreExpandedTaskRows(table, rowIds) {
   rowIds.forEach((rowId) => table.getRow(rowId)?.treeExpand());
 }
 
+function enterApplianceUpdateStatus(response) {
+  if (response.status !== 503 || response.headers?.get("X-Atlaso-Update-Mode") !== "active") {
+    return false;
+  }
+  // Maintenance is HTML served by nginx, even for a JSON polling request.
+  // Drop workspace fragments so browser refreshes perform a real navigation.
+  window.location.replace(managementUiPath("/appliance-update"));
+  return true;
+}
+
 async function refreshTasksPage({ reopen = false } = {}) {
   const page = document.querySelector("[data-tasks-page]");
   if (!(page instanceof HTMLElement)) {
@@ -14888,6 +14898,7 @@ async function refreshTasksPage({ reopen = false } = {}) {
     query.set("task_type", page.dataset.taskType);
   }
   const response = await fetch(managementUiPath(`/tasks/status?${query.toString()}`), { credentials: "same-origin" });
+  if (enterApplianceUpdateStatus(response)) return;
   const payload = await response.json();
   if (!response.ok) {
     throw new Error(payload.detail || "Unable to refresh tasks.");
@@ -14906,6 +14917,9 @@ async function requestTasksTableData(_url, _config, params = {}) {
   query.set("size", String(params.size || 25));
   query.set("filters", JSON.stringify(params.filters || params.filter || []));
   const response = await fetch(managementUiPath(`/tasks/status?${query.toString()}`), { credentials: "same-origin" });
+  if (enterApplianceUpdateStatus(response)) {
+    return { data: atlasoTasks, last_page: Math.max(1, Number(params.page) || 1) };
+  }
   const payload = await response.json();
   if (!response.ok) {
     throw new Error(payload.detail || "Unable to filter tasks.");
@@ -15440,6 +15454,7 @@ function initializeApplianceUpdateSubmission() {
         headers: { Accept: "application/json" },
         body: new FormData(form),
       });
+      if (enterApplianceUpdateStatus(response)) return;
       const payload = await response.json();
       if (!response.ok) {
         throw new Error(payload.detail || "Unable to start the appliance update task.");
