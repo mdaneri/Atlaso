@@ -44,6 +44,24 @@ from atlaso.app.seed import FACTORY_RESET_SETTING_KEY, seed_initial_data
 from atlaso.app.services.networking import HostPhysicalInterface
 
 
+@pytest.mark.parametrize("state", ["building", "applying", "committing", "awaiting_readiness", "failed"])
+def test_reset_console_progress_is_readable_and_strips_control_sequences(state):
+    """Show reset stages and recovery without allowing detail text to control tty1.
+
+    Args:
+        state: Reset lifecycle stage rendered for the operator.
+    """
+    from atlaso.app.factory_reset import _render_reset_console
+
+    screen = _render_reset_console(state, "Network detail\x1b[2J\ncontinued")
+    assert screen.startswith("\x1b[2J\x1b[H")
+    assert screen.count("\x1b") == 2
+    assert f"Stage: {state}" in screen
+    assert "Do not power off" in screen
+    assert ("Alt+F2" in screen) == (state == "failed")
+    assert ("192.168.49.1" in screen) == (state != "failed")
+
+
 def test_factory_reset_transaction_lock_rejects_overlapping_posix_runner(
     tmp_path,
     monkeypatch,

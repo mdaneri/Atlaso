@@ -291,3 +291,8 @@ These captures show responsive layouts and useful operational states referenced 
 *Figure: Backup and Restore in the verified clean-appliance responsive state.*
 
 <!-- END GENERATED ADDITIONAL SCREENSHOTS -->
+
+During runtime reset, tty1 displays **Factory reset in progress**, the current stage, and a warning not to power off.
+This display writes no database state and remains available while the normal console service is stopped. If reset
+fails, it displays the public failure detail and the Alt+F2 status-command recovery path. Headless systems continue
+reset even when tty1 cannot be written. The normal console returns as required services restart.

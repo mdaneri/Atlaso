@@ -479,6 +479,57 @@ def read_factory_reset_state() -> dict[str, Any]:
     return {"state": "idle", "updated_at": "", "message": ""}
 
 
+def _render_reset_console(state: str, message: str) -> str:
+    """Render non-interactive reset progress without database access.
+
+    Args:
+        state: Durable reset lifecycle stage.
+        message: Public-safe status detail, stripped of terminal control characters.
+    """
+    import textwrap
+
+    safe_message = "".join(character if character.isprintable() else " " for character in message)
+    heading = "Factory reset failed" if state == "failed" else "Factory reset in progress"
+    lines = ["Atlaso Appliance", "", heading, "", "Do not power off or restart this appliance.", "",
+             f"Stage: {state}", "", *textwrap.wrap(safe_message[:800], width=72), ""]
+    if state == "failed":
+        lines.extend(["Use Alt+F2 to open the local recovery console.",
+                      "/opt/atlaso/bin/atlaso-helper factory-reset status --real"])
+    else:
+        lines.extend(["Management may return to the factory address 192.168.49.1.",
+                      "The Atlaso console returns when services restart."])
+    return "\x1b[2J\x1b[H" + "\r\n".join(lines) + "\r\n"
+
+
+def _show_reset_console(state: str, message: str) -> None:
+    """Best-effort tty1 progress while the normal database-backed console is stopped.
+
+    Args:
+        state: Durable reset lifecycle stage.
+        message: Public-safe status detail.
+    """
+    if os.name != "posix" or get_settings().environment != "appliance":
+        return
+    descriptor = None
+    try:
+        required_flags = [getattr(os, name, 0) for name in ("O_NOCTTY", "O_NONBLOCK", "O_NOFOLLOW")]
+        if not all(required_flags):
+            return
+        flags = os.O_WRONLY | required_flags[0] | required_flags[1] | required_flags[2]
+        descriptor = os.open("/dev/tty1", flags)
+        metadata = os.fstat(descriptor)
+        device = getattr(metadata, "st_rdev", 0)
+        if not stat.S_ISCHR(metadata.st_mode) or getattr(os, "major", lambda _device: -1)(device) != 4 or getattr(os, "minor", lambda _device: -1)(device) != 1:
+            return
+        os.write(descriptor, _render_reset_console(state, message).encode("utf-8"))
+    except (OSError, AttributeError):
+        # Headless appliances still complete the durable reset transaction.
+        pass
+    finally:
+        if descriptor is not None:
+            os.close(descriptor)
+
+
 def _update_request(state: str, message: str, **details: Any) -> dict[str, Any]:
     """Update the resumable reset marker without secret-bearing data.
 
@@ -501,6 +552,7 @@ def _update_request(state: str, message: str, **details: Any) -> dict[str, Any]:
         **details,
     }
     _write_json_atomic(request_path, payload)
+    _show_reset_console(state, message)
     return payload
 
 
