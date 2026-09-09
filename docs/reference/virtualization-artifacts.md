@@ -491,6 +491,7 @@ Editing a flagged listener's Source Group overrides that listener only; other li
 Console IPv6 correction uses the shared Network Objects transaction lock before reading desired state, preserving
 concurrent operator saves. It updates the address family of an untouched bootstrap group before Apply; an operator-saved
 Source Group remains authoritative. Operators can subsequently edit that Source Group or its assignment;
+assignment-only saves and edits to other groups preserve the bootstrap group's console-recovery eligibility.
 startup does not replace saved choices or migrate existing appliances.
 When validating a portable image, use a management subnet different from the builder's and verify SSH plus
 `/openapi.json` both on initial boot and after reboot. Existing exported images need a rebuilt artifact to receive

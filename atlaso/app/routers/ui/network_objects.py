@@ -336,6 +336,7 @@ def build_router(dependencies: NetworkObjectsUiDependencies) -> NetworkObjectsUi
             if action == "rename":
                 groups[existing_index] = normalize_source_group({**current, "name": name})
             else:
+                current.pop("bootstrap_entries", None)
                 description = (
                     str(form.get("description") or "Custom source group.")
                     if "description" in form

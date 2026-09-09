@@ -623,8 +623,8 @@ def update_bootstrap_management_ipv6(raw_json: str, mode: str, cidr: str) -> str
         if group.get("id") != "custom:bootstrap-management":
             continue
         entries = group.get("entries")
-        # Ordinary Source Group saves discard this seed-only marker. Equality
-        # also protects direct/API edits that retain unknown fields.
+        # Entry edits discard this seed-only marker; assignment-only saves retain
+        # it. Equality also protects direct edits that retain unknown fields.
         if not isinstance(entries, list) or not entries or entries != group.get("bootstrap_entries"):
             return raw_json
         try:
@@ -671,6 +671,9 @@ def firewall_source_group_state(
                 str(saved_group.get("description") or "Custom source group."),
             )
         )
+        if (group_id == "custom:bootstrap-management"
+                and saved_group.get("bootstrap_entries") == groups[-1]["entries"]):
+            groups[-1]["bootstrap_entries"] = list(groups[-1]["entries"])
     assignments = saved.get("assignments", {})
     if not isinstance(assignments, dict):
         assignments = {}
