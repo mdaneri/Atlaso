@@ -598,6 +598,47 @@ def managed_routing_firewall_rules(
     return rules
 
 
+def update_bootstrap_management_ipv6(raw_json: str, mode: str, cidr: str) -> str:
+    """Update only an untouched bootstrap group's IPv6 policy during console recovery.
+
+    Args:
+        raw_json: Persisted managed Source Group state.
+        mode: Validated console IPv6 mode.
+        cidr: Validated static IPv6 address, or empty for automatic mode.
+
+    Returns:
+        Updated state, or unchanged state after an operator edited the group.
+    """
+    if not raw_json:
+        return raw_json
+    try:
+        state = json.loads(raw_json)
+    except (TypeError, ValueError):
+        return raw_json
+    if not isinstance(state, dict) or not isinstance(state.get("groups"), list):
+        return raw_json
+    for group in state["groups"]:
+        if not isinstance(group, dict):
+            continue
+        if group.get("id") != "custom:bootstrap-management":
+            continue
+        entries = group.get("entries")
+        # Ordinary Source Group saves discard this seed-only marker. Equality
+        # also protects direct/API edits that retain unknown fields.
+        if not isinstance(entries, list) or not entries or entries != group.get("bootstrap_entries"):
+            return raw_json
+        try:
+            updated = [entry for entry in entries if ip_network(entry, strict=False).version == 4]
+        except (TypeError, ValueError):
+            return raw_json
+        if mode != "disabled":
+            updated.append(str(ip_network(cidr, strict=False)) if cidr else "::/0")
+        group["entries"] = updated
+        group["bootstrap_entries"] = updated
+        return json.dumps(state)
+    return raw_json
+
+
 def firewall_source_group_state(
     raw_json: str,
     interface_networks: dict[str, list[str]],

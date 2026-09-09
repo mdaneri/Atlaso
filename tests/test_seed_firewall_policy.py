@@ -8,9 +8,21 @@ from sqlalchemy.orm import Session
 
 from atlaso.app.config import get_settings
 from atlaso.app.database import Base
-from atlaso.app.models import Setting
+from atlaso.app.models import PhysicalInterface, Setting, VlanInterface
 from atlaso.app.seed import seed_initial_data
 from atlaso.app.services.firewall import FIREWALL_SOURCE_GROUPS_SETTING_KEY
+
+
+@pytest.mark.parametrize("raw", ["", "invalid", "[]", '{"groups":null}', '{"groups":[null]}'])
+def test_console_preserves_unrecognized_source_policy(raw):
+    """Leave malformed saved state to normal validation without blocking recovery.
+
+    Args:
+        raw: Unrecognized persisted policy.
+    """
+    from atlaso.app.services.firewall import update_bootstrap_management_ipv6
+
+    assert update_bootstrap_management_ipv6(raw, "auto", "") == raw
 
 
 @pytest.mark.parametrize(
@@ -55,6 +67,30 @@ def test_bootstrap_management_policy_survives_managed_render_and_reseed(
                 assert all('iifname "eth0"' in line for line in management)
                 for entry in expected:
                     assert any(f"saddr {entry}" in line for line in management)
+            interface = db.scalar(select(PhysicalInterface).where(PhysicalInterface.name == "eth0"))
+            interface.role = "access"
+            interface.access_management_ui_enabled = True
+            db.commit()
+            rows = firewall_context(db, reconcile=False)["firewall_managed_rule_rows"]
+            assert next(row for row in rows if row["name"] == "management-ui-eth0")["source_group_id"] == "custom:bootstrap-management"
+            for preview in (firewall_validation_payload(db)[2], firewall_context(db, reconcile=False)["firewall_config_preview"]):
+                management = [line for line in preview.splitlines() if 'comment "management-ui-eth0"' in line]
+                assert len(management) == len(expected)
+                for entry in expected:
+                    assert any(f"saddr {entry}" in line for line in management)
+            interface.access_management_ui_enabled = False
+            interface.mode = "trunk"
+            db.add(VlanInterface(name="eth0.10", parent_interface="eth0", vlan_id=10,
+                                 ip_cidr="172.25.81.1/20", enabled=True, role="access",
+                                 access_management_ui_enabled=True))
+            db.commit()
+            rows = firewall_context(db, reconcile=False)["firewall_managed_rule_rows"]
+            assert next(row for row in rows if row["name"] == "management-ui-eth0.10")["source_group_id"] == "custom:bootstrap-management"
+            for preview in (firewall_validation_payload(db)[2], firewall_context(db, reconcile=False)["firewall_config_preview"]):
+                management = [line for line in preview.splitlines() if 'comment "management-ui-eth0.10"' in line]
+                assert len(management) == len(expected)
+                for entry in expected:
+                    assert any(f"saddr {entry}" in line for line in management)
             # A saved operator edit is authoritative on subsequent initialization.
             state["groups"][0]["entries"] = ["10.99.0.0/16"]
             row.value = json.dumps(state)
@@ -95,3 +131,46 @@ def test_bootstrap_management_seed_preserves_existing_state(monkeypatch, mode):
     finally:
         engine.dispose()
         get_settings.cache_clear()
+
+
+@pytest.mark.parametrize(
+    ("mode", "cidr", "edited", "expected"),
+    [
+        ("auto", "", False, ["10.42.0.0/16", "::/0"]),
+        ("static", "fd00:42::10/64", False, ["10.42.0.0/16", "fd00:42::/64"]),
+        ("disabled", "", False, ["10.42.0.0/16"]),
+        ("auto", "", True, ["10.99.0.0/16"]),
+    ],
+)
+def test_console_updates_untouched_bootstrap_family_before_apply(client, monkeypatch, mode, cidr, edited, expected):
+    """Console recovery stages the selected family while preserving operator changes.
+
+    Args:
+        client: Initialized application database fixture.
+        monkeypatch: Replace privileged apply/recovery with observations.
+        mode: Requested IPv6 mode.
+        cidr: Requested static IPv6 address.
+        edited: Whether an operator has replaced the seeded group entries.
+        expected: Effective entries before Apply admission.
+    """
+    from atlaso.app import appliance_console
+    from atlaso.app.database import SessionLocal
+
+    initial = ["10.42.0.0/16", "fd00:123::/64"] if mode == "disabled" else ["10.42.0.0/16"]
+    with SessionLocal() as db:
+        db.add(Setting(key=FIREWALL_SOURCE_GROUPS_SETTING_KEY, value=json.dumps({
+            "groups": [{"id": "custom:bootstrap-management", "entries": ["10.99.0.0/16"] if edited else initial,
+                        "bootstrap_entries": initial}],
+            "assignments": {"mgmt-console": "custom:bootstrap-management"},
+        })))
+        db.commit()
+
+    def submit(_units, **_kwargs):
+        with SessionLocal() as db:
+            row = db.scalar(select(Setting).where(Setting.key == FIREWALL_SOURCE_GROUPS_SETTING_KEY))
+            assert json.loads(row.value)["groups"][0]["entries"] == expected
+        return "test-job"
+
+    monkeypatch.setattr(appliance_console, "_submit_console_apply", submit)
+    monkeypatch.setattr(appliance_console, "_recover_management_plane", lambda _stage: None)
+    appliance_console.configure_management("dhcp", "", "", mode, cidr, "", "192.0.2.53")

@@ -486,7 +486,9 @@ The temporary VMware builder subnet is not retained as a source restriction. An 
 it from the final configured management network. Services interfaces remain outside this management admission.
 Fresh appliance initialization retains these
 source and address-family restrictions in the **Bootstrap management** Source Group assigned to management admission,
-so normal Firewall Apply preserves them. Operators can subsequently edit that Source Group or its assignment;
+including physical and VLAN interfaces flagged for management UI, so normal Firewall Apply preserves them.
+Console IPv6 correction updates the address family of an untouched bootstrap group before Apply; an operator-saved
+Source Group remains authoritative. Operators can subsequently edit that Source Group or its assignment;
 startup does not replace saved choices or migrate existing appliances.
 When validating a portable image, use a management subnet different from the builder's and verify SSH plus
 `/openapi.json` both on initial boot and after reboot. Existing exported images need a rebuilt artifact to receive

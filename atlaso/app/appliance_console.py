@@ -72,11 +72,16 @@ from atlaso.app.models import (  # noqa: E402 - appliance environment must load 
     JobStatus,
     JobStep,
     PhysicalInterface,
+    Setting,
     utcnow,
 )
 from atlaso.app.services.dnsmasq import (  # noqa: E402 - appliance environment must load before configured imports.
     join_servers,
     split_servers,
+)
+from atlaso.app.services.firewall import (  # noqa: E402 - appliance environment must load before configured imports.
+    FIREWALL_SOURCE_GROUPS_SETTING_KEY,
+    update_bootstrap_management_ipv6,
 )
 
 HELPER_PATH = Path("/opt/atlaso/bin/atlaso-helper")
@@ -1225,6 +1230,9 @@ def configure_management(
         settings = db.scalar(select(ApplianceSettings).order_by(ApplianceSettings.id))
         if settings is None:
             raise ConsoleOperationError("Appliance Settings desired state is unavailable.")
+        source_state = db.scalar(select(Setting).where(Setting.key == FIREWALL_SOURCE_GROUPS_SETTING_KEY))
+        if source_state is not None:
+            source_state.value = update_bootstrap_management_ipv6(source_state.value, mode, ipv6_cidr_value)
         interface.ipv4_method = method
         interface.ip_cidr = cidr or None
         interface.gateway = gateway_value or None

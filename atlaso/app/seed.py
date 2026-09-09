@@ -565,9 +565,13 @@ def seed_initial_data(
                     "id": "custom:bootstrap-management",
                     "name": "Bootstrap management",
                     "entries": entries,
+                    "bootstrap_entries": entries,
                     "description": "Management source policy retained from first-boot deployment.",
                 }],
-                "assignments": {"mgmt-console": "custom:bootstrap-management"},
+                "assignments": {
+                    "mgmt-console": "custom:bootstrap-management",
+                    "management-ui": "custom:bootstrap-management",
+                },
             })))
 
     if db.execute(select(FirewallSettings)).first() is None:

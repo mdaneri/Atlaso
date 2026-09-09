@@ -4344,7 +4344,8 @@ def managed_firewall_rule_rows(
             source_group_id = ""
             source_group = {"name": "DHCP bootstrap", "entries": ["interface-bound"]}
         else:
-            source_group_id = assignments.get(rule.name, "any")
+            assignment_name = "management-ui" if rule.name.startswith("management-ui-") else rule.name
+            source_group_id = assignments.get(assignment_name, "any")
             if source_group_id not in source_groups_by_id:
                 source_group_id = "any"
             source_group = source_groups_by_id.get(source_group_id, {})
