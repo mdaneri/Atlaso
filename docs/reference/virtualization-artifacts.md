@@ -447,7 +447,11 @@ uses a private root-owned HOME/cache sandbox rather than the Packer communicator
 - VMware retains and enables `open-vm-tools`.
 - KVM, QEMU, and Proxmox remove VMware Tools, install the verified local QEMU guest-agent closure, and enable its
   service.
-- Hyper-V removes VMware Tools, installs the verified local Photon Hyper-V closure, and enables its required daemons.
+- Hyper-V removes VMware Tools, installs the verified local Photon Hyper-V closure, and requires its KVP and VSS
+  daemons. Atlaso disables the packaged legacy `hv_fcopy_daemon`: its `/dev/vmbus/hv_fcopy` transport is absent from
+  the supported Linux 6.12 kernel. Hyper-V host-to-guest file copy is not supported by this artifact; enabling Guest
+  Service Interface in the host does not restore that obsolete transport. File-copy availability must not block
+  machine identity initialization or management DHCP.
 - Bare metal removes VMware Tools and all virtual guest-agent payloads, then continues without an agent.
 - Unknown or contradictory platform evidence blocks appliance startup for diagnosis.
 
@@ -484,6 +488,8 @@ high-entropy administrator and root passwords. VMware replaces the generated pas
 and publishes the regenerated Ed25519 public host key through VMware guest-info for authenticated automation. KVM and
 Proxmox expose a root-only one-time envelope on tmpfs at `/run/atlaso/first-boot-access.json`, readable through the QEMU
 guest agent or from the local console. Hyper-V publishes the same envelope under KVP key `atlaso.first_boot_access`.
+The host reads that guest-authored record from `Msvm_KvpExchangeComponent.GuestExchangeItems` for the exact VM ID;
+`GuestIntrinsicExchangeItems` contains OS/provider metadata, not the Atlaso envelope.
 The local console keeps the envelope on a dedicated first-time initialization screen until an operator presses Enter
 to acknowledge that every value was recorded; acknowledgement removes only the console's tmpfs copy. Retrieve the
 envelope only from the authenticated hypervisor control plane or the physically controlled console, pin its SSH host
@@ -549,6 +555,12 @@ If guest-agent selection fails, inspect its service status and journal from the 
 correct only the reported image or platform conflict, and restart the selector. Do not manually enable Atlaso or nginx
 while the selector is failed. For an import-time failure, keep the original release assets, remove only the target VM
 and storage owned by that import attempt, correct the host prerequisite, and run the helper again.
+
+A Hyper-V management-address timeout does not by itself prove a DHCP-server problem. Check
+`journalctl -u atlaso-guest-agent-select.service -u hv_fcopy_daemon.service`: older artifacts can stop before networking
+because the legacy file-copy daemon reports `open /dev/vmbus/hv_fcopy failed`. Rebuild with the corrected selector;
+do not disable the KVP/VSS readiness checks, admit another adapter's address, or boot a completed source template to
+repair it. Both initial and post-reboot SSH, disk, service, and OpenAPI checks remain required.
 
 ## Protected release runners
 

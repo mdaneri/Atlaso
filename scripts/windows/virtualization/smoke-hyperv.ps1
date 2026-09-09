@@ -42,7 +42,9 @@ function Get-AtlasoHyperVFirstBootAccess {
     if ($component.Count -ne 1) {
         return $null
     }
-    foreach ($item in @($component[0].GuestIntrinsicExchangeItems)) {
+    # Pool 1 is guest-authored (extrinsic) data. Intrinsic items contain only
+    # provider/OS metadata and cannot carry Atlaso's first-boot access envelope.
+    foreach ($item in @($component[0].GuestExchangeItems)) {
         try {
             [xml]$record = $item
             $nameNode = $record.SelectSingleNode("//PROPERTY[@NAME='Name']/VALUE")
