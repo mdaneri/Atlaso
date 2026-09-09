@@ -399,6 +399,8 @@ historical downgrades.
 
 Generated Python launchers are rebound after each environment-directory promotion. The console service invokes its
 Python module directly, which also supports installation by older updaters with stale generated launcher paths.
+The incoming release's existing service bootstrap also repairs its own staging paths before services start, so an
+upgrade from 0.9.329 repairs vault and KMS launchers even though that updater lacks the relocation step.
 Recovery admits the same first-boot helper and service destinations that installation backs up. Every named service
 must be active; a successful multi-service `systemctl is-active` exit alone is insufficient.
 

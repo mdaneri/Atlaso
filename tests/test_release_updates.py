@@ -2912,6 +2912,37 @@ def test_helper_offline_install_uses_only_locked_wheelhouse(monkeypatch, tmp_pat
     assert env["PIP_NO_INDEX"] == "1"
 
 
+def test_candidate_prestart_repairs_current_updater_launchers(monkeypatch, tmp_path):
+    """Repair the incoming release even after data-disk bootstrap is complete.
+
+    Args:
+        monkeypatch: Redirect active release paths and the completed bootstrap marker.
+        tmp_path: Isolated candidate release tree.
+    """
+    from tests.test_appliance_update import load_helper_module
+
+    helper = load_helper_module()
+    releases = tmp_path / "releases"
+    release = releases / "0.9.330"
+    scripts = release / ".venv/bin"
+    scripts.mkdir(parents=True)
+    old = releases / ".staging-0.9.330-1234/content/.venv-new"
+    for name in ("atlaso-console", "atlaso-vault", "atlaso-kmip"):
+        (scripts / name).write_text(f"#!{old}/bin/python\nprint('ready')\n", encoding="utf-8")
+    unrelated = f"#!{releases}/.staging-0.9.329-1234/content/.venv-new/bin/python\n"
+    (scripts / "unrelated").write_text(unrelated, encoding="utf-8")
+    current = tmp_path / "current"
+    current.symlink_to(release, target_is_directory=True)
+    monkeypatch.setattr(helper, "ATLASO_CURRENT_LINK", current)
+    monkeypatch.setattr(helper, "ATLASO_RELEASES_DIR", releases)
+    monkeypatch.setattr(helper, "_data_disk_safety_bootstrap_is_complete", lambda: True)
+    assert helper._bootstrap_release_data_disk_safety(current) == []
+    for name in ("atlaso-console", "atlaso-vault", "atlaso-kmip"):
+        assert (scripts / name).read_text().startswith(f"#!{release / '.venv'}/bin/python\n")
+    assert (scripts / "unrelated").read_text() == unrelated
+    assert helper._bootstrap_release_data_disk_safety(current) == []
+
+
 def test_release_launchers_survive_both_environment_promotions(tmp_path):
     """Preserve executable entry points through inner and outer directory moves.
 
