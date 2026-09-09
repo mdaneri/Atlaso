@@ -16,6 +16,9 @@ brings infrastructure, storage, identity, networking, and lifecycle workflows in
   firewall policy, public services, and network boot through reviewed desired state.
 - **Lifecycle** — review desired-state changes, automate tasks, monitor health, and install signed updates.
 
+[Appliance Update](docs/operate/appliance-update.md) follows one durable task through service restarts and recovery,
+with automatic browser status navigation and a final result backed by active-release and service checks.
+
 Successful `main` CI automatically publishes the immutable wheel handoff, creates the signed software Release, and
 advances `development`. Promotion to `preview` or `stable` and all OVA/virtualization production remain explicit manual
 operations.

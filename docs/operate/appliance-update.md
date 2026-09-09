@@ -73,6 +73,12 @@ when every selected child succeeds and all required restoration evidence is dura
 
 ## Update-only browser surface
 
+Task polling recognizes the update-mode response and opens the status page automatically. Its refresh URL retains the
+task identifier and removes workspace fragments, so a previously selected Update Sources tab cannot leave the browser
+on a stale document. Progress measures completed stream steps, not elapsed time; a long-running step can hold the
+percentage steady while its phase remains active. After restoration, inspect the same task's final result in Recent
+update tasks. A changed version alone does not establish successful completion.
+
 A real installation replaces the ordinary management and public browser experiences with a self-contained status page
 before the first child may mutate the appliance. The page reuses the Tasks parent/child hierarchy and Appliance Apply
 status language: it shows only the bounded task identifier, phase, percentage, ordered stream labels and states, and
@@ -390,6 +396,13 @@ can persist the durable task outcome. Without a matching definitive finalizer, w
 running parent failed even when every child step committed before the restart; child results remain available as
 recovery evidence. Only the current and previous known-good releases are retained; the UI does not expose arbitrary
 historical downgrades.
+
+Generated Python launchers are rebound after each environment-directory promotion. The console service invokes its
+Python module directly, which also supports installation by older updaters with stale generated launcher paths.
+The incoming release's existing service bootstrap also repairs its own staging paths before services start, so an
+upgrade from 0.9.329 repairs vault and KMS launchers even though that updater lacks the relocation step.
+Recovery admits the same first-boot helper and service destinations that installation backs up. Every named service
+must be active; a successful multi-service `systemctl is-active` exit alone is insufficient.
 
 Success is recorded only after Atlaso flushes the active switch and installed release assets, validates and reloads
 nginx, removes maintenance mode, and verifies web, worker, console, and nginx service state. The helper writes a

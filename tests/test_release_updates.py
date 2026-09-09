@@ -1137,12 +1137,19 @@ def test_release_prestart_runs_candidate_bookkeeping_as_atlaso(monkeypatch, tmp_
     assert command[-3:] == [str(python), "-m", "atlaso.app.worker"]
 
 
-def test_release_recovery_manifest_accepts_the_migrated_esx_allowlist(monkeypatch, tmp_path):
-    """Verify reboot recovery validates the ESX claim backup added after migration.
+@pytest.mark.parametrize("asset_constant", [
+    "ESX_STORAGE_DISK_ALLOWLIST_PATH",
+    "ATLASO_GUEST_AGENT_SELECTOR_PATH",
+    "ATLASO_MACHINE_IDENTITY_INITIALIZER_PATH",
+    "ATLASO_GUEST_AGENT_SELECT_UNIT_PATH",
+])
+def test_release_recovery_manifest_accepts_owned_assets(monkeypatch, tmp_path, asset_constant):
+    """Verify recovery accepts every added first-boot and ESX claim asset.
 
     Args:
         monkeypatch: Pytest fixture used to replace helper paths.
         tmp_path: Temporary directory provided for bounded recovery state.
+        asset_constant: Owned destination admitted by the recovery validator.
     """
     from tests.test_appliance_update import load_helper_module
 
@@ -1165,7 +1172,7 @@ def test_release_recovery_manifest_accepts_the_migrated_esx_allowlist(monkeypatc
     allowlist_backup.write_bytes(allowlist.read_bytes())
     monkeypatch.setattr(helper, "ATLASO_RELEASES_DIR", releases)
     monkeypatch.setattr(helper, "ATLASO_UPDATE_BACKUP_DIR", backups)
-    monkeypatch.setattr(helper, "ESX_STORAGE_DISK_ALLOWLIST_PATH", allowlist)
+    monkeypatch.setattr(helper, asset_constant, allowlist)
 
     context = helper._validated_release_recovery_context(
         {
@@ -1187,6 +1194,33 @@ def test_release_recovery_manifest_accepts_the_migrated_esx_allowlist(monkeypatc
     )
 
     assert context["file_backups"] == [(allowlist_backup.resolve(), allowlist)]
+
+
+@pytest.mark.parametrize("states,ready", [
+    ("active\nactive\n", True),
+    ("active\nactivating\n", False),
+    ("active\nfailed\n", False),
+    ("active\n", False),
+    ("", False),
+])
+def test_service_readiness_requires_every_requested_unit(monkeypatch, states, ready):
+    """Reject systemctl's any-active success for incomplete service readiness.
+
+    Args:
+        monkeypatch: Isolate systemctl execution.
+        states: Per-unit states returned with a successful command exit.
+        ready: Whether every required unit was proven active.
+    """
+    from tests.test_appliance_update import load_helper_module
+
+    helper = load_helper_module()
+    monkeypatch.setattr(helper, "_command_path", lambda _name: "systemctl")
+    monkeypatch.setattr(helper, "_command_payload", lambda _command: {
+        "success": True, "returncode": 0, "stdout": states, "stderr": "",
+    })
+    result = helper._service_command("is-active", "atlaso.service", "atlaso-console.service")
+    assert result["success"] is ready
+    assert (result["returncode"] == 0) is ready
 
 
 @pytest.mark.parametrize(
@@ -2876,6 +2910,79 @@ def test_helper_offline_install_uses_only_locked_wheelhouse(monkeypatch, tmp_pat
     assert "--find-links" in dependency_command
     assert env["PIP_CONFIG_FILE"] == "/dev/null"
     assert env["PIP_NO_INDEX"] == "1"
+
+
+def test_candidate_prestart_repairs_current_updater_launchers(monkeypatch, tmp_path):
+    """Repair the incoming release even after data-disk bootstrap is complete.
+
+    Args:
+        monkeypatch: Redirect active release paths and the completed bootstrap marker.
+        tmp_path: Isolated candidate release tree.
+    """
+    from tests.test_appliance_update import load_helper_module
+
+    helper = load_helper_module()
+    releases = tmp_path / "releases"
+    release = releases / "0.9.330"
+    scripts = release / ".venv/bin"
+    scripts.mkdir(parents=True)
+    old = releases / ".staging-0.9.330-1234/content/.venv-new"
+    for name in ("atlaso-console", "atlaso-vault", "atlaso-kmip"):
+        (scripts / name).write_text(f"#!{old}/bin/python\nprint('ready')\n", encoding="utf-8")
+    unrelated = f"#!{releases}/.staging-0.9.329-1234/content/.venv-new/bin/python\n"
+    (scripts / "unrelated").write_text(unrelated, encoding="utf-8")
+    current = tmp_path / "current"
+    current.symlink_to(release, target_is_directory=True)
+    monkeypatch.setattr(helper, "ATLASO_CURRENT_LINK", current)
+    monkeypatch.setattr(helper, "ATLASO_RELEASES_DIR", releases)
+    monkeypatch.setattr(helper, "_data_disk_safety_bootstrap_is_complete", lambda: True)
+    assert helper._bootstrap_release_data_disk_safety(current) == []
+    for name in ("atlaso-console", "atlaso-vault", "atlaso-kmip"):
+        assert (scripts / name).read_text().startswith(f"#!{release / '.venv'}/bin/python\n")
+    assert (scripts / "unrelated").read_text() == unrelated
+    assert helper._bootstrap_release_data_disk_safety(current) == []
+
+
+def test_release_launchers_survive_both_environment_promotions(tmp_path):
+    """Preserve executable entry points through inner and outer directory moves.
+
+    Args:
+        tmp_path: Isolated release installation root.
+    """
+    from tests.test_appliance_update import load_helper_module
+
+    helper = load_helper_module()
+    content = tmp_path / ".staging-release" / "content"
+    original = content / ".venv-new"
+    scripts = original / "bin"
+    scripts.mkdir(parents=True)
+    launcher = scripts / "atlaso-console"
+    launcher.write_text(f"#!{original}/bin/python\nprint('launcher-ready')\n", encoding="utf-8")
+    launcher.chmod(0o755)
+    (scripts / "activate").write_text(f'VIRTUAL_ENV="{original}"\n', encoding="utf-8")
+    (scripts / "long-launcher").write_text(
+        f"#!/bin/sh\n'''exec' '{original}/bin/python' \"$0\" \"$@\"\n' '''\n", encoding="utf-8"
+    )
+    binary = b"\x7fELF\0" + os.fsencode(original)
+    (scripts / "native").write_bytes(binary)
+    if os.name == "posix":
+        (scripts / "python").symlink_to(sys.executable)
+    environment = content / ".venv"
+    original.rename(environment)
+    helper._relocate_release_venv_scripts(environment, original)
+    final = tmp_path / "0.9.329"
+    content.rename(final)
+    helper._relocate_release_venv_scripts(final / ".venv", environment)
+    scripts = final / ".venv/bin"
+    expected = str(final / ".venv")
+    assert (scripts / "atlaso-console").read_text().startswith(f"#!{expected}/bin/python\n")
+    assert expected in (scripts / "long-launcher").read_text()
+    assert (scripts / "activate").read_text() == f'VIRTUAL_ENV="{expected}"\n'
+    assert (scripts / "native").read_bytes() == binary
+    if os.name == "posix":
+        assert (scripts / "python").is_symlink()
+        result = subprocess.run([str(scripts / "atlaso-console")], check=True, capture_output=True, text=True)
+        assert result.stdout.strip() == "launcher-ready"
 
 
 def test_photon_candidate_abi_uses_python_nevra_and_transaction_is_test_only(monkeypatch):
@@ -5051,6 +5158,9 @@ def test_committed_activation_finishes_forward_without_database_rollback(monkeyp
     parsed = {
         "job_id": "job-forward",
         "status": "activation_committed",
+        "success": False,
+        "error": "Earlier handoff required retry",
+        "failure_layer": "committed_activation_handoff",
         "candidate_version": "0.9.0",
         "commands": [],
         "transaction_recovery": {"schema_version": 1},
@@ -5071,6 +5181,9 @@ def test_committed_activation_finishes_forward_without_database_rollback(monkeyp
         assert not gate_states
     else:
         assert result["status"] == "succeeded"
+        assert result["success"] is True
+        assert result["error"] == ""
+        assert result["failure_layer"] == ""
         assert finalizers == ["succeeded"]
         assert gate_states == [False]
 
