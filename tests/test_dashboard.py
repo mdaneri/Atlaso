@@ -383,6 +383,77 @@ def test_dashboard_failed_task_window_and_activity_merge_are_safe(client, monkey
     assert "token=hidden" not in serialized
 
 
+def test_apply_projection_omits_detail_probes_and_preserves_validation(client, monkeypatch):
+    """Keep expensive display-only probes out of current apply validation.
+
+    Args:
+        client: Initialized application and database fixture.
+        monkeypatch: Dependency replacement fixture.
+    """
+    from atlaso.app import ui
+    from atlaso.app.database import SessionLocal
+
+    probes = ("esx_storage_inventory", "read_dhcp_leases", "kms_status")
+    calls = []
+    for name in probes:
+        original = getattr(ui.SystemAdapter, name)
+
+        def observed(adapter, *args, _name=name, _original=original, **kwargs):
+            calls.append(_name)
+            return _original(adapter, *args, **kwargs)
+
+        monkeypatch.setattr(ui.SystemAdapter, name, observed)
+
+    with SessionLocal() as db:
+        compact = ui.appliance_apply_units(db, reconcile=False)
+        assert calls == []
+
+        # Force the former detail-rich behavior to compare every apply contract field.
+        for name, flag in (
+            ("esx_storage_context", "include_disk_inventory"),
+            ("dnsmasq_context", "include_leases"),
+            ("kms_context", "include_runtime_counts"),
+        ):
+            original_context = getattr(ui, name)
+
+            def detailed(*args, _original=original_context, _flag=flag, **kwargs):
+                kwargs[_flag] = True
+                return _original(*args, **kwargs)
+
+            monkeypatch.setattr(ui, name, detailed)
+        full = ui.appliance_apply_units(db, reconcile=False)
+        assert set(calls) == set(probes)
+        assert [{key: value for key, value in unit.items() if key != "context"} for unit in compact] == [
+            {key: value for key, value in unit.items() if key != "context"} for unit in full
+        ]
+
+
+def test_detail_contexts_keep_live_probes_by_default(client, monkeypatch):
+    """Retain live detail retrieval for existing page callers.
+
+    Args:
+        client: Initialized application and database fixture.
+        monkeypatch: Dependency replacement fixture.
+    """
+    from atlaso.app import ui
+    from atlaso.app.database import SessionLocal
+
+    calls = []
+    for name in ("esx_storage_inventory", "read_dhcp_leases", "kms_status"):
+        original = getattr(ui.SystemAdapter, name)
+
+        def observed(adapter, *args, _name=name, _original=original, **kwargs):
+            calls.append(_name)
+            return _original(adapter, *args, **kwargs)
+
+        monkeypatch.setattr(ui.SystemAdapter, name, observed)
+    with SessionLocal() as db:
+        ui.esx_storage_context(db, reconcile=False)
+        ui.dnsmasq_context(db, reconcile=False)
+        ui.kms_context(db, reconcile=False)
+    assert calls == ["esx_storage_inventory", "read_dhcp_leases", "kms_status"]
+
+
 def test_dashboard_apply_summary_disables_reconciliation(monkeypatch):
     """Verify that dashboard apply summary disables reconciliation.
 
