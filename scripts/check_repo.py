@@ -475,6 +475,15 @@ REQUIRED_POLICY_MARKERS = {
     ),
 }
 
+COMPLETED_TASK_COMMAND_MARKERS = (
+    "must use `scripts/cleanup-completed-task.ps1`",
+    "`-Handoff`, `-Evidence`, and `-Config`",
+    "omit `-Execute` for read-only preview",
+    "fresh live controller evidence",
+    "Never replace a failed or refused command with ad hoc deletion",
+    "command and bridge contract",
+)
+
 SCHEDULED_PR_MONITORING_SECTION_ANCHORS = {
     Path("AGENTS.md"): "### Focused local validation and pull-request follow-through",
     Path("CONTRIBUTING.md"): "### Automated pull-request follow-through",
@@ -3299,6 +3308,34 @@ def check_agent_policy_gate(root: Path) -> list[Finding]:
     return findings
 
 
+def check_completed_task_command_policy(root: Path) -> list[Finding]:
+    """Require the shipped command and operative preview/execution policy in controller guides.
+
+    Args:
+        root: Repository root containing implementation and controller documentation.
+    """
+    findings: list[Finding] = []
+    for relative in ("scripts/cleanup-completed-task.ps1", "scripts/completed_task_cleanup.py",
+                     "scripts/completed_task_files.py", "docs/contribute/completed-task-cleanup.md"):
+        if not (root / relative).is_file():
+            findings.append(Finding(root / relative, "supported cleanup command dependency is missing"))
+    for relative in (Path("AGENTS.md"), Path("CONTRIBUTING.md"), Path("docs/contribute/agent-policies.md")):
+        text, error = read_text(root / relative)
+        if error is not None or text is None:
+            findings.append(Finding(root / relative, "cleanup command policy is missing"))
+            continue
+        anchor = "## Completed Task Cleanup" if relative.name == "AGENTS.md" else "### Completed task cleanup"
+        count, section = extract_required_policy_section(text, anchor)
+        if count != 1 or section is None:
+            findings.append(Finding(root / relative, "cleanup command section must appear exactly once"))
+            continue
+        visible = " ".join(render_markdown_operative_text(section).split())
+        for marker in COMPLETED_TASK_COMMAND_MARKERS:
+            if marker.replace("`", "") not in visible:
+                findings.append(Finding(root / relative, f"cleanup command policy marker is missing: {marker}"))
+    return findings
+
+
 def check_validation_resource_policy(root: Path) -> list[Finding]:
     """Keep resource handoff and release gates in each operative cleanup section.
 
@@ -5755,6 +5792,7 @@ def main(argv: list[str] | None = None) -> int:
         findings.extend(check_file(path))
     findings.extend(check_agent_policy_gate(ROOT))
     findings.extend(check_validation_resource_policy(ROOT))
+    findings.extend(check_completed_task_command_policy(ROOT))
     findings.extend(check_merge_authority_transfer_fixtures(ROOT))
     findings.extend(check_spark_worker_agent(ROOT))
     findings.extend(check_ui_pattern_foundation(ROOT))
