@@ -168,6 +168,12 @@ def test_console_updates_untouched_bootstrap_family_before_apply(client, monkeyp
         db.commit()
 
     def submit(_units, **_kwargs):
+        """Inspect policy before privileged Apply.
+
+        Args:
+            _units: Requested apply units.
+            **_kwargs: Additional apply options.
+        """
         with SessionLocal() as db:
             row = db.scalar(select(Setting).where(Setting.key == FIREWALL_SOURCE_GROUPS_SETTING_KEY))
             assert json.loads(row.value)["groups"][0]["entries"] == expected
@@ -202,12 +208,23 @@ def test_console_waits_for_operator_source_group_save(client, monkeypatch):
     acquired = threading.Event()
 
     def lock(db):
+        """Observe acquisition before the console reads desired state.
+
+        Args:
+            db: Console transaction awaiting the shared writer lock.
+        """
         assert not db.in_transaction(), "Console must acquire the lock before its first read"
         attempted.set()
         acquire_network_objects_write_lock(db)
         acquired.set()
 
     def apply(_units, **_kwargs):
+        """Verify the concurrent operator policy at Apply admission.
+
+        Args:
+            _units: Requested apply units.
+            **_kwargs: Additional apply options.
+        """
         with SessionLocal() as db:
             row = db.scalar(select(Setting).where(Setting.key == FIREWALL_SOURCE_GROUPS_SETTING_KEY))
             assert json.loads(row.value)["groups"][0]["entries"] == ["10.99.0.0/16"]
