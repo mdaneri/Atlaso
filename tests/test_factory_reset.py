@@ -1927,15 +1927,18 @@ def test_factory_host_inventory_is_stable_across_startup_refresh(tmp_path):
     engine.dispose()
 
 
+@pytest.mark.parametrize("had_applied_vlan", [False, True])
 def test_complete_factory_reset_replaces_database_and_establishes_baselines(
     tmp_path,
     monkeypatch,
+    had_applied_vlan,
 ):
     """Factory reset removes prior records and leaves every apply unit current.
 
     Args:
         tmp_path: Temporary directory provided by pytest for isolated filesystem state.
         monkeypatch: Pytest fixture used to replace dependencies for the test.
+        had_applied_vlan: Whether the previous Network baseline includes a removed VLAN.
     """
     database_path = tmp_path / "atlaso.db"
     state_directory = tmp_path / "factory-reset"
@@ -1953,10 +1956,12 @@ def test_complete_factory_reset_replaces_database_and_establishes_baselines(
         seed_initial_data(db, include_examples=False)
         from atlaso.app.ui import save_appliance_apply_baselines
 
-        save_appliance_apply_baselines(
-            db,
-            {"retired-legacy-unit": {"fingerprint": "pre-reset-state"}},
-        )
+        previous_baselines = {"retired-legacy-unit": {"fingerprint": "pre-reset-state"}}
+        if had_applied_vlan:
+            previous_baselines["network"] = {
+                "config_preview": "[vlan_interfaces]\nvlan=eth1.110\n  parent=eth1\n  vlan_id=110\n",
+            }
+        save_appliance_apply_baselines(db, previous_baselines)
         admin = db.execute(select(User).where(User.username == "admin")).scalar_one()
         db.add(User(username="remove-me", role="admin"))
         db.add(

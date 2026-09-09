@@ -1369,9 +1369,12 @@ def _candidate_database(
                     )
                 _remove_retired_ca_private_keys(retired_ca_private_key_paths)
 
+            # Activation still needs the old baseline to remove prior resources.
+            # Final fingerprints must exclude that retired inventory, including
+            # the transient VLAN-removal summary that disappears after reset.
+            save_appliance_apply_baselines(db, {})
             final_units = appliance_apply_units(db, reconcile=False)
             final_unit_ids = {unit["id"] for unit in final_units}
-            save_appliance_apply_baselines(db, {})
             update_appliance_apply_baselines(
                 db,
                 final_units,

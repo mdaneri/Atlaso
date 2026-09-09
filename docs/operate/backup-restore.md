@@ -126,7 +126,10 @@ retry reset after its finalizer is definitive.
 
 The candidate temporarily imports compatible applied baselines so removed resources can be reconciled against their
 last known state. After activation, Atlaso replaces that mapping with fingerprints for exactly the current factory apply
-units; retired or unknown baseline keys cannot survive in the replacement database.
+units; retired or unknown baseline keys cannot survive in the replacement database. The old mapping is cleared before
+calculating those final fingerprints, so completed VLAN removals cannot leave a transient removal summary in the new
+Network baseline. Retaining that summary could stop a reset with
+`Factory reset could not establish applied baselines for: Network` after runtime defaults were activated.
 
 Earlier sessions, bearer tokens, service credentials, and removed-account credentials stop working. The reset preserves
 the current bootstrap administrator web/Photon password and root password for each **Keep current password** choice. A
