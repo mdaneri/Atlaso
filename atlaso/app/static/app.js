@@ -5562,7 +5562,9 @@ function initializeFactoryResetPasswords() {
       fields.confirmation.value = "";
       refresh(account);
     });
-    form.querySelector(`[data-reset-password-fields="${account}"]`).hidden = true;
+    const fallback = form.querySelector(`[data-reset-password-fields="${account}"]`);
+    fallback.hidden = true;
+    fallback.classList.add("hidden");
     form.querySelector(`[data-reset-password-controls="${account}"]`).hidden = false;
   });
   // Run before the shared destructive confirmation; no password is submitted by

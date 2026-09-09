@@ -6,7 +6,10 @@ const vm = require("node:vm");
 
 function fixture() {
   class Element {
-    constructor() { this.events = {}; this.dataset = {}; this.value = ""; this.checked = false; }
+    constructor() {
+      this.events = {}; this.dataset = {}; this.value = ""; this.checked = false;
+      this.classes = new Set(); this.classList = { add: (name) => this.classes.add(name) };
+    }
     addEventListener(name, handler) { (this.events[name] ||= []).push(handler); }
     emit(name) {
       const event = { currentTarget: this, preventDefault() {}, stopImmediatePropagation() {} };
@@ -72,6 +75,8 @@ for (const account of ["admin", "root"]) {
   test(`${account}: prepare, cancel edits, keep and page exit clear values`, () => {
     const f = fixture();
     const a = f.accounts[account];
+    assert.equal(a.fields.hidden, true);
+    assert.equal(a.fields.classes.has("hidden"), true);
     a.open.emit("click");
     f.password.value = "synthetic-test-value";
     f.confirmation.value = "different";
