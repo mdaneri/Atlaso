@@ -915,20 +915,17 @@ sed -i 's/\r$//' /etc/systemd/system/nginx.service.d/atlaso-data-disks.conf
 systemctl daemon-reload
 
 log_step "configuring Atlaso nftables firewall"
-if [ -z "$ATLASO_MGMT_SOURCE_CIDR" ]; then
-  DETECTED_MGMT_ADDRESS="$(ip -4 -o addr show dev "$ATLASO_MGMT_INTERFACE" scope global 2>/dev/null | awk 'NR == 1 { print $4 }')"
-  if [ -n "$DETECTED_MGMT_ADDRESS" ]; then
-    ATLASO_MGMT_SOURCE_CIDR="$(python3 -c 'import ipaddress, sys; print(ipaddress.ip_interface(sys.argv[1]).network)' "$DETECTED_MGMT_ADDRESS")"
-  fi
-fi
-if [ -z "$ATLASO_MGMT_SOURCE_CIDR" ] && [ "$ATLASO_MGMT_ADDRESS" != "dhcp" ]; then
+# A DHCP deployment must not inherit the temporary builder's connected subnet.
+# Static defaults come from the final configuration; explicit source policy wins.
+if [ -z "$ATLASO_MGMT_SOURCE_CIDR" ] && [ "$ATLASO_MGMT_USES_DHCP" != "true" ]; then
   ATLASO_MGMT_SOURCE_CIDR="$(python3 -c 'import ipaddress, sys; print(ipaddress.ip_interface(sys.argv[1]).network)' "$ATLASO_MGMT_ADDRESS")"
 fi
+# Persist the empty DHCP policy too, overriding the application's static default.
+printf '\nATLASO_MANAGEMENT_SOURCE_CIDR=%s\n' "$ATLASO_MGMT_SOURCE_CIDR" >>/etc/atlaso/atlaso.env
 if [ -n "$ATLASO_MGMT_SOURCE_CIDR" ]; then
-  printf '\nATLASO_MANAGEMENT_SOURCE_CIDR=%s\n' "$ATLASO_MGMT_SOURCE_CIDR" >>/etc/atlaso/atlaso.env
-  ATLASO_MGMT_ACCESS_RULE="    ip saddr $ATLASO_MGMT_SOURCE_CIDR tcp dport { 22, 80, 443 } accept comment \"Atlaso management access\""
+  ATLASO_MGMT_ACCESS_RULE="    iifname \"$ATLASO_MGMT_INTERFACE\" ip saddr $ATLASO_MGMT_SOURCE_CIDR tcp dport { 22, 80, 443 } accept comment \"Atlaso management access\""
 else
-  ATLASO_MGMT_ACCESS_RULE="    iifname \"$ATLASO_MGMT_INTERFACE\" tcp dport { 22, 80, 443 } accept comment \"Atlaso management access\""
+  ATLASO_MGMT_ACCESS_RULE="    iifname \"$ATLASO_MGMT_INTERFACE\" meta nfproto ipv4 tcp dport { 22, 80, 443 } accept comment \"Atlaso management access\""
 fi
 install -d -o root -g root -m 0755 /etc/atlaso/nftables.d
 cat >/etc/atlaso/nftables.d/atlaso.nft <<EOF

@@ -1,0 +1,340 @@
+"""Verify first-boot management source policy survives normal firewall rendering."""
+
+import json
+import threading
+from concurrent.futures import ThreadPoolExecutor
+
+import pytest
+from sqlalchemy import create_engine, select
+from sqlalchemy.orm import Session
+
+from atlaso.app.config import get_settings
+from atlaso.app.database import Base
+from atlaso.app.models import PhysicalInterface, Setting, VlanInterface
+from atlaso.app.seed import seed_initial_data
+from atlaso.app.services.firewall import FIREWALL_SOURCE_GROUPS_SETTING_KEY
+
+
+@pytest.mark.parametrize("raw", ["", "invalid", "[]", '{"groups":null}', '{"groups":[null]}'])
+def test_console_preserves_unrecognized_source_policy(raw):
+    """Leave malformed saved state to normal validation without blocking recovery.
+
+    Args:
+        raw: Unrecognized persisted policy.
+    """
+    from atlaso.app.services.firewall import update_bootstrap_management_ipv6
+
+    assert update_bootstrap_management_ipv6(raw, "auto", "") == raw
+
+
+@pytest.mark.parametrize(
+    ("source", "ipv6", "ipv6_cidr", "expected"),
+    [
+        ("", False, "", ["0.0.0.0/0"]),
+        ("10.42.0.0/16", False, "", ["10.42.0.0/16"]),
+        ("", True, "", ["0.0.0.0/0", "::/0"]),
+        ("172.25.80.0/20", True, "fd00:49::10/64", ["172.25.80.0/20", "fd00:49::/64"]),
+    ],
+)
+def test_bootstrap_management_policy_survives_managed_render_and_reseed(
+    monkeypatch, source, ipv6, ipv6_cidr, expected,
+):
+    """Preserve initial restrictions through both production renderers and restart.
+
+    Args:
+        monkeypatch: Isolated deployment environment configuration.
+        source: Initial IPv4 management source restriction.
+        ipv6: Whether deployment explicitly enables IPv6 management.
+        ipv6_cidr: Static IPv6 management address, or empty for automatic addressing.
+        expected: Source Group entries expected after initialization.
+    """
+    from atlaso.app.api.v1 import firewall_validation_payload
+    from atlaso.app.ui import firewall_context
+
+    monkeypatch.setenv("ATLASO_MANAGEMENT_SOURCE_CIDR", source)
+    monkeypatch.setenv("ATLASO_APPLIANCE_MANAGEMENT_IPV6_ENABLED", str(ipv6).lower())
+    monkeypatch.setenv("ATLASO_APPLIANCE_MANAGEMENT_IPV6_CIDR", ipv6_cidr)
+    get_settings.cache_clear()
+    engine = create_engine("sqlite:///:memory:")
+    Base.metadata.create_all(engine)
+    try:
+        with Session(engine) as db:
+            seed_initial_data(db, include_examples=False, appliance_mode=True)
+            row = db.execute(select(Setting).where(Setting.key == FIREWALL_SOURCE_GROUPS_SETTING_KEY)).scalar_one()
+            state = json.loads(row.value)
+            assert state["groups"][0]["entries"] == expected
+            for preview in (firewall_validation_payload(db)[2], firewall_context(db, reconcile=False)["firewall_config_preview"]):
+                management = [line for line in preview.splitlines() if 'comment "mgmt-console"' in line]
+                assert len(management) == len(expected)
+                assert all('iifname "eth0"' in line for line in management)
+                for entry in expected:
+                    assert any(f"saddr {entry}" in line for line in management)
+            interface = db.scalar(select(PhysicalInterface).where(PhysicalInterface.name == "eth0"))
+            interface.role = "access"
+            interface.access_management_ui_enabled = True
+            db.commit()
+            rows = firewall_context(db, reconcile=False)["firewall_managed_rule_rows"]
+            assert next(row for row in rows if row["name"] == "management-ui-eth0")["source_group_id"] == "custom:bootstrap-management"
+            for preview in (firewall_validation_payload(db)[2], firewall_context(db, reconcile=False)["firewall_config_preview"]):
+                management = [line for line in preview.splitlines() if 'comment "management-ui-eth0"' in line]
+                assert len(management) == len(expected)
+                for entry in expected:
+                    assert any(f"saddr {entry}" in line for line in management)
+            interface.access_management_ui_enabled = False
+            interface.mode = "trunk"
+            db.add(VlanInterface(name="eth0.10", parent_interface="eth0", vlan_id=10,
+                                 ip_cidr="172.25.81.1/20", enabled=True, role="access",
+                                 access_management_ui_enabled=True))
+            db.commit()
+            rows = firewall_context(db, reconcile=False)["firewall_managed_rule_rows"]
+            assert next(row for row in rows if row["name"] == "management-ui-eth0.10")["source_group_id"] == "custom:bootstrap-management"
+            for preview in (firewall_validation_payload(db)[2], firewall_context(db, reconcile=False)["firewall_config_preview"]):
+                management = [line for line in preview.splitlines() if 'comment "management-ui-eth0.10"' in line]
+                assert len(management) == len(expected)
+                for entry in expected:
+                    assert any(f"saddr {entry}" in line for line in management)
+            # A saved operator edit is authoritative on subsequent initialization.
+            state["groups"][0]["entries"] = ["10.99.0.0/16"]
+            row.value = json.dumps(state)
+            db.commit()
+            seed_initial_data(db, include_examples=False, appliance_mode=True)
+            assert json.loads(row.value)["groups"][0]["entries"] == ["10.99.0.0/16"]
+    finally:
+        engine.dispose()
+        get_settings.cache_clear()
+
+
+@pytest.mark.parametrize("mode", ["existing", "saved", "factory"])
+def test_bootstrap_management_seed_preserves_existing_state(monkeypatch, mode):
+    """Do not migrate existing appliances, overwrite groups, or override reset policy.
+
+    Args:
+        monkeypatch: Isolated bootstrap settings.
+        mode: Existing-install, retained-group, or factory-reset scenario.
+    """
+    monkeypatch.setenv("ATLASO_MANAGEMENT_SOURCE_CIDR", "10.42.0.0/16")
+    get_settings.cache_clear()
+    engine = create_engine("sqlite:///:memory:")
+    Base.metadata.create_all(engine)
+    try:
+        with Session(engine) as db:
+            if mode == "existing":
+                seed_initial_data(db, include_examples=False)
+            if mode == "saved":
+                db.add(Setting(key=FIREWALL_SOURCE_GROUPS_SETTING_KEY, value='{"groups":[],"assignments":{}}'))
+                db.commit()
+            seed_initial_data(db, include_examples=False, appliance_mode=True, factory_defaults=mode == "factory")
+            row = db.execute(select(Setting).where(Setting.key == FIREWALL_SOURCE_GROUPS_SETTING_KEY)).scalar_one_or_none()
+            if mode == "saved":
+                assert row is not None
+                assert row.value == '{"groups":[],"assignments":{}}'
+            else:
+                assert row is None
+    finally:
+        engine.dispose()
+        get_settings.cache_clear()
+
+
+@pytest.mark.parametrize(
+    ("mode", "cidr", "edited", "expected"),
+    [
+        ("auto", "", False, ["10.42.0.0/16", "::/0"]),
+        ("static", "fd00:42::10/64", False, ["10.42.0.0/16", "fd00:42::/64"]),
+        ("disabled", "", False, ["10.42.0.0/16"]),
+        ("auto", "", True, ["10.99.0.0/16"]),
+    ],
+)
+def test_console_updates_untouched_bootstrap_family_before_apply(client, monkeypatch, mode, cidr, edited, expected):
+    """Console recovery stages the selected family while preserving operator changes.
+
+    Args:
+        client: Initialized application database fixture.
+        monkeypatch: Replace privileged apply/recovery with observations.
+        mode: Requested IPv6 mode.
+        cidr: Requested static IPv6 address.
+        edited: Whether an operator has replaced the seeded group entries.
+        expected: Effective entries before Apply admission.
+    """
+    from atlaso.app import appliance_console
+    from atlaso.app.database import SessionLocal
+
+    initial = ["10.42.0.0/16", "fd00:123::/64"] if mode == "disabled" else ["10.42.0.0/16"]
+    with SessionLocal() as db:
+        db.add(Setting(key=FIREWALL_SOURCE_GROUPS_SETTING_KEY, value=json.dumps({
+            "groups": [{"id": "custom:bootstrap-management", "entries": ["10.99.0.0/16"] if edited else initial,
+                        "bootstrap_entries": initial}],
+            "assignments": {"mgmt-console": "custom:bootstrap-management"},
+        })))
+        db.commit()
+
+    def submit(_units, **_kwargs):
+        """Inspect policy before privileged Apply.
+
+        Args:
+            _units: Requested apply units.
+            **_kwargs: Additional apply options.
+        """
+        with SessionLocal() as db:
+            row = db.scalar(select(Setting).where(Setting.key == FIREWALL_SOURCE_GROUPS_SETTING_KEY))
+            assert json.loads(row.value)["groups"][0]["entries"] == expected
+        return "test-job"
+
+    monkeypatch.setattr(appliance_console, "_submit_console_apply", submit)
+    monkeypatch.setattr(appliance_console, "_recover_management_plane", lambda _stage: None)
+    appliance_console.configure_management("dhcp", "", "", mode, cidr, "", "192.0.2.53")
+
+
+def test_console_waits_for_operator_source_group_save(client, monkeypatch):
+    """Serialize console recovery before reads and retain a concurrent operator edit.
+
+    Args:
+        client: Initialized application database fixture.
+        monkeypatch: Replace privileged operations and observe transaction ordering.
+    """
+    from atlaso.app import appliance_console
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.services.network_objects import acquire_network_objects_write_lock
+
+    state = {
+        "groups": [{"id": "custom:bootstrap-management", "entries": ["0.0.0.0/0"],
+                    "bootstrap_entries": ["0.0.0.0/0"]}],
+        "assignments": {"mgmt-console": "custom:bootstrap-management"},
+    }
+    with SessionLocal() as db:
+        db.add(Setting(key=FIREWALL_SOURCE_GROUPS_SETTING_KEY, value=json.dumps(state)))
+        db.commit()
+
+    attempted = threading.Event()
+    acquired = threading.Event()
+
+    def lock(db):
+        """Observe acquisition before the console reads desired state.
+
+        Args:
+            db: Console transaction awaiting the shared writer lock.
+        """
+        assert not db.in_transaction(), "Console must acquire the lock before its first read"
+        attempted.set()
+        acquire_network_objects_write_lock(db)
+        acquired.set()
+
+    def apply(_units, **_kwargs):
+        """Verify the concurrent operator policy at Apply admission.
+
+        Args:
+            _units: Requested apply units.
+            **_kwargs: Additional apply options.
+        """
+        with SessionLocal() as db:
+            row = db.scalar(select(Setting).where(Setting.key == FIREWALL_SOURCE_GROUPS_SETTING_KEY))
+            assert json.loads(row.value)["groups"][0]["entries"] == ["10.99.0.0/16"]
+        return "test-job"
+
+    monkeypatch.setattr(appliance_console, "acquire_network_objects_write_lock", lock)
+    monkeypatch.setattr(appliance_console, "_submit_console_apply", apply)
+    monkeypatch.setattr(appliance_console, "_recover_management_plane", lambda _stage: None)
+    with ThreadPoolExecutor(max_workers=1) as executor:
+        with SessionLocal() as operator:
+            acquire_network_objects_write_lock(operator)
+            row = operator.scalar(select(Setting).where(Setting.key == FIREWALL_SOURCE_GROUPS_SETTING_KEY))
+            state["groups"][0]["entries"] = ["10.99.0.0/16"]
+            row.value = json.dumps(state)
+            pending = executor.submit(appliance_console.configure_management,
+                                      "dhcp", "", "", "auto", "", "", "192.0.2.53")
+            assert attempted.wait(2)
+            assert not acquired.wait(0.1)
+            operator.commit()
+        pending.result(timeout=5)
+    assert acquired.is_set()
+
+@pytest.mark.parametrize("target", ["eth1", "eth2.10"])
+def test_flagged_listener_assignment_save_survives_reload_and_render(client, target, monkeypatch):
+    """Apply a row edit only to its listener through the real authenticated endpoint.
+
+    Args:
+        client: HTTP client for the initialized application.
+        target: Physical or VLAN listener selected by the operator.
+        monkeypatch: Replace privileged console operations with test observations.
+    """
+    from atlaso.app.api.v1 import firewall_validation_payload
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.ui import firewall_context
+    from tests.routers.ui.helpers import login
+
+    with SessionLocal() as db:
+        physical = db.scalar(select(PhysicalInterface).where(PhysicalInterface.name == "eth1"))
+        physical.role = "access"
+        physical.mode = "access"
+        physical.admin_state = "up"
+        physical.ipv4_method = "static"
+        physical.ip_cidr = "172.25.80.1/24"
+        physical.access_management_ui_enabled = True
+        parent = db.scalar(select(PhysicalInterface).where(PhysicalInterface.name == "eth2"))
+        parent.mode = "trunk"
+        db.add(VlanInterface(name="eth2.10", parent_interface="eth2", vlan_id=10,
+                             ip_cidr="172.25.81.1/20", enabled=True, role="access",
+                             access_management_ui_enabled=True))
+        db.add(Setting(key=FIREWALL_SOURCE_GROUPS_SETTING_KEY, value=json.dumps({
+            "groups": [
+                {"id": "custom:bootstrap-management", "name": "Bootstrap management", "entries": ["0.0.0.0/0"],
+                 "bootstrap_entries": ["0.0.0.0/0"]},
+                {"id": "custom:operator", "name": "Operator", "entries": ["10.99.0.0/16"]},
+            ],
+            "assignments": {"management-ui": "custom:bootstrap-management"},
+        })))
+        db.commit()
+    login(client)
+    page = client.get("/firewall")
+    csrf = page.text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
+    for group_id, source in [("custom:operator", "10.99.0.0/16"), ("any", None)]:
+        saved = client.post("/firewall/managed-rules/source-group", data={
+            "csrf": csrf, "rule_name": f"management-ui-{target}", "source_group_id": group_id,
+        })
+        assert saved.status_code == 200
+        assert saved.json()["status"] == "saved"
+        assert client.get("/firewall").status_code == 200
+        with SessionLocal() as db:
+            context = firewall_context(db, reconcile=False)
+            rows = context["firewall_managed_rule_rows"]
+            selected = next(row for row in rows if row["name"] == f"management-ui-{target}")
+            assert selected["source_group_id"] == group_id
+            other = "eth2.10" if target == "eth1" else "eth1"
+            assert next(row for row in rows if row["name"] == f"management-ui-{other}")["source_group_id"] == "custom:bootstrap-management"
+            for preview in (context["firewall_config_preview"], firewall_validation_payload(db)[2]):
+                line = next(line for line in preview.splitlines() if f'comment "management-ui-{target}"' in line)
+                if source:
+                    assert f"ip saddr {source}" in line
+                else:
+                    assert "saddr" not in line
+                other_line = next(line for line in preview.splitlines() if f'comment "management-ui-{other}"' in line)
+                assert "ip saddr 0.0.0.0/0" in other_line
+
+    # A different group save also normalizes every group; neither operation
+    # should turn an untouched bootstrap policy into an operator-owned policy.
+    saved = client.post("/network-objects/source-groups", data={
+        "csrf": csrf, "action": "update", "group_id": "custom:operator",
+        "group_name": "Operator", "group_entries": "10.98.0.0/16",
+    }, headers={"X-Atlaso-Grid": "1"})
+    assert saved.status_code == 200
+    from atlaso.app import appliance_console
+
+    monkeypatch.setattr(appliance_console, "_submit_console_apply", lambda *_args, **_kwargs: "test-job")
+    monkeypatch.setattr(appliance_console, "_recover_management_plane", lambda _stage: None)
+    appliance_console.configure_management("dhcp", "", "", "auto", "", "", "192.0.2.53")
+    with SessionLocal() as db:
+        row = db.scalar(select(Setting).where(Setting.key == FIREWALL_SOURCE_GROUPS_SETTING_KEY))
+        bootstrap = next(group for group in json.loads(row.value)["groups"] if group["id"] == "custom:bootstrap-management")
+        assert bootstrap["entries"] == ["0.0.0.0/0", "::/0"]
+        assert bootstrap["bootstrap_entries"] == bootstrap["entries"]
+    # Even saving the same entries explicitly makes that group's policy final.
+    saved = client.post("/network-objects/source-groups", data={
+        "csrf": csrf, "action": "update", "group_id": "custom:bootstrap-management",
+        "group_name": "Bootstrap management", "group_entries": "0.0.0.0/0\n::/0",
+    }, headers={"X-Atlaso-Grid": "1"})
+    assert saved.status_code == 200
+    appliance_console.configure_management("dhcp", "", "", "disabled", "", "", "192.0.2.53")
+    with SessionLocal() as db:
+        row = db.scalar(select(Setting).where(Setting.key == FIREWALL_SOURCE_GROUPS_SETTING_KEY))
+        bootstrap = next(group for group in json.loads(row.value)["groups"] if group["id"] == "custom:bootstrap-management")
+        assert bootstrap["entries"] == ["0.0.0.0/0", "::/0"]
+        assert "bootstrap_entries" not in bootstrap

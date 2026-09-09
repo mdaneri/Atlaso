@@ -1066,14 +1066,13 @@ def test_photon_provisioning_installs_default_nginx_management_proxy():
     assert 'ATLASO_MGMT_USES_DHCP=false' in script
     assert 'ATLASO_APPLIANCE_EXTERNAL_DNS_SERVERS=$(if [ "$ATLASO_MGMT_USES_DHCP" = "true" ]; then printf \'\'; else printf \'%s\' "$ATLASO_MGMT_DNS" | tr \' \' \',\'; fi)' in script
     assert 'if [ "$ATLASO_MGMT_USES_DHCP" != "true" ] && [ -n "$ATLASO_MGMT_DNS" ]; then' in script
-    assert 'ip -4 -o addr show dev "$ATLASO_MGMT_INTERFACE" scope global' in script
-    assert 'DETECTED_MGMT_ADDRESS' in script
+    assert 'DETECTED_MGMT_ADDRESS' not in script
     assert "ipaddress.ip_interface(sys.argv[1]).network" in script
     assert "printf '\\nATLASO_MANAGEMENT_SOURCE_CIDR=%s\\n' \"$ATLASO_MGMT_SOURCE_CIDR\" >>/etc/atlaso/atlaso.env" in script
     assert 'log_step "system adapter dry-run mode: $ATLASO_DRY_RUN_SYSTEM_ADAPTERS"' in script
     assert "ATLASO_DRY_RUN_SYSTEM_ADAPTERS=$ATLASO_DRY_RUN_SYSTEM_ADAPTERS" in script
-    assert 'ATLASO_MGMT_ACCESS_RULE="    ip saddr $ATLASO_MGMT_SOURCE_CIDR tcp dport { 22, 80, 443 } accept comment \\"Atlaso management access\\""' in script
-    assert 'ATLASO_MGMT_ACCESS_RULE="    iifname \\"$ATLASO_MGMT_INTERFACE\\" tcp dport { 22, 80, 443 } accept comment \\"Atlaso management access\\""' in script
+    assert 'ATLASO_MGMT_ACCESS_RULE="    iifname \\"$ATLASO_MGMT_INTERFACE\\" ip saddr $ATLASO_MGMT_SOURCE_CIDR tcp dport { 22, 80, 443 } accept comment \\"Atlaso management access\\""' in script
+    assert 'ATLASO_MGMT_ACCESS_RULE="    iifname \\"$ATLASO_MGMT_INTERFACE\\" meta nfproto ipv4 tcp dport { 22, 80, 443 } accept comment \\"Atlaso management access\\""' in script
     assert "$ATLASO_MGMT_ACCESS_RULE" in script
     assert 'install -o root -g root -m 0440 "$ATLASO_HOME/image/common/sudoers.d/atlaso-helper" /etc/sudoers.d/atlaso-helper' in script
     assert 'sed -i \'s/\\r$//\'' in script
@@ -1099,6 +1098,65 @@ def test_photon_provisioning_installs_default_nginx_management_proxy():
     assert "omit both for the deterministic" in root_docs
     assert "does not fill a partial override or retry an explicit" in root_docs
     assert "pair through public PyPI" in root_docs
+
+
+@pytest.mark.parametrize(
+    ("address", "method", "source", "expected_source"),
+    [
+        ("dhcp", "", "", ""),
+        ("192.168.167.20/24", "dhcp", "", ""),
+        ("172.25.81.117/20", "static", "", "172.25.80.0/20"),
+        ("dhcp", "dhcp", "10.42.0.0/16", "10.42.0.0/16"),
+        ("172.25.81.117/20", "static", "10.42.0.0/16", "10.42.0.0/16"),
+    ],
+)
+def test_provisioning_firewall_uses_final_management_policy(
+    tmp_path: Path, address: str, method: str, source: str, expected_source: str,
+) -> None:
+    """Execute provisioning policy with a builder subnet different from deployment.
+
+    Args:
+        tmp_path: Isolated output directory.
+        address: Final management address or DHCP sentinel.
+        method: Explicit final IPv4 method.
+        source: Optional operator source restriction.
+        expected_source: Persisted deployment restriction.
+    """
+    shell = shutil.which("sh")
+    if os.name == "nt":
+        shell = str(Path(os.environ.get("ProgramFiles", "C:/Program Files")) / "Git/bin/bash.exe")
+    if not shell or not Path(shell).is_file():
+        pytest.skip("A POSIX shell is required for image provisioning validation")
+    script = Path("image/common/scripts/provision-atlaso.sh").read_text(encoding="utf-8")
+    defaults = script[script.index('ATLASO_MGMT_ADDRESS='):script.index('ATLASO_DRY_RUN_SYSTEM_ADAPTERS=')]
+    firewall = script.split('log_step "configuring Atlaso nftables firewall"', 1)[1]
+    firewall = firewall.split('install -d -o root -g root -m 0755 /etc/atlaso/nftables.d', 1)[0]
+    firewall = firewall.replace("/etc/atlaso/atlaso.env", '"$POLICY_ENV"')
+    environment = {
+        **os.environ,
+        "ATLASO_MGMT_ADDRESS": address,
+        "ATLASO_MGMT_IPV4_METHOD": method,
+        "ATLASO_MGMT_SOURCE_CIDR": source,
+        "ATLASO_MGMT_INTERFACE": "eth0",
+        "POLICY_ENV": (tmp_path / "atlaso.env").as_posix(),
+        "TEST_PYTHON": Path(sys.executable).as_posix(),
+    }
+    completed = subprocess.run(
+        [shell, "-s"],
+        input=(
+            "set -eu\n"
+            'ip() { printf \'2: eth0 inet 192.168.167.20/24 scope global eth0\\n\'; }\n'
+            'python3() { "$TEST_PYTHON" "$@"; }\n'
+            + defaults + firewall + '\nprintf \'%s\\n\' "$ATLASO_MGMT_ACCESS_RULE"\n'
+        ),
+        env=environment, capture_output=True, text=True, check=False,
+    )
+    assert completed.returncode == 0, completed.stderr
+    assert (tmp_path / "atlaso.env").read_text().strip() == f"ATLASO_MANAGEMENT_SOURCE_CIDR={expected_source}"
+    predicate = f" ip saddr {expected_source}" if expected_source else " meta nfproto ipv4"
+    assert completed.stdout.strip() == (
+        f'iifname "eth0"{predicate} tcp dport {{ 22, 80, 443 }} accept comment "Atlaso management access"'
+    )
 
 
 def test_photon_https_bootstrap_supplies_trusted_listener_identity(tmp_path, monkeypatch):
