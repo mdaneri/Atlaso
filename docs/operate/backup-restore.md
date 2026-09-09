@@ -59,6 +59,12 @@ replacement database, validates all generated runtime configuration, and activat
 units. Only after the candidate passes validation does Atlaso atomically replace the active database. The management
 plane restarts and the initiating browser is handed back to sign-in.
 
+For either account, **Change password** opens the same password-dialog pattern used by Local Users. Enter and confirm
+the replacement, then select **Use password for reset**. This prepares it only for the final confirmed reset; closing
+the dialog does not change an operating-system password. The page displays a prepared status without the value.
+Cancel discards the current dialog edits, and **Keep current password** clears that account's prepared replacement.
+Passwords are not saved in browser storage. Without JavaScript, the original labeled password fields remain available.
+
 Factory reset deliberately moves management admission to the applied factory binding (`eth0` at
 `192.168.49.1/24`) instead of keeping a retired pre-reset listener authorized. The replacement database, Network
 baseline, and app-owned `core.atlaso.internal` DNS record are committed together only after factory networking has
@@ -160,6 +166,14 @@ services again. This prevents a legacy delayed restart from reviving a database 
 Factory Appliance Settings activation initializes the packaged PowerCLI runtime from Atlaso's root-owned persistent
 PowerShell home, so the all-users VMware CEIP policy does not depend on an interactive root profile during the detached
 reset transaction.
+
+The final operating-system login sweep runs during `committing`, after database replacement and retained-key cleanup.
+Only login-session cleanup is admitted in both `applying` and `committing`; network and retained-runtime cleanup stay
+restricted to `applying`. Versions with the earlier applying-only login guard can stop with
+`Factory reset could not terminate post-activation operating-system login sessions.`, leaving tty1 blank after factory
+addressing has applied. Preserve the failure status, install the corrected helper through the supported deployment
+workflow after restoring access, and use the documented resume path. Repeating the reset with the old helper does not
+correct the phase mismatch.
 
 Reset progress and only the non-secret `keep`/`change` choices are recorded outside the database in
 `/var/lib/atlaso-privileged/factory-reset/request.json`; the last successful result is recorded in `last-result.json`. Atlaso

@@ -108,6 +108,7 @@
       <form
         class="form-stack"
         action="{{ management_ui_root }}/backup-restore/factory-reset"
+        data-factory-reset-form
         method="post"
         data-confirm-modal
         data-confirm-title="Factory reset the Atlaso appliance?"
@@ -120,12 +121,16 @@
           <legend><span class="field-label"><span>Bootstrap administrator password</span><button class="help-icon" type="button" data-help="Keep the current admin web and Photon OS password, or replace both during factory reset. The bootstrap administrator account is recreated either way.">i</button></span></legend>
           <div class="choice-list compact">
             <label class="choice-row"><input type="radio" name="admin_password_action" value="keep" checked><span class="choice-copy"><strong>Keep current password</strong><small>Preserve the current admin web and Photon OS password.</small></span></label>
-            <label class="choice-row"><input type="radio" name="admin_password_action" value="change"><span class="choice-copy"><strong>Change password</strong><small>Use the new password below for admin web and Photon OS access.</small></span></label>
+            <label class="choice-row"><input type="radio" name="admin_password_action" value="change"><span class="choice-copy"><strong>Change password</strong><small>Prepare a new password for admin web and Photon OS access during reset.</small></span></label>
           </div>
         </fieldset>
-        <div class="form-grid">
+        <div class="form-grid" data-reset-password-fields="admin">
           <label><span class="field-label"><span>New administrator password</span><button class="help-icon" type="button" data-help="Required only when Change password is selected. The value is staged in a mode-0600 transient file and never written to the database or reset marker.">i</button></span><input type="password" name="admin_password" autocomplete="new-password" aria-describedby="factory-reset-password-policy"></label>
           <label><span>Confirm administrator password</span><input type="password" name="admin_password_confirm" autocomplete="new-password" aria-describedby="factory-reset-password-policy"></label>
+        </div>
+        <div data-reset-password-controls="admin" hidden>
+          <span class="muted" data-reset-password-status="admin" role="status">Current password will be kept.</span>
+          <button class="button secondary" type="button" data-reset-password-open="admin">Set administrator password</button>
         </div>
         <fieldset>
           <legend><span class="field-label"><span>Root password</span><button class="help-icon" type="button" data-help="Keep the current Photon root password, or replace it during the protected factory-reset transaction. This does not enable root SSH.">i</button></span></legend>
@@ -134,9 +139,13 @@
             <label class="choice-row"><input type="radio" name="root_password_action" value="change"><span class="choice-copy"><strong>Change password</strong><small>Apply the new Photon root password during reset.</small></span></label>
           </div>
         </fieldset>
-        <div class="form-grid">
+        <div class="form-grid" data-reset-password-fields="root">
           <label><span class="field-label"><span>New root password</span><button class="help-icon" type="button" data-help="Required only when Change password is selected. The value is passed to the constrained root helper through protected storage and stdin.">i</button></span><input type="password" name="root_password" autocomplete="new-password" aria-describedby="factory-reset-password-policy"></label>
           <label><span>Confirm root password</span><input type="password" name="root_password_confirm" autocomplete="new-password" aria-describedby="factory-reset-password-policy"></label>
+        </div>
+        <div data-reset-password-controls="root" hidden>
+          <span class="muted" data-reset-password-status="root" role="status">Current password will be kept.</span>
+          <button class="button secondary" type="button" data-reset-password-open="root">Set root password</button>
         </div>
         <button class="button danger" type="submit">Factory reset appliance</button>
       </form>
@@ -180,4 +189,29 @@
     </div>
   {% endif %}
 </section>
+<dialog id="factory-reset-password-modal" class="confirm-modal" aria-labelledby="factory-reset-password-title" aria-describedby="factory-reset-password-message">
+  <form id="factory-reset-password-dialog-form" class="confirm-modal-panel form-stack" method="dialog">
+    <div class="confirm-modal-body">
+      <p class="kicker">Factory reset</p>
+      <h2 id="factory-reset-password-title">Prepare password for factory reset</h2>
+      <p id="factory-reset-password-message" class="muted">This prepares a password for the confirmed factory reset. It does not change the password now.</p>
+      <p class="muted">Password requirements: {{ factory_reset_password_policy_summary }}.</p>
+    </div>
+    {% for field, label in [('password', 'New password'), ('confirmation', 'Confirm password')] %}
+    <label>
+      <span class="field-label"><span>{{ label }}</span><button class="help-icon" type="button" data-help="Both entries must match. Atlaso validates the factory password policy when the reset is submitted.">i</button></span>
+      <span class="password-input-wrap">
+        <input type="password" name="{{ field }}" autocomplete="new-password" required>
+        <button class="password-toggle" type="button" data-password-toggle aria-label="Show {{ label|lower }}" aria-pressed="false">
+          <svg aria-hidden="true" viewBox="0 0 24 24" focusable="false"><path d="M2.5 12s3.5-6 9.5-6 9.5 6 9.5 6-3.5 6-9.5 6-9.5-6-9.5-6Z"></path><circle cx="12" cy="12" r="3"></circle></svg>
+        </button>
+      </span>
+    </label>
+    {% endfor %}
+    <div class="confirm-modal-actions">
+      <button class="button ghost" type="button" data-reset-password-cancel>Cancel</button>
+      <button class="button primary" type="submit">Use password for reset</button>
+    </div>
+  </form>
+</dialog>
 {% endblock %}

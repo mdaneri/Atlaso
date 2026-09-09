@@ -5489,6 +5489,108 @@ function initializeUsersTable() {
   });
 }
 
+function initializeFactoryResetPasswords() {
+  const form = document.querySelector("[data-factory-reset-form]");
+  const modal = document.getElementById("factory-reset-password-modal");
+  const editor = document.getElementById("factory-reset-password-dialog-form");
+  if (!(form instanceof HTMLFormElement) || !(modal instanceof HTMLDialogElement)
+      || !(editor instanceof HTMLFormElement) || form.dataset.passwordDialogsReady) return;
+  const password = editor.elements.namedItem("password");
+  const confirmation = editor.elements.namedItem("confirmation");
+  if (!(password instanceof HTMLInputElement) || !(confirmation instanceof HTMLInputElement)) return;
+  let active = null;
+  let launcher = null;
+  const accountFields = (account) => ({
+    password: form.elements.namedItem(`${account}_password`),
+    confirmation: form.elements.namedItem(`${account}_password_confirm`),
+    keep: form.querySelector(`input[name="${account}_password_action"][value="keep"]`),
+    change: form.querySelector(`input[name="${account}_password_action"][value="change"]`),
+    status: form.querySelector(`[data-reset-password-status="${account}"]`),
+  });
+  const refresh = (account) => {
+    const fields = accountFields(account);
+    fields.status.textContent = fields.change.checked && fields.password.value
+      ? "Replacement password prepared for reset." : "Current password will be kept.";
+  };
+  const open = (account, source) => {
+    active = account;
+    launcher = source;
+    editor.reset();
+    confirmation.setCustomValidity("");
+    resetPasswordVisibility(editor);
+    document.getElementById("factory-reset-password-title").textContent = account === "admin"
+      ? "Prepare administrator password for reset" : "Prepare root password for reset";
+    modal.showModal();
+    password.focus();
+  };
+  initializePasswordToggles(editor);
+  [password, confirmation].forEach((input) => input.addEventListener("input", () => {
+    confirmation.setCustomValidity("");
+  }));
+  editor.addEventListener("submit", (event) => {
+    event.preventDefault();
+    confirmation.setCustomValidity(password.value === confirmation.value ? "" : "Password confirmation does not match.");
+    if (!editor.reportValidity() || !active) return;
+    const fields = accountFields(active);
+    fields.password.value = password.value;
+    fields.confirmation.value = confirmation.value;
+    fields.change.checked = true;
+    modal.close("prepared");
+  });
+  modal.querySelector("[data-reset-password-cancel]").addEventListener("click", () => modal.close("cancel"));
+  modal.addEventListener("close", () => {
+    if (active) {
+      const fields = accountFields(active);
+      if (!fields.password.value) fields.keep.checked = true;
+      refresh(active);
+    }
+    editor.reset();
+    resetPasswordVisibility(editor);
+    confirmation.setCustomValidity("");
+    active = null;
+    launcher?.focus();
+  });
+  ["admin", "root"].forEach((account) => {
+    const fields = accountFields(account);
+    form.querySelector(`[data-reset-password-open="${account}"]`).addEventListener("click", (event) => open(account, event.currentTarget));
+    fields.change.addEventListener("change", () => {
+      if (fields.change.checked) open(account, fields.change);
+    });
+    fields.keep.addEventListener("change", () => {
+      if (!fields.keep.checked) return;
+      fields.password.value = "";
+      fields.confirmation.value = "";
+      refresh(account);
+    });
+    form.querySelector(`[data-reset-password-fields="${account}"]`).hidden = true;
+    form.querySelector(`[data-reset-password-controls="${account}"]`).hidden = false;
+  });
+  // Run before the shared destructive confirmation; no password is submitted by
+  // the editor, and the existing backend remains the password-policy authority.
+  form.addEventListener("submit", (event) => {
+    for (const account of ["admin", "root"]) {
+      const fields = accountFields(account);
+      if (fields.change.checked && !fields.password.value) {
+        event.preventDefault();
+        event.stopImmediatePropagation();
+        open(account, fields.change);
+        return;
+      }
+    }
+  }, true);
+  window.addEventListener("pagehide", () => {
+    editor.reset();
+    for (const account of ["admin", "root"]) {
+      const fields = accountFields(account);
+      fields.password.value = "";
+      fields.confirmation.value = "";
+      fields.keep.checked = true;
+      refresh(account);
+    }
+  });
+  form.dataset.passwordDialogsReady = "true";
+}
+
 function initializeUserPasswordForm() {
   const modal = document.getElementById("user-password-modal");
   const form = document.getElementById("user-password-form");
@@ -23580,6 +23682,7 @@ document.addEventListener("DOMContentLoaded", initializeServicesTable);
 document.addEventListener("DOMContentLoaded", initializeDepotBrowserTable);
 document.addEventListener("DOMContentLoaded", initializeUsersTable);
 document.addEventListener("DOMContentLoaded", initializeUserPasswordForm);
+document.addEventListener("DOMContentLoaded", initializeFactoryResetPasswords);
 document.addEventListener("DOMContentLoaded", initializeRoutesWanRoutesTable);
 document.addEventListener("DOMContentLoaded", initializeRoutesWanRoutingTable);
 document.addEventListener("DOMContentLoaded", initializeRoutesWanNatTable);

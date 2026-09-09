@@ -3,6 +3,7 @@
 import builtins
 import json
 import os
+import runpy
 import subprocess
 import sys
 from contextlib import contextmanager
@@ -1576,6 +1577,41 @@ def test_managed_factory_reset_retains_marker_until_readiness(tmp_path, monkeypa
     scheduled: list[tuple[str, ...]] = []
     credential_removal_states: list[str] = []
     login_cleanup_events: list[str] = []
+    helper = runpy.run_path(str(Path(__file__).resolve().parents[1] / "scripts/appliance/atlaso-helper"))
+    login_cleanup = helper["_terminate_factory_reset_login_sessions"]
+    helper_globals = login_cleanup.__globals__
+    monkeypatch.setitem(helper_globals, "ATLASO_FACTORY_RESET_REQUEST_PATH", state_directory / "request.json")
+    monkeypatch.setitem(helper_globals, "_managed_local_usernames", lambda: ["admin"])
+    monkeypatch.setattr(helper_globals["shutil"], "which", lambda name: f"/usr/bin/{name}")
+    if os.name == "posix":
+        monkeypatch.setitem(
+            helper_globals, "_open_factory_reset_directory",
+            lambda: os.open(state_directory, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW),
+        )
+        original_fstat = os.fstat
+
+        def root_owned_fstat(descriptor):
+            """Model root ownership while retaining real marker content and mode."""
+            result = original_fstat(descriptor)
+            return SimpleNamespace(st_mode=result.st_mode, st_uid=0, st_size=result.st_size)
+
+        monkeypatch.setattr(helper_globals["os"], "fstat", root_owned_fstat)
+
+    def session_command(command, **_kwargs):
+        """Provide stopped SSH and empty session inventories without host mutation."""
+        return subprocess.CompletedProcess(command, 3 if "is-active" in command else 0, "", "")
+
+    monkeypatch.setitem(helper_globals, "_run", session_command)
+
+    def terminate_sessions(_adapter):
+        """Exercise real helper admission against the runner's durable phase."""
+        assert json.loads((state_directory / "request.json").read_text(encoding="utf-8"))["state"] == "committing"
+        login_cleanup_events.append("sessions terminated")
+        return AdapterResult(
+            command=["factory-reset", "terminate-login-sessions"],
+            dry_run=False,
+            returncode=login_cleanup(),
+        )
     monkeypatch.setenv("ATLASO_FACTORY_RESET_STATE_DIRECTORY", str(state_directory))
     monkeypatch.setattr(
         factory_reset,
@@ -1594,11 +1630,7 @@ def test_managed_factory_reset_retains_marker_until_readiness(tmp_path, monkeypa
     monkeypatch.setattr(
         SystemAdapter,
         "terminate_factory_reset_login_sessions",
-        lambda _adapter: login_cleanup_events.append("sessions terminated")
-        or AdapterResult(
-            command=["factory-reset", "terminate-login-sessions"],
-            dry_run=False,
-        ),
+        terminate_sessions,
     )
     real_remove_credentials = factory_reset._remove_factory_reset_credentials
 

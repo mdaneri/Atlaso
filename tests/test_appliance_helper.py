@@ -4452,12 +4452,17 @@ def test_factory_reset_network_runtime_cleanup_requires_applying_marker(monkeypa
     assert "active applying marker" in capsys.readouterr().err
 
 
-def test_factory_reset_terminates_bounded_login_sessions(monkeypatch, capsys):
+@pytest.mark.parametrize(
+    "phase", ["applying", "committing", "scheduled", "building", "failed", "awaiting_readiness", "succeeded", None, []]
+)
+def test_factory_reset_terminates_bounded_login_sessions(monkeypatch, tmp_path, capsys, phase):
     """Reset stops SSH and terminates root and Atlaso-managed login sessions.
 
     Args:
         monkeypatch: Pytest fixture used to replace session and service commands.
+        tmp_path: Isolated protected-marker fixture.
         capsys: Pytest fixture used to capture helper output.
+        phase: Durable reset phase presented to the real admission predicate.
     """
     helper = load_helper_module()
     commands: list[list[str]] = []
@@ -4482,10 +4487,36 @@ def test_factory_reset_terminates_bounded_login_sessions(monkeypatch, capsys):
             return subprocess.CompletedProcess(command, 3, "", "")
         return subprocess.CompletedProcess(command, 0, "", "")
 
-    monkeypatch.setattr(helper, "_factory_reset_runtime_cleanup_is_admitted", lambda: True)
+    request_path = tmp_path / "request.json"
+    request_path.write_text(json.dumps({"schema_version": 1, "state": phase}), encoding="utf-8")
+    request_path.chmod(0o600)
+    monkeypatch.setattr(helper, "ATLASO_FACTORY_RESET_REQUEST_PATH", request_path)
+    if os.name == "posix":
+        monkeypatch.setattr(
+            helper, "_open_factory_reset_directory",
+            lambda: os.open(tmp_path, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW),
+        )
+        original_fstat = helper.os.fstat
+
+        def root_owned_fstat(descriptor):
+            """Model the root-owned marker without bypassing phase admission."""
+            result = original_fstat(descriptor)
+            return SimpleNamespace(st_mode=result.st_mode, st_uid=0, st_size=result.st_size)
+
+        monkeypatch.setattr(helper.os, "fstat", root_owned_fstat)
     monkeypatch.setattr(helper, "_managed_local_usernames", lambda: ["admin"])
     monkeypatch.setattr(helper.shutil, "which", lambda name: f"/usr/bin/{name}")
     monkeypatch.setattr(helper, "_run", fake_run)
+
+    if phase not in ("applying", "committing"):
+        assert helper._handle_factory_reset("terminate-login-sessions", []) == 2
+        assert commands == []
+        return
+
+    if phase == "committing":
+        assert helper._handle_factory_reset("reset-network-runtime", []) == 2
+        assert helper._handle_factory_reset("reset-retained-runtime", []) == 2
+        assert commands == []
 
     assert helper._handle_factory_reset("terminate-login-sessions", []) == 0
 
