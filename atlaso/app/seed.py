@@ -1,6 +1,7 @@
 """Implement seed behavior."""
 
-from ipaddress import ip_interface
+import json
+from ipaddress import ip_interface, ip_network
 
 from sqlalchemy import select, text
 from sqlalchemy.orm import Session
@@ -49,6 +50,7 @@ from atlaso.app.services.dnsmasq import (
     validate_dns_record,
 )
 from atlaso.app.services.esxi_pxe import ESXI_PXE_NATIVE_UEFI_HTTP_ENABLED_KEY
+from atlaso.app.services.firewall import FIREWALL_SOURCE_GROUPS_SETTING_KEY
 from atlaso.app.services.ldap import LDAP_STAGED_CONFIG_PATH
 from atlaso.app.services.local_users import (
     DEFAULT_LOCAL_USER_SHELL,
@@ -546,6 +548,27 @@ def seed_initial_data(
                 enabled=False,
             )
         )
+
+    # Bootstrap policy becomes ordinary editable desired state once, so Apply
+    # cannot silently widen image admission and later operator edits remain final.
+    if fresh_install and appliance_mode and not factory_defaults:
+        source_state = db.execute(
+            select(Setting).where(Setting.key == FIREWALL_SOURCE_GROUPS_SETTING_KEY)
+        ).scalar_one_or_none()
+        if source_state is None:
+            entries = [str(ip_network(settings.management_source_cidr or "0.0.0.0/0", strict=False))]
+            if settings.appliance_management_ipv6_enabled:
+                entries.append(str(ip_interface(settings.appliance_management_ipv6_cidr).network)
+                               if settings.appliance_management_ipv6_cidr else "::/0")
+            db.add(Setting(key=FIREWALL_SOURCE_GROUPS_SETTING_KEY, value=json.dumps({
+                "groups": [{
+                    "id": "custom:bootstrap-management",
+                    "name": "Bootstrap management",
+                    "entries": entries,
+                    "description": "Management source policy retained from first-boot deployment.",
+                }],
+                "assignments": {"mgmt-console": "custom:bootstrap-management"},
+            })))
 
     if db.execute(select(FirewallSettings)).first() is None:
         db.add(FirewallSettings(enabled=True, default_input_policy="drop", default_forward_policy="drop", default_output_policy="accept"))

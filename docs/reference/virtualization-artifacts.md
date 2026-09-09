@@ -484,6 +484,10 @@ DHCP-first images admit management SSH and HTTP/HTTPS over IPv4 only through the
 The temporary VMware builder subnet is not retained as a source restriction. An explicitly supplied
 `ATLASO_MGMT_SOURCE_CIDR` remains an additional source restriction on that interface; static builds otherwise derive
 it from the final configured management network. Services interfaces remain outside this management admission.
+Fresh appliance initialization retains these
+source and address-family restrictions in the **Bootstrap management** Source Group assigned to management admission,
+so normal Firewall Apply preserves them. Operators can subsequently edit that Source Group or its assignment;
+startup does not replace saved choices or migrate existing appliances.
 When validating a portable image, use a management subnet different from the builder's and verify SSH plus
 `/openapi.json` both on initial boot and after reboot. Existing exported images need a rebuilt artifact to receive
 this provisioning correction; changing an appliance software version alone does not replace their initial firewall.
