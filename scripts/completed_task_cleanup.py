@@ -26,6 +26,7 @@ from scripts.completed_task_files import (
     read_bounded_regular,
     sync_directory,
 )
+from scripts.completed_task_process import contained_child
 from scripts.completed_task_title import (
     completed_task_title,
     verify_completed_task_title,
@@ -33,6 +34,7 @@ from scripts.completed_task_title import (
 
 MAX_EVIDENCE_BYTES = 64 * 1024 * 1024
 MAX_CHILD_BYTES = 4 * 1024 * 1024
+CHILD_TIMEOUT = 90
 
 
 class Refusal(RuntimeError):
@@ -268,44 +270,44 @@ class Cleanup:
         lock = threading.Lock()
         failed = threading.Event()
         try:
-            process = subprocess.Popen(args, cwd=self.repo, env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+            with contained_child(args, self.repo, env) as process:
 
-            def drain(stream, keep: bool) -> None:
-                """Drain bounded chunks concurrently so neither child pipe can deadlock the other.
+                def drain(stream, keep: bool) -> None:
+                    """Drain bounded chunks concurrently so neither child pipe can deadlock the other.
 
-                Args:
-                    stream: Child output pipe drained under the combined byte limit.
-                    keep: Whether this pipe contributes to the returned stdout buffer.
-                """
-                nonlocal count
-                try:
-                    with stream:
-                        while chunk := stream.read(65536):
-                            with lock:
-                                count += len(chunk)
-                                if count > MAX_CHILD_BYTES:
-                                    failed.set()
-                                    process.kill()
-                                    return
-                                if keep:
-                                    output.extend(chunk)
-                except OSError:
-                    failed.set()
+                    Args:
+                        stream: Child output pipe drained under the combined byte limit.
+                        keep: Whether this pipe contributes to the returned stdout buffer.
+                    """
+                    nonlocal count
+                    try:
+                        with stream:
+                            while chunk := stream.read(65536):
+                                with lock:
+                                    count += len(chunk)
+                                    if count > MAX_CHILD_BYTES:
+                                        failed.set()
+                                        process.kill()
+                                        return
+                                    if keep:
+                                        output.extend(chunk)
+                    except OSError:
+                        failed.set()
 
-            readers = [threading.Thread(target=drain, args=(stream, keep), daemon=True)
-                       for stream, keep in ((process.stdout, True), (process.stderr, False))]
-            for reader in readers:
-                reader.start()
-            try:
-                process.wait(timeout=90)
+                readers = [threading.Thread(target=drain, args=(stream, keep), daemon=True)
+                           for stream, keep in ((process.stdout, True), (process.stderr, False))]
                 for reader in readers:
-                    reader.join(timeout=1)
-                require(not failed.is_set() and not any(reader.is_alive() for reader in readers),
-                        "Child output exceeded the bounded capture or could not close; inspect the tool directly before retry.")
-            finally:
-                if process.poll() is None:
-                    process.kill()
-                process.wait(timeout=5)
+                    reader.start()
+                try:
+                    process.wait(timeout=CHILD_TIMEOUT)
+                    for reader in readers:
+                        reader.join(timeout=1)
+                    require(not failed.is_set() and not any(reader.is_alive() for reader in readers),
+                            "Child output exceeded the bounded capture or could not close; inspect the tool directly before retry.")
+                finally:
+                    if process.poll() is None:
+                        process.kill()
+                    process.wait(timeout=5)
         except (OSError, subprocess.TimeoutExpired) as exc:
             raise Refusal(f"{args[0]} could not complete; verify tool availability and execution policy before retry.") from exc
         require(process.returncode in allowed,
@@ -449,6 +451,7 @@ class Cleanup:
                     "Index assume-unchanged or skip-worktree flags block cleanup; reconcile tracked content first.")
             require(not self.git("-C", str(self.target), "status", "--porcelain", "--untracked-files=all"),
                     "Dirty or untracked worktree content blocks cleanup.")
+            self.verify_tracked_contents()
         else:
             require(not targets and not owners, "Absent path still has Git registration; preserve metadata for diagnosis.")
         local = self.git("for-each-ref", "--format=%(objectname)", f"refs/heads/{self.branch}")
@@ -461,6 +464,21 @@ class Cleanup:
             require(not local, "Local branch reappeared after its absence gate; preserve it and revalidate ownership.")
         if "worktree_removed" in self.gates:
             require(not self.target.exists() and not targets, "Worktree reappeared after removal; preserve it.")
+
+    def verify_tracked_contents(self) -> None:
+        """Hash tracked files independently of Git's cached stat data before trusting cleanliness."""
+        entries = self.git("-C", str(self.target), "ls-files", "--stage", "-z").split("\0")
+        require(len(entries) <= 50001, "Tracked inventory exceeds the bounded cleanup limit.")
+        for entry in filter(None, entries):
+            metadata, name = entry.split("\t", 1)
+            mode, expected, stage = metadata.split()
+            require(stage == "0" and mode in {"100644", "100755"}, "Unsupported tracked entry; reconcile before cleanup.")
+            ordinary(self.target / name)
+            attributes = self.git("-C", str(self.target), "check-attr", "-z", "filter", "--", name).split("\0")
+            require(len(attributes) == 4 and attributes[2] in {"unspecified", "unset"},
+                    "Custom content filters require independent reconciliation before cleanup.")
+            actual = self.git("-C", str(self.target), "hash-object", f"--path={name}", "--", name)
+            require(actual == expected, "Tracked content differs from the index; preserve the worktree.")
 
     def require_direct_task_ref(self) -> None:
         """Reject even dangling symbolic branches before accepting absence or deleting a ref."""
@@ -717,9 +735,12 @@ class Cleanup:
                 scopes = self.removal_scopes(resource, inspected)
                 require(scopes == inventory_scopes[identity] and self.inventory_scopes() == inventory_scopes,
                         "Inventory scopes changed before release.")
+                inspected = self.controller.call("resource.inspect", {"resource": resource, "handoff_sha256": self.digest})
+                require(self.removal_scopes(resource, inspected) == scopes, "Resource scopes changed before release.")
                 require(all(inspected.get(key) is True for key in
                             ("ownership_verified", "inactive", "supported_cleanup", "evidence_preserved"))
-                        and inspected.get("retained") is False, "Resource release eligibility changed.")
+                        and inspected.get("retained") is False and inspected.get("absent") is False,
+                        "Resource release eligibility changed.")
                 self.record(f"resource_release_prepared:{identity}")
                 released = self.controller.call("resource.release", {"resource": resource, "handoff_sha256": self.digest,
                                                                       "removal_scopes": scopes})

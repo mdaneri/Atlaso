@@ -21,6 +21,9 @@ repair; a later configuration rewrite preserves already recorded cleanup gates i
 The active configuration uses the pinned regular-file reader with a 1 MiB limit before TOML parsing.
 Child commands stream stdout and stderr through a combined 4 MiB cap with a 90-second execution timeout. Excess output
 terminates the child and produces a sanitized refusal; inspect the tool directly before retrying.
+Windows children enter a non-breakaway job before the command is authorized to start; POSIX children enter a new
+process group. Completion and refusal paths terminate remaining descendants and verify quiescence. Failure to establish
+or verify containment refuses the operation and requires helper reconciliation before retry.
 Child environments discard inherited `GIT_*` overrides except the credential prompt helper `GIT_ASKPASS`, then explicitly
 disable optional Git locks. Repository, index, object-store, namespace, and injected configuration overrides therefore
 cannot redirect inspection or deletion away from the checked worktree. Normal on-disk Git configuration still applies.
@@ -28,6 +31,11 @@ Every Git child explicitly sets `core.fsmonitor=false`, including cleanliness ch
 monitor response cannot hide tracked edits from the cleanup gates.
 Git children also force `core.trustctime=true` and `core.checkStat=default` so on-disk configuration cannot suppress
 ctime and other normal stat comparisons for tracked files, including same-size edits with a preserved mtime.
+Because filesystem timestamps can still collide, cleanup independently hashes every tracked regular file against its
+index blob before trusting cleanliness. Built-in Git checkout normalization applies, while custom content filters and
+unsupported tracked entries require independent reconciliation. Hash mismatches preserve the worktree.
+Specialized resources receive a new eligibility and scope inspection after the complete scope scan, immediately before
+their prepared-release gate and owning-tool invocation.
 POSIX Git children also force `core.fileMode=true` so executable-bit-only edits remain visible even when repository
 configuration disables mode tracking. Windows retains its native file-mode behavior.
 Closing issue references must name this same repository through their canonical GitHub issue URLs. A matching issue

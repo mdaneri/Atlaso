@@ -197,11 +197,109 @@ def test_preserved_mtime_edit_is_detected(cleanup: Cleanup) -> None:
     source.write_bytes(b"x" * original_size)
     os.utime(source, ns=(old, old))
     assert not git(cleanup.target, "status", "--porcelain")
-    assert "source.txt" in cleanup.git("-C", str(cleanup.target), "status", "--porcelain")
+    with pytest.raises(Refusal, match="Tracked content differs"):
+        cleanup.verify_tracked_contents()
     with pytest.raises(Refusal):
         cleanup.run()
     assert source.read_bytes() == b"x" * original_size
     assert not cleanup.gates
+
+
+def test_hash_check_ignores_cached_stat(cleanup: Cleanup) -> None:
+    """Direct content hashing detects an equal-size rewrite even with restored file times.
+
+    Args:
+        cleanup: Disposable worktree with unchanged index content.
+    """
+    source = cleanup.target / "source.txt"
+    before = source.stat()
+    source.write_bytes(b"x" * before.st_size)
+    os.utime(source, ns=(before.st_atime_ns, before.st_mtime_ns))
+    with pytest.raises(Refusal, match="Tracked content differs"):
+        cleanup.verify_tracked_contents()
+    assert source.read_bytes() == b"x" * before.st_size
+
+
+@pytest.mark.parametrize("field", ["inactive", "retained", "ownership_verified"])
+def test_specialized_resource_rechecked_after_scopes(cleanup: Cleanup, monkeypatch: pytest.MonkeyPatch, field: str) -> None:
+    """Eligibility withdrawn during scope reconciliation blocks the owning-tool release.
+
+    Args:
+        cleanup: Disposable task with one specialized resource in its inventory.
+        monkeypatch: Fixture injecting a state change at the scope-reconciliation boundary.
+        field: Resource guarantee withdrawn after the second complete scope scan.
+    """
+    cleanup.handoff["resources"] = [resource_identity(cleanup, "fresh-specialized")]
+    cleanup.handoff_path.write_text(json.dumps(cleanup.handoff), encoding="utf-8")
+    cleanup.digest = hashlib.sha256(cleanup.handoff_path.read_bytes()).hexdigest()
+    original_scopes, original_call = cleanup.inventory_scopes, cleanup.controller.call
+    scans = 0
+
+    def scopes() -> dict[str, list[str]]:
+        """Change eligibility only after the full scan has returned unchanged scopes."""
+        nonlocal scans
+        result = original_scopes()
+        scans += 1
+        return result
+
+    def inspect(operation: str, payload: dict) -> dict:
+        """Return the changed eligibility to the next fresh inspection.
+
+        Args:
+            operation: Requested controller operation.
+            payload: Current handoff-bound request fields.
+        """
+        result = original_call(operation, payload)
+        if operation == "resource.inspect" and scans >= 2:
+            result[field] = field == "retained"
+        return result
+
+    monkeypatch.setattr(cleanup, "inventory_scopes", scopes)
+    monkeypatch.setattr(cleanup.controller, "call", inspect)
+    with pytest.raises(Refusal, match="Resource release eligibility changed"):
+        cleanup.run()
+    assert "resource.release" not in cleanup.controller.calls
+    assert "resource_release_prepared:fresh-specialized" not in cleanup.gates
+
+
+def test_timeout_terminates_helper_tree(cleanup: Cleanup, monkeypatch: pytest.MonkeyPatch) -> None:
+    """A command refusal waits for its spawned helper to stop executing.
+
+    Args:
+        cleanup: Disposable task providing a permitted PID evidence path.
+        monkeypatch: Fixture shortening the command timeout for this regression.
+    """
+    pidfile = cleanup.root / "helper-pid"
+    script = ("import subprocess,sys,time,pathlib; "
+              "p=subprocess.Popen([sys.executable,'-I','-S','-c','import time; time.sleep(60)']); "
+              "pathlib.Path(sys.argv[1]).write_text(str(p.pid)); time.sleep(60)")
+    monkeypatch.setattr("scripts.completed_task_cleanup.CHILD_TIMEOUT", 2)
+    with pytest.raises((Refusal, FileRefusal)):
+        cleanup.command([sys.executable, "-I", "-S", "-c", script, str(pidfile)])
+    pid = int(pidfile.read_text())
+    if os.name == "nt":
+        import ctypes
+
+        kernel = ctypes.WinDLL("kernel32", use_last_error=True)
+        kernel.OpenProcess.argtypes = [ctypes.c_uint32, ctypes.c_int, ctypes.c_uint32]
+        kernel.OpenProcess.restype = ctypes.c_void_p
+        kernel.WaitForSingleObject.argtypes = [ctypes.c_void_p, ctypes.c_uint32]
+        kernel.CloseHandle.argtypes = [ctypes.c_void_p]
+        handle = kernel.OpenProcess(0x100000, False, pid)
+        if handle:
+            try:
+                assert kernel.WaitForSingleObject(handle, 0) == 0
+            finally:
+                kernel.CloseHandle(handle)
+        else:
+            assert ctypes.get_last_error() == 87
+    else:
+        try:
+            os.kill(pid, 0)
+        except ProcessLookupError:
+            pass
+        else:
+            assert Path(f"/proc/{pid}/stat").read_text().split(")", 1)[1].split()[0] == "Z"
 
 
 def test_posix_git_command_forces_file_modes(cleanup: Cleanup, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -2011,7 +2109,6 @@ def test_lost_resource_evidence_blocks_aggregate_gate(cleanup: Cleanup, monkeypa
     """
     cleanup.handoff["resources"] = [resource_identity(cleanup, "lost-evidence")]
     original = cleanup.controller.call
-    inspections = 0
 
     def lost_evidence(operation: str, payload: dict) -> dict:
         """Preserve initial evidence but invalidate it on the final aggregate inspection.
@@ -2020,12 +2117,9 @@ def test_lost_resource_evidence_blocks_aggregate_gate(cleanup: Cleanup, monkeypa
             operation: Named controller operation requested by the cleanup protocol.
             payload: Structured request fields bound to the current cleanup handoff.
         """
-        nonlocal inspections
         result = original(operation, payload)
-        if operation == "resource.inspect":
-            inspections += 1
-            if inspections >= 4:
-                result["evidence_preserved"] = False
+        if operation == "resource.inspect" and "resource_released:lost-evidence" in cleanup.gates:
+            result["evidence_preserved"] = False
         return result
 
     monkeypatch.setattr(cleanup.controller, "call", lost_evidence)
