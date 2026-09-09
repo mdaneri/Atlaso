@@ -257,6 +257,9 @@ class Cleanup:
         env = {key: value for key, value in os.environ.items()
                if not key.upper().startswith("GIT_") or key.upper() == "GIT_ASKPASS"}
         env.update(GIT_OPTIONAL_LOCKS="0", PYTHONDONTWRITEBYTECODE="1")
+        if args[0] == "git":
+            # A stale monitor can hide tracked changes from status and worktree remove alike.
+            args = ["git", "-c", "core.fsmonitor=false", *args[1:]]
         output = bytearray()
         count = 0
         lock = threading.Lock()

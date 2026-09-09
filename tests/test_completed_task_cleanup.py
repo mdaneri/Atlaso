@@ -165,6 +165,31 @@ def cleanup(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Cleanup:
     return instance
 
 
+def test_stale_fsmonitor_cannot_hide_dirty_source(cleanup: Cleanup) -> None:
+    """Cleanup bypasses the configured monitor for both status and removal subprocesses.
+
+    Args:
+        cleanup: Disposable task configured with a monitor that reports no changed paths.
+    """
+    hook = cleanup.root / "stale-monitor.sh"
+    marker = cleanup.root / "monitor-called"
+    hook.write_text("#!/bin/sh\nprintf 'called' > '" + marker.as_posix() + "'\nprintf 'token\\0'\n", encoding="utf-8")
+    hook.chmod(0o700)
+    git(cleanup.repo, "config", "core.fsmonitor", hook.as_posix())
+    git(cleanup.repo, "config", "core.fsmonitorHookVersion", "2")
+    git(cleanup.target, "status", "--porcelain")
+    assert marker.read_text(encoding="utf-8") == "called"
+    marker.write_text("bypassed", encoding="utf-8")
+    source = cleanup.target / "source.txt"
+    source.write_text("preserve dirty source", encoding="utf-8")
+    assert "source.txt" in cleanup.git("-C", str(cleanup.target), "status", "--porcelain")
+    with pytest.raises(Refusal):
+        cleanup.run()
+    assert source.read_text(encoding="utf-8") == "preserve dirty source"
+    assert marker.read_text(encoding="utf-8") == "bypassed"
+    assert not cleanup.gates
+
+
 @pytest.mark.parametrize("variable", ["GIT_INDEX_FILE", "GIT_DIR", "GIT_WORK_TREE", "GIT_CONFIG_COUNT"])
 def test_git_environment_cannot_hide_dirty_source(cleanup: Cleanup, monkeypatch: pytest.MonkeyPatch, variable: str) -> None:
     """Inherited repository-shaping variables cannot redirect the checked worktree or index.
