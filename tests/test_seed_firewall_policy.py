@@ -229,3 +229,63 @@ def test_console_waits_for_operator_source_group_save(client, monkeypatch):
             operator.commit()
         pending.result(timeout=5)
     assert acquired.is_set()
+
+@pytest.mark.parametrize("target", ["eth1", "eth2.10"])
+def test_flagged_listener_assignment_save_survives_reload_and_render(client, target):
+    """Apply a row edit only to its listener through the real authenticated endpoint.
+
+    Args:
+        client: HTTP client for the initialized application.
+        target: Physical or VLAN listener selected by the operator.
+    """
+    from atlaso.app.api.v1 import firewall_validation_payload
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.ui import firewall_context
+    from tests.routers.ui.helpers import login
+
+    with SessionLocal() as db:
+        physical = db.scalar(select(PhysicalInterface).where(PhysicalInterface.name == "eth1"))
+        physical.role = "access"
+        physical.mode = "access"
+        physical.admin_state = "up"
+        physical.ipv4_method = "static"
+        physical.ip_cidr = "172.25.80.1/24"
+        physical.access_management_ui_enabled = True
+        parent = db.scalar(select(PhysicalInterface).where(PhysicalInterface.name == "eth2"))
+        parent.mode = "trunk"
+        db.add(VlanInterface(name="eth2.10", parent_interface="eth2", vlan_id=10,
+                             ip_cidr="172.25.81.1/20", enabled=True, role="access",
+                             access_management_ui_enabled=True))
+        db.add(Setting(key=FIREWALL_SOURCE_GROUPS_SETTING_KEY, value=json.dumps({
+            "groups": [
+                {"id": "custom:bootstrap-management", "name": "Bootstrap management", "entries": ["0.0.0.0/0"]},
+                {"id": "custom:operator", "name": "Operator", "entries": ["10.99.0.0/16"]},
+            ],
+            "assignments": {"management-ui": "custom:bootstrap-management"},
+        })))
+        db.commit()
+    login(client)
+    page = client.get("/firewall")
+    csrf = page.text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
+    for group_id, source in [("custom:operator", "10.99.0.0/16"), ("any", None)]:
+        saved = client.post("/firewall/managed-rules/source-group", data={
+            "csrf": csrf, "rule_name": f"management-ui-{target}", "source_group_id": group_id,
+        })
+        assert saved.status_code == 200
+        assert saved.json()["status"] == "saved"
+        assert client.get("/firewall").status_code == 200
+        with SessionLocal() as db:
+            context = firewall_context(db, reconcile=False)
+            rows = context["firewall_managed_rule_rows"]
+            selected = next(row for row in rows if row["name"] == f"management-ui-{target}")
+            assert selected["source_group_id"] == group_id
+            other = "eth2.10" if target == "eth1" else "eth1"
+            assert next(row for row in rows if row["name"] == f"management-ui-{other}")["source_group_id"] == "custom:bootstrap-management"
+            for preview in (context["firewall_config_preview"], firewall_validation_payload(db)[2]):
+                line = next(line for line in preview.splitlines() if f'comment "management-ui-{target}"' in line)
+                if source:
+                    assert f"ip saddr {source}" in line
+                else:
+                    assert "saddr" not in line
+                other_line = next(line for line in preview.splitlines() if f'comment "management-ui-{other}"' in line)
+                assert "ip saddr 0.0.0.0/0" in other_line

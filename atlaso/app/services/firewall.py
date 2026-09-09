@@ -256,7 +256,7 @@ def managed_service_firewall_rules(
                 name=f"management-ui-{interface_name}",
                 service="Management UI",
                 interface_name=interface_name,
-                source=_managed_rule_source("management-ui", interface_name, interface_networks, source_groups_by_id, source_group_assignments),
+                source=_managed_rule_source(f"management-ui-{interface_name}", interface_name, interface_networks, source_groups_by_id, source_group_assignments),
                 protocol="tcp",
                 ports="22,80,443",
                 priority=10 + index,
@@ -1211,6 +1211,17 @@ def _routing_firewall_rule(
     )
 
 
+def managed_rule_source_group_id(rule_name: str, assignments: dict[str, str]) -> str:
+    """Resolve a listener override before its shared bootstrap assignment.
+
+    Args:
+        rule_name: Generated rule identity used by the row editor.
+        assignments: Persisted Source Group assignments.
+    """
+    default_name = "management-ui" if rule_name.startswith("management-ui-") else rule_name
+    return assignments.get(rule_name, assignments.get(default_name, FIREWALL_ANY_SOURCE_GROUP_ID))
+
+
 def _managed_rule_source(
     rule_name: str,
     interface_name: str,
@@ -1227,7 +1238,7 @@ def _managed_rule_source(
         source_groups_by_id: Identifier of the source groups by.
         assignments: Assignments supplied by the caller.
     """
-    group_id = assignments.get(rule_name, FIREWALL_ANY_SOURCE_GROUP_ID)
+    group_id = managed_rule_source_group_id(rule_name, assignments)
     group = source_groups_by_id.get(group_id) or source_groups_by_id.get(FIREWALL_ANY_SOURCE_GROUP_ID)
     if group:
         return source_group_to_rule_source(group, source_groups_by_id)

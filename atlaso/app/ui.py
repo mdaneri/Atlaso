@@ -399,6 +399,7 @@ from atlaso.app.services.firewall import (
     firewall_source_group_state,
     is_atlaso_managed_firewall_rule,
     managed_routing_firewall_rules,
+    managed_rule_source_group_id,
     managed_service_firewall_rules,
     render_nftables_config,
     validate_firewall_source_groups,
@@ -4344,8 +4345,7 @@ def managed_firewall_rule_rows(
             source_group_id = ""
             source_group = {"name": "DHCP bootstrap", "entries": ["interface-bound"]}
         else:
-            assignment_name = "management-ui" if rule.name.startswith("management-ui-") else rule.name
-            source_group_id = assignments.get(assignment_name, "any")
+            source_group_id = managed_rule_source_group_id(rule.name, assignments)
             if source_group_id not in source_groups_by_id:
                 source_group_id = "any"
             source_group = source_groups_by_id.get(source_group_id, {})

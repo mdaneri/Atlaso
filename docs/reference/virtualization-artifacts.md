@@ -487,6 +487,7 @@ it from the final configured management network. Services interfaces remain outs
 Fresh appliance initialization retains these
 source and address-family restrictions in the **Bootstrap management** Source Group assigned to management admission,
 including physical and VLAN interfaces flagged for management UI, so normal Firewall Apply preserves them.
+Editing a flagged listener's Source Group overrides that listener only; other listeners retain their shared default.
 Console IPv6 correction uses the shared Network Objects transaction lock before reading desired state, preserving
 concurrent operator saves. It updates the address family of an untouched bootstrap group before Apply; an operator-saved
 Source Group remains authoritative. Operators can subsequently edit that Source Group or its assignment;
