@@ -4221,6 +4221,9 @@ are explicitly inventoried so route/template changes cannot silently escape the 
   <code>appliance-apply-modal</code>, <code>task-detail-modal</code>, and <code>task-log-modal</code>.</li>
 <li>Authentication and users: <code>oidc-client-dialog</code>, <code>oidc-key-dialog</code>, <code>api-token-dialog</code>, <code>user-account-dialog</code>, and
   <code>user-password-modal</code>.</li>
+<li>Factory Reset uses <code>factory-reset-password-modal</code> for non-grid settings, reusing the Local Users password dialog.
+  Only Change-selected accounts are prompted at submission; inline validation, contained focus/hover help, cancellation
+  cleanup, and the shared destructive confirmation preserve the reset boundary.</li>
 <li>Automation and maintenance: <code>automation-schedule-modal</code>, <code>automation-script-create-dialog</code>,
   <code>automation-script-modal</code>, <code>automation-script-run-modal</code>, <code>automation-script-diff-modal</code>,
   <code>appliance-update-source-dialog</code>, and <code>managed-package-dialog</code>.</li>
