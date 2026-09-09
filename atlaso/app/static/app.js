@@ -5489,6 +5489,105 @@ function initializeUsersTable() {
   });
 }
 
+function initializeFactoryResetPasswords() {
+  const form = document.querySelector("[data-factory-reset-form]");
+  const modal = document.getElementById("factory-reset-password-modal");
+  const editor = document.getElementById("factory-reset-password-dialog-form");
+  if (!(form instanceof HTMLFormElement) || !(modal instanceof HTMLDialogElement)
+      || !(editor instanceof HTMLFormElement) || form.dataset.passwordDialogsReady) return;
+  const password = editor.elements.namedItem("password");
+  const confirmation = editor.elements.namedItem("confirmation");
+  const error = document.getElementById("factory-reset-password-error");
+  let resolvePassword = null;
+  let busy = false;
+  const fields = (account) => ({
+    password: form.elements.namedItem(`${account}_password`),
+    confirmation: form.elements.namedItem(`${account}_password_confirm`),
+    change: form.querySelector(`input[name="${account}_password_action"][value="change"]`),
+  });
+  const clear = () => {
+    editor.reset();
+    resetPasswordVisibility(editor);
+    error.textContent = "";
+    for (const account of ["admin", "root"]) {
+      fields(account).password.value = "";
+      fields(account).confirmation.value = "";
+    }
+  };
+  initializePasswordToggles(editor);
+  editor.noValidate = true;
+  editor.addEventListener("submit", (event) => {
+    event.preventDefault();
+    error.textContent = !password.value || !confirmation.value
+      ? "Enter and confirm the new password."
+      : password.value !== confirmation.value ? "Password confirmation does not match." : "";
+    if (error.textContent) {
+      (!password.value ? password : confirmation).focus();
+      return;
+    }
+    modal.close("prepared");
+  });
+  [password, confirmation].forEach((input) => input.addEventListener("input", () => { error.textContent = ""; }));
+  modal.querySelector("[data-reset-password-cancel]").addEventListener("click", () => modal.close("cancel"));
+  modal.addEventListener("close", () => {
+    const result = modal.returnValue === "prepared" ? password.value : null;
+    editor.reset();
+    resetPasswordVisibility(editor);
+    error.textContent = "";
+    resolvePassword?.(result);
+    resolvePassword = null;
+  });
+  for (const account of ["admin", "root"]) {
+    const fallback = form.querySelector(`[data-reset-password-fields="${account}"]`);
+    fallback.hidden = true;
+    fallback.classList.add("hidden");
+  }
+  // Collect only the requested changes, then use the shared final confirmation.
+  // Its one-shot confirmed flag also lets the shared submit handler pass through.
+  form.addEventListener("submit", async (event) => {
+    if (form.dataset.confirmed === "1") return;
+    event.preventDefault();
+    event.stopImmediatePropagation();
+    if (busy) return;
+    busy = true;
+    clear();
+    let confirmed = false;
+    try {
+      for (const account of ["admin", "root"]) {
+        if (!fields(account).change.checked) continue;
+        document.getElementById("factory-reset-password-title").textContent = account === "admin"
+          ? "New administrator password for reset" : "New root password for reset";
+        const value = await new Promise((resolve) => {
+          resolvePassword = resolve;
+          modal.returnValue = "";
+          modal.showModal();
+          password.focus();
+        });
+        if (value === null) return;
+        fields(account).password.value = value;
+        fields(account).confirmation.value = value;
+      }
+      confirmed = await requestConfirmation({
+        title: form.dataset.confirmTitle,
+        message: form.dataset.confirmMessage,
+        label: form.dataset.confirmLabel,
+      });
+      if (confirmed) {
+        form.dataset.confirmed = "1";
+        form.requestSubmit(event.submitter);
+      }
+    } finally {
+      busy = false;
+      if (!confirmed) {
+        clear();
+        event.submitter?.focus();
+      }
+    }
+  }, true);
+  window.addEventListener("pagehide", clear);
+  form.dataset.passwordDialogsReady = "true";
+}
+
 function initializeUserPasswordForm() {
   const modal = document.getElementById("user-password-modal");
   const form = document.getElementById("user-password-form");
@@ -23580,6 +23679,7 @@ document.addEventListener("DOMContentLoaded", initializeServicesTable);
 document.addEventListener("DOMContentLoaded", initializeDepotBrowserTable);
 document.addEventListener("DOMContentLoaded", initializeUsersTable);
 document.addEventListener("DOMContentLoaded", initializeUserPasswordForm);
+document.addEventListener("DOMContentLoaded", initializeFactoryResetPasswords);
 document.addEventListener("DOMContentLoaded", initializeRoutesWanRoutesTable);
 document.addEventListener("DOMContentLoaded", initializeRoutesWanRoutingTable);
 document.addEventListener("DOMContentLoaded", initializeRoutesWanNatTable);

@@ -3,6 +3,7 @@
 import builtins
 import json
 import os
+import runpy
 import subprocess
 import sys
 from contextlib import contextmanager
@@ -41,6 +42,24 @@ from atlaso.app.models import (
 )
 from atlaso.app.seed import FACTORY_RESET_SETTING_KEY, seed_initial_data
 from atlaso.app.services.networking import HostPhysicalInterface
+
+
+@pytest.mark.parametrize("state", ["building", "applying", "committing", "awaiting_readiness", "failed"])
+def test_reset_console_progress_is_readable_and_strips_control_sequences(state):
+    """Show reset stages and recovery without allowing detail text to control tty1.
+
+    Args:
+        state: Reset lifecycle stage rendered for the operator.
+    """
+    from atlaso.app.factory_reset import _render_reset_console
+
+    screen = _render_reset_console(state, "Network detail\x1b[2J\ncontinued")
+    assert screen.startswith("\x1b[2J\x1b[H")
+    assert screen.count("\x1b") == 2
+    assert f"Stage: {state}" in screen
+    assert "Do not power off" in screen
+    assert ("Alt+F2" in screen) == (state == "failed")
+    assert ("192.168.49.1" in screen) == (state != "failed")
 
 
 def test_factory_reset_transaction_lock_rejects_overlapping_posix_runner(
@@ -1576,6 +1595,54 @@ def test_managed_factory_reset_retains_marker_until_readiness(tmp_path, monkeypa
     scheduled: list[tuple[str, ...]] = []
     credential_removal_states: list[str] = []
     login_cleanup_events: list[str] = []
+    helper = runpy.run_path(str(Path(__file__).resolve().parents[1] / "scripts/appliance/atlaso-helper"))
+    login_cleanup = helper["_terminate_factory_reset_login_sessions"]
+    helper_globals = login_cleanup.__globals__
+    monkeypatch.setitem(helper_globals, "ATLASO_FACTORY_RESET_REQUEST_PATH", state_directory / "request.json")
+    monkeypatch.setitem(helper_globals, "_managed_local_usernames", lambda: ["admin"])
+    monkeypatch.setattr(helper_globals["shutil"], "which", lambda name: f"/usr/bin/{name}")
+    if os.name == "posix":
+        monkeypatch.setitem(
+            helper_globals, "_open_factory_reset_directory",
+            lambda: os.open(state_directory, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW),
+        )
+        original_fstat = os.fstat
+
+        def root_owned_fstat(descriptor):
+            """Model root ownership while retaining real marker content and mode.
+
+            Args:
+                descriptor: Open marker descriptor passed to the real fstat.
+            """
+            result = original_fstat(descriptor)
+            return SimpleNamespace(st_mode=result.st_mode, st_uid=0, st_size=result.st_size)
+
+        monkeypatch.setattr(helper_globals["os"], "fstat", root_owned_fstat)
+
+    def session_command(command, **_kwargs):
+        """Provide stopped SSH and empty session inventories without host mutation.
+
+        Args:
+            command: Helper command whose result is simulated.
+            **_kwargs: Ignored command execution options.
+        """
+        return subprocess.CompletedProcess(command, 3 if "is-active" in command else 0, "", "")
+
+    monkeypatch.setitem(helper_globals, "_run", session_command)
+
+    def terminate_sessions(_adapter):
+        """Exercise real helper admission against the runner's durable phase.
+
+        Args:
+            _adapter: Adapter instance invoking the helper operation.
+        """
+        assert json.loads((state_directory / "request.json").read_text(encoding="utf-8"))["state"] == "committing"
+        login_cleanup_events.append("sessions terminated")
+        return AdapterResult(
+            command=["factory-reset", "terminate-login-sessions"],
+            dry_run=False,
+            returncode=login_cleanup(),
+        )
     monkeypatch.setenv("ATLASO_FACTORY_RESET_STATE_DIRECTORY", str(state_directory))
     monkeypatch.setattr(
         factory_reset,
@@ -1594,11 +1661,7 @@ def test_managed_factory_reset_retains_marker_until_readiness(tmp_path, monkeypa
     monkeypatch.setattr(
         SystemAdapter,
         "terminate_factory_reset_login_sessions",
-        lambda _adapter: login_cleanup_events.append("sessions terminated")
-        or AdapterResult(
-            command=["factory-reset", "terminate-login-sessions"],
-            dry_run=False,
-        ),
+        terminate_sessions,
     )
     real_remove_credentials = factory_reset._remove_factory_reset_credentials
 
@@ -1895,15 +1958,18 @@ def test_factory_host_inventory_is_stable_across_startup_refresh(tmp_path):
     engine.dispose()
 
 
+@pytest.mark.parametrize("had_applied_vlan", [False, True])
 def test_complete_factory_reset_replaces_database_and_establishes_baselines(
     tmp_path,
     monkeypatch,
+    had_applied_vlan,
 ):
     """Factory reset removes prior records and leaves every apply unit current.
 
     Args:
         tmp_path: Temporary directory provided by pytest for isolated filesystem state.
         monkeypatch: Pytest fixture used to replace dependencies for the test.
+        had_applied_vlan: Whether the previous Network baseline includes a removed VLAN.
     """
     database_path = tmp_path / "atlaso.db"
     state_directory = tmp_path / "factory-reset"
@@ -1921,10 +1987,12 @@ def test_complete_factory_reset_replaces_database_and_establishes_baselines(
         seed_initial_data(db, include_examples=False)
         from atlaso.app.ui import save_appliance_apply_baselines
 
-        save_appliance_apply_baselines(
-            db,
-            {"retired-legacy-unit": {"fingerprint": "pre-reset-state"}},
-        )
+        previous_baselines = {"retired-legacy-unit": {"fingerprint": "pre-reset-state"}}
+        if had_applied_vlan:
+            previous_baselines["network"] = {
+                "config_preview": "[vlan_interfaces]\nvlan=eth1.110\n  parent=eth1\n  vlan_id=110\n",
+            }
+        save_appliance_apply_baselines(db, previous_baselines)
         admin = db.execute(select(User).where(User.username == "admin")).scalar_one()
         db.add(User(username="remove-me", role="admin"))
         db.add(

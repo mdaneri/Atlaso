@@ -59,6 +59,14 @@ replacement database, validates all generated runtime configuration, and activat
 units. Only after the candidate passes validation does Atlaso atomically replace the active database. The management
 plane restarts and the initiating browser is handed back to sign-in.
 
+Choose **Keep current password** or **Change password** for each account, then select **Factory reset appliance**.
+Only accounts marked **Change password** are prompted, administrator first and root second, using the Local Users
+password-dialog pattern. Enter and confirm each replacement, then select **Continue**. Empty or mismatched entries
+show an inline error. Help appears only while its icon is hovered or keyboard-focused and stays within the dialog.
+The final destructive confirmation follows password collection. Canceling either dialog or final confirmation discards
+all prepared values without changing the account choices. Passwords are not saved in browser storage. Without
+JavaScript, the original labeled password fields remain available.
+
 Factory reset deliberately moves management admission to the applied factory binding (`eth0` at
 `192.168.49.1/24`) instead of keeping a retired pre-reset listener authorized. The replacement database, Network
 baseline, and app-owned `core.atlaso.internal` DNS record are committed together only after factory networking has
@@ -120,7 +128,10 @@ retry reset after its finalizer is definitive.
 
 The candidate temporarily imports compatible applied baselines so removed resources can be reconciled against their
 last known state. After activation, Atlaso replaces that mapping with fingerprints for exactly the current factory apply
-units; retired or unknown baseline keys cannot survive in the replacement database.
+units; retired or unknown baseline keys cannot survive in the replacement database. The old mapping is cleared before
+calculating those final fingerprints, so completed VLAN removals cannot leave a transient removal summary in the new
+Network baseline. Retaining that summary could stop a reset with
+`Factory reset could not establish applied baselines for: Network` after runtime defaults were activated.
 
 Earlier sessions, bearer tokens, service credentials, and removed-account credentials stop working. The reset preserves
 the current bootstrap administrator web/Photon password and root password for each **Keep current password** choice. A
@@ -160,6 +171,19 @@ services again. This prevents a legacy delayed restart from reviving a database 
 Factory Appliance Settings activation initializes the packaged PowerCLI runtime from Atlaso's root-owned persistent
 PowerShell home, so the all-users VMware CEIP policy does not depend on an interactive root profile during the detached
 reset transaction.
+
+During runtime reset, tty1 displays **Factory reset in progress**, the current stage, and a warning not to power off.
+This display writes no database state and remains available while the normal console service is stopped. If reset
+fails, it displays the public failure detail and the Alt+F2 status-command recovery path. Headless systems continue
+reset even when tty1 cannot be written. The normal console returns as required services restart.
+
+The final operating-system login sweep runs during `committing`, after database replacement and retained-key cleanup.
+Only login-session cleanup is admitted in both `applying` and `committing`; network and retained-runtime cleanup stay
+restricted to `applying`. Versions with the earlier applying-only login guard can stop with
+`Factory reset could not terminate post-activation operating-system login sessions.`, leaving tty1 blank after factory
+addressing has applied. Preserve the failure status, install the corrected helper through the supported deployment
+workflow after restoring access, and use the documented resume path. Repeating the reset with the old helper does not
+correct the phase mismatch.
 
 Reset progress and only the non-secret `keep`/`change` choices are recorded outside the database in
 `/var/lib/atlaso-privileged/factory-reset/request.json`; the last successful result is recorded in `last-result.json`. Atlaso
