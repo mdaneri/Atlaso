@@ -4253,7 +4253,9 @@ def firewall_context(db: Session, *, reconcile: bool = True) -> dict:
         web_terminal_interfaces=terminal_interfaces,
         ldap_settings=get_ldap_settings_row(db),
         oidc_settings=ensure_oidc_provider_settings(db),
-        esx_storage_rules=esx_storage_firewall_rule_specs(esx_storage_context(db, reconcile=False)["esx_storage_manifest"]),
+        esx_storage_rules=esx_storage_firewall_rule_specs(
+            esx_storage_context(db, reconcile=False, include_disk_inventory=False)["esx_storage_manifest"]
+        ),
         management_interface=management.get("name", ""),
         access_management_ui_interfaces=[
             interface.name
@@ -5034,12 +5036,13 @@ def ca_request_context(db: Session) -> dict:
     }
 
 
-def kms_context(db: Session, *, reconcile: bool = True) -> dict:
+def kms_context(db: Session, *, reconcile: bool = True, include_runtime_counts: bool = True) -> dict:
     """Return kms context.
 
     Args:
         db: Active database session.
         reconcile: Whether dependent desired state should be reconciled.
+        include_runtime_counts: Read live provider counts for the detail page.
     """
     settings = get_kms_settings_row(db)
     available_interfaces = service_bind_options(db)
@@ -5097,7 +5100,7 @@ def kms_context(db: Session, *, reconcile: bool = True) -> dict:
         .order_by(CaCertificate.id.desc())
     ).scalars().first()
     runtime = service_runtime_status(db, "kms")
-    status_snapshot = runtime_status_snapshot()
+    status_snapshot = runtime_status_snapshot() if include_runtime_counts else {}
     runtime_counts = status_snapshot.get("providers")
     runtime_counts = runtime_counts if isinstance(runtime_counts, dict) else {}
     status_rows = [
@@ -5583,12 +5586,13 @@ def routes_wan_context(db: Session) -> dict:
     }
 
 
-def dnsmasq_context(db: Session, *, reconcile: bool = True) -> dict:
+def dnsmasq_context(db: Session, *, reconcile: bool = True, include_leases: bool = True) -> dict:
     """Return dnsmasq context.
 
     Args:
         db: Active database session.
         reconcile: Whether dependent desired state should be reconciled.
+        include_leases: Read current client leases for the DNS/DHCP detail page.
     """
     dns_settings = get_dns_settings_row(db)
     if reconcile and normalize_service_bind_settings(db, dns_settings):
@@ -5662,9 +5666,12 @@ def dnsmasq_context(db: Session, *, reconcile: bool = True) -> dict:
             group["authority"] = None
         group["suggested_ipv4"] = dns_record_suggested_ipv4(dns_records, group["domain"], dhcp_scopes, dhcp_reservations)
     reverse_zone_groups = reverse_records_by_zone(dns_reverse_records(dns_records))
-    lease_result = SystemAdapter().read_dhcp_leases()
-    dhcp_lease_error = lease_result.stderr.strip() if lease_result.returncode != 0 else ""
-    dhcp_leases = [] if dhcp_lease_error else filter_current_dhcp_leases(parse_dnsmasq_leases(lease_result.stdout), dhcp_scopes)
+    lease_result = SystemAdapter().read_dhcp_leases() if include_leases else None
+    dhcp_lease_error = lease_result.stderr.strip() if lease_result and lease_result.returncode != 0 else ""
+    dhcp_leases = (
+        filter_current_dhcp_leases(parse_dnsmasq_leases(lease_result.stdout), dhcp_scopes)
+        if lease_result and not dhcp_lease_error else []
+    )
     return {
         "dns_settings": dns_settings,
         "dns_records": dns_records,
@@ -5688,8 +5695,8 @@ def dnsmasq_context(db: Session, *, reconcile: bool = True) -> dict:
         "dhcp_reservation_rows": [dhcp_reservation_payload(item, dhcp_scopes) for item in dhcp_reservations],
         "dhcp_leases": dhcp_leases,
         "dhcp_lease_rows": [dhcp_lease_payload(lease, dhcp_scopes) for lease in dhcp_leases],
-        "dhcp_lease_dry_run": lease_result.dry_run,
-        "dhcp_lease_command": " ".join(lease_result.command),
+        "dhcp_lease_dry_run": lease_result.dry_run if lease_result else False,
+        "dhcp_lease_command": " ".join(lease_result.command) if lease_result else "",
         "dhcp_lease_error": dhcp_lease_error,
         "available_interfaces": available_interfaces,
         "available_dns_addresses": available_dns_listen_addresses(dns_settings, dhcp_settings, available_interfaces, vlan_interfaces),
@@ -10633,12 +10640,13 @@ def parse_optional_esxi_kickstart_id(db: Session, kickstart_id: str, *, label: s
     return normalized_id
 
 
-def esx_storage_context(db: Session, *, reconcile: bool = True) -> dict[str, Any]:
+def esx_storage_context(db: Session, *, reconcile: bool = True, include_disk_inventory: bool = True) -> dict[str, Any]:
     """Return esx storage context.
 
     Args:
         db: Active database session.
         reconcile: Whether dependent desired state should be reconciled.
+        include_disk_inventory: Read candidate disks for the storage detail page.
     """
     settings = get_esx_storage_settings_row(db)
     volumes = db.execute(select(EsxStorageVolume).order_by(EsxStorageVolume.name)).scalars().all()
@@ -10669,10 +10677,10 @@ def esx_storage_context(db: Session, *, reconcile: bool = True) -> dict[str, Any
     validation_errors = [*manifest["validation"]["errors"], *record_conflicts]
     disk_inventory: list[dict[str, Any]] = []
     inventory_error = ""
-    inventory_result = SystemAdapter().esx_storage_inventory()
-    if inventory_result.returncode:
+    inventory_result = SystemAdapter().esx_storage_inventory() if include_disk_inventory else None
+    if inventory_result and inventory_result.returncode:
         inventory_error = inventory_result.stderr.strip() or "ESX Storage disk inventory is unavailable."
-    else:
+    elif inventory_result:
         try:
             disk_inventory = parse_esx_storage_disk_inventory_output(
                 inventory_result.stdout,
@@ -10769,11 +10777,13 @@ def appliance_apply_units(db: Session, *, reconcile: bool = True) -> list[dict[s
     wan = routes_wan_context(db)
     nat = traffic_publishing_context(db)
     firewall = firewall_context(db, reconcile=reconcile)
-    dnsmasq = dnsmasq_context(db, reconcile=reconcile)
+    # Apply units consume desired previews and validation, not detail-page tables.
+    # Keep validation probes (including NTP capabilities and DHCP upstreams) live.
+    dnsmasq = dnsmasq_context(db, reconcile=reconcile, include_leases=False)
     esxi_pxe = esxi_pxe_context(db)
-    esx_storage = esx_storage_context(db, reconcile=reconcile)
+    esx_storage = esx_storage_context(db, reconcile=reconcile, include_disk_inventory=False)
     ca = ca_context(db, reconcile=reconcile)
-    kms = kms_context(db, reconcile=reconcile)
+    kms = kms_context(db, reconcile=reconcile, include_runtime_counts=False)
     ldap = ldap_context(db, reconcile=reconcile)
     ntp = ntp_context(db, reconcile=reconcile)
     vcf_backup = vcf_backup_context(db, reconcile=reconcile)

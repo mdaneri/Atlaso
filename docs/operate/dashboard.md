@@ -69,6 +69,11 @@ time, and destination URL. Task results, command output, raw errors, audit detai
 The browser refreshes every 30 seconds while the page is visible, pauses while hidden, and refreshes immediately after
 becoming visible. A failed refresh keeps the last successful DOM and displays a stale-data notice.
 
+Each snapshot evaluates current desired-state validation and pending changes without fetching detail-page disk
+inventory, DHCP client leases, or vSphere provider counts. Those live details remain available in their owning pages.
+Validation inputs such as NTP capabilities and management DHCP DNS upstreams are still checked; Dashboard does not
+cache desired-state results to shorten page opening.
+
 `/api/v1/dashboard` remains the existing bearer-authenticated public API and is not backed by this private UI response.
 
 <!-- BEGIN GENERATED ADDITIONAL SCREENSHOTS -->
