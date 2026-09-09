@@ -38,11 +38,11 @@ if ($version -notmatch '^\d+\.\d+\.\d+$') {
 $hyperVAdapters = @(
     [pscustomobject]@{
         Name = 'Services'; Id = 'service-id'; SwitchName = 'Services';
-        MacAddress = '00155D445566'; IPAddresses = @('198.51.100.20')
+        MacAddress = '00155D445566'; IPAddresses = @('198.51.100.20'); DynamicMacAddressEnabled = $true
     },
     [pscustomobject]@{
         Name = 'Management'; Id = 'management-id'; SwitchName = 'Management';
-        MacAddress = '00155D112233'; IPAddresses = @('192.0.2.20')
+        MacAddress = '00155D112233'; IPAddresses = @('192.0.2.20'); DynamicMacAddressEnabled = $true
     }
 )
 $hyperVIdentity = Resolve-AtlasoHyperVSmokeNetworkIdentity `
@@ -55,12 +55,31 @@ $hyperVIdentity = Resolve-AtlasoHyperVSmokeNetworkIdentity `
 $pendingAdapters = @($hyperVAdapters | ForEach-Object { $_.PSObject.Copy() })
 foreach ($adapter in $pendingAdapters) {
     $adapter.MacAddress = '000000000000'
-    $adapter | Add-Member -NotePropertyName DynamicMacAddressEnabled -NotePropertyValue $true
 }
 $pendingIdentity = Resolve-AtlasoHyperVSmokeNetworkIdentity -Adapters $pendingAdapters `
     -ManagementSwitch Management -ServiceSwitch Services -AllowMissingAddress -AllowPendingMacAddress
 if (-not $pendingIdentity.ServiceMacPending -or -not $pendingIdentity.ManagementMacPending) {
     throw 'Unassigned dynamic adapters were not marked pending.'
+}
+foreach ($adapterIndex in @(0, 1)) {
+    foreach ($allocationMode in @('static', 'missing')) {
+        $modeChangedAdapters = @($hyperVAdapters | ForEach-Object { $_.PSObject.Copy() })
+        if ($allocationMode -eq 'static') {
+            $modeChangedAdapters[$adapterIndex].DynamicMacAddressEnabled = $false
+        } else {
+            $modeChangedAdapters[$adapterIndex].PSObject.Properties.Remove('DynamicMacAddressEnabled')
+        }
+        $modeRejected = $false
+        try {
+            Resolve-AtlasoHyperVSmokeNetworkIdentity -Adapters $modeChangedAdapters `
+                -ManagementSwitch Management -ServiceSwitch Services -ExpectedIdentity $pendingIdentity `
+                -AllowPendingMacAddress | Out-Null
+        } catch {
+            if ($_.Exception.Message -notmatch 'stopped being explicitly dynamic') { throw }
+            $modeRejected = $true
+        }
+        if (-not $modeRejected) { throw "Pending allocation admitted $allocationMode mode for adapter $adapterIndex." }
+    }
 }
 $pendingAdapters[1].MacAddress = '00155D112233'
 $partialIdentity = Resolve-AtlasoHyperVSmokeNetworkIdentity -Adapters $pendingAdapters `
@@ -125,7 +144,6 @@ if (-not $rejected) { throw 'An unassigned static MAC was admitted as pending.' 
         $state = @($hyperVAdapters | ForEach-Object { $_.PSObject.Copy() })
         if ($script:macSample -eq 0) {
             $state[0].MacAddress = '000000000000'
-            $state[0] | Add-Member -NotePropertyName DynamicMacAddressEnabled -NotePropertyValue $true
         } elseif ($script:replaceAssignedMac) { $state[1].MacAddress = '00155DAABBCC' }
         $script:macSample++
         return $state

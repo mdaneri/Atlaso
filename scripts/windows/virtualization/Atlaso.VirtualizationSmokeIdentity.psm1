@@ -200,6 +200,11 @@ function Resolve-AtlasoHyperVSmokeNetworkIdentity {
                 [string]$ExpectedIdentity.$field -eq '00:00:00:00:00:00' -and
                 $null -ne $ExpectedIdentity.PSObject.Properties[($field + 'Pending')] -and
                 $ExpectedIdentity.PSObject.Properties[($field + 'Pending')].Value -eq $true) {
+                $allocatingAdapter = if ($field -eq 'ManagementMac') { $management[0] } else { $services[0] }
+                if ($null -eq $allocatingAdapter.PSObject.Properties['DynamicMacAddressEnabled'] -or
+                    $allocatingAdapter.DynamicMacAddressEnabled -ne $true) {
+                    throw "The Hyper-V smoke adapter stopped being explicitly dynamic while acquiring $field."
+                }
                 continue
             }
             if ([string]$identity.$field -cne [string]$ExpectedIdentity.$field) {
