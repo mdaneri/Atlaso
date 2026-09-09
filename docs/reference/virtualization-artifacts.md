@@ -521,6 +521,13 @@ mismatched, or
 changing management MAC/address evidence fails the smoke run before the SSH or `/openapi.json` result is accepted, and
 the same binding is revalidated after reboot.
 
+Hyper-V smoke imports without starting the VM so adapter IDs and switch bindings are captured before power-on.
+During initial acquisition only, an all-zero MAC on an explicitly dynamic adapter is pending allocation. The smoke
+pins each nonzero MAC as soon as it appears and requires both MACs plus management IPv4 before probing. It never
+rebases an assigned MAC, adapter ID, or switch; subsequent changes remain fatal, including after reboot. Identity
+errors include expected and observed field values and both current adapter IDs for diagnosis. If a service-MAC
+failure recurs, retain that evidence to distinguish allocation from adapter replacement or a later MAC change.
+
 VMware SSH admission requires a currently `Reachable` management neighbor. Cached `Stale`, `Delay`, and `Probe`
 entries are probe candidates only; expired, malformed, or unbounded DHCP leases are excluded. Each failed SSH
 transport attempt returns to the Windows wrapper for another identity check under the same 15-minute phase deadline.

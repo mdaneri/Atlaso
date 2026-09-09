@@ -127,8 +127,11 @@ function Wait-AtlasoHyperVSmokeNetworkIdentity {
             -ManagementSwitch $ManagementSwitch `
             -ServiceSwitch $ServiceSwitch `
             -ExpectedIdentity $ExpectedIdentity `
-            -AllowMissingAddress
-        if ($identity.Address) {
+            -AllowMissingAddress `
+            -AllowPendingMacAddress
+        # Pin each allocated MAC even if the other NIC or DHCP is still pending.
+        $ExpectedIdentity = $identity
+        if ($identity.Address -and -not $identity.ManagementMacPending -and -not $identity.ServiceMacPending) {
             return $identity
         }
         Start-Sleep -Seconds 5
@@ -237,8 +240,7 @@ try {
             -Name $Name `
             -ManagementSwitch $ManagementSwitch `
             -ServiceSwitch $ServiceSwitch `
-            -DestinationRoot $vmRoot `
-            -Start
+            -DestinationRoot $vmRoot
     )
     if ($createdVmMatches.Count -ne 1 -or
         [string]$createdVmMatches[0].Name -cne $Name -or
@@ -251,7 +253,14 @@ try {
         -Adapters @(Get-VMNetworkAdapter -VM $createdVm -ErrorAction Stop) `
         -ManagementSwitch $ManagementSwitch `
         -ServiceSwitch $ServiceSwitch `
-        -AllowMissingAddress
+        -AllowMissingAddress `
+        -AllowPendingMacAddress
+    # Bind adapter IDs and switches before power-on, then acquire dynamic MACs
+    # without treating the provider's all-zero placeholder as a durable identity.
+    Assert-AtlasoStorageCapacity -Stage 'Hyper-V startup' -Components @(
+        [pscustomobject]@{ Path=$operationRoot; Name='VMRS memory, metadata and guest disk growth'; Bytes=20GB }
+    )
+    Start-VM -VM $createdVm -ErrorAction Stop | Out-Null
     $deadline = [DateTimeOffset]::UtcNow.AddMinutes(15)
     $access = $null
     $networkIdentity = $null
@@ -262,6 +271,7 @@ try {
             -ServiceSwitch $ServiceSwitch `
             -ExpectedIdentity $providerIdentity `
             -Deadline $deadline
+        $providerIdentity = $networkIdentity
         $access = Get-AtlasoHyperVFirstBootAccess -VmId $createdVm.Id
         if ($null -eq $access) {
             Start-Sleep -Seconds 5
