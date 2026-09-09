@@ -18,7 +18,7 @@
         <link rel="prev" href="../ui-design-guide/">
       
       
-        <link rel="next" href="../../project/">
+        <link rel="next" href="../completed-task-cleanup/">
       
       
         
@@ -424,6 +424,8 @@
       
         
           
+        
+      
         
       
         
@@ -2553,6 +2555,8 @@
       
         
       
+        
+      
     
     
     
@@ -3273,6 +3277,40 @@
   
 </nav>
       
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../completed-task-cleanup/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Completed task cleanup command
+
+    
+  </span>
+  
+  
+    
+  
+  
+    <span class="md-status md-status--current"></span>
+  
+
+  
+
+      </a>
     </li>
   
 
@@ -4097,6 +4135,8 @@
       
         
       
+        
+      
     
     
     
@@ -4373,6 +4413,13 @@ runtime.</p>
   check linked issue closure, and monitor applicable post-merge workflows before reporting completion.</li>
 </ul>
 <h3 id="completed-task-cleanup">Completed task cleanup<a class="headerlink" href="#completed-task-cleanup" title="Permanent link">&para;</a></h3>
+<p>Agents and the primary-checkout cleanup controller must use <code>scripts/cleanup-completed-task.ps1</code> for eligible
+completed ordinary task worktrees. Run <code>pwsh -NoProfile -File scripts/cleanup-completed-task.ps1</code> with absolute
+<code>-Handoff</code>, <code>-Evidence</code>, and <code>-Config</code> inputs: omit <code>-Execute</code> for read-only preview, then add it for execution with
+fresh live controller evidence. Follow the <a href="../completed-task-cleanup/">command and bridge contract</a>.
+Never replace a failed or refused command with ad hoc deletion; preserve remaining resources and report its exact
+retry condition. Unsupported policy exceptions retain their existing safeguards and require the documented controller
+workflow; this command does not waive ownership, resource-release, terminal-order, or title-readback gates.</p>
 <ul>
 <li>A task becomes <code>cleanup-ready</code> only after its exact pull request is merged, the merge commit is reachable from current
   <code>origin/main</code>, the linked issue is closed, applicable post-merge workflows are complete, and no review, deployment,
@@ -6141,13 +6188,13 @@ never pass advisory identifiers to this public formatter, and still require exac
         
         
           
-          <a href="../../project/" class="md-footer__link md-footer__link--next" aria-label="Next: Overview">
+          <a href="../completed-task-cleanup/" class="md-footer__link md-footer__link--next" aria-label="Next: Completed task cleanup command">
             <div class="md-footer__title">
               <span class="md-footer__direction">
                 Next
               </span>
               <div class="md-ellipsis">
-                Overview
+                Completed task cleanup command
               </div>
             </div>
             <div class="md-footer__button md-icon">
