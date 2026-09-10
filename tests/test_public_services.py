@@ -18,7 +18,13 @@ from atlaso.app.services.public_services import (
 @pytest.mark.parametrize("service_id", ["ca", "oidc"])
 @pytest.mark.parametrize("management_ui,service_port", [(True, 443), (False, 443), (True, 8443)])
 def test_service_hostname_terminal_upgrade_respects_management_cohosting(service_id, management_ui, service_port):
-    """Check the selected hostname block, not upgrade directives in a sibling server."""
+    """Check the selected hostname block, not upgrade directives in a sibling server.
+
+    Args:
+        service_id: Public service whose hostname server is rendered.
+        management_ui: Whether the Access interface also exposes management.
+        service_port: Service HTTPS port used to test same-port cohosting.
+    """
     config = render_public_services_nginx_config(
         [dict(interface="eth0", role="access", address="192.168.87.32",
               management_ui=management_ui, web_terminal=True,
