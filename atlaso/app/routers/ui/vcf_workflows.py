@@ -110,7 +110,11 @@ from atlaso.app.services.vcf_sddc_deployment import (
     vsphere_inventory,
     vsphere_ovf_descriptor,
 )
-from atlaso.app.services.vcf_sddc_upload import SddcUploadError, store_sddc_ova_upload
+from atlaso.app.services.vcf_sddc_upload import (
+    UPLOAD_ERROR_MESSAGES,
+    SddcUploadError,
+    store_sddc_ova_upload,
+)
 from atlaso.app.services.vcf_trust import (
     VcfTrustCredentials,
     VcfTrustError,
@@ -997,7 +1001,10 @@ def build_router(dependencies: VcfWorkflowsUiDependencies) -> VcfWorkflowsUiRout
                 request.stream(), unquote(request.headers.get("X-Atlaso-Filename", ""))
             )
         except SddcUploadError as exc:
-            return JSONResponse({"detail": str(exc)}, status_code=exc.status_code)
+            return JSONResponse(
+                {"detail": UPLOAD_ERROR_MESSAGES.get(exc.code, UPLOAD_ERROR_MESSAGES["storage_error"])},
+                status_code=exc.status_code,
+            )
         record_audit(
             db, actor=identity.username, action="upload_vcf_sddc_ova",
             resource_type="vcf_sddc_ova", resource_id=str(result["relative_path"]),

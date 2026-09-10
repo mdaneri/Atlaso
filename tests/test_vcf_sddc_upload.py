@@ -141,3 +141,19 @@ def test_upload_proxy_is_scoped_to_management_endpoint():
     assert "proxy_request_buffering off;" in location
     assert "proxy_http_version 1.1;" in location
     assert "proxy_set_header X-Atlaso-Listener-Address $server_addr;" in location
+
+
+def test_storage_error_does_not_expose_underlying_exception(tmp_path, monkeypatch):
+    import atlaso.app.services.vcf_sddc_upload as service
+
+    root = tmp_path / "component"
+    root.mkdir()
+
+    def fail_staging(*args, **kwargs):
+        raise OSError("private filesystem diagnostics")
+
+    monkeypatch.setattr(service.tempfile, "TemporaryDirectory", fail_staging)
+    with pytest.raises(SddcUploadError) as error:
+        asyncio.run(store_sddc_ova_upload(chunks(b"test"), "test.ova", root=root))
+    assert error.value.code == "storage_error"
+    assert "private" not in service.UPLOAD_ERROR_MESSAGES[error.value.code]
