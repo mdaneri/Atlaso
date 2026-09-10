@@ -3852,6 +3852,12 @@ and promotion writers wait and execute sequentially instead of replacing an earl
 run the workflow. Maintainers can request the same rebuild from an authenticated GitHub CLI session with
 <code>gh workflow run docs.yml --ref main</code> and monitor it with <code>gh run watch</code>.</p>
 <h2 id="required-checks">Required checks<a class="headerlink" href="#required-checks" title="Permanent link">&para;</a></h2>
+<p>The npm override for <code>markdownlint-cli2@0.23.1</code> selects <code>smol-toml</code> 1.7.1 to fix
+<a href="https://github.com/advisories/GHSA-7w5x-hrqm-74c2">GHSA-7w5x-hrqm-74c2</a>, an infinite loop on malformed TOML.
+Atlaso's checked-in linter configuration uses JSONC; this dependency update does not establish an appliance runtime
+exploit or exposure to untrusted TOML through supported tooling. Keep the scoped override until a linter upgrade
+resolves a patched parser without it. When upgrading the linter, remove the override, regenerate <code>package-lock.json</code>
+with npm, and verify the clean installed tree and timeout-protected parser compatibility tests before delivery.</p>
 <p>Run these commands before opening a pull request:</p>
 <div class="language-powershell highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="n">npm</span> <span class="n">ci</span>
 </span><span id="__span-0-2"><a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a><span class="n">npm</span> <span class="n">run</span> <span class="n">lint</span><span class="p">:</span><span class="n">markdown</span>
