@@ -16,7 +16,9 @@ Offline bundles use the same `ModuleName/Version` layout and must contain every 
 version. Missing modules, incompatible manifests, and side-by-side versions fail before the bundle is copied.
 Fresh root and bootstrap-administrator processes reject shadowing module copies, import the suite, verify every loaded
 module version and `Connect-VIServer`, and check the appliance-wide CEIP default. Final package-update checks repeat
-that proof. Updating `ATLASO_POWERCLI_VERSION` requires a matching reviewed complete lock; a suite-only override is
+that proof. Setting CEIP starts another verification process because PowerCLI caches that setting until restart;
+an unset value is not accepted as disabled. Updating `ATLASO_POWERCLI_VERSION` requires a matching reviewed complete
+lock; a suite-only override is
 rejected. This image-build lock does not change the runtime Appliance Update workflow.
 
 Both `build-photon-image.ps1` and `export-ovf.ps1` automatically run

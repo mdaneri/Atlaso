@@ -99,6 +99,54 @@ def test_exact_closure_imports_in_fresh_process(bundle: tuple[Path, Path]) -> No
     assert "Loaded locked PowerCLI module VMware.OpenAPI 1.0.0" in result.stdout
 
 
+@pytest.mark.parametrize("persist", [True, False])
+def test_ceip_setting_requires_fresh_process_readback(
+    bundle: tuple[Path, Path],
+    persist: bool,
+) -> None:
+    """Model vendor import-time caching and reject a setter that did not persist."""
+    root, lock = bundle
+    script = root / "VCF.PowerCLI/9.1.0/VCF.PowerCLI.psm1"
+    script.write_text(
+        "$script:cached = $null\n"
+        "$script:setting = Join-Path $PSScriptRoot 'ceip-disabled'\n"
+        "if (Test-Path $script:setting) { $script:cached = $false }\n"
+        "function Get-PowerCLIConfiguration { param($Scope) "
+        "[pscustomobject]@{ParticipateInCEIP=$script:cached} }\n"
+        "function Connect-VIServer {}\n"
+        "function Set-PowerCLIConfiguration { param($ParticipateInCeip,$Scope,$Confirm)\n"
+        + ("Set-Content $script:setting 'false'\n" if persist else "")
+        + "}\n",
+        encoding="utf-8",
+    )
+    env = os.environ.copy()
+    env.pop("ATLASO_POWERCLI_VERSION", None)
+    env["PSModulePath"] = str(root)
+    result = subprocess.run(
+        [
+            str(PWSH),
+            "-NoProfile",
+            "-File",
+            str(SCRIPT),
+            "-Mode",
+            "Verify",
+            "-ConfigureCeip",
+            "-ModuleRoot",
+            str(root),
+            "-LockPath",
+            str(lock),
+        ],
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=60,
+        check=False,
+    )
+    assert (result.returncode == 0) is persist, result.stdout + result.stderr
+    if not persist:
+        assert "Fresh-process PowerCLI CEIP verification failed" in result.stderr
+
+
 def test_side_by_side_newer_release_is_rejected(bundle: tuple[Path, Path]) -> None:
     """A later Gallery version cannot satisfy an open-ended requirement silently."""
     module(bundle[0], "VMware.OpenAPI", "1.1.0")

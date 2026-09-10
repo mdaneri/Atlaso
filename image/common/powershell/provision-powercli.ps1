@@ -138,6 +138,13 @@ try {
     }
     if ($ConfigureCeip) {
         Set-PowerCLIConfiguration -ParticipateInCeip $false -Scope AllUsers -Confirm:$false | Out-Null
+        # PowerCLI caches CEIP at import; its setter requires a restart before
+        # readback. Prove persistence in a fresh process, never accept cached null.
+        $executable = Join-Path $PSHOME $(if ($IsWindows) { 'pwsh.exe' } else { 'pwsh' })
+        & $executable -NoLogo -NoProfile -NonInteractive -File $PSCommandPath `
+            -Mode Verify -ModuleRoot $ModuleRoot -LockPath $LockPath -SuiteVersion $lock.suite_version
+        if ($LASTEXITCODE -ne 0) { throw 'Fresh-process PowerCLI CEIP verification failed.' }
+        return
     }
     $configured = Get-PowerCLIConfiguration -Scope AllUsers
     if ($null -eq $configured.ParticipateInCEIP -or [bool]$configured.ParticipateInCEIP) {
