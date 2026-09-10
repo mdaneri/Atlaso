@@ -8,10 +8,6 @@ status: current
 
 # VCF Offline Depot
 
-VCFDT package and credential-file uploads use the shared [chunked browser
-transport](vcf-helper.md#chunked-browser-uploads). Progress tracks acknowledged chunks, transient failures retry
-the current chunk, and credential files remain in memory until existing validation and secret storage consume them.
-
 Open **VCF Offline Depot** to configure the local content repository used by supported VCF workflows.
 
 <!-- BEGIN GENERATED INTERFACE OVERVIEW -->
@@ -24,6 +20,10 @@ This verified appliance view provides visual orientation before you begin.
 *Figure: VCF Offline Depot with metadata first and the compact VCFDT configuration summary in the desktop settings rail.*
 
 <!-- END GENERATED INTERFACE OVERVIEW -->
+
+VCFDT package and credential-file uploads use the shared [chunked browser
+transport](vcf-helper.md#chunked-browser-uploads). Progress tracks acknowledged chunks, transient failures retry
+the current chunk, and credential files remain in memory until existing validation and secret storage consume them.
 
 The published `/PROD/` directory uses the public Atlaso shell and a read-only contents grid. Directory links navigate
 within the depot, file links retain their exact artifact URL, and **Up one level** returns to the parent directory.

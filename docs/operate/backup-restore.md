@@ -9,10 +9,6 @@ status: current
 
 # Backup and restore
 
-Browser archive imports use the shared [chunked upload
-transport](../services/vcf-helper.md#chunked-browser-uploads). Chunk staging does not restore or apply settings;
-the existing validation, recovery review, and global apply boundaries still govern finalization.
-
 Traffic Publishing archives include canonical NAT enablement and additive family, translation mode, and fixed-address
 fields. Legacy IPv4 rules retain their meaning; omitted ingress remains pending explicit review. Missing NIC selectors
 are retained only when backed by archived missing-host inventory and never become runtime-eligible on restore.
@@ -30,6 +26,10 @@ This verified appliance view provides visual orientation before you begin.
 *Figure: Backup and Restore in the verified clean-appliance desktop state.*
 
 <!-- END GENERATED INTERFACE OVERVIEW -->
+
+Browser archive imports use the shared [chunked upload
+transport](../services/vcf-helper.md#chunked-browser-uploads). Chunk staging does not restore or apply settings;
+the existing validation, recovery review, and global apply boundaries still govern finalization.
 
 Open **Backup and Restore** to protect Atlaso settings before maintenance and recover the control-plane configuration
 when needed.

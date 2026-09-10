@@ -9,9 +9,6 @@ status: current
 
 # Network Boot and ESX scripted installation
 
-Browser media uploads use the shared [chunked upload transport](vcf-helper.md#chunked-browser-uploads), including
-ESX installer ISOs and Network Boot environment artifacts. Existing file limits and validation still apply.
-
 Atlaso Network Boot provides safe hardware discovery, verified interactive
 maintenance environments, and the existing ESX installation workflow from one
 service. The detailed Broadcom-aligned ESX reference remains later in this page.
@@ -26,6 +23,9 @@ This verified appliance view provides visual orientation before you begin.
 *Figure: Network Boot in the verified clean-appliance desktop state.*
 
 <!-- END GENERATED INTERFACE OVERVIEW -->
+
+Browser media uploads use the shared [chunked upload transport](vcf-helper.md#chunked-browser-uploads), including
+ESX installer ISOs and Network Boot environment artifacts. Existing file limits and validation still apply.
 
 Public boot scripts, reports, and media under `/pxe` are Network Boot protocol routes documented in this guide. They
 remain operational and are intentionally absent from Swagger; administrative Network Boot operations under `/api/v1`
