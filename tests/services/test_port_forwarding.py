@@ -229,6 +229,38 @@ def test_source_group_edits_validate_saved_port_forward_family_and_usage():
     assert "clients" in source_group_nat_validation_errors(groups, [row], include_disabled=True)
 
 
+@pytest.mark.parametrize("change", [
+    {"ingress_interface": "missing"}, {"listener_address": "192.0.2.99"},
+    {"target_address": "10.1.1.20"}, {"target_address": "192.0.2.1"},
+    {"source": "missing-group"},
+    {"external_port_start": 22, "external_port_end": 24},
+])
+def test_disabled_replacement_revalidates_bindings_and_preserves_saved_rule(change):
+    """Disabled replacements cannot clear archive review with unsafe bindings.
+
+    Args:
+        change: Invalid replacement binding or service collision.
+    """
+    engine = create_engine("sqlite://")
+    Base.metadata.create_all(engine)
+    with Session(engine) as db:
+        db.add_all(interfaces())
+        db.commit()
+        saved = save_port_forward(db, PortForwardCreate(**payload(enabled=False)), actor="operator")
+        saved.restore_review_required = True
+        db.commit()
+        rule_id = saved.id
+        with pytest.raises(ValueError):
+            save_port_forward(db, PortForwardCreate(**payload(enabled=False, **change)),
+                              actor="operator", rule_id=rule_id)
+        db.expire_all()
+        restored = db.get(PortForward, rule_id)
+        assert restored.ingress_interface == "eth1"
+        assert restored.target_address == "198.51.100.10"
+        assert restored.restore_review_required is True
+        assert len(list(db.scalars(select(AuditEvent)))) == 1
+
+
 def test_failed_overlap_preserves_row_and_audit_atomically():
     """A rejected complete replacement cannot leave changed values or an audit."""
     engine = create_engine("sqlite://")

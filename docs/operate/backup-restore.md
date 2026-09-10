@@ -16,12 +16,6 @@ Canonical NAT enablement takes precedence over a legacy Routes/WAN projection. F
 disables the NAT replay service, and establishes a disabled `nat` Apply baseline. See
 [Traffic Publishing](traffic-publishing.md) for the translation contract.
 
-Port-forward archives preserve listener identities, source restrictions, port mappings, reply mode, and desired
-enablement. Restore reconstructs Source Group references and retains unavailable ingress relationships as disabled
-rules requiring review. It never substitutes another listener or broadens the source boundary. Factory reset deletes
-these desired rules and retires their generated admissions, counters, and marked sessions through its managed runtime
-cleanup before applying defaults. Unresolved publication recovery blocks reset until reconciliation completes.
-
 <!-- BEGIN GENERATED INTERFACE OVERVIEW -->
 ## Interface overview
 
@@ -35,6 +29,12 @@ This verified appliance view provides visual orientation before you begin.
 
 Open **Backup and Restore** to protect Atlaso settings before maintenance and recover the control-plane configuration
 when needed.
+
+Port-forward archives preserve listener identities, source restrictions, port mappings, reply mode, and desired
+enablement. Restore reconstructs Source Group references and retains unavailable ingress relationships as disabled
+rules requiring review. It never substitutes another listener or broadens the source boundary. Factory reset deletes
+these desired rules and retires their generated admissions, counters, and marked sessions through its managed runtime
+cleanup before applying defaults. Unresolved publication recovery blocks reset until reconciliation completes.
 
 ## Create a backup
 

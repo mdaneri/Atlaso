@@ -222,7 +222,9 @@ def save_port_forward(db: Session, payload: PortForwardCreate, *, actor: str, ru
         values["listener_address"] = str(ip_address(payload.listener_address))
         values["target_address"] = str(ip_address(payload.target_address))
         candidate = models.PortForward(id=rule_id, **values)
-        errors = validate_port_forward(candidate, peers, validation_context(db), require_binding=current is None or payload.enabled)
+        # Complete replacements must revalidate every binding even when disabled;
+        # only archive restoration may retain unavailable disabled relationships.
+        errors = validate_port_forward(candidate, peers, validation_context(db))
         if errors:
             raise ValueError(" ".join(errors))
         if current is None:

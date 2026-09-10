@@ -10,11 +10,13 @@ from atlaso.app.database import SessionLocal
 from atlaso.app.models import Job
 
 
-def test_global_submission_publishes_captured_port_forward_pair(client):
+@pytest.mark.parametrize("management_move", [False, True])
+def test_global_submission_publishes_captured_port_forward_pair(client, management_move):
     """The real submission and task runner keep Firewall/NAT baselines together.
 
     Args:
         client: Isolated application with dry-run host adapters.
+        management_move: Include the pair in a protected management handoff.
     """
     from sqlalchemy import select
 
@@ -32,6 +34,9 @@ def test_global_submission_publishes_captured_port_forward_pair(client):
         ui.update_appliance_apply_baselines(db, before, {unit["id"] for unit in before})
         interface = db.scalar(select(PhysicalInterface).where(PhysicalInterface.name == "eth2"))
         db.add(PortForward(**payload(ingress_interface="eth2", listener_address=interface.ip_cidr.split("/")[0])))
+        if management_move:
+            management = db.scalar(select(PhysicalInterface).where(PhysicalInterface.name == "eth0"))
+            management.ip_cidr = "192.168.49.21/24"
         db.commit()
     response = client.post("/appliance-apply", data={"csrf": csrf, "selected_units": "nat"},
                            headers={"Accept": "application/json"})
@@ -40,12 +45,18 @@ def test_global_submission_publishes_captured_port_forward_pair(client):
         job = db.get(Job, response.json()["job_id"])
         result = json.loads(job.result)
         assert job.status == "succeeded", result
-        assert result["traffic_publishing_pair"] is True
-        assert result["traffic_publishing_runtime_commit_pending"] is False
-        assert [unit["unit_id"] for unit in result["units"]] == ["firewall", "nat"]
+        if management_move:
+            assert result["management_handoff"] is True
+            assert "nat" in result["management_handoff_units"]
+        else:
+            assert result["traffic_publishing_pair"] is True
+            assert result["traffic_publishing_runtime_commit_pending"] is False
+            assert [unit["unit_id"] for unit in result["units"]] == ["firewall", "nat"]
         baselines = ui.load_appliance_apply_baselines(db)
         assert "Atlaso port forward" in baselines["firewall"]["config_preview"]
         assert "[port_forwards]" in baselines["nat"]["config_preview"]
+        captured_nat = next(unit for unit in result["captured_units"] if unit["unit_id"] == "nat")
+        assert baselines["nat"]["snapshot_hash"] == captured_nat["snapshot_hash"]
 
 
 @pytest.fixture()

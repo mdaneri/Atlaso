@@ -145,6 +145,8 @@ ports may be mapped across enabled rules.
 `reply_mode=preserve` keeps the original client address. Selecting `reply_mode=masquerade` requires
 `acknowledge_source_loss=true` in the create or replacement request. The acknowledgement is request-only. New rules
 default disabled. Validation failures use ProblemDetails and preserve the previous row and its audit history.
+Complete replacements revalidate bindings, source restrictions, target safety, and listener collisions even when
+disabled. Only archive restoration may retain unavailable disabled relationships for later review.
 Saving never invokes host enforcement; global Appliance Apply owns translation changes.
 
 Status distinguishes disabled, pending, suspended, applied, and degraded records. An edited target or source boundary

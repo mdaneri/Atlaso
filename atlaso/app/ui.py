@@ -15683,7 +15683,7 @@ def run_appliance_apply_job(job_id: str, *, force_real: bool = False) -> None:
                             )
                         applied = [
                             current_by_id[unit_id]
-                            for unit_id in (*MANAGEMENT_HANDOFF_UNIT_IDS, "wan")
+                            for unit_id in (*MANAGEMENT_HANDOFF_UNIT_IDS, "wan", "nat")
                             if unit_id in handoff_unit_ids
                         ]
                         applied_ids = set(handoff_unit_ids)
