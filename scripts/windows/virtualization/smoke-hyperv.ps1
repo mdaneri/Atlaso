@@ -42,7 +42,9 @@ function Get-AtlasoHyperVFirstBootAccess {
     if ($component.Count -ne 1) {
         return $null
     }
-    foreach ($item in @($component[0].GuestIntrinsicExchangeItems)) {
+    # Pool 1 is guest-authored (extrinsic) data. Intrinsic items contain only
+    # provider/OS metadata and cannot carry Atlaso's first-boot access envelope.
+    foreach ($item in @($component[0].GuestExchangeItems)) {
         try {
             [xml]$record = $item
             $nameNode = $record.SelectSingleNode("//PROPERTY[@NAME='Name']/VALUE")
@@ -125,8 +127,15 @@ function Wait-AtlasoHyperVSmokeNetworkIdentity {
             -ManagementSwitch $ManagementSwitch `
             -ServiceSwitch $ServiceSwitch `
             -ExpectedIdentity $ExpectedIdentity `
-            -AllowMissingAddress
-        if ($identity.Address) {
+            -AllowMissingAddress `
+            -AllowPendingMacAddress
+        # Pin each allocated MAC even if the other NIC or DHCP is still pending.
+        # A missing provider report must not erase an address already bound to
+        # this run. Keep observed readiness separate from the retained baseline.
+        $pinnedAddress = [string]$ExpectedIdentity.Address
+        $ExpectedIdentity = $identity.PSObject.Copy()
+        if (-not $ExpectedIdentity.Address) { $ExpectedIdentity.Address = $pinnedAddress }
+        if ($identity.Address -and -not $identity.ManagementMacPending -and -not $identity.ServiceMacPending) {
             return $identity
         }
         Start-Sleep -Seconds 5
@@ -235,8 +244,7 @@ try {
             -Name $Name `
             -ManagementSwitch $ManagementSwitch `
             -ServiceSwitch $ServiceSwitch `
-            -DestinationRoot $vmRoot `
-            -Start
+            -DestinationRoot $vmRoot
     )
     if ($createdVmMatches.Count -ne 1 -or
         [string]$createdVmMatches[0].Name -cne $Name -or
@@ -249,7 +257,14 @@ try {
         -Adapters @(Get-VMNetworkAdapter -VM $createdVm -ErrorAction Stop) `
         -ManagementSwitch $ManagementSwitch `
         -ServiceSwitch $ServiceSwitch `
-        -AllowMissingAddress
+        -AllowMissingAddress `
+        -AllowPendingMacAddress
+    # Bind adapter IDs and switches before power-on, then acquire dynamic MACs
+    # without treating the provider's all-zero placeholder as a durable identity.
+    Assert-AtlasoStorageCapacity -Stage 'Hyper-V startup' -Components @(
+        [pscustomobject]@{ Path=$operationRoot; Name='VMRS memory, metadata and guest disk growth'; Bytes=20GB }
+    )
+    Start-VM -VM $createdVm -ErrorAction Stop | Out-Null
     $deadline = [DateTimeOffset]::UtcNow.AddMinutes(15)
     $access = $null
     $networkIdentity = $null
@@ -260,6 +275,7 @@ try {
             -ServiceSwitch $ServiceSwitch `
             -ExpectedIdentity $providerIdentity `
             -Deadline $deadline
+        $providerIdentity = $networkIdentity
         $access = Get-AtlasoHyperVFirstBootAccess -VmId $createdVm.Id
         if ($null -eq $access) {
             Start-Sleep -Seconds 5

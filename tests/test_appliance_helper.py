@@ -1,6 +1,7 @@
 """Test appliance helper behavior."""
 
 import base64
+import configparser
 import hashlib
 import importlib.machinery
 import importlib.util
@@ -7105,6 +7106,10 @@ def test_network_helper_renders_management_dhcp_networkd(tmp_path):
     assert "Address=" not in management_network
     assert "IPv6AcceptRA=no" in management_network
     assert "LinkLocalAddressing=no" in management_network
+    parsed = configparser.ConfigParser()
+    parsed.read_string(management_network)
+    assert parsed["DHCPv4"].getboolean("SendRelease") is False
+    assert parsed["Network"]["LinkLocalAddressing"] == "no"
 
 
 def test_network_helper_preserves_automatic_ipv6_for_management(tmp_path):
@@ -7142,6 +7147,10 @@ def test_network_helper_preserves_automatic_ipv6_for_management(tmp_path):
     assert "DHCP=ipv4" in management_network
     assert "IPv6AcceptRA=yes" in management_network
     assert "LinkLocalAddressing=ipv6" in management_network
+    parsed = configparser.ConfigParser()
+    parsed.read_string(management_network)
+    assert parsed["DHCPv4"].getboolean("SendRelease") is False
+    assert parsed["Network"].getboolean("IPv6AcceptRA") is True
 
 
 def test_network_helper_renders_static_management_ipv6_gateway_in_main_and_table_100(tmp_path):

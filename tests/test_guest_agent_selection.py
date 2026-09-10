@@ -60,8 +60,11 @@ set -eu
 printf '%s\n' "$*" >>"$FAKE_SYSTEMCTL_LOG"
 if [ "${1:-}" = "is-active" ] || [ "${1:-}" = "is-enabled" ]; then
   service="${3:-}"
+  if [ "$service" = "${FAKE_INACTIVE_SERVICE:-}" ]; then
+    exit 1
+  fi
   case "$FAKE_VIRTUALIZATION:$service" in
-    vmware:vmtoolsd.service|kvm:qemu-guest-agent.service|qemu:qemu-guest-agent.service|microsoft:hv_kvp_daemon.service|microsoft:hv_fcopy_daemon.service|microsoft:hv_vss_daemon.service)
+    vmware:vmtoolsd.service|kvm:qemu-guest-agent.service|qemu:qemu-guest-agent.service|microsoft:hv_kvp_daemon.service|microsoft:hv_vss_daemon.service)
       exit 0
       ;;
     *) exit 1 ;;
@@ -299,6 +302,8 @@ def test_selects_one_provider_then_erases_staging_at_cleanup_gate(
         assert rpm_log.index("-e open-vm-tools") < rpm_log.index("-Uvh")
     if detected == "microsoft":
         service_log = Path(environment["FAKE_SYSTEMCTL_LOG"]).read_text(encoding="utf-8")
+        assert "enable --now hv_fcopy_daemon.service" not in service_log
+        assert "disable --now hv_fcopy_daemon.service" in service_log
         assert "enable --now hv_kvp_daemon.service" not in service_log
         assert service_log.index("enable hv_kvp_daemon.service") < service_log.index("initialize --platform hyperv")
         assert service_log.index("initialize --platform hyperv") < service_log.index("start hv_kvp_daemon.service")
@@ -308,6 +313,23 @@ def test_selects_one_provider_then_erases_staging_at_cleanup_gate(
     assert cleanup.returncode == 0, cleanup.stderr
     assert not Path(environment["ATLASO_GUEST_AGENT_STAGING"]).exists()
     assert not any(Path(environment["ATLASO_GUEST_AGENT_PACKAGE_CACHE"]).iterdir())
+
+
+@pytest.mark.parametrize("service", ["hv_kvp_daemon.service", "hv_vss_daemon.service"])
+def test_hyperv_required_agent_failure_still_blocks_initialization(tmp_path: Path, service: str) -> None:
+    """Retiring legacy file copy must not relax KVP or backup readiness.
+
+    Args:
+        tmp_path: Isolated selector filesystem.
+        service: Required integration daemon made unavailable by the fixture.
+    """
+
+    environment = _prepare_runtime(tmp_path, platform="microsoft", dmi="Microsoft Corporation", packages=("open-vm-tools",))
+    environment["FAKE_INACTIVE_SERVICE"] = service
+    result = _run_selector(environment)
+    assert result.returncode != 0
+    assert not Path(environment["ATLASO_GUEST_AGENT_MARKER"]).exists()
+    assert Path(environment["ATLASO_GUEST_AGENT_STAGING"]).is_dir()
 
 
 @pytest.mark.parametrize(

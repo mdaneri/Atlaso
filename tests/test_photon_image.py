@@ -1,5 +1,6 @@
 """Test photon image behavior."""
 
+import configparser
 import hashlib
 import importlib.util
 import io
@@ -909,6 +910,45 @@ def test_photon_provisioning_management_network_matches_eth0_only():
     assert "if include_examples:" in seed
     assert "management_https_enabled=False if factory_defaults else appliance_mode" in seed
     assert 'install -d -o atlaso -g atlaso -m 0700 "$ATLASO_STATE/vcfDownloadTool/active-tool/secrets"' in script
+
+
+@pytest.mark.skipif(os.name == "nt", reason="executes the image's POSIX shell renderer")
+@pytest.mark.parametrize("dhcp", ["true", "false"])
+def test_photon_management_lease_retention(dhcp: str) -> None:
+    """Execute the image renderer and keep DHCP options out of static networking.
+
+    Args:
+        dhcp: Whether the image uses dynamic management addressing.
+    """
+    script = Path("image/common/scripts/provision-atlaso.sh").read_text(encoding="utf-8")
+    renderer = script.split('log_step "configuring final appliance management network"\n', 1)[1]
+    renderer = renderer.split(">/etc/systemd/network/00-atlaso-mgmt.network", 1)[0]
+    result = subprocess.run(
+        ["sh", "-eu", "-c", renderer],
+        env={
+            **os.environ,
+            "ATLASO_MGMT_INTERFACE": "eth0",
+            "ATLASO_MGMT_USES_DHCP": dhcp,
+            "ATLASO_MGMT_ADDRESS": "192.0.2.10/24",
+            "ATLASO_MGMT_GATEWAY": "192.0.2.1",
+            "ATLASO_MGMT_DNS": "192.0.2.53",
+        },
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    parsed = configparser.ConfigParser()
+    parsed.read_string(result.stdout)
+    assert parsed["Match"]["Name"] == "eth0"
+    if dhcp == "true":
+        assert parsed["Network"]["DHCP"] == "ipv4"
+        assert parsed["DHCPv4"].getboolean("SendRelease") is False
+        assert "Address" not in parsed["Network"]
+    else:
+        assert "DHCPv4" not in parsed
+        assert parsed["Network"]["Address"] == "192.0.2.10/24"
+        assert parsed["Network"]["Gateway"] == "192.0.2.1"
+        assert parsed["Network"]["DNS"] == "192.0.2.53"
 
 
 def test_photon_provisioning_installs_default_nginx_management_proxy():

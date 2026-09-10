@@ -1437,6 +1437,9 @@ def write_networkd_config(config: dict[str, object]) -> None:
         if config["ipv6_gateway"]:
             lines.append(f"Gateway={config['ipv6_gateway']}")
     lines.extend(f"DNS={server}" for server in config["dns_servers"])
+    if config["management_mode"] == "dhcp":
+        # Match the portable image and Network Apply lease-retention policy.
+        lines.extend(["", "[DHCPv4]", "SendRelease=no"])
     content = "\n".join(lines).strip() + "\n"
     NETWORKD_PATH.parent.mkdir(parents=True, exist_ok=True)
     NETWORKD_PATH.write_text(content, encoding="utf-8")
