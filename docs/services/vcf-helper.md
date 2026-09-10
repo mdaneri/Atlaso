@@ -310,8 +310,7 @@ These captures show responsive layouts and useful operational states referenced 
 
 ### VCF Helper
 
-![Atlaso VCF Helper page in the clean-appliance responsive
-viewport.](../assets/screenshots/vcf-helper-clean-responsive.webp)
+![Atlaso VCF Helper page in the clean-appliance responsive viewport.](../assets/screenshots/vcf-helper-clean-responsive.webp)
 
 *Figure: VCF Helper in the verified clean-appliance responsive state.*
 
