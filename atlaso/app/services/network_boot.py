@@ -2383,17 +2383,19 @@ def _request_http_origin(boot: dict[str, Any], requested_origin: str) -> str:
     return f"http://{rendered_host}:{port}"
 
 
-def _applied_esxi_boot_context(
-    db: Session,
-    *,
-    host_id: int,
-) -> tuple[dict[str, Any], dict[str, Any], dict[str, Any], dict[str, Any], dict[str, Any]]:
-    """Return the exact applied host, artifact, Kickstart, boot, and manifest.
+@dataclass
+class _AppliedEsxiBootSnapshot:
+    """Keep request-local applied indexes and verified Kickstart revisions."""
 
-    Args:
-        db: Database session used to compare desired and applied state.
-        host_id: ESXi Host Reference identifier to resolve.
-    """
+    manifest: dict[str, Any]
+    hosts: dict[int, dict[str, Any]]
+    artifacts: dict[int, dict[str, Any]]
+    kickstarts: dict[int, dict[str, Any]]
+    revisions: dict[int, bool]
+
+
+def _indexed_applied_esxi_boot_snapshot(db: Session) -> _AppliedEsxiBootSnapshot:
+    """Decrypt and index one applied snapshot, preserving first-match semantics."""
     manifest = _applied_esxi_pxe_manifest(db)
     boot = manifest.get("boot")
     hosts = manifest.get("hosts")
@@ -2403,20 +2405,39 @@ def _applied_esxi_boot_context(
         (boot, dict), (hosts, list), (artifacts, list), (kickstarts, list),
     )):
         raise ValueError("Applied ESXi Network Boot state is unavailable.")
-    host = next(
-        (row for row in hosts if isinstance(row, dict) and row.get("id") == host_id),
-        None,
-    )
-    artifact = next(
-        (
-            row
-            for row in artifacts
-            if isinstance(row, dict)
-            and row.get("host_id") == host_id
-            and not row.get("is_default")
-        ),
-        None,
-    )
+    indexes: list[dict[int, dict[str, Any]]] = []
+    for rows, key, kind in ((hosts, "id", "host"), (artifacts, "host_id", "artifact"), (kickstarts, "id", "kickstart")):
+        index: dict[int, dict[str, Any]] = {}
+        for row in rows:
+            if not isinstance(row, dict) or not isinstance(row.get(key), int):
+                continue
+            if kind == "artifact" and row.get("is_default"):
+                continue
+            if kind == "kickstart" and not row.get("enabled"):
+                continue
+            index.setdefault(row[key], row)
+        indexes.append(index)
+    return _AppliedEsxiBootSnapshot(manifest, *indexes, {})
+
+
+def _applied_esxi_boot_context(
+    db: Session,
+    *,
+    host_id: int,
+    snapshot: _AppliedEsxiBootSnapshot | None = None,
+) -> tuple[dict[str, Any], dict[str, Any], dict[str, Any], dict[str, Any], dict[str, Any]]:
+    """Return the exact applied host, artifact, Kickstart, boot, and manifest.
+
+    Args:
+        db: Database session used to compare desired and applied state.
+        host_id: ESXi Host Reference identifier to resolve.
+        snapshot: Optional request-local index reused by management diagnostics.
+    """
+    snapshot = snapshot or _indexed_applied_esxi_boot_snapshot(db)
+    manifest = snapshot.manifest
+    boot = manifest["boot"]
+    host = snapshot.hosts.get(host_id)
+    artifact = snapshot.artifacts.get(host_id)
     if not host or not host.get("enabled") or not artifact:
         raise ValueError("Enabled applied ESXi host state is unavailable.")
     current_host = db.get(EsxiPxeHost, host_id)
@@ -2433,21 +2454,17 @@ def _applied_esxi_boot_context(
     ):
         raise ValueError("The ESXi Host Reference differs from applied state; review and apply it before authorizing boot.")
     kickstart_id = host.get("kickstart_id")
-    kickstart = next(
-        (
-            row
-            for row in kickstarts
-            if isinstance(row, dict)
-            and row.get("id") == kickstart_id
-            and row.get("enabled")
-        ),
-        None,
-    )
+    kickstart = snapshot.kickstarts.get(kickstart_id)
     if not kickstart or artifact.get("kickstart_id") != kickstart_id:
         raise ValueError("Applied ESXi Kickstart state is unavailable.")
-    content = str(kickstart.get("content") or "")
-    revision = str(kickstart.get("content_hash") or "").lower()
-    if not re.fullmatch(r"[0-9a-f]{64}", revision) or hashlib.sha256(content.encode("utf-8")).hexdigest() != revision:
+    if kickstart_id not in snapshot.revisions:
+        content = str(kickstart.get("content") or "")
+        revision = str(kickstart.get("content_hash") or "").lower()
+        snapshot.revisions[kickstart_id] = bool(
+            re.fullmatch(r"[0-9a-f]{64}", revision)
+            and hashlib.sha256(content.encode("utf-8")).hexdigest() == revision
+        )
+    if not snapshot.revisions[kickstart_id]:
         raise ValueError("Applied ESXi Kickstart revision is invalid.")
     expected_mac = normalize_mac(str(host.get("mac_address") or ""))
     if normalize_pxe_mac(expected_mac) != str(artifact.get("mac_key") or ""):
@@ -2463,11 +2480,18 @@ def esxi_boot_readiness_warnings(db: Session, hosts: list[EsxiPxeHost]) -> list[
         hosts: Desired Host References displayed by management.
     """
     warnings: list[str] = []
-    for host in hosts:
-        if not host.enabled or not host.kickstart_id or not host.installer_iso_path:
-            continue
+    bootable_hosts = [host for host in hosts if host.enabled and host.kickstart_id and host.installer_iso_path]
+    if not bootable_hosts:
+        return warnings
+    try:
+        snapshot = _indexed_applied_esxi_boot_snapshot(db)
+    except (TypeError, ValueError):
+        snapshot = None
+    for host in bootable_hosts:
         try:
-            _host, artifact, _kickstart, _boot, _manifest = _applied_esxi_boot_context(db, host_id=host.id)
+            if snapshot is None:
+                raise ValueError("Applied ESXi Network Boot state is unavailable.")
+            _host, artifact, _kickstart, _boot, _manifest = _applied_esxi_boot_context(db, host_id=host.id, snapshot=snapshot)
             _artifact_listener_origin(artifact)
         except (TypeError, ValueError) as exc:
             # Never expose raw exceptions, manifest fields, or content hashes.

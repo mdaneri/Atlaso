@@ -201,6 +201,31 @@ def test_invalid_encrypted_snapshot_fails_closed_without_legacy_fallback(applied
         assert 'invalid' not in warnings[0]
 
 
+def test_readiness_reuses_one_snapshot_and_one_revision_check(applied_boot_fixture, monkeypatch):
+    """Repeated references on one management render must not repeat cryptographic work."""
+    fixture = applied_boot_fixture
+    fixture.apply()
+    loads = []
+    hashes = []
+    original_load = boot._applied_esxi_pxe_manifest
+    original_hash = boot.hashlib.sha256
+
+    def load(db):
+        loads.append(True)
+        return original_load(db)
+
+    def digest(value):
+        hashes.append(True)
+        return original_hash(value)
+
+    monkeypatch.setattr(boot, '_applied_esxi_pxe_manifest', load)
+    monkeypatch.setattr(boot.hashlib, 'sha256', digest)
+    with SessionLocal() as db:
+        host = db.get(EsxiPxeHost, fixture.host_id)
+        assert boot.esxi_boot_readiness_warnings(db, [host] * 100) == []
+    assert len(loads) == len(hashes) == 1
+
+
 def test_legacy_redacted_snapshot_recovers_only_through_real_apply(applied_boot_fixture):
     """Upgrades preserve failure until real Apply records a new protected snapshot."""
     fixture = applied_boot_fixture
@@ -224,3 +249,49 @@ def test_legacy_redacted_snapshot_recovers_only_through_real_apply(applied_boot_
         assert boot.APPLIANCE_APPLY_BASELINES_KEY not in SAFE_SETTING_KEYS
         baseline_row = db.scalar(select(Setting).where(Setting.key == boot.APPLIANCE_APPLY_BASELINES_KEY))
         assert 'fixture-only-not-a-real-password' not in baseline_row.value
+
+
+def test_factory_reset_retains_exact_executed_esxi_snapshot(client, monkeypatch, tmp_path):
+    """A real reset's final baseline rebuild must retain its activation receipt."""
+    import atlaso.app.factory_reset as reset
+    from atlaso.app.config import get_settings
+    from atlaso.app.services.networking import HostPhysicalInterface
+
+    activated = []
+
+    def execute(unit, *, adapter, db):
+        if unit['id'] == 'esxi_pxe' and adapter is activation_adapter:
+            activated.append(unit['raw_config_preview'])
+        return {'success': True, 'dry_run': adapter.dry_run}
+
+    def success():
+        return AdapterResult(['fixture-reset'], dry_run=False)
+
+    activation_adapter = SimpleNamespace(
+        dry_run=False,
+        terminate_factory_reset_login_sessions=success,
+        reset_factory_network_runtime=success,
+        reset_factory_retained_runtime=success,
+        apply_factory_reset_root_password=success,
+    )
+    monkeypatch.setattr(ui, 'execute_appliance_apply_unit', execute)
+    monkeypatch.setattr(reset, 'discover_host_physical_interfaces', lambda: [HostPhysicalInterface(
+        name='eth0', mac_address='00:50:56:00:00:01', driver='vmxnet3', speed='10 Gbps',
+        host_ip_cidr='192.0.2.10/24', host_ipv6_cidr=None, host_mtu=1500,
+        host_admin_state='up', oper_state='up',
+    )])
+    monkeypatch.setattr(reset, '_remove_retired_ca_private_keys', lambda paths: None)
+    source = Path(get_settings().database_url.removeprefix('sqlite:///'))
+    candidate = tmp_path / 'factory-candidate.db'
+    assert reset._candidate_database(source, candidate, adapter=activation_adapter, report_progress=False) == 17
+    from sqlalchemy import create_engine
+    from sqlalchemy.orm import Session
+    engine = create_engine(f'sqlite:///{candidate}')
+    try:
+        with Session(engine) as db:
+            baseline = ui.load_appliance_apply_baselines(db)['esxi_pxe']
+            assert len(activated) == 1
+            assert decrypt_secret(baseline['runtime_config_encrypted']) == activated[0]
+            assert not next(unit for unit in ui.appliance_apply_units(db, reconcile=False) if unit['id'] == 'esxi_pxe')['changed']
+    finally:
+        engine.dispose()

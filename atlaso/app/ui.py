@@ -10393,6 +10393,17 @@ def make_appliance_apply_unit(
             )
         except (AttributeError, TypeError, ValueError):
             runtime_pending = True
+        if not (baseline or {}).get("runtime_config_encrypted"):
+            desired_manifest = json.loads(raw_config_preview if raw_config_preview is not None else config_preview)
+            # A pristine factory reset has no boot consumers to admit. Its
+            # non-appliance dry-run path must not invent real runtime evidence.
+            runtime_pending = bool(
+                desired_manifest.get("boot", {}).get("enabled")
+                or desired_manifest.get("hosts")
+                or desired_manifest.get("kickstarts")
+                or desired_manifest.get("default_host", {}).get("enabled")
+                or any(row.get("enabled") for row in desired_manifest.get("network_boot", {}).get("environments", []))
+            )
     return {
         "id": unit_id,
         "label": label,

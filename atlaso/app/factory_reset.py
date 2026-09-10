@@ -27,6 +27,7 @@ from atlaso.app.adapters.system import AdapterResult, SystemAdapter
 from atlaso.app.config import get_settings
 from atlaso.app.database import Base
 from atlaso.app.models import CaCertificate, PhysicalInterface, Setting, User
+from atlaso.app.secrets import encrypt_secret
 from atlaso.app.seed import (
     FACTORY_MANAGEMENT_CIDR,
     SEED_EXAMPLES_SETTING_KEY,
@@ -1403,10 +1404,20 @@ def _candidate_database(
             if runtime_cleanup.returncode != 0:
                 raise FactoryResetError("Factory reset could not clear Atlaso-managed network runtime state.")
 
+            esxi_runtime_receipt: dict[str, str] = {}
             for unit in units:
+                encrypted_runtime = (
+                    encrypt_secret(unit["raw_config_preview"])
+                    if unit["id"] == "esxi_pxe" and not adapter.dry_run else None
+                )
                 result = execute_appliance_apply_unit(unit, adapter=adapter, db=db)
                 if not result["success"]:
                     raise FactoryResetError(f"Factory reset activation failed for {unit['label']}.")
+                if encrypted_runtime is not None and not result.get("dry_run"):
+                    esxi_runtime_receipt = {
+                        "runtime_config_encrypted": encrypted_runtime,
+                        "runtime_config_preview": unit["config_preview"],
+                    }
                 db.flush()
             if not adapter.dry_run:
                 retained_runtime_cleanup = adapter.reset_factory_retained_runtime()
@@ -1426,6 +1437,9 @@ def _candidate_database(
             # the transient VLAN-removal summary that disappears after reset.
             save_appliance_apply_baselines(db, {})
             final_units = appliance_apply_units(db, reconcile=False)
+            for unit in final_units:
+                if unit["id"] == "esxi_pxe":
+                    unit.update(esxi_runtime_receipt)
             final_unit_ids = {unit["id"] for unit in final_units}
             update_appliance_apply_baselines(
                 db,
