@@ -1,6 +1,9 @@
 """Exercise manual OVA intake publication, validation, and admission boundaries."""
 
 import asyncio
+import io
+import tarfile
+import threading
 from functools import partial
 
 import pytest
@@ -9,6 +12,114 @@ from atlaso.app.services.vcf_sddc_deployment import ova_inventory
 from atlaso.app.services.vcf_sddc_upload import SddcUploadError, store_sddc_ova_upload
 from tests.routers.ui.helpers import login
 from tests.test_vcf_sddc_deployment import write_ova
+
+
+@pytest.mark.parametrize("kind", ["members", "descriptor", "manifest", "pax", "longname"])
+def test_ova_metadata_limits_precede_deployment_parser(tmp_path, monkeypatch, kind):
+    """Reject excessive metadata before the general parser allocates it.
+
+    Args:
+        tmp_path: Private test archive directory.
+        monkeypatch: Fixture isolating parser entry and member-count limit.
+        kind: Excessive archive structure under test.
+    """
+    import atlaso.app.services.vcf_sddc_upload as service
+    path = tmp_path / "input.ova"
+    if kind == "members":
+        monkeypatch.setattr(service, "OVA_MAX_MEMBERS", 2)
+        with tarfile.open(path, "w") as archive:
+            for index in range(3):
+                archive.addfile(tarfile.TarInfo(f"member-{index}"), io.BytesIO())
+    else:
+        member = tarfile.TarInfo("descriptor.ovf" if kind == "descriptor" else "manifest.mf")
+        member.size = service.OVA_MAX_OVF_BYTES + 1 if kind == "descriptor" else 1024**2 + 1
+        if kind in {"pax", "longname"}:
+            member.type = tarfile.XHDTYPE if kind == "pax" else tarfile.GNUTYPE_LONGNAME
+            member.size = service.OVA_MAX_METADATA_BYTES + 1
+        path.write_bytes(member.tobuf() + b"\0" * 1024)
+
+    def forbidden_parser(*args, **kwargs):
+        """Prove the unrestricted parser is never reached.
+
+        Args:
+            *args: Ignored parser arguments.
+            **kwargs: Ignored parser keyword arguments.
+        """
+        pytest.fail("Deployment parser reached before metadata limits")
+
+    monkeypatch.setattr(service, "inspect_ova", forbidden_parser)
+    with pytest.raises(SddcUploadError, match="validation"):
+        service._validate_staged_ova(path)
+
+
+def test_staging_writes_and_flush_run_outside_event_loop(tmp_path, monkeypatch):
+    """Verify blocking file operations never execute on the async caller thread.
+
+    Args:
+        tmp_path: Private staging directory.
+        monkeypatch: Fixture instrumenting staging writes and flush.
+    """
+    from pathlib import Path
+
+    import atlaso.app.services.vcf_sddc_upload as service
+    source = tmp_path / "source.ova"
+    write_ova(source)
+    data = source.read_bytes()
+    caller = threading.get_ident()
+    operations = []
+    actual_open, actual_flush = Path.open, service._flush_staged_file
+
+    class CheckedFile:
+        """Record the worker identity at each blocking staging operation."""
+
+        def __init__(self, wrapped):
+            """Keep the real staging handle.
+
+            Args:
+                wrapped: File receiving staged bytes.
+            """
+            self.wrapped = wrapped
+
+        def write(self, value):
+            """Assert file writes use a worker.
+
+            Args:
+                value: Current upload chunk.
+            """
+            assert threading.get_ident() != caller
+            operations.append("write")
+            return self.wrapped.write(value)
+
+        def close(self):
+            assert threading.get_ident() != caller
+            self.wrapped.close()
+
+    def checked_open(path, mode="r", *args, **kwargs):
+        """Wrap only the upload's writable staging handle.
+
+        Args:
+            path: File being opened.
+            mode: Requested file mode.
+            *args: Positional arguments for the underlying file.
+            **kwargs: Keyword arguments for the underlying file.
+        """
+        result = actual_open(path, mode, *args, **kwargs)
+        return CheckedFile(result) if mode == "xb" else result
+
+    def checked_flush(target):
+        """Assert fsync and buffered flush use the worker.
+
+        Args:
+            target: Wrapped upload staging handle.
+        """
+        assert threading.get_ident() != caller
+        operations.append("flush")
+        actual_flush(target.wrapped)
+
+    monkeypatch.setattr(Path, "open", checked_open)
+    monkeypatch.setattr(service, "_flush_staged_file", checked_flush)
+    asyncio.run(store_sddc_ova_upload(chunks(data), "test.ova", root=tmp_path / "component"))
+    assert "write" in operations and operations[-1] == "flush"
 
 
 async def chunks(data):
@@ -256,3 +367,65 @@ def test_audit_failure_rolls_back_published_ova(client, tmp_path, monkeypatch):
     assert "private" not in response.text
     assert ova_inventory(root=root) == []
     assert not list(root.parent.glob(".sddc-upload-*"))
+
+
+@pytest.mark.parametrize("failure", ["refresh", "operational_log"])
+def test_post_commit_reporting_failure_preserves_published_ova(client, tmp_path, monkeypatch, failure):
+    """Keep publication aligned with its durable success audit.
+
+    Args:
+        client: Isolated application client.
+        tmp_path: Private upload destination.
+        monkeypatch: Fixture injecting post-commit reporting failures.
+        failure: Reporting stage that fails after the database commit.
+    """
+    from sqlalchemy import select
+    from sqlalchemy.orm import Session
+
+    import atlaso.app.audit as audit
+    import atlaso.app.routers.ui.vcf_workflows as routes
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import AuditEvent
+
+    root = tmp_path / "component"
+    monkeypatch.setattr(routes, "store_sddc_ova_upload", partial(store_sddc_ova_upload, root=root))
+    login(client)
+    page = client.get("/ui/management/vcf-helper")
+    csrf = page.text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
+    actual_refresh = Session.refresh
+
+    def failed_refresh(db, event, *args, **kwargs):
+        """Fail only the committed upload audit refresh.
+
+        Args:
+            db: Active database session.
+            event: Row being refreshed.
+            *args: Extra refresh arguments.
+            **kwargs: Extra refresh keyword arguments.
+        """
+        if isinstance(event, AuditEvent):
+            raise RuntimeError("post-commit refresh failure")
+        return actual_refresh(db, event, *args, **kwargs)
+
+    def failed_log(event):
+        """Simulate optional operational logging being unavailable.
+
+        Args:
+            event: Already committed audit event.
+        """
+        raise RuntimeError("post-commit logging failure")
+
+    if failure == "refresh":
+        monkeypatch.setattr(Session, "refresh", failed_refresh)
+    else:
+        monkeypatch.setattr(audit, "log_audit_event", failed_log)
+    source = tmp_path / "source.ova"
+    write_ova(source)
+    response = client.post("/ui/management/vcf-helper/sddc-manager/ovas/upload", content=source.read_bytes(),
+                           headers={"Content-Type": "application/octet-stream", "X-CSRF-Token": csrf,
+                                    "X-Atlaso-Filename": "test.ova"})
+    assert response.status_code == 200, response.text
+    assert (root / "test.ova").read_bytes() == source.read_bytes()
+    with SessionLocal() as db:
+        event = db.scalar(select(AuditEvent).where(AuditEvent.action == "upload_vcf_sddc_ova"))
+        assert event is not None and event.success

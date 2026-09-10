@@ -43,7 +43,8 @@ the main DNS helper workspace. See [VCF Certificate Trust](vcf-trust.md).
 An administrator can select **Vault** and then **Key** anywhere VCF Helper requests a remote vCenter, ESXi, SDDC
 Manager, VCF Installer, or VCF Automation login. Atlaso fills the server from the HTTP or HTTPS URI selected for the
 entry and fills its username. The server control is read-only, the manual-login controls are disabled, and the login
-page is skipped. The picker omits keys without an HTTP or HTTPS URI and shows one choice per valid URI when a key has several.
+page is skipped. The picker omits keys without an HTTP or HTTPS URI and shows one choice per valid URI when a key has
+several.
 If the selected vault has no usable keys, it shows **No HTTP/HTTPS credentials available** and keeps manual mode active.
 
 Address fields display only the selected hostname, IP, and non-default port; they do not display `http://` or
@@ -78,7 +79,10 @@ inside the component folder without an extra version or upload directory. This m
 Keep the vendor filename; only letters, numbers, dots, underscores, and hyphens are accepted.
 
 The wizard reports transfer progress, then shows validation while Atlaso checks the OVF, referenced files, and manifest
-checksums. After success, the page refreshes and **Deploy SDDC Manager** discovers the package in the same folder used
+checksums. Admission limits archive metadata to 8 MiB, 4,096 members, a 4 MiB OVF, and a 1 MiB manifest before
+using the deployment parser. OVA staging writes and disk flushing run outside the event loop so slow depot storage
+does not block management requests. After success, the page refreshes and **Deploy SDDC Manager** discovers the
+package in the same folder used
 by VCFDT. Uploading does not deploy a VM, enable the depot, or require global Appliance Apply. It does not require
 VCFDT, Broadcom credentials, or a software depot ID, and does not populate the metadata needed to serve a complete
 offline depot to VCF.
@@ -87,7 +91,9 @@ For an existing OVA, ESX ISO, or VCF Download Tool filename, Atlaso shows **Over
 file bytes. **Cancel** keeps the original file; **Overwrite** replaces it only after validation succeeds. Confirmation
 is bound to the current file revision: if another upload changes it during transfer, select the file again and confirm
 the new warning. ESX ISO names use the same whitespace trimming for overwrite checks and final storage.
-A failed OVA audit restores the previous package. For invalid or truncated files, obtain the complete
+A failed OVA audit commit restores the previous package. Optional audit refresh or operational logging failures after
+a successful commit preserve the published OVA and its durable success record. For invalid or truncated files, obtain
+the complete
 original OVA and retry. For storage failures, check depot free space and write access.
 Failed or disconnected uploads are removed from staging; a process interruption can leave a private staging directory
 outside deployment discovery, but never a partially uploaded selectable OVA.
@@ -304,7 +310,8 @@ These captures show responsive layouts and useful operational states referenced 
 
 ### VCF Helper
 
-![Atlaso VCF Helper page in the clean-appliance responsive viewport.](../assets/screenshots/vcf-helper-clean-responsive.webp)
+![Atlaso VCF Helper page in the clean-appliance responsive
+viewport.](../assets/screenshots/vcf-helper-clean-responsive.webp)
 
 *Figure: VCF Helper in the verified clean-appliance responsive state.*
 

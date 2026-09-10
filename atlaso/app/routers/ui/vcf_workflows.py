@@ -1014,6 +1014,7 @@ def build_router(dependencies: VcfWorkflowsUiDependencies) -> VcfWorkflowsUiRout
                 db, actor=identity.username, action="upload_vcf_sddc_ova",
                 resource_type="vcf_sddc_ova", resource_id=str(result["relative_path"]),
                 detail=f"size_bytes={result['size_bytes']}", request_id=request.state.request_id,
+                post_commit_best_effort=True,
             )
 
         try:

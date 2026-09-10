@@ -2,14 +2,16 @@
 
 from __future__ import annotations
 
+import io
 import os
 import re
 import tarfile
 import tempfile
 from collections.abc import AsyncIterable, Callable
 from pathlib import Path
+from typing import BinaryIO
 
-from anyio import to_thread
+from anyio import CancelScope, to_thread
 
 from atlaso.app.services.upload_publication import (
     PublicationConflict,
@@ -24,6 +26,54 @@ from atlaso.app.services.vcf_sddc_deployment import (
 )
 
 SDDC_OVA_MAX_BYTES = 16 * 1024**3
+OVA_MAX_MEMBERS = 4096
+OVA_MAX_OVF_BYTES = 4 * 1024**2
+OVA_MAX_METADATA_BYTES = 8 * 1024**2
+
+
+class _MetadataReader(io.BufferedReader):
+    """Bound tar header and extension allocations before parsing an archive."""
+
+    remaining = OVA_MAX_METADATA_BYTES
+
+    def read(self, size: int | None = -1) -> bytes:
+        """Reject oversized metadata reads before allocating their buffers.
+
+        Args:
+            size: Requested tar metadata read length.
+        """
+        if size is None or size < 0 or size > self.remaining:
+            raise ValueError("OVA metadata limit exceeded")
+        data = super().read(size)
+        self.remaining -= len(data)
+        return data
+
+
+def _check_ova_structure(path: Path) -> None:
+    """Bound member count, extended headers and descriptors before discovery.
+
+    Args:
+        path: Private uncompressed OVA awaiting deployment-parser inspection.
+    """
+    with _MetadataReader(io.FileIO(path, "r")) as source:
+        with tarfile.open(fileobj=source, mode="r:") as archive:
+            for count, member in enumerate(archive, 1):
+                if count > OVA_MAX_MEMBERS:
+                    raise ValueError("OVA member limit exceeded")
+                if member.name.lower().endswith(".ovf") and member.size > OVA_MAX_OVF_BYTES:
+                    raise ValueError("OVA descriptor limit exceeded")
+                if member.name.lower().endswith(".mf") and member.size > 1024**2:
+                    raise ValueError("OVA manifest limit exceeded")
+
+
+def _flush_staged_file(target: BinaryIO) -> None:
+    """Flush validated input to disk from a worker thread.
+
+    Args:
+        target: Open private staging file.
+    """
+    target.flush()
+    os.fsync(target.fileno())
 
 UPLOAD_ERROR_MESSAGES = {
     'invalid_filename': 'Choose a .ova filename using only letters, numbers, dots, hyphens, and underscores.',
@@ -60,6 +110,7 @@ def _validate_staged_ova(path: Path) -> None:
         path: Private staged OVA to validate.
     """
     try:
+        _check_ova_structure(path)
         descriptor = inspect_ova(path, root=path.parent)
         with tarfile.open(path, "r") as archive:
             manifest = archive.extractfile(descriptor.manifest_member)
@@ -75,7 +126,7 @@ def _validate_staged_ova(path: Path) -> None:
             if not {descriptor.ovf_member, *(str(item["href"]) for item in descriptor.files)} <= covered:
                 raise ValueError("Incomplete manifest")
         validate_ova_manifest(descriptor)
-    except (VcfSddcDeploymentError, OSError, tarfile.TarError, ValueError, KeyError) as exc:
+    except (VcfSddcDeploymentError, OSError, tarfile.TarError, ValueError, KeyError, RecursionError) as exc:
         raise SddcUploadError(
             "invalid_ova"
         ) from exc
@@ -117,16 +168,19 @@ async def store_sddc_ova_upload(
         with tempfile.TemporaryDirectory(prefix=".sddc-upload-", dir=root.parent) as staging:
             staged = Path(staging) / filename
             total = 0
-            with staged.open("xb") as target:
+            target = await to_thread.run_sync(staged.open, "xb")
+            try:
                 async for chunk in chunks:
                     total += len(chunk)
                     if total > max_bytes:
                         raise SddcUploadError("oversized", 413)
-                    target.write(chunk)
+                    await to_thread.run_sync(target.write, chunk)
                 if not total:
                     raise SddcUploadError("empty")
-                target.flush()
-                os.fsync(target.fileno())
+                await to_thread.run_sync(_flush_staged_file, target)
+            finally:
+                with CancelScope(shield=True):
+                    await to_thread.run_sync(target.close)
             await to_thread.run_sync(_validate_staged_ova, staged)
             staged.chmod(0o644)
             result: dict[str, str | int] = {
