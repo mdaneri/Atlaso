@@ -5,11 +5,11 @@ from __future__ import annotations
 import hashlib
 import json
 import re
-import shutil
 from datetime import datetime, timezone
 from ipaddress import ip_address, ip_network
 from pathlib import Path
 from typing import Any
+from uuid import uuid4
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -26,6 +26,10 @@ from atlaso.app.models import (
 )
 from atlaso.app.services.dnsmasq import reservation_dns_record
 from atlaso.app.services.service_dns_defaults import factory_service_hostname
+from atlaso.app.services.upload_publication import (
+    UploadPublication,
+    cleanup_private_upload,
+)
 from atlaso.app.services.vaults import validate_kickstart_vault_markers
 
 ESXI_PXE_UNIT_ID = "esxi_pxe"
@@ -1564,12 +1568,13 @@ def normalize_installer_iso_path(value: str, *, ensure_root: bool = True) -> str
     return str(resolved)
 
 
-async def store_installer_iso_upload(upload_file: Any, *, max_bytes: int) -> dict[str, Any]:
+async def store_installer_iso_upload(upload_file: Any, *, max_bytes: int, publication: UploadPublication | None = None) -> dict[str, Any]:
     """Persist installer iso upload.
 
     Args:
         upload_file: Upload file supplied by the caller.
         max_bytes: Maximum accepted payload size in bytes.
+        publication: Optional browser consent bound to the existing destination.
 
     Returns:
         The store installer iso upload result.
@@ -1580,7 +1585,7 @@ async def store_installer_iso_upload(upload_file: Any, *, max_bytes: int) -> dic
     root = ensure_installer_iso_root()
     filename = safe_installer_iso_name(upload_file.filename or "")
     destination = root / filename
-    temp_path = root / f".{filename}.uploading"
+    temp_path = root / f".{filename}.{uuid4().hex}.uploading"
     total = 0
     try:
         with temp_path.open("wb") as handle:
@@ -1594,11 +1599,11 @@ async def store_installer_iso_upload(upload_file: Any, *, max_bytes: int) -> dic
                 handle.write(chunk)
         if total == 0:
             raise ValueError("Installer ISO upload is empty.")
-        shutil.move(str(temp_path), destination)
-        destination.chmod(0o644)
-    except Exception:
-        temp_path.unlink(missing_ok=True)
-        raise
+        temp_path.chmod(0o644)
+        with (publication or UploadPublication(destination, None)).publish(temp_path, destination):
+            pass
+    finally:
+        cleanup_private_upload(temp_path)
     return _installer_iso_inventory_row(destination, root)
 
 

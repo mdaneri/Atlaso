@@ -333,7 +333,7 @@ def test_dns_and_dhcp_pages_render(client):
     assert "dnsZoneTabButtonForDomain(storedDomain)" in app_js.text
     assert "initializeTagEditors" in app_js.text
     assert "initializeEsxiIsoUploadForms" in app_js.text
-    assert "XMLHttpRequest" in app_js.text
+    assert "window.AtlasoUploads.Request" in app_js.text
     assert "X-Atlaso-Upload" in app_js.text
     assert 'pattern: "wizard-backed"' in app_js.text
     assert "esxiIsoUploadWizard = window.AtlasoUiPatterns.createWizard" in app_js.text

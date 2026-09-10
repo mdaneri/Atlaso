@@ -49,6 +49,7 @@
         </details>
       </div>
     {% endif %}
+    <noscript><p class="muted">Enable JavaScript to upload an SDDC Manager OVA using the reviewed upload wizard.</p></noscript>
     <div class="vcf-helper-subjects">
       <div class="vcf-helper-subject-group" aria-labelledby="vcf-helper-platform-title">
         <div class="vcf-helper-subject-head">
@@ -71,6 +72,11 @@
           <span class="muted">Import the active Atlaso root CA into a VCF 9 Installer or SDDC Manager appliance, then verify trust and service recovery.</span>
         </span>
           </button>
+          {% if identity.has_role('admin') or identity.has_role('service-admin') %}
+          <button class="info-band vcf-helper-action-band" type="button" data-sddc-ova-upload-open aria-haspopup="dialog" aria-controls="sddc-ova-upload-dialog">
+            <span class="vcf-helper-action-copy"><span class="vcf-helper-action-title">Add SDDC Manager OVA</span><span class="muted">Upload a deployment OVA from your computer without VCFDT. Confirm before overwriting an existing file.</span></span>
+          </button>
+          {% endif %}
           <div class="vcf-helper-action-wrap" {% if not vcf_sddc_ovas %}data-help="SDDC Manager deployment becomes available when a valid OVA is present under {{ vcf_sddc_ova_root }}." tabindex="0" aria-label="Deploy SDDC Manager unavailable. Add a valid OVA under {{ vcf_sddc_ova_root }}."{% endif %}>
             <button class="info-band vcf-helper-action-band" type="button" data-vcf-sddc-deploy-open aria-haspopup="dialog" aria-controls="vcf-sddc-deploy-modal" {% if not vcf_sddc_ovas or not (identity.has_role('admin') or identity.has_role('service-admin')) %}disabled{% endif %}>
               <span class="vcf-helper-action-copy">
@@ -121,6 +127,7 @@
 
 {% include "partials/vcf_trust_modal.html" %}
 {% include "partials/vcf_sddc_deploy_modal.html" %}
+{% if identity.has_role('admin') or identity.has_role('service-admin') %}{% include "partials/vcf_sddc_upload_modal.html" %}{% endif %}
 {% include "partials/vcf_target_depot_modal.html" %}
 {% include "partials/vcf_ldap_modal.html" %}
 {% include "partials/vcf_vault_import_modal.html" %}

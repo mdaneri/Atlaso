@@ -18,6 +18,7 @@ from atlaso.app.audit import record_audit
 from atlaso.app.config import get_settings
 from atlaso.app.database import get_db
 from atlaso.app.models import EsxiKickstart, EsxiPxeHost, utcnow
+from atlaso.app.routers.chunk_uploads import ChunkedUploadRoute
 from atlaso.app.security import Identity, require_session_identity
 from atlaso.app.services.esxi_pxe import (
     ESXI_PXE_HTTP_PORT,
@@ -91,6 +92,7 @@ def build_router(dependencies: NetworkBootUiDependencies) -> NetworkBootUiRouter
         dependencies: Stable facade dependencies used by Network Boot transports.
     """
     router = APIRouter(
+        route_class=ChunkedUploadRoute,
         prefix=MANAGEMENT_UI_ROOT,
         dependencies=[Depends(dependencies.require_management_ui_request)],
     )
@@ -921,7 +923,8 @@ def build_router(dependencies: NetworkBootUiDependencies) -> NetworkBootUiRouter
         wants_json = request.headers.get("X-Atlaso-Upload") == "1"
         try:
             iso = await store_installer_iso_upload(
-                iso_file, max_bytes=get_settings().esxi_installer_iso_max_bytes
+                iso_file, max_bytes=get_settings().esxi_installer_iso_max_bytes,
+                publication=getattr(request.state, "upload_publication", None),
             )
         except ValueError as exc:
             status_code = 413 if "too large" in str(exc).lower() else 400

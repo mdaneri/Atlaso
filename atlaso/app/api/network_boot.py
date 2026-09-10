@@ -44,6 +44,7 @@ from atlaso.app.models import (
     utcnow,
 )
 from atlaso.app.openapi import DocumentedAPIRoute
+from atlaso.app.routers.chunk_uploads import ChunkedUploadRoute
 from atlaso.app.schemas import (
     EsxiBootAuthorizationRequest,
     EsxiBootAuthorizationResponse,
@@ -90,10 +91,15 @@ from atlaso.app.services.network_boot import (
     wake_on_lan_broadcast_targets,
 )
 
+
+class ChunkedDocumentedRoute(ChunkedUploadRoute, DocumentedAPIRoute):
+    """Preserve API documentation while adapting browser upload finalization."""
+
+
 router = APIRouter(
     prefix="/api/v1/network-boot",
     tags=["network-boot"],
-    route_class=DocumentedAPIRoute,
+    route_class=ChunkedDocumentedRoute,
 )
 public_router = APIRouter(tags=["network-boot-public"])
 logger = logging.getLogger("uvicorn.error")

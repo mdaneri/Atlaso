@@ -19,6 +19,7 @@ def record_audit(
     detail: str | None = None,
     request_id: str | None = None,
     emit_operational: bool = True,
+    post_commit_best_effort: bool = False,
 ) -> AuditEvent:
     """Persist audit.
 
@@ -32,6 +33,7 @@ def record_audit(
         detail: Detail supplied by the caller.
         request_id: Identifier of the request.
         emit_operational: Emit operational supplied by the caller.
+        post_commit_best_effort: Preserve committed success if optional refresh or logging fails.
 
     Returns:
         The record audit result.
@@ -47,9 +49,15 @@ def record_audit(
     )
     db.add(event)
     db.commit()
-    db.refresh(event)
-    if emit_operational:
-        log_audit_event(event)
+    try:
+        db.refresh(event)
+        if emit_operational:
+            log_audit_event(event)
+    except Exception:
+        # Publication compensation is valid only when the commit itself failed.
+        # Optional reporting must not turn a persisted success into a rollback.
+        if not post_commit_best_effort:
+            raise
     return event
 
 

@@ -550,6 +550,10 @@ from atlaso.app.services.update_sources import (
     validate_managed_package,
     validate_update_source,
 )
+from atlaso.app.services.upload_publication import (
+    UploadPublication,
+    cleanup_private_upload,
+)
 from atlaso.app.services.vaults import (
     VaultEntryInput,
     create_vault,
@@ -2770,12 +2774,14 @@ def store_pasted_vcf_depot_secret(
     return display_name
 
 
-def store_uploaded_vcf_depot_archive(settings: VcfOfflineDepotSettings, archive_file: UploadFile | None) -> str | None:
+def store_uploaded_vcf_depot_archive(settings: VcfOfflineDepotSettings, archive_file: UploadFile | None,
+                                     *, publication: UploadPublication | None = None) -> str | None:
     """Persist uploaded vcf depot archive.
 
     Args:
         settings: Current Atlaso settings used to configure the operation.
         archive_file: Archive file consumed by store uploaded VCF depot archive.
+        publication: Optional browser consent bound to the existing destination.
 
 
     Returns:
@@ -2797,14 +2803,14 @@ def store_uploaded_vcf_depot_archive(settings: VcfOfflineDepotSettings, archive_
         with temp_path.open("wb") as destination:
             shutil.copyfileobj(archive_file.file, destination)
         validate_vcf_download_tool_upload_envelope(temp_path)
-        temp_path.replace(archive_path)
+        with (publication or UploadPublication(archive_path, None)).publish(temp_path, archive_path):
+            pass
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except OSError as exc:
         raise HTTPException(status_code=500, detail="Unable to store the VCF Download Tool archive.") from exc
     finally:
-        if temp_path.exists():
-            temp_path.unlink(missing_ok=True)
+        cleanup_private_upload(temp_path)
     settings.tool_archive_path = str(archive_path)
     settings.tool_version = ""
     return archive_name

@@ -1086,7 +1086,7 @@ def test_pwa_manifest_service_worker_and_offline_shell(client):
     assert "ATLASO_CACHE" in service_worker.text
     assert "atlaso-management-pwa-v" in service_worker.text
     assert "ATLASO_CACHE_PREFIX" in service_worker.text
-    assert 'const ATLASO_CACHE = `${ATLASO_CACHE_PREFIX}312`;' in service_worker.text
+    assert 'const ATLASO_CACHE = `${ATLASO_CACHE_PREFIX}319`;' in service_worker.text
     assert 'fetch(asset, { cache: "reload" })' in service_worker.text
     assert "Required precache request failed" in service_worker.text
     assert "key.startsWith(ATLASO_CACHE_PREFIX)" in service_worker.text
@@ -1106,7 +1106,7 @@ def test_pwa_manifest_service_worker_and_offline_shell(client):
     assert "/static/ui-patterns.js?v=atlaso-ui-foundation-20260726-10" in service_worker.text
     assert "/static/appliance-apply-polling.js?v=issue-420-6" in service_worker.text
     assert "/static/ui-routes.js?v=issue-287-1" in service_worker.text
-    assert "/static/app.js?v=issues-776-777-2" in service_worker.text
+    assert "/static/app.js?v=issue-779-7" in service_worker.text
     assert "/static/terminal.js?v=issue-287-2" in service_worker.text
     assert "/static/pwa.js?v=issue-287-2" in service_worker.text
     assert "vcfdt-configuration-248-20260807-14" not in service_worker.text
@@ -1160,7 +1160,7 @@ def test_shared_ui_pattern_shell_and_wizard_contracts(client):
     base = (templates / "base.html").read_text(encoding="utf-8")
     public_base = (templates / "public_portal_base.html").read_text(encoding="utf-8")
     for shell, app_asset in (
-        (base, "/static/app.js?v=issues-776-777-2"),
+        (base, "/static/app.js?v=issue-779-7"),
         (public_base, "/static/app.js?v=issues-515-519-12-513-328-1-595-6-605-1-606-607-1-660-4-662-663-3-682-1"),
         (base, "/static/appliance-apply-polling.js?v=issue-420-6"),
     ):
@@ -1820,7 +1820,7 @@ def test_monitor_page_renders_template_and_browser_assets(client):
     assert "swagger-link-icon" in page.text
     assert "/static/app.css?v=issues-515-519-10-605-1-660-3" in page.text
     assert "/static/ui-patterns.js?v=atlaso-ui-foundation-20260726-10" in page.text
-    assert "/static/app.js?v=issues-776-777-2" in page.text
+    assert "/static/app.js?v=issue-779-7" in page.text
     app_css = client.get("/static/app.css")
     assert app_css.status_code == 200
     assert ".split-workspace > .wide-panel" in app_css.text
@@ -11946,6 +11946,7 @@ def test_vcf_offline_depot_tool_upload_marks_apply_pending_without_profiles(clie
         update_appliance_apply_baselines,
     )
 
+    monkeypatch.setattr("atlaso.app.ui.VCF_DEPOT_UPLOAD_DIR", tmp_path / "uploads")
     monkeypatch.setattr("atlaso.app.ui.find_local_vcf_download_tool_archive", lambda: None)
 
     login(client)
@@ -12117,6 +12118,7 @@ def test_vcf_offline_depot_apply_stages_tool_without_download_profiles(client, t
     from atlaso.app.database import SessionLocal
     from atlaso.app.models import Job, VcfDepotDownloadProfile
 
+    monkeypatch.setattr("atlaso.app.ui.VCF_DEPOT_UPLOAD_DIR", tmp_path / "uploads")
     monkeypatch.setattr("atlaso.app.ui.find_local_vcf_download_tool_archive", lambda: None)
 
     archive_path = tmp_path / "vcf-download-tool-9.1.0.test.tar.gz"
@@ -12231,6 +12233,7 @@ def test_vcf_offline_depot_tool_package_wizard_endpoint_and_reset_clear_configur
         VCF_DEPOT_TOOL_VERSION_SOURCE_KEY,
     )
 
+    monkeypatch.setattr("atlaso.app.ui.VCF_DEPOT_UPLOAD_DIR", tmp_path / "uploads")
     monkeypatch.setattr("atlaso.app.ui.find_local_vcf_download_tool_archive", lambda: None)
 
     archive_path = tmp_path / "vcf-download-tool-9.1.0.test.tar.gz"
@@ -12249,6 +12252,18 @@ def test_vcf_offline_depot_tool_package_wizard_endpoint_and_reset_clear_configur
         files={"tool_archive_file": ("vcf-download-tool-9.1.0.test.tar.gz", archive_path.read_bytes(), "application/gzip")},
     )
     assert upload.status_code == 200
+    from atlaso.app.ui import VCF_DEPOT_UPLOAD_DIR
+
+    stored_archive = VCF_DEPOT_UPLOAD_DIR / archive_path.name
+    original_bytes = stored_archive.read_bytes()
+    rejected = client.post(
+        "/vcf-offline-depot/tool-package", data={"csrf": csrf},
+        files={"tool_archive_file": (archive_path.name, archive_path.read_bytes(), "application/gzip")},
+    )
+    assert rejected.status_code == 400
+    assert "confirm any overwrite" in rejected.text
+    assert stored_archive.read_bytes() == original_bytes
+    assert not list(stored_archive.parent.glob(".*.upload"))
     upload_payload = upload.json()
     assert upload_payload["tool_archive_name"] == "vcf-download-tool-9.1.0.test.tar.gz"
     assert upload_payload["tool_archive_uploaded"] is True
@@ -17574,7 +17589,7 @@ def test_vcf_helper_page_renders_domain_dropdown(client):
     visible_workspace = response.text.split('<section class="split-workspace vcf-helper-workspace"', 1)[1].split("</section>", 1)[0]
     assert "VCF Certificate Trust" in visible_workspace
     assert "Review DNS" not in visible_workspace
-    assert visible_workspace.count('class="info-band vcf-helper-action-band"') == 7
+    assert visible_workspace.count('class="info-band vcf-helper-action-band"') == 8
     assert "Import passwords into a vault" in visible_workspace
     assert 'id="vcf-helper-platform-title">SDDC Manager / VCF Installer</h3>' in visible_workspace
     assert 'id="vcf-helper-ldap-title">LDAP</h3>' in visible_workspace

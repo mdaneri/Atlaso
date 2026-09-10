@@ -1,6 +1,6 @@
 [project]
 name = "atlaso"
-version = "0.9.335"
+version = "0.9.336"
 description = "Atlaso supports POC, lab, and test environments by simplifying deployment, maintenance, and validation."
 readme = "README.md"
 license = "MIT"
@@ -101,5 +101,8 @@ files = [
   "atlaso/app/services/management_bindings.py",
   "atlaso/app/services/physical_interfaces.py",
   "atlaso/app/services/service_dns_defaults.py",
-  "atlaso/app/services/service_registry.py",
+    "atlaso/app/services/service_registry.py",
+    "atlaso/app/services/vcf_sddc_upload.py",
+    "atlaso/app/services/chunk_uploads.py",
+    "atlaso/app/services/upload_publication.py",
 ]

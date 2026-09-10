@@ -27,6 +27,10 @@ This verified appliance view provides visual orientation before you begin.
 
 <!-- END GENERATED INTERFACE OVERVIEW -->
 
+Browser archive imports use the shared [chunked upload
+transport](../services/vcf-helper.md#chunked-browser-uploads). Chunk staging does not restore or apply settings;
+the existing validation, recovery review, and global apply boundaries still govern finalization.
+
 Open **Backup and Restore** to protect Atlaso settings before maintenance and recover the control-plane configuration
 when needed.
 
