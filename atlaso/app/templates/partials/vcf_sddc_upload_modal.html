@@ -1,0 +1,44 @@
+<dialog id="sddc-ova-upload-dialog" class="confirm-modal wide-modal vcf-sddc-wizard-modal" aria-labelledby="sddc-ova-upload-title" aria-describedby="sddc-ova-upload-description">
+  <form class="confirm-modal-panel vcf-sddc-wizard-panel" action="{{ management_ui_root }}/vcf-helper/sddc-manager/ovas/upload" method="post" data-sddc-ova-upload data-atlaso-wizard novalidate>
+    <input type="hidden" name="csrf" value="{{ csrf_token }}">
+    <aside class="vcf-sddc-wizard-rail" aria-label="Add SDDC Manager OVA steps">
+      <p class="kicker">VCF Installer</p><h2 id="sddc-ova-upload-title">Add SDDC Manager OVA</h2>
+      <ol class="vcf-sddc-step-list">
+        <li><button class="vcf-sddc-step-button active" type="button" data-atlaso-wizard-nav="file"><span>1</span><strong>OVA file</strong><small>Choose installer media</small></button></li>
+        <li><button class="vcf-sddc-step-button" type="button" data-atlaso-wizard-nav="review" disabled><span>2</span><strong>Review</strong><small>Confirm upload destination</small></button></li>
+      </ol>
+    </aside>
+    <div class="vcf-sddc-wizard-main">
+      <div class="confirm-modal-body vcf-sddc-wizard-body">
+        <div class="vcf-sddc-wizard-heading"><p class="kicker" data-atlaso-wizard-kicker>Step 1 of 2</p><h3 data-atlaso-wizard-title>Choose an SDDC Manager OVA</h3><p id="sddc-ova-upload-description" class="muted" data-atlaso-wizard-description>Select one OVA to add to the VCFDT SDDC_MANAGER_VCF folder.</p></div>
+        <div class="alert error hidden" data-atlaso-wizard-error></div>
+        <section class="vcf-sddc-step-page" data-atlaso-wizard-step="file">
+          <label>
+            <span class="field-label"><span>SDDC Manager OVA</span><button class="help-icon" type="button" data-help="Uploads a complete OVA, up to 16 GiB, without VCFDT. Existing filenames are never replaced. This does not deploy a VM or configure the offline depot.">i</button></span>
+            <span class="file-upload-control">
+              <input class="file-upload-input" type="file" name="ova_file" accept=".ova" data-file-upload-input required>
+              <span class="file-upload-surface"><span class="file-upload-copy"><strong>Choose OVA file</strong><small data-file-upload-name>VCF-SDDC-Manager-Appliance.ova</small></span></span>
+            </span>
+          </label>
+        </section>
+        <section class="vcf-sddc-step-page hidden" data-atlaso-wizard-step="review">
+          <div class="settings-list">
+            <div><span>OVA file</span><strong data-sddc-ova-review-name>Not selected</strong></div>
+            <div><span>Size</span><strong data-sddc-ova-review-size>Not available</strong></div>
+            <div><span>Destination</span><strong>{{ vcf_sddc_ova_root }}</strong></div>
+            <div><span>Runtime</span><strong>Available for deployment after validation</strong></div>
+          </div>
+          <p class="muted">Keep the original OVA filename. Atlaso checks the OVF and manifest before making this package available. ISO boot images are not supported.</p>
+          <progress aria-label="OVA upload progress" class="upload-progress" value="0" max="100" data-sddc-ova-upload-progress hidden></progress>
+          <p class="autosave-status" data-state="idle" data-sddc-ova-upload-status aria-live="polite">Ready to upload the reviewed OVA.</p>
+        </section>
+      </div>
+      <div class="confirm-modal-actions vcf-sddc-wizard-actions">
+        <button class="button secondary" type="button" data-atlaso-wizard-cancel>Cancel</button>
+        <button class="button secondary hidden" type="button" data-atlaso-wizard-back>Back</button>
+        <button class="button primary" type="button" data-atlaso-wizard-next>Next</button>
+        <button class="button primary hidden" type="submit" data-atlaso-wizard-submit data-sddc-ova-upload-button>Upload SDDC Manager OVA</button>
+      </div>
+    </div>
+  </form>
+</dialog>

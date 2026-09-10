@@ -16927,6 +16927,113 @@ function initializeEsxiIsoUploadForms() {
   });
 }
 
+function initializeSddcOvaUploadForms() {
+  const form = document.querySelector("[data-sddc-ova-upload]");
+  const dialog = document.getElementById("sddc-ova-upload-dialog");
+  if (!(form instanceof HTMLFormElement) || !(dialog instanceof HTMLDialogElement)) return;
+  const fileInput = form.elements.ova_file;
+  const progress = form.querySelector("[data-sddc-ova-upload-progress]");
+  const status = form.querySelector("[data-sddc-ova-upload-status]");
+  const reviewName = form.querySelector("[data-sddc-ova-review-name]");
+  const reviewSize = form.querySelector("[data-sddc-ova-review-size]");
+  const setStatus = (message, state = "idle") => {
+    if (!(status instanceof HTMLElement)) return;
+    status.textContent = message;
+    status.dataset.state = state;
+  };
+  const selectedFile = () => fileInput instanceof HTMLInputElement ? fileInput.files?.[0] : null;
+  const upload = (file) => new Promise((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    xhr.open("POST", form.action);
+    xhr.setRequestHeader("Content-Type", "application/octet-stream");
+    xhr.setRequestHeader("X-CSRF-Token", form.elements.csrf.value);
+    xhr.setRequestHeader("X-Atlaso-Filename", encodeURIComponent(file.name));
+    xhr.upload.addEventListener("load", () => {
+      if (progress instanceof HTMLProgressElement) progress.removeAttribute("value");
+      setStatus("Upload received. Validating the OVA and manifest; keep this page open...", "saving");
+    });
+    xhr.upload.addEventListener("loadstart", () => {
+      if (progress instanceof HTMLProgressElement) {
+        progress.hidden = false;
+        progress.value = 0;
+      }
+      setStatus(`Uploading ${file.name}...`, "saving");
+    });
+    xhr.upload.addEventListener("progress", (event) => {
+      if (!(progress instanceof HTMLProgressElement) || !event.lengthComputable) return;
+      const percent = Math.max(0, Math.min(100, Math.round((event.loaded / event.total) * 100)));
+      progress.value = percent;
+      setStatus(`Uploading ${file.name}: ${percent}%`, "saving");
+    });
+    xhr.addEventListener("load", () => {
+      let payload = {};
+      try {
+        payload = xhr.responseText ? JSON.parse(xhr.responseText) : {};
+      } catch (_error) {
+        payload = {};
+      }
+      if (xhr.status >= 200 && xhr.status < 300 && payload.path) {
+        resolve(payload);
+        return;
+      }
+      reject(new Error(payload.detail || (xhr.status === 413
+        ? "Upload is too large. SDDC Manager OVA uploads are limited to 16 GiB."
+        : `Upload failed with HTTP ${xhr.status}.`)));
+    });
+    xhr.addEventListener("error", () => reject(new Error("Upload failed before Atlaso received the file. Check appliance connectivity and upload size.")));
+    xhr.addEventListener("abort", () => reject(new Error("Upload canceled.")));
+    xhr.send(file);
+  });
+  const wizard = window.AtlasoUiPatterns.createWizard({
+    form,
+    dialog,
+    steps: [
+      { id: "file", title: "Choose an SDDC Manager OVA", description: "Select one OVA to add to the VCFDT SDDC_MANAGER_VCF folder." },
+      { id: "review", title: "Review the SDDC Manager OVA", description: "Review the destination. Uploading does not deploy a VM or configure the offline depot." },
+    ],
+    discardTitle: "Discard SDDC Manager OVA upload?",
+    discardMessage: "The selected deployment OVA will not be uploaded.",
+    onOpen: () => {
+      form.reset();
+      if (progress instanceof HTMLProgressElement) {
+        progress.hidden = true;
+        progress.value = 0;
+      }
+      setStatus("Ready to upload the reviewed OVA.");
+    },
+    validateStep: ({ step }) => {
+      if (step.id !== "file") return { valid: true };
+      const file = selectedFile();
+      if (!file) return { valid: false, message: "Choose an SDDC Manager OVA before continuing.", field: "ova_file" };
+      if (!file.name.toLowerCase().endsWith(".ova")) return { valid: false, message: "Choose a .ova installer file.", field: "ova_file" };
+      if (file.size > 16 * 1024 ** 3) return { valid: false, message: "Choose an OVA no larger than 16 GiB.", field: "ova_file" };
+      return { valid: true };
+    },
+    prepareReview: () => {
+      const file = selectedFile();
+      if (reviewName instanceof HTMLElement) reviewName.textContent = file?.name || "Not selected";
+      if (reviewSize instanceof HTMLElement) reviewSize.textContent = file ? formatMonitorBytes(file.size) : "Not available";
+    },
+    onSubmit: async () => {
+      const file = selectedFile();
+      if (!file) return { valid: false, message: "Choose an SDDC Manager OVA.", step: "file", field: "ova_file" };
+      try {
+        await upload(file);
+        setStatus(`${file.name} validated and added. Refreshing deployment choices...`, "saved");
+        window.location.reload();
+        return { valid: true };
+      } catch (error) {
+        const message = error instanceof Error ? error.message : "The SDDC Manager OVA could not be uploaded.";
+        setStatus(message, "error");
+        return { valid: false, message, step: "review" };
+      }
+    },
+  });
+  document.querySelectorAll("[data-sddc-ova-upload-open]").forEach((launcher) => {
+    launcher.addEventListener("click", () => wizard.open({ launcher }));
+  });
+}
+
 function initializeTagEditors(root = document) {
   root.querySelectorAll("[data-tag-editor]").forEach((editor) => {
     if (editor instanceof HTMLElement && editor.dataset.tagEditorInitialized === "1") {
@@ -23727,6 +23834,7 @@ document.addEventListener("DOMContentLoaded", initializeVcfDepotTokenPaste);
 document.addEventListener("DOMContentLoaded", initializeVcfDepotActivationPaste);
 document.addEventListener("DOMContentLoaded", initializeFileUploadControls);
 document.addEventListener("DOMContentLoaded", initializeEsxiIsoUploadForms);
+document.addEventListener("DOMContentLoaded", initializeSddcOvaUploadForms);
 document.addEventListener("DOMContentLoaded", () => initializeTagEditors());
 document.addEventListener("DOMContentLoaded", () => initializeServiceBindEditors());
 document.addEventListener("DOMContentLoaded", initializeTabs);

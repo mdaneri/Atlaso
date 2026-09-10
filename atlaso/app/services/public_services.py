@@ -665,6 +665,15 @@ def _management_ui_proxy_locations(upstream_host: str, upstream_port: int) -> li
         upstream_port: Atlaso application port receiving proxied browser requests.
     """
     return [
+        *_proxy_location(
+            "= /ui/management/vcf-helper/sddc-manager/ovas/upload",
+            upstream_host, upstream_port, forwarded_proto="https",
+            extra_directives=[
+                "    client_max_body_size 16g;",
+                "    proxy_request_buffering off;",
+                "    proxy_read_timeout 1800s;",
+            ],
+        ),
         "",
         *_proxy_location("= /ui/management", upstream_host, upstream_port, forwarded_proto="https"),
         "",

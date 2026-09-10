@@ -10,7 +10,7 @@ from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 from threading import Lock
 from typing import Any
-from urllib.parse import quote, urlsplit
+from urllib.parse import quote, unquote, urlsplit
 from uuid import uuid4
 
 from fastapi import (
@@ -110,6 +110,7 @@ from atlaso.app.services.vcf_sddc_deployment import (
     vsphere_inventory,
     vsphere_ovf_descriptor,
 )
+from atlaso.app.services.vcf_sddc_upload import SddcUploadError, store_sddc_ova_upload
 from atlaso.app.services.vcf_trust import (
     VcfTrustCredentials,
     VcfTrustError,
@@ -979,6 +980,30 @@ def build_router(dependencies: VcfWorkflowsUiDependencies) -> VcfWorkflowsUiRout
             labels = [properties[key].label or key for key in missing]
             invalid.insert(0, f"Complete required OVA properties: {', '.join(labels)}.")
         return invalid
+
+    @router.post("/vcf-helper/sddc-manager/ovas/upload", response_model=None)
+    async def upload_vcf_sddc_ova(
+        request: Request,
+        identity: Identity = Depends(require_session_identity),
+        db: Session = Depends(get_db),
+    ) -> JSONResponse:
+        """Stream one authorized OVA after session and CSRF admission, without multipart spooling."""
+        require_vcf_helper_write(identity)
+        verify_csrf(request, request.headers.get("X-CSRF-Token", ""))
+        if request.headers.get("content-type") != "application/octet-stream":
+            raise HTTPException(status_code=415, detail="Upload the selected OVA as a binary file.")
+        try:
+            result = await store_sddc_ova_upload(
+                request.stream(), unquote(request.headers.get("X-Atlaso-Filename", ""))
+            )
+        except SddcUploadError as exc:
+            return JSONResponse({"detail": str(exc)}, status_code=exc.status_code)
+        record_audit(
+            db, actor=identity.username, action="upload_vcf_sddc_ova",
+            resource_type="vcf_sddc_ova", resource_id=str(result["relative_path"]),
+            detail=f"size_bytes={result['size_bytes']}", request_id=request.state.request_id,
+        )
+        return JSONResponse({"status": "uploaded", **result})
 
     @router.post("/vcf-helper/sddc-manager/inventory", response_model=None)
     async def vcf_sddc_manager_inventory(
@@ -4160,6 +4185,7 @@ def build_router(dependencies: VcfWorkflowsUiDependencies) -> VcfWorkflowsUiRout
             "inspect_vcf_vault_import": inspect_vcf_vault_import,
             "import_vcf_passwords_to_vault": import_vcf_passwords_to_vault,
             "_validate_vcf_sddc_property_values": _validate_vcf_sddc_property_values,
+            "upload_vcf_sddc_ova": upload_vcf_sddc_ova,
             "vcf_sddc_manager_inventory": vcf_sddc_manager_inventory,
             "deploy_vcf_sddc_manager_from_ui": deploy_vcf_sddc_manager_from_ui,
             "vcf_sddc_manager_task_status": vcf_sddc_manager_task_status,

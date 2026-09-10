@@ -64,6 +64,33 @@ and OVA appliance passwords remain separate fields and are never filled from thi
 
 ## Deploy SDDC Manager
 
+### Upload an OVA without VCFDT
+
+Administrators and service administrators can select **Add SDDC Manager OVA** under **SDDC Manager / VCF Installer**.
+Choose the original `.ova` file from your computer, review its filename, size, and destination, then select
+**Upload SDDC Manager OVA**. The two-step wizard follows **Add ESX ISO**, but accepts deployment OVAs rather than
+ISO boot images. JavaScript is required for the streaming upload. The limit is 16 GiB.
+
+The final destination is `/mnt/atlaso-vcf-offline-depot/PROD/COMP/SDDC_MANAGER_VCF/<original-filename>.ova`, directly
+inside the component folder without an extra version or upload directory. This matches the packaged VCFDT
+`application-prodv2.properties` defaults and the
+[VMware Holodeck offline depot layout](https://github.com/vmware/Holodeck/blob/main/docs/offline_depot.md).
+Keep the vendor filename; only letters, numbers, dots, underscores, and hyphens are accepted.
+
+The wizard reports transfer progress, then shows validation while Atlaso checks the OVF, referenced files, and manifest
+checksums. After success, the page refreshes and **Deploy SDDC Manager** discovers the package in the same folder used
+by VCFDT. Uploading does not deploy a VM, enable the depot, or require global Appliance Apply. It does not require
+VCFDT, Broadcom credentials, or a software depot ID, and does not populate the metadata needed to serve a complete
+offline depot to VCF.
+
+Existing filenames are rejected, including when two uploads finish concurrently; Atlaso never replaces an existing
+package. Choose the correct original package rather than renaming it to bypass a duplicate. For invalid or truncated
+files, obtain the complete original OVA and retry. For storage failures, check depot free space and write access.
+Failed or disconnected uploads are removed from staging; a process interruption can leave a private staging directory
+outside deployment discovery, but never a partially uploaded selectable OVA.
+
+### Deploy a validated package
+
 `Deploy SDDC Manager` becomes available when a valid OVA is present beneath
 `/mnt/atlaso-vcf-offline-depot/PROD/COMP/SDDC_MANAGER_VCF`. Atlaso validates the OVA manifest, reads its
 user-configurable OVF properties, confirms the vCenter or ESXi TLS fingerprint, and asks the selected target to parse
@@ -228,6 +255,7 @@ match the current catalog.
 - `POST /ui/management/vcf-helper/generated-fqdns` validates and creates missing records.
 - `POST /ui/management/vcf-helper/generated-fqdns/delete` deletes matching helper-owned records.
 - `POST /ui/management/vcf-helper/sddc-manager/inventory` confirms TLS and discovers vSphere inventory.
+- `POST /ui/management/vcf-helper/sddc-manager/ovas/upload` streams an OVA after session, role, and CSRF checks.
 - `POST /ui/management/vcf-helper/sddc-manager/deploy` queues an OVA deployment.
 - `GET /ui/management/vcf-helper/sddc-manager/tasks/{job_id}` reports deployment progress.
 - `POST /ui/management/vcf-helper/offline-depot/inspect-target` previews remote depot state.
