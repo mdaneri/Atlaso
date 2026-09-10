@@ -1,5 +1,5 @@
 // All browser file-bearing requests use the shared chunk transport.
-const fetch = (...args) => window.AtlasoUploads.fetch(...args);
+const fetch = (...args) => window.AtlasoUploads ? window.AtlasoUploads.fetch(...args) : window.fetch(...args);
 const managementUiPath = (path = "") => window.AtlasoRoutes.management(path);
 
 document.addEventListener("click", (event) => {

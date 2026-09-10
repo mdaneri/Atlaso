@@ -49,6 +49,10 @@ def _publication(target: str, field: str, filename: str) -> UploadPublication | 
         root = vcf_sddc_upload.SDDC_MANAGER_OVA_ROOT
     elif target.endswith("/esxi-pxe/isos/upload") and field == "iso_file":
         root = esxi_pxe.ESXI_INSTALLER_ISO_ROOT
+        try:
+            filename = esxi_pxe.safe_installer_iso_name(filename)
+        except ValueError as exc:
+            raise HTTPException(400, "Upload an ESX installer ISO with a safe .iso filename.") from exc
     elif field == "tool_archive_file":
         root = vcf_offline_depot.VCF_DEPOT_UPLOAD_DIR
     if root is None:

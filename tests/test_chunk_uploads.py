@@ -59,6 +59,47 @@ def test_existing_media_requires_revision_bound_consent(client, tmp_path, monkey
     client.delete(BASE + "/data", headers={**headers, "X-Atlaso-Upload-Id": key})
 
 
+@pytest.mark.parametrize("filename", [" installer.iso", "installer.iso "])
+@pytest.mark.parametrize("existing", [False, True])
+def test_iso_consent_and_publication_share_canonical_filename(client, tmp_path, monkeypatch, filename, existing):
+    """Trim ISO names consistently before warning and final publication.
+
+    Args:
+        client: Isolated application test client.
+        tmp_path: Isolated media directory.
+        monkeypatch: Fixture replacing the canonical ISO root.
+        filename: Browser name containing surrounding whitespace.
+        existing: Whether an overwrite confirmation is required.
+    """
+    root = tmp_path / "isos"
+    root.mkdir()
+    monkeypatch.setattr("atlaso.app.services.esxi_pxe.ESXI_INSTALLER_ISO_ROOT", root)
+    destination = root / "installer.iso"
+    if existing:
+        destination.write_bytes(b"previous")
+    login(client)
+    page = client.get("/ui/management/vcf-helper")
+    csrf = page.text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
+    headers = {"X-CSRF-Token": csrf}
+    target = "/ui/management/esxi-pxe/isos/upload"
+    envelope = {"target": target, "field": "iso_file", "filename": filename, "size": 6}
+    response = client.post(BASE, headers=headers, json=envelope)
+    if existing:
+        assert response.status_code == 409
+        assert destination.read_bytes() == b"previous"
+        response = client.post(BASE, headers=headers,
+                               json={**envelope, "overwrite_token": response.json()["overwrite_token"]})
+    assert response.status_code == 200, response.text
+    key = response.json()["id"]
+    assert append(client, headers, key, 0, b"abcdef").status_code == 200
+    result = client.post(target, headers={**headers, "X-Atlaso-Chunked": "1", "X-Atlaso-Upload": "1"},
+                         json={"files": [key], "fields": [["csrf", csrf]]})
+    assert result.status_code == 200, result.text
+    assert result.json()["name"] == "installer.iso"
+    assert destination.read_bytes() == b"abcdef"
+    assert [p.name for p in root.iterdir()] == ["installer.iso"]
+
+
 def test_chunk_admission_requires_destination_permissions():
     """Reject staging before bytes are accepted when destination scope is missing."""
     from fastapi import HTTPException
@@ -241,12 +282,14 @@ def test_file_transport_preserves_endpoint_validation(client, target, field, tmp
     """
     import atlaso.app.api.network_boot as network_routes
     monkeypatch.setattr(network_routes, "network_boot_upload_path", lambda job_id: tmp_path / job_id / "artifact")
-    headers, key = start(client, target, field, "invalid.bin")
+    monkeypatch.setattr("atlaso.app.services.esxi_pxe.ESXI_INSTALLER_ISO_ROOT", tmp_path / "isos")
+    headers, key = start(client, target, field, "installer.iso" if field == "iso_file" else "invalid.bin")
     assert append(client, headers, key, 0, b"abcdef").status_code == 200
     response = client.post(target, headers={**headers, "X-Atlaso-Chunked": "1", "Accept": "application/json",
                                           "X-Atlaso-Upload": "1"},
                            json={"files": [key], "fields": [["csrf", headers["X-CSRF-Token"]]]})
-    assert response.status_code in ({202} if target.startswith("/api/") else {400, 422}), response.text
+    expected = {202} if target.startswith("/api/") else {200} if field == "iso_file" else {400, 422}
+    assert response.status_code in expected, response.text
     assert key not in upload_store.sessions
 
 

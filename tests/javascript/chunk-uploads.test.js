@@ -5,6 +5,17 @@ const vm = require("node:vm");
 const { webcrypto, createHash } = require("node:crypto");
 const source = fs.readFileSync("atlaso/app/static/chunk-uploads.js", "utf8");
 
+test("shared app keeps ordinary fetch working on public shells without upload assets", async () => {
+  const binding = fs.readFileSync("atlaso/app/static/app.js", "utf8").split("\n").find(line => line.startsWith("const fetch ="));
+  for (const management of [false, true]) {
+    const calls = [];
+    const context = { window: { fetch: async (url) => { calls.push("native:" + url); return "ok"; } } };
+    if (management) context.window.AtlasoUploads = { fetch: async (url) => { calls.push("chunked:" + url); return "ok"; } };
+    assert.equal(await vm.runInNewContext(`${binding}\nfetch('/status')`, context), "ok");
+    assert.deepEqual(calls, [(management ? "chunked:" : "native:") + "/status"]);
+  }
+});
+
 function harness({ lostAck = false, finalFailure = false, existing = false, confirm = false, http = false, chunkBytes = 2 } = {}) {
   const calls = [];
   const warnings = [];

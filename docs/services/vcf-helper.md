@@ -86,7 +86,8 @@ offline depot to VCF.
 For an existing OVA, ESX ISO, or VCF Download Tool filename, Atlaso shows **Overwrite existing file?** before sending
 file bytes. **Cancel** keeps the original file; **Overwrite** replaces it only after validation succeeds. Confirmation
 is bound to the current file revision: if another upload changes it during transfer, select the file again and confirm
-the new warning. A failed OVA audit restores the previous package. For invalid or truncated files, obtain the complete
+the new warning. ESX ISO names use the same whitespace trimming for overwrite checks and final storage.
+A failed OVA audit restores the previous package. For invalid or truncated files, obtain the complete
 original OVA and retry. For storage failures, check depot free space and write access.
 Failed or disconnected uploads are removed from staging; a process interruption can leave a private staging directory
 outside deployment discovery, but never a partially uploaded selectable OVA.
