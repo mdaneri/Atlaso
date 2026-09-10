@@ -78,6 +78,7 @@ except ModuleNotFoundError:
 
 
 COMMANDS: dict[str, set[str]] = {
+    "diagnostics": {"source"},
     "staging": {"prepare"},
     "local-users": {"validate", "apply", "status", "authenticate"},
     "appliance-settings": {"validate", "preflight", "apply"},
@@ -212,6 +213,7 @@ NO_PATH_ACTIONS = {
     ("appliance-update", "quiesce-action"),
 }
 NON_PATH_ARGUMENT_ACTIONS = {
+    ("diagnostics", "source"),
     ("local-users", "authenticate"),
     ("ldap", "authenticate"),
     ("automation", "run"),
@@ -23201,6 +23203,40 @@ def _handle_appliance_update(action: str, args: list[str]) -> int:
     return 2
 
 
+def _handle_diagnostic_source(args: list[str]) -> int:
+    """Return one sanitized observational source through the installed collector.
+
+    Args:
+        args: Exact source identifier, two aware timestamps, and a bounded event limit.
+    """
+    sources = {"firewall-ipv4", "firewall-ipv6", "release-update"} | {
+        "journal-" + unit for unit in ("atlaso", "atlaso-worker", "nginx", "systemd-networkd", "systemd-resolved")
+    }
+    try:
+        if len(args) != 4 or args[0] not in sources or not args[3].isdigit() or not 1 <= int(args[3]) <= 2000:
+            return 2
+        since, until = [datetime.fromisoformat(value.replace("Z", "+00:00")) for value in args[1:3]]
+        if since.tzinfo is None or until.tzinfo is None or not 0 < (until - since).total_seconds() <= 7 * 86400:
+            return 2
+        # -I prevents caller PYTHONPATH/site customization from gaining privilege.
+        # Only the installed root-owned release provides the standard-library collector.
+        result = subprocess.run(
+            ["/opt/atlaso/.venv/bin/python", "-I", "-m", "atlaso.diagnostics", "--source", args[0],
+             "--since", args[1], "--until", args[2], "--log-lines", args[3]],
+            check=False, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, stdin=subprocess.DEVNULL,
+            timeout=8, env={"PATH": "/usr/sbin:/usr/bin:/sbin:/bin", "LC_ALL": "C"},
+        )
+        if result.returncode or len(result.stdout) > 262144:
+            return 1
+        payload = json.loads(result.stdout)
+        if not isinstance(payload, dict) or payload.get("source") != args[0] or not isinstance(payload.get("evidence"), dict):
+            return 1
+        print(json.dumps(payload, sort_keys=True))
+        return 0
+    except (ValueError, OSError, subprocess.TimeoutExpired):
+        return 1
+
+
 def main(argv: list[str]) -> int:
     """Run the command-line entry point.
 
@@ -23234,6 +23270,8 @@ def main(argv: list[str]) -> int:
 
     if (group, action) == ("kms", "status"):
         return _handle_kms(action, normalized_args)
+    if (group, action) == ("diagnostics", "source"):
+        return _handle_diagnostic_source(normalized_args)
 
     if real_apply and _should_run_real_action_with_systemd(action):
         return _run_real_action_with_systemd(group, action, normalized_args)

@@ -232,6 +232,13 @@ shared Tabulator foundation or receive explicit maintainer approval through a se
 
 ## Completion rule
 
+Issue #799 reorganizes the existing Maintenance (`backup_restore.html`) page into LDAP, Backup, Reset and Diagnostics
+tabs. Recovery actions retain their original routes and safeguards. `partials/diagnostics.html` contains the
+wizard-backed Tabulator collection using Automation Schedules and ESX Storage, the `diagnostics-wizard` four-step
+creation flow, and the `diagnostics-detail` read-only result dialog using Tasks conventions. It preserves the native
+read-only fallback, current administrator authorization, explicit omission/status text, keyboard entry and responsive
+shared controls. Diagnostics does not invoke Appliance Apply. Desktop and narrow-view validation belong to #799.
+
 The matrix is complete only while E1–E8 pass on the same pull-request head. A future failure must be remediated in the
 same change or tracked by a separately labeled issue linked to #115; a new `custom/other` interaction also requires
 explicit maintainer approval before implementation.

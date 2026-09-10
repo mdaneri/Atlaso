@@ -6755,9 +6755,81 @@
     "methods": [
       "GET"
     ],
-    "name": "placeholder_page",
+    "name": "diagnostics_data",
     "operation_id": null,
     "order": 562,
+    "path": "/ui/management/backup-restore/diagnostics/data",
+    "plane": "ui_management"
+  },
+  {
+    "include_in_schema": false,
+    "kind": "http",
+    "methods": [
+      "POST"
+    ],
+    "name": "diagnostics_create",
+    "operation_id": null,
+    "order": 563,
+    "path": "/ui/management/backup-restore/diagnostics/create",
+    "plane": "ui_management"
+  },
+  {
+    "include_in_schema": false,
+    "kind": "http",
+    "methods": [
+      "GET"
+    ],
+    "name": "diagnostics_detail",
+    "operation_id": null,
+    "order": 564,
+    "path": "/ui/management/backup-restore/diagnostics/{bundle_id}",
+    "plane": "ui_management"
+  },
+  {
+    "include_in_schema": false,
+    "kind": "http",
+    "methods": [
+      "GET"
+    ],
+    "name": "diagnostics_download",
+    "operation_id": null,
+    "order": 565,
+    "path": "/ui/management/backup-restore/diagnostics/{bundle_id}/download",
+    "plane": "ui_management"
+  },
+  {
+    "include_in_schema": false,
+    "kind": "http",
+    "methods": [
+      "POST"
+    ],
+    "name": "diagnostics_delete",
+    "operation_id": null,
+    "order": 566,
+    "path": "/ui/management/backup-restore/diagnostics/{bundle_id}/delete",
+    "plane": "ui_management"
+  },
+  {
+    "include_in_schema": false,
+    "kind": "http",
+    "methods": [
+      "POST"
+    ],
+    "name": "diagnostics_cancel",
+    "operation_id": null,
+    "order": 567,
+    "path": "/ui/management/backup-restore/diagnostics/{bundle_id}/cancel",
+    "plane": "ui_management"
+  },
+  {
+    "include_in_schema": false,
+    "kind": "http",
+    "methods": [
+      "GET"
+    ],
+    "name": "placeholder_page",
+    "operation_id": null,
+    "order": 568,
     "path": "/ui/management/{page}",
     "plane": "ui_management"
   },
@@ -6769,7 +6841,7 @@
     ],
     "name": "create_upload",
     "operation_id": null,
-    "order": 563,
+    "order": 569,
     "path": "/ui/management/uploads/chunks",
     "plane": "ui_management"
   },
@@ -6781,7 +6853,7 @@
     ],
     "name": "append_chunk",
     "operation_id": null,
-    "order": 564,
+    "order": 570,
     "path": "/ui/management/uploads/chunks/data",
     "plane": "ui_management"
   },
@@ -6793,7 +6865,7 @@
     ],
     "name": "cancel_upload",
     "operation_id": null,
-    "order": 565,
+    "order": 571,
     "path": "/ui/management/uploads/chunks/data",
     "plane": "ui_management"
   }

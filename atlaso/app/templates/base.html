@@ -13,7 +13,7 @@
     <link rel="icon" href="/favicon.ico" type="image/x-icon">
     <link rel="icon" href="/static/brand/atlaso-icon.svg" type="image/svg+xml">
     <link rel="stylesheet" href="/static/vendor/tabulator/tabulator.min.css">
-    <link rel="stylesheet" href="/static/app.css?v=issues-515-519-10-605-1-660-3-662-663-1-721-3-777-1">
+    <link rel="stylesheet" href="/static/app.css?v=issues-515-519-10-605-1-660-3-662-663-1-721-3-777-1-799-3">
     {% block extra_head %}{% endblock %}
   </head>
   <body>
@@ -68,7 +68,7 @@
               ("Audit Events", management_ui_path("/audit-log"), "read:audit"),
               ("Appliance Update", management_ui_path("/appliance-update"), "admin:all"),
               ("Automation", management_ui_path("/automation"), "admin:all"),
-              ("Backup / Restore", management_ui_path("/backup-restore"), "admin:all")
+              ("Maintenance", management_ui_path("/backup-restore"), "admin:all")
             ])
           ] %}
           {% set nav_link_aliases = {

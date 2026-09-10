@@ -7183,6 +7183,47 @@ textarea {
   }
 }
 
+#diagnostics-wizard .field-label > span {
+  min-width: 0;
+  white-space: normal;
+}
+
+#diagnostics-wizard .vcf-sddc-wizard-rail h2 {
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
+#diagnostics-wizard .field-label {
+  position: relative;
+}
+
+#diagnostics-wizard .help-icon {
+  position: static;
+}
+
+#diagnostics-wizard .help-icon::after {
+  left: 0;
+  width: min(280px, 100%);
+  box-sizing: border-box;
+  transform: none;
+}
+
+@media (max-width: 600px) {
+  #diagnostics-wizard .form-grid,
+  #diagnostics-wizard .scope-choice-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  #diagnostics-wizard .vcf-sddc-step-list {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  #diagnostics-wizard .vcf-sddc-wizard-rail,
+  #diagnostics-wizard .vcf-sddc-wizard-body {
+    padding: 12px;
+  }
+}
+
 .vcf-fqdn-modal.confirm-modal.wide-modal {
   width: min(960px, calc(100vw - 32px));
   max-height: calc(100vh - 32px);

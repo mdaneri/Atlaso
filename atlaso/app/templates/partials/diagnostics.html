@@ -1,0 +1,73 @@
+<div class="panel-head"><div><h2>Diagnostic bundles</h2><p class="muted">Collect selected support evidence without changing appliance configuration. Bundles expire after 24 hours; sharing is manual.</p></div></div>
+<p id="diagnostics-status" class="muted" role="status"></p>
+<p id="diagnostics-grid-status" class="muted" role="status"></p>
+<div id="diagnostics-grid" class="tabulator-grid compact-grid" data-fallback-id="diagnostics-fallback" data-root="{{ management_ui_root }}/backup-restore/diagnostics"></div>
+<table id="diagnostics-fallback" class="data-table compact">
+  <thead><tr><th>Created</th><th>Status</th><th>Scope</th><th>Anonymized</th><th>Expires</th></tr></thead>
+  <tbody>{% for bundle in diagnostics_rows|default([]) %}<tr><td>{{ bundle.created_at }}</td><td>{{ bundle.status }}</td><td>{{ bundle.scope|join(', ') }}</td><td>{{ 'Yes' if bundle.anonymize else 'No' }}</td><td>{{ bundle.expires_at }}</td></tr>{% else %}<tr><td colspan="5">No diagnostic bundles recorded.</td></tr>{% endfor %}</tbody>
+</table>
+<noscript><p class="muted">Bundle creation and download require JavaScript. Recovery console alternative: <code>atlaso-diagnostics --output /absolute/private/directory/bundle.zip</code>.</p></noscript>
+<dialog id="diagnostics-wizard" class="confirm-modal wide-modal vcf-sddc-wizard-modal" aria-labelledby="diagnostics-title" aria-describedby="diagnostics-description">
+  <form id="diagnostics-create" class="confirm-modal-panel vcf-sddc-wizard-panel" method="post" action="{{ management_ui_root }}/backup-restore/diagnostics/create" data-atlaso-wizard>
+    <input type="hidden" name="csrf" value="{{ csrf_token }}">
+    <aside class="vcf-sddc-wizard-rail" aria-label="Diagnostic collection steps">
+      <p class="kicker">Support evidence</p><h2 id="diagnostics-title">Create diagnostic bundle</h2>
+      <ol class="vcf-sddc-step-list">{% for key, label in [('incident','Incident'),('contents','Contents'),('privacy','Privacy'),('review','Review')] %}<li><button class="vcf-sddc-step-button{{ ' active' if loop.first else '' }}" type="button" data-atlaso-wizard-nav="{{ key }}" {{ 'disabled' if not loop.first else '' }}><span>{{ loop.index }}</span><strong>{{ label }}</strong></button></li>{% endfor %}</ol>
+    </aside>
+    <div class="vcf-sddc-wizard-main"><div class="confirm-modal-body vcf-sddc-wizard-body">
+      <p class="kicker" data-atlaso-wizard-kicker>Step 1 of 4</p><h3 data-atlaso-wizard-title>Incident</h3>
+      <p id="diagnostics-description" class="muted" data-atlaso-wizard-description>Select when the problem occurred.</p>
+      <div class="alert error hidden" data-atlaso-wizard-error></div>
+      <section data-atlaso-wizard-step="incident">
+        <div class="form-grid">
+          <label class="full"><span class="field-label"><span>Incident window</span><button class="help-icon" type="button" data-help="Last 30 minutes is evaluated when collection is requested. Custom times use the displayed browser timezone, with a maximum seven-day window.">i</button></span><select id="diagnostics-window"><option value="recent">Last 30 minutes</option><option value="custom">Custom time range</option></select></label>
+          <label data-diagnostic-time hidden><span>From</span><input type="datetime-local" name="since" disabled></label>
+          <label data-diagnostic-time hidden><span>Until</span><input type="datetime-local" name="until" disabled></label>
+          <p class="muted full" id="diagnostics-timezone"></p>
+          <label class="full"><span class="field-label"><span>Task / correlation ID (optional)</span><button class="help-icon" type="button" data-help="A task or correlation UUID narrows recorded task history. Existing job_ identifiers are accepted. It does not make appliance observations historical or filter unrelated system events.">i</button></span><input name="correlation_id" autocomplete="off" maxlength="40" pattern="(job_[0-9a-fA-F]{12}|[0-9a-fA-F\-]{32,36})"></label>
+        </div>
+      </section>
+      <section data-atlaso-wizard-step="contents" hidden>
+        <p>Basic version, clock, resource pressure, service status, and database availability are always included.</p>
+        <fieldset class="scope-choice-fieldset"><legend>Additional evidence</legend><div class="scope-choice-grid">
+          {% for key,label,description in [('network','Network','Desired, applied and observed interfaces, routes, DNS and listeners.'),('terminal','Web Terminal','Management listeners, nginx WebSocket forwarding and service evidence.'),('update','Appliance Update','Relevant update task and release evidence.'),('pxe','Network Boot / PXE','Relevant boot service and task evidence.')] %}
+          <label class="scope-choice"><input type="checkbox" name="scopes" value="{{ key }}"><span class="scope-choice-copy"><strong>{{ label }}</strong><small>{{ description }}</small></span></label>
+          {% endfor %}
+        </div></fieldset>
+        <label class="choice-row"><input type="checkbox" name="detailed_logs"><span class="choice-copy"><strong>Include detailed log evidence</strong><small>Bounded journal timestamps, severity, hostnames and recognized failure categories. Free-form messages and customer content are excluded.</small></span></label>
+        <label><span class="field-label"><span>Maximum events per log</span><button class="help-icon" type="button" data-help="Applies only when detailed logs are selected. Between 1 and 2000 events, subject to the collector byte and time limits.">i</button></span><input name="log_lines" type="number" min="1" max="2000" value="500"></label>
+      </section>
+      <section data-atlaso-wizard-step="privacy" hidden>
+        <label class="switch-row"><span class="field-label"><span>Anonymize hostnames and usernames</span><button class="help-icon" type="button" data-help="Replace repeated hostnames and usernames consistently within this bundle. IP and MAC addresses remain unchanged. The original-value mapping is never included.">i</button></span><input type="checkbox" name="anonymize" aria-label="Anonymize hostnames and usernames"></label>
+        <p class="muted">Examples: <code>hostname0001</code>, <code>user0001</code>. The same value has the same alias throughout this bundle. Aliases are not shared across bundles.</p>
+        <p>IP and MAC addresses remain unchanged. Passwords, tokens, private keys, and other secrets are always excluded.</p>
+      </section>
+      <section data-atlaso-wizard-step="review" hidden>
+        <div id="diagnostics-review" class="settings-list"></div>
+        <p class="muted">Collection is observational and does not require Appliance Apply. Review the resulting contents and omissions before sharing. No automatic upload occurs.</p>
+        <p>Automatic deletion after 24 hours. Manual deletion is available immediately after collection stops.</p>
+      </section>
+    </div><div class="confirm-modal-actions">
+      <button class="button ghost" type="button" data-atlaso-wizard-cancel>Cancel</button>
+      <button class="button secondary" type="button" data-atlaso-wizard-back>Back</button>
+      <button class="button primary" type="button" data-atlaso-wizard-next>Next</button>
+      <button class="button primary hidden" type="submit" data-atlaso-wizard-submit>Create bundle</button>
+    </div></div>
+  </form>
+</dialog>
+<dialog id="diagnostics-detail" class="confirm-modal wide-modal" aria-labelledby="diagnostics-detail-title">
+  <div class="confirm-modal-panel"><div class="confirm-modal-body">
+    <h2 id="diagnostics-detail-title">Diagnostic bundle</h2><p id="diagnostics-detail-status" role="status"></p>
+    <div id="diagnostics-detail-contents" class="settings-list"></div>
+    <h3>Omissions</h3><ul id="diagnostics-omissions"></ul>
+    <p class="muted">Hashes verify file integrity, not source authenticity. Browser handshake and close codes require separate browser evidence.</p>
+  </div><div class="confirm-modal-actions">
+    <a id="diagnostics-download" class="button primary" hidden>Download bundle</a>
+    <a id="diagnostics-task" class="button secondary">View task</a>
+    <button id="diagnostics-retry" class="button secondary" type="button">Collect again</button>
+    <button id="diagnostics-cancel" class="button secondary" type="button" hidden>Cancel collection</button>
+    <button id="diagnostics-remove" class="button danger" type="button" hidden>Delete bundle</button>
+    <button id="diagnostics-detail-close" class="button ghost" type="button">Close</button>
+  </div></div>
+</dialog>
+<form id="diagnostics-delete" method="post" data-confirm-modal data-confirm-title="Delete diagnostic bundle?" data-confirm-message="This permanently removes the selected diagnostic archive from the appliance. Downloaded copies are unaffected. No appliance configuration is changed." data-confirm-label="Delete bundle" hidden><input type="hidden" name="csrf" value="{{ csrf_token }}"></form>

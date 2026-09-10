@@ -9,6 +9,11 @@ status: current
 
 # Backup and restore
 
+Open **Operations > Maintenance**. The **LDAP** tab contains directory recovery; **Backup** groups settings export,
+restore and archive scope; **Reset** retains the confirmed factory-reset workflow. **Diagnostics** collects
+[diagnostic support bundles](diagnostics.md) through its own reviewed wizard.
+Existing `/ui/management/backup-restore` links and recovery actions remain supported.
+
 Traffic Publishing archives include canonical NAT enablement and additive family, translation mode, and fixed-address
 fields. Legacy IPv4 rules retain their meaning; omitted ingress remains pending explicit review. Missing NIC selectors
 are retained only when backed by archived missing-host inventory and never become runtime-eligible on restore.
@@ -31,7 +36,7 @@ Browser archive imports use the shared [chunked upload
 transport](../services/vcf-helper.md#chunked-browser-uploads). Chunk staging does not restore or apply settings;
 the existing validation, recovery review, and global apply boundaries still govern finalization.
 
-Open **Backup and Restore** to protect Atlaso settings before maintenance and recover the control-plane configuration
+Open **Maintenance > Backup** to protect Atlaso settings before maintenance and recover the control-plane configuration
 when needed.
 
 ## Create a backup
