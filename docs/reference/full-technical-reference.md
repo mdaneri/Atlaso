@@ -919,9 +919,10 @@ console keeps CA configuration under `/ui/management/certificate-authority`, wit
 
 ESXi PXE stores Kickstart source files in the Atlaso database. The database is the source of truth; generated files
 under `/var/lib/atlaso/pxe/http/esxi/ks/<id>.cfg` are runtime copies for drift/apply bookkeeping, while boot-time
-Kickstart responses require an unpredictable pending boot claim whose one-time
-code is entered by an authenticated administrator from the intended host
-console. Only that exact claim can receive the cryptographically random,
+Kickstart responses require an unpredictable boot claim. The applied Boot Service
+**Require console authorization** switch is off by default; when enabled, an
+authenticated administrator must enter the intended host's one-time console code.
+Only that exact claim can receive the cryptographically random,
 ten-minute, single-use boot capability. Atlaso stores only claim, code, and
 capability verifiers and binds the capability to the exact applied host, every
 render-affecting Host Reference field, full Kickstart content hash, listener

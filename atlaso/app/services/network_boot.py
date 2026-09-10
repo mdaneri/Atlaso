@@ -2646,7 +2646,7 @@ def create_esxi_boot_claim(
         request_origin: HTTP listener origin serving the host's iPXE request.
     """
     cleanup_esxi_boot_authorizations(db)
-    host, artifact, kickstart, _boot, _manifest = _applied_esxi_boot_context(db, host_id=host_id)
+    host, artifact, kickstart, applied_boot, _manifest = _applied_esxi_boot_context(db, host_id=host_id)
     listener_origin = _artifact_listener_origin(artifact)
     if listener_origin != request_origin.rstrip("/").lower():
         raise ValueError("The request did not arrive on the applied ESXi PXE listener.")
@@ -2666,10 +2666,10 @@ def create_esxi_boot_claim(
         kickstart_id=int(kickstart["id"]),
         kickstart_revision=str(kickstart["content_hash"]).lower(),
         listener_origin=listener_origin,
-        requested_by="",
+        requested_by="" if applied_boot.get("console_authorization_required", True) else "boot-policy",
         requested_at=now,
         expires_at=now + NETWORK_BOOT_ESXI_CAPABILITY_LIFETIME,
-        authorized_at=None,
+        authorized_at=None if applied_boot.get("console_authorization_required", True) else now,
         consumed_at=None,
     )
     db.add(capability)
@@ -2792,6 +2792,14 @@ def _prepare_esxi_boot_attempt(
 
     http_attempt = ESXI_PXE_HTTP_BASE / "attempts" / capability.attempt_id
     tftp_attempt = ESXI_TFTP_ROOT / "attempts" / capability.attempt_id
+    # The service runs with umask 0027; nginx and TFTP need directory traversal.
+    # Only these generated public artifact directories receive relaxed modes.
+    for directory in (
+        http_attempt.parent, http_attempt, tftp_attempt.parent, tftp_attempt,
+        ESXI_TFTP_ROOT / "pxelinux.cfg" / "attempts",
+    ):
+        directory.mkdir(parents=True, exist_ok=True)
+        os.chmod(directory, 0o755)
     _atomic_write_text(http_attempt / "boot.cfg", attempt_boot_cfg)
     _atomic_write_text(tftp_attempt / "boot.cfg", attempt_boot_cfg)
     source_mboot = source_http.parent / "mboot.efi"
@@ -2866,6 +2874,8 @@ def render_esxi_boot_claim(
             db,
             host_id=capability.host_id,
         )
+        if capability.requested_by == "boot-policy" and _boot.get("console_authorization_required", True):
+            raise ValueError("Console authorization is now required; start a fresh boot attempt.")
         if (
             capability.kickstart_id != int(kickstart.get("id") or 0)
             or capability.kickstart_revision != str(kickstart.get("content_hash") or "").lower()
@@ -2953,6 +2963,8 @@ def consume_esxi_boot_capability(
         return None
     try:
         host, artifact, kickstart, boot, manifest = _applied_esxi_boot_context(db, host_id=capability.host_id)
+        if capability.requested_by == "boot-policy" and boot.get("console_authorization_required", True):
+            raise ValueError("Console authorization is now required; start a fresh boot attempt.")
         if (
             normalize_pxe_mac(str(host.get("mac_address") or "")) != mac_key
             or str(kickstart.get("content_hash") or "").lower() != kickstart_revision
@@ -3103,6 +3115,11 @@ def render_network_boot_menu(
             ]
         plaintext_claim = str(getattr(claim, "_plaintext_claim", ""))
         boot_code = str(getattr(claim, "_boot_code", ""))
+        if claim.authorized_at is not None:
+            return [
+                "echo Starting assigned ESXi installer...",
+                f"chain {http_origin}/pxe/esxi/claim/{plaintext_claim}.ipxe?firmware=${{platform}} || goto menu",
+            ]
         return [
             "echo Authorize this exact boot attempt in Atlaso.",
             f"echo Console code: {boot_code}",

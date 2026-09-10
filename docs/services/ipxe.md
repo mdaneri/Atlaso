@@ -430,9 +430,14 @@ commit. API clients use `DELETE
 /api/v1/esxi-pxe/hosts/{host_id}` with `write:esxi-pxe`; the default retains
 discovery history. The optional `remove_discovered_host=true` query additionally
 requires `write:pxe` and applies the same transactional shared-assignment guard.
-Start the assigned host first and choose its ESXi entry.
+The Boot Service **Require console authorization** switch is off by default.
+Save and submit a real global **ESXi PXE Apply** to activate the policy, then start
+a fresh host boot attempt. Existing applied snapshots retain their approval requirement
+until that Apply succeeds. With the switch off, assigned hosts continue directly into
+their applied installer; network access and an assigned MAC are not proof of host identity.
+With the switch on, start the assigned host and choose its ESXi entry.
 The host console displays a one-time code while its unpredictable boot claim
-waits. Then choose **Authorize ESXi boot once**, enter that console code
+waits. Choose **Authorize ESXi boot once**, enter that console code
 in the shared two-step wizard, and review the host before submitting. Atlaso
 creates a ten-minute, single-use authorization bound to that exact claim,
 applied Host Reference, applied Kickstart revision, HTTP listener, and boot
@@ -441,7 +446,7 @@ or its URL. Appliance Apply invalidates all outstanding attempts. Unauthorized,
 invalid-code, expired, replayed, wrong-host,
 wrong-revision, and wrong-listener requests receive the same not-found response.
 
-If the console cannot display a code, inspect the **Validation** card on Network Boot.
+If the assigned installer cannot start, inspect the **Validation** card on Network Boot.
 It identifies Host References whose applied boot snapshot is unavailable, whose
 Kickstart snapshot is invalid, or whose saved host fields differ from applied state.
 Use **Review appliance changes** to submit a real **ESXi PXE** Apply, then start a
@@ -496,9 +501,9 @@ installation, Kickstart, `boot.cfg`, PXELINUX, iPXE, and native UEFI HTTP boot.
 
 Atlaso note: applied host-specific `boot.cfg` files do not contain reusable
 Kickstart URLs. A MAC-selected menu request creates a distinct unpredictable
-pending claim; it never receives an existing attempt path. The boot console
-shows a one-time code that an authenticated `write:pxe` administrator must
-enter before that exact claim can obtain an ephemeral attempt-specific
+claim; it never receives an existing attempt path. When the applied console-authorization
+switch is on, the boot console shows a one-time code that an authenticated `write:pxe`
+administrator must enter before that exact claim can obtain an ephemeral attempt-specific
 `boot.cfg`. Atlaso stores only claim, code, and capability SHA-256 verifiers,
 consumes the capability atomically before resolving any markers, and renders
 from the exact applied Host Reference and full Kickstart content hash. A MAC

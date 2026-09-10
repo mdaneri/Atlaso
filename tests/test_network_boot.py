@@ -3,6 +3,7 @@
 import hashlib
 import io
 import json
+import os
 import re
 import threading
 import time
@@ -715,10 +716,12 @@ def test_api_schedules_and_claims_esxi_inventory_boot_override(client):
         ).scalar_one_or_none() is not None
 
 
+@pytest.mark.parametrize("console_required", [True, False])
 def test_esxi_boot_capability_authorization_binding_and_single_use(
     client,
     monkeypatch,
     tmp_path,
+    console_required,
 ):
     """Verify that resolved Kickstarts require one bound boot capability.
 
@@ -726,6 +729,7 @@ def test_esxi_boot_capability_authorization_binding_and_single_use(
         client: HTTP test client used to exercise the Atlaso application.
         monkeypatch: Pytest fixture used to replace dependencies for the test.
         tmp_path: Temporary directory provided by pytest for isolated filesystem state.
+        console_required: Applied policy selecting manual approval or automatic continuation.
     """
     from urllib.parse import urlsplit
 
@@ -773,6 +777,7 @@ def test_esxi_boot_capability_authorization_binding_and_single_use(
             bios_bootfile="undionly.kpxe",
             uefi_bootfile="snponly.efi",
             native_uefi_http_enabled=True,
+            console_authorization_required=console_required,
         )
         kickstart = EsxiKickstart(
             name="Capability-bound ESXi",
@@ -849,6 +854,12 @@ def test_esxi_boot_capability_authorization_binding_and_single_use(
         )
 
     endpoint = f"/api/v1/network-boot/esxi-hosts/{host_id}/authorize-boot-once"
+    # Autosaved desired policy must not change the already applied boot policy.
+    with SessionLocal() as db:
+        policy = db.scalar(select(Setting).where(Setting.key == "esxi_pxe.boot.console_authorization_required"))
+        policy.value = "false" if console_required else "true"
+        db.commit()
+        assert esxi_pxe_boot_settings(db)["console_authorization_required"] is not console_required
     write_token = create_api_token(client, ["write:pxe"])
     write_headers = {"Authorization": f"Bearer {write_token}"}
     orphan_attempt = "f" * 32
@@ -877,31 +888,43 @@ def test_esxi_boot_capability_authorization_binding_and_single_use(
         assert "/pxe/esxi/attempts/" not in menu.text
         code_match = re.search(r"Console code: ([A-HJ-NP-Z2-9]{4}-[A-HJ-NP-Z2-9]{4})", menu.text)
         claim_match = re.search(r"/pxe/esxi/claim/([A-Za-z0-9_-]{40,64})\.ipxe", menu.text)
-        assert code_match is not None
+        assert (code_match is not None) == console_required
         assert claim_match is not None
-        return code_match.group(1), claim_match.group(1)
+        return code_match.group(1) if code_match else "no-console-code-issued", claim_match.group(1)
 
     def authorize_and_prepare() -> tuple[str, str, str, str]:
         code, claim = pending_boot()
-        pending = client.get(
-            f"/pxe/esxi/claim/{claim}.ipxe?firmware=efi",
-            headers={"host": "192.168.50.1:8080"},
-        )
-        assert pending.status_code == 200
-        assert "Waiting for Atlaso authorization" in pending.text
-        assert "/pxe/esxi/attempts/" not in pending.text
-        authorized = client.post(endpoint, json={"boot_code": code}, headers=write_headers)
-        assert authorized.status_code == 202, authorized.text
-        assert set(authorized.json()) == {"host_id", "requested_at", "expires_at", "message"}
-        loader = client.get(
-            f"/pxe/esxi/claim/{claim}.ipxe?firmware=efi",
-            headers={"host": "192.168.50.1:8080"},
-        )
+        if console_required:
+            pending = client.get(
+                f"/pxe/esxi/claim/{claim}.ipxe?firmware=efi",
+                headers={"host": "192.168.50.1:8080"},
+            )
+            assert pending.status_code == 200
+            assert "Waiting for Atlaso authorization" in pending.text
+            assert "/pxe/esxi/attempts/" not in pending.text
+            authorized = client.post(endpoint, json={"boot_code": code}, headers=write_headers)
+            assert authorized.status_code == 202, authorized.text
+            assert set(authorized.json()) == {"host_id", "requested_at", "expires_at", "message"}
+        previous_umask = os.umask(0o027)
+        try:
+            loader = client.get(
+                f"/pxe/esxi/claim/{claim}.ipxe?firmware=efi",
+                headers={"host": "192.168.50.1:8080"},
+            )
+        finally:
+            os.umask(previous_umask)
         assert loader.status_code == 200, loader.text
         attempt_match = re.search(r"/pxe/esxi/attempts/([0-9a-f]{32})/mboot\.efi", loader.text)
         assert attempt_match is not None
         attempt_id = attempt_match.group(1)
         attempt_boot_cfg = http_base / "attempts" / attempt_id / "boot.cfg"
+        if os.name == "posix":
+            for directory in (
+                attempt_boot_cfg.parent, attempt_boot_cfg.parent.parent,
+                tftp_root / "attempts", tftp_root / "attempts" / attempt_id,
+                tftp_root / "pxelinux.cfg" / "attempts",
+            ):
+                assert directory.stat().st_mode & 0o777 == 0o755
         match = re.search(r"(?:^|\s)ks=(\S+)", attempt_boot_cfg.read_text(encoding="utf-8"))
         assert match is not None
         capability_url = urlsplit(match.group(1))
@@ -928,8 +951,12 @@ def test_esxi_boot_capability_authorization_binding_and_single_use(
         host = db.get(EsxiPxeHost, host_id)
         host.hostname = "desired-drift"
         db.commit()
-    drifted = client.post(endpoint, json={"boot_code": code}, headers=write_headers)
-    assert drifted.status_code == 409
+    if console_required:
+        drifted = client.post(endpoint, json={"boot_code": code}, headers=write_headers)
+        assert drifted.status_code == 409
+    else:
+        drifted = client.get(f"/pxe/esxi/claim/{claim}.ipxe?firmware=efi", headers={"host": "192.168.50.1:8080"})
+        assert drifted.status_code == 404
     with SessionLocal() as db:
         host = db.get(EsxiPxeHost, host_id)
         host.hostname = "esx-capability"
@@ -952,10 +979,13 @@ def test_esxi_boot_capability_authorization_binding_and_single_use(
                 AuditEvent.resource_id == str(host_id),
             ).order_by(AuditEvent.id.desc())
         ).scalars().first()
-        assert audit is not None
-        assert claim not in (audit.detail or "")
-        assert code not in (audit.detail or "")
-        assert attempt_id not in (audit.detail or "")
+        if console_required:
+            assert audit is not None
+            assert claim not in (audit.detail or "")
+            assert code not in (audit.detail or "")
+            assert attempt_id not in (audit.detail or "")
+        else:
+            assert audit is None
     assert not (http_base / "attempts" / orphan_attempt).exists()
     assert not (tftp_root / "attempts" / orphan_attempt).exists()
     assert not (tftp_root / "pxelinux.cfg" / "attempts" / orphan_attempt).exists()
@@ -1007,6 +1037,20 @@ def test_esxi_boot_capability_authorization_binding_and_single_use(
     expired = client.get(expired_path, headers={"host": "192.168.50.1:8080"})
     assert expired.status_code == 404
     assert "resolved-value-for-test" not in expired.text
+
+    if not console_required:
+        _code, _claim, _attempt_id, automatic_path = authorize_and_prepare()
+        _code, unprepared_claim = pending_boot()
+        with SessionLocal() as db:
+            baseline = db.scalar(select(Setting).where(Setting.key == "appliance_apply.baselines.v1"))
+            payload = json.loads(baseline.value)
+            manifest = json.loads(payload["esxi_pxe"]["config_preview"])
+            manifest["boot"]["console_authorization_required"] = True
+            payload["esxi_pxe"]["config_preview"] = json.dumps(manifest)
+            baseline.value = json.dumps(payload)
+            db.commit()
+        assert client.get(automatic_path, headers={"host": "192.168.50.1:8080"}).status_code == 404
+        assert client.get(f"/pxe/esxi/claim/{unprepared_claim}.ipxe?firmware=efi", headers={"host": "192.168.50.1:8080"}).status_code == 404
 
 
 def test_wake_on_lan_packet_and_distinct_broadcast_delivery():

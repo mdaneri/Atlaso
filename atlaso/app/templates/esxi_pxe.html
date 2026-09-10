@@ -330,6 +330,10 @@
       <input type="hidden" name="tftp_root" value="{{ esxi_pxe_boot.tftp_root }}">
       <input type="hidden" name="bios_bootfile" value="{{ esxi_pxe_boot.bios_bootfile }}">
       <input type="hidden" name="uefi_bootfile" value="{{ esxi_pxe_boot.uefi_bootfile }}">
+      <label class="switch-field">
+        <span class="field-label"><span>Require console authorization</span><button class="help-icon" type="button" data-help="Off by default: assigned hosts continue into ESXi installation without a console-code approval. Enable to require an administrator to approve each exact boot attempt. Save changes, then use global Apply to activate this policy.">i</button></span>
+        <input class="switch-input" type="checkbox" name="console_authorization_required" {{ "checked" if esxi_pxe_boot.console_authorization_required else "" }} {{ "disabled" if not esxi_can_write else "" }}><span class="switch-track" aria-hidden="true"></span>
+      </label>
       <div class="form-grid">
         <label class="switch-field">
           <span class="field-label"><span>Native UEFI HTTP</span><button class="help-icon" type="button" data-help="Adds DHCP matching for UEFI HTTPClient firmware and loads the generated iPXE first stage. Every client then resolves the safe per-host Network Boot menu.">i</button></span>

@@ -78,6 +78,10 @@ in a dedicated encrypted runtime record. Display previews and Apply baselines re
 MAC addresses, and host UUIDs remain visible operational identifiers. Recovery from an incomplete applied snapshot
 requires a real ESXi PXE Apply followed by a fresh host boot attempt; a dry run does not repair it.
 
+The Boot Service **Require console authorization** switch is off by default. Apply this policy to let assigned ESXi
+hosts continue without a console code, or enable it for per-attempt administrator approval. Generated attempt
+directories remain readable by the boot servers even under the appliance service's restrictive umask.
+
 ## Project and community
 
 Automated pull-request monitoring uses one four-minute current-task heartbeat as the exclusive routine reconciliation
