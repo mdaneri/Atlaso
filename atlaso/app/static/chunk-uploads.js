@@ -1,8 +1,8 @@
 /* Shared browser file transport; existing form handlers own validation and results. */
 (() => {
   "use strict";
-  // Resolve at call time so the shared mutation-refresh wrapper stays in the chain.
-  const nativeFetch = (...args) => window.fetch(...args);
+  // Staging traffic does not change desired state or need an Apply status refresh.
+  const nativeFetch = window.fetch.bind(window);
   const endpoint = "/ui/management/uploads/chunks";
 
   async function checksumBytes(buffer) {
@@ -71,7 +71,7 @@
     const body = options.body;
     const entries = body instanceof FormData ? [...body.entries()] : body instanceof File ? [["ova_file", body]] : [];
     const files = entries.filter(([, value]) => value instanceof File && value.name);
-    if (!files.length) return nativeFetch(url, options);
+    if (!files.length) return window.fetch(url, options);
     if (target.origin !== location.origin) throw new Error("File uploads must target this appliance.");
     const headers = new Headers(options.headers);
     const csrf = headers.get("X-CSRF-Token") || entries.find(([name]) => name === "csrf")?.[1]
@@ -137,7 +137,7 @@
       headers.set("X-Atlaso-Chunked", "1");
       headers.set("Content-Type", "application/json");
       // Finalization may mutate state: never retry this request automatically.
-      return await nativeFetch(url, {
+      return await window.fetch(url, {
         ...options, headers,
         body: JSON.stringify({ files: ids, fields: entries.filter(([, value]) => typeof value === "string") }),
       });

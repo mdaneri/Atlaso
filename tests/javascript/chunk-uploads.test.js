@@ -156,6 +156,6 @@ test("chunk and ordinary mutations retain the late-installed apply refresh wrapp
   await upload("/ui/management/vcf-helper/sddc-manager/ovas/upload", {
     method: "POST", body: new File(["abc"], "test.ova"),
   });
-  assert.ok(refreshes > beforeRead);
+  assert.equal(refreshes, beforeRead + 1);
   assert.equal(calls.filter(call => call.url.endsWith('/ovas/upload')).length, 1);
 });

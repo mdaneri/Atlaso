@@ -104,7 +104,8 @@ Browser file uploads use a shared sequential transport, including SDDC Manager O
 Network Boot media, credential files, registry CA bundles, and backup imports. Each request carries at most 8 MiB;
 small files use one chunk. Hashing supports both HTTP and HTTPS management pages. This works with the existing
 management proxy limit without applying Appliance Settings.
-Successful mutations retain the shared pending-changes sidebar refresh. Progress counts acknowledged bytes.
+Successful finalization retains the shared pending-changes sidebar refresh; staging reservations, chunks, and
+cancellation do not trigger extra status requests. Progress counts acknowledged bytes.
 A failed chunk retries up to three times with the same offset and SHA-256
 checksum; already acknowledged chunks are not resent. Atlaso rejects changed retries, gaps, and size overruns.
 OVA filenames are validated before reserving a session, so unsupported names transfer no file bytes.
