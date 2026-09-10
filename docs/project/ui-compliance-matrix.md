@@ -188,7 +188,7 @@ are explicitly inventoried so route/template changes cannot silently escape the 
   `ldap-password-modal`, `ldap-group-members-modal`, `ldap-generate-modal`, `vsphere-provider-dialog`,
   `vsphere-vcenter-dialog`, and `vsphere-certificate-dialog`.
 - Network Boot and storage: `network-boot-host-dialog`, `network-boot-upload-dialog`,
-  `network-boot-promote-dialog`, `esxi-iso-upload-dialog`, `esxi-custom-variable-wizard-dialog`,
+  `network-boot-promote-dialog`, `esxi-iso-upload-dialog`, `sddc-ova-upload-dialog`, `esxi-custom-variable-wizard-dialog`,
   `esxi-boot-authorization-dialog`, `kickstart-wizard-dialog`, `esx-storage-volume-modal`, and
   `esx-storage-share-modal`.
 - Routing and WAN: `routes-wan-route-dialog`, `routes-wan-routing-dialog`, `routes-wan-nat-dialog`, and
@@ -221,7 +221,7 @@ Page templates covered by the route rows are `appliance_update.html`, `audit.htm
 Shared-only templates are `base.html`, `public_portal_base.html`, `partials/appliance_apply_status.html`,
 `partials/brand_mark.html`, `partials/config_preview_action.html`, `partials/resource_wizard.html`,
 `partials/task_grid.html`, `partials/task_modals.html`, `partials/terminal_panel.html`, `partials/vcf_ldap_modal.html`,
-`partials/vcf_sddc_deploy_modal.html`, `partials/vcf_target_depot_modal.html`, `partials/vcf_trust_modal.html`,
+`partials/vcf_sddc_deploy_modal.html`, `partials/vcf_sddc_upload_modal.html`, `partials/vcf_target_depot_modal.html`, `partials/vcf_trust_modal.html`,
 `partials/vcf_vault_credential_picker.html`, and `partials/vcf_vault_import_modal.html`.
 
 The only non-fallback native tables are the reviewed #115 semantic summaries: backup archive scope, generated DHCP PXE

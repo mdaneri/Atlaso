@@ -45,6 +45,7 @@ from atlaso.app.models import (
     utcnow,
 )
 from atlaso.app.operational_logging import log_audit_event
+from atlaso.app.routers.chunk_uploads import ChunkedUploadRoute
 from atlaso.app.secrets import decrypt_secret
 from atlaso.app.security import Identity, require_session_identity
 from atlaso.app.services.dnsmasq import split_addresses, split_interfaces
@@ -311,6 +312,7 @@ def build_router(dependencies: VcfWorkflowsUiDependencies) -> VcfWorkflowsUiRout
         dependencies: Stable facade dependencies used by VCF workflow transports.
     """
     router = APIRouter(
+        route_class=ChunkedUploadRoute,
         prefix=MANAGEMENT_UI_ROOT,
         dependencies=[Depends(dependencies.require_management_ui_request)],
     )
@@ -991,25 +993,40 @@ def build_router(dependencies: VcfWorkflowsUiDependencies) -> VcfWorkflowsUiRout
         identity: Identity = Depends(require_session_identity),
         db: Session = Depends(get_db),
     ) -> JSONResponse:
-        """Stream one authorized OVA after session and CSRF admission, without multipart spooling."""
+        """Stream one authorized OVA after session and CSRF admission, without multipart spooling.
+
+        Args:
+            request: Incoming authenticated browser request.
+            identity: Current browser identity used for permission checks.
+            db: Database transaction used to persist the audit event.
+        """
         require_vcf_helper_write(identity)
         verify_csrf(request, request.headers.get("X-CSRF-Token", ""))
         if request.headers.get("content-type") != "application/octet-stream":
             raise HTTPException(status_code=415, detail="Upload the selected OVA as a binary file.")
+        def audit_publication(result: dict[str, str | int]) -> None:
+            """Audit publication.
+
+            Args:
+                result: Validated artifact metadata used for audit persistence.
+            """
+            record_audit(
+                db, actor=identity.username, action="upload_vcf_sddc_ova",
+                resource_type="vcf_sddc_ova", resource_id=str(result["relative_path"]),
+                detail=f"size_bytes={result['size_bytes']}", request_id=request.state.request_id,
+            )
+
         try:
             result = await store_sddc_ova_upload(
-                request.stream(), unquote(request.headers.get("X-Atlaso-Filename", ""))
+                request.stream(), unquote(request.headers.get("X-Atlaso-Filename", "")),
+                on_publish=audit_publication,
             )
         except SddcUploadError as exc:
+            db.rollback()
             return JSONResponse(
                 {"detail": UPLOAD_ERROR_MESSAGES.get(exc.code, UPLOAD_ERROR_MESSAGES["storage_error"])},
                 status_code=exc.status_code,
             )
-        record_audit(
-            db, actor=identity.username, action="upload_vcf_sddc_ova",
-            resource_type="vcf_sddc_ova", resource_id=str(result["relative_path"]),
-            detail=f"size_bytes={result['size_bytes']}", request_id=request.state.request_id,
-        )
         return JSONResponse({"status": "uploaded", **result})
 
     @router.post("/vcf-helper/sddc-manager/inventory", response_model=None)

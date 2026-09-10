@@ -12,12 +12,21 @@ from tests.test_vcf_sddc_deployment import write_ova
 
 
 async def chunks(data):
-    """Supply several chunks to exercise streaming size accounting."""
+    """Supply several chunks to exercise streaming size accounting.
+
+    Args:
+        data: Bytes supplied by this test or upload chunk.
+    """
     for offset in range(0, len(data), 1024):
         yield data[offset:offset + 1024]
 
 
 def test_upload_publishes_into_vcfdt_layout_and_rejects_duplicates(tmp_path):
+    """Test upload publishes into vcfdt layout and rejects duplicates.
+
+    Args:
+        tmp_path: Task-owned temporary directory supplied by pytest.
+    """
     source = tmp_path / "original.ova"
     write_ova(source)
     root = tmp_path / "PROD" / "COMP" / "SDDC_MANAGER_VCF"
@@ -34,6 +43,12 @@ def test_upload_publishes_into_vcfdt_layout_and_rejects_duplicates(tmp_path):
 
 @pytest.mark.parametrize("name", ["../test.ova", "x/test.ova", "x\\test.ova", "test.iso", ".hidden.ova", "x%2Ftest.ova"])
 def test_upload_rejects_unsafe_names_before_storage(tmp_path, name):
+    """Test upload rejects unsafe names before storage.
+
+    Args:
+        tmp_path: Task-owned temporary directory supplied by pytest.
+        name: Filename under validation.
+    """
     root = tmp_path / "root"
     with pytest.raises(SddcUploadError):
         asyncio.run(store_sddc_ova_upload(chunks(b"invalid"), name, root=root))
@@ -42,6 +57,12 @@ def test_upload_rejects_unsafe_names_before_storage(tmp_path, name):
 
 @pytest.mark.parametrize("kind", ["empty", "invalid", "corrupt", "oversized", "disconnected"])
 def test_failed_upload_never_enters_inventory(tmp_path, kind):
+    """Test failed upload never enters inventory.
+
+    Args:
+        tmp_path: Task-owned temporary directory supplied by pytest.
+        kind: Failure mode exercised by this test.
+    """
     source = tmp_path / "source.ova"
     write_ova(source, corrupt_manifest=kind == "corrupt")
     data = source.read_bytes()
@@ -66,6 +87,12 @@ def test_failed_upload_never_enters_inventory(tmp_path, kind):
 
 
 def test_upload_atomic_publication_preserves_concurrent_winner(tmp_path, monkeypatch):
+    """Test upload atomic publication preserves concurrent winner.
+
+    Args:
+        tmp_path: Task-owned temporary directory supplied by pytest.
+        monkeypatch: Fixture replacing external dependencies with isolated test behavior.
+    """
     import atlaso.app.services.vcf_sddc_upload as service
 
     source = tmp_path / "source.ova"
@@ -74,6 +101,12 @@ def test_upload_atomic_publication_preserves_concurrent_winner(tmp_path, monkeyp
     actual_link = service.os.link
 
     def competing_link(staged, destination):
+        """Competing link.
+
+        Args:
+            staged: Private source file for atomic publication.
+            destination: Final artifact path used in the publication race test.
+        """
         destination.write_bytes(b"winner")
         actual_link(staged, destination)
 
@@ -86,6 +119,13 @@ def test_upload_atomic_publication_preserves_concurrent_winner(tmp_path, monkeyp
 
 
 def test_upload_route_checks_csrf_and_uses_canonical_service(client, tmp_path, monkeypatch):
+    """Test upload route checks csrf and uses canonical service.
+
+    Args:
+        client: Isolated authenticated application test client.
+        tmp_path: Task-owned temporary directory supplied by pytest.
+        monkeypatch: Fixture replacing external dependencies with isolated test behavior.
+    """
     import atlaso.app.routers.ui.vcf_workflows as routes
 
     root = tmp_path / "component"
@@ -109,6 +149,15 @@ def test_upload_route_checks_csrf_and_uses_canonical_service(client, tmp_path, m
 
 @pytest.mark.parametrize("role,expected", [("service-admin", 200), ("network-admin", 403), ("viewer", 403)])
 def test_upload_route_enforces_roles_before_streaming(client, tmp_path, monkeypatch, role, expected):
+    """Test upload route enforces roles before streaming.
+
+    Args:
+        client: Isolated authenticated application test client.
+        tmp_path: Task-owned temporary directory supplied by pytest.
+        monkeypatch: Fixture replacing external dependencies with isolated test behavior.
+        role: Role whose upload permission is tested.
+        expected: Expected HTTP admission status.
+    """
     import atlaso.app.routers.ui.vcf_workflows as routes
     from atlaso.app.security import Identity, require_session_identity
 
@@ -144,12 +193,24 @@ def test_upload_proxy_is_scoped_to_management_endpoint():
 
 
 def test_storage_error_does_not_expose_underlying_exception(tmp_path, monkeypatch):
+    """Test storage error does not expose underlying exception.
+
+    Args:
+        tmp_path: Task-owned temporary directory supplied by pytest.
+        monkeypatch: Fixture replacing external dependencies with isolated test behavior.
+    """
     import atlaso.app.services.vcf_sddc_upload as service
 
     root = tmp_path / "component"
     root.mkdir()
 
     def fail_staging(*args, **kwargs):
+        """Fail staging.
+
+        Args:
+            *args: Arguments forwarded to the storage operation or injected test callback.
+            **kwargs: Keyword arguments accepted by the injected test callback.
+        """
         raise OSError("private filesystem diagnostics")
 
     monkeypatch.setattr(service.tempfile, "TemporaryDirectory", fail_staging)
@@ -157,3 +218,41 @@ def test_storage_error_does_not_expose_underlying_exception(tmp_path, monkeypatc
         asyncio.run(store_sddc_ova_upload(chunks(b"test"), "test.ova", root=root))
     assert error.value.code == "storage_error"
     assert "private" not in service.UPLOAD_ERROR_MESSAGES[error.value.code]
+
+
+def test_audit_failure_rolls_back_published_ova(client, tmp_path, monkeypatch):
+    """Test audit failure rolls back published ova.
+
+    Args:
+        client: Isolated authenticated application test client.
+        tmp_path: Task-owned temporary directory supplied by pytest.
+        monkeypatch: Fixture replacing external dependencies with isolated test behavior.
+    """
+    import atlaso.app.routers.ui.vcf_workflows as routes
+
+    root = tmp_path / "component"
+    monkeypatch.setattr(routes, "store_sddc_ova_upload", partial(store_sddc_ova_upload, root=root))
+    login(client)
+    page = client.get("/ui/management/vcf-helper")
+    csrf = page.text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
+
+    def failed_audit(*args, **kwargs):
+        """Failed audit.
+
+        Args:
+            *args: Arguments forwarded to the storage operation or injected test callback.
+            **kwargs: Keyword arguments accepted by the injected test callback.
+        """
+        raise RuntimeError("private database failure")
+
+    monkeypatch.setattr(routes, "record_audit", failed_audit)
+    source = tmp_path / "source.ova"
+    write_ova(source)
+    response = client.post("/ui/management/vcf-helper/sddc-manager/ovas/upload", content=source.read_bytes(),
+                           headers={"Content-Type": "application/octet-stream", "X-CSRF-Token": csrf,
+                                    "X-Atlaso-Filename": "test.ova"})
+    assert response.status_code == 503
+    assert "rolled back" in response.json()["detail"]
+    assert "private" not in response.text
+    assert ova_inventory(root=root) == []
+    assert not list(root.parent.glob(".sddc-upload-*"))

@@ -103,4 +103,5 @@ files = [
   "atlaso/app/services/service_dns_defaults.py",
     "atlaso/app/services/service_registry.py",
     "atlaso/app/services/vcf_sddc_upload.py",
+    "atlaso/app/services/chunk_uploads.py",
 ]

@@ -8,6 +8,10 @@ status: current
 
 # VCF Offline Depot
 
+VCFDT package and credential-file uploads use the shared [chunked browser
+transport](vcf-helper.md#chunked-browser-uploads). Progress tracks acknowledged chunks, transient failures retry
+the current chunk, and credential files remain in memory until existing validation and secret storage consume them.
+
 Open **VCF Offline Depot** to configure the local content repository used by supported VCF workflows.
 
 <!-- BEGIN GENERATED INTERFACE OVERVIEW -->

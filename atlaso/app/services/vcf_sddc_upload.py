@@ -6,7 +6,7 @@ import os
 import re
 import tarfile
 import tempfile
-from collections.abc import AsyncIterable
+from collections.abc import AsyncIterable, Callable
 from pathlib import Path
 
 from anyio import to_thread
@@ -29,6 +29,7 @@ UPLOAD_ERROR_MESSAGES = {
     'empty': 'The OVA upload is empty. Choose a complete OVA file.',
     'invalid_ova': 'OVA validation failed. Choose the original complete SDDC Manager OVA with its OVF, disks, and valid manifest.',
     'storage_error': 'OVA upload could not be stored. Check depot free space and write access, then retry.',
+    'audit_error': 'OVA upload could not be audited and was rolled back. Retry after database recovery.',
 }
 
 
@@ -37,13 +38,23 @@ class SddcUploadError(ValueError):
     """Report a reviewed upload failure without exposing filesystem exceptions."""
 
     def __init__(self, code: str, status_code: int = 400) -> None:
+        """  init  .
+
+        Args:
+            code: Fixed public error-message selector.
+            status_code: HTTP status for the reviewed failure.
+        """
         super().__init__(UPLOAD_ERROR_MESSAGES.get(code, UPLOAD_ERROR_MESSAGES["storage_error"]))
         self.code = code
         self.status_code = status_code
 
 
 def _validate_staged_ova(path: Path) -> None:
-    """Validate descriptor and manifest before publication, off the event loop."""
+    """Validate descriptor and manifest before publication, off the event loop.
+
+    Args:
+        path: Private staged OVA to validate.
+    """
     try:
         descriptor = inspect_ova(path, root=path.parent)
         with tarfile.open(path, "r") as archive:
@@ -72,12 +83,20 @@ async def store_sddc_ova_upload(
     *,
     root: Path = SDDC_MANAGER_OVA_ROOT,
     max_bytes: int = SDDC_OVA_MAX_BYTES,
+    on_publish: Callable[[dict[str, str | int]], None] | None = None,
 ) -> dict[str, str | int]:
     """Publish a validated stream without replacing any existing depot artifact.
 
     Staging is a private sibling directory outside deployment discovery. A unique
     staging path isolates concurrent requests, and hard-link publication provides
     atomic create-if-absent semantics even if another upload wins the race.
+
+    Args:
+        chunks: Incoming bounded byte stream.
+        filename: Original basename validated before publication.
+        root: Canonical artifact directory on the depot volume.
+        max_bytes: Maximum accepted file size in bytes.
+        on_publish: Audit callback; failure removes only this upload's published hard link.
     """
     if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{0,195}\.ova", filename, re.IGNORECASE):
         raise SddcUploadError("invalid_filename")
@@ -108,6 +127,18 @@ async def store_sddc_ova_upload(
                 os.link(staged, destination)
             except FileExistsError as exc:
                 raise SddcUploadError("duplicate", 409) from exc
-        return {"path": str(destination), "relative_path": filename, "filename": filename, "size_bytes": total}
+            result: dict[str, str | int] = {
+                "path": str(destination), "relative_path": filename, "filename": filename, "size_bytes": total,
+            }
+            if on_publish is not None:
+                try:
+                    on_publish(result)
+                except Exception as exc:
+                    # Remove only our own hard link if audit persistence fails;
+                    # never remove a concurrently replaced operator artifact.
+                    if os.path.lexists(destination) and os.path.samefile(staged, destination):
+                        destination.unlink()
+                    raise SddcUploadError("audit_error", 503) from exc
+        return result
     except OSError as exc:
         raise SddcUploadError("storage_error", 503) from exc

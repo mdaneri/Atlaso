@@ -18,6 +18,7 @@ from atlaso.app.audit import record_audit
 from atlaso.app.config import get_settings
 from atlaso.app.database import get_db
 from atlaso.app.models import EsxiKickstart, EsxiPxeHost, utcnow
+from atlaso.app.routers.chunk_uploads import ChunkedUploadRoute
 from atlaso.app.security import Identity, require_session_identity
 from atlaso.app.services.esxi_pxe import (
     ESXI_PXE_HTTP_PORT,
@@ -91,6 +92,7 @@ def build_router(dependencies: NetworkBootUiDependencies) -> NetworkBootUiRouter
         dependencies: Stable facade dependencies used by Network Boot transports.
     """
     router = APIRouter(
+        route_class=ChunkedUploadRoute,
         prefix=MANAGEMENT_UI_ROOT,
         dependencies=[Depends(dependencies.require_management_ui_request)],
     )

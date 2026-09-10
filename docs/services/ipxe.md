@@ -9,6 +9,9 @@ status: current
 
 # Network Boot and ESX scripted installation
 
+Browser media uploads use the shared [chunked upload transport](vcf-helper.md#chunked-browser-uploads), including
+ESX installer ISOs and Network Boot environment artifacts. Existing file limits and validation still apply.
+
 Atlaso Network Boot provides safe hardware discovery, verified interactive
 maintenance environments, and the existing ESX installation workflow from one
 service. The detailed Broadcom-aligned ESX reference remains later in this page.

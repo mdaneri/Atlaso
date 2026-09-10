@@ -6760,5 +6760,41 @@
     "order": 562,
     "path": "/ui/management/{page}",
     "plane": "ui_management"
+  },
+  {
+    "include_in_schema": false,
+    "kind": "http",
+    "methods": [
+      "POST"
+    ],
+    "name": "create_upload",
+    "operation_id": null,
+    "order": 563,
+    "path": "/ui/management/uploads/chunks",
+    "plane": "ui_management"
+  },
+  {
+    "include_in_schema": false,
+    "kind": "http",
+    "methods": [
+      "PUT"
+    ],
+    "name": "append_chunk",
+    "operation_id": null,
+    "order": 564,
+    "path": "/ui/management/uploads/chunks/data",
+    "plane": "ui_management"
+  },
+  {
+    "include_in_schema": false,
+    "kind": "http",
+    "methods": [
+      "DELETE"
+    ],
+    "name": "cancel_upload",
+    "operation_id": null,
+    "order": 565,
+    "path": "/ui/management/uploads/chunks/data",
+    "plane": "ui_management"
   }
 ]

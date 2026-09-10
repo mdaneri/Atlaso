@@ -69,7 +69,7 @@ and OVA appliance passwords remain separate fields and are never filled from thi
 Administrators and service administrators can select **Add SDDC Manager OVA** under **SDDC Manager / VCF Installer**.
 Choose the original `.ova` file from your computer, review its filename, size, and destination, then select
 **Upload SDDC Manager OVA**. The two-step wizard follows **Add ESX ISO**, but accepts deployment OVAs rather than
-ISO boot images. JavaScript is required for the streaming upload. The limit is 16 GiB.
+ISO boot images. JavaScript is required for the chunked upload. The limit is 16 GiB.
 
 The final destination is `/mnt/atlaso-vcf-offline-depot/PROD/COMP/SDDC_MANAGER_VCF/<original-filename>.ova`, directly
 inside the component folder without an extra version or upload directory. This matches the packaged VCFDT
@@ -88,6 +88,33 @@ package. Choose the correct original package rather than renaming it to bypass a
 files, obtain the complete original OVA and retry. For storage failures, check depot free space and write access.
 Failed or disconnected uploads are removed from staging; a process interruption can leave a private staging directory
 outside deployment discovery, but never a partially uploaded selectable OVA.
+
+### Chunked browser uploads
+
+Browser file uploads use a shared sequential transport, including SDDC Manager OVA, ESX ISO, VCFDT packages,
+Network Boot media, credential files, registry CA bundles, and backup imports. Each request carries at most 8 MiB;
+small files use one chunk. This works with the existing management proxy limit without applying Appliance Settings.
+Progress counts acknowledged bytes. A failed chunk retries up to three times with the same offset and SHA-256
+checksum; already acknowledged chunks are not resent. Atlaso rejects changed retries, gaps, and size overruns.
+Final validation and publication use the existing endpoint, permissions, duplicate policy, and desired-state boundary.
+A lost final response is not retried automatically: inspect the destination before submitting again.
+
+Keep the page open during transfer and validation. Sessions expire after 30 minutes without an accepted chunk;
+page reload, logout, application restart, or exhausting retries requires selecting and uploading the file again.
+Browser completion or failure releases staging; abandoned sessions expire automatically. Files up to 16 MiB stay
+in memory, so credential-file contents never enter chunk staging on disk. Larger files use private anonymous
+files beneath `/mnt/atlaso-vcf-offline-depot/.atlaso-uploads`, outside artifact discovery. The depot volume must be
+available and staging must not be writable by other users. The service reserves capacity for upload and validation,
+with at most four sessions per browser, sixteen per process, and 32 GiB of total declared file sizes. Existing
+file-specific limits still apply (including the configured ESX ISO limit); VCFDT packages are limited to 2 GiB,
+LDAP recovery archives to 1 GiB, and credential/CA files to 1 MiB in this browser transport.
+
+The browser protocol is excluded from OpenAPI: `POST /ui/management/uploads/chunks` creates a session,
+`PUT /ui/management/uploads/chunks/data` appends a checked chunk, and `DELETE` on that same data route cancels it.
+All operations require a current browser session and `X-CSRF-Token`. Session identifiers travel in headers,
+not URLs. Finalization sends a bounded form envelope with `X-Atlaso-Chunked: 1` to the original upload endpoint.
+Existing multipart API clients and server-rendered fallback forms remain compatible; they do not gain automatic
+chunk retries. Local file imports into text editors remain editor operations rather than binary file uploads.
 
 ### Deploy a validated package
 

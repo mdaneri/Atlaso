@@ -17,6 +17,7 @@ from sqlalchemy.orm import Session
 from atlaso.app.audit import record_audit
 from atlaso.app.database import get_db
 from atlaso.app.models import PhysicalInterface, VlanInterface, utcnow
+from atlaso.app.routers.chunk_uploads import ChunkedUploadRoute
 from atlaso.app.security import Identity, require_session_identity
 from atlaso.app.services.authentication_lifetimes import (
     authentication_lifetime_validation_error,
@@ -91,6 +92,7 @@ def build_router(dependencies: SettingsBackupUiDependencies) -> SettingsBackupUi
         Configured management router and stable endpoint callables.
     """
     router = APIRouter(
+        route_class=ChunkedUploadRoute,
         prefix=MANAGEMENT_UI_ROOT,
         dependencies=[Depends(dependencies.require_management_ui_request)],
     )

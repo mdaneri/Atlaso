@@ -1,3 +1,5 @@
+// All browser file-bearing requests use the shared chunk transport.
+const fetch = (...args) => window.AtlasoUploads.fetch(...args);
 const managementUiPath = (path = "") => window.AtlasoRoutes.management(path);
 
 document.addEventListener("click", (event) => {
@@ -12076,7 +12078,7 @@ function initializeAutosaveForms(root = document) {
 
     const postWithUploadProgress = (actionUrl, formData, files) =>
       new Promise((resolve, reject) => {
-        const xhr = new XMLHttpRequest();
+        const xhr = new window.AtlasoUploads.Request();
         const request = { abort: () => xhr.abort() };
         inFlightRequest = request;
         const progress = uploadProgress();
@@ -16284,7 +16286,7 @@ function initializeVcfDepotToolPackageWizard() {
     status.dataset.state = state;
   };
   const uploadPackage = (file) => new Promise((resolve, reject) => {
-    const xhr = new XMLHttpRequest();
+    const xhr = new window.AtlasoUploads.Request();
     xhr.open("POST", form.action);
     xhr.setRequestHeader("Accept", "application/json");
     xhr.upload.addEventListener("loadstart", () => {
@@ -16842,7 +16844,7 @@ function initializeEsxiIsoUploadForms() {
     }
   };
   const upload = (file) => new Promise((resolve, reject) => {
-    const xhr = new XMLHttpRequest();
+    const xhr = new window.AtlasoUploads.Request();
     xhr.open("POST", form.action);
     xhr.setRequestHeader("X-Atlaso-Upload", "1");
     xhr.upload.addEventListener("loadstart", () => {
@@ -16943,7 +16945,7 @@ function initializeSddcOvaUploadForms() {
   };
   const selectedFile = () => fileInput instanceof HTMLInputElement ? fileInput.files?.[0] : null;
   const upload = (file) => new Promise((resolve, reject) => {
-    const xhr = new XMLHttpRequest();
+    const xhr = new window.AtlasoUploads.Request();
     xhr.open("POST", form.action);
     xhr.setRequestHeader("Content-Type", "application/octet-stream");
     xhr.setRequestHeader("X-CSRF-Token", form.elements.csrf.value);
@@ -23628,7 +23630,7 @@ function initializeNetworkBootPage() {
     }
     const file = fileInput.files[0];
     const body = new FormData(uploadForm);
-    const request = new XMLHttpRequest();
+    const request = new window.AtlasoUploads.Request();
     request.open("POST", `/api/v1/network-boot/environments/${environmentKey}/upload`);
     request.setRequestHeader("Accept", "application/json");
     const csrf = document.querySelector("input[name='csrf']")?.value || "";
