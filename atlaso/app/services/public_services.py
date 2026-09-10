@@ -381,6 +381,7 @@ def _oidc_https_server_lines(
         "",
         *_proxy_location("^~ /identity/", upstream_host, upstream_port, forwarded_proto="https"),
         "",
+        *(_management_terminal_proxy_locations(upstream_host, upstream_port) if management_ui else []),
         *_management_or_not_found_location(management_ui, upstream_host, upstream_port),
         "}",
     ]
@@ -437,9 +438,31 @@ def _ca_https_server_lines(
         "",
         *_proxy_location("= /favicon.ico", upstream_host, upstream_port, forwarded_proto="https"),
         "",
+        *(_management_terminal_proxy_locations(upstream_host, upstream_port) if management_ui else []),
         *_management_or_not_found_location(management_ui, upstream_host, upstream_port),
         "}",
     ]
+
+
+def _management_terminal_proxy_locations(upstream_host: str, upstream_port: int) -> list[str]:
+    """Preserve terminal upgrades when a service hostname cohosts management.
+
+    Args:
+        upstream_host: Atlaso application host receiving proxied requests.
+        upstream_port: Atlaso application port receiving proxied requests.
+    """
+    # Nginx chooses one virtual server before matching locations. Upgrade
+    # locations in the separate IP management server cannot serve this hostname.
+    lines: list[str] = []
+    for path in ("/terminal/ws", "/ui/management/terminal/ws"):
+        lines.extend(_proxy_location(
+            f"= {path}", upstream_host, upstream_port, forwarded_proto="https",
+            extra_directives=[
+                "    proxy_set_header Upgrade $http_upgrade;",
+                '    proxy_set_header Connection "upgrade";',
+            ],
+        ))
+    return lines
 
 
 def _ip_scoped_https_server_lines(
@@ -479,7 +502,7 @@ def _ip_scoped_https_server_lines(
         "",
         "server {",
         "  # IP-scoped HTTPS public services front door.",
-        f"  listen {format_nginx_listen(address, https_port)} ssl;",
+        f"  listen {format_nginx_listen(address, https_port)} ssl{' default_server' if management_ui else ''};",
         f"  server_name {_nginx_server_name(address)};",
         f"  ssl_certificate {management_certificate_path if management_ui else ca_certificate_path};",
         f"  ssl_certificate_key {management_key_path if management_ui else ca_key_path};",
@@ -573,7 +596,7 @@ def _terminal_https_server_lines(
         "",
         "server {",
         "  # Terminal-only HTTPS front door.",
-        f"  listen {format_nginx_listen(address, https_port)} ssl;",
+        f"  listen {format_nginx_listen(address, https_port)} ssl{' default_server' if management_ui else ''};",
         f"  server_name {_nginx_server_name(address)};",
         f"  ssl_certificate {management_certificate_path if management_ui else certificate_path};",
         f"  ssl_certificate_key {management_key_path if management_ui else key_path};",
@@ -617,7 +640,9 @@ def _management_https_server_lines(
         "",
         "server {",
         "  # IP-scoped management HTTPS front door.",
-        f"  listen {format_nginx_listen(address, https_port)} ssl;",
+        # Unmatched appliance SNI must use the appliance certificate, while
+        # explicit CA/OIDC names retain their own service certificates.
+        f"  listen {format_nginx_listen(address, https_port)} ssl default_server;",
         f"  server_name {_nginx_server_name(address)};",
         f"  ssl_certificate {certificate_path};",
         f"  ssl_certificate_key {key_path};",
