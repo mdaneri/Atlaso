@@ -57,7 +57,7 @@ def applied_boot_fixture(client, monkeypatch, tmp_path):
             'artifacts': [{'host_id': host.id, 'hostname': host.hostname, 'mac_key': '01-00-50-56-aa-bb-cc', 'kickstart_id': kickstart.id, 'is_default': False, 'image_http_url': 'http://192.0.2.1:8080/pxe/esxi/images/fixture'}],
         }
         raw = json.dumps(manifest, indent=2, sort_keys=True)
-        return [ui.make_appliance_apply_unit(unit_id='esxi_pxe', label='ESXi PXE', page_url='/esxi-pxe', context={'esxi_pxe_config_path': str(root / 'staged.json'), 'esxi_kickstarts': [kickstart]}, summary=['fixture'], validation_errors=[], config_path=str(root / 'staged.json'), config_preview=raw, baseline=ui.load_appliance_apply_baselines(db).get('esxi_pxe'), snapshot_marker={'protected_runtime_manifest': 1}, runtime_config_encrypted=boot.load_esxi_applied_runtime(db))]
+        return [ui.make_appliance_apply_unit(unit_id='esxi_pxe', label='ESXi PXE', page_url='/esxi-pxe', context={'esxi_pxe_config_path': str(root / 'staged.json'), 'esxi_kickstarts': [kickstart]}, summary=['fixture'], validation_errors=[], config_path=str(root / 'staged.json'), config_preview=raw, baseline=ui.load_appliance_apply_baselines(db).get('esxi_pxe'), snapshot_marker=ui.esxi_apply_snapshot_marker(raw), runtime_config_encrypted=boot.load_esxi_applied_runtime(db))]
 
     class Adapter:
         def __init__(self, **kwargs):

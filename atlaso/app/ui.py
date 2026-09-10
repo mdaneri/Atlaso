@@ -10337,6 +10337,17 @@ def esxi_apply_comparison_preview(preview: str) -> str:
     return json.dumps(manifest, sort_keys=True)
 
 
+def esxi_apply_snapshot_marker(preview: str) -> dict[str, Any]:
+    """Bind hidden ESXi edits before entering the shared Apply projection."""
+    settings = get_settings()
+    revision = hmac.digest(
+        (settings.secrets_key or settings.secret_key).encode("utf-8"),
+        b"atlaso-esxi-apply-v1\x00" + esxi_apply_comparison_preview(preview).encode("utf-8"),
+        "sha256",
+    ).hex()
+    return {"protected_runtime_manifest": 1, "revision": revision}
+
+
 def make_appliance_apply_unit(
     *,
     unit_id: str,
@@ -10374,7 +10385,10 @@ def make_appliance_apply_unit(
         The make appliance apply unit result.
     """
     redacted_preview = redact_config_preview(config_preview)
-    protected_esxi = unit_id == "esxi_pxe" and snapshot_marker == {"protected_runtime_manifest": 1}
+    protected_esxi = (
+        unit_id == "esxi_pxe" and isinstance(snapshot_marker, dict)
+        and snapshot_marker.get("protected_runtime_manifest") == 1
+    )
     snapshot_payload = {
         "unit_id": unit_id,
         "summary": summary,
@@ -10382,17 +10396,6 @@ def make_appliance_apply_unit(
         "config_preview": esxi_apply_comparison_preview(redacted_preview) if protected_esxi else redacted_preview,
         "snapshot_marker": snapshot_marker,
     }
-    if protected_esxi:
-        settings = get_settings()
-        # Domain-separated HMAC binds hidden edits without publishing a
-        # password-guessing oracle or secret material in review/task metadata.
-        snapshot_payload["protected_revision"] = hmac.digest(
-            (settings.secrets_key or settings.secret_key).encode("utf-8"),
-            b"atlaso-esxi-apply-v1\x00" + esxi_apply_comparison_preview(
-                raw_config_preview if raw_config_preview is not None else config_preview
-            ).encode("utf-8"),
-            "sha256",
-        ).hex()
     current_hash = appliance_snapshot_hash(snapshot_payload)
     baseline_hash = str((baseline or {}).get("snapshot_hash") or "")
     runtime_pending = False
@@ -11028,7 +11031,7 @@ def appliance_apply_units(db: Session, *, reconcile: bool = True) -> list[dict[s
             config_path=esxi_pxe["esxi_pxe_config_path"],
             config_preview=esxi_pxe["esxi_pxe_manifest"],
             baseline=baselines.get("esxi_pxe"),
-            snapshot_marker={"protected_runtime_manifest": 1},
+            snapshot_marker=esxi_apply_snapshot_marker(esxi_pxe["esxi_pxe_manifest"]),
             runtime_config_encrypted=load_esxi_applied_runtime(db),
         ),
         make_appliance_apply_unit(
