@@ -12,6 +12,9 @@ exact-version Gallery downloads and built-in .NET ZIP extraction, then checks ev
 constraints without changing
 its declarations, catalogs, or signatures. This prevents a newly published Gallery dependency from mixing release
 families under the older suite pin. No PSResourceGet installation is required on Photon.
+The reviewed lock records SHA-256 digests for each archive and for its complete extracted file tree. Downloads are
+checked before extraction; online and offline module contents are checked before any vendor import. Added, removed,
+or modified files fail admission even when module manifests still declare the expected versions.
 Offline bundles use the same `ModuleName/Version` layout and must contain every locked module with only its locked
 version. Missing modules, incompatible manifests, and side-by-side versions fail before the bundle is copied.
 Fresh root and bootstrap-administrator processes reject shadowing module copies, import the suite, verify every loaded
@@ -20,6 +23,8 @@ that proof. Setting CEIP starts another verification process because PowerCLI ca
 an unset value is not accepted as disabled. Updating `ATLASO_POWERCLI_VERSION` requires a matching reviewed complete
 lock; a suite-only override is
 rejected. This image-build lock does not change the runtime Appliance Update workflow.
+The shared PowerCLI configuration directories are mode `0755` and the settings file is mode `0644`, owned by root,
+so bootstrap administrators can read the appliance-wide preference despite the build's restrictive creation umask.
 
 Both `build-photon-image.ps1` and `export-ovf.ps1` automatically run
 `python scripts/update_powercli_lock.py --before-build` before build/export admission. The helper queries the latest
@@ -31,6 +36,11 @@ must be rebuilt; refreshing source cannot update an already-built VM. Release/pr
 `--check` and require the refreshed baseline to have reached the committed release source. Metadata errors or
 incompatible dependency graphs stop admission without changing files. The isolated build child uses its frozen lock
 and does not query Gallery again.
+Refresh publication records a recovery journal in `.atlaso-local/powercli-refresh-transaction.json` before replacing
+tracked files. If interrupted, rerun the same command to complete the recorded update before checking newer releases.
+Recovery preserves unrelated edits and reports the conflicting file; immutable checks never perform recovery writes.
+Do not delete a pending journal to bypass recovery. The updater upgrades legacy version-only locks once to add hashes;
+subsequent checks of an already-current hashed lock remain byte- and timestamp-preserving.
 
 For a manual refresh, run `python scripts/update_powercli_lock.py`, or select a known stable suite with
 `--version X.Y.Z.BUILD`. Downgrades are rejected. Validate the generated closure with image provisioning and the focused

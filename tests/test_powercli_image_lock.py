@@ -1,12 +1,16 @@
 """Exercise image dependency admission with real PowerShell module manifests."""
 
+import hashlib
 import json
 import os
 import shutil
 import subprocess
+import zipfile
 from pathlib import Path
 
 import pytest
+
+from scripts.update_powercli_lock import content_digest
 
 SCRIPT = Path("image/common/powershell/provision-powercli.ps1").resolve()
 PWSH = shutil.which("pwsh")
@@ -34,6 +38,31 @@ def module(root: Path, name: str, version: str, required: str = "@()") -> Path:
     return manifest
 
 
+def pin_bundle(root: Path, lock: Path) -> None:
+    """Freeze inert test archives and payload hashes before exercising admission."""
+    data = json.loads(lock.read_text(encoding="utf-8"))
+    data["schema_version"] = 2
+    data["hashes"] = {}
+    archives = root / ".archives"
+    archives.mkdir(exist_ok=True)
+    for name, version in data["modules"].items():
+        directory = root / name / version
+        files = {
+            p.relative_to(directory).as_posix(): p.read_bytes()
+            for p in directory.rglob("*")
+            if p.is_file()
+        }
+        archive = archives / f"{name}.{version}.nupkg"
+        with zipfile.ZipFile(archive, "w") as package:
+            for relative, payload in files.items():
+                package.writestr(relative, payload)
+        data["hashes"][name] = {
+            "archive_sha256": hashlib.sha256(archive.read_bytes()).hexdigest(),
+            "content_sha256": content_digest(files),
+        }
+    lock.write_text(json.dumps(data), encoding="utf-8")
+
+
 @pytest.fixture
 def bundle(tmp_path: Path) -> tuple[Path, Path]:
     """Create a suite whose open-ended dependency must use the reviewed version."""
@@ -56,6 +85,7 @@ def bundle(tmp_path: Path) -> tuple[Path, Path]:
         ),
         encoding="utf-8",
     )
+    pin_bundle(root, lock)
     return root, lock
 
 
@@ -109,7 +139,7 @@ def test_ceip_setting_requires_fresh_process_readback(
     script = root / "VCF.PowerCLI/9.1.0/VCF.PowerCLI.psm1"
     script.write_text(
         "$script:cached = $null\n"
-        "$script:setting = Join-Path $PSScriptRoot 'ceip-disabled'\n"
+        "$script:setting = Join-Path $PSScriptRoot '../../../ceip-disabled'\n"
         "if (Test-Path $script:setting) { $script:cached = $false }\n"
         "function Get-PowerCLIConfiguration { param($Scope) "
         "[pscustomobject]@{ParticipateInCEIP=$script:cached} }\n"
@@ -119,6 +149,7 @@ def test_ceip_setting_requires_fresh_process_readback(
         + "}\n",
         encoding="utf-8",
     )
+    pin_bundle(root, lock)
     env = os.environ.copy()
     env.pop("ATLASO_POWERCLI_VERSION", None)
     env["PSModulePath"] = str(root)
@@ -185,6 +216,7 @@ def test_incompatible_vendor_constraint_is_rejected(
         "@{ModuleVersion='9.1.0';RequiredModules=@(" + requirement + ")}",
         encoding="utf-8",
     )
+    pin_bundle(*bundle)
     result = run(bundle)
     assert result.returncode != 0
     assert "violates" in result.stderr or "omits dependency" in result.stderr
@@ -196,9 +228,23 @@ def test_missing_locked_module_is_rejected(bundle: tuple[Path, Path]) -> None:
     assert run(bundle).returncode != 0
 
 
+def test_changed_payload_with_identical_manifest_is_rejected(
+    bundle: tuple[Path, Path],
+) -> None:
+    """Offline admission rejects modified executable code even when version metadata agrees."""
+    (bundle[0] / "VMware.OpenAPI/1.0.0/VMware.OpenAPI.psm1").write_text(
+        'throw "tampered"', encoding="utf-8"
+    )
+    result = run(bundle, "Verify")
+    assert result.returncode != 0
+    assert "content hash mismatch" in result.stderr
+
+
+@pytest.mark.parametrize("tamper", [False, True])
 def test_install_saves_each_exact_package_without_resolution(
     bundle: tuple[Path, Path],
     tmp_path: Path,
+    tamper: bool,
 ) -> None:
     """A simulated Gallery latest release must never enter the saved package set."""
     root, lock = bundle
@@ -209,13 +255,15 @@ def test_install_saves_each_exact_package_without_resolution(
         "function Invoke-WebRequest {\n"
         "param($Uri,$OutFile,$TimeoutSec)\n"
         "$parts = $Uri.Split('/'); $Name = $parts[-2]; $Version = $parts[-1]\n"
-        "[System.IO.Compression.ZipFile]::CreateFromDirectory("
-        '(Join-Path $Source "$Name/$Version"), $OutFile)\n}\n'
+        'Copy-Item -LiteralPath (Join-Path $Source ".archives/$Name.$Version.nupkg") -Destination $OutFile\n}\n'
         "& $Script -Mode Install -ModuleRoot $Target -LockPath $Lock\n",
         encoding="utf-8",
     )
     # The source advertises a newer dependency; only an exact version request is copied.
     module(root, "VMware.OpenAPI", "1.1.0")
+    if tamper:
+        archive = root / ".archives/VCF.PowerCLI.9.1.0.nupkg"
+        archive.write_bytes(archive.read_bytes() + b"corrupted or replaced bytes")
     result = subprocess.run(
         [
             str(PWSH),
@@ -233,6 +281,11 @@ def test_install_saves_each_exact_package_without_resolution(
         timeout=60,
         check=False,
     )
+    if tamper:
+        assert result.returncode != 0
+        assert "archive hash mismatch" in result.stderr
+        assert not (target / "VCF.PowerCLI").exists()
+        return
     assert result.returncode == 0, result.stdout + result.stderr
     assert sorted(p.name for p in (target / "VMware.OpenAPI").iterdir()) == ["1.0.0"]
     for path in target.rglob("*.psd1"):

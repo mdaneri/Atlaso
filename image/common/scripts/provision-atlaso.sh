@@ -455,6 +455,10 @@ chmod 0755 /usr/local/share/powershell /usr/local/share/powershell/Modules
 chmod -R a+rX,go-w /usr/local/share/powershell/Modules
 pwsh -NoLogo -NoProfile -NonInteractive -File "$ATLASO_SRC/image/common/powershell/provision-powercli.ps1" \
   -Mode Verify -ConfigureCeip
+# PowerCLI creates AllUsers configuration under the build's restrictive umask.
+# Keep the shared preference root-writable and readable by local pwsh users.
+chmod 0755 /var/opt/VMware /var/opt/VMware/PowerCLI
+chmod 0644 /var/opt/VMware/PowerCLI/PowerCLI_Settings.xml
 
 log_step "verifying Photon OS updates after package install"
 run_tdnf "Photon OS update verification" update

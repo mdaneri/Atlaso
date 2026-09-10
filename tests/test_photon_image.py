@@ -988,6 +988,8 @@ def test_photon_provisioning_installs_default_nginx_management_proxy():
     assert "Get-PowerCLIConfiguration -Scope AllUsers" in powercli
     assert "-Mode Validate -ModuleRoot" in script
     assert "-Mode Verify -ConfigureCeip" in script
+    assert "chmod 0755 /var/opt/VMware /var/opt/VMware/PowerCLI" in script
+    assert "chmod 0644 /var/opt/VMware/PowerCLI/PowerCLI_Settings.xml" in script
     assert "ATLASO_POWERCLI_MODULE_SOURCE" in script
     assert 'awk \'$2 == "/tmp" { print $3; exit }\' /proc/mounts' in script
     assert "mount -o remount,size=4G /tmp" in script

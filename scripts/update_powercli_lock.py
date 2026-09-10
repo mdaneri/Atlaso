@@ -8,10 +8,14 @@ Never independently upgrade a component to Gallery latest or execute package cod
 from __future__ import annotations
 
 import argparse
+import hashlib
+import io
 import json
+import os
 import re
 import urllib.request
 import xml.etree.ElementTree as ET
+import zipfile
 from pathlib import Path
 from urllib.parse import urlencode
 
@@ -28,6 +32,87 @@ CONSUMERS = (
     "docs/reference/full-technical-reference.md",
     "docs/reference/vmware-workstation-lifecycle-testing.md",
 )
+JOURNAL = Path(".atlaso-local/powercli-refresh-transaction.json")
+
+
+def content_digest(files: dict[str, bytes]) -> str:
+    """Bind every archive-relative path and byte sequence in ordinal path order."""
+    lines = []
+    folded = set()
+    for name, payload in sorted(files.items()):
+        if (
+            not name
+            or not name.isascii()
+            or any(ord(char) < 32 for char in name)
+            or "\\" in name
+            or ":" in name
+            or name.startswith("/")
+            or any(part in ("", ".", "..") for part in name.split("/"))
+            or name.lower() in folded
+        ):
+            raise ValueError(f"Unsafe or ambiguous package path: {name!r}")
+        folded.add(name.lower())
+        lines.append(name + "\0" + hashlib.sha256(payload).hexdigest() + "\n")
+    return hashlib.sha256("".join(lines).encode("utf-8")).hexdigest()
+
+
+def replace_file(path: Path, data: bytes) -> None:
+    """Durably stage one same-directory replacement before atomic rename."""
+    staged = path.with_name(path.name + ".powercli-pending")
+    with staged.open("wb") as stream:
+        stream.write(data)
+        stream.flush()
+        os.fsync(stream.fileno())
+    os.replace(staged, path)
+
+
+def recover_transaction(root: Path, check: bool = False) -> bool:
+    """Roll an interrupted update forward, preserving any independently edited file."""
+    journal = root / JOURNAL
+    if not journal.exists():
+        return False
+    transaction = json.loads(journal.read_text(encoding="utf-8"))
+    expected = {*CONSUMERS, LOCK.as_posix()}
+    entries = transaction["files"]
+    if set(entries) != expected:
+        raise ValueError("Unexpected PowerCLI transaction file inventory")
+    for relative, entry in entries.items():
+        current = (root / relative).read_bytes()
+        if current not in (
+            entry["before"].encode("utf-8"),
+            entry["after"].encode("utf-8"),
+        ):
+            raise ValueError(
+                f"PowerCLI recovery preserves independently edited {relative}"
+            )
+    if check:
+        raise ValueError(
+            "Pending PowerCLI refresh requires recovery in a development worktree"
+        )
+    for relative, entry in entries.items():
+        destination = root / relative
+        payload = entry["after"].encode("utf-8")
+        if destination.read_bytes() != payload:
+            replace_file(destination, payload)
+    journal.unlink()
+    return True
+
+
+def publish_transaction(root: Path, updates: dict[Path, str]) -> None:
+    """Journal the complete update before any tracked write so retries can finish it."""
+    journal = root / JOURNAL
+    journal.parent.mkdir(parents=True, exist_ok=True)
+    transaction = {
+        "files": {
+            path.relative_to(root).as_posix(): {
+                "before": path.read_bytes().decode("utf-8"),
+                "after": content,
+            }
+            for path, content in updates.items()
+        }
+    }
+    replace_file(journal, (json.dumps(transaction, indent=2) + "\n").encode("utf-8"))
+    recover_transaction(root)
 
 
 def version_key(value: str) -> tuple[int, ...]:
@@ -141,6 +226,26 @@ class Gallery:
             result.append((dependency, constraint))
         return result
 
+    def hashes(self, name: str, version: str) -> dict[str, str]:
+        """Download inert package bytes and bind both archive and extracted contents."""
+        with urllib.request.urlopen(
+            API + f"package/{name}/{version}", timeout=300
+        ) as response:
+            archive = response.read(512 * 1024 * 1024 + 1)
+        if len(archive) > 512 * 1024 * 1024:
+            raise ValueError(f"PowerCLI archive too large: {name}")
+        with zipfile.ZipFile(io.BytesIO(archive)) as package:
+            members = [item for item in package.infolist() if not item.is_dir()]
+            if len({item.filename for item in members}) != len(members):
+                raise ValueError(f"Duplicate archive member: {name}")
+            if sum(item.file_size for item in members) > 1024 * 1024 * 1024:
+                raise ValueError(f"PowerCLI expanded archive too large: {name}")
+            files = {item.filename: package.read(item) for item in members}
+        return {
+            "archive_sha256": hashlib.sha256(archive).hexdigest(),
+            "content_sha256": content_digest(files),
+        }
+
 
 def resolve(gallery: Gallery, suite_version: str) -> dict[str, object]:
     """Resolve vendor floors and reject incompatible or unbounded closures.
@@ -168,20 +273,28 @@ def resolve(gallery: Gallery, suite_version: str) -> dict[str, object]:
                 f"{constraint}, selected {selected[dependency]}"
             )
     return {
-        "schema_version": 1,
+        "schema_version": 2,
         "suite_version": suite_version,
         "modules": dict(sorted(selected.items())),
+        "hashes": {
+            name: gallery.hashes(name, selected[name]) for name in sorted(selected)
+        },
     }
 
 
 def refresh(root: Path, gallery: Gallery, version: str | None, check: bool) -> bool:
     """Validate a complete candidate before writing; preserve current bytes on no-op."""
+    if recover_transaction(root, check):
+        print(
+            "Recovered the complete PowerCLI refresh; review and commit before building."
+        )
+        return True
     path = root / LOCK
     previous = json.loads(path.read_text(encoding="utf-8"))
     target = version or gallery.latest()
     if version_key(target) < version_key(previous["suite_version"]):
         raise ValueError("Refusing to downgrade the PowerCLI suite")
-    if target == previous["suite_version"]:
+    if target == previous["suite_version"] and previous.get("schema_version") == 2:
         print(f"PowerCLI {target} is current; no files changed.")
         return False
     candidate = resolve(gallery, target)
@@ -202,8 +315,7 @@ def refresh(root: Path, gallery: Gallery, version: str | None, check: bool) -> b
         updates[consumer] = content.replace(old, target)
     # Resolve and validate all inputs before the first tracked write.
     updates[path] = json.dumps(candidate, indent=2) + "\n"
-    for destination, content in updates.items():
-        destination.write_text(content, encoding="utf-8", newline="\n")
+    publish_transaction(root, updates)
     print(
         f"Updated PowerCLI {old} -> {target} and {len(candidate['modules'])} locked modules."
     )

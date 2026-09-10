@@ -13,6 +13,10 @@ from scripts import update_powercli_lock as updater
 class FakeGallery(updater.Gallery):
     """Expose a new suite with old-compatible floors and newer component releases."""
 
+    def hashes(self, name: str, version: str) -> dict[str, str]:
+        """Return inert reviewed test package digests."""
+        return {"archive_sha256": "a" * 64, "content_sha256": "b" * 64}
+
     def latest(self) -> str:
         """Return the latest stable suite fixture."""
         return "9.1.1"
@@ -34,7 +38,10 @@ def checkout(tmp_path: Path) -> Path:
     """Write minimal baseline consumers and a deliberately noncanonical lock format."""
     path = tmp_path / updater.LOCK
     path.parent.mkdir(parents=True)
-    path.write_text('{ "suite_version": "9.1.0", "modules": {} }', encoding="utf-8")
+    path.write_text(
+        '{ "schema_version": 2, "suite_version": "9.1.0", "modules": {} }',
+        encoding="utf-8",
+    )
     for relative in updater.CONSUMERS:
         consumer = tmp_path / relative
         consumer.parent.mkdir(parents=True, exist_ok=True)
@@ -112,6 +119,59 @@ def test_consumer_drift_fails_before_write(checkout: Path) -> None:
     )
     before = snapshot(checkout)
     with pytest.raises(ValueError, match="baseline missing"):
+        updater.refresh(checkout, FakeGallery(), None, False)
+    assert snapshot(checkout) == before
+
+
+@pytest.mark.parametrize("failure", [OSError, KeyboardInterrupt])
+def test_interrupted_publication_recovers_complete_update(
+    checkout: Path, monkeypatch, failure
+) -> None:
+    """A write failure or process interruption after one replacement remains resumable."""
+    original = updater.replace_file
+    completed = 0
+
+    def interrupted(path: Path, payload: bytes) -> None:
+        """Interrupt after one tracked consumer has already been replaced."""
+        nonlocal completed
+        if path != checkout / updater.JOURNAL:
+            completed += 1
+            if completed == 2:
+                raise failure("simulated interrupted update")
+        original(path, payload)
+
+    monkeypatch.setattr(updater, "replace_file", interrupted)
+    with pytest.raises(failure):
+        updater.refresh(checkout, FakeGallery(), None, False)
+    assert (checkout / updater.JOURNAL).exists()
+    monkeypatch.setattr(updater, "replace_file", original)
+    assert updater.refresh(checkout, FakeGallery(), None, False)
+    assert not (checkout / updater.JOURNAL).exists()
+    assert all(
+        '"9.1.1"' in (checkout / path).read_text(encoding="utf-8")
+        for path in updater.CONSUMERS
+    )
+    assert (
+        json.loads((checkout / updater.LOCK).read_text(encoding="utf-8"))[
+            "suite_version"
+        ]
+        == "9.1.1"
+    )
+    before = snapshot(checkout)
+    assert not updater.refresh(checkout, FakeGallery(), None, False)
+    assert snapshot(checkout) == before
+
+
+def test_recovery_preserves_independent_edits(checkout: Path, monkeypatch) -> None:
+    """A retry never overwrites maintainer edits made after an interrupted refresh."""
+    original = updater.recover_transaction
+    monkeypatch.setattr(updater, "recover_transaction", lambda root, check=False: False)
+    updater.refresh(checkout, FakeGallery(), None, False)
+    edited = checkout / updater.CONSUMERS[0]
+    edited.write_text("maintainer edit", encoding="utf-8")
+    monkeypatch.setattr(updater, "recover_transaction", original)
+    before = snapshot(checkout)
+    with pytest.raises(ValueError, match="independently edited"):
         updater.refresh(checkout, FakeGallery(), None, False)
     assert snapshot(checkout) == before
 

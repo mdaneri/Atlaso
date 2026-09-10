@@ -26,16 +26,54 @@ Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 $ModuleRoot = [System.IO.Path]::GetFullPath($ModuleRoot)
 $lock = Get-Content -LiteralPath $LockPath -Raw | ConvertFrom-Json -AsHashtable
-if ($lock.schema_version -ne 1 -or $lock.modules.Count -eq 0 -or
+if ($lock.schema_version -ne 2 -or $lock.modules.Count -eq 0 -or
     $lock.modules['VCF.PowerCLI'] -ne $lock.suite_version -or
     ($SuiteVersion -and $SuiteVersion -ne $lock.suite_version)) {
     throw 'PowerCLI requested version does not match the complete reviewed lock.'
 }
 foreach ($name in $lock.modules.Keys) {
     if ($name -notmatch '^(VCF|VMware)\.[A-Za-z0-9.]+$' -or
-        $lock.modules[$name] -notmatch '^\d+\.\d+\.\d+(\.\d+)?$') {
+        $lock.modules[$name] -notmatch '^\d+\.\d+\.\d+(\.\d+)?$' -or
+        $lock.hashes[$name].archive_sha256 -notmatch '^[0-9a-f]{64}$' -or
+        $lock.hashes[$name].content_sha256 -notmatch '^[0-9a-f]{64}$') {
         throw 'Invalid PowerCLI lock entry.'
     }
+}
+
+function Get-PowerCliContentDigest {
+    <#
+    .SYNOPSIS
+    Bind every extracted relative path and file byte before importing vendor code.
+    .PARAMETER Root
+    Versioned module root whose files must match the reviewed package contents.
+    #>
+    param([string]$Root)
+    $pending = [System.Collections.Generic.Queue[string]]::new()
+    $pending.Enqueue($Root)
+    $files = [System.Collections.Generic.Dictionary[string,string]]::new([StringComparer]::Ordinal)
+    while ($pending.Count -gt 0) {
+        $directory = $pending.Dequeue()
+        if ((Get-Item -LiteralPath $directory -Force).Attributes -band [IO.FileAttributes]::ReparsePoint) {
+            throw 'PowerCLI content tree contains a reparse point.'
+        }
+        foreach ($item in Get-ChildItem -LiteralPath $directory -Force) {
+            if ($item.Attributes -band [IO.FileAttributes]::ReparsePoint) {
+                throw 'PowerCLI content tree contains a reparse point.'
+            }
+            if ($item.PSIsContainer) { $pending.Enqueue($item.FullName); continue }
+            $relative = [IO.Path]::GetRelativePath($Root, $item.FullName).Replace('\', '/')
+            $files.Add($relative, (Get-FileHash -LiteralPath $item.FullName -Algorithm SHA256).Hash.ToLowerInvariant())
+        }
+    }
+    [string[]]$names = @($files.Keys)
+    [Array]::Sort($names, [StringComparer]::Ordinal)
+    $canonical = [Text.StringBuilder]::new()
+    foreach ($name in $names) {
+        [void]$canonical.Append($name).Append([char]0).Append($files[$name]).Append("`n")
+    }
+    return [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData(
+        [Text.Encoding]::UTF8.GetBytes($canonical.ToString())
+    )).ToLowerInvariant()
 }
 
 function Test-PowerCliBundle {
@@ -56,6 +94,9 @@ function Test-PowerCliBundle {
             throw "PowerCLI bundle requires only ${name} ${version}; found $($versions.Name -join ', ')."
         }
         $path = Join-Path $directory "$version/$name.psd1"
+        if ((Get-PowerCliContentDigest -Root (Join-Path $directory $version)) -cne $lock.hashes[$name].content_sha256) {
+            throw "PowerCLI content hash mismatch: $name $version."
+        }
         $manifest = Import-PowerShellDataFile -LiteralPath $path
         if ([version]$manifest.ModuleVersion -ne [version]$version) {
             throw "PowerCLI manifest version mismatch: $name $version."
@@ -110,6 +151,10 @@ if ($Mode -eq 'Install') {
         try {
             Invoke-WebRequest -Uri "https://www.powershellgallery.com/api/v2/package/$name/$version" `
                 -OutFile $archive -TimeoutSec 300
+            if ((Get-FileHash -LiteralPath $archive -Algorithm SHA256).Hash.ToLowerInvariant() -cne
+                $lock.hashes[$name].archive_sha256) {
+                throw "PowerCLI archive hash mismatch: $name $version."
+            }
             [System.IO.Compression.ZipFile]::ExtractToDirectory($archive, $destination)
         } finally {
             if (Test-Path -LiteralPath $archive) { Remove-Item -LiteralPath $archive -Force }
