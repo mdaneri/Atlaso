@@ -923,7 +923,8 @@ def build_router(dependencies: NetworkBootUiDependencies) -> NetworkBootUiRouter
         wants_json = request.headers.get("X-Atlaso-Upload") == "1"
         try:
             iso = await store_installer_iso_upload(
-                iso_file, max_bytes=get_settings().esxi_installer_iso_max_bytes
+                iso_file, max_bytes=get_settings().esxi_installer_iso_max_bytes,
+                publication=getattr(request.state, "upload_publication", None),
             )
         except ValueError as exc:
             status_code = 413 if "too large" in str(exc).lower() else 400

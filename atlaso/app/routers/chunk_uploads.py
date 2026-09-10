@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hmac
 import json
 import re
 from collections.abc import Callable
@@ -11,7 +12,7 @@ import anyio
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.routing import APIRoute
 from starlette.datastructures import FormData, UploadFile
-from starlette.responses import Response
+from starlette.responses import JSONResponse, Response
 
 from atlaso.app.config import get_settings
 from atlaso.app.database import SessionLocal
@@ -22,9 +23,38 @@ from atlaso.app.security import (
     require_session_identity,
 )
 from atlaso.app.services.chunk_uploads import CHUNK_BYTES, UploadError, upload_store
+from atlaso.app.services.upload_publication import (
+    CONFLICT,
+    PublicationConflict,
+    UploadPublication,
+    revision,
+)
 from atlaso.app.ui_routes import MANAGEMENT_UI_ROOT
 
 router = APIRouter(prefix=f"{MANAGEMENT_UI_ROOT}/uploads/chunks", include_in_schema=False)
+
+
+def _publication(target: str, field: str, filename: str) -> UploadPublication | None:
+    """Resolve the three named media destinations using their service constants.
+
+    Args:
+        target: Authorized destination endpoint.
+        field: Authorized file field.
+        filename: Validated ordinary basename.
+    """
+    from atlaso.app.services import esxi_pxe, vcf_offline_depot, vcf_sddc_upload
+
+    root = None
+    if target.endswith("/vcf-helper/sddc-manager/ovas/upload") and field == "ova_file":
+        root = vcf_sddc_upload.SDDC_MANAGER_OVA_ROOT
+    elif target.endswith("/esxi-pxe/isos/upload") and field == "iso_file":
+        root = esxi_pxe.ESXI_INSTALLER_ISO_ROOT
+    elif field == "tool_archive_file":
+        root = vcf_offline_depot.VCF_DEPOT_UPLOAD_DIR
+    if root is None:
+        return None
+    path = (root / filename).absolute()
+    return UploadPublication(path, revision(path))
 
 
 def _policy(target: str, field: str, identity: Identity) -> int:
@@ -147,7 +177,7 @@ async def _operation(function: Callable[..., Any], *args: Any) -> Any:
 
 
 @router.post("")
-async def create_upload(request: Request, identity: Identity = Depends(require_session_identity)) -> dict[str, Any]:
+async def create_upload(request: Request, identity: Identity = Depends(require_session_identity)) -> Any:
     """Reserve one file after session, CSRF, field, permission, and size checks.
 
     Args:
@@ -158,13 +188,21 @@ async def create_upload(request: Request, identity: Identity = Depends(require_s
     body = await _json(request)
     target, field, filename, size = (body.get(name) for name in ("target", "field", "filename", "size"))
     if (not all(isinstance(value, str) for value in (target, field, filename))
-            or not filename or len(filename) > 240 or any(c in filename for c in "\r\n\x00/\\")
+            or not filename or filename in {".", ".."} or len(filename) > 240 or any(c in filename for c in "\r\n\x00/\\")
             or not isinstance(size, int) or isinstance(size, bool) or size <= 0):
         raise HTTPException(400, "Choose a nonempty, named file.")
     limit = _policy(target, field, identity)
     if size > limit:
         raise HTTPException(413, "File exceeds this upload's size limit.")
+    publication = await _operation(_publication, target, field, filename)
+    if publication is not None and publication.expected is not None:
+        token = body.get("overwrite_token")
+        if not isinstance(token, str) or not hmac.compare_digest(token, publication.token(owner)):
+            return JSONResponse({"detail": "A file with this name already exists.",
+                                 "code": "overwrite_required", "overwrite_token": publication.token(owner)},
+                                status_code=409)
     key = await _operation(upload_store.create, owner, target, field, filename, size)
+    upload_store.get(key, owner).publication = publication
     return {"id": key, "offset": 0, "chunk_bytes": CHUNK_BYTES}
 
 
@@ -240,6 +278,10 @@ class ChunkedUploadRoute(APIRoute):
                 _policy(request.url.path, session.field, identity)
             sessions = await _operation(upload_store.claim, keys, owner, request.url.path)
             try:
+                publications = [s.publication for s in sessions if s.publication is not None]
+                if len(publications) > 1:
+                    raise HTTPException(400, "Choose one media file at a time.")
+                request.state.upload_publication = publications[0] if publications else None
                 # FastAPI calls Request.form(); pre-populating its form cache avoids
                 # copying multi-GiB files through the multipart spool a second time.
                 request._form = FormData([*map(tuple, fields), *(
@@ -260,6 +302,8 @@ class ChunkedUploadRoute(APIRoute):
                                          (b"x-atlaso-filename", quote(sessions[0].filename).encode())]
                     request = Request(scope, receive)
                 return await original(request)
+            except PublicationConflict as exc:
+                raise HTTPException(409, CONFLICT) from exc
             finally:
                 upload_store.release(keys)
 

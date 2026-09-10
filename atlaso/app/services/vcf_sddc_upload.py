@@ -11,6 +11,10 @@ from pathlib import Path
 
 from anyio import to_thread
 
+from atlaso.app.services.upload_publication import (
+    PublicationConflict,
+    UploadPublication,
+)
 from atlaso.app.services.vcf_sddc_deployment import (
     MANIFEST_LINE,
     SDDC_MANAGER_OVA_ROOT,
@@ -24,7 +28,7 @@ SDDC_OVA_MAX_BYTES = 16 * 1024**3
 UPLOAD_ERROR_MESSAGES = {
     'invalid_filename': 'Choose a .ova filename using only letters, numbers, dots, hyphens, and underscores.',
     'storage_path': 'The SDDC Manager depot path is unavailable. Ask an administrator to check its storage.',
-    'duplicate': 'An OVA with this filename already exists. Existing depot files are never replaced.',
+    'duplicate': 'An OVA with this filename already exists. Confirm overwrite in the upload dialog.',
     'oversized': 'The OVA exceeds the 16 GiB upload limit.',
     'empty': 'The OVA upload is empty. Choose a complete OVA file.',
     'invalid_ova': 'OVA validation failed. Choose the original complete SDDC Manager OVA with its OVF, disks, and valid manifest.',
@@ -84,8 +88,9 @@ async def store_sddc_ova_upload(
     root: Path = SDDC_MANAGER_OVA_ROOT,
     max_bytes: int = SDDC_OVA_MAX_BYTES,
     on_publish: Callable[[dict[str, str | int]], None] | None = None,
+    publication: UploadPublication | None = None,
 ) -> dict[str, str | int]:
-    """Publish a validated stream without replacing any existing depot artifact.
+    """Publish a validated stream, replacing artifacts only with bound consent.
 
     Staging is a private sibling directory outside deployment discovery. A unique
     staging path isolates concurrent requests, and hard-link publication provides
@@ -97,6 +102,7 @@ async def store_sddc_ova_upload(
         root: Canonical artifact directory on the depot volume.
         max_bytes: Maximum accepted file size in bytes.
         on_publish: Audit callback; failure removes only this upload's published hard link.
+        publication: Browser consent bound to the destination's pre-upload revision.
     """
     if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{0,195}\.ova", filename, re.IGNORECASE):
         raise SddcUploadError("invalid_filename")
@@ -105,7 +111,7 @@ async def store_sddc_ova_upload(
         if not root.is_absolute() or any(part.is_symlink() for part in (root, *root.parents)):
             raise SddcUploadError("storage_path")
         root.mkdir(parents=True, exist_ok=True)
-        if os.path.lexists(destination):
+        if publication is None and os.path.lexists(destination):
             raise SddcUploadError("duplicate", 409)
         # Keeping staging on the depot volume avoids root-volume multipart spooling.
         with tempfile.TemporaryDirectory(prefix=".sddc-upload-", dir=root.parent) as staging:
@@ -123,22 +129,17 @@ async def store_sddc_ova_upload(
                 os.fsync(target.fileno())
             await to_thread.run_sync(_validate_staged_ova, staged)
             staged.chmod(0o644)
-            try:
-                os.link(staged, destination)
-            except FileExistsError as exc:
-                raise SddcUploadError("duplicate", 409) from exc
             result: dict[str, str | int] = {
                 "path": str(destination), "relative_path": filename, "filename": filename, "size_bytes": total,
             }
-            if on_publish is not None:
-                try:
-                    on_publish(result)
-                except Exception as exc:
-                    # Remove only our own hard link if audit persistence fails;
-                    # never remove a concurrently replaced operator artifact.
-                    if os.path.lexists(destination) and os.path.samefile(staged, destination):
-                        destination.unlink()
-                    raise SddcUploadError("audit_error", 503) from exc
+            with (publication or UploadPublication(destination, None)).publish(staged, destination):
+                if on_publish is not None:
+                    try:
+                        on_publish(result)
+                    except Exception as exc:
+                        raise SddcUploadError("audit_error", 503) from exc
         return result
+    except PublicationConflict as exc:
+        raise SddcUploadError("duplicate", 409) from exc
     except OSError as exc:
         raise SddcUploadError("storage_error", 503) from exc

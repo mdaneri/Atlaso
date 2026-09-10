@@ -1020,6 +1020,7 @@ def build_router(dependencies: VcfWorkflowsUiDependencies) -> VcfWorkflowsUiRout
             result = await store_sddc_ova_upload(
                 request.stream(), unquote(request.headers.get("X-Atlaso-Filename", "")),
                 on_publish=audit_publication,
+                publication=getattr(request.state, "upload_publication", None),
             )
         except SddcUploadError as exc:
             db.rollback()
@@ -2421,7 +2422,7 @@ def build_router(dependencies: VcfWorkflowsUiDependencies) -> VcfWorkflowsUiRout
         settings.depot_store_path = VCF_DEPOT_DEFAULT_STORE_PATH
         settings.config_path = VCF_DEPOT_DEFAULT_CONFIG_PATH
         uploaded_archive_name = store_uploaded_vcf_depot_archive(
-            settings, tool_archive_file
+            settings, tool_archive_file, publication=getattr(request.state, "upload_publication", None)
         )
         uploaded_token_name = store_uploaded_vcf_depot_secret(
             db,
@@ -2571,7 +2572,7 @@ def build_router(dependencies: VcfWorkflowsUiDependencies) -> VcfWorkflowsUiRout
         verify_csrf(request, csrf)
         settings = get_vcf_offline_depot_settings_row(db)
         uploaded_archive_name = store_uploaded_vcf_depot_archive(
-            settings, tool_archive_file
+            settings, tool_archive_file, publication=getattr(request.state, "upload_publication", None)
         )
         if not uploaded_archive_name:
             raise HTTPException(

@@ -83,9 +83,11 @@ by VCFDT. Uploading does not deploy a VM, enable the depot, or require global Ap
 VCFDT, Broadcom credentials, or a software depot ID, and does not populate the metadata needed to serve a complete
 offline depot to VCF.
 
-Existing filenames are rejected, including when two uploads finish concurrently; Atlaso never replaces an existing
-package. Choose the correct original package rather than renaming it to bypass a duplicate. For invalid or truncated
-files, obtain the complete original OVA and retry. For storage failures, check depot free space and write access.
+For an existing OVA, ESX ISO, or VCF Download Tool filename, Atlaso shows **Overwrite existing file?** before sending
+file bytes. **Cancel** keeps the original file; **Overwrite** replaces it only after validation succeeds. Confirmation
+is bound to the current file revision: if another upload changes it during transfer, select the file again and confirm
+the new warning. A failed OVA audit restores the previous package. For invalid or truncated files, obtain the complete
+original OVA and retry. For storage failures, check depot free space and write access.
 Failed or disconnected uploads are removed from staging; a process interruption can leave a private staging directory
 outside deployment discovery, but never a partially uploaded selectable OVA.
 
@@ -93,7 +95,8 @@ outside deployment discovery, but never a partially uploaded selectable OVA.
 
 Browser file uploads use a shared sequential transport, including SDDC Manager OVA, ESX ISO, VCFDT packages,
 Network Boot media, credential files, registry CA bundles, and backup imports. Each request carries at most 8 MiB;
-small files use one chunk. This works with the existing management proxy limit without applying Appliance Settings.
+small files use one chunk. Hashing supports both HTTP and HTTPS management pages. This works with the existing
+management proxy limit without applying Appliance Settings.
 Progress counts acknowledged bytes. A failed chunk retries up to three times with the same offset and SHA-256
 checksum; already acknowledged chunks are not resent. Atlaso rejects changed retries, gaps, and size overruns.
 Final validation and publication use the existing endpoint, permissions, duplicate policy, and desired-state boundary.

@@ -549,6 +549,7 @@ from atlaso.app.services.update_sources import (
     validate_managed_package,
     validate_update_source,
 )
+from atlaso.app.services.upload_publication import UploadPublication
 from atlaso.app.services.vaults import (
     VaultEntryInput,
     create_vault,
@@ -2769,12 +2770,14 @@ def store_pasted_vcf_depot_secret(
     return display_name
 
 
-def store_uploaded_vcf_depot_archive(settings: VcfOfflineDepotSettings, archive_file: UploadFile | None) -> str | None:
+def store_uploaded_vcf_depot_archive(settings: VcfOfflineDepotSettings, archive_file: UploadFile | None,
+                                     *, publication: UploadPublication | None = None) -> str | None:
     """Persist uploaded vcf depot archive.
 
     Args:
         settings: Current Atlaso settings used to configure the operation.
         archive_file: Archive file consumed by store uploaded VCF depot archive.
+        publication: Optional browser consent bound to the existing destination.
 
 
     Returns:
@@ -2796,7 +2799,11 @@ def store_uploaded_vcf_depot_archive(settings: VcfOfflineDepotSettings, archive_
         with temp_path.open("wb") as destination:
             shutil.copyfileobj(archive_file.file, destination)
         validate_vcf_download_tool_upload_envelope(temp_path)
-        temp_path.replace(archive_path)
+        if publication is None:
+            temp_path.replace(archive_path)
+        else:
+            with publication.publish(temp_path, archive_path):
+                pass
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except OSError as exc:

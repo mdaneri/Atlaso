@@ -16,6 +16,49 @@ BASE = "/ui/management/uploads/chunks"
 OVA = "/ui/management/vcf-helper/sddc-manager/ovas/upload"
 
 
+@pytest.mark.parametrize("target,field,constant,filename", [
+    (OVA, "ova_file", "vcf_sddc_upload.SDDC_MANAGER_OVA_ROOT", "existing.ova"),
+    ("/ui/management/esxi-pxe/isos/upload", "iso_file", "esxi_pxe.ESXI_INSTALLER_ISO_ROOT", "existing.iso"),
+    ("/ui/management/vcf-offline-depot/tool-package", "tool_archive_file",
+     "vcf_offline_depot.VCF_DEPOT_UPLOAD_DIR", "vcf-download-tool-existing.tar.gz"),
+])
+def test_existing_media_requires_revision_bound_consent(client, tmp_path, monkeypatch, target, field, constant, filename):
+    """Reserve no storage before confirmation and reject a stale warning token.
+
+    Args:
+        client: Isolated authenticated application client.
+        tmp_path: Isolated destination directory.
+        monkeypatch: Fixture replacing the canonical media root.
+        target: Media endpoint under test.
+        field: Corresponding browser file field.
+        constant: Service constant that owns the destination.
+        filename: Existing media basename.
+    """
+    monkeypatch.setattr("atlaso.app.services." + constant, tmp_path)
+    destination = tmp_path / filename
+    destination.write_bytes(b"original")
+    login(client)
+    page = client.get("/ui/management/vcf-helper")
+    csrf = page.text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
+    headers = {"X-CSRF-Token": csrf}
+    body = {"target": target, "field": field, "filename": filename, "size": 6}
+    before = set(upload_store.sessions)
+    warning = client.post(BASE, headers=headers, json=body)
+    assert warning.status_code == 409
+    assert warning.json()["code"] == "overwrite_required"
+    assert set(upload_store.sessions) == before
+    assert destination.read_bytes() == b"original"
+    destination.write_bytes(b"newer file")
+    stale = client.post(BASE, headers=headers, json={**body, "overwrite_token": warning.json()["overwrite_token"]})
+    assert stale.status_code == 409
+    confirmed = client.post(BASE, headers=headers, json={**body, "overwrite_token": stale.json()["overwrite_token"]})
+    assert confirmed.status_code == 200
+    key = confirmed.json()["id"]
+    assert upload_store.sessions[key].publication.expected is not None
+    assert destination.read_bytes() == b"newer file"
+    client.delete(BASE + "/data", headers={**headers, "X-Atlaso-Upload-Id": key})
+
+
 def test_chunk_admission_requires_destination_permissions():
     """Reject staging before bytes are accepted when destination scope is missing."""
     from fastapi import HTTPException
@@ -151,6 +194,7 @@ def test_ova_chunks_reach_existing_validator_once(client, tmp_path, monkeypatch)
     """
     import atlaso.app.routers.ui.vcf_workflows as routes
     root = tmp_path / "component"
+    monkeypatch.setattr("atlaso.app.services.vcf_sddc_upload.SDDC_MANAGER_OVA_ROOT", root)
     monkeypatch.setattr(routes, "store_sddc_ova_upload", partial(store_sddc_ova_upload, root=root))
     source = tmp_path / "source.ova"
     write_ova(source)
@@ -166,6 +210,16 @@ def test_ova_chunks_reach_existing_validator_once(client, tmp_path, monkeypatch)
     assert (root / "test.ova").read_bytes() == data
     assert key not in upload_store.sessions
     assert client.post(OVA, headers={**headers, "X-Atlaso-Chunked": "1"}, json={"files": [key]}).status_code == 404
+    envelope = {"target": OVA, "field": "ova_file", "filename": "test.ova", "size": len(data)}
+    warning = client.post(BASE, headers=headers, json=envelope)
+    assert warning.status_code == 409
+    confirmation = client.post(BASE, headers=headers,
+                               json={**envelope, "overwrite_token": warning.json()["overwrite_token"]})
+    replacement = confirmation.json()["id"]
+    assert append(client, headers, replacement, 0, data).status_code == 200
+    result = client.post(OVA, headers={**headers, "X-Atlaso-Chunked": "1"}, json={"files": [replacement]})
+    assert result.status_code == 200, result.text
+    assert (root / "test.ova").read_bytes() == data
 
 
 @pytest.mark.parametrize("target,field", [

@@ -16826,7 +16826,7 @@ function initializeEsxiIsoUploadForms() {
     status.dataset.state = state;
   };
   const selectedFile = () => fileInput instanceof HTMLInputElement ? fileInput.files?.[0] : null;
-  const updateIsoConsumers = async (uploaded) => {
+  const updateIsoConsumers = async (uploaded, replaced) => {
     const label = `${uploaded.relative_path || uploaded.name} (${uploaded.source_label || "Uploaded by user"})`;
     document.querySelectorAll('select[name="installer_iso_path"]').forEach((select) => {
       if (!(select instanceof HTMLSelectElement)) return;
@@ -16838,7 +16838,7 @@ function initializeEsxiIsoUploadForms() {
     await hostsElement?.atlasoRefreshIsoOptions?.(uploaded.path, label);
     const summary = document.querySelector("[data-esxi-pxe-summary]");
     if (summary instanceof HTMLElement) {
-      const count = Number(summary.dataset.isoCount || "0") + 1;
+      const count = Number(summary.dataset.isoCount || "0") + (replaced ? 0 : 1);
       summary.dataset.isoCount = String(count);
       summary.textContent = `${summary.dataset.kickstartCount || "0"} Kickstarts / ${count} ISOs`;
     }
@@ -16916,7 +16916,7 @@ function initializeEsxiIsoUploadForms() {
         const existing = esxiInstallerIsosTable?.getRow?.(uploaded.path);
         if (existing) await existing.update(uploaded);
         else await esxiInstallerIsosTable?.addRow?.(uploaded, true, "__new__");
-        await updateIsoConsumers(uploaded);
+        await updateIsoConsumers(uploaded, Boolean(existing));
         setStatus(`${uploaded.name || file.name} uploaded.`, "saved");
         showTransientGridStatus(`${uploaded.name || file.name} added to ESX installer ISOs.`);
         return { valid: true };

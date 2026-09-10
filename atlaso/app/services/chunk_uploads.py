@@ -14,6 +14,8 @@ from pathlib import Path
 from secrets import token_hex
 from typing import BinaryIO, cast
 
+from atlaso.app.services.upload_publication import UploadPublication
+
 CHUNK_BYTES = 8 * 1024**2
 SESSION_SECONDS = 30 * 60
 UPLOAD_ROOT = Path("/mnt/atlaso-vcf-offline-depot/.atlaso-uploads")
@@ -46,6 +48,7 @@ class UploadSession:
     expires: float
     offset: int = 0
     claimed: bool = False
+    publication: UploadPublication | None = None
 
 
 class UploadStore:
