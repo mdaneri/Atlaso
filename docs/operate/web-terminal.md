@@ -119,6 +119,14 @@ check that `/etc/atlaso/nginx/sites.d/management.conf` sets this header to `$ser
 Reconcile Appliance Settings through global appliance apply to regenerate an older configuration. Do not substitute a
 client-supplied header or relax terminal listener authorization.
 
+On an Access interface with **Management UI** enabled, CA and same-port OIDC hostname listeners also proxy management
+terminal WebSocket upgrades. Nginx selects a hostname server before a location, so upgrade headers in the separate
+IP-address server are insufficient. This also matters when an unmatched appliance hostname selects the first server
+on that address. If the page opens but the terminal disconnects immediately, compare the WebSocket handshake through
+the browser's hostname and the management IP. A successful upgrade returns HTTP `101`; HTTP `404` can indicate an
+older hostname server missing the terminal upgrade locations. Apply **Public Services** after upgrading to regenerate
+these listeners. Unflagged service listeners and OIDC on a separate port do not gain management access.
+
 If apply fails, inspect the Public Services child task and validate
 `/var/lib/atlaso/apply/public-services/atlaso-public-services.conf`. On the appliance, validate nginx with `nginx -t`,
 confirm `atlaso.service` is active, and verify the selected address separately:

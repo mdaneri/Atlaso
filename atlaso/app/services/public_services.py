@@ -381,6 +381,7 @@ def _oidc_https_server_lines(
         "",
         *_proxy_location("^~ /identity/", upstream_host, upstream_port, forwarded_proto="https"),
         "",
+        *(_management_terminal_proxy_locations(upstream_host, upstream_port) if management_ui else []),
         *_management_or_not_found_location(management_ui, upstream_host, upstream_port),
         "}",
     ]
@@ -437,9 +438,31 @@ def _ca_https_server_lines(
         "",
         *_proxy_location("= /favicon.ico", upstream_host, upstream_port, forwarded_proto="https"),
         "",
+        *(_management_terminal_proxy_locations(upstream_host, upstream_port) if management_ui else []),
         *_management_or_not_found_location(management_ui, upstream_host, upstream_port),
         "}",
     ]
+
+
+def _management_terminal_proxy_locations(upstream_host: str, upstream_port: int) -> list[str]:
+    """Preserve terminal upgrades when a service hostname cohosts management.
+
+    Args:
+        upstream_host: Atlaso application host receiving proxied requests.
+        upstream_port: Atlaso application port receiving proxied requests.
+    """
+    # Nginx chooses one virtual server before matching locations. Upgrade
+    # locations in the separate IP management server cannot serve this hostname.
+    lines: list[str] = []
+    for path in ("/terminal/ws", "/ui/management/terminal/ws"):
+        lines.extend(_proxy_location(
+            f"= {path}", upstream_host, upstream_port, forwarded_proto="https",
+            extra_directives=[
+                "    proxy_set_header Upgrade $http_upgrade;",
+                '    proxy_set_header Connection "upgrade";',
+            ],
+        ))
+    return lines
 
 
 def _ip_scoped_https_server_lines(
