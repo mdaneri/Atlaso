@@ -585,6 +585,19 @@ running target with checked `vmrun -T ws stop <vmx> hard` and verifies that the 
 registration row for that exact in-root VMX selects checked `vmrun -T ws deleteVM <vmx>`. Already-stopped and
 already-unregistered VMs remain idempotent cleanup cases. A nonzero provider command, a target that remains running, or
 a VMX that survives provider deletion preserves the remaining root and returns failure.
+`Insufficient permissions` from `deleteVM` does not by itself prove an NTFS permission problem. VIX can emit it after
+an Authd connection failure prevents the GUI unmanage transition and the stopped VM's tab retains a VMX lock.
+Cleanup reads only a bounded tail of recent VIX logs, matches the exact VMX lock path and current invocation time,
+and checks the reported GUI process ID and start time before identifying a still-live owner. These diagnostics
+never authorize deletion, process termination, or reservation release. Missing or stale evidence remains explicitly
+unclassified; a running Authorization Service does not prove that the earlier Authd connection succeeded.
+
+When this occurs, close the exact stopped builder's tab in Workstation. If it still retains ownership, review other
+VMs before closing Workstation normally, then retry the original checked cleanup workflow. Do not delete `.lck`
+files, terminate a shared GUI, or elevate/change ACLs merely because of the generic provider error. Cleanup performs
+one provider deletion attempt; a retry must re-enter all ownership, identity, registration, inactivity, and external-disk
+checks. Keep retained artifacts and the builder-address reservation until the existing completion gates prove removal.
+
 Immediately before each `deleteVM`, cleanup repeats the target identity and identity-aware running check, confirms the
 exact scoped registration, and verifies that the recursive VMX set still contains only the validated targets.
 

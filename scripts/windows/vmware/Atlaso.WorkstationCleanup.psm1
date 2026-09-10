@@ -395,16 +395,85 @@ function Invoke-AtlasoVmrunChecked {
         [Parameter(Mandatory = $true)][string[]]$Arguments,
         [Parameter(Mandatory = $true)][string]$Action
     )
+    $startedUtc = [DateTime]::UtcNow
     $output = @(& $VmrunPath @Arguments 2>&1)
     $exitCode = $LASTEXITCODE
     if ($exitCode -ne 0) {
         $detail = ($output | ForEach-Object { $_.ToString().Trim() } | Where-Object { $_ }) -join ' '
+        if ($Arguments.Count -eq 4 -and $Arguments[2] -ceq 'deleteVM') {
+            $diagnostic = Get-AtlasoWorkstationDeleteDiagnostic -VmxPath $Arguments[3] -SinceUtc $startedUtc
+            $detail = "$detail $diagnostic".Trim()
+        }
         if ($detail) {
             throw "$Action failed with exit code $exitCode. vmrun output: $detail"
         }
         throw "$Action failed with exit code $exitCode."
     }
     return $output
+}
+<#
+.SYNOPSIS
+Describe a failed deletion without treating provider diagnostics as cleanup authority.
+
+.PARAMETER VmxPath
+Exact VMX passed to the failed provider deletion.
+
+.PARAMETER SinceUtc
+Start of this provider invocation; older log evidence is ignored.
+
+.PARAMETER LogDirectory
+Existing VMware diagnostic directory, read only and never created here.
+#>
+function Get-AtlasoWorkstationDeleteDiagnostic {
+    param(
+        [Parameter(Mandatory = $true)][string]$VmxPath,
+        [Parameter(Mandatory = $true)][datetime]$SinceUtc,
+        [string]$LogDirectory = (Join-Path ([System.IO.Path]::GetTempPath()) "vmware-$([Environment]::UserName)")
+    )
+    $guidance = "Deletion was not verified; remaining artifacts and any builder reservation must be preserved. A stopped VM does not prove that Workstation released its GUI/file locks. Close the exact stopped VM's tab; if necessary, close Workstation after reviewing other VMs, then retry checked cleanup. Do not remove .lck files or change permissions based only on this provider error."
+    $untilUtc = [datetime]::UtcNow
+    try {
+        # Logs are optional, bounded diagnostics only. Never print arbitrary log
+        # lines or use their process identities to authorize mutation or retries.
+        $logs = @(Get-ChildItem -LiteralPath $LogDirectory -Filter 'vmware-vix-*.log' -File -ErrorAction Stop |
+            Where-Object { $_.LastWriteTimeUtc -ge $SinceUtc -and -not ($_.Attributes -band [IO.FileAttributes]::ReparsePoint) } |
+            Sort-Object LastWriteTimeUtc -Descending | Select-Object -First 8)
+        foreach ($log in $logs) {
+            $stream = [IO.File]::Open($log.FullName, 'Open', 'Read', 'ReadWrite')
+            try {
+                $offset = [Math]::Max(0, $stream.Length - 65536)
+                [void]$stream.Seek($offset, 'Begin')
+                $buffer = [byte[]]::new(65536)
+                $count = $stream.Read($buffer, 0, $buffer.Length)
+                $tail = [Text.Encoding]::UTF8.GetString($buffer, 0, $count)
+            } finally { $stream.Dispose() }
+            $recent = @($tail -split '\r?\n' | Where-Object {
+                $stamp = [datetime]::MinValue
+                $_ -match '^(\S+) ' -and [datetime]::TryParse($Matches[1], [ref]$stamp) -and $stamp.ToUniversalTime() -ge $SinceUtc -and $stamp.ToUniversalTime() -le $untilUtc
+            })
+            foreach ($line in $recent) {
+                if ($line -notmatch "FileLockWaitForPossession timeout on '([^']+)' due to a local process '(\d+)-(\d+)\(vmware\.exe\)'") { continue }
+                $lockPath = $Matches[1]
+                $ownerId = [int]$Matches[2]
+                $ownerStart = [long]$Matches[3]
+                if (-not (Test-AtlasoSamePath -Left ([IO.Path]::GetDirectoryName($lockPath)) -Right "$VmxPath.lck")) { continue }
+                if (-not (Test-Path -LiteralPath $lockPath -PathType Leaf)) { continue }
+                $owner = Get-Process -Id $ownerId -ErrorAction Stop
+                try {
+                    if ($owner.ProcessName -cne 'vmware' -or $owner.StartTime.ToUniversalTime().ToFileTimeUtc() -ne $ownerStart -or $owner.HasExited) { continue }
+                    $transition = if (($recent -match 'VMHS_UnmanageVM failed').Count -and ($recent -match 'CnxAuthdConnect.*failed|unable to contact authd').Count) {
+                        ' VIX also recorded an Authd connection failure and failed GUI unmanage transition; this does not establish that VMAuthdService is stopped.'
+                    } else { '' }
+                    return "VIX reported a lock on this exact VMX held by the still-live Workstation GUI (PID $ownerId, start FILETIME $ownerStart).$transition $guidance"
+                } finally { $owner.Dispose() }
+            }
+        }
+    } catch {
+        # Missing logs, process exit/reuse, and unreadable diagnostics cannot
+        # replace the original provider failure or establish a lock owner.
+        return "Lock-owner diagnostics were unavailable. The provider error does not establish a filesystem permission denial or a live lock owner. $guidance"
+    }
+    return "The provider error does not establish a filesystem permission denial or a live lock owner. $guidance"
 }
 <#
 .SYNOPSIS
