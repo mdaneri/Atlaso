@@ -57,7 +57,7 @@ def applied_boot_fixture(client, monkeypatch, tmp_path):
             'artifacts': [{'host_id': host.id, 'hostname': host.hostname, 'mac_key': '01-00-50-56-aa-bb-cc', 'kickstart_id': kickstart.id, 'is_default': False, 'image_http_url': 'http://192.0.2.1:8080/pxe/esxi/images/fixture'}],
         }
         raw = json.dumps(manifest, indent=2, sort_keys=True)
-        return [ui.make_appliance_apply_unit(unit_id='esxi_pxe', label='ESXi PXE', page_url='/esxi-pxe', context={'esxi_pxe_config_path': str(root / 'staged.json'), 'esxi_kickstarts': [kickstart]}, summary=['fixture'], validation_errors=[], config_path=str(root / 'staged.json'), config_preview=raw, baseline=ui.load_appliance_apply_baselines(db).get('esxi_pxe'), snapshot_marker={'protected_runtime_manifest': 1})]
+        return [ui.make_appliance_apply_unit(unit_id='esxi_pxe', label='ESXi PXE', page_url='/esxi-pxe', context={'esxi_pxe_config_path': str(root / 'staged.json'), 'esxi_kickstarts': [kickstart]}, summary=['fixture'], validation_errors=[], config_path=str(root / 'staged.json'), config_preview=raw, baseline=ui.load_appliance_apply_baselines(db).get('esxi_pxe'), snapshot_marker={'protected_runtime_manifest': 1}, runtime_config_encrypted=boot.load_esxi_applied_runtime(db))]
 
     class Adapter:
         def __init__(self, **kwargs):
@@ -85,6 +85,8 @@ def applied_boot_fixture(client, monkeypatch, tmp_path):
             db.add(job)
             db.add(JobStep(id=f'{job_id}:esxi_pxe', job=job, component_key='esxi_pxe', label='ESXi PXE', position=1, status='pending', result='{}'))
             db.commit()
+        if getattr(state, 'before_run', None):
+            state.before_run()
         ui.run_appliance_apply_job(job_id)
         with SessionLocal() as db:
             job = db.get(Job, job_id)
@@ -116,8 +118,10 @@ def test_real_apply_retains_exact_encrypted_source_and_creates_console_claim(app
     with SessionLocal() as db:
         baseline = ui.load_appliance_apply_baselines(db)['esxi_pxe']
         assert content not in json.dumps(baseline)
+        assert 'runtime_config_encrypted' not in baseline
+        assert boot.load_esxi_applied_runtime(db) not in json.dumps(baseline)
         assert json.loads(baseline['config_preview'])['kickstarts'][0]['content'] == '[redacted]'
-        assert decrypt_secret(baseline['runtime_config_encrypted']) == fixture.staged[0]
+        assert decrypt_secret(boot.load_esxi_applied_runtime(db)) == fixture.staged[0]
         assert boot._applied_esxi_pxe_manifest(db)['kickstarts'][0]['content'] == content
         assert not fixture.units(db)[0]['changed']
         row = json.loads(baseline['config_preview'])['hosts'][0]
@@ -137,14 +141,14 @@ def test_unsuccessful_real_apply_preserves_previous_protected_runtime(applied_bo
     fixture = applied_boot_fixture
     fixture.apply()
     with SessionLocal() as db:
-        previous = ui.load_appliance_apply_baselines(db)['esxi_pxe']['runtime_config_encrypted']
+        previous = boot.load_esxi_applied_runtime(db)
         host = db.get(EsxiPxeHost, fixture.host_id)
         host.ip_address = '192.0.2.11'
         db.commit()
     fixture.dry_run, fixture.failure = dry_run, failure
     fixture.apply()
     with SessionLocal() as db:
-        assert ui.load_appliance_apply_baselines(db)['esxi_pxe']['runtime_config_encrypted'] == previous
+        assert boot.load_esxi_applied_runtime(db) == previous
         assert boot._applied_esxi_pxe_manifest(db)['hosts'][0]['ip_address'] == '192.0.2.10'
         assert fixture.units(db)[0]['changed']
         with pytest.raises(ValueError, match='differs from applied state'):
@@ -166,6 +170,34 @@ def test_apply_concurrent_edit_stays_pending_and_does_not_replace_staged_snapsho
         assert boot._applied_esxi_pxe_manifest(db)['hosts'][0]['ip_address'] == '192.0.2.10'
         assert fixture.units(db)[0]['changed']
         assert boot.esxi_boot_readiness_warnings(db, [db.get(EsxiPxeHost, fixture.host_id)])
+
+
+def test_secret_only_edit_after_submission_rejects_before_helper_execution(applied_boot_fixture):
+    """Equal redacted previews cannot admit different hidden execution inputs."""
+    fixture = applied_boot_fixture
+    with SessionLocal() as db:
+        host = db.get(EsxiPxeHost, fixture.host_id)
+        host.variables_json = json.dumps({'password': 'fixture-secret-before'})
+        db.commit()
+        before = fixture.units(db)[0]
+
+    def edit_after_submission():
+        with SessionLocal() as db:
+            db.get(EsxiPxeHost, fixture.host_id).variables_json = json.dumps({'password': 'fixture-secret-after'})
+            db.commit()
+            after = fixture.units(db)[0]
+            assert before['config_preview'] == after['config_preview']
+            assert before['snapshot_hash'] != after['snapshot_hash']
+
+    fixture.before_run = edit_after_submission
+    fixture.failure = True
+    job_id = fixture.apply()
+    assert fixture.staged == []
+    with SessionLocal() as db:
+        assert boot.load_esxi_applied_runtime(db) is None
+        job = db.get(Job, job_id)
+        assert 'changed' in job.error.lower()
+        assert 'fixture-secret' not in job.result
 
 
 def test_media_activation_receipt_does_not_create_another_pending_apply(applied_boot_fixture):
@@ -190,7 +222,7 @@ def test_invalid_encrypted_snapshot_fails_closed_without_legacy_fallback(applied
     with SessionLocal() as db:
         baselines = ui.load_appliance_apply_baselines(db)
         baselines['esxi_pxe']['runtime_config_preview'] = fixture.staged[0]
-        baselines['esxi_pxe']['runtime_config_encrypted'] = 'fernet:v1:invalid'
+        boot.save_esxi_applied_runtime(db, 'fernet:v1:invalid')
         ui.save_appliance_apply_baselines(db, baselines)
         db.commit()
     with SessionLocal() as db:
@@ -199,6 +231,17 @@ def test_invalid_encrypted_snapshot_fails_closed_without_legacy_fallback(applied
         warnings = boot.esxi_boot_readiness_warnings(db, [db.get(EsxiPxeHost, fixture.host_id)])
         assert warnings and 'real ESXi PXE Apply' in warnings[0]
         assert 'invalid' not in warnings[0]
+
+
+def test_runtime_record_is_independent_of_display_baseline(applied_boot_fixture):
+    """The dedicated runtime receipt remains authoritative across baseline rebuilds."""
+    fixture = applied_boot_fixture
+    fixture.apply()
+    with SessionLocal() as db:
+        ui.save_appliance_apply_baselines(db, {})
+        db.commit()
+        assert boot._applied_esxi_pxe_manifest(db)['hosts'][0]['id'] == fixture.host_id
+        assert boot._has_explicit_esxi_pxe_runtime_preview(db)
 
 
 def test_readiness_reuses_one_snapshot_and_one_revision_check(applied_boot_fixture, monkeypatch):
@@ -247,6 +290,7 @@ def test_legacy_redacted_snapshot_recovers_only_through_real_apply(applied_boot_
         # Neither internal baseline field belongs to portable settings archives.
         from atlaso.app.services.settings_archive import SAFE_SETTING_KEYS
         assert boot.APPLIANCE_APPLY_BASELINES_KEY not in SAFE_SETTING_KEYS
+        assert boot.ESXI_APPLIED_RUNTIME_KEY not in SAFE_SETTING_KEYS
         baseline_row = db.scalar(select(Setting).where(Setting.key == boot.APPLIANCE_APPLY_BASELINES_KEY))
         assert 'fixture-only-not-a-real-password' not in baseline_row.value
 
@@ -290,8 +334,9 @@ def test_factory_reset_retains_exact_executed_esxi_snapshot(client, monkeypatch,
     try:
         with Session(engine) as db:
             baseline = ui.load_appliance_apply_baselines(db)['esxi_pxe']
+            assert 'runtime_config_encrypted' not in baseline
             assert len(activated) == 1
-            assert decrypt_secret(baseline['runtime_config_encrypted']) == activated[0]
+            assert decrypt_secret(boot.load_esxi_applied_runtime(db)) == activated[0]
             assert not next(unit for unit in ui.appliance_apply_units(db, reconcile=False) if unit['id'] == 'esxi_pxe')['changed']
     finally:
         engine.dispose()

@@ -2,6 +2,7 @@
 
 import difflib
 import hashlib
+import hmac
 import json
 import logging
 import os
@@ -10350,6 +10351,7 @@ def make_appliance_apply_unit(
     baseline: dict[str, Any] | None,
     raw_config_preview: str | None = None,
     snapshot_marker: Any = None,
+    runtime_config_encrypted: str | None = None,
 ) -> dict[str, Any]:
     """Build appliance apply unit.
 
@@ -10366,6 +10368,7 @@ def make_appliance_apply_unit(
         baseline: Baseline supplied by the caller.
         raw_config_preview: Raw config preview supplied by the caller.
         snapshot_marker: Snapshot marker supplied by the caller.
+        runtime_config_encrypted: Internal runtime record used only for ESXi comparison.
 
     Returns:
         The make appliance apply unit result.
@@ -10379,6 +10382,17 @@ def make_appliance_apply_unit(
         "config_preview": esxi_apply_comparison_preview(redacted_preview) if protected_esxi else redacted_preview,
         "snapshot_marker": snapshot_marker,
     }
+    if protected_esxi:
+        settings = get_settings()
+        # Domain-separated HMAC binds hidden edits without publishing a
+        # password-guessing oracle or secret material in review/task metadata.
+        snapshot_payload["protected_revision"] = hmac.new(
+            (settings.secrets_key or settings.secret_key).encode("utf-8"),
+            b"atlaso-esxi-apply-v1\x00" + esxi_apply_comparison_preview(
+                raw_config_preview if raw_config_preview is not None else config_preview
+            ).encode("utf-8"),
+            hashlib.sha256,
+        ).hexdigest()
     current_hash = appliance_snapshot_hash(snapshot_payload)
     baseline_hash = str((baseline or {}).get("snapshot_hash") or "")
     runtime_pending = False
@@ -10387,13 +10401,13 @@ def make_appliance_apply_unit(
         # selectable until real Apply records the exact protected runtime input.
         try:
             runtime_pending = esxi_apply_comparison_preview(
-                decrypt_secret((baseline or {}).get("runtime_config_encrypted", ""))
+                decrypt_secret(runtime_config_encrypted or "")
             ) != esxi_apply_comparison_preview(
                 raw_config_preview if raw_config_preview is not None else config_preview
             )
         except (AttributeError, TypeError, ValueError):
             runtime_pending = True
-        if not (baseline or {}).get("runtime_config_encrypted"):
+        if runtime_config_encrypted is None:
             desired_manifest = json.loads(raw_config_preview if raw_config_preview is not None else config_preview)
             # A pristine factory reset has no boot consumers to admit. Its
             # non-appliance dry-run path must not invent real runtime evidence.
@@ -10803,6 +10817,8 @@ def appliance_apply_units(db: Session, *, reconcile: bool = True) -> list[dict[s
         db: Active database session.
         reconcile: Whether dependent desired state should be reconciled.
     """
+    from atlaso.app.services.network_boot import load_esxi_applied_runtime
+
     baselines = load_appliance_apply_baselines(db)
     local_users = local_users_apply_context(db, baselines.get("local_users"))
     appliance_settings = appliance_settings_context(db, reconcile_dns=reconcile)
@@ -11013,6 +11029,7 @@ def appliance_apply_units(db: Session, *, reconcile: bool = True) -> list[dict[s
             config_preview=esxi_pxe["esxi_pxe_manifest"],
             baseline=baselines.get("esxi_pxe"),
             snapshot_marker={"protected_runtime_manifest": 1},
+            runtime_config_encrypted=load_esxi_applied_runtime(db),
         ),
         make_appliance_apply_unit(
             unit_id="esx_storage",
@@ -14070,16 +14087,6 @@ def update_appliance_apply_baselines(db: Session, units: list[dict[str, Any]], s
         runtime_config_preview = unit.get("runtime_config_preview")
         if isinstance(runtime_config_preview, str):
             baseline["runtime_config_preview"] = runtime_config_preview
-        if unit["id"] == "esxi_pxe":
-            # This internal baseline is excluded from settings archives and UI
-            # projections. Preserve ciphertext across dry runs and baseline-only
-            # refreshes; only a successful real Apply supplies a replacement.
-            encrypted = unit.get(
-                "runtime_config_encrypted",
-                baselines.get("esxi_pxe", {}).get("runtime_config_encrypted"),
-            )
-            if isinstance(encrypted, str):
-                baseline["runtime_config_encrypted"] = encrypted
         if unit["id"] == "dnsmasq":
             baseline["dns_enabled"] = bool(unit["context"]["dns_settings"].enabled)
         baselines[unit["id"]] = baseline
@@ -15789,8 +15796,11 @@ def run_appliance_apply_job(job_id: str, *, force_real: bool = False) -> None:
                         from atlaso.app.services.network_boot import (
                             mark_network_boot_environments_applied,
                             prune_superseded_shredos_media,
+                            save_esxi_applied_runtime,
                         )
 
+                        assert esxi_runtime_encrypted is not None
+                        save_esxi_applied_runtime(db, esxi_runtime_encrypted)
                         mark_network_boot_environments_applied(
                             db, applied_manifest=json.loads(execution_unit["raw_config_preview"]),
                         )
@@ -15836,10 +15846,6 @@ def run_appliance_apply_job(job_id: str, *, force_real: bool = False) -> None:
                             runtime_config_preview = str(
                                 applied_unit["config_preview"]
                             )
-                            applied_unit = {
-                                **applied_unit,
-                                "runtime_config_encrypted": esxi_runtime_encrypted,
-                            }
                         applied_unit = {
                             **applied_unit,
                             "runtime_config_preview": runtime_config_preview,

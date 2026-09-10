@@ -47,6 +47,7 @@ from atlaso.app.services.local_users import (
     restore_pending_os_password_snapshot,
     stage_user_os_password,
 )
+from atlaso.app.services.network_boot import save_esxi_applied_runtime
 from atlaso.app.services.networking import (
     HostPhysicalInterface,
     discover_host_physical_interfaces,
@@ -1414,8 +1415,8 @@ def _candidate_database(
                 if not result["success"]:
                     raise FactoryResetError(f"Factory reset activation failed for {unit['label']}.")
                 if encrypted_runtime is not None and not result.get("dry_run"):
+                    save_esxi_applied_runtime(db, encrypted_runtime)
                     esxi_runtime_receipt = {
-                        "runtime_config_encrypted": encrypted_runtime,
                         "runtime_config_preview": unit["config_preview"],
                     }
                 db.flush()

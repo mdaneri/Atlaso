@@ -100,6 +100,7 @@ NETWORK_BOOT_HTTP_ROOT = Path("/var/lib/atlaso/pxe/http")
 NETWORK_BOOT_STAGED_CONFIG_PATH = "/var/lib/atlaso/apply/esxi-pxe/atlaso-esxi-pxe.json"
 NETWORK_BOOT_UNIT_ID = "esxi_pxe"
 APPLIANCE_APPLY_BASELINES_KEY = "appliance_apply.baselines.v1"
+ESXI_APPLIED_RUNTIME_KEY = "network_boot.esxi_applied_runtime_encrypted.v1"
 _MEDIA_SWAP_THREAD_LOCK = threading.Lock()
 _MEDIA_STAGING_THREAD_LOCK = threading.Lock()
 _ACTIVE_MEDIA_STAGING_DIRECTORIES: set[str] = set()
@@ -2115,29 +2116,43 @@ def send_wake_on_lan(
     return sent_targets
 
 
+def load_esxi_applied_runtime(db: Session) -> str | None:
+    """Read protected runtime evidence from its dedicated, non-exported record."""
+    row = db.scalar(select(Setting).where(Setting.key == ESXI_APPLIED_RUNTIME_KEY))
+    return row.value if row is not None else None
+
+
+def save_esxi_applied_runtime(db: Session, encrypted: str) -> None:
+    """Stage a successful real activation receipt in the caller's transaction."""
+    row = db.scalar(select(Setting).where(Setting.key == ESXI_APPLIED_RUNTIME_KEY))
+    if row is None:
+        row = Setting(key=ESXI_APPLIED_RUNTIME_KEY, value=encrypted)
+    else:
+        row.value = encrypted
+    db.add(row)
+    db.flush()
+
+
 def _applied_esxi_pxe_manifest(db: Session) -> dict[str, Any]:
     """Return applied esxi pxe manifest.
 
     Args:
         db: Active database session.
     """
-    setting = db.execute(
-        select(Setting).where(Setting.key == APPLIANCE_APPLY_BASELINES_KEY)
-    ).scalar_one_or_none()
-    if setting is None:
-        return {}
     try:
-        baselines = json.loads(setting.value or "{}")
-        baseline = baselines.get(NETWORK_BOOT_UNIT_ID)
-        runtime_preview = (baseline or {}).get(
-            "runtime_config_preview",
-            (baseline or {}).get("config_preview"),
-        )
         # Display previews may replace an entire Kickstart with [redacted]. Only
         # the protected snapshot retains the exact bytes admitted by real Apply.
         # An unreadable new snapshot must never fall back to older runtime data.
-        if "runtime_config_encrypted" in (baseline or {}):
-            runtime_preview = decrypt_secret(baseline["runtime_config_encrypted"])
+        encrypted = load_esxi_applied_runtime(db)
+        if encrypted is not None:
+            runtime_preview = decrypt_secret(encrypted)
+        else:
+            setting = db.scalar(select(Setting).where(Setting.key == APPLIANCE_APPLY_BASELINES_KEY))
+            baselines = json.loads((setting.value if setting is not None else "") or "{}")
+            baseline = baselines.get(NETWORK_BOOT_UNIT_ID)
+            runtime_preview = (baseline or {}).get(
+                "runtime_config_preview", (baseline or {}).get("config_preview"),
+            )
         manifest = json.loads(str(runtime_preview or "{}"))
     except (AttributeError, TypeError, ValueError, json.JSONDecodeError):
         return {}
@@ -2155,6 +2170,8 @@ def _has_explicit_esxi_pxe_runtime_preview(db: Session) -> bool:
     Args:
         db: Active database session.
     """
+    if load_esxi_applied_runtime(db) is not None:
+        return True
     setting = db.execute(
         select(Setting).where(Setting.key == APPLIANCE_APPLY_BASELINES_KEY)
     ).scalar_one_or_none()

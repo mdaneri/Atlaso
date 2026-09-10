@@ -453,7 +453,9 @@ repair an older redacted snapshot either. Do not edit the database or remove the
 Kickstart's password directive to work around this validation.
 
 Atlaso retains the exact successfully staged boot manifest encrypted with the
-appliance secrets key, separately from redacted display previews. Failed and dry-run
+appliance secrets key in a dedicated runtime record, separately from redacted
+display previews and Apply baselines. A keyed snapshot check rejects hidden edits
+made after submission before the Apply helper runs. Failed and dry-run
 applies retain the last real snapshot, and desired edits made during Apply remain
 pending. Plain IP addresses, MAC addresses, and host UUIDs remain operational
 identifiers; passwords, console codes, and boot capabilities remain protected.
