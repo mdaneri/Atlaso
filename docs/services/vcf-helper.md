@@ -107,6 +107,8 @@ management proxy limit without applying Appliance Settings.
 Progress counts acknowledged bytes. A failed chunk retries up to three times with the same offset and SHA-256
 checksum; already acknowledged chunks are not resent. Atlaso rejects changed retries, gaps, and size overruns.
 OVA filenames are validated before reserving a session, so unsupported names transfer no file bytes.
+Archive members and their total logical size are each limited to 16 GiB before manifest hashing, including
+sparse disk members whose logical size exceeds their physical archive size.
 Final validation and publication use the existing endpoint, permissions, duplicate policy, and desired-state boundary.
 A lost final response is not retried automatically: inspect the destination before submitting again.
 

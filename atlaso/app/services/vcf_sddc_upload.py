@@ -57,7 +57,13 @@ def _check_ova_structure(path: Path) -> None:
     """
     with _MetadataReader(io.FileIO(path, "r")) as source:
         with tarfile.open(fileobj=source, mode="r:") as archive:
+            logical_bytes = 0
             for count, member in enumerate(archive, 1):
+                if member.size < 0 or member.size > SDDC_OVA_MAX_BYTES:
+                    raise ValueError("OVA member size limit exceeded")
+                logical_bytes += member.size
+                if logical_bytes > SDDC_OVA_MAX_BYTES:
+                    raise ValueError("OVA logical size limit exceeded")
                 if count > OVA_MAX_MEMBERS:
                     raise ValueError("OVA member limit exceeded")
                 if member.name.lower().endswith(".ovf") and member.size > OVA_MAX_OVF_BYTES:

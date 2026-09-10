@@ -447,3 +447,42 @@ def test_post_commit_reporting_failure_preserves_published_ova(client, tmp_path,
     with SessionLocal() as db:
         event = db.scalar(select(AuditEvent).where(AuditEvent.action == "upload_vcf_sddc_ova"))
         assert event is not None and event.success
+
+
+@pytest.mark.parametrize("sizes", [(1025,), (600, 600)])
+def test_sparse_logical_sizes_are_bounded_before_hashing(tmp_path, monkeypatch, sizes):
+    """Reject individual and aggregate sparse expansion before parser or hashing.
+
+    Args:
+        tmp_path: Isolated archive directory.
+        monkeypatch: Fixture setting a small logical limit and guarding parsers.
+        sizes: Logical sizes declared by physically tiny sparse disk members.
+    """
+    import atlaso.app.services.vcf_sddc_upload as service
+
+    monkeypatch.setattr(service, "SDDC_OVA_MAX_BYTES", 1024)
+    path = tmp_path / "sparse.ova"
+    with tarfile.open(path, "w", format=tarfile.PAX_FORMAT) as archive:
+        for index, size in enumerate(sizes):
+            member = tarfile.TarInfo(f"disk-{index}.vmdk")
+            member.size = 1
+            member.pax_headers = {"GNU.sparse.map": "0,1", "GNU.sparse.size": str(size)}
+            archive.addfile(member, io.BytesIO(b"x"))
+    with tarfile.open(path) as archive:
+        members = list(archive)
+        assert tuple(member.size for member in members) == sizes
+        assert all(member.sparse == [(0, 1)] for member in members)
+
+    def forbidden_parser(*args, **kwargs):
+        """Ensure sparse expansion cannot reach discovery or hashing.
+
+        Args:
+            *args: Ignored validation arguments.
+            **kwargs: Ignored validation keyword arguments.
+        """
+        pytest.fail("Sparse logical expansion reached parser or hashing")
+
+    monkeypatch.setattr(service, "inspect_ova", forbidden_parser)
+    monkeypatch.setattr(service, "validate_ova_manifest", forbidden_parser)
+    with pytest.raises(SddcUploadError, match="validation"):
+        service._validate_staged_ova(path)
