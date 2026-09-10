@@ -142,6 +142,7 @@ if (-not $rejected) { throw 'An unassigned static MAC was admitted as pending.' 
         $node.Name -eq 'Wait-AtlasoHyperVSmokeNetworkIdentity'
     }, $true)
     . ([scriptblock]::Create($waitFunction.Extent.Text.Replace('Start-Sleep -Seconds 5', '')))
+    $script:addressScenario = ''
     <#
     .SYNOPSIS
     Return successive provider snapshots for the isolated startup fixture.
@@ -153,7 +154,9 @@ if (-not $rejected) { throw 'An unassigned static MAC was admitted as pending.' 
     function Get-VMNetworkAdapter {
         param($VM, $ErrorAction)
         $state = @($hyperVAdapters | ForEach-Object { $_.PSObject.Copy() })
-        if ($script:macSample -eq 0) {
+        if ($script:addressScenario) {
+            $state[1].IPAddresses = if ($script:macSample -lt 2) { @() } else { @($script:addressScenario) }
+        } elseif ($script:macSample -eq 0) {
             $state[0].MacAddress = '000000000000'
         } elseif ($script:replaceAssignedMac) { $state[1].MacAddress = '00155DAABBCC' }
         $script:macSample++
@@ -175,6 +178,27 @@ if (-not $rejected) { throw 'An unassigned static MAC was admitted as pending.' 
             $failed = $true
         }
         if ($replace -and -not $failed) { throw 'Wait forgot the first assigned management MAC.' }
+    }
+    foreach ($returnedAddress in @('192.0.2.20', '192.0.2.21')) {
+        $script:addressScenario = $returnedAddress
+        $script:macSample = 0
+        $failed = $false
+        try {
+            $result = Wait-AtlasoHyperVSmokeNetworkIdentity -Vm ([pscustomobject]@{}) `
+                -ManagementSwitch Management -ServiceSwitch Services -ExpectedIdentity $hyperVIdentity `
+                -Deadline ([DateTimeOffset]::UtcNow.AddSeconds(30))
+            if ($script:macSample -ne 3 -or $result.Address -ne '192.0.2.20') {
+                throw 'Wait returned stale or changed address evidence.'
+            }
+        } catch {
+            if ($returnedAddress -eq '192.0.2.20' -or
+                $_.Exception.Message -notmatch 'IPv4 address changed') { throw }
+            $failed = $true
+        }
+        if ($returnedAddress -ne '192.0.2.20' -and -not $failed) {
+            throw 'Empty provider reports erased the pinned address.'
+        }
+        if ($hyperVIdentity.Address -ne '192.0.2.20') { throw 'Wait mutated the caller identity.' }
     }
 }
 if ($hyperVIdentity.Address -ne '192.0.2.20' -or

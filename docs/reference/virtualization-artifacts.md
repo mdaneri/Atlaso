@@ -548,6 +548,8 @@ errors include expected and observed field values and both current adapter IDs f
 failure recurs, retain that evidence to distinguish allocation from adapter replacement or a later MAC change.
 Dynamic-mode rejections also identify the expected and observed MAC, and distinguish a reported static mode from
 missing mode evidence.
+Temporary loss of the provider's IPv4 report does not clear an already pinned address. The smoke waits for a fresh
+report and rejects a different address, including across reboot.
 
 VMware SSH admission requires a currently `Reachable` management neighbor. Cached `Stale`, `Delay`, and `Probe`
 entries are probe candidates only; expired, malformed, or unbounded DHCP leases are excluded. Each failed SSH

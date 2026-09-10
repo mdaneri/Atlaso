@@ -130,7 +130,11 @@ function Wait-AtlasoHyperVSmokeNetworkIdentity {
             -AllowMissingAddress `
             -AllowPendingMacAddress
         # Pin each allocated MAC even if the other NIC or DHCP is still pending.
-        $ExpectedIdentity = $identity
+        # A missing provider report must not erase an address already bound to
+        # this run. Keep observed readiness separate from the retained baseline.
+        $pinnedAddress = [string]$ExpectedIdentity.Address
+        $ExpectedIdentity = $identity.PSObject.Copy()
+        if (-not $ExpectedIdentity.Address) { $ExpectedIdentity.Address = $pinnedAddress }
         if ($identity.Address -and -not $identity.ManagementMacPending -and -not $identity.ServiceMacPending) {
             return $identity
         }
