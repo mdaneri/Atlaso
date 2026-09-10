@@ -5,7 +5,9 @@ from __future__ import annotations
 import ast
 import base64
 import io
+import shutil
 import struct
+import subprocess
 import sys
 from pathlib import Path
 
@@ -16,6 +18,42 @@ from scripts.virtualization import smoke_guest_ssh as smoke
 HOST_KEY = "ssh-ed25519 " + base64.b64encode(
     struct.pack(">I", 11) + b"ssh-ed25519" + struct.pack(">I", 32) + b"s" * 32
 ).decode()
+
+
+def test_hyperv_access_reads_only_exact_vm_guest_authored_kvp(tmp_path: Path) -> None:
+    """Intrinsic OS metadata and another VM cannot supply the access envelope.
+
+    Args:
+        tmp_path: Directory for the isolated PowerShell fixture.
+    """
+
+    pwsh = shutil.which("pwsh")
+    if pwsh is None:
+        pytest.skip("PowerShell is unavailable")
+    fixture = tmp_path / "kvp.ps1"
+    fixture.write_text(
+        r"""param([string]$Source)
+$ErrorActionPreference = 'Stop'
+$tokens = $null; $errors = $null
+$ast = [System.Management.Automation.Language.Parser]::ParseFile($Source, [ref]$tokens, [ref]$errors)
+$function = $ast.Find({param($node) $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -eq 'Get-AtlasoHyperVFirstBootAccess'}, $true)
+. ([scriptblock]::Create($function.Extent.Text))
+$script:guestItems = @('<INSTANCE><PROPERTY NAME="Name"><VALUE>atlaso.first_boot_access</VALUE></PROPERTY><PROPERTY NAME="Data"><VALUE>{"username":"expected"}</VALUE></PROPERTY></INSTANCE>')
+function Get-CimInstance {
+    param($Namespace, $ClassName, $ErrorAction)
+    [pscustomobject]@{SystemName='00000000-0000-0000-0000-000000000002'; GuestExchangeItems=@(); GuestIntrinsicExchangeItems=$script:guestItems}
+    [pscustomobject]@{SystemName='00000000-0000-0000-0000-000000000001'; GuestExchangeItems=$script:guestItems; GuestIntrinsicExchangeItems=@('<INSTANCE><PROPERTY NAME="Name"><VALUE>atlaso.first_boot_access</VALUE></PROPERTY><PROPERTY NAME="Data"><VALUE>{"username":"wrong-collection"}</VALUE></PROPERTY></INSTANCE>')}
+}
+$vmId = [guid]'00000000-0000-0000-0000-000000000001'
+if ((Get-AtlasoHyperVFirstBootAccess -VmId $vmId).username -cne 'expected') { throw 'Wrong KVP source' }
+$script:guestItems = @()
+if ($null -ne (Get-AtlasoHyperVFirstBootAccess -VmId $vmId)) { throw 'Intrinsic data admitted' }
+""",
+        encoding="utf-8",
+    )
+    source = Path(__file__).resolve().parents[1] / "scripts/windows/virtualization/smoke-hyperv.ps1"
+    result = subprocess.run([pwsh, "-NoProfile", "-File", str(fixture), "-Source", str(source)], capture_output=True, text=True, check=False)
+    assert result.returncode == 0, result.stderr
 
 
 def test_smoke_dependency_input_matches_runtime_and_shared_release_pin() -> None:

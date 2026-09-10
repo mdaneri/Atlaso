@@ -124,6 +124,9 @@ Previously captured identity that the current evidence must match.
 
 .PARAMETER AllowMissingAddress
 Permit the management adapter to have no usable IPv4 while topology is captured.
+
+.PARAMETER AllowPendingMacAddress
+Permit an unassigned dynamic MAC during initial provider startup acquisition.
 #>
 function Resolve-AtlasoHyperVSmokeNetworkIdentity {
     param(
@@ -131,7 +134,8 @@ function Resolve-AtlasoHyperVSmokeNetworkIdentity {
         [Parameter(Mandatory = $true)][string]$ManagementSwitch,
         [Parameter(Mandatory = $true)][string]$ServiceSwitch,
         [AllowNull()][object]$ExpectedIdentity = $null,
-        [switch]$AllowMissingAddress
+        [switch]$AllowMissingAddress,
+        [switch]$AllowPendingMacAddress
     )
 
     if ($Adapters.Count -ne 2) {
@@ -148,7 +152,26 @@ function Resolve-AtlasoHyperVSmokeNetworkIdentity {
     }
     $managementMac = ConvertTo-AtlasoSmokeMacAddress -MacAddress ([string]$management[0].MacAddress)
     $serviceMac = ConvertTo-AtlasoSmokeMacAddress -MacAddress ([string]$services[0].MacAddress)
-    if ($managementMac -eq $serviceMac) {
+    $managementPending = $managementMac -eq '00:00:00:00:00:00'
+    $servicePending = $serviceMac -eq '00:00:00:00:00:00'
+    foreach ($adapter in @($management[0], $services[0])) {
+        if ((ConvertTo-AtlasoSmokeMacAddress -MacAddress ([string]$adapter.MacAddress)) -eq '00:00:00:00:00:00' -and
+            (-not $AllowPendingMacAddress -or
+                $null -eq $adapter.PSObject.Properties['DynamicMacAddressEnabled'] -or
+                $adapter.DynamicMacAddressEnabled -ne $true)) {
+            $observedMode = if ($null -eq $adapter.PSObject.Properties['DynamicMacAddressEnabled']) {
+                'missing'
+            } else { [string]$adapter.DynamicMacAddressEnabled }
+            $macField = if ([string]$adapter.Name -ceq 'Management') { 'ManagementMac' } else { 'ServiceMac' }
+            $expectedMac = if ($null -ne $ExpectedIdentity) { [string]$ExpectedIdentity.$macField } else { 'unassigned or unique nonzero' }
+            throw ("The Hyper-V smoke adapter has no assigned dynamic MAC address. " +
+                "Expected MAC '$expectedMac', observed '00:00:00:00:00:00'. " +
+                "Expected dynamic mode 'True' for an unassigned MAC, observed '$observedMode'. " +
+                "Pending acquisition allowed='$([bool]$AllowPendingMacAddress)'. " +
+                "Adapter IDs: Management='$($management[0].Id)', Services='$($services[0].Id)'.")
+        }
+    }
+    if (-not $managementPending -and -not $servicePending -and $managementMac -eq $serviceMac) {
         throw 'The Hyper-V management and services adapters must have distinct MAC addresses.'
     }
     $addresses = @(Get-AtlasoSmokeUsableIPv4Address -Addresses @($management[0].IPAddresses))
@@ -163,9 +186,11 @@ function Resolve-AtlasoHyperVSmokeNetworkIdentity {
         Provider            = 'hyperv'
         ManagementAdapterId = [string]$management[0].Id
         ManagementMac       = $managementMac
+        ManagementMacPending = $managementPending
         ManagementNetwork   = [string]$management[0].SwitchName
         ServiceAdapterId    = [string]$services[0].Id
         ServiceMac          = $serviceMac
+        ServiceMacPending   = $servicePending
         ServiceNetwork      = [string]$services[0].SwitchName
         Address             = if ($addresses.Count -eq 1) { $addresses[0] } else { '' }
     }
@@ -178,14 +203,37 @@ function Resolve-AtlasoHyperVSmokeNetworkIdentity {
                 'Provider', 'ManagementAdapterId', 'ManagementMac', 'ManagementNetwork',
                 'ServiceAdapterId', 'ServiceMac', 'ServiceNetwork'
             )) {
+            # Only the explicit, provider-reported unassigned dynamic state can
+            # acquire a MAC. Callers retain each newly assigned value immediately.
+            if ($AllowPendingMacAddress -and $field -in @('ManagementMac', 'ServiceMac') -and
+                [string]$ExpectedIdentity.$field -eq '00:00:00:00:00:00' -and
+                $null -ne $ExpectedIdentity.PSObject.Properties[($field + 'Pending')] -and
+                $ExpectedIdentity.PSObject.Properties[($field + 'Pending')].Value -eq $true) {
+                $allocatingAdapter = if ($field -eq 'ManagementMac') { $management[0] } else { $services[0] }
+                if ($null -eq $allocatingAdapter.PSObject.Properties['DynamicMacAddressEnabled'] -or
+                    $allocatingAdapter.DynamicMacAddressEnabled -ne $true) {
+                    $observedMode = if ($null -eq $allocatingAdapter.PSObject.Properties['DynamicMacAddressEnabled']) {
+                        'missing'
+                    } else { [string]$allocatingAdapter.DynamicMacAddressEnabled }
+                    throw ("The Hyper-V smoke adapter stopped being explicitly dynamic while acquiring $field. " +
+                        "Expected dynamic mode 'True', observed '$observedMode'. " +
+                        "Expected MAC '$($ExpectedIdentity.$field)', observed '$($identity.$field)'. " +
+                        "Adapter IDs: Management='$($identity.ManagementAdapterId)', Services='$($identity.ServiceAdapterId)'.")
+                }
+                continue
+            }
             if ([string]$identity.$field -cne [string]$ExpectedIdentity.$field) {
-                throw "The Hyper-V smoke network identity changed at field $field."
+                throw ("The Hyper-V smoke network identity changed at field $field. " +
+                    "Expected '$($ExpectedIdentity.$field)', observed '$($identity.$field)'. " +
+                    "Adapter IDs: Management='$($identity.ManagementAdapterId)', Services='$($identity.ServiceAdapterId)'.")
             }
         }
         if ([string]$ExpectedIdentity.Address -and
             [string]$identity.Address -and
             [string]$identity.Address -cne [string]$ExpectedIdentity.Address) {
-            throw 'The Hyper-V management IPv4 address changed during smoke validation.'
+            throw ("The Hyper-V management IPv4 address changed during smoke validation. " +
+                "Expected '$($ExpectedIdentity.Address)', observed '$($identity.Address)'. " +
+                "Adapter IDs: Management='$($identity.ManagementAdapterId)', Services='$($identity.ServiceAdapterId)'.")
         }
     }
     return $identity

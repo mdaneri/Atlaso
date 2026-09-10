@@ -8152,6 +8152,9 @@ def _systemd_networkd_files(path: Path) -> tuple[dict[str, str], list[str], list
                         f"Table={MANAGEMENT_ROUTE_TABLE_ID}",
                     ]
                 )
+        if name == management_name and ipv4_method == "dhcp":
+            # Preserve the image's lease-retention policy when Network Apply rewrites this file.
+            lines.extend(["", "[DHCPv4]", "SendRelease=no"])
         filename = "00-atlaso-mgmt.network" if name == management_name else _networkd_managed_filename(name, "network")
         files[filename] = "\n".join(lines).strip() + "\n"
         if name != management_name:
