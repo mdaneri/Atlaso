@@ -3848,6 +3848,14 @@ configuration. If the selected and applied addresses are correct but the termina
 check that <code>/etc/atlaso/nginx/sites.d/management.conf</code> sets this header to <code>$server_addr</code> in its HTTPS proxy location.
 Reconcile Appliance Settings through global appliance apply to regenerate an older configuration. Do not substitute a
 client-supplied header or relax terminal listener authorization.</p>
+<p>On an Access interface with <strong>Management UI</strong> enabled, CA and same-port OIDC hostname listeners also proxy management
+terminal WebSocket upgrades. Nginx selects a hostname server before a location, so upgrade headers in the separate
+IP-address server are insufficient. The management server is also the default TLS server for each flagged address,
+so the appliance hostname selects the management certificate while explicit CA/OIDC names retain their service
+certificates. If the page opens but the terminal disconnects immediately, compare the WebSocket handshake through
+the browser's hostname and the management IP. A successful upgrade returns HTTP <code>101</code>; HTTP <code>404</code> can indicate an
+older hostname server missing the terminal upgrade locations. Apply <strong>Public Services</strong> after upgrading to regenerate
+these listeners. Unflagged service listeners and OIDC on a separate port do not gain management access.</p>
 <p>If apply fails, inspect the Public Services child task and validate
 <code>/var/lib/atlaso/apply/public-services/atlaso-public-services.conf</code>. On the appliance, validate nginx with <code>nginx -t</code>,
 confirm <code>atlaso.service</code> is active, and verify the selected address separately:</p>
