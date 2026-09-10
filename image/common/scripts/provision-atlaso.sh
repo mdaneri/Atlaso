@@ -830,6 +830,8 @@ log_step "configuring final appliance management network"
   printf '[Network]\n'
   if [ "$ATLASO_MGMT_USES_DHCP" = "true" ]; then
     printf 'DHCP=ipv4\n'
+    # Keep the server's lease through reboot, matching Photon's DHCP default.
+    printf '\n[DHCPv4]\nSendRelease=no\n'
   else
     printf 'Address=%s\n' "$ATLASO_MGMT_ADDRESS"
     if [ -n "$ATLASO_MGMT_GATEWAY" ]; then
