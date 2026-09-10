@@ -25,7 +25,13 @@ from atlaso.app.secrets import decrypt_secret
 
 @pytest.fixture()
 def applied_boot_fixture(client, monkeypatch, tmp_path):
-    """Supply an isolated host while retaining real Apply orchestration and storage."""
+    """Supply an isolated host while retaining real Apply orchestration and storage.
+
+    Args:
+        client: Application client fixture that initializes the test database.
+        monkeypatch: Fixture for restoring isolated dependency overrides.
+        tmp_path: Task-owned directory for generated test artifacts.
+    """
     root = tmp_path / 'pxe'
     monkeypatch.setattr(ui, 'ESXI_PXE_STAGED_CONFIG_PATH', str(root / 'staged.json'))
     monkeypatch.setattr(boot, 'ESXI_PXE_HTTP_BASE', root / 'http')
@@ -46,6 +52,12 @@ def applied_boot_fixture(client, monkeypatch, tmp_path):
     state = SimpleNamespace(dry_run=False, failure=False, after_apply=None, staged=[], counter=0)
 
     def units(db, **kwargs):
+        """Build the exact manifest and shared Apply projection.
+
+        Args:
+            db: Active database session owned by the caller.
+            **kwargs: Unused compatibility options supplied by the production caller.
+        """
         host = db.get(EsxiPxeHost, host_id)
         kickstart = db.get(EsxiKickstart, kickstart_id)
         manifest = {
@@ -61,12 +73,27 @@ def applied_boot_fixture(client, monkeypatch, tmp_path):
 
     class Adapter:
         def __init__(self, **kwargs):
+            """Bind the isolated adapter to fixture state.
+
+            Args:
+                **kwargs: Unused compatibility options supplied by the production caller.
+            """
             self.dry_run = state.dry_run
 
         def validate_esxi_pxe_config(self, path):
+            """Accept staged configuration in the isolated test adapter.
+
+            Args:
+                path: Staged ESXi configuration path passed to the test adapter.
+            """
             return AdapterResult(['fixture-validate'], self.dry_run)
 
         def apply_esxi_pxe_config(self, path):
+            """Capture real-mode staging and simulate the requested outcome.
+
+            Args:
+                path: Staged ESXi configuration path passed to the test adapter.
+            """
             if not self.dry_run:
                 state.staged.append(Path(path).read_text(encoding='utf-8'))
             if state.after_apply:
@@ -107,7 +134,12 @@ def applied_boot_fixture(client, monkeypatch, tmp_path):
     '# password is managed separately\nreboot\n',
 ])
 def test_real_apply_retains_exact_encrypted_source_and_creates_console_claim(applied_boot_fixture, content):
-    """A redacted preview must coexist with usable exact applied authorization state."""
+    """A redacted preview must coexist with usable exact applied authorization state.
+
+    Args:
+        applied_boot_fixture: Real Apply orchestration with isolated host-adapter behavior.
+        content: Kickstart source exercising a display-redaction case.
+    """
     fixture = applied_boot_fixture
     with SessionLocal() as db:
         kickstart = db.get(EsxiKickstart, fixture.kickstart_id)
@@ -137,7 +169,13 @@ def test_real_apply_retains_exact_encrypted_source_and_creates_console_claim(app
 
 @pytest.mark.parametrize('dry_run,failure', [(True, False), (False, True)])
 def test_unsuccessful_real_apply_preserves_previous_protected_runtime(applied_boot_fixture, dry_run, failure):
-    """Dry runs and helper failures cannot publish a new runtime snapshot."""
+    """Dry runs and helper failures cannot publish a new runtime snapshot.
+
+    Args:
+        applied_boot_fixture: Real Apply orchestration with isolated host-adapter behavior.
+        dry_run: Whether the test adapter must avoid real activation.
+        failure: Whether the test adapter returns an activation failure.
+    """
     fixture = applied_boot_fixture
     fixture.apply()
     with SessionLocal() as db:
@@ -156,7 +194,11 @@ def test_unsuccessful_real_apply_preserves_previous_protected_runtime(applied_bo
 
 
 def test_apply_concurrent_edit_stays_pending_and_does_not_replace_staged_snapshot(applied_boot_fixture):
-    """A desired edit during helper execution must not become applied evidence."""
+    """A desired edit during helper execution must not become applied evidence.
+
+    Args:
+        applied_boot_fixture: Real Apply orchestration with isolated host-adapter behavior.
+    """
     fixture = applied_boot_fixture
 
     def concurrent_edit():
@@ -173,7 +215,11 @@ def test_apply_concurrent_edit_stays_pending_and_does_not_replace_staged_snapsho
 
 
 def test_secret_only_edit_after_submission_rejects_before_helper_execution(applied_boot_fixture):
-    """Equal redacted previews cannot admit different hidden execution inputs."""
+    """Equal redacted previews cannot admit different hidden execution inputs.
+
+    Args:
+        applied_boot_fixture: Real Apply orchestration with isolated host-adapter behavior.
+    """
     fixture = applied_boot_fixture
     with SessionLocal() as db:
         host = db.get(EsxiPxeHost, fixture.host_id)
@@ -201,7 +247,11 @@ def test_secret_only_edit_after_submission_rejects_before_helper_execution(appli
 
 
 def test_media_activation_receipt_does_not_create_another_pending_apply(applied_boot_fixture):
-    """A successful Apply activates captured media without changing desired input."""
+    """A successful Apply activates captured media without changing desired input.
+
+    Args:
+        applied_boot_fixture: Real Apply orchestration with isolated host-adapter behavior.
+    """
     fixture = applied_boot_fixture
     with SessionLocal() as db:
         state = next(row for row in boot.ensure_environment_rows(db) if row.key == 'memtest86plus')
@@ -216,7 +266,11 @@ def test_media_activation_receipt_does_not_create_another_pending_apply(applied_
 
 
 def test_invalid_encrypted_snapshot_fails_closed_without_legacy_fallback(applied_boot_fixture):
-    """Corrupt protected evidence cannot silently reactivate a legacy preview."""
+    """Corrupt protected evidence cannot silently reactivate a legacy preview.
+
+    Args:
+        applied_boot_fixture: Real Apply orchestration with isolated host-adapter behavior.
+    """
     fixture = applied_boot_fixture
     fixture.apply()
     with SessionLocal() as db:
@@ -234,7 +288,11 @@ def test_invalid_encrypted_snapshot_fails_closed_without_legacy_fallback(applied
 
 
 def test_runtime_record_is_independent_of_display_baseline(applied_boot_fixture):
-    """The dedicated runtime receipt remains authoritative across baseline rebuilds."""
+    """The dedicated runtime receipt remains authoritative across baseline rebuilds.
+
+    Args:
+        applied_boot_fixture: Real Apply orchestration with isolated host-adapter behavior.
+    """
     fixture = applied_boot_fixture
     fixture.apply()
     with SessionLocal() as db:
@@ -245,7 +303,12 @@ def test_runtime_record_is_independent_of_display_baseline(applied_boot_fixture)
 
 
 def test_readiness_reuses_one_snapshot_and_one_revision_check(applied_boot_fixture, monkeypatch):
-    """Repeated references on one management render must not repeat cryptographic work."""
+    """Repeated references on one management render must not repeat cryptographic work.
+
+    Args:
+        applied_boot_fixture: Real Apply orchestration with isolated host-adapter behavior.
+        monkeypatch: Fixture for restoring isolated dependency overrides.
+    """
     fixture = applied_boot_fixture
     fixture.apply()
     loads = []
@@ -254,10 +317,20 @@ def test_readiness_reuses_one_snapshot_and_one_revision_check(applied_boot_fixtu
     original_hash = boot.hashlib.sha256
 
     def load(db):
+        """Count request-local runtime snapshot loads.
+
+        Args:
+            db: Active database session owned by the caller.
+        """
         loads.append(True)
         return original_load(db)
 
     def digest(value):
+        """Count shared Kickstart revision calculations.
+
+        Args:
+            value: Revision input whose digest calls are counted.
+        """
         hashes.append(True)
         return original_hash(value)
 
@@ -270,7 +343,11 @@ def test_readiness_reuses_one_snapshot_and_one_revision_check(applied_boot_fixtu
 
 
 def test_legacy_redacted_snapshot_recovers_only_through_real_apply(applied_boot_fixture):
-    """Upgrades preserve failure until real Apply records a new protected snapshot."""
+    """Upgrades preserve failure until real Apply records a new protected snapshot.
+
+    Args:
+        applied_boot_fixture: Real Apply orchestration with isolated host-adapter behavior.
+    """
     fixture = applied_boot_fixture
     with SessionLocal() as db:
         unit = fixture.units(db)[0]
@@ -296,7 +373,13 @@ def test_legacy_redacted_snapshot_recovers_only_through_real_apply(applied_boot_
 
 
 def test_factory_reset_retains_exact_executed_esxi_snapshot(client, monkeypatch, tmp_path):
-    """A real reset's final baseline rebuild must retain its activation receipt."""
+    """A real reset's final baseline rebuild must retain its activation receipt.
+
+    Args:
+        client: Application client fixture that initializes the test database.
+        monkeypatch: Fixture for restoring isolated dependency overrides.
+        tmp_path: Task-owned directory for generated test artifacts.
+    """
     import atlaso.app.factory_reset as reset
     from atlaso.app.config import get_settings
     from atlaso.app.services.networking import HostPhysicalInterface
@@ -304,6 +387,13 @@ def test_factory_reset_retains_exact_executed_esxi_snapshot(client, monkeypatch,
     activated = []
 
     def execute(unit, *, adapter, db):
+        """Capture the exact successful factory-reset ESXi input.
+
+        Args:
+            unit: Captured Apply unit supplied to the factory-reset test seam.
+            adapter: System adapter supplied by factory-reset orchestration.
+            db: Active database session owned by the caller.
+        """
         if unit['id'] == 'esxi_pxe' and adapter is activation_adapter:
             activated.append(unit['raw_config_preview'])
         return {'success': True, 'dry_run': adapter.dry_run}

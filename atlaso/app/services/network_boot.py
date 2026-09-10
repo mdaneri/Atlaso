@@ -2117,13 +2117,22 @@ def send_wake_on_lan(
 
 
 def load_esxi_applied_runtime(db: Session) -> str | None:
-    """Read protected runtime evidence from its dedicated, non-exported record."""
+    """Read protected runtime evidence from its dedicated, non-exported record.
+
+    Args:
+        db: Active database session owned by the caller.
+    """
     row = db.scalar(select(Setting).where(Setting.key == ESXI_APPLIED_RUNTIME_KEY))
     return row.value if row is not None else None
 
 
 def save_esxi_applied_runtime(db: Session, encrypted: str) -> None:
-    """Stage a successful real activation receipt in the caller's transaction."""
+    """Stage a successful real activation receipt in the caller's transaction.
+
+    Args:
+        db: Active database session owned by the caller.
+        encrypted: Encrypted exact manifest from successful real activation.
+    """
     row = db.scalar(select(Setting).where(Setting.key == ESXI_APPLIED_RUNTIME_KEY))
     if row is None:
         row = Setting(key=ESXI_APPLIED_RUNTIME_KEY, value=encrypted)
@@ -2412,7 +2421,11 @@ class _AppliedEsxiBootSnapshot:
 
 
 def _indexed_applied_esxi_boot_snapshot(db: Session) -> _AppliedEsxiBootSnapshot:
-    """Decrypt and index one applied snapshot, preserving first-match semantics."""
+    """Decrypt and index one applied snapshot, preserving first-match semantics.
+
+    Args:
+        db: Active database session owned by the caller.
+    """
     manifest = _applied_esxi_pxe_manifest(db)
     boot = manifest.get("boot")
     hosts = manifest.get("hosts")

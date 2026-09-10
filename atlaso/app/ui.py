@@ -10330,7 +10330,11 @@ def wan_rollback_config_preview(
 
 
 def esxi_apply_comparison_preview(preview: str) -> str:
-    """Exclude media activation receipts from desired ESXi Apply comparison."""
+    """Exclude media activation receipts from desired ESXi Apply comparison.
+
+    Args:
+        preview: Exact ESXi manifest text before display redaction.
+    """
     manifest = json.loads(preview)
     for row in manifest.get("network_boot", {}).get("environments", []):
         row.pop("active_version", None)
@@ -10338,7 +10342,11 @@ def esxi_apply_comparison_preview(preview: str) -> str:
 
 
 def esxi_apply_snapshot_marker(preview: str) -> dict[str, Any]:
-    """Bind hidden ESXi edits before entering the shared Apply projection."""
+    """Bind hidden ESXi edits before entering the shared Apply projection.
+
+    Args:
+        preview: Exact ESXi manifest text before display redaction.
+    """
     settings = get_settings()
     revision = hmac.digest(
         (settings.secrets_key or settings.secret_key).encode("utf-8"),
