@@ -167,13 +167,30 @@ def test_upload_rejects_unsafe_names_before_storage(tmp_path, name):
 
 
 @pytest.mark.parametrize("kind", ["empty", "invalid", "corrupt", "oversized", "disconnected"])
-def test_failed_upload_never_enters_inventory(tmp_path, kind):
+def test_failed_upload_never_enters_inventory(tmp_path, kind, monkeypatch):
     """Test failed upload never enters inventory.
 
     Args:
         tmp_path: Task-owned temporary directory supplied by pytest.
         kind: Failure mode exercised by this test.
+        monkeypatch: Fixture observing private staging removal.
     """
+    import atlaso.app.services.vcf_sddc_upload as service
+
+    caller = threading.get_ident()
+    cleanup_calls = []
+    actual_cleanup = service.tempfile.TemporaryDirectory.cleanup
+
+    def checked_cleanup(staging):
+        """Observe real directory removal outside the request thread.
+
+        Args:
+            staging: Temporary directory holding the rejected OVA.
+        """
+        cleanup_calls.append(threading.get_ident())
+        actual_cleanup(staging)
+
+    monkeypatch.setattr(service.tempfile.TemporaryDirectory, "cleanup", checked_cleanup)
     source = tmp_path / "source.ova"
     write_ova(source, corrupt_manifest=kind == "corrupt")
     data = source.read_bytes()
@@ -195,6 +212,7 @@ def test_failed_upload_never_enters_inventory(tmp_path, kind):
         ))
     assert ova_inventory(root=root) == []
     assert not list(root.parent.glob(".sddc-upload-*"))
+    assert len(cleanup_calls) == 1 and cleanup_calls[0] != caller
 
 
 def test_upload_atomic_publication_preserves_concurrent_winner(tmp_path, monkeypatch):

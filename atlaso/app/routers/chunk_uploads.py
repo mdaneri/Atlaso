@@ -46,6 +46,10 @@ def _publication(target: str, field: str, filename: str) -> UploadPublication | 
 
     root = None
     if target.endswith("/vcf-helper/sddc-manager/ovas/upload") and field == "ova_file":
+        try:
+            vcf_sddc_upload.validate_ova_filename(filename)
+        except vcf_sddc_upload.SddcUploadError as exc:
+            raise HTTPException(400, vcf_sddc_upload.UPLOAD_ERROR_MESSAGES["invalid_filename"]) from exc
         root = vcf_sddc_upload.SDDC_MANAGER_OVA_ROOT
     elif target.endswith("/esxi-pxe/isos/upload") and field == "iso_file":
         root = esxi_pxe.ESXI_INSTALLER_ISO_ROOT

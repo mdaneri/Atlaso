@@ -106,13 +106,15 @@ small files use one chunk. Hashing supports both HTTP and HTTPS management pages
 management proxy limit without applying Appliance Settings.
 Progress counts acknowledged bytes. A failed chunk retries up to three times with the same offset and SHA-256
 checksum; already acknowledged chunks are not resent. Atlaso rejects changed retries, gaps, and size overruns.
+OVA filenames are validated before reserving a session, so unsupported names transfer no file bytes.
 Final validation and publication use the existing endpoint, permissions, duplicate policy, and desired-state boundary.
 A lost final response is not retried automatically: inspect the destination before submitting again.
 
 Keep the page open during transfer and validation. Sessions expire after 30 minutes without an accepted chunk;
 page reload, logout, application restart, or exhausting retries requires selecting and uploading the file again.
 Browser completion or failure releases staging in a worker thread, including when finalization is canceled,
-so closing large temporary files does not block management requests. Abandoned sessions expire automatically.
+so closing large temporary files does not block management requests. Rejected OVA staging directories also
+use shielded worker-thread cleanup. Abandoned sessions expire automatically.
 Files up to 16 MiB stay
 in memory, so credential-file contents never enter chunk staging on disk. Larger files use private anonymous
 files beneath `/mnt/atlaso-vcf-offline-depot/.atlaso-uploads`, outside artifact discovery. The depot volume must be

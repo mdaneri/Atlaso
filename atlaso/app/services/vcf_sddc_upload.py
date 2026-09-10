@@ -103,6 +103,16 @@ class SddcUploadError(ValueError):
         self.status_code = status_code
 
 
+def validate_ova_filename(filename: str) -> None:
+    """Reject unsupported names consistently before admission and storage.
+
+    Args:
+        filename: Original OVA basename supplied by the caller.
+    """
+    if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{0,195}\.ova", filename, re.IGNORECASE):
+        raise SddcUploadError("invalid_filename")
+
+
 def _validate_staged_ova(path: Path) -> None:
     """Validate descriptor and manifest before publication, off the event loop.
 
@@ -155,8 +165,7 @@ async def store_sddc_ova_upload(
         on_publish: Audit callback; failure removes only this upload's published hard link.
         publication: Browser consent bound to the destination's pre-upload revision.
     """
-    if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{0,195}\.ova", filename, re.IGNORECASE):
-        raise SddcUploadError("invalid_filename")
+    validate_ova_filename(filename)
     destination = root / filename
     try:
         if not root.is_absolute() or any(part.is_symlink() for part in (root, *root.parents)):
@@ -165,8 +174,9 @@ async def store_sddc_ova_upload(
         if publication is None and os.path.lexists(destination):
             raise SddcUploadError("duplicate", 409)
         # Keeping staging on the depot volume avoids root-volume multipart spooling.
-        with tempfile.TemporaryDirectory(prefix=".sddc-upload-", dir=root.parent) as staging:
-            staged = Path(staging) / filename
+        staging = tempfile.TemporaryDirectory(prefix=".sddc-upload-", dir=root.parent)
+        try:
+            staged = Path(staging.name) / filename
             total = 0
             target = await to_thread.run_sync(staged.open, "xb")
             try:
@@ -192,6 +202,9 @@ async def store_sddc_ova_upload(
                         on_publish(result)
                     except Exception as exc:
                         raise SddcUploadError("audit_error", 503) from exc
+        finally:
+            with CancelScope(shield=True):
+                await to_thread.run_sync(staging.cleanup)
         return result
     except PublicationConflict as exc:
         raise SddcUploadError("duplicate", 409) from exc

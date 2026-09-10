@@ -405,3 +405,33 @@ def test_canceled_finalization_still_releases_staging(monkeypatch):
         anyio.run(exercise)
     finally:
         store.close()
+
+
+@pytest.mark.parametrize("filename", ["name with spaces.ova", "café.ova", "percent%20.ova", "a" * 197 + ".ova"])
+def test_ova_filename_rejected_before_reservation(client, monkeypatch, filename):
+    """Reject unsupported OVA names before allocating or accepting chunks.
+
+    Args:
+        client: Authenticated application test client.
+        monkeypatch: Fixture preventing any storage reservation.
+        filename: Invalid basename that passes generic transport checks.
+    """
+    from atlaso.app.services.vcf_sddc_upload import UPLOAD_ERROR_MESSAGES
+
+    headers, key = start(client)
+    client.delete(BASE + "/data", headers={**headers, "X-Atlaso-Upload-Id": key})
+
+    def forbidden_create(*args, **kwargs):
+        """Fail if invalid filenames reach storage admission.
+
+        Args:
+            *args: Ignored reservation arguments.
+            **kwargs: Ignored reservation keyword arguments.
+        """
+        pytest.fail("Invalid OVA filename reached storage reservation")
+
+    monkeypatch.setattr(upload_store, "create", forbidden_create)
+    response = client.post(BASE, headers=headers, json={"target": OVA, "field": "ova_file",
+                                                       "filename": filename, "size": 16 * 1024**3})
+    assert response.status_code == 400
+    assert response.json()["detail"] == UPLOAD_ERROR_MESSAGES["invalid_filename"]
