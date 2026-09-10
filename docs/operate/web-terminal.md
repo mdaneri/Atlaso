@@ -121,8 +121,9 @@ client-supplied header or relax terminal listener authorization.
 
 On an Access interface with **Management UI** enabled, CA and same-port OIDC hostname listeners also proxy management
 terminal WebSocket upgrades. Nginx selects a hostname server before a location, so upgrade headers in the separate
-IP-address server are insufficient. This also matters when an unmatched appliance hostname selects the first server
-on that address. If the page opens but the terminal disconnects immediately, compare the WebSocket handshake through
+IP-address server are insufficient. The management server is also the default TLS server for each flagged address,
+so the appliance hostname selects the management certificate while explicit CA/OIDC names retain their service
+certificates. If the page opens but the terminal disconnects immediately, compare the WebSocket handshake through
 the browser's hostname and the management IP. A successful upgrade returns HTTP `101`; HTTP `404` can indicate an
 older hostname server missing the terminal upgrade locations. Apply **Public Services** after upgrading to regenerate
 these listeners. Unflagged service listeners and OIDC on a separate port do not gain management access.

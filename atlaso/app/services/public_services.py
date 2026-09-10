@@ -502,7 +502,7 @@ def _ip_scoped_https_server_lines(
         "",
         "server {",
         "  # IP-scoped HTTPS public services front door.",
-        f"  listen {format_nginx_listen(address, https_port)} ssl;",
+        f"  listen {format_nginx_listen(address, https_port)} ssl{' default_server' if management_ui else ''};",
         f"  server_name {_nginx_server_name(address)};",
         f"  ssl_certificate {management_certificate_path if management_ui else ca_certificate_path};",
         f"  ssl_certificate_key {management_key_path if management_ui else ca_key_path};",
@@ -596,7 +596,7 @@ def _terminal_https_server_lines(
         "",
         "server {",
         "  # Terminal-only HTTPS front door.",
-        f"  listen {format_nginx_listen(address, https_port)} ssl;",
+        f"  listen {format_nginx_listen(address, https_port)} ssl{' default_server' if management_ui else ''};",
         f"  server_name {_nginx_server_name(address)};",
         f"  ssl_certificate {management_certificate_path if management_ui else certificate_path};",
         f"  ssl_certificate_key {management_key_path if management_ui else key_path};",
@@ -640,7 +640,9 @@ def _management_https_server_lines(
         "",
         "server {",
         "  # IP-scoped management HTTPS front door.",
-        f"  listen {format_nginx_listen(address, https_port)} ssl;",
+        # Unmatched appliance SNI must use the appliance certificate, while
+        # explicit CA/OIDC names retain their own service certificates.
+        f"  listen {format_nginx_listen(address, https_port)} ssl default_server;",
         f"  server_name {_nginx_server_name(address)};",
         f"  ssl_certificate {certificate_path};",
         f"  ssl_certificate_key {key_path};",

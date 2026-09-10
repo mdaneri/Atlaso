@@ -56,6 +56,40 @@ def test_service_hostname_terminal_upgrade_respects_management_cohosting(service
             assert directive in body
 
 
+@pytest.mark.parametrize("address", ["192.168.87.32", "fd00::32"])
+@pytest.mark.parametrize("management_ui", [True, False])
+@pytest.mark.parametrize("layout", ["management", "terminal", "depot"])
+def test_flagged_address_has_one_management_certificate_default(address, management_ui, layout):
+    """Bind the default certificate to management in every shared listener layout.
+
+    Args:
+        address: IPv4 or IPv6 address shared by service and management listeners.
+        management_ui: Whether the Access address exposes management.
+        layout: IP-scoped server layout emitted alongside hostname services.
+    """
+    services = [dict(id="ca", dns_names=["ca.example.test"]),
+                dict(id="oidc", port=443, dns_names=["identity.example.test"])]
+    if layout == "depot":
+        services.append(dict(id="vcf_offline_depot", port=443))
+    config = render_public_services_nginx_config(
+        [dict(interface="eth0", role="access", address=address, management_ui=management_ui,
+              web_terminal=layout == "terminal", services=services)],
+        ca_certificate_path="/ca.crt", ca_key_path="/ca.key",
+        oidc_certificate_path="/oidc.crt", oidc_key_path="/oidc.key",
+        management_certificate_path="/management.crt", management_key_path="/management.key",
+        terminal_certificate_path="/terminal.crt", terminal_key_path="/terminal.key",
+    )
+    assert config.count("default_server") == int(management_ui)
+    if management_ui:
+        default_block = next(block for block in config.split("\nserver {") if "default_server" in block)
+        assert "ssl_certificate /management.crt;" in default_block
+        assert "ssl_certificate_key /management.key;" in default_block
+    for hostname, certificate in (("ca.example.test", "/ca.crt"), ("identity.example.test", "/oidc.crt")):
+        service_block = next(block for block in config.split("\nserver {") if f"server_name {hostname};" in block)
+        assert "default_server" not in service_block
+        assert f"ssl_certificate {certificate};" in service_block
+
+
 def test_public_service_entries_scope_services_to_matching_address():
     """Verify that public service entries scope services to matching address."""
     interfaces = [
