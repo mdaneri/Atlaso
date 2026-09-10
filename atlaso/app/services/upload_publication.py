@@ -42,6 +42,18 @@ def revision(path: Path) -> tuple[int, int, int, int, int] | None:
     return value.st_dev, value.st_ino, value.st_size, value.st_mtime_ns, value.st_ctime_ns
 
 
+def cleanup_private_upload(path: Path) -> None:
+    """Attempt private staging cleanup without replacing the consuming outcome.
+
+    Args:
+        path: Caller-owned staging file or publication link.
+    """
+    try:
+        path.unlink(missing_ok=True)
+    except OSError:
+        logger.warning("Upload publication link cleanup could not be completed.")
+
+
 @dataclass(frozen=True)
 class UploadPublication:
     """Retain the exact destination revision approved before accepting bytes."""
@@ -99,7 +111,4 @@ class UploadPublication:
             finally:
                 if not defer_cleanup:
                     for path in (backup, replacement):
-                        try:
-                            path.unlink(missing_ok=True)
-                        except OSError:
-                            logger.warning("Upload publication link cleanup could not be completed.")
+                        cleanup_private_upload(path)

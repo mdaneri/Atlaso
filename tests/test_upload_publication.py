@@ -137,3 +137,67 @@ def test_link_cleanup_failure_preserves_publication_outcome(tmp_path, monkeypatc
     assert attempts == ["staged.previous", "staged.publish"]
     assert "Upload publication link cleanup could not be completed." in caplog.text
     assert "private backup path" not in caplog.text
+
+
+@pytest.mark.parametrize("kind", ["iso", "vcfdt"])
+def test_caller_staging_unlink_failure_preserves_success(tmp_path, monkeypatch, kind):
+    """Both media services return success and metadata after a failed staging unlink.
+
+    Args:
+        tmp_path: Isolated upload root.
+        monkeypatch: Fixture replacing filesystem cleanup.
+        kind: Media storage service to exercise.
+    """
+    import io
+    from pathlib import Path
+    from types import SimpleNamespace
+
+    from starlette.datastructures import UploadFile
+
+    from atlaso.app import ui
+    from atlaso.app.services import esxi_pxe
+    from tests.test_ui import make_vcfdt_archive
+
+    root = tmp_path / "uploads"
+    root.mkdir()
+    filename = "test.iso" if kind == "iso" else "vcf-download-tool-9.1.0.test.tar.gz"
+    source = tmp_path / filename
+    if kind == "iso":
+        source.write_bytes(b"new ISO")
+    else:
+        make_vcfdt_archive(source)
+    data = source.read_bytes()
+    destination = root / filename
+    destination.write_bytes(b"previous media")
+    publication = UploadPublication(destination, revision(destination))
+    upload = UploadFile(io.BytesIO(data), filename=filename)
+    actual_unlink = Path.unlink
+    attempted = []
+
+    def fail_staging(path, *args, **kwargs):
+        """Inject failure only for the caller-owned original staging link.
+
+        Args:
+            path: File being removed.
+            *args: Positional filesystem arguments.
+            **kwargs: Keyword filesystem arguments.
+        """
+        if path.name.endswith((".uploading", ".upload")):
+            attempted.append(path)
+            raise OSError("private staging location")
+        return actual_unlink(path, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "unlink", fail_staging)
+    if kind == "iso":
+        monkeypatch.setattr(esxi_pxe, "ESXI_INSTALLER_ISO_ROOT", root)
+        result = asyncio.run(esxi_pxe.store_installer_iso_upload(upload, max_bytes=1024, publication=publication))
+        assert result["relative_path"] == filename
+    else:
+        monkeypatch.setattr(ui, "VCF_DEPOT_UPLOAD_DIR", root)
+        settings = SimpleNamespace(tool_archive_path="old", tool_version="old")
+        result = ui.store_uploaded_vcf_depot_archive(settings, upload, publication=publication)
+        assert result == filename
+        assert settings.tool_archive_path == str(destination)
+        assert settings.tool_version == ""
+    assert destination.read_bytes() == data
+    assert len(attempted) == 1

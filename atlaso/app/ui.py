@@ -550,7 +550,10 @@ from atlaso.app.services.update_sources import (
     validate_managed_package,
     validate_update_source,
 )
-from atlaso.app.services.upload_publication import UploadPublication
+from atlaso.app.services.upload_publication import (
+    UploadPublication,
+    cleanup_private_upload,
+)
 from atlaso.app.services.vaults import (
     VaultEntryInput,
     create_vault,
@@ -2807,8 +2810,7 @@ def store_uploaded_vcf_depot_archive(settings: VcfOfflineDepotSettings, archive_
     except OSError as exc:
         raise HTTPException(status_code=500, detail="Unable to store the VCF Download Tool archive.") from exc
     finally:
-        if temp_path.exists():
-            temp_path.unlink(missing_ok=True)
+        cleanup_private_upload(temp_path)
     settings.tool_archive_path = str(archive_path)
     settings.tool_version = ""
     return archive_name

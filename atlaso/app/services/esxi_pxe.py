@@ -26,7 +26,10 @@ from atlaso.app.models import (
 )
 from atlaso.app.services.dnsmasq import reservation_dns_record
 from atlaso.app.services.service_dns_defaults import factory_service_hostname
-from atlaso.app.services.upload_publication import UploadPublication
+from atlaso.app.services.upload_publication import (
+    UploadPublication,
+    cleanup_private_upload,
+)
 from atlaso.app.services.vaults import validate_kickstart_vault_markers
 
 ESXI_PXE_UNIT_ID = "esxi_pxe"
@@ -1596,13 +1599,11 @@ async def store_installer_iso_upload(upload_file: Any, *, max_bytes: int, public
                 handle.write(chunk)
         if total == 0:
             raise ValueError("Installer ISO upload is empty.")
+        temp_path.chmod(0o644)
         with (publication or UploadPublication(destination, None)).publish(temp_path, destination):
             pass
-        temp_path.unlink()
-        destination.chmod(0o644)
-    except Exception:
-        temp_path.unlink(missing_ok=True)
-        raise
+    finally:
+        cleanup_private_upload(temp_path)
     return _installer_iso_inventory_row(destination, root)
 
 
