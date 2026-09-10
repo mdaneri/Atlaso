@@ -196,6 +196,9 @@ def normalize_source_group(group: dict[str, Any]) -> dict[str, Any]:
         "sources": normalized_entries,
         "description": str(group.get("description") or "Custom source group."),
         "builtin": bool(group.get("builtin")),
+        **({"bootstrap_entries": list(normalized_entries)}
+           if group_id == "custom:bootstrap-management" and group.get("bootstrap_entries") == normalized_entries
+           else {}),
     }
 
 

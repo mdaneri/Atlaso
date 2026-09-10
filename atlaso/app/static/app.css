@@ -9198,3 +9198,16 @@ dialog.has-expanded-monaco .confirm-modal-panel {
   max-width: 100%;
   overflow: hidden;
 }
+
+/* Anchor reset help to the label width inside the dialog, not the icon center. */
+#factory-reset-password-modal .field-label { position: relative; }
+#factory-reset-password-modal .help-icon { position: static; }
+#factory-reset-password-modal .help-icon::after {
+  left: 0;
+  width: min(280px, 100%);
+  box-sizing: border-box;
+  transform: none;
+  visibility: hidden;
+}
+#factory-reset-password-modal .help-icon:hover::after,
+#factory-reset-password-modal .help-icon:focus-visible::after { visibility: visible; }

@@ -174,6 +174,9 @@ are explicitly inventoried so route/template changes cannot silently escape the 
   `appliance-apply-modal`, `task-detail-modal`, and `task-log-modal`.
 - Authentication and users: `oidc-client-dialog`, `oidc-key-dialog`, `api-token-dialog`, `user-account-dialog`, and
   `user-password-modal`.
+- Factory Reset uses `factory-reset-password-modal` for non-grid settings, reusing the Local Users password dialog.
+  Only Change-selected accounts are prompted at submission; inline validation, contained focus/hover help, cancellation
+  cleanup, and the shared destructive confirmation preserve the reset boundary.
 - Automation and maintenance: `automation-schedule-modal`, `automation-script-create-dialog`,
   `automation-script-modal`, `automation-script-run-modal`, `automation-script-diff-modal`,
   `appliance-update-source-dialog`, and `managed-package-dialog`.

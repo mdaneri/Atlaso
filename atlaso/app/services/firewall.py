@@ -256,7 +256,7 @@ def managed_service_firewall_rules(
                 name=f"management-ui-{interface_name}",
                 service="Management UI",
                 interface_name=interface_name,
-                source=_managed_rule_source("management-ui", interface_name, interface_networks, source_groups_by_id, source_group_assignments),
+                source=_managed_rule_source(f"management-ui-{interface_name}", interface_name, interface_networks, source_groups_by_id, source_group_assignments),
                 protocol="tcp",
                 ports="22,80,443",
                 priority=10 + index,
@@ -598,6 +598,47 @@ def managed_routing_firewall_rules(
     return rules
 
 
+def update_bootstrap_management_ipv6(raw_json: str, mode: str, cidr: str) -> str:
+    """Update only an untouched bootstrap group's IPv6 policy during console recovery.
+
+    Args:
+        raw_json: Persisted managed Source Group state.
+        mode: Validated console IPv6 mode.
+        cidr: Validated static IPv6 address, or empty for automatic mode.
+
+    Returns:
+        Updated state, or unchanged state after an operator edited the group.
+    """
+    if not raw_json:
+        return raw_json
+    try:
+        state = json.loads(raw_json)
+    except (TypeError, ValueError):
+        return raw_json
+    if not isinstance(state, dict) or not isinstance(state.get("groups"), list):
+        return raw_json
+    for group in state["groups"]:
+        if not isinstance(group, dict):
+            continue
+        if group.get("id") != "custom:bootstrap-management":
+            continue
+        entries = group.get("entries")
+        # Entry edits discard this seed-only marker; assignment-only saves retain
+        # it. Equality also protects direct edits that retain unknown fields.
+        if not isinstance(entries, list) or not entries or entries != group.get("bootstrap_entries"):
+            return raw_json
+        try:
+            updated = [entry for entry in entries if ip_network(entry, strict=False).version == 4]
+        except (TypeError, ValueError):
+            return raw_json
+        if mode != "disabled":
+            updated.append(str(ip_network(cidr, strict=False)) if cidr else "::/0")
+        group["entries"] = updated
+        group["bootstrap_entries"] = updated
+        return json.dumps(state)
+    return raw_json
+
+
 def firewall_source_group_state(
     raw_json: str,
     interface_networks: dict[str, list[str]],
@@ -630,6 +671,9 @@ def firewall_source_group_state(
                 str(saved_group.get("description") or "Custom source group."),
             )
         )
+        if (group_id == "custom:bootstrap-management"
+                and saved_group.get("bootstrap_entries") == groups[-1]["entries"]):
+            groups[-1]["bootstrap_entries"] = list(groups[-1]["entries"])
     assignments = saved.get("assignments", {})
     if not isinstance(assignments, dict):
         assignments = {}
@@ -1170,6 +1214,17 @@ def _routing_firewall_rule(
     )
 
 
+def managed_rule_source_group_id(rule_name: str, assignments: dict[str, str]) -> str:
+    """Resolve a listener override before its shared bootstrap assignment.
+
+    Args:
+        rule_name: Generated rule identity used by the row editor.
+        assignments: Persisted Source Group assignments.
+    """
+    default_name = "management-ui" if rule_name.startswith("management-ui-") else rule_name
+    return assignments.get(rule_name, assignments.get(default_name, FIREWALL_ANY_SOURCE_GROUP_ID))
+
+
 def _managed_rule_source(
     rule_name: str,
     interface_name: str,
@@ -1186,7 +1241,7 @@ def _managed_rule_source(
         source_groups_by_id: Identifier of the source groups by.
         assignments: Assignments supplied by the caller.
     """
-    group_id = assignments.get(rule_name, FIREWALL_ANY_SOURCE_GROUP_ID)
+    group_id = managed_rule_source_group_id(rule_name, assignments)
     group = source_groups_by_id.get(group_id) or source_groups_by_id.get(FIREWALL_ANY_SOURCE_GROUP_ID)
     if group:
         return source_group_to_rule_source(group, source_groups_by_id)

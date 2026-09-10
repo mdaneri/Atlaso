@@ -483,6 +483,24 @@ networking. The retry never exposes a password whose corresponding host state wa
 VMware continues into OVF-property customization. Hyper-V, KVM, and Proxmox use DHCP-first defaults and do not wait for
 VMware metadata. Use the appliance console to complete initial networking when DHCP is unavailable.
 
+DHCP-first images admit management SSH and HTTP/HTTPS over IPv4 only through the deployed management interface
+(`eth0`). IPv6 management admission requires explicit deployment configuration.
+The temporary VMware builder subnet is not retained as a source restriction. An explicitly supplied
+`ATLASO_MGMT_SOURCE_CIDR` remains an additional source restriction on that interface; static builds otherwise derive
+it from the final configured management network. Services interfaces remain outside this management admission.
+Fresh appliance initialization retains these
+source and address-family restrictions in the **Bootstrap management** Source Group assigned to management admission,
+including physical and VLAN interfaces flagged for management UI, so normal Firewall Apply preserves them.
+Editing a flagged listener's Source Group overrides that listener only; other listeners retain their shared default.
+Console IPv6 correction uses the shared Network Objects transaction lock before reading desired state, preserving
+concurrent operator saves. It updates the address family of an untouched bootstrap group before Apply; an operator-saved
+Source Group remains authoritative. Operators can subsequently edit that Source Group or its assignment;
+assignment-only saves and edits to other groups preserve the bootstrap group's console-recovery eligibility.
+startup does not replace saved choices or migrate existing appliances.
+When validating a portable image, use a management subnet different from the builder's and verify SSH plus
+`/openapi.json` both on initial boot and after reboot. Existing exported images need a rebuilt artifact to receive
+this provisioning correction; changing an appliance software version alone does not replace their initial firewall.
+
 Before networking, every cloned appliance generates a new machine ID, OpenSSH host-key set, application secrets, and
 high-entropy administrator and root passwords. VMware replaces the generated passwords with its required OVF values
 and publishes the regenerated Ed25519 public host key through VMware guest-info for authenticated automation. KVM and

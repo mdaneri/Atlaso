@@ -20257,8 +20257,15 @@ def _schedule_factory_reset(credentials_path: str) -> int:
             _fsync_factory_reset_directory(staging_directory)
 
 
-def _factory_reset_runtime_cleanup_is_admitted() -> bool:
-    """Return whether the durable marker admits reset-only runtime cleanup."""
+def _factory_reset_runtime_cleanup_is_admitted(*, login_sessions: bool = False) -> bool:
+    """Admit cleanup only in its required protected transaction phases.
+
+    Args:
+        login_sessions: Also admit the final login sweep after database replacement.
+    """
+    # Only login cleanup repeats after retained authorization is scrubbed. Network
+    # and retained-runtime cleanup must remain unavailable after activation.
+    admitted_states = ("applying", "committing") if login_sessions else ("applying",)
     if os.name == "posix":
         directory_descriptor: int | None = None
         marker_descriptor: int | None = None
@@ -20292,13 +20299,17 @@ def _factory_reset_runtime_cleanup_is_admitted() -> bool:
         return (
             isinstance(payload, dict)
             and payload.get("schema_version") == 1
-            and payload.get("state") == "applying"
+            and payload.get("state") in admitted_states
         )
     try:
         payload = json.loads(ATLASO_FACTORY_RESET_REQUEST_PATH.read_text(encoding="utf-8"))
     except (FileNotFoundError, OSError, json.JSONDecodeError):
         return False
-    return payload.get("schema_version") == 1 and payload.get("state") == "applying"
+    return (
+        isinstance(payload, dict)
+        and payload.get("schema_version") == 1
+        and payload.get("state") in admitted_states
+    )
 
 
 def _factory_reset_managed_vlan_names() -> list[str]:
@@ -20363,8 +20374,8 @@ def _factory_reset_login_session_rows(loginctl: str) -> list[tuple[str, str]]:
 
 def _terminate_factory_reset_login_sessions() -> int:
     """Stop SSH admission, terminate, and verify bounded pre-reset logins."""
-    if not _factory_reset_runtime_cleanup_is_admitted():
-        print("factory-reset login cleanup requires an active applying marker", file=sys.stderr)
+    if not _factory_reset_runtime_cleanup_is_admitted(login_sessions=True):
+        print("factory-reset login cleanup requires an active applying or committing marker", file=sys.stderr)
         return 2
     loginctl = shutil.which("loginctl")
     if loginctl is None:
