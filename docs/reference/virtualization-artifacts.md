@@ -546,6 +546,8 @@ appears, and requires both MACs plus management IPv4 before probing. It never
 rebases an assigned MAC, adapter ID, or switch; subsequent changes remain fatal, including after reboot. Identity
 errors include expected and observed field values and both current adapter IDs for diagnosis. If a service-MAC
 failure recurs, retain that evidence to distinguish allocation from adapter replacement or a later MAC change.
+Dynamic-mode rejections also identify the expected and observed MAC, and distinguish a reported static mode from
+missing mode evidence.
 
 VMware SSH admission requires a currently `Reachable` management neighbor. Cached `Stale`, `Delay`, and `Probe`
 entries are probe candidates only; expired, malformed, or unbounded DHCP leases are excluded. Each failed SSH

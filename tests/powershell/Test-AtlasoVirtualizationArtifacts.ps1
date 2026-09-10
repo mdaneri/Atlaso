@@ -76,6 +76,17 @@ foreach ($adapterIndex in @(0, 1)) {
                 -AllowPendingMacAddress | Out-Null
         } catch {
             if ($_.Exception.Message -notmatch 'stopped being explicitly dynamic') { throw }
+            $expectedMode = if ($allocationMode -eq 'static') { 'False' } else { 'missing' }
+            $expectedMac = if ($adapterIndex -eq 0) { '00:15:5d:44:55:66' } else { '00:15:5d:11:22:33' }
+            foreach ($detail in @(
+                    "Expected dynamic mode 'True', observed '$expectedMode'",
+                    "Expected MAC '00:00:00:00:00:00', observed '$expectedMac'",
+                    "Management='management-id'", "Services='service-id'"
+                )) {
+                if (-not $_.Exception.Message.Contains($detail)) {
+                    throw "Dynamic-mode rejection omitted diagnostic detail: $detail"
+                }
+            }
             $modeRejected = $true
         }
         if (-not $modeRejected) { throw "Pending allocation admitted $allocationMode mode for adapter $adapterIndex." }
