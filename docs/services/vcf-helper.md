@@ -100,6 +100,9 @@ outside deployment discovery, but never a partially uploaded selectable OVA.
 
 ### Chunked browser uploads
 
+VCF Download Tool filenames are validated before chunk storage is reserved. Final chunk cleanup attempts every staged
+file; a handle-close error is logged without replacing the consuming endpoint result.
+
 Browser file uploads use a shared sequential transport, including SDDC Manager OVA, ESX ISO, VCFDT packages,
 Network Boot media, credential files, registry CA bundles, and backup imports. Each request carries at most 8 MiB;
 small files use one chunk. Hashing supports both HTTP and HTTPS management pages. This works with the existing
@@ -326,6 +329,3 @@ These captures show responsive layouts and useful operational states referenced 
 *Figure: VCF Helper in the verified clean-appliance responsive state.*
 
 <!-- END GENERATED ADDITIONAL SCREENSHOTS -->
-
-VCF Download Tool filenames are validated before chunk storage is reserved. Final chunk cleanup attempts every staged
-file; a handle-close error is logged without replacing the consuming endpoint result.
