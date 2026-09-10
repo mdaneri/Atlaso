@@ -159,7 +159,16 @@ function Resolve-AtlasoHyperVSmokeNetworkIdentity {
             (-not $AllowPendingMacAddress -or
                 $null -eq $adapter.PSObject.Properties['DynamicMacAddressEnabled'] -or
                 $adapter.DynamicMacAddressEnabled -ne $true)) {
-            throw 'The Hyper-V smoke adapter has no assigned dynamic MAC address.'
+            $observedMode = if ($null -eq $adapter.PSObject.Properties['DynamicMacAddressEnabled']) {
+                'missing'
+            } else { [string]$adapter.DynamicMacAddressEnabled }
+            $macField = if ([string]$adapter.Name -ceq 'Management') { 'ManagementMac' } else { 'ServiceMac' }
+            $expectedMac = if ($null -ne $ExpectedIdentity) { [string]$ExpectedIdentity.$macField } else { 'unassigned or unique nonzero' }
+            throw ("The Hyper-V smoke adapter has no assigned dynamic MAC address. " +
+                "Expected MAC '$expectedMac', observed '00:00:00:00:00:00'. " +
+                "Expected dynamic mode 'True' for an unassigned MAC, observed '$observedMode'. " +
+                "Pending acquisition allowed='$([bool]$AllowPendingMacAddress)'. " +
+                "Adapter IDs: Management='$($management[0].Id)', Services='$($services[0].Id)'.")
         }
     }
     if (-not $managementPending -and -not $servicePending -and $managementMac -eq $serviceMac) {

@@ -92,6 +92,35 @@ foreach ($adapterIndex in @(0, 1)) {
         if (-not $modeRejected) { throw "Pending allocation admitted $allocationMode mode for adapter $adapterIndex." }
     }
 }
+foreach ($adapterIndex in @(0, 1)) {
+    foreach ($allocationMode in @('static', 'missing')) {
+        $zeroAdapters = @($pendingAdapters | ForEach-Object { $_.PSObject.Copy() })
+        if ($allocationMode -eq 'static') {
+            $zeroAdapters[$adapterIndex].DynamicMacAddressEnabled = $false
+        } else {
+            $zeroAdapters[$adapterIndex].PSObject.Properties.Remove('DynamicMacAddressEnabled')
+        }
+        $modeRejected = $false
+        try {
+            Resolve-AtlasoHyperVSmokeNetworkIdentity -Adapters $zeroAdapters `
+                -ManagementSwitch Management -ServiceSwitch Services -ExpectedIdentity $pendingIdentity `
+                -AllowMissingAddress -AllowPendingMacAddress | Out-Null
+        } catch {
+            $expectedMode = if ($allocationMode -eq 'static') { 'False' } else { 'missing' }
+            foreach ($detail in @(
+                    'no assigned dynamic MAC address',
+                    "Expected MAC '00:00:00:00:00:00', observed '00:00:00:00:00:00'",
+                    "Expected dynamic mode 'True' for an unassigned MAC, observed '$expectedMode'",
+                    "Pending acquisition allowed='True'",
+                    "Management='management-id'", "Services='service-id'"
+                )) {
+                if (-not $_.Exception.Message.Contains($detail)) { throw "Zero-MAC diagnostic omitted: $detail" }
+            }
+            $modeRejected = $true
+        }
+        if (-not $modeRejected) { throw "Zero MAC admitted $allocationMode mode for adapter $adapterIndex." }
+    }
+}
 $pendingAdapters[1].MacAddress = '00155D112233'
 $partialIdentity = Resolve-AtlasoHyperVSmokeNetworkIdentity -Adapters $pendingAdapters `
     -ManagementSwitch Management -ServiceSwitch Services -ExpectedIdentity $pendingIdentity `
