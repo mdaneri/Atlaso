@@ -3747,6 +3747,9 @@ disables the NAT replay service, and establishes a disabled <code>nat</code> App
 <p><em>Figure: Backup and Restore in the verified clean-appliance desktop state.</em></p>
 <!-- END GENERATED INTERFACE OVERVIEW -->
 
+<p>Browser archive imports use the shared <a href="../../services/vcf-helper/#chunked-browser-uploads">chunked upload
+transport</a>. Chunk staging does not restore or apply settings;
+the existing validation, recovery review, and global apply boundaries still govern finalization.</p>
 <p>Open <strong>Backup and Restore</strong> to protect Atlaso settings before maintenance and recover the control-plane configuration
 when needed.</p>
 <h2 id="create-a-backup">Create a backup<a class="headerlink" href="#create-a-backup" title="Permanent link">&para;</a></h2>

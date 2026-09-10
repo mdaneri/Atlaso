@@ -3742,6 +3742,9 @@
 <p><em>Figure: VCF Offline Depot with metadata first and the compact VCFDT configuration summary in the desktop settings rail.</em></p>
 <!-- END GENERATED INTERFACE OVERVIEW -->
 
+<p>VCFDT package and credential-file uploads use the shared <a href="../vcf-helper/#chunked-browser-uploads">chunked browser
+transport</a>. Progress tracks acknowledged chunks, transient failures retry
+the current chunk, and credential files remain in memory until existing validation and secret storage consume them.</p>
 <p>The published <code>/PROD/</code> directory uses the public Atlaso shell and a read-only contents grid. Directory links navigate
 within the depot, file links retain their exact artifact URL, and <strong>Up one level</strong> returns to the parent directory.
 Authenticated and unauthenticated access continue to follow the configured depot policy; a server-rendered contents
