@@ -58,6 +58,10 @@ def _publication(target: str, field: str, filename: str) -> UploadPublication | 
         except ValueError as exc:
             raise HTTPException(400, "Upload an ESX installer ISO with a safe .iso filename.") from exc
     elif field == "tool_archive_file":
+        try:
+            filename = vcf_offline_depot.safe_archive_upload_name(filename)
+        except ValueError as exc:
+            raise HTTPException(400, "Upload the VCF Download Tool file named vcf-download-tool-*.tar.gz.") from exc
         root = vcf_offline_depot.VCF_DEPOT_UPLOAD_DIR
     if root is None:
         return None

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import io
+import logging
 import os
 import shutil
 import tempfile
@@ -15,6 +16,8 @@ from secrets import token_hex
 from typing import BinaryIO, cast
 
 from atlaso.app.services.upload_publication import UploadPublication
+
+logger = logging.getLogger(__name__)
 
 CHUNK_BYTES = 8 * 1024**2
 SESSION_SECONDS = 30 * 60
@@ -203,7 +206,11 @@ class UploadStore:
             for key in keys:
                 session = self.sessions.pop(key, None)
                 if session is not None:
-                    session.file.close()
+                    try:
+                        session.file.close()
+                    except OSError:
+                        # Cleanup must not replace the endpoint outcome or strand later sessions.
+                        logger.warning("Upload staging handle cleanup could not be completed.")
 
     def cancel(self, key: str, owner: str) -> None:
         """Close a session belonging to this browser session.

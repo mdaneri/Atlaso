@@ -311,7 +311,8 @@ def test_file_transport_preserves_endpoint_validation(client, target, field, tmp
     monkeypatch.setattr(upload_store, "release", observed_release)
     monkeypatch.setattr(network_routes, "network_boot_upload_path", lambda job_id: tmp_path / job_id / "artifact")
     monkeypatch.setattr("atlaso.app.services.esxi_pxe.ESXI_INSTALLER_ISO_ROOT", tmp_path / "isos")
-    headers, key = start(client, target, field, "installer.iso" if field == "iso_file" else "invalid.bin")
+    filename = {"iso_file": "installer.iso", "tool_archive_file": "vcf-download-tool-invalid.tar.gz"}.get(field, "invalid.bin")
+    headers, key = start(client, target, field, filename)
     assert append(client, headers, key, 0, b"abcdef").status_code == 200
     response = client.post(target, headers={**headers, "X-Atlaso-Chunked": "1", "Accept": "application/json",
                                           "X-Atlaso-Upload": "1"},
@@ -435,3 +436,101 @@ def test_ova_filename_rejected_before_reservation(client, monkeypatch, filename)
                                                        "filename": filename, "size": 16 * 1024**3})
     assert response.status_code == 400
     assert response.json()["detail"] == UPLOAD_ERROR_MESSAGES["invalid_filename"]
+
+
+@pytest.mark.parametrize("target", ["/vcf-offline-depot/settings", "/vcf-offline-depot/tool-package"])
+@pytest.mark.parametrize("filename", ["renamed.tar.gz", "vcf-download-tool-with spaces.tar.gz"])
+def test_vcfdt_filename_rejected_before_reservation(client, monkeypatch, target, filename):
+    """Reject invalid tool names before allocating their potentially large storage.
+
+    Args:
+        client: Authenticated application client.
+        monkeypatch: Fixture preventing storage allocation.
+        target: Supported tool upload endpoint suffix.
+        filename: Invalid archive basename.
+    """
+    headers, key = start(client)
+    client.delete(BASE + "/data", headers={**headers, "X-Atlaso-Upload-Id": key})
+
+    def forbidden_create(*args):
+        """Reject any unexpected allocation.
+
+        Args:
+            *args: Storage admission arguments.
+        """
+        pytest.fail("Invalid VCFDT name reached storage reservation")
+
+    monkeypatch.setattr(upload_store, "create", forbidden_create)
+    response = client.post(BASE, headers=headers, json={
+        "target": "/ui/management" + target, "field": "tool_archive_file",
+        "filename": filename, "size": 2 * 1024**3,
+    })
+    assert response.status_code == 400
+    assert response.json()["detail"] == "Upload the VCF Download Tool file named vcf-download-tool-*.tar.gz."
+
+
+@pytest.mark.parametrize("status", [201, 422])
+def test_handle_close_failure_preserves_endpoint_result_and_releases_all(monkeypatch, status):
+    """A failed first close must neither replace the result nor strand later files.
+
+    Args:
+        monkeypatch: Fixture isolating route identity and staged storage.
+        status: Success or validation-failure status returned by the endpoint.
+    """
+    import io
+    import json
+    from contextlib import AsyncExitStack, nullcontext
+
+    import anyio
+    from fastapi import Request
+    from starlette.responses import Response
+
+    import atlaso.app.routers.chunk_uploads as routes
+
+    class FailedClose(io.BytesIO):
+        """Simulate a handle reporting a filesystem error during close."""
+
+        def close(self):
+            """Close the fixture and report the injected error."""
+            super().close()
+            raise OSError("private staging path")
+
+    store = UploadStore()
+    keys = [store.create("owner", "/upload", "file", "test.bin", 1) for _ in range(2)]
+    for key in keys:
+        store.append(key, "owner", 0, b"x", hashlib.sha256(b"x").hexdigest())
+    store.sessions[keys[0]].file.close()
+    store.sessions[keys[0]].file = FailedClose(b"x")
+    handles = [store.sessions[key].file for key in keys]
+    monkeypatch.setattr(routes, "upload_store", store)
+    monkeypatch.setattr(routes, "SessionLocal", lambda: nullcontext(None))
+    monkeypatch.setattr(routes, "get_session_identity", lambda request, db: object())
+    monkeypatch.setattr(routes, "_owner", lambda request: "owner")
+    monkeypatch.setattr(routes, "_policy", lambda *args: None)
+
+    async def endpoint():
+        """Return the original endpoint outcome after consuming staged data."""
+        return Response(b"original outcome", status_code=status)
+
+    async def receive():
+        """Provide the finalization envelope for both staged files."""
+        return {"type": "http.request", "body": json.dumps({"files": keys}).encode()}
+
+    async def exercise():
+        """Run the actual route adapter including its shielded worker cleanup."""
+        route = routes.ChunkedUploadRoute("/upload", endpoint, methods=["POST"])
+        request = Request({"type": "http", "method": "POST", "path": "/upload",
+                           "headers": [(b"x-atlaso-chunked", b"1")], "query_string": b""}, receive)
+        async with AsyncExitStack() as stack:
+            for name in ("fastapi_middleware_astack", "fastapi_inner_astack", "fastapi_function_astack"):
+                request.scope[name] = stack
+            response = await route.get_route_handler()(request)
+        assert response.status_code == status
+        assert response.body == b"original outcome"
+        assert all(handle.closed for handle in handles)
+        assert not store.sessions
+
+    try:
+        anyio.run(exercise)
+    finally:
+        store.close()
