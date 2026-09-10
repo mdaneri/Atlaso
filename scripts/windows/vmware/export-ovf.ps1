@@ -53,6 +53,8 @@ Release-specific label of the approved ephemeral KVM runner.
 Return after workflow dispatch instead of waiting for hosted publication.
 .PARAMETER VirtualizationSourceMetadata
 Internal verified software-release metadata embedded into OVA provenance.
+.PARAMETER ProtectedExport
+Internal prerelease export mode that checks the PowerCLI baseline without changing source.
 .PARAMETER CandidateOnly
 Produce and smoke a prerelease candidate without changing GitHub.
 .PARAMETER MaximumReleaseAssetBytes
@@ -107,6 +109,7 @@ param(
     [string]$KvmRunnerLabel = '',
     [switch]$NoWait,
     [string]$VirtualizationSourceMetadata = '',
+    [switch]$ProtectedExport,
     [switch]$CandidateOnly,
     [ValidateRange(1, 2147483647)]
     [long]$MaximumReleaseAssetBytes = 2147483647,
@@ -124,7 +127,7 @@ if ($Release -and $Prerelease) {
 
 $repoRoot = (Resolve-Path -LiteralPath (Join-Path $PSScriptRoot '..\..\..')).Path
 $powerCliRefreshArguments = @((Join-Path $repoRoot 'scripts/update_powercli_lock.py'), '--before-build')
-if ($Release -or $Prerelease) { $powerCliRefreshArguments += '--check' }
+if ($Release -or $Prerelease -or $ProtectedExport) { $powerCliRefreshArguments += '--check' }
 & python @powerCliRefreshArguments
 if ($LASTEXITCODE -ne 0) {
     throw 'PowerCLI refresh did not admit the export. Follow the refresh diagnostic, then rebuild and rerun.'

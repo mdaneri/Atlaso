@@ -55,6 +55,7 @@ function Assert-PowerCliDirectoryPath {
             $item = Get-Item -LiteralPath $directory.FullName -Force
         } catch [System.Management.Automation.ItemNotFoundException] {
             # Installation can create absent components after checking ancestors.
+            $item = $null
         }
         if ($null -ne $item) {
             if (-not $item.PSIsContainer -or

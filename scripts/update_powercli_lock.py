@@ -8,6 +8,7 @@ Never independently upgrade a component to Gallery latest or execute package cod
 from __future__ import annotations
 
 import argparse
+import ctypes
 import hashlib
 import io
 import json
@@ -56,6 +57,45 @@ def content_digest(files: dict[str, bytes]) -> str:
     return hashlib.sha256("".join(lines).encode("utf-8")).hexdigest()
 
 
+def sync_directory(path: Path) -> None:
+    """Persist POSIX directory entries; Windows renames use write-through instead."""
+    if os.name != "nt":
+        descriptor = os.open(path, os.O_RDONLY | os.O_DIRECTORY)
+        try:
+            os.fsync(descriptor)
+        finally:
+            os.close(descriptor)
+
+
+def durable_replace(source: Path, destination: Path) -> None:
+    """Commit a same-directory rename before any dependent tracked write."""
+    if os.name == "nt":
+        kernel = ctypes.WinDLL("kernel32", use_last_error=True)
+        kernel.MoveFileExW.argtypes = [
+            ctypes.c_wchar_p,
+            ctypes.c_wchar_p,
+            ctypes.c_uint32,
+        ]
+        kernel.MoveFileExW.restype = ctypes.c_int
+        # REPLACE_EXISTING | WRITE_THROUGH: data was flushed before publication.
+        if not kernel.MoveFileExW(str(source), str(destination), 0x9):
+            raise ctypes.WinError(ctypes.get_last_error())
+    else:
+        os.replace(source, destination)
+        sync_directory(destination.parent)
+
+
+def ensure_journal_directory(root: Path) -> None:
+    """Publish the journal directory itself before relying on its children."""
+    directory = (root / JOURNAL).parent
+    if not directory.exists():
+        pending = directory.with_name(directory.name + ".powercli-pending")
+        pending.mkdir(exist_ok=True)
+        durable_replace(pending, directory)
+    # Repair a visible mkdir whose parent sync failed on an earlier POSIX run.
+    sync_directory(directory.parent)
+
+
 def replace_file(path: Path, data: bytes) -> None:
     """Durably stage one same-directory replacement before atomic rename."""
     staged = path.with_name(path.name + ".powercli-pending")
@@ -63,7 +103,7 @@ def replace_file(path: Path, data: bytes) -> None:
         stream.write(data)
         stream.flush()
         os.fsync(stream.fileno())
-    os.replace(staged, path)
+    durable_replace(staged, path)
 
 
 def recover_transaction(root: Path, check: bool = False) -> bool:
@@ -89,19 +129,24 @@ def recover_transaction(root: Path, check: bool = False) -> bool:
         raise ValueError(
             "Pending PowerCLI refresh requires recovery in a development worktree"
         )
+    ensure_journal_directory(root)
+    # A previous publication may be visible even though its durability step failed.
+    # Recommit the journal before trusting it to protect any consumer replacement.
+    replace_file(journal, journal.read_bytes())
     for relative, entry in entries.items():
         destination = root / relative
         payload = entry["after"].encode("utf-8")
-        if destination.read_bytes() != payload:
-            replace_file(destination, payload)
+        # Recommit already-visible after images too: their previous sync may have failed.
+        replace_file(destination, payload)
     journal.unlink()
+    sync_directory(journal.parent)
     return True
 
 
 def publish_transaction(root: Path, updates: dict[Path, str]) -> None:
     """Journal the complete update before any tracked write so retries can finish it."""
     journal = root / JOURNAL
-    journal.parent.mkdir(parents=True, exist_ok=True)
+    ensure_journal_directory(root)
     transaction = {
         "files": {
             path.relative_to(root).as_posix(): {

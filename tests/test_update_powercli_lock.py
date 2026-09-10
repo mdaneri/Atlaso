@@ -194,15 +194,17 @@ def test_gallery_constraint_boundaries(
 
 
 @pytest.mark.parametrize(
-    "entry,release,child,status,admitted",
+    "entry,release,child,status,admitted,protected",
     [
-        ("build-photon-image.ps1", False, False, 0, True),
-        ("build-photon-image.ps1", False, False, 3, False),
-        ("build-photon-image.ps1", True, False, 1, False),
-        ("build-photon-image.ps1", False, True, 1, True),
-        ("export-ovf.ps1", False, False, 0, True),
-        ("export-ovf.ps1", False, False, 3, False),
-        ("export-ovf.ps1", True, False, 1, False),
+        ("build-photon-image.ps1", False, False, 0, True, False),
+        ("build-photon-image.ps1", False, False, 3, False, False),
+        ("build-photon-image.ps1", True, False, 1, False, False),
+        ("build-photon-image.ps1", False, True, 1, True, False),
+        ("export-ovf.ps1", False, False, 0, True, False),
+        ("export-ovf.ps1", False, False, 3, False, False),
+        ("export-ovf.ps1", True, False, 1, False, False),
+        ("export-ovf.ps1", False, False, 1, False, True),
+        ("export-ovf.ps1", False, False, 0, True, True),
     ],
 )
 def test_entry_point_refresh_admission(
@@ -212,6 +214,7 @@ def test_entry_point_refresh_admission(
     child: bool,
     status: int,
     admitted: bool,
+    protected: bool,
 ) -> None:
     """Execute the actual entry-point hook with a controlled refresh subprocess result."""
     pwsh = shutil.which("pwsh")
@@ -233,6 +236,7 @@ def test_entry_point_refresh_admission(
         "$ErrorActionPreference = 'Stop'\n"
         f"$repoRoot = $PSScriptRoot; $CredentialChild = ${str(child).lower()}\n"
         f"$ReleaseBuilder = ${str(release).lower()}; $Release = $ReleaseBuilder; $Prerelease = $false\n"
+        f"$ProtectedExport = ${str(protected).lower()}\n"
         f"function python {{ Write-Output ('REFRESH ' + ($args -join ' ')); $global:LASTEXITCODE = {status} }}\n"
         + hook
         + "\nWrite-Output 'ADMITTED'\n",
@@ -250,4 +254,82 @@ def test_entry_point_refresh_admission(
         assert "REFRESH" not in result.stdout
     else:
         assert "--before-build" in result.stdout
-        assert ("--check" in result.stdout) is release
+        assert ("--check" in result.stdout) is (release or protected)
+
+
+@pytest.mark.parametrize("failed_name", ["journal", "consumer"])
+def test_failed_rename_durability_is_repaired_before_recovery(
+    checkout: Path, monkeypatch, failed_name: str
+) -> None:
+    """A visible rename with a failed persistence step cannot bypass recovery ordering."""
+    journal = checkout / updater.JOURNAL
+    consumer = checkout / updater.CONSUMERS[0]
+    target = journal if failed_name == "journal" else consumer
+    original = updater.durable_replace
+    before = {path: (checkout / path).read_bytes() for path in updater.CONSUMERS}
+
+    def fail_after_rename(source: Path, destination: Path) -> None:
+        """Model a rename becoming visible before its durability operation reports failure."""
+        original(source, destination)
+        if destination == target:
+            raise OSError("simulated directory persistence failure")
+
+    monkeypatch.setattr(updater, "durable_replace", fail_after_rename)
+    with pytest.raises(OSError, match="persistence failure"):
+        updater.refresh(checkout, FakeGallery(), None, False)
+    assert journal.exists()
+    if failed_name == "journal":
+        assert all(
+            (checkout / path).read_bytes() == data for path, data in before.items()
+        )
+    calls = []
+
+    def record(source: Path, destination: Path) -> None:
+        """Record successful durable publication order during recovery."""
+        original(source, destination)
+        calls.append(destination)
+
+    monkeypatch.setattr(updater, "durable_replace", record)
+    assert updater.refresh(checkout, FakeGallery(), None, False)
+    assert calls[0] == journal
+    assert consumer in calls[1:]
+    assert not journal.exists()
+    completed = snapshot(checkout)
+    assert not updater.refresh(checkout, FakeGallery(), None, False)
+    assert snapshot(checkout) == completed
+
+
+def test_prerelease_nested_export_preserves_protected_mode(tmp_path: Path) -> None:
+    """Execute the actual nested call with a stub that captures protected export admission."""
+    pwsh = shutil.which("pwsh")
+    if not pwsh:
+        pytest.skip("PowerShell is required")
+    source = (
+        updater.ROOT
+        / "scripts/windows/virtualization/Atlaso.VirtualizationRelease.psm1"
+    ).read_text(encoding="utf-8")
+    start = source.index(
+        "    & (Join-Path $RepoRoot 'scripts\\windows\\vmware\\export-ovf.ps1')"
+    )
+    call = source[start : source.index("    if ($LASTEXITCODE", start)]
+    stub = tmp_path / "scripts/windows/vmware/export-ovf.ps1"
+    stub.parent.mkdir(parents=True)
+    stub.write_text(
+        "param($SourceVmxPath, $Name, [switch]$Force, $VirtualizationSourceMetadata, [switch]$ProtectedExport)\nif (-not $ProtectedExport) { throw 'Writable nested export' }; 'PROTECTED'\n",
+        encoding="utf-8",
+    )
+    wrapper = tmp_path / "invoke.ps1"
+    wrapper.write_text(
+        "$ErrorActionPreference = 'Stop'; $RepoRoot = $PSScriptRoot; $vmx = 'test'; $name = 'test'; $sourceMetadata = 'test'\n"
+        + call,
+        encoding="utf-8",
+    )
+    result = subprocess.run(
+        [pwsh, "-NoProfile", "-File", str(wrapper)],
+        capture_output=True,
+        text=True,
+        timeout=30,
+        check=False,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "PROTECTED" in result.stdout

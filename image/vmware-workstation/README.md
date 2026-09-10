@@ -35,11 +35,14 @@ constraint. Individual components never independently float to latest. If the su
 written (including the lock's timestamp). A newer suite refreshes the lock and image baseline references together;
 the command then stops so the changes can be reviewed, validated, and committed before rerunning. Existing VM payloads
 must be rebuilt; refreshing source cannot update an already-built VM. Release/prerelease entry points use read-only
-`--check` and require the refreshed baseline to have reached the committed release source. Metadata errors or
+`--check`, including the nested OVA export after prerelease image creation, and require the refreshed baseline to have
+reached the committed release source. Metadata errors or
 incompatible dependency graphs stop admission without changing files. The isolated build child uses its frozen lock
 and does not query Gallery again.
 Refresh publication records a recovery journal in `.atlaso-local/powercli-refresh-transaction.json` before replacing
 tracked files. If interrupted, rerun the same command to complete the recorded update before checking newer releases.
+Journal and consumer publication persist directory entries with POSIX directory synchronization or Windows
+write-through renames. Recovery recommits visible entries before proceeding after a failed durability step.
 Recovery preserves unrelated edits and reports the conflicting file; immutable checks never perform recovery writes.
 Do not delete a pending journal to bypass recovery. The updater upgrades legacy version-only locks once to add hashes;
 subsequent checks of an already-current hashed lock remain byte- and timestamp-preserving.

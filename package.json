@@ -12,6 +12,9 @@
     "monaco-editor": "0.52.2"
   },
   "overrides": {
-    "js-yaml": "5.2.2"
+    "js-yaml": "5.2.2",
+    "markdownlint-cli2@0.23.1": {
+      "smol-toml": "1.7.1"
+    }
   }
 }

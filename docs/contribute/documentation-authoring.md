@@ -101,6 +101,13 @@ run the workflow. Maintainers can request the same rebuild from an authenticated
 
 ## Required checks
 
+The npm override for `markdownlint-cli2@0.23.1` selects `smol-toml` 1.7.1 to fix
+[GHSA-7w5x-hrqm-74c2](https://github.com/advisories/GHSA-7w5x-hrqm-74c2), an infinite loop on malformed TOML.
+Atlaso's checked-in linter configuration uses JSONC; this dependency update does not establish an appliance runtime
+exploit or exposure to untrusted TOML through supported tooling. Keep the scoped override until a linter upgrade
+resolves a patched parser without it. When upgrading the linter, remove the override, regenerate `package-lock.json`
+with npm, and verify the clean installed tree and timeout-protected parser compatibility tests before delivery.
+
 Run these commands before opening a pull request:
 
 ```powershell
