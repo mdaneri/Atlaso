@@ -1134,6 +1134,7 @@ def refresh_interface_dependent_addresses(
                     esxi_boot.get("native_uefi_http_enabled")
                 ),
                 native_uefi_http_url=native_uefi_http_url,
+                console_authorization_required=bool(esxi_boot.get("console_authorization_required")),
             )
             mark_changed("ESXi PXE")
 

@@ -55,6 +55,7 @@ ESXI_PXE_HTTP_PORT_KEY = "esxi_pxe.boot.http_port"
 ESXI_PXE_BIOS_BOOTFILE_KEY = "esxi_pxe.boot.bios_bootfile"
 ESXI_PXE_UEFI_BOOTFILE_KEY = "esxi_pxe.boot.uefi_bootfile"
 ESXI_PXE_NATIVE_UEFI_HTTP_ENABLED_KEY = "esxi_pxe.boot.native_uefi_http_enabled"
+ESXI_PXE_CONSOLE_AUTHORIZATION_REQUIRED_KEY = "esxi_pxe.boot.console_authorization_required"
 ESXI_PXE_NATIVE_UEFI_HTTP_URL_KEY = "esxi_pxe.boot.native_uefi_http_url"
 ESXI_PXE_IPXE_SCRIPT_KEY = "esxi_pxe.boot.ipxe_script"
 ESXI_PXE_DEFAULT_HOST_ENABLED_KEY = "esxi_pxe.default_host.enabled"
@@ -874,6 +875,7 @@ def esxi_pxe_boot_settings(db: Session) -> dict[str, Any]:
     )
     settings = {
         "enabled": enabled,
+        "console_authorization_required": rows.get(ESXI_PXE_CONSOLE_AUTHORIZATION_REQUIRED_KEY, "false").strip().lower() in {"1", "true", "yes", "on"},
         "hostname": rows.get(ESXI_PXE_HOSTNAME_KEY, default_hostname).strip()
         or default_hostname,
         "dhcp_scope_id": dhcp_scope.id if dhcp_scope is not None else None,
@@ -929,6 +931,7 @@ def save_esxi_pxe_boot_settings(
     http_port: int | str = ESXI_PXE_HTTP_PORT,
     ipxe_script: str | None = None,
     native_uefi_http_enabled: bool = False,
+    console_authorization_required: bool = False,
     native_uefi_http_url: str = "",
 ) -> dict[str, Any]:
     """Persist esxi pxe boot settings.
@@ -947,6 +950,7 @@ def save_esxi_pxe_boot_settings(
         http_port: Http port supplied by the caller.
         ipxe_script: Ipxe script supplied by the caller.
         native_uefi_http_enabled: Native uefi http enabled supplied by the caller.
+        console_authorization_required: Whether each boot needs an administrator-entered console code.
         native_uefi_http_url: URL for the native uefi http.
 
     Returns:
@@ -969,6 +973,7 @@ def save_esxi_pxe_boot_settings(
         ESXI_PXE_BIOS_BOOTFILE_KEY: _normalize_bootfile(bios_bootfile, default=ESXI_PXE_BIOS_BOOTFILE),
         ESXI_PXE_UEFI_BOOTFILE_KEY: _normalize_bootfile(uefi_bootfile, default=ESXI_PXE_UEFI_BOOTFILE),
         ESXI_PXE_NATIVE_UEFI_HTTP_ENABLED_KEY: "true" if native_uefi_http_enabled else "false",
+        ESXI_PXE_CONSOLE_AUTHORIZATION_REQUIRED_KEY: "true" if console_authorization_required else "false",
         ESXI_PXE_NATIVE_UEFI_HTTP_URL_KEY: _normalize_native_uefi_http_url(native_uefi_http_url),
     }
     if ipxe_script is not None:
@@ -2060,6 +2065,7 @@ def render_esxi_pxe_manifest(
         "uefi_second_stage_bootfile": ESXI_PXE_UEFI_SECOND_STAGE_BOOTFILE,
         "native_uefi_bootfile": ESXI_PXE_NATIVE_UEFI_BOOTFILE,
         "native_uefi_http_enabled": False,
+        "console_authorization_required": False,
         "native_uefi_http_url": "",
         "ipxe_script_name": ESXI_PXE_IPXE_SCRIPT_NAME,
         "ipxe_script": default_ipxe_script(),
@@ -2089,6 +2095,7 @@ def render_esxi_pxe_manifest(
         "uefi_second_stage_bootfile",
         "native_uefi_bootfile",
         "native_uefi_http_enabled",
+        "console_authorization_required",
         "native_uefi_http_url",
         "effective_native_uefi_http_url",
         "ipxe_script_name",

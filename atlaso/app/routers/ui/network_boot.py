@@ -178,6 +178,7 @@ def build_router(dependencies: NetworkBootUiDependencies) -> NetworkBootUiRouter
         bios_bootfile: str = Form(...),
         uefi_bootfile: str = Form(...),
         native_uefi_http_enabled: bool = Form(False),
+        console_authorization_required: bool = Form(False),
         native_uefi_http_url: str = Form(""),
         csrf: str = Form(...),
         identity: Identity = Depends(require_session_identity),
@@ -202,6 +203,7 @@ def build_router(dependencies: NetworkBootUiDependencies) -> NetworkBootUiRouter
             bios_bootfile: Bios bootfile supplied by the caller.
             uefi_bootfile: Uefi bootfile supplied by the caller.
             native_uefi_http_enabled: Native uefi http enabled supplied by the caller.
+            console_authorization_required: Whether each boot needs an administrator-entered console code.
             native_uefi_http_url: URL for the native uefi http.
             csrf: Validated CSRF token authorizing the request.
             identity: Authenticated identity authorizing the request.
@@ -237,6 +239,7 @@ def build_router(dependencies: NetworkBootUiDependencies) -> NetworkBootUiRouter
                 bios_bootfile=bios_bootfile,
                 uefi_bootfile=uefi_bootfile,
                 native_uefi_http_enabled=native_uefi_http_enabled,
+                console_authorization_required=console_authorization_required,
                 native_uefi_http_url=native_uefi_http_url,
             )
             dns_record_action = ensure_dns_for_esxi_pxe(
