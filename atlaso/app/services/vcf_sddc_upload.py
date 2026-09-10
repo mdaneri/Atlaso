@@ -217,7 +217,8 @@ async def store_sddc_ova_upload(
             result: dict[str, str | int] = {
                 "path": str(destination), "relative_path": filename, "filename": filename, "size_bytes": total,
             }
-            with (publication or UploadPublication(destination, None)).publish(staged, destination):
+            # Private links are removed by shielded staging cleanup, off the event loop.
+            with (publication or UploadPublication(destination, None)).publish(staged, destination, defer_cleanup=True):
                 if on_publish is not None:
                     try:
                         on_publish(result)

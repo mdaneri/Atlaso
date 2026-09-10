@@ -56,12 +56,13 @@ class UploadPublication:
         return hmac.new(_KEY, payload, hashlib.sha256).hexdigest()
 
     @contextmanager
-    def publish(self, staged: Path, destination: Path) -> Iterator[None]:
+    def publish(self, staged: Path, destination: Path, *, defer_cleanup: bool = False) -> Iterator[None]:
         """Publish validated bytes and restore the old artifact on audit failure.
 
         Args:
             staged: Private validated file retained until publication finishes.
             destination: Actual service destination, checked against admission.
+            defer_cleanup: Let the caller remove private staging links through its worker cleanup.
         """
         with _LOCK:
             if destination.absolute() != self.path.absolute() or revision(destination) != self.expected:
@@ -93,5 +94,6 @@ class UploadPublication:
                             os.replace(backup, destination)
                     raise
             finally:
-                backup.unlink(missing_ok=True)
-                replacement.unlink(missing_ok=True)
+                if not defer_cleanup:
+                    backup.unlink(missing_ok=True)
+                    replacement.unlink(missing_ok=True)

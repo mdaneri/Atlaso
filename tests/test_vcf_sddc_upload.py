@@ -534,3 +534,63 @@ def test_duplicate_manifest_members_rejected_before_hashing(tmp_path, monkeypatc
     monkeypatch.setattr(service, "validate_ova_manifest", forbidden_hash)
     with pytest.raises(SddcUploadError, match="validation"):
         service._validate_staged_ova(path)
+
+
+@pytest.mark.parametrize("audit_fails", [False, True])
+def test_overwrite_backup_cleanup_runs_off_loop(tmp_path, monkeypatch, audit_fails):
+    """Release old OVA links in the worker while retaining audit rollback semantics.
+
+    Args:
+        tmp_path: Private artifact and staging root.
+        monkeypatch: Fixture observing actual unlink calls.
+        audit_fails: Whether publication must restore the prior artifact.
+    """
+    import os
+
+    from atlaso.app.services.upload_publication import UploadPublication, revision
+
+    source = tmp_path / "source.ova"
+    write_ova(source)
+    data = source.read_bytes()
+    root = tmp_path / "component"
+    root.mkdir()
+    destination = root / "test.ova"
+    destination.write_bytes(b"previous artifact")
+    publication = UploadPublication(destination, revision(destination))
+    caller = threading.get_ident()
+    removed = []
+    actual_unlink = os.unlink
+
+    def checked_unlink(path, *args, **kwargs):
+        """Record the thread deleting publication backup links.
+
+        Args:
+            path: Link being removed.
+            *args: Positional filesystem arguments.
+            **kwargs: Platform-specific filesystem arguments.
+        """
+        if str(path).endswith(".previous"):
+            removed.append(threading.get_ident())
+        return actual_unlink(path, *args, **kwargs)
+
+    def audit(result):
+        """Optionally fail after publication to exercise restoration.
+
+        Args:
+            result: Published artifact metadata.
+        """
+        if audit_fails:
+            raise RuntimeError("audit unavailable")
+
+    monkeypatch.setattr(os, "unlink", checked_unlink)
+    operation = store_sddc_ova_upload(chunks(data), "test.ova", root=root,
+                                      publication=publication, on_publish=audit)
+    if audit_fails:
+        with pytest.raises(SddcUploadError):
+            asyncio.run(operation)
+        assert destination.read_bytes() == b"previous artifact"
+    else:
+        asyncio.run(operation)
+        assert destination.read_bytes() == data
+        assert removed and all(thread != caller for thread in removed)
+    assert not list(tmp_path.glob(".sddc-upload-*"))
