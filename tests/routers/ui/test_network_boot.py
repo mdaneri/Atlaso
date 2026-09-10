@@ -684,6 +684,7 @@ def test_esxi_pxe_default_host_edit_marks_appliance_apply_pending(client):
     """
     from atlaso.app.database import SessionLocal
     from atlaso.app.models import EsxiKickstart
+    from atlaso.app.secrets import encrypt_secret
     from atlaso.app.services import esxi_pxe
     from atlaso.app.ui import (
         appliance_apply_status,
@@ -706,6 +707,9 @@ def test_esxi_pxe_default_host_edit_marks_appliance_apply_pending(client):
         db.flush()
         kickstart_id = kickstart.id
         units = appliance_apply_units(db)
+        for unit in units:
+            if unit["id"] == "esxi_pxe":
+                unit["runtime_config_encrypted"] = encrypt_secret(unit["raw_config_preview"])
         update_appliance_apply_baselines(db, units, {unit["id"] for unit in units})
         db.commit()
     with SessionLocal() as db:
