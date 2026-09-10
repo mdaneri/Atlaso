@@ -111,7 +111,9 @@ A lost final response is not retried automatically: inspect the destination befo
 
 Keep the page open during transfer and validation. Sessions expire after 30 minutes without an accepted chunk;
 page reload, logout, application restart, or exhausting retries requires selecting and uploading the file again.
-Browser completion or failure releases staging; abandoned sessions expire automatically. Files up to 16 MiB stay
+Browser completion or failure releases staging in a worker thread, including when finalization is canceled,
+so closing large temporary files does not block management requests. Abandoned sessions expire automatically.
+Files up to 16 MiB stay
 in memory, so credential-file contents never enter chunk staging on disk. Larger files use private anonymous
 files beneath `/mnt/atlaso-vcf-offline-depot/.atlaso-uploads`, outside artifact discovery. The depot volume must be
 available and staging must not be writable by other users. The service reserves capacity for upload and validation,

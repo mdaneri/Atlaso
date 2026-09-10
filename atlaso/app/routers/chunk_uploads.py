@@ -309,6 +309,7 @@ class ChunkedUploadRoute(APIRoute):
             except PublicationConflict as exc:
                 raise HTTPException(409, CONFLICT) from exc
             finally:
-                upload_store.release(keys)
+                with anyio.CancelScope(shield=True):
+                    await _operation(upload_store.release, keys)
 
         return handle

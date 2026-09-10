@@ -2,6 +2,7 @@
 
 import hashlib
 import io
+import threading
 import time
 from functools import partial
 
@@ -281,6 +282,33 @@ def test_file_transport_preserves_endpoint_validation(client, target, field, tmp
         monkeypatch: Fixture replacing external dependencies with isolated test behavior.
     """
     import atlaso.app.api.network_boot as network_routes
+    import atlaso.app.routers.chunk_uploads as chunk_routes
+
+    caller_threads = []
+    release_threads = []
+    original_json = chunk_routes._json
+    original_release = upload_store.release
+
+    async def observed_json(request):
+        """Record the request event loop thread.
+
+        Args:
+            request: Incoming finalization envelope.
+        """
+        caller_threads.append(threading.get_ident())
+        return await original_json(request)
+
+    def observed_release(keys):
+        """Record cleanup and close the real staged handles.
+
+        Args:
+            keys: Claimed upload identifiers to release.
+        """
+        release_threads.append(threading.get_ident())
+        original_release(keys)
+
+    monkeypatch.setattr(chunk_routes, "_json", observed_json)
+    monkeypatch.setattr(upload_store, "release", observed_release)
     monkeypatch.setattr(network_routes, "network_boot_upload_path", lambda job_id: tmp_path / job_id / "artifact")
     monkeypatch.setattr("atlaso.app.services.esxi_pxe.ESXI_INSTALLER_ISO_ROOT", tmp_path / "isos")
     headers, key = start(client, target, field, "installer.iso" if field == "iso_file" else "invalid.bin")
@@ -290,6 +318,8 @@ def test_file_transport_preserves_endpoint_validation(client, target, field, tmp
                            json={"files": [key], "fields": [["csrf", headers["X-CSRF-Token"]]]})
     expected = {202} if target.startswith("/api/") else {200} if field == "iso_file" else {400, 422}
     assert response.status_code in expected, response.text
+    assert len(release_threads) == 1
+    assert release_threads[0] != caller_threads[-1]
     assert key not in upload_store.sessions
 
 
@@ -306,3 +336,72 @@ def test_admission_rejects_csrf_unknown_field_and_oversize(client):
     assert client.post(BASE, headers=headers, json={**body, "field": "unknown"}).status_code == 400
     assert client.post(BASE, headers=headers, json={**body, "size": 17 * 1024**3}).status_code == 413
     assert client.delete(BASE + "/data", headers={**headers, "X-Atlaso-Upload-Id": key}).status_code == 204
+
+
+def test_canceled_finalization_still_releases_staging(monkeypatch):
+    """Close claimed staging off-loop even under an already canceled scope.
+
+    Args:
+        monkeypatch: Fixture isolating authentication and the upload store.
+    """
+    from contextlib import AsyncExitStack, nullcontext
+
+    import anyio
+    from fastapi import Request
+    from starlette.responses import Response
+
+    import atlaso.app.routers.chunk_uploads as routes
+
+    store = UploadStore()
+    key = store.create("owner", "/upload", "file", "test.bin", 1)
+    store.append(key, "owner", 0, b"x", hashlib.sha256(b"x").hexdigest())
+    staged = store.sessions[key].file
+    released = []
+    release = store.release
+
+    def observed_release(keys):
+        """Capture cleanup's worker thread before closing the staged handle.
+
+        Args:
+            keys: Claimed identifiers supplied by the route adapter.
+        """
+        released.append(threading.get_ident())
+        release(keys)
+
+    monkeypatch.setattr(routes, "upload_store", store)
+    monkeypatch.setattr(store, "release", observed_release)
+    monkeypatch.setattr(routes, "SessionLocal", lambda: nullcontext(None))
+    monkeypatch.setattr(routes, "get_session_identity", lambda request, db: object())
+    monkeypatch.setattr(routes, "_owner", lambda request: "owner")
+    monkeypatch.setattr(routes, "_policy", lambda *args: None)
+
+    async def exercise():
+        """Cancel inside the wrapped endpoint and observe mandatory cleanup."""
+        caller_thread = threading.get_ident()
+        with anyio.CancelScope() as scope:
+            async def endpoint():
+                """Simulate cancellation after the staged file was claimed."""
+                scope.cancel()
+                await anyio.lowlevel.checkpoint()
+                return Response()
+
+            async def receive():
+                """Supply the bounded finalization envelope."""
+                return {"type": "http.request", "body": ('{"files":["' + key + '"]}').encode()}
+
+            route = routes.ChunkedUploadRoute("/upload", endpoint, methods=["POST"])
+            request = Request({"type": "http", "method": "POST", "path": "/upload",
+                               "headers": [(b"x-atlaso-chunked", b"1")], "query_string": b""}, receive)
+            async with AsyncExitStack() as stack:
+                request.scope["fastapi_middleware_astack"] = stack
+                request.scope["fastapi_inner_astack"] = stack
+                request.scope["fastapi_function_astack"] = stack
+                await route.get_route_handler()(request)
+        assert scope.cancelled_caught
+        assert len(released) == 1 and released[0] != caller_thread
+        assert staged.closed and not store.sessions
+
+    try:
+        anyio.run(exercise)
+    finally:
+        store.close()
