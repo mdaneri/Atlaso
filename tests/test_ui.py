@@ -12231,6 +12231,7 @@ def test_vcf_offline_depot_tool_package_wizard_endpoint_and_reset_clear_configur
         VCF_DEPOT_TOOL_VERSION_SOURCE_KEY,
     )
 
+    monkeypatch.setattr("atlaso.app.ui.VCF_DEPOT_UPLOAD_DIR", tmp_path / "uploads")
     monkeypatch.setattr("atlaso.app.ui.find_local_vcf_download_tool_archive", lambda: None)
 
     archive_path = tmp_path / "vcf-download-tool-9.1.0.test.tar.gz"
@@ -12249,6 +12250,18 @@ def test_vcf_offline_depot_tool_package_wizard_endpoint_and_reset_clear_configur
         files={"tool_archive_file": ("vcf-download-tool-9.1.0.test.tar.gz", archive_path.read_bytes(), "application/gzip")},
     )
     assert upload.status_code == 200
+    from atlaso.app.ui import VCF_DEPOT_UPLOAD_DIR
+
+    stored_archive = VCF_DEPOT_UPLOAD_DIR / archive_path.name
+    original_bytes = stored_archive.read_bytes()
+    rejected = client.post(
+        "/vcf-offline-depot/tool-package", data={"csrf": csrf},
+        files={"tool_archive_file": (archive_path.name, archive_path.read_bytes(), "application/gzip")},
+    )
+    assert rejected.status_code == 400
+    assert "confirm any overwrite" in rejected.text
+    assert stored_archive.read_bytes() == original_bytes
+    assert not list(stored_archive.parent.glob(".*.upload"))
     upload_payload = upload.json()
     assert upload_payload["tool_archive_name"] == "vcf-download-tool-9.1.0.test.tar.gz"
     assert upload_payload["tool_archive_uploaded"] is True

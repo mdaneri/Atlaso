@@ -2800,11 +2800,8 @@ def store_uploaded_vcf_depot_archive(settings: VcfOfflineDepotSettings, archive_
         with temp_path.open("wb") as destination:
             shutil.copyfileobj(archive_file.file, destination)
         validate_vcf_download_tool_upload_envelope(temp_path)
-        if publication is None:
-            temp_path.replace(archive_path)
-        else:
-            with publication.publish(temp_path, archive_path):
-                pass
+        with (publication or UploadPublication(archive_path, None)).publish(temp_path, archive_path):
+            pass
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except OSError as exc:

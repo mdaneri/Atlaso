@@ -100,6 +100,9 @@ outside deployment discovery, but never a partially uploaded selectable OVA.
 
 ### Chunked browser uploads
 
+Multipart and no-JavaScript media uploads may create a new filename but cannot replace an existing file without
+revision-bound overwrite consent. Use the browser confirmation flow to replace existing media.
+
 VCF Download Tool filenames are validated before chunk storage is reserved. Final chunk cleanup attempts every staged
 file; a handle-close error is logged without replacing the consuming endpoint result. Expiry sweeps and shutdown
 also attempt every eligible handle after a close failure, and expiry continues for remaining sessions.

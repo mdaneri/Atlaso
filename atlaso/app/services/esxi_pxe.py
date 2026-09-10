@@ -5,11 +5,11 @@ from __future__ import annotations
 import hashlib
 import json
 import re
-import shutil
 from datetime import datetime, timezone
 from ipaddress import ip_address, ip_network
 from pathlib import Path
 from typing import Any
+from uuid import uuid4
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -1582,7 +1582,7 @@ async def store_installer_iso_upload(upload_file: Any, *, max_bytes: int, public
     root = ensure_installer_iso_root()
     filename = safe_installer_iso_name(upload_file.filename or "")
     destination = root / filename
-    temp_path = root / f".{filename}.uploading"
+    temp_path = root / f".{filename}.{uuid4().hex}.uploading"
     total = 0
     try:
         with temp_path.open("wb") as handle:
@@ -1596,12 +1596,9 @@ async def store_installer_iso_upload(upload_file: Any, *, max_bytes: int, public
                 handle.write(chunk)
         if total == 0:
             raise ValueError("Installer ISO upload is empty.")
-        if publication is None:
-            shutil.move(str(temp_path), destination)
-        else:
-            with publication.publish(temp_path, destination):
-                pass
-            temp_path.unlink()
+        with (publication or UploadPublication(destination, None)).publish(temp_path, destination):
+            pass
+        temp_path.unlink()
         destination.chmod(0o644)
     except Exception:
         temp_path.unlink(missing_ok=True)

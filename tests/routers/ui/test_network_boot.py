@@ -259,6 +259,16 @@ def test_esxi_pxe_iso_upload_and_host_selection(client, monkeypatch, tmp_path):
     assert uploaded.headers["location"] == "/ui/management/esxi-pxe#esxi-pxe-isos-panel"
     iso_path = iso_root / "VMware-VMvisor-Installer-8.0U3.iso"
     assert iso_path.read_bytes() == b"iso bytes"
+    for headers in ({}, {"X-Atlaso-Upload": "1"}):
+        rejected = client.post(
+            "/esxi-pxe/isos/upload", data={"csrf": csrf},
+            files={"iso_file": (iso_path.name, b"replacement bytes", "application/octet-stream")},
+            headers=headers,
+        )
+        assert rejected.status_code == 400
+        assert "confirm any overwrite" in rejected.text
+        assert iso_path.read_bytes() == b"iso bytes"
+    assert not list(iso_root.glob(".*.uploading"))
 
     ajax_upload = client.post(
         "/esxi-pxe/isos/upload",
