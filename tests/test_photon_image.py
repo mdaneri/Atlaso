@@ -981,13 +981,16 @@ def test_photon_provisioning_installs_default_nginx_management_proxy():
     assert "powershell" in script
     assert "VCF.PowerCLI" in script
     assert "9.1.0.25380678" in script
-    assert "Connect-VIServer" in script
-    assert "Set-PowerCLIConfiguration -ParticipateInCeip $false -Scope AllUsers -Confirm:$false" in script
-    assert "Get-PowerCLIConfiguration -Scope AllUsers" in script
+    powercli = Path("image/common/powershell/provision-powercli.ps1").read_text(encoding="utf-8")
+    assert "Connect-VIServer" in powercli
+    assert "Set-PowerCLIConfiguration -ParticipateInCeip $false -Scope AllUsers -Confirm:$false" in powercli
+    assert "Get-PowerCLIConfiguration -Scope AllUsers" in powercli
+    assert "-Mode Validate -ModuleRoot" in script
+    assert "-Mode Verify -ConfigureCeip" in script
     assert "ATLASO_POWERCLI_MODULE_SOURCE" in script
     assert 'awk \'$2 == "/tmp" { print $3; exit }\' /proc/mounts' in script
     assert "mount -o remount,size=4G /tmp" in script
-    assert script.index("mount -o remount,size=4G /tmp") < script.index("Install-Module -Name VCF.PowerCLI")
+    assert script.index("mount -o remount,size=4G /tmp") < script.index("-Mode Install")
     assert "chmod 0755 /usr/local/share/powershell /usr/local/share/powershell/Modules" in script
     assert "chmod -R a+rX,go-w /usr/local/share/powershell/Modules" in script
     assert "ipxe" in script
@@ -1032,7 +1035,7 @@ def test_photon_provisioning_installs_default_nginx_management_proxy():
         'sudo -H -u "$BOOTSTRAP_USERNAME" env -u PSModulePath '
         'ATLASO_POWERCLI_VERSION="$ATLASO_POWERCLI_VERSION"'
     ) in script
-    assert "is not available to the bootstrap administrator" in script
+    assert '-File "$ATLASO_HOME/image/common/powershell/provision-powercli.ps1"' in script
     assert 'chmod 0711 "$ATLASO_STATE"' in script
     assert 'chown "$BOOTSTRAP_USERNAME:$(id -gn "$BOOTSTRAP_USERNAME")" "$ATLASO_STATE/users/$BOOTSTRAP_USERNAME"' in script
     assert 'chmod 0750 "$ATLASO_STATE/users/$BOOTSTRAP_USERNAME"' in script
@@ -1739,11 +1742,11 @@ def test_photon_provisioning_prepares_attached_data_disks():
     final_bootstrap_powercli_index = provision.rindex("verify_bootstrap_powercli")
     assert final_profile_install_index < final_bootstrap_powercli_index
     assert final_profile_install_index < provision.rindex(
-        "Import-Module VCF.PowerCLI -RequiredVersion"
+        "-Mode Verify"
     )
     assert final_bootstrap_powercli_index < provision.rindex("nginx -t")
     assert 'sudo -H -u "$BOOTSTRAP_USERNAME"' in provision
-    assert "Get-Command Connect-VIServer" in provision
+    assert "provision-powercli.ps1" in provision
     assert final_update_index < provision.rindex("nginx -t")
     assert final_update_index < provision.rindex(
         '"$ATLASO_HOME/.venv/bin/python" '

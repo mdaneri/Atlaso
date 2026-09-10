@@ -6,6 +6,18 @@ also disables and verifies PowerCLI CEIP participation at `AllUsers` scope; Appl
 preference after deployment without product-specific prompts. The system module tree remains root-owned and writable
 only by root, while every local `/usr/bin/pwsh` user can read and import its modules. Set
 `ATLASO_POWERCLI_MODULE_SOURCE` to a pre-staged module directory for offline image builds; otherwise PSGallery is used.
+The image's complete dependency set is pinned in `image/common/powershell/powercli-lock.json`, including
+`VMware.OpenAPI` and its transitive dependencies. `provision-powercli.ps1` saves each exact package through
+`Save-PSResource -SkipDependencyCheck`, then checks every vendor manifest's dependency constraints without changing
+its declarations, catalogs, or signatures. This prevents a newly published Gallery dependency from mixing release
+families under the older suite pin. PowerShell's bundled PSResourceGet module is required.
+Offline bundles use the same `ModuleName/Version` layout and must contain every locked module with only its locked
+version. Missing modules, incompatible manifests, and side-by-side versions fail before the bundle is copied.
+Fresh root and bootstrap-administrator processes reject shadowing module copies, import the suite, verify every loaded
+module version and `Connect-VIServer`, and check the appliance-wide CEIP default. Final package-update checks repeat
+that proof. Updating `ATLASO_POWERCLI_VERSION` requires a matching reviewed complete lock; a suite-only override is
+rejected. This image-build lock does not change the runtime Appliance Update workflow.
+
 Before a PSGallery install, the shared provisioner expands Photon's build-time `/tmp` tmpfs to 4 GiB so PowerCLI's
 dependency extraction does not exhaust the default memory-backed temporary filesystem. The deployed appliance returns
 to Photon's normal `/tmp` sizing after reboot.
