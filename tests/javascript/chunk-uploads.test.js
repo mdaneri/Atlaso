@@ -45,7 +45,7 @@ function harness({ lostAck = false, finalFailure = false, existing = false, conf
     } },
   };
   vm.runInNewContext(source, context);
-  return { calls, warnings, upload: context.window.AtlasoUploads.fetch, Request: context.window.AtlasoUploads.Request };
+  return { context, calls, warnings, upload: context.window.AtlasoUploads.fetch, Request: context.window.AtlasoUploads.Request };
 }
 
 test("bounded chunks retry identical offsets and finalize text fields once", async () => {
@@ -132,4 +132,30 @@ test("ordinary requests pass through and cross-origin file uploads fail closed",
   body.append("archive_file", new File(["ab"], "settings.json"));
   await assert.rejects(upload("https://elsewhere/upload", { method: "POST", body }), /this appliance/);
   assert.equal(calls.length, 1);
+});
+
+
+test("chunk and ordinary mutations retain the late-installed apply refresh wrapper", async () => {
+  const { context, calls, upload } = harness();
+  context.Request = globalThis.Request;
+  context.window.location = context.location;
+  context.window.AtlasoRoutes = { management: path => "/ui/management" + path };
+  let refreshes = 0;
+  context.window.clearTimeout = () => {};
+  context.window.setTimeout = () => { refreshes += 1; return refreshes; };
+  const appPrefix = fs.readFileSync("atlaso/app/static/app.js", "utf8").split("function readCookieValue")[0];
+  vm.runInNewContext(appPrefix, context);
+  for (const method of ["POST", "PUT", "PATCH", "DELETE"]) {
+    const before = refreshes;
+    await vm.runInNewContext(`fetch('/ui/management/settings', {method: '${method}'})`, context);
+    assert.equal(refreshes, before + 1);
+  }
+  const beforeRead = refreshes;
+  await vm.runInNewContext("fetch('/ui/management/settings')", context);
+  assert.equal(refreshes, beforeRead);
+  await upload("/ui/management/vcf-helper/sddc-manager/ovas/upload", {
+    method: "POST", body: new File(["abc"], "test.ova"),
+  });
+  assert.ok(refreshes > beforeRead);
+  assert.equal(calls.filter(call => call.url.endsWith('/ovas/upload')).length, 1);
 });

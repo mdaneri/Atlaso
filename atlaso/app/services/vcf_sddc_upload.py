@@ -135,10 +135,21 @@ def _validate_staged_ova(path: Path) -> None:
             content = manifest.read(1024 * 1024 + 1)
             if len(content) > 1024 * 1024:
                 raise ValueError("Oversized manifest")
-            covered = {
-                match.group(2) for line in content.decode("utf-8").splitlines()
-                if (match := MANIFEST_LINE.fullmatch(line.strip()))
-            }
+            covered: set[str] = set()
+            hashing_bytes = 0
+            for line in content.decode("utf-8").splitlines():
+                if not line.strip():
+                    continue
+                match = MANIFEST_LINE.fullmatch(line.strip())
+                if match is None:
+                    raise ValueError("Unsupported manifest entry")
+                member = archive.getmember(match.group(2))
+                if not member.isfile() or member.name in covered:
+                    raise ValueError("Duplicate or non-file manifest entry")
+                covered.add(member.name)
+                hashing_bytes += member.size
+                if len(covered) > OVA_MAX_MEMBERS or hashing_bytes > SDDC_OVA_MAX_BYTES:
+                    raise ValueError("OVA manifest work limit exceeded")
             if not {descriptor.ovf_member, *(str(item["href"]) for item in descriptor.files)} <= covered:
                 raise ValueError("Incomplete manifest")
         validate_ova_manifest(descriptor)

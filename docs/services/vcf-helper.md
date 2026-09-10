@@ -104,11 +104,13 @@ Browser file uploads use a shared sequential transport, including SDDC Manager O
 Network Boot media, credential files, registry CA bundles, and backup imports. Each request carries at most 8 MiB;
 small files use one chunk. Hashing supports both HTTP and HTTPS management pages. This works with the existing
 management proxy limit without applying Appliance Settings.
-Progress counts acknowledged bytes. A failed chunk retries up to three times with the same offset and SHA-256
+Successful mutations retain the shared pending-changes sidebar refresh. Progress counts acknowledged bytes.
+A failed chunk retries up to three times with the same offset and SHA-256
 checksum; already acknowledged chunks are not resent. Atlaso rejects changed retries, gaps, and size overruns.
 OVA filenames are validated before reserving a session, so unsupported names transfer no file bytes.
 Archive members and their total logical size are each limited to 16 GiB before manifest hashing, including
-sparse disk members whose logical size exceeds their physical archive size.
+sparse disk members whose logical size exceeds their physical archive size. Manifest entries must reference
+unique regular files, and total hashing work is bounded by the same limit.
 Final validation and publication use the existing endpoint, permissions, duplicate policy, and desired-state boundary.
 A lost final response is not retried automatically: inspect the destination before submitting again.
 

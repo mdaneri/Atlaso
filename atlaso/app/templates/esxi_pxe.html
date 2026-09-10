@@ -666,8 +666,11 @@
     <div class="panel">
       <div class="panel-head">
         <h2>Validation</h2>
-        <span class="status-pill {{ 'good' if not esxi_pxe_validation_errors else 'warn' }}">{{ "valid" if not esxi_pxe_validation_errors else "needs attention" }}</span>
+        <span class="status-pill {{ 'good' if not esxi_pxe_validation_errors and not esxi_boot_readiness_warnings else 'warn' }}">{{ "valid" if not esxi_pxe_validation_errors and not esxi_boot_readiness_warnings else "needs attention" }}</span>
       </div>
+      {% for warning in esxi_boot_readiness_warnings %}
+        <div class="alert warning" role="alert">{{ warning }}</div>
+      {% endfor %}
       {% if esxi_selected_kickstart and esxi_selected_kickstart_json.drift_state == "filesystem_modified" %}
         <div class="alert warning">Filesystem copy differs from database source. The next ESXi PXE apply will overwrite the filesystem copy from the database.</div>
       {% endif %}

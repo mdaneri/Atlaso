@@ -486,3 +486,39 @@ def test_sparse_logical_sizes_are_bounded_before_hashing(tmp_path, monkeypatch, 
     monkeypatch.setattr(service, "validate_ova_manifest", forbidden_parser)
     with pytest.raises(SddcUploadError, match="validation"):
         service._validate_staged_ova(path)
+
+
+@pytest.mark.parametrize("algorithm", ["SHA256", "SHA512"])
+def test_duplicate_manifest_members_rejected_before_hashing(tmp_path, monkeypatch, algorithm):
+    """Bound repeated hashing even when a duplicate uses another digest algorithm.
+
+    Args:
+        tmp_path: Private archive directory.
+        monkeypatch: Fixture guarding manifest hashing.
+        algorithm: Digest algorithm of the repeated member entry.
+    """
+    import atlaso.app.services.vcf_sddc_upload as service
+
+    source = tmp_path / "source.ova"
+    write_ova(source)
+    path = tmp_path / "duplicate.ova"
+    with tarfile.open(source) as original, tarfile.open(path, "w") as output:
+        for member in original:
+            body = original.extractfile(member).read()
+            if member.name.endswith(".mf"):
+                body += f"{algorithm}(disk.vmdk)= {'0' * (128 if algorithm == 'SHA512' else 64)}\n".encode()
+                member.size = len(body)
+            output.addfile(member, io.BytesIO(body))
+
+    def forbidden_hash(*args, **kwargs):
+        """Reject repeated work before the manifest validator starts.
+
+        Args:
+            *args: Ignored validator arguments.
+            **kwargs: Ignored validator keyword arguments.
+        """
+        pytest.fail("Duplicate manifest reached hashing")
+
+    monkeypatch.setattr(service, "validate_ova_manifest", forbidden_hash)
+    with pytest.raises(SddcUploadError, match="validation"):
+        service._validate_staged_ova(path)

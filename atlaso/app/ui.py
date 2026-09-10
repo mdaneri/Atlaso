@@ -2,6 +2,7 @@
 
 import difflib
 import hashlib
+import hmac
 import json
 import logging
 import os
@@ -10335,6 +10336,33 @@ def wan_rollback_config_preview(
     return "\n".join(lines).lstrip("\n") + "\n"
 
 
+def esxi_apply_comparison_preview(preview: str) -> str:
+    """Exclude media activation receipts from desired ESXi Apply comparison.
+
+    Args:
+        preview: Exact ESXi manifest text before display redaction.
+    """
+    manifest = json.loads(preview)
+    for row in manifest.get("network_boot", {}).get("environments", []):
+        row.pop("active_version", None)
+    return json.dumps(manifest, sort_keys=True)
+
+
+def esxi_apply_snapshot_marker(preview: str) -> dict[str, Any]:
+    """Bind hidden ESXi edits before entering the shared Apply projection.
+
+    Args:
+        preview: Exact ESXi manifest text before display redaction.
+    """
+    settings = get_settings()
+    revision = hmac.digest(
+        (settings.secrets_key or settings.secret_key).encode("utf-8"),
+        b"atlaso-esxi-apply-v1\x00" + esxi_apply_comparison_preview(preview).encode("utf-8"),
+        "sha256",
+    ).hex()
+    return {"protected_runtime_manifest": 1, "revision": revision}
+
+
 def make_appliance_apply_unit(
     *,
     unit_id: str,
@@ -10349,6 +10377,7 @@ def make_appliance_apply_unit(
     baseline: dict[str, Any] | None,
     raw_config_preview: str | None = None,
     snapshot_marker: Any = None,
+    runtime_config_encrypted: str | None = None,
 ) -> dict[str, Any]:
     """Build appliance apply unit.
 
@@ -10365,20 +10394,48 @@ def make_appliance_apply_unit(
         baseline: Baseline supplied by the caller.
         raw_config_preview: Raw config preview supplied by the caller.
         snapshot_marker: Snapshot marker supplied by the caller.
+        runtime_config_encrypted: Internal runtime record used only for ESXi comparison.
 
     Returns:
         The make appliance apply unit result.
     """
     redacted_preview = redact_config_preview(config_preview)
+    protected_esxi = (
+        unit_id == "esxi_pxe" and isinstance(snapshot_marker, dict)
+        and snapshot_marker.get("protected_runtime_manifest") == 1
+    )
     snapshot_payload = {
         "unit_id": unit_id,
         "summary": summary,
         "config_path": config_path,
-        "config_preview": redacted_preview,
+        "config_preview": esxi_apply_comparison_preview(redacted_preview) if protected_esxi else redacted_preview,
         "snapshot_marker": snapshot_marker,
     }
     current_hash = appliance_snapshot_hash(snapshot_payload)
     baseline_hash = str((baseline or {}).get("snapshot_hash") or "")
+    runtime_pending = False
+    if protected_esxi:
+        # A dry run can advance the display baseline, but recovery must remain
+        # selectable until real Apply records the exact protected runtime input.
+        try:
+            runtime_pending = esxi_apply_comparison_preview(
+                decrypt_secret(runtime_config_encrypted or "")
+            ) != esxi_apply_comparison_preview(
+                raw_config_preview if raw_config_preview is not None else config_preview
+            )
+        except (AttributeError, TypeError, ValueError):
+            runtime_pending = True
+        if runtime_config_encrypted is None:
+            desired_manifest = json.loads(raw_config_preview if raw_config_preview is not None else config_preview)
+            # A pristine factory reset has no boot consumers to admit. Its
+            # non-appliance dry-run path must not invent real runtime evidence.
+            runtime_pending = bool(
+                desired_manifest.get("boot", {}).get("enabled")
+                or desired_manifest.get("hosts")
+                or desired_manifest.get("kickstarts")
+                or desired_manifest.get("default_host", {}).get("enabled")
+                or any(row.get("enabled") for row in desired_manifest.get("network_boot", {}).get("environments", []))
+            )
     return {
         "id": unit_id,
         "label": label,
@@ -10392,7 +10449,7 @@ def make_appliance_apply_unit(
         "raw_config_preview": raw_config_preview if raw_config_preview is not None else config_preview,
         "config_preview": redacted_preview,
         "snapshot_hash": current_hash,
-        "changed": current_hash != baseline_hash,
+        "changed": current_hash != baseline_hash or runtime_pending,
         "has_baseline": bool(baseline_hash),
         "last_applied_at": (baseline or {}).get("applied_at"),
         "config_diff": config_diff_for_unit(unit_id, redacted_preview, baseline),
@@ -10778,6 +10835,8 @@ def appliance_apply_units(db: Session, *, reconcile: bool = True) -> list[dict[s
         db: Active database session.
         reconcile: Whether dependent desired state should be reconciled.
     """
+    from atlaso.app.services.network_boot import load_esxi_applied_runtime
+
     baselines = load_appliance_apply_baselines(db)
     local_users = local_users_apply_context(db, baselines.get("local_users"))
     appliance_settings = appliance_settings_context(db, reconcile_dns=reconcile)
@@ -10987,6 +11046,8 @@ def appliance_apply_units(db: Session, *, reconcile: bool = True) -> list[dict[s
             config_path=esxi_pxe["esxi_pxe_config_path"],
             config_preview=esxi_pxe["esxi_pxe_manifest"],
             baseline=baselines.get("esxi_pxe"),
+            snapshot_marker=esxi_apply_snapshot_marker(esxi_pxe["esxi_pxe_manifest"]),
+            runtime_config_encrypted=load_esxi_applied_runtime(db),
         ),
         make_appliance_apply_unit(
             unit_id="esx_storage",
@@ -13567,7 +13628,7 @@ def execute_appliance_apply_unit(
     elif unit_id == "esxi_pxe":
         config_path = context["esxi_pxe_config_path"]
         if not adapter.dry_run:
-            config_path = stage_appliance_apply_config(ESXI_PXE_STAGED_CONFIG_PATH, context["esxi_pxe_manifest"])
+            config_path = stage_appliance_apply_config(ESXI_PXE_STAGED_CONFIG_PATH, unit["raw_config_preview"])
         results = run_adapter_steps(
             [
                 lambda: adapter.validate_esxi_pxe_config(config_path),
@@ -15713,6 +15774,13 @@ def run_appliance_apply_job(job_id: str, *, force_real: bool = False) -> None:
                             job_result.get("refresh_vcf_depot_software_depot_id")
                         ),
                     }
+                # Seal the exact staged input before host mutation, not a later
+                # refreshed desired state or a redacted task/display result.
+                esxi_runtime_encrypted = (
+                    encrypt_secret(execution_unit["raw_config_preview"])
+                    if unit["id"] == "esxi_pxe"
+                    else None
+                )
                 result = execute_appliance_apply_unit(
                     execution_unit,
                     adapter=SystemAdapter(dry_run=False) if force_real else None,
@@ -15746,9 +15814,14 @@ def run_appliance_apply_job(job_id: str, *, force_real: bool = False) -> None:
                         from atlaso.app.services.network_boot import (
                             mark_network_boot_environments_applied,
                             prune_superseded_shredos_media,
+                            save_esxi_applied_runtime,
                         )
 
-                        mark_network_boot_environments_applied(db)
+                        assert esxi_runtime_encrypted is not None
+                        save_esxi_applied_runtime(db, esxi_runtime_encrypted)
+                        mark_network_boot_environments_applied(
+                            db, applied_manifest=json.loads(execution_unit["raw_config_preview"]),
+                        )
                         prune_network_boot_media = True
                     if unit["id"] == "esx_storage" and not result.get("dry_run"):
                         inventory_result = SystemAdapter(dry_run=False).esx_storage_inventory()
@@ -15787,6 +15860,7 @@ def run_appliance_apply_job(job_id: str, *, force_real: bool = False) -> None:
                                 )
                             )
                         else:
+                            applied_unit = unit
                             runtime_config_preview = str(
                                 applied_unit["config_preview"]
                             )
@@ -17099,6 +17173,7 @@ def esxi_pxe_page_context(
     from atlaso.app.models import NetworkBootDiscoveredHost
     from atlaso.app.services.network_boot import (
         catalog_rows,
+        esxi_boot_readiness_warnings,
         esxi_host_assignments_by_mac,
     )
     from atlaso.app.services.network_boot import (
@@ -17106,6 +17181,7 @@ def esxi_pxe_page_context(
     )
 
     context = esxi_pxe_context(db)
+    context["esxi_boot_readiness_warnings"] = esxi_boot_readiness_warnings(db, context["esxi_pxe_hosts"])
     kickstarts = context["esxi_kickstarts"]
     selected = next((row for row in kickstarts if row.id == selected_id), None) or (kickstarts[0] if kickstarts else None)
     selected_validation = {"valid": True, "errors": [], "warnings": []}

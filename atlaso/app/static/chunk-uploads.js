@@ -1,7 +1,8 @@
 /* Shared browser file transport; existing form handlers own validation and results. */
 (() => {
   "use strict";
-  const nativeFetch = window.fetch.bind(window);
+  // Resolve at call time so the shared mutation-refresh wrapper stays in the chain.
+  const nativeFetch = (...args) => window.fetch(...args);
   const endpoint = "/ui/management/uploads/chunks";
 
   async function checksumBytes(buffer) {
