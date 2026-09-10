@@ -4305,7 +4305,11 @@ uses a private root-owned HOME/cache sandbox rather than the Packer communicator
 <li>VMware retains and enables <code>open-vm-tools</code>.</li>
 <li>KVM, QEMU, and Proxmox remove VMware Tools, install the verified local QEMU guest-agent closure, and enable its
   service.</li>
-<li>Hyper-V removes VMware Tools, installs the verified local Photon Hyper-V closure, and enables its required daemons.</li>
+<li>Hyper-V removes VMware Tools, installs the verified local Photon Hyper-V closure, and requires its KVP and VSS
+  daemons. Atlaso disables the packaged legacy <code>hv_fcopy_daemon</code>: its <code>/dev/vmbus/hv_fcopy</code> transport is absent from
+  the supported Linux 6.12 kernel. Hyper-V host-to-guest file copy is not supported by this artifact; enabling Guest
+  Service Interface in the host does not restore that obsolete transport. File-copy availability must not block
+  machine identity initialization or management DHCP.</li>
 <li>Bare metal removes VMware Tools and all virtual guest-agent payloads, then continues without an agent.</li>
 <li>Unknown or contradictory platform evidence blocks appliance startup for diagnosis.</li>
 </ul>
@@ -4334,6 +4338,12 @@ identity initialization, generates a fresh credential set, and republishes its m
 networking. The retry never exposes a password whose corresponding host state was replaced.</p>
 <p>VMware continues into OVF-property customization. Hyper-V, KVM, and Proxmox use DHCP-first defaults and do not wait for
 VMware metadata. Use the appliance console to complete initial networking when DHCP is unavailable.</p>
+<p>Management DHCP configuration retains Photon's <code>SendRelease=no</code> policy through image provisioning, OVF customization,
+and Network Apply. Reboot therefore does not explicitly release the management lease, which can cause Hyper-V's
+Default Switch to assign a different address despite an unchanged MAC and DHCP client identity. DHCP remains subject
+to server policy and lease expiry; use a reservation or static address when permanent address stability is required.
+Smoke validation still rejects an address change across reboot. Existing exported images require a rebuild to receive
+the provisioning setting.</p>
 <p>DHCP-first images admit management SSH and HTTP/HTTPS over IPv4 only through the deployed management interface
 (<code>eth0</code>). IPv6 management admission requires explicit deployment configuration.
 The temporary VMware builder subnet is not retained as a source restriction. An explicitly supplied
@@ -4356,6 +4366,8 @@ high-entropy administrator and root passwords. VMware replaces the generated pas
 and publishes the regenerated Ed25519 public host key through VMware guest-info for authenticated automation. KVM and
 Proxmox expose a root-only one-time envelope on tmpfs at <code>/run/atlaso/first-boot-access.json</code>, readable through the QEMU
 guest agent or from the local console. Hyper-V publishes the same envelope under KVP key <code>atlaso.first_boot_access</code>.
+The host reads that guest-authored record from <code>Msvm_KvpExchangeComponent.GuestExchangeItems</code> for the exact VM ID;
+<code>GuestIntrinsicExchangeItems</code> contains OS/provider metadata, not the Atlaso envelope.
 The local console keeps the envelope on a dedicated first-time initialization screen until an operator presses Enter
 to acknowledge that every value was recorded; acknowledgement removes only the console's tmpfs copy. Retrieve the
 envelope only from the authenticated hypervisor control plane or the physically controlled console, pin its SSH host
@@ -4382,6 +4394,19 @@ matching management-vmnet neighbor entry. Services-first enumeration cannot choo
 mismatched, or
 changing management MAC/address evidence fails the smoke run before the SSH or <code>/openapi.json</code> result is accepted, and
 the same binding is revalidated after reboot.</p>
+<p>Hyper-V smoke imports without starting the VM so adapter IDs and switch bindings are captured before power-on.
+During initial acquisition only, an all-zero MAC on an explicitly dynamic adapter is pending allocation. The smoke
+requires that adapter to remain explicitly dynamic when its MAC is assigned, pins each nonzero MAC as soon as it
+appears, and requires both MACs plus management IPv4 before probing. It never
+rebases an assigned MAC, adapter ID, or switch; subsequent changes remain fatal, including after reboot. MAC allocation
+and pinned IPv4 mismatch errors report expected and observed values and both current adapter IDs for diagnosis.
+Zero-MAC rejection also reports whether pending acquisition was permitted and distinguishes static from missing dynamic
+mode evidence. If a service-MAC
+failure recurs, retain that evidence to distinguish allocation from adapter replacement or a later MAC change.
+Dynamic-mode rejections also identify the expected and observed MAC, and distinguish a reported static mode from
+missing mode evidence.
+Temporary loss of the provider's IPv4 report does not clear an already pinned address. The smoke waits for a fresh
+report and rejects a different address, including across reboot.</p>
 <p>VMware SSH admission requires a currently <code>Reachable</code> management neighbor. Cached <code>Stale</code>, <code>Delay</code>, and <code>Probe</code>
 entries are probe candidates only; expired, malformed, or unbounded DHCP leases are excluded. Each failed SSH
 transport attempt returns to the Windows wrapper for another identity check under the same 15-minute phase deadline.
@@ -4412,6 +4437,11 @@ readiness.</p>
 correct only the reported image or platform conflict, and restart the selector. Do not manually enable Atlaso or nginx
 while the selector is failed. For an import-time failure, keep the original release assets, remove only the target VM
 and storage owned by that import attempt, correct the host prerequisite, and run the helper again.</p>
+<p>A Hyper-V management-address timeout does not by itself prove a DHCP-server problem. Check
+<code>journalctl -u atlaso-guest-agent-select.service -u hv_fcopy_daemon.service</code>: older artifacts can stop before networking
+because the legacy file-copy daemon reports <code>open /dev/vmbus/hv_fcopy failed</code>. Rebuild with the corrected selector;
+do not disable the KVP/VSS readiness checks, admit another adapter's address, or boot a completed source template to
+repair it. Both initial and post-reboot SSH, disk, service, and OpenAPI checks remain required.</p>
 <h2 id="protected-release-runners">Protected release runners<a class="headerlink" href="#protected-release-runners" title="Permanent link">&para;</a></h2>
 <p>The primary Windows producer is a maintainer workstation, not a permanent GitHub runner. From a clean attached branch
 or detached checkout at the successful software-release SHA, run:</p>
