@@ -1198,7 +1198,7 @@ function Invoke-AtlasoVirtualizationPrerelease {
     $name = "atlaso-v$($identity.Version)"
     Assert-AtlasoVirtualizationStoragePlan -Plan $storagePlan -Stage 2
     & (Join-Path $RepoRoot 'scripts\windows\vmware\export-ovf.ps1') `
-        -SourceVmxPath $vmx -Name $name -Force -VirtualizationSourceMetadata $sourceMetadata
+        -SourceVmxPath $vmx -Name $name -Force -VirtualizationSourceMetadata $sourceMetadata -ProtectedExport
     if ($LASTEXITCODE -ne 0) {
         throw 'Canonical OVA export failed.'
     }

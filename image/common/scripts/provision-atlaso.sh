@@ -21,7 +21,7 @@ ATLASO_IMAGE_ASSET_DIR="${ATLASO_IMAGE_ASSET_DIR:-image/vmware-workstation}"
 ATLASO_PIP_GLOBAL_INDEX="${ATLASO_PIP_GLOBAL_INDEX:-}"
 ATLASO_PIP_GLOBAL_INDEX_URL="${ATLASO_PIP_GLOBAL_INDEX_URL:-}"
 ATLASO_POWERCLI_MODULE_SOURCE="${ATLASO_POWERCLI_MODULE_SOURCE:-}"
-ATLASO_POWERCLI_VERSION="${ATLASO_POWERCLI_VERSION:-9.1.0.25380678}"
+ATLASO_POWERCLI_VERSION="${ATLASO_POWERCLI_VERSION:-9.1.1.25718932}"
 ATLASO_SYSTEM_CONTENT_DISK="${ATLASO_SYSTEM_CONTENT_DISK:-false}"
 ATLASO_SYSTEM_CONTENT_MOUNT="${ATLASO_SYSTEM_CONTENT_MOUNT:-/var/lib/atlaso-system}"
 ATLASO_ROOT_SCSI_TUPLE="${ATLASO_ROOT_SCSI_TUPLE:-}"
@@ -440,19 +440,25 @@ if [ -n "$ATLASO_POWERCLI_MODULE_SOURCE" ]; then
     exit 2
   fi
   install -d -o root -g root -m 0755 /usr/local/share/powershell/Modules
+  pwsh -NoLogo -NoProfile -NonInteractive -File "$ATLASO_SRC/image/common/powershell/provision-powercli.ps1" \
+    -Mode Validate -ModuleRoot "$ATLASO_POWERCLI_MODULE_SOURCE"
   cp -R "$ATLASO_POWERCLI_MODULE_SOURCE"/. /usr/local/share/powershell/Modules/
 else
   if [ "$(awk '$2 == "/tmp" { print $3; exit }' /proc/mounts)" = "tmpfs" ]; then
     log_step "expanding build-time /tmp tmpfs to 4 GiB for VCF PowerCLI"
     mount -o remount,size=4G /tmp
   fi
-  pwsh -NoLogo -NoProfile -NonInteractive -Command \
-    '$ErrorActionPreference = "Stop"; Set-PSRepository -Name PSGallery -InstallationPolicy Trusted; try { Install-Module -Name VCF.PowerCLI -RequiredVersion $env:ATLASO_POWERCLI_VERSION -Repository PSGallery -Scope AllUsers -Force -AllowClobber -AcceptLicense -Confirm:$false } finally { Set-PSRepository -Name PSGallery -InstallationPolicy Untrusted }'
+  pwsh -NoLogo -NoProfile -NonInteractive -File "$ATLASO_SRC/image/common/powershell/provision-powercli.ps1" \
+    -Mode Install
 fi
 chmod 0755 /usr/local/share/powershell /usr/local/share/powershell/Modules
 chmod -R a+rX,go-w /usr/local/share/powershell/Modules
-pwsh -NoLogo -NoProfile -NonInteractive -Command \
-  '$ErrorActionPreference = "Stop"; $module = Get-Module -Name VCF.PowerCLI -ListAvailable | Where-Object Version -eq $env:ATLASO_POWERCLI_VERSION | Select-Object -First 1; if (-not $module) { throw "VCF.PowerCLI $env:ATLASO_POWERCLI_VERSION is not installed" }; Import-Module $module.Path -Force; Set-PowerCLIConfiguration -ParticipateInCeip $false -Scope AllUsers -Confirm:$false | Out-Null; $configured = Get-PowerCLIConfiguration -Scope AllUsers; if ([bool]$configured.ParticipateInCEIP) { throw "VCF.PowerCLI CEIP default was not disabled" }; if (-not (Get-Command Connect-VIServer -ErrorAction SilentlyContinue)) { throw "Connect-VIServer is not available" }; Write-Host "VCF.PowerCLI $($module.Version) verified with appliance-wide CEIP disabled"'
+pwsh -NoLogo -NoProfile -NonInteractive -File "$ATLASO_SRC/image/common/powershell/provision-powercli.ps1" \
+  -Mode Verify -ConfigureCeip
+# PowerCLI creates AllUsers configuration under the build's restrictive umask.
+# Keep the shared preference root-writable and readable by local pwsh users.
+chmod 0755 /var/opt/VMware /var/opt/VMware/PowerCLI
+chmod 0644 /var/opt/VMware/PowerCLI/PowerCLI_Settings.xml
 
 log_step "verifying Photon OS updates after package install"
 run_tdnf "Photon OS update verification" update
@@ -565,8 +571,8 @@ chmod 0440 /etc/sudoers.d/atlaso-bootstrap-admin
 visudo -cf /etc/sudoers.d/atlaso-bootstrap-admin
 verify_bootstrap_powercli() {
   sudo -H -u "$BOOTSTRAP_USERNAME" env -u PSModulePath ATLASO_POWERCLI_VERSION="$ATLASO_POWERCLI_VERSION" \
-    pwsh -NoLogo -NoProfile -NonInteractive -Command \
-    '$ErrorActionPreference = "Stop"; $module = Get-Module -Name VCF.PowerCLI -ListAvailable | Where-Object Version -eq $env:ATLASO_POWERCLI_VERSION | Select-Object -First 1; if (-not $module) { throw "VCF.PowerCLI $env:ATLASO_POWERCLI_VERSION is not available to the bootstrap administrator" }; Import-Module $module.Path -Force; $configured = Get-PowerCLIConfiguration -Scope AllUsers; if ([bool]$configured.ParticipateInCEIP) { throw "VCF.PowerCLI CEIP default is not disabled for the bootstrap administrator" }; if (-not (Get-Command Connect-VIServer -ErrorAction SilentlyContinue)) { throw "Connect-VIServer is not available to the bootstrap administrator" }; Write-Host "VCF.PowerCLI $($module.Version) verified as $([Environment]::UserName) with appliance-wide CEIP disabled"'
+    pwsh -NoLogo -NoProfile -NonInteractive -File "$ATLASO_SRC/image/common/powershell/provision-powercli.ps1" \
+    -Mode Verify
 }
 verify_bootstrap_powercli
 
@@ -1023,8 +1029,8 @@ command -v python3 >/dev/null
 command -v pwsh >/dev/null
 command -v vmtoolsd >/dev/null 2>&1 || [ "$ATLASO_GUEST_PLATFORM" != "vmware" ]
 "$ATLASO_HOME/.venv/bin/python" -c 'import atlaso'
-pwsh -NoLogo -NoProfile -NonInteractive -Command \
-  '$ErrorActionPreference = "Stop"; Import-Module VCF.PowerCLI -RequiredVersion $env:ATLASO_POWERCLI_VERSION -Force'
+pwsh -NoLogo -NoProfile -NonInteractive -File "$ATLASO_HOME/image/common/powershell/provision-powercli.ps1" \
+  -Mode Verify
 python3 "$PHOTON_PACKAGE_STATE_VERIFIER" --guest-platform "$ATLASO_GUEST_PLATFORM"
 
 run_tdnf "Final Photon package cache cleanup" clean all
@@ -1044,8 +1050,8 @@ verify_bootstrap_powercli
 nginx -t
 "$ATLASO_HOME/.venv/bin/python" "$ATLASO_HOME/scripts/check_photon_compatibility.py"
 "$ATLASO_HOME/.venv/bin/python" -c 'import atlaso'
-pwsh -NoLogo -NoProfile -NonInteractive -Command \
-  '$ErrorActionPreference = "Stop"; Import-Module VCF.PowerCLI -RequiredVersion $env:ATLASO_POWERCLI_VERSION -Force'
+pwsh -NoLogo -NoProfile -NonInteractive -File "$ATLASO_HOME/image/common/powershell/provision-powercli.ps1" \
+  -Mode Verify
 python3 "$PHOTON_PACKAGE_STATE_VERIFIER" --guest-platform "$ATLASO_GUEST_PLATFORM"
 log_step "scrubbing host identity after final Photon update"
 rm -f /etc/ssh/ssh_host_* /etc/machine-id /var/lib/dbus/machine-id
