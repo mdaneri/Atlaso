@@ -10386,13 +10386,13 @@ def make_appliance_apply_unit(
         settings = get_settings()
         # Domain-separated HMAC binds hidden edits without publishing a
         # password-guessing oracle or secret material in review/task metadata.
-        snapshot_payload["protected_revision"] = hmac.new(
+        snapshot_payload["protected_revision"] = hmac.digest(
             (settings.secrets_key or settings.secret_key).encode("utf-8"),
             b"atlaso-esxi-apply-v1\x00" + esxi_apply_comparison_preview(
                 raw_config_preview if raw_config_preview is not None else config_preview
             ).encode("utf-8"),
-            hashlib.sha256,
-        ).hexdigest()
+            "sha256",
+        ).hex()
     current_hash = appliance_snapshot_hash(snapshot_payload)
     baseline_hash = str((baseline or {}).get("snapshot_hash") or "")
     runtime_pending = False
