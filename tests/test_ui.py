@@ -2750,11 +2750,17 @@ def test_appliance_apply_status_api_tracks_autosaved_desired_state(client):
         client: HTTP test client used to exercise the Atlaso application.
     """
     from atlaso.app.database import SessionLocal
+    from atlaso.app.secrets import encrypt_secret
     from atlaso.app.ui import appliance_apply_units, update_appliance_apply_baselines
 
     login(client)
     with SessionLocal() as db:
         units = appliance_apply_units(db)
+        # Model a completed real Apply, including its protected runtime receipt.
+        for unit in units:
+            if unit["id"] == "esxi_pxe":
+                from atlaso.app.services.network_boot import save_esxi_applied_runtime
+                save_esxi_applied_runtime(db, encrypt_secret(unit["raw_config_preview"]))
         update_appliance_apply_baselines(db, units, {unit["id"] for unit in units})
         db.commit()
 
@@ -15727,6 +15733,11 @@ def test_successful_esxi_pxe_apply_marks_network_boot_state_in_job_session(
             "marker": "current-desired-state",
         }
     )
+    desired_payload = json.loads(desired_preview)
+    desired_payload["network_boot"]["environments"] = [
+        {"key": "memtest86plus", "enabled": True, "desired_version": "8.10"},
+    ]
+    desired_preview = json.dumps(desired_payload)
     unit = {
         "id": "esxi_pxe",
         "label": "ESXi PXE",
@@ -15736,6 +15747,7 @@ def test_successful_esxi_pxe_apply_marks_network_boot_state_in_job_session(
         "validation_warnings": [],
         "config_path": "/var/lib/atlaso/apply/esxi-pxe/atlaso-esxi-pxe.json",
         "config_preview": desired_preview,
+        "raw_config_preview": desired_preview,
         "config_diff": "",
         "context": {},
     }
