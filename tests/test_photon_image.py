@@ -980,7 +980,8 @@ def test_photon_provisioning_installs_default_nginx_management_proxy():
     assert 'ENV{ID_SERIAL}==""' not in script
     assert "powershell" in script
     assert "VCF.PowerCLI" in script
-    assert "9.1.0.25380678" in script
+    powercli_lock = json.loads(Path("image/common/powershell/powercli-lock.json").read_text(encoding="utf-8"))
+    assert powercli_lock["suite_version"] in script
     powercli = Path("image/common/powershell/provision-powercli.ps1").read_text(encoding="utf-8")
     assert "Connect-VIServer" in powercli
     assert "Set-PowerCLIConfiguration -ParticipateInCeip $false -Scope AllUsers -Confirm:$false" in powercli

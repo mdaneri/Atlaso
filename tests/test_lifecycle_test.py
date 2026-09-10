@@ -884,9 +884,10 @@ def test_host_state_checks_verify_vcf_trust_runtime_dependencies(monkeypatch):
     encoded_vcf_sdk_probe = lifecycle.base64.b64encode(
         b'from importlib.metadata import version; assert version("vcf-sdk") == "9.1.0.0"'
     ).decode("ascii")
+    powercli_version = json.loads(Path("image/common/powershell/powercli-lock.json").read_text(encoding="utf-8"))["suite_version"]
     encoded_powercli_probe = lifecycle.base64.b64encode(
         (
-            '$m = Get-Module VCF.PowerCLI -ListAvailable | Where-Object Version -eq "9.1.0.25380678" | '
+            f'$m = Get-Module VCF.PowerCLI -ListAvailable | Where-Object Version -eq "{powercli_version}" | '
             'Select-Object -First 1; if (-not $m) { exit 1 }; Import-Module $m.Path -Force; '
             '$configured = Get-PowerCLIConfiguration -Scope AllUsers; if ([bool]$configured.ParticipateInCEIP) { exit 1 }; '
             'if (-not (Get-Command Connect-VIServer -ErrorAction SilentlyContinue)) { exit 1 }'

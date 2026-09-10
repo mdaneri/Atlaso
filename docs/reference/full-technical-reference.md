@@ -1161,7 +1161,7 @@ The MVP follows these boundaries:
   reconfiguration. Management source networks use the management route table; access and route networks use the lab
   route table. A static dedicated-management family with a default gateway persists its connected prefix as a scope-link
   route in table `100`, beside the source rule and default, so same-subnet host-facing replies remain direct after reboot.
-- Photon image provisioning installs Photon's `powershell` package, system-wide `VCF.PowerCLI` `9.1.0.25380678`, and
+- Photon image provisioning installs Photon's `powershell` package, system-wide `VCF.PowerCLI` `9.1.1.25718932`, and
   Python `vcf-sdk` `9.1.0.0`. The image's complete PowerCLI dependency set is pinned in
   `image/common/powershell/powercli-lock.json`; online and offline provisioning reject missing, incompatible, or
   side-by-side module versions and verify the loaded closure in fresh root and bootstrap-administrator processes.

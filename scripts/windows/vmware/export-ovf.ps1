@@ -1,6 +1,10 @@
 <#
 .SYNOPSIS
 Export a VMware VMX into a validated Atlaso OVF/OVA package.
+.DESCRIPTION
+Checks the latest PowerCLI suite before export admission. Ordinary exports refresh
+outdated source and stop for review, commit, and image rebuild. Release and
+prerelease modes check without modifying source; current locks remain untouched.
 
 .PARAMETER SourceVmxPath
 Explicit path to the proven task-owned, local/test, or release-owned source VMX used for ovftool export.
@@ -119,6 +123,12 @@ if ($Release -and $Prerelease) {
 }
 
 $repoRoot = (Resolve-Path -LiteralPath (Join-Path $PSScriptRoot '..\..\..')).Path
+$powerCliRefreshArguments = @((Join-Path $repoRoot 'scripts/update_powercli_lock.py'), '--before-build')
+if ($Release -or $Prerelease) { $powerCliRefreshArguments += '--check' }
+& python @powerCliRefreshArguments
+if ($LASTEXITCODE -ne 0) {
+    throw 'PowerCLI refresh did not admit the export. Follow the refresh diagnostic, then rebuild and rerun.'
+}
 if ($Release -or $Prerelease) {
     $releaseModule = Join-Path $repoRoot 'scripts\windows\virtualization\Atlaso.VirtualizationRelease.psm1'
     Import-Module $releaseModule -Force

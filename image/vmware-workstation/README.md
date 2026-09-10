@@ -1,6 +1,6 @@
 # Atlaso Photon OS VMware Workstation Image
 
-The base image includes Python `vcf-sdk==9.1.0.0` and system-wide `VCF.PowerCLI==9.1.0.25380678`. Provisioning fails if
+The base image includes Python `vcf-sdk==9.1.0.0` and system-wide `VCF.PowerCLI==9.1.1.25718932`. Provisioning fails if
 PowerCLI cannot import or `Connect-VIServer` is unavailable to the unprivileged bootstrap administrator. Provisioning
 also disables and verifies PowerCLI CEIP participation at `AllUsers` scope; Appliance Settings can change that central
 preference after deployment without product-specific prompts. The system module tree remains root-owned and writable
@@ -8,15 +8,31 @@ only by root, while every local `/usr/bin/pwsh` user can read and import its mod
 `ATLASO_POWERCLI_MODULE_SOURCE` to a pre-staged module directory for offline image builds; otherwise PSGallery is used.
 The image's complete dependency set is pinned in `image/common/powershell/powercli-lock.json`, including
 `VMware.OpenAPI` and its transitive dependencies. `provision-powercli.ps1` saves each exact package through
-`Save-PSResource -SkipDependencyCheck`, then checks every vendor manifest's dependency constraints without changing
+exact-version Gallery downloads and built-in .NET ZIP extraction, then checks every vendor manifest's dependency
+constraints without changing
 its declarations, catalogs, or signatures. This prevents a newly published Gallery dependency from mixing release
-families under the older suite pin. PowerShell's bundled PSResourceGet module is required.
+families under the older suite pin. No PSResourceGet installation is required on Photon.
 Offline bundles use the same `ModuleName/Version` layout and must contain every locked module with only its locked
 version. Missing modules, incompatible manifests, and side-by-side versions fail before the bundle is copied.
 Fresh root and bootstrap-administrator processes reject shadowing module copies, import the suite, verify every loaded
 module version and `Connect-VIServer`, and check the appliance-wide CEIP default. Final package-update checks repeat
 that proof. Updating `ATLASO_POWERCLI_VERSION` requires a matching reviewed complete lock; a suite-only override is
 rejected. This image-build lock does not change the runtime Appliance Update workflow.
+
+Both `build-photon-image.ps1` and `export-ovf.ps1` automatically run
+`python scripts/update_powercli_lock.py --before-build` before build/export admission. The helper queries the latest
+stable **suite** release, resolves its complete dependency set from Gallery metadata, and checks every dependency
+constraint. Individual components never independently float to latest. If the suite is already current, no files are
+written (including the lock's timestamp). A newer suite refreshes the lock and image baseline references together;
+the command then stops so the changes can be reviewed, validated, and committed before rerunning. Existing VM payloads
+must be rebuilt; refreshing source cannot update an already-built VM. Release/prerelease entry points use read-only
+`--check` and require the refreshed baseline to have reached the committed release source. Metadata errors or
+incompatible dependency graphs stop admission without changing files. The isolated build child uses its frozen lock
+and does not query Gallery again.
+
+For a manual refresh, run `python scripts/update_powercli_lock.py`, or select a known stable suite with
+`--version X.Y.Z.BUILD`. Downgrades are rejected. Validate the generated closure with image provisioning and the focused
+PowerCLI tests before committing; Gallery dependency metadata is checked again against the downloaded vendor manifests.
 
 Before a PSGallery install, the shared provisioner expands Photon's build-time `/tmp` tmpfs to 4 GiB so PowerCLI's
 dependency extraction does not exhaust the default memory-backed temporary filesystem. The deployed appliance returns

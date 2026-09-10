@@ -24,6 +24,7 @@ param(
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
+$ModuleRoot = [System.IO.Path]::GetFullPath($ModuleRoot)
 $lock = Get-Content -LiteralPath $LockPath -Raw | ConvertFrom-Json -AsHashtable
 if ($lock.schema_version -ne 1 -or $lock.modules.Count -eq 0 -or
     $lock.modules['VCF.PowerCLI'] -ne $lock.suite_version -or
@@ -95,14 +96,24 @@ function Test-PowerCliBundle {
 }
 
 if ($Mode -eq 'Install') {
-    # Save each exact package without invoking the Gallery's open-ended resolver.
-    # Save-PSResource retains the publisher's manifests, catalogs and signatures.
-    Get-Command Save-PSResource -ErrorAction Stop | Out-Null
+    # Photon does not bundle PSResourceGet. Extract exact Gallery packages with
+    # built-in .NET APIs, retaining publisher manifests, catalogs and signatures.
     New-Item -ItemType Directory -Path $ModuleRoot -Force | Out-Null
     foreach ($name in ($lock.modules.Keys | Sort-Object)) {
-        Write-Host "Saving locked PowerCLI module $name $($lock.modules[$name])"
-        Save-PSResource -Name $name -Version $lock.modules[$name] -Repository PSGallery `
-            -Path $ModuleRoot -SkipDependencyCheck -TrustRepository -AcceptLicense
+        $version = $lock.modules[$name]
+        $destination = Join-Path $ModuleRoot "$name/$version"
+        if (Test-Path -LiteralPath $destination) {
+            throw "PowerCLI install destination already exists: $name $version."
+        }
+        $archive = Join-Path $ModuleRoot ".powercli-$([guid]::NewGuid().ToString('N')).nupkg"
+        Write-Host "Saving locked PowerCLI module $name $version"
+        try {
+            Invoke-WebRequest -Uri "https://www.powershellgallery.com/api/v2/package/$name/$version" `
+                -OutFile $archive -TimeoutSec 300
+            [System.IO.Compression.ZipFile]::ExtractToDirectory($archive, $destination)
+        } finally {
+            if (Test-Path -LiteralPath $archive) { Remove-Item -LiteralPath $archive -Force }
+        }
     }
 }
 Test-PowerCliBundle -Root $ModuleRoot

@@ -158,13 +158,11 @@ def test_install_saves_each_exact_package_without_resolution(
     wrapper = tmp_path / "install.ps1"
     wrapper.write_text(
         "param($Script,$Source,$Target,$Lock)\n"
-        "function Save-PSResource {\n"
-        "param($Name,$Version,$Repository,$Path,[switch]$SkipDependencyCheck,"
-        "[switch]$TrustRepository,[switch]$AcceptLicense)\n"
-        "if (-not $SkipDependencyCheck -or $Repository -ne 'PSGallery') { throw 'resolver called' }\n"
-        "New-Item -ItemType Directory -Path (Join-Path $Path $Name) -Force | Out-Null\n"
-        'Copy-Item -LiteralPath (Join-Path $Source "$Name/$Version") '
-        "-Destination (Join-Path $Path $Name) -Recurse\n}\n"
+        "function Invoke-WebRequest {\n"
+        "param($Uri,$OutFile,$TimeoutSec)\n"
+        "$parts = $Uri.Split('/'); $Name = $parts[-2]; $Version = $parts[-1]\n"
+        "[System.IO.Compression.ZipFile]::CreateFromDirectory("
+        '(Join-Path $Source "$Name/$Version"), $OutFile)\n}\n'
         "& $Script -Mode Install -ModuleRoot $Target -LockPath $Lock\n",
         encoding="utf-8",
     )
@@ -198,7 +196,9 @@ def test_checked_in_lock_pins_the_reported_dependency_chain() -> None:
     lock = json.loads(
         SCRIPT.with_name("powercli-lock.json").read_text(encoding="utf-8")
     )
-    assert lock["modules"]["VMware.OpenAPI"] == "13.5.0.25380678"
-    assert lock["modules"]["VMware.Vim"] == "9.1.0.25380678"
-    assert lock["modules"]["VMware.Vcf.Sso"] == "13.5.0.25380678"
-    assert lock["modules"]["VMware.VimAutomation.Common"] == "13.5.0.25380678"
+    # Baseline upgrades may change the family, but these components must move together.
+    family = lock["modules"]["VMware.OpenAPI"]
+    assert lock["modules"]["VMware.Vcf.Sso"] == family
+    assert lock["modules"]["VMware.VimAutomation.Common"] == family
+    assert lock["modules"]["VMware.VimAutomation.Sdk"] == family
+    assert lock["modules"]["VCF.PowerCLI"] == lock["suite_version"]
