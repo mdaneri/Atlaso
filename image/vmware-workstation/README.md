@@ -15,6 +15,8 @@ families under the older suite pin. No PSResourceGet installation is required on
 The reviewed lock records SHA-256 digests for each archive and for its complete extracted file tree. Downloads are
 checked before extraction; online and offline module contents are checked before any vendor import. Added, removed,
 or modified files fail admission even when module manifests still declare the expected versions.
+Bundle roots, module parents, version directories, and their ancestors must be ordinary directories; symlinks and
+reparse points are rejected before installation or offline-bundle acceptance.
 Offline bundles use the same `ModuleName/Version` layout and must contain every locked module with only its locked
 version. Missing modules, incompatible manifests, and side-by-side versions fail before the bundle is copied.
 Fresh root and bootstrap-administrator processes reject shadowing module copies, import the suite, verify every loaded

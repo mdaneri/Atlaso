@@ -40,6 +40,34 @@ foreach ($name in $lock.modules.Keys) {
     }
 }
 
+function Assert-PowerCliDirectoryPath {
+    <#
+    .SYNOPSIS
+    Reject symlink or reparse-point ancestors before creating or reading a bundle.
+    .PARAMETER Path
+    Directory path whose existing components must all be ordinary directories.
+    #>
+    param([string]$Path)
+    $directory = [IO.DirectoryInfo]::new([IO.Path]::GetFullPath($Path))
+    while ($null -ne $directory) {
+        $item = $null
+        try {
+            $item = Get-Item -LiteralPath $directory.FullName -Force
+        } catch [System.Management.Automation.ItemNotFoundException] {
+            # Installation can create absent components after checking ancestors.
+        }
+        if ($null -ne $item) {
+            if (-not $item.PSIsContainer -or
+                ($item.Attributes -band [IO.FileAttributes]::ReparsePoint)) {
+                throw 'PowerCLI directory path contains a symlink, reparse point, or non-directory.'
+            }
+        }
+        $directory = $directory.Parent
+    }
+}
+
+Assert-PowerCliDirectoryPath -Path $ModuleRoot
+
 function Get-PowerCliContentDigest {
     <#
     .SYNOPSIS
@@ -89,6 +117,7 @@ function Test-PowerCliBundle {
     foreach ($name in ($lock.modules.Keys | Sort-Object)) {
         $version = $lock.modules[$name]
         $directory = Join-Path $Root $name
+        Assert-PowerCliDirectoryPath -Path $directory
         $versions = @(Get-ChildItem -LiteralPath $directory -Directory)
         if ($versions.Count -ne 1 -or $versions[0].Name -ne $version) {
             throw "PowerCLI bundle requires only ${name} ${version}; found $($versions.Name -join ', ')."
@@ -143,6 +172,7 @@ if ($Mode -eq 'Install') {
     foreach ($name in ($lock.modules.Keys | Sort-Object)) {
         $version = $lock.modules[$name]
         $destination = Join-Path $ModuleRoot "$name/$version"
+        Assert-PowerCliDirectoryPath -Path $destination
         if (Test-Path -LiteralPath $destination) {
             throw "PowerCLI install destination already exists: $name $version."
         }

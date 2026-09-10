@@ -292,6 +292,43 @@ def test_install_saves_each_exact_package_without_resolution(
         assert path.read_bytes() == (root / path.relative_to(target)).read_bytes()
 
 
+@pytest.mark.parametrize("linked_component", ["module", "root"])
+def test_linked_bundle_ancestor_is_rejected(
+    bundle: tuple[Path, Path], linked_component: str
+) -> None:
+    """Identical package bytes outside a linked parent must never pass offline admission."""
+    root, lock = bundle
+    source = root / "VMware.OpenAPI" if linked_component == "module" else root
+    destination = root.parent / f"relocated-{linked_component}"
+    assert source.resolve().is_relative_to(lock.parent.resolve())
+    assert destination.resolve().is_relative_to(lock.parent.resolve())
+    source.rename(destination)
+    if os.name == "nt":
+        result = subprocess.run(
+            [
+                str(PWSH),
+                "-NoProfile",
+                "-Command",
+                "New-Item -ItemType Junction -Path $env:LINK_PATH -Target $env:LINK_TARGET | Out-Null",
+            ],
+            env={
+                **os.environ,
+                "LINK_PATH": str(source),
+                "LINK_TARGET": str(destination),
+            },
+            capture_output=True,
+            text=True,
+            timeout=30,
+            check=False,
+        )
+        assert result.returncode == 0, result.stderr
+    else:
+        source.symlink_to(destination, target_is_directory=True)
+    result = run(bundle)
+    assert result.returncode != 0
+    assert "directory path contains a symlink" in result.stderr
+
+
 def test_checked_in_lock_pins_the_reported_dependency_chain() -> None:
     """Keep the repaired release family explicit instead of resolving Gallery latest."""
     lock = json.loads(
