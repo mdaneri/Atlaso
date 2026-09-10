@@ -483,6 +483,13 @@ networking. The retry never exposes a password whose corresponding host state wa
 VMware continues into OVF-property customization. Hyper-V, KVM, and Proxmox use DHCP-first defaults and do not wait for
 VMware metadata. Use the appliance console to complete initial networking when DHCP is unavailable.
 
+Management DHCP configuration retains Photon's `SendRelease=no` policy through image provisioning, OVF customization,
+and Network Apply. Reboot therefore does not explicitly release the management lease, which can cause Hyper-V's
+Default Switch to assign a different address despite an unchanged MAC and DHCP client identity. DHCP remains subject
+to server policy and lease expiry; use a reservation or static address when permanent address stability is required.
+Smoke validation still rejects an address change across reboot. Existing exported images require a rebuild to receive
+the provisioning setting.
+
 DHCP-first images admit management SSH and HTTP/HTTPS over IPv4 only through the deployed management interface
 (`eth0`). IPv6 management admission requires explicit deployment configuration.
 The temporary VMware builder subnet is not retained as a source restriction. An explicitly supplied
