@@ -52,6 +52,12 @@ restores the previous rule with its original Source Group constraint.
 
 ## Verify and recover
 
+Port-forward admissions appear as read-only generated rows attributed to their Traffic Publishing resource. They
+match the original listener, protocol, external ports, source boundary, and ingress of the translated connection.
+Edit the owning [port forward](../operate/traffic-publishing.md#configure-port-forwarding) to change that boundary.
+Firewall and NAT are captured and published together whenever port-forward state must be installed or retired.
+Removing a rule also retires its owned connection marks and counters; unrelated connections are preserved.
+
 After a successful task, test the required TCP or UDP service from the intended network. On the appliance, maintainers
 can verify the effective state with `nft list ruleset`. If a rule removes management access, recover through the
 [local appliance console](../operate/appliance-console.md) and restore the previous desired state.

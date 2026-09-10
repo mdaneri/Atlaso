@@ -1485,6 +1485,15 @@ if ! command -v gpg >/dev/null 2>&1; then
     tdnf -y install gnupg
 fi
 
+if ! command -v conntrack >/dev/null 2>&1; then
+    if ! command -v tdnf >/dev/null 2>&1; then
+        echo "conntrack-tools is required for managed port-forward retirement and tdnf is unavailable." >&2
+        exit 2
+    fi
+    echo "Installing conntrack-tools for managed port-forward retirement..."
+    tdnf -y install conntrack-tools
+fi
+
 old_ifs="$IFS"
 IFS=:
 for runtime_dependency_path in $runtime_dependency_paths; do

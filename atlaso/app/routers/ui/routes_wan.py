@@ -22,6 +22,9 @@ from atlaso.app.models import (
     VlanInterface,
     WanPolicy,
 )
+from atlaso.app.routers.ui.port_forwards import (
+    build_router as build_port_forwards_router,
+)
 from atlaso.app.security import Identity, require_session_identity
 from atlaso.app.services.network_objects import acquire_network_objects_write_lock
 from atlaso.app.services.routes_wan import (
@@ -1279,4 +1282,10 @@ def build_router(dependencies: RoutesWanUiDependencies) -> RoutesWanUiRouter:
         "edit_policy_from_ui": edit_policy_from_ui,
         "delete_policy_from_ui": delete_policy_from_ui,
     }
+    # Keep the facade's concrete route inventory while preserving listener
+    # admission on every independently owned destination-translation endpoint.
+    router.routes.extend(build_port_forwards_router(
+        verify_csrf=verify_csrf, context=dependencies.traffic_publishing_context,
+        require_management_ui_request=dependencies.require_management_ui_request,
+    ).routes)
     return RoutesWanUiRouter(router=router, endpoints=endpoints)

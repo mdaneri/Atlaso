@@ -1,6 +1,6 @@
 ---
 title: Traffic Publishing
-description: Configure explicit IPv4 and IPv6 source translation and apply it safely.
+description: Configure explicit IPv4 and IPv6 source translation and port forwarding.
 audience:
   - operator
   - maintainer
@@ -9,7 +9,8 @@ status: current
 
 # Traffic Publishing
 
-Use **Traffic Publishing** at `/ui/management/traffic-publishing` to configure source NAT. **Routing & WAN**
+Use **Traffic Publishing** at `/ui/management/traffic-publishing` to configure source NAT and port forwarding.
+**Routing & WAN**
 at `/ui/management/routes-wan` owns static routes, routing permissions, forwarding, and WAN simulation. Traffic
 Publishing requires Firewall read permission; changing its browser settings or rules requires Firewall write permission.
 
@@ -53,7 +54,43 @@ This verified appliance view provides visual orientation before you begin.
 
 Saving only changes desired state. There is no rule-specific Apply action. Disabled features preserve their rows.
 Every rendered rule includes explicit ingress selectors, so appliance-originated traffic cannot match it. This page
-does not configure destination NAT, port forwarding, proxies, address pools, or NPTv6.
+does not configure proxies, address pools, or NPTv6.
+
+## Configure port forwarding
+
+1. Select the **Port Forwarding** tab and add a rule. Enter its name, purpose, and priority.
+2. Choose IPv4 or IPv6, one eligible addressed ingress interface or VLAN, and its exact listener address.
+   Dedicated management interfaces are excluded. An access interface with the management UI flag remains eligible,
+   but Atlaso service listener ports cannot be redirected.
+3. Choose TCP or UDP and the external port range. Enter the same-family target address and an equally sized target
+   port range. For example, `12000–12002` to `13000–13002` maps each port by its offset. The target must be another
+   host and cannot be a dedicated management-network address. IPv6 forwarding uses stateful NAT66.
+4. Choose Any, a shared Source Group, or explicit same-family CIDRs. The source restriction applies only inside the
+   selected ingress boundary. Overlapping enabled listeners are rejected even when their source restrictions differ.
+5. Keep **Preserve client source** unless the target's return path requires reply masquerade. With preservation,
+   arrange the target's route back to the client through Atlaso. Masquerade replaces the original client source;
+   selecting it requires an explicit acknowledgement before saving.
+6. Review the complete mapping and enablement. New rules default disabled. Save desired state, then use global
+   Appliance Apply. Routing must be enabled for activation; the Source NAT enable switch does not control port forwards.
+
+Firewall shows generated admission attributed to the owning port forward. These rows are read-only; edit their source
+boundary and listener in Traffic Publishing. Apply captures Firewall and NAT together, validates their complete program,
+and publishes both atomically. It commits both application baselines before acknowledging the root-owned recovery
+record. Management changes include this pair in the protected management handoff and its wider rollback.
+
+Removing, disabling, or suspending a rule retires its counters and Atlaso-marked connections during Apply. Existing
+sessions through that mapping must reconnect. This retirement never flushes unrelated connection tracking. Appliance
+images and wheel deployments include `conntrack-tools`; its daemon is not required. An unavailable retirement tool
+blocks publication rather than leaving stale translations active.
+
+Refresh status after applying. A missing lab route or a failed target/next-hop neighbor produces a degraded warning
+while keeping the safe mapping applied. Review Routing & WAN, the target address, power, and connectivity. A present
+route or an unresolved neighbor does not prove application health: test from an allowed client and check the target
+service. Status performs bounded read-only observations and does not probe target ports.
+
+Archives preserve complete mappings and source references. An unavailable restored interface relationship remains
+saved but disabled and marked for review. Factory reset removes desired mappings and retires their runtime state before
+replacing interface configuration. A pending publication recovery must be reconciled before reset can continue.
 
 ## Verify and recover
 
@@ -72,7 +109,8 @@ without replacing unrelated nftables tables. A durable recovery record restores 
 program, and service enablement if persistence or activation fails. Failed recovery remains actionable.
 
 Successful Apply persists `/etc/atlaso/traffic-publishing/atlaso-nat.conf` and enables `atlaso-nat.service` only while
-NAT intent is enabled. Disabling NAT or factory reset disables that replay service and clears translation. Boot and
+source NAT or port-forward intent is enabled. Disabling Source NAT does not disable port forwards. Factory reset clears
+both kinds of translation. Boot and
 control-plane startup rebuild selectors using current interface indexes. A replaced or missing NIC, or an unavailable
 fixed address, quarantines translation and requires review. The saved desired rule is preserved. Do not hand-edit
 `/etc/atlaso/nftables.d/atlaso-nat.nft`; the managed include path remains stable.
@@ -81,6 +119,39 @@ Management handoff rollback restores Firewall before replaying NAT, so a firewal
 the restored source translations.
 
 ## Upgrade, archives, and API compatibility
+
+### Port-forward API
+
+The `/api/v1/traffic-publishing/port-forwards` collection owns destination-translation intent independently of the
+legacy source NAT collection. List and read operations require `read:firewall`; create, replace, and delete require
+`write:firewall`. WAN permission does not grant access to these operations.
+
+| Operation | Meaning |
+| --- | --- |
+| `GET /api/v1/traffic-publishing/port-forwards` | List up to 256 saved rules, including disabled intent. |
+| `POST /api/v1/traffic-publishing/port-forwards` | Validate and create a complete rule; return `201`. |
+| `GET /api/v1/traffic-publishing/port-forwards/{id}` | Read one saved rule; return `404` when absent. |
+| `PUT /api/v1/traffic-publishing/port-forwards/{id}` | Validate and atomically replace the complete saved rule. |
+| `DELETE /api/v1/traffic-publishing/port-forwards/{id}` | Delete desired intent and return `204` without a body. |
+| `GET /api/v1/traffic-publishing/port-forwards/status` | Compare current intent with bounded applied observations. |
+
+A complete rule names one IP family, exact assigned ingress listener, TCP or UDP, ordered external and target port
+ranges of equal length, and a same-family target address. Each external port maps to the target port at the same
+offset. Source restrictions may use Any, a shared Source Group, or up to 128 same-family CIDRs. Source Groups containing
+both families are rejected instead of silently filtering their members. Enabled rules cannot overlap on the same
+family, listener, protocol, and external ports, even when their source restrictions differ. At most 65,535 external
+ports may be mapped across enabled rules.
+
+`reply_mode=preserve` keeps the original client address. Selecting `reply_mode=masquerade` requires
+`acknowledge_source_loss=true` in the create or replacement request. The acknowledgement is request-only. New rules
+default disabled. Validation failures use ProblemDetails and preserve the previous row and its audit history.
+Saving never invokes host enforcement; global Appliance Apply owns translation changes.
+
+Status distinguishes disabled, pending, suspended, applied, and degraded records. An edited target or source boundary
+does not inherit the previous mapping's counters. Packet and byte counts are nullable: unavailable observations are
+not reported as zero. These counters describe matched traffic, not proof that an application at the target is healthy.
+
+### Source NAT compatibility
 
 Existing IPv4 rules gain `ip_family=4`, `translation_mode=masquerade`, and an empty `translated_address`. Existing
 explicit NAT enablement migrates to the single `traffic_publishing.nat_enabled` setting. When neither global switch

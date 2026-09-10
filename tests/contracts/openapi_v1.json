@@ -6939,6 +6939,349 @@
         "title": "PhysicalInterfaceUpdate",
         "type": "object"
       },
+      "PortForwardCreate": {
+        "additionalProperties": false,
+        "description": "Review a complete rule; saving never invokes appliance enforcement.",
+        "properties": {
+          "acknowledge_source_loss": {
+            "default": false,
+            "description": "Required explicit acknowledgement when selecting reply masquerade; request-only, never archived.",
+            "title": "Acknowledge Source Loss",
+            "type": "boolean"
+          },
+          "description": {
+            "default": "",
+            "description": "Operator purpose for this forwarding rule.",
+            "maxLength": 1000,
+            "title": "Description",
+            "type": "string"
+          },
+          "enabled": {
+            "default": false,
+            "description": "Desired enablement; global Appliance Apply and Routing govern activation.",
+            "title": "Enabled",
+            "type": "boolean"
+          },
+          "external_port_end": {
+            "description": "Last external port, inclusive, at least the starting port.",
+            "maximum": 65535.0,
+            "minimum": 1.0,
+            "title": "External Port End",
+            "type": "integer"
+          },
+          "external_port_start": {
+            "description": "First external port, inclusive; use the same end for a single port.",
+            "maximum": 65535.0,
+            "minimum": 1.0,
+            "title": "External Port Start",
+            "type": "integer"
+          },
+          "ingress_interface": {
+            "description": "One eligible access or route physical interface or VLAN; dedicated management is excluded.",
+            "pattern": "^[A-Za-z0-9_.:-]{1,80}$",
+            "title": "Ingress Interface",
+            "type": "string"
+          },
+          "ip_family": {
+            "default": 4,
+            "description": "IPv4 DNAT (4) or stateful IPv6 NAT66 (6); NPTv6 is unsupported.",
+            "enum": [
+              4,
+              6
+            ],
+            "title": "Ip Family",
+            "type": "integer"
+          },
+          "listener_address": {
+            "description": "Exact same-family unicast address currently assigned to the ingress listener.",
+            "maxLength": 45,
+            "minLength": 2,
+            "title": "Listener Address",
+            "type": "string"
+          },
+          "name": {
+            "description": "Unique stable operator name for this port forward.",
+            "maxLength": 120,
+            "minLength": 1,
+            "title": "Name",
+            "type": "string"
+          },
+          "priority": {
+            "default": 100,
+            "description": "Non-negative rule ordering; lower values come first.",
+            "maximum": 2147483647.0,
+            "minimum": 0.0,
+            "title": "Priority",
+            "type": "integer"
+          },
+          "protocol": {
+            "description": "Transport protocol for the external and target port ranges.",
+            "enum": [
+              "tcp",
+              "udp"
+            ],
+            "title": "Protocol",
+            "type": "string"
+          },
+          "reply_mode": {
+            "default": "preserve",
+            "description": "Preserve the original client source by default; masquerade explicitly hides that source from the target.",
+            "enum": [
+              "preserve",
+              "masquerade"
+            ],
+            "title": "Reply Mode",
+            "type": "string"
+          },
+          "source": {
+            "default": "any",
+            "description": "Any, a stable group:<id> Source Group, or comma-separated same-family CIDRs inside the exact ingress boundary.",
+            "maxLength": 4096,
+            "minLength": 1,
+            "title": "Source",
+            "type": "string"
+          },
+          "target_address": {
+            "description": "Same-family unicast destination; cannot be an Atlaso-owned address or dedicated management target.",
+            "maxLength": 45,
+            "minLength": 2,
+            "title": "Target Address",
+            "type": "string"
+          },
+          "target_port_end": {
+            "description": "Last target port; the inclusive range must have exactly the external range's cardinality.",
+            "maximum": 65535.0,
+            "minimum": 1.0,
+            "title": "Target Port End",
+            "type": "integer"
+          },
+          "target_port_start": {
+            "description": "First target port; translation preserves each external port's offset.",
+            "maximum": 65535.0,
+            "minimum": 1.0,
+            "title": "Target Port Start",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "name",
+          "ingress_interface",
+          "listener_address",
+          "protocol",
+          "external_port_start",
+          "external_port_end",
+          "target_address",
+          "target_port_start",
+          "target_port_end"
+        ],
+        "title": "PortForwardCreate",
+        "type": "object"
+      },
+      "PortForwardResponse": {
+        "description": "Expose saved intent with no raw helper expressions or runtime handles.",
+        "properties": {
+          "apply_required": {
+            "const": true,
+            "default": true,
+            "description": "All saves change desired state only; global Appliance Apply owns host mutation.",
+            "title": "Apply Required",
+            "type": "boolean"
+          },
+          "created_at": {
+            "description": "UTC creation timestamp.",
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "description": {
+            "description": "Operator purpose for this rule.",
+            "title": "Description",
+            "type": "string"
+          },
+          "enabled": {
+            "description": "Desired enablement, effective only after global Appliance Apply with Routing enabled.",
+            "title": "Enabled",
+            "type": "boolean"
+          },
+          "external_port_end": {
+            "description": "Last external port, inclusive.",
+            "title": "External Port End",
+            "type": "integer"
+          },
+          "external_port_start": {
+            "description": "First external port, inclusive.",
+            "title": "External Port Start",
+            "type": "integer"
+          },
+          "id": {
+            "description": "Stable database identifier of the port forward.",
+            "title": "Id",
+            "type": "integer"
+          },
+          "ingress_interface": {
+            "description": "Saved exact physical-interface or VLAN ingress identity.",
+            "title": "Ingress Interface",
+            "type": "string"
+          },
+          "ip_family": {
+            "description": "IPv4 (4) or stateful NAT66 (6).",
+            "enum": [
+              4,
+              6
+            ],
+            "title": "Ip Family",
+            "type": "integer"
+          },
+          "listener_address": {
+            "description": "Saved exact ingress listener address.",
+            "title": "Listener Address",
+            "type": "string"
+          },
+          "name": {
+            "description": "Unique operator-facing name.",
+            "title": "Name",
+            "type": "string"
+          },
+          "priority": {
+            "description": "Non-negative evaluation order.",
+            "title": "Priority",
+            "type": "integer"
+          },
+          "protocol": {
+            "description": "TCP or UDP transport protocol.",
+            "enum": [
+              "tcp",
+              "udp"
+            ],
+            "title": "Protocol",
+            "type": "string"
+          },
+          "reply_mode": {
+            "description": "Original client source preservation or explicitly reviewed reply masquerade.",
+            "enum": [
+              "preserve",
+              "masquerade"
+            ],
+            "title": "Reply Mode",
+            "type": "string"
+          },
+          "restore_review_required": {
+            "description": "True when archive restore retained an unavailable binding disabled for explicit review.",
+            "title": "Restore Review Required",
+            "type": "boolean"
+          },
+          "source": {
+            "description": "Saved Any, Source Group reference, or same-family CIDR boundary.",
+            "title": "Source",
+            "type": "string"
+          },
+          "target_address": {
+            "description": "Same-family target unicast address.",
+            "title": "Target Address",
+            "type": "string"
+          },
+          "target_port_end": {
+            "description": "Last translated port, inclusive.",
+            "title": "Target Port End",
+            "type": "integer"
+          },
+          "target_port_start": {
+            "description": "First translated port, inclusive.",
+            "title": "Target Port Start",
+            "type": "integer"
+          },
+          "updated_at": {
+            "description": "UTC latest desired-state update timestamp.",
+            "format": "date-time",
+            "title": "Updated At",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "description",
+          "priority",
+          "enabled",
+          "ip_family",
+          "ingress_interface",
+          "listener_address",
+          "protocol",
+          "external_port_start",
+          "external_port_end",
+          "target_address",
+          "target_port_start",
+          "target_port_end",
+          "source",
+          "reply_mode",
+          "restore_review_required",
+          "created_at",
+          "updated_at"
+        ],
+        "title": "PortForwardResponse",
+        "type": "object"
+      },
+      "PortForwardStatus": {
+        "description": "Return bounded applied observations without fabricating missing counters.",
+        "properties": {
+          "bytes": {
+            "anyOf": [
+              {
+                "minimum": 0.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Observed matched bytes since last activation; null means unavailable, not zero.",
+            "title": "Bytes"
+          },
+          "detail": {
+            "description": "Bounded actionable status without raw command output or nftables handles.",
+            "maxLength": 500,
+            "title": "Detail",
+            "type": "string"
+          },
+          "id": {
+            "description": "Saved port-forward identifier.",
+            "title": "Id",
+            "type": "integer"
+          },
+          "packets": {
+            "anyOf": [
+              {
+                "minimum": 0.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Observed matched packets since last activation; null means unavailable, not zero.",
+            "title": "Packets"
+          },
+          "state": {
+            "description": "Desired/applied comparison and observed runtime readiness.",
+            "enum": [
+              "disabled",
+              "pending",
+              "suspended",
+              "applied",
+              "degraded"
+            ],
+            "title": "State",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "state",
+          "detail"
+        ],
+        "title": "PortForwardStatus",
+        "type": "object"
+      },
       "ProblemDetails": {
         "description": "Validated fields used by the Atlaso problem details API contract.\n\nAttributes:\n    type: Stable URI identifying the problem or resource type.\n    title: Short human-readable summary of the response or problem.\n    status: Returned status value for this problem details resource.\n    detail: Human-readable detail explaining the current state or failure.\n    instance: Request path associated with this problem response.\n    error_code: Stable Atlaso error identifier suitable for programmatic handling.\n    request_id: Request correlation identifier included in responses and operational logs.",
         "properties": {
@@ -17606,6 +17949,285 @@
         "summary": "Update App Settings",
         "tags": [
           "Settings"
+        ]
+      }
+    },
+    "/api/v1/traffic-publishing/port-forwards": {
+      "get": {
+        "description": "List managed port-forward desired state.\n\nRequires `read:firewall`. Returns at most 256 saved rules, including disabled\nand suspended intent. These records do not assert live activation. Global\nAppliance Apply is the only host-mutation boundary.",
+        "operationId": "listPortForwards",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/PortForwardResponse"
+                  },
+                  "title": "Response Listportforwards",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "List managed port-forward desired state. The response body matches the documented success schema."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "The request parameters or body failed Atlaso validation. The response includes a request ID that can be correlated with operational logs."
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "List Port Forwards",
+        "tags": [
+          "NAT"
+        ]
+      },
+      "post": {
+        "description": "Create a reviewed port-forward rule without applying it.\n\nRequires `write:firewall`. Validates the complete family, listener, source,\ntarget, equal-length mapping and overlap under one transaction. Explicit\nreply masquerade requires acknowledgement of source visibility loss.\nValidation failures return 422 ProblemDetails; success saves desired state\nand audit together. Global Appliance Apply owns host mutation.",
+        "operationId": "createPortForward",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PortForwardCreate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PortForwardResponse"
+                }
+              }
+            },
+            "description": "Create a reviewed port-forward rule without applying it. The response body matches the documented success schema."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "The request parameters or body failed Atlaso validation. The response includes a request ID that can be correlated with operational logs."
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Create Port Forward",
+        "tags": [
+          "NAT"
+        ]
+      }
+    },
+    "/api/v1/traffic-publishing/port-forwards/status": {
+      "get": {
+        "description": "Observe applied port-forward state and nullable packet counters.\n\nRequires `read:firewall`. Uses one bounded read-only helper call and compares\nits captured applied records to current desired intent. Unavailable counters\nremain null, never fabricated zero. Does not apply, reset, recover, or probe\ncredentials. Global Appliance Apply remains the host-mutation boundary.",
+        "operationId": "getPortForwardStatus",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/PortForwardStatus"
+                  },
+                  "title": "Response Getportforwardstatus",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Observe applied port-forward state and nullable packet counters. The response body matches the documented success schema."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "The request parameters or body failed Atlaso validation. The response includes a request ID that can be correlated with operational logs."
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Get Port Forward Status",
+        "tags": [
+          "NAT"
+        ]
+      }
+    },
+    "/api/v1/traffic-publishing/port-forwards/{rule_id}": {
+      "delete": {
+        "description": "Delete a saved rule and audit the removal without mutating the host.\n\nRequires `write:firewall`. Missing rules return 404 ProblemDetails. Success\nreturns no body; generated firewall admission and translation are removed\nonly through the global Appliance Apply transaction.",
+        "operationId": "deletePortForward",
+        "parameters": [
+          {
+            "description": "Positive identifier of the saved port-forward resource.",
+            "in": "path",
+            "name": "rule_id",
+            "required": true,
+            "schema": {
+              "description": "Positive identifier of the saved port-forward resource.",
+              "minimum": 1,
+              "title": "Rule Id",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Delete a saved rule and audit the removal without mutating the host. The operation completed successfully and returns no response body."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "The request parameters or body failed Atlaso validation. The response includes a request ID that can be correlated with operational logs."
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Delete Port Forward",
+        "tags": [
+          "NAT"
+        ]
+      },
+      "get": {
+        "description": "Read one saved destination translation.\n\nRequires `read:firewall`. Returns desired intent without invoking the helper\nor changing runtime state. Missing resources return 404 ProblemDetails.\nGlobal Appliance Apply owns all subsequent host changes.",
+        "operationId": "getPortForward",
+        "parameters": [
+          {
+            "description": "Positive identifier of the saved port-forward resource.",
+            "in": "path",
+            "name": "rule_id",
+            "required": true,
+            "schema": {
+              "description": "Positive identifier of the saved port-forward resource.",
+              "minimum": 1,
+              "title": "Rule Id",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PortForwardResponse"
+                }
+              }
+            },
+            "description": "Read one saved destination translation. The response body matches the documented success schema."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "The request parameters or body failed Atlaso validation. The response includes a request ID that can be correlated with operational logs."
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Get Port Forward",
+        "tags": [
+          "NAT"
+        ]
+      },
+      "put": {
+        "description": "Replace the complete reviewed intent of an existing port forward.\n\nRequires `write:firewall`. The full record is required so source and listener\nboundaries cannot be accidentally omitted. Revalidates overlap atomically;\n404 identifies an absent rule and 422 ProblemDetails identifies invalid\nintent. Global Appliance Apply is required to change the host.",
+        "operationId": "replacePortForward",
+        "parameters": [
+          {
+            "description": "Positive identifier of the saved port-forward resource.",
+            "in": "path",
+            "name": "rule_id",
+            "required": true,
+            "schema": {
+              "description": "Positive identifier of the saved port-forward resource.",
+              "minimum": 1,
+              "title": "Rule Id",
+              "type": "integer"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PortForwardCreate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PortForwardResponse"
+                }
+              }
+            },
+            "description": "Replace the complete reviewed intent of an existing port forward. The response body matches the documented success schema."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            },
+            "description": "The request parameters or body failed Atlaso validation. The response includes a request ID that can be correlated with operational logs."
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Replace Port Forward",
+        "tags": [
+          "NAT"
         ]
       }
     },

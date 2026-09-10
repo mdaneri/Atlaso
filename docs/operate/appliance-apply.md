@@ -58,9 +58,17 @@ gateway change also selects **Routing & WAN** with Network and uses the protecte
 to a mirrored management default uses the same handoff. Each WAN unit executes from its captured snapshot.
 
 The `wan` unit owns Routing and WAN Simulation. The separate **Traffic Publishing** (`nat`) unit owns source
-translation and its baseline. Turning a feature off removes its Atlaso-owned runtime state while preserving saved rows.
+translation, port forwarding, and their baseline. Turning a feature off removes its Atlaso-owned runtime state while
+preserving saved rows.
 NAT reports **suspended** when NAT is on but Routing is off. Network or WAN submissions include NAT reconciliation;
 activating NAT also includes changed target and Routing dependencies before management-handoff classification.
+
+Current or previously applied port forwards couple Firewall and Traffic Publishing into one publication. Both
+snapshots validate before mutation and both baselines commit before the runtime transaction is acknowledged. This
+coupling remains when the last rule is deleted. Service-only submissions also validate saved port forwards so a new
+service listener cannot silently take over an enabled mapping. Protected management handoff includes the pair in its
+wider recovery snapshot. After an interruption, the task retains its lock until the recorded application commit can
+be reconciled with runtime state. See [Traffic Publishing](traffic-publishing.md#configure-port-forwarding).
 
 ## Review pending changes
 

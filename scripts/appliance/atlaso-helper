@@ -127,7 +127,7 @@ COMMANDS: dict[str, set[str]] = {
     },
     "console": {"disable-services", "recover-management-plane", "restore-services", "status"},
     "wan": {"validate", "apply", "restore", "reconcile-nat"},
-    "nat": {"validate", "apply", "restore"},
+    "nat": {"validate", "apply", "restore", "status", "validate-publishing", "apply-publishing", "acknowledge-publishing", "recover-publishing"},
 }
 
 
@@ -142,6 +142,9 @@ def _sha256_file(path: Path) -> str:
 
 
 SYSTEMD_RUN_REAL_ACTIONS = {
+    "apply-publishing",
+    "acknowledge-publishing",
+    "recover-publishing",
     "apply",
     "reload",
     "stage-tool",
@@ -169,6 +172,7 @@ SYSTEMD_RUN_CHILD_ENV = "ATLASO_HELPER_SYSTEMD_RUN_CHILD"
 SYSTEMD_RUN_ACTION_UNIT_PREFIX = "atlaso-helper-action"
 UPDATE_RELEASE_NOTES_URL_MAX_LENGTH = 2048
 NO_PATH_ACTIONS = {
+    ("nat", "status"),
     ("wan", "reconcile-nat"),
     ("dnsmasq", "leases"),
     ("dnsmasq", "logs"),
@@ -212,6 +216,10 @@ NO_PATH_ACTIONS = {
     ("appliance-update", "quiesce-action"),
 }
 NON_PATH_ARGUMENT_ACTIONS = {
+    ("nat", "validate-publishing"),
+    ("nat", "apply-publishing"),
+    ("nat", "acknowledge-publishing"),
+    ("nat", "recover-publishing"),
     ("local-users", "authenticate"),
     ("ldap", "authenticate"),
     ("automation", "run"),
@@ -8747,6 +8755,7 @@ def _parse_wan_config(path: Path, *, content: str | None = None) -> dict[str, li
         "removed_main_defaults": [],
         "routing_rules": [],
         "nat_rules": [],
+        "port_forwards": [],
         "wan_policies": [],
     }
     current_section = ""
@@ -8759,6 +8768,7 @@ def _parse_wan_config(path: Path, *, content: str | None = None) -> dict[str, li
         "removed_main_defaults": "route",
         "routing_rules": "routing",
         "nat_rules": "nat",
+        "port_forwards": "json",
         "wan_policies": "policy",
     }
     for raw_line in (path.read_text(encoding="utf-8") if content is None else content).splitlines():
@@ -9318,18 +9328,249 @@ def _wan_source_expr(source: str) -> str:
     return f"ip saddr {{ {', '.join(values)} }} "
 
 
-def _render_wan_nat_config(nat_rules: list[dict[str, str]], interface_indexes: dict[str, int] | None = None) -> str:
+def _port_forward_records(parsed: dict[str, list[dict[str, str]]]) -> list[dict]:
+    """Independently admit bounded destination translation from captured input.
+
+    Args:
+        parsed: Captured NAT configuration with at most one JSON rule collection.
+    """
+    containers = parsed.get("port_forwards", [])
+    if not containers:
+        return []
+    if len(containers) != 1 or set(containers[0]) != {"name"}:
+        raise ValueError("Port-forward input must contain one canonical collection")
+    raw = containers[0]["name"]
+    if len(raw) > 2_000_000:
+        raise ValueError("Port-forward input exceeds the bounded collection size")
+    try:
+        rows = json.loads(raw)
+    except json.JSONDecodeError as exc:
+        raise ValueError("Port-forward collection is malformed") from exc
+    if not isinstance(rows, list) or len(rows) > 256:
+        raise ValueError("Port-forward collection must contain at most 256 rules")
+    targets = {item["name"]: item for item in parsed["targets"]}
+    seen_ids = set()
+    active = []
+    for row in rows:
+        required = {"id", "name", "description", "priority", "enabled", "ip_family", "ingress_interface",
+                    "listener_address", "protocol", "external_port_start", "external_port_end",
+                    "target_address", "target_port_start", "target_port_end", "source", "reply_mode", "source_networks"}
+        if not isinstance(row, dict) or set(row) != required:
+            raise ValueError("Port-forward fields do not match the typed contract")
+        integer_fields = ("id", "priority", "ip_family", "external_port_start", "external_port_end", "target_port_start", "target_port_end")
+        if any(type(row[key]) is not int for key in integer_fields) or type(row["enabled"]) is not bool:
+            raise ValueError("Port-forward numeric and enabled fields require canonical types")
+        if not 1 <= row["id"] <= 0xFFFFFF or row["id"] in seen_ids or not 0 <= row["priority"] <= 2147483647:
+            raise ValueError("Port-forward identity or priority is invalid")
+        seen_ids.add(row["id"])
+        if row["ip_family"] not in (4, 6) or row["protocol"] not in ("tcp", "udp") or row["reply_mode"] not in ("preserve", "masquerade"):
+            raise ValueError("Port-forward family, protocol or reply mode is invalid")
+        if not all(type(row[key]) is str for key in required - set(integer_fields) - {"enabled", "source_networks"}):
+            raise ValueError("Port-forward text fields require strings")
+        if not _valid_network_interface_name(row["ingress_interface"]):
+            raise ValueError("Port-forward ingress name is invalid")
+        for key in ("external_port_start", "external_port_end", "target_port_start", "target_port_end"):
+            if not 1 <= row[key] <= 65535:
+                raise ValueError("Port-forward ports must be between 1 and 65535")
+        external_size = row["external_port_end"] - row["external_port_start"]
+        target_size = row["target_port_end"] - row["target_port_start"]
+        if external_size < 0 or target_size != external_size:
+            raise ValueError("Port-forward ranges require equal cardinality and deterministic offsets")
+        for key in ("listener_address", "target_address"):
+            address = ip_address(row[key])
+            if (address.version != row["ip_family"] or "%" in row[key] or address.is_loopback
+                    or address.is_link_local or address.is_multicast or address.is_unspecified or address.is_reserved
+                    or getattr(address, "ipv4_mapped", None)):
+                raise ValueError("Port-forward addresses must be same-family ordinary unicast")
+            if str(address) != row[key]:
+                raise ValueError("Port-forward addresses require canonical literals")
+        networks = row["source_networks"]
+        if not isinstance(networks, list) or len(networks) > 128 or any(not isinstance(value, str) or ip_network(value).version != row["ip_family"] for value in networks):
+            raise ValueError("Port-forward sources must be canonical same-family networks")
+        if not row["enabled"] or not _wan_feature_settings(parsed)["routing_enabled"]:
+            continue
+        ingress = targets.get(row["ingress_interface"], {})
+        cidr = ingress.get("ip_cidr" if row["ip_family"] == 4 else "ipv6_cidr", "")
+        if (ingress.get("role") not in ("access", "route") or not cidr
+                or str(ip_interface(cidr).ip) != row["listener_address"]):
+            raise ValueError("Port-forward listener is not assigned to an eligible ingress")
+        for peer in active:
+            if (peer["ip_family"] == row["ip_family"] and peer["listener_address"] == row["listener_address"]
+                    and peer["protocol"] == row["protocol"] and peer["external_port_start"] <= row["external_port_end"]
+                    and row["external_port_start"] <= peer["external_port_end"]):
+                raise ValueError("Enabled port forwards overlap")
+        active.append(row)
+    if sum(row["external_port_end"] - row["external_port_start"] + 1 for row in active) > 65535:
+        raise ValueError("Active port forwards exceed the 65535-port aggregate mapping budget")
+    return sorted(active, key=lambda row: (row["priority"], row["id"]))
+
+
+def _port_forward_mark(row: dict) -> str:
+    """Return the private conntrack namespace bound to one validated rule.
+
+    Args:
+        row: Validated destination translation record.
+    """
+    return hex(0xA7000000 | row["id"])
+
+
+def _retire_port_forward_connections() -> None:
+    """Remove only Atlaso destination translations from both conntrack families.
+
+    A rule edit can preserve its identifier while changing its target or source
+    boundary. Retiring the private mark namespace prevents the old translation
+    from inheriting the replacement rule's admission or counters. Never flush
+    unrelated source NAT, management, or operator-owned tracked connections.
+    """
+    for family in ("ipv4", "ipv6"):
+        result = _run(["conntrack", "--delete", "--family", family,
+                       "--mark", "0xa7000000/0xff000000"])
+        # conntrack reports an empty successful selection with exit status 1.
+        empty = result.returncode == 1 and not result.stdout.strip() and re.fullmatch(
+            r"conntrack v[^\s]+ \(conntrack-tools\): 0 flow entries have been deleted\.",
+            result.stderr.strip(),
+        )
+        if result.returncode != 0 and not empty:
+            raise ValueError("Port-forward connection retirement failed; runtime recovery is required")
+
+
+def _port_forward_match(row: dict, indexes: dict[str, int] | None = None) -> str:
+    """Render exact original ingress, listener, source and transport predicates.
+
+    Args:
+        row: Validated destination translation record.
+        indexes: Verified live device indexes, omitted only for offline validation.
+    """
+    family = "ip" if row["ip_family"] == 4 else "ip6"
+    ingress = json.dumps(row["ingress_interface"])
+    identity = f'meta iif {indexes[row["ingress_interface"]]} ' if indexes is not None else ""
+    sources = row["source_networks"]
+    source = f'{family} saddr {{ {", ".join(sources)} }} ' if sources else ""
+    ports = str(row["external_port_start"]) if row["external_port_start"] == row["external_port_end"] else f'{row["external_port_start"]}-{row["external_port_end"]}'
+    return f'{identity}iifname {ingress} {family} daddr {row["listener_address"]} {source}{row["protocol"]} dport {ports}'
+
+
+def _render_port_forward_nat(rows: list[dict], family: int, indexes: dict[str, int] | None) -> list[str]:
+    """Render deterministic port maps; an inclusive range is never a target pool.
+
+    Args:
+        rows: Effective validated destination translations.
+        family: NAT table family being rendered.
+        indexes: Verified kernel interface identities.
+    """
+    lines = ["  chain prerouting {", "    type nat hook prerouting priority dstnat; policy accept;"]
+    for row in rows:
+        if row["ip_family"] != family:
+            continue
+        address = f'[{row["target_address"]}]' if family == 6 else row["target_address"]
+        start, end = row["external_port_start"], row["external_port_end"]
+        if start == end:
+            translation = f'{address}:{row["target_port_start"]}'
+        elif start == row["target_port_start"]:
+            translation = address
+        else:
+            mapping = ", ".join(f'{port} : {row["target_port_start"] + port - start}' for port in range(start, end + 1))
+            translation = f'{address}:{row["protocol"]} dport map {{ {mapping} }}'
+        lines.append(f'    {_port_forward_match(row, indexes)} ct mark set {_port_forward_mark(row)} dnat to {translation} comment "Atlaso port forward {row["id"]}"')
+    return [*lines, "  }"]
+
+
+def _port_forward_filter_match(row: dict, *, reply: bool = False) -> str:
+    """Match the translated connection and its complete original tuple.
+
+    Args:
+        row: Validated rule with a private connection mark.
+        reply: Match the reverse path back to the reviewed ingress.
+    """
+    family = "ip" if row["ip_family"] == 4 else "ip6"
+    sources = row["source_networks"]
+    source = f'ct original {family} saddr {{ {", ".join(sources)} }} ' if sources else ""
+    port = str(row["external_port_start"]) if row["external_port_start"] == row["external_port_end"] else f'{row["external_port_start"]}-{row["external_port_end"]}'
+    direction = "reply" if reply else "original"
+    interface = "oifname" if reply else "iifname"
+    return (f'ct mark {_port_forward_mark(row)} ct status dnat ct direction {direction} '
+            f'{interface} {json.dumps(row["ingress_interface"])} '
+            f'ct original {family} daddr {row["listener_address"]} {source}'
+            f'meta l4proto {row["protocol"]} ct original proto-dst {port}')
+
+
+def _render_port_forward_guard(rows: list[dict]) -> list[str]:
+    """Count all translated packets and reject every stale marked connection.
+
+    This hook precedes the ordinary established-connection fast path. Removing a
+    rule therefore cannot leave its earlier conntrack admission usable.
+
+    Args:
+        rows: Effective validated destination translations.
+    """
+    lines = ["table inet atlaso_port_forwards", "flush table inet atlaso_port_forwards", "table inet atlaso_port_forwards {"]
+    for row in rows:
+        lines.append(f'  counter pf_{row["id"]} {{ }}')
+    lines.extend(["  chain forward {", "    type filter hook forward priority -10; policy accept;"])
+    for row in rows:
+        for reply in (False, True):
+            lines.append(f'    {_port_forward_filter_match(row, reply=reply)} counter name pf_{row["id"]} accept')
+    lines.extend(['    ct mark & 0xff000000 == 0xa7000000 drop comment "Retired Atlaso port forward"', "  }", "}"])
+    return lines
+
+
+def _render_port_forward_firewall(firewall: str, rows: list[dict]) -> str:
+    """Append exact generated admission to the reviewed Atlaso forward chain.
+
+    Args:
+        firewall: Complete validated Firewall snapshot staged with translation.
+        rows: Effective typed destination translations from the same snapshot.
+    """
+    start = "# BEGIN ATLASO PORT FORWARD ADMISSION"
+    end = "# END ATLASO PORT FORWARD ADMISSION"
+    if start in firewall or end in firewall:
+        if firewall.count(start) != 1 or firewall.count(end) != 1 or firewall.index(end) < firewall.index(start):
+            raise ValueError("Generated port-forward admission markers are invalid")
+        before, generated = firewall.split(start, 1)
+        _old_rules, after = generated.split(end, 1)
+        firewall = before.rstrip() + "\n" + after.lstrip("\n")
+    if not rows or not re.search(r"^table inet atlaso\s*\{", firewall, re.MULTILINE):
+        return firewall
+    lines = [firewall.rstrip(), start]
+    for row in rows:
+        for reply in (False, True):
+            lines.append(f'add rule inet atlaso forward {_port_forward_filter_match(row, reply=reply)} accept comment "Atlaso port forward {row["id"]}"')
+    return "\n".join([*lines, end]) + "\n"
+
+
+def _quiesce_port_forward_config() -> str:
+    """Stop owned DNAT and retired flows while preserving source NAT chains."""
+    lines = []
+    for family in ("ip", "ip6"):
+        lines.extend([f"table {family} atlaso_nat",
+                      f"add chain {family} atlaso_nat prerouting",
+                      f"flush chain {family} atlaso_nat prerouting"])
+    return "\n".join([*lines, *_render_port_forward_guard([])]) + "\n"
+
+
+def _render_wan_nat_config(nat_rules: list[dict[str, str]], interface_indexes: dict[str, int] | None = None, port_forwards: list[dict] | None = None) -> str:
     """Render an atomic dual-family replacement, retaining reviewed NIC identities.
 
     Args:
         nat_rules: Validated source NAT intent, never raw nftables expressions.
         interface_indexes: Live identity indexes; omitted only for offline validation.
+        port_forwards: Effective reviewed destination translations.
     """
     lines = ["# Managed by Atlaso Traffic Publishing."]
     for family, table_family in ((4, "ip"), (6, "ip6")):
         lines.extend([f"table {table_family} atlaso_nat", f"flush table {table_family} atlaso_nat",
-                      f"table {table_family} atlaso_nat {{", "  chain postrouting {",
+                      f"table {table_family} atlaso_nat {{"])
+        if port_forwards:
+            lines.extend(_render_port_forward_nat(port_forwards, family, interface_indexes))
+        lines.extend(["  chain postrouting {",
                       "    type nat hook postrouting priority srcnat; policy accept;"])
+        for forward in port_forwards or []:
+            if forward["ip_family"] != family:
+                continue
+            # Explicit preserve must terminate this NAT chain before a broad source
+            # translation rule can erase the original client identity.
+            action = "masquerade" if forward["reply_mode"] == "masquerade" else "return"
+            lines.append(f'    ct mark {_port_forward_mark(forward)} ct status dnat {action}')
         rules = [rule for rule in nat_rules if _wan_bool(rule.get("enabled", ""), default=True)
                  and rule.get("ip_family", "4") == str(family)]
         for rule in sorted(rules, key=lambda item: int(item.get("priority", "100"))):
@@ -9357,6 +9598,8 @@ def _render_wan_nat_config(nat_rules: list[dict[str, str]], interface_indexes: d
             comment = json.dumps(str(rule.get("name", "Atlaso NAT")), ensure_ascii=True)
             lines.append(f'    {identity}{ingress}{source_expr}oifname "{outbound}" {translation} comment {comment}')
         lines.extend(["  }", "}"])
+    if port_forwards is not None:
+        lines.extend(_render_port_forward_guard(port_forwards))
     return "\n".join([*lines, ""])
 
 
@@ -10084,6 +10327,401 @@ def _nat_observed_addresses(rules: list[dict[str, str]]) -> None:
             raise ValueError("Could not verify fixed SNAT egress address") from exc
 
 
+def _port_forward_observed_interfaces(parsed: dict[str, list[dict[str, str]]], rows: list[dict]) -> dict[str, int]:
+    """Bind port-forward listeners to live addresses and physical NIC identity.
+
+    Args:
+        parsed: Validated target identities captured with the rule snapshot.
+        rows: Effective destination translations.
+    """
+    identities = [{"enabled": "true", "inbound_interfaces": row["ingress_interface"],
+                   "outbound_interface": row["ingress_interface"]} for row in rows]
+    indexes = _wan_nat_interface_indexes(parsed, identities)
+    if not rows:
+        return indexes
+    observed = _run(["ip", "-j", "address", "show"])
+    if observed.returncode or len(observed.stdout) > 2_000_000:
+        raise ValueError("Port-forward live address inventory is unavailable")
+    try:
+        addresses = json.loads(observed.stdout)
+        owned = {str(ip_address(entry["local"])) for interface in addresses for entry in interface.get("addr_info", [])}
+        assigned = {interface["ifname"]: {str(ip_address(entry["local"])) for entry in interface.get("addr_info", [])
+                                        if not set(entry.get("flags", [])).intersection({"tentative", "dadfailed"})
+                                        and not entry.get("tentative") and not entry.get("dadfailed")}
+                    for interface in addresses}
+        for row in rows:
+            if row["listener_address"] not in assigned.get(row["ingress_interface"], set()) or row["target_address"] in owned:
+                raise ValueError("Port-forward listener or target conflicts with live appliance addresses")
+            for interface in addresses:
+                for entry in interface.get("addr_info", []):
+                    subnet = ip_network(f'{entry["local"]}/{entry["prefixlen"]}', strict=False)
+                    target = ip_address(row["target_address"])
+                    if target.version != subnet.version:
+                        continue
+                    if target in subnet and interface["ifname"] not in {item["name"] for item in parsed["targets"]}:
+                        raise ValueError("Port-forward target enters a non-lab appliance network")
+                    if subnet.version == 4 and subnet.prefixlen < 31 and target in (subnet.network_address, subnet.broadcast_address):
+                        raise ValueError("Port-forward target is a live subnet network or broadcast address")
+    except (KeyError, TypeError, json.JSONDecodeError) as exc:
+        raise ValueError("Port-forward live address inventory is malformed") from exc
+    listeners = _run(["ss", "-H", "-l", "-n", "-t", "-u"])
+    if listeners.returncode or len(listeners.stdout) > 2_000_000:
+        raise ValueError("Port-forward live socket inventory is unavailable")
+    for line in listeners.stdout.splitlines():
+        fields = line.split()
+        if len(fields) < 6 or fields[0] not in ("tcp", "udp"):
+            raise ValueError("Port-forward live socket inventory is malformed")
+        address, separator, port = fields[4].rpartition(":")
+        if not separator or not port.isdecimal():
+            raise ValueError("Port-forward live socket endpoint is malformed")
+        address = address.strip("[]")
+        if "%" in address:
+            address, device = address.rsplit("%", 1)
+        else:
+            device = ""
+        for row in rows:
+            if (fields[0] == row["protocol"] and row["external_port_start"] <= int(port) <= row["external_port_end"]
+                    and (not device or device == row["ingress_interface"])
+                    and address in ("*", "0.0.0.0", "::", row["listener_address"])):
+                raise ValueError("Port-forward external port collides with a live appliance service")
+    return indexes
+
+
+def _port_forward_target_warnings(rows: list[dict]) -> dict[int, str]:
+    """Observe missing lab routes and failed neighbors without probing targets.
+
+    Args:
+        rows: Validated applied rules; at most 256 entries across two families.
+
+    A route and an unresolved neighbor do not establish application health. Only
+    affirmative kernel failures produce an unreachable-target warning.
+    """
+    warnings = {}
+    for family in sorted({row["ip_family"] for row in rows}):
+        inventories = []
+        try:
+            for suffix in (["route", "show", "table", str(LAB_ROUTE_TABLE_ID)], ["neigh", "show"]):
+                result = _run(["ip", "-j", f"-{family}", *suffix], timeout=1)
+                if result.returncode or len(result.stdout) > 2_000_000:
+                    raise ValueError("Target path observation unavailable")
+                inventory = json.loads(result.stdout)
+                if not isinstance(inventory, list) or len(inventory) > 4096:
+                    raise ValueError("Target path observation exceeds its bound")
+                inventories.append(inventory)
+            routes, neighbors = inventories
+            for row in (item for item in rows if item["ip_family"] == family):
+                target = ip_address(row["target_address"])
+                candidates = []
+                for route in routes:
+                    destination = route.get("dst", "default")
+                    network = ip_network(("0.0.0.0/0" if family == 4 else "::/0") if destination == "default" else destination)
+                    if target in network:
+                        candidates.append((network.prefixlen, -int(route.get("metric", 0)), route))
+                if not candidates:
+                    warnings[row["id"]] = "target_route_missing"
+                    continue
+                route = max(candidates, key=lambda item: item[:2])[2]
+                if route.get("type", "unicast") in {"unreachable", "blackhole", "prohibit", "throw"} or "linkdown" in route.get("flags", []):
+                    warnings[row["id"]] = "target_route_missing"
+                    continue
+                next_hop = route.get("gateway", row["target_address"])
+                if any(neighbor.get("dst") == next_hop and neighbor.get("dev") == route.get("dev")
+                       and "FAILED" in neighbor.get("state", []) for neighbor in neighbors):
+                    warnings[row["id"]] = "target_neighbor_failed"
+        except (OSError, ValueError, TypeError, AttributeError, subprocess.TimeoutExpired):
+            warnings.update({row["id"]: "target_observation_unavailable" for row in rows if row["ip_family"] == family})
+    return warnings
+
+
+def _port_forward_status() -> int:
+    """Observe only the fixed applied rule set and owned counters without mutation."""
+    if not NAT_RUNTIME_CONFIG_PATH.is_file():
+        print(json.dumps({"available": True, "rules": []}))
+        return 0
+    try:
+        parsed = _parse_wan_config(NAT_RUNTIME_CONFIG_PATH)
+        rows = _port_forward_records(parsed)
+        result = _run(["nft", "-j", "list", "table", "inet", "atlaso_port_forwards"], timeout=2)
+        if result.returncode:
+            print(json.dumps({"available": not rows, "rules": []}))
+            return 0
+        if len(result.stdout) > 2_000_000:
+            raise ValueError("Port-forward runtime response exceeds the observation bound")
+        entries = json.loads(result.stdout).get("nftables", [])
+        counters = {item["counter"]["name"]: item["counter"] for item in entries if isinstance(item, dict) and "counter" in item}
+        observed = []
+        warnings = _port_forward_target_warnings(rows)
+        for row in rows:
+            counter = counters.get(f'pf_{row["id"]}')
+            valid = counter is not None and all(type(counter.get(key)) is int and counter[key] >= 0 for key in ("packets", "bytes"))
+            observed.append({"id": row["id"], "packets": counter["packets"] if valid else None,
+                             "snapshot_hash": hashlib.sha256(json.dumps(row, sort_keys=True, separators=(",", ":")).encode()).hexdigest(),
+                             "bytes": counter["bytes"] if valid else None,
+                             "state": "applied" if valid and row["id"] not in warnings else "degraded",
+                             "warning": warnings.get(row["id"], ""),
+                             "detail": "Applied translation; verify target reachability from a selected client." if valid else "Applied translation counter is unavailable; review runtime state and apply again."})
+        print(json.dumps({"available": True, "rules": observed}))
+        return 0
+    except (OSError, ValueError, KeyError, TypeError, subprocess.TimeoutExpired):
+        print(json.dumps({"available": False, "rules": []}))
+        return 0
+
+
+def _nat_service_text() -> str:
+    """Describe identity-checked NAT replay after Firewall and Routing startup."""
+    return "\n".join([
+        "[Unit]", "Description=Atlaso Traffic Publishing",
+        "After=network-online.target atlaso-firewall.service atlaso-wan.service", "Wants=network-online.target",
+        "Before=atlaso.service", "[Service]", "Type=oneshot",
+        f"ExecStart=/opt/atlaso/bin/atlaso-helper nat restore --real {NAT_RUNTIME_CONFIG_PATH}",
+        "RemainAfterExit=yes", "[Install]", "WantedBy=multi-user.target", "",
+    ])
+
+
+def _publishing_program(intent: str, firewall: str, *, observed: bool) -> tuple[str, str, bool]:
+    """Render Firewall admission and NAT from one captured pair of snapshots.
+
+    Args:
+        intent: Complete typed source and destination translation snapshot.
+        firewall: Complete reviewed Firewall configuration.
+        observed: Require current physical identity, addresses and listener ownership.
+    """
+    parsed = _parse_wan_config(NAT_RUNTIME_CONFIG_PATH, content=intent)
+    errors = _wan_config_errors(NAT_RUNTIME_CONFIG_PATH, parsed=parsed)
+    if errors:
+        raise ValueError("; ".join(errors))
+    forwards = _port_forward_records(parsed)
+    source_rules = parsed["nat_rules"] if _wan_feature_settings(parsed)["effective_nat_enabled"] else []
+    indexes = None
+    if observed:
+        indexes = _wan_nat_interface_indexes(parsed, source_rules)
+        _nat_observed_addresses(source_rules)
+        indexes.update(_port_forward_observed_interfaces(parsed, forwards))
+    return (_render_port_forward_firewall(firewall, forwards),
+            _render_wan_nat_config(source_rules, indexes, forwards), bool(forwards))
+
+
+def _publishing_files() -> tuple[Path, ...]:
+    """Return the exact Firewall/NAT recovery inventory, never caller-owned paths."""
+    return (FIREWALL_CONFIG_PATH, FIREWALL_SERVICE_PATH, NAT_RUNTIME_CONFIG_PATH,
+            WAN_NAT_CONFIG_PATH, WAN_NAT_SERVICE_PATH)
+
+
+def _publishing_restore(state: dict) -> None:
+    """Restore both runtimes and service enablement before clearing recovery state.
+
+    Args:
+        state: Root-owned snapshot captured before paired publication.
+    """
+    files = _publishing_files()
+    if (set(state.get("files", {})) != {str(path) for path in files}
+            or any(value is not None and not isinstance(value, str) for value in state["files"].values())
+            or set(state.get("enabled", {})) != {"atlaso-firewall.service", "atlaso-nat.service"}
+            or any(type(value) is not bool for value in state["enabled"].values())
+            or type(state.get("retire_connections")) is not bool):
+        raise ValueError("Traffic Publishing recovery inventory is invalid")
+    previous_intent = state["files"][str(NAT_RUNTIME_CONFIG_PATH)] or ""
+    previous_firewall = state["files"][str(FIREWALL_CONFIG_PATH)] or "flush ruleset\n"
+    try:
+        restored_firewall, restored_nat, _ = _publishing_program(previous_intent, previous_firewall, observed=True)
+    except ValueError:
+        # A disappeared or replaced interface cannot receive an old translation.
+        restored_firewall = previous_firewall
+        restored_nat = _render_wan_nat_config([], port_forwards=[])
+    if state["retire_connections"]:
+        if _run_with_input(["nft", "-f", "-"], _quiesce_port_forward_config()).returncode:
+            raise ValueError("Traffic Publishing recovery could not quiesce translations")
+        _retire_port_forward_connections()
+    program = restored_firewall.rstrip() + "\n" + restored_nat
+    if _validate_wan_nat_config(program).returncode or _run_with_input(["nft", "-f", "-"], program).returncode:
+        raise ValueError("Traffic Publishing recovery could not atomically restore Firewall and NAT")
+    for path in files:
+        content = state["files"][str(path)]
+        if content is None:
+            path.unlink(missing_ok=True)
+            if path.parent.exists():
+                _fsync_directory(path.parent)
+        else:
+            # Runtime indexes may legitimately change after reboot.
+            _nat_write(path, restored_nat if path == WAN_NAT_CONFIG_PATH else content)
+    if _run(["systemctl", "daemon-reload"]).returncode:
+        raise ValueError("Traffic Publishing recovery could not reload service definitions")
+    for service, enabled in state["enabled"].items():
+        result = _run(["systemctl", "enable" if enabled else "disable", service])
+        service_path = FIREWALL_SERVICE_PATH if service == "atlaso-firewall.service" else WAN_NAT_SERVICE_PATH
+        if result.returncode and service_path.exists():
+            raise ValueError("Traffic Publishing recovery could not restore service enablement")
+
+
+def _publishing_install(intent: str, firewall: str, nat_program: str, *, retire_connections: bool) -> None:
+    """Install a validated complete pair without independently restarting Firewall.
+
+    Args:
+        intent: Captured typed translation intent.
+        firewall: Complete generated Firewall program.
+        nat_program: Complete generated translation and retirement guard program.
+        retire_connections: Retire only Atlaso-owned destination translations first.
+    """
+    if retire_connections:
+        if _run_with_input(["nft", "-f", "-"], _quiesce_port_forward_config()).returncode:
+            raise ValueError("Traffic Publishing could not quiesce the previous translations")
+        _retire_port_forward_connections()
+    if _run_with_input(["nft", "-f", "-"], firewall.rstrip() + "\n" + nat_program).returncode:
+        raise ValueError("Atomic Firewall and NAT publication failed")
+    for output, content in (
+        (FIREWALL_CONFIG_PATH, firewall), (FIREWALL_SERVICE_PATH, _firewall_service_text()),
+        (NAT_RUNTIME_CONFIG_PATH, intent), (WAN_NAT_CONFIG_PATH, nat_program),
+        (WAN_NAT_SERVICE_PATH, _nat_service_text()),
+    ):
+        _nat_write(output, content)
+    if _run(["systemctl", "daemon-reload"]).returncode:
+        raise ValueError("Traffic Publishing service definition reload failed")
+    parsed = _parse_wan_config(NAT_RUNTIME_CONFIG_PATH, content=intent)
+    saved_forwards = json.loads(parsed["port_forwards"][0]["name"]) if parsed["port_forwards"] else []
+    enabled = _wan_feature_settings(parsed)["nat_enabled"] or any(row["enabled"] for row in saved_forwards)
+    if (_run(["systemctl", "enable", "atlaso-firewall.service"]).returncode
+            or _run(["systemctl", "enable" if enabled else "disable", "atlaso-nat.service"]).returncode):
+        raise ValueError("Traffic Publishing boot replay enablement failed")
+
+
+def _publishing_apply(job_id: str, nat_path: str, firewall_path: str, *, validate_only: bool = False) -> dict:
+    """Stage one paired publication and retain rollback until application commit.
+
+    Args:
+        job_id: Exact global Appliance Apply owner.
+        nat_path: Admitted typed NAT configuration staged by that task.
+        firewall_path: Admitted Firewall configuration captured with NAT.
+        validate_only: Validate the complete pair without snapshots or mutation.
+    """
+    if re.fullmatch(r"job_[0-9a-f]{12}", job_id) is None:
+        raise ValueError("Traffic Publishing task identity is invalid")
+    path = Path(_validate_path(nat_path)).resolve()
+    if not path.is_relative_to(NAT_APPLY_DIR) or path.suffix != ".conf" or not path.is_file():
+        raise ValueError("Traffic Publishing intent must use the managed NAT staging directory")
+    firewall_candidate = _validate_firewall_config_path(firewall_path)
+    intent = path.read_text(encoding="utf-8")
+    firewall = firewall_candidate.read_text(encoding="utf-8")
+    if len(intent) > 2_000_000 or len(firewall) > 2_000_000:
+        raise ValueError("Traffic Publishing paired snapshot exceeds its size bound")
+    final_firewall, nat_program, active_forwards = _publishing_program(intent, firewall, observed=not validate_only)
+    combined = final_firewall.rstrip() + "\n" + nat_program
+    if _validate_wan_nat_config(combined).returncode:
+        raise ValueError("Combined Firewall and NAT validation failed")
+    if validate_only:
+        return {"publishing": "validation ok", "job_id": job_id}
+    marker = NAT_RUNTIME_CONFIG_PATH.with_suffix(".publishing-recovery.json")
+    if marker.exists():
+        raise ValueError("Traffic Publishing has an uncommitted transaction; reconcile its task first")
+    receipt = NAT_RUNTIME_CONFIG_PATH.with_suffix(".publishing-commit.json")
+    if receipt.is_file() and json.loads(receipt.read_text(encoding="utf-8")).get("job_id") == job_id:
+        raise ValueError("Traffic Publishing task is already committed; reconcile its recorded result")
+    previous = {str(item): item.read_text(encoding="utf-8") if item.exists() else None for item in _publishing_files()}
+    previous_intent = previous[str(NAT_RUNTIME_CONFIG_PATH)] or ""
+    previous_forwards = _port_forward_records(_parse_wan_config(NAT_RUNTIME_CONFIG_PATH, content=previous_intent))
+    state = {
+        "job_id": job_id, "phase": "prepared", "files": previous,
+        "enabled": {service: _run(["systemctl", "is-enabled", service]).returncode == 0
+                    for service in ("atlaso-firewall.service", "atlaso-nat.service")},
+        "retire_connections": active_forwards or bool(previous_forwards),
+        "candidate": {"intent": intent, "firewall": firewall},
+        "runtime_restored": False,
+    }
+    _nat_write(marker, json.dumps(state, sort_keys=True))
+    try:
+        _publishing_install(intent, final_firewall, nat_program, retire_connections=state["retire_connections"])
+        state["phase"] = "awaiting-application-commit"
+        _nat_write(marker, json.dumps(state, sort_keys=True))
+    except (OSError, ValueError) as original:
+        try:
+            _publishing_restore(state)
+            marker.unlink()
+            _fsync_directory(marker.parent)
+        except (OSError, ValueError) as rollback:
+            raise ValueError("Traffic Publishing failed and paired recovery remains required") from rollback
+        raise ValueError("Traffic Publishing failed; previous Firewall and NAT were restored") from original
+    return {"publishing": "awaiting application commit", "job_id": job_id}
+
+
+def _publishing_acknowledge(job_id: str) -> None:
+    """Finish one exact transaction only after both application baselines commit.
+
+    Args:
+        job_id: Global Appliance Apply task whose successful baselines are durable.
+    """
+    if re.fullmatch(r"job_[0-9a-f]{12}", job_id) is None:
+        raise ValueError("Traffic Publishing task identity is invalid")
+    marker = NAT_RUNTIME_CONFIG_PATH.with_suffix(".publishing-recovery.json")
+    receipt = NAT_RUNTIME_CONFIG_PATH.with_suffix(".publishing-commit.json")
+    if not marker.exists():
+        if receipt.is_file() and json.loads(receipt.read_text(encoding="utf-8")) == {"job_id": job_id, "phase": "committed"}:
+            return
+        raise ValueError("Traffic Publishing commit has no matching transaction")
+    state = json.loads(marker.read_text(encoding="utf-8"))
+    if state.get("job_id") != job_id or state.get("phase") != "awaiting-application-commit":
+        raise ValueError("Traffic Publishing commit does not match the pending transaction")
+    if state.get("runtime_restored") is True:
+        # Boot cannot inspect the application transaction. It restores the prior
+        # pair but retains this root-owned candidate until the application proves
+        # that both baselines committed. Revalidate before recovering forward.
+        candidate = state.get("candidate")
+        if (not isinstance(candidate, dict) or set(candidate) != {"intent", "firewall"}
+                or any(not isinstance(value, str) or len(value) > 2_000_000 for value in candidate.values())):
+            raise ValueError("Traffic Publishing recovery candidate is invalid")
+        firewall, program, active = _publishing_program(candidate["intent"], candidate["firewall"], observed=True)
+        if _validate_wan_nat_config(firewall.rstrip() + "\n" + program).returncode:
+            raise ValueError("Traffic Publishing committed candidate no longer validates")
+        _publishing_install(candidate["intent"], firewall, program, retire_connections=active or state["retire_connections"])
+        state["runtime_restored"] = False
+        _nat_write(marker, json.dumps(state, sort_keys=True))
+    _nat_write(receipt, json.dumps({"job_id": job_id, "phase": "committed"}))
+    marker.unlink()
+    _fsync_directory(marker.parent)
+
+
+def _publishing_boot_restore() -> bool:
+    """Restore safe prior runtime while retaining an undecided application commit.
+
+    Returns:
+        Whether a pending pair was handled and ordinary replay must be skipped.
+    """
+    marker = NAT_RUNTIME_CONFIG_PATH.with_suffix(".publishing-recovery.json")
+    if not marker.exists():
+        return False
+    state = json.loads(marker.read_text(encoding="utf-8"))
+    if (re.fullmatch(r"job_[0-9a-f]{12}", str(state.get("job_id") or "")) is None
+            or state.get("phase") not in {"prepared", "awaiting-application-commit"}):
+        raise ValueError("Traffic Publishing recovery owner or phase is invalid")
+    receipt = NAT_RUNTIME_CONFIG_PATH.with_suffix(".publishing-commit.json")
+    committed = json.loads(receipt.read_text(encoding="utf-8")) if receipt.exists() else {}
+    if committed == {"job_id": state["job_id"], "phase": "committed"}:
+        marker.unlink()
+        _fsync_directory(marker.parent)
+        return False
+    # Publish recovery intent before touching either runtime. A second interruption
+    # must not turn an application-committed candidate into an old-rule receipt.
+    state["runtime_restored"] = True
+    _nat_write(marker, json.dumps(state, sort_keys=True))
+    _publishing_restore(state)
+    return True
+
+
+def _publishing_recover() -> None:
+    """Reconcile a pending root-owned pair before accepting another mutation."""
+    marker = NAT_RUNTIME_CONFIG_PATH.with_suffix(".publishing-recovery.json")
+    if not marker.exists():
+        return
+    state = json.loads(marker.read_text(encoding="utf-8"))
+    if (re.fullmatch(r"job_[0-9a-f]{12}", str(state.get("job_id") or "")) is None
+            or state.get("phase") not in {"prepared", "awaiting-application-commit"}):
+        raise ValueError("Traffic Publishing recovery owner or phase is invalid")
+    receipt = NAT_RUNTIME_CONFIG_PATH.with_suffix(".publishing-commit.json")
+    committed = json.loads(receipt.read_text(encoding="utf-8")) if receipt.exists() else {}
+    if committed != {"job_id": state.get("job_id"), "phase": "committed"}:
+        _publishing_restore(state)
+    marker.unlink()
+    _fsync_directory(marker.parent)
+
+
 def _nat_recover() -> None:
     """Restore an interrupted NAT transaction before accepting further mutation."""
     marker = NAT_RUNTIME_CONFIG_PATH.with_suffix(".recovery.json")
@@ -10108,7 +10746,8 @@ def _nat_recover() -> None:
         rules = parsed["nat_rules"] if _wan_feature_settings(parsed)["effective_nat_enabled"] else []
         try:
             _nat_observed_addresses(rules)
-            program = _render_wan_nat_config(rules, _wan_nat_interface_indexes(parsed, rules))
+            program = _render_wan_nat_config(rules, _wan_nat_interface_indexes(parsed, rules),
+                                             port_forwards=[] if parsed["port_forwards"] else None)
         except ValueError:
             # A reboot or replacement NIC cannot inherit an old kernel selector.
             program = _render_wan_nat_config([])
@@ -10131,7 +10770,7 @@ def _nat_recover() -> None:
 
 def _nat_quarantine() -> None:
     """Clear both owned translation tables before reporting unsafe replay."""
-    empty = _render_wan_nat_config([])
+    empty = _render_wan_nat_config([], port_forwards=[])
     if _run_with_input(["nft", "-f", "-"], empty).returncode:
         raise ValueError("NAT replay quarantine failed; runtime state requires recovery")
     _nat_write(WAN_NAT_CONFIG_PATH, empty)
@@ -10175,9 +10814,48 @@ def _handle_nat(action: str, args: list[str]) -> int:
         action: Allowlisted validation or mutation operation.
         args: Exact staged or fixed runtime configuration path.
     """
+    if action == "status":
+        if args:
+            return 2
+        return _port_forward_status()
     try:
-        with _nat_transaction_lock() if action != "validate" else nullcontext():
+        with _nat_transaction_lock() if action not in {"validate", "validate-publishing"} else nullcontext():
+            if action in {"validate-publishing", "apply-publishing"}:
+                if len(args) != 3:
+                    raise ValueError("Paired publication requires one task and two managed snapshots")
+                if action == "apply-publishing":
+                    _nat_recover()
+                result = _publishing_apply(*args, validate_only=action == "validate-publishing")
+                print(json.dumps(result, sort_keys=True))
+                return 0
+            if action in {"acknowledge-publishing", "recover-publishing"}:
+                if len(args) != 1 or re.fullmatch(r"job_[0-9a-f]{12}", args[0]) is None:
+                    raise ValueError("Paired recovery requires one exact task identity")
+                if action == "acknowledge-publishing":
+                    _publishing_acknowledge(args[0])
+                    result = {"publishing": "committed", "job_id": args[0]}
+                else:
+                    marker = NAT_RUNTIME_CONFIG_PATH.with_suffix(".publishing-recovery.json")
+                    if marker.exists():
+                        state = json.loads(marker.read_text(encoding="utf-8"))
+                        if state.get("job_id") != args[0]:
+                            raise ValueError("Paired recovery does not own the pending transaction")
+                        receipt = NAT_RUNTIME_CONFIG_PATH.with_suffix(".publishing-commit.json")
+                        committed = json.loads(receipt.read_text(encoding="utf-8")) if receipt.exists() else {}
+                        was_committed = committed == {"job_id": args[0], "phase": "committed"}
+                        _publishing_recover()
+                        result = {"publishing": "committed" if was_committed else "recovered",
+                                  "job_id": args[0], "rolled_back": not was_committed}
+                    else:
+                        result = {"publishing": "no interrupted transaction", "job_id": args[0]}
+                print(json.dumps(result, sort_keys=True))
+                return 0
             if action != "validate":
+                if action == "restore" and _publishing_boot_restore():
+                    print(json.dumps({"publishing": "awaiting application reconciliation"}))
+                    return 0
+                if NAT_RUNTIME_CONFIG_PATH.with_suffix(".publishing-recovery.json").exists():
+                    raise ValueError("Traffic Publishing requires application reconciliation before another NAT mutation")
                 _nat_recover()
                 if action == "restore" and args == [str(NAT_RUNTIME_CONFIG_PATH)] and not NAT_RUNTIME_CONFIG_PATH.exists():
                     print(json.dumps({"nat": "disabled", "reason": "No prior runtime after recovery"}))
@@ -10205,6 +10883,13 @@ def _handle_nat_locked(action: str, args: list[str]) -> int:
         # The staging account can replace the path; every phase must use these same bytes.
         intent = path.read_text(encoding="utf-8")
         parsed = _parse_wan_config(path, content=intent)
+        if action == "apply":
+            current = (_parse_wan_config(NAT_RUNTIME_CONFIG_PATH)
+                       if NAT_RUNTIME_CONFIG_PATH.exists() else {"port_forwards": []})
+            for snapshot in (parsed, current):
+                containers = snapshot.get("port_forwards", [])
+                if containers and (len(containers) != 1 or json.loads(containers[0]["name"])):
+                    raise ValueError("Port forwards require paired Firewall and NAT publication")
         errors = _wan_config_errors(path, parsed=parsed)
         if errors:
             if action == "restore":
@@ -10213,7 +10898,27 @@ def _handle_nat_locked(action: str, args: list[str]) -> int:
                 return 0
             raise ValueError("; ".join(errors))
         rules = parsed["nat_rules"] if _wan_feature_settings(parsed)["effective_nat_enabled"] else []
-        program = _render_wan_nat_config(rules)
+        forwards = _port_forward_records(parsed)
+        if forwards and action == "restore":
+            try:
+                firewall = FIREWALL_CONFIG_PATH.read_text(encoding="utf-8")
+                final_firewall, nat_program, _ = _publishing_program(intent, firewall, observed=True)
+                combined = final_firewall.rstrip() + "\n" + nat_program
+                if _validate_wan_nat_config(combined).returncode:
+                    raise ValueError("Saved paired Firewall and NAT no longer validate")
+            except (OSError, ValueError):
+                _nat_quarantine()
+                print(json.dumps({"nat": "quarantined", "reason": "Saved publication requires review"}))
+                return 0
+            # Replay the entire committed pair after Firewall boot, never add an
+            # independently generated admission to a different live policy.
+            if _run_with_input(["nft", "-f", "-"], combined).returncode:
+                raise ValueError("Committed Firewall and NAT replay failed")
+            _nat_write(FIREWALL_CONFIG_PATH, final_firewall)
+            _nat_write(WAN_NAT_CONFIG_PATH, nat_program)
+            print(json.dumps({"publishing": "committed pair restored"}))
+            return 0
+        program = _render_wan_nat_config(rules, port_forwards=[] if parsed["port_forwards"] else None)
         validation = _validate_wan_nat_config(program)
         if validation.returncode:
             raise ValueError("Staged nftables source translation validation failed")
@@ -10224,7 +10929,7 @@ def _handle_nat_locked(action: str, args: list[str]) -> int:
         try:
             indexes = _wan_nat_interface_indexes(parsed, rules)
             _nat_observed_addresses(rules)
-            program = _render_wan_nat_config(rules, indexes)
+            program = _render_wan_nat_config(rules, indexes, port_forwards=[] if parsed["port_forwards"] else None)
         except ValueError:
             if action != "restore":
                 raise
@@ -10252,7 +10957,11 @@ def _handle_nat_locked(action: str, args: list[str]) -> int:
                 f"ExecStart=/opt/atlaso/bin/atlaso-helper nat restore --real {NAT_RUNTIME_CONFIG_PATH}",
                 "RemainAfterExit=yes", "[Install]", "WantedBy=multi-user.target", "",
             ]))
-            operation = "enable" if _wan_feature_settings(parsed)["nat_enabled"] else "disable"
+            saved_forwards = json.loads(parsed["port_forwards"][0]["name"]) if parsed["port_forwards"] else []
+            replay_enabled = _wan_feature_settings(parsed)["nat_enabled"] or any(row["enabled"] for row in saved_forwards)
+            if parsed["port_forwards"]:
+                _nat_write(WAN_NAT_SERVICE_PATH, _nat_service_text())
+            operation = "enable" if replay_enabled else "disable"
             if _run(["systemctl", "daemon-reload"]).returncode or _run(["systemctl", operation, "atlaso-nat.service"]).returncode:
                 raise ValueError("NAT boot replay enablement failed")
             marker.unlink()
@@ -10552,12 +11261,9 @@ def _handle_wan_config(action: str, config_path: Path, *, replay: bool = False) 
     return 0
 
 
-def _install_firewall_service() -> None:
-    """Perform install firewall service.
-
-    """
-    FIREWALL_SERVICE_PATH.write_text(
-        "\n".join(
+def _firewall_service_text() -> str:
+    """Describe Firewall boot replay without starting a second ruleset replace."""
+    return "\n".join(
             [
                 "[Unit]",
                 "Description=Atlaso nftables firewall",
@@ -10574,9 +11280,12 @@ def _install_firewall_service() -> None:
                 "WantedBy=multi-user.target",
                 "",
             ]
-        ),
-        encoding="utf-8",
-    )
+        )
+
+
+def _install_firewall_service() -> None:
+    """Install and activate the existing standalone Firewall boot service."""
+    FIREWALL_SERVICE_PATH.write_text(_firewall_service_text(), encoding="utf-8")
     _run(["systemctl", "daemon-reload"])
     _run(["systemctl", "enable", "--now", "atlaso-firewall.service"])
 
@@ -20478,6 +21187,35 @@ def _factory_reset_root_netem_interfaces(candidates: list[str]) -> list[str]:
     return interfaces
 
 
+def _reset_factory_port_forward_runtime() -> None:
+    """Retire owned translations before factory reset replaces network identity.
+
+    Called only after the factory-reset applying marker has admitted cleanup.
+    Pending publication evidence is retained for application reconciliation.
+    """
+    if (not NAT_RUNTIME_CONFIG_PATH.exists()
+            and not NAT_RUNTIME_CONFIG_PATH.with_suffix(".publishing-recovery.json").exists()):
+        return
+    with _nat_transaction_lock():
+        if NAT_RUNTIME_CONFIG_PATH.with_suffix(".publishing-recovery.json").exists():
+            raise ValueError("Factory reset requires pending Traffic Publishing reconciliation")
+        if not NAT_RUNTIME_CONFIG_PATH.exists():
+            return
+        parsed = _parse_wan_config(NAT_RUNTIME_CONFIG_PATH)
+        if not parsed.get("port_forwards"):
+            return
+        if _run_with_input(["nft", "-f", "-"], _quiesce_port_forward_config()).returncode:
+            raise ValueError("Factory reset could not quiesce destination translations")
+        _retire_port_forward_connections()
+        _nat_quarantine()
+        # The reset subsequently applies an empty desired snapshot. Remove the
+        # old replay intent only after its marked sessions can no longer pass.
+        for path in (NAT_RUNTIME_CONFIG_PATH,
+                     NAT_RUNTIME_CONFIG_PATH.with_suffix(".publishing-commit.json")):
+            path.unlink(missing_ok=True)
+        _fsync_directory(NAT_RUNTIME_CONFIG_PATH.parent)
+
+
 def _reset_factory_network_runtime() -> int:
     """Clear bounded live VLAN, route-table, and WAN impairment state during reset."""
     if not _factory_reset_runtime_cleanup_is_admitted():
@@ -20493,7 +21231,8 @@ def _reset_factory_network_runtime() -> int:
         vlan_names = _factory_reset_managed_vlan_names()
         wan_route_interfaces = _factory_reset_wan_route_interfaces()
         netem_interfaces = _factory_reset_root_netem_interfaces(wan_route_interfaces)
-    except ValueError as exc:
+        _reset_factory_port_forward_runtime()
+    except (OSError, ValueError) as exc:
         print(str(exc), file=sys.stderr)
         return 2
 
@@ -20780,6 +21519,12 @@ def _load_management_handoff_manifest(path: Path) -> dict:
             raise ValueError(f"management handoff ca_config_path must name a staged file under {CA_APPLY_DIR}")
         payload["ca_config_path"] = str(ca_path)
     wan_value = str(payload.get("wan_config_path") or "")
+    nat_value = str(payload.get("nat_config_path") or "")
+    if nat_value:
+        nat_path = Path(_validate_path(nat_value)).resolve()
+        if nat_path.suffix != ".conf" or not nat_path.is_file() or not nat_path.is_relative_to(NAT_APPLY_DIR):
+            raise ValueError("management handoff nat_config_path must name a staged NAT config")
+        payload["nat_config_path"] = str(nat_path)
     wan_rollback_value = str(payload.get("wan_rollback_config_path") or "")
     if bool(wan_value) != bool(wan_rollback_value):
         raise ValueError("management handoff WAN candidate and rollback paths must be supplied together")
@@ -20896,6 +21641,17 @@ def _management_handoff_validation_errors(payload: dict) -> list[str]:
                 nat_validation = _validate_wan_nat_config(_render_wan_nat_config(parsed_wan["nat_rules"]))
                 if nat_validation.returncode != 0:
                     errors.append(f"{label}: {(nat_validation.stderr or nat_validation.stdout).strip()}")
+    if payload.get("nat_config_path"):
+        try:
+            intent = Path(payload["nat_config_path"]).read_text(encoding="utf-8")
+            firewall = Path(payload["firewall_config_path"]).read_text(encoding="utf-8")
+            if len(intent) > 2_000_000 or len(firewall) > 2_000_000:
+                raise ValueError("Paired publication exceeds its size bound")
+            final_firewall, nat_program, _ = _publishing_program(intent, firewall, observed=False)
+            if _validate_wan_nat_config(final_firewall.rstrip() + "\n" + nat_program).returncode:
+                errors.append("Combined Firewall and Traffic Publishing validation failed")
+        except (OSError, ValueError):
+            errors.append("Captured Traffic Publishing intent is invalid")
     return [error for error in errors if error]
 
 
@@ -21157,6 +21913,9 @@ def _snapshot_management_handoff(payload: dict) -> dict:
         "resolver_apply_started": False,
         "previous_firewall_config_existed": previous_firewall_config_existed,
         "previous_firewall_service_existed": previous_firewall_service_existed,
+        "publishing_included": bool(payload.get("nat_config_path")),
+        "previous_nat_enabled": (_run(["systemctl", "is-enabled", "atlaso-nat.service"]).returncode == 0
+                                 if payload.get("nat_config_path") else False),
         "wan_rollback_config_path": str(payload.get("wan_rollback_config_path") or ""),
     }
     _durable_management_handoff_state_write(state, MANAGEMENT_HANDOFF_STATE_PATH)
@@ -22207,6 +22966,8 @@ def _restore_management_handoff(state: dict) -> dict:
     )
     # Firewall restoration flushes the ruleset; replay canonical NAT after that final flush.
     attempt("firewall restore", lambda: _restore_management_handoff_firewall(state, commands))
+    if state.get("publishing_included"):
+        attempt("port-forward connection retirement", _retire_port_forward_connections)
     if NAT_RUNTIME_CONFIG_PATH.exists():
         def restore_nat() -> None:
             """Rebuild prior NAT selectors after restoring Network and WAN."""
@@ -22216,6 +22977,17 @@ def _restore_management_handoff(state: dict) -> dict:
                 raise ValueError("Traffic Publishing rollback failed")
 
         attempt("Traffic Publishing rollback", restore_nat)
+    elif state.get("publishing_included"):
+        attempt("Traffic Publishing quarantine", _nat_quarantine)
+    if state.get("publishing_included"):
+        def restore_nat_enablement() -> None:
+            """Restore the snapshotted boot policy after paired handoff rollback."""
+            operation = "enable" if state.get("previous_nat_enabled") else "disable"
+            result = _run(["systemctl", operation, "atlaso-nat.service"])
+            if result.returncode and WAN_NAT_SERVICE_PATH.exists():
+                raise ValueError("Traffic Publishing boot policy rollback failed")
+
+        attempt("Traffic Publishing boot policy", restore_nat_enablement)
 
     def validate_nginx() -> None:
         if _nginx_binary() is None or _nginx_test_command().returncode != 0:
@@ -22667,6 +23439,12 @@ def _apply_management_handoff(payload: dict) -> int:
         )
         return 1
     try:
+        if NAT_RUNTIME_CONFIG_PATH.with_suffix(".publishing-recovery.json").exists():
+            raise ValueError("Traffic Publishing application reconciliation is required before management handoff")
+        nat_intent = (Path(payload["nat_config_path"]).read_text(encoding="utf-8")
+                      if payload.get("nat_config_path") else None)
+        if nat_intent is not None and len(nat_intent) > 2_000_000:
+            raise ValueError("Traffic Publishing handoff snapshot exceeds its size bound")
         state = _snapshot_management_handoff(payload)
     except (OSError, ValueError, json.JSONDecodeError) as exc:
         marker_exists = MANAGEMENT_HANDOFF_STATE_PATH.is_file()
@@ -22820,10 +23598,20 @@ def _apply_management_handoff(payload: dict) -> int:
             # rules and default routes survive retirement and reboot.
             failing_layer = "Routes & WAN persistence"
             _apply_management_handoff_wan(payload)
-        transition_path.write_text(final_firewall, encoding="utf-8")
-        os.chmod(transition_path, 0o600)
-        if _handle_firewall("apply", [str(transition_path)]) != 0:
-            raise ValueError("final nftables apply failed while retiring the previous path")
+        if nat_intent is not None:
+            failing_layer = "paired Firewall and Traffic Publishing"
+            with _nat_transaction_lock():
+                paired_firewall, nat_program, _ = _publishing_program(nat_intent, final_firewall, observed=True)
+                if _validate_wan_nat_config(paired_firewall.rstrip() + "\n" + nat_program).returncode:
+                    raise ValueError("Final Firewall and Traffic Publishing validation failed")
+                # The wider management journal already owns these five files and
+                # the application acknowledgement. Do not create a second journal.
+                _publishing_install(nat_intent, paired_firewall, nat_program, retire_connections=True)
+        else:
+            transition_path.write_text(final_firewall, encoding="utf-8")
+            os.chmod(transition_path, 0o600)
+            if _handle_firewall("apply", [str(transition_path)]) != 0:
+                raise ValueError("final nftables apply failed while retiring the previous path")
         if protocol_holdover:
             failing_layer = "previous-protocol retirement"
             management_https_result, _restart_delay_seconds = _configure_atlaso_management_https(
@@ -23218,6 +24006,9 @@ def main(argv: list[str]) -> int:
 
     if (group, action) == ("kms", "status"):
         return _handle_kms(action, normalized_args)
+
+    if (group, action) == ("nat", "status"):
+        return _handle_nat(action, normalized_args)
 
     if real_apply and _should_run_real_action_with_systemd(action):
         return _run_real_action_with_systemd(group, action, normalized_args)

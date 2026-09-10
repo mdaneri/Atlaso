@@ -63,6 +63,7 @@ from atlaso.app.models import (
     OidcSigningKey,
     OidcSubject,
     PhysicalInterface,
+    PortForward,
     Route,
     RoutingRule,
     Schedule,
@@ -173,6 +174,7 @@ from atlaso.app.services.oidc import (
     validate_persisted_client_policy,
     validate_redirect_uri_list,
 )
+from atlaso.app.services.port_forwarding import MAX_PORT_FORWARDS, validate_port_forward
 from atlaso.app.services.routes_wan import (
     ROUTES_WAN_SETTING_KEYS,
     RoutesWanSettings,
@@ -232,6 +234,7 @@ SCALAR_TABLES = {
     "vlan_interfaces": VlanInterface,
     "wan_policies": WanPolicy,
     "nat_rules": NatRule,
+    "port_forwards": PortForward,
     "routing_rules": RoutingRule,
     "service_states": ServiceState,
     "appliance_settings": ApplianceSettings,
@@ -390,6 +393,7 @@ RESTORE_DELETE_MODELS = [
     Route,
     RoutingRule,
     NatRule,
+    PortForward,
     WanPolicy,
     VlanInterface,
     PhysicalInterface,
@@ -1452,7 +1456,7 @@ def _restore_settings_archive_data(db: Session, data: dict[str, Any]) -> dict[st
     _clear_desired_state(db)
 
     counts: dict[str, int] = {}
-    for key in ["physical_interfaces", "vlan_interfaces", "wan_policies", "nat_rules", "routing_rules"]:
+    for key in ["physical_interfaces", "vlan_interfaces", "wan_policies", "nat_rules", "port_forwards", "routing_rules"]:
         counts[key] = _insert_rows(db, SCALAR_TABLES[key], data.get(key, []))
     db.flush()
 
@@ -1788,6 +1792,7 @@ ARCHIVE_UNGUARDED_UNIQUE_IDENTITIES: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("vlan_interfaces", ("parent_interface", "vlan_id")),
     ("wan_policies", ("name",)),
     ("nat_rules", ("name",)),
+    ("port_forwards", ("name",)),
     ("routing_rules", ("name",)),
     ("service_states", ("service",)),
     ("dns_records", ("hostname", "record_type", "address")),
@@ -2568,6 +2573,29 @@ def _validate_archive_relationships(data: dict[str, list[dict[str, Any]]]) -> No
         errors = validate_nat_rule(candidate, [*traffic_targets, *retained_targets], firewall_source_groups, allow_legacy=True)
         if errors:
             raise ValueError(f"Settings archive NAT row {row_index} is invalid: {errors[0]}")
+
+    forward_rows = data.get("port_forwards", [])
+    if len(forward_rows) > MAX_PORT_FORWARDS:
+        raise ValueError("Settings archives may retain at most 256 port forwards.")
+    forwards = [PortForward(id=index, **_model_kwargs_with_scalar_defaults(PortForward, row))
+                for index, row in enumerate(forward_rows, start=1)]
+    target_by_name = {target["name"]: target for target in traffic_targets}
+    for candidate, row in zip(forwards, forward_rows, strict=True):
+        target = target_by_name.get(candidate.ingress_interface, {})
+        cidr = target.get("ip_cidr" if candidate.ip_family == 4 else "ipv6_cidr", "")
+        if not cidr or str(ip_interface(cidr).ip) != candidate.listener_address:
+            # Preserve the exact saved relationship for review; never substitute
+            # another interface, listener address, or an Any ingress on import.
+            candidate.enabled = False
+            candidate.restore_review_required = True
+            row["enabled"] = False
+            row["restore_review_required"] = True
+    forward_context = {"targets": traffic_targets, "interfaces": [*archived_interfaces, *archived_vlans],
+                       "groups": firewall_source_groups, "claims": []}
+    for row_index, candidate in enumerate(forwards, start=1):
+        errors = validate_port_forward(candidate, forwards, forward_context, require_binding=candidate.enabled)
+        if errors:
+            raise ValueError(f"Settings archive port-forward row {row_index} is invalid: {errors[0]}")
 
     for row_index, row in enumerate(data.get("routing_rules", []), start=1):
         enabled = row.get("enabled", True)

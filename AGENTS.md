@@ -555,8 +555,10 @@ The following cross-cutting boundaries always apply:
   IPv4 or IPv6 family plus a same-family next-hop gateway for defaults, persist canonical `0.0.0.0/0` or `::/0`, and
   allow only one default per family. Destination-specific routes keep a required CIDR and optional gateway for directly
   connected paths; API callers may continue to submit canonical `/0` CIDRs.
-  Static Routes, Routing Permissions, and WAN Policies belong to Routing & WAN; source NAT belongs to Traffic
-  Publishing and supports IPv4/IPv6 masquerade or fixed SNAT through its separate `nat` Apply unit. All four are
+  Static Routes, Routing Permissions, and WAN Policies belong to Routing & WAN; source NAT and port forwarding belong to
+  Traffic Publishing. Source NAT supports IPv4/IPv6 masquerade or fixed SNAT. Port forwarding owns exact dual-stack
+  listener mappings and read-only generated Firewall admissions; its Firewall/NAT publication and baselines are paired.
+  All five are
   wizard-backed Tabulator collections. Add launches
   from the bottom row; edit launches from row double-click or the context menu; generated routing permissions remain
   read-only; and ordinary persisted **Enabled** state remains directly editable without host mutation.

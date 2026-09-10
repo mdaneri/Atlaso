@@ -2747,11 +2747,13 @@ def test_management_handoff_keeps_previous_https_identity(monkeypatch, tmp_path,
 
 
 @pytest.mark.parametrize("candidate_sync_error", [False, True], ids=["durable", "sync-failure"])
+@pytest.mark.parametrize("paired_publishing", [False, True], ids=["source-only", "port-forward-pair"])
 def test_management_handoff_candidate_durability_gates_ack(
     monkeypatch,
     tmp_path,
     capsys,
     candidate_sync_error,
+    paired_publishing,
 ):
     """Acknowledge only a durable candidate and roll back a sync failure.
 
@@ -2760,6 +2762,7 @@ def test_management_handoff_candidate_durability_gates_ack(
         tmp_path: Temporary directory provided for staged firewall state.
         capsys: Pytest fixture used to inspect bounded helper output.
         candidate_sync_error: Whether to inject the final durability failure.
+        paired_publishing: Include captured Firewall/NAT in the wider handoff.
     """
     helper = load_helper_module()
     state = {
@@ -2881,6 +2884,34 @@ def test_management_handoff_candidate_durability_gates_ack(
     candidate = tmp_path / "candidate-firewall.nft"
     candidate.write_text("table inet atlaso {\n  chain input {\n  }\n}\n", encoding="utf-8")
 
+    paired_calls = []
+    nat = tmp_path / "candidate-nat.conf"
+    nat.write_text("captured destination intent", encoding="utf-8")
+    if paired_publishing:
+        from contextlib import nullcontext
+
+        monkeypatch.setattr(helper, "NAT_RUNTIME_CONFIG_PATH", tmp_path / "runtime-nat.conf")
+        monkeypatch.setattr(helper, "_nat_transaction_lock", nullcontext)
+        monkeypatch.setattr(helper, "_publishing_program", lambda intent, firewall, **_kwargs: (firewall, "captured nat", True))
+        monkeypatch.setattr(helper, "_validate_wan_nat_config", lambda _program: subprocess.CompletedProcess([], 0, "", ""))
+
+        def install_pair(intent, firewall, program, *, retire_connections):
+            """Record pair publication after Network/WAN and before durable ACK.
+
+            Args:
+                intent: Captured destination intent.
+                firewall: Final Firewall after management holdover retirement.
+                program: Validated translation program.
+                retire_connections: Required removal of old owned sessions.
+            """
+            assert retirement_operations[-1] == "wan"
+            assert not durability_calls
+            assert retire_connections
+            paired_calls.append((intent, program))
+            applied_firewalls.append(firewall)
+
+        monkeypatch.setattr(helper, "_publishing_install", install_pair)
+
     result = helper._apply_management_handoff(
         {
             "network_config_path": "candidate-network",
@@ -2888,10 +2919,12 @@ def test_management_handoff_candidate_durability_gates_ack(
             "appliance_settings_config_path": "candidate-settings",
             "public_services_config_path": "candidate-public",
             "wan_config_path": "candidate-wan",
+            **({"nat_config_path": str(nat)} if paired_publishing else {}),
         }
     )
 
     assert durability_calls == [True]
+    assert paired_calls == ([("captured destination intent", "captured nat")] if paired_publishing else [])
     if candidate_sync_error:
         assert result == 1
         assert "awaiting-application-commit" not in phases

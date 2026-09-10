@@ -101,6 +101,7 @@ from atlaso.app.models import (
     NtpSettings,
     OidcProviderSettings,
     PhysicalInterface,
+    PortForward,
     Role,
     Route,
     RoutingRule,
@@ -126,6 +127,7 @@ from atlaso.app.operational_logging import (
     logging_preferences_to_dict,
     save_logging_preferences,
 )
+from atlaso.app.port_forward_schemas import PortForwardResponse
 from atlaso.app.routers.registry import (
     RouterContribution,
     allow_compatible_route_shadow,
@@ -487,6 +489,15 @@ from atlaso.app.services.oidc import (
 )
 from atlaso.app.services.oidc import (
     ensure_provider_settings as ensure_oidc_provider_settings,
+)
+from atlaso.app.services.port_forwarding import (
+    port_forward_firewall_projection,
+    render_port_forward_records,
+    snapshot_has_port_forwards,
+    validate_port_forward,
+)
+from atlaso.app.services.port_forwarding import (
+    validation_context as port_forward_validation_context,
 )
 from atlaso.app.services.public_services import (
     PUBLIC_SERVICES_STAGED_CONFIG_PATH,
@@ -3279,6 +3290,7 @@ def recover_interrupted_appliance_apply_jobs(db: Session) -> int:
         for job in candidate_jobs
         if job.status in {JobStatus.PENDING.value, JobStatus.RUNNING.value}
         or _job_payload(job).get("management_handoff_runtime_commit_pending")
+        or _job_payload(job).get("traffic_publishing_runtime_commit_pending")
     ]
     if not jobs:
         return 0
@@ -3290,6 +3302,16 @@ def recover_interrupted_appliance_apply_jobs(db: Session) -> int:
         or _job_payload(job).get("management_handoff_runtime_commit_pending")
     ]
     handoff_recoveries: dict[str, tuple[AdapterResult, dict[str, Any]]] = {}
+    publishing_recoveries: dict[str, AdapterResult] = {}
+    for publishing_job in jobs:
+        publishing_payload = _job_payload(publishing_job)
+        if publishing_payload.get("traffic_publishing_runtime_commit_pending"):
+            publishing_adapter = SystemAdapter(dry_run=False)
+            publishing_recoveries[publishing_job.id] = (
+                publishing_adapter.acknowledge_traffic_publishing(publishing_job.id)
+                if publishing_payload.get("traffic_publishing_application_committed") is True
+                else publishing_adapter.recover_traffic_publishing(publishing_job.id)
+            )
     if handoff_jobs:
         adapter = SystemAdapter(dry_run=False)
         for handoff_job in handoff_jobs:
@@ -3359,6 +3381,18 @@ def recover_interrupted_appliance_apply_jobs(db: Session) -> int:
         payload["state"] = "failed"
         payload["interrupted"] = True
         payload["interrupted_at"] = finished.isoformat()
+        publishing_recovery = publishing_recoveries.get(job.id)
+        if publishing_recovery is not None:
+            payload["traffic_publishing_recovery"] = adapter_result_to_payload(publishing_recovery)
+            payload["traffic_publishing_runtime_commit_pending"] = publishing_recovery.returncode != 0
+            if publishing_recovery.returncode == 0:
+                if payload.get("traffic_publishing_application_committed") is True:
+                    payload["traffic_publishing_runtime_committed"] = True
+                    job.error = "Interrupted after paired Firewall and Traffic Publishing baselines committed; runtime acknowledgement is now complete."
+                else:
+                    job.error = "Interrupted paired Traffic Publishing was recovered; review desired state and submit the changes again."
+            else:
+                job.error = "Paired Firewall and Traffic Publishing recovery remains pending; inspect the task evidence before retrying."
         if handoff_recovery is not None:
             recovery_result, recovery_evidence = handoff_recovery
             payload["management_handoff_recovery"] = adapter_result_to_payload(
@@ -4300,13 +4334,21 @@ def firewall_context(db: Session, *, reconcile: bool = True) -> dict:
     editable_rules = [rule for rule in rules if not is_atlaso_managed_firewall_rule(rule)]
     replaced_rules = [rule for rule in rules if is_atlaso_managed_firewall_rule(rule)]
     available_interfaces = service_bind_options(db)
+    forward_rows = []
+    try:
+        config_preview, forward_rows = port_forward_firewall_projection(
+            config_preview, list(db.scalars(select(PortForward))), source_group_state["groups"],
+            routing_enabled=setting_value(db, "routes_wan.routing_enabled").lower() in {"true", "1", "on", "yes"},
+        )
+    except ValueError:
+        validation_errors.append("Resolve port-forward source validation in Traffic Publishing before Apply.")
     return {
         "firewall_settings": settings,
         "firewall_rules": editable_rules,
         "firewall_rules_json": [firewall_rule_to_dict(rule) for rule in editable_rules],
         "firewall_generated_rules": generated_rules,
         "firewall_generated_rules_json": [firewall_rule_to_dict(rule) for rule in generated_rules],
-        "firewall_managed_rule_rows": managed_firewall_rule_rows(generated_rules, replaced_rules, source_group_state["groups"], source_group_state["assignments"]),
+        "firewall_managed_rule_rows": [*managed_firewall_rule_rows(generated_rules, replaced_rules, source_group_state["groups"], source_group_state["assignments"]), *forward_rows],
         "firewall_source_groups": source_group_state["groups"],
         "firewall_source_group_assignments": source_group_state["assignments"],
         "firewall_config_preview": config_preview,
@@ -5426,7 +5468,7 @@ def wan_nat_targets_from_route_targets(targets: list[dict[str, str]]) -> list[di
 
 
 def traffic_publishing_context(db: Session) -> dict:
-    """Project reviewed source NAT intent without applying runtime translation.
+    """Project reviewed source and destination NAT without applying translation.
 
     Args:
         db: Session containing desired rules, interfaces and shared Source Groups.
@@ -5437,13 +5479,27 @@ def traffic_publishing_context(db: Session) -> dict:
     targets = nat_targets(list(db.scalars(select(PhysicalInterface))), list(db.scalars(select(VlanInterface))))
     groups = firewall_source_group_state_for_db(db)["groups"]
     errors = [error for rule in rules if rule.enabled for error in validate_nat_rule(rule, targets, groups)]
+    forwards = list(db.scalars(select(PortForward).order_by(PortForward.priority, PortForward.name)))
+    forward_context = port_forward_validation_context(db)
+    forward_errors = [f"{rule.name}: {error}" for rule in forwards if rule.enabled
+                      for error in validate_port_forward(rule, forwards, forward_context)]
+    try:
+        forward_preview = render_port_forward_records(forwards, groups)
+    except ValueError:
+        forward_errors.append("Resolve port-forward source validation before rendering the complete snapshot.")
+        forward_preview = "\n# Port-forward configuration requires source validation.\n"
     return {
         "nat_rules": rules, "nat_rule_rows": [nat_rule_to_dict(rule) for rule in rules],
+        "port_forwards": forwards,
+        "port_forward_rows": [PortForwardResponse.model_validate(rule).model_dump(mode="json") for rule in forwards],
+        "port_forward_validation_errors": forward_errors,
+        "port_forward_effective": settings.routing_enabled and any(rule.enabled for rule in forwards),
         "wan_nat_targets": targets, "wan_nat_target_names": [target["name"] for target in targets],
         "wan_source_groups": groups, "traffic_publishing_settings": settings,
         "nat_config_path": NAT_CONFIG_PATH,
-        "nat_config_preview": render_nat_config(rules, targets, groups, settings),
-        "nat_validation_errors": errors if settings.effective_nat_enabled else [],
+        "nat_config_preview": render_nat_config(rules, targets, groups, settings) + forward_preview,
+        "nat_validation_errors": [*(errors if settings.effective_nat_enabled else []),
+                                  *(forward_errors if settings.routing_enabled else [])],
         "nat_rule_validation_errors": errors,
         "nat_status": "suspended" if settings.suspended else "disabled" if not settings.nat_enabled else "needs attention" if errors else "valid",
     }
@@ -10936,7 +10992,7 @@ def appliance_apply_units(db: Session, *, reconcile: bool = True) -> list[dict[s
         wan_unit,
         make_appliance_apply_unit(
             unit_id="nat", label="Traffic Publishing", page_url="/traffic-publishing",
-            context=nat, summary=[f"{len(nat['nat_rules'])} source NAT rules", nat["nat_status"]],
+            context=nat, summary=[f"{len(nat['nat_rules'])} source NAT rules", f"{len(nat['port_forwards'])} port forwards", nat["nat_status"]],
             validation_errors=nat["nat_validation_errors"], config_path=NAT_CONFIG_PATH,
             config_preview=nat["nat_config_preview"], baseline=baselines.get("nat"),
         ),
@@ -13421,6 +13477,85 @@ def synchronize_routing_service_runtime(
     db.add(routing_service)
 
 
+def execute_traffic_publishing_pair(
+    db: Session, job: Job, units: list[dict[str, Any]], *, adapter: SystemAdapter,
+) -> list[dict[str, Any]]:
+    """Publish Firewall and NAT with one durable application-commit decision.
+
+    Args:
+        db: Global Apply transaction and baseline owner.
+        job: Already admitted global task; never a service-specific task.
+        units: Exact captured Firewall and NAT units, unchanged since admission.
+        adapter: Shared dry-run or real constrained helper boundary.
+    """
+    by_id = {unit["id"]: unit for unit in units}
+    if set(by_id) != {"firewall", "nat"}:
+        raise ApplianceApplyJobError("Paired Traffic Publishing requires both captured units.")
+    payload = _job_payload(job)
+    payload["traffic_publishing_runtime_commit_pending"] = not adapter.dry_run
+    payload["traffic_publishing_application_committed"] = False
+    job.result = json.dumps(payload, indent=2)
+    db.commit()
+    commands: list[AdapterResult] = []
+    application_committed = False
+    try:
+        nat_path = NAT_CONFIG_PATH
+        firewall_path = FIREWALL_STAGED_CONFIG_PATH
+        if not adapter.dry_run:
+            nat_path = stage_appliance_apply_config(nat_path, by_id["nat"]["raw_config_preview"])
+            firewall_path = stage_appliance_apply_config(firewall_path, by_id["firewall"]["raw_config_preview"])
+        commands.append(adapter.validate_traffic_publishing(job.id, nat_path, firewall_path))
+        if commands[-1].returncode == 0:
+            commands.append(adapter.apply_traffic_publishing(job.id, nat_path, firewall_path))
+        succeeded = all(command.returncode == 0 for command in commands)
+        if succeeded:
+            # Never refresh desired state here: edits made during native publication
+            # belong to the next Apply, not to this pair's committed baselines.
+            update_appliance_apply_baselines(db, units, {"firewall", "nat"})
+            payload = _job_payload(job)
+            payload["traffic_publishing_application_committed"] = not adapter.dry_run
+            job.result = json.dumps(payload, indent=2)
+            db.commit()
+            application_committed = True
+        if not adapter.dry_run:
+            reconciliation = (adapter.acknowledge_traffic_publishing(job.id) if succeeded
+                              else adapter.recover_traffic_publishing(job.id))
+            commands.append(reconciliation)
+            if reconciliation.returncode == 0:
+                payload = _job_payload(job)
+                payload["traffic_publishing_runtime_commit_pending"] = False
+                payload["traffic_publishing_runtime_committed"] = succeeded
+                job.result = json.dumps(payload, indent=2)
+                db.commit()
+            else:
+                succeeded = False
+    except Exception:
+        db.rollback()
+        if not adapter.dry_run:
+            # A lost helper response may still have published the pair. The exact
+            # owner and retained root journal decide rollback versus forward retry.
+            db.refresh(job)
+            application_committed = bool(_job_payload(job).get("traffic_publishing_application_committed"))
+            reconciliation = (adapter.acknowledge_traffic_publishing(job.id) if application_committed
+                              else adapter.recover_traffic_publishing(job.id))
+            payload = _job_payload(job)
+            payload["traffic_publishing_runtime_commit_pending"] = reconciliation.returncode != 0
+            payload["traffic_publishing_recovery"] = adapter_result_to_payload(reconciliation)
+            job.result = json.dumps(payload, indent=2)
+            db.commit()
+        raise
+    return [{
+        "unit_id": unit["id"], "label": unit["label"], "success": succeeded,
+        "status": JobStatus.SUCCEEDED.value if succeeded else JobStatus.FAILED.value,
+        "dry_run": adapter.dry_run,
+        "commands": [adapter_result_to_payload(command) for command in commands] if unit["id"] == "nat" else [],
+        "summary": unit["summary"], "validation_errors": unit["validation_errors"],
+        "validation_warnings": unit["validation_warnings"], "config_path": unit["config_path"],
+        "config_preview": unit["config_preview"], "config_diff": unit["config_diff"],
+        "error": "" if succeeded else "Paired Firewall and Traffic Publishing did not complete; inspect task recovery evidence.",
+    } for unit in units]
+
+
 def execute_appliance_apply_unit(
     unit: dict[str, Any],
     *,
@@ -13763,6 +13898,7 @@ def execute_management_handoff(
     adapter: SystemAdapter | None = None,
     db: Session,
     include_wan: bool | None = None,
+    include_nat: bool = False,
 ) -> tuple[dict[str, Any], list[dict[str, Any]]]:
     """Execute management-affecting apply units as one recoverable transaction.
 
@@ -13772,6 +13908,7 @@ def execute_management_handoff(
         adapter: System adapter used for helper execution.
         db: Active database session.
         include_wan: Whether the captured WAN unit participates in the transaction.
+        include_nat: Whether the captured Firewall/NAT pair shares this wider recovery.
 
     Returns:
         The group result and one truthful result per bundled apply unit.
@@ -13791,9 +13928,11 @@ def execute_management_handoff(
         )
     )
     wan = units_by_id["wan"] if wan_required else None
+    nat = units_by_id["nat"] if include_nat else None
     handoff_unit_ids = (
         *MANAGEMENT_HANDOFF_UNIT_IDS,
         *(("wan",) if wan_required else ()),
+        *(("nat",) if include_nat else ()),
     )
     baselines = load_appliance_apply_baselines(db)
     previous_paths = list(network.get("previous_management_paths") or [])
@@ -13836,6 +13975,9 @@ def execute_management_handoff(
         )
         wan_path = ""
         wan_rollback_path = ""
+        nat_path = ""
+        if nat is not None:
+            nat_path = stage_appliance_apply_config(NAT_CONFIG_PATH, nat["raw_config_preview"])
         if wan is not None:
             wan_path = stage_appliance_apply_config(
                 str(wan["config_path"]),
@@ -13869,6 +14011,7 @@ def execute_management_handoff(
                 "ca_config_path": ca_path,
                 "wan_config_path": wan_path,
                 "wan_rollback_config_path": wan_rollback_path,
+                "nat_config_path": nat_path,
                 "previous_management_interfaces": previous_interfaces,
                 "previous_management_parent_interfaces": previous_parent_interfaces,
                 "previous_management_addresses": list(dict.fromkeys(previous_addresses)),
@@ -15270,6 +15413,7 @@ def active_appliance_apply_job(db: Session) -> Job | None:
             or_(
                 Job.status.in_([JobStatus.PENDING.value, JobStatus.RUNNING.value]),
                 Job.result.like('%"management_handoff_runtime_commit_pending": true%'),
+                Job.result.like('%"traffic_publishing_runtime_commit_pending": true%'),
             ),
         )
         .order_by(Job.created_at)
@@ -15435,6 +15579,7 @@ def run_appliance_apply_job(job_id: str, *, force_real: bool = False) -> None:
             failed = False
             cancelled = False
             handoff_completed = False
+            publishing_completed = False
             handoff_unit_ids = set(
                 job_result.get("management_handoff_units", [])
                 if job_result.get("management_handoff")
@@ -15462,7 +15607,7 @@ def run_appliance_apply_job(job_id: str, *, force_real: bool = False) -> None:
                         continue
                     bundled_units = [
                         current_by_id[unit_id]
-                        for unit_id in (*MANAGEMENT_HANDOFF_UNIT_IDS, "wan")
+                        for unit_id in (*MANAGEMENT_HANDOFF_UNIT_IDS, "wan", "nat")
                         if unit_id in handoff_unit_ids
                     ]
                     if not set(MANAGEMENT_HANDOFF_UNIT_IDS).issubset(
@@ -15494,6 +15639,7 @@ def run_appliance_apply_job(job_id: str, *, force_real: bool = False) -> None:
                         adapter=handoff_adapter,
                         db=db,
                         include_wan="wan" in handoff_unit_ids,
+                        include_nat="nat" in handoff_unit_ids,
                     )
                     if not group_result.get("success") and group_result.get("rollback_proven"):
                         handoff_runtime_pending = False
@@ -15681,6 +15827,45 @@ def run_appliance_apply_job(job_id: str, *, force_real: bool = False) -> None:
                             )
                     handoff_completed = True
                     db.commit()
+                    if failed:
+                        break
+                    continue
+
+                if job_result.get("traffic_publishing_pair") and unit["id"] in {"firewall", "nat"}:
+                    if publishing_completed:
+                        continue
+                    pair = [current_by_id[unit_id] for unit_id in ("firewall", "nat")]
+                    for paired_unit in pair:
+                        paired_step = steps_by_key.get(paired_unit["id"])
+                        if paired_step is None:
+                            raise ApplianceApplyJobError("A paired publication component task is missing.")
+                        paired_step.status = JobStatus.RUNNING.value
+                        paired_step.started_at = utcnow()
+                        paired_step.progress_percent = 5
+                    db.commit()
+                    pair_results = execute_traffic_publishing_pair(
+                        db, job, pair, adapter=SystemAdapter(dry_run=False) if force_real else SystemAdapter(),
+                    )
+                    for paired_result in pair_results:
+                        paired_step = steps_by_key[paired_result["unit_id"]]
+                        paired_step.status = paired_result["status"]
+                        paired_step.result = json.dumps(_redact_task_value(paired_result), indent=2, sort_keys=True)
+                        paired_step.error = paired_result["error"] or None
+                        paired_step.finished_at = utcnow()
+                        paired_step.progress_percent = 100
+                    unit_results.extend(pair_results)
+                    failed = not all(item["success"] for item in pair_results)
+                    current_payload = _job_payload(job)
+                    job.result = json.dumps({**current_payload, "units": unit_results}, indent=2)
+                    if failed:
+                        for remaining in job.steps:
+                            if remaining.status == JobStatus.PENDING.value:
+                                remaining.status = "skipped"
+                                remaining.finished_at = utcnow()
+                                remaining.progress_percent = 100
+                                remaining.error = "Skipped because paired Traffic Publishing failed."
+                    db.commit()
+                    publishing_completed = True
                     if failed:
                         break
                     continue
@@ -16235,8 +16420,22 @@ def _submit_appliance_apply(
     # Firewall replaces the ruleset, so replay NAT after it even when NAT is unchanged.
     if selected_ids.intersection({"wan", "network", "firewall"}) and "nat" in unit_map:
         selected_ids.add("nat")
+    nat_baseline = load_appliance_apply_baselines(db).get("nat") or {}
+    publishing_pair_required = bool(
+        unit_map.get("nat", {}).get("context", {}).get("port_forwards")
+        or snapshot_has_port_forwards(str(nat_baseline.get("config_preview") or ""))
+    )
+    listener_units = {"appliance_settings", "dnsmasq", "esxi_pxe", "esx_storage", "ca", "kms", "ldap",
+                      "ntpd", "vcf_backups", "vcf_offline_depot", "vcf_private_registry", "public_services"}
+    if publishing_pair_required and selected_ids.intersection(listener_units) and "nat" in unit_map:
+        # Service publication must pass the same desired-listener collision check
+        # even when the operator selected only that service in global Apply.
+        selected_ids.add("nat")
+    if publishing_pair_required and "nat" in selected_ids and "firewall" in unit_map:
+        selected_ids.add("firewall")
     nat_activation = unit_map.get("nat", {}).get("context", {}).get("traffic_publishing_settings")
-    if "nat" in selected_ids and getattr(nat_activation, "effective_nat_enabled", False):
+    if "nat" in selected_ids and (getattr(nat_activation, "effective_nat_enabled", False)
+                                  or unit_map.get("nat", {}).get("context", {}).get("port_forward_effective")):
         for dependency in ("network", "wan"):
             if unit_map.get(dependency, {}).get("changed"):
                 selected_ids.add(dependency)
@@ -16273,6 +16472,12 @@ def _submit_appliance_apply(
         return JSONResponse({"detail": detail}, status_code=422) if wants_json else Response(detail, status_code=422, media_type="text/plain")
 
     selected_ordered_units = [unit for unit in units if unit["id"] in selected_ids]
+    traffic_publishing_pair = publishing_pair_required and not management_handoff and {"firewall", "nat"}.issubset(selected_ids)
+    if traffic_publishing_pair:
+        # Network/WAN must finish before either member publishes its captured pair.
+        selected_ordered_units = [unit for unit in selected_ordered_units if unit["id"] != "firewall"]
+        nat_index = next(index for index, unit in enumerate(selected_ordered_units) if unit["id"] == "nat")
+        selected_ordered_units.insert(nat_index, unit_map["firewall"])
     skipped_changed_units = [
         {"unit_id": unit["id"], "label": unit["label"], "summary": unit["summary"]}
         for unit in units
@@ -16322,10 +16527,12 @@ def _submit_appliance_apply(
         "format_authorizations": [],
         "refresh_vcf_depot_software_depot_id": refresh_vcf_depot_software_depot_id,
         "management_handoff": management_handoff,
+        "traffic_publishing_pair": traffic_publishing_pair,
         "management_handoff_units": [
             unit_id
-            for unit_id in (*MANAGEMENT_HANDOFF_UNIT_IDS, "wan")
+            for unit_id in (*MANAGEMENT_HANDOFF_UNIT_IDS, "wan", "nat")
             if management_handoff and unit_id in selected_ids
+            and (unit_id != "nat" or publishing_pair_required)
         ],
     }
     vcf_depot_submit_guard = VCF_DEPOT_SUBMIT_LOCK if "vcf_offline_depot" in selected_ids else nullcontext()

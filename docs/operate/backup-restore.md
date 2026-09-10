@@ -14,7 +14,13 @@ fields. Legacy IPv4 rules retain their meaning; omitted ingress remains pending 
 are retained only when backed by archived missing-host inventory and never become runtime-eligible on restore.
 Canonical NAT enablement takes precedence over a legacy Routes/WAN projection. Factory reset clears NAT rules,
 disables the NAT replay service, and establishes a disabled `nat` Apply baseline. See
-[Traffic Publishing](traffic-publishing.md) for the source-translation contract.
+[Traffic Publishing](traffic-publishing.md) for the translation contract.
+
+Port-forward archives preserve listener identities, source restrictions, port mappings, reply mode, and desired
+enablement. Restore reconstructs Source Group references and retains unavailable ingress relationships as disabled
+rules requiring review. It never substitutes another listener or broadens the source boundary. Factory reset deletes
+these desired rules and retires their generated admissions, counters, and marked sessions through its managed runtime
+cleanup before applying defaults. Unresolved publication recovery blocks reset until reconciliation completes.
 
 <!-- BEGIN GENERATED INTERFACE OVERVIEW -->
 ## Interface overview
