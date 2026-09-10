@@ -222,7 +222,9 @@ function Resolve-AtlasoHyperVSmokeNetworkIdentity {
         if ([string]$ExpectedIdentity.Address -and
             [string]$identity.Address -and
             [string]$identity.Address -cne [string]$ExpectedIdentity.Address) {
-            throw 'The Hyper-V management IPv4 address changed during smoke validation.'
+            throw ("The Hyper-V management IPv4 address changed during smoke validation. " +
+                "Expected '$($ExpectedIdentity.Address)', observed '$($identity.Address)'. " +
+                "Adapter IDs: Management='$($identity.ManagementAdapterId)', Services='$($identity.ServiceAdapterId)'.")
         }
     }
     return $identity

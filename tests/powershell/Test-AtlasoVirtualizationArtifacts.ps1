@@ -193,6 +193,15 @@ if (-not $rejected) { throw 'An unassigned static MAC was admitted as pending.' 
         } catch {
             if ($returnedAddress -eq '192.0.2.20' -or
                 $_.Exception.Message -notmatch 'IPv4 address changed') { throw }
+            foreach ($detail in @(
+                    "Expected '192.0.2.20'", "observed '192.0.2.21'",
+                    "Management='$($hyperVIdentity.ManagementAdapterId)'",
+                    "Services='$($hyperVIdentity.ServiceAdapterId)'"
+                )) {
+                if (-not $_.Exception.Message.Contains($detail)) {
+                    throw "Address-change diagnostic omitted: $detail"
+                }
+            }
             $failed = $true
         }
         if ($returnedAddress -ne '192.0.2.20' -and -not $failed) {
