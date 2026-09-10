@@ -836,6 +836,14 @@ The following cross-cutting boundaries always apply:
   the address with every running Workstation VM and fail closed with the conflicting VMX, MAC, and address when another
   guest reports it or the host-facing neighbor maps elsewhere. Never continue SSH or HTTPS validation through an
   ambiguous address and never modify the user's SSH `known_hosts` automatically during recovery.
+- ESXi boot authorization must consume the exact successful real-Apply manifest from the dedicated encrypted runtime
+  record, never a redacted display preview. Keep ciphertext out of Apply baselines and portable settings exports;
+  publish the runtime record transactionally after successful activation, including factory reset, and preserve it
+  across failed and dry-run applies. Bind hidden desired edits to the submitted snapshot with the ESXi-specific keyed
+  marker. Corrupt protected evidence must fail closed without legacy fallback. Keep incomplete runtime state selectable
+  for real Apply, explain recovery in the existing Validation rail, and require a fresh host boot attempt afterward.
+  Reuse one request-local manifest index and revision check across management diagnostics. Preserve standalone IP,
+  MAC, and host UUID identifiers without adding UUID as an authorization requirement. See [ESXi Network Boot](docs/services/ipxe.md).
 - Inventory Linux reports use bounded schema v2 while accepting and normalizing legacy v1. Keep sysfs authoritative for
   device enumeration, use metadata tools only for structured enrichment/readable names, retain JSON in the existing
   report column, enforce the 256 KiB boundary, and never submit raw command output. Its five-minute local console

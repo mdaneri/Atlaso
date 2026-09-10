@@ -1141,6 +1141,12 @@ Terminal order:
   numeric `.cfg` files, writes HTTP `boot.ipxe` even without host profiles, validates selected ISO paths stay under the
   ESX_HOST folder, updates rendered/applied timestamps, and redacts root passwords, tokens, keys, licenses, and other
   secret-looking values from previews, diffs, jobs, logs, audit events, and final responses.
+- Store the exact successful ESXi activation manifest in its dedicated encrypted runtime record, outside Apply
+  baselines and portable settings exports. Real Apply and factory reset publish that record in the same database
+  transaction as their completion metadata; failures and dry runs cannot replace it. Bind hidden input changes with
+  the ESXi-specific keyed snapshot marker before shared Apply projection. Never authorize from redacted previews or
+  fall back when a protected record is unreadable. Recovery requires real Apply and a fresh client boot attempt;
+  report it in the existing Validation rail using one request-local manifest index and shared revision checks.
 - Kickstart vault access is declared only through exact
   `{{vault.<vaultname>.<key>.<username|password|uri1..uri9>}}` markers. Saving and request-time rendering must validate
   every named vault, key, and subkey, resolve only those exact values, and fail closed without exposing secret values.

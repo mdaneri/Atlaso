@@ -73,6 +73,11 @@ See [Getting started](docs/getting-started/index.md) for the first-use path and
 Development appliances keep host-mutating adapters in dry-run mode by default. Operators edit desired state, review
 the resulting appliance changes, and explicitly submit valid units through the global Appliance Apply workflow.
 
+[ESXi Network Boot](docs/services/ipxe.md) authorizes against the exact successfully applied configuration, retained
+in a dedicated encrypted runtime record. Display previews and Apply baselines remain redacted; standalone IP addresses,
+MAC addresses, and host UUIDs remain visible operational identifiers. Recovery from an incomplete applied snapshot
+requires a real ESXi PXE Apply followed by a fresh host boot attempt; a dry run does not repair it.
+
 ## Project and community
 
 Automated pull-request monitoring uses one four-minute current-task heartbeat as the exclusive routine reconciliation
