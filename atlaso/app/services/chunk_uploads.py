@@ -71,11 +71,12 @@ class UploadStore:
         """Close expired sessions even when no subsequent request arrives."""
         with self.lock:
             self.timer = None
-            for key, session in list(self.sessions.items()):
-                if not session.claimed and session.expires <= time.monotonic():
-                    self.sessions.pop(key).file.close()
-            if self.sessions:
-                self._schedule()
+            try:
+                self.release([key for key, session in self.sessions.items()
+                              if not session.claimed and session.expires <= time.monotonic()])
+            finally:
+                if self.sessions:
+                    self._schedule()
 
     def _schedule(self) -> None:
         """Keep one bounded cleanup timer while sessions exist."""
@@ -90,9 +91,7 @@ class UploadStore:
             if self.timer:
                 self.timer.cancel()
                 self.timer = None
-            for session in self.sessions.values():
-                session.file.close()
-            self.sessions.clear()
+            self.release(list(self.sessions))
 
     def create(self, owner: str, target: str, field: str, filename: str, size: int) -> str:
         """Reserve bounded staging without creating any discoverable artifact.

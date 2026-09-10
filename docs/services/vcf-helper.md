@@ -101,7 +101,9 @@ outside deployment discovery, but never a partially uploaded selectable OVA.
 ### Chunked browser uploads
 
 VCF Download Tool filenames are validated before chunk storage is reserved. Final chunk cleanup attempts every staged
-file; a handle-close error is logged without replacing the consuming endpoint result. Replaced OVA backup links
+file; a handle-close error is logged without replacing the consuming endpoint result. Expiry sweeps and shutdown
+also attempt every eligible handle after a close failure, and expiry continues for remaining sessions.
+Replaced OVA backup links
 are removed with private staging in the shielded worker cleanup, so old-file deallocation does not block management requests.
 
 Browser file uploads use a shared sequential transport, including SDDC Manager OVA, ESX ISO, VCFDT packages,

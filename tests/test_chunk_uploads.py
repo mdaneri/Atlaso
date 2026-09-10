@@ -534,3 +534,75 @@ def test_handle_close_failure_preserves_endpoint_result_and_releases_all(monkeyp
         anyio.run(exercise)
     finally:
         store.close()
+
+
+@pytest.mark.parametrize("shutdown", [False, True])
+def test_sweep_and_shutdown_continue_after_close_failure(monkeypatch, shutdown):
+    """Failed closes cannot stop later cleanup or disable expiry scheduling.
+
+    Args:
+        monkeypatch: Fixture replacing timers with deterministic callbacks.
+        shutdown: Whether to exercise shutdown or repeated expiry sweeps.
+    """
+    import atlaso.app.services.chunk_uploads as service
+
+    timers = []
+
+    class Timer:
+        """Record scheduling without starting background threads."""
+
+        def __init__(self, interval, callback):
+            """Retain the scheduled callback.
+
+            Args:
+                interval: Requested sweep delay.
+                callback: Expiry callback.
+            """
+            self.callback = callback
+            self.canceled = False
+            timers.append(self)
+
+        def start(self):
+            """Leave execution under the test's control."""
+
+        def cancel(self):
+            """Record shutdown cancellation."""
+            self.canceled = True
+
+    class FailedClose(io.BytesIO):
+        """Close normally then simulate a filesystem error."""
+
+        def close(self):
+            """Report a failure after releasing this fixture's buffer."""
+            super().close()
+            raise OSError("staging close failed")
+
+    monkeypatch.setattr(service.threading, "Timer", Timer)
+    store = UploadStore()
+    keys = [store.create("owner", OVA, "ova_file", "test.ova", 1) for _ in range(4)]
+    store.sessions[keys[0]].file.close()
+    store.sessions[keys[0]].file = FailedClose()
+    handles = [store.sessions[key].file for key in keys]
+    for key in keys[:2]:
+        store.sessions[key].expires = 0
+    store.sessions[keys[3]].claimed = True
+    store.sessions[keys[3]].expires = 0
+    try:
+        if shutdown:
+            store.close()
+            assert timers[0].canceled and store.timer is None
+            assert not store.sessions and all(handle.closed for handle in handles)
+        else:
+            timers[0].callback()
+            assert all(handle.closed for handle in handles[:2])
+            assert set(store.sessions) == set(keys[2:])
+            assert not any(handle.closed for handle in handles[2:])
+            assert len(timers) == 2 and store.timer is timers[1]
+            key = store.create("owner", OVA, "ova_file", "new.ova", 1)
+            store.cancel(key, "owner")
+            store.sessions[keys[2]].expires = 0
+            timers[1].callback()
+            assert handles[2].closed and not handles[3].closed
+            assert len(timers) == 3 and store.timer is timers[2]
+    finally:
+        store.close()
