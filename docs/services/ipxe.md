@@ -437,6 +437,30 @@ attempt. The management page and API receipt do not display the boot capability
 or its URL. Appliance Apply invalidates all outstanding attempts. Unauthorized,
 invalid-code, expired, replayed, wrong-host,
 wrong-revision, and wrong-listener requests receive the same not-found response.
+
+If the console cannot display a code, inspect the **Validation** card on Network Boot.
+It identifies Host References whose applied boot snapshot is unavailable, whose
+Kickstart snapshot is invalid, or whose saved host fields differ from applied state.
+Use **Review appliance changes** to submit a real **ESXi PXE** Apply, then start a
+fresh boot attempt on the intended host. A menu already loaded in iPXE retains its
+original attempt; returning to that same menu does not fetch a new one. Rebooting
+the client alone cannot repair an invalid applied snapshot.
+
+Upgrading from a release that retained only redacted runtime previews requires one
+real ESXi PXE Apply, even when the previous release reported no pending changes.
+A dry run does not repair runtime evidence. Vault password markers alone do not
+repair an older redacted snapshot either. Do not edit the database or remove the
+Kickstart's password directive to work around this validation.
+
+Atlaso retains the exact successfully staged boot manifest encrypted with the
+appliance secrets key, separately from redacted display previews. Failed and dry-run
+applies retain the last real snapshot, and desired edits made during Apply remain
+pending. Plain IP addresses, MAC addresses, and host UUIDs remain operational
+identifiers; passwords, console codes, and boot capabilities remain protected.
+Host UUID is not an additional ESXi authorization requirement. The protected
+runtime snapshot is excluded from portable settings archives; restored desired
+state requires real Apply before boot authorization.
+
 The
 **Default / undefined MACs** profile remains a compact inline exception for its
 Kickstart, installer ISO, and Enabled values. Manual add and edit require ESXi

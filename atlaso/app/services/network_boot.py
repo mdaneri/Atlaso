@@ -49,6 +49,7 @@ from atlaso.app.models import (
     Setting,
     utcnow,
 )
+from atlaso.app.secrets import decrypt_secret
 from atlaso.app.services.esxi_pxe import (
     ESXI_PXE_HTTP_BASE,
     ESXI_TFTP_ROOT,
@@ -404,14 +405,25 @@ def desired_environment_manifest_rows(db: Session) -> list[dict[str, Any]]:
     return rows
 
 
-def mark_network_boot_environments_applied(db: Session) -> None:
-    """Handle mark network boot environments applied.
+def mark_network_boot_environments_applied(
+    db: Session, *, applied_manifest: dict[str, Any] | None = None,
+) -> None:
+    """Activate only the media versions captured by the successful Apply.
 
     Args:
         db: Active database session.
+        applied_manifest: Exact staged manifest; omitted by legacy direct callers.
     """
+    applied_rows = {
+        row["key"]: row
+        for row in (applied_manifest or {}).get("network_boot", {}).get("environments", [])
+    }
     for state in ensure_environment_rows(db):
-        state.active_version = state.desired_version if state.enabled else ""
+        if applied_manifest is None:
+            state.active_version = state.desired_version if state.enabled else ""
+        else:
+            row = applied_rows.get(state.key, {})
+            state.active_version = str(row.get("desired_version") or "") if row.get("enabled") else ""
         state.updated_at = utcnow()
         db.add(state)
 
@@ -2121,6 +2133,11 @@ def _applied_esxi_pxe_manifest(db: Session) -> dict[str, Any]:
             "runtime_config_preview",
             (baseline or {}).get("config_preview"),
         )
+        # Display previews may replace an entire Kickstart with [redacted]. Only
+        # the protected snapshot retains the exact bytes admitted by real Apply.
+        # An unreadable new snapshot must never fall back to older runtime data.
+        if "runtime_config_encrypted" in (baseline or {}):
+            runtime_preview = decrypt_secret(baseline["runtime_config_encrypted"])
         manifest = json.loads(str(runtime_preview or "{}"))
     except (AttributeError, TypeError, ValueError, json.JSONDecodeError):
         return {}
@@ -2436,6 +2453,35 @@ def _applied_esxi_boot_context(
     if normalize_pxe_mac(expected_mac) != str(artifact.get("mac_key") or ""):
         raise ValueError("Applied ESXi host binding is invalid.")
     return host, artifact, kickstart, dict(boot), manifest
+
+
+def esxi_boot_readiness_warnings(db: Session, hosts: list[EsxiPxeHost]) -> list[str]:
+    """Explain applied-state failures on the authenticated management page only.
+
+    Args:
+        db: Database session used for side-effect-free readiness checks.
+        hosts: Desired Host References displayed by management.
+    """
+    warnings: list[str] = []
+    for host in hosts:
+        if not host.enabled or not host.kickstart_id or not host.installer_iso_path:
+            continue
+        try:
+            _host, artifact, _kickstart, _boot, _manifest = _applied_esxi_boot_context(db, host_id=host.id)
+            _artifact_listener_origin(artifact)
+        except (TypeError, ValueError) as exc:
+            # Never expose raw exceptions, manifest fields, or content hashes.
+            reason = {
+                "Applied ESXi Kickstart revision is invalid.": "The applied Kickstart snapshot is incomplete or invalid.",
+                "The ESXi Host Reference differs from applied state; review and apply it before authorizing boot.":
+                    "The Host Reference differs from its applied snapshot.",
+                "Applied ESXi listener binding is invalid.": "The applied boot listener is invalid.",
+            }.get(str(exc), "The applied ESXi boot snapshot is unavailable or incomplete.")
+            warnings.append(
+                f"{host.hostname}: {reason} "
+                "Review appliance changes and submit a real ESXi PXE Apply, then start a fresh host boot attempt."
+            )
+    return warnings
 
 
 def _artifact_listener_origin(artifact: dict[str, Any]) -> str:
