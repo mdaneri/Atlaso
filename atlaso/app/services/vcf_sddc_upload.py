@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import io
+import logging
 import os
 import re
 import tarfile
@@ -24,6 +25,8 @@ from atlaso.app.services.vcf_sddc_deployment import (
     inspect_ova,
     validate_ova_manifest,
 )
+
+logger = logging.getLogger(__name__)
 
 SDDC_OVA_MAX_BYTES = 16 * 1024**3
 OVA_MAX_MEMBERS = 4096
@@ -192,6 +195,7 @@ async def store_sddc_ova_upload(
             raise SddcUploadError("duplicate", 409)
         # Keeping staging on the depot volume avoids root-volume multipart spooling.
         staging = tempfile.TemporaryDirectory(prefix=".sddc-upload-", dir=root.parent)
+        published = False
         try:
             staged = Path(staging.name) / filename
             total = 0
@@ -219,9 +223,15 @@ async def store_sddc_ova_upload(
                         on_publish(result)
                     except Exception as exc:
                         raise SddcUploadError("audit_error", 503) from exc
+            published = True
         finally:
             with CancelScope(shield=True):
-                await to_thread.run_sync(staging.cleanup)
+                try:
+                    await to_thread.run_sync(staging.cleanup)
+                except OSError:
+                    if not published:
+                        raise
+                    logger.warning("Published OVA staging cleanup could not be completed.")
         return result
     except PublicationConflict as exc:
         raise SddcUploadError("duplicate", 409) from exc

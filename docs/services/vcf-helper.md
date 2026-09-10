@@ -115,6 +115,8 @@ unique regular files, and total hashing work is bounded by the same limit.
 Final validation and publication use the existing endpoint, permissions, duplicate policy, and desired-state boundary.
 A lost final response is not retried automatically: inspect the destination before submitting again.
 
+The OVA wizard locks Back, Cancel, step navigation, and Escape during transfer and validation.
+A staging cleanup error after successful publication and audit does not turn the completed upload into a failure.
 Keep the page open during transfer and validation. Sessions expire after 30 minutes without an accepted chunk;
 page reload, logout, application restart, or exhausting retries requires selecting and uploading the file again.
 Browser completion or failure releases staging in a worker thread, including when finalization is canceled,

@@ -159,3 +159,64 @@ test("chunk and ordinary mutations retain the late-installed apply refresh wrapp
   assert.equal(refreshes, beforeRead + 1);
   assert.equal(calls.filter(call => call.url.endsWith('/ovas/upload')).length, 1);
 });
+
+
+test("OVA wizard locks navigation and Escape until upload success or failure", async () => {
+  const app = fs.readFileSync("atlaso/app/static/app.js", "utf8");
+  const initializer = app.slice(app.indexOf("function initializeSddcOvaUploadForms()"), app.indexOf("function initializeTagEditors"));
+  for (const success of [true, false]) {
+    class Element extends EventTarget {
+      constructor() { super(); this.dataset = {}; this.disabled = false; }
+      toggleAttribute(name, enabled) { this[name] = enabled; }
+    }
+    class Button extends Element {}
+    class Input extends Element {}
+    class Form extends Element {}
+    class Dialog extends Element {}
+    class Progress extends Element {}
+    const form = new Form(), dialog = new Dialog(), input = new Input();
+    input.files = [new File(["abc"], "test.ova")];
+    form.elements = { ova_file: input, csrf: { value: "csrf" } };
+    form.action = "/ui/management/vcf-helper/sddc-manager/ovas/upload";
+    form.querySelector = () => new Element();
+    const controls = Array.from({ length: 4 }, () => new Button());
+    form.querySelectorAll = () => controls;
+    let config, request, discard = 0, reloads = 0;
+    class Upload extends EventTarget {
+      constructor() { super(); this.upload = new EventTarget(); request = this; }
+      open() {}
+      setRequestHeader() {}
+      send() {}
+    }
+    const context = {
+      HTMLElement: Element, HTMLInputElement: Input, HTMLFormElement: Form,
+      HTMLDialogElement: Dialog, HTMLButtonElement: Button, HTMLProgressElement: Progress,
+      Error, encodeURIComponent,
+      document: { querySelector: () => form, getElementById: () => dialog, querySelectorAll: () => [] },
+      window: { AtlasoUploads: { Request: Upload }, location: { reload: () => { reloads += 1; } },
+        AtlasoUiPatterns: { createWizard: options => {
+          config = options;
+          dialog.addEventListener("cancel", () => { discard += 1; });
+          return {};
+        } } },
+    };
+    vm.runInNewContext(initializer + "\ninitializeSddcOvaUploadForms();", context);
+    const pending = config.onSubmit();
+    assert.ok(controls.every(control => control.disabled));
+    assert.equal(form["aria-busy"], true);
+    const escape = new Event("cancel", { cancelable: true });
+    dialog.dispatchEvent(escape);
+    assert.equal(escape.defaultPrevented, true);
+    assert.equal(discard, 0);
+    request.status = success ? 200 : 400;
+    request.responseText = JSON.stringify(success ? { path: "/depot/test.ova" } : { detail: "Rejected" });
+    request.dispatchEvent(new Event("load"));
+    const result = await pending;
+    assert.equal(result.valid, success);
+    assert.equal(reloads, success ? 1 : 0);
+    assert.ok(controls.every(control => !control.disabled));
+    assert.equal(form["aria-busy"], false);
+    dialog.dispatchEvent(new Event("cancel", { cancelable: true }));
+    assert.equal(discard, 1);
+  }
+});

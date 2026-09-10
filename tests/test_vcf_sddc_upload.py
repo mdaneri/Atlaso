@@ -387,7 +387,7 @@ def test_audit_failure_rolls_back_published_ova(client, tmp_path, monkeypatch):
     assert not list(root.parent.glob(".sddc-upload-*"))
 
 
-@pytest.mark.parametrize("failure", ["refresh", "operational_log"])
+@pytest.mark.parametrize("failure", ["refresh", "operational_log", "staging_cleanup"])
 def test_post_commit_reporting_failure_preserves_published_ova(client, tmp_path, monkeypatch, failure):
     """Keep publication aligned with its durable success audit.
 
@@ -435,8 +435,20 @@ def test_post_commit_reporting_failure_preserves_published_ova(client, tmp_path,
 
     if failure == "refresh":
         monkeypatch.setattr(Session, "refresh", failed_refresh)
-    else:
+    elif failure == "operational_log":
         monkeypatch.setattr(audit, "log_audit_event", failed_log)
+    else:
+        import atlaso.app.services.vcf_sddc_upload as service
+
+        def failed_cleanup(staging):
+            """Fail private cleanup after publication and the audit commit.
+
+            Args:
+                staging: Upload staging directory awaiting removal.
+            """
+            raise OSError("transient cleanup failure")
+
+        monkeypatch.setattr(service.tempfile.TemporaryDirectory, "cleanup", failed_cleanup)
     source = tmp_path / "source.ova"
     write_ova(source)
     response = client.post("/ui/management/vcf-helper/sddc-manager/ovas/upload", content=source.read_bytes(),

@@ -16938,6 +16938,19 @@ function initializeSddcOvaUploadForms() {
   const status = form.querySelector("[data-sddc-ova-upload-status]");
   const reviewName = form.querySelector("[data-sddc-ova-review-name]");
   const reviewSize = form.querySelector("[data-sddc-ova-review-size]");
+  let uploading = false;
+  const setUploading = (busy) => {
+    uploading = busy;
+    form.toggleAttribute("aria-busy", busy);
+    form.querySelectorAll("[data-atlaso-wizard-nav], [data-atlaso-wizard-back], [data-atlaso-wizard-cancel], [data-atlaso-wizard-submit]").forEach((control) => {
+      if (control instanceof HTMLButtonElement) control.disabled = busy;
+    });
+  };
+  dialog.addEventListener("cancel", (event) => {
+    if (!uploading) return;
+    event.preventDefault();
+    event.stopImmediatePropagation();
+  });
   const setStatus = (message, state = "idle") => {
     if (!(status instanceof HTMLElement)) return;
     status.textContent = message;
@@ -17019,6 +17032,7 @@ function initializeSddcOvaUploadForms() {
     onSubmit: async () => {
       const file = selectedFile();
       if (!file) return { valid: false, message: "Choose an SDDC Manager OVA.", step: "file", field: "ova_file" };
+      setUploading(true);
       try {
         await upload(file);
         setStatus(`${file.name} validated and added. Refreshing deployment choices...`, "saved");
@@ -17028,6 +17042,8 @@ function initializeSddcOvaUploadForms() {
         const message = error instanceof Error ? error.message : "The SDDC Manager OVA could not be uploaded.";
         setStatus(message, "error");
         return { valid: false, message, step: "review" };
+      } finally {
+        setUploading(false);
       }
     },
   });
