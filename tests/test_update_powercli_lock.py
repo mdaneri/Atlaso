@@ -14,7 +14,12 @@ class FakeGallery(updater.Gallery):
     """Expose a new suite with old-compatible floors and newer component releases."""
 
     def hashes(self, name: str, version: str) -> dict[str, str]:
-        """Return inert reviewed test package digests."""
+        """Return inert reviewed test package digests.
+
+        Args:
+            name: Published module name used to identify its manifest and package.
+            version: Exact module or suite version selected for this operation.
+        """
         return {"archive_sha256": "a" * 64, "content_sha256": "b" * 64}
 
     def latest(self) -> str:
@@ -22,7 +27,12 @@ class FakeGallery(updater.Gallery):
         return "9.1.1"
 
     def dependencies(self, name: str, version: str) -> list[tuple[str, str]]:
-        """Return metadata only for the selected release family."""
+        """Return metadata only for the selected release family.
+
+        Args:
+            name: Published module name used to identify its manifest and package.
+            version: Exact module or suite version selected for this operation.
+        """
         return {
             ("VCF.PowerCLI", "9.1.1"): [
                 ("VMware.OpenAPI", "[2.0.0, )"),
@@ -35,7 +45,11 @@ class FakeGallery(updater.Gallery):
 
 @pytest.fixture
 def checkout(tmp_path: Path) -> Path:
-    """Write minimal baseline consumers and a deliberately noncanonical lock format."""
+    """Write minimal baseline consumers and a deliberately noncanonical lock format.
+
+    Args:
+        tmp_path: Isolated pytest directory for fixture files and child-process scripts.
+    """
     path = tmp_path / updater.LOCK
     path.parent.mkdir(parents=True)
     path.write_text(
@@ -50,7 +64,11 @@ def checkout(tmp_path: Path) -> Path:
 
 
 def snapshot(root: Path) -> dict[str, tuple[bytes, int]]:
-    """Capture content and timestamps to prove no-op and failure leave files untouched."""
+    """Capture content and timestamps to prove no-op and failure leave files untouched.
+
+    Args:
+        root: Root directory containing the module bundle or checkout being validated.
+    """
     return {
         str(path.relative_to(root)): (path.read_bytes(), path.stat().st_mtime_ns)
         for path in root.rglob("*")
@@ -59,7 +77,11 @@ def snapshot(root: Path) -> dict[str, tuple[bytes, int]]:
 
 
 def test_refresh_updates_complete_closure_and_consumers(checkout: Path) -> None:
-    """Suite refresh selects compatible floors and updates all baseline references."""
+    """Suite refresh selects compatible floors and updates all baseline references.
+
+    Args:
+        checkout: Fixture checkout containing the lock and all baseline consumers.
+    """
     assert updater.refresh(checkout, FakeGallery(), None, False)
     lock = json.loads((checkout / updater.LOCK).read_text(encoding="utf-8"))
     assert lock["modules"] == {
@@ -77,7 +99,11 @@ def test_refresh_updates_complete_closure_and_consumers(checkout: Path) -> None:
 
 
 def test_current_release_preserves_bytes_and_timestamps(checkout: Path) -> None:
-    """An already-current baseline is not reformatted or rewritten."""
+    """An already-current baseline is not reformatted or rewritten.
+
+    Args:
+        checkout: Fixture checkout containing the lock and all baseline consumers.
+    """
     before = snapshot(checkout)
     assert not updater.refresh(checkout, FakeGallery(), "9.1.0", False)
     assert snapshot(checkout) == before
@@ -87,7 +113,13 @@ def test_current_release_preserves_bytes_and_timestamps(checkout: Path) -> None:
 def test_release_check_and_downgrade_never_write(
     checkout: Path, check: bool, version: str | None
 ) -> None:
-    """Immutable release and downgrade admission preserve every tracked file."""
+    """Immutable release and downgrade admission preserve every tracked file.
+
+    Args:
+        checkout: Fixture checkout containing the lock and all baseline consumers.
+        check: Whether admission must remain read-only, including during recovery.
+        version: Exact module or suite version selected for this operation.
+    """
     before = snapshot(checkout)
     with pytest.raises(ValueError):
         updater.refresh(checkout, FakeGallery(), version, check)
@@ -95,13 +127,22 @@ def test_release_check_and_downgrade_never_write(
 
 
 def test_conflicting_metadata_fails_before_write(checkout: Path) -> None:
-    """A newer transitive requirement cannot silently override the suite's pin."""
+    """A newer transitive requirement cannot silently override the suite's pin.
+
+    Args:
+        checkout: Fixture checkout containing the lock and all baseline consumers.
+    """
 
     class Conflict(FakeGallery):
         """Model the incompatible family that originally broke provisioning."""
 
         def dependencies(self, name: str, version: str) -> list[tuple[str, str]]:
-            """Require a later Vim from the suite's selected OpenAPI."""
+            """Require a later Vim from the suite's selected OpenAPI.
+
+            Args:
+                name: Published module name used to identify its manifest and package.
+                version: Exact module or suite version selected for this operation.
+            """
             if name == "VMware.OpenAPI":
                 return [("VMware.Vim", "[4.0.0, )")]
             return super().dependencies(name, version)
@@ -113,7 +154,11 @@ def test_conflicting_metadata_fails_before_write(checkout: Path) -> None:
 
 
 def test_consumer_drift_fails_before_write(checkout: Path) -> None:
-    """A missing baseline reference cannot leave the lock partially synchronized."""
+    """A missing baseline reference cannot leave the lock partially synchronized.
+
+    Args:
+        checkout: Fixture checkout containing the lock and all baseline consumers.
+    """
     (checkout / updater.CONSUMERS[-1]).write_text(
         "unexpected content", encoding="utf-8"
     )
@@ -127,12 +172,23 @@ def test_consumer_drift_fails_before_write(checkout: Path) -> None:
 def test_interrupted_publication_recovers_complete_update(
     checkout: Path, monkeypatch, failure
 ) -> None:
-    """A write failure or process interruption after one replacement remains resumable."""
+    """A write failure or process interruption after one replacement remains resumable.
+
+    Args:
+        checkout: Fixture checkout containing the lock and all baseline consumers.
+        monkeypatch: Pytest patch manager used to inject controlled metadata or write failures.
+        failure: Exception type raised to simulate an interrupted publication.
+    """
     original = updater.replace_file
     completed = 0
 
     def interrupted(path: Path, payload: bytes) -> None:
-        """Interrupt after one tracked consumer has already been replaced."""
+        """Interrupt after one tracked consumer has already been replaced.
+
+        Args:
+            path: Destination path whose contents or directory entries must be persisted.
+            payload: Replacement bytes for the tracked consumer or recovery journal.
+        """
         nonlocal completed
         if path != checkout / updater.JOURNAL:
             completed += 1
@@ -163,7 +219,12 @@ def test_interrupted_publication_recovers_complete_update(
 
 
 def test_recovery_preserves_independent_edits(checkout: Path, monkeypatch) -> None:
-    """A retry never overwrites maintainer edits made after an interrupted refresh."""
+    """A retry never overwrites maintainer edits made after an interrupted refresh.
+
+    Args:
+        checkout: Fixture checkout containing the lock and all baseline consumers.
+        monkeypatch: Pytest patch manager used to inject controlled metadata or write failures.
+    """
     original = updater.recover_transaction
     monkeypatch.setattr(updater, "recover_transaction", lambda root, check=False: False)
     updater.refresh(checkout, FakeGallery(), None, False)
@@ -189,7 +250,13 @@ def test_recovery_preserves_independent_edits(checkout: Path, monkeypatch) -> No
 def test_gallery_constraint_boundaries(
     constraint: str, selected: str, expected: bool
 ) -> None:
-    """Inclusive, exclusive, exact, and minimum bounds retain Gallery semantics."""
+    """Inclusive, exclusive, exact, and minimum bounds retain Gallery semantics.
+
+    Args:
+        constraint: Gallery dependency range exercised by the boundary case.
+        selected: Candidate version tested against the dependency range.
+        expected: Expected result of the dependency compatibility comparison.
+    """
     assert updater.satisfies(selected, constraint) is expected
 
 
@@ -216,7 +283,17 @@ def test_entry_point_refresh_admission(
     admitted: bool,
     protected: bool,
 ) -> None:
-    """Execute the actual entry-point hook with a controlled refresh subprocess result."""
+    """Execute the actual entry-point hook with a controlled refresh subprocess result.
+
+    Args:
+        tmp_path: Isolated pytest directory for fixture files and child-process scripts.
+        entry: VMware build or export script whose real preflight hook is executed.
+        release: Whether the hook runs in an immutable release mode.
+        child: Whether invocation is the isolated credential child of the build wrapper.
+        status: Exit code returned by the stubbed refresh subprocess.
+        admitted: Whether the script is expected to proceed beyond version preflight.
+        protected: Whether the nested export must retain read-only version admission.
+    """
     pwsh = shutil.which("pwsh")
     if not pwsh:
         pytest.skip("PowerShell is required")
@@ -261,7 +338,13 @@ def test_entry_point_refresh_admission(
 def test_failed_rename_durability_is_repaired_before_recovery(
     checkout: Path, monkeypatch, failed_name: str
 ) -> None:
-    """A visible rename with a failed persistence step cannot bypass recovery ordering."""
+    """A visible rename with a failed persistence step cannot bypass recovery ordering.
+
+    Args:
+        checkout: Fixture checkout containing the lock and all baseline consumers.
+        monkeypatch: Pytest patch manager used to inject controlled metadata or write failures.
+        failed_name: Journal or consumer publication selected for persistence failure injection.
+    """
     journal = checkout / updater.JOURNAL
     consumer = checkout / updater.CONSUMERS[0]
     target = journal if failed_name == "journal" else consumer
@@ -269,7 +352,12 @@ def test_failed_rename_durability_is_repaired_before_recovery(
     before = {path: (checkout / path).read_bytes() for path in updater.CONSUMERS}
 
     def fail_after_rename(source: Path, destination: Path) -> None:
-        """Model a rename becoming visible before its durability operation reports failure."""
+        """Model a rename becoming visible before its durability operation reports failure.
+
+        Args:
+            source: Flushed staging path published by the rename operation.
+            destination: Final path receiving the durable replacement.
+        """
         original(source, destination)
         if destination == target:
             raise OSError("simulated directory persistence failure")
@@ -285,7 +373,12 @@ def test_failed_rename_durability_is_repaired_before_recovery(
     calls = []
 
     def record(source: Path, destination: Path) -> None:
-        """Record successful durable publication order during recovery."""
+        """Record successful durable publication order during recovery.
+
+        Args:
+            source: Flushed staging path published by the rename operation.
+            destination: Final path receiving the durable replacement.
+        """
         original(source, destination)
         calls.append(destination)
 
@@ -300,7 +393,11 @@ def test_failed_rename_durability_is_repaired_before_recovery(
 
 
 def test_prerelease_nested_export_preserves_protected_mode(tmp_path: Path) -> None:
-    """Execute the actual nested call with a stub that captures protected export admission."""
+    """Execute the actual nested call with a stub that captures protected export admission.
+
+    Args:
+        tmp_path: Isolated pytest directory for fixture files and child-process scripts.
+    """
     pwsh = shutil.which("pwsh")
     if not pwsh:
         pytest.skip("PowerShell is required")

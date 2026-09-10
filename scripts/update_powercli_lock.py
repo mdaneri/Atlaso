@@ -37,7 +37,11 @@ JOURNAL = Path(".atlaso-local/powercli-refresh-transaction.json")
 
 
 def content_digest(files: dict[str, bytes]) -> str:
-    """Bind every archive-relative path and byte sequence in ordinal path order."""
+    """Bind every archive-relative path and byte sequence in ordinal path order.
+
+    Args:
+        files: Archive-relative paths mapped to the exact uncompressed file bytes.
+    """
     lines = []
     folded = set()
     for name, payload in sorted(files.items()):
@@ -58,7 +62,11 @@ def content_digest(files: dict[str, bytes]) -> str:
 
 
 def sync_directory(path: Path) -> None:
-    """Persist POSIX directory entries; Windows renames use write-through instead."""
+    """Persist POSIX directory entries; Windows renames use write-through instead.
+
+    Args:
+        path: Destination path whose contents or directory entries must be persisted.
+    """
     if os.name != "nt":
         descriptor = os.open(path, os.O_RDONLY | os.O_DIRECTORY)
         try:
@@ -68,7 +76,12 @@ def sync_directory(path: Path) -> None:
 
 
 def durable_replace(source: Path, destination: Path) -> None:
-    """Commit a same-directory rename before any dependent tracked write."""
+    """Commit a same-directory rename before any dependent tracked write.
+
+    Args:
+        source: Flushed staging path published by the rename operation.
+        destination: Final path receiving the durable replacement.
+    """
     if os.name == "nt":
         kernel = ctypes.WinDLL("kernel32", use_last_error=True)
         kernel.MoveFileExW.argtypes = [
@@ -86,7 +99,11 @@ def durable_replace(source: Path, destination: Path) -> None:
 
 
 def ensure_journal_directory(root: Path) -> None:
-    """Publish the journal directory itself before relying on its children."""
+    """Publish the journal directory itself before relying on its children.
+
+    Args:
+        root: Root directory containing the module bundle or checkout being validated.
+    """
     directory = (root / JOURNAL).parent
     if not directory.exists():
         pending = directory.with_name(directory.name + ".powercli-pending")
@@ -97,7 +114,12 @@ def ensure_journal_directory(root: Path) -> None:
 
 
 def replace_file(path: Path, data: bytes) -> None:
-    """Durably stage one same-directory replacement before atomic rename."""
+    """Durably stage one same-directory replacement before atomic rename.
+
+    Args:
+        path: Destination path whose contents or directory entries must be persisted.
+        data: Complete replacement bytes to flush before publication.
+    """
     staged = path.with_name(path.name + ".powercli-pending")
     with staged.open("wb") as stream:
         stream.write(data)
@@ -107,7 +129,12 @@ def replace_file(path: Path, data: bytes) -> None:
 
 
 def recover_transaction(root: Path, check: bool = False) -> bool:
-    """Roll an interrupted update forward, preserving any independently edited file."""
+    """Roll an interrupted update forward, preserving any independently edited file.
+
+    Args:
+        root: Root directory containing the module bundle or checkout being validated.
+        check: Whether admission must remain read-only, including during recovery.
+    """
     journal = root / JOURNAL
     if not journal.exists():
         return False
@@ -144,7 +171,12 @@ def recover_transaction(root: Path, check: bool = False) -> bool:
 
 
 def publish_transaction(root: Path, updates: dict[Path, str]) -> None:
-    """Journal the complete update before any tracked write so retries can finish it."""
+    """Journal the complete update before any tracked write so retries can finish it.
+
+    Args:
+        root: Root directory containing the module bundle or checkout being validated.
+        updates: Complete destination-to-content mapping for one synchronized refresh.
+    """
     journal = root / JOURNAL
     ensure_journal_directory(root)
     transaction = {
@@ -161,7 +193,11 @@ def publish_transaction(root: Path, updates: dict[Path, str]) -> None:
 
 
 def version_key(value: str) -> tuple[int, ...]:
-    """Accept stable PowerShell versions and compare missing revision as zero."""
+    """Accept stable PowerShell versions and compare missing revision as zero.
+
+    Args:
+        value: Stable numeric PowerShell module version to normalize for comparison.
+    """
     if not re.fullmatch(r"\d+\.\d+\.\d+(?:\.\d+)?", value):
         raise ValueError(f"Unsupported stable module version: {value!r}")
     parts = tuple(int(part) for part in value.split("."))
@@ -169,7 +205,11 @@ def version_key(value: str) -> tuple[int, ...]:
 
 
 def dependency_floor(requirement: str) -> str:
-    """Return an inclusive published floor; reject ranges requiring guessing."""
+    """Return an inclusive published floor; reject ranges requiring guessing.
+
+    Args:
+        requirement: Gallery dependency range whose bounds must be honored.
+    """
     if requirement.startswith("[") and requirement.endswith(("]", ")")):
         floor = requirement[1:-1].split(",")[0].strip()
     elif requirement and requirement[0].isdigit():
@@ -181,7 +221,12 @@ def dependency_floor(requirement: str) -> str:
 
 
 def satisfies(version: str, requirement: str) -> bool:
-    """Evaluate numeric NuGet exact, minimum, and bounded dependency constraints."""
+    """Evaluate numeric NuGet exact, minimum, and bounded dependency constraints.
+
+    Args:
+        version: Exact module or suite version selected for this operation.
+        requirement: Gallery dependency range whose bounds must be honored.
+    """
     candidate = version_key(version)
     if requirement[0].isdigit():
         return candidate >= version_key(requirement)
@@ -210,7 +255,11 @@ class Gallery:
     """Read bounded official Gallery XML without loading downloaded modules."""
 
     def read(self, query: str) -> ET.Element:
-        """Fetch one metadata document with a timeout and response-size bound."""
+        """Fetch one metadata document with a timeout and response-size bound.
+
+        Args:
+            query: Gallery API query appended to the public metadata endpoint.
+        """
         request = urllib.request.Request(
             API + query, headers={"User-Agent": "Atlaso-PowerCLI-lock"}
         )
@@ -242,7 +291,12 @@ class Gallery:
         return versions[0]
 
     def dependencies(self, name: str, version: str) -> list[tuple[str, str]]:
-        """Read and validate the requested package identity and dependency edges."""
+        """Read and validate the requested package identity and dependency edges.
+
+        Args:
+            name: Published module name used to identify its manifest and package.
+            version: Exact module or suite version selected for this operation.
+        """
         if not re.fullmatch(r"(?:VCF|VMware)\.[A-Za-z0-9.]+", name):
             raise ValueError(f"Unsupported PowerCLI dependency: {name!r}")
         version_key(version)
@@ -272,7 +326,12 @@ class Gallery:
         return result
 
     def hashes(self, name: str, version: str) -> dict[str, str]:
-        """Download inert package bytes and bind both archive and extracted contents."""
+        """Download inert package bytes and bind both archive and extracted contents.
+
+        Args:
+            name: Published module name used to identify its manifest and package.
+            version: Exact module or suite version selected for this operation.
+        """
         with urllib.request.urlopen(
             API + f"package/{name}/{version}", timeout=300
         ) as response:
@@ -297,6 +356,10 @@ def resolve(gallery: Gallery, suite_version: str) -> dict[str, object]:
 
     A suite floor is authoritative. Conflicting transitive floors fail for review
     instead of silently selecting a different release family.
+
+    Args:
+        gallery: Metadata and package provider used to resolve the suite closure.
+        suite_version: Exact stable suite release whose declared dependencies are resolved.
     """
     version_key(suite_version)
     selected = {SUITE: suite_version}
@@ -328,7 +391,14 @@ def resolve(gallery: Gallery, suite_version: str) -> dict[str, object]:
 
 
 def refresh(root: Path, gallery: Gallery, version: str | None, check: bool) -> bool:
-    """Validate a complete candidate before writing; preserve current bytes on no-op."""
+    """Validate a complete candidate before writing; preserve current bytes on no-op.
+
+    Args:
+        root: Root directory containing the module bundle or checkout being validated.
+        gallery: Metadata and package provider used to resolve the suite closure.
+        version: Exact module or suite version selected for this operation.
+        check: Whether admission must remain read-only, including during recovery.
+    """
     if recover_transaction(root, check):
         print(
             "Recovered the complete PowerCLI refresh; review and commit before building."

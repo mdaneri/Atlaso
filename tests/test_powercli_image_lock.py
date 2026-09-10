@@ -18,7 +18,14 @@ pytestmark = pytest.mark.skipif(PWSH is None, reason="PowerShell is required")
 
 
 def module(root: Path, name: str, version: str, required: str = "@()") -> Path:
-    """Write a minimal importable vendor-shaped module without external dependencies."""
+    """Write a minimal importable vendor-shaped module without external dependencies.
+
+    Args:
+        root: Root directory containing the module bundle or checkout being validated.
+        name: Published module name used to identify its manifest and package.
+        version: Exact module or suite version selected for this operation.
+        required: PowerShell RequiredModules expression written into the fixture manifest.
+    """
     directory = root / name / version
     directory.mkdir(parents=True)
     manifest = directory / f"{name}.psd1"
@@ -39,7 +46,12 @@ def module(root: Path, name: str, version: str, required: str = "@()") -> Path:
 
 
 def pin_bundle(root: Path, lock: Path) -> None:
-    """Freeze inert test archives and payload hashes before exercising admission."""
+    """Freeze inert test archives and payload hashes before exercising admission.
+
+    Args:
+        root: Root directory containing the module bundle or checkout being validated.
+        lock: JSON lock path that records the reviewed fixture versions and hashes.
+    """
     data = json.loads(lock.read_text(encoding="utf-8"))
     data["schema_version"] = 2
     data["hashes"] = {}
@@ -65,7 +77,11 @@ def pin_bundle(root: Path, lock: Path) -> None:
 
 @pytest.fixture
 def bundle(tmp_path: Path) -> tuple[Path, Path]:
-    """Create a suite whose open-ended dependency must use the reviewed version."""
+    """Create a suite whose open-ended dependency must use the reviewed version.
+
+    Args:
+        tmp_path: Isolated pytest directory for fixture files and child-process scripts.
+    """
     root = tmp_path / "modules"
     module(root, "VMware.OpenAPI", "1.0.0")
     module(
@@ -92,7 +108,13 @@ def bundle(tmp_path: Path) -> tuple[Path, Path]:
 def run(
     bundle: tuple[Path, Path], mode: str = "Validate", extra_root: Path | None = None
 ) -> subprocess.CompletedProcess[str]:
-    """Run one clean process using only explicitly selected module search roots."""
+    """Run one clean process using only explicitly selected module search roots.
+
+    Args:
+        bundle: Fixture module-root and lock-file pair passed to the provisioning helper.
+        mode: Provisioning mode invoked in the fresh PowerShell process.
+        extra_root: Optional second module search directory used to test shadowing.
+    """
     root, lock = bundle
     env = os.environ.copy()
     env.pop("ATLASO_POWERCLI_VERSION", None)
@@ -123,7 +145,11 @@ def run(
 
 
 def test_exact_closure_imports_in_fresh_process(bundle: tuple[Path, Path]) -> None:
-    """A compatible minimum version loads with the suite and exposes its command."""
+    """A compatible minimum version loads with the suite and exposes its command.
+
+    Args:
+        bundle: Fixture module-root and lock-file pair passed to the provisioning helper.
+    """
     result = run(bundle, "Verify")
     assert result.returncode == 0, result.stdout + result.stderr
     assert "Loaded locked PowerCLI module VMware.OpenAPI 1.0.0" in result.stdout
@@ -134,7 +160,12 @@ def test_ceip_setting_requires_fresh_process_readback(
     bundle: tuple[Path, Path],
     persist: bool,
 ) -> None:
-    """Model vendor import-time caching and reject a setter that did not persist."""
+    """Model vendor import-time caching and reject a setter that did not persist.
+
+    Args:
+        bundle: Fixture module-root and lock-file pair passed to the provisioning helper.
+        persist: Whether the fixture persists CEIP changes across fresh processes.
+    """
     root, lock = bundle
     script = root / "VCF.PowerCLI/9.1.0/VCF.PowerCLI.psm1"
     script.write_text(
@@ -179,7 +210,11 @@ def test_ceip_setting_requires_fresh_process_readback(
 
 
 def test_side_by_side_newer_release_is_rejected(bundle: tuple[Path, Path]) -> None:
-    """A later Gallery version cannot satisfy an open-ended requirement silently."""
+    """A later Gallery version cannot satisfy an open-ended requirement silently.
+
+    Args:
+        bundle: Fixture module-root and lock-file pair passed to the provisioning helper.
+    """
     module(bundle[0], "VMware.OpenAPI", "1.1.0")
     result = run(bundle)
     assert result.returncode != 0
@@ -189,7 +224,12 @@ def test_side_by_side_newer_release_is_rejected(bundle: tuple[Path, Path]) -> No
 def test_user_module_shadow_is_rejected(
     bundle: tuple[Path, Path], tmp_path: Path
 ) -> None:
-    """Fresh administrator verification rejects another discoverable version."""
+    """Fresh administrator verification rejects another discoverable version.
+
+    Args:
+        bundle: Fixture module-root and lock-file pair passed to the provisioning helper.
+        tmp_path: Isolated pytest directory for fixture files and child-process scripts.
+    """
     shadow = tmp_path / "user-modules"
     module(shadow, "VMware.OpenAPI", "1.1.0")
     result = run(bundle, "Verify", shadow)
@@ -210,7 +250,12 @@ def test_incompatible_vendor_constraint_is_rejected(
     bundle: tuple[Path, Path],
     requirement: str,
 ) -> None:
-    """A lock must satisfy every unmodified vendor dependency declaration."""
+    """A lock must satisfy every unmodified vendor dependency declaration.
+
+    Args:
+        bundle: Fixture module-root and lock-file pair passed to the provisioning helper.
+        requirement: Gallery dependency range whose bounds must be honored.
+    """
     manifest = bundle[0] / "VCF.PowerCLI/9.1.0/VCF.PowerCLI.psd1"
     manifest.write_text(
         "@{ModuleVersion='9.1.0';RequiredModules=@(" + requirement + ")}",
@@ -223,7 +268,11 @@ def test_incompatible_vendor_constraint_is_rejected(
 
 
 def test_missing_locked_module_is_rejected(bundle: tuple[Path, Path]) -> None:
-    """Incomplete offline bundles fail before copy or import."""
+    """Incomplete offline bundles fail before copy or import.
+
+    Args:
+        bundle: Fixture module-root and lock-file pair passed to the provisioning helper.
+    """
     (bundle[0] / "VMware.OpenAPI/1.0.0/VMware.OpenAPI.psd1").unlink()
     assert run(bundle).returncode != 0
 
@@ -231,7 +280,11 @@ def test_missing_locked_module_is_rejected(bundle: tuple[Path, Path]) -> None:
 def test_changed_payload_with_identical_manifest_is_rejected(
     bundle: tuple[Path, Path],
 ) -> None:
-    """Offline admission rejects modified executable code even when version metadata agrees."""
+    """Offline admission rejects modified executable code even when version metadata agrees.
+
+    Args:
+        bundle: Fixture module-root and lock-file pair passed to the provisioning helper.
+    """
     (bundle[0] / "VMware.OpenAPI/1.0.0/VMware.OpenAPI.psm1").write_text(
         'throw "tampered"', encoding="utf-8"
     )
@@ -246,7 +299,13 @@ def test_install_saves_each_exact_package_without_resolution(
     tmp_path: Path,
     tamper: bool,
 ) -> None:
-    """A simulated Gallery latest release must never enter the saved package set."""
+    """A simulated Gallery latest release must never enter the saved package set.
+
+    Args:
+        bundle: Fixture module-root and lock-file pair passed to the provisioning helper.
+        tmp_path: Isolated pytest directory for fixture files and child-process scripts.
+        tamper: Whether the package bytes are altered after their digest is locked.
+    """
     root, lock = bundle
     target = tmp_path / "saved"
     wrapper = tmp_path / "install.ps1"
@@ -296,7 +355,12 @@ def test_install_saves_each_exact_package_without_resolution(
 def test_linked_bundle_ancestor_is_rejected(
     bundle: tuple[Path, Path], linked_component: str
 ) -> None:
-    """Identical package bytes outside a linked parent must never pass offline admission."""
+    """Identical package bytes outside a linked parent must never pass offline admission.
+
+    Args:
+        bundle: Fixture module-root and lock-file pair passed to the provisioning helper.
+        linked_component: Bundle-root or module-parent component replaced by a filesystem link.
+    """
     root, lock = bundle
     source = root / "VMware.OpenAPI" if linked_component == "module" else root
     destination = root.parent / f"relocated-{linked_component}"
