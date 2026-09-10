@@ -5184,8 +5184,14 @@ CA/certificate material while host file writes still go through <code>atlaso-hel
   reconfiguration. Management source networks use the management route table; access and route networks use the lab
   route table. A static dedicated-management family with a default gateway persists its connected prefix as a scope-link
   route in table <code>100</code>, beside the source rule and default, so same-subnet host-facing replies remain direct after reboot.</li>
-<li>Photon image provisioning installs Photon's <code>powershell</code> package, system-wide <code>VCF.PowerCLI</code> <code>9.1.0.25380678</code>, and
-  Python <code>vcf-sdk</code> <code>9.1.0.0</code>. It keeps the system module tree root-owned and read-only to non-root users, verifies
+<li>Photon image provisioning installs Photon's <code>powershell</code> package, system-wide <code>VCF.PowerCLI</code> <code>9.1.1.25718932</code>, and
+  Python <code>vcf-sdk</code> <code>9.1.0.0</code>. The image's complete PowerCLI dependency set is pinned in
+  <code>image/common/powershell/powercli-lock.json</code>; online and offline provisioning reject missing, incompatible, or
+  side-by-side module versions and verify the loaded closure in fresh root and bootstrap-administrator processes.
+  Vendor manifests and signatures remain unchanged. See the
+  <a href="https://github.com/mdaneri/Atlaso/blob/main/image/vmware-workstation/README.md">image dependency contract</a>
+  for offline bundle layout and coordinated lock updates. It keeps the system module tree root-owned and read-only
+  to non-root users, verifies
   <code>Connect-VIServer</code> from the bootstrap administrator's unprivileged PowerShell session, records tool versions in
   <code>/etc/atlaso/build-info</code>, and creates that OS account under <code>/var/lib/atlaso/users</code> with <code>/usr/bin/pwsh</code>. Appliance
   Update preserves the same permissions after managed PowerShell module installs. Before a PSGallery install, shared
