@@ -55,7 +55,7 @@ def pin_bundle(root: Path, lock: Path) -> None:
     data = json.loads(lock.read_text(encoding="utf-8"))
     data["schema_version"] = 2
     data["hashes"] = {}
-    archives = root / ".archives"
+    archives = root.parent / ".archives"
     archives.mkdir(exist_ok=True)
     for name, version in data["modules"].items():
         directory = root / name / version
@@ -314,14 +314,14 @@ def test_install_saves_each_exact_package_without_resolution(
         "function Invoke-WebRequest {\n"
         "param($Uri,$OutFile,$TimeoutSec)\n"
         "$parts = $Uri.Split('/'); $Name = $parts[-2]; $Version = $parts[-1]\n"
-        'Copy-Item -LiteralPath (Join-Path $Source ".archives/$Name.$Version.nupkg") -Destination $OutFile\n}\n'
+        'Copy-Item -LiteralPath (Join-Path (Split-Path $Source -Parent) ".archives/$Name.$Version.nupkg") -Destination $OutFile\n}\n'
         "& $Script -Mode Install -ModuleRoot $Target -LockPath $Lock\n",
         encoding="utf-8",
     )
     # The source advertises a newer dependency; only an exact version request is copied.
     module(root, "VMware.OpenAPI", "1.1.0")
     if tamper:
-        archive = root / ".archives/VCF.PowerCLI.9.1.0.nupkg"
+        archive = root.parent / ".archives/VCF.PowerCLI.9.1.0.nupkg"
         archive.write_bytes(archive.read_bytes() + b"corrupted or replaced bytes")
     result = subprocess.run(
         [
@@ -390,7 +390,11 @@ def test_linked_bundle_ancestor_is_rejected(
         source.symlink_to(destination, target_is_directory=True)
     result = run(bundle)
     assert result.returncode != 0
-    assert "directory path contains a symlink" in result.stderr
+    assert (
+        "top-level inventory"
+        if linked_component == "module"
+        else "directory path contains a symlink"
+    ) in result.stderr
 
 
 def test_checked_in_lock_pins_the_reported_dependency_chain() -> None:
@@ -404,3 +408,47 @@ def test_checked_in_lock_pins_the_reported_dependency_chain() -> None:
     assert lock["modules"]["VMware.VimAutomation.Common"] == family
     assert lock["modules"]["VMware.VimAutomation.Sdk"] == family
     assert lock["modules"]["VCF.PowerCLI"] == lock["suite_version"]
+
+
+@pytest.mark.parametrize("extra_kind", ["module", "file", "link"])
+def test_unlocked_top_level_entry_is_rejected(
+    bundle: tuple[Path, Path], extra_kind: str
+) -> None:
+    """Reject everything outside the reviewed module inventory before vendor import.
+
+    Args:
+        bundle: Fixture module-root and lock-file pair passed to the validator.
+        extra_kind: Unlocked module, loose file, or directory link added to the root.
+    """
+    root, _ = bundle
+    if extra_kind == "module":
+        module(root, "Unreviewed.Module", "1.0.0")
+    elif extra_kind == "file":
+        (root / ".unreviewed.psm1").write_text("throw 'unreviewed'", encoding="utf-8")
+    else:
+        target = root.parent / "unreviewed-target"
+        target.mkdir()
+        if os.name == "nt":
+            result = subprocess.run(
+                [
+                    str(PWSH),
+                    "-NoProfile",
+                    "-Command",
+                    "New-Item -ItemType Junction -Path $env:LINK_PATH -Target $env:LINK_TARGET | Out-Null",
+                ],
+                env={
+                    **os.environ,
+                    "LINK_PATH": str(root / "Unreviewed.Link"),
+                    "LINK_TARGET": str(target),
+                },
+                timeout=30,
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            assert result.returncode == 0, result.stderr
+        else:
+            (root / "Unreviewed.Link").symlink_to(target, target_is_directory=True)
+    result = run(bundle)
+    assert result.returncode != 0
+    assert "top-level inventory" in result.stderr

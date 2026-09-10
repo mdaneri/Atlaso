@@ -114,6 +114,16 @@ function Test-PowerCliBundle {
     #>
     param([string]$Root)
 
+    $entries = @(Get-ChildItem -LiteralPath $Root -Force)
+    if ($entries.Count -ne $lock.modules.Count) {
+        throw 'PowerCLI bundle top-level inventory must exactly match the lock.'
+    }
+    foreach ($entry in $entries) {
+        if (@($lock.modules.Keys) -cnotcontains $entry.Name -or -not $entry.PSIsContainer -or
+            ($entry.Attributes -band [IO.FileAttributes]::ReparsePoint)) {
+            throw 'PowerCLI bundle top-level inventory contains an unlocked or linked entry.'
+        }
+    }
     $manifests = @{}
     foreach ($name in ($lock.modules.Keys | Sort-Object)) {
         $version = $lock.modules[$name]

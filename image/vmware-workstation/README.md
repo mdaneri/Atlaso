@@ -28,6 +28,9 @@ rejected. This image-build lock does not change the runtime Appliance Update wor
 The shared PowerCLI configuration directories are mode `0755` and the settings file is mode `0644`, owned by root,
 so bootstrap administrators can read the appliance-wide preference despite the build's restrictive creation umask.
 
+Offline PowerCLI bundles must contain exactly the locked module directories at their root. Extra modules, loose files,
+hidden entries, and directory links are rejected before copying the bundle into the system module search path.
+
 Both `build-photon-image.ps1` and `export-ovf.ps1` automatically run
 `python scripts/update_powercli_lock.py --before-build` before build/export admission. The helper queries the latest
 stable **suite** release, resolves its complete dependency set from Gallery metadata, and checks every dependency
