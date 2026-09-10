@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import hmac
+import logging
 import os
 import secrets
 import stat
@@ -12,6 +13,8 @@ from collections.abc import Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
+
+logger = logging.getLogger(__name__)
 
 _KEY = secrets.token_bytes(32)
 _LOCK = threading.RLock()
@@ -95,5 +98,8 @@ class UploadPublication:
                     raise
             finally:
                 if not defer_cleanup:
-                    backup.unlink(missing_ok=True)
-                    replacement.unlink(missing_ok=True)
+                    for path in (backup, replacement):
+                        try:
+                            path.unlink(missing_ok=True)
+                        except OSError:
+                            logger.warning("Upload publication link cleanup could not be completed.")

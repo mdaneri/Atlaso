@@ -11946,6 +11946,7 @@ def test_vcf_offline_depot_tool_upload_marks_apply_pending_without_profiles(clie
         update_appliance_apply_baselines,
     )
 
+    monkeypatch.setattr("atlaso.app.ui.VCF_DEPOT_UPLOAD_DIR", tmp_path / "uploads")
     monkeypatch.setattr("atlaso.app.ui.find_local_vcf_download_tool_archive", lambda: None)
 
     login(client)
@@ -12117,6 +12118,7 @@ def test_vcf_offline_depot_apply_stages_tool_without_download_profiles(client, t
     from atlaso.app.database import SessionLocal
     from atlaso.app.models import Job, VcfDepotDownloadProfile
 
+    monkeypatch.setattr("atlaso.app.ui.VCF_DEPOT_UPLOAD_DIR", tmp_path / "uploads")
     monkeypatch.setattr("atlaso.app.ui.find_local_vcf_download_tool_archive", lambda: None)
 
     archive_path = tmp_path / "vcf-download-tool-9.1.0.test.tar.gz"

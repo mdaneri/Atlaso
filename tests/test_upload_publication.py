@@ -85,3 +85,55 @@ def test_invalid_ova_keeps_existing_artifact(tmp_path):
         asyncio.run(store_sddc_ova_upload(chunks(b"invalid"), destination.name,
                                           root=tmp_path, publication=publication))
     assert destination.read_bytes() == b"old"
+
+
+@pytest.mark.parametrize("audit_failure", [False, True])
+def test_link_cleanup_failure_preserves_publication_outcome(tmp_path, monkeypatch, caplog, audit_failure):
+    """Cleanup tries both links without replacing success or the original failure.
+
+    Args:
+        tmp_path: Private publication root.
+        monkeypatch: Fixture injecting backup cleanup failure.
+        caplog: Captured fixed cleanup warning.
+        audit_failure: Whether the consuming operation rejects publication.
+    """
+    from pathlib import Path
+
+    destination = tmp_path / "existing.iso"
+    destination.write_bytes(b"old")
+    staged = tmp_path / "staged"
+    staged.write_bytes(b"new")
+    publication = UploadPublication(destination, revision(destination))
+    actual_unlink = Path.unlink
+    attempts = []
+
+    def failed_backup_cleanup(path, *args, **kwargs):
+        """Fail only backup-link cleanup while recording both attempts.
+
+        Args:
+            path: Private link being removed.
+            *args: Positional filesystem arguments.
+            **kwargs: Keyword filesystem arguments.
+        """
+        attempts.append(path.name)
+        if path.name.endswith(".previous"):
+            raise OSError("private backup path")
+        return actual_unlink(path, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "unlink", failed_backup_cleanup)
+
+    def publish():
+        """Run the consuming operation within the real publication boundary."""
+        with publication.publish(staged, destination):
+            if audit_failure:
+                raise ValueError("original rejection")
+
+    if audit_failure:
+        with pytest.raises(ValueError, match="original rejection"):
+            publish()
+    else:
+        publish()
+    assert destination.read_bytes() == (b"old" if audit_failure else b"new")
+    assert attempts == ["staged.previous", "staged.publish"]
+    assert "Upload publication link cleanup could not be completed." in caplog.text
+    assert "private backup path" not in caplog.text
