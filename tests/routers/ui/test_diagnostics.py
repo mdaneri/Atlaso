@@ -443,3 +443,50 @@ def test_deletion_flush_failure_keeps_lifecycle_retryable(client, monkeypatch, t
         diagnostics.remove(db, job, actor="admin", expired=expired)
         assert diagnostics.result(job)["bundle_status"] == ("expired" if expired else "deleted")
     assert len(attempts) == 2
+
+
+@pytest.mark.parametrize("flush_fails", [False, True])
+def test_publication_flush_precedes_ready_state(client, monkeypatch, tmp_path, flush_fails):
+    """A bundle becomes ready only after its directory entry is durable.
+
+    Args:
+        client: Application client fixture.
+        monkeypatch: Dependency override fixture.
+        tmp_path: Private test filesystem root.
+        flush_fails: Simulate a failed appliance directory flush.
+    """
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.services import diagnostics
+    from atlaso.diagnostics import Collector
+
+    csrf = prepare(client, monkeypatch, tmp_path)
+    bundle_id = client.post(ROOT + "/create", data={"csrf": csrf}).json()["id"]
+    with SessionLocal() as db:
+        job = diagnostics.find_job(db, bundle_id)
+        job.status = "running"
+        db.commit()
+    monkeypatch.setattr(Collector, "capture", lambda *args: (b"safe", {"status": "ready", "omissions": []}))
+    flushed = []
+
+    def flush(directory):
+        """Verify publication ordering before optionally rejecting durability.
+
+        Args:
+            directory: Private spool holding the new archive.
+        """
+        assert diagnostics.artifact_path(bundle_id).read_bytes() == b"safe"
+        with SessionLocal() as db:
+            assert diagnostics.find_job(db, bundle_id).status == "running"
+        flushed.append(directory)
+        if flush_fails:
+            raise OSError("simulated flush failure")
+
+    monkeypatch.setattr(diagnostics, "sync_spool", flush)
+    diagnostics.run(bundle_id)
+    assert len(flushed) == 1
+    with SessionLocal() as db:
+        job = diagnostics.find_job(db, bundle_id)
+        assert job.status == ("failed" if flush_fails else "succeeded")
+        assert diagnostics.result(job)["bundle_status"] == ("failed" if flush_fails else "ready")
+        assert job.finished_at is not None
+        assert job.progress_percent == 100

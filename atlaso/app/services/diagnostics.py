@@ -286,7 +286,9 @@ def run(job_id: str) -> None:
         archive, manifest = Collector(options, database=database, cancelled=cancelled, progress=progress).capture(job_id)
         if cancelled():
             raise EvidenceError("cancelled")
-        write_new(artifact_path(job_id), archive)
+        target = artifact_path(job_id)
+        write_new(target, archive)
+        sync_spool(target.parent)
         with SessionLocal() as db:
             db.execute(text("UPDATE jobs SET progress_percent=progress_percent WHERE 1=0"))
             job = find_job(db, job_id)
