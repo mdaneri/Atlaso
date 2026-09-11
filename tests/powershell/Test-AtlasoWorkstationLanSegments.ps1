@@ -246,6 +246,21 @@ Assert-Refused {
         }
     } $vmRoot $inventory $segment.Id
 } 'contents changed during LAN segment'
+# Simulate an earlier guard completing after its individual poll while the later
+# guard stays unchanged. One shared native event must invalidate the whole set.
+$secondRoot = Join-Path $fixture 'second-root'
+[IO.Directory]::CreateDirectory($secondRoot) | Out-Null
+$aggregate = [Threading.EventWaitHandle]::new($false, [Threading.EventResetMode]::ManualReset)
+$firstGuard = [Atlaso.WorkstationDirectoryChangeGuardV2]::new($vmRoot, $aggregate)
+$secondGuard = [Atlaso.WorkstationDirectoryChangeGuardV2]::new($secondRoot, $aggregate)
+try {
+    $firstGuard.AssertUnchanged()
+    $latePath = Join-Path $vmRoot 'after-first-poll.vmx'
+    [IO.File]::WriteAllText($latePath, 'late reference')
+    [IO.File]::Delete($latePath)
+    $secondGuard.AssertUnchanged()
+    if (-not $aggregate.WaitOne(0)) { throw 'Aggregate commit check missed an earlier-root completion.' }
+} finally { $secondGuard.Dispose(); $firstGuard.Dispose(); $aggregate.Dispose() }
 $runnerPath = Join-Path $repositoryRoot 'scripts/windows/vmware/run-lifecycle-test.ps1'
 $tokens = $null; $parseErrors = $null
 $runnerAst = [System.Management.Automation.Language.Parser]::ParseFile($runnerPath, [ref]$tokens, [ref]$parseErrors)

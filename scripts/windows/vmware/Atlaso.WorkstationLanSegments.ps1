@@ -6,14 +6,15 @@ Loaded inside Atlaso.WorkstationCleanup so transactions share its filesystem ide
 and recovery primitives. Callers supply independently verified lifecycle ownership.
 #>
 
-if (-not ('Atlaso.WorkstationDirectoryChangeGuard' -as [type])) {
+if (-not ('Atlaso.WorkstationDirectoryChangeGuardV2' -as [type])) {
     Add-Type -TypeDefinition @'
 using System;
 using System.ComponentModel;
+using System.Threading;
 using System.Runtime.InteropServices;
 using Microsoft.Win32.SafeHandles;
 namespace Atlaso {
-    public sealed class WorkstationDirectoryChangeGuard : IDisposable {
+    public sealed class WorkstationDirectoryChangeGuardV2 : IDisposable {
         [StructLayout(LayoutKind.Sequential)]
         private struct Overlapped {
             public IntPtr Internal, InternalHigh;
@@ -34,7 +35,7 @@ namespace Atlaso {
         private SafeFileHandle handle;
         private IntPtr buffer, overlapped;
         private bool pending;
-        public WorkstationDirectoryChangeGuard(string path) {
+        public WorkstationDirectoryChangeGuardV2(string path, EventWaitHandle changes) {
             try {
                 // Arm before enumeration. Unlike FileSystemWatcher callbacks, polling
                 // the native completion has no managed event-delivery lag. One event or
@@ -43,7 +44,7 @@ namespace Atlaso {
                 if (handle.IsInvalid) throw new Win32Exception(Marshal.GetLastWin32Error());
                 buffer = Marshal.AllocHGlobal(65536);
                 overlapped = Marshal.AllocHGlobal(Marshal.SizeOf<Overlapped>());
-                Marshal.StructureToPtr(new Overlapped(), overlapped, false);
+                Marshal.StructureToPtr(new Overlapped { Event = changes.SafeWaitHandle.DangerousGetHandle() }, overlapped, false);
                 if (!ReadDirectoryChangesW(handle, buffer, 65536, true, 0x15F,
                     IntPtr.Zero, overlapped, IntPtr.Zero))
                     throw new Win32Exception(Marshal.GetLastWin32Error());
@@ -63,8 +64,10 @@ namespace Atlaso {
                 if (pending) {
                     CancelIoEx(handle, overlapped);
                     uint transferred;
-                    // Cancellation completion precedes freeing the native IO buffers.
-                    GetOverlappedResult(handle, overlapped, out transferred, true);
+                    // Another request can signal the shared event before this cancellation
+                    // completes. Confirm this exact request is terminal before freeing.
+                    while (!GetOverlappedResult(handle, overlapped, out transferred, false) &&
+                        Marshal.GetLastWin32Error() == 996) Thread.Sleep(1);
                     pending = false;
                 }
                 handle.Dispose();
@@ -361,6 +364,13 @@ function Assert-AtlasoLanSegmentUnreferenced {
     }
     $Pins.Add([Atlaso.WorkstationFileIdentity]::PinOrdinaryDirectoryPath((Split-Path -Parent $InventoryPath), $true))
     $Pins.Add([Atlaso.WorkstationFileIdentity]::PinOrdinaryReadFile($InventoryPath, $true))
+    $changeEvent = @($Pins | Where-Object { $_ -is [Threading.EventWaitHandle] }) | Select-Object -First 1
+    if (-not $changeEvent) {
+        # Every native request signals the same event. The final single
+        # kernel wait is the reference-snapshot commit point across all roots.
+        $changeEvent = [Threading.EventWaitHandle]::new($false, [Threading.EventResetMode]::ManualReset)
+        $Pins.Add($changeEvent)
+    }
     $paths = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
     foreach ($line in [System.IO.File]::ReadAllLines($InventoryPath)) {
         if ($line -notmatch '^\s*(vmlist\d+\.config|index\d+\.id)\s*=') { continue }
@@ -375,7 +385,7 @@ function Assert-AtlasoLanSegmentUnreferenced {
     }
     foreach ($root in $VmRoots) {
         $Pins.Add([Atlaso.WorkstationFileIdentity]::PinOrdinaryDirectoryPath($root, $true))
-        $Pins.Add([Atlaso.WorkstationDirectoryChangeGuard]::new($root))
+        $Pins.Add([Atlaso.WorkstationDirectoryChangeGuardV2]::new($root, $changeEvent))
         foreach ($item in Get-ChildItem -LiteralPath $root -Recurse -Force -ErrorAction Stop) {
             if ($item.Attributes -band [System.IO.FileAttributes]::ReparsePoint) {
                 throw 'VM search root contains a reparse point; LAN segment cleanup refused.'
@@ -386,16 +396,12 @@ function Assert-AtlasoLanSegmentUnreferenced {
     foreach ($path in $paths) {
         Assert-AtlasoPathHasNoReparsePoint -Path $path
         $parent = Split-Path -Parent $path
-        if ([System.IO.Directory]::Exists($parent)) {
-            $Pins.Add([Atlaso.WorkstationFileIdentity]::PinOrdinaryDirectoryPath($parent, $true))
-            $Pins.Add([Atlaso.WorkstationDirectoryChangeGuard]::new($parent))
+        if (-not [System.IO.Directory]::Exists($parent)) {
+            throw 'A registered VM directory is unavailable; reconcile its inventory before LAN segment cleanup.'
         }
-        if (-not [System.IO.File]::Exists($path)) {
-            if (-not [System.IO.Directory]::Exists((Split-Path -Parent $path))) {
-                throw 'A registered VM directory is unavailable; reconcile its inventory before LAN segment cleanup.'
-            }
-            continue
-        }
+        $Pins.Add([Atlaso.WorkstationFileIdentity]::PinOrdinaryDirectoryPath($parent, $true))
+        $Pins.Add([Atlaso.WorkstationDirectoryChangeGuardV2]::new($parent, $changeEvent))
+        if (-not [System.IO.File]::Exists($path)) { continue }
         $Pins.Add([Atlaso.WorkstationFileIdentity]::PinOrdinaryDirectoryPath((Split-Path -Parent $path), $true))
         $Pins.Add([Atlaso.WorkstationFileIdentity]::PinOrdinaryReadFile($path, $true))
         foreach ($line in [System.IO.File]::ReadAllLines($path)) {
@@ -407,8 +413,11 @@ function Assert-AtlasoLanSegmentUnreferenced {
         }
     }
     foreach ($pin in $Pins) {
-        if ($pin -is [Atlaso.WorkstationDirectoryChangeGuard]) { $pin.AssertUnchanged() }
+        if ($pin -is [Atlaso.WorkstationDirectoryChangeGuardV2]) { $pin.AssertUnchanged() }
     }
+    # A completion in an earlier root during later per-request error checks still
+    # signals this shared event. No new request is armed during these polls; do not accept sequential polls alone.
+    if ($changeEvent.WaitOne(0)) { throw 'VM search-root contents changed during LAN segment reference verification.' }
 }
 
 <#

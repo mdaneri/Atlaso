@@ -128,7 +128,10 @@ independently recorded receipt hash; cleanup can verify an absent pending regist
 A provider-path mutex spans recovery preflight, preferences publication, rollback, and artifact retirement across
 processes and Windows sessions. An overlapping transaction refuses immediately; retries inspect retained recovery
 artifacts after the previous transaction releases its lock. Independent final registration and reference readback
-runs before rollback state is retired; a failed final check restores the displaced registration.
+runs before rollback state is retired; a failed final check restores the displaced registration. All directory guards
+signal one shared native event. Its final check after all requests are armed defines the reference-snapshot
+commit point across roots.
+Missing registered-parent directories are refused immediately rather than rechecked without a guard.
 An existing named segment is reused without claiming ownership or rewriting its ID. Shared segments and legacy residue
 without creation evidence remain preserved for maintainer-directed reconciliation.
 
