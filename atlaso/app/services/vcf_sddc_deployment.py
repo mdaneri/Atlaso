@@ -890,7 +890,7 @@ def _ovf_environment_from_vmx(contents: bytes) -> str:
 
 
 def _read_persisted_ovf_environment(
-    vm: Any, service_instance: Any, datastore: Any, *, endpoint: str, port: int, expected_fingerprint: str,
+    vm: Any, service_instance: Any, datastore: Any, *, endpoint: str, port: int, expected_fingerprint: str, cancelled: CancelCheck | None = None,
 ) -> str:
     """Read the exact VMX over pinned HTTPS when ESXi masks its API value.
 
@@ -901,6 +901,7 @@ def _read_persisted_ovf_environment(
         endpoint: Operator-confirmed ESXi endpoint.
         port: HTTPS service port on that endpoint.
         expected_fingerprint: Operator-confirmed TLS certificate SHA-256.
+        cancelled: Optional operator cancellation check between response reads.
     """
     from pyVmomi import vim
 
@@ -930,10 +931,30 @@ def _read_persisted_ovf_environment(
         # Send the session cookie only after checking this connection's certificate.
         # http.client does not follow redirects or inherit proxy configuration.
         connection.request("GET", target, headers={"Cookie": service_instance._stub.cookie})
+        transport = connection.sock
         response = connection.getresponse()
         if response.status != 200:
             raise ValueError("VMX readback refused")
-        return _ovf_environment_from_vmx(response.read(MAX_OVF_VMX_BYTES + 1))
+        deadline = time.monotonic() + 30
+        payload = bytearray()
+        while len(payload) <= MAX_OVF_VMX_BYTES:
+            _check_cancelled(cancelled)
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise TimeoutError("VMX readback deadline exceeded")
+            transport.settimeout(min(1, remaining))
+            # read1 returns after at most one underlying buffered read, so
+            # successfully trickled bytes cannot restart the overall deadline.
+            chunk = response.read1(min(65536, MAX_OVF_VMX_BYTES + 1 - len(payload)))
+            _check_cancelled(cancelled)
+            if time.monotonic() >= deadline:
+                raise TimeoutError("VMX readback deadline exceeded")
+            if not chunk:
+                break
+            payload.extend(chunk)
+        return _ovf_environment_from_vmx(bytes(payload))
+    except VcfSddcDeploymentCancelled:
+        raise
     except Exception:  # noqa: BLE001 - HTTP/vendor exceptions can include session or VMX material.
         raise VcfSddcDeploymentError("Could not verify the persisted standalone ESXi OVF environment over confirmed HTTPS.") from None
     finally:
@@ -1407,12 +1428,14 @@ def deploy_ova(
                 _install_guestinfo_ovf_environment(vm, guest_environment)
                 imported_vm_result["ovf_verification"] = _verify_guestinfo_ovf_environment(
                     vm, guest_properties, platform=guest_platform, read_persisted=lambda: _read_persisted_ovf_environment(
-                        vm, service_instance, datastore, endpoint=endpoint, port=port, expected_fingerprint=expected_fingerprint,
+                        vm, service_instance, datastore, endpoint=endpoint, port=port, expected_fingerprint=expected_fingerprint, cancelled=cancelled,
                     ),
                 )
             else:
                 vm.Reload()
                 imported_vm_result["ovf_verification"] = _verify_imported_ovf_environment(vm, descriptor, property_values)
+        except VcfSddcDeploymentCancelled:
+            raise
         except Exception as verification_exc:
             message = (
                 str(verification_exc)

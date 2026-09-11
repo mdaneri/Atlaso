@@ -833,7 +833,7 @@ def test_persisted_environment_rejects_ambiguous_or_invalid_vmx(vmx):
         _ovf_environment_from_vmx(vmx)
 
 
-@pytest.mark.parametrize("fault", ["", "pin", "redirect", "path", "oversize"])
+@pytest.mark.parametrize("fault", ["", "pin", "redirect", "path", "oversize", "deadline", "cancel"])
 @pytest.mark.parametrize("fingerprint_style", ["plain", "colon"])
 def test_persisted_environment_read_is_pinned_bounded_and_same_host(monkeypatch, fault, fingerprint_style):
     """Never send a session cookie to an unconfirmed or redirected endpoint.
@@ -846,6 +846,9 @@ def test_persisted_environment_read_is_pinned_bounded_and_same_host(monkeypatch,
     from pyVmomi import vim
 
     captured = []
+    elapsed = [0.0]
+    read_count = [0]
+    monkeypatch.setattr("atlaso.app.services.vcf_sddc_deployment.time.monotonic", lambda: elapsed[0])
     certificate = b"confirmed-certificate"
     payload = b'guestinfo.ovfEnv = "safe"\n' if fault != "oversize" else b'x' * (1024 * 1024 + 1)
 
@@ -864,7 +867,7 @@ def test_persisted_environment_read_is_pinned_bounded_and_same_host(monkeypatch,
                 **kwargs: Connection controls.
             """
             assert (endpoint, port, kwargs["timeout"]) == ("esxi.example.test", 443, 30)
-            self.sock = SimpleNamespace(getpeercert=lambda **_kwargs: certificate)
+            self.sock = SimpleNamespace(getpeercert=lambda **_kwargs: certificate, settimeout=lambda value: None)
 
         def connect(self):
             """Record the TLS connection before any HTTP request."""
@@ -883,15 +886,22 @@ def test_persisted_environment_read_is_pinned_bounded_and_same_host(monkeypatch,
 
         def getresponse(self):
             """Return a bounded response or an untrusted redirect."""
+            offset = [0]
             def read(limit):
                 """Enforce the caller's byte bound.
 
                 Args:
                     limit: Maximum returned bytes.
                 """
-                assert limit == 1024 * 1024 + 1
-                return payload[:limit]
-            return SimpleNamespace(status=302 if fault == "redirect" else 200, read=read)
+                assert 0 < limit <= 65536
+                read_count[0] += 1
+                if fault == "deadline":
+                    elapsed[0] += 0.5
+                    return b'x'
+                chunk = payload[offset[0]:offset[0] + limit]
+                offset[0] += len(chunk)
+                return chunk
+            return SimpleNamespace(status=302 if fault == "redirect" else 200, read1=read)
 
         def close(self):
             """Always release the transport."""
@@ -906,11 +916,17 @@ def test_persisted_environment_read_is_pinned_bounded_and_same_host(monkeypatch,
         fingerprint = ":".join(fingerprint[index:index + 2] for index in range(0, len(fingerprint), 2)).upper()
     def read():
         """Read the selected VMX using the confirmed certificate pin."""
-        return _read_persisted_ovf_environment(vm, si, SimpleNamespace(name="store"), endpoint="esxi.example.test", port=443, expected_fingerprint="incorrect" if fault == "pin" else fingerprint)
+        return _read_persisted_ovf_environment(vm, si, SimpleNamespace(name="store"), endpoint="esxi.example.test", port=443, expected_fingerprint="incorrect" if fault == "pin" else fingerprint, cancelled=lambda: fault == "cancel" and read_count[0] > 0)
     if fault:
         with pytest.raises(VcfSddcDeploymentError) as caught:
             read()
         assert "session-secret" not in str(caught.value)
+        if fault == "deadline":
+            assert elapsed[0] == 30
+            assert read_count[0] == 60
+        if fault == "cancel":
+            assert "cancelled" in str(caught.value)
+            assert read_count[0] == 1
         if fault in {"pin", "path"}:
             assert not any(isinstance(entry, tuple) for entry in captured)
     else:
