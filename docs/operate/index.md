@@ -24,6 +24,7 @@ Use these guides for day-to-day appliance work:
 - [1Password bridge recovery](onepassword-credential-bridge-recovery.md) — inspect and safely reset exact retained
   Windows credential state for VMware workflows.
 - [Backup and restore](backup-restore.md) — protect and recover Atlaso settings.
+- [Diagnostic support bundles](diagnostics.md) — collect private evidence for troubleshooting.
 - [Automation](automation.md) — schedules, executions, and immutable managed scripts.
 - [Use the Atlaso API](api.md) — create scoped tokens, call `/api/v1`, and interpret errors and apply boundaries.
 - [Web Terminal](web-terminal.md) — constrained browser terminal sessions.

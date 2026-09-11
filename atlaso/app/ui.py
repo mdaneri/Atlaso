@@ -152,6 +152,7 @@ from atlaso.app.routers.ui.dashboard_monitor import DashboardMonitorUiDependenci
 from atlaso.app.routers.ui.dashboard_monitor import (
     build_router as build_dashboard_monitor_ui_router,
 )
+from atlaso.app.routers.ui.diagnostics import build_router as build_diagnostics_router
 from atlaso.app.routers.ui.dns_dhcp import DnsDhcpUiDependencies
 from atlaso.app.routers.ui.dns_dhcp import build_router as build_dns_dhcp_ui_router
 from atlaso.app.routers.ui.esx_storage import EsxStorageUiDependencies
@@ -17099,6 +17100,8 @@ def backup_restore_context(db: Session, result: dict[str, Any] | None = None, er
         result: Operation result to summarize, validate, or persist.
         error: Public-safe error detail to record or return.
     """
+    from atlaso.app.services import diagnostics
+
     counts = desired_state_counts(db)
     ldap_recovery_archive = db.execute(
         select(LdapRecoveryArchive)
@@ -17106,6 +17109,9 @@ def backup_restore_context(db: Session, result: dict[str, Any] | None = None, er
         .order_by(LdapRecoveryArchive.created_at.desc())
     ).scalars().first()
     return {
+        "diagnostics_rows": [diagnostics.row(job) for job in db.scalars(
+            select(Job).where(Job.type == diagnostics.JOB_TYPE).order_by(Job.created_at.desc()).limit(100)
+        ).all()],
         "settings_backup_counts": counts,
         "settings_backup_total_rows": sum(counts.values()),
         "backup_restore_result": result,
@@ -17532,6 +17538,12 @@ _settings_backup_ui = build_settings_backup_ui_router(
     )
 )
 settings_backup_router = _settings_backup_ui.router
+
+diagnostics_router = build_diagnostics_router(
+    management=require_management_ui_request,
+    admin=require_admin_identity,
+    csrf=verify_csrf,
+)
 backup_restore_page = _settings_backup_ui.endpoints["backup_restore_page"]
 export_backup_restore_archive = _settings_backup_ui.endpoints[
     "export_backup_restore_archive"
@@ -17757,6 +17769,10 @@ UI_ROUTER_REGISTRY.register(
     (RouterContribution(plane="management", router=settings_backup_router),),
 )
 UI_ROUTER_REGISTRY.register(
+    "diagnostics",
+    (RouterContribution(plane="management", router=diagnostics_router),),
+)
+UI_ROUTER_REGISTRY.register(
     "facade_after_settings_backup",
     (
         RouterContribution(
@@ -17795,6 +17811,7 @@ UI_ROUTER_REGISTRY.validate_domains(
         "facade_between_identity_network_boot",
         "network_boot",
         "settings_backup",
+        "diagnostics",
         "facade_after_settings_backup",
     )
 )

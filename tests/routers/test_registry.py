@@ -95,6 +95,7 @@ def test_facades_register_extracted_domains_in_exact_order():
         "facade_between_identity_network_boot",
         "network_boot",
         "settings_backup",
+        "diagnostics",
         "facade_after_settings_backup",
     )
     assert ui.UI_ROUTER_REGISTRY.routers_for_plane("management") == (
@@ -127,6 +128,7 @@ def test_facades_register_extracted_domains_in_exact_order():
         ui._management_between_identity_network_boot_router,
         ui.network_boot_router,
         ui.settings_backup_router,
+        ui.diagnostics_router,
         ui._management_after_settings_backup_router,
     )
     assert ui.UI_ROUTER_REGISTRY.routers_for_plane("public") == (ui.public_router,)

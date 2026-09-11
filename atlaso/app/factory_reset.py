@@ -837,6 +837,41 @@ def _clear_automation_transient_staging() -> None:
         _clear_symlink_resistant_directory(path, label=label)
 
 
+def _clear_diagnostic_archives(*, service_account: bool = False) -> None:
+    """Clear the dedicated spool before discarding its job-based retention metadata.
+
+    Args:
+        service_account: Whether appliance services own the spool instead of the development process.
+    """
+    from atlaso.diagnostics import EvidenceError, ordinary_path, private_directory
+
+    path = get_settings().diagnostics_spool_path.absolute()
+    try:
+        ordinary_path(path)
+        owner_uid = None
+        if service_account:
+            import pwd
+
+            lookup = getattr(pwd, "getpwnam", None)
+            if lookup is None:
+                raise FactoryResetError("Factory reset cannot verify the Atlaso service account.")
+            owner_uid = int(lookup("atlaso").pw_uid)
+        private_directory(path, owner_uid=owner_uid)
+    except FileNotFoundError:
+        return
+    except (OSError, EvidenceError, ImportError, KeyError, AttributeError) as exc:
+        raise FactoryResetError("Factory reset diagnostic spool is unsafe or unavailable.") from exc
+    # Refuse misconfigured shared directories: the collector publishes only UUID ZIPs.
+    if not path.is_dir() or path == path.parent:
+        raise FactoryResetError("Factory reset diagnostic spool is unsafe.")
+    for child in path.iterdir():
+        if not re.fullmatch(r"[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}\.zip", child.name):
+            raise FactoryResetError("Factory reset diagnostic spool contains an unrecognized entry.")
+        if child.is_dir() and not child.is_symlink():
+            raise FactoryResetError("Factory reset diagnostic spool contains an unsafe directory.")
+    _clear_symlink_resistant_directory(path, label="diagnostic archives")
+
+
 def _require_terminal_release_update() -> None:
     """Reject reset while durable signed-release recovery remains pending."""
     try:
@@ -1587,6 +1622,18 @@ def _replace_sqlite_database_contents(source_path: Path, candidate_path: Path) -
                 raise FactoryResetError(
                     "Factory reset cannot replace a development database with a different schema."
                 )
+            if {"type", "status"}.issubset(installed.get("jobs", ())):
+                active_bundle = destination_connection.execute(
+                    "SELECT 1 FROM main.jobs WHERE type='diagnostic-bundle' "
+                    "AND status IN ('pending', 'running') LIMIT 1"
+                ).fetchone()
+                if active_bundle:
+                    raise FactoryResetError(
+                        "Wait for diagnostic collection to finish or cancel it before development factory reset."
+                    )
+                # Hold the admission writer lock through spool cleanup and replacement.
+                # An active collector is rejected above because development has no service quiescence.
+                _clear_diagnostic_archives()
             for table_name, columns in installed.items():
                 quoted_table = '"' + table_name.replace('"', '""') + '"'
                 quoted_columns = ", ".join(
@@ -1665,6 +1712,9 @@ def _run_factory_reset_locked(
             credential_plan=credential_plan,
         )
         _update_request("committing", "Replacing the Atlaso database with the validated factory database.")
+        if not (adapter and adapter.dry_run):
+            # Root performs reset, but the stopped Atlaso services own their spool.
+            _clear_diagnostic_archives(service_account=True)
         _replace_database(source_path, candidate_path)
         if not (adapter and adapter.dry_run):
             _clear_apply_staging()
