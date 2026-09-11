@@ -414,7 +414,9 @@ namespace Atlaso {
     } finally { $verifiedArchive.Dispose() }
     $snapshotAccepted = $true
     foreach ($directoryPin in $snapshotDirectoryPins) { $ConsumerPins.Add($directoryPin) }
+    foreach ($filePin in $snapshotPins) { $ConsumerPins.Add($filePin) }
     $snapshotDirectoryPins.Clear()
+    $snapshotPins.Clear()
     return $snapshotPath
     } finally {
         try {
@@ -1919,6 +1921,37 @@ function Sync-ApplianceHelperScript {
 
 <#
 .SYNOPSIS
+Pin the single wheel matching the filename and digest emitted by this build.
+.PARAMETER OutputRoot
+Fresh output directory retained under the build's directory pins.
+.PARAMETER BuildOutput
+Captured pip output from this invocation, including its created-wheel digest.
+.PARAMETER ConsumerPins
+Caller-owned pins retained through guest upload and installation.
+#>
+function Get-LifecycleBuiltWheel {
+    param([string]$OutputRoot, [object[]]$BuildOutput,
+        [Parameter(Mandatory)][AllowEmptyCollection()][Collections.Generic.List[IDisposable]]$ConsumerPins)
+    $records = [regex]::Matches(($BuildOutput -join "`n"),
+        '(?im)^\s*Created wheel for atlaso: filename=(atlaso-[A-Za-z0-9_.+\-]+\.whl) size=(\d+) sha256=([a-f0-9]{64})\s*$')
+    if ($records.Count -ne 1) { throw 'Build did not report one exact Atlaso wheel identity and digest.' }
+    $record = $records[0]
+    $candidates = @(Get-ChildItem -LiteralPath $OutputRoot -Filter '*.whl' -File -Force)
+    if ($candidates.Count -ne 1 -or $candidates[0].Name -cne $record.Groups[1].Value) {
+        throw 'Wheel output does not contain exactly the artifact reported by this build.'
+    }
+    $wheel = $candidates[0]
+    $ConsumerPins.Add([Atlaso.WorkstationFileIdentity]::PinOrdinaryReadFile($wheel.FullName, $true))
+    $wheel.Refresh()
+    $digest = (Get-FileHash -LiteralPath $wheel.FullName -Algorithm SHA256).Hash
+    if ($wheel.Length -ne [long]$record.Groups[2].Value -or $digest -ine $record.Groups[3].Value) {
+        throw 'Built wheel bytes differ from the digest reported by this invocation.'
+    }
+    return [pscustomobject]@{ Name = $wheel.Name; FullName = $wheel.FullName; Sha256 = $digest }
+}
+
+<#
+.SYNOPSIS
 Upload and install the lifecycle application wheel in the appliance guest.
 .PARAMETER ApplianceVmx
 VMX path identifying the appliance guest where the wheel is installed.
@@ -1929,48 +1962,44 @@ function Sync-ApplianceApplicationWheel {
     Get-LifecycleSourceCommit -RepositoryRoot $repoRoot -ExpectedCommit $sourceCommit | Out-Null
     $wheelRoot = Join-Path $resultRoot 'wheel'
     if (Test-Path -LiteralPath $wheelRoot) {
-        Remove-Item -LiteralPath $wheelRoot -Recurse -Force
+        throw 'Lifecycle wheel output root already exists; preserve it for ownership-aware cleanup.'
     }
-    New-Item -ItemType Directory -Force -Path $wheelRoot | Out-Null
+    New-Item -ItemType Directory -Path $wheelRoot -ErrorAction Stop | Out-Null
     $wheelConsumerPins = [Collections.Generic.List[IDisposable]]::new()
     try {
         $wheelSource = New-LifecycleSourceSnapshot -RepositoryRoot $repoRoot -Commit $sourceCommit -DestinationRoot $wheelRoot -ConsumerPins $wheelConsumerPins
         Write-Host "Building Atlaso wheel from admitted commit $sourceCommit."
-        & python -m pip wheel $wheelSource --no-deps -w $wheelRoot | Out-Host
+        $wheelBuildOutput = @(& python -m pip wheel $wheelSource --no-deps -w $wheelRoot 2>&1)
+        $wheelBuildOutput | ForEach-Object { Write-Host $_ }
         if ($LASTEXITCODE -ne 0) {
             throw "Failed to build Atlaso wheel from $repoRoot."
         }
+        Get-LifecycleSourceCommit -RepositoryRoot $repoRoot -ExpectedCommit $sourceCommit | Out-Null
+        $wheel = Get-LifecycleBuiltWheel -OutputRoot $wheelRoot -BuildOutput $wheelBuildOutput -ConsumerPins $wheelConsumerPins
+
+        $guestWheel = "/tmp/$($wheel.Name)"
+        if ($PSCmdlet.ShouldProcess($ApplianceVmx, "Install current Atlaso wheel into appliance")) {
+            & $resolvedVmrun -T ws -gu $ApplianceSshUser -gp $ApplianceGuestPassword copyFileFromHostToGuest $ApplianceVmx $wheel.FullName $guestWheel | Out-Host
+            if ($LASTEXITCODE -ne 0) {
+                throw "Failed to copy Atlaso wheel into the appliance with VMware guest operations."
+            }
+            $quotedPassword = ConvertTo-GuestShellSingleQuote -Value $ApplianceGuestPassword
+            $quotedWheel = ConvertTo-GuestShellSingleQuote -Value $guestWheel
+            $script = "printf '%s  %s\n' '$($wheel.Sha256)' $quotedWheel | sha256sum -c - && printf '%s\n' $quotedPassword | sudo -S /opt/atlaso/.venv/bin/python -m pip install --force-reinstall --no-deps $quotedWheel && printf '%s\n' $quotedPassword | sudo -S find /opt/atlaso/.venv -type d -exec chmod 0755 {} + && printf '%s\n' $quotedPassword | sudo -S find /opt/atlaso/.venv -type f -exec chmod 0644 {} + && printf '%s\n' $quotedPassword | sudo -S find /opt/atlaso/.venv/bin -type f -exec chmod 0755 {} + && printf '%s\n' $quotedPassword | sudo -S systemctl restart atlaso.service"
+            Invoke-ApplianceGuestScript -ApplianceVmx $ApplianceVmx -Script $script
+        }
+
+        $deadline = (Get-Date).AddMinutes(3)
+        do {
+            if (Test-ApplianceOpenApi -Url "$ApplianceUrl/openapi.json") {
+                return $wheel.FullName
+            }
+            Start-Sleep -Seconds 5
+        } while ((Get-Date) -lt $deadline)
+        throw "Timed out waiting for Atlaso web service after installing $($wheel.Name)."
     } finally {
         for ($pinIndex = $wheelConsumerPins.Count - 1; $pinIndex -ge 0; $pinIndex--) { $wheelConsumerPins[$pinIndex].Dispose() }
     }
-    Get-LifecycleSourceCommit -RepositoryRoot $repoRoot -ExpectedCommit $sourceCommit | Out-Null
-    $wheel = Get-ChildItem -LiteralPath $wheelRoot -Filter 'atlaso-*.whl' -File |
-        Sort-Object LastWriteTime -Descending |
-        Select-Object -First 1
-    if (-not $wheel) {
-        throw "Built wheel was not found under $wheelRoot."
-    }
-
-    $guestWheel = "/tmp/$($wheel.Name)"
-    if ($PSCmdlet.ShouldProcess($ApplianceVmx, "Install current Atlaso wheel into appliance")) {
-        & $resolvedVmrun -T ws -gu $ApplianceSshUser -gp $ApplianceGuestPassword copyFileFromHostToGuest $ApplianceVmx $wheel.FullName $guestWheel | Out-Host
-        if ($LASTEXITCODE -ne 0) {
-            throw "Failed to copy Atlaso wheel into the appliance with VMware guest operations."
-        }
-        $quotedPassword = ConvertTo-GuestShellSingleQuote -Value $ApplianceGuestPassword
-        $quotedWheel = ConvertTo-GuestShellSingleQuote -Value $guestWheel
-        $script = "printf '%s\n' $quotedPassword | sudo -S /opt/atlaso/.venv/bin/python -m pip install --force-reinstall --no-deps $quotedWheel && printf '%s\n' $quotedPassword | sudo -S find /opt/atlaso/.venv -type d -exec chmod 0755 {} + && printf '%s\n' $quotedPassword | sudo -S find /opt/atlaso/.venv -type f -exec chmod 0644 {} + && printf '%s\n' $quotedPassword | sudo -S find /opt/atlaso/.venv/bin -type f -exec chmod 0755 {} + && printf '%s\n' $quotedPassword | sudo -S systemctl restart atlaso.service"
-        Invoke-ApplianceGuestScript -ApplianceVmx $ApplianceVmx -Script $script
-    }
-
-    $deadline = (Get-Date).AddMinutes(3)
-    do {
-        if (Test-ApplianceOpenApi -Url "$ApplianceUrl/openapi.json") {
-            return $wheel.FullName
-        }
-        Start-Sleep -Seconds 5
-    } while ((Get-Date) -lt $deadline)
-    throw "Timed out waiting for Atlaso web service after installing $($wheel.Name)."
 }
 
 <#

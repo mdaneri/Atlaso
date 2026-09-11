@@ -410,6 +410,14 @@ Remove-Module helper
 [IO.File]::WriteAllText($helperFile, "function Get-FixtureProvenance { 'initial' }")
 Assert-Refused { [IO.File]::WriteAllText((Join-Path $snapshot 'source.txt'), 'tampered') } 'denied'
 Assert-Refused { [IO.Directory]::Move($snapshot, $snapshot + '-moved') } 'being used by another process'
+$pinnedSourceFile = Join-Path $snapshot 'source.txt'
+$ownerOverrideAcl = [Security.AccessControl.FileSecurity]::new()
+$ownerOverrideAcl.SetAccessRuleProtection($true, $false)
+$ownerOverrideAcl.AddAccessRule([Security.AccessControl.FileSystemAccessRule]::new(
+    [Security.Principal.WindowsIdentity]::GetCurrent().User, [Security.AccessControl.FileSystemRights]::FullControl,
+    [Security.AccessControl.AccessControlType]::Allow))
+Set-Acl -LiteralPath $pinnedSourceFile -AclObject $ownerOverrideAcl
+Assert-Refused { [IO.File]::WriteAllText($pinnedSourceFile, 'owner override') } 'being used by another process'
 Assert-Refused { [IO.File]::WriteAllText((Join-Path $snapshot 'injected.py'), 'tampered') } 'denied'
 # Restore endpoint state: the snapshot still proves the exact admitted object.
 [IO.File]::WriteAllText($sourceFile, 'next')
@@ -549,6 +557,31 @@ try {
     }
 } finally { . ([scriptblock]::Create($snapshotFunction.Extent.Text)) }
 $publicationStage = Join-Path $fixture 'publication-stage.tmp'
+$wheelCheckFunction = $runnerAst.Find({ param($node)
+    $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -eq 'Get-LifecycleBuiltWheel'
+}, $false)
+if (-not $wheelCheckFunction) { throw 'Cannot load wheel output binding.' }
+. ([scriptblock]::Create($wheelCheckFunction.Extent.Text))
+$wheelFixtureRoot = Join-Path $fixture 'wheel-output'
+[IO.Directory]::CreateDirectory($wheelFixtureRoot) | Out-Null
+$wheelFixturePath = Join-Path $wheelFixtureRoot 'atlaso-1.2.3-py3-none-any.whl'
+[IO.File]::WriteAllText($wheelFixturePath, 'fixture wheel bytes')
+$wheelFixtureHash = (Get-FileHash -LiteralPath $wheelFixturePath -Algorithm SHA256).Hash.ToLowerInvariant()
+$wheelFixtureLog = "  Created wheel for atlaso: filename=atlaso-1.2.3-py3-none-any.whl size=19 sha256=$wheelFixtureHash"
+$wheelFixturePins = [Collections.Generic.List[IDisposable]]::new()
+try {
+    $boundWheel = Get-LifecycleBuiltWheel -OutputRoot $wheelFixtureRoot -BuildOutput @($wheelFixtureLog) -ConsumerPins $wheelFixturePins
+    Assert-Refused { [IO.File]::WriteAllText($boundWheel.FullName, 'foreign wheel') } 'being used by another process'
+    Assert-Refused { [IO.File]::Move($boundWheel.FullName, "$wheelFixturePath.moved") } 'being used by another process'
+} finally { foreach ($pin in $wheelFixturePins) { $pin.Dispose() }; $wheelFixturePins.Clear() }
+$extraWheel = Join-Path $wheelFixtureRoot 'atlaso-9.9.9-py3-none-any.whl'
+[IO.File]::WriteAllText($extraWheel, 'newer foreign wheel')
+Assert-Refused { Get-LifecycleBuiltWheel -OutputRoot $wheelFixtureRoot -BuildOutput @($wheelFixtureLog) -ConsumerPins $wheelFixturePins } 'exactly the artifact'
+[IO.File]::Delete($extraWheel)
+[IO.File]::WriteAllText($wheelFixturePath, 'substitute contents')
+try {
+    Assert-Refused { Get-LifecycleBuiltWheel -OutputRoot $wheelFixtureRoot -BuildOutput @($wheelFixtureLog) -ConsumerPins $wheelFixturePins } 'bytes differ'
+} finally { foreach ($pin in $wheelFixturePins) { $pin.Dispose() } }
 $cleanupLinkRoot = Join-Path $fixture 'preflight-hardlink'
 [IO.Directory]::CreateDirectory($cleanupLinkRoot) | Out-Null
 $cleanupLinkGuard = New-LifecyclePreflightGuard -Path $cleanupLinkRoot

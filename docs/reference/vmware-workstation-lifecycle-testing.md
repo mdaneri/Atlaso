@@ -124,8 +124,8 @@ is pinned and checked against its creation identity and single-link count before
 external files if a hard link was substituted. Snapshot ancestors and newly created directories are pinned with
 no-follow handles that deny deletion before any child is extracted, and remain pinned through final verification.
 This prevents a concurrent directory-to-junction replacement from redirecting archive writes outside the snapshot.
-The snapshot transfers its directory pins to its caller after verification. The lifecycle runner retains them through
-all helper consumers and releases them on exit; the wheel builder retains its pins until the build process exits.
+The snapshot transfers its directory and file pins to its caller after verification. The lifecycle runner retains them
+through all helper consumers and releases them on exit; the wheel builder retains its pins through upload and installation.
 Preflight failure releases those pins before ownership-aware artifact cleanup. Thus renaming the verified root cannot
 substitute a different source tree between verification and use.
 Before applying inheritable ACLs, the exporter freezes each expected directory with an object-only ACL update and
@@ -134,6 +134,9 @@ ACL propagation; failed construction restores the directory freeze without touch
 Runtime admission also compares the executing runner's already parsed script text with the admitted Git object before
 creating resources. Restoring a temporarily edited runner pathname before the clean-checkout check cannot attribute
 the previously parsed edited orchestration to an unchanged commit.
+Wheel upload requires exactly one output matching the filename, size, and SHA-256 emitted by that pip invocation.
+The wheel is held under an ordinary single-link read pin through upload, and the guest verifies its SHA-256 before
+installation. Extra, renamed, or substituted output fails instead of selecting a wheel by modification time.
 Ownership receipts and lifecycle manifests retain their original creation handles with writer and deletion exclusion
 through publication. The publisher flushes before and after renaming that exact handle, so a substituted staging
 pathname cannot replace ownership evidence.
