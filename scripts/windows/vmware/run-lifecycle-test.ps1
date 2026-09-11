@@ -657,7 +657,7 @@ function Set-VmxNetworkAdapter {
 
 <#
 .SYNOPSIS
-Copy a source VMX into a managed lifecycle lab directory.
+Clone a verified appliance with its required data disks into the lifecycle lab.
 
 .PARAMETER SourceVmx
 Source VMX path.
@@ -675,23 +675,30 @@ function Copy-VmDirectory {
 
     Assert-SafeLifecycleName -Name $Name
     $resolvedSourceVmx = (Resolve-Path -LiteralPath $SourceVmx).Path
+    Assert-AtlasoTemplatePoweredOff -VmxPath $resolvedSourceVmx -VmrunPath $resolvedVmrun
     Assert-AtlasoVmwarePayloadProvenance -VmxPath $resolvedSourceVmx | Out-Null
     if (Test-Path -LiteralPath $DestinationDirectory) {
         throw "Lifecycle VM directory already exists: $DestinationDirectory"
     }
-    $sourceDirectory = Split-Path -Parent $resolvedSourceVmx
-    if ($PSCmdlet.ShouldProcess($DestinationDirectory, "Copy Workstation VM $Name")) {
-        Copy-Item -LiteralPath $sourceDirectory -Destination $DestinationDirectory -Recurse
-    }
-    $vmx = Get-ChildItem -LiteralPath $DestinationDirectory -Filter '*.vmx' | Select-Object -First 1
-    if (-not $vmx) {
-        throw "Copied Workstation VM has no VMX: $DestinationDirectory"
-    }
     $targetVmx = Join-Path $DestinationDirectory "$Name.vmx"
-    Rename-Item -LiteralPath $vmx.FullName -NewName "$Name.vmx"
-    Set-VmxValue -Path $targetVmx -Key 'displayName' -Value $Name
-    Get-AtlasoVmwarePayloadLayout -VmxPath $targetVmx -RequireExactlyTwoVmdks | Out-Null
-    $createdVmxPaths.Add($targetVmx)
+    if ($PSCmdlet.ShouldProcess($DestinationDirectory, "Clone Workstation VM $Name with dedicated storage")) {
+        try {
+            # Reuse the normal clone contract: immutable two-payload source,
+            # private 500 GiB thin depot/backup disks at SCSI units 2 and 3.
+            # Lifecycle-specific LAN adapters are configured by the caller.
+            & (Join-Path $PSScriptRoot 'create-atlaso-vm.ps1') `
+                -Name $Name -ApplianceVmxPath $resolvedSourceVmx `
+                -OutputDirectory $DestinationDirectory -VmrunPath $resolvedVmrun `
+                -ManagementNetwork $ManagementNetwork -SkipLabNetworkAdapters | Out-Host
+        }
+        finally {
+            # A failed disk creation can leave a valid clone. Retain its exact
+            # identity for supported cleanup even when provisioning throws.
+            if (Test-Path -LiteralPath $targetVmx -PathType Leaf) {
+                $createdVmxPaths.Add($targetVmx)
+            }
+        }
+    }
     return $targetVmx
 }
 
@@ -1352,6 +1359,50 @@ function Test-ApplianceOpenApi {
 
 <#
 .SYNOPSIS
+Read bounded, non-secret startup prerequisite state after a lifecycle deployment failure.
+.PARAMETER ApplianceVmx
+Exact task-owned appliance VMX whose service states are queried.
+#>
+function Get-ApplianceStartupDiagnostic {
+    param([Parameter(Mandatory = $true)][string]$ApplianceVmx)
+
+    $guestOutput = '/tmp/atlaso-lifecycle-startup-state.txt'
+    $hostOutput = Join-Path $resultRoot 'appliance-startup-state.txt'
+    $units = @('atlaso-data-disks.service', 'atlaso-bootstrap-https.service', 'atlaso.service', 'nginx.service')
+    $probe = "systemctl show $($units -join ' ') --property=Id,LoadState,ActiveState,SubState,Result > $guestOutput"
+    try {
+        $observed = Invoke-VmrunBounded -Arguments @(
+            '-T', 'ws', '-gu', $ApplianceSshUser, '-gp', $ApplianceGuestPassword,
+            'runScriptInGuest', $ApplianceVmx, '/bin/sh', $probe
+        ) -TimeoutSeconds 15
+        if ($observed.ExitCode -ne 0) { return 'Startup prerequisite state unavailable (guest query failed).' }
+        if (Test-Path -LiteralPath $hostOutput) { Remove-Item -LiteralPath $hostOutput -Force }
+        $copied = Invoke-VmrunBounded -Arguments @(
+            '-T', 'ws', '-gu', $ApplianceSshUser, '-gp', $ApplianceGuestPassword,
+            'copyFileFromGuestToHost', $ApplianceVmx, $guestOutput, $hostOutput
+        ) -TimeoutSeconds 15
+        if ($copied.ExitCode -ne 0 -or -not (Test-Path -LiteralPath $hostOutput -PathType Leaf)) {
+            return 'Startup prerequisite state unavailable (guest readback failed).'
+        }
+        if ((Get-Item -LiteralPath $hostOutput).Length -gt 4096) {
+            return 'Startup prerequisite state unavailable (oversized readback).'
+        }
+        # Report only fixed unit names and systemd state tokens, never journals,
+        # guest commands, or arbitrary guest output from a failed operation.
+        $states = @(Get-Content -LiteralPath $hostOutput | Where-Object {
+            $_ -match '^(?:LoadState|ActiveState|SubState|Result)=[a-z-]{1,40}$' -or
+            ($_ -match '^Id=(.+)$' -and $Matches[1] -in $units)
+        })
+        if ($states.Count -eq 0) { return 'Startup prerequisite state unavailable (invalid readback).' }
+        return "Startup prerequisites: $($states -join '; ')."
+    }
+    catch {
+        return 'Startup prerequisite state unavailable (bounded provider failure).'
+    }
+}
+
+<#
+.SYNOPSIS
 Upload the lifecycle helper script to the appliance guest.
 .PARAMETER ApplianceVmx
 VMX path identifying the appliance guest that receives the helper.
@@ -1789,8 +1840,18 @@ try {
         appliance_ip  = $ApplianceIPAddress
         appliance_url = $ApplianceUrl
     } | ConvertTo-Json -Depth 3 | Set-Content -LiteralPath (Join-Path $resultRoot 'discovered-appliance.json') -Encoding UTF8
-    Sync-ApplianceHelperScript -ApplianceVmx $applianceVmx
-    $applianceWheelPath = Sync-ApplianceApplicationWheel -ApplianceVmx $applianceVmx
+    try {
+        Sync-ApplianceHelperScript -ApplianceVmx $applianceVmx
+        $applianceWheelPath = Sync-ApplianceApplicationWheel -ApplianceVmx $applianceVmx
+    }
+    catch {
+        $deploymentFailure = $_
+        $startupDiagnostic = Get-ApplianceStartupDiagnostic -ApplianceVmx $applianceVmx
+        throw [System.InvalidOperationException]::new(
+            "Lifecycle application deployment failed. $startupDiagnostic Original failure: $($deploymentFailure.Exception.Message)",
+            $deploymentFailure.Exception
+        )
+    }
     $applianceHostKey = Get-PlinkHostKey -HostName $ApplianceIPAddress -UserName $ApplianceSshUser -Password $adminPasswordSecure
     $clientAHost = ''
     $clientBHost = ''

@@ -177,7 +177,13 @@ The default lifecycle lab creates isolated VM directories and result/log artifac
 test-results/vmware-workstation-lifecycle/Atlaso-PR-<number>-lifecycle-<collision-safe-suffix>/vms
 ```
 
-The appliance VMX is copied from the selected Workstation image output. Client VMs use an Alpine cloud VMDK prepared
+The appliance is cloned through `create-atlaso-vm.ps1` from the verified, powered-off two-payload-disk template.
+Before first boot, the shared clone contract creates private 500 GiB thin depot and backup disks inside the lab's
+appliance directory and attaches them at SCSI units 2 and 3. The source template stays unchanged, and no persistent
+data disks from another appliance are reused. Failed disk provisioning retains the clone identity for supported
+cleanup. If helper or wheel deployment fails, the runner reports bounded state for data-disk initialization, HTTPS
+bootstrap, Atlaso, and nginx, or explicitly reports that guest diagnostics were unavailable.
+Client VMs use an Alpine cloud VMDK prepared
 from a pinned upstream QCOW2 source. The payload and SHA-512 metadata are cached only as
 a verified pair: corrupt entries are removed on an ordinary rerun, downloads stay in unique partial files until
 validation succeeds, and promotion is scoped to the exact expected cache files. The default Alpine artifact uses the

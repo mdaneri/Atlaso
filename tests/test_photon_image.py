@@ -791,6 +791,36 @@ def test_vmware_workstation_address_readiness_behavior(tmp_path):
     assert "Atlaso VMware Workstation readiness tests passed." in result.stdout
 
 
+def test_vmware_lifecycle_storage_behavior(tmp_path):
+    """Verify clone delegation, failed-provisioning cleanup identity, and diagnostics.
+
+    Args:
+        tmp_path: Fixture directory for synthetic lifecycle storage evidence.
+    """
+    pwsh = shutil.which("pwsh")
+    if pwsh is None:
+        pytest.skip("PowerShell 7 is not available")
+    result = subprocess.run(
+        [
+            pwsh,
+            "-NoProfile",
+            "-NonInteractive",
+            "-File",
+            "tests/powershell/Test-AtlasoLifecycleStorage.ps1",
+            "-RepositoryRoot",
+            str(Path.cwd()),
+            "-OutputDirectory",
+            str(tmp_path / "lifecycle-storage"),
+        ],
+        check=False,
+        capture_output=True,
+        text=True,
+        timeout=60,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "Atlaso lifecycle storage tests passed." in result.stdout
+
+
 def test_wsl_build_contract_and_setup_are_pinned_idempotent_and_non_destructive():
     """Verify that wsl build contract and setup are pinned idempotent and non destructive."""
     contract = json.loads(
@@ -2722,10 +2752,10 @@ def test_create_atlaso_vmware_test_vm_wrapper_uses_common_helpers():
         "scripts/windows/vmware/run-lifecycle-test.ps1"
     ).read_text(encoding="utf-8")
     assert "Assert-AtlasoVmwarePayloadProvenance -VmxPath $resolvedSourceVmx" in lifecycle_script
-    assert "Get-AtlasoVmwarePayloadLayout -VmxPath $targetVmx -RequireExactlyTwoVmdks" in lifecycle_script
+    assert "'create-atlaso-vm.ps1'" in lifecycle_script
     assert lifecycle_script.index(
         "Assert-AtlasoVmwarePayloadProvenance -VmxPath $resolvedSourceVmx"
-    ) < lifecycle_script.index("Copy-Item -LiteralPath $sourceDirectory")
+    ) < lifecycle_script.index("'create-atlaso-vm.ps1'")
     assert '"$prefix.vnet"' in nics_script
     assert "if ($Vmnet -match '^(?i)vmnet(\\d+)$')" in nics_script
     assert '$Vmnet = "VMnet$($Matches[1])"' in nics_script
