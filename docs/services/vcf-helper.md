@@ -175,6 +175,8 @@ against the confirmed fingerprint before sending its session cookie, and verifie
 deployment account therefore needs permission to read that VMX through the datastore browser. A refused read, changed
 certificate, redirect, or invalid configuration fails verification and triggers the same rollback. Results identify
 this readback as `datastore-vmx`; no configuration file or property values are saved in task logs.
+If cancellation arrives during metadata installation or readback, Atlaso finishes that verification but checks
+cancellation again before starting power-on. The verified VM remains powered off and is reported as a partial deployment.
 
 If installation or verification fails, Atlaso removes only the exact VM created by that task. A failed removal is reported
 as a partial deployment requiring manual cleanup. The pre-authentication fingerprint probe requires TLS 1.2 or newer

@@ -1425,6 +1425,9 @@ def deploy_ova(
             return imported_vm_result
         if progress:
             progress(75, "powering-on")
+        # Installation/readback can outlive a cancellation request. Complete that
+        # metadata transaction, but do not start a new power-on task afterward.
+        _check_cancelled(cancelled)
         _wait_task(vm.PowerOnVM_Task(), cancelled=cancelled)
         if progress:
             progress(80, "waiting-for-guest-address")

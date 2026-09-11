@@ -428,6 +428,9 @@ def test_imported_ovf_verification_requires_all_keys_and_transport():
         ("VirtualCenter", False, False, ""),
         ("HostAgent", True, True, "reconfigure"),
         ("HostAgent", True, False, "rollback"),
+        ("HostAgent", True, True, "cancel-reconfigure"),
+        ("HostAgent", True, True, "cancel-readback"),
+        ("VirtualCenter", False, True, "cancel-readback"),
     ],
 )
 def test_deploy_ova_binds_standalone_host_and_preserves_vcenter_automatic_placement(
@@ -646,7 +649,19 @@ def test_deploy_ova_binds_standalone_host_and_preserves_vcenter_automatic_placem
             property_values={"ROOT_PASSWORD": "one-time-secret", "vami.hostname": "target.example.test"},
             deployment_option="small",
             power_on=True,
+            cancelled=lambda: bool(
+                (failure_mode == "cancel-reconfigure" and captured.get("reconfigured"))
+                or (failure_mode == "cancel-readback" and captured.get("reloaded"))
+            ),
         )
+    if failure_mode.startswith("cancel-"):
+        with pytest.raises(VcfSddcPostImportError, match="cancelled") as caught:
+            deploy()
+        assert caught.value.vm_result["vm_id"] == vm._moId
+        assert "powered_on" not in captured
+        assert "destroyed" not in captured
+        assert vm.runtime.powerState == "poweredOff"
+        return
     if failure_mode:
         error_type = VcfSddcPostImportError if failure_mode == "rollback" else VcfSddcDeploymentError
         with pytest.raises(error_type) as caught:
