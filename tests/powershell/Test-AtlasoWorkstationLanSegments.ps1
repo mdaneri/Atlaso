@@ -385,7 +385,8 @@ if (-not $snapshotFunction) { throw 'Cannot load immutable source exporter.' }
 [IO.File]::WriteAllText($helperFile, "function Get-FixtureProvenance { 'transient' }")
 [IO.File]::WriteAllText($sourceFile, 'transient build injection')
 [IO.File]::WriteAllText($untracked, 'untracked build injection')
-$snapshot = New-LifecycleSourceSnapshot -RepositoryRoot $sourceRoot -Commit $admitted -DestinationRoot $fixture
+$snapshotConsumerPins = [Collections.Generic.List[IDisposable]]::new()
+$snapshot = New-LifecycleSourceSnapshot -RepositoryRoot $sourceRoot -Commit $admitted -ConsumerPins $snapshotConsumerPins -DestinationRoot $fixture
 if ([IO.File]::ReadAllText((Join-Path $snapshot 'source.txt')) -cne 'initial' -or
     [IO.File]::Exists((Join-Path $snapshot 'untracked.txt'))) { throw 'Snapshot read live worktree bytes.' }
 Import-Module (Join-Path $snapshot 'helper.psm1') -Force
@@ -393,6 +394,7 @@ if ((Get-FixtureProvenance) -cne 'initial') { throw 'Runtime helper loaded trans
 Remove-Module helper
 [IO.File]::WriteAllText($helperFile, "function Get-FixtureProvenance { 'initial' }")
 Assert-Refused { [IO.File]::WriteAllText((Join-Path $snapshot 'source.txt'), 'tampered') } 'denied'
+Assert-Refused { [IO.Directory]::Move($snapshot, $snapshot + '-moved') } 'being used by another process'
 Assert-Refused { [IO.File]::WriteAllText((Join-Path $snapshot 'injected.py'), 'tampered') } 'denied'
 # Restore endpoint state: the snapshot still proves the exact admitted object.
 [IO.File]::WriteAllText($sourceFile, 'next')
@@ -426,7 +428,8 @@ $preflightGuard.Expect((Join-Path $preflightRoot ('source-' + ('a' * 32) + '.zip
 $fixtureCreated = [IO.File]::OpenRead((Join-Path $preflightRoot ('source-' + ('a' * 32) + '.zip')))
 try { $preflightGuard.Record((Join-Path $preflightRoot ('source-' + ('a' * 32) + '.zip')), $fixtureCreated.SafeFileHandle) }
 finally { $fixtureCreated.Dispose() }
-New-LifecycleSourceSnapshot -RepositoryRoot $sourceRoot -Commit $admitted -DestinationRoot $preflightRoot -PreflightGuard $preflightGuard | Out-Null
+New-LifecycleSourceSnapshot -RepositoryRoot $sourceRoot -Commit $admitted -ConsumerPins $snapshotConsumerPins -DestinationRoot $preflightRoot -PreflightGuard $preflightGuard | Out-Null
+foreach ($pin in $snapshotConsumerPins) { $pin.Dispose() }; $snapshotConsumerPins.Clear()
 Assert-Refused { Remove-LifecyclePreflightArtifacts -Path $preflightRoot -ExpectedParent $vmRoot -Guard $preflightGuard } 'independently derived lifecycle parent'
 Remove-LifecyclePreflightArtifacts -Path $preflightRoot -ExpectedParent $fixture -Guard $preflightGuard
 $preflightGuard.Dispose()
@@ -494,7 +497,7 @@ $injectedSnapshotSource = $snapshotFunction.Extent.Text.Replace(
     '[IO.File]::WriteAllText((Join-Path $snapshotPath "source.txt"), "construction substitution"); foreach ($createdFile in $snapshotIdentities.Keys) {')
 . ([scriptblock]::Create($injectedSnapshotSource))
 try {
-    Assert-Refused { New-LifecycleSourceSnapshot -RepositoryRoot $sourceRoot -Commit $admitted -DestinationRoot $fixture } 'snapshot bytes differ from the Git archive'
+    Assert-Refused { New-LifecycleSourceSnapshot -RepositoryRoot $sourceRoot -Commit $admitted -ConsumerPins $snapshotConsumerPins -DestinationRoot $fixture } 'snapshot bytes differ from the Git archive'
 } finally { . ([scriptblock]::Create($snapshotFunction.Extent.Text)) }
 $externalSnapshotFile = Join-Path $fixture 'external-source.txt'
 [IO.File]::WriteAllText($externalSnapshotFile, 'initial')
@@ -504,7 +507,7 @@ $hardlinkSnapshotSource = $snapshotFunction.Extent.Text.Replace(
     '[IO.File]::Delete((Join-Path $snapshotPath "source.txt")); New-Item -ItemType HardLink -Path (Join-Path $snapshotPath "source.txt") -Target $externalSnapshotFile | Out-Null; foreach ($createdFile in $snapshotIdentities.Keys) {')
 . ([scriptblock]::Create($hardlinkSnapshotSource))
 try {
-    Assert-Refused { New-LifecycleSourceSnapshot -RepositoryRoot $sourceRoot -Commit $admitted -DestinationRoot $fixture } 'creation identity or single-link'
+    Assert-Refused { New-LifecycleSourceSnapshot -RepositoryRoot $sourceRoot -Commit $admitted -ConsumerPins $snapshotConsumerPins -DestinationRoot $fixture } 'creation identity or single-link'
 } finally { . ([scriptblock]::Create($snapshotFunction.Extent.Text)) }
 if ((Get-Acl -LiteralPath $externalSnapshotFile).Sddl -cne $externalAclBefore) { throw 'Substituted hard link changed an external ACL.' }
 # Try replacing a directory at the former post-RecordDirectory race boundary.
@@ -514,7 +517,7 @@ $directorySnapshotSource = $snapshotFunction.Extent.Text.Replace(
     'try { [IO.Directory]::Move($directoryPath, $directoryPath + "-replaced") } catch [IO.IOException] { $script:directoryRenameBlocked = $true }; if (-not $script:directoryRenameBlocked) { throw "Snapshot directory replacement succeeded." }; $createdDirectories.Add($directoryPath) | Out-Null')
 . ([scriptblock]::Create($directorySnapshotSource))
 try {
-    $directorySnapshot = New-LifecycleSourceSnapshot -RepositoryRoot $sourceRoot -Commit $admitted -DestinationRoot $fixture
+    $directorySnapshot = New-LifecycleSourceSnapshot -RepositoryRoot $sourceRoot -Commit $admitted -ConsumerPins $snapshotConsumerPins -DestinationRoot $fixture
     if (-not $script:directoryRenameBlocked -or [IO.File]::ReadAllText((Join-Path $directorySnapshot 'nested/child.txt')) -cne 'child') {
         throw 'Snapshot directory pin regression failed.'
     }
@@ -557,4 +560,5 @@ try {
 if ([IO.File]::Exists($publicationStage) -or [IO.File]::ReadAllText($publicationFinal) -cne 'original ownership') {
     throw 'Handle-bound ownership publication failed.'
 }
+foreach ($pin in $snapshotConsumerPins) { $pin.Dispose() }
 Write-Host "LAN segment safety fixtures passed: $fixture"

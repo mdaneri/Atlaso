@@ -124,6 +124,10 @@ is pinned and checked against its creation identity and single-link count before
 external files if a hard link was substituted. Snapshot ancestors and newly created directories are pinned with
 no-follow handles that deny deletion before any child is extracted, and remain pinned through final verification.
 This prevents a concurrent directory-to-junction replacement from redirecting archive writes outside the snapshot.
+The snapshot transfers its directory pins to its caller after verification. The lifecycle runner retains them through
+all helper consumers and releases them on exit; the wheel builder retains its pins until the build process exits.
+Preflight failure releases those pins before ownership-aware artifact cleanup. Thus renaming the verified root cannot
+substitute a different source tree between verification and use.
 Ownership receipts and lifecycle manifests retain their original creation handles with writer and deletion exclusion
 through publication. The publisher flushes before and after renaming that exact handle, so a substituted staging
 pathname cannot replace ownership evidence.

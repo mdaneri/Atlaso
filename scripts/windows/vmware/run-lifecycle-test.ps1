@@ -144,11 +144,14 @@ Full admitted commit SHA; the live checkout is never a build input.
 Existing task-owned wheel output root containing the unique archive and source directory.
 .PARAMETER PreflightGuard
 Optional invocation inventory receiving the exact archive paths before extraction.
+.PARAMETER ConsumerPins
+Caller-owned directory pins that must remain alive until every snapshot consumer exits.
 #>
 function New-LifecycleSourceSnapshot {
     param([Parameter(Mandatory)][string]$RepositoryRoot,
         [Parameter(Mandatory)][ValidatePattern('^[0-9a-f]{40}$')][string]$Commit,
-        [Parameter(Mandatory)][string]$DestinationRoot, [object]$PreflightGuard)
+        [Parameter(Mandatory)][string]$DestinationRoot, [object]$PreflightGuard,
+        [Parameter(Mandatory)][AllowEmptyCollection()][Collections.Generic.List[IDisposable]]$ConsumerPins)
     if (-not ('Atlaso.SnapshotFileIdentityV1' -as [type])) {
         Add-Type -TypeDefinition @'
 using System;
@@ -350,6 +353,8 @@ namespace Atlaso {
             }
         }
     } finally { $verifiedArchive.Dispose() }
+    foreach ($directoryPin in $snapshotDirectoryPins) { $ConsumerPins.Add($directoryPin) }
+    $snapshotDirectoryPins.Clear()
     return $snapshotPath
     } finally {
         foreach ($snapshotFilePin in $snapshotPins) { $snapshotFilePin.Dispose() }
@@ -557,6 +562,8 @@ if (Test-Path -LiteralPath $resultRoot) {
 }
 $preflightRootCreated = $false
 $preflightGuard = $null
+$runtimeConsumerPins = [Collections.Generic.List[IDisposable]]::new()
+try {
 try {
 $runtimeSourceRoot = $repoRoot
 if (-not $PlanOnly) {
@@ -566,7 +573,7 @@ if (-not $PlanOnly) {
     foreach ($artifact in @('plan.json', 'vmware-identity.json', 'vms', 'seed')) {
         $preflightGuard.Expect((Join-Path $resultRoot $artifact))
     }
-    $runtimeSourceRoot = New-LifecycleSourceSnapshot -RepositoryRoot $repoRoot -Commit $sourceCommit -DestinationRoot $resultRoot -PreflightGuard $preflightGuard
+    $runtimeSourceRoot = New-LifecycleSourceSnapshot -RepositoryRoot $repoRoot -Commit $sourceCommit -DestinationRoot $resultRoot -PreflightGuard $preflightGuard -ConsumerPins $runtimeConsumerPins
 }
 $runtimeVmwareRoot = Join-Path $runtimeSourceRoot 'scripts/windows/vmware'
 $vmRoot = Join-Path $resultRoot 'vms'
@@ -1813,11 +1820,16 @@ function Sync-ApplianceApplicationWheel {
         Remove-Item -LiteralPath $wheelRoot -Recurse -Force
     }
     New-Item -ItemType Directory -Force -Path $wheelRoot | Out-Null
-    $wheelSource = New-LifecycleSourceSnapshot -RepositoryRoot $repoRoot -Commit $sourceCommit -DestinationRoot $wheelRoot
-    Write-Host "Building Atlaso wheel from admitted commit $sourceCommit."
-    & python -m pip wheel $wheelSource --no-deps -w $wheelRoot | Out-Host
-    if ($LASTEXITCODE -ne 0) {
-        throw "Failed to build Atlaso wheel from $repoRoot."
+    $wheelConsumerPins = [Collections.Generic.List[IDisposable]]::new()
+    try {
+        $wheelSource = New-LifecycleSourceSnapshot -RepositoryRoot $repoRoot -Commit $sourceCommit -DestinationRoot $wheelRoot -ConsumerPins $wheelConsumerPins
+        Write-Host "Building Atlaso wheel from admitted commit $sourceCommit."
+        & python -m pip wheel $wheelSource --no-deps -w $wheelRoot | Out-Host
+        if ($LASTEXITCODE -ne 0) {
+            throw "Failed to build Atlaso wheel from $repoRoot."
+        }
+    } finally {
+        for ($pinIndex = $wheelConsumerPins.Count - 1; $pinIndex -ge 0; $pinIndex--) { $wheelConsumerPins[$pinIndex].Dispose() }
     }
     Get-LifecycleSourceCommit -RepositoryRoot $repoRoot -ExpectedCommit $sourceCommit | Out-Null
     $wheel = Get-ChildItem -LiteralPath $wheelRoot -Filter 'atlaso-*.whl' -File |
@@ -2131,6 +2143,8 @@ function Invoke-TrackedLifecycleVmCreation {
 Write-LifecycleIdentityEvidence
 } catch {
     $preflightFailure = $_
+    for ($pinIndex = $runtimeConsumerPins.Count - 1; $pinIndex -ge 0; $pinIndex--) { $runtimeConsumerPins[$pinIndex].Dispose() }
+    $runtimeConsumerPins.Clear()
     if ($preflightRootCreated) {
         try {
             Remove-LifecyclePreflightArtifacts -Path $resultRoot `
@@ -2440,4 +2454,7 @@ if ($seedCleanupFailure) {
 }
 if ($cleanupFailure) {
     throw $cleanupFailure
+}
+} finally {
+    for ($pinIndex = $runtimeConsumerPins.Count - 1; $pinIndex -ge 0; $pinIndex--) { $runtimeConsumerPins[$pinIndex].Dispose() }
 }
