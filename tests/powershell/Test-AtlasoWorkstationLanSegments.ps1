@@ -61,6 +61,12 @@ $receiptRecords = [System.Collections.Generic.List[object]]::new()
 $publishReceipt = {
     param($pending)
     if ([IO.File]::ReadAllText($preferences).Contains($pending.Id)) { throw 'Registration preceded its ownership evidence.' }
+    if (-not [IO.File]::Exists($pending.ReceiptPath) -or [IO.File]::Exists("$($pending.ReceiptPath).stage")) {
+        throw 'Receipt pathname was not published before evidence callback.'
+    }
+    if ((Get-FileHash -LiteralPath $pending.ReceiptPath -Algorithm SHA256).Hash -cne $pending.ReceiptSha256) {
+        throw 'Published receipt digest differs.'
+    }
     $receiptRecords.Add($pending)
     $evidenceStage = Join-Path $labRoot 'identity.tmp'
     $evidencePath = Join-Path $labRoot 'identity.json'
@@ -161,6 +167,37 @@ Assert-Refused {
     } $preferences
 } 'post-publication reference drift'
 if ([IO.File]::ReadAllText($preferences) -cne 'concurrent state') { throw 'Post-publication refusal did not restore preferences.' }
+# A second thread holds the provider transaction lock while producing unresolved
+# recovery state. A concurrent retry must refuse before reading its old snapshot.
+$pathKey = [IO.Path]::GetFullPath($preferences).ToUpperInvariant()
+$pathHash = [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData([Text.Encoding]::UTF8.GetBytes($pathKey)))
+$ready = [Threading.ManualResetEventSlim]::new($false)
+$release = [Threading.ManualResetEventSlim]::new($false)
+$holder = [PowerShell]::Create()
+$null = $holder.AddScript({
+    param($name, $ready, $release, $residue)
+    $mutex = [Threading.Mutex]::new($false, $name)
+    try {
+        if (-not $mutex.WaitOne(0)) { throw 'Fixture mutex unavailable.' }
+        try {
+            $ready.Set()
+            if (-not $release.Wait(30000)) { throw 'Fixture lock release timed out.' }
+            [IO.File]::WriteAllText($residue, 'concurrent recovery state')
+        } finally { $mutex.ReleaseMutex() }
+    } finally { $mutex.Dispose() }
+}).AddArgument("Global\Atlaso-LanPreferences-$pathHash").AddArgument($ready).AddArgument($release).AddArgument("$preferences.atlaso-cas-concurrent.tmp")
+$pendingHolder = $holder.BeginInvoke()
+try {
+    if (-not $ready.Wait(10000)) { throw 'Fixture lock acquisition timed out.' }
+    Assert-Refused { Remove-AtlasoWorkstationLanSegment @argsMap } 'Another LAN preferences transaction is active'
+} finally {
+    $release.Set()
+    $holder.EndInvoke($pendingHolder) | Out-Null
+    $holder.Dispose(); $ready.Dispose(); $release.Dispose()
+}
+Assert-Refused { Remove-AtlasoWorkstationLanSegment @argsMap } 'interrupted LAN preferences transaction'
+if ([IO.File]::ReadAllText("$preferences.atlaso-cas-concurrent.tmp") -cne 'concurrent recovery state') { throw 'Concurrent recovery changed.' }
+[IO.File]::Delete("$preferences.atlaso-cas-concurrent.tmp")
 foreach ($suffix in @('lan-retained.tmp.backup', 'lan-retained.tmp', 'recovery-retained.tmp', 'cas-retained.tmp')) {
     $backup = "$preferences.atlaso-$suffix"
     [IO.File]::WriteAllText($backup, 'retained recovery evidence')

@@ -118,9 +118,13 @@ output makes no runtime source-provenance claim.
 The receipt binds its random VMware ID, exact name and preferences path to the task ID, repository, source commit,
 PR number, and lifecycle result root. `plan.json` records `lan_segment_owner`; `vmware-identity.json` records
 `lan_segments` with each original receipt path and SHA-256. Outside Codex, the unique canonical lab name is the task ID.
+The receipt is flushed under a staging name and published by a write-through rename that refuses replacement.
 The required creation callback flushes and durably publishes the pending identity evidence before preferences can
 register the segment. An interruption therefore leaves either no registration or a registration with its original
 independently recorded receipt hash; cleanup can verify an absent pending registration normally.
+A provider-path mutex spans recovery preflight, preferences publication, rollback, and artifact retirement across
+processes and Windows sessions. An overlapping transaction refuses immediately; retries inspect retained recovery
+artifacts after the previous transaction releases its lock.
 An existing named segment is reused without claiming ownership or rewriting its ID. Shared segments and legacy residue
 without creation evidence remain preserved for maintainer-directed reconciliation.
 

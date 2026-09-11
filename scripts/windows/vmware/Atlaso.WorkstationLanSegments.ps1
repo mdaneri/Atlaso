@@ -140,7 +140,13 @@ function Update-AtlasoLanPreferences {
     param([Parameter(Mandatory)][string]$Path, [Parameter(Mandatory)][scriptblock]$Transform,
         [scriptblock]$Validate)
     Assert-AtlasoLanSegmentUiClosed
-    $pins = [Atlaso.WorkstationFileIdentity]::PinOrdinaryDirectoryPath((Split-Path -Parent $Path), $true)
+    # Serialize cooperating transactions across processes and Windows sessions. Acquire
+    # before recovery enumeration and retain through rollback and artifact retirement.
+    $pathKey = [IO.Path]::GetFullPath($Path).ToUpperInvariant()
+    $pathHash = [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData([Text.Encoding]::UTF8.GetBytes($pathKey)))
+    $transactionMutex = [Threading.Mutex]::new($false, "Global\Atlaso-LanPreferences-$pathHash")
+    $transactionOwned = $false
+    $pins = $null
     $originalLock = $null; $stageLock = $null
     $stage = "$Path.atlaso-lan-$([guid]::NewGuid().ToString('N')).tmp"
     $backup = "$stage.backup"
@@ -148,6 +154,14 @@ function Update-AtlasoLanPreferences {
     $displacedIdentity = $null; $displacedBytes = $null
     $stageIdentity = $null
     try {
+        try { $transactionOwned = $transactionMutex.WaitOne(0) }
+        catch [Threading.AbandonedMutexException] {
+            # Ownership transfers on abandonment; normal recovery preflight below
+            # still refuses every retained stage or recovery artifact.
+            $transactionOwned = $true
+        }
+        if (-not $transactionOwned) { throw 'Another LAN preferences transaction is active; retry after it completes.' }
+        $pins = [Atlaso.WorkstationFileIdentity]::PinOrdinaryDirectoryPath((Split-Path -Parent $Path), $true)
         Assert-AtlasoPathHasNoReparsePoint -Path $Path
         $preferenceName = [regex]::Escape((Split-Path -Leaf $Path))
         $recoveryPattern = "^$preferenceName\.atlaso-(?:lan-.*\.tmp(?:\.backup)?|recovery-.*\.tmp|cas-.*\.tmp)$"
@@ -238,7 +252,11 @@ function Update-AtlasoLanPreferences {
                 [Atlaso.WorkstationFileIdentity]::DeletePinnedFile($stagePin)
             } finally { $stagePin.Dispose() }
         }
-        } finally { $pins.Dispose() }
+        } finally {
+            if ($pins) { $pins.Dispose() }
+            if ($transactionOwned) { $transactionMutex.ReleaseMutex() }
+            $transactionMutex.Dispose()
+        }
     }
 }
 
@@ -290,8 +308,12 @@ function Resolve-AtlasoOwnedLanSegment {
             # exact random identity was absent under the provider lock, never a name claim.
             $receiptPath = Join-Path $receiptRoot "$($receipt.creation_id).json"
             $bytes = [System.Text.UTF8Encoding]::new($false).GetBytes(($receipt | ConvertTo-Json))
-            $writer = [System.IO.FileStream]::new($receiptPath, 'CreateNew', 'Write', 'None', 4096, 'WriteThrough')
+            $receiptStage = "$receiptPath.stage"
+            $writer = [System.IO.FileStream]::new($receiptStage, 'CreateNew', 'Write', 'None', 4096, 'WriteThrough')
             try { $writer.Write($bytes); $writer.Flush($true) } finally { $writer.Dispose() }
+            # Flush bytes, then durably publish the immutable pathname without
+            # replacing any existing receipt before publishing independent evidence.
+            [Atlaso.WorkstationFileIdentity]::PublishDurableFile($receiptStage, $receiptPath, $false)
             $result.ReceiptPath = $receiptPath
             $result.ReceiptSha256 = [Convert]::ToHexString([System.Security.Cryptography.SHA256]::HashData($bytes))
             $result.Id = $id
