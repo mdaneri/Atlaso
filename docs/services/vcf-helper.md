@@ -168,6 +168,7 @@ version and vendor, and the `en` locale. Readback verifies this platform metadat
 Guest keys retain VMware's class and instance qualification, such as `vami.ip0.SDDC-Manager`, while reviewed empty
 values and non-editable appliance defaults are preserved. A missing, malformed, duplicated, or changed environment
 fails verification; the absence of ESXi `vAppConfig` alone is expected.
+Standalone import warnings are redacted against both reviewed values and the additional non-editable defaults.
 
 ESXi can expose an empty `guestinfo.ovfEnv` API value even though the VMX contains the complete XML. In that case,
 Atlaso reads only the exact imported VM's configuration from the selected datastore over HTTPS, checks the certificate

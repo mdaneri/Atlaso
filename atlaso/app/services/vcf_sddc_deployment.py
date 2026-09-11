@@ -1340,15 +1340,20 @@ def deploy_ova(
             if spec.error:
                 messages = "; ".join(_ovf_diagnostic_messages(spec.error, property_values=property_values))
                 raise VcfSddcDeploymentError(f"vSphere rejected the OVA import specification: {messages}")
-            for warning in _ovf_diagnostic_messages(getattr(spec, "warning", None), property_values=property_values):
-                if warning not in import_warnings:
-                    import_warnings.append(warning)
-            if import_warnings and progress:
-                progress(10, "reviewed-import-warnings")
+            diagnostic_properties = dict(property_values)
             if api_type == "HostAgent":
                 guest_properties = _standalone_ovf_properties(spec.importSpec, descriptor, property_values)
                 guest_platform = {"Kind": "VMware ESXi", "Version": str(content.about.version), "Vendor": str(content.about.vendor), "Locale": "en"}
                 guest_environment = _ovf_environment_xml(guest_properties, platform=guest_platform)
+                diagnostic_properties = {str(index): value for index, value in enumerate([*property_values.values(), *guest_properties.values()])}
+                # The effective environment also contains non-editable defaults
+                # that were not in the reviewed mapping used by the parser.
+                import_warnings = [_redact_ovf_property_values(warning, list(diagnostic_properties.values())) for warning in import_warnings]
+            for warning in _ovf_diagnostic_messages(getattr(spec, "warning", None), property_values=diagnostic_properties):
+                if warning not in import_warnings:
+                    import_warnings.append(warning)
+            if import_warnings and progress:
+                progress(10, "reviewed-import-warnings")
             member_sizes, required_bytes = _ova_file_item_sizes(list(spec.fileItem), archive)
             _ensure_datastore_free_space(datastore, required_bytes)
             lease = resource_pool.ImportVApp(spec.importSpec, folder, host)

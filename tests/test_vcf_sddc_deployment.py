@@ -589,10 +589,10 @@ def test_deploy_ova_binds_standalone_host_and_preserves_vcenter_automatic_placem
             captured["params"] = params
             return SimpleNamespace(
                 error=[],
-                warning=[SimpleNamespace(localizedMessage="Accepted one-time-secret for ROOT_PASSWORD")],
+                warning=[SimpleNamespace(localizedMessage="Accepted one-time-secret for ROOT_PASSWORD and default-only-secret")],
                 fileItem=[],
                 importSpec=SimpleNamespace(configSpec=SimpleNamespace(vAppConfig=SimpleNamespace(
-                    property=[SimpleNamespace(info=item) for item in parsed.property],
+                    property=[SimpleNamespace(info=item) for item in parsed.property] + [SimpleNamespace(info=SimpleNamespace(id="hidden", defaultValue="default-only-secret"))],
                     ovfEnvironmentTransport=[],
                 ))),
             )
@@ -690,6 +690,7 @@ def test_deploy_ova_binds_standalone_host_and_preserves_vcenter_automatic_placem
     assert result["api_type"] == api_type
     assert result["ovf_verification"]["transports"] == ["com.vmware.guestInfo"]
     if api_type == "HostAgent":
+        assert "default-only-secret" not in " ".join(result["warnings"])
         assert captured["reconfigured"] is True
         assert captured["reloaded"] is True
         assert result["ovf_verification"]["source"] == "guestinfo.ovfEnv"
