@@ -21,6 +21,17 @@ CANONICAL_BROWSER_ROOTS = {
 CAPTURE_OVERRIDES = {
     **{
         stem: {
+            "source_commit": "08dec140c7316b91e102260bdb2a36df628f1a34",
+            "atlaso_version": "0.9.346",
+            "capture_method": "playwright-edge",
+        }
+        for stem in (
+            "firewall-rule-wizard-desktop", "firewall-rule-wizard-responsive",
+            "firewall-rule-review-desktop", "firewall-rule-review-responsive",
+        )
+    },
+    **{
+        stem: {
             "source_commit": "8296a12b37df60084bc94d00be9c89cf1888237a",
             "atlaso_version": "0.9.324",
             "capture_method": "edge-browser",
@@ -330,6 +341,22 @@ ROUTES = {
 }
 
 SPECIAL = {
+    **{
+        stem: (
+            "/ui/management/firewall", "rule-wizard",
+            "Start a rule with its identity and multiline description before choosing traffic and priority.",
+            "Atlaso Firewall Rule step with a full-width multiline Description and the four-step navigation.",
+        )
+        for stem in ("firewall-rule-wizard-desktop", "firewall-rule-wizard-responsive")
+    },
+    **{
+        stem: (
+            "/ui/management/firewall", "rule-review",
+            "Review the multiline description, traffic fields, priority, and enabled state before saving desired state.",
+            "Atlaso Firewall Review step showing escaped operator notes with preserved line breaks and rule priority.",
+        )
+        for stem in ("firewall-rule-review-desktop", "firewall-rule-review-responsive")
+    },
     **{
         stem: ("/ui/management/traffic-publishing", "assigned-address-translation",
                "Choose an assigned translated address and open source groups in a separate tab without leaving the wizard.",

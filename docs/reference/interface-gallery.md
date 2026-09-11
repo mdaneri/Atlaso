@@ -247,6 +247,22 @@ Figure: Firewall in the verified clean-appliance desktop state.
 
 Figure: Firewall in the verified clean-appliance responsive state.
 
+![Atlaso Firewall Review step showing escaped operator notes with preserved line breaks and rule priority.](../assets/screenshots/firewall-rule-review-desktop.webp)
+
+Figure: Review the multiline description, traffic fields, priority, and enabled state before saving desired state.
+
+![Atlaso Firewall Review step showing escaped operator notes with preserved line breaks and rule priority.](../assets/screenshots/firewall-rule-review-responsive.webp)
+
+Figure: Review the multiline description, traffic fields, priority, and enabled state before saving desired state.
+
+![Atlaso Firewall Rule step with a full-width multiline Description and the four-step navigation.](../assets/screenshots/firewall-rule-wizard-desktop.webp)
+
+Figure: Start a rule with its identity and multiline description before choosing traffic and priority.
+
+![Atlaso Firewall Rule step with a full-width multiline Description and the four-step navigation.](../assets/screenshots/firewall-rule-wizard-responsive.webp)
+
+Figure: Start a rule with its identity and multiline description before choosing traffic and priority.
+
 ## Ldap
 
 Route: `/ui/management/ldap`

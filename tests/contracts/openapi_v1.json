@@ -3322,8 +3322,9 @@
                 "type": "null"
               }
             ],
-            "description": "Operator-facing purpose or context for this resource.",
-            "title": "Description"
+            "description": "Optional multiline operator note, at most 1,000 UTF-16 code units on create or update, matching browser maxlength. Clients must enforce x-maxLengthUtf16CodeUnits; JSON Schema maxLength counts code points and is intentionally omitted.",
+            "title": "Description",
+            "x-maxLengthUtf16CodeUnits": 1000
           },
           "destination": {
             "default": "any",
@@ -3411,7 +3412,7 @@
                 "type": "null"
               }
             ],
-            "description": "Operator-facing purpose or context for this resource.",
+            "description": "Saved multiline operator note; legacy records may exceed the current 1,000-UTF-16-unit write limit.",
             "title": "Description"
           },
           "destination": {
@@ -12447,7 +12448,7 @@
         ]
       },
       "post": {
-        "description": "Create Firewall Rule.\n\nRequires the `write:firewall` API scope. The operation changes saved Atlaso application state;\nany appliance host enforcement remains subject to the documented apply or task boundary for the\nresource.",
+        "description": "Create Firewall Rule.\n\nDescription accepts at most 1,000 UTF-16 code units; longer notes return HTTP 422 before mutation.\n\nRequires the `write:firewall` API scope. The operation changes saved Atlaso application state;\nany appliance host enforcement remains subject to the documented apply or task boundary for the\nresource.",
         "operationId": "createFirewallRule",
         "requestBody": {
           "content": {
@@ -12544,7 +12545,7 @@
         ]
       },
       "patch": {
-        "description": "Update Firewall Rule.\n\nRequires the `write:firewall` API scope. The operation updates saved Atlaso state and does not\nbypass the documented global Appliance Apply or service lifecycle boundary.",
+        "description": "Update Firewall Rule.\n\nDescription accepts at most 1,000 UTF-16 code units; longer notes return HTTP 422 before mutation.\n\nRequires the `write:firewall` API scope. The operation updates saved Atlaso state and does not\nbypass the documented global Appliance Apply or service lifecycle boundary.",
         "operationId": "updateFirewallRule",
         "parameters": [
           {
