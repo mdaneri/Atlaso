@@ -361,10 +361,25 @@ $helperFile = Join-Path $sourceRoot 'helper.psm1'
 [IO.File]::WriteAllText($helperFile, "function Get-FixtureProvenance { 'initial' }")
 [IO.Directory]::CreateDirectory((Join-Path $sourceRoot 'nested')) | Out-Null
 [IO.File]::WriteAllText((Join-Path $sourceRoot 'nested/child.txt'), 'child')
-& git -C $sourceRoot add source.txt helper.psm1 nested/child.txt
+$fixtureRunnerPath = Join-Path $sourceRoot 'scripts/windows/vmware/run-lifecycle-test.ps1'
+[IO.Directory]::CreateDirectory((Split-Path -Parent $fixtureRunnerPath)) | Out-Null
+$fixtureRunnerText = "param()`n'original orchestration'`n"
+[IO.File]::WriteAllText($fixtureRunnerPath, $fixtureRunnerText)
+& git -C $sourceRoot add source.txt helper.psm1 nested/child.txt scripts/windows/vmware/run-lifecycle-test.ps1
 & git -C $sourceRoot -c user.name=Fixture -c user.email=fixture@example.invalid -c commit.gpgsign=false commit -qm initial
 if ($LASTEXITCODE -ne 0) { throw 'Could not prepare source fixture.' }
 $admitted = Get-LifecycleSourceCommit -RepositoryRoot $sourceRoot
+$runnerCheckFunction = $runnerAst.Find({ param($node)
+    $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -eq 'Assert-LifecycleRunnerSource'
+}, $false)
+if (-not $runnerCheckFunction) { throw 'Cannot load parsed-runner admission check.' }
+. ([scriptblock]::Create($runnerCheckFunction.Extent.Text))
+Assert-LifecycleRunnerSource -RepositoryRoot $sourceRoot -Commit $admitted -ParsedScript ([scriptblock]::Create($fixtureRunnerText).Ast.Extent.Text)
+[IO.File]::WriteAllText($fixtureRunnerPath, $fixtureRunnerText.Replace('original', 'modified'))
+$temporarilyParsedRunner = [scriptblock]::Create([IO.File]::ReadAllText($fixtureRunnerPath))
+[IO.File]::WriteAllText($fixtureRunnerPath, $fixtureRunnerText)
+Get-LifecycleSourceCommit -RepositoryRoot $sourceRoot -ExpectedCommit $admitted | Out-Null
+Assert-Refused { Assert-LifecycleRunnerSource -RepositoryRoot $sourceRoot -Commit $admitted -ParsedScript $temporarilyParsedRunner.Ast.Extent.Text } 'Parsed lifecycle runner differs'
 [IO.File]::WriteAllText($sourceFile, 'dirty')
 Assert-Refused { Get-LifecycleSourceCommit -RepositoryRoot $sourceRoot } 'clean source worktree'
 [IO.File]::WriteAllText($sourceFile, 'initial')

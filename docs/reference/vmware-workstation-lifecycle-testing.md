@@ -131,6 +131,9 @@ substitute a different source tree between verification and use.
 Before applying inheritable ACLs, the exporter freezes each expected directory with an object-only ACL update and
 checks every immediate entry against the archive inventory. Unknown files, directories, and links are refused before
 ACL propagation; failed construction restores the directory freeze without touching unverified descendants.
+Runtime admission also compares the executing runner's already parsed script text with the admitted Git object before
+creating resources. Restoring a temporarily edited runner pathname before the clean-checkout check cannot attribute
+the previously parsed edited orchestration to an unchanged commit.
 Ownership receipts and lifecycle manifests retain their original creation handles with writer and deletion exclusion
 through publication. The publisher flushes before and after renaming that exact handle, so a substituted staging
 pathname cannot replace ownership evidence.

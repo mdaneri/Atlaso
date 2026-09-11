@@ -135,6 +135,28 @@ function Get-LifecycleSourceCommit {
 
 <#
 .SYNOPSIS
+Verify the already parsed orchestration script against the admitted Git object.
+.PARAMETER RepositoryRoot
+Repository containing the admitted runner object.
+.PARAMETER Commit
+Full admitted source commit.
+.PARAMETER ParsedScript
+Text from the executing script block AST, not a reread of its mutable pathname.
+#>
+function Assert-LifecycleRunnerSource {
+    param([Parameter(Mandatory)][string]$RepositoryRoot,
+        [Parameter(Mandatory)][string]$Commit, [Parameter(Mandatory)][string]$ParsedScript)
+    $admittedLines = @(& git -C $RepositoryRoot show "${Commit}:scripts/windows/vmware/run-lifecycle-test.ps1")
+    if ($LASTEXITCODE -ne 0) { throw 'Cannot read the admitted lifecycle runner object.' }
+    $admittedText = ($admittedLines -join "`n").TrimStart([char]0xFEFF).TrimEnd("`r", "`n")
+    $parsedText = $ParsedScript.Replace("`r`n", "`n").TrimStart([char]0xFEFF).TrimEnd("`r", "`n")
+    if ($parsedText -cne $admittedText) {
+        throw 'Parsed lifecycle runner differs from the admitted commit; no resources may be created.'
+    }
+}
+
+<#
+.SYNOPSIS
 Export an admitted Git object into a fresh task-owned wheel source directory.
 .PARAMETER RepositoryRoot
 Repository containing the admitted immutable commit object.
@@ -626,6 +648,10 @@ function Remove-LifecyclePreflightArtifacts {
 
 # Plan-only output creates no runtime resource and makes no source-provenance claim.
 $sourceCommit = if ($PlanOnly) { '' } else { Get-LifecycleSourceCommit -RepositoryRoot $repoRoot }
+if (-not $PlanOnly) {
+    Assert-LifecycleRunnerSource -RepositoryRoot $repoRoot -Commit $sourceCommit `
+        -ParsedScript $MyInvocation.MyCommand.ScriptBlock.Ast.Extent.Text
+}
 if ($PlanOnly) {
     Import-Module (Join-Path $PSScriptRoot 'Atlaso.VmwareTestIdentity.psm1') -Force
 } else {
