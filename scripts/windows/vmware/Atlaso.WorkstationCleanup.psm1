@@ -16,21 +16,43 @@ unchanged and does not require them to resolve.
 #>
 
 Set-StrictMode -Version Latest
-if (-not ('Atlaso.WorkstationDurablePublisherV1' -as [type])) {
+if (-not ('Atlaso.WorkstationDurablePublisherV2' -as [type])) {
     Add-Type -TypeDefinition @'
 using System;
 using System.ComponentModel;
+using System.IO;
+using System.Text;
 using System.Runtime.InteropServices;
+using Microsoft.Win32.SafeHandles;
 namespace Atlaso {
-    public static class WorkstationDurablePublisherV1 {
+    public static class WorkstationDurablePublisherV2 {
         [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
-        private static extern bool MoveFileExW(string source, string destination, uint flags);
-        public static void PublishDurableFile(string source, string destination, bool replace = true)
-        {
-            // Flush the source first; publish the same-volume directory entry with
-            // write-through replacement so ownership precedes provider mutation.
-            if (!MoveFileExW(source, destination, (replace ? 0x1u : 0u) | 0x8u))
-                throw new Win32Exception(Marshal.GetLastWin32Error());
+        private static extern SafeFileHandle CreateFileW(string path, uint access, uint share,
+            IntPtr security, uint creation, uint flags, IntPtr template);
+        [DllImport("kernel32.dll", SetLastError = true)]
+        private static extern bool SetFileInformationByHandle(SafeFileHandle handle, int kind, IntPtr info, uint size);
+        public static FileStream CreateStage(string path) {
+            // DELETE access belongs to this handle; deny other writers and deleters.
+            var handle = CreateFileW(path, 0xC0010000, 1, IntPtr.Zero, 1, 0x80200000, IntPtr.Zero);
+            if (handle.IsInvalid) { handle.Dispose(); throw new Win32Exception(Marshal.GetLastWin32Error()); }
+            return new FileStream(handle, FileAccess.ReadWrite);
+        }
+        public static void PublishDurableFile(FileStream stage, string destination, bool replace = true) {
+            stage.Flush(true);
+            byte[] name = Encoding.Unicode.GetBytes(Path.GetFullPath(destination));
+            int nameOffset = IntPtr.Size == 8 ? 20 : 12;
+            int size = nameOffset + name.Length + 2;
+            IntPtr info = Marshal.AllocHGlobal(size);
+            try {
+                for (int i = 0; i < size; i++) Marshal.WriteByte(info, i, 0);
+                Marshal.WriteByte(info, 0, replace ? (byte)1 : (byte)0);
+                Marshal.WriteInt32(info, nameOffset - 4, name.Length);
+                Marshal.Copy(name, 0, IntPtr.Add(info, nameOffset), name.Length);
+                // Rename the original creation handle, never a reopened pathname.
+                if (!SetFileInformationByHandle(stage.SafeFileHandle, 3, info, (uint)size))
+                    throw new Win32Exception(Marshal.GetLastWin32Error());
+                stage.Flush(true);
+            } finally { Marshal.FreeHGlobal(info); }
         }
     }
 }

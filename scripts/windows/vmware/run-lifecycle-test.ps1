@@ -2055,19 +2055,17 @@ function Write-LifecycleIdentityEvidence {
     # created beside the destination so the final replace stays on one volume.
     $identityTempPath = Join-Path $resultRoot ('.vmware-identity.{0}.tmp' -f [guid]::NewGuid().ToString('N'))
     if ($preflightGuard) { $preflightGuard.Expect($identityTempPath) }
+    $identityBytes = [System.Text.UTF8Encoding]::new($false).GetBytes($identityJson)
+    $identityWriter = [Atlaso.WorkstationDurablePublisherV2]::CreateStage($identityTempPath)
     try {
-        $identityBytes = [System.Text.UTF8Encoding]::new($false).GetBytes($identityJson)
-        $identityWriter = [System.IO.FileStream]::new($identityTempPath, 'CreateNew', 'Write', 'None', 4096, 'WriteThrough')
-        try { if ($preflightGuard) { $preflightGuard.Record($identityTempPath, $identityWriter.SafeFileHandle) }; $identityWriter.Write($identityBytes); $identityWriter.Flush($true) }
-        finally { $identityWriter.Dispose() }
-        [Atlaso.WorkstationDurablePublisherV1]::PublishDurableFile($identityTempPath, $identityPath)
-        if ($preflightGuard) { $preflightGuard.Published($identityTempPath, $identityPath) }
+        if ($preflightGuard) { $preflightGuard.Record($identityTempPath, $identityWriter.SafeFileHandle) }
+        $identityWriter.Write($identityBytes)
+        [Atlaso.WorkstationDurablePublisherV2]::PublishDurableFile($identityWriter, $identityPath)
     }
-    finally {
-        if (Test-Path -LiteralPath $identityTempPath -PathType Leaf) {
-            Remove-Item -LiteralPath $identityTempPath -Force
-        }
-    }
+    finally { $identityWriter.Dispose() }
+    if ($preflightGuard) { $preflightGuard.Published($identityTempPath, $identityPath) }
+    # Failed publication retains its exact stage for ownership-aware recovery;
+    # never delete a reopened staging pathname after releasing its creation handle.
 }
 
 <#

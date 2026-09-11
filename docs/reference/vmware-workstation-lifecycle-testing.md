@@ -124,6 +124,9 @@ is pinned and checked against its creation identity and single-link count before
 external files if a hard link was substituted. Snapshot ancestors and newly created directories are pinned with
 no-follow handles that deny deletion before any child is extracted, and remain pinned through final verification.
 This prevents a concurrent directory-to-junction replacement from redirecting archive writes outside the snapshot.
+Ownership receipts and lifecycle manifests retain their original creation handles with writer and deletion exclusion
+through publication. The publisher flushes before and after renaming that exact handle, so a substituted staging
+pathname cannot replace ownership evidence.
 If archive, credential, module, or other pre-resource admission fails, the runner releases only its newly created
 preflight result directory. Cleanup verifies the independently derived parent, rejects links, unexpected entries,
 and nonempty VM/seed roots, and verifies absence so an ordinary preflight failure can be retried. The root is pinned

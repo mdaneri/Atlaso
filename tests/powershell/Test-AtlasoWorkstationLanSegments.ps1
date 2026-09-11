@@ -70,8 +70,8 @@ $publishReceipt = {
     $receiptRecords.Add($pending)
     $evidenceStage = Join-Path $labRoot 'identity.tmp'
     $evidencePath = Join-Path $labRoot 'identity.json'
-    [IO.File]::WriteAllText($evidenceStage, ($receiptRecords | ConvertTo-Json))
-    [Atlaso.WorkstationDurablePublisherV1]::PublishDurableFile($evidenceStage, $evidencePath)
+    $evidenceWriter = [Atlaso.WorkstationDurablePublisherV2]::CreateStage($evidenceStage)
+    try { $evidenceWriter.Write([Text.Encoding]::UTF8.GetBytes(($receiptRecords | ConvertTo-Json))); [Atlaso.WorkstationDurablePublisherV2]::PublishDurableFile($evidenceWriter, $evidencePath) } finally { $evidenceWriter.Dispose() }
 }
 $shared = Resolve-AtlasoOwnedLanSegment -Name Shared -Owner $owner -PreferencesPath $preferences -PublishReceipt $publishReceipt
 if ($shared.ReceiptPath -or [IO.File]::ReadAllText($preferences) -cne $original) { throw 'Shared registration was adopted or changed.' }
@@ -375,8 +375,8 @@ $reloadCode = "param([string]`$ModulePath, [string]`$Root)`n" +
     "Add-Type 'namespace Atlaso { public static class WorkstationFileIdentity {} }'`n" +
     "Import-Module `$ModulePath -Force`nImport-Module `$ModulePath -Force`n" +
     "`$stage = Join-Path `$Root 'reload.stage'; `$final = Join-Path `$Root 'reload.final'`n" +
-    "[IO.File]::WriteAllText(`$stage, 'reload')`n" +
-    "[Atlaso.WorkstationDurablePublisherV1]::PublishDurableFile(`$stage, `$final, `$false)`n" +
+    "`$writer = [Atlaso.WorkstationDurablePublisherV2]::CreateStage(`$stage); `$writer.Write([Text.Encoding]::UTF8.GetBytes('reload'))`n" +
+    "try { [Atlaso.WorkstationDurablePublisherV2]::PublishDurableFile(`$writer, `$final, `$false) } finally { `$writer.Dispose() }`n" +
     "if ([IO.File]::ReadAllText(`$final) -cne 'reload') { throw 'Reload publication failed.' }`n"
 [IO.File]::WriteAllText($reloadScript, $reloadCode)
 & pwsh -NoProfile -File $reloadScript -ModulePath (Join-Path $repositoryRoot 'scripts/windows/vmware/Atlaso.WorkstationCleanup.psm1') -Root $fixture
@@ -491,4 +491,18 @@ try {
         throw 'Snapshot directory pin regression failed.'
     }
 } finally { . ([scriptblock]::Create($snapshotFunction.Extent.Text)) }
+$publicationStage = Join-Path $fixture 'publication-stage.tmp'
+$publicationFinal = Join-Path $fixture 'publication-final.json'
+$publicationWriter = [Atlaso.WorkstationDurablePublisherV2]::CreateStage($publicationStage)
+try {
+    $publicationWriter.Write([Text.Encoding]::UTF8.GetBytes('original ownership'))
+    $publicationWriter.Flush($true)
+    Assert-Refused { [IO.File]::Move($publicationStage, "$publicationStage.replaced") } 'being used by another process'
+    Assert-Refused { [IO.File]::WriteAllText($publicationStage, 'replacement ownership') } 'being used by another process'
+    [Atlaso.WorkstationDurablePublisherV2]::PublishDurableFile($publicationWriter, $publicationFinal, $false)
+    Assert-Refused { [IO.File]::WriteAllText($publicationFinal, 'replacement ownership') } 'being used by another process'
+} finally { $publicationWriter.Dispose() }
+if ([IO.File]::Exists($publicationStage) -or [IO.File]::ReadAllText($publicationFinal) -cne 'original ownership') {
+    throw 'Handle-bound ownership publication failed.'
+}
 Write-Host "LAN segment safety fixtures passed: $fixture"

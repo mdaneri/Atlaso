@@ -363,11 +363,13 @@ function Resolve-AtlasoOwnedLanSegment {
             $receiptPath = Join-Path $receiptRoot "$($receipt.creation_id).json"
             $bytes = [System.Text.UTF8Encoding]::new($false).GetBytes(($receipt | ConvertTo-Json))
             $receiptStage = "$receiptPath.stage"
-            $writer = [System.IO.FileStream]::new($receiptStage, 'CreateNew', 'Write', 'None', 4096, 'WriteThrough')
-            try { $writer.Write($bytes); $writer.Flush($true) } finally { $writer.Dispose() }
-            # Flush bytes, then durably publish the immutable pathname without
-            # replacing any existing receipt before publishing independent evidence.
-            [Atlaso.WorkstationDurablePublisherV1]::PublishDurableFile($receiptStage, $receiptPath, $false)
+            $writer = [Atlaso.WorkstationDurablePublisherV2]::CreateStage($receiptStage)
+            try {
+                $writer.Write($bytes)
+                # Flush and publish the original creation handle without replacing
+                # any existing receipt before publishing independent evidence.
+                [Atlaso.WorkstationDurablePublisherV2]::PublishDurableFile($writer, $receiptPath, $false)
+            } finally { $writer.Dispose() }
             $result.ReceiptPath = $receiptPath
             $result.ReceiptSha256 = [Convert]::ToHexString([System.Security.Cryptography.SHA256]::HashData($bytes))
             $result.Id = $id
