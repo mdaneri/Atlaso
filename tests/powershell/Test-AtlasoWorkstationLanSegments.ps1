@@ -185,4 +185,33 @@ Assert-Refused {
         }
     } $vmRoot $inventory $segment.Id
 } 'contents changed during LAN segment'
+$runnerPath = Join-Path $repositoryRoot 'scripts/windows/vmware/run-lifecycle-test.ps1'
+$tokens = $null; $parseErrors = $null
+$runnerAst = [System.Management.Automation.Language.Parser]::ParseFile($runnerPath, [ref]$tokens, [ref]$parseErrors)
+$sourceFunction = $runnerAst.Find({ param($node)
+    $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -eq 'Get-LifecycleSourceCommit'
+}, $false)
+if ($parseErrors -or -not $sourceFunction) { throw 'Cannot load lifecycle source admission function.' }
+. ([scriptblock]::Create($sourceFunction.Extent.Text))
+$sourceRoot = Join-Path $fixture 'source'
+[IO.Directory]::CreateDirectory($sourceRoot) | Out-Null
+& git -C $sourceRoot init -q
+$sourceFile = Join-Path $sourceRoot 'source.txt'
+[IO.File]::WriteAllText($sourceFile, 'initial')
+& git -C $sourceRoot add source.txt
+& git -C $sourceRoot -c user.name=Fixture -c user.email=fixture@example.invalid -c commit.gpgsign=false commit -qm initial
+if ($LASTEXITCODE -ne 0) { throw 'Could not prepare source fixture.' }
+$admitted = Get-LifecycleSourceCommit -RepositoryRoot $sourceRoot
+[IO.File]::WriteAllText($sourceFile, 'dirty')
+Assert-Refused { Get-LifecycleSourceCommit -RepositoryRoot $sourceRoot } 'clean source worktree'
+[IO.File]::WriteAllText($sourceFile, 'initial')
+$untracked = Join-Path $sourceRoot 'untracked.txt'
+[IO.File]::WriteAllText($untracked, 'untracked')
+Assert-Refused { Get-LifecycleSourceCommit -RepositoryRoot $sourceRoot } 'clean source worktree'
+[IO.File]::Delete($untracked)
+[IO.File]::WriteAllText($sourceFile, 'next')
+& git -C $sourceRoot add source.txt
+& git -C $sourceRoot -c user.name=Fixture -c user.email=fixture@example.invalid -c commit.gpgsign=false commit -qm next
+if ($LASTEXITCODE -ne 0) { throw 'Could not advance source fixture.' }
+Assert-Refused { Get-LifecycleSourceCommit -RepositoryRoot $sourceRoot -ExpectedCommit $admitted } 'source commit changed'
 Write-Host "LAN segment safety fixtures passed: $fixture"

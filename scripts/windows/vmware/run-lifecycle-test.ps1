@@ -112,6 +112,28 @@ $ErrorActionPreference = 'Stop'
 Import-Module (Join-Path $PSScriptRoot 'Atlaso.VmwareTestIdentity.psm1') -Force
 
 $repoRoot = Resolve-Path -LiteralPath (Join-Path $PSScriptRoot '..\..\..')
+<#
+.SYNOPSIS
+Bind runtime lifecycle resources to one clean source commit.
+.PARAMETER RepositoryRoot
+Exact lifecycle source checkout to inspect.
+.PARAMETER ExpectedCommit
+Previously admitted source commit required for a later resource or wheel operation.
+#>
+function Get-LifecycleSourceCommit {
+    param([Parameter(Mandatory)][string]$RepositoryRoot, [string]$ExpectedCommit = '')
+    $commit = (& git -C $RepositoryRoot rev-parse HEAD).Trim()
+    if ($LASTEXITCODE -ne 0 -or $commit -notmatch '^[0-9a-f]{40}$') { throw 'Cannot resolve lifecycle source commit.' }
+    $changes = @(& git -C $RepositoryRoot status --porcelain --untracked-files=normal)
+    if ($LASTEXITCODE -ne 0 -or $changes.Count -gt 0) { throw 'Lifecycle runtime requires a clean source worktree before resource creation or wheel publication.' }
+    $confirmed = (& git -C $RepositoryRoot rev-parse HEAD).Trim()
+    if ($LASTEXITCODE -ne 0 -or $confirmed -cne $commit -or ($ExpectedCommit -and $ExpectedCommit -cne $commit)) {
+        throw 'Lifecycle source commit changed after admission.'
+    }
+    return $commit
+}
+# Plan-only output creates no runtime resource and makes no source-provenance claim.
+$sourceCommit = if ($PlanOnly) { '' } else { Get-LifecycleSourceCommit -RepositoryRoot $repoRoot }
 $vmIdentity = New-AtlasoVmwareTestIdentity `
     -PullRequestNumber $PullRequestNumber `
     -Purpose $Purpose `
@@ -489,6 +511,7 @@ Exact requested LAN segment name.
 #>
 function Resolve-LanSegmentId {
     param([string]$Name)
+    Get-LifecycleSourceCommit -RepositoryRoot $repoRoot -ExpectedCommit $sourceCommit | Out-Null
     $segment = Resolve-AtlasoOwnedLanSegment -Name $Name -Owner $lanSegmentOwner -PublishReceipt {
         param($pendingSegment)
         $ownedLanSegments.Add($pendingSegment)
@@ -1275,6 +1298,7 @@ VMX path identifying the appliance guest where the wheel is installed.
 function Sync-ApplianceApplicationWheel {
     param([string]$ApplianceVmx)
 
+    Get-LifecycleSourceCommit -RepositoryRoot $repoRoot -ExpectedCommit $sourceCommit | Out-Null
     $wheelRoot = Join-Path $resultRoot 'wheel'
     if (Test-Path -LiteralPath $wheelRoot) {
         Remove-Item -LiteralPath $wheelRoot -Recurse -Force
@@ -1285,6 +1309,7 @@ function Sync-ApplianceApplicationWheel {
     if ($LASTEXITCODE -ne 0) {
         throw "Failed to build Atlaso wheel from $repoRoot."
     }
+    Get-LifecycleSourceCommit -RepositoryRoot $repoRoot -ExpectedCommit $sourceCommit | Out-Null
     $wheel = Get-ChildItem -LiteralPath $wheelRoot -Filter 'atlaso-*.whl' -File |
         Sort-Object LastWriteTime -Descending |
         Select-Object -First 1
@@ -1437,10 +1462,6 @@ $esxiMacAddress = if ($FullEsxiPxeInstall) { New-StaticVmwareMac } else { '' }
 $planApplianceVmx = if (Test-Path -LiteralPath $ApplianceVmxPath) { (Resolve-Path -LiteralPath $ApplianceVmxPath).Path } else { $ApplianceVmxPath }
 $planClientVmdk = if (Test-Path -LiteralPath $ClientVmdkPath) { (Resolve-Path -LiteralPath $ClientVmdkPath).Path } else { $ClientVmdkPath }
 
-$sourceCommit = (& git -C $repoRoot rev-parse HEAD).Trim()
-if ($LASTEXITCODE -ne 0 -or $sourceCommit -notmatch '^[0-9a-f]{40}$') {
-    throw 'Cannot bind lifecycle LAN segments to the source commit.'
-}
 $lanSegmentOwner = @{
     task_id = $(if ($env:CODEX_THREAD_ID) { $env:CODEX_THREAD_ID } else { $LabName })
     repository = 'mdaneri/Atlaso'; source_commit = $sourceCommit
@@ -1555,6 +1576,7 @@ function Invoke-TrackedLifecycleVmCreation {
     )
 
     $expectedVmxPath = [System.IO.Path]::GetFullPath($VmxPath)
+    Get-LifecycleSourceCommit -RepositoryRoot $repoRoot -ExpectedCommit $sourceCommit | Out-Null
     $record = [ordered]@{
         role         = $Role
         display_name = $DisplayName

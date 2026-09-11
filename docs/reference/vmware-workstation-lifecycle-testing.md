@@ -112,6 +112,9 @@ must never remove or alter the primary checkout's originals.
 ### Release task-owned LAN segments
 
 Lifecycle runs that request `lan:<name>` now create an immutable receipt before registering a new segment.
+Runtime admission requires a clean source checkout and rechecks its exact commit before VM/segment creation and before
+and after wheel building. Dirty or changed source is refused before the next resource or wheel publication; plan-only
+output makes no runtime source-provenance claim.
 The receipt binds its random VMware ID, exact name and preferences path to the task ID, repository, source commit,
 PR number, and lifecycle result root. `plan.json` records `lan_segment_owner`; `vmware-identity.json` records
 `lan_segments` with each original receipt path and SHA-256. Outside Codex, the unique canonical lab name is the task ID.
