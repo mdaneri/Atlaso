@@ -158,14 +158,94 @@ function New-LifecycleSourceSnapshot {
 
 <#
 .SYNOPSIS
+Pin a fresh preflight root and delete only individually pinned descendants on failure.
+.PARAMETER Path
+Fresh result directory owned by this invocation.
+#>
+function New-LifecyclePreflightGuard {
+    param([Parameter(Mandatory)][string]$Path)
+    if (-not ('Atlaso.PreflightRootGuardV1' -as [type])) {
+        Add-Type -TypeDefinition @'
+using System;
+using System.IO;
+using System.Collections.Generic;
+using System.ComponentModel;
+using System.Runtime.InteropServices;
+using Microsoft.Win32.SafeHandles;
+namespace Atlaso {
+    public sealed class PreflightRootGuardV1 : IDisposable {
+        [DllImport("kernel32.dll", CharSet=CharSet.Unicode, SetLastError=true)]
+        private static extern SafeFileHandle CreateFileW(string p, uint a, uint s, IntPtr x, uint d, uint f, IntPtr t);
+        [DllImport("kernel32.dll", SetLastError=true)]
+        private static extern bool SetFileInformationByHandle(SafeFileHandle h, int c, ref byte data, uint n);
+        [DllImport("kernel32.dll", SetLastError=true)]
+        private static extern bool GetFileInformationByHandleEx(SafeFileHandle h, int c, out TagInfo data, uint n);
+        [StructLayout(LayoutKind.Sequential)] private struct TagInfo { public uint Attributes, Tag; }
+        public string Root { get; private set; }
+        private readonly List<SafeFileHandle> ancestors = new List<SafeFileHandle>();
+        private readonly List<SafeFileHandle> entries = new List<SafeFileHandle>();
+        private SafeFileHandle Open(string path, bool delete, bool directory) {
+            var h = CreateFileW(path, 0x81u | (delete ? 0x10000u : 0), directory ? 3u : 1u,
+                IntPtr.Zero, 3, 0x02200000, IntPtr.Zero);
+            if (h.IsInvalid) { h.Dispose(); throw new Win32Exception(Marshal.GetLastWin32Error()); }
+            TagInfo tag;
+            if (!GetFileInformationByHandleEx(h, 9, out tag, 8) || (tag.Attributes & 0x400) != 0 ||
+                ((tag.Attributes & 0x10) != 0) != directory) {
+                h.Dispose(); throw new IOException("Preflight entry changed type or is a reparse point.");
+            }
+            return h;
+        }
+        public PreflightRootGuardV1(string path) {
+            Root = Path.GetFullPath(path);
+            try {
+                var chain = new Stack<string>();
+                for (var p = Directory.GetParent(Root); p != null; p = p.Parent) chain.Push(p.FullName);
+                foreach (var p in chain) ancestors.Add(Open(p, false, true));
+                entries.Add(Open(Root, true, true));
+            } catch { Dispose(); throw; }
+        }
+        private void Capture(string parent) {
+            foreach (string path in Directory.GetFileSystemEntries(parent)) {
+                bool directory = (File.GetAttributes(path) & FileAttributes.Directory) != 0;
+                entries.Add(Open(path, true, directory));
+                if (directory) Capture(path);
+            }
+        }
+        public void CaptureSnapshot() { Capture(Root); }
+        public void Remove() {
+            // Capture each child under its already pinned parent. No recursive path
+            // deletion: additions after capture make directory deletion fail closed.
+            for (int i = entries.Count - 1; i >= 0; --i) {
+                byte delete = 1;
+                if (!SetFileInformationByHandle(entries[i], 4, ref delete, 1))
+                    throw new Win32Exception(Marshal.GetLastWin32Error());
+                entries[i].Dispose();
+            }
+        }
+        public void Dispose() {
+            for (int i = entries.Count - 1; i >= 0; --i) entries[i].Dispose();
+            for (int i = ancestors.Count - 1; i >= 0; --i) ancestors[i].Dispose();
+        }
+    }
+}
+'@
+    }
+    return [Atlaso.PreflightRootGuardV1]::new($Path)
+}
+
+<#
+.SYNOPSIS
 Release only this invocation's result directory after a pre-resource failure.
 .PARAMETER Path
 Fresh result directory created by the current preflight invocation.
 .PARAMETER ExpectedParent
 Independently derived lifecycle results parent in the admitted repository.
+.PARAMETER Guard
+Root identity pin retained from this invocation's directory creation.
 #>
 function Remove-LifecyclePreflightArtifacts {
-    param([Parameter(Mandatory)][string]$Path, [Parameter(Mandatory)][string]$ExpectedParent)
+    param([Parameter(Mandatory)][string]$Path, [Parameter(Mandatory)][string]$ExpectedParent,
+        [Parameter(Mandatory)][object]$Guard)
     $fullPath = [IO.Path]::GetFullPath($Path)
     $parentPath = [IO.Path]::GetFullPath($ExpectedParent)
     if (-not [IO.Path]::GetDirectoryName($fullPath).Equals($parentPath, [StringComparison]::OrdinalIgnoreCase)) {
@@ -177,6 +257,8 @@ function Remove-LifecyclePreflightArtifacts {
         if ($entry.Attributes -band [IO.FileAttributes]::ReparsePoint) { throw 'Preflight cleanup path contains a reparse point; preserve it.' }
         $cursor = [IO.Path]::GetDirectoryName($cursor)
     }
+    if (-not $Guard.Root.Equals($fullPath, [StringComparison]::OrdinalIgnoreCase)) { throw 'Preflight root guard mismatch.' }
+    $Guard.CaptureSnapshot()
     # This entry point is reachable only before provider/resource creation. Refuse
     # unexpected output instead of turning a preflight retry into VM cleanup.
     foreach ($entry in Get-ChildItem -LiteralPath $fullPath -Force -ErrorAction Stop) {
@@ -191,7 +273,8 @@ function Remove-LifecyclePreflightArtifacts {
         Where-Object { $_.Attributes -band [IO.FileAttributes]::ReparsePoint }).Count) {
         throw 'Preflight artifacts contain a reparse point; preserve them.'
     }
-    Remove-Item -LiteralPath $fullPath -Recurse -Force -ErrorAction Stop
+    if (-not $Guard.Root.Equals($fullPath, [StringComparison]::OrdinalIgnoreCase)) { throw 'Preflight root guard mismatch.' }
+    $Guard.Remove()
     if (Test-Path -LiteralPath $fullPath) { throw 'Preflight artifact removal was not verified.' }
 }
 
@@ -218,17 +301,20 @@ if (Test-Path -LiteralPath $resultRoot) {
     throw "Refusing lifecycle reuse because the exact PR-owned result root already exists: $resultRoot"
 }
 $preflightRootCreated = $false
+$preflightGuard = $null
 try {
 $runtimeSourceRoot = $repoRoot
 if (-not $PlanOnly) {
     New-Item -ItemType Directory -Path $resultRoot -ErrorAction Stop | Out-Null
     $preflightRootCreated = $true
+    $preflightGuard = New-LifecyclePreflightGuard -Path $resultRoot
     $runtimeSourceRoot = New-LifecycleSourceSnapshot -RepositoryRoot $repoRoot -Commit $sourceCommit -DestinationRoot $resultRoot
 }
 $runtimeVmwareRoot = Join-Path $runtimeSourceRoot 'scripts/windows/vmware'
 $vmRoot = Join-Path $resultRoot 'vms'
 $seedRoot = Join-Path $resultRoot 'seed'
 $createdVmxPaths = New-Object System.Collections.Generic.List[string]
+$diagnosticTerminationUnproven = $false
 
 # Plan-only execution consumes no credentials. Runtime execution imports the
 # current-user-protected bundle before VMware or the harness needs plaintext.
@@ -401,7 +487,7 @@ function Resolve-VdiskManagerPath {
     if ($command) {
         return $command.Source
     }
-    throw 'vmware-vdiskmanager.exe was not found. It is required for -FullEsxiPxeInstall.'
+    throw 'vmware-vdiskmanager.exe was not found. It is required for lifecycle appliance storage and -FullEsxiPxeInstall.'
 }
 
 <#
@@ -650,7 +736,7 @@ function Set-VmxNetworkAdapter {
 
 <#
 .SYNOPSIS
-Copy a source VMX into a managed lifecycle lab directory.
+Clone a verified appliance with its required data disks into the lifecycle lab.
 
 .PARAMETER SourceVmx
 Source VMX path.
@@ -668,23 +754,31 @@ function Copy-VmDirectory {
 
     Assert-SafeLifecycleName -Name $Name
     $resolvedSourceVmx = (Resolve-Path -LiteralPath $SourceVmx).Path
+    Assert-AtlasoTemplatePoweredOff -VmxPath $resolvedSourceVmx -VmrunPath $resolvedVmrun
     Assert-AtlasoVmwarePayloadProvenance -VmxPath $resolvedSourceVmx | Out-Null
     if (Test-Path -LiteralPath $DestinationDirectory) {
         throw "Lifecycle VM directory already exists: $DestinationDirectory"
     }
-    $sourceDirectory = Split-Path -Parent $resolvedSourceVmx
-    if ($PSCmdlet.ShouldProcess($DestinationDirectory, "Copy Workstation VM $Name")) {
-        Copy-Item -LiteralPath $sourceDirectory -Destination $DestinationDirectory -Recurse
-    }
-    $vmx = Get-ChildItem -LiteralPath $DestinationDirectory -Filter '*.vmx' | Select-Object -First 1
-    if (-not $vmx) {
-        throw "Copied Workstation VM has no VMX: $DestinationDirectory"
-    }
     $targetVmx = Join-Path $DestinationDirectory "$Name.vmx"
-    Rename-Item -LiteralPath $vmx.FullName -NewName "$Name.vmx"
-    Set-VmxValue -Path $targetVmx -Key 'displayName' -Value $Name
-    Get-AtlasoVmwarePayloadLayout -VmxPath $targetVmx -RequireExactlyTwoVmdks | Out-Null
-    $createdVmxPaths.Add($targetVmx)
+    if ($PSCmdlet.ShouldProcess($DestinationDirectory, "Clone Workstation VM $Name with dedicated storage")) {
+        try {
+            # Reuse the normal clone contract: immutable two-payload source,
+            # private 500 GiB thin depot/backup disks at SCSI units 2 and 3.
+            # Lifecycle-specific LAN adapters are configured by the caller.
+            & (Join-Path $runtimeVmwareRoot 'create-atlaso-vm.ps1') `
+                -Name $Name -ApplianceVmxPath $resolvedSourceVmx `
+                -OutputDirectory $DestinationDirectory -VmrunPath $resolvedVmrun `
+                -VdiskManagerPath (Resolve-VdiskManagerPath) `
+                -ManagementNetwork $ManagementNetwork -SkipLabNetworkAdapters | Out-Host
+        }
+        finally {
+            # A failed disk creation can leave a valid clone. Retain its exact
+            # identity for supported cleanup even when provisioning throws.
+            if (Test-Path -LiteralPath $targetVmx -PathType Leaf) {
+                $createdVmxPaths.Add($targetVmx)
+            }
+        }
+    }
     return $targetVmx
 }
 
@@ -1345,6 +1439,83 @@ function Test-ApplianceOpenApi {
 
 <#
 .SYNOPSIS
+Read bounded, non-secret startup prerequisite state after a lifecycle deployment failure.
+.PARAMETER ApplianceVmx
+Exact task-owned appliance VMX whose service states are queried.
+#>
+function Get-ApplianceStartupDiagnostic {
+    param([Parameter(Mandatory = $true)][string]$ApplianceVmx)
+
+    $guestOutput = '/tmp/atlaso-lifecycle-startup-state.txt'
+    $hostOutput = Join-Path $resultRoot 'appliance-startup-state.txt'
+    # Keep untrusted readback outside retained results. The deterministic lab
+    # directory identifies interrupted staging for operator recovery.
+    $stagingRoot = Join-Path $repoRoot ".atlaso-local/lifecycle-startup-diagnostics/$LabName"
+    $rawOutput = Join-Path $stagingRoot 'guest-readback.txt'
+    $publishOutput = Join-Path $resultRoot 'appliance-startup-state.pending'
+    $units = @('atlaso-data-disks.service', 'atlaso-bootstrap-https.service', 'atlaso.service', 'nginx.service')
+    $probe = "systemctl show $($units -join ' ') --property=Id,LoadState,ActiveState,SubState,Result > $guestOutput"
+    $validatedArtifact = $false
+    $terminationUnproven = $false
+    try {
+        if (Test-Path -LiteralPath $hostOutput) { Remove-Item -LiteralPath $hostOutput -Force }
+        [IO.Directory]::CreateDirectory($stagingRoot) | Out-Null
+        foreach ($pending in @($rawOutput, $publishOutput)) {
+            if (Test-Path -LiteralPath $pending) { Remove-Item -LiteralPath $pending -Force }
+        }
+        $null = Invoke-AtlasoBoundedStreamingProcess -FilePath $resolvedVmrun -DiscardOutput -ArgumentList @(
+            '-T', 'ws', '-gu', $ApplianceSshUser, '-gp', $ApplianceGuestPassword,
+            'runScriptInGuest', $ApplianceVmx, '/bin/sh', $probe
+        ) -TimeoutSeconds 15 -Action 'Lifecycle startup query'
+        $null = Invoke-AtlasoBoundedStreamingProcess -FilePath $resolvedVmrun -DiscardOutput -ArgumentList @(
+            '-T', 'ws', '-gu', $ApplianceSshUser, '-gp', $ApplianceGuestPassword,
+            'copyFileFromGuestToHost', $ApplianceVmx, $guestOutput, $rawOutput
+        ) -TimeoutSeconds 15 -Action 'Lifecycle startup readback'
+        if (-not (Test-Path -LiteralPath $rawOutput -PathType Leaf)) {
+            return 'Startup prerequisite state unavailable (guest readback failed).'
+        }
+        if ((Get-Item -LiteralPath $rawOutput).Length -gt 4096) {
+            return 'Startup prerequisite state unavailable (oversized readback).'
+        }
+        # Report only fixed unit names and systemd state tokens, never journals,
+        # guest commands, or arbitrary guest output from a failed operation.
+        $states = @(Get-Content -LiteralPath $rawOutput | Where-Object {
+            $_ -match '^(?:LoadState|ActiveState|SubState|Result)=[a-z-]{1,40}$' -or
+            ($_ -match '^Id=(.+)$' -and $Matches[1] -in $units)
+        })
+        if ($states.Count -eq 0) { return 'Startup prerequisite state unavailable (invalid readback).' }
+        # Retained evidence must contain the same allowlisted data as the error.
+        Set-Content -LiteralPath $publishOutput -Value $states -Encoding utf8
+        [IO.File]::Move($publishOutput, $hostOutput)
+        $validatedArtifact = $true
+        return "Startup prerequisites: $($states -join '; ')."
+    }
+    catch {
+        $failure = $_.Exception
+        while ($null -ne $failure) {
+            if ($failure.Data['AtlasoProcessTreeTerminationUnproven']) { $terminationUnproven = $true }
+            $failure = $failure.InnerException
+        }
+        if ($terminationUnproven) {
+            $script:diagnosticTerminationUnproven = $true
+            throw "Startup diagnostic process termination is unproven. Preserve staging for recovery: $stagingRoot"
+        }
+        return 'Startup prerequisite state unavailable (bounded provider failure).'
+    }
+    finally {
+        if (-not $terminationUnproven) {
+            foreach ($pending in @($rawOutput, $publishOutput)) {
+                if (Test-Path -LiteralPath $pending) { Remove-Item -LiteralPath $pending -Force -ErrorAction Stop }
+            }
+        }
+        if (-not $validatedArtifact -and (Test-Path -LiteralPath $hostOutput)) {
+            Remove-Item -LiteralPath $hostOutput -Force -ErrorAction Stop
+        }
+    }
+}
+
+<#
+.SYNOPSIS
 Upload the lifecycle helper script to the appliance guest.
 .PARAMETER ApplianceVmx
 VMX path identifying the appliance guest that receives the helper.
@@ -1698,12 +1869,14 @@ Write-LifecycleIdentityEvidence
     if ($preflightRootCreated) {
         try {
             Remove-LifecyclePreflightArtifacts -Path $resultRoot `
-                -ExpectedParent (Join-Path $repoRoot 'test-results/vmware-workstation-lifecycle')
+                -ExpectedParent (Join-Path $repoRoot 'test-results/vmware-workstation-lifecycle') -Guard $preflightGuard
         } catch {
             throw "Lifecycle preflight failed: $($preflightFailure.Exception.Message) Preflight cleanup refused: $($_.Exception.Message)"
         }
     }
     throw $preflightFailure
+} finally {
+    if ($preflightGuard) { $preflightGuard.Dispose() }
 }
 
 $clientASeedIso = ''
@@ -1805,8 +1978,18 @@ try {
         appliance_ip  = $ApplianceIPAddress
         appliance_url = $ApplianceUrl
     } | ConvertTo-Json -Depth 3 | Set-Content -LiteralPath (Join-Path $resultRoot 'discovered-appliance.json') -Encoding UTF8
-    Sync-ApplianceHelperScript -ApplianceVmx $applianceVmx
-    $applianceWheelPath = Sync-ApplianceApplicationWheel -ApplianceVmx $applianceVmx
+    try {
+        Sync-ApplianceHelperScript -ApplianceVmx $applianceVmx
+        $applianceWheelPath = Sync-ApplianceApplicationWheel -ApplianceVmx $applianceVmx
+    }
+    catch {
+        $deploymentFailure = $_
+        $startupDiagnostic = Get-ApplianceStartupDiagnostic -ApplianceVmx $applianceVmx
+        throw [System.InvalidOperationException]::new(
+            "Lifecycle application deployment failed. $startupDiagnostic Original failure: $($deploymentFailure.Exception.Message)",
+            $deploymentFailure.Exception
+        )
+    }
     $applianceHostKey = Get-PlinkHostKey -HostName $ApplianceIPAddress -UserName $ApplianceSshUser -Password $adminPasswordSecure
     $clientAHost = ''
     $clientBHost = ''
@@ -1932,6 +2115,11 @@ try {
     }
 } catch {
     $scenarioFailure = $_
+}
+
+# No further provider operations are safe while a diagnostic writer may survive.
+if ($diagnosticTerminationUnproven) {
+    throw "Lifecycle provider termination is unproven. VM and diagnostic staging cleanup is blocked; preserve lab '$LabName' at '$vmRoot' until the owning process tree is proven inactive."
 }
 
 $seedCleanupFailure = $null

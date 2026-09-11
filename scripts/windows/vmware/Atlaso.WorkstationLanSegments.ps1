@@ -233,11 +233,12 @@ function Update-AtlasoLanPreferences {
         if ($Validate) { & $Validate }
         [System.IO.File]::Replace($stage, $Path, $backup, $true)
         $applied = $true
-        $stageLock = [System.IO.File]::Open($Path, 'Open', 'Read', ([IO.FileShare]::Read -bor [IO.FileShare]::Delete))
         # File.Replace is not a compare-and-swap. Inspect what it actually displaced,
         # including file identity, before accepting the operation.
         $displacedIdentity = Get-AtlasoPathIdentity -Path $backup -Description 'Displaced LAN preferences'
         [byte[]]$displacedBytes = [System.IO.File]::ReadAllBytes($backup)
+        # Capture rollback evidence before any fallible published-path reopen.
+        $stageLock = [System.IO.File]::Open($Path, 'Open', 'Read', ([IO.FileShare]::Read -bor [IO.FileShare]::Delete))
         if ($displacedIdentity -cne $identity -or
             -not (Test-AtlasoByteArraysEqual -Left $original -Right $displacedBytes)) {
             $stageLock.Dispose(); $stageLock = $null

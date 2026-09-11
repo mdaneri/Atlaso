@@ -344,6 +344,10 @@ $reloadCode = "param([string]`$ModulePath, [string]`$Root)`n" +
 [IO.File]::WriteAllText($reloadScript, $reloadCode)
 & pwsh -NoProfile -File $reloadScript -ModulePath (Join-Path $repositoryRoot 'scripts/windows/vmware/Atlaso.WorkstationCleanup.psm1') -Root $fixture
 if ($LASTEXITCODE -ne 0) { throw 'Reload-safe publisher fixture failed.' }
+$guardFunction = $runnerAst.Find({ param($node)
+    $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -eq 'New-LifecyclePreflightGuard'
+}, $false)
+. ([scriptblock]::Create($guardFunction.Extent.Text))
 $preflightFunction = $runnerAst.Find({ param($node)
     $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -eq 'Remove-LifecyclePreflightArtifacts'
 }, $false)
@@ -351,12 +355,26 @@ if (-not $preflightFunction) { throw 'Cannot load lifecycle preflight cleanup.' 
 . ([scriptblock]::Create($preflightFunction.Extent.Text))
 $preflightRoot = Join-Path $fixture 'preflight'
 [IO.Directory]::CreateDirectory($preflightRoot) | Out-Null
+$preflightGuard = New-LifecyclePreflightGuard -Path $preflightRoot
 [IO.File]::WriteAllText((Join-Path $preflightRoot ('source-' + ('a' * 32) + '.zip')), 'partial archive')
-Assert-Refused { Remove-LifecyclePreflightArtifacts -Path $preflightRoot -ExpectedParent $vmRoot } 'independently derived lifecycle parent'
-Remove-LifecyclePreflightArtifacts -Path $preflightRoot -ExpectedParent $fixture
+Assert-Refused { Remove-LifecyclePreflightArtifacts -Path $preflightRoot -ExpectedParent $vmRoot -Guard $preflightGuard } 'independently derived lifecycle parent'
+Remove-LifecyclePreflightArtifacts -Path $preflightRoot -ExpectedParent $fixture -Guard $preflightGuard
+$preflightGuard.Dispose()
 if (Test-Path -LiteralPath $preflightRoot) { throw 'Failed archive preflight still blocks retry.' }
 [IO.Directory]::CreateDirectory($preflightRoot) | Out-Null
+$preflightGuard = New-LifecyclePreflightGuard -Path $preflightRoot
 [IO.File]::WriteAllText((Join-Path $preflightRoot 'unexpected.txt'), 'preserve')
-Assert-Refused { Remove-LifecyclePreflightArtifacts -Path $preflightRoot -ExpectedParent $fixture } 'Unexpected preflight artifact'
+Assert-Refused { Remove-LifecyclePreflightArtifacts -Path $preflightRoot -ExpectedParent $fixture -Guard $preflightGuard } 'Unexpected preflight artifact'
+$preflightGuard.Dispose()
 if ([IO.File]::ReadAllText((Join-Path $preflightRoot 'unexpected.txt')) -cne 'preserve') { throw 'Unexpected preflight state was removed.' }
+$preflightGuard.Dispose()
+$lateRoot = Join-Path $fixture 'preflight-late'
+[IO.Directory]::CreateDirectory($lateRoot) | Out-Null
+$lateGuard = New-LifecyclePreflightGuard -Path $lateRoot
+try {
+    $lateGuard.CaptureSnapshot()
+    [IO.File]::WriteAllText((Join-Path $lateRoot 'late.txt'), 'preserve late entry')
+    Assert-Refused { $lateGuard.Remove() } 'directory is not empty'
+} finally { $lateGuard.Dispose() }
+if ([IO.File]::ReadAllText((Join-Path $lateRoot 'late.txt')) -cne 'preserve late entry') { throw 'Late preflight descendant was deleted.' }
 Write-Host "LAN segment safety fixtures passed: $fixture"

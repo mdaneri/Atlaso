@@ -344,9 +344,9 @@ namespace Atlaso
             return quoted.ToString();
         }
 
-        public static WorkstationProcessJob StartSuspended(string filePath, string[] arguments)
+        public static WorkstationProcessJob StartSuspended(string filePath, string[] arguments, bool discardOutput = false)
         {
-            WorkstationProcessJob job = CreateSuspended(filePath, arguments, null);
+            WorkstationProcessJob job = CreateSuspended(filePath, arguments, null, discardOutput);
             try
             {
                 job.Resume();
@@ -362,9 +362,11 @@ namespace Atlaso
         public static WorkstationProcessJob CreateSuspended(
             string filePath,
             string[] arguments,
-            string name)
+            string name,
+            bool discardOutput = false)
         {
             const uint CREATE_SUSPENDED = 0x00000004;
+            const uint CREATE_NO_WINDOW = 0x08000000;
             IntPtr job = CreateJobObject(IntPtr.Zero, name);
             if (job == IntPtr.Zero)
             {
@@ -393,7 +395,7 @@ namespace Atlaso
                     IntPtr.Zero,
                     IntPtr.Zero,
                     false,
-                    CREATE_SUSPENDED,
+                    CREATE_SUSPENDED | (discardOutput ? CREATE_NO_WINDOW : 0),
                     IntPtr.Zero,
                     null,
                     ref startup,
@@ -657,13 +659,16 @@ Individual process arguments encoded through the Windows argv contract.
 Optional exact named job used by durable same-boot recovery.
 .PARAMETER DeferResume
 Return the root suspended so its ownership can be durably published first.
+.PARAMETER DiscardOutput
+Start the console executable without a console or inherited output handles.
 #>
 function New-AtlasoBoundedProcessJob {
     param(
         [Parameter(Mandatory = $true)][string]$FilePath,
         [Parameter(Mandatory = $true)][AllowEmptyString()][string[]]$ArgumentList,
         [string]$ProcessJobName = '',
-        [switch]$DeferResume
+        [switch]$DeferResume,
+        [switch]$DiscardOutput
     )
 
     Initialize-AtlasoWorkstationProcessJobType
@@ -675,10 +680,11 @@ function New-AtlasoBoundedProcessJob {
             return [Atlaso.WorkstationProcessJob]::CreateSuspended(
                 $FilePath,
                 $ArgumentList,
-                $ProcessJobName
+                $ProcessJobName,
+                [bool]$DiscardOutput
             )
         }
-        return [Atlaso.WorkstationProcessJob]::StartSuspended($FilePath, $ArgumentList)
+        return [Atlaso.WorkstationProcessJob]::StartSuspended($FilePath, $ArgumentList, [bool]$DiscardOutput)
     }
     catch {
         $assignmentFailure = [System.InvalidOperationException]::new(
@@ -1139,6 +1145,8 @@ Safe action description used in failure messages.
 Optional exact named job used by durable same-boot recovery.
 .PARAMETER ProcessOwnershipPublisher
 Callback that durably records the suspended root before it is resumed.
+.PARAMETER DiscardOutput
+Suppress untrusted console output while retaining Windows job completion proof.
 #>
 function Invoke-AtlasoBoundedStreamingProcess {
     param(
@@ -1147,10 +1155,12 @@ function Invoke-AtlasoBoundedStreamingProcess {
         [Parameter(Mandatory = $true)][ValidateRange(1, 86400)][int]$TimeoutSeconds,
         [Parameter(Mandatory = $true)][string]$Action,
         [string]$ProcessJobName = '',
-        [scriptblock]$ProcessOwnershipPublisher
+        [scriptblock]$ProcessOwnershipPublisher,
+        [switch]$DiscardOutput
     )
 
-    # The isolated image child owns redaction. Inheriting the console preserves
+    # DiscardOutput gives untrusted diagnostic tools no console output channel.
+    # Otherwise the isolated image child owns redaction. Inheriting the console preserves
     # its sanitized Packer heartbeats and diagnostics without copying plaintext
     # credentials or buffered output into the PowerShell parent.
     $recoverable = $null -ne $ProcessOwnershipPublisher
@@ -1158,7 +1168,8 @@ function Invoke-AtlasoBoundedStreamingProcess {
         -FilePath $FilePath `
         -ArgumentList $ArgumentList `
         -ProcessJobName $ProcessJobName `
-        -DeferResume:$recoverable
+        -DeferResume:$recoverable `
+        -DiscardOutput:$DiscardOutput
     $process = $processJob.RootProcess
     $jobCompletionProven = $false
     $interruptionTerminationProven = $false

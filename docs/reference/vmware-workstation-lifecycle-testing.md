@@ -118,7 +118,9 @@ the live checkout cannot enter the artifact. Runtime modules, seed helpers, the 
 harness also load from the admitted archive; identity naming loads directly from that commit object.
 If archive, credential, module, or other pre-resource admission fails, the runner releases only its newly created
 preflight result directory. Cleanup verifies the independently derived parent, rejects links, unexpected entries,
-and nonempty VM/seed roots, and verifies absence so an ordinary preflight failure can be retried.
+and nonempty VM/seed roots, and verifies absence so an ordinary preflight failure can be retried. The root is pinned
+from creation; failure cleanup captures descendant handles before validation and deletes only those exact objects.
+Entries added after capture are preserved and make parent deletion fail closed.
 The durable publisher uses its own versioned helper type so existing
 PowerShell sessions can reload the module after an upgrade. Dirty or changed source is refused before the next
 resource or wheel publication; plan-only
@@ -264,7 +266,23 @@ The default lifecycle lab creates isolated VM directories and result/log artifac
 test-results/vmware-workstation-lifecycle/Atlaso-PR-<number>-lifecycle-<collision-safe-suffix>/vms
 ```
 
-The appliance VMX is copied from the selected Workstation image output. Client VMs use an Alpine cloud VMDK prepared
+The appliance is cloned through `create-atlaso-vm.ps1` from the verified, powered-off two-payload-disk template.
+Custom `-VmrunPath` installations also reuse the disk manager discovered beside that executable.
+Before first boot, the shared clone contract creates private 500 GiB thin depot and backup disks inside the lab's
+appliance directory and attaches them at SCSI units 2 and 3. The source template stays unchanged, and no persistent
+data disks from another appliance are reused. Failed disk provisioning retains the clone identity for supported
+cleanup. If helper or wheel deployment fails, the runner reports bounded state for data-disk initialization, HTTPS
+bootstrap, Atlaso, and nginx, or explicitly reports that guest diagnostics were unavailable. Retained startup
+diagnostics contain only validated unit names and state fields; failed, invalid, or oversized readbacks are removed.
+Raw readbacks use the task checkout's `.atlaso-local/lifecycle-startup-diagnostics/<lab-name>/guest-readback.txt`,
+outside retained results. Only sanitized bytes are atomically published to the final diagnostic artifact. After a
+provider timeout, the shared Windows job runner terminates and verifies every descendant has exited before staging
+cleanup. It also proves the job empty after normal parent exit and suppresses untrusted provider console output.
+Unproven termination fails closed and blocks final lab and client-seed provider cleanup, even with
+`-CleanupCreatedLab`, preserving the appliance and exact staging path for recovery. After a
+host/process interruption, preserve that exact staging identity, verify the owning lifecycle and provider processes
+have exited, and remove its readback before sharing evidence or completing task cleanup. Do not archive raw staging.
+Client VMs use an Alpine cloud VMDK prepared
 from a pinned upstream QCOW2 source. The payload and SHA-512 metadata are cached only as
 a verified pair: corrupt entries are removed on an ordinary rerun, downloads stay in unique partial files until
 validation succeeds, and promotion is scoped to the exact expected cache files. The default Alpine artifact uses the
