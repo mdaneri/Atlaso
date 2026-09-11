@@ -116,6 +116,9 @@ Runtime admission requires a clean source checkout and rechecks its exact commit
 and after wheel building. The wheel is built from a fresh Git archive of the admitted commit, so transient edits in
 the live checkout cannot enter the artifact. Runtime modules, seed helpers, the appliance helper, and the interop
 harness also load from the admitted archive; identity naming loads directly from that commit object.
+If archive, credential, module, or other pre-resource admission fails, the runner releases only its newly created
+preflight result directory. Cleanup verifies the independently derived parent, rejects links, unexpected entries,
+and nonempty VM/seed roots, and verifies absence so an ordinary preflight failure can be retried.
 The durable publisher uses its own versioned helper type so existing
 PowerShell sessions can reload the module after an upgrade. Dirty or changed source is refused before the next
 resource or wheel publication; plan-only

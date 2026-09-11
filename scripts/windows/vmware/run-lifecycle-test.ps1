@@ -156,6 +156,45 @@ function New-LifecycleSourceSnapshot {
     return $snapshotPath
 }
 
+<#
+.SYNOPSIS
+Release only this invocation's result directory after a pre-resource failure.
+.PARAMETER Path
+Fresh result directory created by the current preflight invocation.
+.PARAMETER ExpectedParent
+Independently derived lifecycle results parent in the admitted repository.
+#>
+function Remove-LifecyclePreflightArtifacts {
+    param([Parameter(Mandatory)][string]$Path, [Parameter(Mandatory)][string]$ExpectedParent)
+    $fullPath = [IO.Path]::GetFullPath($Path)
+    $parentPath = [IO.Path]::GetFullPath($ExpectedParent)
+    if (-not [IO.Path]::GetDirectoryName($fullPath).Equals($parentPath, [StringComparison]::OrdinalIgnoreCase)) {
+        throw 'Preflight cleanup root is outside its independently derived lifecycle parent.'
+    }
+    $cursor = $fullPath
+    while ($cursor) {
+        $entry = Get-Item -LiteralPath $cursor -Force -ErrorAction Stop
+        if ($entry.Attributes -band [IO.FileAttributes]::ReparsePoint) { throw 'Preflight cleanup path contains a reparse point; preserve it.' }
+        $cursor = [IO.Path]::GetDirectoryName($cursor)
+    }
+    # This entry point is reachable only before provider/resource creation. Refuse
+    # unexpected output instead of turning a preflight retry into VM cleanup.
+    foreach ($entry in Get-ChildItem -LiteralPath $fullPath -Force -ErrorAction Stop) {
+        if ($entry.Name -notmatch '^(source-[0-9a-f]{32}(\.zip)?|plan\.json|vmware-identity\.json|\.vmware-identity\..*\.tmp|vms|seed)$') {
+            throw 'Unexpected preflight artifact; preserve the result root for diagnosis.'
+        }
+        if ($entry.Name -in @('vms', 'seed') -and @(Get-ChildItem -LiteralPath $entry.FullName -Force).Count) {
+            throw 'Preflight root contains runtime artifacts; preserve it for owned resource cleanup.'
+        }
+    }
+    if (@(Get-ChildItem -LiteralPath $fullPath -Force -Recurse -ErrorAction Stop |
+        Where-Object { $_.Attributes -band [IO.FileAttributes]::ReparsePoint }).Count) {
+        throw 'Preflight artifacts contain a reparse point; preserve them.'
+    }
+    Remove-Item -LiteralPath $fullPath -Recurse -Force -ErrorAction Stop
+    if (Test-Path -LiteralPath $fullPath) { throw 'Preflight artifact removal was not verified.' }
+}
+
 # Plan-only output creates no runtime resource and makes no source-provenance claim.
 $sourceCommit = if ($PlanOnly) { '' } else { Get-LifecycleSourceCommit -RepositoryRoot $repoRoot }
 if ($PlanOnly) {
@@ -178,9 +217,12 @@ $resultRoot = Assert-AtlasoVmwareIdentityDirectory `
 if (Test-Path -LiteralPath $resultRoot) {
     throw "Refusing lifecycle reuse because the exact PR-owned result root already exists: $resultRoot"
 }
+$preflightRootCreated = $false
+try {
 $runtimeSourceRoot = $repoRoot
 if (-not $PlanOnly) {
     New-Item -ItemType Directory -Path $resultRoot -ErrorAction Stop | Out-Null
+    $preflightRootCreated = $true
     $runtimeSourceRoot = New-LifecycleSourceSnapshot -RepositoryRoot $repoRoot -Commit $sourceCommit -DestinationRoot $resultRoot
 }
 $runtimeVmwareRoot = Join-Path $runtimeSourceRoot 'scripts/windows/vmware'
@@ -1651,6 +1693,18 @@ function Invoke-TrackedLifecycleVmCreation {
 }
 
 Write-LifecycleIdentityEvidence
+} catch {
+    $preflightFailure = $_
+    if ($preflightRootCreated) {
+        try {
+            Remove-LifecyclePreflightArtifacts -Path $resultRoot `
+                -ExpectedParent (Join-Path $repoRoot 'test-results/vmware-workstation-lifecycle')
+        } catch {
+            throw "Lifecycle preflight failed: $($preflightFailure.Exception.Message) Preflight cleanup refused: $($_.Exception.Message)"
+        }
+    }
+    throw $preflightFailure
+}
 
 $clientASeedIso = ''
 $clientBSeedIso = ''
