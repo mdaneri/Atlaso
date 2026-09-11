@@ -122,7 +122,8 @@ If archive, credential, module, or other pre-resource admission fails, the runne
 preflight result directory. Cleanup verifies the independently derived parent, rejects links, unexpected entries,
 and nonempty VM/seed roots, and verifies absence so an ordinary preflight failure can be retried. The root is pinned
 from creation; failure cleanup captures descendant handles before validation and deletes only those exact objects.
-Entries added after capture are preserved and make parent deletion fail closed.
+Cleanup admits only this invocation's exact archive/output paths and the archive's recorded extraction inventory.
+Unrecorded additions before capture are preserved; additions after capture make parent deletion fail closed.
 The durable publisher uses its own versioned helper type so existing
 PowerShell sessions can reload the module after an upgrade. Dirty or changed source is refused before the next
 resource or wheel publication; plan-only

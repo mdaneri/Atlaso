@@ -142,16 +142,34 @@ Repository containing the admitted immutable commit object.
 Full admitted commit SHA; the live checkout is never a build input.
 .PARAMETER DestinationRoot
 Existing task-owned wheel output root containing the unique archive and source directory.
+.PARAMETER PreflightGuard
+Optional invocation inventory receiving the exact archive paths before extraction.
 #>
 function New-LifecycleSourceSnapshot {
     param([Parameter(Mandatory)][string]$RepositoryRoot,
         [Parameter(Mandatory)][ValidatePattern('^[0-9a-f]{40}$')][string]$Commit,
-        [Parameter(Mandatory)][string]$DestinationRoot)
+        [Parameter(Mandatory)][string]$DestinationRoot, [object]$PreflightGuard)
     $snapshotId = [guid]::NewGuid().ToString('N')
     $archivePath = Join-Path $DestinationRoot "source-$snapshotId.zip"
     $snapshotPath = Join-Path $DestinationRoot "source-$snapshotId"
+    if ($PreflightGuard) { $PreflightGuard.Expect($archivePath) }
     & git -C $RepositoryRoot archive --format=zip --output=$archivePath $Commit
     if ($LASTEXITCODE -ne 0) { throw 'Could not archive the admitted lifecycle commit.' }
+    if ($PreflightGuard) {
+        $PreflightGuard.Expect($snapshotPath)
+        $archiveInventory = [IO.Compression.ZipFile]::OpenRead($archivePath)
+        try {
+            foreach ($entry in $archiveInventory.Entries) {
+                $expectedPath = [IO.Path]::GetFullPath((Join-Path $snapshotPath $entry.FullName))
+                $PreflightGuard.Expect($expectedPath)
+                $expectedParent = [IO.Path]::GetDirectoryName($expectedPath)
+                while ($expectedParent -and $expectedParent.Length -ge $snapshotPath.Length) {
+                    $PreflightGuard.Expect($expectedParent)
+                    $expectedParent = [IO.Path]::GetDirectoryName($expectedParent)
+                }
+            }
+        } finally { $archiveInventory.Dispose() }
+    }
     Expand-Archive -LiteralPath $archivePath -DestinationPath $snapshotPath -ErrorAction Stop
     # Deny ordinary same-user writes, including creation/replacement beneath every
     # directory. Keep DELETE rights available to supported owned-artifact cleanup.
@@ -194,6 +212,13 @@ namespace Atlaso {
         public string Root { get; private set; }
         private readonly List<SafeFileHandle> ancestors = new List<SafeFileHandle>();
         private readonly List<SafeFileHandle> entries = new List<SafeFileHandle>();
+        private readonly HashSet<string> expected = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        public void Expect(string path) {
+            string full = Path.GetFullPath(path).TrimEnd(Path.DirectorySeparatorChar);
+            if (!full.StartsWith(Root + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase))
+                throw new IOException("Preflight inventory path escaped its root.");
+            expected.Add(full);
+        }
         private SafeFileHandle Open(string path, bool delete, bool directory) {
             var h = CreateFileW(path, 0x81u | (delete ? 0x10000u : 0), directory ? 3u : 1u,
                 IntPtr.Zero, 3, 0x02200000, IntPtr.Zero);
@@ -216,6 +241,8 @@ namespace Atlaso {
         }
         private void Capture(string parent) {
             foreach (string path in Directory.GetFileSystemEntries(parent)) {
+                if (!expected.Contains(Path.GetFullPath(path)))
+                    throw new IOException("Unrecorded preflight artifact; preserve the result root.");
                 bool directory = (File.GetAttributes(path) & FileAttributes.Directory) != 0;
                 entries.Add(Open(path, true, directory));
                 if (directory) Capture(path);
@@ -318,7 +345,10 @@ if (-not $PlanOnly) {
     New-Item -ItemType Directory -Path $resultRoot -ErrorAction Stop | Out-Null
     $preflightRootCreated = $true
     $preflightGuard = New-LifecyclePreflightGuard -Path $resultRoot
-    $runtimeSourceRoot = New-LifecycleSourceSnapshot -RepositoryRoot $repoRoot -Commit $sourceCommit -DestinationRoot $resultRoot
+    foreach ($artifact in @('plan.json', 'vmware-identity.json', 'vms', 'seed')) {
+        $preflightGuard.Expect((Join-Path $resultRoot $artifact))
+    }
+    $runtimeSourceRoot = New-LifecycleSourceSnapshot -RepositoryRoot $repoRoot -Commit $sourceCommit -DestinationRoot $resultRoot -PreflightGuard $preflightGuard
 }
 $runtimeVmwareRoot = Join-Path $runtimeSourceRoot 'scripts/windows/vmware'
 $vmRoot = Join-Path $resultRoot 'vms'
@@ -1799,6 +1829,7 @@ function Write-LifecycleIdentityEvidence {
     # Keep every observable ownership manifest complete. The temporary file is
     # created beside the destination so the final replace stays on one volume.
     $identityTempPath = Join-Path $resultRoot ('.vmware-identity.{0}.tmp' -f [guid]::NewGuid().ToString('N'))
+    if ($preflightGuard) { $preflightGuard.Expect($identityTempPath) }
     try {
         $identityBytes = [System.Text.UTF8Encoding]::new($false).GetBytes($identityJson)
         $identityWriter = [System.IO.FileStream]::new($identityTempPath, 'CreateNew', 'Write', 'None', 4096, 'WriteThrough')

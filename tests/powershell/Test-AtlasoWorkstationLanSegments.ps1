@@ -358,8 +358,9 @@ if (-not $preflightFunction) { throw 'Cannot load lifecycle preflight cleanup.' 
 $preflightRoot = Join-Path $fixture 'preflight'
 [IO.Directory]::CreateDirectory($preflightRoot) | Out-Null
 $preflightGuard = New-LifecyclePreflightGuard -Path $preflightRoot
+$preflightGuard.Expect((Join-Path $preflightRoot ('source-' + ('a' * 32) + '.zip')))
 [IO.File]::WriteAllText((Join-Path $preflightRoot ('source-' + ('a' * 32) + '.zip')), 'partial archive')
-New-LifecycleSourceSnapshot -RepositoryRoot $sourceRoot -Commit $admitted -DestinationRoot $preflightRoot | Out-Null
+New-LifecycleSourceSnapshot -RepositoryRoot $sourceRoot -Commit $admitted -DestinationRoot $preflightRoot -PreflightGuard $preflightGuard | Out-Null
 Assert-Refused { Remove-LifecyclePreflightArtifacts -Path $preflightRoot -ExpectedParent $vmRoot -Guard $preflightGuard } 'independently derived lifecycle parent'
 Remove-LifecyclePreflightArtifacts -Path $preflightRoot -ExpectedParent $fixture -Guard $preflightGuard
 $preflightGuard.Dispose()
@@ -367,10 +368,18 @@ if (Test-Path -LiteralPath $preflightRoot) { throw 'Failed archive preflight sti
 [IO.Directory]::CreateDirectory($preflightRoot) | Out-Null
 $preflightGuard = New-LifecyclePreflightGuard -Path $preflightRoot
 [IO.File]::WriteAllText((Join-Path $preflightRoot 'unexpected.txt'), 'preserve')
-Assert-Refused { Remove-LifecyclePreflightArtifacts -Path $preflightRoot -ExpectedParent $fixture -Guard $preflightGuard } 'Unexpected preflight artifact'
+Assert-Refused { Remove-LifecyclePreflightArtifacts -Path $preflightRoot -ExpectedParent $fixture -Guard $preflightGuard } 'Unrecorded preflight artifact'
 $preflightGuard.Dispose()
 if ([IO.File]::ReadAllText((Join-Path $preflightRoot 'unexpected.txt')) -cne 'preserve') { throw 'Unexpected preflight state was removed.' }
 $preflightGuard.Dispose()
+$foreignRoot = Join-Path $fixture 'preflight-foreign'
+[IO.Directory]::CreateDirectory($foreignRoot) | Out-Null
+$foreignGuard = New-LifecyclePreflightGuard -Path $foreignRoot
+$foreignZip = Join-Path $foreignRoot ('source-' + ('b' * 32) + '.zip')
+[IO.File]::WriteAllText($foreignZip, 'foreign allowlisted name')
+try { Assert-Refused { Remove-LifecyclePreflightArtifacts -Path $foreignRoot -ExpectedParent $fixture -Guard $foreignGuard } 'Unrecorded preflight artifact' }
+finally { $foreignGuard.Dispose() }
+if ([IO.File]::ReadAllText($foreignZip) -cne 'foreign allowlisted name') { throw 'Pre-capture foreign archive was adopted.' }
 $lateRoot = Join-Path $fixture 'preflight-late'
 [IO.Directory]::CreateDirectory($lateRoot) | Out-Null
 $lateGuard = New-LifecyclePreflightGuard -Path $lateRoot
