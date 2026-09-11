@@ -837,6 +837,28 @@ def _clear_automation_transient_staging() -> None:
         _clear_symlink_resistant_directory(path, label=label)
 
 
+def _clear_diagnostic_archives() -> None:
+    """Clear the dedicated spool before discarding its job-based retention metadata."""
+    from atlaso.diagnostics import EvidenceError, ordinary_path
+
+    path = get_settings().diagnostics_spool_path.absolute()
+    try:
+        ordinary_path(path)
+    except FileNotFoundError:
+        return
+    except (OSError, EvidenceError) as exc:
+        raise FactoryResetError("Factory reset diagnostic spool is unsafe or unavailable.") from exc
+    # Refuse misconfigured shared directories: the collector publishes only UUID ZIPs.
+    if not path.is_dir() or path == path.parent:
+        raise FactoryResetError("Factory reset diagnostic spool is unsafe.")
+    for child in path.iterdir():
+        if not re.fullmatch(r"[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}\.zip", child.name):
+            raise FactoryResetError("Factory reset diagnostic spool contains an unrecognized entry.")
+        if child.is_dir() and not child.is_symlink():
+            raise FactoryResetError("Factory reset diagnostic spool contains an unsafe directory.")
+    _clear_symlink_resistant_directory(path, label="diagnostic archives")
+
+
 def _require_terminal_release_update() -> None:
     """Reject reset while durable signed-release recovery remains pending."""
     try:
@@ -1665,6 +1687,9 @@ def _run_factory_reset_locked(
             credential_plan=credential_plan,
         )
         _update_request("committing", "Replacing the Atlaso database with the validated factory database.")
+        if not (adapter and adapter.dry_run):
+            # Writers are stopped; failure retains the old jobs so expiry can retry.
+            _clear_diagnostic_archives()
         _replace_database(source_path, candidate_path)
         if not (adapter and adapter.dry_run):
             _clear_apply_staging()

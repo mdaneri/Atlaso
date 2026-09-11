@@ -101,6 +101,8 @@ Web bundles expire 24 hours after their request time and immediately become unav
 expired terminal artifacts during bounded reconciliation; if the worker is stopped, physical removal resumes when it
 returns. Expired downloads also attempt cleanup. An item-specific cleanup failure retains that protected artifact for
 retry and storage attention; cleanup continues for the other expired bundles.
+Complete factory reset clears the dedicated diagnostic spool before replacing its job records. An unsafe spool path
+or an unrecognized entry blocks reset cleanup so the existing retention records remain available for recovery.
 Manual deletion affects only the appliance copy. Neither expiry nor deletion promises forensic erasure or removes copies
 the operator downloaded or shared. For storage failures, check free space and private-directory permissions, then retry.
 

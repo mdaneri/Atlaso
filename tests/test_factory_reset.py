@@ -974,6 +974,53 @@ def test_factory_reset_stops_transient_helper_restart_and_automation_units(monke
     assert staging_cleared == [True]
 
 
+def test_factory_reset_clears_diagnostic_archives_and_rejects_shared_root(tmp_path, monkeypatch):
+    """Reset clears dedicated archives but refuses an unrelated directory entry.
+
+    Args:
+        tmp_path: Isolated filesystem fixture.
+        monkeypatch: Fixture restoring configured spool overrides.
+    """
+    import atlaso.app.factory_reset as factory_reset
+
+    spool = tmp_path / "diagnostics"
+    spool.mkdir()
+    archive = spool / "00000000-0000-0000-0000-000000000001.zip"
+    archive.write_bytes(b"sanitized evidence")
+    monkeypatch.setattr(factory_reset.get_settings(), "diagnostics_spool_path", spool)
+    factory_reset._clear_diagnostic_archives()
+    assert list(spool.iterdir()) == []
+    unrelated = spool / "preserve.txt"
+    unrelated.write_text("preserve", encoding="utf-8")
+    with pytest.raises(factory_reset.FactoryResetError, match="unrecognized"):
+        factory_reset._clear_diagnostic_archives()
+    assert unrelated.read_text(encoding="utf-8") == "preserve"
+
+
+def test_factory_reset_rejects_linked_diagnostic_spool(tmp_path, monkeypatch):
+    """A linked configured root must never erase its target's evidence.
+
+    Args:
+        tmp_path: Isolated filesystem fixture.
+        monkeypatch: Fixture restoring configured spool overrides.
+    """
+    import atlaso.app.factory_reset as factory_reset
+
+    target = tmp_path / "target"
+    target.mkdir()
+    archive = target / "00000000-0000-0000-0000-000000000001.zip"
+    archive.write_bytes(b"preserve")
+    link = tmp_path / "diagnostics"
+    try:
+        link.symlink_to(target, target_is_directory=True)
+    except OSError:
+        pytest.skip("Host does not grant symlink creation.")
+    monkeypatch.setattr(factory_reset.get_settings(), "diagnostics_spool_path", link)
+    with pytest.raises(factory_reset.FactoryResetError, match="unsafe"):
+        factory_reset._clear_diagnostic_archives()
+    assert archive.read_bytes() == b"preserve"
+
+
 def test_factory_reset_clears_automation_staging_after_quiescence(tmp_path, monkeypatch):
     """Reset removes interrupted script and run data from bounded roots.
 
@@ -1651,7 +1698,21 @@ def test_managed_factory_reset_retains_marker_until_readiness(tmp_path, monkeypa
     )
     monkeypatch.setattr(factory_reset, "_stop_application_services", lambda **_kwargs: None)
     monkeypatch.setattr(factory_reset, "_candidate_database", lambda *_args, **_kwargs: 16)
-    monkeypatch.setattr(factory_reset, "_replace_database", lambda *_args: None)
+    diagnostic_spool = tmp_path / "diagnostics"
+    diagnostic_spool.mkdir()
+    diagnostic_archive = diagnostic_spool / "00000000-0000-0000-0000-000000000001.zip"
+    diagnostic_archive.write_bytes(b"old diagnostic evidence")
+    monkeypatch.setattr(factory_reset.get_settings(), "diagnostics_spool_path", diagnostic_spool)
+
+    def replace_after_diagnostics(*_args):
+        """Require artifact removal before its job records are discarded.
+
+        Args:
+            *_args: Source and candidate paths supplied by the reset runner.
+        """
+        assert not diagnostic_archive.exists()
+
+    monkeypatch.setattr(factory_reset, "_replace_database", replace_after_diagnostics)
     monkeypatch.setattr(factory_reset, "_clear_apply_staging", lambda: None)
     monkeypatch.setattr(
         factory_reset,
