@@ -103,6 +103,8 @@ returns. Expired downloads also attempt cleanup. An item-specific cleanup failur
 retry and storage attention; cleanup continues for the other expired bundles.
 Complete factory reset clears the dedicated diagnostic spool before replacing its job records. An unsafe spool path
 or an unrecognized entry blocks reset cleanup so the existing retention records remain available for recovery.
+Development-mode reset uses the same cleanup while holding its database writer lock. Finish or cancel any queued or
+running diagnostic collection first; development reset does not stop appliance services to quiesce collectors.
 Manual deletion affects only the appliance copy. Neither expiry nor deletion promises forensic erasure or removes copies
 the operator downloaded or shared. For storage failures, check free space and private-directory permissions, then retry.
 

@@ -1609,6 +1609,18 @@ def _replace_sqlite_database_contents(source_path: Path, candidate_path: Path) -
                 raise FactoryResetError(
                     "Factory reset cannot replace a development database with a different schema."
                 )
+            if {"type", "status"}.issubset(installed.get("jobs", ())):
+                active_bundle = destination_connection.execute(
+                    "SELECT 1 FROM main.jobs WHERE type='diagnostic-bundle' "
+                    "AND status IN ('pending', 'running') LIMIT 1"
+                ).fetchone()
+                if active_bundle:
+                    raise FactoryResetError(
+                        "Wait for diagnostic collection to finish or cancel it before development factory reset."
+                    )
+                # Hold the admission writer lock through spool cleanup and replacement.
+                # An active collector is rejected above because development has no service quiescence.
+                _clear_diagnostic_archives()
             for table_name, columns in installed.items():
                 quoted_table = '"' + table_name.replace('"', '""') + '"'
                 quoted_columns = ", ".join(

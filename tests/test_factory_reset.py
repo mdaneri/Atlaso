@@ -974,6 +974,41 @@ def test_factory_reset_stops_transient_helper_restart_and_automation_units(monke
     assert staging_cleared == [True]
 
 
+@pytest.mark.parametrize("active", [False, True])
+def test_development_reset_cleans_diagnostics_with_admission_locked(tmp_path, monkeypatch, active):
+    """Development reset clears terminal evidence and refuses an in-flight collector.
+
+    Args:
+        tmp_path: Isolated SQLite and spool fixture root.
+        monkeypatch: Fixture restoring the configured spool path.
+        active: Whether the existing bundle still has a live worker lifecycle.
+    """
+    import sqlite3
+
+    import atlaso.app.factory_reset as factory_reset
+
+    source, candidate = tmp_path / "source.db", tmp_path / "candidate.db"
+    for path in (source, candidate):
+        with sqlite3.connect(path) as connection:
+            connection.execute("CREATE TABLE jobs (id TEXT, type TEXT, status TEXT)")
+    with sqlite3.connect(source) as connection:
+        connection.execute("INSERT INTO jobs VALUES (?, 'diagnostic-bundle', ?)",
+                           ("bundle", "running" if active else "succeeded"))
+    spool = tmp_path / "diagnostics"
+    spool.mkdir()
+    archive = spool / "00000000-0000-0000-0000-000000000001.zip"
+    archive.write_bytes(b"old evidence")
+    monkeypatch.setattr(factory_reset.get_settings(), "diagnostics_spool_path", spool)
+    if active:
+        with pytest.raises(factory_reset.FactoryResetError, match="diagnostic collection"):
+            factory_reset._replace_sqlite_database_contents(source, candidate)
+    else:
+        factory_reset._replace_sqlite_database_contents(source, candidate)
+    with sqlite3.connect(source) as connection:
+        assert connection.execute("SELECT COUNT(*) FROM jobs").fetchone()[0] == int(active)
+    assert archive.exists() == active
+
+
 def test_factory_reset_clears_diagnostic_archives_and_rejects_shared_root(tmp_path, monkeypatch):
     """Reset clears dedicated archives but refuses an unrelated directory entry.
 
