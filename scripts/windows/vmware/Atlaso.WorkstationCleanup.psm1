@@ -16,6 +16,26 @@ unchanged and does not require them to resolve.
 #>
 
 Set-StrictMode -Version Latest
+if (-not ('Atlaso.WorkstationDurablePublisherV1' -as [type])) {
+    Add-Type -TypeDefinition @'
+using System;
+using System.ComponentModel;
+using System.Runtime.InteropServices;
+namespace Atlaso {
+    public static class WorkstationDurablePublisherV1 {
+        [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+        private static extern bool MoveFileExW(string source, string destination, uint flags);
+        public static void PublishDurableFile(string source, string destination, bool replace = true)
+        {
+            // Flush the source first; publish the same-volume directory entry with
+            // write-through replacement so ownership precedes provider mutation.
+            if (!MoveFileExW(source, destination, (replace ? 0x1u : 0u) | 0x8u))
+                throw new Win32Exception(Marshal.GetLastWin32Error());
+        }
+    }
+}
+'@
+}
 if (-not ('Atlaso.WorkstationFileIdentity' -as [type])) {
     Add-Type -TypeDefinition @'
 using System;
@@ -32,15 +52,6 @@ namespace Atlaso
         private const uint FileShareDelete = 0x4;
         private const uint OpenExisting = 3;
         private const uint BackupSemantics = 0x02000000;
-        [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
-        private static extern bool MoveFileExW(string source, string destination, uint flags);
-        public static void PublishDurableFile(string source, string destination, bool replace = true)
-        {
-            // Flush the source first; publish the same-volume directory entry with
-            // write-through replacement so ownership precedes provider mutation.
-            if (!MoveFileExW(source, destination, (replace ? 0x1u : 0u) | 0x8u))
-                throw new Win32Exception(Marshal.GetLastWin32Error());
-        }
         [StructLayout(LayoutKind.Sequential)]
         private struct ByHandleFileInformation
         {

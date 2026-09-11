@@ -113,7 +113,10 @@ must never remove or alter the primary checkout's originals.
 
 Lifecycle runs that request `lan:<name>` now create an immutable receipt before registering a new segment.
 Runtime admission requires a clean source checkout and rechecks its exact commit before VM/segment creation and before
-and after wheel building. Dirty or changed source is refused before the next resource or wheel publication; plan-only
+and after wheel building. The wheel is built from a fresh Git archive of the admitted commit, so transient edits in
+the live checkout cannot enter the artifact. The durable publisher uses its own versioned helper type so existing
+PowerShell sessions can reload the module after an upgrade. Dirty or changed source is refused before the next
+resource or wheel publication; plan-only
 output makes no runtime source-provenance claim.
 The receipt binds its random VMware ID, exact name and preferences path to the task ID, repository, source commit,
 PR number, and lifecycle result root. `plan.json` records `lan_segment_owner`; `vmware-identity.json` records

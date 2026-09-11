@@ -71,7 +71,7 @@ $publishReceipt = {
     $evidenceStage = Join-Path $labRoot 'identity.tmp'
     $evidencePath = Join-Path $labRoot 'identity.json'
     [IO.File]::WriteAllText($evidenceStage, ($receiptRecords | ConvertTo-Json))
-    [Atlaso.WorkstationFileIdentity]::PublishDurableFile($evidenceStage, $evidencePath)
+    [Atlaso.WorkstationDurablePublisherV1]::PublishDurableFile($evidenceStage, $evidencePath)
 }
 $shared = Resolve-AtlasoOwnedLanSegment -Name Shared -Owner $owner -PreferencesPath $preferences -PublishReceipt $publishReceipt
 if ($shared.ReceiptPath -or [IO.File]::ReadAllText($preferences) -cne $original) { throw 'Shared registration was adopted or changed.' }
@@ -251,4 +251,29 @@ Assert-Refused { Get-LifecycleSourceCommit -RepositoryRoot $sourceRoot } 'clean 
 & git -C $sourceRoot -c user.name=Fixture -c user.email=fixture@example.invalid -c commit.gpgsign=false commit -qm next
 if ($LASTEXITCODE -ne 0) { throw 'Could not advance source fixture.' }
 Assert-Refused { Get-LifecycleSourceCommit -RepositoryRoot $sourceRoot -ExpectedCommit $admitted } 'source commit changed'
+$snapshotFunction = $runnerAst.Find({ param($node)
+    $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -eq 'New-LifecycleSourceSnapshot'
+}, $false)
+if (-not $snapshotFunction) { throw 'Cannot load immutable source exporter.' }
+. ([scriptblock]::Create($snapshotFunction.Extent.Text))
+[IO.File]::WriteAllText($sourceFile, 'transient build injection')
+[IO.File]::WriteAllText($untracked, 'untracked build injection')
+$snapshot = New-LifecycleSourceSnapshot -RepositoryRoot $sourceRoot -Commit $admitted -DestinationRoot $fixture
+if ([IO.File]::ReadAllText((Join-Path $snapshot 'source.txt')) -cne 'initial' -or
+    [IO.File]::Exists((Join-Path $snapshot 'untracked.txt'))) { throw 'Snapshot read live worktree bytes.' }
+# Restore endpoint state: the snapshot still proves the exact admitted object.
+[IO.File]::WriteAllText($sourceFile, 'next')
+[IO.File]::Delete($untracked)
+$reloadScript = Join-Path $fixture 'reload.ps1'
+$reloadCode = "param([string]`$ModulePath, [string]`$Root)`n" +
+    "`$ErrorActionPreference = 'Stop'`n" +
+    "Add-Type 'namespace Atlaso { public static class WorkstationFileIdentity {} }'`n" +
+    "Import-Module `$ModulePath -Force`nImport-Module `$ModulePath -Force`n" +
+    "`$stage = Join-Path `$Root 'reload.stage'; `$final = Join-Path `$Root 'reload.final'`n" +
+    "[IO.File]::WriteAllText(`$stage, 'reload')`n" +
+    "[Atlaso.WorkstationDurablePublisherV1]::PublishDurableFile(`$stage, `$final, `$false)`n" +
+    "if ([IO.File]::ReadAllText(`$final) -cne 'reload') { throw 'Reload publication failed.' }`n"
+[IO.File]::WriteAllText($reloadScript, $reloadCode)
+& pwsh -NoProfile -File $reloadScript -ModulePath (Join-Path $repositoryRoot 'scripts/windows/vmware/Atlaso.WorkstationCleanup.psm1') -Root $fixture
+if ($LASTEXITCODE -ne 0) { throw 'Reload-safe publisher fixture failed.' }
 Write-Host "LAN segment safety fixtures passed: $fixture"

@@ -1291,6 +1291,29 @@ function Sync-ApplianceHelperScript {
 
 <#
 .SYNOPSIS
+Export an admitted Git object into a fresh task-owned wheel source directory.
+.PARAMETER RepositoryRoot
+Repository containing the admitted immutable commit object.
+.PARAMETER Commit
+Full admitted commit SHA; the live checkout is never a build input.
+.PARAMETER DestinationRoot
+Existing task-owned wheel output root containing the unique archive and source directory.
+#>
+function New-LifecycleSourceSnapshot {
+    param([Parameter(Mandatory)][string]$RepositoryRoot,
+        [Parameter(Mandatory)][ValidatePattern('^[0-9a-f]{40}$')][string]$Commit,
+        [Parameter(Mandatory)][string]$DestinationRoot)
+    $snapshotId = [guid]::NewGuid().ToString('N')
+    $archivePath = Join-Path $DestinationRoot "source-$snapshotId.zip"
+    $snapshotPath = Join-Path $DestinationRoot "source-$snapshotId"
+    & git -C $RepositoryRoot archive --format=zip --output=$archivePath $Commit
+    if ($LASTEXITCODE -ne 0) { throw 'Could not archive the admitted lifecycle commit.' }
+    Expand-Archive -LiteralPath $archivePath -DestinationPath $snapshotPath -ErrorAction Stop
+    return $snapshotPath
+}
+
+<#
+.SYNOPSIS
 Upload and install the lifecycle application wheel in the appliance guest.
 .PARAMETER ApplianceVmx
 VMX path identifying the appliance guest where the wheel is installed.
@@ -1304,8 +1327,9 @@ function Sync-ApplianceApplicationWheel {
         Remove-Item -LiteralPath $wheelRoot -Recurse -Force
     }
     New-Item -ItemType Directory -Force -Path $wheelRoot | Out-Null
-    Write-Host "Building Atlaso wheel from current branch."
-    & python -m pip wheel $repoRoot --no-deps -w $wheelRoot | Out-Host
+    $wheelSource = New-LifecycleSourceSnapshot -RepositoryRoot $repoRoot -Commit $sourceCommit -DestinationRoot $wheelRoot
+    Write-Host "Building Atlaso wheel from admitted commit $sourceCommit."
+    & python -m pip wheel $wheelSource --no-deps -w $wheelRoot | Out-Host
     if ($LASTEXITCODE -ne 0) {
         throw "Failed to build Atlaso wheel from $repoRoot."
     }
@@ -1542,7 +1566,7 @@ function Write-LifecycleIdentityEvidence {
         $identityWriter = [System.IO.FileStream]::new($identityTempPath, 'CreateNew', 'Write', 'None', 4096, 'WriteThrough')
         try { $identityWriter.Write($identityBytes); $identityWriter.Flush($true) }
         finally { $identityWriter.Dispose() }
-        [Atlaso.WorkstationFileIdentity]::PublishDurableFile($identityTempPath, $identityPath)
+        [Atlaso.WorkstationDurablePublisherV1]::PublishDurableFile($identityTempPath, $identityPath)
     }
     finally {
         if (Test-Path -LiteralPath $identityTempPath -PathType Leaf) {

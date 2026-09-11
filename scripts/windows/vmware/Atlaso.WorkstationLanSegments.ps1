@@ -313,7 +313,7 @@ function Resolve-AtlasoOwnedLanSegment {
             try { $writer.Write($bytes); $writer.Flush($true) } finally { $writer.Dispose() }
             # Flush bytes, then durably publish the immutable pathname without
             # replacing any existing receipt before publishing independent evidence.
-            [Atlaso.WorkstationFileIdentity]::PublishDurableFile($receiptStage, $receiptPath, $false)
+            [Atlaso.WorkstationDurablePublisherV1]::PublishDurableFile($receiptStage, $receiptPath, $false)
             $result.ReceiptPath = $receiptPath
             $result.ReceiptSha256 = [Convert]::ToHexString([System.Security.Cryptography.SHA256]::HashData($bytes))
             $result.Id = $id
