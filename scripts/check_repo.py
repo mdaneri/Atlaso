@@ -2697,10 +2697,14 @@ def is_checkable(path: Path) -> bool:
 
 
 def collect_files(paths: list[str]) -> list[Path]:
-    """Return collect files.
+    """Collect checkable sources, pruning local task state on default scans.
 
     Args:
-        paths: Paths consumed by collect files.
+        paths: Explicit files or directories, or an empty list for the repository.
+
+    Explicit paths retain their existing exclusions and allow deliberate checks
+    inside root-level ``.atlaso-local``. Default discovery never enters that
+    task-state directory; no Git invocation or general ignore filtering is used.
     """
     if paths:
         candidates: list[Path] = []
@@ -2713,7 +2717,17 @@ def collect_files(paths: list[str]) -> list[Path]:
             elif path.exists():
                 candidates.append(path)
     else:
-        candidates = list(ROOT.rglob("*"))
+        candidates = []
+        for directory, subdirectories, filenames in ROOT.walk():
+            # Prune before descent so downloaded runtimes and negative-test
+            # fixtures cannot turn a source check into a task-state tree scan.
+            subdirectories[:] = [
+                name
+                for name in subdirectories
+                if not (directory == ROOT and name == ".atlaso-local")
+                and not should_skip(directory / name)
+            ]
+            candidates.extend(directory / name for name in filenames)
 
     files = []
     for path in candidates:
