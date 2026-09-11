@@ -2610,10 +2610,67 @@ function clearEsxiHostError() {
 }
 
 let esxiHostReferenceWizard = null;
+let esxiHostReferenceOpening = false;
 let esxiBootAuthorizationWizard = null;
 let esxiInstallerIsosTable = null;
 let esxiIsoUploadWizard = null;
 let networkBootDiscoveredHostRefresh = null;
+let esxiHostReferenceRefreshSequence = 0;
+
+async function refreshEsxiHostReferenceState() {
+  const element = document.getElementById("esxi-pxe-hosts-table");
+  if (!element) throw new Error("Host Reference choices are unavailable.");
+  const sequence = ++esxiHostReferenceRefreshSequence;
+  try {
+    const response = await fetch(managementUiPath("/network-boot"), {
+      credentials: "same-origin", cache: "no-store",
+      headers: { "X-Requested-With": "AtlasoHostReferenceRefresh" },
+    });
+    if (!response.ok) throw new Error("Host Reference choices could not be refreshed. Retry Refresh Kickstarts.");
+    const state = await response.json();
+    if (!Array.isArray(state.kickstarts) || !state.authorization_reasons
+      || typeof state.authorization_reasons !== "object" || typeof state.can_write !== "boolean") {
+      throw new Error("Host Reference choices are unavailable. Retry Refresh Kickstarts.");
+    }
+    if (sequence !== esxiHostReferenceRefreshSequence) return null;
+    element.dataset.authorizationReasons = JSON.stringify(state.authorization_reasons);
+    element.dataset.kickstartOptions = JSON.stringify(state.kickstarts);
+    element.atlasoRefreshKickstartOptions?.(state.kickstarts);
+    element.dataset.canWrite = String(state.can_write);
+    element.dataset.authorizationRefreshError = "";
+    const setting = document.querySelector('input[name="console_authorization_required"]');
+    if (setting && setting.dataset.pending !== "true") setting.checked = state.console_authorization_required === true;
+    return state;
+  } catch (error) {
+    if (sequence !== esxiHostReferenceRefreshSequence) return null;
+    element.dataset.authorizationRefreshError = "Boot readiness could not be refreshed. Retry after checking the connection.";
+    throw error;
+  }
+}
+
+function esxiHostAuthorizationDisabledReason(data) {
+  const element = document.getElementById("esxi-pxe-hosts-table");
+  if (element?.dataset.canWrite !== "true") return "ESXi write permission is required.";
+  const setting = document.querySelector('input[name="console_authorization_required"]');
+  if (!setting?.checked) return "Console authorization is disabled.";
+  if (setting.dataset.pending === "true") return "Wait for Boot Service settings to save successfully.";
+  if (!data || data.is_new || data.is_default || !data.enabled || !data.kickstart_id) {
+    return "An enabled host with a Kickstart is required.";
+  }
+  if (element.dataset.authorizationRefreshError) return element.dataset.authorizationRefreshError;
+  const reasons = JSON.parse(element.dataset.authorizationReasons || "{}");
+  return reasons[data.id] ?? "Review and submit appliance changes before authorizing boot.";
+}
+
+function initializeEsxiConsoleAuthorizationAutosave(setting) {
+  const form = setting?.closest("form");
+  setting?.addEventListener("change", () => { setting.dataset.pending = "true"; });
+  form?.addEventListener("atlaso:autosave-success", (event) => {
+    if (event.atlasoEditGeneration !== (form.atlasoEditGeneration || 0)) return;
+    setting.dataset.pending = "false";
+    refreshEsxiHostReferenceState().catch(() => {});
+  });
+}
 
 function esxiHostMacKey(value) {
   return String(value || "").toLowerCase().replace(/[:-]/g, "").replace(/\./g, "");
@@ -2760,6 +2817,54 @@ function initializeEsxiHostReferenceWizard() {
   const variablesStatus = form.querySelector("[data-esxi-host-variables-status]");
   const installerIsoSelect = form.elements.installer_iso_path;
   const enabledInput = form.elements.enabled;
+  const kickstartSelect = form.elements.kickstart_id;
+  const kickstartStatus = form.querySelector("[data-esxi-host-kickstart-status]");
+  let kickstartRefreshSequence = 0;
+  let kickstartLoading = false;
+  let kickstartError = "";
+  const validateKickstartChoice = () => {
+    const unavailable = kickstartSelect.selectedOptions[0]?.dataset.unavailable === "true";
+    const message = kickstartLoading ? "Wait for Kickstart choices to finish loading."
+      : kickstartError || (unavailable ? "The selected Kickstart is unavailable. Choose an available Kickstart or explicitly choose No Kickstart." : "");
+    kickstartSelect.setCustomValidity(message);
+    kickstartSelect.setAttribute("aria-invalid", String(Boolean(message)));
+    kickstartStatus.textContent = message || (kickstartSelect.options.length > 1 ? "Kickstart choices are current." : "No Kickstarts available. You can continue without one.");
+    kickstartStatus.dataset.state = message ? (kickstartLoading ? "loading" : "error") : "ready";
+    return !message;
+  };
+  const preserveKickstartChoice = (value) => {
+    const selected = String(value || "");
+    if (selected && ![...kickstartSelect.options].some((option) => option.value === selected)) {
+      const missing = new Option(`Unavailable Kickstart (${selected})`, selected);
+      missing.dataset.unavailable = "true";
+      kickstartSelect.add(missing);
+    }
+    kickstartSelect.value = selected;
+  };
+  const refreshKickstartChoices = async () => {
+    const sequence = ++kickstartRefreshSequence;
+    kickstartLoading = true;
+    kickstartError = "";
+    validateKickstartChoice();
+    try {
+      const state = await refreshEsxiHostReferenceState();
+      if (sequence !== kickstartRefreshSequence) return;
+      if (!state) throw new Error("Choices changed while loading. Retry Refresh Kickstarts.");
+      const selected = kickstartSelect.value;
+      kickstartSelect.replaceChildren(...state.kickstarts.map((item) => new Option(item.label, item.id)));
+      preserveKickstartChoice(selected);
+    } catch (error) {
+      if (sequence !== kickstartRefreshSequence) return;
+      kickstartError = error instanceof Error ? error.message : "Kickstart choices could not be refreshed. Retry Refresh Kickstarts.";
+    } finally {
+      if (sequence === kickstartRefreshSequence) {
+        kickstartLoading = false;
+        validateKickstartChoice();
+      }
+    }
+  };
+  form.querySelector("[data-esxi-host-refresh-kickstarts]").addEventListener("click", refreshKickstartChoices);
+  kickstartSelect.addEventListener("change", validateKickstartChoice);
   const canPromote = discoveredTableElement?.dataset.canWrite === "true";
   const discoveredRows = () => {
     const tableRows = discoveredTableElement?.atlasoTabulator?.getData?.();
@@ -2997,12 +3102,23 @@ function initializeEsxiHostReferenceWizard() {
     steps: [
       { id: "identity", title: "Choose host identity", description: "Select a discovered host or enter an explicit ESXi identity." },
       { id: "installer", title: "Choose installer inputs", description: "Select the Kickstart, installer ISO, and reviewed variables." },
-      { id: "enablement", title: "Choose desired-state enablement", description: "Enabled is reviewed last before the summary." },
+      { id: "enablement", title: "Enable this host", description: "Choose whether to include this host's ESXi entry in Network Boot." },
       { id: "review", title: "Review Host Reference", description: "Saving creates desired state only and does not run appliance apply." },
     ],
     discardTitle: "Discard Host Reference changes?",
     discardMessage: "The Host Reference values entered in this wizard will be lost.",
+    onStepChange: ({ step }) => {
+      if (step.id === "installer") refreshKickstartChoices();
+    },
+    onClose: () => {
+      discoveredSelectionSequence += 1;
+      kickstartRefreshSequence += 1;
+      pendingDiscoveredSelection = null;
+    },
     onOpen: async ({ context }) => {
+      kickstartRefreshSequence += 1;
+      kickstartLoading = false;
+      kickstartError = "";
       discoveredSelectionSequence += 1;
       pendingDiscoveredSelection = null;
       activeContext = { ...(context || {}) };
@@ -3031,14 +3147,16 @@ function initializeEsxiHostReferenceWizard() {
         form.elements.record_id.value = host.id;
         form.elements.hostname.value = host.hostname || "";
         form.elements.manual_mac_address.value = host.mac_address || "";
+        updateManualMacValidity();
         form.elements.ip_address.value = host.ip_address || "";
-        form.elements.kickstart_id.value = host.kickstart_id || "";
+        preserveKickstartChoice(host.kickstart_id);
         form.elements.installer_iso_path.value = host.installer_iso_path || "";
         form.elements.variables.value = host.variables_json || "{}";
         form.elements.enabled.checked = Boolean(host.enabled);
         await loadVariables(host.variables_json || "{}");
         if (wizardTitle) wizardTitle.textContent = "Edit Host Reference";
         if (submitButton) submitButton.textContent = "Save host reference";
+        validateKickstartChoice();
         return;
       }
 
@@ -3061,6 +3179,9 @@ function initializeEsxiHostReferenceWizard() {
       if (source === "discovered") await selectDiscoveredHost();
     },
     validateStep: async ({ step }) => {
+      if (step.id === "installer" && !validateKickstartChoice()) {
+        return { valid: false, message: kickstartSelect.validationMessage, field: "kickstart_id" };
+      }
       if (step.id === "identity" && sourceSelect.value === "discovered" && pendingDiscoveredSelection) {
         try {
           await pendingDiscoveredSelection;
@@ -3105,6 +3226,8 @@ function initializeEsxiHostReferenceWizard() {
       ]);
     },
     onSubmit: async () => {
+      await refreshKickstartChoices();
+      if (!validateKickstartChoice()) return { valid: false, message: kickstartSelect.validationMessage, field: "kickstart_id", step: "installer" };
       const parsed = parseVariables();
       if (!parsed.valid) return { ok: false, ...parsed, step: "installer" };
       const payload = buildHostPayload(parsed.variables);
@@ -3193,9 +3316,15 @@ function initializeEsxiHostReferenceWizard() {
   });
 }
 
-function openEsxiHostReferenceWizard(context) {
+async function openEsxiHostReferenceWizard(context) {
   if (!esxiHostReferenceWizard) throw new Error("The Host Reference wizard is unavailable.");
-  return esxiHostReferenceWizard.open({ launcher: context.launcher, context });
+  if (esxiHostReferenceOpening) throw new Error("A Host Reference is still loading. Wait for it to open, then retry.");
+  esxiHostReferenceOpening = true;
+  try {
+    return await esxiHostReferenceWizard.open({ launcher: context.launcher, context });
+  } finally {
+    esxiHostReferenceOpening = false;
+  }
 }
 
 async function postEsxiHostAction(url, data, csrf, options = {}) {
@@ -3344,8 +3473,12 @@ async function requestEsxiHostInventoryBoot(row) {
 async function requestEsxiHostBootAuthorization(row) {
   clearEsxiHostError();
   const data = row.getData();
-  if (data.is_new || data.is_default || !data.enabled || !data.kickstart_id) return;
+  if (esxiHostAuthorizationDisabledReason(data)) return;
   try {
+    const state = await refreshEsxiHostReferenceState();
+    if (!state) throw new Error("Boot readiness changed while checking. Retry the authorization action.");
+    const reason = esxiHostAuthorizationDisabledReason(row.getData());
+    if (reason) throw new Error(reason);
     if (!esxiBootAuthorizationWizard) throw new Error("The ESXi boot authorization wizard is unavailable.");
     await esxiBootAuthorizationWizard.open({ launcher: row.getElement(), context: { host: data } });
   } catch (error) {
@@ -3393,6 +3526,10 @@ function initializeEsxiBootAuthorizationWizard() {
       ]);
     },
     onSubmit: async () => {
+      const state = await refreshEsxiHostReferenceState();
+      if (!state) return { valid: false, message: "Boot readiness changed while checking. Retry authorization." };
+      const reason = esxiHostAuthorizationDisabledReason(activeHost);
+      if (reason) return { valid: false, message: reason };
       const result = await networkBootRequest(
         `/api/v1/network-boot/esxi-hosts/${activeHost.id}/authorize-boot-once`,
         { method: "POST", body: JSON.stringify({ boot_code: normalizeCode() }) },
@@ -11234,7 +11371,7 @@ function initializeEsxiPxeHostsTable() {
           field: "kickstart_id",
           editor: canWrite ? "list" : false,
           editable: (cell) => canWrite && cell.getRow().getData().is_default,
-          editorParams: { values: kickstartValues },
+          editorParams: () => ({ values: { ...kickstartValues } }),
           formatter: (cell) => esxiHostKickstartFormatter(cell, kickstartValues),
           minWidth: 180,
           cellEdited: (cell) => autoSaveEsxiHost(cell, csrf),
@@ -11306,11 +11443,11 @@ function initializeEsxiPxeHostsTable() {
           action: (_event, row) => requestEsxiHostInventoryBoot(row),
         },
         {
-          label: "Authorize ESXi boot once",
-          disabled: (component) => {
-            const data = component.getData();
-            return data.is_new || data.is_default || !data.enabled || !data.kickstart_id;
+          label: (component) => {
+            const reason = esxiHostAuthorizationDisabledReason(component.getData());
+            return reason ? `Authorize ESXi boot once (${reason})` : "Authorize ESXi boot once";
           },
+          disabled: (component) => Boolean(esxiHostAuthorizationDisabledReason(component.getData())),
           action: (_event, row) => requestEsxiHostBootAuthorization(row),
         },
         {
@@ -11328,6 +11465,12 @@ function initializeEsxiPxeHostsTable() {
     });
     table = grid.table;
     tableElement.atlasoTabulator = table;
+    tableElement.atlasoRefreshKickstartOptions = (options) => {
+      // Keep formatter closures current; editor parameters snapshot this map on each open.
+      Object.keys(kickstartValues).forEach((id) => delete kickstartValues[id]);
+      Object.assign(kickstartValues, Object.fromEntries(options.map((item) => [item.id, item.label])));
+      table?.getRows?.().forEach((row) => row.reformat());
+    };
     tableElement.atlasoRefreshIsoOptions = async (path, label) => {
       isoValues[path] = label;
       const isoColumn = table?.getColumn?.("installer_iso_path");
@@ -12124,6 +12267,7 @@ function initializeAutosaveForms(root = document) {
 
     const save = async () => {
       window.clearTimeout(timer);
+      const editGeneration = form.atlasoEditGeneration || 0;
       if (inFlightRequest) {
         inFlightRequest.abort();
       }
@@ -12138,7 +12282,9 @@ function initializeAutosaveForms(root = document) {
           ? await postWithUploadProgress(actionUrl, formData, files)
           : await postWithFetch(actionUrl, formData);
         if (payload.appliance_apply_status) updatePageApplyNotice(payload.appliance_apply_status);
-        form.dispatchEvent(new CustomEvent("atlaso:autosave-success", { detail: payload }));
+        const successEvent = new CustomEvent("atlaso:autosave-success", { detail: payload });
+        successEvent.atlasoEditGeneration = editGeneration;
+        form.dispatchEvent(successEvent);
         if (hasFiles) {
           clearSelectedFileInputs();
         }
@@ -12174,6 +12320,7 @@ function initializeAutosaveForms(root = document) {
     form.atlasoSaveNow = save;
 
     const scheduleSave = () => {
+      form.atlasoEditGeneration = (form.atlasoEditGeneration || 0) + 1;
       window.clearTimeout(timer);
       timer = window.setTimeout(save, 350);
     };
@@ -23138,6 +23285,9 @@ function initializeNetworkBootDiscoveredHostRefresh(
       const hostReferencesTable = document.getElementById?.("esxi-pxe-hosts-table")?.atlasoTabulator;
       await reconcileNetworkBootDiscoveredHosts(hostsTable, hosts, hostReferencesTable);
       setStatus();
+      if (hostReferencesTable && !document.getElementById("network-boot-promote-dialog")?.open) {
+        await refreshEsxiHostReferenceState();
+      }
     } catch (error) {
       setStatus(error instanceof Error
         ? `Automatic refresh unavailable: ${error.message} Showing the last received host list.`
@@ -23223,11 +23373,6 @@ function initializeNetworkBootPage() {
   let hostsTable = null;
   let environmentTable = null;
   let environmentRefreshPromise = null;
-  const loadHost = async (row) => {
-    const host = await networkBootRequest(`/api/v1/network-boot/hosts/${row.id}`);
-    const history = await networkBootRequest(`/api/v1/network-boot/hosts/${row.id}/history`);
-    return { host, history };
-  };
   const loadLatestHost = createLatestNetworkBootHostLoader(networkBootRequest);
   const selectReport = (historyItem) => {
     if (!selectedHost || !historyItem) return;
@@ -23339,12 +23484,12 @@ function initializeNetworkBootPage() {
   };
   const promoteHost = async (row, launcher = null) => {
     const data = row?.getData ? row.getData() : row;
-    if (!data?.id || data.assigned_to_esxi) return;
+    if (!canWrite || !data?.id || data.assigned_to_esxi) return;
     try {
-      const loaded = selectedHost?.id === data.id ? { host: selectedHost } : await loadHost(data);
-      selectedHost = loaded.host;
+      showTransientGridStatus("Loading the discovered host for promotion…");
       if (hostDialog?.open) hostDialog.close();
-      await openEsxiHostReferenceWizard({ mode: "promote", discoveredHost: selectedHost, launcher });
+      await openEsxiHostReferenceWizard({ mode: "promote", discoveredHost: data, launcher });
+      document.getElementById("grid-status-toast")?.classList.remove("visible");
     } catch (error) {
       showTransientGridStatus(error instanceof Error ? error.message : "The discovered host could not be loaded for promotion.");
     }
@@ -23400,6 +23545,9 @@ function initializeNetworkBootPage() {
     },
   });
   hostsTable = hostGrid.table;
+  hostsElement.atlasoTabulator = hostsTable;
+  const consoleSetting = document.querySelector('input[name="console_authorization_required"]');
+  initializeEsxiConsoleAuthorizationAutosave(consoleSetting);
   networkBootDiscoveredHostRefresh?.stop?.();
   networkBootDiscoveredHostRefresh = initializeNetworkBootDiscoveredHostRefresh(hostsTable, discoveredStatus);
   hostDialog?.querySelector("[data-network-boot-host-close]")?.addEventListener("click", () => hostDialog.close());

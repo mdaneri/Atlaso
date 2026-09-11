@@ -462,7 +462,8 @@ def test_esxi_pxe_host_reference_wizard_and_grid_responses(client):
     assert "Six hexadecimal octets; unicast addresses only." in host_wizard
     assert "IP address (optional — leave blank for DHCP)" in host_wizard
     assert "Boot MAC" in host_wizard
-    assert "host-reference-enable-step" in host_wizard
+    assert "host-reference-enable-step" not in host_wizard
+    assert 'data-atlaso-wizard-step="enablement"><div class="form-stack">' in host_wizard
     assert "Variables JSON" not in host_wizard
     assert "Custom Variables definition" in host_wizard
     assert "Default value" in host_wizard
