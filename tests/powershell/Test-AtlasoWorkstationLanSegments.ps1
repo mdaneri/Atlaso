@@ -167,6 +167,30 @@ Assert-Refused {
     } $preferences
 } 'post-publication reference drift'
 if ([IO.File]::ReadAllText($preferences) -cne 'concurrent state') { throw 'Post-publication refusal did not restore preferences.' }
+Assert-Refused {
+    & $module {
+        param($path, $root, $inventoryPath, $id)
+        $referencePins = [System.Collections.Generic.List[System.IDisposable]]::new()
+        try {
+            Update-AtlasoLanPreferences -Path $path -Transform {
+                param($originalBytes)
+                return ,([Text.Encoding]::UTF8.GetBytes('candidate state'))
+            } -Validate {
+                Assert-AtlasoLanSegmentUnreferenced -InventoryPath $inventoryPath -VmRoots @($root) -SegmentId $id -Pins $referencePins
+            } -Readback {
+                # Drift arrives after the last post-publication check. Final native
+                # guard failure must still restore the displaced preferences object.
+                $lateVmx = Join-Path $root 'final-readback.vmx'
+                [IO.File]::WriteAllText($lateVmx, "ethernet0.pvnID = `"$id`"")
+                [IO.File]::Delete($lateVmx)
+                Assert-AtlasoLanSegmentUnreferenced -InventoryPath $inventoryPath -VmRoots @($root) -SegmentId $id -Pins $referencePins
+            }
+        } finally {
+            for ($i = $referencePins.Count - 1; $i -ge 0; $i--) { $referencePins[$i].Dispose() }
+        }
+    } $preferences $vmRoot $inventory $segment.Id
+} 'contents changed during LAN segment'
+if ([IO.File]::ReadAllText($preferences) -cne 'concurrent state') { throw 'Final readback failure did not restore preferences.' }
 # A second thread holds the provider transaction lock while producing unresolved
 # recovery state. A concurrent retry must refuse before reading its old snapshot.
 $pathKey = [IO.Path]::GetFullPath($preferences).ToUpperInvariant()

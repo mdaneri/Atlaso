@@ -135,10 +135,12 @@ Existing provider preferences file.
 Action receiving original bytes and returning replacement bytes under write exclusion.
 .PARAMETER Validate
 Optional live preconditions repeated immediately before and after publication.
+.PARAMETER Readback
+Independent final verification performed before rollback state is retired, including unchanged retries.
 #>
 function Update-AtlasoLanPreferences {
     param([Parameter(Mandatory)][string]$Path, [Parameter(Mandatory)][scriptblock]$Transform,
-        [scriptblock]$Validate)
+        [scriptblock]$Validate, [scriptblock]$Readback)
     Assert-AtlasoLanSegmentUiClosed
     # Serialize cooperating transactions across processes and Windows sessions. Acquire
     # before recovery enumeration and retain through rollback and artifact retirement.
@@ -180,7 +182,10 @@ function Update-AtlasoLanPreferences {
         [byte[]]$original = @(Read-AtlasoStreamBytes -Stream $originalLock)
         if ($original.Length -eq 0) { throw 'Initialize Workstation preferences through normal setup before managing LAN segments.' }
         [byte[]]$replacement = & $Transform $original
-        if (Test-AtlasoByteArraysEqual -Left $original -Right $replacement) { return }
+        if (Test-AtlasoByteArraysEqual -Left $original -Right $replacement) {
+            if ($Readback) { & $Readback }
+            return
+        }
         $writer = [System.IO.FileStream]::new($stage, 'CreateNew', 'Write', 'None', 4096, 'WriteThrough')
         try {
             $stageIdentity = Get-AtlasoPathIdentity -Path $stage -Description 'LAN preferences stage'
@@ -215,6 +220,7 @@ function Update-AtlasoLanPreferences {
         }
         Assert-AtlasoLanSegmentUiClosed
         if ($Validate) { & $Validate }
+        if ($Readback) { & $Readback }
         $applied = $false
     } catch {
         $failure = $_
@@ -451,6 +457,19 @@ function Remove-AtlasoWorkstationLanSegment {
         $changed = @{ Value = $false; Declined = $false }
         Update-AtlasoLanPreferences -Path $PreferencesPath -Validate {
             Assert-AtlasoLanSegmentUnreferenced -InventoryPath $InventoryPath -VmRoots $VmRoots -SegmentId $receipt.pvn_id -Pins $pins
+        } -Readback {
+            if ($WhatIfPreference -or $changed.Declined) { return }
+            # Independently reopen and parse provider state while rollback remains
+            # available. Release the read pin before propagating a verification error.
+            $readbackPin = [Atlaso.WorkstationFileIdentity]::PinOrdinaryReadFile($PreferencesPath, $true)
+            try {
+                $readback = ConvertFrom-AtlasoLanPreferences -Bytes ([System.IO.File]::ReadAllBytes($PreferencesPath))
+                if (@($readback.Entries.Values | Where-Object { $_.pvnID -ieq $receipt.pvn_id -or $_.name -ieq $receipt.name }).Count) {
+                    throw 'LAN segment registration absence was not verified.'
+                }
+                Assert-AtlasoLanSegmentUiClosed
+                Assert-AtlasoLanSegmentUnreferenced -InventoryPath $InventoryPath -VmRoots $VmRoots -SegmentId $receipt.pvn_id -Pins $pins
+            } finally { $readbackPin.Dispose() }
         } -Transform {
             param($original)
             $parsed = ConvertFrom-AtlasoLanPreferences -Bytes $original
@@ -472,15 +491,6 @@ function Remove-AtlasoWorkstationLanSegment {
             return ,([System.Text.UTF8Encoding]::new($false).GetBytes(($lines -join '')))
         }
         if ($WhatIfPreference -or $changed.Declined) { return }
-        # Fresh parse, reference inspection and UI check are separate from mutation.
-        $pins.Add([Atlaso.WorkstationFileIdentity]::PinOrdinaryDirectoryPath((Split-Path -Parent $PreferencesPath), $true))
-        $pins.Add([Atlaso.WorkstationFileIdentity]::PinOrdinaryReadFile($PreferencesPath, $true))
-        $parsed = ConvertFrom-AtlasoLanPreferences -Bytes ([System.IO.File]::ReadAllBytes($PreferencesPath))
-        if (@($parsed.Entries.Values | Where-Object { $_.pvnID -ieq $receipt.pvn_id -or $_.name -ieq $receipt.name }).Count) {
-            throw 'LAN segment registration absence was not verified.'
-        }
-        Assert-AtlasoLanSegmentUiClosed
-        Assert-AtlasoLanSegmentUnreferenced -InventoryPath $InventoryPath -VmRoots $VmRoots -SegmentId $receipt.pvn_id -Pins $pins
         return [pscustomobject]@{ schema = 1; task_id = $Owner.task_id; pr = $Owner.pr
             provider_id = $receipt.pvn_id; name = $receipt.name; receipt_sha256 = $ReceiptSha256
             registration_absent = $true; adapter_references_absent = $true; changed = $changed.Value }
