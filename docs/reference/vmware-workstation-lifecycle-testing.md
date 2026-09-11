@@ -185,6 +185,10 @@ data disks from another appliance are reused. Failed disk provisioning retains t
 cleanup. If helper or wheel deployment fails, the runner reports bounded state for data-disk initialization, HTTPS
 bootstrap, Atlaso, and nginx, or explicitly reports that guest diagnostics were unavailable. Retained startup
 diagnostics contain only validated unit names and state fields; failed, invalid, or oversized readbacks are removed.
+Raw readbacks use the task checkout's `.atlaso-local/lifecycle-startup-diagnostics/<lab-name>/guest-readback.txt`,
+outside retained results. Only sanitized bytes are atomically published to the final diagnostic artifact. After a
+host/process interruption, preserve that exact staging identity, verify the owning lifecycle and provider processes
+have exited, and remove its readback before sharing evidence or completing task cleanup. Do not archive raw staging.
 Client VMs use an Alpine cloud VMDK prepared
 from a pinned upstream QCOW2 source. The payload and SHA-512 metadata are cached only as
 a verified pair: corrupt entries are removed on an ordinary rerun, downloads stay in unique partial files until

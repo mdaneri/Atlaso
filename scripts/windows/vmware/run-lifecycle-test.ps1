@@ -1369,11 +1369,20 @@ function Get-ApplianceStartupDiagnostic {
 
     $guestOutput = '/tmp/atlaso-lifecycle-startup-state.txt'
     $hostOutput = Join-Path $resultRoot 'appliance-startup-state.txt'
+    # Keep untrusted readback outside retained results. The deterministic lab
+    # directory identifies interrupted staging for operator recovery.
+    $stagingRoot = Join-Path $repoRoot ".atlaso-local/lifecycle-startup-diagnostics/$LabName"
+    $rawOutput = Join-Path $stagingRoot 'guest-readback.txt'
+    $publishOutput = Join-Path $resultRoot 'appliance-startup-state.pending'
     $units = @('atlaso-data-disks.service', 'atlaso-bootstrap-https.service', 'atlaso.service', 'nginx.service')
     $probe = "systemctl show $($units -join ' ') --property=Id,LoadState,ActiveState,SubState,Result > $guestOutput"
     $validatedArtifact = $false
     try {
         if (Test-Path -LiteralPath $hostOutput) { Remove-Item -LiteralPath $hostOutput -Force }
+        [IO.Directory]::CreateDirectory($stagingRoot) | Out-Null
+        foreach ($pending in @($rawOutput, $publishOutput)) {
+            if (Test-Path -LiteralPath $pending) { Remove-Item -LiteralPath $pending -Force }
+        }
         $observed = Invoke-VmrunBounded -Arguments @(
             '-T', 'ws', '-gu', $ApplianceSshUser, '-gp', $ApplianceGuestPassword,
             'runScriptInGuest', $ApplianceVmx, '/bin/sh', $probe
@@ -1381,23 +1390,24 @@ function Get-ApplianceStartupDiagnostic {
         if ($observed.ExitCode -ne 0) { return 'Startup prerequisite state unavailable (guest query failed).' }
         $copied = Invoke-VmrunBounded -Arguments @(
             '-T', 'ws', '-gu', $ApplianceSshUser, '-gp', $ApplianceGuestPassword,
-            'copyFileFromGuestToHost', $ApplianceVmx, $guestOutput, $hostOutput
+            'copyFileFromGuestToHost', $ApplianceVmx, $guestOutput, $rawOutput
         ) -TimeoutSeconds 15
-        if ($copied.ExitCode -ne 0 -or -not (Test-Path -LiteralPath $hostOutput -PathType Leaf)) {
+        if ($copied.ExitCode -ne 0 -or -not (Test-Path -LiteralPath $rawOutput -PathType Leaf)) {
             return 'Startup prerequisite state unavailable (guest readback failed).'
         }
-        if ((Get-Item -LiteralPath $hostOutput).Length -gt 4096) {
+        if ((Get-Item -LiteralPath $rawOutput).Length -gt 4096) {
             return 'Startup prerequisite state unavailable (oversized readback).'
         }
         # Report only fixed unit names and systemd state tokens, never journals,
         # guest commands, or arbitrary guest output from a failed operation.
-        $states = @(Get-Content -LiteralPath $hostOutput | Where-Object {
+        $states = @(Get-Content -LiteralPath $rawOutput | Where-Object {
             $_ -match '^(?:LoadState|ActiveState|SubState|Result)=[a-z-]{1,40}$' -or
             ($_ -match '^Id=(.+)$' -and $Matches[1] -in $units)
         })
         if ($states.Count -eq 0) { return 'Startup prerequisite state unavailable (invalid readback).' }
         # Retained evidence must contain the same allowlisted data as the error.
-        Set-Content -LiteralPath $hostOutput -Value $states -Encoding utf8
+        Set-Content -LiteralPath $publishOutput -Value $states -Encoding utf8
+        [IO.File]::Move($publishOutput, $hostOutput)
         $validatedArtifact = $true
         return "Startup prerequisites: $($states -join '; ')."
     }
@@ -1405,6 +1415,9 @@ function Get-ApplianceStartupDiagnostic {
         return 'Startup prerequisite state unavailable (bounded provider failure).'
     }
     finally {
+        foreach ($pending in @($rawOutput, $publishOutput)) {
+            if (Test-Path -LiteralPath $pending) { Remove-Item -LiteralPath $pending -Force -ErrorAction Stop }
+        }
         if (-not $validatedArtifact -and (Test-Path -LiteralPath $hostOutput)) {
             Remove-Item -LiteralPath $hostOutput -Force -ErrorAction Stop
         }

@@ -46,6 +46,8 @@ try {
         $script:ManagementNetwork = 'VMnet8'
         $script:createdVmxPaths = [Collections.Generic.List[string]]::new()
         $script:resultRoot = $FixtureRoot
+        $script:repoRoot = Join-Path $FixtureRoot 'task-checkout'
+        $script:LabName = 'Atlaso-PR-812-lifecycle-fixture'
         $script:ApplianceSshUser = 'fixture'
         $script:ApplianceGuestPassword = ''
         Set-Item function:script:Assert-SafeLifecycleName -Value { param($Name) }
@@ -84,6 +86,12 @@ try {
             if ($TimeoutSeconds -ne 15) { throw 'Unbounded prerequisite query.' }
             if ($script:providerFailure) { return [pscustomobject]@{ ExitCode = 1 } }
             if ('copyFileFromGuestToHost' -in $Arguments) {
+                if ($Arguments[-1] -notlike '*lifecycle-startup-diagnostics*guest-readback.txt') {
+                    throw 'Raw readback targeted retained results.'
+                }
+                if (Test-Path -LiteralPath (Join-Path $script:resultRoot 'appliance-startup-state.txt')) {
+                    throw 'Final diagnostic was published before validation.'
+                }
                 [IO.File]::WriteAllText($Arguments[-1], $script:diagnosticText)
             }
             return [pscustomobject]@{ ExitCode = 0 }
@@ -97,6 +105,8 @@ try {
         if ($saved -like '*SECRET_FIXTURE*' -or $saved -notlike '*ActiveState=failed*') {
             throw 'Persisted prerequisite evidence was not sanitized.'
         }
+        $raw = Join-Path $script:repoRoot ".atlaso-local/lifecycle-startup-diagnostics/$LabName/guest-readback.txt"
+        if (Test-Path -LiteralPath $raw) { throw 'Transient readback was not released.' }
         $script:providerFailure = $true
         if ((Get-ApplianceStartupDiagnostic -ApplianceVmx $vmx) -notlike '*unavailable*guest query failed*') {
             throw 'Failed provider was treated as valid prerequisite evidence.'
@@ -109,6 +119,7 @@ try {
                 throw 'Invalid or oversized prerequisite evidence was accepted.'
             }
             if (Test-Path -LiteralPath $artifact) { throw 'Rejected raw prerequisite evidence was retained.' }
+            if (Test-Path -LiteralPath $raw) { throw 'Rejected transient readback was retained.' }
         }
     } $OutputDirectory
 }
