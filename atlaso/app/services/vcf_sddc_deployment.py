@@ -423,11 +423,12 @@ def _wait_task(task: Any, *, timeout: float = 900.0, cancelled: CancelCheck | No
     return task.info.result
 
 
-def _safe_vsphere_message(exc: Exception) -> str:
+def _safe_vsphere_message(exc: Exception, *, normalize: bool = True) -> str:
     """Return safe vsphere message.
 
     Args:
         exc: Exception that caused the current failure path.
+        normalize: Collapse whitespace only after callers have redacted raw values.
     """
     message = str(getattr(exc, "msg", "") or getattr(exc, "localizedMessage", "") or "")
     if not message:
@@ -437,7 +438,8 @@ def _safe_vsphere_message(exc: Exception) -> str:
             message = "; ".join(part for part in parts if part)
     if not message:
         message = str(exc)
-    message = re.sub(r"\s+", " ", message).strip()
+    if normalize:
+        message = re.sub(r"\s+", " ", message).strip()
     return message or exc.__class__.__name__
 
 
@@ -481,7 +483,7 @@ def _ovf_diagnostic_messages(items: Any, *, property_values: dict[str, str] | No
     values = list((property_values or {}).values())
     messages: list[str] = []
     for item in list(items or []):
-        safe = _redact_ovf_property_values(_safe_vsphere_message(item), values)
+        safe = _redact_ovf_property_values(_safe_vsphere_message(item, normalize=False), values)
         fault = getattr(item, "fault", None)
         fault_name = (fault or item).__class__.__name__
         rendered = f"{fault_name}: {safe}" if safe and safe != fault_name else fault_name
@@ -511,11 +513,16 @@ def _parse_vsphere_ovf_descriptor(
         locale="",
         deploymentOption=str(deployment_option or ""),
     )
+    standalone = str(getattr(getattr(content, "about", None), "apiType", "")) == "HostAgent"
     try:
         parsed = content.ovfManager.ParseDescriptor(_ovf_descriptor_text(descriptor), params)
     except Exception as exc:  # pyVmomi exposes version-specific fault types.
+        if standalone:
+            raise VcfSddcDeploymentError("vSphere could not parse the standalone OVA descriptor; vendor diagnostic text was withheld.") from None
         message = _redact_ovf_property_values(_safe_vsphere_message(exc), list((property_values or {}).values()))
         raise VcfSddcDeploymentError(f"vSphere could not parse the OVA descriptor: {message}") from exc
+    if standalone and getattr(parsed, "error", None):
+        raise VcfSddcDeploymentError("vSphere rejected the standalone OVA descriptor; vendor diagnostic text was withheld.")
     errors = _ovf_diagnostic_messages(getattr(parsed, "error", None), property_values=property_values)
     if errors:
         raise VcfSddcDeploymentError(f"vSphere rejected the OVA descriptor: {'; '.join(errors)}")
@@ -561,7 +568,11 @@ def _parse_vsphere_ovf_descriptor(
     selected_option = str(deployment_option or default_option)
     if selected_option and selected_option not in option_keys:
         raise VcfSddcDeploymentError("The selected OVF deployment option is no longer accepted by vSphere.")
-    warnings = _ovf_diagnostic_messages(getattr(parsed, "warning", None), property_values=property_values)
+    # ParseDescriptor can omit non-editable defaults that only CreateImportSpec
+    # reveals. Do not retain transformed vendor text that cannot be redacted later.
+    warnings = (
+        ["Standalone descriptor warnings were reported; vendor diagnostic text was withheld."] if getattr(parsed, "warning", None) else []
+    ) if standalone else _ovf_diagnostic_messages(getattr(parsed, "warning", None), property_values=property_values)
     return replace(
         descriptor,
         vm_name=str(getattr(parsed, "defaultEntityName", "") or descriptor.vm_name),

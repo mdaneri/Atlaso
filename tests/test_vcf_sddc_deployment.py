@@ -562,7 +562,7 @@ def test_deploy_ova_binds_standalone_host_and_preserves_vcenter_automatic_placem
     pool = Pool()
     parsed = SimpleNamespace(
         error=[],
-        warning=[],
+        warning=[SimpleNamespace(localizedMessage="Default default-only  secret " + "x" * 1100)],
         property=[
             SimpleNamespace(id="ROOT_PASSWORD", type="password", label="Root", description="Secret", defaultValue="", userConfigurable=True),
             SimpleNamespace(id="vami.hostname", type="string", label="FQDN", description="Host", defaultValue="target.example.test", userConfigurable=True),
@@ -598,10 +598,10 @@ def test_deploy_ova_binds_standalone_host_and_preserves_vcenter_automatic_placem
                 return SimpleNamespace(error=[SimpleNamespace(localizedMessage="Rejected one-time-secret and default-only-secret")], importSpec=None)
             return SimpleNamespace(
                 error=[],
-                warning=[SimpleNamespace(localizedMessage="Accepted one-time-secret for ROOT_PASSWORD and default-only-secret")],
+                warning=[SimpleNamespace(localizedMessage="Accepted one-time-secret for ROOT_PASSWORD and default-only  secret")],
                 fileItem=[],
                 importSpec=SimpleNamespace(configSpec=SimpleNamespace(vAppConfig=SimpleNamespace(
-                    property=[SimpleNamespace(info=item) for item in parsed.property] + [SimpleNamespace(info=SimpleNamespace(id="hidden", defaultValue="default-only-secret"))],
+                    property=[SimpleNamespace(info=item) for item in parsed.property] + [SimpleNamespace(info=SimpleNamespace(id="hidden", defaultValue="default-only  secret"))],
                     ovfEnvironmentTransport=[],
                 ))),
             )
@@ -706,7 +706,8 @@ def test_deploy_ova_binds_standalone_host_and_preserves_vcenter_automatic_placem
     assert result["api_type"] == api_type
     assert result["ovf_verification"]["transports"] == ["com.vmware.guestInfo"]
     if api_type == "HostAgent":
-        assert "default-only-secret" not in " ".join(result["warnings"])
+        assert "default-only" not in " ".join(result["warnings"])
+        assert "x" * 100 not in " ".join(result["warnings"])
         assert captured["reconfigured"] is True
         assert captured["reloaded"] is True
         assert result["ovf_verification"]["source"] == "guestinfo.ovfEnv"

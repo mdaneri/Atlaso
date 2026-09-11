@@ -169,6 +169,8 @@ Guest keys retain VMware's class and instance qualification, such as `vami.ip0.S
 values and non-editable appliance defaults are preserved. A missing, malformed, duplicated, or changed environment
 fails verification; the absence of ESXi `vAppConfig` alone is expected.
 Standalone import warnings are redacted against both reviewed values and the additional non-editable defaults.
+Values are redacted before whitespace normalization or truncation. Standalone parser diagnostic text is withheld
+because the parser can omit defaults revealed only by the later import specification.
 Failed standalone import specifications may omit property metadata, so their vendor diagnostic text is withheld.
 Cancellation during metadata work is checked before either powered-off completion or power-on.
 VMX responses enforce one 30-second deadline starting before the request, including headers, chunk framing, and body.
