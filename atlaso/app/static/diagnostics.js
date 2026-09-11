@@ -114,7 +114,7 @@
       link.hidden = !["ready", "ready_with_omissions"].includes(selected.status);
       link.classList.toggle("hidden", link.hidden);
       link.href = `${root}/${encodeURIComponent(selected.id)}/download`;
-      for (const [id, enabled] of [["diagnostics-cancel", ["pending", "running"].includes(selected.status)], ["diagnostics-remove", !["pending", "running", "expired", "deleted"].includes(selected.status)]]) {
+      for (const [id, enabled] of [["diagnostics-cancel", ["pending", "running"].includes(selected.status)], ["diagnostics-remove", !["pending", "running", "deleted"].includes(selected.status)]]) {
         const button = document.getElementById(id);
         button.hidden = !enabled;
         button.classList.toggle("hidden", !enabled);
@@ -158,7 +158,7 @@
       rowContextMenu: [
         { label: "View contents", disabled: (row) => row.getData().is_new, action: (_event, row) => openDetail(row.getData()) },
         { label: "Cancel collection", disabled: (row) => !["pending", "running"].includes(row.getData().status), action: (_event, row) => cancel(row.getData()) },
-        { label: "Delete bundle", disabled: (row) => row.getData().is_new || ["pending", "running", "expired", "deleted"].includes(row.getData().status), action: (_event, row) => remove(row.getData()) },
+        { label: "Delete bundle", disabled: (row) => row.getData().is_new || ["pending", "running", "deleted"].includes(row.getData().status), action: (_event, row) => remove(row.getData()) },
       ],
       columns: [
         { title: "Created", field: "created_at", minWidth: 190, formatter: (cell) => {

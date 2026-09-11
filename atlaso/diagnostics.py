@@ -250,7 +250,11 @@ class Projection:
         key = (kind, value.lower().rstrip(".") if kind == "hostname" else value)
         if key not in self.aliases:
             self.counts[kind] += 1
-            self.aliases[key] = f"{kind}{self.counts[kind]:04d}"
+            candidate = f"{kind}{self.counts[kind]:04d}"
+            if candidate == key[1]:
+                self.counts[kind] += 1
+                candidate = f"{kind}{self.counts[kind]:04d}"
+            self.aliases[key] = candidate
         return self.aliases[key]
 
 

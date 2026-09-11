@@ -41,7 +41,8 @@ When JavaScript is unavailable, the page retains a read-only collection; use the
 
 With anonymization enabled, repeated hostnames become `hostname0001`, `hostname0002`, and so on; usernames become
 `user0001`, `user0002`, and so on. The mapping is consistent across the archive and exists only in collector memory.
-Each capture starts a new mapping. No original-value mapping or pseudonymization key is written to the archive.
+Aliases skip a candidate that equals the normalized source identifier. Each capture starts a new mapping.
+No original-value mapping or pseudonymization key is written to the archive.
 IP and MAC addresses remain unchanged. Replacing hostnames may make literal DNS-name comparison less useful.
 
 Passwords, tokens, authorization headers, cookies, private keys, credential stores, password hashes, terminal contents,
@@ -115,6 +116,7 @@ itself runs as root. Console reset recovery reads the spool selection from `/etc
 console-shell value so custom-spool archives are included in cleanup.
 Development-mode reset uses the same cleanup while holding its database writer lock. Finish or cancel any queued or
 running diagnostic collection first; development reset does not stop appliance services to quiesce collectors.
+Expired retained bundles remain manually deletable even while automatic cleanup is unavailable.
 Manual deletion affects only the appliance copy. Neither expiry nor deletion promises forensic erasure or removes copies
 the operator downloaded or shared. For storage failures, check free space and private-directory permissions, then retry.
 

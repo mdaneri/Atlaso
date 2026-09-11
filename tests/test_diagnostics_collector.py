@@ -46,6 +46,17 @@ def test_anonymization_consistent_but_ips_and_mac_preserved():
     assert projection.identifier("https://user:password@host", "hostname") is None
 
 
+def test_alias_candidates_never_repeat_their_source():
+    """Skip colliding aliases while preserving repeated normalized identities."""
+    projection = Projection(True)
+    assert projection.identifier("HOSTNAME0001.", "hostname") == "hostname0002"
+    assert projection.identifier("hostname0001", "hostname") == "hostname0002"
+    assert projection.identifier("hostname0003", "hostname") == "hostname0004"
+    assert projection.identifier("user0001", "user") == "user0002"
+    assert projection.identifier("user0001", "user") == "user0002"
+    assert projection.identifier("user0003", "user") == "user0004"
+
+
 def test_degraded_capture_and_secret_free_entire_archive(tmp_path, monkeypatch):
     """Test degraded capture and secret free entire archive.
 
