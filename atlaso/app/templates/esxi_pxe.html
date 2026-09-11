@@ -142,7 +142,7 @@
       <ol class="vcf-sddc-step-list">
         <li><button class="vcf-sddc-step-button active" type="button" data-atlaso-wizard-nav="identity"><span>1</span><strong>Identity</strong><small>Hostname, MAC, and address</small></button></li>
         <li><button class="vcf-sddc-step-button" type="button" data-atlaso-wizard-nav="installer" disabled><span>2</span><strong>Installer</strong><small>Kickstart and ISO</small></button></li>
-        <li><button class="vcf-sddc-step-button" type="button" data-atlaso-wizard-nav="enablement" disabled><span>3</span><strong>Enabled</strong><small>Desired-state enablement</small></button></li>
+        <li><button class="vcf-sddc-step-button" type="button" data-atlaso-wizard-nav="enablement" disabled><span>3</span><strong>Enabled</strong><small>Network Boot availability</small></button></li>
         <li><button class="vcf-sddc-step-button" type="button" data-atlaso-wizard-nav="review" disabled><span>4</span><strong>Review</strong><small>Confirm desired state</small></button></li>
       </ol>
     </aside>
@@ -161,7 +161,8 @@
           </div>
         </div></section>
         <section class="vcf-sddc-step-page hidden" data-atlaso-wizard-step="installer"><div class="form-stack">
-          <label><span>Kickstart</span><select name="kickstart_id">{% for option in esxi_pxe_host_kickstart_options %}<option value="{{ option.id }}">{{ option.label }}</option>{% endfor %}</select></label>
+          <label><span>Kickstart</span><select name="kickstart_id" aria-describedby="esxi-host-kickstart-status">{% for option in esxi_pxe_host_kickstart_options %}<option value="{{ option.id }}">{{ option.label }}</option>{% endfor %}</select></label>
+          <div><p id="esxi-host-kickstart-status" class="autosave-status" role="status" data-esxi-host-kickstart-status></p><button class="button secondary" type="button" data-esxi-host-refresh-kickstarts>Refresh Kickstarts</button></div>
           <label><span>Installer ISO</span><select name="installer_iso_path">{% for option in esxi_pxe_host_iso_options %}<option value="{{ option.id }}">{{ option.label }}</option>{% endfor %}</select></label>
           <input type="hidden" name="variables" value="{}">
           <div class="form-stack">
@@ -182,9 +183,10 @@
             </div>
           </div>
         </div></section>
-        <section class="vcf-sddc-step-page host-reference-enable-step hidden" data-atlaso-wizard-step="enablement">
-          <label class="switch-field"><span>Enabled</span><input class="switch-input" type="checkbox" name="enabled"><span class="switch-track" aria-hidden="true"></span></label>
-          <p class="muted">Saving creates desired state only. The global apply workflow remains the sole host-mutation path.</p>
+        <section class="vcf-sddc-step-page hidden" data-atlaso-wizard-step="enablement"><div class="form-stack">
+          <label class="switch-field"><span class="field-label"><span>Enabled</span><button class="help-icon" type="button" data-help="Include this host's ESXi entry in Network Boot. Saving does not change active boot behavior; use Review appliance changes and Submit appliance changes to activate it.">i</button></span><input class="switch-input" type="checkbox" name="enabled"><span class="switch-track" aria-hidden="true"></span></label>
+          <p class="muted">Changes take effect after you review and submit appliance changes.</p>
+        </div>
         </section>
         <section class="vcf-sddc-step-page hidden" data-atlaso-wizard-step="review"><div class="settings-list" data-atlaso-resource-review></div></section>
       </div>
@@ -458,6 +460,7 @@
             class="tabulator-shell esxi-pxe-hosts-table"
             data-hosts='{{ esxi_pxe_host_rows | tojson }}'
             data-kickstart-options='{{ esxi_pxe_host_kickstart_options | tojson }}'
+            data-authorization-reasons='{{ esxi_boot_authorization_reasons | default({}) | tojson }}'
             data-iso-options='{{ esxi_pxe_host_iso_options | tojson }}'
             data-csrf="{{ csrf_token }}"
             data-can-write="{{ 'true' if esxi_can_write else 'false' }}"
