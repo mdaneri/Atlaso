@@ -12,6 +12,7 @@ from sqlalchemy.orm import Session
 from atlaso.app.audit import record_audit
 from atlaso.app.database import get_db
 from atlaso.app.models import FirewallRule, utcnow
+from atlaso.app.schemas import validate_firewall_description
 from atlaso.app.security import Identity, require_session_identity
 from atlaso.app.services.firewall import (
     FIREWALL_POLICIES,
@@ -240,6 +241,10 @@ def build_router(dependencies: FirewallUiDependencies) -> FirewallUiRouter:
             enabled: Whether the requested behavior is enabled.
             description: Human-readable description of the resource.
         """
+        try:
+            validate_firewall_description(description)
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
         rule.name = name.strip()
         rule.direction = direction
         rule.action = action

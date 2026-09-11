@@ -26,7 +26,7 @@ This verified appliance view provides visual orientation before you begin.
 
 Select **Add rule here** or open an existing operator rule to use the four-step guided workflow:
 
-1. **Rule** — enter the name and a multiline Description (up to 1,000 characters), then choose Direction and Action.
+1. **Rule** — enter the name and a multiline Description (up to 1,000 UTF-16 code units), then choose Direction and Action.
 2. **Traffic** — choose Protocol, Source, Destination, Destination ports, Interface, and Priority. Lower priority values
    are evaluated first.
 3. **Enablement** — choose whether the rule enters rendered desired state.
@@ -57,8 +57,10 @@ During a protected management handoff, the previous listener retains its SSH rul
 and front door pass readiness. A successful handoff leaves the generated TCP/22 rule on the new listener; rollback
 restores the previous rule with its original Source Group constraint.
 
-Descriptions are limited to 1,000 characters on both API and browser-form create/update requests. Longer submissions
-return HTTP 422 without changing the saved rule. Existing longer notes remain readable and are never truncated;
+Descriptions are limited to 1,000 UTF-16 code units on both API and browser-form create/update requests. Longer submissions
+return HTTP 422 without changing the saved rule. Most characters count as one unit; characters outside the Basic
+Multilingual Plane, such as many emoji, count as two, matching the browser textarea. Existing longer notes remain readable
+and are never truncated;
 shorten them before saving an edit. This tightens write validation while preserving field names and stored content.
 
 ## Verify and recover

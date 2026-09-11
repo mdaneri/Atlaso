@@ -184,7 +184,7 @@ def build_router(dependencies: FirewallApiDependencies) -> FirewallApiRouter:
     ) -> FirewallRuleResponse:
         """Create Firewall Rule.
 
-        Description accepts at most 1,000 characters; longer notes return HTTP 422 before mutation.
+        Description accepts at most 1,000 UTF-16 code units; longer notes return HTTP 422 before mutation.
 
         Requires the `write:firewall` API scope. The operation changes saved Atlaso application state;
         any appliance host enforcement remains subject to the documented apply or task boundary for the
@@ -220,7 +220,7 @@ def build_router(dependencies: FirewallApiDependencies) -> FirewallApiRouter:
     ) -> FirewallRuleResponse:
         """Update Firewall Rule.
 
-        Description accepts at most 1,000 characters; longer notes return HTTP 422 before mutation.
+        Description accepts at most 1,000 UTF-16 code units; longer notes return HTTP 422 before mutation.
 
         Requires the `write:firewall` API scope. The operation updates saved Atlaso state and does not
         bypass the documented global Appliance Apply or service lifecycle boundary.

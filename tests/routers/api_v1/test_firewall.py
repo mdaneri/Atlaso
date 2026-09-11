@@ -1,5 +1,7 @@
 """Test Firewall API v1 transport behavior."""
 
+import pytest
+
 from tests.routers.api_v1.helpers import create_token
 
 
@@ -166,19 +168,22 @@ def test_flagged_management_listener_preview_matches_ui_and_api(client):
     )
 
 
-def test_firewall_description_write_limit_preserves_legacy_reads(client):
+@pytest.mark.parametrize("valid_note, invalid_note", [("a" * 1000, "x" * 1001), ("\U0001f600" * 500, "\U0001f600" * 501), ("a" * 998 + "\U0001f600", "a" * 999 + "\U0001f600")], ids=["ascii", "non-bmp", "mixed"])
+def test_firewall_description_write_limit_preserves_legacy_reads(client, valid_note, invalid_note):
     """Reject oversized writes without losing existing or legacy operator notes.
 
     Args:
         client: HTTP test client used to exercise the Atlaso application.
+        valid_note: Note at the browser-compatible write boundary.
+        invalid_note: Note exceeding the browser-compatible write boundary.
     """
     from atlaso.app.database import SessionLocal
     from atlaso.app.models import FirewallRule
 
     token, _ = create_token(client, scopes=["read:firewall", "write:firewall"])
     headers = {"Authorization": f"Bearer {token}"}
-    payload = {"name": "bounded-api-note", "description": "a" * 999 + "b"}
-    oversized = {**payload, "description": "x" * 1001}
+    payload = {"name": "bounded-api-note", "description": valid_note}
+    oversized = {**payload, "description": invalid_note}
     assert client.post("/api/v1/firewall/rules", headers=headers, json=oversized).status_code == 422
     created = client.post("/api/v1/firewall/rules", headers=headers, json=payload)
     assert created.status_code == 200, created.text

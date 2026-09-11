@@ -1,5 +1,7 @@
 """Test Firewall management UI transport behavior."""
 
+import pytest
+
 from tests.routers.ui.helpers import assert_apply_redirect, login
 
 
@@ -347,11 +349,14 @@ def test_firewall_multiline_description_round_trip(client):
     assert '<note>' not in page.text
 
 
-def test_firewall_form_description_limit_rejects_before_mutation(client):
+@pytest.mark.parametrize("valid_note, invalid_note", [("a" * 1000, "x" * 1001), ("\U0001f600" * 500, "\U0001f600" * 501), ("a" * 998 + "\U0001f600", "a" * 999 + "\U0001f600")], ids=["ascii", "non-bmp", "mixed"])
+def test_firewall_form_description_limit_rejects_before_mutation(client, valid_note, invalid_note):
     """Enforce the textarea bound on direct form create and edit submissions.
 
     Args:
         client: HTTP test client used to exercise the Atlaso application.
+        valid_note: Note at the browser-compatible write boundary.
+        invalid_note: Note exceeding the browser-compatible write boundary.
     """
     from atlaso.app.database import SessionLocal
     from atlaso.app.models import FirewallRule
@@ -359,9 +364,9 @@ def test_firewall_form_description_limit_rejects_before_mutation(client):
     login(client)
     page = client.get("/firewall")
     csrf = page.text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
-    fields = {"csrf": csrf, "name": "bounded-form-note", "description": "a" * 1000}
+    fields = {"csrf": csrf, "name": "bounded-form-note", "description": valid_note}
     headers = {"X-Atlaso-Grid": "1"}
-    oversized = {**fields, "description": "x" * 1001}
+    oversized = {**fields, "description": invalid_note}
     assert client.post("/firewall/rules", data=oversized, headers=headers).status_code == 422
     created = client.post("/firewall/rules", data=fields, headers=headers)
     assert created.status_code == 200, created.text

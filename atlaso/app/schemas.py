@@ -4,6 +4,7 @@ from datetime import datetime
 from typing import Annotated, Any, Literal
 
 from pydantic import (
+    AfterValidator,
     BaseModel,
     ConfigDict,
     Field,
@@ -215,6 +216,23 @@ class FirewallSettingsResponse(FirewallSettingsUpdate):
     updated_at: Annotated[datetime, Field(description='UTC timestamp when the resource was last updated.')]
 
 
+def validate_firewall_description(value: str | None) -> str | None:
+    """Match the browser textarea's UTF-16 length bound without altering notes.
+
+    Args:
+        value: Optional operator note supplied on a rule write.
+
+    Returns:
+        The original note unchanged.
+
+    Raises:
+        ValueError: If the note exceeds 1,000 UTF-16 code units.
+    """
+    if value is not None and sum(2 if ord(char) > 0xFFFF else 1 for char in value) > 1000:
+        raise ValueError("Description must be at most 1,000 UTF-16 code units.")
+    return value
+
+
 class FirewallRuleCreate(BaseModel):
     """Fields accepted when creating a firewall rule resource.
 
@@ -243,7 +261,7 @@ class FirewallRuleCreate(BaseModel):
     interface_name: Annotated[str, Field(description='Requested interface name value for this firewall rule resource.')] = ""
     priority: Annotated[int, Field(description='Requested priority value for this firewall rule resource.')] = 100
     enabled: Annotated[bool, Field(description='Whether the resource is enabled in saved Atlaso state.')] = True
-    description: Annotated[str | None, Field(max_length=1000, description='Optional multiline operator note, at most 1,000 characters on create or update.')] = None
+    description: Annotated[str | None, Field(max_length=1000, description='Optional multiline operator note, at most 1,000 UTF-16 code units on create or update, matching browser maxlength.'), AfterValidator(validate_firewall_description)] = None
 
 
 class FirewallRuleResponse(FirewallRuleCreate):
@@ -258,7 +276,7 @@ class FirewallRuleResponse(FirewallRuleCreate):
     model_config = ConfigDict(from_attributes=True)
 
     # Existing unbounded notes remain readable; only new writes adopt the limit.
-    description: Annotated[str | None, Field(description='Saved multiline operator note; legacy records may exceed the current 1,000-character write limit.')] = None
+    description: Annotated[str | None, Field(description='Saved multiline operator note; legacy records may exceed the current 1,000-UTF-16-unit write limit.')] = None
 
     id: Annotated[int, Field(description='Unique database identifier assigned to this resource.')]
     created_at: Annotated[datetime, Field(description='UTC timestamp when the resource was created.')]
