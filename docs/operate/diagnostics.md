@@ -99,7 +99,8 @@ Collection requires at least 16 MiB of free spool space and uses bounded memory 
 
 Web bundles expire 24 hours after their request time and immediately become unavailable to download. The worker removes
 expired terminal artifacts during bounded reconciliation; if the worker is stopped, physical removal resumes when it
-returns. Expired downloads also attempt cleanup. Failed cleanup retains protected data and requires storage attention.
+returns. Expired downloads also attempt cleanup. An item-specific cleanup failure retains that protected artifact for
+retry and storage attention; cleanup continues for the other expired bundles.
 Manual deletion affects only the appliance copy. Neither expiry nor deletion promises forensic erasure or removes copies
 the operator downloaded or shared. For storage failures, check free space and private-directory permissions, then retry.
 

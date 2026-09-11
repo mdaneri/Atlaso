@@ -8,6 +8,51 @@ from tests.routers.ui.helpers import login
 ROOT = "/ui/management/backup-restore/diagnostics"
 
 
+def test_expiry_continues_after_one_artifact_failure(client, monkeypatch, tmp_path):
+    """Preserve an unsafe artifact while still deleting an older ordinary bundle.
+
+    Args:
+        client: Test application client fixture.
+        monkeypatch: Fixture restoring patched dependencies after the test.
+        tmp_path: Task-local isolated filesystem fixture.
+    """
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import Job, utcnow
+    from atlaso.app.services import diagnostics
+    from atlaso.diagnostics import EvidenceError, write_new
+
+    prepare(client, monkeypatch, tmp_path)
+    ids = ["00000000-0000-0000-0000-000000000001", "00000000-0000-0000-0000-000000000002"]
+    for bundle_id in ids:
+        write_new(diagnostics.artifact_path(bundle_id), b"safe")
+    original = diagnostics.remove
+
+    def fail_newest(db, job, *, actor, expired=False):
+        """Simulate an item-specific filesystem rejection.
+
+        Args:
+            db: Worker database session.
+            job: Candidate expired job.
+            actor: Cleanup audit identity.
+            expired: Whether this is retention cleanup.
+        """
+        if job.id == ids[0]:
+            raise EvidenceError("permission_denied")
+        original(db, job, actor=actor, expired=expired)
+
+    monkeypatch.setattr(diagnostics, "remove", fail_newest)
+    with SessionLocal() as db:
+        for index, bundle_id in enumerate(ids):
+            db.add(Job(id=bundle_id, type=diagnostics.JOB_TYPE, status="succeeded", created_by="admin",
+                       created_at=utcnow() - timedelta(days=2 + index), result='{"bundle_status":"ready"}'))
+        db.commit()
+        diagnostics.expire(db)
+        assert diagnostics.result(diagnostics.find_job(db, ids[1]))["bundle_status"] == "expired"
+        assert diagnostics.result(diagnostics.find_job(db, ids[0]))["bundle_status"] == "ready"
+    assert diagnostics.artifact_path(ids[0]).exists()
+    assert not diagnostics.artifact_path(ids[1]).exists()
+
+
 def test_current_job_status_overrides_stale_bundle_metadata():
     """Keep claimed and interrupted jobs actionable despite stale result metadata."""
     from atlaso.app.models import Job, utcnow

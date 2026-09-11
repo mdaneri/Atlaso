@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import io
 import json
+import logging
 import os
 import re
 import shutil
@@ -190,7 +191,11 @@ def expire(db: Session) -> None:
                                       Job.status.notin_(["pending", "running"])).order_by(Job.created_at.desc()).limit(128)).all()
     for job in jobs:
         if result(job).get("bundle_status") not in {"expired", "deleted"}:
-            remove(db, job, actor="system", expired=True)
+            try:
+                remove(db, job, actor="system", expired=True)
+            except (OSError, EvidenceError, ValueError):
+                db.rollback()
+                logging.getLogger(__name__).warning("Diagnostic artifact expiry could not be completed; retrying on the next worker pass.")
 
 
 def download(db: Session, job: Job, actor: str) -> bytes:
