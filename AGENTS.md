@@ -1063,6 +1063,20 @@ The following cross-cutting boundaries always apply:
   construct a root-only repository view in volatile `/run` storage, pass only its non-secret path to TDNF, and remove
   that view when each command exits. Never place Photon repository credentials in durable package-client configuration
   or command arguments.
+- Maintenance retains the Backup / Restore route and groups LDAP, Backup, Reset, and Diagnostics in shared tabs.
+  Diagnostic bundles are administrator-only, bounded observational captures through the shared grid and reviewed wizard;
+  the recovery CLI must remain independent of web, worker, writable database, and application startup. Default to a
+  30-minute window, minimal evidence, detailed logs off, and hostname/username anonymization off. When selected, assign
+  consistent per-bundle aliases only after reserving all collected source identities; never export their mapping or
+  internal markers. Preserve IP and MAC addresses. Exclude secrets, arbitrary files, free-form logs, environments, and
+  command lines regardless of privacy selection. Privileged reads use only fixed helper source allowlists and bounded
+  projections; never accept arbitrary commands or paths. Recompute integrity metadata over final exported bytes and
+  report unavailable, truncated, or failed evidence truthfully. Publish private archives with current authorization,
+  mode `0600`, non-cacheable downloads, cancellation, manual deletion of retained expired bundles, and 24-hour managed
+  retention. CLI archives remain operator-owned. Factory reset must safely clear the dedicated spool before replacing
+  retention records. Collection never applies configuration, restarts services, repairs state, or uploads evidence.
+  Keep the [operator guide](docs/operate/diagnostics.md) and
+  [collector contract](docs/contribute/diagnostic-collectors.md) aligned with these boundaries.
 - Preflight every settings archive section, required row field, relationship, and enabled VLAN or static-route target
   before clearing desired state. A failed restore must roll back database changes and preserve separately staged LDAP
   recovery metadata and in-memory bytes. Clear staged recovery material only after a successful restore commit or

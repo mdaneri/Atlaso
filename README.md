@@ -19,6 +19,12 @@ brings infrastructure, storage, identity, networking, and lifecycle workflows in
 [Appliance Update](docs/operate/appliance-update.md) follows one durable task through service restarts and recovery,
 with automatic browser status navigation and a final result backed by active-release and service checks.
 
+[Maintenance](docs/operate/backup-restore.md) groups LDAP, Backup, Reset, and Diagnostics into separate tabs.
+Administrators can create [diagnostic support bundles](docs/operate/diagnostics.md) through a reviewed wizard or use
+the recovery CLI when the web service, worker, or database is unavailable. Optional hostname and username aliases are
+consistent within each bundle; IP and MAC addresses stay unchanged, and secrets are always excluded. Managed bundles
+expire after 24 hours and support manual deletion. Collection is observational and never uploads evidence automatically.
+
 Successful `main` CI automatically publishes the immutable wheel handoff, creates the signed software Release, and
 advances `development`. Promotion to `preview` or `stable` and all OVA/virtualization production remain explicit manual
 operations.
