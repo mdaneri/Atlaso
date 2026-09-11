@@ -3820,8 +3820,15 @@ routing permissions, and operator-defined rules. Reusable Source Groups are owne
 <p><em>Figure: Firewall in the verified clean-appliance desktop state.</em></p>
 <!-- END GENERATED INTERFACE OVERVIEW -->
 
-<p>Select <strong>Add rule here</strong> or open an existing operator rule to use the five-step guided workflow. Rule identity, traffic
-matching, priority and notes, enablement, and final review are separate decisions. The dedicated <strong>Enablement</strong> step
+<p>Select <strong>Add rule here</strong> or open an existing operator rule to use the four-step guided workflow:</p>
+<ol>
+<li><strong>Rule</strong> — enter the name and a multiline Description (up to 1,000 UTF-16 code units), then choose Direction and Action.</li>
+<li><strong>Traffic</strong> — choose Protocol, Source, Destination, Destination ports, Interface, and Priority. Lower priority values
+   are evaluated first.</li>
+<li><strong>Enablement</strong> — choose whether the rule enters rendered desired state.</li>
+<li><strong>Review</strong> — check every field, including the description with its line breaks, before creating or updating the rule.</li>
+</ol>
+<p>Existing rules retain their description, priority, and enabled state when reopened. The dedicated <strong>Enablement</strong> step
 makes clear that enabling a rule changes rendered desired state only; enforcement still waits for the global Firewall
 appliance-apply unit.</p>
 <h2 id="review-safely">Review safely<a class="headerlink" href="#review-safely" title="Permanent link">&para;</a></h2>
@@ -3842,6 +3849,16 @@ bootstrap-administrator or key-based SSH stays available on every effective mana
 <p>During a protected management handoff, the previous listener retains its SSH rule until the candidate management path
 and front door pass readiness. A successful handoff leaves the generated TCP/22 rule on the new listener; rollback
 restores the previous rule with its original Source Group constraint.</p>
+<p>Descriptions are limited to 1,000 UTF-16 code units on both API and browser-form create/update requests. Longer submissions
+return HTTP 422 without changing the saved rule. Most characters count as one unit; characters outside the Basic
+Multilingual Plane, such as many emoji, count as two, matching the browser textarea. Existing longer notes remain readable
+and are never truncated;
+shorten them before saving an edit. This tightens write validation while preserving field names and stored content.
+Browser-form CRLF and CR line endings are normalized to LF before validation and storage, matching the textarea value.
+JSON API notes retain their literal line endings and count every submitted UTF-16 unit.
+The OpenAPI description field publishes <code>x-maxLengthUtf16CodeUnits: 1000</code>; clients must enforce this extension using
+UTF-16 length (for example, JavaScript string <code>length</code>). Standard JSON Schema <code>maxLength</code> counts code points, so it is
+intentionally omitted for this field.</p>
 <h2 id="verify-and-recover">Verify and recover<a class="headerlink" href="#verify-and-recover" title="Permanent link">&para;</a></h2>
 <p>After a successful task, test the required TCP or UDP service from the intended network. On the appliance, maintainers
 can verify the effective state with <code>nft list ruleset</code>. If a rule removes management access, recover through the
@@ -3857,6 +3874,14 @@ stable UI and API facades. Network Objects owns Source Group projection and muta
 <h3 id="firewall_1">Firewall<a class="headerlink" href="#firewall_1" title="Permanent link">&para;</a></h3>
 <p><img alt="Atlaso Firewall page in the clean-appliance responsive viewport." src="../../assets/screenshots/firewall-clean-responsive.webp" /></p>
 <p><em>Figure: Firewall in the verified clean-appliance responsive state.</em></p>
+<p><img alt="Atlaso Firewall Review step showing escaped operator notes with preserved line breaks and rule priority." src="../../assets/screenshots/firewall-rule-review-desktop.webp" /></p>
+<p><em>Figure: Review the multiline description, traffic fields, priority, and enabled state before saving desired state.</em></p>
+<p><img alt="Atlaso Firewall Review step showing escaped operator notes with preserved line breaks and rule priority." src="../../assets/screenshots/firewall-rule-review-responsive.webp" /></p>
+<p><em>Figure: Review the multiline description, traffic fields, priority, and enabled state before saving desired state.</em></p>
+<p><img alt="Atlaso Firewall Rule step with a full-width multiline Description and the four-step navigation." src="../../assets/screenshots/firewall-rule-wizard-desktop.webp" /></p>
+<p><em>Figure: Start a rule with its identity and multiline description before choosing traffic and priority.</em></p>
+<p><img alt="Atlaso Firewall Rule step with a full-width multiline Description and the four-step navigation." src="../../assets/screenshots/firewall-rule-wizard-responsive.webp" /></p>
+<p><em>Figure: Start a rule with its identity and multiline description before choosing traffic and priority.</em></p>
 <!-- END GENERATED ADDITIONAL SCREENSHOTS -->
 
 
