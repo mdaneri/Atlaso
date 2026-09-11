@@ -2445,6 +2445,17 @@ else {
             }
             $checkedFailureHandlingError = $null
             try {
+                # Persist proven job termination before checked deleteVM can fail. The
+                # credential marker is retired independently and cannot carry this proof.
+                if ($isolatedBuildFailure.Exception.Data['AtlasoProcessTreeTerminationProven'] -and
+                    (Test-Path -LiteralPath $childBuilderAddressReservationPath -PathType Leaf)) {
+                    Save-AtlasoBuilderTerminationProof `
+                        -HandoffPath $childBuilderAddressReservationPath `
+                        -ExpectedOwnerPid ([int]$processOwnershipPayload.ChildProcessId) `
+                        -ExpectedOwnerStartTimeUtcTicks ([DateTime]::FromFileTimeUtc(
+                            [long]$processOwnershipPayload.ChildProcessStartFileTimeUtc
+                        ).Ticks)
+                }
                 if ($isolatedBuildFailure.Exception.Data['AtlasoProcessTreeTerminationProven'] -and
                     $PackerOnError -eq 'cleanup' -and (
                         (Test-Path -LiteralPath $childOutputCleanupClaimPath -PathType Leaf)

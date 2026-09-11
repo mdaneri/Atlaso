@@ -500,6 +500,108 @@ exit 1
     }
     Exit-AtlasoVmwareBuilderAddressReservation -Reservation $recovered -VmrunPath $vmrunPath -StateRoot $stateRoot
 
+    # A completed controller retains proof when checked VM deletion fails.
+    $recoveryState = Join-Path $testRoot 'recovery-state'
+    $pending = Join-Path $testRoot 'recovery/pending-releases'
+    [void][IO.Directory]::CreateDirectory($recoveryState)
+    [void][IO.Directory]::CreateDirectory($pending)
+    [IO.File]::WriteAllText((Join-Path $recoveryState 'reservations.lock'), '')
+    $handoffPath = Join-Path $pending 'builder-address-reservation-0123456789abcdef0123456789abcdef.json'
+    $record = $stale.Reservations[0] | ConvertTo-Json | ConvertFrom-Json
+    $record.HostBootIdentity = $currentBootIdentity
+    $unrelated = $record | ConvertTo-Json | ConvertFrom-Json
+    $unrelated.Id = '1123456789abcdef0123456789abcdef'
+    $unrelated.Address = '192.0.2.31'
+    $recoveryLedger = Join-Path $recoveryState 'reservations.json'
+    [IO.File]::WriteAllText($handoffPath, ($record | ConvertTo-Json))
+    [IO.File]::WriteAllText($recoveryLedger, (@{Schema=1;Reservations=@($record,$unrelated)} | ConvertTo-Json -Depth 8))
+    $before = (Get-FileHash $recoveryLedger).Hash
+    $blocked = Invoke-AtlasoBuilderReservationRecovery -HandoffPath $handoffPath -VmrunPath $vmrunPath -StateRoot $recoveryState
+    if ($blocked.Status -ne 'blocked' -or (Get-FileHash $recoveryLedger).Hash -cne $before) {
+        throw 'Legacy same-boot verification mutated state or invented process proof.'
+    }
+    $publisher = Join-Path $testRoot 'publish-proof.ps1'
+    $failedChild = Join-Path $testRoot 'failed-builder.ps1'
+    [IO.File]::WriteAllText($failedChild, @'
+param($HandoffPath, $LedgerPath)
+$record = Get-Content $HandoffPath -Raw | ConvertFrom-Json
+$record.OwnerPid = $PID
+$record.OwnerStartTimeUtcTicks = (Get-Process -Id $PID).StartTime.ToUniversalTime().Ticks
+$ledger = Get-Content $LedgerPath -Raw | ConvertFrom-Json
+$ledger.Reservations = @($record) + @($ledger.Reservations | Where-Object Id -ne $record.Id)
+$record | ConvertTo-Json -Depth 8 | Set-Content $HandoffPath
+$ledger | ConvertTo-Json -Depth 8 | Set-Content $LedgerPath
+exit 1
+'@)
+    [IO.File]::WriteAllText($publisher, @'
+param($ModulePath, $HandoffPath, $ChildPath, $LedgerPath)
+Import-Module $ModulePath -Force
+. (Join-Path (Split-Path -Parent $ModulePath) 'Atlaso.WorkstationFirstBoot.ps1')
+$identity = @{}
+try {
+    Invoke-AtlasoBoundedStreamingProcess -FilePath (Get-Process -Id $PID).Path `
+        -ArgumentList @('-NoProfile', '-File', $ChildPath, $HandoffPath, $LedgerPath) `
+        -TimeoutSeconds 20 -Action 'Inert builder fixture' `
+        -ProcessJobName ('Local\Atlaso-Receipt-Test-' + [guid]::NewGuid().ToString('N')) `
+        -ProcessOwnershipPublisher {
+            param($Job)
+            $identity.Id = $Job.RootProcess.Id
+            $identity.Ticks = $Job.RootProcess.StartTime.ToUniversalTime().Ticks
+        }
+    throw 'The failed child unexpectedly succeeded.'
+}
+catch {
+    if (-not $_.Exception.Data['AtlasoProcessTreeTerminationProven']) { throw }
+    Save-AtlasoBuilderTerminationProof -HandoffPath $HandoffPath `
+        -ExpectedOwnerPid $identity.Id -ExpectedOwnerStartTimeUtcTicks $identity.Ticks
+}
+'@)
+    & (Get-Process -Id $PID).Path -NoProfile -File $publisher $modulePath $handoffPath $failedChild $recoveryLedger
+    if ($LASTEXITCODE -ne 0) { throw 'Completed controller did not durably preserve termination proof.' }
+    $before = (Get-FileHash $recoveryLedger).Hash
+    $receiptBytes = [IO.File]::ReadAllText($handoffPath)
+    $verified = Invoke-AtlasoBuilderReservationRecovery -HandoffPath $handoffPath -VmrunPath $vmrunPath -StateRoot $recoveryState
+    if ($verified.Status -ne 'releasable' -or (Get-FileHash $recoveryLedger).Hash -cne $before -or
+        [IO.File]::ReadAllText($handoffPath) -cne $receiptBytes) {
+        throw "A later caller could not verify unchanged same-boot recovery: $($verified.Reason)"
+    }
+    & (Join-Path $RepositoryRoot 'scripts/windows/vmware/manage-builder-reservation.ps1') `
+        -HandoffPath $handoffPath -VmrunPath $vmrunPath -ReservationStateRoot $recoveryState -Cleanup -WhatIf -Json
+    if ((Get-FileHash $recoveryLedger).Hash -cne $before -or [IO.File]::ReadAllText($handoffPath) -cne $receiptBytes) {
+        throw 'The operator WhatIf path changed reservation state.'
+    }
+    $linkedHandoff = Join-Path $pending 'builder-address-reservation-1123456789abcdef0123456789abcdef.json'
+    New-Item -ItemType HardLink -Path $linkedHandoff -Target $handoffPath | Out-Null
+    $linked = Invoke-AtlasoBuilderReservationRecovery -HandoffPath $handoffPath -VmrunPath $vmrunPath -StateRoot $recoveryState -Execute
+    if ($linked.Status -ne 'blocked' -or (Get-FileHash $recoveryLedger).Hash -cne $before) {
+        throw 'A hard-linked handoff was accepted for mutation.'
+    }
+    Remove-Item -LiteralPath $linkedHandoff
+    $altered = $receiptBytes | ConvertFrom-Json
+    $altered.SourceBranch = 'changed'
+    [IO.File]::WriteAllText($handoffPath, ($altered | ConvertTo-Json -Depth 8))
+    $rejected = Invoke-AtlasoBuilderReservationRecovery -HandoffPath $handoffPath -VmrunPath $vmrunPath -StateRoot $recoveryState -Execute
+    if ($rejected.Status -ne 'blocked' -or (Get-FileHash $recoveryLedger).Hash -cne $before) {
+        throw 'Changed receipt identity released an allocation.'
+    }
+    [IO.File]::WriteAllText($handoffPath, $receiptBytes)
+    $running = Invoke-AtlasoBuilderReservationRecovery -HandoffPath $handoffPath -VmrunPath $staleRunningVmrunPath -StateRoot $recoveryState -Execute
+    if ($running.Status -ne 'blocked' -or (Get-FileHash $recoveryLedger).Hash -cne $before) {
+        throw 'Termination proof bypassed running-VM protection.'
+    }
+    $released = Invoke-AtlasoBuilderReservationRecovery -HandoffPath $handoffPath -VmrunPath $vmrunPath -StateRoot $recoveryState -Execute
+    $remaining = (Get-Content $recoveryLedger -Raw | ConvertFrom-Json).Reservations
+    if ($released.Status -ne 'released' -or (Test-Path $handoffPath) -or @($remaining).Count -ne 1 -or
+        ($remaining[0] | ConvertTo-Json -Compress) -cne ($unrelated | ConvertTo-Json -Compress)) {
+        throw "Exact same-boot recovery did not preserve unrelated allocations: $($released.Reason)"
+    }
+    # Simulate interruption after ledger commit but before handoff retirement.
+    [IO.File]::WriteAllText($handoffPath, $receiptBytes)
+    $retry = Invoke-AtlasoBuilderReservationRecovery -HandoffPath $handoffPath -VmrunPath $vmrunPath -StateRoot $recoveryState -Execute
+    if ($retry.Status -ne 'released' -or (Test-Path $handoffPath)) {
+        throw 'Interrupted handoff retirement was not idempotent.'
+    }
+
     $wrapper = [System.IO.File]::ReadAllText($wrapperPath)
     foreach ($required in @(
             'Atlaso.WorkstationBuilderAddress.psm1',
