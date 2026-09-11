@@ -261,7 +261,7 @@ class FirewallRuleCreate(BaseModel):
     interface_name: Annotated[str, Field(description='Requested interface name value for this firewall rule resource.')] = ""
     priority: Annotated[int, Field(description='Requested priority value for this firewall rule resource.')] = 100
     enabled: Annotated[bool, Field(description='Whether the resource is enabled in saved Atlaso state.')] = True
-    description: Annotated[str | None, Field(max_length=1000, description='Optional multiline operator note, at most 1,000 UTF-16 code units on create or update, matching browser maxlength.'), AfterValidator(validate_firewall_description)] = None
+    description: Annotated[str | None, Field(description='Optional multiline operator note, at most 1,000 UTF-16 code units on create or update, matching browser maxlength. Clients must enforce x-maxLengthUtf16CodeUnits; JSON Schema maxLength counts code points and is intentionally omitted.', json_schema_extra={'x-maxLengthUtf16CodeUnits': 1000}), AfterValidator(validate_firewall_description)] = None
 
 
 class FirewallRuleResponse(FirewallRuleCreate):

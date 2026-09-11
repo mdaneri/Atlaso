@@ -204,4 +204,6 @@ def test_firewall_description_write_limit_preserves_legacy_reads(client, valid_n
     assert updated.json()["description"] == payload["description"]
     schemas = client.get("/openapi.json").json()["components"]["schemas"]
     note_schema = schemas["FirewallRuleCreate"]["properties"]["description"]
-    assert next(item for item in note_schema["anyOf"] if item["type"] == "string")["maxLength"] == 1000
+    assert note_schema["x-maxLengthUtf16CodeUnits"] == 1000
+    assert "maxLength" not in note_schema
+    assert all("maxLength" not in item for item in note_schema["anyOf"])

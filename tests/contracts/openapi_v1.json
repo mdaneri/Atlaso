@@ -3316,15 +3316,15 @@
           "description": {
             "anyOf": [
               {
-                "maxLength": 1000,
                 "type": "string"
               },
               {
                 "type": "null"
               }
             ],
-            "description": "Optional multiline operator note, at most 1,000 UTF-16 code units on create or update, matching browser maxlength.",
-            "title": "Description"
+            "description": "Optional multiline operator note, at most 1,000 UTF-16 code units on create or update, matching browser maxlength. Clients must enforce x-maxLengthUtf16CodeUnits; JSON Schema maxLength counts code points and is intentionally omitted.",
+            "title": "Description",
+            "x-maxLengthUtf16CodeUnits": 1000
           },
           "destination": {
             "default": "any",
