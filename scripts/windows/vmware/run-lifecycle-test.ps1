@@ -1377,22 +1377,22 @@ function Get-ApplianceStartupDiagnostic {
     $units = @('atlaso-data-disks.service', 'atlaso-bootstrap-https.service', 'atlaso.service', 'nginx.service')
     $probe = "systemctl show $($units -join ' ') --property=Id,LoadState,ActiveState,SubState,Result > $guestOutput"
     $validatedArtifact = $false
+    $terminationUnproven = $false
     try {
         if (Test-Path -LiteralPath $hostOutput) { Remove-Item -LiteralPath $hostOutput -Force }
         [IO.Directory]::CreateDirectory($stagingRoot) | Out-Null
         foreach ($pending in @($rawOutput, $publishOutput)) {
             if (Test-Path -LiteralPath $pending) { Remove-Item -LiteralPath $pending -Force }
         }
-        $observed = Invoke-VmrunBounded -Arguments @(
+        $null = Invoke-AtlasoBoundedVmrun -VmrunPath $resolvedVmrun -ArgumentList @(
             '-T', 'ws', '-gu', $ApplianceSshUser, '-gp', $ApplianceGuestPassword,
             'runScriptInGuest', $ApplianceVmx, '/bin/sh', $probe
-        ) -TimeoutSeconds 15
-        if ($observed.ExitCode -ne 0) { return 'Startup prerequisite state unavailable (guest query failed).' }
-        $copied = Invoke-VmrunBounded -Arguments @(
+        ) -TimeoutSeconds 15 -Action 'Lifecycle startup query'
+        $null = Invoke-AtlasoBoundedVmrun -VmrunPath $resolvedVmrun -ArgumentList @(
             '-T', 'ws', '-gu', $ApplianceSshUser, '-gp', $ApplianceGuestPassword,
             'copyFileFromGuestToHost', $ApplianceVmx, $guestOutput, $rawOutput
-        ) -TimeoutSeconds 15
-        if ($copied.ExitCode -ne 0 -or -not (Test-Path -LiteralPath $rawOutput -PathType Leaf)) {
+        ) -TimeoutSeconds 15 -Action 'Lifecycle startup readback'
+        if (-not (Test-Path -LiteralPath $rawOutput -PathType Leaf)) {
             return 'Startup prerequisite state unavailable (guest readback failed).'
         }
         if ((Get-Item -LiteralPath $rawOutput).Length -gt 4096) {
@@ -1412,11 +1412,21 @@ function Get-ApplianceStartupDiagnostic {
         return "Startup prerequisites: $($states -join '; ')."
     }
     catch {
+        $failure = $_.Exception
+        while ($null -ne $failure) {
+            if ($failure.Data['AtlasoProcessTreeTerminationUnproven']) { $terminationUnproven = $true }
+            $failure = $failure.InnerException
+        }
+        if ($terminationUnproven) {
+            throw "Startup diagnostic process termination is unproven. Preserve staging for recovery: $stagingRoot"
+        }
         return 'Startup prerequisite state unavailable (bounded provider failure).'
     }
     finally {
-        foreach ($pending in @($rawOutput, $publishOutput)) {
-            if (Test-Path -LiteralPath $pending) { Remove-Item -LiteralPath $pending -Force -ErrorAction Stop }
+        if (-not $terminationUnproven) {
+            foreach ($pending in @($rawOutput, $publishOutput)) {
+                if (Test-Path -LiteralPath $pending) { Remove-Item -LiteralPath $pending -Force -ErrorAction Stop }
+            }
         }
         if (-not $validatedArtifact -and (Test-Path -LiteralPath $hostOutput)) {
             Remove-Item -LiteralPath $hostOutput -Force -ErrorAction Stop

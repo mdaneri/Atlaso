@@ -187,6 +187,8 @@ bootstrap, Atlaso, and nginx, or explicitly reports that guest diagnostics were 
 diagnostics contain only validated unit names and state fields; failed, invalid, or oversized readbacks are removed.
 Raw readbacks use the task checkout's `.atlaso-local/lifecycle-startup-diagnostics/<lab-name>/guest-readback.txt`,
 outside retained results. Only sanitized bytes are atomically published to the final diagnostic artifact. After a
+provider timeout, the shared bounded runner terminates the process tree and waits for exit before staging cleanup.
+Unproven termination fails closed and preserves the exact staging path for recovery. After a
 host/process interruption, preserve that exact staging identity, verify the owning lifecycle and provider processes
 have exited, and remove its readback before sharing evidence or completing task cleanup. Do not archive raw staging.
 Client VMs use an Alpine cloud VMDK prepared

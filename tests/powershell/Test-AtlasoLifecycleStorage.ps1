@@ -81,20 +81,26 @@ try {
 
         $script:diagnosticText = "Id=atlaso-data-disks.service`nLoadState=loaded`nActiveState=failed`nSubState=failed`nResult=exit-code`nSECRET_FIXTURE_DO_NOT_REPORT"
         $script:providerFailure = $false
-        Set-Item function:script:Invoke-VmrunBounded -Value {
-            param($Arguments, $TimeoutSeconds)
+        $script:terminationFailure = $false
+        Set-Item function:script:Invoke-AtlasoBoundedVmrun -Value {
+            param($VmrunPath, $ArgumentList, $TimeoutSeconds, $Action)
             if ($TimeoutSeconds -ne 15) { throw 'Unbounded prerequisite query.' }
-            if ($script:providerFailure) { return [pscustomobject]@{ ExitCode = 1 } }
-            if ('copyFileFromGuestToHost' -in $Arguments) {
-                if ($Arguments[-1] -notlike '*lifecycle-startup-diagnostics*guest-readback.txt') {
+            if ($script:providerFailure) { throw 'Fixture provider failure.' }
+            if ('copyFileFromGuestToHost' -in $ArgumentList) {
+                if ($ArgumentList[-1] -notlike '*lifecycle-startup-diagnostics*guest-readback.txt') {
                     throw 'Raw readback targeted retained results.'
                 }
                 if (Test-Path -LiteralPath (Join-Path $script:resultRoot 'appliance-startup-state.txt')) {
                     throw 'Final diagnostic was published before validation.'
                 }
-                [IO.File]::WriteAllText($Arguments[-1], $script:diagnosticText)
+                [IO.File]::WriteAllText($ArgumentList[-1], $script:diagnosticText)
+                if ($script:terminationFailure) {
+                    $failure = [TimeoutException]::new('Fixture termination uncertainty.')
+                    $failure.Data['AtlasoProcessTreeTerminationUnproven'] = $true
+                    throw $failure
+                }
             }
-            return [pscustomobject]@{ ExitCode = 0 }
+            return ''
         }
         $diagnostic = Get-ApplianceStartupDiagnostic -ApplianceVmx $vmx
         if ($diagnostic -notlike '*Id=atlaso-data-disks.service*ActiveState=failed*' -or $diagnostic -like '*SECRET_FIXTURE*') {
@@ -108,7 +114,7 @@ try {
         $raw = Join-Path $script:repoRoot ".atlaso-local/lifecycle-startup-diagnostics/$LabName/guest-readback.txt"
         if (Test-Path -LiteralPath $raw) { throw 'Transient readback was not released.' }
         $script:providerFailure = $true
-        if ((Get-ApplianceStartupDiagnostic -ApplianceVmx $vmx) -notlike '*unavailable*guest query failed*') {
+        if ((Get-ApplianceStartupDiagnostic -ApplianceVmx $vmx) -notlike '*unavailable*bounded provider failure*') {
             throw 'Failed provider was treated as valid prerequisite evidence.'
         }
         if (Test-Path -LiteralPath $artifact) { throw 'Failed provider retained stale evidence.' }
@@ -121,6 +127,15 @@ try {
             if (Test-Path -LiteralPath $artifact) { throw 'Rejected raw prerequisite evidence was retained.' }
             if (Test-Path -LiteralPath $raw) { throw 'Rejected transient readback was retained.' }
         }
+        $script:terminationFailure = $true
+        $failure = $null
+        try { Get-ApplianceStartupDiagnostic -ApplianceVmx $vmx }
+        catch { $failure = $_ }
+        if ($null -eq $failure -or $failure.Exception.Message -notlike '*termination is unproven*' -or
+            -not (Test-Path -LiteralPath $raw) -or (Test-Path -LiteralPath $artifact)) {
+            throw 'Unproven writer termination did not preserve recoverable staging and fail closed.'
+        }
+        Remove-Item -LiteralPath $raw
     } $OutputDirectory
 }
 finally { Remove-Module $module }
