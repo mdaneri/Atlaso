@@ -75,6 +75,7 @@ AUTOMATION_VAULT_STAGE_DIR = Path("/run/atlaso-automation-vaults")
 WORKER_STARTUP_STATUS_PATH = Path("/var/lib/atlaso/worker-startup.json")
 APPLIANCE_UPDATE_STATUS_MARKER_PATH = Path("/run/atlaso-appliance-update-status")
 WORKER_JOB_TYPES = {
+    "diagnostic-bundle",
     "appliance-update",
     "vcf-depot-download",
     "managed-script",
@@ -1923,6 +1924,13 @@ def run_worker_once() -> str | None:
     Raises:
         ValueError: If an input value is invalid.
     """
+    from atlaso.app.services import diagnostics
+
+    try:
+        with SessionLocal() as cleanup_db:
+            diagnostics.expire(cleanup_db)
+    except (OSError, diagnostics.EvidenceError):
+        LOGGER.warning("Diagnostic expiry cleanup needs storage attention; retained artifacts remain protected.")
     if not _reconcile_appliance_update_status_surface():
         return None
     with SessionLocal() as db:
@@ -1933,7 +1941,9 @@ def run_worker_once() -> str | None:
         job_id = job.id
         job_type = job.type
     try:
-        if job_type == "appliance-update":
+        if job_type == "diagnostic-bundle":
+            diagnostics.run(job_id)
+        elif job_type == "appliance-update":
             _run_appliance_update(job_id)
         elif job_type == "vcf-depot-download":
             from atlaso.app.ui import run_vcf_depot_download_job

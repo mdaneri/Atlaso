@@ -974,6 +974,88 @@ def test_factory_reset_stops_transient_helper_restart_and_automation_units(monke
     assert staging_cleared == [True]
 
 
+@pytest.mark.parametrize("active", [False, True])
+def test_development_reset_cleans_diagnostics_with_admission_locked(tmp_path, monkeypatch, active):
+    """Development reset clears terminal evidence and refuses an in-flight collector.
+
+    Args:
+        tmp_path: Isolated SQLite and spool fixture root.
+        monkeypatch: Fixture restoring the configured spool path.
+        active: Whether the existing bundle still has a live worker lifecycle.
+    """
+    import sqlite3
+
+    import atlaso.app.factory_reset as factory_reset
+
+    source, candidate = tmp_path / "source.db", tmp_path / "candidate.db"
+    for path in (source, candidate):
+        with sqlite3.connect(path) as connection:
+            connection.execute("CREATE TABLE jobs (id TEXT, type TEXT, status TEXT)")
+    with sqlite3.connect(source) as connection:
+        connection.execute("INSERT INTO jobs VALUES (?, 'diagnostic-bundle', ?)",
+                           ("bundle", "running" if active else "succeeded"))
+    spool = tmp_path / "diagnostics"
+    spool.mkdir(mode=0o700)
+    archive = spool / "00000000-0000-0000-0000-000000000001.zip"
+    archive.write_bytes(b"old evidence")
+    monkeypatch.setattr(factory_reset.get_settings(), "diagnostics_spool_path", spool)
+    if active:
+        with pytest.raises(factory_reset.FactoryResetError, match="diagnostic collection"):
+            factory_reset._replace_sqlite_database_contents(source, candidate)
+    else:
+        factory_reset._replace_sqlite_database_contents(source, candidate)
+    with sqlite3.connect(source) as connection:
+        assert connection.execute("SELECT COUNT(*) FROM jobs").fetchone()[0] == int(active)
+    assert archive.exists() == active
+
+
+def test_factory_reset_clears_diagnostic_archives_and_rejects_shared_root(tmp_path, monkeypatch):
+    """Reset clears dedicated archives but refuses an unrelated directory entry.
+
+    Args:
+        tmp_path: Isolated filesystem fixture.
+        monkeypatch: Fixture restoring configured spool overrides.
+    """
+    import atlaso.app.factory_reset as factory_reset
+
+    spool = tmp_path / "diagnostics"
+    spool.mkdir(mode=0o700)
+    archive = spool / "00000000-0000-0000-0000-000000000001.zip"
+    archive.write_bytes(b"sanitized evidence")
+    monkeypatch.setattr(factory_reset.get_settings(), "diagnostics_spool_path", spool)
+    factory_reset._clear_diagnostic_archives()
+    assert list(spool.iterdir()) == []
+    unrelated = spool / "preserve.txt"
+    unrelated.write_text("preserve", encoding="utf-8")
+    with pytest.raises(factory_reset.FactoryResetError, match="unrecognized"):
+        factory_reset._clear_diagnostic_archives()
+    assert unrelated.read_text(encoding="utf-8") == "preserve"
+
+
+def test_factory_reset_rejects_linked_diagnostic_spool(tmp_path, monkeypatch):
+    """A linked configured root must never erase its target's evidence.
+
+    Args:
+        tmp_path: Isolated filesystem fixture.
+        monkeypatch: Fixture restoring configured spool overrides.
+    """
+    import atlaso.app.factory_reset as factory_reset
+
+    target = tmp_path / "target"
+    target.mkdir()
+    archive = target / "00000000-0000-0000-0000-000000000001.zip"
+    archive.write_bytes(b"preserve")
+    link = tmp_path / "diagnostics"
+    try:
+        link.symlink_to(target, target_is_directory=True)
+    except OSError:
+        pytest.skip("Host does not grant symlink creation.")
+    monkeypatch.setattr(factory_reset.get_settings(), "diagnostics_spool_path", link)
+    with pytest.raises(factory_reset.FactoryResetError, match="unsafe"):
+        factory_reset._clear_diagnostic_archives()
+    assert archive.read_bytes() == b"preserve"
+
+
 def test_factory_reset_clears_automation_staging_after_quiescence(tmp_path, monkeypatch):
     """Reset removes interrupted script and run data from bounded roots.
 
@@ -1651,7 +1733,29 @@ def test_managed_factory_reset_retains_marker_until_readiness(tmp_path, monkeypa
     )
     monkeypatch.setattr(factory_reset, "_stop_application_services", lambda **_kwargs: None)
     monkeypatch.setattr(factory_reset, "_candidate_database", lambda *_args, **_kwargs: 16)
-    monkeypatch.setattr(factory_reset, "_replace_database", lambda *_args: None)
+    import sys
+    from collections import namedtuple
+    from types import SimpleNamespace
+
+    passwd_record = namedtuple("PasswdRecord", "pw_name pw_passwd pw_uid pw_gid pw_gecos pw_dir pw_shell")
+    monkeypatch.setitem(sys.modules, "pwd", SimpleNamespace(
+        getpwnam=lambda name: passwd_record(name, "x", tmp_path.stat().st_uid, 0, "", "/", "/bin/sh")
+    ))
+    diagnostic_spool = tmp_path / "diagnostics"
+    diagnostic_spool.mkdir(mode=0o700)
+    diagnostic_archive = diagnostic_spool / "00000000-0000-0000-0000-000000000001.zip"
+    diagnostic_archive.write_bytes(b"old diagnostic evidence")
+    monkeypatch.setattr(factory_reset.get_settings(), "diagnostics_spool_path", diagnostic_spool)
+
+    def replace_after_diagnostics(*_args):
+        """Require artifact removal before its job records are discarded.
+
+        Args:
+            *_args: Source and candidate paths supplied by the reset runner.
+        """
+        assert not diagnostic_archive.exists()
+
+    monkeypatch.setattr(factory_reset, "_replace_database", replace_after_diagnostics)
     monkeypatch.setattr(factory_reset, "_clear_apply_staging", lambda: None)
     monkeypatch.setattr(
         factory_reset,
@@ -2358,3 +2462,53 @@ def test_complete_factory_reset_resumes_after_post_replacement_interruption(
     assert result["state"] == "succeeded"
     assert result["applied_unit_count"] == 17
     assert not (state_directory / "request.json").exists()
+
+
+@pytest.mark.parametrize("mode,owner", [(0o40755, 123), (0o40700, 456), (0o40700, 123)])
+def test_factory_reset_preserves_diagnostics_with_unsafe_ownership(tmp_path, monkeypatch, mode, owner):
+    """Reset preserves archives when collection would reject their directory.
+
+    Args:
+        tmp_path: Isolated spool fixture.
+        monkeypatch: Fixture restoring metadata and configured root overrides.
+        mode: Simulated POSIX directory mode.
+        owner: Simulated directory owner.
+    """
+    import sys
+    from types import SimpleNamespace
+
+    import atlaso.app.factory_reset as factory_reset
+    import atlaso.diagnostics as diagnostics
+
+    spool = tmp_path / "diagnostics"
+    spool.mkdir(mode=0o700)
+    archive = spool / "00000000-0000-0000-0000-000000000001.zip"
+    archive.write_bytes(b"preserve")
+    monkeypatch.setattr(factory_reset.get_settings(), "diagnostics_spool_path", spool)
+    original_stat = type(spool).stat
+
+    def metadata(path, *args, **kwargs):
+        """Substitute only the spool's follow-link metadata.
+
+        Args:
+            path: Requested filesystem path.
+            *args: Forwarded stat arguments.
+            **kwargs: Forwarded stat options.
+        """
+        if path == spool and not args and not kwargs:
+            return SimpleNamespace(st_mode=mode, st_uid=owner)
+        return original_stat(path, *args, **kwargs)
+
+    with monkeypatch.context() as patch:
+        patch.setattr(diagnostics, "os", SimpleNamespace(name="posix", geteuid=lambda: 0))
+        patch.setattr(type(spool), "stat", metadata)
+        patch.setitem(sys.modules, "pwd", SimpleNamespace(getpwnam=lambda name: SimpleNamespace(pw_uid=123)))
+        if mode == 0o40700 and owner == 123:
+            cleared = []
+            patch.setattr(factory_reset, "_clear_symlink_resistant_directory", lambda path, **kwargs: cleared.append(path))
+            factory_reset._clear_diagnostic_archives(service_account=True)
+            assert cleared == [spool]
+        else:
+            with pytest.raises(factory_reset.FactoryResetError, match="unsafe"):
+                factory_reset._clear_diagnostic_archives(service_account=True)
+    assert archive.read_bytes() == b"preserve"
