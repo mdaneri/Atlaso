@@ -139,16 +139,18 @@ def ordinary_path(path: Path) -> None:
             raise EvidenceError("permission_denied")
 
 
-def private_directory(path: Path) -> None:
+def private_directory(path: Path, *, owner_uid: int | None = None) -> None:
     """Require an ordinary private directory owned by the current process user.
 
     Args:
         path: Configured diagnostic spool directory to validate without creating it.
+        owner_uid: Expected owner UID, defaulting to the current process user.
     """
     ordinary_path(path)
     info = path.stat()
     effective_uid = getattr(os, "geteuid", lambda: -1)
-    if not stat.S_ISDIR(info.st_mode) or (os.name == "posix" and (info.st_mode & 0o077 or info.st_uid != effective_uid())):
+    expected_uid = effective_uid() if owner_uid is None else owner_uid
+    if not stat.S_ISDIR(info.st_mode) or (os.name == "posix" and (info.st_mode & 0o077 or info.st_uid != expected_uid)):
         raise EvidenceError("permission_denied")
 
 

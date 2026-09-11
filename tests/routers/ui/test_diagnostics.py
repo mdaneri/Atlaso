@@ -66,6 +66,12 @@ def test_current_job_status_overrides_stale_bundle_metadata():
     job.status = "succeeded"
     job.result = '{"bundle_status":"ready_with_omissions"}'
     assert diagnostics.row(job)["status"] == "ready_with_omissions"
+    job.created_at = utcnow() - timedelta(days=2)
+    for state in ("pending", "running"):
+        job.status = state
+        assert diagnostics.row(job)["status"] == state
+    job.status = "succeeded"
+    assert diagnostics.row(job)["status"] == "expired"
 
 
 def prepare(client, monkeypatch, tmp_path):

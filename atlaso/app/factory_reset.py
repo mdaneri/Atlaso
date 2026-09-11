@@ -837,16 +837,29 @@ def _clear_automation_transient_staging() -> None:
         _clear_symlink_resistant_directory(path, label=label)
 
 
-def _clear_diagnostic_archives() -> None:
-    """Clear the dedicated spool before discarding its job-based retention metadata."""
-    from atlaso.diagnostics import EvidenceError, private_directory
+def _clear_diagnostic_archives(*, service_account: bool = False) -> None:
+    """Clear the dedicated spool before discarding its job-based retention metadata.
+
+    Args:
+        service_account: Whether appliance services own the spool instead of the development process.
+    """
+    from atlaso.diagnostics import EvidenceError, ordinary_path, private_directory
 
     path = get_settings().diagnostics_spool_path.absolute()
     try:
-        private_directory(path)
+        ordinary_path(path)
+        owner_uid = None
+        if service_account:
+            import pwd
+
+            lookup = getattr(pwd, "getpwnam", None)
+            if lookup is None:
+                raise FactoryResetError("Factory reset cannot verify the Atlaso service account.")
+            owner_uid = int(lookup("atlaso").pw_uid)
+        private_directory(path, owner_uid=owner_uid)
     except FileNotFoundError:
         return
-    except (OSError, EvidenceError) as exc:
+    except (OSError, EvidenceError, ImportError, KeyError, AttributeError) as exc:
         raise FactoryResetError("Factory reset diagnostic spool is unsafe or unavailable.") from exc
     # Refuse misconfigured shared directories: the collector publishes only UUID ZIPs.
     if not path.is_dir() or path == path.parent:
@@ -1700,8 +1713,8 @@ def _run_factory_reset_locked(
         )
         _update_request("committing", "Replacing the Atlaso database with the validated factory database.")
         if not (adapter and adapter.dry_run):
-            # Writers are stopped; failure retains the old jobs so expiry can retry.
-            _clear_diagnostic_archives()
+            # Root performs reset, but the stopped Atlaso services own their spool.
+            _clear_diagnostic_archives(service_account=True)
         _replace_database(source_path, candidate_path)
         if not (adapter and adapter.dry_run):
             _clear_apply_staging()

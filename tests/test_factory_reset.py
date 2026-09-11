@@ -1733,6 +1733,10 @@ def test_managed_factory_reset_retains_marker_until_readiness(tmp_path, monkeypa
     )
     monkeypatch.setattr(factory_reset, "_stop_application_services", lambda **_kwargs: None)
     monkeypatch.setattr(factory_reset, "_candidate_database", lambda *_args, **_kwargs: 16)
+    import sys
+    from types import SimpleNamespace
+
+    monkeypatch.setitem(sys.modules, "pwd", SimpleNamespace(getpwnam=lambda name: SimpleNamespace(pw_uid=tmp_path.stat().st_uid)))
     diagnostic_spool = tmp_path / "diagnostics"
     diagnostic_spool.mkdir(mode=0o700)
     diagnostic_archive = diagnostic_spool / "00000000-0000-0000-0000-000000000001.zip"
@@ -2456,7 +2460,7 @@ def test_complete_factory_reset_resumes_after_post_replacement_interruption(
     assert not (state_directory / "request.json").exists()
 
 
-@pytest.mark.parametrize("mode,owner", [(0o40755, 123), (0o40700, 456)])
+@pytest.mark.parametrize("mode,owner", [(0o40755, 123), (0o40700, 456), (0o40700, 123)])
 def test_factory_reset_preserves_diagnostics_with_unsafe_ownership(tmp_path, monkeypatch, mode, owner):
     """Reset preserves archives when collection would reject their directory.
 
@@ -2466,6 +2470,7 @@ def test_factory_reset_preserves_diagnostics_with_unsafe_ownership(tmp_path, mon
         mode: Simulated POSIX directory mode.
         owner: Simulated directory owner.
     """
+    import sys
     from types import SimpleNamespace
 
     import atlaso.app.factory_reset as factory_reset
@@ -2491,8 +2496,15 @@ def test_factory_reset_preserves_diagnostics_with_unsafe_ownership(tmp_path, mon
         return original_stat(path, *args, **kwargs)
 
     with monkeypatch.context() as patch:
-        patch.setattr(diagnostics, "os", SimpleNamespace(name="posix", geteuid=lambda: 123))
+        patch.setattr(diagnostics, "os", SimpleNamespace(name="posix", geteuid=lambda: 0))
         patch.setattr(type(spool), "stat", metadata)
-        with pytest.raises(factory_reset.FactoryResetError, match="unsafe"):
-            factory_reset._clear_diagnostic_archives()
+        patch.setitem(sys.modules, "pwd", SimpleNamespace(getpwnam=lambda name: SimpleNamespace(pw_uid=123)))
+        if mode == 0o40700 and owner == 123:
+            cleared = []
+            patch.setattr(factory_reset, "_clear_symlink_resistant_directory", lambda path, **kwargs: cleared.append(path))
+            factory_reset._clear_diagnostic_archives(service_account=True)
+            assert cleared == [spool]
+        else:
+            with pytest.raises(factory_reset.FactoryResetError, match="unsafe"):
+                factory_reset._clear_diagnostic_archives(service_account=True)
     assert archive.read_bytes() == b"preserve"

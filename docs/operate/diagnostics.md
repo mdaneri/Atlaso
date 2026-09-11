@@ -102,11 +102,13 @@ Collection requires at least 16 MiB of free spool space and uses bounded memory 
 
 Web bundles expire 24 hours after their request time and immediately become unavailable to download. The worker removes
 expired terminal artifacts during bounded reconciliation; if the worker is stopped, physical removal resumes when it
-returns. Expired downloads also attempt cleanup. An item-specific cleanup failure retains that protected artifact for
-retry and storage attention; cleanup continues for the other expired bundles.
+returns. Pending or running jobs remain cancellable after the retention deadline so an unavailable worker cannot
+leave the collection slot blocked. Expired downloads also attempt cleanup. An item-specific cleanup failure retains that
+protected artifact for retry and storage attention; cleanup continues for the other expired bundles.
 Complete factory reset clears the dedicated diagnostic spool before replacing its job records. A spool with an unsafe
 path, owner, or permissions or an unrecognized entry blocks reset cleanup so the existing retention records remain
-available for recovery.
+available for recovery. Appliance reset validates ownership against the `atlaso` service account even though reset
+itself runs as root.
 Development-mode reset uses the same cleanup while holding its database writer lock. Finish or cancel any queued or
 running diagnostic collection first; development reset does not stop appliance services to quiesce collectors.
 Manual deletion affects only the appliance copy. Neither expiry nor deletion promises forensic erasure or removes copies

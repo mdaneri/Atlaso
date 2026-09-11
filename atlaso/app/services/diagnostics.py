@@ -107,7 +107,7 @@ def row(job: Job) -> dict[str, Any]:
     status = state.get("bundle_status", job.status)
     if status not in {"deleted", "expired"} and job.status != "succeeded":
         status = job.status
-    if expires_at(job) <= utcnow() and status != "deleted":
+    if expires_at(job) <= utcnow() and status != "deleted" and job.status not in {"pending", "running"}:
         status = "expired"
     return {"id": job.id, "task_id": job.id, "created_at": job.created_at.isoformat(),
             "expires_at": expires_at(job).isoformat(), "status": status,
