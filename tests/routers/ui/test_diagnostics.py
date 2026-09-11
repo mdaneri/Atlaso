@@ -490,3 +490,36 @@ def test_publication_flush_precedes_ready_state(client, monkeypatch, tmp_path, f
         assert diagnostics.result(job)["bundle_status"] == ("failed" if flush_fails else "ready")
         assert job.finished_at is not None
         assert job.progress_percent == 100
+
+
+@pytest.mark.parametrize("terminal_status", ["succeeded", "failed", "cancelled"])
+def test_terminal_cancellation_conflicts_without_audit(client, monkeypatch, tmp_path, terminal_status):
+    """A stale cancel action must not claim or audit a cancellation that did not occur.
+
+    Args:
+        client: Application client fixture.
+        monkeypatch: Dependency override fixture.
+        tmp_path: Private test filesystem root.
+        terminal_status: Completed job state reached before the cancellation request.
+    """
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.routers.ui import diagnostics as routes
+    from atlaso.app.services import diagnostics
+
+    csrf = prepare(client, monkeypatch, tmp_path)
+    bundle_id = client.post(ROOT + "/create", data={"csrf": csrf}).json()["id"]
+    with SessionLocal() as db:
+        job = diagnostics.find_job(db, bundle_id)
+        job.status = terminal_status
+        original_result = job.result
+        db.commit()
+    audits = []
+    monkeypatch.setattr(routes, "record_audit", lambda *args, **kwargs: audits.append(kwargs))
+    response = client.post(ROOT + "/" + bundle_id + "/cancel", data={"csrf": csrf})
+    assert response.status_code == 409
+    assert response.json()["detail"] == "Collection has already stopped. Refresh the bundle status."
+    assert audits == []
+    with SessionLocal() as db:
+        job = diagnostics.find_job(db, bundle_id)
+        assert job.status == terminal_status
+        assert job.result == original_result

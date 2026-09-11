@@ -17178,7 +17178,7 @@ def esxi_pxe_page_context(
     from atlaso.app.models import NetworkBootDiscoveredHost
     from atlaso.app.services.network_boot import (
         catalog_rows,
-        esxi_boot_readiness_warnings,
+        esxi_boot_management_state,
         esxi_host_assignments_by_mac,
     )
     from atlaso.app.services.network_boot import (
@@ -17186,7 +17186,9 @@ def esxi_pxe_page_context(
     )
 
     context = esxi_pxe_context(db)
-    context["esxi_boot_readiness_warnings"] = esxi_boot_readiness_warnings(db, context["esxi_pxe_hosts"])
+    boot_management = esxi_boot_management_state(db, context["esxi_pxe_hosts"])
+    context["esxi_boot_readiness_warnings"] = boot_management["warnings"]
+    context["esxi_boot_authorization_reasons"] = boot_management["authorization_reasons"]
     kickstarts = context["esxi_kickstarts"]
     selected = next((row for row in kickstarts if row.id == selected_id), None) or (kickstarts[0] if kickstarts else None)
     selected_validation = {"valid": True, "errors": [], "warnings": []}

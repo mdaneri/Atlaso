@@ -164,6 +164,8 @@ def build_router(*, management: Callable[..., Any], admin: Callable[..., Any],
             state["bundle_status"] = "cancelled"
         elif job.status == "running":
             state["cancel_requested"] = True
+        else:
+            raise HTTPException(409, "Collection has already stopped. Refresh the bundle status.")
         job.result = json.dumps(state)
         db.commit()
         record_audit(db, actor=identity.username, action="diagnostics.cancel", resource_type="diagnostic_bundle", resource_id=job.id)

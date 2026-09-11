@@ -35,6 +35,7 @@ anything. A diagnostic bundle is not a settings backup or a promise of source au
 The page uses the established Atlaso grid and wizard controls, including keyboard row opening and context-menu actions.
 Use **Collect again** to reopen the previous selections for review; it does not silently expand collection scope.
 The row context menu offers cancellation while pending/running and confirmed deletion after collection stops.
+If collection finishes before a cancellation request arrives, the request reports a conflict; refresh the bundle status.
 When JavaScript is unavailable, the page retains a read-only collection; use the CLI for recovery collection.
 
 ## Privacy and contents
