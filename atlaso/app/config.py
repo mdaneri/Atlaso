@@ -76,6 +76,7 @@ class Settings(BaseSettings):
     repository_path: Path = Path("/mnt/atlaso-vcf-offline-depot")
     vcf_backup_path: Path = Path("/mnt/atlaso-vcf-backups")
     app_log_path: Path = Path("/var/log/atlaso/atlaso.log")
+    diagnostics_spool_path: Path = Path("/var/lib/atlaso/diagnostics")
     esxi_kickstart_max_bytes: int = 262_144
     esxi_installer_iso_max_bytes: int = 1024 * 1024 * 1024
     monitor_enabled: bool = True

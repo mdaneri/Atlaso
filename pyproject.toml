@@ -1,6 +1,6 @@
 [project]
 name = "atlaso"
-version = "0.9.347"
+version = "0.9.348"
 description = "Atlaso supports POC, lab, and test environments by simplifying deployment, maintenance, and validation."
 readme = "README.md"
 license = "MIT"
@@ -29,6 +29,7 @@ atlaso-console = "atlaso.app.appliance_console:main"
 atlaso-kmip = "atlaso.app.kmip.server:main"
 atlaso-vault = "atlaso.app.vault_cli:main"
 atlaso-worker = "atlaso.app.worker:main"
+atlaso-diagnostics = "atlaso.diagnostics:main"
 
 [project.optional-dependencies]
 dev = [
@@ -87,6 +88,9 @@ show_error_codes = true
 warn_unused_configs = true
 follow_imports = "silent"
 files = [
+  "atlaso/diagnostics.py",
+  "atlaso/app/services/diagnostics.py",
+  "atlaso/app/routers/ui/diagnostics.py",
   "atlaso/app/factory_reset.py",
   "atlaso/app/routers/api_v1/firewall.py",
   "atlaso/app/routers/api_v1/physical_vlans.py",
