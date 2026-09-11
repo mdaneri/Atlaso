@@ -149,6 +149,34 @@ function New-LifecycleSourceSnapshot {
     param([Parameter(Mandatory)][string]$RepositoryRoot,
         [Parameter(Mandatory)][ValidatePattern('^[0-9a-f]{40}$')][string]$Commit,
         [Parameter(Mandatory)][string]$DestinationRoot, [object]$PreflightGuard)
+    if (-not ('Atlaso.SnapshotFileIdentityV1' -as [type])) {
+        Add-Type -TypeDefinition @'
+using System;
+using System.IO;
+using System.ComponentModel;
+using System.Runtime.InteropServices;
+using Microsoft.Win32.SafeHandles;
+namespace Atlaso {
+    public static class SnapshotFileIdentityV1 {
+        [StructLayout(LayoutKind.Sequential)] private struct Info {
+            public uint Attributes, CreateLow, CreateHigh, AccessLow, AccessHigh, WriteLow, WriteHigh;
+            public uint Volume, SizeHigh, SizeLow, Links, IndexHigh, IndexLow;
+        }
+        [DllImport("kernel32.dll", SetLastError=true)]
+        private static extern bool GetFileInformationByHandle(SafeFileHandle h, out Info info);
+        public static string Get(SafeFileHandle handle) {
+            Info info;
+            if (!GetFileInformationByHandle(handle, out info)) throw new Win32Exception(Marshal.GetLastWin32Error());
+            if (info.Links != 1 || (info.Attributes & 0x410) != 0)
+                throw new IOException("Snapshot creation identity or single-link requirement failed.");
+            return info.Volume.ToString("X8") + info.IndexHigh.ToString("X8") + info.IndexLow.ToString("X8");
+        }
+    }
+}
+'@
+    }
+    $snapshotIdentities = [Collections.Generic.Dictionary[string,string]]::new([StringComparer]::OrdinalIgnoreCase)
+    $snapshotPins = [Collections.Generic.List[IO.FileStream]]::new()
     $snapshotId = [guid]::NewGuid().ToString('N')
     $archivePath = Join-Path $DestinationRoot "source-$snapshotId.zip"
     $snapshotPath = Join-Path $DestinationRoot "source-$snapshotId"
@@ -223,6 +251,7 @@ function New-LifecycleSourceSnapshot {
             if ($entry.FullName.EndsWith('/')) { continue }
             $entryWriter = [IO.File]::Open($entryPath, 'CreateNew', 'Write', 'None')
             try {
+                $snapshotIdentities.Add($entryPath, [Atlaso.SnapshotFileIdentityV1]::Get($entryWriter.SafeFileHandle))
                 if ($PreflightGuard) { $PreflightGuard.Record($entryPath, $entryWriter.SafeFileHandle) }
                 $entryReader = $entry.Open()
                 try { $entryReader.CopyTo($entryWriter) } finally { $entryReader.Dispose() }
@@ -232,6 +261,15 @@ function New-LifecycleSourceSnapshot {
     } finally { $extractArchive.Dispose() }
     # Deny ordinary same-user writes, including creation/replacement beneath every
     # directory. Keep DELETE rights available to supported owned-artifact cleanup.
+    # Pin the actual creation objects before propagating any inherited ACL. A
+    # same-byte hard-link substitution must never change an external descriptor.
+    foreach ($createdFile in $snapshotIdentities.Keys) {
+        $snapshotFilePin = [IO.File]::Open($createdFile, 'Open', 'Read', 'Read')
+        $snapshotPins.Add($snapshotFilePin)
+        if ([Atlaso.SnapshotFileIdentityV1]::Get($snapshotFilePin.SafeFileHandle) -cne $snapshotIdentities[$createdFile]) {
+            throw 'Snapshot creation identity or single-link requirement failed.'
+        }
+    }
     $sourceSid = [Security.Principal.WindowsIdentity]::GetCurrent().User
     $denyWrite = [Security.AccessControl.FileSystemAccessRule]::new($sourceSid,
         [Security.AccessControl.FileSystemRights]::Write,
@@ -265,7 +303,10 @@ function New-LifecycleSourceSnapshot {
         }
     } finally { $verifiedArchive.Dispose() }
     return $snapshotPath
-    } finally { $archiveRead.Dispose() }
+    } finally {
+        foreach ($snapshotFilePin in $snapshotPins) { $snapshotFilePin.Dispose() }
+        $archiveRead.Dispose()
+    }
 }
 
 <#

@@ -460,10 +460,21 @@ finally { $frozenNative.Dispose() }
 if (-not $frozenProbe.Blocked -or (Test-Path -LiteralPath $frozenRoot)) { throw 'Frozen cleanup fixture failed.' }
 # Inject immediately after real extraction in this fixture's local function copy.
 $injectedSnapshotSource = $snapshotFunction.Extent.Text.Replace(
-    '$sourceSid = [Security.Principal.WindowsIdentity]::GetCurrent().User',
-    '[IO.File]::WriteAllText((Join-Path $snapshotPath "source.txt"), "construction substitution"); $sourceSid = [Security.Principal.WindowsIdentity]::GetCurrent().User')
+    'foreach ($createdFile in $snapshotIdentities.Keys) {',
+    '[IO.File]::WriteAllText((Join-Path $snapshotPath "source.txt"), "construction substitution"); foreach ($createdFile in $snapshotIdentities.Keys) {')
 . ([scriptblock]::Create($injectedSnapshotSource))
 try {
     Assert-Refused { New-LifecycleSourceSnapshot -RepositoryRoot $sourceRoot -Commit $admitted -DestinationRoot $fixture } 'snapshot bytes differ from the Git archive'
 } finally { . ([scriptblock]::Create($snapshotFunction.Extent.Text)) }
+$externalSnapshotFile = Join-Path $fixture 'external-source.txt'
+[IO.File]::WriteAllText($externalSnapshotFile, 'initial')
+$externalAclBefore = (Get-Acl -LiteralPath $externalSnapshotFile).Sddl
+$hardlinkSnapshotSource = $snapshotFunction.Extent.Text.Replace(
+    'foreach ($createdFile in $snapshotIdentities.Keys) {',
+    '[IO.File]::Delete((Join-Path $snapshotPath "source.txt")); New-Item -ItemType HardLink -Path (Join-Path $snapshotPath "source.txt") -Target $externalSnapshotFile | Out-Null; foreach ($createdFile in $snapshotIdentities.Keys) {')
+. ([scriptblock]::Create($hardlinkSnapshotSource))
+try {
+    Assert-Refused { New-LifecycleSourceSnapshot -RepositoryRoot $sourceRoot -Commit $admitted -DestinationRoot $fixture } 'creation identity or single-link'
+} finally { . ([scriptblock]::Create($snapshotFunction.Extent.Text)) }
+if ((Get-Acl -LiteralPath $externalSnapshotFile).Sddl -cne $externalAclBefore) { throw 'Substituted hard link changed an external ACL.' }
 Write-Host "LAN segment safety fixtures passed: $fixture"

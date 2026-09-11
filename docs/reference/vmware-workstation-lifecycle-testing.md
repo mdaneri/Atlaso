@@ -119,7 +119,9 @@ harness also load from the admitted archive; identity naming loads directly from
 snapshots deny same-user write access with inherited ACLs throughout their lifetime, including new child creation.
 Delete rights remain available to the supported owned-artifact cleanup path. Git archive bytes are captured directly
 from the process output; the on-disk archive is pinned and digest-checked, and extracted file hashes are verified
-against that archive under write exclusion before any helper or build can use the snapshot.
+against that archive under write exclusion before any helper or build can use the snapshot. Every extracted file
+is pinned and checked against its creation identity and single-link count before ACL propagation, preserving
+external files if a hard link was substituted.
 If archive, credential, module, or other pre-resource admission fails, the runner releases only its newly created
 preflight result directory. Cleanup verifies the independently derived parent, rejects links, unexpected entries,
 and nonempty VM/seed roots, and verifies absence so an ordinary preflight failure can be retried. The root is pinned
