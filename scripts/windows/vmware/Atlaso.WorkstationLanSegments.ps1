@@ -219,7 +219,7 @@ function Update-AtlasoLanPreferences {
         }
         [byte[]]$original = @(Read-AtlasoStreamBytes -Stream $originalLock)
         if ($original.Length -eq 0) { throw 'Initialize Workstation preferences through normal setup before managing LAN segments.' }
-        [byte[]]$replacement = & $Transform $original
+        [byte[]]$replacement = & $Transform $original $Path
         if (Test-AtlasoByteArraysEqual -Left $original -Right $replacement) {
             if ($Readback) { & $Readback }
             return
@@ -336,7 +336,7 @@ function Resolve-AtlasoOwnedLanSegment {
         $receiptPin = [Atlaso.WorkstationFileIdentity]::PinOrdinaryDirectoryPath($receiptRoot, $true)
         $result = @{ Id = ''; ReceiptPath = ''; ReceiptSha256 = '' }
         Update-AtlasoLanPreferences -Path $PreferencesPath -Transform {
-            param($original)
+            param($original, $canonicalProviderPath)
             $parsed = ConvertFrom-AtlasoLanPreferences -Bytes $original
             foreach ($entry in $parsed.Entries.Values) {
                 if ($entry.name -ieq $Name) { $result.Id = $entry.pvnID; return ,$original }
@@ -347,7 +347,7 @@ function Resolve-AtlasoOwnedLanSegment {
             $index = if ($null -eq $parsed.Count) { 0 } else { $parsed.Count }
             $receipt = $Owner.Clone()
             $receipt.schema = 1; $receipt.name = $Name; $receipt.pvn_id = $id
-            $receipt.preferences_path = [System.IO.Path]::GetFullPath($PreferencesPath)
+            $receipt.preferences_path = $canonicalProviderPath
             $receipt.creation_id = [guid]::NewGuid().ToString('N')
             # Publish intent before registration. The immutable receipt records that this
             # exact random identity was absent under the provider lock, never a name claim.
@@ -480,6 +480,10 @@ function Remove-AtlasoWorkstationLanSegment {
         [Parameter(Mandatory)][ValidateNotNullOrEmpty()][string[]]$VmRoots,
         [string]$PreferencesPath = (Join-Path ([Environment]::GetFolderPath('ApplicationData')) 'VMware\preferences.ini'),
         [string]$InventoryPath = (Join-Path ([Environment]::GetFolderPath('ApplicationData')) 'VMware\inventory.vmls'))
+    Assert-AtlasoPathHasNoReparsePoint -Path $PreferencesPath
+    $providerPin = [Atlaso.WorkstationFileIdentity]::PinOrdinaryReadFile($PreferencesPath, $true)
+    try { $PreferencesPath = [Atlaso.WorkstationCanonicalProviderV1]::Get($providerPin) }
+    finally { $providerPin.Dispose() }
     $pins = [System.Collections.Generic.List[System.IDisposable]]::new()
     try {
         $pins.Add([Atlaso.WorkstationFileIdentity]::PinOrdinaryDirectoryPath((Split-Path -Parent $ReceiptPath), $true))

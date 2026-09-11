@@ -20,7 +20,7 @@ from atlaso.app.models import (
     NetworkBootEsxiBootCapability,
     Setting,
 )
-from atlaso.app.secrets import decrypt_secret
+from atlaso.app.secrets import decrypt_secret, encrypt_secret
 
 
 @pytest.fixture()
@@ -430,3 +430,36 @@ def test_factory_reset_retains_exact_executed_esxi_snapshot(client, monkeypatch,
             assert not next(unit for unit in ui.appliance_apply_units(db, reconcile=False) if unit['id'] == 'esxi_pxe')['changed']
     finally:
         engine.dispose()
+
+
+def test_management_authorization_requires_desired_and_applied_policy(applied_boot_fixture):
+    """Keep desired enablement, protected runtime state and menu readiness separate.
+
+    Args:
+        applied_boot_fixture: Isolated real-Apply pipeline with a bootable reference.
+    """
+    state = applied_boot_fixture
+    state.apply()
+    with SessionLocal() as db:
+        hosts = [db.get(EsxiPxeHost, state.host_id)]
+        projection = boot.esxi_boot_management_state(db, hosts)
+        assert projection['authorization_reasons'][state.host_id] == 'Console authorization is disabled.'
+        key = 'esxi_pxe.boot.console_authorization_required'
+        setting = db.scalar(select(Setting).where(Setting.key == key))
+        if setting is None:
+            db.add(Setting(key=key, value='true'))
+        else:
+            setting.value = 'true'
+        db.commit()
+        manifest = boot._applied_esxi_pxe_manifest(db)
+        manifest['boot'].update(enabled=True, console_authorization_required=False)
+        boot.save_esxi_applied_runtime(db, encrypt_secret(json.dumps(manifest)))
+        db.commit()
+        assert 'submit appliance changes' in boot.esxi_boot_management_state(db, hosts)['authorization_reasons'][state.host_id]
+        manifest['boot']['console_authorization_required'] = True
+        boot.save_esxi_applied_runtime(db, encrypt_secret(json.dumps(manifest)))
+        db.commit()
+        assert boot.esxi_boot_management_state(db, hosts)['authorization_reasons'][state.host_id] == ''
+        hosts[0].hostname = 'pending-host-edit'
+        db.commit()
+        assert 'differs' in boot.esxi_boot_management_state(db, hosts)['authorization_reasons'][state.host_id]

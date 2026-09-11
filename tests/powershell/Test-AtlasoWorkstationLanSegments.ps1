@@ -213,6 +213,21 @@ try {
     if ([IO.File]::ReadAllText($preferences) -cne 'committed state') { throw 'Successful readback pin allowed replacement.' }
 } finally { foreach ($pin in $commitPins) { $pin.Dispose() } }
 [IO.File]::WriteAllText($preferences, 'concurrent state')
+# Creation through the alias records canonical provenance; cleanup through the
+# canonical path and alias both accept the same immutable receipt.
+$aliasPreferences = Join-Path $provider 'alias-preferences.ini'
+[IO.File]::WriteAllText($aliasPreferences, $original)
+$aliasBuffer = [Text.StringBuilder]::new(32768)
+if ([AtlasoFixture.ShortProviderPath]::GetShortPathName($aliasPreferences, $aliasBuffer, 32768) -eq 0) { throw 'Alias receipt fixture unavailable.' }
+$aliasSegment = Resolve-AtlasoOwnedLanSegment -Name AliasOwned -Owner $owner -PreferencesPath $aliasBuffer.ToString() -PublishReceipt { param($pending) }
+$aliasReceipt = [IO.File]::ReadAllText($aliasSegment.ReceiptPath) | ConvertFrom-Json
+if ($aliasReceipt.preferences_path -ine $aliasPreferences) { throw 'Receipt stored alias text instead of canonical path.' }
+$aliasArguments = @{ ReceiptPath = $aliasSegment.ReceiptPath; ReceiptSha256 = $aliasSegment.ReceiptSha256
+    Owner = $owner; VmRoots = @($vmRoot); PreferencesPath = $aliasPreferences; InventoryPath = $inventory }
+$aliasResult = Remove-AtlasoWorkstationLanSegment @aliasArguments
+if (-not $aliasResult.registration_absent) { throw 'Canonical cleanup rejected alias-created receipt.' }
+$aliasArguments.PreferencesPath = $aliasBuffer.ToString()
+if (-not (Remove-AtlasoWorkstationLanSegment @aliasArguments).registration_absent) { throw 'Alias retry rejected canonical receipt.' }
 # A second thread holds the provider transaction lock while producing unresolved
 # recovery state. A concurrent retry must refuse before reading its old snapshot.
 $pathKey = [Atlaso.WorkstationFileIdentity]::Get((Split-Path -Parent $preferences)) + ':' + (Split-Path -Leaf $preferences).ToUpperInvariant()

@@ -136,7 +136,8 @@ The required creation callback flushes and durably publishes the pending identit
 register the segment. An interruption therefore leaves either no registration or a registration with its original
 independently recorded receipt hash; cleanup can verify an absent pending registration normally.
 The pinned provider handle resolves its canonical long pathname; parent file identity and the canonical leaf key
-the mutex, so drive/UNC and short-name aliases share transaction exclusion and recovery discovery.
+the mutex, so drive/UNC and short-name aliases share transaction exclusion and recovery discovery. Receipts store
+that canonical provider pathname, and cleanup resolves its input the same way before checking receipt identity.
 A provider-path mutex spans recovery preflight, preferences publication, rollback, and artifact retirement across
 processes and Windows sessions. An overlapping transaction refuses immediately; retries inspect retained recovery
 artifacts after the previous transaction releases its lock. Independent final registration and reference readback

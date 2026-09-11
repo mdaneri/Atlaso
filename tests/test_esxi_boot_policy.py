@@ -46,3 +46,36 @@ def test_console_authorization_default_and_ui_round_trip(client):
         switch = re.search(r'<input[^>]+name="console_authorization_required"[^>]*>', page.text)
         assert switch is not None
         assert ("checked" in switch.group()) is required
+
+
+def test_host_reference_refresh_is_current_and_contains_no_kickstart_source(client):
+    """Project current choices through the authenticated, non-cacheable UI flow.
+
+    Args:
+        client: Application client with the isolated seeded database.
+    """
+    from atlaso.app.models import EsxiKickstart
+
+    login(client)
+    headers = {"X-Requested-With": "AtlasoHostReferenceRefresh"}
+    response = client.get("/ui/management/network-boot", headers=headers)
+    assert response.status_code == 200
+    assert response.headers["cache-control"] == "no-store"
+    assert response.json()["console_authorization_required"] is False
+    with SessionLocal() as db:
+        row = EsxiKickstart(name="refresh-choice", content="fixture source must remain private", content_hash="0" * 64, enabled=False)
+        db.add(row)
+        db.commit()
+        row_id = row.id
+    response = client.get("/ui/management/network-boot", headers=headers)
+    assert {"id": row_id, "label": "refresh-choice"} in response.json()["kickstarts"]
+    assert "fixture source" not in response.text
+    with SessionLocal() as db:
+        row = db.get(EsxiKickstart, row_id)
+        row.name = "renamed-choice"
+        db.commit()
+    assert {"id": row_id, "label": "renamed-choice"} in client.get("/ui/management/network-boot", headers=headers).json()["kickstarts"]
+    with SessionLocal() as db:
+        db.delete(db.get(EsxiKickstart, row_id))
+        db.commit()
+    assert all(item["id"] != row_id for item in client.get("/ui/management/network-boot", headers=headers).json()["kickstarts"])
