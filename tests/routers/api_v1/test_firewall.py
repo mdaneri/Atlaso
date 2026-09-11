@@ -168,7 +168,7 @@ def test_flagged_management_listener_preview_matches_ui_and_api(client):
     )
 
 
-@pytest.mark.parametrize("valid_note, invalid_note", [("a" * 1000, "x" * 1001), ("\U0001f600" * 500, "\U0001f600" * 501), ("a" * 998 + "\U0001f600", "a" * 999 + "\U0001f600")], ids=["ascii", "non-bmp", "mixed"])
+@pytest.mark.parametrize("valid_note, invalid_note", [("a" * 1000, "x" * 1001), ("\U0001f600" * 500, "\U0001f600" * 501), ("a" * 998 + "\U0001f600", "a" * 999 + "\U0001f600"), ("a" * 997 + "\r\nb", "a" * 998 + "\r\nb")], ids=["ascii", "non-bmp", "mixed", "literal-crlf"])
 def test_firewall_description_write_limit_preserves_legacy_reads(client, valid_note, invalid_note):
     """Reject oversized writes without losing existing or legacy operator notes.
 

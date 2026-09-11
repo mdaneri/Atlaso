@@ -349,7 +349,7 @@ def test_firewall_multiline_description_round_trip(client):
     assert '<note>' not in page.text
 
 
-@pytest.mark.parametrize("valid_note, invalid_note", [("a" * 1000, "x" * 1001), ("\U0001f600" * 500, "\U0001f600" * 501), ("a" * 998 + "\U0001f600", "a" * 999 + "\U0001f600")], ids=["ascii", "non-bmp", "mixed"])
+@pytest.mark.parametrize("valid_note, invalid_note", [("a" * 1000, "x" * 1001), ("\U0001f600" * 500, "\U0001f600" * 501), ("a" * 998 + "\U0001f600", "a" * 999 + "\U0001f600"), ("a" * 998 + "\r\nb", "a" * 999 + "\r\nb"), ("a" * 998 + "\rb", "a" * 999 + "\rb")], ids=["ascii", "non-bmp", "mixed", "crlf", "cr"])
 def test_firewall_form_description_limit_rejects_before_mutation(client, valid_note, invalid_note):
     """Enforce the textarea bound on direct form create and edit submissions.
 
@@ -374,7 +374,7 @@ def test_firewall_form_description_limit_rejects_before_mutation(client, valid_n
     endpoint = f"/firewall/rules/{rule_id}/edit"
     assert client.post(endpoint, data=oversized, headers=headers).status_code == 422
     with SessionLocal() as db:
-        assert db.get(FirewallRule, rule_id).description == fields["description"]
+        assert db.get(FirewallRule, rule_id).description == valid_note.replace("\r\n", "\n").replace("\r", "\n")
     fields["description"] = "b" * 1000
     updated = client.post(endpoint, data=fields, headers=headers)
     assert updated.status_code == 200, updated.text

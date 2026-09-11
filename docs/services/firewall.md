@@ -62,6 +62,8 @@ return HTTP 422 without changing the saved rule. Most characters count as one un
 Multilingual Plane, such as many emoji, count as two, matching the browser textarea. Existing longer notes remain readable
 and are never truncated;
 shorten them before saving an edit. This tightens write validation while preserving field names and stored content.
+Browser-form CRLF and CR line endings are normalized to LF before validation and storage, matching the textarea value.
+JSON API notes retain their literal line endings and count every submitted UTF-16 unit.
 The OpenAPI description field publishes `x-maxLengthUtf16CodeUnits: 1000`; clients must enforce this extension using
 UTF-16 length (for example, JavaScript string `length`). Standard JSON Schema `maxLength` counts code points, so it is
 intentionally omitted for this field.

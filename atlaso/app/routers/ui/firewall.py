@@ -241,6 +241,8 @@ def build_router(dependencies: FirewallUiDependencies) -> FirewallUiRouter:
             enabled: Whether the requested behavior is enabled.
             description: Human-readable description of the resource.
         """
+        # HTML form serialization expands textarea LF to CRLF; count the textarea value.
+        description = description.replace("\r\n", "\n").replace("\r", "\n")
         try:
             validate_firewall_description(description)
         except ValueError as exc:
@@ -273,7 +275,7 @@ def build_router(dependencies: FirewallUiDependencies) -> FirewallUiRouter:
         interface_name: str = Form(""),
         priority: int = Form(100),
         enabled: str | None = Form(None),
-        description: str = Form("", max_length=1000),
+        description: str = Form(""),
         csrf: str = Form(...),
         identity: Identity = Depends(require_session_identity),
         db: Session = Depends(get_db),
@@ -355,7 +357,7 @@ def build_router(dependencies: FirewallUiDependencies) -> FirewallUiRouter:
         interface_name: str = Form(""),
         priority: int = Form(100),
         enabled: str | None = Form(None),
-        description: str = Form("", max_length=1000),
+        description: str = Form(""),
         csrf: str = Form(...),
         identity: Identity = Depends(require_session_identity),
         db: Session = Depends(get_db),
