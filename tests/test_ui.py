@@ -1820,7 +1820,7 @@ def test_monitor_page_renders_template_and_browser_assets(client):
     assert "Loading devices" not in page.text
     assert "<th>Device</th><th>Read/s</th><th>Write/s</th>" in page.text
     assert "swagger-link-icon" in page.text
-    assert "/static/app.css?v=issues-515-519-10-605-1-660-3" in page.text
+    assert "/static/app.css?v=issues-803-807-1" in page.text
     assert "/static/ui-patterns.js?v=atlaso-ui-foundation-20260726-10" in page.text
     assert "/static/app.js?v=issues-803-807-2" in page.text
     app_css = client.get("/static/app.css")
@@ -7244,8 +7244,11 @@ def test_network_boot_host_management_report_and_print_contract(client):
     assert "flex: 1 1 auto;" in app_css
     assert "min-height: 0;" in app_css
     assert "height: 240px !important;" in app_css
-    assert ".host-reference-enable-step" in app_css
-    assert "justify-items: center;" in app_css
+    enablement = page.text.split('data-atlaso-wizard-step="enablement"', 1)[1].split("</section>", 1)[0]
+    assert 'class="form-stack"' in enablement
+    assert 'class="switch-field"' in enablement
+    assert 'class="switch-input" type="checkbox" name="enabled"' in enablement
+    assert "Changes take effect after you review and submit appliance changes." in enablement
     print_css = app_css.split("@media print", 1)[1]
     assert "@page atlaso-network-boot-report" in print_css
     assert "page: atlaso-network-boot-report;" in print_css
