@@ -41,7 +41,8 @@ When JavaScript is unavailable, the page retains a read-only collection; use the
 
 With anonymization enabled, repeated hostnames become `hostname0001`, `hostname0002`, and so on; usernames become
 `user0001`, `user0002`, and so on. The mapping is consistent across the archive and exists only in collector memory.
-Aliases skip a candidate that equals the normalized source identifier. Each capture starts a new mapping.
+Aliases are assigned after collection and exclude all collected source identifiers, regardless of source order.
+Each capture starts a new mapping.
 No original-value mapping or pseudonymization key is written to the archive.
 IP and MAC addresses remain unchanged. Replacing hostnames may make literal DNS-name comparison less useful.
 

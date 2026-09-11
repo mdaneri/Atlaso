@@ -229,7 +229,6 @@ class Projection:
         """
         self.anonymize = anonymize
         self.aliases: dict[tuple[str, str], str] = {}
-        self.counts = {"hostname": 0, "user": 0}
 
     def identifier(self, value: Any, kind: str) -> str | None:
         """Accept only bounded hostname/account tokens; optionally substitute aliases.
@@ -249,13 +248,28 @@ class Projection:
             return value
         key = (kind, value.lower().rstrip(".") if kind == "hostname" else value)
         if key not in self.aliases:
-            self.counts[kind] += 1
-            candidate = f"{kind}{self.counts[kind]:04d}"
-            if candidate == key[1]:
-                self.counts[kind] += 1
-                candidate = f"{kind}{self.counts[kind]:04d}"
-            self.aliases[key] = candidate
+            # Markers cannot be accepted source identities. Resolve only after
+            # every collector has registered names, including later sources.
+            self.aliases[key] = f"@atlaso-identity-{len(self.aliases) + 1}@"
         return self.aliases[key]
+
+    def render(self, data: bytes) -> bytes:
+        """Replace internal JSON identity markers after all sources are collected.
+
+        Args:
+            data: Serialized projected evidence containing internal identity markers.
+        """
+        reserved = {value.lower().rstrip(".") for _, value in self.aliases}
+        counts = {"hostname": 0, "user": 0}
+        replacements: dict[bytes, bytes] = {}
+        for (kind, _), marker in self.aliases.items():
+            counts[kind] += 1
+            candidate = f"{kind}{counts[kind]:04d}"
+            while candidate in reserved:
+                counts[kind] += 1
+                candidate = f"{kind}{counts[kind]:04d}"
+            replacements[json.dumps(marker).encode()] = json.dumps(candidate).encode()
+        return re.sub(rb'"@atlaso-identity-[0-9]+@"', lambda match: replacements.get(match[0], match[0]), data)
 
 
 def address(value: Any) -> str | None:
@@ -787,6 +801,13 @@ class Collector:
                 configuration_changed = self.first_configuration != {key: latest[key] for key in self.first_configuration}
             except (OSError, sqlite3.Error, ValueError, EvidenceError, TypeError, KeyError):
                 pass
+        # Final names exclude every source identity, regardless of collector order.
+        # Recompute the per-source integrity metadata over the exported bytes.
+        for entry in entries:
+            if entry["status"] == "success":
+                filename = entry["path"]
+                files[filename] = self.projection.render(files[filename])
+                entry.update(size_bytes=len(files[filename]), sha256=hashlib.sha256(files[filename]).hexdigest())
         omissions = [entry["collector"] + ": " + entry["status"] for entry in entries if entry["status"] != "success"]
         omissions.extend(["Free-form log messages and arbitrary configuration are excluded.",
                           "Browser handshake status and close codes require separate browser evidence.",
@@ -863,7 +884,7 @@ def main() -> int:
                 evidence = collector.update()
             else:
                 evidence = collector.journal(args.source.removeprefix("journal-")) if args.source.startswith("journal-") else collector.firewall()
-            data = json_bytes({"source": args.source, "evidence": evidence})
+            data = collector.projection.render(json_bytes({"source": args.source, "evidence": evidence}))
             if len(data) > SOURCE_LIMIT:
                 raise EvidenceError("truncated")
             print(data.decode(), end="")

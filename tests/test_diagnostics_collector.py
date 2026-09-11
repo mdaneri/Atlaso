@@ -1,5 +1,6 @@
 """Verify privacy boundaries and degraded recovery without touching a live appliance."""
 
+import hashlib
 import io
 import json
 import sqlite3
@@ -36,25 +37,69 @@ def test_options_defaults_and_bounds():
 
 def test_anonymization_consistent_but_ips_and_mac_preserved():
     projection = Projection(True)
-    assert projection.identifier("myhost.example", "hostname") == "hostname0001"
-    assert projection.identifier("MYHOST.EXAMPLE.", "hostname") == "hostname0001"
-    assert projection.identifier("alice", "user") == "user0001"
-    assert projection.identifier("alice", "user") == "user0001"
-    assert projection.identifier("bob", "user") == "user0002"
-    assert projection.identifier("192.0.2.1", "hostname") == "192.0.2.1"
-    assert Projection(True).identifier("different", "hostname") == "hostname0001"
+    sources = [("myhost.example", "hostname"), ("MYHOST.EXAMPLE.", "hostname"),
+               ("alice", "user"), ("alice", "user"), ("bob", "user"), ("192.0.2.1", "hostname")]
+    markers = [projection.identifier(value, kind) for value, kind in sources]
+    exported = json.loads(projection.render(json.dumps(markers).encode()))
+    assert exported == ["hostname0001", "hostname0001", "user0001", "user0001", "user0002", "192.0.2.1"]
     assert projection.identifier("https://user:password@host", "hostname") is None
 
 
-def test_alias_candidates_never_repeat_their_source():
-    """Skip colliding aliases while preserving repeated normalized identities."""
+@pytest.mark.parametrize("reverse", [False, True])
+def test_alias_candidates_exclude_all_original_identities(reverse):
+    """Later source names cannot collide with aliases assigned to earlier names.
+
+    Args:
+        reverse: Whether alias-shaped source names are observed before ordinary names.
+    """
     projection = Projection(True)
-    assert projection.identifier("HOSTNAME0001.", "hostname") == "hostname0002"
-    assert projection.identifier("hostname0001", "hostname") == "hostname0002"
-    assert projection.identifier("hostname0003", "hostname") == "hostname0004"
-    assert projection.identifier("user0001", "user") == "user0002"
-    assert projection.identifier("user0001", "user") == "user0002"
-    assert projection.identifier("user0003", "user") == "user0004"
+    sources = [("actual-host.example", "hostname"), ("alice", "user"),
+               ("HOSTNAME0001.", "hostname"), ("hostname0002", "hostname"),
+               ("user0001", "user"), ("user0002", "user"), ("hostname0003", "user")]
+    if reverse:
+        sources.reverse()
+    markers = [projection.identifier(value, kind) for value, kind in sources]
+    markers.append(projection.identifier("hostname0001", "hostname"))
+    exported = json.loads(projection.render(json.dumps(markers).encode()))
+    originals = {value.lower().rstrip(".") for value, _ in sources}
+    assert not originals.intersection(exported)
+    assert len(set(exported[:-1])) == len(sources)
+    assert exported[-1] == exported[sources.index(("HOSTNAME0001.", "hostname"))]
+    assert "@atlaso-identity-" not in json.dumps(exported)
+
+
+def test_later_alias_shaped_source_is_absent_from_final_archive(tmp_path, monkeypatch):
+    """Resolve aliases across collectors before publishing evidence hashes.
+
+    Args:
+        tmp_path: Isolated unavailable database fixture.
+        monkeypatch: Fixture restoring synthetic source commands.
+    """
+    monkeypatch.setattr("atlaso.diagnostics.os.geteuid", lambda: 0, raising=False)
+    monkeypatch.setattr("atlaso.diagnostics.platform.node", lambda: "actual-host.example")
+    collector = Collector(Options.parse({"anonymize": True, "detailed_logs": True}), database=tmp_path / "missing.db")
+
+    def command(args):
+        """Introduce an alias-shaped hostname after the baseline collector.
+
+        Args:
+            args: Fixed command arguments identifying the requested source.
+        """
+        if args[0] == "systemctl":
+            return "ActiveState=active\nUser=user0001\n"
+        return json.dumps({"_HOSTNAME": "hostname0001", "__REALTIME_TIMESTAMP": "12345", "PRIORITY": "3"})
+
+    monkeypatch.setattr(collector, "command", command)
+    data, manifest = collector.capture()
+    with zipfile.ZipFile(io.BytesIO(data)) as archive:
+        content = b"\n".join(archive.read(name) for name in archive.namelist())
+        for original in (b"actual-host.example", b"hostname0001", b"user0001", b"@atlaso-identity-"):
+            assert original not in content
+        for entry in manifest["collectors"]:
+            if entry["status"] == "success":
+                exported = archive.read(entry["path"])
+                assert len(exported) == entry["size_bytes"]
+                assert hashlib.sha256(exported).hexdigest() == entry["sha256"]
 
 
 def test_degraded_capture_and_secret_free_entire_archive(tmp_path, monkeypatch):
@@ -250,7 +295,8 @@ def test_optional_sources_project_identifiers_and_reject_payloads(monkeypatch, t
     monkeypatch.setattr("atlaso.diagnostics.read_source", read)
     monkeypatch.setattr("atlaso.diagnostics.ordinary_path", lambda path: None)
     monkeypatch.setattr("atlaso.diagnostics.os.readlink", lambda path: "/opt/atlaso/releases/0.9.341")
-    payload = json.dumps([collector.network(), collector.listeners(), collector.resolver(), collector.firewall(), collector.nginx(), collector.update()])
+    projected = [collector.network(), collector.listeners(), collector.resolver(), collector.firewall(), collector.nginx(), collector.update()]
+    payload = collector.projection.render(json.dumps(projected).encode()).decode()
     assert "TOPSECRET" not in payload and "customer" not in payload and "private.example" not in payload
     assert "192.0.2.2" in payload and "00:11:22:33:44:55" in payload and "hostname0001" in payload
     assert '"policy": "drop"' in payload and '"set": [22, 443]' in payload
