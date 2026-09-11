@@ -109,6 +109,154 @@ Repeated setup copies nothing when the destination is already valid. Keep config
 release artifacts, and logs. Record ownership of only the task's copied configuration; later task-worktree cleanup
 must never remove or alter the primary checkout's originals.
 
+### Release task-owned LAN segments
+
+Lifecycle runs that request `lan:<name>` now create an immutable receipt before registering a new segment.
+Runtime admission requires a clean source checkout and rechecks its exact commit before VM/segment creation and before
+and after wheel building. The wheel is built from a fresh Git archive of the admitted commit, so transient edits in
+the live checkout cannot enter the artifact. Runtime modules, seed helpers, the appliance helper, and the interop
+harness also load from the admitted archive; identity naming loads directly from that commit object. Extracted
+snapshots deny same-user write access with inherited ACLs throughout their lifetime, including new child creation.
+Delete rights remain available to the supported owned-artifact cleanup path. Git archive bytes are captured directly
+from the process output; the on-disk archive is pinned and digest-checked, and extracted file hashes are verified
+against that archive under write exclusion before any helper or build can use the snapshot. Every extracted file
+is pinned and checked against its creation identity and single-link count before ACL propagation, preserving
+external files if a hard link was substituted. Snapshot ancestors and newly created directories are pinned with
+no-follow handles that deny deletion before any child is extracted, and remain pinned through final verification.
+This prevents a concurrent directory-to-junction replacement from redirecting archive writes outside the snapshot.
+The snapshot transfers its directory and file pins to its caller after verification. The lifecycle runner retains them
+through all helper consumers and releases them on exit; the wheel builder retains its pins through upload and installation.
+Preflight failure releases those pins before ownership-aware artifact cleanup. Thus renaming the verified root cannot
+substitute a different source tree between verification and use.
+Before applying inheritable ACLs, the exporter freezes each expected directory with an object-only ACL update and
+checks every immediate entry against the archive inventory. Unknown files, directories, and links are refused before
+ACL propagation; failed construction restores the directory freeze without touching unverified descendants.
+Runtime admission also compares the executing runner's already parsed script text with the admitted Git object before
+creating resources. This detects an accidentally stale parsed runner when its pathname was restored before the
+clean-checkout check. The executing entry point and host process remain trusted: this self-check cannot authenticate
+code that has deliberately removed the verifier. Moving that check into another mutable checkout launcher would not
+establish an independent trust boundary. Host execution-policy enforcement is outside this ownership receipt contract.
+
+Preferences publication rechecks the original file identity immediately before replacement and preserves a competing
+file when drift is already visible. A replacement during the remaining publication window retains ambiguous recovery
+objects for explicit recovery; an unverified backup is never installed automatically.
+
+LAN registration creation independently verifies the exact name and ID under a no-write/no-delete preferences pin and
+retains that pin through result construction, including reuse of an existing shared registration.
+
+Wheel upload requires exactly one output matching the filename, size, and SHA-256 emitted by that pip invocation.
+The wheel is held under an ordinary single-link read pin through upload, and the guest verifies its SHA-256 before
+installation. Extra, renamed, or substituted output fails instead of selecting a wheel by modification time.
+Ownership receipts and lifecycle manifests retain their original creation handles with writer and deletion exclusion
+through publication. The publisher flushes before and after renaming that exact handle, so a substituted staging
+pathname cannot replace ownership evidence.
+After publication, the receipt is identity-checked under a retained read pin through independent evidence publication
+and provider registration. Backup capture likewise pins the displaced pathname and requires the original provider
+identity; rollback bytes come from the retained original handle. An ambiguous displaced identity preserves the
+transaction files for explicit recovery rather than automatically restoring potentially substituted bytes.
+Normal rollback retains both source and target pins, captures the verified failed publication by handle, and renames
+the displaced handle without replacing an existing pathname. If a competing pathname appears during that transition,
+rollback refuses and preserves both captured objects for recovery.
+Successful preferences transactions delete their backup through the retained identity handle before releasing it.
+If archive, credential, module, or other pre-resource admission fails, the runner releases only its newly created
+preflight result directory. Cleanup verifies the independently derived parent, rejects links, unexpected entries,
+and nonempty VM/seed roots, and verifies absence so an ordinary preflight failure can be retried. The root is pinned
+from creation; failure cleanup captures descendant handles before validation and deletes only those exact objects.
+Cleanup admits only this invocation's exact archive/output paths and the archive's recorded extraction inventory.
+Creation-time stream identities bind each file; capture refuses replacements at expected paths. Cleanup denies
+descendant writes before capture through deletion, restoring the original root ACL when cleanup refuses.
+Cleanup freezes each verified directory through an object-only ACL update and requires single-link regular files;
+it never propagates an inherited ACL into unverified descendants. Refusal restores the directory ACLs through their
+retained handles, preserving external files reached by unexpected hard links.
+The result-root guard and VM/seed directory pins remain alive through all lifecycle consumers and cleanup. VM cleanup
+uses `KeepRemovalRoot` to remove validated contents while retaining the pinned empty VM directory for later owned
+artifact-root teardown. Preflight cleanup verifies the original root identity when upgrading its handle for deletion.
+Retained-root cleanup captures each remaining descendant against the admitted cleanup inventory and deletes through
+those handles; replaced or added entries are refused. Snapshot consumers also retain a native recursive change guard:
+any namespace or security change invalidates admission and wheel output, including a transient added module removed
+before the build finishes. The Python lifecycle consumer checks the retained source guards immediately before and
+after execution and uses Python isolated mode so its script directory, current directory and `PYTHONPATH` cannot
+supply shadow imports. Directory sharing alone does not prevent child creation on Windows.
+Unrecorded additions before capture are preserved. Cleanup rechecks the entire captured path set before marking any
+handle for deletion, so additions observed at that boundary preserve both owned evidence and foreign entries.
+The durable publisher uses its own versioned helper type so existing
+PowerShell sessions can reload the module after an upgrade. Dirty or changed source is refused before the next
+resource or wheel publication; plan-only
+output makes no runtime source-provenance claim.
+The receipt binds its random VMware ID, exact name and preferences path to the task ID, repository, source commit,
+PR number, and lifecycle result root. `plan.json` records `lan_segment_owner`; `vmware-identity.json` records
+`lan_segments` with each original receipt path and SHA-256. Outside Codex, the unique canonical lab name is the task ID.
+The receipt is flushed under a staging name and published by a write-through rename that refuses replacement.
+The required creation callback flushes and durably publishes the pending identity evidence before preferences can
+register the segment. An interruption therefore leaves either no registration or a registration with its original
+independently recorded receipt hash; cleanup can verify an absent pending registration normally.
+The pinned provider handle resolves its canonical long pathname; parent file identity and the canonical leaf key
+the mutex, so drive/UNC and short-name aliases share transaction exclusion and recovery discovery. Receipts store
+that canonical provider pathname, and cleanup resolves its input the same way before checking receipt identity.
+A provider-path mutex spans recovery preflight, preferences publication, rollback, and artifact retirement across
+processes and Windows sessions. An overlapping transaction refuses immediately; retries inspect retained recovery
+artifacts after the previous transaction releases its lock. Independent final registration and reference readback
+runs before rollback state is retired; a failed final check restores the displaced registration. Successful readback
+retains its no-delete provider pin through transaction commit and result creation. All directory guards
+signal one shared native event. Its final check after all requests are armed defines the reference-snapshot
+commit point across roots.
+Missing registered-parent directories are refused immediately rather than rechecked without a guard.
+An existing named segment is reused without claiming ownership or rewriting its ID. Shared segments and legacy residue
+without creation evidence remain preserved for maintainer-directed reconciliation.
+
+After removing the owned VMs through `remove-lifecycle-vms.ps1` or the lifecycle cleanup option, separately release
+each owned segment through `Remove-AtlasoWorkstationLanSegment`, exported by `Atlaso.WorkstationCleanup.psm1`.
+VM removal alone does not release a LAN registration. Preserve the creation receipts and their original hashes on the
+durable controller evidence surface before deleting any lifecycle result root.
+
+1. Independently verify the originating task, repository, creation commit, exact PR, canonical lab root, and original
+   receipt hash against the task's creation evidence and lifecycle identity. Do not derive expected ownership or a new
+   expected hash from the candidate receipt during cleanup.
+2. Close the Workstation UI normally and finish VMware VM/vmrun activity. The cleanup operation never closes the UI,
+   stops another VM, or terminates another task's process. Coordinate with other validation tasks before proceeding.
+3. Supply every independently configured VM storage root in `$vmRoots`, including locations of unregistered VMX files.
+   The operation additionally inspects all paths in Workstation's inventory. Missing configured roots, inaccessible
+   registered directories, malformed adapter/inventory records, links, and surviving references refuse cleanup.
+4. Preview and execute the exact receipt-bound operation:
+
+   ```powershell
+   Import-Module ./scripts/windows/vmware/Atlaso.WorkstationCleanup.psm1
+   $owner = @{
+       task_id = $verifiedTaskId
+       repository = 'mdaneri/Atlaso'
+       source_commit = $verifiedCreationCommit
+       pr = $verifiedPrNumber
+       lab_root = $verifiedLabRoot
+   }
+   $arguments = @{
+       ReceiptPath = $preservedReceiptPath
+       ReceiptSha256 = $originalReceiptSha256
+       Owner = $owner
+       VmRoots = $vmRoots
+   }
+   Remove-AtlasoWorkstationLanSegment @arguments -WhatIf
+   $releaseEvidence = Remove-AtlasoWorkstationLanSegment @arguments -Confirm:$false
+   ```
+
+5. Retain the returned `provider_id`, receipt digest, task/PR binding, `registration_absent`, and
+   `adapter_references_absent` in `validation_resource_release_evidence`. The cleanup controller performs a separate
+   exact-identity invocation/readback before accepting resource absence. An already-absent retry still validates the
+   original ownership and current adapter references.
+
+The operation requires existing UTF-8 preferences without a BOM and an existing inventory. It removes only the two
+exact segment records, preserving all other bytes, line endings, segment indices, and the provider's high-water count.
+Duplicate or unsupported registration fields and name/ID drift fail closed. Preferences updates pin ordinary paths,
+exclude writers, atomically replace the file, compare the displaced identity/bytes, and independently verify absence.
+Native recursive directory-change requests are armed before enumeration and retained through the final readback.
+Any descendant change, even a transient VMX creation/deletion, or a notification error/overflow refuses the scan;
+read-only file pins alone cannot prevent new VMX files from appearing beneath a storage root.
+The verified original displaced state is restored through pinned handles; an ambiguous displaced identity, failed
+rollback, or interrupted transaction retains recovery copies and blocks mutation until reconciled, including retained
+`atlaso-recovery-*.tmp` and `atlaso-cas-*.tmp` artifacts as well as LAN staging and backup files. Never repair that
+condition by deleting a
+backup or rewriting preferences broadly. Registration absence covers the supplied complete storage roots and provider
+inventory; a caller must not omit an unregistered VM storage location to obtain a successful result.
+
 ### Wheel-only deployment authentication
 
 For a wheel-only deployment to the canonical test VM, use `scripts/windows/vmware/deploy-wheel.ps1` with the secure

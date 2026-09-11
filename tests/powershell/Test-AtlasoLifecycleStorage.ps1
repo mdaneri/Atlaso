@@ -49,6 +49,7 @@ try {
         [IO.File]::WriteAllText((Join-Path $toolsRoot 'vmware-vdiskmanager.exe'), 'never executed')
         $script:ManagementNetwork = 'VMnet8'
         $script:createdVmxPaths = [Collections.Generic.List[string]]::new()
+        $script:runtimeVmwareRoot = $FixtureRoot
         $script:resultRoot = $FixtureRoot
         $script:repoRoot = Join-Path $FixtureRoot 'task-checkout'
         $script:LabName = 'Atlaso-PR-812-lifecycle-fixture'

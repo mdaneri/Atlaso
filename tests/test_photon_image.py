@@ -3295,7 +3295,7 @@ def test_vmware_test_identity_is_bound_to_the_exact_owner():
     assert "Refusing lifecycle reuse because the exact PR-owned result root already exists" in lifecycle_runner
     assert "vmware-identity.json" in lifecycle_runner
     assert "'.vmware-identity.{0}.tmp'" in lifecycle_runner
-    assert "[System.IO.File]::Move($identityTempPath, $identityPath, $true)" in lifecycle_runner
+    assert "[Atlaso.WorkstationDurablePublisherV3]::PublishDurableFile($identityWriter, $identityPath)" in lifecycle_runner
     assert "Invoke-TrackedLifecycleVmCreation" in lifecycle_runner
     assert "Publish ownership before an external copy or VMX writer" in lifecycle_runner
     assert "pull_request_number = $PullRequestNumber" in lifecycle_runner
@@ -3334,7 +3334,7 @@ def test_lifecycle_vmware_script_supports_routing_wan_only_and_esxi_pxe_install(
     assert "Remove-Item -LiteralPath $secretBundlePath -Force -ErrorAction Stop" in wrapper
     assert "-GuestPassword $esxiPasswordSecure" in runner
     assert "'--secret-stdin'" in runner
-    assert "$secretPayload | & python @Arguments | Out-Host" in runner
+    assert "$secretPayload | & python -I @Arguments | Out-Host" in runner
     assert "'--esxi-password'," not in runner
 
     assert "function Get-GuestIPv4ViaGuestOps" in runner
@@ -3359,7 +3359,8 @@ def test_lifecycle_vmware_script_supports_routing_wan_only_and_esxi_pxe_install(
     assert "copyFileFromHostToGuest $ApplianceVmx $localHelper $guestTemp" in runner
     assert "install -o root -g root -m 0755 $quotedTemp /opt/atlaso/bin/atlaso-helper" in runner
     assert "function Sync-ApplianceApplicationWheel" in runner
-    assert "python -m pip wheel $repoRoot --no-deps -w $wheelRoot" in runner
+    assert "New-LifecycleSourceSnapshot -RepositoryRoot $repoRoot -Commit $sourceCommit" in runner
+    assert "python -m pip wheel $wheelSource --no-deps -w $wheelRoot" in runner
     assert "pip install --force-reinstall --no-deps $quotedWheel" in runner
     assert "systemctl restart atlaso.service" in runner
     assert "$applianceWheelPath = Sync-ApplianceApplicationWheel -ApplianceVmx $applianceVmx" in runner
@@ -3380,7 +3381,7 @@ def test_lifecycle_vmware_script_supports_routing_wan_only_and_esxi_pxe_install(
     assert "if ($Vmnet -match '^(?i)vmnet(\\d+)$')" in runner
     assert '$Vmnet = "VMnet$($Matches[1])"' in runner
     assert "function Resolve-LanSegmentId" in runner
-    assert "pref.namedPVNs$nextIndex.name" in runner
+    assert "Resolve-AtlasoOwnedLanSegment -Name $Name -Owner $lanSegmentOwner" in runner
     assert "connectionType\" -Value 'pvn'" in runner
     assert "$prefix.pvnID" in runner
     assert "Remove-VmxValue -Path $Path -Key \"$prefix.vnet\"" in runner

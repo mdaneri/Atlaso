@@ -1379,6 +1379,35 @@ def test_already_unregistered_vm_uses_filesystem_cleanup_only(tmp_path: Path) ->
     assert "deleteVM" not in [command[2] for command in _commands(log)]
 
 
+def test_cleanup_can_retain_a_caller_pinned_empty_root(tmp_path: Path) -> None:
+    """Remove validated VM contents while preserving the caller's root identity.
+
+    Args:
+        tmp_path: Pytest temporary directory path.
+    """
+    root = tmp_path / "artifacts" / "vm"
+    vmx = root / "Atlaso.vmx"
+    _write_vmx(vmx)
+    vmrun, environment, log, _ = _write_fake_vmrun(tmp_path / "fake", [vmx])
+    module = VMWARE_SCRIPT_ROOT / "Atlaso.WorkstationCleanup.psm1"
+    wrapper = tmp_path / "retained-root.ps1"
+    wrapper.write_text(
+        f"""$ErrorActionPreference = 'Stop'
+Import-Module '{module}' -Force
+$pin = [Atlaso.WorkstationFileIdentity]::PinOrdinaryDirectoryPath('{root}', $true)
+try {{
+    Remove-AtlasoWorkstationVmArtifacts -VmrunPath '{vmrun}' -VmxPaths @('{vmx}') -RemovalRoot '{root}' -KeepRemovalRoot -Confirm:$false
+}} finally {{ $pin.Dispose() }}
+""",
+        encoding="utf-8",
+    )
+    result = _run_script(wrapper, environment=environment)
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert root.is_dir()
+    assert not list(root.iterdir())
+    assert "deleteVM" not in [command[2] for command in _commands(log)]
+
+
 def test_provider_delete_may_remove_the_complete_validated_root(tmp_path: Path) -> None:
     """A checked provider deletion may satisfy cleanup by removing the exact root.
 
@@ -3353,10 +3382,10 @@ def test_module_keeps_inventory_work_out_of_normal_delete_path() -> None:
     )
     assert stale_repair.index("if ($OnVerified)", replacement_verification) < replacement_unlock
     assert stale_repair.count("Get-Process vmware -ErrorAction SilentlyContinue") >= 5
-    implementation = re.sub(r"<#.*?#>\s*", "", module, flags=re.DOTALL)
-    # Allow bounded delete diagnostics, shutdown verification, pins, and retirement without
-    # restoring global inventory reconciliation to root-scoped deletion.
-    assert len(implementation.splitlines()) < 1_540
+    implementation = re.sub(r"<#.*?#>\s*", "", normal_path, flags=re.DOTALL)
+    # Bound the root-scoped deletion path, not independent native identity/publisher helpers.
+    # The assertions above separately exclude global inventory reconciliation from this path.
+    assert len(implementation.splitlines()) < 250
 
 
 def test_development_ca_cleanup_releases_recovery_inside_provider_proof() -> None:

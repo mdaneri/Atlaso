@@ -1,0 +1,612 @@
+<#
+.SYNOPSIS
+Manage receipt-bound Workstation LAN segment registrations without adopting existing segments.
+.DESCRIPTION
+Loaded inside Atlaso.WorkstationCleanup so transactions share its filesystem identity
+and recovery primitives. Callers supply independently verified lifecycle ownership.
+#>
+
+if (-not ('Atlaso.WorkstationDirectoryChangeGuardV2' -as [type])) {
+    Add-Type -TypeDefinition @'
+using System;
+using System.ComponentModel;
+using System.Threading;
+using System.Runtime.InteropServices;
+using Microsoft.Win32.SafeHandles;
+namespace Atlaso {
+    public sealed class WorkstationDirectoryChangeGuardV2 : IDisposable {
+        [StructLayout(LayoutKind.Sequential)]
+        private struct Overlapped {
+            public IntPtr Internal, InternalHigh;
+            public uint Offset, OffsetHigh;
+            public IntPtr Event;
+        }
+        [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+        private static extern SafeFileHandle CreateFileW(string path, uint access, uint sharing,
+            IntPtr security, uint disposition, uint flags, IntPtr template);
+        [DllImport("kernel32.dll", SetLastError = true)]
+        private static extern bool ReadDirectoryChangesW(SafeFileHandle directory, IntPtr buffer,
+            uint length, bool subtree, uint filter, IntPtr returned, IntPtr overlapped, IntPtr completion);
+        [DllImport("kernel32.dll", SetLastError = true)]
+        private static extern bool GetOverlappedResult(SafeFileHandle directory, IntPtr overlapped,
+            out uint transferred, bool wait);
+        [DllImport("kernel32.dll", SetLastError = true)]
+        private static extern bool CancelIoEx(SafeFileHandle directory, IntPtr overlapped);
+        private SafeFileHandle handle;
+        private IntPtr buffer, overlapped;
+        private bool pending;
+        public WorkstationDirectoryChangeGuardV2(string path, EventWaitHandle changes) {
+            try {
+                // Arm before enumeration. Unlike FileSystemWatcher callbacks, polling
+                // the native completion has no managed event-delivery lag. One event or
+                // buffer overflow permanently invalidates this scan; never rearm it.
+                handle = CreateFileW(path, 1, 3, IntPtr.Zero, 3, 0x42000000, IntPtr.Zero);
+                if (handle.IsInvalid) throw new Win32Exception(Marshal.GetLastWin32Error());
+                buffer = Marshal.AllocHGlobal(65536);
+                overlapped = Marshal.AllocHGlobal(Marshal.SizeOf<Overlapped>());
+                Marshal.StructureToPtr(new Overlapped { Event = changes.SafeWaitHandle.DangerousGetHandle() }, overlapped, false);
+                if (!ReadDirectoryChangesW(handle, buffer, 65536, true, 0x15F,
+                    IntPtr.Zero, overlapped, IntPtr.Zero))
+                    throw new Win32Exception(Marshal.GetLastWin32Error());
+                pending = true;
+            } catch { Dispose(); throw; }
+        }
+        public void AssertUnchanged() {
+            uint transferred;
+            if (GetOverlappedResult(handle, overlapped, out transferred, false))
+                throw new InvalidOperationException("VM search-root contents changed during LAN segment reference verification.");
+            int error = Marshal.GetLastWin32Error();
+            if (error != 996) // ERROR_IO_INCOMPLETE is the only unchanged state.
+                throw new Win32Exception(error, "VM search-root change tracking failed; cleanup refused.");
+        }
+        public void Dispose() {
+            if (handle != null && !handle.IsClosed) {
+                if (pending) {
+                    CancelIoEx(handle, overlapped);
+                    uint transferred;
+                    // Another request can signal the shared event before this cancellation
+                    // completes. Confirm this exact request is terminal before freeing.
+                    while (!GetOverlappedResult(handle, overlapped, out transferred, false) &&
+                        Marshal.GetLastWin32Error() == 996) Thread.Sleep(1);
+                    pending = false;
+                }
+                handle.Dispose();
+            }
+            if (overlapped != IntPtr.Zero) { Marshal.FreeHGlobal(overlapped); overlapped = IntPtr.Zero; }
+            if (buffer != IntPtr.Zero) { Marshal.FreeHGlobal(buffer); buffer = IntPtr.Zero; }
+        }
+    }
+}
+'@
+}
+
+if (-not ('Atlaso.WorkstationCanonicalProviderV1' -as [type])) {
+    Add-Type -TypeDefinition @'
+using System;
+using System.ComponentModel;
+using System.Text;
+using System.Runtime.InteropServices;
+using Microsoft.Win32.SafeHandles;
+namespace Atlaso {
+    public static class WorkstationCanonicalProviderV1 {
+        [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+        private static extern uint GetFinalPathNameByHandleW(SafeFileHandle file, StringBuilder path, uint size, uint flags);
+        public static string Get(SafeFileHandle file) {
+            var path = new StringBuilder(32768);
+            uint length = GetFinalPathNameByHandleW(file, path, (uint)path.Capacity, 0);
+            if (length == 0 || length >= path.Capacity) throw new Win32Exception(Marshal.GetLastWin32Error());
+            string value = path.ToString();
+            if (value.StartsWith(@"\\?\UNC\", StringComparison.OrdinalIgnoreCase)) return @"\\" + value.Substring(8);
+            if (value.StartsWith(@"\\?\", StringComparison.Ordinal)) return value.Substring(4);
+            throw new InvalidOperationException("Provider canonical path is unavailable.");
+        }
+    }
+}
+'@
+}
+
+<#
+.SYNOPSIS
+Reject an active Workstation UI before changing its cached preferences.
+#>
+function Assert-AtlasoLanSegmentUiClosed {
+    if (Get-Process -Name vmware -ErrorAction SilentlyContinue) {
+        throw 'Close the VMware Workstation UI before changing LAN segment registrations; do not terminate it automatically.'
+    }
+}
+
+<#
+.SYNOPSIS
+Parse LAN registrations strictly while preserving every original line and terminator.
+.PARAMETER Bytes
+Exact UTF-8 preferences bytes captured under the transaction lock.
+#>
+function ConvertFrom-AtlasoLanPreferences {
+    param([Parameter(Mandatory)][AllowEmptyCollection()][byte[]]$Bytes)
+    $text = [System.Text.UTF8Encoding]::new($false, $true).GetString($Bytes)
+    if ($text.StartsWith([string][char]0xfeff, [StringComparison]::Ordinal)) { throw 'BOM-prefixed LAN preferences require encoding reconciliation.' }
+    $lines = @([regex]::Matches($text, '[^\r\n]*(?:\r\n|\n|\r|$)') |
+        Where-Object Length -GT 0 | ForEach-Object { $_.Value })
+    $entries = @{}
+    $count = $null
+    foreach ($line in $lines) {
+        if ($line -notmatch '^\s*pref\.namedPVNs') { continue }
+        if ($line -match '^\s*pref\.namedPVNs\.count\s*=\s*"(0|[1-9][0-9]*)"\s*$') {
+            if ($null -ne $count) { throw 'Duplicate LAN segment count; preferences preserved.' }
+            $count = [int]$Matches[1]
+        } elseif ($line -match '^\s*pref\.namedPVNs(0|[1-9][0-9]*)\.(name|pvnID)\s*=\s*"([^"\r\n]+)"\s*$') {
+            $index = [int]$Matches[1]; $key = $Matches[2]; $value = $Matches[3]
+            if (-not $entries.ContainsKey($index)) { $entries[$index] = @{} }
+            if ($entries[$index].ContainsKey($key)) { throw 'Duplicate LAN segment field; preferences preserved.' }
+            $entries[$index][$key] = $value
+        } else { throw 'Unsupported LAN segment preferences record; preferences preserved.' }
+    }
+    $names = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
+    $ids = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
+    foreach ($index in $entries.Keys) {
+        $entry = $entries[$index]
+        if ($entry.Count -ne 2 -or $null -eq $count -or $index -ge $count -or
+            -not $names.Add($entry.name) -or -not $ids.Add($entry.pvnID) -or
+            $entry.pvnID -notmatch '^[0-9a-fA-F]{2}( [0-9a-fA-F]{2}){7}-[0-9a-fA-F]{2}( [0-9a-fA-F]{2}){7}$') {
+            throw 'Incomplete or ambiguous LAN segment registration; preferences preserved.'
+        }
+    }
+    return @{ Lines = $lines; Entries = $entries; Count = $count }
+}
+
+<#
+.SYNOPSIS
+Restore a pinned displaced provider without reopening its replaceable pathname.
+.PARAMETER Path
+Provider pathname whose current object must match the failed publication.
+.PARAMETER DisplacedPin
+Original displaced object retained with read and delete access, denying write and delete sharing.
+.PARAMETER ExpectedBytes
+Exact bytes expected at the failed publication.
+.PARAMETER ExpectedIdentity
+Filesystem identity expected at the failed publication.
+#>
+function Restore-AtlasoPinnedLanPreferences {
+    param([string]$Path, [Microsoft.Win32.SafeHandles.SafeFileHandle]$DisplacedPin,
+        [byte[]]$ExpectedBytes, [string]$ExpectedIdentity)
+    $targetPin = [Atlaso.WorkstationFileIdentity]::PinOrdinaryReadFile($Path, $true, $true)
+    $targetStream = [IO.FileStream]::new($targetPin, [IO.FileAccess]::Read)
+    $capturedPath = "$Path.atlaso-cas-$([guid]::NewGuid().ToString('N')).tmp"
+    try {
+        if ((Get-AtlasoPathIdentity -Path $Path -Description 'LAN rollback target') -cne $ExpectedIdentity -or
+            -not (Test-AtlasoByteArraysEqual -Left $ExpectedBytes -Right (Read-AtlasoStreamBytes $targetStream))) {
+            throw 'LAN rollback target changed; preserve transaction files for recovery.'
+        }
+        # Both objects remain pinned. Capture the target by handle, then install
+        # the displaced handle without replacement. A competing new pathname
+        # makes installation fail; both original objects remain recoverable.
+        [Atlaso.WorkstationDurablePublisherV3]::RenamePinnedFile($targetPin, $capturedPath, $false)
+        [Atlaso.WorkstationDurablePublisherV3]::RenamePinnedFile($DisplacedPin, $Path, $false)
+        [Atlaso.WorkstationFileIdentity]::DeletePinnedFile($targetPin)
+    } finally { $targetStream.Dispose() }
+}
+
+<#
+.SYNOPSIS
+Atomically replace exact preferences bytes and verify both displaced and published identities.
+.PARAMETER Path
+Existing provider preferences file.
+.PARAMETER Transform
+Action receiving original bytes and returning replacement bytes under write exclusion.
+.PARAMETER Validate
+Optional live preconditions repeated immediately before and after publication.
+.PARAMETER Readback
+Independent final verification performed before rollback state is retired, including unchanged retries.
+#>
+function Update-AtlasoLanPreferences {
+    param([Parameter(Mandatory)][string]$Path, [Parameter(Mandatory)][scriptblock]$Transform,
+        [scriptblock]$Validate, [scriptblock]$Readback)
+    Assert-AtlasoLanSegmentUiClosed
+    # Serialize cooperating transactions across processes and Windows sessions. Acquire
+    # before recovery enumeration and retain through rollback and artifact retirement.
+    Assert-AtlasoPathHasNoReparsePoint -Path $Path
+    $canonicalPin = [Atlaso.WorkstationFileIdentity]::PinOrdinaryReadFile($Path, $true)
+    try { $Path = [Atlaso.WorkstationCanonicalProviderV1]::Get($canonicalPin) }
+    finally { $canonicalPin.Dispose() }
+    $parentIdentity = [Atlaso.WorkstationFileIdentity]::Get((Split-Path -Parent $Path))
+    # Parent identity survives file replacement and is independent of drive/UNC
+    # aliases. The final handle path supplies the long leaf for recovery discovery.
+    $pathKey = $parentIdentity + ':' + (Split-Path -Leaf $Path).ToUpperInvariant()
+    $pathHash = [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData([Text.Encoding]::UTF8.GetBytes($pathKey)))
+    $transactionMutex = [Threading.Mutex]::new($false, "Global\Atlaso-LanPreferences-$pathHash")
+    $transactionOwned = $false
+    $providerDirectoryPins = $null
+    $originalLock = $null; $stageLock = $null; $displacedPin = $null
+    $stage = "$Path.atlaso-lan-$([guid]::NewGuid().ToString('N')).tmp"
+    $backup = "$stage.backup"
+    $applied = $false
+    $publicationVerified = $false
+    $displacedIdentity = $null; $displacedBytes = $null
+    $stageIdentity = $null
+    try {
+        try { $transactionOwned = $transactionMutex.WaitOne(0) }
+        catch [Threading.AbandonedMutexException] {
+            # Ownership transfers on abandonment; normal recovery preflight below
+            # still refuses every retained stage or recovery artifact.
+            $transactionOwned = $true
+        }
+        if (-not $transactionOwned) { throw 'Another LAN preferences transaction is active; retry after it completes.' }
+        $providerDirectoryPins = [Atlaso.WorkstationFileIdentity]::PinOrdinaryDirectoryPath((Split-Path -Parent $Path), $true)
+        if ([Atlaso.WorkstationFileIdentity]::Get((Split-Path -Parent $Path)) -cne $parentIdentity) {
+            throw 'LAN preferences parent identity changed before transaction admission.'
+        }
+        Assert-AtlasoPathHasNoReparsePoint -Path $Path
+        $preferenceName = [regex]::Escape((Split-Path -Leaf $Path))
+        $recoveryPattern = "^$preferenceName\.atlaso-(?:lan-.*\.tmp(?:\.backup)?|recovery-.*\.tmp|cas-.*\.tmp)$"
+        if (@(Get-ChildItem -LiteralPath (Split-Path -Parent $Path) -Force -ErrorAction Stop |
+            Where-Object { $_.Name -match $recoveryPattern }).Count) {
+            throw 'An interrupted LAN preferences transaction needs identity-checked recovery; preserve its backup before retry.'
+        }
+        # A single-link read pin rejects aliases before the share-delete transaction.
+        $filePin = [Atlaso.WorkstationFileIdentity]::PinOrdinaryReadFile($Path, $true)
+        try { $identity = Get-AtlasoPathIdentity -Path $Path -Description 'LAN preferences' }
+        finally { $filePin.Dispose() }
+        $originalLock = [System.IO.File]::Open($Path, 'Open', 'Read', ([IO.FileShare]::Read -bor [IO.FileShare]::Delete))
+        if ((Get-AtlasoPathIdentity -Path $Path -Description 'LAN preferences') -cne $identity) {
+            throw 'LAN preferences identity changed before locking.'
+        }
+        [byte[]]$original = @(Read-AtlasoStreamBytes -Stream $originalLock)
+        if ($original.Length -eq 0) { throw 'Initialize Workstation preferences through normal setup before managing LAN segments.' }
+        [byte[]]$replacement = & $Transform $original $Path
+        if (Test-AtlasoByteArraysEqual -Left $original -Right $replacement) {
+            if ($Readback) { & $Readback }
+            return
+        }
+        $writer = [System.IO.FileStream]::new($stage, 'CreateNew', 'Write', 'None', 4096, 'WriteThrough')
+        try {
+            $stageIdentity = Get-AtlasoPathIdentity -Path $stage -Description 'LAN preferences stage'
+            $writer.Write($replacement); $writer.Flush($true)
+        } finally { $writer.Dispose() }
+        Assert-AtlasoLanSegmentUiClosed
+        if ($Validate) { & $Validate }
+        if ((Get-AtlasoPathIdentity -Path $Path -Description 'LAN preferences before publication') -cne $identity) {
+            throw 'LAN preferences identity changed before publication; competing provider state was preserved.'
+        }
+        [System.IO.File]::Replace($stage, $Path, $backup, $true)
+        $applied = $true
+        # File.Replace is not a compare-and-swap. Inspect what it actually displaced,
+        # including file identity, before accepting the operation.
+        $displacedPin = [Atlaso.WorkstationFileIdentity]::PinOrdinaryReadFile($backup, $true, $true)
+        $capturedIdentity = Get-AtlasoPathIdentity -Path $backup -Description 'Displaced LAN preferences'
+        if ($capturedIdentity -cne $identity) {
+            throw 'Displaced LAN preferences identity is ambiguous; preserve transaction files for identity-checked recovery.'
+        }
+        # The original retained handle is the only authoritative byte source.
+        # A foreign backup pathname must never become automatic rollback input.
+        [byte[]]$displacedBytes = @(Read-AtlasoStreamBytes -Stream $originalLock)
+        $displacedIdentity = $identity
+        # Capture rollback evidence before any fallible published-path reopen.
+        $stageLock = [System.IO.File]::Open($Path, 'Open', 'Read', ([IO.FileShare]::Read -bor [IO.FileShare]::Delete))
+        $publishedIdentity = Get-AtlasoPathIdentity -Path $Path -Description 'Published LAN preferences'
+        if ($publishedIdentity -cne $stageIdentity) {
+            [byte[]]$publishedBytes = @(Read-AtlasoStreamBytes -Stream $stageLock)
+            $stageLock.Dispose(); $stageLock = $null
+            $originalLock.Dispose(); $originalLock = $null
+            Restore-AtlasoPinnedLanPreferences -Path $Path -DisplacedPin $displacedPin `
+                -ExpectedBytes $publishedBytes -ExpectedIdentity $publishedIdentity
+            $applied = $false
+            throw 'LAN preferences staging identity changed; displaced provider state was restored.'
+        }
+        # Hold the published object against writes while verifying its exact bytes.
+        # Recheck the UI as well: it must not retain an obsolete in-memory copy.
+        if (-not (Test-AtlasoByteArraysEqual -Left $replacement -Right (Read-AtlasoStreamBytes $stageLock))) {
+            throw "LAN preferences verification failed; recovery copy retained at '$backup'."
+        }
+        Assert-AtlasoLanSegmentUiClosed
+        if ($Validate) { & $Validate }
+        if ($Readback) { & $Readback }
+        $publicationVerified = $true
+        $applied = $false
+    } catch {
+        $failure = $_
+        if ($applied -and $displacedIdentity -and $null -ne $displacedBytes -and
+            (Get-AtlasoPathIdentity -Path $Path -Description 'LAN preferences rollback target') -ceq $stageIdentity) {
+            if ($stageLock) { $stageLock.Dispose(); $stageLock = $null }
+            if ($originalLock) { $originalLock.Dispose(); $originalLock = $null }
+            Restore-AtlasoPinnedLanPreferences -Path $Path -DisplacedPin $displacedPin `
+                -ExpectedBytes $replacement -ExpectedIdentity $stageIdentity
+            $applied = $false
+        }
+        throw $failure
+    } finally {
+        if ($stageLock) { $stageLock.Dispose() }
+        if ($originalLock) { $originalLock.Dispose() }
+        try {
+        # Retire only the verified-success backup through its still-retained handle.
+        # Rollback moves that same handle back to the provider and must preserve it.
+        if ($publicationVerified -and $displacedPin) {
+            [Atlaso.WorkstationFileIdentity]::DeletePinnedFile($displacedPin)
+        }
+        if ($stageIdentity -and (Test-Path -LiteralPath $stage)) {
+            $stagePin = [Atlaso.WorkstationFileIdentity]::PinOrdinaryReadFile($stage, $true, $true)
+            try {
+                if ((Get-AtlasoPathIdentity -Path $stage -Description 'LAN preferences stage') -cne $stageIdentity) {
+                    throw 'LAN preferences stage identity changed; preserve it for recovery.'
+                }
+                [Atlaso.WorkstationFileIdentity]::DeletePinnedFile($stagePin)
+            } finally { $stagePin.Dispose() }
+        }
+        } finally {
+            if ($displacedPin) { $displacedPin.Dispose() }
+            if ($providerDirectoryPins) { $providerDirectoryPins.Dispose() }
+            if ($transactionOwned) { $transactionMutex.ReleaseMutex() }
+            $transactionMutex.Dispose()
+        }
+    }
+}
+
+<#
+.SYNOPSIS
+Create a new segment with immutable ownership evidence or reuse a shared segment without claiming it.
+.PARAMETER Name
+Exact requested LAN segment name.
+.PARAMETER Owner
+Independent lifecycle owner: task_id, repository, source_commit, pr, and lab_root.
+.PARAMETER PreferencesPath
+Existing Workstation preferences path, or an isolated provider fixture.
+.PARAMETER PublishReceipt
+Required callback that durably records the original receipt path and digest before provider registration.
+#>
+function Resolve-AtlasoOwnedLanSegment {
+    param(
+        [Parameter(Mandatory)][ValidatePattern('^[A-Za-z0-9][A-Za-z0-9 ._-]{0,127}$')][string]$Name,
+        [Parameter(Mandatory)][hashtable]$Owner,
+        [Parameter(Mandatory)][scriptblock]$PublishReceipt,
+        [string]$PreferencesPath = (Join-Path ([Environment]::GetFolderPath('ApplicationData')) 'VMware\preferences.ini')
+    )
+    foreach ($field in @('task_id', 'repository', 'source_commit', 'pr', 'lab_root')) {
+        if (-not $Owner.ContainsKey($field) -or -not $Owner[$field]) { throw "Missing LAN segment owner field: $field." }
+    }
+    if ([int]$Owner.pr -le 0 -or $Owner.source_commit -notmatch '^[0-9a-f]{40}$') { throw 'Invalid LAN segment source ownership.' }
+    $receiptRoot = Join-Path $Owner.lab_root 'lan-segments'
+    $labPin = [Atlaso.WorkstationFileIdentity]::PinOrdinaryDirectoryPath($Owner.lab_root, $true)
+    $receiptPin = $null
+    $receiptFilePins = [Collections.Generic.List[Microsoft.Win32.SafeHandles.SafeFileHandle]]::new()
+    try {
+        [System.IO.Directory]::CreateDirectory($receiptRoot) | Out-Null
+        $receiptPin = [Atlaso.WorkstationFileIdentity]::PinOrdinaryDirectoryPath($receiptRoot, $true)
+        $result = @{ Id = ''; ReceiptPath = ''; ReceiptSha256 = '' }
+        Update-AtlasoLanPreferences -Path $PreferencesPath -Readback {
+            $readbackPin = [Atlaso.WorkstationFileIdentity]::PinOrdinaryReadFile($PreferencesPath, $true)
+            try {
+                $readback = ConvertFrom-AtlasoLanPreferences -Bytes ([IO.File]::ReadAllBytes($PreferencesPath))
+                $registrations = @($readback.Entries.Values | Where-Object { $_.name -ieq $Name -or $_.pvnID -ieq $result.Id })
+                if ($registrations.Count -ne 1 -or $registrations[0].name -ine $Name -or $registrations[0].pvnID -cne $result.Id) {
+                    throw 'LAN segment registration presence was not verified.'
+                }
+                Assert-AtlasoLanSegmentUiClosed
+                # Retain the no-write/no-delete pin through commit and result construction,
+                # including the shared-registration fast path.
+                $receiptFilePins.Add($readbackPin)
+                $readbackPin = $null
+            } finally { if ($readbackPin) { $readbackPin.Dispose() } }
+        } -Transform {
+            param($original, $canonicalProviderPath)
+            $parsed = ConvertFrom-AtlasoLanPreferences -Bytes $original
+            foreach ($entry in $parsed.Entries.Values) {
+                if ($entry.name -ieq $Name) { $result.Id = $entry.pvnID; return ,$original }
+            }
+            $idBytes = [guid]::NewGuid().ToByteArray(); $idBytes[0] = 0x52
+            $id = (($idBytes[0..7] | ForEach-Object { $_.ToString('x2') }) -join ' ') + '-' +
+                (($idBytes[8..15] | ForEach-Object { $_.ToString('x2') }) -join ' ')
+            $index = if ($null -eq $parsed.Count) { 0 } else { $parsed.Count }
+            $receipt = $Owner.Clone()
+            $receipt.schema = 1; $receipt.name = $Name; $receipt.pvn_id = $id
+            $receipt.preferences_path = $canonicalProviderPath
+            $receipt.creation_id = [guid]::NewGuid().ToString('N')
+            # Publish intent before registration. The immutable receipt records that this
+            # exact random identity was absent under the provider lock, never a name claim.
+            $receiptPath = Join-Path $receiptRoot "$($receipt.creation_id).json"
+            $bytes = [System.Text.UTF8Encoding]::new($false).GetBytes(($receipt | ConvertTo-Json))
+            $receiptStage = "$receiptPath.stage"
+            $writer = [Atlaso.WorkstationDurablePublisherV3]::CreateStage($receiptStage)
+            try {
+                $writer.Write($bytes)
+                # Flush and publish the original creation handle without replacing
+                # any existing receipt before publishing independent evidence.
+                [Atlaso.WorkstationDurablePublisherV3]::PublishDurableFile($writer, $receiptPath, $false)
+                $receiptIdentity = Get-AtlasoPathIdentity -Path $receiptPath -Description 'Published LAN receipt'
+            } finally { $writer.Dispose() }
+            $receiptFilePins.Add([Atlaso.WorkstationFileIdentity]::PinOrdinaryReadFile($receiptPath, $true))
+            if ((Get-AtlasoPathIdentity -Path $receiptPath -Description 'Pinned LAN receipt') -cne $receiptIdentity -or
+                -not (Test-AtlasoByteArraysEqual -Left $bytes -Right ([IO.File]::ReadAllBytes($receiptPath)))) {
+                throw 'LAN receipt identity or bytes changed before registration; provider was preserved.'
+            }
+            $result.ReceiptPath = $receiptPath
+            $result.ReceiptSha256 = [Convert]::ToHexString([System.Security.Cryptography.SHA256]::HashData($bytes))
+            $result.Id = $id
+            # The lifecycle evidence must be durable before the preferences transaction
+            # can publish this ID. An interrupted registration is then an absent retry.
+            & $PublishReceipt ([pscustomobject]$result) | Out-Null
+            $lines = @($parsed.Lines | Where-Object { $_ -notmatch '^\s*pref\.namedPVNs\.count\s*=' })
+            $text = $lines -join ''
+            if ($text -and $text -notmatch '[\r\n]$') { $text += "`r`n" }
+            $text += "pref.namedPVNs$index.name = `"$Name`"`r`npref.namedPVNs$index.pvnID = `"$id`"`r`npref.namedPVNs.count = `"$($index + 1)`"`r`n"
+            return ,([System.Text.UTF8Encoding]::new($false).GetBytes($text))
+        }
+        return [pscustomobject]$result
+    } finally {
+        foreach ($receiptFilePin in $receiptFilePins) { $receiptFilePin.Dispose() }
+        if ($receiptPin) { $receiptPin.Dispose() }
+        $labPin.Dispose()
+    }
+}
+
+<#
+.SYNOPSIS
+Pin every registered and explicitly scoped VMX and reject surviving segment references.
+.PARAMETER InventoryPath
+Existing Workstation inventory to inspect under a read pin.
+.PARAMETER VmRoots
+Independently configured complete VM roots, including unregistered lifecycle outputs.
+.PARAMETER SegmentId
+Exact segment identifier being released.
+.PARAMETER Pins
+Disposable handles retained by the caller through preferences publication.
+#>
+function Assert-AtlasoLanSegmentUnreferenced {
+    param([Parameter(Mandatory)][string]$InventoryPath,
+        [Parameter(Mandatory)][string[]]$VmRoots,
+        [Parameter(Mandatory)][string]$SegmentId,
+        [Parameter(Mandatory)][AllowEmptyCollection()][System.Collections.Generic.List[System.IDisposable]]$Pins)
+    if (Get-Process -Name vmware-vmx, vmrun -ErrorAction SilentlyContinue) {
+        throw 'Stop VMware VM and vmrun activity before LAN segment cleanup; provider state preserved.'
+    }
+    $Pins.Add([Atlaso.WorkstationFileIdentity]::PinOrdinaryDirectoryPath((Split-Path -Parent $InventoryPath), $true))
+    $Pins.Add([Atlaso.WorkstationFileIdentity]::PinOrdinaryReadFile($InventoryPath, $true))
+    $changeEvent = @($Pins | Where-Object { $_ -is [Threading.EventWaitHandle] }) | Select-Object -First 1
+    if (-not $changeEvent) {
+        # Every native request signals the same event. The final single
+        # kernel wait is the reference-snapshot commit point across all roots.
+        $changeEvent = [Threading.EventWaitHandle]::new($false, [Threading.EventResetMode]::ManualReset)
+        $Pins.Add($changeEvent)
+    }
+    $paths = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
+    foreach ($line in [System.IO.File]::ReadAllLines($InventoryPath)) {
+        if ($line -notmatch '^\s*(vmlist\d+\.config|index\d+\.id)\s*=') { continue }
+        if ($line -notmatch '^\s*(?:vmlist\d+\.config|index\d+\.id)\s*=\s*"([^"\r\n]+)"\s*$' -or
+            -not [System.IO.Path]::IsPathFullyQualified($Matches[1])) {
+            throw 'Cannot prove LAN segment reference absence from malformed Workstation inventory.'
+        }
+        $path = [System.IO.Path]::GetFullPath($Matches[1])
+        # Missing library entries do not own a surviving adapter. Pin their parent
+        # below when it exists; inaccessible paths fail rather than becoming absence.
+        $paths.Add($path) | Out-Null
+    }
+    foreach ($root in $VmRoots) {
+        $Pins.Add([Atlaso.WorkstationFileIdentity]::PinOrdinaryDirectoryPath($root, $true))
+        $Pins.Add([Atlaso.WorkstationDirectoryChangeGuardV2]::new($root, $changeEvent))
+        foreach ($item in Get-ChildItem -LiteralPath $root -Recurse -Force -ErrorAction Stop) {
+            if ($item.Attributes -band [System.IO.FileAttributes]::ReparsePoint) {
+                throw 'VM search root contains a reparse point; LAN segment cleanup refused.'
+            }
+            if (-not $item.PSIsContainer -and $item.Extension -ieq '.vmx') { $paths.Add($item.FullName) | Out-Null }
+        }
+    }
+    foreach ($path in $paths) {
+        Assert-AtlasoPathHasNoReparsePoint -Path $path
+        $parent = Split-Path -Parent $path
+        if (-not [System.IO.Directory]::Exists($parent)) {
+            throw 'A registered VM directory is unavailable; reconcile its inventory before LAN segment cleanup.'
+        }
+        $Pins.Add([Atlaso.WorkstationFileIdentity]::PinOrdinaryDirectoryPath($parent, $true))
+        $Pins.Add([Atlaso.WorkstationDirectoryChangeGuardV2]::new($parent, $changeEvent))
+        if (-not [System.IO.File]::Exists($path)) { continue }
+        $Pins.Add([Atlaso.WorkstationFileIdentity]::PinOrdinaryDirectoryPath((Split-Path -Parent $path), $true))
+        $Pins.Add([Atlaso.WorkstationFileIdentity]::PinOrdinaryReadFile($path, $true))
+        foreach ($line in [System.IO.File]::ReadAllLines($path)) {
+            if ($line -notmatch '^\s*ethernet\d+\.pvnID\s*=') { continue }
+            if ($line -notmatch '^\s*ethernet\d+\.pvnID\s*=\s*"([^"\r\n]+)"\s*$') {
+                throw 'Malformed VM adapter segment reference; cleanup refused.'
+            }
+            if ($Matches[1] -ieq $SegmentId) { throw "LAN segment is still referenced by VMX '$path'." }
+        }
+    }
+    foreach ($pin in $Pins) {
+        if ($pin -is [Atlaso.WorkstationDirectoryChangeGuardV2]) { $pin.AssertUnchanged() }
+    }
+    # A completion in an earlier root during later per-request error checks still
+    # signals this shared event. No new request is armed during these polls; do not accept sequential polls alone.
+    if ($changeEvent.WaitOne(0)) { throw 'VM search-root contents changed during LAN segment reference verification.' }
+}
+
+<#
+.SYNOPSIS
+Remove one receipt-bound unreferenced LAN registration and return independently checked absence evidence.
+.PARAMETER ReceiptPath
+Immutable creation receipt retained by the lifecycle run.
+.PARAMETER ReceiptSha256
+Creation receipt digest independently recorded by the originating task or controller.
+.PARAMETER Owner
+Independently verified lifecycle task, repository, commit, PR and lab root.
+.PARAMETER VmRoots
+Independently configured VM roots to search in addition to all Workstation inventory entries.
+.PARAMETER PreferencesPath
+Exact provider preferences path, never selected from an untrusted receipt.
+.PARAMETER InventoryPath
+Exact provider inventory path, never selected from an untrusted receipt.
+#>
+function Remove-AtlasoWorkstationLanSegment {
+    [CmdletBinding(SupportsShouldProcess)]
+    param([Parameter(Mandatory)][string]$ReceiptPath,
+        [Parameter(Mandatory)][ValidatePattern('^[0-9a-fA-F]{64}$')][string]$ReceiptSha256,
+        [Parameter(Mandatory)][hashtable]$Owner,
+        [Parameter(Mandatory)][ValidateNotNullOrEmpty()][string[]]$VmRoots,
+        [string]$PreferencesPath = (Join-Path ([Environment]::GetFolderPath('ApplicationData')) 'VMware\preferences.ini'),
+        [string]$InventoryPath = (Join-Path ([Environment]::GetFolderPath('ApplicationData')) 'VMware\inventory.vmls'))
+    Assert-AtlasoPathHasNoReparsePoint -Path $PreferencesPath
+    $providerPin = [Atlaso.WorkstationFileIdentity]::PinOrdinaryReadFile($PreferencesPath, $true)
+    try { $PreferencesPath = [Atlaso.WorkstationCanonicalProviderV1]::Get($providerPin) }
+    finally { $providerPin.Dispose() }
+    $pins = [System.Collections.Generic.List[System.IDisposable]]::new()
+    try {
+        $pins.Add([Atlaso.WorkstationFileIdentity]::PinOrdinaryDirectoryPath((Split-Path -Parent $ReceiptPath), $true))
+        $pins.Add([Atlaso.WorkstationFileIdentity]::PinOrdinaryReadFile($ReceiptPath, $true))
+        if ((Get-FileHash -LiteralPath $ReceiptPath -Algorithm SHA256).Hash -ine $ReceiptSha256) { throw 'LAN creation receipt digest mismatch.' }
+        $receipt = [System.IO.File]::ReadAllText($ReceiptPath) | ConvertFrom-Json -AsHashtable
+        foreach ($field in @('task_id', 'repository', 'source_commit', 'pr', 'lab_root')) {
+            if (-not $Owner.ContainsKey($field) -or -not $Owner[$field] -or $receipt[$field] -cne $Owner[$field]) {
+                throw "LAN creation receipt owner mismatch: $field."
+            }
+        }
+        if ($receipt.schema -ne 1 -or [int]$Owner.pr -le 0 -or $Owner.source_commit -notmatch '^[0-9a-f]{40}$' -or
+            $receipt.creation_id -notmatch '^[0-9a-f]{32}$' -or
+            $receipt.pvn_id -notmatch '^52( [0-9a-f]{2}){7}-[0-9a-f]{2}( [0-9a-f]{2}){7}$' -or
+            -not (Test-AtlasoSamePath -Left $receipt.preferences_path -Right $PreferencesPath)) {
+            throw 'LAN creation receipt identity is invalid.'
+        }
+        Assert-AtlasoLanSegmentUiClosed
+        Assert-AtlasoLanSegmentUnreferenced -InventoryPath $InventoryPath -VmRoots $VmRoots -SegmentId $receipt.pvn_id -Pins $pins
+        $changed = @{ Value = $false; Declined = $false }
+        Update-AtlasoLanPreferences -Path $PreferencesPath -Validate {
+            Assert-AtlasoLanSegmentUnreferenced -InventoryPath $InventoryPath -VmRoots $VmRoots -SegmentId $receipt.pvn_id -Pins $pins
+        } -Readback {
+            if ($WhatIfPreference -or $changed.Declined) { return }
+            # Independently reopen and parse provider state while rollback remains
+            # available. Release the read pin before propagating a verification error.
+            $readbackPin = [Atlaso.WorkstationFileIdentity]::PinOrdinaryReadFile($PreferencesPath, $true)
+            try {
+                $readback = ConvertFrom-AtlasoLanPreferences -Bytes ([System.IO.File]::ReadAllBytes($PreferencesPath))
+                if (@($readback.Entries.Values | Where-Object { $_.pvnID -ieq $receipt.pvn_id -or $_.name -ieq $receipt.name }).Count) {
+                    throw 'LAN segment registration absence was not verified.'
+                }
+                Assert-AtlasoLanSegmentUiClosed
+                Assert-AtlasoLanSegmentUnreferenced -InventoryPath $InventoryPath -VmRoots $VmRoots -SegmentId $receipt.pvn_id -Pins $pins
+                # Successful readback transfers this no-delete pin to the caller;
+                # retain it through transaction commit and absence-result creation.
+                $pins.Add($readbackPin)
+                $readbackPin = $null
+            } finally { if ($readbackPin) { $readbackPin.Dispose() } }
+        } -Transform {
+            param($original)
+            $parsed = ConvertFrom-AtlasoLanPreferences -Bytes $original
+            $selected = @($parsed.Entries.Keys | Where-Object {
+                $parsed.Entries[$_].name -ieq $receipt.name -or $parsed.Entries[$_].pvnID -ieq $receipt.pvn_id
+            })
+            if ($selected.Count -eq 0) { return ,$original }
+            if ($selected.Count -ne 1 -or $parsed.Entries[$selected[0]].name -cne $receipt.name -or
+                $parsed.Entries[$selected[0]].pvnID -cne $receipt.pvn_id) { throw 'LAN registration identity drift; preferences preserved.' }
+            if (-not $PSCmdlet.ShouldProcess($receipt.name, 'Remove exact owned LAN segment registration')) {
+                $changed.Declined = $true
+                return ,$original
+            }
+            $index = $selected[0]
+            $lines = @($parsed.Lines | Where-Object { $_ -notmatch "^\s*pref\.namedPVNs$index\." })
+            # Keep the provider high-water count and every other byte intact: sparse
+            # indices remain valid and another segment is never renumbered or rewritten.
+            $changed.Value = $true
+            return ,([System.Text.UTF8Encoding]::new($false).GetBytes(($lines -join '')))
+        }
+        if ($WhatIfPreference -or $changed.Declined) { return }
+        return [pscustomobject]@{ schema = 1; task_id = $Owner.task_id; pr = $Owner.pr
+            provider_id = $receipt.pvn_id; name = $receipt.name; receipt_sha256 = $ReceiptSha256
+            registration_absent = $true; adapter_references_absent = $true; changed = $changed.Value }
+    } finally {
+        for ($index = $pins.Count - 1; $index -ge 0; $index--) { $pins[$index].Dispose() }
+    }
+}
