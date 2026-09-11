@@ -1,8 +1,11 @@
 """Test vcf sddc deployment behavior."""
 
 import hashlib
+import http.client
 import io
+import socket
 import tarfile
+import xml.etree.ElementTree as ET
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -10,10 +13,17 @@ import pytest
 
 from atlaso.app.services.vcf_sddc_deployment import (
     VcfSddcDeploymentError,
+    VcfSddcPostImportError,
+    _DeadlineSocketReader,
     _ensure_datastore_free_space,
     _lease_imported_entity,
+    _ovf_environment_from_vmx,
+    _ovf_environment_xml,
     _parse_vsphere_ovf_descriptor,
+    _read_persisted_ovf_environment,
+    _standalone_ovf_properties,
     _upload_member,
+    _verify_guestinfo_ovf_environment,
     _verify_imported_ovf_environment,
     complete_property_mapping,
     deploy_ova,
@@ -22,6 +32,8 @@ from atlaso.app.services.vcf_sddc_deployment import (
     ova_inventory,
     validate_ova_manifest,
 )
+
+OVF_PLATFORM = {"Kind": "VMware ESXi", "Version": "9.1.0", "Vendor": "VMware, Inc.", "Locale": "en"}
 
 OVF = b"""<?xml version="1.0"?>
 <Envelope xmlns="http://schemas.dmtf.org/ovf/envelope/1">
@@ -411,8 +423,22 @@ def test_imported_ovf_verification_requires_all_keys_and_transport():
 
 
 @pytest.mark.parametrize(
-    ("api_type", "expected_host", "complete_metadata"),
-    [("HostAgent", True, True), ("VirtualCenter", False, True), ("HostAgent", True, False)],
+    ("api_type", "expected_host", "complete_metadata", "failure_mode"),
+    [
+        ("HostAgent", True, True, ""),
+        ("VirtualCenter", False, True, ""),
+        ("HostAgent", True, False, ""),
+        ("VirtualCenter", False, False, ""),
+        ("HostAgent", True, True, "reconfigure"),
+        ("HostAgent", True, False, "rollback"),
+        ("HostAgent", True, True, "cancel-reconfigure"),
+        ("HostAgent", True, True, "cancel-readback"),
+        ("VirtualCenter", False, True, "cancel-readback"),
+        ("HostAgent", True, True, "cancel-reconfigure-off"),
+        ("HostAgent", True, True, "cancel-readback-off"),
+        ("VirtualCenter", False, True, "cancel-readback-off"),
+        ("HostAgent", True, True, "spec-error"),
+    ],
 )
 def test_deploy_ova_binds_standalone_host_and_preserves_vcenter_automatic_placement(
     tmp_path,
@@ -420,6 +446,7 @@ def test_deploy_ova_binds_standalone_host_and_preserves_vcenter_automatic_placem
     api_type,
     expected_host,
     complete_metadata,
+    failure_mode,
 ):
     """Pass complete mappings and deterministic direct-ESXi placement through import.
 
@@ -429,6 +456,7 @@ def test_deploy_ova_binds_standalone_host_and_preserves_vcenter_automatic_placem
         api_type: VMware endpoint API type exercised by this parameter set.
         expected_host: Whether import placement must bind the standalone host.
         complete_metadata: Whether the imported VM retains valid OVF metadata.
+        failure_mode: Optional VMware configuration or rollback failure.
     """
     from pyVmomi import vim
 
@@ -450,6 +478,8 @@ def test_deploy_ova_binds_standalone_host_and_preserves_vcenter_automatic_placem
 
         _moId = "vm-595"
         name = "sddc-test"
+        runtime = SimpleNamespace(powerState="poweredOff")
+        guest = SimpleNamespace(ipAddress="192.0.2.10")
         config = SimpleNamespace(
             vAppConfig=SimpleNamespace(
                 property=[
@@ -457,12 +487,39 @@ def test_deploy_ova_binds_standalone_host_and_preserves_vcenter_automatic_placem
                     SimpleNamespace(id="vami.hostname", value="target.example.test"),
                 ],
                 ovfEnvironmentTransport=["com.vmware.guestInfo"] if complete_metadata else [],
-            )
+            ) if api_type == "VirtualCenter" else None,
+            extraConfig=[],
         )
+
+        def Reload(self):
+            """Record a fresh VM readback."""
+            captured["reloaded"] = True
+
+        def ReconfigVM_Task(self, spec):
+            """Persist or deliberately discard the guest-info environment.
+
+            Args:
+                spec: Requested virtual-machine configuration change.
+            """
+            captured["reconfigured"] = True
+            if failure_mode == "reconfigure":
+                raise RuntimeError(spec.extraConfig[0].value)
+            self.config.extraConfig = list(spec.extraConfig) if complete_metadata else []
+            return Task()
+
+        def PowerOnVM_Task(self):
+            """Ensure verification completed before any power-on."""
+            assert captured["reloaded"] is True
+            if api_type == "HostAgent":
+                assert self.config.extraConfig
+            captured["powered_on"] = True
+            return Task()
 
         def Destroy_Task(self):
             """Return a successful destroy task."""
             captured["destroyed"] = True
+            if failure_mode == "rollback":
+                raise RuntimeError("controlled rollback failure")
             return Task()
 
     vm = Vm()
@@ -505,7 +562,7 @@ def test_deploy_ova_binds_standalone_host_and_preserves_vcenter_automatic_placem
     pool = Pool()
     parsed = SimpleNamespace(
         error=[],
-        warning=[],
+        warning=[SimpleNamespace(localizedMessage="Default default-only  secret " + "x" * 1100)],
         property=[
             SimpleNamespace(id="ROOT_PASSWORD", type="password", label="Root", description="Secret", defaultValue="", userConfigurable=True),
             SimpleNamespace(id="vami.hostname", type="string", label="FQDN", description="Host", defaultValue="target.example.test", userConfigurable=True),
@@ -537,15 +594,20 @@ def test_deploy_ova_binds_standalone_host_and_preserves_vcenter_automatic_placem
                 params: VMware import parameters under test.
             """
             captured["params"] = params
+            if failure_mode == "spec-error":
+                return SimpleNamespace(error=[SimpleNamespace(localizedMessage="Rejected one-time-secret and default-only-secret")], importSpec=None)
             return SimpleNamespace(
                 error=[],
-                warning=[SimpleNamespace(localizedMessage="Accepted one-time-secret for ROOT_PASSWORD")],
+                warning=[SimpleNamespace(localizedMessage="Accepted one-time-secret for ROOT_PASSWORD and default-only  secret")],
                 fileItem=[],
-                importSpec=SimpleNamespace(name="spec"),
+                importSpec=SimpleNamespace(configSpec=SimpleNamespace(vAppConfig=SimpleNamespace(
+                    property=[SimpleNamespace(info=item) for item in parsed.property] + [SimpleNamespace(info=SimpleNamespace(id="hidden", defaultValue="default-only  secret"))],
+                    ovfEnvironmentTransport=[],
+                ))),
             )
 
     content = SimpleNamespace(
-        about=SimpleNamespace(apiType=api_type),
+        about=SimpleNamespace(apiType=api_type, version="9.1.0", vendor="VMware, Inc."),
         ovfManager=OvfManager(),
     )
     service_instance = SimpleNamespace(RetrieveContent=lambda: content)
@@ -595,12 +657,43 @@ def test_deploy_ova_binds_standalone_host_and_preserves_vcenter_automatic_placem
             vm_name="sddc-test",
             property_values={"ROOT_PASSWORD": "one-time-secret", "vami.hostname": "target.example.test"},
             deployment_option="small",
-            power_on=False,
+            power_on=not failure_mode.endswith("-off"),
+            cancelled=lambda: bool(
+                (failure_mode.startswith("cancel-reconfigure") and captured.get("reconfigured"))
+                or (failure_mode.startswith("cancel-readback") and captured.get("reloaded"))
+            ),
         )
+    if failure_mode == "spec-error":
+        with pytest.raises(VcfSddcDeploymentError, match="rejected the standalone OVA import specification") as caught:
+            deploy()
+        assert "one-time-secret" not in str(caught.value)
+        assert "default-only-secret" not in str(caught.value)
+        assert "import_host" not in captured
+        return
+    if failure_mode.startswith("cancel-"):
+        with pytest.raises(VcfSddcPostImportError, match="cancelled") as caught:
+            deploy()
+        assert caught.value.vm_result["vm_id"] == vm._moId
+        assert "powered_on" not in captured
+        assert "destroyed" not in captured
+        assert vm.runtime.powerState == "poweredOff"
+        return
+    if failure_mode:
+        error_type = VcfSddcPostImportError if failure_mode == "rollback" else VcfSddcDeploymentError
+        with pytest.raises(error_type) as caught:
+            deploy()
+        assert "one-time-secret" not in str(caught.value)
+        assert "<" not in str(caught.value)
+        assert captured["destroyed"] is True
+        assert "powered_on" not in captured
+        if failure_mode == "rollback":
+            assert caught.value.vm_result["vm_id"] == vm._moId
+        return
     if not complete_metadata:
         with pytest.raises(VcfSddcDeploymentError, match="exact incomplete VM was removed"):
             deploy()
         assert captured["destroyed"] is True
+        assert "powered_on" not in captured
         return
     result = deploy()
 
@@ -612,4 +705,298 @@ def test_deploy_ova_binds_standalone_host_and_preserves_vcenter_automatic_placem
     assert "one-time-secret" not in " ".join(result["warnings"])
     assert result["api_type"] == api_type
     assert result["ovf_verification"]["transports"] == ["com.vmware.guestInfo"]
+    if api_type == "HostAgent":
+        assert "default-only" not in " ".join(result["warnings"])
+        assert "x" * 100 not in " ".join(result["warnings"])
+        assert captured["reconfigured"] is True
+        assert captured["reloaded"] is True
+        assert result["ovf_verification"]["source"] == "guestinfo.ovfEnv"
+        assert vm.config.vAppConfig is None
+    else:
+        assert "reconfigured" not in captured
     assert "destroyed" not in captured
+    assert captured["powered_on"] is True
+
+
+def test_standalone_environment_preserves_qualified_keys_and_reviewed_empty_values(tmp_path):
+    """Use import metadata for namespace qualification without replacing reviewed values.
+
+    Args:
+        tmp_path: Isolated fixture directory.
+    """
+    ova = tmp_path / "test.ova"
+    write_ova(ova)
+    descriptor = inspect_ova(ova, root=tmp_path)
+    rows = [
+        SimpleNamespace(id="ROOT_PASSWORD", value="", defaultValue="", classId="", instanceId=""),
+        SimpleNamespace(id="ip0", value="", defaultValue="default-address", classId="vami", instanceId="SDDC-Manager"),
+        SimpleNamespace(id="hidden", value="", defaultValue="internal", classId="", instanceId=""),
+    ]
+    spec = SimpleNamespace(configSpec=SimpleNamespace(vAppConfig=SimpleNamespace(property=[SimpleNamespace(info=row) for row in rows])))
+    values = {"ROOT_PASSWORD": 'secret<&"\t\nvalue', "ip0": ""}
+    properties = _standalone_ovf_properties(spec, descriptor, values)
+    assert properties == {"ROOT_PASSWORD": values["ROOT_PASSWORD"], "vami.ip0.SDDC-Manager": "", "hidden": "internal"}
+    payload = _ovf_environment_xml(properties, platform=OVF_PLATFORM)
+    environment = ET.fromstring(payload)
+    assert [child.tag.rsplit("}", 1)[-1] for child in environment] == ["PlatformSection", "PropertySection"]
+    assert {child.tag.rsplit("}", 1)[-1]: child.text for child in environment[0]} == OVF_PLATFORM
+    vm = SimpleNamespace(Reload=lambda: None, config=SimpleNamespace(extraConfig=[SimpleNamespace(key="guestinfo.ovfEnv", value=payload)]))
+    result = _verify_guestinfo_ovf_environment(vm, properties, platform=OVF_PLATFORM)
+    assert result["property_keys"] == ["ROOT_PASSWORD", "hidden", "vami.ip0.SDDC-Manager"]
+    assert values["ROOT_PASSWORD"] not in str(result)
+    spec.configSpec.vAppConfig.property.append(SimpleNamespace(info=rows[1]))
+    with pytest.raises(VcfSddcDeploymentError, match="ambiguous"):
+        _standalone_ovf_properties(spec, descriptor, values)
+
+
+@pytest.mark.parametrize("damage", ["transport", "metadata", "unidentified", "omitted"])
+def test_standalone_environment_rejects_incomplete_import_contract(damage):
+    """Reject unsupported specifications before creating a VM or uploading disks.
+
+    Args:
+        damage: Missing part of the target-generated import contract.
+    """
+    descriptor = SimpleNamespace(ovf_environment_transports=["com.vmware.guestInfo"])
+    info = SimpleNamespace(id="ROOT_PASSWORD", classId="", instanceId="")
+    spec = SimpleNamespace(configSpec=SimpleNamespace(vAppConfig=SimpleNamespace(property=[SimpleNamespace(info=info)])))
+    if damage == "transport":
+        descriptor.ovf_environment_transports = ["iso"]
+    elif damage == "metadata":
+        spec.configSpec.vAppConfig = None
+    elif damage == "unidentified":
+        info.id = ""
+    else:
+        info.id = "different"
+    with pytest.raises(VcfSddcDeploymentError) as caught:
+        _standalone_ovf_properties(spec, descriptor, {"ROOT_PASSWORD": "secret-value"})
+    assert "secret-value" not in str(caught.value)
+
+
+@pytest.mark.parametrize("damage", ["missing", "mismatch", "duplicate", "namespace", "malformed", "dtd", "oversized", "platform_missing", "platform_duplicate", "platform_order", "platform_value"])
+def test_guestinfo_verification_rejects_incomplete_or_ambiguous_documents(damage):
+    """Reject malformed or changed readback without disclosing serialized secrets.
+
+    Args:
+        damage: Specific corruption applied to the persisted guest environment.
+    """
+    properties = {"ROOT_PASSWORD": "secret<&value", "vami.ip0.SDDC-Manager": ""}
+    root = ET.fromstring(_ovf_environment_xml(properties, platform=OVF_PLATFORM))
+    section = root[1]
+    if damage == "missing":
+        section.remove(section[0])
+    elif damage == "mismatch":
+        section[0].set("{http://schemas.dmtf.org/ovf/environment/1}value", "different")
+    elif damage == "duplicate":
+        section.append(ET.fromstring(ET.tostring(section[0])))
+    elif damage == "namespace":
+        root.tag = "Environment"
+    elif damage == "platform_missing":
+        root.remove(root[0])
+    elif damage == "platform_duplicate":
+        root.insert(0, ET.fromstring(ET.tostring(root[0])))
+    elif damage == "platform_order":
+        root.append(root[0])
+        root.remove(root[0])
+    elif damage == "platform_value":
+        root[0][1].text = "different-version"
+    payload = ET.tostring(root, encoding="unicode")
+    if damage == "malformed":
+        payload = payload[:-5]
+    elif damage == "dtd":
+        payload = '<!DOCTYPE Environment [<!ENTITY x "secret">]>' + payload
+    elif damage == "oversized":
+        payload = " " * (128 * 1024 + 1)
+    vm = SimpleNamespace(Reload=lambda: None, config=SimpleNamespace(extraConfig=[SimpleNamespace(key="guestinfo.ovfEnv", value=payload)]))
+    with pytest.raises(VcfSddcDeploymentError) as caught:
+        _verify_guestinfo_ovf_environment(vm, properties, platform=OVF_PLATFORM)
+    assert "secret" not in str(caught.value)
+
+
+def test_guestinfo_empty_api_value_requires_verified_persisted_xml():
+    """Accept masked API values only when the independently stored XML matches."""
+    properties = {"ROOT_PASSWORD": 'sensitive<&"|é', "vami.ip0.SDDC-Manager": ""}
+    payload = _ovf_environment_xml(properties, platform=OVF_PLATFORM)
+    encoded = payload.replace("|", "|7C").replace('"', "|22").encode("utf-8")
+    vmx = b'guestinfo.ovfEnv = "' + encoded + b'"\n'
+    vm = SimpleNamespace(Reload=lambda: None, config=SimpleNamespace(extraConfig=[SimpleNamespace(key="guestinfo.ovfEnv", value="")]))
+    result = _verify_guestinfo_ovf_environment(vm, properties, platform=OVF_PLATFORM, read_persisted=lambda: _ovf_environment_from_vmx(vmx))
+    assert result["readback"] == "datastore-vmx"
+    assert "sensitive" not in str(result)
+    with pytest.raises(VcfSddcDeploymentError, match="complete reviewed"):
+        _verify_guestinfo_ovf_environment(vm, {"ROOT_PASSWORD": "other"}, platform=OVF_PLATFORM, read_persisted=lambda: _ovf_environment_from_vmx(vmx))
+
+
+@pytest.mark.parametrize("vmx", [b'', b'guestinfo.ovfEnv = "a"\nguestinfo.ovfenv = "b"', b'guestinfo.ovfEnv = "|zz"', b'guestinfo.ovfEnv = "|ff"', b'x' * (1024 * 1024 + 1)], ids=["missing", "duplicate", "escape", "encoding", "oversize"])
+def test_persisted_environment_rejects_ambiguous_or_invalid_vmx(vmx):
+    """Reject unsafe persisted representations before parsing their XML.
+
+    Args:
+        vmx: Invalid bounded configuration input.
+    """
+    with pytest.raises(VcfSddcDeploymentError):
+        _ovf_environment_from_vmx(vmx)
+
+
+@pytest.mark.parametrize("fault", ["", "pin", "redirect", "path", "oversize", "deadline", "cancel"])
+@pytest.mark.parametrize("fingerprint_style", ["plain", "colon"])
+def test_persisted_environment_read_is_pinned_bounded_and_same_host(monkeypatch, fault, fingerprint_style):
+    """Never send a session cookie to an unconfirmed or redirected endpoint.
+
+    Args:
+        monkeypatch: Isolated transport replacement.
+        fault: Failed trust, response, or path constraint.
+        fingerprint_style: Plain hexadecimal or the colon-separated UI representation.
+    """
+    from pyVmomi import vim
+
+    captured = []
+    elapsed = [0.0]
+    read_count = [0]
+    monkeypatch.setattr("atlaso.app.services.vcf_sddc_deployment.time.monotonic", lambda: elapsed[0])
+    certificate = b"confirmed-certificate"
+    payload = b'guestinfo.ovfEnv = "safe"\n' if fault != "oversize" else b'x' * (1024 * 1024 + 1)
+
+    class Datacenter:
+        """Represent the sole datacenter on this standalone endpoint."""
+        name = "ha-datacenter"
+
+    class Connection:
+        """Capture transport order without networking or credential output."""
+        def __init__(self, endpoint, port, **kwargs):
+            """Require the selected endpoint and a bounded timeout.
+
+            Args:
+                endpoint: Selected host.
+                port: Selected HTTPS port.
+                **kwargs: Connection controls.
+            """
+            assert (endpoint, port, kwargs["timeout"]) == ("esxi.example.test", 443, 30)
+            self.sock = SimpleNamespace(getpeercert=lambda **_kwargs: certificate, settimeout=lambda value: None, close=lambda: None)
+
+        def connect(self):
+            """Record the TLS connection before any HTTP request."""
+            captured.append("connect")
+
+        def request(self, method, target, headers):
+            """Record only the method and safe URL.
+
+            Args:
+                method: HTTP method.
+                target: Same-host resource path.
+                headers: Session authentication header.
+            """
+            assert headers == {"Cookie": "session-secret"}
+            captured.append((method, target))
+
+        def getresponse(self):
+            """Return a bounded response or an untrusted redirect."""
+            offset = [0]
+            def read(limit):
+                """Enforce the caller's byte bound.
+
+                Args:
+                    limit: Maximum returned bytes.
+                """
+                assert 0 < limit <= 65536
+                read_count[0] += 1
+                if fault == "deadline":
+                    elapsed[0] += 0.5
+                    return b'x'
+                chunk = payload[offset[0]:offset[0] + limit]
+                offset[0] += len(chunk)
+                return chunk
+            return SimpleNamespace(status=302 if fault == "redirect" else 200, read1=read, begin=lambda: None, close=lambda: None)
+
+        def close(self):
+            """Always release the transport."""
+            captured.append("close")
+
+    monkeypatch.setattr(vim, "Datacenter", Datacenter)
+    monkeypatch.setattr("atlaso.app.services.vcf_sddc_deployment.http.client.HTTPSConnection", Connection)
+    monkeypatch.setattr("atlaso.app.services.vcf_sddc_deployment.http.client.HTTPResponse", lambda *_args, **_kwargs: Connection("esxi.example.test", 443, timeout=30).getresponse())
+    si = SimpleNamespace(_stub=SimpleNamespace(cookie="session-secret"), RetrieveContent=lambda: SimpleNamespace(rootFolder=SimpleNamespace(childEntity=[Datacenter()])))
+    vm = SimpleNamespace(runtime=SimpleNamespace(powerState="poweredOff"), config=SimpleNamespace(files=SimpleNamespace(vmPathName="[store] ../vm.vmx" if fault == "path" else "[store] task vm/vm.vmx")))
+    fingerprint = hashlib.sha256(certificate).hexdigest()
+    if fingerprint_style == "colon":
+        fingerprint = ":".join(fingerprint[index:index + 2] for index in range(0, len(fingerprint), 2)).upper()
+    def read():
+        """Read the selected VMX using the confirmed certificate pin."""
+        return _read_persisted_ovf_environment(vm, si, SimpleNamespace(name="store"), endpoint="esxi.example.test", port=443, expected_fingerprint="incorrect" if fault == "pin" else fingerprint, cancelled=lambda: fault == "cancel" and read_count[0] > 0)
+    if fault:
+        with pytest.raises(VcfSddcDeploymentError) as caught:
+            read()
+        assert "session-secret" not in str(caught.value)
+        if fault == "deadline":
+            assert elapsed[0] == 30
+            assert read_count[0] == 60
+        if fault == "cancel":
+            assert "cancelled" in str(caught.value)
+            assert read_count[0] == 1
+        if fault in {"pin", "path"}:
+            assert not any(isinstance(entry, tuple) for entry in captured)
+    else:
+        assert read() == "safe"
+        assert captured == ["connect", ("GET", "/folder/task%20vm/vm.vmx?dcPath=ha-datacenter&dsName=store"), "close"]
+
+
+@pytest.mark.parametrize("scenario", ["header-trickle", "chunk-trickle", "pause", "cancel"])
+def test_http_response_socket_deadline_covers_headers_and_retries(monkeypatch, scenario):
+    """Exercise the real HTTP parser through the deadline-aware socket reader.
+
+    Args:
+        monkeypatch: Deterministic monotonic clock replacement.
+        scenario: Slow headers, slow chunk framing, transient pause, or cancellation.
+    """
+    elapsed = [0.0]
+    calls = [0]
+    monkeypatch.setattr("atlaso.app.services.vcf_sddc_deployment.time.monotonic", lambda: elapsed[0])
+    frames = [b"HTTP/1.1 200 OK\r\nContent-Length: 4\r\n\r\n", b"safe"]
+    if scenario == "chunk-trickle":
+        frames = [b"HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n"]
+
+    class Transport:
+        """Supply partial network frames and inactivity timeouts."""
+        def settimeout(self, value):
+            """Check the remaining-deadline polling limit.
+
+            Args:
+                value: Next socket inactivity timeout.
+            """
+            assert 0 < value <= 1
+
+        def recv_into(self, buffer):
+            """Simulate progress without real delays.
+
+            Args:
+                buffer: Raw socket receive destination.
+            """
+            calls[0] += 1
+            elapsed[0] += 0.5
+            if scenario in {"header-trickle", "cancel"}:
+                frame = b"H"
+            elif scenario == "pause" and calls[0] in {2, 3, 4}:
+                raise socket.timeout()
+            elif frames:
+                frame = frames.pop(0)
+            elif scenario == "chunk-trickle":
+                frame = b"0"
+            else:
+                return 0
+            buffer[:len(frame)] = frame
+            return len(frame)
+
+    reader = _DeadlineSocketReader(Transport(), 30, lambda: scenario == "cancel" and calls[0] >= 3)
+    response = http.client.HTTPResponse(reader)
+    try:
+        if scenario == "pause":
+            response.begin()
+            assert response.read() == b"safe"
+            assert calls[0] == 5
+        else:
+            expected = "cancelled" if scenario == "cancel" else "deadline exceeded"
+            with pytest.raises((VcfSddcDeploymentError, TimeoutError), match=expected):
+                response.begin()
+                response.read()
+            assert elapsed[0] <= 30
+    finally:
+        response.close()

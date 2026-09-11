@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import http.client
+import io
 import re
 import socket
 import ssl
@@ -14,11 +15,14 @@ import xml.etree.ElementTree as ET
 from dataclasses import asdict, dataclass, field, replace
 from pathlib import Path
 from typing import Any, Callable
-from urllib.parse import urlsplit, urlunsplit
+from urllib.parse import quote, urlencode, urlsplit, urlunsplit
 
 SDDC_MANAGER_OVA_ROOT = Path("/mnt/atlaso-vcf-offline-depot/PROD/COMP/SDDC_MANAGER_VCF")
 OVF_NS = "http://schemas.dmtf.org/ovf/envelope/1"
 OVF = f"{{{OVF_NS}}}"
+OVF_ENV = "{http://schemas.dmtf.org/ovf/environment/1}"
+MAX_OVF_ENVIRONMENT_BYTES = 128 * 1024
+MAX_OVF_VMX_BYTES = 1024 * 1024
 MANIFEST_LINE = re.compile(r"^(SHA1|SHA256|SHA512)\(([^)]+)\)=\s*([0-9a-fA-F]+)\s*$")
 Progress = Callable[[int, str], None]
 CancelCheck = Callable[[], bool]
@@ -419,11 +423,12 @@ def _wait_task(task: Any, *, timeout: float = 900.0, cancelled: CancelCheck | No
     return task.info.result
 
 
-def _safe_vsphere_message(exc: Exception) -> str:
+def _safe_vsphere_message(exc: Exception, *, normalize: bool = True) -> str:
     """Return safe vsphere message.
 
     Args:
         exc: Exception that caused the current failure path.
+        normalize: Collapse whitespace only after callers have redacted raw values.
     """
     message = str(getattr(exc, "msg", "") or getattr(exc, "localizedMessage", "") or "")
     if not message:
@@ -433,7 +438,8 @@ def _safe_vsphere_message(exc: Exception) -> str:
             message = "; ".join(part for part in parts if part)
     if not message:
         message = str(exc)
-    message = re.sub(r"\s+", " ", message).strip()
+    if normalize:
+        message = re.sub(r"\s+", " ", message).strip()
     return message or exc.__class__.__name__
 
 
@@ -477,7 +483,7 @@ def _ovf_diagnostic_messages(items: Any, *, property_values: dict[str, str] | No
     values = list((property_values or {}).values())
     messages: list[str] = []
     for item in list(items or []):
-        safe = _redact_ovf_property_values(_safe_vsphere_message(item), values)
+        safe = _redact_ovf_property_values(_safe_vsphere_message(item, normalize=False), values)
         fault = getattr(item, "fault", None)
         fault_name = (fault or item).__class__.__name__
         rendered = f"{fault_name}: {safe}" if safe and safe != fault_name else fault_name
@@ -507,11 +513,16 @@ def _parse_vsphere_ovf_descriptor(
         locale="",
         deploymentOption=str(deployment_option or ""),
     )
+    standalone = str(getattr(getattr(content, "about", None), "apiType", "")) == "HostAgent"
     try:
         parsed = content.ovfManager.ParseDescriptor(_ovf_descriptor_text(descriptor), params)
     except Exception as exc:  # pyVmomi exposes version-specific fault types.
+        if standalone:
+            raise VcfSddcDeploymentError("vSphere could not parse the standalone OVA descriptor; vendor diagnostic text was withheld.") from None
         message = _redact_ovf_property_values(_safe_vsphere_message(exc), list((property_values or {}).values()))
         raise VcfSddcDeploymentError(f"vSphere could not parse the OVA descriptor: {message}") from exc
+    if standalone and getattr(parsed, "error", None):
+        raise VcfSddcDeploymentError("vSphere rejected the standalone OVA descriptor; vendor diagnostic text was withheld.")
     errors = _ovf_diagnostic_messages(getattr(parsed, "error", None), property_values=property_values)
     if errors:
         raise VcfSddcDeploymentError(f"vSphere rejected the OVA descriptor: {'; '.join(errors)}")
@@ -557,7 +568,11 @@ def _parse_vsphere_ovf_descriptor(
     selected_option = str(deployment_option or default_option)
     if selected_option and selected_option not in option_keys:
         raise VcfSddcDeploymentError("The selected OVF deployment option is no longer accepted by vSphere.")
-    warnings = _ovf_diagnostic_messages(getattr(parsed, "warning", None), property_values=property_values)
+    # ParseDescriptor can omit non-editable defaults that only CreateImportSpec
+    # reveals. Do not retain transformed vendor text that cannot be redacted later.
+    warnings = (
+        ["Standalone descriptor warnings were reported; vendor diagnostic text was withheld."] if getattr(parsed, "warning", None) else []
+    ) if standalone else _ovf_diagnostic_messages(getattr(parsed, "warning", None), property_values=property_values)
     return replace(
         descriptor,
         vm_name=str(getattr(parsed, "defaultEntityName", "") or descriptor.vm_name),
@@ -795,6 +810,292 @@ def _verify_imported_ovf_environment(
         "property_keys": sorted(actual_keys),
         "transports": sorted(actual_transports),
     }
+
+
+def _standalone_ovf_properties(
+    import_spec: Any,
+    descriptor: OvaDescriptor,
+    property_values: dict[str, str],
+) -> dict[str, str]:
+    """Retain VMware's qualified guest keys and the exact reviewed values.
+
+    Args:
+        import_spec: Target-generated single-VM import specification.
+        descriptor: Target-authoritative descriptor with declared transports.
+        property_values: Complete reviewed property mapping, kept request-local.
+    """
+    if "com.vmware.guestInfo" not in descriptor.ovf_environment_transports:
+        raise VcfSddcDeploymentError("Standalone ESXi requires the OVA to declare the VMware guest-info OVF transport.")
+    config = getattr(import_spec, "configSpec", None)
+    vapp = getattr(config, "vAppConfig", None)
+    if vapp is None:
+        raise VcfSddcDeploymentError("The standalone ESXi import specification has no OVF property metadata.")
+    result: dict[str, str] = {}
+    reviewed_ids: set[str] = set()
+    for entry in list(getattr(vapp, "property", None) or []):
+        info = getattr(entry, "info", None)
+        identifier = str(getattr(info, "id", "") or "")
+        if not identifier:
+            raise VcfSddcDeploymentError("The standalone ESXi import specification has an unidentified OVF property.")
+        # OVF keys are class.id.instance, not the unqualified IDs used by
+        # ParseDescriptor and propertyMapping (for example vami.ip0.SDDC-Manager).
+        guest_key = ".".join(
+            part for part in (str(getattr(info, "classId", "") or ""), identifier, str(getattr(info, "instanceId", "") or "")) if part
+        )
+        if guest_key in result or (identifier in property_values and identifier in reviewed_ids):
+            raise VcfSddcDeploymentError("The standalone ESXi import specification has ambiguous OVF property identifiers.")
+        if identifier in property_values:
+            reviewed_ids.add(identifier)
+            value = property_values[identifier]
+        else:
+            # Preserve non-editable appliance defaults as well. ESXi cannot
+            # synthesize these into an environment after discarding vAppConfig.
+            value = str(getattr(info, "value", "") or getattr(info, "defaultValue", "") or "")
+        result[guest_key] = value
+    if reviewed_ids != set(property_values):
+        raise VcfSddcDeploymentError("The standalone ESXi import specification omitted reviewed OVF properties.")
+    return result
+
+
+def _ovf_environment_xml(properties: dict[str, str], *, platform: dict[str, str]) -> str:
+    """Serialize a bounded, escaped OVF environment without logging its values.
+
+    Args:
+        properties: Qualified guest keys and their request-local values.
+        platform: Target platform kind, version, vendor, and locale.
+    """
+    if list(platform) != ["Kind", "Version", "Vendor", "Locale"] or not all(platform.values()):
+        raise VcfSddcDeploymentError("The standalone ESXi OVF platform metadata is incomplete.")
+    root = ET.Element(f"{OVF_ENV}Environment", {f"{OVF_ENV}id": "vm"})
+    platform_section = ET.SubElement(root, f"{OVF_ENV}PlatformSection")
+    for key, value in platform.items():
+        ET.SubElement(platform_section, f"{OVF_ENV}{key}").text = value
+    section = ET.SubElement(root, f"{OVF_ENV}PropertySection")
+    for key, value in properties.items():
+        ET.SubElement(section, f"{OVF_ENV}Property", {f"{OVF_ENV}key": key, f"{OVF_ENV}value": value})
+    payload = ET.tostring(root, encoding="unicode")
+    if len(payload.encode("utf-8")) > MAX_OVF_ENVIRONMENT_BYTES:
+        raise VcfSddcDeploymentError("The standalone ESXi OVF environment exceeds the supported size.")
+    try:
+        ET.fromstring(payload)
+    except ET.ParseError:
+        raise VcfSddcDeploymentError("The standalone ESXi OVF environment contains invalid XML characters.") from None
+    return payload
+
+
+def _ovf_environment_from_vmx(contents: bytes) -> str:
+    """Decode exactly one persisted guest-info value without exposing the VMX.
+
+    Args:
+        contents: Bounded UTF-8 VMX bytes from the exact imported VM.
+    """
+    if len(contents) > MAX_OVF_VMX_BYTES:
+        raise VcfSddcDeploymentError("The imported VM configuration exceeds the readback limit.")
+    lines = re.findall(rb'^\s*guestinfo\.ovfEnv\s*=\s*(.*?)\s*$', contents, re.MULTILINE | re.IGNORECASE)
+    if len(lines) != 1 or not re.fullmatch(rb'"(?:[^"|\r\n]|\|[0-9a-fA-F]{2})*"', lines[0]):
+        raise VcfSddcDeploymentError("The imported VM configuration has no unambiguous OVF guest-info value.")
+    decoded = re.sub(rb'\|([0-9a-fA-F]{2})', lambda match: bytes([int(match[1], 16)]), lines[0][1:-1])
+    try:
+        return decoded.decode("utf-8")
+    except UnicodeDecodeError:
+        raise VcfSddcDeploymentError("The imported VM configuration has invalid OVF guest-info encoding.") from None
+
+
+class _DeadlineSocketReader(io.RawIOBase):
+    """Apply one deadline to HTTP headers, chunk framing, and response bytes."""
+
+    def __init__(self, transport: Any, deadline: float, cancelled: CancelCheck | None) -> None:
+        """Bind the already authenticated TLS transport.
+
+        Args:
+            transport: Socket owned and closed by the readback caller.
+            deadline: Absolute monotonic deadline for the whole response.
+            cancelled: Optional operator cancellation check.
+        """
+        super().__init__()
+        self.transport = transport
+        self.deadline = deadline
+        self.cancelled = cancelled
+
+    def readable(self) -> bool:
+        """Allow HTTPResponse to buffer this raw reader."""
+        return True
+
+    def makefile(self, mode: str) -> io.BufferedReader:
+        """Provide the socket file expected by HTTPResponse.
+
+        Args:
+            mode: HTTPResponse's binary read mode.
+        """
+        if mode != "rb":
+            raise ValueError("Unsupported response mode")
+        return io.BufferedReader(self)
+
+    def readinto(self, buffer: Any) -> int:
+        """Retry inactivity polls without poisoning a socket makefile buffer.
+
+        Args:
+            buffer: Writable destination for the next socket receive.
+        """
+        while True:
+            _check_cancelled(self.cancelled)
+            remaining = self.deadline - time.monotonic()
+            if remaining <= 0:
+                raise TimeoutError("VMX readback deadline exceeded")
+            self.transport.settimeout(min(1, remaining))
+            try:
+                count = self.transport.recv_into(buffer)
+            except socket.timeout:
+                continue
+            _check_cancelled(self.cancelled)
+            if time.monotonic() >= self.deadline:
+                raise TimeoutError("VMX readback deadline exceeded")
+            return int(count)
+
+
+def _read_persisted_ovf_environment(
+    vm: Any, service_instance: Any, datastore: Any, *, endpoint: str, port: int, expected_fingerprint: str, cancelled: CancelCheck | None = None,
+) -> str:
+    """Read the exact VMX over pinned HTTPS when ESXi masks its API value.
+
+    Args:
+        vm: Exact powered-off VM returned by the import lease.
+        service_instance: Authenticated standalone ESXi session.
+        datastore: Selected import datastore, used to constrain the VMX path.
+        endpoint: Operator-confirmed ESXi endpoint.
+        port: HTTPS service port on that endpoint.
+        expected_fingerprint: Operator-confirmed TLS certificate SHA-256.
+        cancelled: Optional operator cancellation check between response reads.
+    """
+    from pyVmomi import vim
+
+    connection = None
+    transport = None
+    response = None
+    try:
+        if not expected_fingerprint or str(vm.runtime.powerState) != "poweredOff":
+            raise ValueError("Readback requires a confirmed endpoint and a powered-off VM")
+        prefix = f"[{datastore.name}] "
+        vmx_path = str(vm.config.files.vmPathName)
+        if not vmx_path.startswith(prefix):
+            raise ValueError("Unexpected datastore")
+        relative = vmx_path[len(prefix):]
+        if not relative.endswith(".vmx") or "\\" in relative or any(part in {"", ".", ".."} for part in relative.split("/")):
+            raise ValueError("Invalid VMX path")
+        datacenters = [entry for entry in service_instance.RetrieveContent().rootFolder.childEntity if isinstance(entry, vim.Datacenter)]
+        if len(datacenters) != 1:
+            raise ValueError("Ambiguous standalone datacenter")
+        target = "/folder/" + quote(relative, safe="/") + "?" + urlencode({"dcPath": datacenters[0].name, "dsName": datastore.name})
+        context = ssl.create_default_context()
+        context.check_hostname = False
+        context.verify_mode = ssl.CERT_NONE
+        connection = http.client.HTTPSConnection(endpoint, port, timeout=30, context=context)
+        connection.connect()
+        certificate = connection.sock.getpeercert(binary_form=True)
+        if hashlib.sha256(certificate).hexdigest().upper() != expected_fingerprint.replace(":", "").upper():
+            raise ValueError("Certificate changed")
+        # Send the session cookie only after checking this connection's certificate.
+        # http.client does not follow redirects or inherit proxy configuration.
+        transport = connection.sock
+        deadline = time.monotonic() + 30
+        reader = _DeadlineSocketReader(transport, deadline, cancelled)
+        _check_cancelled(cancelled)
+        connection.request("GET", target, headers={"Cookie": service_instance._stub.cookie})
+        # Own response parsing directly: HTTPConnection.getresponse can close a
+        # Connection: close socket before our raw reader has consumed its body.
+        response = http.client.HTTPResponse(reader, method="GET")
+        response.begin()
+        if response.status != 200:
+            raise ValueError("VMX readback refused")
+        payload = bytearray()
+        while len(payload) <= MAX_OVF_VMX_BYTES:
+            _check_cancelled(cancelled)
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise TimeoutError("VMX readback deadline exceeded")
+            # read1 returns after at most one underlying buffered read, so
+            # successfully trickled bytes cannot restart the overall deadline.
+            chunk = response.read1(min(65536, MAX_OVF_VMX_BYTES + 1 - len(payload)))
+            _check_cancelled(cancelled)
+            if time.monotonic() >= deadline:
+                raise TimeoutError("VMX readback deadline exceeded")
+            if not chunk:
+                break
+            payload.extend(chunk)
+        return _ovf_environment_from_vmx(bytes(payload))
+    except VcfSddcDeploymentCancelled:
+        raise
+    except Exception:  # noqa: BLE001 - HTTP/vendor exceptions can include session or VMX material.
+        raise VcfSddcDeploymentError("Could not verify the persisted standalone ESXi OVF environment over confirmed HTTPS.") from None
+    finally:
+        if response is not None:
+            response.close()
+        if connection is not None:
+            connection.close()
+        if transport is not None:
+            transport.close()
+
+
+def _verify_guestinfo_ovf_environment(
+    vm: Any, properties: dict[str, str], *, platform: dict[str, str], read_persisted: Callable[[], str] | None = None,
+) -> dict[str, Any]:
+    """Read back and compare every guest-info property before admitting power-on.
+
+    Args:
+        vm: Exact powered-off VM returned by this import's NFC lease.
+        properties: Expected qualified property mapping, never included in results.
+        platform: Expected platform identity from the connected target.
+        read_persisted: Bounded VMX reader for ESXi's empty API representation.
+    """
+    vm.Reload()
+    entries = [entry for entry in list(vm.config.extraConfig or []) if entry.key == "guestinfo.ovfEnv"]
+    if len(entries) != 1 or not isinstance(entries[0].value, str):
+        raise VcfSddcDeploymentError("The imported VM did not retain exactly one OVF guest-info environment.")
+    payload = entries[0].value
+    readback = "config.extraConfig"
+    if not payload and read_persisted is not None:
+        payload = read_persisted()
+        readback = "datastore-vmx"
+    if len(payload.encode("utf-8")) > MAX_OVF_ENVIRONMENT_BYTES or "<!" in payload:
+        raise VcfSddcDeploymentError("The imported VM retained an invalid OVF guest-info environment.")
+    try:
+        root = ET.fromstring(payload)
+    except ET.ParseError:
+        raise VcfSddcDeploymentError("The imported VM retained malformed OVF guest-info XML.") from None
+    sections = root.findall(f"{OVF_ENV}PropertySection")
+    if root.tag != f"{OVF_ENV}Environment" or root.get(f"{OVF_ENV}id") != "vm" or [child.tag for child in root] != [f"{OVF_ENV}PlatformSection", f"{OVF_ENV}PropertySection"]:
+        raise VcfSddcDeploymentError("The imported VM retained an invalid OVF guest-info document.")
+    platform_section = root[0]
+    if [child.tag for child in platform_section] != [f"{OVF_ENV}{key}" for key in platform] or [child.text for child in platform_section] != list(platform.values()):
+        raise VcfSddcDeploymentError("The imported VM did not retain the complete OVF platform metadata.")
+    actual: dict[str, str] = {}
+    for entry in sections[0]:
+        key = entry.get(f"{OVF_ENV}key")
+        value = entry.get(f"{OVF_ENV}value")
+        if entry.tag != f"{OVF_ENV}Property" or not key or value is None or key in actual:
+            raise VcfSddcDeploymentError("The imported VM retained ambiguous OVF guest-info properties.")
+        actual[key] = value
+    if actual != properties:
+        raise VcfSddcDeploymentError("The imported VM did not retain the complete reviewed OVF guest-info values.")
+    return {"property_keys": sorted(actual), "transports": ["com.vmware.guestInfo"], "source": "guestinfo.ovfEnv", "readback": readback}
+
+
+def _install_guestinfo_ovf_environment(vm: Any, payload: str) -> None:
+    """Install the environment only on the exact powered-off imported VM.
+
+    Args:
+        vm: Exact VM returned by the completed NFC lease.
+        payload: Request-local XML containing deployment secrets.
+    """
+    from pyVmomi import vim
+
+    if str(vm.runtime.powerState) != "poweredOff":
+        raise VcfSddcDeploymentError("The imported VM must remain powered off while installing its OVF environment.")
+    try:
+        _wait_task(vm.ReconfigVM_Task(spec=vim.vm.ConfigSpec(extraConfig=[vim.option.OptionValue(key="guestinfo.ovfEnv", value=payload)])))
+    except Exception:  # noqa: BLE001 - vendor faults may contain the complete secret-bearing XML.
+        # VMware faults can echo the submitted XML, including escaped secrets.
+        raise VcfSddcDeploymentError("Standalone ESXi could not persist the OVF guest-info environment.") from None
 
 
 def _destroy_imported_vm(vm: Any) -> None:
@@ -1123,15 +1424,31 @@ def deploy_ova(
             parameter_values["hostSystem"] = host
         params = vim.OvfManager.CreateImportSpecParams(**parameter_values)
         import_warnings = list(descriptor.warnings)
+        guest_properties: dict[str, str] | None = None
+        guest_platform: dict[str, str] = {}
+        guest_environment = ""
         with tarfile.open(descriptor.path, "r") as archive:
             ovf_source = archive.extractfile(descriptor.ovf_member)
             if ovf_source is None:
                 raise VcfSddcDeploymentError("The OVA descriptor could not be read for deployment.")
             spec = content.ovfManager.CreateImportSpec(ovf_source.read().decode("utf-8"), resource_pool, datastore, params)
             if spec.error:
+                if api_type == "HostAgent":
+                    # Failed specifications can omit the metadata needed to
+                    # identify every secret-bearing appliance default.
+                    raise VcfSddcDeploymentError("vSphere rejected the standalone OVA import specification; vendor diagnostic text was withheld.")
                 messages = "; ".join(_ovf_diagnostic_messages(spec.error, property_values=property_values))
                 raise VcfSddcDeploymentError(f"vSphere rejected the OVA import specification: {messages}")
-            for warning in _ovf_diagnostic_messages(getattr(spec, "warning", None), property_values=property_values):
+            diagnostic_properties = dict(property_values)
+            if api_type == "HostAgent":
+                guest_properties = _standalone_ovf_properties(spec.importSpec, descriptor, property_values)
+                guest_platform = {"Kind": "VMware ESXi", "Version": str(content.about.version), "Vendor": str(content.about.vendor), "Locale": "en"}
+                guest_environment = _ovf_environment_xml(guest_properties, platform=guest_platform)
+                diagnostic_properties = {str(index): value for index, value in enumerate([*property_values.values(), *guest_properties.values()])}
+                # The effective environment also contains non-editable defaults
+                # that were not in the reviewed mapping used by the parser.
+                import_warnings = [_redact_ovf_property_values(warning, list(diagnostic_properties.values())) for warning in import_warnings]
+            for warning in _ovf_diagnostic_messages(getattr(spec, "warning", None), property_values=diagnostic_properties):
                 if warning not in import_warnings:
                     import_warnings.append(warning)
             if import_warnings and progress:
@@ -1181,7 +1498,18 @@ def deploy_ova(
             "deployment_option": descriptor.selected_deployment_option,
         }
         try:
-            imported_vm_result["ovf_verification"] = _verify_imported_ovf_environment(vm, descriptor, property_values)
+            if guest_properties is not None:
+                _install_guestinfo_ovf_environment(vm, guest_environment)
+                imported_vm_result["ovf_verification"] = _verify_guestinfo_ovf_environment(
+                    vm, guest_properties, platform=guest_platform, read_persisted=lambda: _read_persisted_ovf_environment(
+                        vm, service_instance, datastore, endpoint=endpoint, port=port, expected_fingerprint=expected_fingerprint, cancelled=cancelled,
+                    ),
+                )
+            else:
+                vm.Reload()
+                imported_vm_result["ovf_verification"] = _verify_imported_ovf_environment(vm, descriptor, property_values)
+        except VcfSddcDeploymentCancelled:
+            raise
         except Exception as verification_exc:
             message = (
                 str(verification_exc)
@@ -1200,9 +1528,13 @@ def deploy_ova(
         if not power_on:
             if progress:
                 progress(100, "deployed-powered-off")
+            _check_cancelled(cancelled)
             return imported_vm_result
         if progress:
             progress(75, "powering-on")
+        # Installation/readback can outlive a cancellation request. Complete that
+        # metadata transaction, but do not start a new power-on task afterward.
+        _check_cancelled(cancelled)
         _wait_task(vm.PowerOnVM_Task(), cancelled=cancelled)
         if progress:
             progress(80, "waiting-for-guest-address")

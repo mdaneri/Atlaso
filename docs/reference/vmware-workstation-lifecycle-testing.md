@@ -164,6 +164,9 @@ The operation requires existing UTF-8 preferences without a BOM and an existing 
 exact segment records, preserving all other bytes, line endings, segment indices, and the provider's high-water count.
 Duplicate or unsupported registration fields and name/ID drift fail closed. Preferences updates pin ordinary paths,
 exclude writers, atomically replace the file, compare the displaced identity/bytes, and independently verify absence.
+Native recursive directory-change requests are armed before enumeration and retained through the final readback.
+Any descendant change, even a transient VMX creation/deletion, or a notification error/overflow refuses the scan;
+read-only file pins alone cannot prevent new VMX files from appearing beneath a storage root.
 Concurrent displaced state is restored through the shared checked recovery helper; a failed or interrupted transaction
 retains its recovery copy and blocks subsequent mutation until reconciled, including the shared rollback helper's
 `atlaso-recovery-*.tmp` and `atlaso-cas-*.tmp` artifacts as well as LAN staging and backup files. Never repair that

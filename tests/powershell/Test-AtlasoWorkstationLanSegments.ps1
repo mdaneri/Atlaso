@@ -168,4 +168,21 @@ foreach ($suffix in @('lan-retained.tmp.backup', 'lan-retained.tmp', 'recovery-r
     if ([IO.File]::ReadAllText($backup) -cne 'retained recovery evidence') { throw 'Recovery evidence was changed.' }
     [IO.File]::Delete($backup)
 }
+Assert-Refused {
+    & $module {
+        param($root, $inventoryPath, $id)
+        $referencePins = [System.Collections.Generic.List[System.IDisposable]]::new()
+        try {
+            Assert-AtlasoLanSegmentUnreferenced -InventoryPath $inventoryPath -VmRoots @($root) -SegmentId $id -Pins $referencePins
+            $lateVmx = Join-Path $root 'late.vmx'
+            [IO.File]::WriteAllText($lateVmx, "ethernet0.pvnID = `"$id`"")
+            [IO.File]::Delete($lateVmx)
+            # A second enumeration sees no VMX, but the retained native completion
+            # must reject the changed descendant set, including transient changes.
+            Assert-AtlasoLanSegmentUnreferenced -InventoryPath $inventoryPath -VmRoots @($root) -SegmentId $id -Pins $referencePins
+        } finally {
+            for ($i = $referencePins.Count - 1; $i -ge 0; $i--) { $referencePins[$i].Dispose() }
+        }
+    } $vmRoot $inventory $segment.Id
+} 'contents changed during LAN segment'
 Write-Host "LAN segment safety fixtures passed: $fixture"

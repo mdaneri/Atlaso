@@ -6,6 +6,77 @@ Loaded inside Atlaso.WorkstationCleanup so transactions share its filesystem ide
 and recovery primitives. Callers supply independently verified lifecycle ownership.
 #>
 
+if (-not ('Atlaso.WorkstationDirectoryChangeGuard' -as [type])) {
+    Add-Type -TypeDefinition @'
+using System;
+using System.ComponentModel;
+using System.Runtime.InteropServices;
+using Microsoft.Win32.SafeHandles;
+namespace Atlaso {
+    public sealed class WorkstationDirectoryChangeGuard : IDisposable {
+        [StructLayout(LayoutKind.Sequential)]
+        private struct Overlapped {
+            public IntPtr Internal, InternalHigh;
+            public uint Offset, OffsetHigh;
+            public IntPtr Event;
+        }
+        [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+        private static extern SafeFileHandle CreateFileW(string path, uint access, uint sharing,
+            IntPtr security, uint disposition, uint flags, IntPtr template);
+        [DllImport("kernel32.dll", SetLastError = true)]
+        private static extern bool ReadDirectoryChangesW(SafeFileHandle directory, IntPtr buffer,
+            uint length, bool subtree, uint filter, IntPtr returned, IntPtr overlapped, IntPtr completion);
+        [DllImport("kernel32.dll", SetLastError = true)]
+        private static extern bool GetOverlappedResult(SafeFileHandle directory, IntPtr overlapped,
+            out uint transferred, bool wait);
+        [DllImport("kernel32.dll", SetLastError = true)]
+        private static extern bool CancelIoEx(SafeFileHandle directory, IntPtr overlapped);
+        private SafeFileHandle handle;
+        private IntPtr buffer, overlapped;
+        private bool pending;
+        public WorkstationDirectoryChangeGuard(string path) {
+            try {
+                // Arm before enumeration. Unlike FileSystemWatcher callbacks, polling
+                // the native completion has no managed event-delivery lag. One event or
+                // buffer overflow permanently invalidates this scan; never rearm it.
+                handle = CreateFileW(path, 1, 3, IntPtr.Zero, 3, 0x42000000, IntPtr.Zero);
+                if (handle.IsInvalid) throw new Win32Exception(Marshal.GetLastWin32Error());
+                buffer = Marshal.AllocHGlobal(65536);
+                overlapped = Marshal.AllocHGlobal(Marshal.SizeOf<Overlapped>());
+                Marshal.StructureToPtr(new Overlapped(), overlapped, false);
+                if (!ReadDirectoryChangesW(handle, buffer, 65536, true, 0x15F,
+                    IntPtr.Zero, overlapped, IntPtr.Zero))
+                    throw new Win32Exception(Marshal.GetLastWin32Error());
+                pending = true;
+            } catch { Dispose(); throw; }
+        }
+        public void AssertUnchanged() {
+            uint transferred;
+            if (GetOverlappedResult(handle, overlapped, out transferred, false))
+                throw new InvalidOperationException("VM search-root contents changed during LAN segment reference verification.");
+            int error = Marshal.GetLastWin32Error();
+            if (error != 996) // ERROR_IO_INCOMPLETE is the only unchanged state.
+                throw new Win32Exception(error, "VM search-root change tracking failed; cleanup refused.");
+        }
+        public void Dispose() {
+            if (handle != null && !handle.IsClosed) {
+                if (pending) {
+                    CancelIoEx(handle, overlapped);
+                    uint transferred;
+                    // Cancellation completion precedes freeing the native IO buffers.
+                    GetOverlappedResult(handle, overlapped, out transferred, true);
+                    pending = false;
+                }
+                handle.Dispose();
+            }
+            if (overlapped != IntPtr.Zero) { Marshal.FreeHGlobal(overlapped); overlapped = IntPtr.Zero; }
+            if (buffer != IntPtr.Zero) { Marshal.FreeHGlobal(buffer); buffer = IntPtr.Zero; }
+        }
+    }
+}
+'@
+}
+
 <#
 .SYNOPSIS
 Reject an active Workstation UI before changing its cached preferences.
@@ -256,7 +327,7 @@ function Assert-AtlasoLanSegmentUnreferenced {
     param([Parameter(Mandatory)][string]$InventoryPath,
         [Parameter(Mandatory)][string[]]$VmRoots,
         [Parameter(Mandatory)][string]$SegmentId,
-        [Parameter(Mandatory)][System.Collections.Generic.List[System.IDisposable]]$Pins)
+        [Parameter(Mandatory)][AllowEmptyCollection()][System.Collections.Generic.List[System.IDisposable]]$Pins)
     if (Get-Process -Name vmware-vmx, vmrun -ErrorAction SilentlyContinue) {
         throw 'Stop VMware VM and vmrun activity before LAN segment cleanup; provider state preserved.'
     }
@@ -276,6 +347,7 @@ function Assert-AtlasoLanSegmentUnreferenced {
     }
     foreach ($root in $VmRoots) {
         $Pins.Add([Atlaso.WorkstationFileIdentity]::PinOrdinaryDirectoryPath($root, $true))
+        $Pins.Add([Atlaso.WorkstationDirectoryChangeGuard]::new($root))
         foreach ($item in Get-ChildItem -LiteralPath $root -Recurse -Force -ErrorAction Stop) {
             if ($item.Attributes -band [System.IO.FileAttributes]::ReparsePoint) {
                 throw 'VM search root contains a reparse point; LAN segment cleanup refused.'
@@ -285,6 +357,11 @@ function Assert-AtlasoLanSegmentUnreferenced {
     }
     foreach ($path in $paths) {
         Assert-AtlasoPathHasNoReparsePoint -Path $path
+        $parent = Split-Path -Parent $path
+        if ([System.IO.Directory]::Exists($parent)) {
+            $Pins.Add([Atlaso.WorkstationFileIdentity]::PinOrdinaryDirectoryPath($parent, $true))
+            $Pins.Add([Atlaso.WorkstationDirectoryChangeGuard]::new($parent))
+        }
         if (-not [System.IO.File]::Exists($path)) {
             if (-not [System.IO.Directory]::Exists((Split-Path -Parent $path))) {
                 throw 'A registered VM directory is unavailable; reconcile its inventory before LAN segment cleanup.'
@@ -300,6 +377,9 @@ function Assert-AtlasoLanSegmentUnreferenced {
             }
             if ($Matches[1] -ieq $SegmentId) { throw "LAN segment is still referenced by VMX '$path'." }
         }
+    }
+    foreach ($pin in $Pins) {
+        if ($pin -is [Atlaso.WorkstationDirectoryChangeGuard]) { $pin.AssertUnchanged() }
     }
 }
 
