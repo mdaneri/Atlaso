@@ -393,6 +393,9 @@ $preflightRoot = Join-Path $fixture 'preflight'
 $preflightGuard = New-LifecyclePreflightGuard -Path $preflightRoot
 $preflightGuard.Expect((Join-Path $preflightRoot ('source-' + ('a' * 32) + '.zip')))
 [IO.File]::WriteAllText((Join-Path $preflightRoot ('source-' + ('a' * 32) + '.zip')), 'partial archive')
+$fixtureCreated = [IO.File]::OpenRead((Join-Path $preflightRoot ('source-' + ('a' * 32) + '.zip')))
+try { $preflightGuard.Record((Join-Path $preflightRoot ('source-' + ('a' * 32) + '.zip')), $fixtureCreated.SafeFileHandle) }
+finally { $fixtureCreated.Dispose() }
 New-LifecycleSourceSnapshot -RepositoryRoot $sourceRoot -Commit $admitted -DestinationRoot $preflightRoot -PreflightGuard $preflightGuard | Out-Null
 Assert-Refused { Remove-LifecyclePreflightArtifacts -Path $preflightRoot -ExpectedParent $vmRoot -Guard $preflightGuard } 'independently derived lifecycle parent'
 Remove-LifecyclePreflightArtifacts -Path $preflightRoot -ExpectedParent $fixture -Guard $preflightGuard
@@ -420,16 +423,45 @@ try {
     $ownedBeforeLate = Join-Path $lateRoot 'owned.txt'
     [IO.File]::WriteAllText($ownedBeforeLate, 'preserve owned evidence')
     $lateGuard.Expect($ownedBeforeLate)
+    $ownedStream = [IO.File]::OpenRead($ownedBeforeLate)
+    try { $lateGuard.Record($ownedBeforeLate, $ownedStream.SafeFileHandle) } finally { $ownedStream.Dispose() }
     $lateGuard.CaptureSnapshot()
     [IO.File]::WriteAllText((Join-Path $lateRoot 'late.txt'), 'preserve late entry')
     Assert-Refused { $lateGuard.Remove() } 'descendant set changed before deletion'
 } finally { $lateGuard.Dispose() }
 if ([IO.File]::ReadAllText($ownedBeforeLate) -cne 'preserve owned evidence') { throw 'Pre-deletion refusal consumed owned evidence.' }
 if ([IO.File]::ReadAllText((Join-Path $lateRoot 'late.txt')) -cne 'preserve late entry') { throw 'Late preflight descendant was deleted.' }
+$replacedRoot = Join-Path $fixture 'preflight-replaced'
+[IO.Directory]::CreateDirectory($replacedRoot) | Out-Null
+$replacedGuard = New-LifecyclePreflightGuard -Path $replacedRoot
+$replacedPath = Join-Path $replacedRoot 'plan.json'
+$replacedGuard.Expect($replacedPath)
+$createdStream = [IO.File]::Open($replacedPath, 'CreateNew', 'Write', 'None')
+try { $replacedGuard.Record($replacedPath, $createdStream.SafeFileHandle); $createdStream.WriteByte(1) } finally { $createdStream.Dispose() }
+$foreignReplacement = Join-Path $fixture 'replacement.json'
+[IO.File]::WriteAllText($foreignReplacement, 'foreign replacement')
+[IO.File]::Replace($foreignReplacement, $replacedPath, (Join-Path $fixture 'original.json'), $true)
+try { Assert-Refused { Remove-LifecyclePreflightArtifacts -Path $replacedRoot -ExpectedParent $fixture -Guard $replacedGuard } 'creation identity changed' }
+finally { $replacedGuard.Dispose() }
+if ([IO.File]::ReadAllText($replacedPath) -cne 'foreign replacement') { throw 'Same-path foreign preflight object was deleted.' }
+$frozenRoot = Join-Path $fixture 'preflight-frozen'
+[IO.Directory]::CreateDirectory($frozenRoot) | Out-Null
+$frozenNative = New-LifecyclePreflightGuard -Path $frozenRoot
+$frozenProbe = [pscustomobject]@{ Root = $frozenRoot; Native = $frozenNative; Blocked = $false }
+$frozenProbe | Add-Member ScriptMethod CaptureSnapshot {
+    $this.Native.CaptureSnapshot()
+    try { [IO.File]::WriteAllText((Join-Path $this.Root 'during-delete.txt'), 'must refuse') }
+    catch [UnauthorizedAccessException] { $this.Blocked = $true }
+    if (-not $this.Blocked) { throw 'Cleanup namespace remained writable.' }
+}
+$frozenProbe | Add-Member ScriptMethod Remove { $this.Native.Remove() }
+try { Remove-LifecyclePreflightArtifacts -Path $frozenRoot -ExpectedParent $fixture -Guard $frozenProbe }
+finally { $frozenNative.Dispose() }
+if (-not $frozenProbe.Blocked -or (Test-Path -LiteralPath $frozenRoot)) { throw 'Frozen cleanup fixture failed.' }
 # Inject immediately after real extraction in this fixture's local function copy.
 $injectedSnapshotSource = $snapshotFunction.Extent.Text.Replace(
-    'Expand-Archive -LiteralPath $archivePath -DestinationPath $snapshotPath -ErrorAction Stop',
-    'Expand-Archive -LiteralPath $archivePath -DestinationPath $snapshotPath -ErrorAction Stop; [IO.File]::WriteAllText((Join-Path $snapshotPath "source.txt"), "construction substitution")')
+    '$sourceSid = [Security.Principal.WindowsIdentity]::GetCurrent().User',
+    '[IO.File]::WriteAllText((Join-Path $snapshotPath "source.txt"), "construction substitution"); $sourceSid = [Security.Principal.WindowsIdentity]::GetCurrent().User')
 . ([scriptblock]::Create($injectedSnapshotSource))
 try {
     Assert-Refused { New-LifecycleSourceSnapshot -RepositoryRoot $sourceRoot -Commit $admitted -DestinationRoot $fixture } 'snapshot bytes differ from the Git archive'

@@ -125,6 +125,8 @@ preflight result directory. Cleanup verifies the independently derived parent, r
 and nonempty VM/seed roots, and verifies absence so an ordinary preflight failure can be retried. The root is pinned
 from creation; failure cleanup captures descendant handles before validation and deletes only those exact objects.
 Cleanup admits only this invocation's exact archive/output paths and the archive's recorded extraction inventory.
+Creation-time stream identities bind each file; capture refuses replacements at expected paths. Cleanup denies
+descendant writes before capture through deletion, restoring the original root ACL when cleanup refuses.
 Unrecorded additions before capture are preserved. Cleanup rechecks the entire captured path set before marking any
 handle for deletion, so additions observed at that boundary preserve both owned evidence and foreign entries.
 The durable publisher uses its own versioned helper type so existing

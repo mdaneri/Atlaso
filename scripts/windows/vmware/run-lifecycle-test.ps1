@@ -175,7 +175,7 @@ function New-LifecycleSourceSnapshot {
     } finally { $archiveMemory.Dispose(); $archiveProcess.Dispose() }
     $archiveDigest = [Security.Cryptography.SHA256]::HashData($archiveBytes)
     $archiveWriter = [IO.File]::Open($archivePath, 'CreateNew', 'Write', 'None')
-    try { $archiveWriter.Write($archiveBytes); $archiveWriter.Flush($true) } finally { $archiveWriter.Dispose() }
+    try { if ($PreflightGuard) { $PreflightGuard.Record($archivePath, $archiveWriter.SafeFileHandle) }; $archiveWriter.Write($archiveBytes); $archiveWriter.Flush($true) } finally { $archiveWriter.Dispose() }
     $archiveRead = [IO.File]::Open($archivePath, 'Open', 'Read', 'Read')
     try {
     if ([Convert]::ToHexString([Security.Cryptography.SHA256]::HashData($archiveRead)) -cne [Convert]::ToHexString($archiveDigest)) {
@@ -197,7 +197,39 @@ function New-LifecycleSourceSnapshot {
             }
         } finally { $archiveInventory.Dispose() }
     }
-    Expand-Archive -LiteralPath $archivePath -DestinationPath $snapshotPath -ErrorAction Stop
+    New-Item -ItemType Directory -Path $snapshotPath -ErrorAction Stop | Out-Null
+    if ($PreflightGuard) { $PreflightGuard.RecordDirectory($snapshotPath) }
+    $archiveRead.Position = 0
+    $extractArchive = [IO.Compression.ZipArchive]::new($archiveRead, [IO.Compression.ZipArchiveMode]::Read, $true)
+    $createdDirectories = [Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
+    $createdDirectories.Add($snapshotPath) | Out-Null
+    try {
+        foreach ($entry in $extractArchive.Entries) {
+            $entryPath = [IO.Path]::GetFullPath((Join-Path $snapshotPath $entry.FullName)).TrimEnd([IO.Path]::DirectorySeparatorChar)
+            if (-not $entryPath.StartsWith($snapshotPath + [IO.Path]::DirectorySeparatorChar, [StringComparison]::OrdinalIgnoreCase)) {
+                throw 'Archive entry escaped its snapshot root.'
+            }
+            $directoryPath = if ($entry.FullName.EndsWith('/')) { $entryPath } else { [IO.Path]::GetDirectoryName($entryPath) }
+            $missing = [Collections.Generic.Stack[string]]::new()
+            while (-not $createdDirectories.Contains($directoryPath)) {
+                $missing.Push($directoryPath); $directoryPath = [IO.Path]::GetDirectoryName($directoryPath)
+            }
+            while ($missing.Count) {
+                $directoryPath = $missing.Pop()
+                New-Item -ItemType Directory -Path $directoryPath -ErrorAction Stop | Out-Null
+                if ($PreflightGuard) { $PreflightGuard.RecordDirectory($directoryPath) }
+                $createdDirectories.Add($directoryPath) | Out-Null
+            }
+            if ($entry.FullName.EndsWith('/')) { continue }
+            $entryWriter = [IO.File]::Open($entryPath, 'CreateNew', 'Write', 'None')
+            try {
+                if ($PreflightGuard) { $PreflightGuard.Record($entryPath, $entryWriter.SafeFileHandle) }
+                $entryReader = $entry.Open()
+                try { $entryReader.CopyTo($entryWriter) } finally { $entryReader.Dispose() }
+                $entryWriter.Flush($true)
+            } finally { $entryWriter.Dispose() }
+        }
+    } finally { $extractArchive.Dispose() }
     # Deny ordinary same-user writes, including creation/replacement beneath every
     # directory. Keep DELETE rights available to supported owned-artifact cleanup.
     $sourceSid = [Security.Principal.WindowsIdentity]::GetCurrent().User
@@ -266,12 +298,25 @@ namespace Atlaso {
         private readonly List<SafeFileHandle> entries = new List<SafeFileHandle>();
         private readonly HashSet<string> capturedPaths = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         private readonly List<string> capturedDirectories = new List<string>();
-        private readonly HashSet<string> expected = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        private readonly Dictionary<string,string> expected = new Dictionary<string,string>(StringComparer.OrdinalIgnoreCase);
+        [StructLayout(LayoutKind.Sequential)] private struct FileId { public ulong Volume, Low, High; }
+        [DllImport("kernel32.dll", EntryPoint="GetFileInformationByHandleEx", SetLastError=true)]
+        private static extern bool GetIdentity(SafeFileHandle h, int c, out FileId data, uint n);
+        private string Identity(SafeFileHandle h) {
+            FileId id;
+            if (!GetIdentity(h, 18, out id, 24)) throw new Win32Exception(Marshal.GetLastWin32Error());
+            return id.Volume.ToString("X16") + id.Low.ToString("X16") + id.High.ToString("X16");
+        }
+        public void Record(string path, SafeFileHandle handle) { expected[Path.GetFullPath(path).TrimEnd(Path.DirectorySeparatorChar)] = Identity(handle); }
+        public void RecordDirectory(string path) { using (var h = Open(path, false, true)) Record(path, h); }
+        public void Published(string stage, string destination) {
+            expected[Path.GetFullPath(destination)] = expected[Path.GetFullPath(stage)];
+        }
         public void Expect(string path) {
             string full = Path.GetFullPath(path).TrimEnd(Path.DirectorySeparatorChar);
             if (!full.StartsWith(Root + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase))
                 throw new IOException("Preflight inventory path escaped its root.");
-            expected.Add(full);
+            if (!expected.ContainsKey(full)) expected.Add(full, null);
         }
         private SafeFileHandle Open(string path, bool delete, bool directory) {
             var h = CreateFileW(path, 0x81u | (delete ? 0x10000u : 0), directory ? 3u : 1u,
@@ -296,10 +341,13 @@ namespace Atlaso {
         }
         private void Capture(string parent) {
             foreach (string path in Directory.GetFileSystemEntries(parent)) {
-                if (!expected.Contains(Path.GetFullPath(path)))
+                if (!expected.ContainsKey(Path.GetFullPath(path)))
                     throw new IOException("Unrecorded preflight artifact; preserve the result root.");
                 bool directory = (File.GetAttributes(path) & FileAttributes.Directory) != 0;
-                entries.Add(Open(path, true, directory));
+                var captured = Open(path, true, directory);
+                entries.Add(captured);
+                if (expected[Path.GetFullPath(path)] == null || Identity(captured) != expected[Path.GetFullPath(path)])
+                    throw new IOException("Preflight artifact creation identity changed; preserve the result root.");
                 capturedPaths.Add(Path.GetFullPath(path));
                 if (directory) { capturedDirectories.Add(path); Capture(path); }
             }
@@ -364,6 +412,14 @@ function Remove-LifecyclePreflightArtifacts {
         $cursor = [IO.Path]::GetDirectoryName($cursor)
     }
     if (-not $Guard.Root.Equals($fullPath, [StringComparison]::OrdinalIgnoreCase)) { throw 'Preflight root guard mismatch.' }
+    $cleanupAcl = Get-Acl -LiteralPath $fullPath
+    $frozenAcl = Get-Acl -LiteralPath $fullPath
+    $frozenAcl.AddAccessRule([Security.AccessControl.FileSystemAccessRule]::new(
+        [Security.Principal.WindowsIdentity]::GetCurrent().User, [Security.AccessControl.FileSystemRights]::Write,
+        ([Security.AccessControl.InheritanceFlags]::ContainerInherit -bor [Security.AccessControl.InheritanceFlags]::ObjectInherit),
+        [Security.AccessControl.PropagationFlags]::None, [Security.AccessControl.AccessControlType]::Deny))
+    Set-Acl -LiteralPath $fullPath -AclObject $frozenAcl -ErrorAction Stop
+    try {
     $Guard.CaptureSnapshot()
     # This entry point is reachable only before provider/resource creation. Refuse
     # unexpected output instead of turning a preflight retry into VM cleanup.
@@ -382,6 +438,9 @@ function Remove-LifecyclePreflightArtifacts {
     if (-not $Guard.Root.Equals($fullPath, [StringComparison]::OrdinalIgnoreCase)) { throw 'Preflight root guard mismatch.' }
     $Guard.Remove()
     if (Test-Path -LiteralPath $fullPath) { throw 'Preflight artifact removal was not verified.' }
+    } finally {
+        if (Test-Path -LiteralPath $fullPath) { Set-Acl -LiteralPath $fullPath -AclObject $cleanupAcl -ErrorAction Stop }
+    }
 }
 
 # Plan-only output creates no runtime resource and makes no source-provenance claim.
@@ -1866,7 +1925,12 @@ if ($PlanOnly) {
 # Cleanup must retain the same identity proof for a kept runtime lab that it
 # receives for a plan-only lab. Publish it before any VM can be created.
 New-Item -ItemType Directory -Force -Path $resultRoot | Out-Null
-$planJson | Set-Content -LiteralPath (Join-Path $resultRoot 'plan.json') -Encoding UTF8
+$planPath = Join-Path $resultRoot 'plan.json'
+$planWriter = [IO.File]::Open($planPath, 'CreateNew', 'Write', 'None')
+try {
+    $preflightGuard.Record($planPath, $planWriter.SafeFileHandle)
+    $planWriter.Write([Text.UTF8Encoding]::new($false).GetBytes($planJson)); $planWriter.Flush($true)
+} finally { $planWriter.Dispose() }
 
 $firstBootOvfEnvironment = New-AtlasoWorkstationOvfEnvironment `
     -Fqdn (New-AtlasoWorkstationFqdn -Name $applianceName) `
@@ -1874,8 +1938,10 @@ $firstBootOvfEnvironment = New-AtlasoWorkstationOvfEnvironment `
     -RootPassword $adminPasswordSecure `
     -RootSshEnabled:($ApplianceSshUser -eq 'root')
 
-New-Item -ItemType Directory -Force -Path $vmRoot | Out-Null
-New-Item -ItemType Directory -Force -Path $seedRoot | Out-Null
+New-Item -ItemType Directory -Path $vmRoot -ErrorAction Stop | Out-Null
+$preflightGuard.RecordDirectory($vmRoot)
+New-Item -ItemType Directory -Path $seedRoot -ErrorAction Stop | Out-Null
+$preflightGuard.RecordDirectory($seedRoot)
 $identityPath = Join-Path $resultRoot 'vmware-identity.json'
 $identityVms = [System.Collections.Generic.List[object]]::new()
 
@@ -1902,9 +1968,10 @@ function Write-LifecycleIdentityEvidence {
     try {
         $identityBytes = [System.Text.UTF8Encoding]::new($false).GetBytes($identityJson)
         $identityWriter = [System.IO.FileStream]::new($identityTempPath, 'CreateNew', 'Write', 'None', 4096, 'WriteThrough')
-        try { $identityWriter.Write($identityBytes); $identityWriter.Flush($true) }
+        try { if ($preflightGuard) { $preflightGuard.Record($identityTempPath, $identityWriter.SafeFileHandle) }; $identityWriter.Write($identityBytes); $identityWriter.Flush($true) }
         finally { $identityWriter.Dispose() }
         [Atlaso.WorkstationDurablePublisherV1]::PublishDurableFile($identityTempPath, $identityPath)
+        if ($preflightGuard) { $preflightGuard.Published($identityTempPath, $identityPath) }
     }
     finally {
         if (Test-Path -LiteralPath $identityTempPath -PathType Leaf) {
