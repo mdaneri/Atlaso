@@ -4574,6 +4574,9 @@ shown by the failure. Then rerun <code>get-atlaso-vm-ip.ps1</code> with the exac
 redeploy the normal test VM, before running SSH or HTTPS validation. Keep SSH trust explicit: compare the separately
 published Ed25519 key and SHA-256 fingerprint, and update <code>known_hosts</code> yourself only when intended. The wrapper never
 changes normal SSH <code>known_hosts</code> automatically.
+The IP helper accepts a positive <code>-TimeoutSeconds</code> up to 2,147,483 seconds, matching the provider's signed
+millisecond wait limit, and a positive <code>-PollSeconds</code>. Each retry sleeps for at most the remaining deadline;
+choosing a poll interval longer than the timeout does not add a full extra interval to the wait.
 Changing the applied management listener from a dedicated interface to an access physical interface or VLAN with
 <strong>Management UI</strong> enabled must retain TCP/22 admission for this ordinary <code>admin</code> SSH workflow, under the same management
 Source Group restriction as TCP/80 and TCP/443. It does not enable root SSH and must not expose SSH on an unflagged
