@@ -32,6 +32,15 @@ namespace Atlaso
         private const uint FileShareDelete = 0x4;
         private const uint OpenExisting = 3;
         private const uint BackupSemantics = 0x02000000;
+        [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+        private static extern bool MoveFileExW(string source, string destination, uint flags);
+        public static void PublishDurableFile(string source, string destination)
+        {
+            // Flush the source first; publish the same-volume directory entry with
+            // write-through replacement so ownership precedes provider mutation.
+            if (!MoveFileExW(source, destination, 0x1 | 0x8))
+                throw new Win32Exception(Marshal.GetLastWin32Error());
+        }
         [StructLayout(LayoutKind.Sequential)]
         private struct ByHandleFileInformation
         {

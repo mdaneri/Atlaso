@@ -115,6 +115,9 @@ Lifecycle runs that request `lan:<name>` now create an immutable receipt before 
 The receipt binds its random VMware ID, exact name and preferences path to the task ID, repository, source commit,
 PR number, and lifecycle result root. `plan.json` records `lan_segment_owner`; `vmware-identity.json` records
 `lan_segments` with each original receipt path and SHA-256. Outside Codex, the unique canonical lab name is the task ID.
+The required creation callback flushes and durably publishes the pending identity evidence before preferences can
+register the segment. An interruption therefore leaves either no registration or a registration with its original
+independently recorded receipt hash; cleanup can verify an absent pending registration normally.
 An existing named segment is reused without claiming ownership or rewriting its ID. Shared segments and legacy residue
 without creation evidence remain preserved for maintainer-directed reconciliation.
 
@@ -162,7 +165,9 @@ exact segment records, preserving all other bytes, line endings, segment indices
 Duplicate or unsupported registration fields and name/ID drift fail closed. Preferences updates pin ordinary paths,
 exclude writers, atomically replace the file, compare the displaced identity/bytes, and independently verify absence.
 Concurrent displaced state is restored through the shared checked recovery helper; a failed or interrupted transaction
-retains its recovery copy and blocks subsequent mutation until reconciled. Never repair that condition by deleting a
+retains its recovery copy and blocks subsequent mutation until reconciled, including the shared rollback helper's
+`atlaso-recovery-*.tmp` and `atlaso-cas-*.tmp` artifacts as well as LAN staging and backup files. Never repair that
+condition by deleting a
 backup or rewriting preferences broadly. Registration absence covers the supplied complete storage roots and provider
 inventory; a caller must not omit an unregistered VM storage location to obtain a successful result.
 

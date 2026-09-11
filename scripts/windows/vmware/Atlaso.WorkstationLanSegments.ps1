@@ -78,7 +78,10 @@ function Update-AtlasoLanPreferences {
     $stageIdentity = $null
     try {
         Assert-AtlasoPathHasNoReparsePoint -Path $Path
-        if (@(Get-ChildItem -LiteralPath (Split-Path -Parent $Path) -Filter "$(Split-Path -Leaf $Path).atlaso-lan-*.tmp.backup" -Force -ErrorAction Stop).Count) {
+        $preferenceName = [regex]::Escape((Split-Path -Leaf $Path))
+        $recoveryPattern = "^$preferenceName\.atlaso-(?:lan-.*\.tmp(?:\.backup)?|recovery-.*\.tmp|cas-.*\.tmp)$"
+        if (@(Get-ChildItem -LiteralPath (Split-Path -Parent $Path) -Force -ErrorAction Stop |
+            Where-Object { $_.Name -match $recoveryPattern }).Count) {
             throw 'An interrupted LAN preferences transaction needs identity-checked recovery; preserve its backup before retry.'
         }
         # A single-link read pin rejects aliases before the share-delete transaction.
@@ -177,11 +180,14 @@ Exact requested LAN segment name.
 Independent lifecycle owner: task_id, repository, source_commit, pr, and lab_root.
 .PARAMETER PreferencesPath
 Existing Workstation preferences path, or an isolated provider fixture.
+.PARAMETER PublishReceipt
+Required callback that durably records the original receipt path and digest before provider registration.
 #>
 function Resolve-AtlasoOwnedLanSegment {
     param(
         [Parameter(Mandatory)][ValidatePattern('^[A-Za-z0-9][A-Za-z0-9 ._-]{0,127}$')][string]$Name,
         [Parameter(Mandatory)][hashtable]$Owner,
+        [Parameter(Mandatory)][scriptblock]$PublishReceipt,
         [string]$PreferencesPath = (Join-Path ([Environment]::GetFolderPath('ApplicationData')) 'VMware\preferences.ini')
     )
     foreach ($field in @('task_id', 'repository', 'source_commit', 'pr', 'lab_root')) {
@@ -217,11 +223,14 @@ function Resolve-AtlasoOwnedLanSegment {
             try { $writer.Write($bytes); $writer.Flush($true) } finally { $writer.Dispose() }
             $result.ReceiptPath = $receiptPath
             $result.ReceiptSha256 = [Convert]::ToHexString([System.Security.Cryptography.SHA256]::HashData($bytes))
+            $result.Id = $id
+            # The lifecycle evidence must be durable before the preferences transaction
+            # can publish this ID. An interrupted registration is then an absent retry.
+            & $PublishReceipt ([pscustomobject]$result) | Out-Null
             $lines = @($parsed.Lines | Where-Object { $_ -notmatch '^\s*pref\.namedPVNs\.count\s*=' })
             $text = $lines -join ''
             if ($text -and $text -notmatch '[\r\n]$') { $text += "`r`n" }
             $text += "pref.namedPVNs$index.name = `"$Name`"`r`npref.namedPVNs$index.pvnID = `"$id`"`r`npref.namedPVNs.count = `"$($index + 1)`"`r`n"
-            $result.Id = $id
             return ,([System.Text.UTF8Encoding]::new($false).GetBytes($text))
         }
         return [pscustomobject]$result

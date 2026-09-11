@@ -489,9 +489,9 @@ Exact requested LAN segment name.
 #>
 function Resolve-LanSegmentId {
     param([string]$Name)
-    $segment = Resolve-AtlasoOwnedLanSegment -Name $Name -Owner $lanSegmentOwner
-    if ($segment.ReceiptPath) {
-        $ownedLanSegments.Add($segment)
+    $segment = Resolve-AtlasoOwnedLanSegment -Name $Name -Owner $lanSegmentOwner -PublishReceipt {
+        param($pendingSegment)
+        $ownedLanSegments.Add($pendingSegment)
         Write-LifecycleIdentityEvidence
     }
     return $segment.Id
@@ -1517,12 +1517,11 @@ function Write-LifecycleIdentityEvidence {
     # created beside the destination so the final replace stays on one volume.
     $identityTempPath = Join-Path $resultRoot ('.vmware-identity.{0}.tmp' -f [guid]::NewGuid().ToString('N'))
     try {
-        [System.IO.File]::WriteAllText(
-            $identityTempPath,
-            $identityJson,
-            [System.Text.UTF8Encoding]::new($false)
-        )
-        [System.IO.File]::Move($identityTempPath, $identityPath, $true)
+        $identityBytes = [System.Text.UTF8Encoding]::new($false).GetBytes($identityJson)
+        $identityWriter = [System.IO.FileStream]::new($identityTempPath, 'CreateNew', 'Write', 'None', 4096, 'WriteThrough')
+        try { $identityWriter.Write($identityBytes); $identityWriter.Flush($true) }
+        finally { $identityWriter.Dispose() }
+        [Atlaso.WorkstationFileIdentity]::PublishDurableFile($identityTempPath, $identityPath)
     }
     finally {
         if (Test-Path -LiteralPath $identityTempPath -PathType Leaf) {

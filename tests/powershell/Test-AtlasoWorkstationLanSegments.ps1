@@ -57,9 +57,28 @@ $original = "# untouched caf$([char]0xe9)`r`nother.setting = `"keep`"`r`npref.na
 [IO.File]::WriteAllText($preferences, $original)
 [IO.File]::WriteAllText($inventory, '')
 $owner = @{ task_id = 'fixture-task'; repository = 'mdaneri/Atlaso'; source_commit = ('a' * 40); pr = 797; lab_root = $labRoot }
-$shared = Resolve-AtlasoOwnedLanSegment -Name Shared -Owner $owner -PreferencesPath $preferences
+$receiptRecords = [System.Collections.Generic.List[object]]::new()
+$publishReceipt = {
+    param($pending)
+    if ([IO.File]::ReadAllText($preferences).Contains($pending.Id)) { throw 'Registration preceded its ownership evidence.' }
+    $receiptRecords.Add($pending)
+    $evidenceStage = Join-Path $labRoot 'identity.tmp'
+    $evidencePath = Join-Path $labRoot 'identity.json'
+    [IO.File]::WriteAllText($evidenceStage, ($receiptRecords | ConvertTo-Json))
+    [Atlaso.WorkstationFileIdentity]::PublishDurableFile($evidenceStage, $evidencePath)
+}
+$shared = Resolve-AtlasoOwnedLanSegment -Name Shared -Owner $owner -PreferencesPath $preferences -PublishReceipt $publishReceipt
 if ($shared.ReceiptPath -or [IO.File]::ReadAllText($preferences) -cne $original) { throw 'Shared registration was adopted or changed.' }
-$segment = Resolve-AtlasoOwnedLanSegment -Name Owned -Owner $owner -PreferencesPath $preferences
+$segment = Resolve-AtlasoOwnedLanSegment -Name Owned -Owner $owner -PreferencesPath $preferences -PublishReceipt $publishReceipt
+if ($receiptRecords.Count -ne 1 -or $receiptRecords[0].ReceiptSha256 -cne $segment.ReceiptSha256) { throw 'Missing original receipt evidence.' }
+Assert-Refused {
+    Resolve-AtlasoOwnedLanSegment -Name Interrupted -Owner $owner -PreferencesPath $preferences -PublishReceipt {
+        param($pending)
+        & $publishReceipt $pending
+        throw 'Simulated interruption after durable receipt publication.'
+    }
+} 'interruption after durable receipt'
+if ([IO.File]::ReadAllText($preferences).Contains($receiptRecords[1].Id)) { throw 'Interrupted evidence publication registered a segment.' }
 $registered = [IO.File]::ReadAllBytes($preferences)
 $argsMap = @{ ReceiptPath = $segment.ReceiptPath; ReceiptSha256 = $segment.ReceiptSha256
     Owner = $owner; VmRoots = @($vmRoot); PreferencesPath = $preferences; InventoryPath = $inventory; Confirm = $false }
@@ -142,8 +161,11 @@ Assert-Refused {
     } $preferences
 } 'post-publication reference drift'
 if ([IO.File]::ReadAllText($preferences) -cne 'concurrent state') { throw 'Post-publication refusal did not restore preferences.' }
-$backup = "$preferences.atlaso-lan-retained.tmp.backup"
-[IO.File]::WriteAllText($backup, 'retained recovery evidence')
-Assert-Refused { Remove-AtlasoWorkstationLanSegment @argsMap } 'interrupted LAN preferences transaction'
-if ([IO.File]::ReadAllText($backup) -cne 'retained recovery evidence') { throw 'Recovery evidence was changed.' }
+foreach ($suffix in @('lan-retained.tmp.backup', 'lan-retained.tmp', 'recovery-retained.tmp', 'cas-retained.tmp')) {
+    $backup = "$preferences.atlaso-$suffix"
+    [IO.File]::WriteAllText($backup, 'retained recovery evidence')
+    Assert-Refused { Remove-AtlasoWorkstationLanSegment @argsMap } 'interrupted LAN preferences transaction'
+    if ([IO.File]::ReadAllText($backup) -cne 'retained recovery evidence') { throw 'Recovery evidence was changed.' }
+    [IO.File]::Delete($backup)
+}
 Write-Host "LAN segment safety fixtures passed: $fixture"
