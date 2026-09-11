@@ -141,6 +141,7 @@ transaction files for explicit recovery rather than automatically restoring pote
 Normal rollback retains both source and target pins, captures the verified failed publication by handle, and renames
 the displaced handle without replacing an existing pathname. If a competing pathname appears during that transition,
 rollback refuses and preserves both captured objects for recovery.
+Successful preferences transactions delete their backup through the retained identity handle before releasing it.
 If archive, credential, module, or other pre-resource admission fails, the runner releases only its newly created
 preflight result directory. Cleanup verifies the independently derived parent, rejects links, unexpected entries,
 and nonempty VM/seed roots, and verifies absence so an ordinary preflight failure can be retried. The root is pinned
@@ -148,6 +149,9 @@ from creation; failure cleanup captures descendant handles before validation and
 Cleanup admits only this invocation's exact archive/output paths and the archive's recorded extraction inventory.
 Creation-time stream identities bind each file; capture refuses replacements at expected paths. Cleanup denies
 descendant writes before capture through deletion, restoring the original root ACL when cleanup refuses.
+Cleanup freezes each verified directory through an object-only ACL update and requires single-link regular files;
+it never propagates an inherited ACL into unverified descendants. Refusal restores the directory ACLs through their
+retained handles, preserving external files reached by unexpected hard links.
 Unrecorded additions before capture are preserved. Cleanup rechecks the entire captured path set before marking any
 handle for deletion, so additions observed at that boundary preserve both owned evidence and foreign entries.
 The durable publisher uses its own versioned helper type so existing

@@ -220,6 +220,7 @@ function Update-AtlasoLanPreferences {
     $stage = "$Path.atlaso-lan-$([guid]::NewGuid().ToString('N')).tmp"
     $backup = "$stage.backup"
     $applied = $false
+    $publicationVerified = $false
     $displacedIdentity = $null; $displacedBytes = $null
     $stageIdentity = $null
     try {
@@ -296,6 +297,7 @@ function Update-AtlasoLanPreferences {
         Assert-AtlasoLanSegmentUiClosed
         if ($Validate) { & $Validate }
         if ($Readback) { & $Readback }
+        $publicationVerified = $true
         $applied = $false
     } catch {
         $failure = $_
@@ -311,17 +313,11 @@ function Update-AtlasoLanPreferences {
     } finally {
         if ($stageLock) { $stageLock.Dispose() }
         if ($originalLock) { $originalLock.Dispose() }
-        if ($displacedPin) { $displacedPin.Dispose() }
         try {
-        # A failed rollback retains the displaced bytes for explicit recovery.
-        if (-not $applied -and (Test-Path -LiteralPath $backup)) {
-            $backupPin = [Atlaso.WorkstationFileIdentity]::PinOrdinaryReadFile($backup, $true, $true)
-            try {
-                if ((Get-AtlasoPathIdentity -Path $backup -Description 'LAN transaction backup') -cne $identity) {
-                    throw 'LAN transaction backup identity changed; preserve it for recovery.'
-                }
-                [Atlaso.WorkstationFileIdentity]::DeletePinnedFile($backupPin)
-            } finally { $backupPin.Dispose() }
+        # Retire only the verified-success backup through its still-retained handle.
+        # Rollback moves that same handle back to the provider and must preserve it.
+        if ($publicationVerified -and $displacedPin) {
+            [Atlaso.WorkstationFileIdentity]::DeletePinnedFile($displacedPin)
         }
         if ($stageIdentity -and (Test-Path -LiteralPath $stage)) {
             $stagePin = [Atlaso.WorkstationFileIdentity]::PinOrdinaryReadFile($stage, $true, $true)
@@ -333,6 +329,7 @@ function Update-AtlasoLanPreferences {
             } finally { $stagePin.Dispose() }
         }
         } finally {
+            if ($displacedPin) { $displacedPin.Dispose() }
             if ($providerDirectoryPins) { $providerDirectoryPins.Dispose() }
             if ($transactionOwned) { $transactionMutex.ReleaseMutex() }
             $transactionMutex.Dispose()

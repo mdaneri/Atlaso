@@ -459,6 +459,7 @@ try {
     $ownedStream = [IO.File]::OpenRead($ownedBeforeLate)
     try { $lateGuard.Record($ownedBeforeLate, $ownedStream.SafeFileHandle) } finally { $ownedStream.Dispose() }
     $lateGuard.CaptureSnapshot()
+    $lateGuard.RestorePermissions() # Simulate an explicit permission override; final inventory must still refuse.
     [IO.File]::WriteAllText((Join-Path $lateRoot 'late.txt'), 'preserve late entry')
     Assert-Refused { $lateGuard.Remove() } 'descendant set changed before deletion'
 } finally { $lateGuard.Dispose() }
@@ -488,6 +489,7 @@ $frozenProbe | Add-Member ScriptMethod CaptureSnapshot {
     if (-not $this.Blocked) { throw 'Cleanup namespace remained writable.' }
 }
 $frozenProbe | Add-Member ScriptMethod Remove { $this.Native.Remove() }
+$frozenProbe | Add-Member ScriptMethod RestorePermissions { $this.Native.RestorePermissions() }
 try { Remove-LifecyclePreflightArtifacts -Path $frozenRoot -ExpectedParent $fixture -Guard $frozenProbe }
 finally { $frozenNative.Dispose() }
 if (-not $frozenProbe.Blocked -or (Test-Path -LiteralPath $frozenRoot)) { throw 'Frozen cleanup fixture failed.' }
@@ -532,6 +534,37 @@ try {
     }
 } finally { . ([scriptblock]::Create($snapshotFunction.Extent.Text)) }
 $publicationStage = Join-Path $fixture 'publication-stage.tmp'
+$cleanupLinkRoot = Join-Path $fixture 'preflight-hardlink'
+[IO.Directory]::CreateDirectory($cleanupLinkRoot) | Out-Null
+$cleanupLinkGuard = New-LifecyclePreflightGuard -Path $cleanupLinkRoot
+$cleanupLinkPath = Join-Path $cleanupLinkRoot 'plan.json'
+New-Item -ItemType HardLink -Path $cleanupLinkPath -Target $externalSnapshotFile | Out-Null
+try {
+    Assert-Refused { Remove-LifecyclePreflightArtifacts -Path $cleanupLinkRoot -ExpectedParent $fixture -Guard $cleanupLinkGuard } 'Unrecorded preflight artifact'
+} finally { $cleanupLinkGuard.Dispose() }
+if ((Get-Acl -LiteralPath $externalSnapshotFile).Sddl -cne $externalAclBefore) { throw 'Cleanup propagated an ACL through an unknown hard link.' }
+$cleanupLinkGuard = New-LifecyclePreflightGuard -Path $cleanupLinkRoot
+$cleanupLinkGuard.Expect($cleanupLinkPath)
+$cleanupLinkStream = [IO.File]::OpenRead($cleanupLinkPath)
+try { $cleanupLinkGuard.Record($cleanupLinkPath, $cleanupLinkStream.SafeFileHandle) } finally { $cleanupLinkStream.Dispose() }
+try {
+    Assert-Refused { Remove-LifecyclePreflightArtifacts -Path $cleanupLinkRoot -ExpectedParent $fixture -Guard $cleanupLinkGuard } 'single-link file'
+} finally { $cleanupLinkGuard.Dispose() }
+if ((Get-Acl -LiteralPath $externalSnapshotFile).Sddl -cne $externalAclBefore) { throw 'Cleanup changed a recorded hard link ACL.' }
+$retirementPath = Join-Path $provider 'retirement.ini'
+[IO.File]::WriteAllText($retirementPath, 'original retirement state')
+& $module {
+    param($path)
+    $savedUpdate = ${function:Update-AtlasoLanPreferences}.ToString()
+    $retirementUpdate = $savedUpdate.Replace(
+        '[Atlaso.WorkstationFileIdentity]::DeletePinnedFile($displacedPin)',
+        '$renameBlocked = $false; try { [IO.File]::Move($backup, "$backup.moved") } catch [IO.IOException] { $renameBlocked = $true }; if (-not $renameBlocked) { throw "Backup retirement lost its pin." }; [Atlaso.WorkstationFileIdentity]::DeletePinnedFile($displacedPin)')
+    Set-Item Function:Update-AtlasoLanPreferences ([scriptblock]::Create($retirementUpdate))
+    try { Update-AtlasoLanPreferences -Path $path -Transform { param($bytes) return ,([Text.Encoding]::UTF8.GetBytes('committed retirement state')) } }
+    finally { Set-Item Function:Update-AtlasoLanPreferences ([scriptblock]::Create($savedUpdate)) }
+} $retirementPath
+if ([IO.File]::ReadAllText($retirementPath) -cne 'committed retirement state' -or
+    @(Get-ChildItem -LiteralPath $provider -Filter 'retirement.ini.atlaso-lan-*').Count) { throw 'Pinned backup retirement failed.' }
 $rollbackRacePath = Join-Path $provider 'rollback-race.ini'
 [IO.File]::WriteAllText($rollbackRacePath, 'original rollback state')
 Assert-Refused {

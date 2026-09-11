@@ -420,7 +420,7 @@ Fresh result directory owned by this invocation.
 #>
 function New-LifecyclePreflightGuard {
     param([Parameter(Mandatory)][string]$Path)
-    if (-not ('Atlaso.PreflightRootGuardV1' -as [type])) {
+    if (-not ('Atlaso.PreflightRootGuardV2' -as [type])) {
         Add-Type -TypeDefinition @'
 using System;
 using System.IO;
@@ -429,7 +429,7 @@ using System.ComponentModel;
 using System.Runtime.InteropServices;
 using Microsoft.Win32.SafeHandles;
 namespace Atlaso {
-    public sealed class PreflightRootGuardV1 : IDisposable {
+    public sealed class PreflightRootGuardV2 : IDisposable {
         [DllImport("kernel32.dll", CharSet=CharSet.Unicode, SetLastError=true)]
         private static extern SafeFileHandle CreateFileW(string p, uint a, uint s, IntPtr x, uint d, uint f, IntPtr t);
         [DllImport("kernel32.dll", SetLastError=true)]
@@ -437,6 +437,41 @@ namespace Atlaso {
         [DllImport("kernel32.dll", SetLastError=true)]
         private static extern bool GetFileInformationByHandleEx(SafeFileHandle h, int c, out TagInfo data, uint n);
         [StructLayout(LayoutKind.Sequential)] private struct TagInfo { public uint Attributes, Tag; }
+        [DllImport("advapi32.dll", SetLastError=true)]
+        private static extern bool GetKernelObjectSecurity(SafeFileHandle h, uint info, byte[] data, uint size, out uint needed);
+        [DllImport("advapi32.dll", SetLastError=true)]
+        private static extern bool SetKernelObjectSecurity(SafeFileHandle h, uint info, byte[] data);
+        [StructLayout(LayoutKind.Sequential)] private struct FileInfo {
+            public uint Attributes, CreateLow, CreateHigh, AccessLow, AccessHigh, WriteLow, WriteHigh;
+            public uint Volume, SizeHigh, SizeLow, Links, IndexHigh, IndexLow;
+        }
+        [DllImport("kernel32.dll", SetLastError=true)]
+        private static extern bool GetFileInformationByHandle(SafeFileHandle h, out FileInfo info);
+        private readonly Dictionary<SafeFileHandle,byte[]> frozenAcls = new Dictionary<SafeFileHandle,byte[]>();
+        private void Freeze(SafeFileHandle handle) {
+            uint needed;
+            GetKernelObjectSecurity(handle, 4, null, 0, out needed);
+            if (needed == 0) throw new Win32Exception(Marshal.GetLastWin32Error());
+            var original = new byte[needed];
+            if (!GetKernelObjectSecurity(handle, 4, original, needed, out needed))
+                throw new Win32Exception(Marshal.GetLastWin32Error());
+            var acl = new System.Security.AccessControl.DirectorySecurity();
+            acl.SetSecurityDescriptorBinaryForm(original);
+            acl.AddAccessRule(new System.Security.AccessControl.FileSystemAccessRule(
+                System.Security.Principal.WindowsIdentity.GetCurrent().User,
+                System.Security.AccessControl.FileSystemRights.Write,
+                System.Security.AccessControl.AccessControlType.Deny));
+            frozenAcls.Add(handle, original);
+            if (!SetKernelObjectSecurity(handle, 4, acl.GetSecurityDescriptorBinaryForm()))
+                throw new Win32Exception(Marshal.GetLastWin32Error());
+        }
+        public void RestorePermissions() {
+            foreach (var entry in frozenAcls) {
+                if (!entry.Key.IsClosed && !SetKernelObjectSecurity(entry.Key, 4, entry.Value))
+                    throw new Win32Exception(Marshal.GetLastWin32Error());
+            }
+            frozenAcls.Clear();
+        }
         public string Root { get; private set; }
         private readonly List<SafeFileHandle> ancestors = new List<SafeFileHandle>();
         private readonly List<SafeFileHandle> entries = new List<SafeFileHandle>();
@@ -463,7 +498,7 @@ namespace Atlaso {
             if (!expected.ContainsKey(full)) expected.Add(full, null);
         }
         private SafeFileHandle Open(string path, bool delete, bool directory) {
-            var h = CreateFileW(path, 0x81u | (delete ? 0x10000u : 0), directory ? 3u : 1u,
+            var h = CreateFileW(path, 0x81u | (delete ? (directory ? 0x70000u : 0x10000u) : 0), directory ? 3u : 1u,
                 IntPtr.Zero, 3, 0x02200000, IntPtr.Zero);
             if (h.IsInvalid) { h.Dispose(); throw new Win32Exception(Marshal.GetLastWin32Error()); }
             TagInfo tag;
@@ -471,9 +506,15 @@ namespace Atlaso {
                 ((tag.Attributes & 0x10) != 0) != directory) {
                 h.Dispose(); throw new IOException("Preflight entry changed type or is a reparse point.");
             }
+            if (!directory) {
+                FileInfo info;
+                if (!GetFileInformationByHandle(h, out info) || info.Links != 1) {
+                    h.Dispose(); throw new IOException("Preflight artifact is not an ordinary single-link file.");
+                }
+            }
             return h;
         }
-        public PreflightRootGuardV1(string path) {
+        public PreflightRootGuardV2(string path) {
             Root = Path.GetFullPath(path);
             try {
                 var chain = new Stack<string>();
@@ -493,10 +534,10 @@ namespace Atlaso {
                 if (expected[Path.GetFullPath(path)] == null || Identity(captured) != expected[Path.GetFullPath(path)])
                     throw new IOException("Preflight artifact creation identity changed; preserve the result root.");
                 capturedPaths.Add(Path.GetFullPath(path));
-                if (directory) { capturedDirectories.Add(path); Capture(path); }
+                if (directory) { Freeze(captured); capturedDirectories.Add(path); Capture(path); }
             }
         }
-        public void CaptureSnapshot() { Capture(Root); }
+        public void CaptureSnapshot() { Freeze(entries[0]); Capture(Root); }
         public void Remove() {
             // Check the entire captured namespace before the first destructive step.
             // Pins prevent replacement/removal; unfamiliar descendants refuse the
@@ -521,14 +562,17 @@ namespace Atlaso {
             }
         }
         public void Dispose() {
-            for (int i = entries.Count - 1; i >= 0; --i) entries[i].Dispose();
-            for (int i = ancestors.Count - 1; i >= 0; --i) ancestors[i].Dispose();
+            try { RestorePermissions(); }
+            finally {
+                for (int i = entries.Count - 1; i >= 0; --i) entries[i].Dispose();
+                for (int i = ancestors.Count - 1; i >= 0; --i) ancestors[i].Dispose();
+            }
         }
     }
 }
 '@
     }
-    return [Atlaso.PreflightRootGuardV1]::new($Path)
+    return [Atlaso.PreflightRootGuardV2]::new($Path)
 }
 
 <#
@@ -556,13 +600,6 @@ function Remove-LifecyclePreflightArtifacts {
         $cursor = [IO.Path]::GetDirectoryName($cursor)
     }
     if (-not $Guard.Root.Equals($fullPath, [StringComparison]::OrdinalIgnoreCase)) { throw 'Preflight root guard mismatch.' }
-    $cleanupAcl = Get-Acl -LiteralPath $fullPath
-    $frozenAcl = Get-Acl -LiteralPath $fullPath
-    $frozenAcl.AddAccessRule([Security.AccessControl.FileSystemAccessRule]::new(
-        [Security.Principal.WindowsIdentity]::GetCurrent().User, [Security.AccessControl.FileSystemRights]::Write,
-        ([Security.AccessControl.InheritanceFlags]::ContainerInherit -bor [Security.AccessControl.InheritanceFlags]::ObjectInherit),
-        [Security.AccessControl.PropagationFlags]::None, [Security.AccessControl.AccessControlType]::Deny))
-    Set-Acl -LiteralPath $fullPath -AclObject $frozenAcl -ErrorAction Stop
     try {
     $Guard.CaptureSnapshot()
     # This entry point is reachable only before provider/resource creation. Refuse
@@ -583,7 +620,7 @@ function Remove-LifecyclePreflightArtifacts {
     $Guard.Remove()
     if (Test-Path -LiteralPath $fullPath) { throw 'Preflight artifact removal was not verified.' }
     } finally {
-        if (Test-Path -LiteralPath $fullPath) { Set-Acl -LiteralPath $fullPath -AclObject $cleanupAcl -ErrorAction Stop }
+        $Guard.RestorePermissions()
     }
 }
 
