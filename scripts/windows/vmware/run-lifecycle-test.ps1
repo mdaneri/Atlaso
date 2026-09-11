@@ -264,6 +264,8 @@ namespace Atlaso {
         public string Root { get; private set; }
         private readonly List<SafeFileHandle> ancestors = new List<SafeFileHandle>();
         private readonly List<SafeFileHandle> entries = new List<SafeFileHandle>();
+        private readonly HashSet<string> capturedPaths = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        private readonly List<string> capturedDirectories = new List<string>();
         private readonly HashSet<string> expected = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         public void Expect(string path) {
             string full = Path.GetFullPath(path).TrimEnd(Path.DirectorySeparatorChar);
@@ -289,6 +291,7 @@ namespace Atlaso {
                 for (var p = Directory.GetParent(Root); p != null; p = p.Parent) chain.Push(p.FullName);
                 foreach (var p in chain) ancestors.Add(Open(p, false, true));
                 entries.Add(Open(Root, true, true));
+                capturedDirectories.Add(Root);
             } catch { Dispose(); throw; }
         }
         private void Capture(string parent) {
@@ -297,11 +300,25 @@ namespace Atlaso {
                     throw new IOException("Unrecorded preflight artifact; preserve the result root.");
                 bool directory = (File.GetAttributes(path) & FileAttributes.Directory) != 0;
                 entries.Add(Open(path, true, directory));
-                if (directory) Capture(path);
+                capturedPaths.Add(Path.GetFullPath(path));
+                if (directory) { capturedDirectories.Add(path); Capture(path); }
             }
         }
         public void CaptureSnapshot() { Capture(Root); }
         public void Remove() {
+            // Check the entire captured namespace before the first destructive step.
+            // Pins prevent replacement/removal; unfamiliar descendants refuse the
+            // whole operation instead of first consuming owned evidence.
+            var observed = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            foreach (string directory in capturedDirectories) {
+                foreach (string path in Directory.GetFileSystemEntries(directory)) {
+                    string full = Path.GetFullPath(path);
+                    if (!capturedPaths.Contains(full))
+                        throw new IOException("Preflight descendant set changed before deletion.");
+                    observed.Add(full);
+                }
+            }
+            if (!observed.SetEquals(capturedPaths)) throw new IOException("Preflight descendant set changed before deletion.");
             // Capture each child under its already pinned parent. No recursive path
             // deletion: additions after capture make directory deletion fail closed.
             for (int i = entries.Count - 1; i >= 0; --i) {

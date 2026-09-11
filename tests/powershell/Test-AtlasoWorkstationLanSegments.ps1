@@ -417,10 +417,14 @@ $lateRoot = Join-Path $fixture 'preflight-late'
 [IO.Directory]::CreateDirectory($lateRoot) | Out-Null
 $lateGuard = New-LifecyclePreflightGuard -Path $lateRoot
 try {
+    $ownedBeforeLate = Join-Path $lateRoot 'owned.txt'
+    [IO.File]::WriteAllText($ownedBeforeLate, 'preserve owned evidence')
+    $lateGuard.Expect($ownedBeforeLate)
     $lateGuard.CaptureSnapshot()
     [IO.File]::WriteAllText((Join-Path $lateRoot 'late.txt'), 'preserve late entry')
-    Assert-Refused { $lateGuard.Remove() } 'directory is not empty'
+    Assert-Refused { $lateGuard.Remove() } 'descendant set changed before deletion'
 } finally { $lateGuard.Dispose() }
+if ([IO.File]::ReadAllText($ownedBeforeLate) -cne 'preserve owned evidence') { throw 'Pre-deletion refusal consumed owned evidence.' }
 if ([IO.File]::ReadAllText((Join-Path $lateRoot 'late.txt')) -cne 'preserve late entry') { throw 'Late preflight descendant was deleted.' }
 # Inject immediately after real extraction in this fixture's local function copy.
 $injectedSnapshotSource = $snapshotFunction.Extent.Text.Replace(
