@@ -2709,6 +2709,17 @@
   
 </li>
       
+        <li class="md-nav__item">
+  <a href="#recover-a-retained-builder-address" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Recover a retained builder address
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
     </ul>
   
 </nav>
@@ -3751,6 +3762,17 @@
   
 </li>
       
+        <li class="md-nav__item">
+  <a href="#recover-a-retained-builder-address" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Recover a retained builder address
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
     </ul>
   
 </nav>
@@ -4580,6 +4602,35 @@ External ESX 9 integration evidence remains required for IPv4 and IPv6 VMkernel 
 reachability, service apply behavior, tty1 console ownership with tty2 left available for normal login, backup/restore
 portability, and host/client integration where separate vmnets are equivalent. Tagged-trunk acceptance requires a
 compatible upstream virtual-network configuration and recorded topology evidence.</p>
+<h2 id="recover-a-retained-builder-address">Recover a retained builder address<a class="headerlink" href="#recover-a-retained-builder-address" title="Permanent link">&para;</a></h2>
+<p>A failed image build can finish process cleanup while Workstation still holds its stopped VM tab open. The image
+wrapper now saves its exact allocation and process-termination proof before attempting VMware deletion. After
+closing that stopped tab and completing checked VM cleanup, use the standalone reservation command; a new build
+and a Windows restart are unnecessary when the saved proof is valid.</p>
+<p>Use the exact handoff path reported by the build, under the task's
+<code>.atlaso-local/photon-image-build-state/vmware-builder-addresses/pending-releases</code> directory:</p>
+<div class="language-powershell highlight"><pre><span></span><code><span id="__span-11-1"><a id="__codelineno-11-1" name="__codelineno-11-1" href="#__codelineno-11-1"></a><span class="nv">$handoff</span> <span class="p">=</span> <span class="s1">&#39;E:\task\.atlaso-local\photon-image-build-state\vmware-builder-addresses\pending-releases\builder-address-reservation-0123456789abcdef0123456789abcdef.json&#39;</span>
+</span><span id="__span-11-2"><a id="__codelineno-11-2" name="__codelineno-11-2" href="#__codelineno-11-2"></a><span class="p">.\</span><span class="n">scripts</span><span class="p">\</span><span class="n">windows</span><span class="p">\</span><span class="n">vmware</span><span class="p">\</span><span class="n">manage-builder-reservation</span><span class="p">.</span><span class="n">ps1</span> <span class="n">-HandoffPath</span> <span class="nv">$handoff</span> <span class="n">-Json</span>
+</span><span id="__span-11-3"><a id="__codelineno-11-3" name="__codelineno-11-3" href="#__codelineno-11-3"></a><span class="p">.\</span><span class="n">scripts</span><span class="p">\</span><span class="n">windows</span><span class="p">\</span><span class="n">vmware</span><span class="p">\</span><span class="n">manage-builder-reservation</span><span class="p">.</span><span class="n">ps1</span> <span class="n">-HandoffPath</span> <span class="nv">$handoff</span> <span class="n">-Cleanup</span> <span class="n">-WhatIf</span>
+</span><span id="__span-11-4"><a id="__codelineno-11-4" name="__codelineno-11-4" href="#__codelineno-11-4"></a><span class="p">.\</span><span class="n">scripts</span><span class="p">\</span><span class="n">windows</span><span class="p">\</span><span class="n">vmware</span><span class="p">\</span><span class="n">manage-builder-reservation</span><span class="p">.</span><span class="n">ps1</span> <span class="n">-HandoffPath</span> <span class="nv">$handoff</span> <span class="n">-Cleanup</span>
+</span></code></pre></div>
+<p>The default and <code>-WhatIf</code> verify without changing reservation or handoff contents. <code>-Cleanup</code> rechecks the exact
+allocation under the shared allocator lock, releases only that record, and then removes its handoff. It does not
+retrieve credentials, launch a build, stop a VM, delete VM artifacts, or change DHCP. <code>-ReservationStateRoot</code> selects
+an explicitly configured existing shared ledger; omit it to use the ordinary allocator location. <code>-VmrunPath</code> selects
+the installed Workstation executable when it cannot be found in the standard installation directories.</p>
+<p>JSON reports <code>Id</code>, <code>Address</code>, <code>Status</code>, <code>Reason</code>, and <code>HandoffPath</code>, plus the source checkout, VMX, owner process,
+and recorded/current boot identities. Exit code <code>0</code> means verification or release
+completed; <code>2</code> means recovery is blocked. A live owner/controller, a running VM, observed address use, changed
+allocation, or unreadable evidence keeps the reservation. <code>already-released</code> means ledger removal previously
+completed and cleanup can finish handoff retirement. An interrupted cleanup can be retried with the same handoff.</p>
+<p>Older handoffs have no retained process-termination receipt. The tool reports that limitation instead of creating
+proof from VM-file absence or a dead PID. Such records still require independently available termination evidence
+or a changed host boot, followed by the same provider and address checks. Do not edit ledger JSON or insert receipts
+manually. The recovery command never restarts Windows automatically.</p>
+<p>A changed host boot supplies process-termination evidence independently of the saved receipt. Recovery therefore
+does not depend on an old receipt's timestamp after a restart; clock corrections cannot strand that allocation.
+Exact allocation identity, owner inactivity, provider state, and address-use checks still apply.</p>
 
 
 
