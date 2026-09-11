@@ -161,6 +161,10 @@ retained handles, preserving external files reached by unexpected hard links.
 The result-root guard and VM/seed directory pins remain alive through all lifecycle consumers and cleanup. VM cleanup
 uses `KeepRemovalRoot` to remove validated contents while retaining the pinned empty VM directory for later owned
 artifact-root teardown. Preflight cleanup verifies the original root identity when upgrading its handle for deletion.
+Retained-root cleanup captures each remaining descendant against the admitted cleanup inventory and deletes through
+those handles; replaced or added entries are refused. Snapshot consumers also retain a native recursive change guard:
+any namespace or security change invalidates admission and wheel output, including a transient added module removed
+before the build finishes. Directory sharing alone does not prevent child creation on Windows.
 Unrecorded additions before capture are preserved. Cleanup rechecks the entire captured path set before marking any
 handle for deletion, so additions observed at that boundary preserve both owned evidence and foreign entries.
 The durable publisher uses its own versioned helper type so existing

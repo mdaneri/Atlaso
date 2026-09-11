@@ -557,6 +557,41 @@ try {
     }
 } finally { . ([scriptblock]::Create($snapshotFunction.Extent.Text)) }
 $publicationStage = Join-Path $fixture 'publication-stage.tmp'
+$sourcePinCheck = $runnerAst.Find({ param($node)
+    $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -eq 'Assert-LifecycleSourcePins'
+}, $false)
+. ([scriptblock]::Create($sourcePinCheck.Extent.Text))
+$namespacePins = [Collections.Generic.List[IDisposable]]::new()
+try {
+    $namespaceSnapshot = New-LifecycleSourceSnapshot -RepositoryRoot $sourceRoot -Commit $admitted -ConsumerPins $namespacePins -DestinationRoot $fixture
+    Assert-LifecycleSourcePins -Pins $namespacePins
+    $overrideDirectoryAcl = [Security.AccessControl.DirectorySecurity]::new()
+    $overrideDirectoryAcl.SetAccessRuleProtection($true, $false)
+    $overrideDirectoryAcl.AddAccessRule([Security.AccessControl.FileSystemAccessRule]::new(
+        [Security.Principal.WindowsIdentity]::GetCurrent().User, [Security.AccessControl.FileSystemRights]::FullControl,
+        [Security.AccessControl.AccessControlType]::Allow))
+    Set-Acl -LiteralPath $namespaceSnapshot -AclObject $overrideDirectoryAcl
+    $injectedModule = Join-Path $namespaceSnapshot 'injected.py'
+    [IO.File]::WriteAllText($injectedModule, 'foreign input')
+    [IO.File]::Delete($injectedModule)
+    Assert-Refused { Assert-LifecycleSourcePins -Pins $namespacePins } 'source snapshot changed'
+} finally { for ($i = $namespacePins.Count - 1; $i -ge 0; $i--) { $namespacePins[$i].Dispose() } }
+$capturedRoot = Join-Path $fixture 'captured-cleanup'
+[IO.Directory]::CreateDirectory($capturedRoot) | Out-Null
+$capturedFile = Join-Path $capturedRoot 'owned.txt'
+[IO.File]::WriteAllText($capturedFile, 'owned evidence')
+$capturedInventory = [Collections.Generic.Dictionary[string,string]]::new()
+$capturedInventory.Add('owned.txt', [Atlaso.WorkstationFileIdentity]::Get($capturedFile))
+$capturedCleanup = [Atlaso.WorkstationCapturedContentsV1]::new($capturedRoot, [Atlaso.WorkstationFileIdentity]::Get($capturedRoot), $capturedInventory)
+try {
+    $capturedCleanup.CaptureSnapshot()
+    Assert-Refused { [IO.File]::Move($capturedFile, "$capturedFile.replaced") } 'being used by another process'
+    $capturedCleanup.RestorePermissions()
+    [IO.File]::WriteAllText((Join-Path $capturedRoot 'foreign.txt'), 'foreign evidence')
+    Assert-Refused { $capturedCleanup.Remove() } 'descendant set changed'
+} finally { $capturedCleanup.Dispose() }
+if ([IO.File]::ReadAllText($capturedFile) -cne 'owned evidence' -or
+    [IO.File]::ReadAllText((Join-Path $capturedRoot 'foreign.txt')) -cne 'foreign evidence') { throw 'Captured cleanup consumed unvalidated state.' }
 $resourcePinRoot = Join-Path $fixture 'retained-resource-roots'
 [IO.Directory]::CreateDirectory($resourcePinRoot) | Out-Null
 $resourceRootGuard = New-LifecyclePreflightGuard -Path $resourcePinRoot

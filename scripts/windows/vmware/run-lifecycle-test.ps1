@@ -113,6 +113,18 @@ $ErrorActionPreference = 'Stop'
 $repoRoot = Resolve-Path -LiteralPath (Join-Path $PSScriptRoot '..\..\..')
 <#
 .SYNOPSIS
+Refuse consumer output after any snapshot namespace or security change.
+.PARAMETER Pins
+Retained snapshot objects including native recursive change guards.
+#>
+function Assert-LifecycleSourcePins {
+    param([Collections.Generic.List[IDisposable]]$Pins)
+    foreach ($pin in $Pins) {
+        if ($pin.GetType().FullName -eq 'Atlaso.LifecycleSourceChangeGuardV1') { $pin.AssertUnchanged() }
+    }
+}
+<#
+.SYNOPSIS
 Bind runtime lifecycle resources to one clean source commit.
 .PARAMETER RepositoryRoot
 Exact lifecycle source checkout to inspect.
@@ -121,6 +133,8 @@ Previously admitted source commit required for a later resource or wheel operati
 #>
 function Get-LifecycleSourceCommit {
     param([Parameter(Mandatory)][string]$RepositoryRoot, [string]$ExpectedCommit = '')
+    $activeSourcePins = Get-Variable -Name runtimeConsumerPins -ValueOnly -ErrorAction SilentlyContinue
+    if ($activeSourcePins) { Assert-LifecycleSourcePins -Pins $activeSourcePins }
     $commit = (& git -C $RepositoryRoot rev-parse HEAD).Trim()
     if ($LASTEXITCODE -ne 0 -or $commit -notmatch '^[0-9a-f]{40}$') { throw 'Cannot resolve lifecycle source commit.' }
     $changes = @(& git -C $RepositoryRoot status --porcelain --untracked-files=normal)
@@ -239,6 +253,81 @@ namespace Atlaso {
 }
 '@
     }
+if (-not ('Atlaso.LifecycleSourceChangeGuardV1' -as [type])) {
+    Add-Type -TypeDefinition @'
+using System;
+using System.ComponentModel;
+using System.Threading;
+using System.Runtime.InteropServices;
+using Microsoft.Win32.SafeHandles;
+namespace Atlaso {
+    public sealed class LifecycleSourceChangeGuardV1 : IDisposable {
+        [StructLayout(LayoutKind.Sequential)]
+        private struct Overlapped {
+            public IntPtr Internal, InternalHigh;
+            public uint Offset, OffsetHigh;
+            public IntPtr Event;
+        }
+        [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+        private static extern SafeFileHandle CreateFileW(string path, uint access, uint sharing,
+            IntPtr security, uint disposition, uint flags, IntPtr template);
+        [DllImport("kernel32.dll", SetLastError = true)]
+        private static extern bool ReadDirectoryChangesW(SafeFileHandle directory, IntPtr buffer,
+            uint length, bool subtree, uint filter, IntPtr returned, IntPtr overlapped, IntPtr completion);
+        [DllImport("kernel32.dll", SetLastError = true)]
+        private static extern bool GetOverlappedResult(SafeFileHandle directory, IntPtr overlapped,
+            out uint transferred, bool wait);
+        [DllImport("kernel32.dll", SetLastError = true)]
+        private static extern bool CancelIoEx(SafeFileHandle directory, IntPtr overlapped);
+        private SafeFileHandle handle;
+        private IntPtr buffer, overlapped;
+        private bool pending;
+        public LifecycleSourceChangeGuardV1(string path, EventWaitHandle changes) {
+            try {
+                // Arm before enumeration. Unlike FileSystemWatcher callbacks, polling
+                // the native completion has no managed event-delivery lag. One event or
+                // buffer overflow permanently invalidates this scan; never rearm it.
+                handle = CreateFileW(path, 1, 3, IntPtr.Zero, 3, 0x42000000, IntPtr.Zero);
+                if (handle.IsInvalid) throw new Win32Exception(Marshal.GetLastWin32Error());
+                buffer = Marshal.AllocHGlobal(65536);
+                overlapped = Marshal.AllocHGlobal(Marshal.SizeOf<Overlapped>());
+                Marshal.StructureToPtr(new Overlapped { Event = changes.SafeWaitHandle.DangerousGetHandle() }, overlapped, false);
+                if (!ReadDirectoryChangesW(handle, buffer, 65536, true, 0x15F,
+                    IntPtr.Zero, overlapped, IntPtr.Zero))
+                    throw new Win32Exception(Marshal.GetLastWin32Error());
+                pending = true;
+            } catch { Dispose(); throw; }
+        }
+        public void AssertUnchanged() {
+            uint transferred;
+            if (GetOverlappedResult(handle, overlapped, out transferred, false))
+                throw new InvalidOperationException("Admitted source snapshot changed during consumption.");
+            int error = Marshal.GetLastWin32Error();
+            if (error != 996) // ERROR_IO_INCOMPLETE is the only unchanged state.
+                throw new Win32Exception(error, "Admitted source snapshot change tracking failed.");
+        }
+        public void Dispose() {
+            if (handle != null && !handle.IsClosed) {
+                if (pending) {
+                    CancelIoEx(handle, overlapped);
+                    uint transferred;
+                    // Another request can signal the shared event before this cancellation
+                    // completes. Confirm this exact request is terminal before freeing.
+                    while (!GetOverlappedResult(handle, overlapped, out transferred, false) &&
+                        Marshal.GetLastWin32Error() == 996) Thread.Sleep(1);
+                    pending = false;
+                }
+                handle.Dispose();
+            }
+            if (overlapped != IntPtr.Zero) { Marshal.FreeHGlobal(overlapped); overlapped = IntPtr.Zero; }
+            if (buffer != IntPtr.Zero) { Marshal.FreeHGlobal(buffer); buffer = IntPtr.Zero; }
+        }
+    }
+}
+'@
+}
+
+    $snapshotChangePins = [Collections.Generic.List[IDisposable]]::new()
     $snapshotDirectoryPins = [Collections.Generic.List[Microsoft.Win32.SafeHandles.SafeFileHandle]]::new()
     $snapshotDirectoryHandles = @{}
     $snapshotDirectoryAcls = @{}
@@ -387,6 +476,10 @@ namespace Atlaso {
     $sourceAcl.AddAccessRule($denyWrite)
     $snapshotAclApplied = $true
     Set-Acl -LiteralPath $snapshotPath -AclObject $sourceAcl -ErrorAction Stop
+    $sourceChanges = [Threading.EventWaitHandle]::new($false, [Threading.EventResetMode]::ManualReset)
+    $snapshotChangePins.Add($sourceChanges)
+    $sourceChangeGuard = [Atlaso.LifecycleSourceChangeGuardV1]::new($snapshotPath, $sourceChanges)
+    $snapshotChangePins.Add($sourceChangeGuard)
     $archiveRead.Position = 0
     $verifiedArchive = [IO.Compression.ZipArchive]::new($archiveRead, [IO.Compression.ZipArchiveMode]::Read, $true)
     $expectedFiles = [Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
@@ -411,11 +504,14 @@ namespace Atlaso {
             }
         }
     } finally { $verifiedArchive.Dispose() }
+    $sourceChangeGuard.AssertUnchanged()
     $snapshotAccepted = $true
     foreach ($directoryPin in $snapshotDirectoryPins) { $ConsumerPins.Add($directoryPin) }
     foreach ($filePin in $snapshotPins) { $ConsumerPins.Add($filePin) }
     $snapshotDirectoryPins.Clear()
     $snapshotPins.Clear()
+    foreach ($changePin in $snapshotChangePins) { $ConsumerPins.Add($changePin) }
+    $snapshotChangePins.Clear()
     return $snapshotPath
     } finally {
         try {
@@ -428,6 +524,7 @@ namespace Atlaso {
             }
         }
         } finally {
+        for ($pinIndex = $snapshotChangePins.Count - 1; $pinIndex -ge 0; $pinIndex--) { $snapshotChangePins[$pinIndex].Dispose() }
         foreach ($snapshotFilePin in $snapshotPins) { $snapshotFilePin.Dispose() }
         for ($pinIndex = $snapshotDirectoryPins.Count - 1; $pinIndex -ge 0; $pinIndex--) { $snapshotDirectoryPins[$pinIndex].Dispose() }
         $archiveRead.Dispose()
@@ -1978,12 +2075,14 @@ function Sync-ApplianceApplicationWheel {
     try {
         $wheelSource = New-LifecycleSourceSnapshot -RepositoryRoot $repoRoot -Commit $sourceCommit -DestinationRoot $wheelRoot -ConsumerPins $wheelConsumerPins
         Write-Host "Building Atlaso wheel from admitted commit $sourceCommit."
+        Assert-LifecycleSourcePins -Pins $wheelConsumerPins
         $wheelBuildOutput = @(& python -m pip wheel $wheelSource --no-deps -w $wheelRoot 2>&1)
         $wheelBuildOutput | ForEach-Object { Write-Host $_ }
         if ($LASTEXITCODE -ne 0) {
             throw "Failed to build Atlaso wheel from $repoRoot."
         }
         Get-LifecycleSourceCommit -RepositoryRoot $repoRoot -ExpectedCommit $sourceCommit | Out-Null
+        Assert-LifecycleSourcePins -Pins $wheelConsumerPins
         $wheel = Get-LifecycleBuiltWheel -OutputRoot $wheelRoot -BuildOutput $wheelBuildOutput -ConsumerPins $wheelConsumerPins
 
         $guestWheel = "/tmp/$($wheel.Name)"
