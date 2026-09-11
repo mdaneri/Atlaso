@@ -171,7 +171,8 @@ fails verification; the absence of ESXi `vAppConfig` alone is expected.
 Standalone import warnings are redacted against both reviewed values and the additional non-editable defaults.
 Failed standalone import specifications may omit property metadata, so their vendor diagnostic text is withheld.
 Cancellation during metadata work is checked before either powered-off completion or power-on.
-VMX response reads enforce a 30-second overall body deadline and check cancellation between bounded reads.
+VMX responses enforce one 30-second deadline starting before the request, including headers, chunk framing, and body.
+Socket inactivity polls retry within that deadline and check cancellation without discarding buffered response bytes.
 
 ESXi can expose an empty `guestinfo.ovfEnv` API value even though the VMX contains the complete XML. In that case,
 Atlaso reads only the exact imported VM's configuration from the selected datastore over HTTPS, checks the certificate

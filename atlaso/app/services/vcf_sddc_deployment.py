@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import http.client
+import io
 import re
 import socket
 import ssl
@@ -889,6 +890,58 @@ def _ovf_environment_from_vmx(contents: bytes) -> str:
         raise VcfSddcDeploymentError("The imported VM configuration has invalid OVF guest-info encoding.") from None
 
 
+class _DeadlineSocketReader(io.RawIOBase):
+    """Apply one deadline to HTTP headers, chunk framing, and response bytes."""
+
+    def __init__(self, transport: Any, deadline: float, cancelled: CancelCheck | None) -> None:
+        """Bind the already authenticated TLS transport.
+
+        Args:
+            transport: Socket owned and closed by the readback caller.
+            deadline: Absolute monotonic deadline for the whole response.
+            cancelled: Optional operator cancellation check.
+        """
+        super().__init__()
+        self.transport = transport
+        self.deadline = deadline
+        self.cancelled = cancelled
+
+    def readable(self) -> bool:
+        """Allow HTTPResponse to buffer this raw reader."""
+        return True
+
+    def makefile(self, mode: str) -> io.BufferedReader:
+        """Provide the socket file expected by HTTPResponse.
+
+        Args:
+            mode: HTTPResponse's binary read mode.
+        """
+        if mode != "rb":
+            raise ValueError("Unsupported response mode")
+        return io.BufferedReader(self)
+
+    def readinto(self, buffer: Any) -> int:
+        """Retry inactivity polls without poisoning a socket makefile buffer.
+
+        Args:
+            buffer: Writable destination for the next socket receive.
+        """
+        while True:
+            _check_cancelled(self.cancelled)
+            remaining = self.deadline - time.monotonic()
+            if remaining <= 0:
+                raise TimeoutError("VMX readback deadline exceeded")
+            self.transport.settimeout(min(1, remaining))
+            try:
+                count = self.transport.recv_into(buffer)
+            except socket.timeout:
+                continue
+            _check_cancelled(self.cancelled)
+            if time.monotonic() >= self.deadline:
+                raise TimeoutError("VMX readback deadline exceeded")
+            return int(count)
+
+
 def _read_persisted_ovf_environment(
     vm: Any, service_instance: Any, datastore: Any, *, endpoint: str, port: int, expected_fingerprint: str, cancelled: CancelCheck | None = None,
 ) -> str:
@@ -906,6 +959,8 @@ def _read_persisted_ovf_environment(
     from pyVmomi import vim
 
     connection = None
+    transport = None
+    response = None
     try:
         if not expected_fingerprint or str(vm.runtime.powerState) != "poweredOff":
             raise ValueError("Readback requires a confirmed endpoint and a powered-off VM")
@@ -930,19 +985,23 @@ def _read_persisted_ovf_environment(
             raise ValueError("Certificate changed")
         # Send the session cookie only after checking this connection's certificate.
         # http.client does not follow redirects or inherit proxy configuration.
-        connection.request("GET", target, headers={"Cookie": service_instance._stub.cookie})
         transport = connection.sock
-        response = connection.getresponse()
+        deadline = time.monotonic() + 30
+        reader = _DeadlineSocketReader(transport, deadline, cancelled)
+        _check_cancelled(cancelled)
+        connection.request("GET", target, headers={"Cookie": service_instance._stub.cookie})
+        # Own response parsing directly: HTTPConnection.getresponse can close a
+        # Connection: close socket before our raw reader has consumed its body.
+        response = http.client.HTTPResponse(reader, method="GET")
+        response.begin()
         if response.status != 200:
             raise ValueError("VMX readback refused")
-        deadline = time.monotonic() + 30
         payload = bytearray()
         while len(payload) <= MAX_OVF_VMX_BYTES:
             _check_cancelled(cancelled)
             remaining = deadline - time.monotonic()
             if remaining <= 0:
                 raise TimeoutError("VMX readback deadline exceeded")
-            transport.settimeout(min(1, remaining))
             # read1 returns after at most one underlying buffered read, so
             # successfully trickled bytes cannot restart the overall deadline.
             chunk = response.read1(min(65536, MAX_OVF_VMX_BYTES + 1 - len(payload)))
@@ -958,8 +1017,12 @@ def _read_persisted_ovf_environment(
     except Exception:  # noqa: BLE001 - HTTP/vendor exceptions can include session or VMX material.
         raise VcfSddcDeploymentError("Could not verify the persisted standalone ESXi OVF environment over confirmed HTTPS.") from None
     finally:
+        if response is not None:
+            response.close()
         if connection is not None:
             connection.close()
+        if transport is not None:
+            transport.close()
 
 
 def _verify_guestinfo_ovf_environment(

@@ -1,7 +1,9 @@
 """Test vcf sddc deployment behavior."""
 
 import hashlib
+import http.client
 import io
+import socket
 import tarfile
 import xml.etree.ElementTree as ET
 from pathlib import Path
@@ -12,6 +14,7 @@ import pytest
 from atlaso.app.services.vcf_sddc_deployment import (
     VcfSddcDeploymentError,
     VcfSddcPostImportError,
+    _DeadlineSocketReader,
     _ensure_datastore_free_space,
     _lease_imported_entity,
     _ovf_environment_from_vmx,
@@ -867,7 +870,7 @@ def test_persisted_environment_read_is_pinned_bounded_and_same_host(monkeypatch,
                 **kwargs: Connection controls.
             """
             assert (endpoint, port, kwargs["timeout"]) == ("esxi.example.test", 443, 30)
-            self.sock = SimpleNamespace(getpeercert=lambda **_kwargs: certificate, settimeout=lambda value: None)
+            self.sock = SimpleNamespace(getpeercert=lambda **_kwargs: certificate, settimeout=lambda value: None, close=lambda: None)
 
         def connect(self):
             """Record the TLS connection before any HTTP request."""
@@ -901,7 +904,7 @@ def test_persisted_environment_read_is_pinned_bounded_and_same_host(monkeypatch,
                 chunk = payload[offset[0]:offset[0] + limit]
                 offset[0] += len(chunk)
                 return chunk
-            return SimpleNamespace(status=302 if fault == "redirect" else 200, read1=read)
+            return SimpleNamespace(status=302 if fault == "redirect" else 200, read1=read, begin=lambda: None, close=lambda: None)
 
         def close(self):
             """Always release the transport."""
@@ -909,6 +912,7 @@ def test_persisted_environment_read_is_pinned_bounded_and_same_host(monkeypatch,
 
     monkeypatch.setattr(vim, "Datacenter", Datacenter)
     monkeypatch.setattr("atlaso.app.services.vcf_sddc_deployment.http.client.HTTPSConnection", Connection)
+    monkeypatch.setattr("atlaso.app.services.vcf_sddc_deployment.http.client.HTTPResponse", lambda *_args, **_kwargs: Connection("esxi.example.test", 443, timeout=30).getresponse())
     si = SimpleNamespace(_stub=SimpleNamespace(cookie="session-secret"), RetrieveContent=lambda: SimpleNamespace(rootFolder=SimpleNamespace(childEntity=[Datacenter()])))
     vm = SimpleNamespace(runtime=SimpleNamespace(powerState="poweredOff"), config=SimpleNamespace(files=SimpleNamespace(vmPathName="[store] ../vm.vmx" if fault == "path" else "[store] task vm/vm.vmx")))
     fingerprint = hashlib.sha256(certificate).hexdigest()
@@ -932,3 +936,66 @@ def test_persisted_environment_read_is_pinned_bounded_and_same_host(monkeypatch,
     else:
         assert read() == "safe"
         assert captured == ["connect", ("GET", "/folder/task%20vm/vm.vmx?dcPath=ha-datacenter&dsName=store"), "close"]
+
+
+@pytest.mark.parametrize("scenario", ["header-trickle", "chunk-trickle", "pause", "cancel"])
+def test_http_response_socket_deadline_covers_headers_and_retries(monkeypatch, scenario):
+    """Exercise the real HTTP parser through the deadline-aware socket reader.
+
+    Args:
+        monkeypatch: Deterministic monotonic clock replacement.
+        scenario: Slow headers, slow chunk framing, transient pause, or cancellation.
+    """
+    elapsed = [0.0]
+    calls = [0]
+    monkeypatch.setattr("atlaso.app.services.vcf_sddc_deployment.time.monotonic", lambda: elapsed[0])
+    frames = [b"HTTP/1.1 200 OK\r\nContent-Length: 4\r\n\r\n", b"safe"]
+    if scenario == "chunk-trickle":
+        frames = [b"HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n"]
+
+    class Transport:
+        """Supply partial network frames and inactivity timeouts."""
+        def settimeout(self, value):
+            """Check the remaining-deadline polling limit.
+
+            Args:
+                value: Next socket inactivity timeout.
+            """
+            assert 0 < value <= 1
+
+        def recv_into(self, buffer):
+            """Simulate progress without real delays.
+
+            Args:
+                buffer: Raw socket receive destination.
+            """
+            calls[0] += 1
+            elapsed[0] += 0.5
+            if scenario in {"header-trickle", "cancel"}:
+                frame = b"H"
+            elif scenario == "pause" and calls[0] in {2, 3, 4}:
+                raise socket.timeout()
+            elif frames:
+                frame = frames.pop(0)
+            elif scenario == "chunk-trickle":
+                frame = b"0"
+            else:
+                return 0
+            buffer[:len(frame)] = frame
+            return len(frame)
+
+    reader = _DeadlineSocketReader(Transport(), 30, lambda: scenario == "cancel" and calls[0] >= 3)
+    response = http.client.HTTPResponse(reader)
+    try:
+        if scenario == "pause":
+            response.begin()
+            assert response.read() == b"safe"
+            assert calls[0] == 5
+        else:
+            expected = "cancelled" if scenario == "cancel" else "deadline exceeded"
+            with pytest.raises((VcfSddcDeploymentError, TimeoutError), match=expected):
+                response.begin()
+                response.read()
+            assert elapsed[0] <= 30
+    finally:
+        response.close()
