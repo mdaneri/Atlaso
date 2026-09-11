@@ -6,7 +6,7 @@
   <thead><tr><th>Created</th><th>Status</th><th>Scope</th><th>Anonymized</th><th>Expires</th></tr></thead>
   <tbody>{% for bundle in diagnostics_rows|default([]) %}<tr><td>{{ bundle.created_at }}</td><td>{{ bundle.status }}</td><td>{{ bundle.scope|join(', ') }}</td><td>{{ 'Yes' if bundle.anonymize else 'No' }}</td><td>{{ bundle.expires_at }}</td></tr>{% else %}<tr><td colspan="5">No diagnostic bundles recorded.</td></tr>{% endfor %}</tbody>
 </table>
-<noscript><p class="muted">Bundle creation and download require JavaScript. Recovery console alternative: <code>atlaso-diagnostics --output /absolute/private/directory/bundle.zip</code>.</p></noscript>
+<noscript><p class="muted">Bundle creation and download require JavaScript. Recovery console alternative: <code>/opt/atlaso/.venv/bin/atlaso-diagnostics --output /absolute/private/directory/bundle.zip</code>.</p></noscript>
 <dialog id="diagnostics-wizard" class="confirm-modal wide-modal vcf-sddc-wizard-modal" aria-labelledby="diagnostics-title" aria-describedby="diagnostics-description">
   <form id="diagnostics-create" class="confirm-modal-panel vcf-sddc-wizard-panel" method="post" action="{{ management_ui_root }}/backup-restore/diagnostics/create" data-atlaso-wizard>
     <input type="hidden" name="csrf" value="{{ csrf_token }}">

@@ -66,11 +66,12 @@ than arbitrary text. An unfamiliar failure may therefore require a separate, car
 
 Use an authorized local console or SSH account with read access to the required sources. An administrator may invoke the
 installed CLI using the existing operating-system privilege policy. Collection does not depend on a running web server,
-worker, writable database, application initialization, credential retrieval, or external connectivity.
+worker, writable database, application initialization, credential retrieval, or external connectivity. On Photon, use
+the installed absolute path below; the application virtual environment is not on a normal console or SSH shell PATH.
 
 ```sh
-atlaso-diagnostics --output /root/support/incident.zip --scope terminal --anonymize
-atlaso-diagnostics --output /root/support/network.zip --scope network --detailed-logs --log-lines 500
+/opt/atlaso/.venv/bin/atlaso-diagnostics --output /root/support/incident.zip --scope terminal --anonymize
+/opt/atlaso/.venv/bin/atlaso-diagnostics --output /root/support/network.zip --scope network --detailed-logs --log-lines 500
 ```
 
 Prepare an existing private output directory first. The destination must be an absolute new filename; existing files,
