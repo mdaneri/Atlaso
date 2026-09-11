@@ -153,6 +153,16 @@ function New-LifecycleSourceSnapshot {
     & git -C $RepositoryRoot archive --format=zip --output=$archivePath $Commit
     if ($LASTEXITCODE -ne 0) { throw 'Could not archive the admitted lifecycle commit.' }
     Expand-Archive -LiteralPath $archivePath -DestinationPath $snapshotPath -ErrorAction Stop
+    # Deny ordinary same-user writes, including creation/replacement beneath every
+    # directory. Keep DELETE rights available to supported owned-artifact cleanup.
+    $sourceSid = [Security.Principal.WindowsIdentity]::GetCurrent().User
+    $denyWrite = [Security.AccessControl.FileSystemAccessRule]::new($sourceSid,
+        [Security.AccessControl.FileSystemRights]::Write,
+        ([Security.AccessControl.InheritanceFlags]::ContainerInherit -bor [Security.AccessControl.InheritanceFlags]::ObjectInherit),
+        [Security.AccessControl.PropagationFlags]::None, [Security.AccessControl.AccessControlType]::Deny)
+    $sourceAcl = Get-Acl -LiteralPath $snapshotPath
+    $sourceAcl.AddAccessRule($denyWrite)
+    Set-Acl -LiteralPath $snapshotPath -AclObject $sourceAcl -ErrorAction Stop
     return $snapshotPath
 }
 

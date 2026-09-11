@@ -115,7 +115,9 @@ Lifecycle runs that request `lan:<name>` now create an immutable receipt before 
 Runtime admission requires a clean source checkout and rechecks its exact commit before VM/segment creation and before
 and after wheel building. The wheel is built from a fresh Git archive of the admitted commit, so transient edits in
 the live checkout cannot enter the artifact. Runtime modules, seed helpers, the appliance helper, and the interop
-harness also load from the admitted archive; identity naming loads directly from that commit object.
+harness also load from the admitted archive; identity naming loads directly from that commit object. Extracted
+snapshots deny same-user write access with inherited ACLs throughout their lifetime, including new child creation.
+Delete rights remain available to the supported owned-artifact cleanup path.
 If archive, credential, module, or other pre-resource admission fails, the runner releases only its newly created
 preflight result directory. Cleanup verifies the independently derived parent, rejects links, unexpected entries,
 and nonempty VM/seed roots, and verifies absence so an ordinary preflight failure can be retried. The root is pinned

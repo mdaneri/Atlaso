@@ -329,6 +329,8 @@ Import-Module (Join-Path $snapshot 'helper.psm1') -Force
 if ((Get-FixtureProvenance) -cne 'initial') { throw 'Runtime helper loaded transient checkout code.' }
 Remove-Module helper
 [IO.File]::WriteAllText($helperFile, "function Get-FixtureProvenance { 'initial' }")
+Assert-Refused { [IO.File]::WriteAllText((Join-Path $snapshot 'source.txt'), 'tampered') } 'denied'
+Assert-Refused { [IO.File]::WriteAllText((Join-Path $snapshot 'injected.py'), 'tampered') } 'denied'
 # Restore endpoint state: the snapshot still proves the exact admitted object.
 [IO.File]::WriteAllText($sourceFile, 'next')
 [IO.File]::Delete($untracked)
@@ -357,6 +359,7 @@ $preflightRoot = Join-Path $fixture 'preflight'
 [IO.Directory]::CreateDirectory($preflightRoot) | Out-Null
 $preflightGuard = New-LifecyclePreflightGuard -Path $preflightRoot
 [IO.File]::WriteAllText((Join-Path $preflightRoot ('source-' + ('a' * 32) + '.zip')), 'partial archive')
+New-LifecycleSourceSnapshot -RepositoryRoot $sourceRoot -Commit $admitted -DestinationRoot $preflightRoot | Out-Null
 Assert-Refused { Remove-LifecyclePreflightArtifacts -Path $preflightRoot -ExpectedParent $vmRoot -Guard $preflightGuard } 'independently derived lifecycle parent'
 Remove-LifecyclePreflightArtifacts -Path $preflightRoot -ExpectedParent $fixture -Guard $preflightGuard
 $preflightGuard.Dispose()
