@@ -15,7 +15,6 @@ import json
 import os
 import platform
 import re
-import shlex
 import shutil
 import sqlite3
 import stat
@@ -53,6 +52,11 @@ class EvidenceError(Exception):
     """Carry only a fixed public status, never a source exception or stderr."""
 
     def __init__(self, status: str) -> None:
+        """Initialize the capture-local collector state.
+
+        Args:
+            status: Fixed public failure category with no source content.
+        """
         super().__init__(status)
         self.status = status
 
@@ -63,7 +67,11 @@ def utc_now() -> datetime:
 
 
 def timestamp(value: str) -> datetime:
-    """Require an ISO timestamp with an explicit timezone."""
+    """Require an ISO timestamp with an explicit timezone.
+
+    Args:
+        value: Candidate source value to validate before serialization.
+    """
     parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
     if parsed.tzinfo is None:
         raise ValueError("Incident times must include a timezone.")
@@ -84,7 +92,11 @@ class Options:
 
     @classmethod
     def parse(cls, values: dict[str, Any]) -> Options:
-        """Reject unrecognized scope, unbounded windows, and free-form identifiers."""
+        """Reject unrecognized scope, unbounded windows, and free-form identifiers.
+
+        Args:
+            values: Untrusted option fields to validate.
+        """
         until = timestamp(str(values["until"])) if values.get("until") else utc_now()
         since = timestamp(str(values["since"])) if values.get("since") else until - timedelta(minutes=30)
         if not timedelta(0) < until - since <= timedelta(days=7) or until > utc_now() + timedelta(minutes=1):
@@ -104,12 +116,20 @@ class Options:
 
 
 def json_bytes(value: Any) -> bytes:
-    """Serialize only projected evidence in a deterministic inspectable form."""
+    """Serialize only projected evidence in a deterministic inspectable form.
+
+    Args:
+        value: Candidate source value to validate before serialization.
+    """
     return (json.dumps(value, indent=2, sort_keys=True, ensure_ascii=True) + "\n").encode()
 
 
 def ordinary_path(path: Path) -> None:
-    """Reject symlinks/reparse points throughout an existing absolute path."""
+    """Reject symlinks/reparse points throughout an existing absolute path.
+
+    Args:
+        path: Fixed source or task-owned output path.
+    """
     if not path.is_absolute():
         raise EvidenceError("failed")
     for parent in reversed((path, *path.parents)):
@@ -119,7 +139,12 @@ def ordinary_path(path: Path) -> None:
 
 
 def read_source(path: Path, limit: int = SOURCE_LIMIT) -> bytes:
-    """Read one fixed ordinary file without following a final-component link."""
+    """Read one fixed ordinary file without following a final-component link.
+
+    Args:
+        path: Fixed source or task-owned output path.
+        limit: Maximum permitted read size in bytes.
+    """
     ordinary_path(path)
     descriptor = os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
     with os.fdopen(descriptor, "rb") as source:
@@ -133,7 +158,12 @@ def read_source(path: Path, limit: int = SOURCE_LIMIT) -> bytes:
 
 
 def write_new(path: Path, content: bytes) -> None:
-    """Exclusively publish a private artifact into a verified existing directory."""
+    """Exclusively publish a private artifact into a verified existing directory.
+
+    Args:
+        path: Fixed source or task-owned output path.
+        content: Already sanitized archive bytes.
+    """
     ordinary_path(path.parent)
     fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0), 0o600)
     try:
@@ -150,12 +180,22 @@ class Projection:
     """Keep consistent identifier aliases in memory for exactly one capture."""
 
     def __init__(self, anonymize: bool) -> None:
+        """Initialize the capture-local collector state.
+
+        Args:
+            anonymize: Whether to assign capture-local hostname and account aliases.
+        """
         self.anonymize = anonymize
         self.aliases: dict[tuple[str, str], str] = {}
         self.counts = {"hostname": 0, "user": 0}
 
     def identifier(self, value: Any, kind: str) -> str | None:
-        """Accept only bounded hostname/account tokens; optionally substitute aliases."""
+        """Accept only bounded hostname/account tokens; optionally substitute aliases.
+
+        Args:
+            value: Candidate source value to validate before serialization.
+            kind: Identifier category or numeric firewall field type.
+        """
         if not isinstance(value, str) or not re.fullmatch(r"[A-Za-z0-9_][A-Za-z0-9_.-]{0,252}", value):
             return None
         if kind == "hostname":
@@ -173,7 +213,11 @@ class Projection:
 
 
 def address(value: Any) -> str | None:
-    """Preserve only valid literal addresses, networks, or MAC addresses."""
+    """Preserve only valid literal addresses, networks, or MAC addresses.
+
+    Args:
+        value: Candidate source value to validate before serialization.
+    """
     if not isinstance(value, str):
         return None
     if re.fullmatch(r"(?:[0-9a-fA-F]{2}:){5}[0-9a-fA-F]{2}", value):
@@ -185,12 +229,21 @@ def address(value: Any) -> str | None:
 
 
 def token(value: Any, pattern: str = r"[a-zA-Z0-9_.:-]{1,80}") -> str | None:
-    """Validate machine-owned identifiers without accepting arbitrary text."""
+    """Validate machine-owned identifiers without accepting arbitrary text.
+
+    Args:
+        value: Candidate source value to validate before serialization.
+        pattern: Allowlisted full-token syntax.
+    """
     return value if isinstance(value, str) and re.fullmatch(pattern, value) else None
 
 
 def number(value: Any) -> int | None:
-    """Accept bounded nonnegative machine counters."""
+    """Accept bounded nonnegative machine counters.
+
+    Args:
+        value: Candidate source value to validate before serialization.
+    """
     try:
         result = int(value)
         return result if 0 <= result <= 2**63 - 1 else None
@@ -204,6 +257,14 @@ class Collector:
     def __init__(self, options: Options, *, database: Path = DATABASE_PATH,
                  cancelled: Callable[[], bool] = lambda: False,
                  progress: Callable[[int, str], None] = lambda percent, source: None) -> None:
+        """Initialize the capture-local collector state.
+
+        Args:
+            options: Validated capture selections shared by the UI and CLI.
+            database: Existing appliance SQLite path opened read-only.
+            cancelled: Callback checking whether collection must stop.
+            progress: Callback publishing safe collection progress.
+        """
         self.options = options
         self.database = database
         self.cancelled = cancelled
@@ -220,7 +281,11 @@ class Collector:
             raise EvidenceError("timed_out")
 
     def command(self, args: list[str]) -> str:
-        """Bound pipe reads and runtime; never persist command stderr or environment."""
+        """Bound pipe reads and runtime; never persist command stderr or environment.
+
+        Args:
+            args: Fixed command arguments or synthetic helper invocation.
+        """
         self.check()
         executable = shutil.which(args[0], path="/usr/sbin:/usr/bin:/sbin:/bin" if os.name == "posix" else None)
         if not executable:
@@ -294,7 +359,11 @@ class Collector:
         return result
 
     def service(self, unit: str) -> dict[str, Any]:
-        """Project fixed service state fields; never read command lines or environment."""
+        """Project fixed service state fields; never read command lines or environment.
+
+        Args:
+            unit: Fixed systemd unit selected by the collector.
+        """
         fields = [*SERVICE_FIELDS, "NRestarts", "ExecMainStatus", "User"]
         raw = self.command(["systemctl", "show", f"{unit}.service", "--no-pager", "--property=" + ",".join(fields)])
         values = dict(line.split("=", 1) for line in raw.splitlines() if "=" in line)
@@ -343,33 +412,65 @@ class Collector:
                 continue
         return {"servers": sorted(servers)}
 
-    def firewall(self, ipv6: bool = False) -> dict[str, Any]:
-        """Project filter policies and numeric match rules without comments or payloads."""
+    def firewall(self) -> dict[str, Any]:
+        """Project Atlaso's native inet table, excluding comments and unknown expressions."""
         if os.name == "posix" and getattr(os, "geteuid", lambda: -1)() != 0:
-            return self.privileged("firewall-ipv6" if ipv6 else "firewall-ipv4")
-        raw = self.command(["ip6tables-save" if ipv6 else "iptables-save", "-t", "filter"])
-        rules = []
-        policies = {}
-        for line in raw.splitlines()[:1000]:
-            words = shlex.split(line)
-            if words and words[0] in {":INPUT", ":OUTPUT", ":FORWARD"}:
-                policies[words[0][1:]] = words[1] if words[1] in {"ACCEPT", "DROP"} else None
-            if len(words) < 2 or words[0] != "-A" or words[1] not in {"INPUT", "OUTPUT", "FORWARD"}:
+            return self.privileged("firewall-nftables")
+        payload = json.loads(self.command(["nft", "-j", "-nn", "list", "table", "inet", "atlaso"]))
+        chains, rules = [], []
+        for entry in payload["nftables"][:1000]:
+            chain = entry.get("chain")
+            if isinstance(chain, dict) and chain.get("family") == "inet" and chain.get("table") == "atlaso" and chain.get("name") in {"input", "output", "forward"}:
+                chains.append({"name": chain["name"], "policy": chain.get("policy") if chain.get("policy") in {"accept", "drop"} else None})
+            rule = entry.get("rule")
+            if not isinstance(rule, dict) or rule.get("family") != "inet" or rule.get("table") != "atlaso" or rule.get("chain") not in {"input", "output", "forward"}:
                 continue
-            item: dict[str, Any] = {"chain": words[1]}
-            for index, word in enumerate(words[:-1]):
-                value = words[index + 1]
-                if word in {"-s", "-d"}:
-                    item[word] = address(value)
-                elif word in {"--dport", "--sport"}:
-                    item[word] = token(value, r"[0-9:]{1,11}")
-                elif word == "-j":
-                    item["target"] = value if value in {"ACCEPT", "DROP", "REJECT", "RETURN"} else "other_chain"
-                elif word == "-p":
-                    item["protocol"] = value if value in {"tcp", "udp", "icmp", "ipv6-icmp", "all"} else None
-            rules.append(item)
-        return {"family": 6 if ipv6 else 4, "policies": policies, "rules": rules,
-                "omitted": "Comments, extension arguments and nonstandard chains are excluded; this is not a complete ruleset."}
+            expressions = []
+            omitted = 0
+            for expression in rule.get("expr", [])[:100]:
+                if len(expression) == 1 and next(iter(expression)) in {"accept", "drop", "return", "reject"}:
+                    expressions.append({"verdict": next(iter(expression))})
+                elif "match" in expression:
+                    match = expression["match"]
+                    left = match.get("left", {})
+                    field = left.get("payload", {})
+                    protocol, name = field.get("protocol"), field.get("field")
+                    kind = "address" if protocol in {"ip", "ip6"} and name in {"saddr", "daddr"} else "port" if protocol in {"tcp", "udp"} and name in {"sport", "dport"} else None
+                    if kind and match.get("op") in {"==", "!=", "in"}:
+                        value = self.firewall_value(match.get("right"), kind)
+                        if value is not None:
+                            expressions.append({"protocol": protocol, "field": name, "op": match["op"], "value": value})
+                            continue
+                    omitted += 1
+                else:
+                    omitted += 1
+            rules.append({"chain": rule["chain"], "expressions": expressions, "omitted_expressions": omitted})
+        return {"family": "inet", "table": "atlaso", "chains": chains, "rules": rules,
+                "omitted": "Comments, counters, other tables and unsupported expressions are excluded; this is not a complete ruleset."}
+
+    @staticmethod
+    def firewall_value(value: Any, kind: str, depth: int = 0) -> Any:
+        """Validate bounded numeric address/port expressions, including sets and ranges.
+
+        Args:
+            value: Candidate nftables right-hand expression.
+            kind: Address or port projection selected from a known packet field.
+            depth: Current nesting bound for structured expressions.
+        """
+        if depth > 3:
+            return None
+        if isinstance(value, dict):
+            if set(value) == {"prefix"} and kind == "address":
+                prefix = value["prefix"]
+                return address(str(prefix.get("addr")) + "/" + str(prefix.get("len")))
+            for key in ("set", "range"):
+                if set(value) == {key} and isinstance(value[key], list) and len(value[key]) <= 100:
+                    items = [Collector.firewall_value(item, kind, depth + 1) for item in value[key]]
+                    return {key: items} if all(item is not None for item in items) else None
+            return None
+        if kind == "address":
+            return address(value)
+        return value if isinstance(value, int) and not isinstance(value, bool) and 0 <= value <= 65535 else None
 
     def update(self) -> dict[str, Any]:
         """Project fixed durable update records without commands, URLs or credentials."""
@@ -495,7 +596,11 @@ class Collector:
 
     @staticmethod
     def network_preview(raw: str) -> list[dict[str, Any]]:
-        """Project only declared interface fields from the last-applied preview."""
+        """Project only declared interface fields from the last-applied preview.
+
+        Args:
+            raw: Bounded last-applied configuration preview.
+        """
         if not isinstance(raw, str) or len(raw) > SOURCE_LIMIT:
             raise EvidenceError("failed")
         rows: list[dict[str, Any]] = []
@@ -516,7 +621,11 @@ class Collector:
         return rows[:200]
 
     def journal(self, unit: str) -> dict[str, Any]:
-        """Export timestamp/severity and fixed categories, never arbitrary log messages."""
+        """Export timestamp/severity and fixed categories, never arbitrary log messages.
+
+        Args:
+            unit: Fixed systemd unit selected by the collector.
+        """
         if os.name == "posix" and getattr(os, "geteuid", lambda: -1)() != 0:
             return self.privileged("journal-" + unit)
         raw = self.command(["journalctl", "--unit=" + unit + ".service", "--no-pager", "--output=json",
@@ -544,7 +653,11 @@ class Collector:
                 "omitted": "All free-form messages, stderr, bodies, session data and unknown fields."}
 
     def privileged(self, source: str) -> dict[str, Any]:
-        """Ask the fixed helper for one projected read-only source, never raw output."""
+        """Ask the fixed helper for one projected read-only source, never raw output.
+
+        Args:
+            source: Fixed allowlisted collector identifier.
+        """
         raw = self.command(["sudo", "-n", "/opt/atlaso/bin/atlaso-helper", "diagnostics", "source", source,
                             self.options.since, self.options.until, str(self.options.log_lines)])
         payload = json.loads(raw)
@@ -559,7 +672,11 @@ class Collector:
         return evidence
 
     def capture(self, bundle_id: str | None = None) -> tuple[bytes, dict[str, Any]]:
-        """Produce an inspectable archive containing only sanitized projected evidence."""
+        """Produce an inspectable archive containing only sanitized projected evidence.
+
+        Args:
+            bundle_id: Server-generated diagnostic bundle UUID.
+        """
         started = utc_now()
         bundle_id = bundle_id or str(uuid4())
         if not re.fullmatch(r"[0-9a-f-]{36}", bundle_id):
@@ -574,8 +691,7 @@ class Collector:
             sources.extend([("network-observed", "ip JSON projection", self.network),
                             ("listeners", "ss numeric listening sockets", self.listeners),
                             ("resolver", "resolvectl numeric DNS addresses", self.resolver)])
-            sources.extend([("firewall-ipv4", "iptables filter field projection", self.firewall),
-                            ("firewall-ipv6", "ip6tables filter field projection", lambda: self.firewall(True))])
+            sources.append(("firewall-nftables", "nft inet atlaso field projection", self.firewall))
         if "terminal" in self.options.scopes:
             sources.append(("nginx", "/etc/nginx/conf.d/atlaso.conf safe directives", self.nginx))
         if "update" in self.options.scopes:
@@ -677,7 +793,7 @@ def main() -> int:
     """Recover diagnostics without starting web, worker, database, or credential helpers."""
     parser = argparse.ArgumentParser(description="Collect private Atlaso support evidence; no upload or repair.")
     parser.add_argument("--output", type=Path, help="New absolute archive path in an existing private directory.")
-    parser.add_argument("--source", choices=["firewall-ipv4", "firewall-ipv6", "release-update", *["journal-" + unit for unit in UNITS]], help=argparse.SUPPRESS)
+    parser.add_argument("--source", choices=["firewall-nftables", "release-update", *["journal-" + unit for unit in UNITS]], help=argparse.SUPPRESS)
     parser.add_argument("--since", help="ISO timestamp with timezone; defaults to 30 minutes before --until.")
     parser.add_argument("--until", help="ISO timestamp with timezone; defaults to now.")
     parser.add_argument("--scope", dest="scopes", action="append", choices=SCOPES, default=[])
@@ -695,7 +811,7 @@ def main() -> int:
             if args.source == "release-update":
                 evidence = collector.update()
             else:
-                evidence = collector.journal(args.source.removeprefix("journal-")) if args.source.startswith("journal-") else collector.firewall(args.source == "firewall-ipv6")
+                evidence = collector.journal(args.source.removeprefix("journal-")) if args.source.startswith("journal-") else collector.firewall()
             data = json_bytes({"source": args.source, "evidence": evidence})
             if len(data) > SOURCE_LIMIT:
                 raise EvidenceError("truncated")

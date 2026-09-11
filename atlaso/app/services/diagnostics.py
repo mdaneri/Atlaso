@@ -52,19 +52,32 @@ def spool() -> Path:
 
 
 def artifact_path(bundle_id: str) -> Path:
-    """Bind the sole artifact filename to an exact server-generated UUID."""
+    """Bind the sole artifact filename to an exact server-generated UUID.
+
+    Args:
+        bundle_id: Server-generated diagnostic bundle UUID.
+    """
     if not re.fullmatch(r"[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}", bundle_id):
         raise ValueError("Invalid bundle identifier.")
     return spool() / (bundle_id + ".zip")
 
 
 def expires_at(job: Job) -> Any:
-    """Use aware timestamps even when SQLite returns a naive creation time."""
+    """Use aware timestamps even when SQLite returns a naive creation time.
+
+    Args:
+        job: Diagnostic job whose current lifecycle is being inspected.
+    """
     return job.created_at.replace(tzinfo=timezone.utc) + RETENTION
 
 
 def find_job(db: Session, bundle_id: str) -> Job:
-    """Prevent artifact access through arbitrary paths or another task domain."""
+    """Prevent artifact access through arbitrary paths or another task domain.
+
+    Args:
+        db: Request or worker database session.
+        bundle_id: Server-generated diagnostic bundle UUID.
+    """
     if not re.fullmatch(r"[0-9a-f-]{36}", bundle_id):
         raise LookupError("Bundle not found.")
     job = db.get(Job, bundle_id)
@@ -74,7 +87,11 @@ def find_job(db: Session, bundle_id: str) -> Job:
 
 
 def result(job: Job) -> dict[str, Any]:
-    """Read only service-owned bundle lifecycle metadata."""
+    """Read only service-owned bundle lifecycle metadata.
+
+    Args:
+        job: Diagnostic job whose current lifecycle is being inspected.
+    """
     try:
         value = json.loads(job.result or "{}")
         return value if isinstance(value, dict) else {}
@@ -83,10 +100,16 @@ def result(job: Job) -> dict[str, Any]:
 
 
 def row(job: Job) -> dict[str, Any]:
-    """Return safe grid metadata; collection identity mappings never reach this store."""
+    """Return safe grid metadata; collection identity mappings never reach this store.
+
+    Args:
+        job: Diagnostic job whose current lifecycle is being inspected.
+    """
     config = json.loads(job.task_config_json or "{}")
     state = result(job)
     status = state.get("bundle_status", job.status)
+    if status not in {"deleted", "expired"} and job.status != "succeeded":
+        status = job.status
     if expires_at(job) <= utcnow() and status != "deleted":
         status = "expired"
     return {"id": job.id, "task_id": job.id, "created_at": job.created_at.isoformat(),
@@ -98,7 +121,13 @@ def row(job: Job) -> dict[str, Any]:
 
 
 def create(db: Session, options: Options, actor: str) -> Job:
-    """Admit one bounded worker request without starting any source collection."""
+    """Admit one bounded worker request without starting any source collection.
+
+    Args:
+        db: Request or worker database session.
+        options: Validated capture selections shared by the UI and CLI.
+        actor: Authenticated username recorded in the safe audit event.
+    """
     from dataclasses import asdict
 
     root = spool()
@@ -127,7 +156,14 @@ def create(db: Session, options: Options, actor: str) -> Job:
 
 
 def remove(db: Session, job: Job, *, actor: str, expired: bool = False) -> None:
-    """Remove only an owned terminal artifact; never race an active writer."""
+    """Remove only an owned terminal artifact; never race an active writer.
+
+    Args:
+        db: Request or worker database session.
+        job: Diagnostic job whose current lifecycle is being inspected.
+        actor: Authenticated username recorded in the safe audit event.
+        expired: Whether removal is automatic retention cleanup.
+    """
     if job.status in {"pending", "running"}:
         raise ValueError("Cancel collection and wait for it to stop before deleting the bundle.")
     target = artifact_path(job.id)
@@ -144,7 +180,11 @@ def remove(db: Session, job: Job, *, actor: str, expired: bool = False) -> None:
 
 
 def expire(db: Session) -> None:
-    """Reconcile expired owned terminal bundles in one bounded worker pass."""
+    """Reconcile expired owned terminal bundles in one bounded worker pass.
+
+    Args:
+        db: Request or worker database session.
+    """
     jobs = db.scalars(select(Job).where(Job.type == JOB_TYPE, Job.created_at <= utcnow() - RETENTION,
                                       or_(Job.result.is_(None), Job.result.notin_([json.dumps({"bundle_status": "expired"}), json.dumps({"bundle_status": "deleted"})])),
                                       Job.status.notin_(["pending", "running"])).order_by(Job.created_at.desc()).limit(128)).all()
@@ -154,7 +194,13 @@ def expire(db: Session) -> None:
 
 
 def download(db: Session, job: Job, actor: str) -> bytes:
-    """Reauthorize lifecycle and expiry before reading a private non-static archive."""
+    """Reauthorize lifecycle and expiry before reading a private non-static archive.
+
+    Args:
+        db: Request or worker database session.
+        job: Diagnostic job whose current lifecycle is being inspected.
+        actor: Authenticated username recorded in the safe audit event.
+    """
     if expires_at(job) <= utcnow():
         if job.status not in {"pending", "running"}:
             remove(db, job, actor="system", expired=True)
@@ -167,7 +213,11 @@ def download(db: Session, job: Job, actor: str) -> bytes:
 
 
 def detail(job: Job) -> dict[str, Any]:
-    """Inspect the sanitized manifest without exposing archive paths or raw source data."""
+    """Inspect the sanitized manifest without exposing archive paths or raw source data.
+
+    Args:
+        job: Diagnostic job whose current lifecycle is being inspected.
+    """
     item = row(job)
     if item["status"] in {"ready", "ready_with_omissions"}:
         data = read_source(artifact_path(job.id), TOTAL_LIMIT + 1024 * 1024)
@@ -180,7 +230,11 @@ def detail(job: Job) -> dict[str, Any]:
 
 
 def run(job_id: str) -> None:
-    """Execute the shared collector and publish only after cancellation is rechecked."""
+    """Execute the shared collector and publish only after cancellation is rechecked.
+
+    Args:
+        job_id: Diagnostic worker job UUID.
+    """
     with SessionLocal() as db:
         job = find_job(db, job_id)
         options = Options.parse(json.loads(job.task_config_json))
@@ -191,6 +245,12 @@ def run(job_id: str) -> None:
             return job.status != "running" or bool(result(job).get("cancel_requested")) or expires_at(job) <= utcnow()
 
     def progress(percent: int, source: str) -> None:
+        """Progress.
+
+        Args:
+            percent: Completed collection percentage.
+            source: Fixed allowlisted collector identifier.
+        """
         with SessionLocal() as db:
             job = find_job(db, job_id)
             job.progress_percent = percent

@@ -21,7 +21,7 @@ startup, web dependencies, system mutation helpers, or credential providers.
 | `systemctl show` on fixed units | Enumerated state/result, restart and exit counters, service username | ExecStart, environment, arbitrary status text |
 | Appliance SQLite in read-only mode | Schema metadata, selected interface fields, bounded task identity/status/times, PXE enablement | Database copies, secret settings, task results, error strings |
 | `ip` JSON, numeric `ss`, `resolvectl dns` | Interface/address/route fields, numeric sockets, DNS addresses | Process details, free-form output |
-| Filter-table save commands | Standard policies, numeric address/port matches, known verdicts | Comments, extension arguments and nonstandard chains |
+| Native `nft -j -nn list table inet atlaso` | Chain policies, numeric address/port matches, known verdicts | Comments, unsupported expressions and other tables |
 | Managed nginx configuration | Listener address/TLS, server hostname, recognized WebSocket headers | Arbitrary directives, paths, credentials, raw config |
 | Active release link and fixed update records | Release identity, finalizer, restart receipt, recovery and worker startup states | Update credentials, arbitrary messages |
 | Selected systemd journals | Timestamp, priority, hostname and fixed failure categories | Raw messages, bodies, session material and unknown fields |

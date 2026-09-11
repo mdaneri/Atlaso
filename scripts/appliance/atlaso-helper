@@ -23209,7 +23209,7 @@ def _handle_diagnostic_source(args: list[str]) -> int:
     Args:
         args: Exact source identifier, two aware timestamps, and a bounded event limit.
     """
-    sources = {"firewall-ipv4", "firewall-ipv6", "release-update"} | {
+    sources = {"firewall-nftables", "release-update"} | {
         "journal-" + unit for unit in ("atlaso", "atlaso-worker", "nginx", "systemd-networkd", "systemd-resolved")
     }
     try:

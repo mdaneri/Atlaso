@@ -46,11 +46,22 @@ def test_anonymization_consistent_but_ips_and_mac_preserved():
 
 
 def test_degraded_capture_and_secret_free_entire_archive(tmp_path, monkeypatch):
+    """Test degraded capture and secret free entire archive.
+
+    Args:
+        tmp_path: Task-local isolated filesystem fixture.
+        monkeypatch: Fixture restoring patched dependencies after the test.
+    """
     monkeypatch.setattr("atlaso.diagnostics.os.geteuid", lambda: 0, raising=False)
     options = Options.parse({"anonymize": True, "detailed_logs": True})
     collector = Collector(options, database=tmp_path / "absent.db")
 
     def command(args):
+        """Command.
+
+        Args:
+            args: Fixed command arguments or synthetic helper invocation.
+        """
         if args[0] == "systemctl":
             return "ActiveState=failed\nSubState=failed\nNRestarts=3\nUser=alice\nEnvironment=TOPSECRET\nExecStart=customer document\n"
         return json.dumps({"_HOSTNAME": "private.example", "MESSAGE": "Authorization: Bearer TOPSECRET customer document https://alice:TOPSECRET@host", "PASSWORD": "TOPSECRET", "__REALTIME_TIMESTAMP": "12345", "PRIORITY": "3"})
@@ -71,9 +82,20 @@ def test_degraded_capture_and_secret_free_entire_archive(tmp_path, monkeypatch):
 
 
 def test_unknown_content_omitted_with_no_exception_leak(tmp_path, monkeypatch):
+    """Test unknown content omitted with no exception leak.
+
+    Args:
+        tmp_path: Task-local isolated filesystem fixture.
+        monkeypatch: Fixture restoring patched dependencies after the test.
+    """
     collector = Collector(Options.parse({}), database=tmp_path / "missing")
 
     def fail(*args):
+        """Fail.
+
+        Args:
+            *args: Fixed command arguments or synthetic helper invocation.
+        """
         raise ValueError("private-key=TOPSECRET")
 
     monkeypatch.setattr(collector, "command", fail)
@@ -84,6 +106,11 @@ def test_unknown_content_omitted_with_no_exception_leak(tmp_path, monkeypatch):
 
 
 def test_cancel_stops_and_timeout_preserves_partial(tmp_path):
+    """Test cancel stops and timeout preserves partial.
+
+    Args:
+        tmp_path: Task-local isolated filesystem fixture.
+    """
     collector = Collector(Options.parse({}), database=tmp_path / "missing", cancelled=lambda: True)
     with pytest.raises(EvidenceError, match="cancelled"):
         collector.capture()
@@ -94,6 +121,11 @@ def test_cancel_stops_and_timeout_preserves_partial(tmp_path):
 
 
 def test_file_limits_and_no_overwrite(tmp_path):
+    """Test file limits and no overwrite.
+
+    Args:
+        tmp_path: Task-local isolated filesystem fixture.
+    """
     target = tmp_path / "bundle.zip"
     write_new(target, b"safe")
     with pytest.raises(FileExistsError):
@@ -104,6 +136,11 @@ def test_file_limits_and_no_overwrite(tmp_path):
 
 
 def test_symlink_source_rejected(tmp_path):
+    """Test symlink source rejected.
+
+    Args:
+        tmp_path: Task-local isolated filesystem fixture.
+    """
     target = tmp_path / "secret"
     target.write_text("TOPSECRET")
     link = tmp_path / "link"
@@ -126,6 +163,11 @@ def test_recovery_does_not_import_application_database():
 
 
 def test_readonly_database_projection_excludes_task_payloads(tmp_path):
+    """Test readonly database projection excludes task payloads.
+
+    Args:
+        tmp_path: Task-local isolated filesystem fixture.
+    """
     path = tmp_path / "test.db"
     with sqlite3.connect(path) as db:
         db.executescript("CREATE TABLE settings(key TEXT,value TEXT); CREATE TABLE jobs(id TEXT,type TEXT,status TEXT,created_at TEXT,started_at TEXT,finished_at TEXT,result TEXT);")
@@ -140,23 +182,45 @@ def test_readonly_database_projection_excludes_task_payloads(tmp_path):
 
 
 def test_optional_sources_project_identifiers_and_reject_payloads(monkeypatch, tmp_path):
-    """Seed every optional file/command projection with data that must stay in memory."""
+    """Seed every optional file/command projection with data that must stay in memory.
+
+    Args:
+        monkeypatch: Fixture restoring patched dependencies after the test.
+        tmp_path: Task-local isolated filesystem fixture.
+    """
     monkeypatch.setattr("atlaso.diagnostics.os.geteuid", lambda: 0, raising=False)
     collector = Collector(Options.parse({"scopes": ["network", "terminal", "update", "pxe"], "anonymize": True}), database=tmp_path / "missing")
     secret = "TOPSECRET customer payload https://alice:TOPSECRET@host"
 
     def command(args):
+        """Command.
+
+        Args:
+            args: Fixed command arguments or synthetic helper invocation.
+        """
         if args[0] == "ip":
             return json.dumps([{"ifname": "eth0", "address": "00:11:22:33:44:55", "local": "192.0.2.2", "dst": "192.0.2.0/24", "gateway": "192.0.2.1", "customer": secret, "addr_info": [{"local": "192.0.2.2", "prefixlen": 24, "secret": secret}]}])
         if args[0] == "ss":
             return "tcp LISTEN 0 128 192.0.2.2:443 0.0.0.0:* users:TOPSECRET\n"
         if args[0] == "resolvectl":
             return "Global: 192.0.2.53 " + secret
-        if args[0] in {"iptables-save", "ip6tables-save"}:
-            return ':INPUT DROP [0:0]\n-A INPUT -s 192.0.2.0/24 -p tcp --dport 443 -m comment --comment "TOPSECRET customer payload" -j ACCEPT\n'
+        if args[0] == "nft":
+            assert args == ["nft", "-j", "-nn", "list", "table", "inet", "atlaso"]
+            return json.dumps({"nftables": [
+                {"chain": {"family": "inet", "table": "atlaso", "name": "input", "policy": "drop", "comment": secret}},
+                {"rule": {"family": "inet", "table": "atlaso", "chain": "input", "comment": secret, "expr": [
+                    {"match": {"op": "==", "left": {"payload": {"protocol": "ip", "field": "saddr"}}, "right": {"prefix": {"addr": "192.0.2.0", "len": 24}}}},
+                    {"match": {"op": "==", "left": {"payload": {"protocol": "tcp", "field": "dport"}}, "right": {"set": [22, 443]}}},
+                    {"log": {"prefix": secret}}, {"accept": None}]}}]})
         return "ActiveState=active\nEnvironment=" + secret
 
     def read(path, limit=262144):
+        """Read.
+
+        Args:
+            path: Fixed source or task-owned output path.
+            limit: Maximum permitted read size in bytes.
+        """
         if path.name == "atlaso.conf":
             return b'listen 192.0.2.2:443 ssl;\nserver_name private.example;\nproxy_set_header X-Atlaso-Listener-Address $server_addr;\nproxy_set_header Authorization TOPSECRET;\nssl_certificate_key TOPSECRET;\n'
         return json.dumps({"status": "succeeded", "candidate_version": "0.9.341", "job_id": "job_123456abcdef", "secret": secret, "commands": [secret]}).encode()
@@ -168,11 +232,16 @@ def test_optional_sources_project_identifiers_and_reject_payloads(monkeypatch, t
     payload = json.dumps([collector.network(), collector.listeners(), collector.resolver(), collector.firewall(), collector.nginx(), collector.update()])
     assert "TOPSECRET" not in payload and "customer" not in payload and "private.example" not in payload
     assert "192.0.2.2" in payload and "00:11:22:33:44:55" in payload and "hostname0001" in payload
+    assert '"policy": "drop"' in payload and '"set": [22, 443]' in payload
     assert "job_123456abcdef" in payload and "x-atlaso-listener-address" in payload
 
 
 def test_command_overflow_and_deadline_kill_child(monkeypatch):
-    """Bound a real pipe producer and a hanging child without source stderr leaks."""
+    """Bound a real pipe producer and a hanging child without source stderr leaks.
+
+    Args:
+        monkeypatch: Fixture restoring patched dependencies after the test.
+    """
     monkeypatch.setattr("atlaso.diagnostics.shutil.which", lambda *args, **kwargs: sys.executable)
     collector = Collector(Options.parse({}))
     with pytest.raises(EvidenceError, match="truncated"):

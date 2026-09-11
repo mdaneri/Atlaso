@@ -23,15 +23,32 @@ NO_STORE = {"Cache-Control": "no-store, private", "Pragma": "no-cache", "X-Conte
 
 def build_router(*, management: Callable[..., Any], admin: Callable[..., Any],
                  csrf: Callable[..., Any]) -> APIRouter:
-    """Bind established management, current identity and CSRF enforcement."""
+    """Bind established management, current identity and CSRF enforcement.
+
+    Args:
+        management: Existing management-listener eligibility dependency.
+        admin: Current administrator authorization check.
+        csrf: Existing CSRF validation callback.
+    """
     router = APIRouter(prefix=MANAGEMENT_UI_ROOT + "/backup-restore/diagnostics",
                        dependencies=[Depends(management)], include_in_schema=False)
 
     def authorized(identity: Identity = Depends(require_session_identity)) -> Identity:
+        """Authorized.
+
+        Args:
+            identity: Currently authenticated session identity.
+        """
         admin(identity)
         return identity
 
     def lookup(db: Session, bundle_id: str) -> Job:
+        """Lookup.
+
+        Args:
+            db: Request or worker database session.
+            bundle_id: Server-generated diagnostic bundle UUID.
+        """
         try:
             return diagnostics.find_job(db, bundle_id)
         except LookupError as exc:
@@ -39,13 +56,24 @@ def build_router(*, management: Callable[..., Any], admin: Callable[..., Any],
 
     @router.get("/data")
     def diagnostics_data(identity: Identity = Depends(authorized), db: Session = Depends(get_db)) -> JSONResponse:
-        """List bounded administrator-visible bundles; reevaluate expiry every request."""
+        """List bounded administrator-visible bundles; reevaluate expiry every request.
+
+        Args:
+            identity: Currently authenticated session identity.
+            db: Request or worker database session.
+        """
         jobs = db.scalars(select(Job).where(Job.type == diagnostics.JOB_TYPE).order_by(Job.created_at.desc()).limit(100)).all()
         return JSONResponse({"bundles": [diagnostics.row(job) for job in jobs]}, headers=NO_STORE)
 
     @router.post("/create")
     async def diagnostics_create(request: Request, identity: Identity = Depends(authorized), db: Session = Depends(get_db)) -> JSONResponse:
-        """Validate reviewed choices and queue an explicit observational task."""
+        """Validate reviewed choices and queue an explicit observational task.
+
+        Args:
+            request: Incoming authenticated browser request.
+            identity: Currently authenticated session identity.
+            db: Request or worker database session.
+        """
         form = await request.form()
         csrf(request, str(form.get("csrf", "")))
         try:
@@ -62,7 +90,13 @@ def build_router(*, management: Callable[..., Any], admin: Callable[..., Any],
 
     @router.get("/{bundle_id}")
     def diagnostics_detail(bundle_id: str, identity: Identity = Depends(authorized), db: Session = Depends(get_db)) -> JSONResponse:
-        """Show the sanitized contents and omission summary before manual sharing."""
+        """Show the sanitized contents and omission summary before manual sharing.
+
+        Args:
+            bundle_id: Server-generated diagnostic bundle UUID.
+            identity: Currently authenticated session identity.
+            db: Request or worker database session.
+        """
         try:
             return JSONResponse(diagnostics.detail(lookup(db, bundle_id)), headers=NO_STORE)
         except (OSError, EvidenceError, ValueError) as exc:
@@ -70,7 +104,13 @@ def build_router(*, management: Callable[..., Any], admin: Callable[..., Any],
 
     @router.get("/{bundle_id}/download")
     def diagnostics_download(bundle_id: str, identity: Identity = Depends(authorized), db: Session = Depends(get_db)) -> Response:
-        """Read a bounded private archive only for a currently authorized administrator."""
+        """Read a bounded private archive only for a currently authorized administrator.
+
+        Args:
+            bundle_id: Server-generated diagnostic bundle UUID.
+            identity: Currently authenticated session identity.
+            db: Request or worker database session.
+        """
         try:
             data = diagnostics.download(db, lookup(db, bundle_id), identity.username)
         except LookupError as exc:
@@ -82,7 +122,14 @@ def build_router(*, management: Callable[..., Any], admin: Callable[..., Any],
 
     @router.post("/{bundle_id}/delete")
     async def diagnostics_delete(bundle_id: str, request: Request, identity: Identity = Depends(authorized), db: Session = Depends(get_db)) -> JSONResponse:
-        """Delete only an owned terminal artifact after authenticated confirmation."""
+        """Delete only an owned terminal artifact after authenticated confirmation.
+
+        Args:
+            bundle_id: Server-generated diagnostic bundle UUID.
+            request: Incoming authenticated browser request.
+            identity: Currently authenticated session identity.
+            db: Request or worker database session.
+        """
         form = await request.form()
         csrf(request, str(form.get("csrf", "")))
         try:
@@ -95,7 +142,14 @@ def build_router(*, management: Callable[..., Any], admin: Callable[..., Any],
 
     @router.post("/{bundle_id}/cancel")
     async def diagnostics_cancel(bundle_id: str, request: Request, identity: Identity = Depends(authorized), db: Session = Depends(get_db)) -> JSONResponse:
-        """Request cooperative cancellation without allowing deletion during capture."""
+        """Request cooperative cancellation without allowing deletion during capture.
+
+        Args:
+            bundle_id: Server-generated diagnostic bundle UUID.
+            request: Incoming authenticated browser request.
+            identity: Currently authenticated session identity.
+            db: Request or worker database session.
+        """
         import json
 
         form = await request.form()

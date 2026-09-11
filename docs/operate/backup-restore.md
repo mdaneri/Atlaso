@@ -14,13 +14,6 @@ restore and archive scope; **Reset** retains the confirmed factory-reset workflo
 [diagnostic support bundles](diagnostics.md) through its own reviewed wizard.
 Existing `/ui/management/backup-restore` links and recovery actions remain supported.
 
-Traffic Publishing archives include canonical NAT enablement and additive family, translation mode, and fixed-address
-fields. Legacy IPv4 rules retain their meaning; omitted ingress remains pending explicit review. Missing NIC selectors
-are retained only when backed by archived missing-host inventory and never become runtime-eligible on restore.
-Canonical NAT enablement takes precedence over a legacy Routes/WAN projection. Factory reset clears NAT rules,
-disables the NAT replay service, and establishes a disabled `nat` Apply baseline. See
-[Traffic Publishing](traffic-publishing.md) for the source-translation contract.
-
 <!-- BEGIN GENERATED INTERFACE OVERVIEW -->
 ## Interface overview
 
@@ -31,6 +24,13 @@ This verified appliance view provides visual orientation before you begin.
 *Figure: Backup and Restore in the verified clean-appliance desktop state.*
 
 <!-- END GENERATED INTERFACE OVERVIEW -->
+
+Traffic Publishing archives include canonical NAT enablement and additive family, translation mode, and fixed-address
+fields. Legacy IPv4 rules retain their meaning; omitted ingress remains pending explicit review. Missing NIC selectors
+are retained only when backed by archived missing-host inventory and never become runtime-eligible on restore.
+Canonical NAT enablement takes precedence over a legacy Routes/WAN projection. Factory reset clears NAT rules,
+disables the NAT replay service, and establishes a disabled `nat` Apply baseline. See
+[Traffic Publishing](traffic-publishing.md) for the source-translation contract.
 
 Browser archive imports use the shared [chunked upload
 transport](../services/vcf-helper.md#chunked-browser-uploads). Chunk staging does not restore or apply settings;

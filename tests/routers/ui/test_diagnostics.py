@@ -8,7 +8,29 @@ from tests.routers.ui.helpers import login
 ROOT = "/ui/management/backup-restore/diagnostics"
 
 
+def test_current_job_status_overrides_stale_bundle_metadata():
+    """Keep claimed and interrupted jobs actionable despite stale result metadata."""
+    from atlaso.app.models import Job, utcnow
+    from atlaso.app.services import diagnostics
+
+    job = Job(id="0" * 36, type=diagnostics.JOB_TYPE, created_at=utcnow(),
+              result='{"bundle_status":"pending"}', task_config_json="{}", progress_percent=50)
+    for state in ("running", "failed", "cancelled"):
+        job.status = state
+        assert diagnostics.row(job)["status"] == state
+    job.status = "succeeded"
+    job.result = '{"bundle_status":"ready_with_omissions"}'
+    assert diagnostics.row(job)["status"] == "ready_with_omissions"
+
+
 def prepare(client, monkeypatch, tmp_path):
+    """Prepare.
+
+    Args:
+        client: Authenticated test application client fixture.
+        monkeypatch: Fixture restoring patched dependencies after the test.
+        tmp_path: Task-local isolated filesystem fixture.
+    """
     from atlaso.app.config import get_settings
 
     monkeypatch.setattr(get_settings(), "diagnostics_spool_path", tmp_path / "diagnostics")
@@ -19,6 +41,13 @@ def prepare(client, monkeypatch, tmp_path):
 
 
 def test_maintenance_tabs_keep_recovery_actions(client, monkeypatch, tmp_path):
+    """Test maintenance tabs keep recovery actions.
+
+    Args:
+        client: Authenticated test application client fixture.
+        monkeypatch: Fixture restoring patched dependencies after the test.
+        tmp_path: Task-local isolated filesystem fixture.
+    """
     prepare(client, monkeypatch, tmp_path)
     html = client.get("/ui/management/backup-restore").text
     assert html.index('>LDAP</button>') < html.index('>Backup</button>') < html.index('>Reset</button>') < html.index('>Diagnostics</button>')
@@ -29,6 +58,13 @@ def test_maintenance_tabs_keep_recovery_actions(client, monkeypatch, tmp_path):
 
 
 def test_create_requires_csrf_and_runs_shared_collector(client, monkeypatch, tmp_path):
+    """Test create requires csrf and runs shared collector.
+
+    Args:
+        client: Authenticated test application client fixture.
+        monkeypatch: Fixture restoring patched dependencies after the test.
+        tmp_path: Task-local isolated filesystem fixture.
+    """
     from atlaso.app.database import SessionLocal
     from atlaso.app.services import diagnostics
     from atlaso.diagnostics import Collector, EvidenceError
@@ -43,6 +79,11 @@ def test_create_requires_csrf_and_runs_shared_collector(client, monkeypatch, tmp
         job.status = "running"
         db.commit()
     def unavailable(*args):
+        """Unavailable.
+
+        Args:
+            *args: Fixed command arguments or synthetic helper invocation.
+        """
         raise EvidenceError("unavailable")
     monkeypatch.setattr(Collector, "command", unavailable)
     diagnostics.run(bundle_id)
@@ -59,6 +100,13 @@ def test_create_requires_csrf_and_runs_shared_collector(client, monkeypatch, tmp
 
 
 def test_expiry_and_task_domain_isolation(client, monkeypatch, tmp_path):
+    """Test expiry and task domain isolation.
+
+    Args:
+        client: Authenticated test application client fixture.
+        monkeypatch: Fixture restoring patched dependencies after the test.
+        tmp_path: Task-local isolated filesystem fixture.
+    """
     from atlaso.app.database import SessionLocal
     from atlaso.app.models import Job, utcnow
     from atlaso.app.services import diagnostics
@@ -78,6 +126,13 @@ def test_expiry_and_task_domain_isolation(client, monkeypatch, tmp_path):
 
 
 def test_active_delete_blocked_cancel_supported(client, monkeypatch, tmp_path):
+    """Test active delete blocked cancel supported.
+
+    Args:
+        client: Authenticated test application client fixture.
+        monkeypatch: Fixture restoring patched dependencies after the test.
+        tmp_path: Task-local isolated filesystem fixture.
+    """
     csrf = prepare(client, monkeypatch, tmp_path)
     bundle_id = client.post(ROOT + "/create", data={"csrf": csrf}).json()["id"]
     assert client.post(ROOT + "/" + bundle_id + "/delete", data={"csrf": csrf}).status_code == 409
@@ -86,6 +141,13 @@ def test_active_delete_blocked_cancel_supported(client, monkeypatch, tmp_path):
 
 
 def test_revocation_blocks_every_bundle_surface(client, monkeypatch, tmp_path):
+    """Test revocation blocks every bundle surface.
+
+    Args:
+        client: Authenticated test application client fixture.
+        monkeypatch: Fixture restoring patched dependencies after the test.
+        tmp_path: Task-local isolated filesystem fixture.
+    """
     from sqlalchemy import select
 
     from atlaso.app.database import SessionLocal
@@ -105,6 +167,13 @@ def test_revocation_blocks_every_bundle_surface(client, monkeypatch, tmp_path):
 
 
 def test_disk_admission_does_not_queue_a_job(client, monkeypatch, tmp_path):
+    """Test disk admission does not queue a job.
+
+    Args:
+        client: Authenticated test application client fixture.
+        monkeypatch: Fixture restoring patched dependencies after the test.
+        tmp_path: Task-local isolated filesystem fixture.
+    """
     from collections import namedtuple
 
     from atlaso.app.services import diagnostics
@@ -117,7 +186,13 @@ def test_disk_admission_does_not_queue_a_job(client, monkeypatch, tmp_path):
 
 
 def test_cancel_during_publication_removes_only_new_bundle(client, monkeypatch, tmp_path):
-    """A cancellation arriving after the write still prevents artifact publication."""
+    """A cancellation arriving after the write still prevents artifact publication.
+
+    Args:
+        client: Authenticated test application client fixture.
+        monkeypatch: Fixture restoring patched dependencies after the test.
+        tmp_path: Task-local isolated filesystem fixture.
+    """
     from atlaso.app.database import SessionLocal
     from atlaso.app.services import diagnostics
     from atlaso.diagnostics import Collector
@@ -132,6 +207,12 @@ def test_cancel_during_publication_removes_only_new_bundle(client, monkeypatch, 
     original = diagnostics.write_new
 
     def write_and_cancel(path, content):
+        """Write and cancel.
+
+        Args:
+            path: Fixed source or task-owned output path.
+            content: Already sanitized archive bytes.
+        """
         original(path, content)
         assert client.post(ROOT + "/" + bundle_id + "/cancel", data={"csrf": csrf}).status_code == 200
 
@@ -142,7 +223,13 @@ def test_cancel_during_publication_removes_only_new_bundle(client, monkeypatch, 
 
 
 def test_expiry_cleans_interrupted_job_without_result(client, monkeypatch, tmp_path):
-    """An interrupted terminal job must not strand an artifact behind a SQL NULL."""
+    """An interrupted terminal job must not strand an artifact behind a SQL NULL.
+
+    Args:
+        client: Authenticated test application client fixture.
+        monkeypatch: Fixture restoring patched dependencies after the test.
+        tmp_path: Task-local isolated filesystem fixture.
+    """
     from atlaso.app.database import SessionLocal
     from atlaso.app.models import utcnow
     from atlaso.app.services import diagnostics
