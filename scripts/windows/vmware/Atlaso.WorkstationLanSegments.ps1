@@ -80,6 +80,31 @@ namespace Atlaso {
 '@
 }
 
+if (-not ('Atlaso.WorkstationCanonicalProviderV1' -as [type])) {
+    Add-Type -TypeDefinition @'
+using System;
+using System.ComponentModel;
+using System.Text;
+using System.Runtime.InteropServices;
+using Microsoft.Win32.SafeHandles;
+namespace Atlaso {
+    public static class WorkstationCanonicalProviderV1 {
+        [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+        private static extern uint GetFinalPathNameByHandleW(SafeFileHandle file, StringBuilder path, uint size, uint flags);
+        public static string Get(SafeFileHandle file) {
+            var path = new StringBuilder(32768);
+            uint length = GetFinalPathNameByHandleW(file, path, (uint)path.Capacity, 0);
+            if (length == 0 || length >= path.Capacity) throw new Win32Exception(Marshal.GetLastWin32Error());
+            string value = path.ToString();
+            if (value.StartsWith(@"\\?\UNC\", StringComparison.OrdinalIgnoreCase)) return @"\\" + value.Substring(8);
+            if (value.StartsWith(@"\\?\", StringComparison.Ordinal)) return value.Substring(4);
+            throw new InvalidOperationException("Provider canonical path is unavailable.");
+        }
+    }
+}
+'@
+}
+
 <#
 .SYNOPSIS
 Reject an active Workstation UI before changing its cached preferences.
@@ -147,7 +172,14 @@ function Update-AtlasoLanPreferences {
     Assert-AtlasoLanSegmentUiClosed
     # Serialize cooperating transactions across processes and Windows sessions. Acquire
     # before recovery enumeration and retain through rollback and artifact retirement.
-    $pathKey = [IO.Path]::GetFullPath($Path).ToUpperInvariant()
+    Assert-AtlasoPathHasNoReparsePoint -Path $Path
+    $canonicalPin = [Atlaso.WorkstationFileIdentity]::PinOrdinaryReadFile($Path, $true)
+    try { $Path = [Atlaso.WorkstationCanonicalProviderV1]::Get($canonicalPin) }
+    finally { $canonicalPin.Dispose() }
+    $parentIdentity = [Atlaso.WorkstationFileIdentity]::Get((Split-Path -Parent $Path))
+    # Parent identity survives file replacement and is independent of drive/UNC
+    # aliases. The final handle path supplies the long leaf for recovery discovery.
+    $pathKey = $parentIdentity + ':' + (Split-Path -Leaf $Path).ToUpperInvariant()
     $pathHash = [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData([Text.Encoding]::UTF8.GetBytes($pathKey)))
     $transactionMutex = [Threading.Mutex]::new($false, "Global\Atlaso-LanPreferences-$pathHash")
     $transactionOwned = $false
@@ -167,6 +199,9 @@ function Update-AtlasoLanPreferences {
         }
         if (-not $transactionOwned) { throw 'Another LAN preferences transaction is active; retry after it completes.' }
         $pins = [Atlaso.WorkstationFileIdentity]::PinOrdinaryDirectoryPath((Split-Path -Parent $Path), $true)
+        if ([Atlaso.WorkstationFileIdentity]::Get((Split-Path -Parent $Path)) -cne $parentIdentity) {
+            throw 'LAN preferences parent identity changed before transaction admission.'
+        }
         Assert-AtlasoPathHasNoReparsePoint -Path $Path
         $preferenceName = [regex]::Escape((Split-Path -Leaf $Path))
         $recoveryPattern = "^$preferenceName\.atlaso-(?:lan-.*\.tmp(?:\.backup)?|recovery-.*\.tmp|cas-.*\.tmp)$"

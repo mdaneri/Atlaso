@@ -191,9 +191,17 @@ Assert-Refused {
     } $preferences $vmRoot $inventory $segment.Id
 } 'contents changed during LAN segment'
 if ([IO.File]::ReadAllText($preferences) -cne 'concurrent state') { throw 'Final readback failure did not restore preferences.' }
+Add-Type -Namespace AtlasoFixture -Name ShortProviderPath -MemberDefinition '[System.Runtime.InteropServices.DllImport("kernel32.dll", CharSet = System.Runtime.InteropServices.CharSet.Unicode, SetLastError = true)] public static extern uint GetShortPathName(string path, System.Text.StringBuilder result, uint length);'
+$shortBuffer = [Text.StringBuilder]::new(32768)
+if ([AtlasoFixture.ShortProviderPath]::GetShortPathName($preferences, $shortBuffer, 32768) -eq 0) { throw 'Could not resolve provider alias fixture.' }
+$providerAlias = $shortBuffer.ToString()
+$canonicalAliasPin = [Atlaso.WorkstationFileIdentity]::PinOrdinaryReadFile($providerAlias, $true)
+try {
+    if ([Atlaso.WorkstationCanonicalProviderV1]::Get($canonicalAliasPin) -ine $preferences) { throw 'Provider alias did not canonicalize.' }
+} finally { $canonicalAliasPin.Dispose() }
 # A second thread holds the provider transaction lock while producing unresolved
 # recovery state. A concurrent retry must refuse before reading its old snapshot.
-$pathKey = [IO.Path]::GetFullPath($preferences).ToUpperInvariant()
+$pathKey = [Atlaso.WorkstationFileIdentity]::Get((Split-Path -Parent $preferences)) + ':' + (Split-Path -Leaf $preferences).ToUpperInvariant()
 $pathHash = [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData([Text.Encoding]::UTF8.GetBytes($pathKey)))
 $ready = [Threading.ManualResetEventSlim]::new($false)
 $release = [Threading.ManualResetEventSlim]::new($false)
@@ -213,13 +221,13 @@ $null = $holder.AddScript({
 $pendingHolder = $holder.BeginInvoke()
 try {
     if (-not $ready.Wait(10000)) { throw 'Fixture lock acquisition timed out.' }
-    Assert-Refused { Remove-AtlasoWorkstationLanSegment @argsMap } 'Another LAN preferences transaction is active'
+    Assert-Refused { & $module { param($path) Update-AtlasoLanPreferences -Path $path -Transform { param($bytes) return ,$bytes } } $providerAlias } 'Another LAN preferences transaction is active'
 } finally {
     $release.Set()
     $holder.EndInvoke($pendingHolder) | Out-Null
     $holder.Dispose(); $ready.Dispose(); $release.Dispose()
 }
-Assert-Refused { Remove-AtlasoWorkstationLanSegment @argsMap } 'interrupted LAN preferences transaction'
+Assert-Refused { & $module { param($path) Update-AtlasoLanPreferences -Path $path -Transform { param($bytes) return ,$bytes } } $providerAlias } 'interrupted LAN preferences transaction'
 if ([IO.File]::ReadAllText("$preferences.atlaso-cas-concurrent.tmp") -cne 'concurrent recovery state') { throw 'Concurrent recovery changed.' }
 [IO.File]::Delete("$preferences.atlaso-cas-concurrent.tmp")
 foreach ($suffix in @('lan-retained.tmp.backup', 'lan-retained.tmp', 'recovery-retained.tmp', 'cas-retained.tmp')) {
