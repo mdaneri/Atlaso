@@ -75,6 +75,19 @@ $publishReceipt = {
     $evidenceWriter = [Atlaso.WorkstationDurablePublisherV3]::CreateStage($evidenceStage)
     try { $evidenceWriter.Write([Text.Encoding]::UTF8.GetBytes(($receiptRecords | ConvertTo-Json))); [Atlaso.WorkstationDurablePublisherV3]::PublishDurableFile($evidenceWriter, $evidencePath) } finally { $evidenceWriter.Dispose() }
 }
+# Exercise the real creation result boundary after the transaction has released its locks.
+& $module {
+    param($path, $fixtureOwner)
+    $savedResolve = ${function:Resolve-AtlasoOwnedLanSegment}.ToString()
+    $checkedResolve = $savedResolve.Replace('return [pscustomobject]$result',
+        '$blocked = $false; try { [IO.File]::Move($PreferencesPath, "$PreferencesPath.moved") } catch [IO.IOException] { $blocked = $true }; if (-not $blocked) { throw "Creation result lost provider pin." }; return [pscustomobject]$result')
+    Set-Item Function:Resolve-AtlasoOwnedLanSegment ([scriptblock]::Create($checkedResolve))
+    try {
+        Resolve-AtlasoOwnedLanSegment -Name CreationPinned -Owner $fixtureOwner -PreferencesPath $path -PublishReceipt {} | Out-Null
+        Resolve-AtlasoOwnedLanSegment -Name CreationPinned -Owner $fixtureOwner -PreferencesPath $path -PublishReceipt {} | Out-Null
+    } finally { Set-Item Function:Resolve-AtlasoOwnedLanSegment ([scriptblock]::Create($savedResolve)) }
+} $preferences $owner
+[IO.File]::WriteAllText($preferences, $original)
 $shared = Resolve-AtlasoOwnedLanSegment -Name Shared -Owner $owner -PreferencesPath $preferences -PublishReceipt $publishReceipt
 if ($shared.ReceiptPath -or [IO.File]::ReadAllText($preferences) -cne $original) { throw 'Shared registration was adopted or changed.' }
 $segment = Resolve-AtlasoOwnedLanSegment -Name Owned -Owner $owner -PreferencesPath $preferences -PublishReceipt $publishReceipt

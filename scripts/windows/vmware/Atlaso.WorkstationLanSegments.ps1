@@ -368,7 +368,21 @@ function Resolve-AtlasoOwnedLanSegment {
         [System.IO.Directory]::CreateDirectory($receiptRoot) | Out-Null
         $receiptPin = [Atlaso.WorkstationFileIdentity]::PinOrdinaryDirectoryPath($receiptRoot, $true)
         $result = @{ Id = ''; ReceiptPath = ''; ReceiptSha256 = '' }
-        Update-AtlasoLanPreferences -Path $PreferencesPath -Transform {
+        Update-AtlasoLanPreferences -Path $PreferencesPath -Readback {
+            $readbackPin = [Atlaso.WorkstationFileIdentity]::PinOrdinaryReadFile($PreferencesPath, $true)
+            try {
+                $readback = ConvertFrom-AtlasoLanPreferences -Bytes ([IO.File]::ReadAllBytes($PreferencesPath))
+                $registrations = @($readback.Entries.Values | Where-Object { $_.name -ieq $Name -or $_.pvnID -ieq $result.Id })
+                if ($registrations.Count -ne 1 -or $registrations[0].name -ine $Name -or $registrations[0].pvnID -cne $result.Id) {
+                    throw 'LAN segment registration presence was not verified.'
+                }
+                Assert-AtlasoLanSegmentUiClosed
+                # Retain the no-write/no-delete pin through commit and result construction,
+                # including the shared-registration fast path.
+                $receiptFilePins.Add($readbackPin)
+                $readbackPin = $null
+            } finally { if ($readbackPin) { $readbackPin.Dispose() } }
+        } -Transform {
             param($original, $canonicalProviderPath)
             $parsed = ConvertFrom-AtlasoLanPreferences -Bytes $original
             foreach ($entry in $parsed.Entries.Values) {

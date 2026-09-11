@@ -132,8 +132,14 @@ Before applying inheritable ACLs, the exporter freezes each expected directory w
 checks every immediate entry against the archive inventory. Unknown files, directories, and links are refused before
 ACL propagation; failed construction restores the directory freeze without touching unverified descendants.
 Runtime admission also compares the executing runner's already parsed script text with the admitted Git object before
-creating resources. Restoring a temporarily edited runner pathname before the clean-checkout check cannot attribute
-the previously parsed edited orchestration to an unchanged commit.
+creating resources. This detects an accidentally stale parsed runner when its pathname was restored before the
+clean-checkout check. The executing entry point and host process remain trusted: this self-check cannot authenticate
+code that has deliberately removed the verifier. Moving that check into another mutable checkout launcher would not
+establish an independent trust boundary. Host execution-policy enforcement is outside this ownership receipt contract.
+
+LAN registration creation independently verifies the exact name and ID under a no-write/no-delete preferences pin and
+retains that pin through result construction, including reuse of an existing shared registration.
+
 Wheel upload requires exactly one output matching the filename, size, and SHA-256 emitted by that pip invocation.
 The wheel is held under an ordinary single-link read pin through upload, and the guest verifies its SHA-256 before
 installation. Extra, renamed, or substituted output fails instead of selecting a wheel by modification time.
