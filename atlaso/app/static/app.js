@@ -3462,7 +3462,8 @@ async function requestEsxiHostBootAuthorization(row) {
   const data = row.getData();
   if (esxiHostAuthorizationDisabledReason(data)) return;
   try {
-    await refreshEsxiHostReferenceState();
+    const state = await refreshEsxiHostReferenceState();
+    if (!state) throw new Error("Boot readiness changed while checking. Retry the authorization action.");
     const reason = esxiHostAuthorizationDisabledReason(row.getData());
     if (reason) throw new Error(reason);
     if (!esxiBootAuthorizationWizard) throw new Error("The ESXi boot authorization wizard is unavailable.");
@@ -3512,7 +3513,8 @@ function initializeEsxiBootAuthorizationWizard() {
       ]);
     },
     onSubmit: async () => {
-      await refreshEsxiHostReferenceState();
+      const state = await refreshEsxiHostReferenceState();
+      if (!state) return { valid: false, message: "Boot readiness changed while checking. Retry authorization." };
       const reason = esxiHostAuthorizationDisabledReason(activeHost);
       if (reason) return { valid: false, message: reason };
       const result = await networkBootRequest(

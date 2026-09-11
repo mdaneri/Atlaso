@@ -13,7 +13,7 @@ function harness() {
     document: { getElementById: () => element, querySelector: () => setting },
     JSON, Error, Boolean,
     clearEsxiHostError() {}, showEsxiHostError() {},
-    refreshEsxiHostReferenceState: async () => { requests++; },
+    refreshEsxiHostReferenceState: async () => { requests++; return {}; },
     esxiBootAuthorizationWizard: { open: async () => { opened++; } },
   });
   vm.runInContext(source.split("function esxiHostAuthorizationDisabledReason", 2)[1]
@@ -53,4 +53,36 @@ test("a stale enabled menu cannot open after readiness changes during refresh", 
   h.context.refreshEsxiHostReferenceState = async () => { h.setting.checked = false; };
   await h.context.requestEsxiHostBootAuthorization({ getData: () => h.data, getElement: () => null });
   assert.deepEqual(h.counts(), [0, 0]);
+});
+
+test("a superseded readiness projection cannot open the authorization wizard", async () => {
+  const h = harness();
+  h.context.refreshEsxiHostReferenceState = async () => null;
+  await h.context.requestEsxiHostBootAuthorization({ getData: () => h.data, getElement: () => null });
+  assert.deepEqual(h.counts(), [0, 0]);
+});
+
+test("a superseded readiness projection cannot submit a boot authorization", async () => {
+  const h = harness();
+  let configuration;
+  let submissions = 0;
+  class Form { elements = { host_id: {}, boot_code: {} }; }
+  const form = new Form();
+  class Dialog { querySelector() { return form; } }
+  const dialog = new Dialog();
+  Object.assign(h.context, {
+    HTMLDialogElement: Dialog, HTMLFormElement: Form,
+    window: { AtlasoUiPatterns: { createWizard: (config) => { configuration = config; } } },
+    refreshEsxiHostReferenceState: async () => null,
+    networkBootRequest: async () => { submissions++; },
+    showEsxiHostSuccess() {},
+  });
+  h.context.document.getElementById = (id) => id === "esxi-boot-authorization-dialog" ? dialog : h.element;
+  vm.runInContext(`function initializeEsxiBootAuthorizationWizard${source.split("function initializeEsxiBootAuthorizationWizard", 2)[1].split("function esxiHostHasValidWakeMac", 1)[0]}`, h.context);
+  h.context.initializeEsxiBootAuthorizationWizard();
+  configuration.onOpen({ context: { host: h.data } });
+  const result = await configuration.onSubmit();
+  assert.equal(result.valid, false);
+  assert.match(result.message, /Retry authorization/);
+  assert.equal(submissions, 0);
 });
