@@ -34,6 +34,7 @@ from uuid import uuid4
 from atlaso import __build_git_commit__, __version__
 
 TASK_ID_PATTERN = r"(?:job_[0-9a-fA-F]{12}|job_[0-9a-fA-F]{32}|job_schedule_[0-9]{1,20}_(?:[0-9a-fA-F]{12}|[0-9]{1,20})|[0-9a-fA-F]{32}|[0-9a-fA-F]{8}(?:-[0-9a-fA-F]{4}){3}-[0-9a-fA-F]{12})"
+TASK_STATUSES = frozenset({"pending", "running", "succeeded", "failed", "skipped", "cancelled", "no-op", "partial-failure"})
 SCHEMA_VERSION = 1
 SCOPES = ("network", "terminal", "update", "pxe")
 SOURCE_LIMIT = 262_144
@@ -603,7 +604,7 @@ class Collector:
                      timestamp(self.options.until).replace(tzinfo=None).isoformat(" "),
                      self.options.correlation_id, self.options.correlation_id))
                 result["tasks"] = [{"id": token(row[0], TASK_ID_PATTERN), "type": token(row[1]),
-                    "status": row[2] if row[2] in {"pending", "running", "succeeded", "failed", "cancelled"} else None,
+                    "status": row[2] if row[2] in TASK_STATUSES else None,
                     "timestamps": [token(v, r"[0-9T :.+Z-]{1,40}") for v in row[3:]]} for row in rows]
         configuration: dict[str, Any] = {key: result[key] for key in ("desired_interfaces", "desired_vlans", "applied_interfaces") if key in result}
         if self.first_configuration is None:

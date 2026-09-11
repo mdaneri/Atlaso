@@ -10,6 +10,7 @@ import zipfile
 import pytest
 
 from atlaso.diagnostics import (
+    TASK_STATUSES,
     Collector,
     EvidenceError,
     Options,
@@ -162,28 +163,30 @@ def test_recovery_does_not_import_application_database():
     assert sys.modules["atlaso.diagnostics"]
 
 
+@pytest.mark.parametrize("status", sorted(TASK_STATUSES))
 @pytest.mark.parametrize("scopes", [[], ["pxe"]])
 @pytest.mark.parametrize("task_id", ["job_123456abcdef", "job_" + "a" * 32,
     "job_schedule_42_123456abcdef", "job_schedule_42_1789092000",
     "a" * 32, "00000000-0000-0000-0000-000000000001"])
-def test_readonly_database_projection_excludes_task_payloads(tmp_path, task_id, scopes):
+def test_readonly_database_projection_excludes_task_payloads(tmp_path, task_id, scopes, status):
     """Preserve all generated task IDs while excluding task payloads.
 
     Args:
         tmp_path: Task-local isolated filesystem fixture.
         task_id: Server-generated task identifier format.
         scopes: Optional evidence scopes, including the default empty selection.
+        status: Supported persisted lifecycle or terminal outcome.
     """
     path = tmp_path / "test.db"
     with sqlite3.connect(path) as db:
         db.executescript("CREATE TABLE settings(key TEXT,value TEXT); CREATE TABLE jobs(id TEXT,type TEXT,status TEXT,created_at TEXT,started_at TEXT,finished_at TEXT,result TEXT);")
-        db.execute("INSERT INTO jobs VALUES(?,?,?,?,?,?,?)", (task_id, "appliance-update", "failed", "2026-01-02 12:00:00", None, None, "TOPSECRET"))
+        db.execute("INSERT INTO jobs VALUES(?,?,?,?,?,?,?)", (task_id, "appliance-update", status, "2026-01-02 12:00:00", None, None, "TOPSECRET"))
         db.execute("CREATE TABLE network_boot_environments(key TEXT,enabled INTEGER)")
     before = path.read_bytes()
     options = Options.parse({"correlation_id": task_id, "scopes": scopes, "since": "2026-01-02T00:00:00Z", "until": "2026-01-03T00:00:00Z"})
     evidence = Collector(options, database=path).database_evidence()
     assert "TOPSECRET" not in json.dumps(evidence)
-    assert evidence["tasks"][0]["status"] == "failed"
+    assert evidence["tasks"][0]["status"] == status
     assert evidence["tasks"][0]["id"] == task_id
     assert path.read_bytes() == before
 
@@ -258,3 +261,10 @@ def test_command_overflow_and_deadline_kill_child(monkeypatch):
     with pytest.raises(EvidenceError, match="timed_out"):
         collector.command(["python", "-c", "import time; time.sleep(30)"])
     assert time.monotonic() - started < 5
+
+
+def test_collector_statuses_cover_application_job_states():
+    """Keep the independent collector aligned with all persisted application states."""
+    from atlaso.app.models import JobStatus
+
+    assert {status.value for status in JobStatus} | {"no-op", "partial-failure"} == TASK_STATUSES
