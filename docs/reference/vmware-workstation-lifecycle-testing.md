@@ -128,6 +128,9 @@ The snapshot transfers its directory pins to its caller after verification. The 
 all helper consumers and releases them on exit; the wheel builder retains its pins until the build process exits.
 Preflight failure releases those pins before ownership-aware artifact cleanup. Thus renaming the verified root cannot
 substitute a different source tree between verification and use.
+Before applying inheritable ACLs, the exporter freezes each expected directory with an object-only ACL update and
+checks every immediate entry against the archive inventory. Unknown files, directories, and links are refused before
+ACL propagation; failed construction restores the directory freeze without touching unverified descendants.
 Ownership receipts and lifecycle manifests retain their original creation handles with writer and deletion exclusion
 through publication. The publisher flushes before and after renaming that exact handle, so a substituted staging
 pathname cannot replace ownership evidence.

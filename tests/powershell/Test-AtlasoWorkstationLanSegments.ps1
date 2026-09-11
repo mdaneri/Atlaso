@@ -510,6 +510,15 @@ try {
     Assert-Refused { New-LifecycleSourceSnapshot -RepositoryRoot $sourceRoot -Commit $admitted -ConsumerPins $snapshotConsumerPins -DestinationRoot $fixture } 'creation identity or single-link'
 } finally { . ([scriptblock]::Create($snapshotFunction.Extent.Text)) }
 if ((Get-Acl -LiteralPath $externalSnapshotFile).Sddl -cne $externalAclBefore) { throw 'Substituted hard link changed an external ACL.' }
+$unexpectedLinkSource = $snapshotFunction.Extent.Text.Replace(
+    '$sourceSid = [Security.Principal.WindowsIdentity]::GetCurrent().User',
+    'New-Item -ItemType HardLink -Path (Join-Path $snapshotPath "unexpected.txt") -Target $externalSnapshotFile | Out-Null; $script:failedSnapshotPath = $snapshotPath; $script:failedSnapshotAcl = (Get-Acl -LiteralPath $snapshotPath).Sddl; $sourceSid = [Security.Principal.WindowsIdentity]::GetCurrent().User')
+. ([scriptblock]::Create($unexpectedLinkSource))
+try {
+    Assert-Refused { New-LifecycleSourceSnapshot -RepositoryRoot $sourceRoot -Commit $admitted -ConsumerPins $snapshotConsumerPins -DestinationRoot $fixture } 'unexpected entry before ACL propagation'
+} finally { . ([scriptblock]::Create($snapshotFunction.Extent.Text)) }
+if ((Get-Acl -LiteralPath $externalSnapshotFile).Sddl -cne $externalAclBefore) { throw 'Unexpected hard link changed an external ACL.' }
+if ((Get-Acl -LiteralPath $script:failedSnapshotPath).Sddl -cne $script:failedSnapshotAcl) { throw 'Failed snapshot directory ACL was not restored.' }
 # Try replacing a directory at the former post-RecordDirectory race boundary.
 $script:directoryRenameBlocked = $false
 $directorySnapshotSource = $snapshotFunction.Extent.Text.Replace(

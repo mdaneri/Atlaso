@@ -178,7 +178,7 @@ namespace Atlaso {
 }
 '@
     }
-    if (-not ('Atlaso.SnapshotDirectoryPinV1' -as [type])) {
+    if (-not ('Atlaso.SnapshotDirectoryPinV2' -as [type])) {
         Add-Type -TypeDefinition @'
 using System;
 using System.IO;
@@ -186,7 +186,7 @@ using System.ComponentModel;
 using System.Runtime.InteropServices;
 using Microsoft.Win32.SafeHandles;
 namespace Atlaso {
-    public static class SnapshotDirectoryPinV1 {
+    public static class SnapshotDirectoryPinV2 {
         [DllImport("kernel32.dll", CharSet=CharSet.Unicode, SetLastError=true)]
         private static extern SafeFileHandle CreateFile(string path, uint access, uint share,
             IntPtr security, uint creation, uint flags, IntPtr template);
@@ -194,8 +194,15 @@ namespace Atlaso {
         private static extern bool GetFileInformationByHandleEx(SafeFileHandle handle, int kind,
             out TagInfo info, uint size);
         [StructLayout(LayoutKind.Sequential)] private struct TagInfo { public uint Attributes, Tag; }
-        public static SafeFileHandle Open(string path) {
-            var handle = CreateFile(path, 0x81, 3, IntPtr.Zero, 3, 0x02200000, IntPtr.Zero);
+        [DllImport("advapi32.dll", SetLastError=true)]
+        private static extern bool SetKernelObjectSecurity(SafeFileHandle handle, uint information, byte[] descriptor);
+        public static void SetDacl(SafeFileHandle handle, byte[] descriptor) {
+            // Set only this kernel object: do not propagate ACLs into unverified children.
+            if (!SetKernelObjectSecurity(handle, 4, descriptor))
+                throw new Win32Exception(Marshal.GetLastWin32Error());
+        }
+        public static SafeFileHandle Open(string path, bool writeDacl = false) {
+            var handle = CreateFile(path, writeDacl ? 0x40081u : 0x81u, 3, IntPtr.Zero, 3, 0x02200000, IntPtr.Zero);
             if (handle.IsInvalid) { handle.Dispose(); throw new Win32Exception(Marshal.GetLastWin32Error()); }
             try {
                 TagInfo info;
@@ -211,6 +218,11 @@ namespace Atlaso {
 '@
     }
     $snapshotDirectoryPins = [Collections.Generic.List[Microsoft.Win32.SafeHandles.SafeFileHandle]]::new()
+    $snapshotDirectoryHandles = @{}
+    $snapshotDirectoryAcls = @{}
+    $snapshotFileAcls = @{}
+    $snapshotAclApplied = $false
+    $snapshotAccepted = $false
     $snapshotIdentities = [Collections.Generic.Dictionary[string,string]]::new([StringComparer]::OrdinalIgnoreCase)
     $snapshotPins = [Collections.Generic.List[IO.FileStream]]::new()
     $snapshotId = [guid]::NewGuid().ToString('N')
@@ -272,10 +284,12 @@ namespace Atlaso {
     # The preflight guard already pins these ancestors and owns a DELETE handle
     # on DestinationRoot, which cannot coexist with another no-delete share pin.
     while (-not $PreflightGuard -and $snapshotAncestors.Count) {
-        $snapshotDirectoryPins.Add([Atlaso.SnapshotDirectoryPinV1]::Open($snapshotAncestors.Pop()))
+        $snapshotDirectoryPins.Add([Atlaso.SnapshotDirectoryPinV2]::Open($snapshotAncestors.Pop()))
     }
     New-Item -ItemType Directory -Path $snapshotPath -ErrorAction Stop | Out-Null
-    $snapshotDirectoryPins.Add([Atlaso.SnapshotDirectoryPinV1]::Open($snapshotPath))
+    $snapshotRootPin = [Atlaso.SnapshotDirectoryPinV2]::Open($snapshotPath, $true)
+    $snapshotDirectoryPins.Add($snapshotRootPin)
+    $snapshotDirectoryHandles[$snapshotPath] = $snapshotRootPin
     if ($PreflightGuard) { $PreflightGuard.RecordDirectory($snapshotPath) }
     $archiveRead.Position = 0
     $extractArchive = [IO.Compression.ZipArchive]::new($archiveRead, [IO.Compression.ZipArchiveMode]::Read, $true)
@@ -295,7 +309,9 @@ namespace Atlaso {
             while ($missing.Count) {
                 $directoryPath = $missing.Pop()
                 New-Item -ItemType Directory -Path $directoryPath -ErrorAction Stop | Out-Null
-                $snapshotDirectoryPins.Add([Atlaso.SnapshotDirectoryPinV1]::Open($directoryPath))
+                $snapshotChildPin = [Atlaso.SnapshotDirectoryPinV2]::Open($directoryPath, $true)
+                $snapshotDirectoryPins.Add($snapshotChildPin)
+                $snapshotDirectoryHandles[$directoryPath] = $snapshotChildPin
                 if ($PreflightGuard) { $PreflightGuard.RecordDirectory($directoryPath) }
                 $createdDirectories.Add($directoryPath) | Out-Null
             }
@@ -320,14 +336,35 @@ namespace Atlaso {
         if ([Atlaso.SnapshotFileIdentityV1]::Get($snapshotFilePin.SafeFileHandle) -cne $snapshotIdentities[$createdFile]) {
             throw 'Snapshot creation identity or single-link requirement failed.'
         }
+        $snapshotFileAcls[$createdFile] = Get-Acl -LiteralPath $createdFile
     }
     $sourceSid = [Security.Principal.WindowsIdentity]::GetCurrent().User
+    $directoryOnlyDeny = [Security.AccessControl.FileSystemAccessRule]::new($sourceSid,
+        [Security.AccessControl.FileSystemRights]::Write, [Security.AccessControl.AccessControlType]::Deny)
+    foreach ($expectedDirectory in $createdDirectories) {
+        $directoryAcl = Get-Acl -LiteralPath $expectedDirectory
+        $snapshotDirectoryAcls[$expectedDirectory] = $directoryAcl.GetSecurityDescriptorBinaryForm()
+        $directoryAcl.AddAccessRule($directoryOnlyDeny)
+        [Atlaso.SnapshotDirectoryPinV2]::SetDacl($snapshotDirectoryHandles[$expectedDirectory], $directoryAcl.GetSecurityDescriptorBinaryForm())
+    }
+    # Every expected directory now rejects child creation. Inspect immediate entries
+    # only, refusing unknown directories before traversing or touching their ACLs.
+    foreach ($expectedDirectory in $createdDirectories) {
+        foreach ($child in Get-ChildItem -LiteralPath $expectedDirectory -Force -ErrorAction Stop) {
+            if ($child.Attributes -band [IO.FileAttributes]::ReparsePoint -or
+                ($child.PSIsContainer -and -not $createdDirectories.Contains($child.FullName)) -or
+                (-not $child.PSIsContainer -and -not $snapshotIdentities.ContainsKey($child.FullName))) {
+                throw 'Admitted source snapshot contains an unexpected entry before ACL propagation.'
+            }
+        }
+    }
     $denyWrite = [Security.AccessControl.FileSystemAccessRule]::new($sourceSid,
         [Security.AccessControl.FileSystemRights]::Write,
         ([Security.AccessControl.InheritanceFlags]::ContainerInherit -bor [Security.AccessControl.InheritanceFlags]::ObjectInherit),
         [Security.AccessControl.PropagationFlags]::None, [Security.AccessControl.AccessControlType]::Deny)
     $sourceAcl = Get-Acl -LiteralPath $snapshotPath
     $sourceAcl.AddAccessRule($denyWrite)
+    $snapshotAclApplied = $true
     Set-Acl -LiteralPath $snapshotPath -AclObject $sourceAcl -ErrorAction Stop
     $archiveRead.Position = 0
     $verifiedArchive = [IO.Compression.ZipArchive]::new($archiveRead, [IO.Compression.ZipArchiveMode]::Read, $true)
@@ -353,13 +390,25 @@ namespace Atlaso {
             }
         }
     } finally { $verifiedArchive.Dispose() }
+    $snapshotAccepted = $true
     foreach ($directoryPin in $snapshotDirectoryPins) { $ConsumerPins.Add($directoryPin) }
     $snapshotDirectoryPins.Clear()
     return $snapshotPath
     } finally {
+        try {
+        if (-not $snapshotAccepted) {
+            foreach ($frozenDirectory in $snapshotDirectoryAcls.Keys) {
+                [Atlaso.SnapshotDirectoryPinV2]::SetDacl($snapshotDirectoryHandles[$frozenDirectory], $snapshotDirectoryAcls[$frozenDirectory])
+            }
+            if ($snapshotAclApplied) {
+                foreach ($createdFile in $snapshotFileAcls.Keys) { Set-Acl -LiteralPath $createdFile -AclObject $snapshotFileAcls[$createdFile] -ErrorAction Stop }
+            }
+        }
+        } finally {
         foreach ($snapshotFilePin in $snapshotPins) { $snapshotFilePin.Dispose() }
         for ($pinIndex = $snapshotDirectoryPins.Count - 1; $pinIndex -ge 0; $pinIndex--) { $snapshotDirectoryPins[$pinIndex].Dispose() }
         $archiveRead.Dispose()
+        }
     }
 }
 
