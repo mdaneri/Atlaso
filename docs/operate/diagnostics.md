@@ -110,7 +110,8 @@ storage attention; cleanup continues for the other expired bundles.
 Complete factory reset clears the dedicated diagnostic spool before replacing its job records. A spool with an unsafe
 path, owner, or permissions or an unrecognized entry blocks reset cleanup so the existing retention records remain
 available for recovery. Appliance reset validates ownership against the `atlaso` service account even though reset
-itself runs as root.
+itself runs as root. Console reset recovery reads the spool selection from `/etc/atlaso/atlaso.env`, overriding any
+console-shell value so custom-spool archives are included in cleanup.
 Development-mode reset uses the same cleanup while holding its database writer lock. Finish or cancel any queued or
 running diagnostic collection first; development reset does not stop appliance services to quiesce collectors.
 Manual deletion affects only the appliance copy. Neither expiry nor deletion promises forensic erasure or removes copies

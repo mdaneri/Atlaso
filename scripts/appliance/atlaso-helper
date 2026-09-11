@@ -19938,8 +19938,13 @@ def _decode_double_quoted_environment_value(value: str) -> str:
     return "".join(decoded)
 
 
-def _installed_atlaso_database_url() -> str:
-    """Read the installed database URL without evaluating environment-file content."""
+def _installed_atlaso_setting(name: str, *, default: str = "") -> str:
+    """Read one installed setting without evaluating environment-file content.
+
+    Args:
+        name: Exact trusted environment assignment to select.
+        default: Value to use only when the assignment is absent.
+    """
     try:
         with ATLASO_ENV_PATH.open("r", encoding="utf-8", newline="") as environment_file:
             source_lines = [
@@ -19947,7 +19952,7 @@ def _installed_atlaso_database_url() -> str:
             ]
     except OSError as exc:
         raise ValueError("Atlaso appliance database configuration is unavailable.") from exc
-    database_url = ""
+    database_url = default
     database_url_quote = ""
     multiline_quote = ""
     unquoted_continuation = False
@@ -19991,17 +19996,17 @@ def _installed_atlaso_database_url() -> str:
             unquoted_continuation = _environment_file_unquoted_continues(raw_line)
         if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", assignment_name):
             continue
-        if assignment_name != "ATLASO_DATABASE_URL":
+        if assignment_name != name:
             continue
         database_url = assignment_value
         database_url_quote = assignment_quote
         database_url_is_multiline = assignment_is_multiline
     if database_url_is_multiline:
         raise ValueError(
-            "ATLASO_DATABASE_URL uses an unsupported multiline EnvironmentFile value."
+            f"{name} uses an unsupported multiline EnvironmentFile value."
         )
     if not database_url:
-        raise ValueError("ATLASO_DATABASE_URL is missing from the Atlaso appliance environment.")
+        raise ValueError(f"{name} is missing from the Atlaso appliance environment.")
     if database_url.startswith(('"', "'")) or database_url.endswith(('"', "'")):
         if (
             len(database_url) < 2
@@ -20009,16 +20014,16 @@ def _installed_atlaso_database_url() -> str:
             or database_url[0] not in {'"', "'"}
         ):
             raise ValueError(
-                "ATLASO_DATABASE_URL uses an unsupported multiline EnvironmentFile value."
+                f"{name} uses an unsupported multiline EnvironmentFile value."
             )
         database_url = database_url[1:-1]
     if database_url_quote == "'" and database_url_quote in database_url:
         raise ValueError(
-            "ATLASO_DATABASE_URL uses unsupported concatenated EnvironmentFile quotes."
+            f"{name} uses unsupported concatenated EnvironmentFile quotes."
         )
     if not database_url_quote and ('"' in database_url or "'" in database_url):
         raise ValueError(
-            "ATLASO_DATABASE_URL uses unsupported concatenated EnvironmentFile quotes."
+            f"{name} uses unsupported concatenated EnvironmentFile quotes."
         )
     if database_url_quote == "'":
         return database_url
@@ -20026,9 +20031,22 @@ def _installed_atlaso_database_url() -> str:
         return _decode_double_quoted_environment_value(database_url)
     if "\\" in database_url:
         raise ValueError(
-            "ATLASO_DATABASE_URL uses unsupported EnvironmentFile escape syntax."
+            f"{name} uses unsupported EnvironmentFile escape syntax."
         )
     return database_url
+
+def _installed_atlaso_database_url() -> str:
+    """Read the installed database URL without evaluating environment-file content."""
+    return _installed_atlaso_setting("ATLASO_DATABASE_URL")
+
+
+def _installed_diagnostics_spool() -> str:
+    """Pin recovery to the installed spool, rejecting ambiguous or relative paths."""
+    value = _installed_atlaso_setting("ATLASO_DIAGNOSTICS_SPOOL_PATH", default="/var/lib/atlaso/diagnostics")
+    path = PurePosixPath(value)
+    if not path.is_absolute() or path == PurePosixPath("/") or ".." in path.parts or any(ord(c) < 32 for c in value):
+        raise ValueError("Atlaso diagnostic spool configuration is invalid.")
+    return value
 
 
 def _factory_reset_runner(*, boot_resume: bool) -> subprocess.CompletedProcess[str]:
@@ -20050,6 +20068,7 @@ def _factory_reset_runner(*, boot_resume: bool) -> subprocess.CompletedProcess[s
     environment = _privileged_powershell_environment()
     try:
         environment["ATLASO_DATABASE_URL"] = _installed_atlaso_database_url()
+        environment["ATLASO_DIAGNOSTICS_SPOOL_PATH"] = _installed_diagnostics_spool()
     except ValueError as exc:
         return subprocess.CompletedProcess(
             [str(ATLASO_FACTORY_RESET_PYTHON), "-m", "atlaso.app.factory_reset"],
