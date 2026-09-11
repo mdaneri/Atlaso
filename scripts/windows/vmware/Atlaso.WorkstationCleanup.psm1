@@ -1633,6 +1633,8 @@ Exact non-reparse-point artifact root to remove.
 
 .PARAMETER AllowMissingRegistrationsUnderRoot
 Optional containing scope for narrow stale-registration repair.
+.PARAMETER KeepRemovalRoot
+Remove validated contents but retain the empty root for a caller holding its lifetime identity pin.
 #>
 function Remove-AtlasoWorkstationVmArtifacts {
     [CmdletBinding(SupportsShouldProcess = $true)]
@@ -1640,7 +1642,8 @@ function Remove-AtlasoWorkstationVmArtifacts {
         [Parameter(Mandatory = $true)][string]$VmrunPath,
         [Parameter(Mandatory = $true)][AllowEmptyCollection()][string[]]$VmxPaths,
         [Parameter(Mandatory = $true)][string]$RemovalRoot,
-        [Parameter(Mandatory = $false)][AllowEmptyString()][string]$AllowMissingRegistrationsUnderRoot = ''
+        [Parameter(Mandatory = $false)][AllowEmptyString()][string]$AllowMissingRegistrationsUnderRoot = '',
+        [switch]$KeepRemovalRoot
     )
     $resolvedRemovalRoot = Get-AtlasoCanonicalPath -Path $RemovalRoot
     $filesystemRoot = [System.IO.Path]::GetPathRoot($resolvedRemovalRoot)
@@ -1826,6 +1829,19 @@ function Remove-AtlasoWorkstationVmArtifacts {
     }
     if (-not $providerRemovedRoot) {
         Assert-AtlasoRootSnapshotUnreplaced -RemovalRoot $resolvedRemovalRoot -Snapshot $snapshot
+        if ($KeepRemovalRoot) {
+            $retainedRootPin = [Atlaso.WorkstationFileIdentity]::PinOrdinaryDirectoryPath($resolvedRemovalRoot, $true)
+            try {
+                Assert-AtlasoRootSnapshotUnreplaced -RemovalRoot $resolvedRemovalRoot -Snapshot $snapshot
+                foreach ($child in Get-ChildItem -LiteralPath $resolvedRemovalRoot -Force -ErrorAction Stop) {
+                    Remove-Item -LiteralPath $child.FullName -Recurse -Force -ErrorAction Stop
+                }
+                if (@(Get-ChildItem -LiteralPath $resolvedRemovalRoot -Force -ErrorAction Stop).Count) {
+                    throw 'VMware artifact root still contains entries after cleanup.'
+                }
+            } finally { $retainedRootPin.Dispose() }
+            return
+        }
         if (Test-Path -LiteralPath $resolvedRemovalRoot) { Remove-Item -LiteralPath $resolvedRemovalRoot -Recurse -Force -ErrorAction Stop }
     }
     if (Test-Path -LiteralPath $resolvedRemovalRoot) {

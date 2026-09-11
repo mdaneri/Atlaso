@@ -557,6 +557,23 @@ try {
     }
 } finally { . ([scriptblock]::Create($snapshotFunction.Extent.Text)) }
 $publicationStage = Join-Path $fixture 'publication-stage.tmp'
+$resourcePinRoot = Join-Path $fixture 'retained-resource-roots'
+[IO.Directory]::CreateDirectory($resourcePinRoot) | Out-Null
+$resourceRootGuard = New-LifecyclePreflightGuard -Path $resourcePinRoot
+$resourceRootPins = [Collections.Generic.List[IDisposable]]::new()
+try {
+    foreach ($name in @('vms', 'seed')) {
+        $resourcePath = Join-Path $resourcePinRoot $name
+        [IO.Directory]::CreateDirectory($resourcePath) | Out-Null
+        $resourceRootPins.Add([Atlaso.SnapshotDirectoryPinV2]::Open($resourcePath))
+        $resourceRootGuard.RecordDirectory($resourcePath)
+        Assert-Refused { [IO.Directory]::Move($resourcePath, "$resourcePath.moved") } 'being used by another process'
+    }
+    Assert-Refused { [IO.Directory]::Move($resourcePinRoot, "$resourcePinRoot.moved") } 'being used by another process'
+} finally {
+    foreach ($pin in $resourceRootPins) { $pin.Dispose() }
+    $resourceRootGuard.Dispose()
+}
 $wheelCheckFunction = $runnerAst.Find({ param($node)
     $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -eq 'Get-LifecycleBuiltWheel'
 }, $false)

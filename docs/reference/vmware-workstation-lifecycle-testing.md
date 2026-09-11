@@ -158,6 +158,9 @@ descendant writes before capture through deletion, restoring the original root A
 Cleanup freezes each verified directory through an object-only ACL update and requires single-link regular files;
 it never propagates an inherited ACL into unverified descendants. Refusal restores the directory ACLs through their
 retained handles, preserving external files reached by unexpected hard links.
+The result-root guard and VM/seed directory pins remain alive through all lifecycle consumers and cleanup. VM cleanup
+uses `KeepRemovalRoot` to remove validated contents while retaining the pinned empty VM directory for later owned
+artifact-root teardown. Preflight cleanup verifies the original root identity when upgrading its handle for deletion.
 Unrecorded additions before capture are preserved. Cleanup rechecks the entire captured path set before marking any
 handle for deletion, so additions observed at that boundary preserve both owned evidence and foreign entries.
 The durable publisher uses its own versioned helper type so existing

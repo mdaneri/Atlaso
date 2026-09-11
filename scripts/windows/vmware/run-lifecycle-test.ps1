@@ -303,8 +303,7 @@ namespace Atlaso {
         $snapshotAncestors.Push($snapshotAncestor)
         $snapshotAncestor = [IO.Path]::GetDirectoryName($snapshotAncestor)
     }
-    # The preflight guard already pins these ancestors and owns a DELETE handle
-    # on DestinationRoot, which cannot coexist with another no-delete share pin.
+    # The preflight guard already retains these ancestor and result-root pins.
     while (-not $PreflightGuard -and $snapshotAncestors.Count) {
         $snapshotDirectoryPins.Add([Atlaso.SnapshotDirectoryPinV2]::Open($snapshotAncestors.Pop()))
     }
@@ -444,7 +443,7 @@ Fresh result directory owned by this invocation.
 #>
 function New-LifecyclePreflightGuard {
     param([Parameter(Mandatory)][string]$Path)
-    if (-not ('Atlaso.PreflightRootGuardV2' -as [type])) {
+    if (-not ('Atlaso.PreflightRootGuardV3' -as [type])) {
         Add-Type -TypeDefinition @'
 using System;
 using System.IO;
@@ -453,7 +452,7 @@ using System.ComponentModel;
 using System.Runtime.InteropServices;
 using Microsoft.Win32.SafeHandles;
 namespace Atlaso {
-    public sealed class PreflightRootGuardV2 : IDisposable {
+    public sealed class PreflightRootGuardV3 : IDisposable {
         [DllImport("kernel32.dll", CharSet=CharSet.Unicode, SetLastError=true)]
         private static extern SafeFileHandle CreateFileW(string p, uint a, uint s, IntPtr x, uint d, uint f, IntPtr t);
         [DllImport("kernel32.dll", SetLastError=true)]
@@ -497,6 +496,7 @@ namespace Atlaso {
             frozenAcls.Clear();
         }
         public string Root { get; private set; }
+        private string rootIdentity;
         private readonly List<SafeFileHandle> ancestors = new List<SafeFileHandle>();
         private readonly List<SafeFileHandle> entries = new List<SafeFileHandle>();
         private readonly HashSet<string> capturedPaths = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
@@ -538,13 +538,14 @@ namespace Atlaso {
             }
             return h;
         }
-        public PreflightRootGuardV2(string path) {
+        public PreflightRootGuardV3(string path) {
             Root = Path.GetFullPath(path);
             try {
                 var chain = new Stack<string>();
                 for (var p = Directory.GetParent(Root); p != null; p = p.Parent) chain.Push(p.FullName);
                 foreach (var p in chain) ancestors.Add(Open(p, false, true));
-                entries.Add(Open(Root, true, true));
+                entries.Add(Open(Root, false, true));
+                rootIdentity = Identity(entries[0]);
                 capturedDirectories.Add(Root);
             } catch { Dispose(); throw; }
         }
@@ -561,7 +562,15 @@ namespace Atlaso {
                 if (directory) { Freeze(captured); capturedDirectories.Add(path); Capture(path); }
             }
         }
-        public void CaptureSnapshot() { Freeze(entries[0]); Capture(Root); }
+        public void CaptureSnapshot() {
+            // Upgrade only for failure cleanup, verifying the creation identity
+            // before touching any ACL or descendant after the handle transition.
+            entries[0].Dispose();
+            entries[0] = Open(Root, true, true);
+            if (Identity(entries[0]) != rootIdentity)
+                throw new IOException("Preflight root creation identity changed; preserve all resources.");
+            Freeze(entries[0]); Capture(Root);
+        }
         public void Remove() {
             // Check the entire captured namespace before the first destructive step.
             // Pins prevent replacement/removal; unfamiliar descendants refuse the
@@ -596,7 +605,7 @@ namespace Atlaso {
 }
 '@
     }
-    return [Atlaso.PreflightRootGuardV2]::new($Path)
+    return [Atlaso.PreflightRootGuardV3]::new($Path)
 }
 
 <#
@@ -2182,8 +2191,10 @@ $firstBootOvfEnvironment = New-AtlasoWorkstationOvfEnvironment `
     -RootSshEnabled:($ApplianceSshUser -eq 'root')
 
 New-Item -ItemType Directory -Path $vmRoot -ErrorAction Stop | Out-Null
+$runtimeConsumerPins.Add([Atlaso.SnapshotDirectoryPinV2]::Open($vmRoot))
 $preflightGuard.RecordDirectory($vmRoot)
 New-Item -ItemType Directory -Path $seedRoot -ErrorAction Stop | Out-Null
+$runtimeConsumerPins.Add([Atlaso.SnapshotDirectoryPinV2]::Open($seedRoot))
 $preflightGuard.RecordDirectory($seedRoot)
 $identityPath = Join-Path $resultRoot 'vmware-identity.json'
 $identityVms = [System.Collections.Generic.List[object]]::new()
@@ -2295,8 +2306,6 @@ Write-LifecycleIdentityEvidence
         }
     }
     throw $preflightFailure
-} finally {
-    if ($preflightGuard) { $preflightGuard.Dispose() }
 }
 
 $clientASeedIso = ''
@@ -2566,6 +2575,7 @@ if ($CleanupCreatedLab) {
                     -VmrunPath $resolvedVmrun `
                     -VmxPaths $createdVmxPathArray `
                     -RemovalRoot $vmRoot `
+                    -KeepRemovalRoot `
                     -Confirm:$false
             }
         } catch {
@@ -2598,4 +2608,5 @@ if ($cleanupFailure) {
 }
 } finally {
     for ($pinIndex = $runtimeConsumerPins.Count - 1; $pinIndex -ge 0; $pinIndex--) { $runtimeConsumerPins[$pinIndex].Dispose() }
+    if ($preflightGuard) { $preflightGuard.Dispose() }
 }

@@ -1379,6 +1379,35 @@ def test_already_unregistered_vm_uses_filesystem_cleanup_only(tmp_path: Path) ->
     assert "deleteVM" not in [command[2] for command in _commands(log)]
 
 
+def test_cleanup_can_retain_a_caller_pinned_empty_root(tmp_path: Path) -> None:
+    """Remove validated VM contents while preserving the caller's root identity.
+
+    Args:
+        tmp_path: Pytest temporary directory path.
+    """
+    root = tmp_path / "artifacts" / "vm"
+    vmx = root / "Atlaso.vmx"
+    _write_vmx(vmx)
+    vmrun, environment, log, _ = _write_fake_vmrun(tmp_path / "fake", [vmx])
+    module = VMWARE_SCRIPT_ROOT / "Atlaso.WorkstationCleanup.psm1"
+    wrapper = tmp_path / "retained-root.ps1"
+    wrapper.write_text(
+        f"""$ErrorActionPreference = 'Stop'
+Import-Module '{module}' -Force
+$pin = [Atlaso.WorkstationFileIdentity]::PinOrdinaryDirectoryPath('{root}', $true)
+try {{
+    Remove-AtlasoWorkstationVmArtifacts -VmrunPath '{vmrun}' -VmxPaths @('{vmx}') -RemovalRoot '{root}' -KeepRemovalRoot -Confirm:$false
+}} finally {{ $pin.Dispose() }}
+""",
+        encoding="utf-8",
+    )
+    result = _run_script(wrapper, environment=environment)
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert root.is_dir()
+    assert not list(root.iterdir())
+    assert "deleteVM" not in [command[2] for command in _commands(log)]
+
+
 def test_provider_delete_may_remove_the_complete_validated_root(tmp_path: Path) -> None:
     """A checked provider deletion may satisfy cleanup by removing the exact root.
 
