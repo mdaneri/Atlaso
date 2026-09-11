@@ -60,7 +60,9 @@ Task history retains at most 100 matching rows and numeric listeners at most 500
 archive retains the bounded evidence and marks that collector truncated; it does not imply the missing rows were absent.
 The same reporting covers observed network links (100), addresses per retained link (100), routes (500), firewall
 entries (1,000), expressions per retained rule (100), desired interface/VLAN/PXE rows (100 each), and applied network
-rows (200). Collection metadata identifies which limits discarded evidence.
+rows (200). Collection metadata identifies which limits discarded evidence. Journal sources that reach the selected
+event limit are conservatively marked truncated because older matching events may exist; their evidence retains the
+`possibly_truncated` flag.
 Missing values remain null or unavailable rather than healthy or zero. Configuration change comparison covers the selected
 desired/applied database interface fields only; other runtime changes can occur during this non-atomic capture.
 Browser handshake status and close codes cannot be captured from the appliance; collect those separately if needed.

@@ -322,6 +322,37 @@ def test_remaining_database_caps_preserve_bounded_prefixes(tmp_path):
         assert len(evidence[field]) == 100
 
 
+@pytest.mark.parametrize("count", [1, 2])
+def test_journal_limit_reaches_manifest_and_summary(tmp_path, monkeypatch, count):
+    """A possible journal cutoff remains visible outside the evidence JSON.
+
+    Args:
+        tmp_path: Isolated absent database fixture.
+        monkeypatch: Fixture restoring journal command output.
+        count: Event count below or at the requested two-event limit.
+    """
+    monkeypatch.setattr("atlaso.diagnostics.os.geteuid", lambda: 0, raising=False)
+    collector = Collector(Options.parse({"detailed_logs": True, "log_lines": 2}), database=tmp_path / "missing.db")
+
+    def command(args):
+        """Return only allowlisted journal metadata.
+
+        Args:
+            args: Fixed collector command arguments.
+        """
+        if args[0] == "journalctl":
+            return "\n".join(json.dumps({"_HOSTNAME": "test-host", "PRIORITY": "3"}) for _ in range(count))
+        return "ActiveState=active"
+
+    monkeypatch.setattr(collector, "command", command)
+    data, manifest = collector.capture()
+    entry = next(item for item in manifest["collectors"] if item["collector"] == "journal-atlaso")
+    assert entry["status"] == ("truncated" if count == 2 else "success")
+    with zipfile.ZipFile(io.BytesIO(data)) as archive:
+        assert (b"journal-atlaso: truncated" in archive.read("summary.txt")) == (count == 2)
+        assert json.loads(archive.read(entry["path"]))["possibly_truncated"] == (count == 2)
+
+
 def test_recovery_does_not_import_application_database():
     # Importing the CLI itself must never run init_db or consume app settings.
     import ast

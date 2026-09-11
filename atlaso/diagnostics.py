@@ -805,7 +805,7 @@ class Collector:
                     raise EvidenceError("truncated")
                 filename = "evidence/" + name + ".json"
                 files[filename] = data
-                entry.update(status="truncated" if evidence.get("truncated") else "success",
+                entry.update(status="truncated" if evidence.get("truncated") or evidence.get("possibly_truncated") else "success",
                              path=filename, size_bytes=len(data), sha256=hashlib.sha256(data).hexdigest())
             except EvidenceError as exc:
                 if exc.status == "cancelled":
