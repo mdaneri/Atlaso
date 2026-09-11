@@ -2629,6 +2629,17 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#release-task-owned-lan-segments" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Release task-owned LAN segments
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#wheel-only-deployment-authentication" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
@@ -3718,6 +3729,17 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#release-task-owned-lan-segments" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Release task-owned LAN segments
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#wheel-only-deployment-authentication" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
@@ -4043,6 +4065,147 @@ directly to a task-worktree consumer: token resolution requires containment bene
 <p>Repeated setup copies nothing when the destination is already valid. Keep configuration out of commits, pull requests,
 release artifacts, and logs. Record ownership of only the task's copied configuration; later task-worktree cleanup
 must never remove or alter the primary checkout's originals.</p>
+<h3 id="release-task-owned-lan-segments">Release task-owned LAN segments<a class="headerlink" href="#release-task-owned-lan-segments" title="Permanent link">&para;</a></h3>
+<p>Lifecycle runs that request <code>lan:&lt;name&gt;</code> now create an immutable receipt before registering a new segment.
+Runtime admission requires a clean source checkout and rechecks its exact commit before VM/segment creation and before
+and after wheel building. The wheel is built from a fresh Git archive of the admitted commit, so transient edits in
+the live checkout cannot enter the artifact. Runtime modules, seed helpers, the appliance helper, and the interop
+harness also load from the admitted archive; identity naming loads directly from that commit object. Extracted
+snapshots deny same-user write access with inherited ACLs throughout their lifetime, including new child creation.
+Delete rights remain available to the supported owned-artifact cleanup path. Git archive bytes are captured directly
+from the process output; the on-disk archive is pinned and digest-checked, and extracted file hashes are verified
+against that archive under write exclusion before any helper or build can use the snapshot. Every extracted file
+is pinned and checked against its creation identity and single-link count before ACL propagation, preserving
+external files if a hard link was substituted. Snapshot ancestors and newly created directories are pinned with
+no-follow handles that deny deletion before any child is extracted, and remain pinned through final verification.
+This prevents a concurrent directory-to-junction replacement from redirecting archive writes outside the snapshot.
+The snapshot transfers its directory and file pins to its caller after verification. The lifecycle runner retains them
+through all helper consumers and releases them on exit; the wheel builder retains its pins through upload and installation.
+Preflight failure releases those pins before ownership-aware artifact cleanup. Thus renaming the verified root cannot
+substitute a different source tree between verification and use.
+Before applying inheritable ACLs, the exporter freezes each expected directory with an object-only ACL update and
+checks every immediate entry against the archive inventory. Unknown files, directories, and links are refused before
+ACL propagation; failed construction restores the directory freeze without touching unverified descendants.
+Runtime admission also compares the executing runner's already parsed script text with the admitted Git object before
+creating resources. This detects an accidentally stale parsed runner when its pathname was restored before the
+clean-checkout check. The executing entry point and host process remain trusted: this self-check cannot authenticate
+code that has deliberately removed the verifier. Moving that check into another mutable checkout launcher would not
+establish an independent trust boundary. Host execution-policy enforcement is outside this ownership receipt contract.</p>
+<p>Preferences publication rechecks the original file identity immediately before replacement and preserves a competing
+file when drift is already visible. A replacement during the remaining publication window retains ambiguous recovery
+objects for explicit recovery; an unverified backup is never installed automatically.</p>
+<p>LAN registration creation independently verifies the exact name and ID under a no-write/no-delete preferences pin and
+retains that pin through result construction, including reuse of an existing shared registration.</p>
+<p>Wheel upload requires exactly one output matching the filename, size, and SHA-256 emitted by that pip invocation.
+The wheel is held under an ordinary single-link read pin through upload, and the guest verifies its SHA-256 before
+installation. Extra, renamed, or substituted output fails instead of selecting a wheel by modification time.
+Ownership receipts and lifecycle manifests retain their original creation handles with writer and deletion exclusion
+through publication. The publisher flushes before and after renaming that exact handle, so a substituted staging
+pathname cannot replace ownership evidence.
+After publication, the receipt is identity-checked under a retained read pin through independent evidence publication
+and provider registration. Backup capture likewise pins the displaced pathname and requires the original provider
+identity; rollback bytes come from the retained original handle. An ambiguous displaced identity preserves the
+transaction files for explicit recovery rather than automatically restoring potentially substituted bytes.
+Normal rollback retains both source and target pins, captures the verified failed publication by handle, and renames
+the displaced handle without replacing an existing pathname. If a competing pathname appears during that transition,
+rollback refuses and preserves both captured objects for recovery.
+Successful preferences transactions delete their backup through the retained identity handle before releasing it.
+If archive, credential, module, or other pre-resource admission fails, the runner releases only its newly created
+preflight result directory. Cleanup verifies the independently derived parent, rejects links, unexpected entries,
+and nonempty VM/seed roots, and verifies absence so an ordinary preflight failure can be retried. The root is pinned
+from creation; failure cleanup captures descendant handles before validation and deletes only those exact objects.
+Cleanup admits only this invocation's exact archive/output paths and the archive's recorded extraction inventory.
+Creation-time stream identities bind each file; capture refuses replacements at expected paths. Cleanup denies
+descendant writes before capture through deletion, restoring the original root ACL when cleanup refuses.
+Cleanup freezes each verified directory through an object-only ACL update and requires single-link regular files;
+it never propagates an inherited ACL into unverified descendants. Refusal restores the directory ACLs through their
+retained handles, preserving external files reached by unexpected hard links.
+The result-root guard and VM/seed directory pins remain alive through all lifecycle consumers and cleanup. VM cleanup
+uses <code>KeepRemovalRoot</code> to remove validated contents while retaining the pinned empty VM directory for later owned
+artifact-root teardown. Preflight cleanup verifies the original root identity when upgrading its handle for deletion.
+Retained-root cleanup captures each remaining descendant against the admitted cleanup inventory and deletes through
+those handles; replaced or added entries are refused. Snapshot consumers also retain a native recursive change guard:
+any namespace or security change invalidates admission and wheel output, including a transient added module removed
+before the build finishes. The Python lifecycle consumer checks the retained source guards immediately before and
+after execution and uses Python isolated mode so its script directory, current directory and <code>PYTHONPATH</code> cannot
+supply shadow imports. Directory sharing alone does not prevent child creation on Windows.
+Unrecorded additions before capture are preserved. Cleanup rechecks the entire captured path set before marking any
+handle for deletion, so additions observed at that boundary preserve both owned evidence and foreign entries.
+The durable publisher uses its own versioned helper type so existing
+PowerShell sessions can reload the module after an upgrade. Dirty or changed source is refused before the next
+resource or wheel publication; plan-only
+output makes no runtime source-provenance claim.
+The receipt binds its random VMware ID, exact name and preferences path to the task ID, repository, source commit,
+PR number, and lifecycle result root. <code>plan.json</code> records <code>lan_segment_owner</code>; <code>vmware-identity.json</code> records
+<code>lan_segments</code> with each original receipt path and SHA-256. Outside Codex, the unique canonical lab name is the task ID.
+The receipt is flushed under a staging name and published by a write-through rename that refuses replacement.
+The required creation callback flushes and durably publishes the pending identity evidence before preferences can
+register the segment. An interruption therefore leaves either no registration or a registration with its original
+independently recorded receipt hash; cleanup can verify an absent pending registration normally.
+The pinned provider handle resolves its canonical long pathname; parent file identity and the canonical leaf key
+the mutex, so drive/UNC and short-name aliases share transaction exclusion and recovery discovery. Receipts store
+that canonical provider pathname, and cleanup resolves its input the same way before checking receipt identity.
+A provider-path mutex spans recovery preflight, preferences publication, rollback, and artifact retirement across
+processes and Windows sessions. An overlapping transaction refuses immediately; retries inspect retained recovery
+artifacts after the previous transaction releases its lock. Independent final registration and reference readback
+runs before rollback state is retired; a failed final check restores the displaced registration. Successful readback
+retains its no-delete provider pin through transaction commit and result creation. All directory guards
+signal one shared native event. Its final check after all requests are armed defines the reference-snapshot
+commit point across roots.
+Missing registered-parent directories are refused immediately rather than rechecked without a guard.
+An existing named segment is reused without claiming ownership or rewriting its ID. Shared segments and legacy residue
+without creation evidence remain preserved for maintainer-directed reconciliation.</p>
+<p>After removing the owned VMs through <code>remove-lifecycle-vms.ps1</code> or the lifecycle cleanup option, separately release
+each owned segment through <code>Remove-AtlasoWorkstationLanSegment</code>, exported by <code>Atlaso.WorkstationCleanup.psm1</code>.
+VM removal alone does not release a LAN registration. Preserve the creation receipts and their original hashes on the
+durable controller evidence surface before deleting any lifecycle result root.</p>
+<ol>
+<li>Independently verify the originating task, repository, creation commit, exact PR, canonical lab root, and original
+   receipt hash against the task's creation evidence and lifecycle identity. Do not derive expected ownership or a new
+   expected hash from the candidate receipt during cleanup.</li>
+<li>Close the Workstation UI normally and finish VMware VM/vmrun activity. The cleanup operation never closes the UI,
+   stops another VM, or terminates another task's process. Coordinate with other validation tasks before proceeding.</li>
+<li>Supply every independently configured VM storage root in <code>$vmRoots</code>, including locations of unregistered VMX files.
+   The operation additionally inspects all paths in Workstation's inventory. Missing configured roots, inaccessible
+   registered directories, malformed adapter/inventory records, links, and surviving references refuse cleanup.</li>
+<li>Preview and execute the exact receipt-bound operation:</li>
+</ol>
+<div class="language-powershell highlight"><pre><span></span><code><span id="__span-3-1"><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a><span class="nb">Import-Module</span> <span class="p">./</span><span class="n">scripts</span><span class="p">/</span><span class="n">windows</span><span class="p">/</span><span class="n">vmware</span><span class="p">/</span><span class="n">Atlaso</span><span class="p">.</span><span class="n">WorkstationCleanup</span><span class="p">.</span><span class="n">psm1</span>
+</span><span id="__span-3-2"><a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a><span class="nv">$owner</span> <span class="p">=</span> <span class="p">@{</span>
+</span><span id="__span-3-3"><a id="__codelineno-3-3" name="__codelineno-3-3" href="#__codelineno-3-3"></a>    <span class="n">task_id</span> <span class="p">=</span> <span class="nv">$verifiedTaskId</span>
+</span><span id="__span-3-4"><a id="__codelineno-3-4" name="__codelineno-3-4" href="#__codelineno-3-4"></a>    <span class="n">repository</span> <span class="p">=</span> <span class="s1">&#39;mdaneri/Atlaso&#39;</span>
+</span><span id="__span-3-5"><a id="__codelineno-3-5" name="__codelineno-3-5" href="#__codelineno-3-5"></a>    <span class="n">source_commit</span> <span class="p">=</span> <span class="nv">$verifiedCreationCommit</span>
+</span><span id="__span-3-6"><a id="__codelineno-3-6" name="__codelineno-3-6" href="#__codelineno-3-6"></a>    <span class="n">pr</span> <span class="p">=</span> <span class="nv">$verifiedPrNumber</span>
+</span><span id="__span-3-7"><a id="__codelineno-3-7" name="__codelineno-3-7" href="#__codelineno-3-7"></a>    <span class="n">lab_root</span> <span class="p">=</span> <span class="nv">$verifiedLabRoot</span>
+</span><span id="__span-3-8"><a id="__codelineno-3-8" name="__codelineno-3-8" href="#__codelineno-3-8"></a><span class="p">}</span>
+</span><span id="__span-3-9"><a id="__codelineno-3-9" name="__codelineno-3-9" href="#__codelineno-3-9"></a><span class="nv">$arguments</span> <span class="p">=</span> <span class="p">@{</span>
+</span><span id="__span-3-10"><a id="__codelineno-3-10" name="__codelineno-3-10" href="#__codelineno-3-10"></a>    <span class="n">ReceiptPath</span> <span class="p">=</span> <span class="nv">$preservedReceiptPath</span>
+</span><span id="__span-3-11"><a id="__codelineno-3-11" name="__codelineno-3-11" href="#__codelineno-3-11"></a>    <span class="n">ReceiptSha256</span> <span class="p">=</span> <span class="nv">$originalReceiptSha256</span>
+</span><span id="__span-3-12"><a id="__codelineno-3-12" name="__codelineno-3-12" href="#__codelineno-3-12"></a>    <span class="n">Owner</span> <span class="p">=</span> <span class="nv">$owner</span>
+</span><span id="__span-3-13"><a id="__codelineno-3-13" name="__codelineno-3-13" href="#__codelineno-3-13"></a>    <span class="n">VmRoots</span> <span class="p">=</span> <span class="nv">$vmRoots</span>
+</span><span id="__span-3-14"><a id="__codelineno-3-14" name="__codelineno-3-14" href="#__codelineno-3-14"></a><span class="p">}</span>
+</span><span id="__span-3-15"><a id="__codelineno-3-15" name="__codelineno-3-15" href="#__codelineno-3-15"></a><span class="nb">Remove-AtlasoWorkstationLanSegment</span> <span class="nv">@arguments</span> <span class="n">-WhatIf</span>
+</span><span id="__span-3-16"><a id="__codelineno-3-16" name="__codelineno-3-16" href="#__codelineno-3-16"></a><span class="nv">$releaseEvidence</span> <span class="p">=</span> <span class="nb">Remove-AtlasoWorkstationLanSegment</span> <span class="nv">@arguments</span> <span class="n">-Confirm</span><span class="p">:</span><span class="nv">$false</span>
+</span></code></pre></div>
+<ol>
+<li>Retain the returned <code>provider_id</code>, receipt digest, task/PR binding, <code>registration_absent</code>, and
+   <code>adapter_references_absent</code> in <code>validation_resource_release_evidence</code>. The cleanup controller performs a separate
+   exact-identity invocation/readback before accepting resource absence. An already-absent retry still validates the
+   original ownership and current adapter references.</li>
+</ol>
+<p>The operation requires existing UTF-8 preferences without a BOM and an existing inventory. It removes only the two
+exact segment records, preserving all other bytes, line endings, segment indices, and the provider's high-water count.
+Duplicate or unsupported registration fields and name/ID drift fail closed. Preferences updates pin ordinary paths,
+exclude writers, atomically replace the file, compare the displaced identity/bytes, and independently verify absence.
+Native recursive directory-change requests are armed before enumeration and retained through the final readback.
+Any descendant change, even a transient VMX creation/deletion, or a notification error/overflow refuses the scan;
+read-only file pins alone cannot prevent new VMX files from appearing beneath a storage root.
+The verified original displaced state is restored through pinned handles; an ambiguous displaced identity, failed
+rollback, or interrupted transaction retains recovery copies and blocks mutation until reconciled, including retained
+<code>atlaso-recovery-*.tmp</code> and <code>atlaso-cas-*.tmp</code> artifacts as well as LAN staging and backup files. Never repair that
+condition by deleting a
+backup or rewriting preferences broadly. Registration absence covers the supplied complete storage roots and provider
+inventory; a caller must not omit an unregistered VM storage location to obtain a successful result.</p>
 <h3 id="wheel-only-deployment-authentication">Wheel-only deployment authentication<a class="headerlink" href="#wheel-only-deployment-authentication" title="Permanent link">&para;</a></h3>
 <p>For a wheel-only deployment to the canonical test VM, use <code>scripts/windows/vmware/deploy-wheel.ps1</code> with the secure
 Windows 1Password handoff documented in the <a href="../full-technical-reference/">full technical reference</a>. Verify the unique
@@ -4097,7 +4260,7 @@ installation fails before any lifecycle VM is created.</p>
 blank-disk claims depend on those identities and reject transient <code>/dev/sdX</code> names.</p>
 <h2 id="topology">Topology<a class="headerlink" href="#topology" title="Permanent link">&para;</a></h2>
 <p>The default lifecycle lab creates isolated VM directories and result/log artifacts under its canonical identity:</p>
-<div class="language-text highlight"><pre><span></span><code><span id="__span-3-1"><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a>test-results/vmware-workstation-lifecycle/Atlaso-PR-&lt;number&gt;-lifecycle-&lt;collision-safe-suffix&gt;/vms
+<div class="language-text highlight"><pre><span></span><code><span id="__span-4-1"><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a>test-results/vmware-workstation-lifecycle/Atlaso-PR-&lt;number&gt;-lifecycle-&lt;collision-safe-suffix&gt;/vms
 </span></code></pre></div>
 <p>The appliance is cloned through <code>create-atlaso-vm.ps1</code> from the verified, powered-off two-payload-disk template.
 Custom <code>-VmrunPath</code> installations also reuse the disk manager discovered beside that executable.
@@ -4129,9 +4292,9 @@ versioned <code>v3.24</code> release URL and a repository-pinned SHA-512 digest;
 <li><code>VMnet4</code> for trunk-like validation</li>
 </ul>
 <p>Check the current Workstation host network inventory with:</p>
-<div class="language-powershell highlight"><pre><span></span><code><span id="__span-4-1"><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a><span class="n">pwsh</span> <span class="n">-ExecutionPolicy</span> <span class="n">Bypass</span> <span class="p">`</span>
-</span><span id="__span-4-2"><a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a>  <span class="o">-File</span> <span class="n">scripts</span><span class="p">/</span><span class="n">windows</span><span class="p">/</span><span class="n">vmware</span><span class="p">/</span><span class="n">prepare-networks</span><span class="p">.</span><span class="n">ps1</span> <span class="p">`</span>
-</span><span id="__span-4-3"><a id="__codelineno-4-3" name="__codelineno-4-3" href="#__codelineno-4-3"></a>  <span class="n">-PlanOnly</span>
+<div class="language-powershell highlight"><pre><span></span><code><span id="__span-5-1"><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a><span class="n">pwsh</span> <span class="n">-ExecutionPolicy</span> <span class="n">Bypass</span> <span class="p">`</span>
+</span><span id="__span-5-2"><a id="__codelineno-5-2" name="__codelineno-5-2" href="#__codelineno-5-2"></a>  <span class="o">-File</span> <span class="n">scripts</span><span class="p">/</span><span class="n">windows</span><span class="p">/</span><span class="n">vmware</span><span class="p">/</span><span class="n">prepare-networks</span><span class="p">.</span><span class="n">ps1</span> <span class="p">`</span>
+</span><span id="__span-5-3"><a id="__codelineno-5-3" name="__codelineno-5-3" href="#__codelineno-5-3"></a>  <span class="n">-PlanOnly</span>
 </span></code></pre></div>
 <p>If vmnets are missing, adjust them in VMware Virtual Network Editor before running the interop test. The image build
 wrapper reads the selected management vmnet before rendering Packer variables; for bridged <code>vmnet0</code>, it uses the active
@@ -4173,12 +4336,12 @@ receipt/finalizer/update-info, and three-vantage probe checks. Preserve sanitize
 desktop and responsive update-only page; redact sessions, credentials, keys, source credentials, and raw helper output.</p>
 <h2 id="build-the-appliance">Build The Appliance<a class="headerlink" href="#build-the-appliance" title="Permanent link">&para;</a></h2>
 <p>Build the Workstation appliance with:</p>
-<div class="language-powershell highlight"><pre><span></span><code><span id="__span-5-1"><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a><span class="n">pwsh</span> <span class="n">-ExecutionPolicy</span> <span class="n">Bypass</span> <span class="p">`</span>
-</span><span id="__span-5-2"><a id="__codelineno-5-2" name="__codelineno-5-2" href="#__codelineno-5-2"></a>  <span class="o">-File</span> <span class="n">scripts</span><span class="p">/</span><span class="n">windows</span><span class="p">/</span><span class="n">vmware</span><span class="p">/</span><span class="n">build-photon-image</span><span class="p">.</span><span class="n">ps1</span> <span class="p">`</span>
-</span><span id="__span-5-3"><a id="__codelineno-5-3" name="__codelineno-5-3" href="#__codelineno-5-3"></a>  <span class="n">-PullRequestNumber</span> <span class="p">&lt;</span><span class="n">number</span><span class="p">&gt;</span> <span class="p">`</span>
-</span><span id="__span-5-4"><a id="__codelineno-5-4" name="__codelineno-5-4" href="#__codelineno-5-4"></a>  <span class="n">-IsoUrl</span> <span class="s2">&quot;&lt;photon-iso-url-or-path&gt;&quot;</span> <span class="p">`</span>
-</span><span id="__span-5-5"><a id="__codelineno-5-5" name="__codelineno-5-5" href="#__codelineno-5-5"></a>  <span class="n">-IsoChecksum</span> <span class="s2">&quot;&lt;packer-checksum&gt;&quot;</span> <span class="p">`</span>
-</span><span id="__span-5-6"><a id="__codelineno-5-6" name="__codelineno-5-6" href="#__codelineno-5-6"></a>  <span class="n">-EnableRealSystemAdapters</span>
+<div class="language-powershell highlight"><pre><span></span><code><span id="__span-6-1"><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a><span class="n">pwsh</span> <span class="n">-ExecutionPolicy</span> <span class="n">Bypass</span> <span class="p">`</span>
+</span><span id="__span-6-2"><a id="__codelineno-6-2" name="__codelineno-6-2" href="#__codelineno-6-2"></a>  <span class="o">-File</span> <span class="n">scripts</span><span class="p">/</span><span class="n">windows</span><span class="p">/</span><span class="n">vmware</span><span class="p">/</span><span class="n">build-photon-image</span><span class="p">.</span><span class="n">ps1</span> <span class="p">`</span>
+</span><span id="__span-6-3"><a id="__codelineno-6-3" name="__codelineno-6-3" href="#__codelineno-6-3"></a>  <span class="n">-PullRequestNumber</span> <span class="p">&lt;</span><span class="n">number</span><span class="p">&gt;</span> <span class="p">`</span>
+</span><span id="__span-6-4"><a id="__codelineno-6-4" name="__codelineno-6-4" href="#__codelineno-6-4"></a>  <span class="n">-IsoUrl</span> <span class="s2">&quot;&lt;photon-iso-url-or-path&gt;&quot;</span> <span class="p">`</span>
+</span><span id="__span-6-5"><a id="__codelineno-6-5" name="__codelineno-6-5" href="#__codelineno-6-5"></a>  <span class="n">-IsoChecksum</span> <span class="s2">&quot;&lt;packer-checksum&gt;&quot;</span> <span class="p">`</span>
+</span><span id="__span-6-6"><a id="__codelineno-6-6" name="__codelineno-6-6" href="#__codelineno-6-6"></a>  <span class="n">-EnableRealSystemAdapters</span>
 </span></code></pre></div>
 <p>The task build begins only after that pull request exists. Its same-repository head branch and commit must exactly
 match the checkout. The wrapper derives <code>Atlaso-PR-&lt;number&gt;-Photon-Builder-VMware[-&lt;collision-safe-suffix&gt;]</code> and keeps
@@ -4277,9 +4440,9 @@ source. A
 reversed, ambiguous, capacity-mismatched, legacy-unproven, or byte-modified payload must be rebuilt and is never repaired
 by formatting or silently swapping unrelated VMDKs.</p>
 <h2 id="single-command-run">Single-Command Run<a class="headerlink" href="#single-command-run" title="Permanent link">&para;</a></h2>
-<div class="language-powershell highlight"><pre><span></span><code><span id="__span-6-1"><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a><span class="n">pwsh</span> <span class="n">-ExecutionPolicy</span> <span class="n">Bypass</span> <span class="p">`</span>
-</span><span id="__span-6-2"><a id="__codelineno-6-2" name="__codelineno-6-2" href="#__codelineno-6-2"></a>  <span class="o">-File</span> <span class="n">scripts</span><span class="p">/</span><span class="n">windows</span><span class="p">/</span><span class="n">vmware</span><span class="p">/</span><span class="nb">invoke-lifecycle</span><span class="n">-test</span><span class="p">.</span><span class="n">ps1</span> <span class="p">`</span>
-</span><span id="__span-6-3"><a id="__codelineno-6-3" name="__codelineno-6-3" href="#__codelineno-6-3"></a>  <span class="n">-PullRequestNumber</span> <span class="p">&lt;</span><span class="n">number</span><span class="p">&gt;</span>
+<div class="language-powershell highlight"><pre><span></span><code><span id="__span-7-1"><a id="__codelineno-7-1" name="__codelineno-7-1" href="#__codelineno-7-1"></a><span class="n">pwsh</span> <span class="n">-ExecutionPolicy</span> <span class="n">Bypass</span> <span class="p">`</span>
+</span><span id="__span-7-2"><a id="__codelineno-7-2" name="__codelineno-7-2" href="#__codelineno-7-2"></a>  <span class="o">-File</span> <span class="n">scripts</span><span class="p">/</span><span class="n">windows</span><span class="p">/</span><span class="n">vmware</span><span class="p">/</span><span class="nb">invoke-lifecycle</span><span class="n">-test</span><span class="p">.</span><span class="n">ps1</span> <span class="p">`</span>
+</span><span id="__span-7-3"><a id="__codelineno-7-3" name="__codelineno-7-3" href="#__codelineno-7-3"></a>  <span class="n">-PullRequestNumber</span> <span class="p">&lt;</span><span class="n">number</span><span class="p">&gt;</span>
 </span></code></pre></div>
 <p>The wrapper has no password defaults. It prompts securely for the appliance administrator and VCF Backup credentials;
 client SSH reuses the administrator <code>SecureString</code> unless <code>-SshPassword</code> is supplied. <code>-FullEsxiPxeInstall</code> also
@@ -4324,23 +4487,23 @@ still clones the selected appliance, installs the exact branch wheel, proves app
 Authorization Code acceptance check. It skips unrelated multi-NIC service configuration, client VM creation and probes,
 and the backup/restore pass.</p>
 <p>Useful commands:</p>
-<div class="language-powershell highlight"><pre><span></span><code><span id="__span-7-1"><a id="__codelineno-7-1" name="__codelineno-7-1" href="#__codelineno-7-1"></a><span class="c"># Print selected paths and topology without creating VMs.</span>
-</span><span id="__span-7-2"><a id="__codelineno-7-2" name="__codelineno-7-2" href="#__codelineno-7-2"></a><span class="n">pwsh</span> <span class="n">-ExecutionPolicy</span> <span class="n">Bypass</span> <span class="p">`</span>
-</span><span id="__span-7-3"><a id="__codelineno-7-3" name="__codelineno-7-3" href="#__codelineno-7-3"></a>  <span class="o">-File</span> <span class="n">scripts</span><span class="p">/</span><span class="n">windows</span><span class="p">/</span><span class="n">vmware</span><span class="p">/</span><span class="nb">invoke-lifecycle</span><span class="n">-test</span><span class="p">.</span><span class="n">ps1</span> <span class="p">`</span>
-</span><span id="__span-7-4"><a id="__codelineno-7-4" name="__codelineno-7-4" href="#__codelineno-7-4"></a>  <span class="n">-PullRequestNumber</span> <span class="p">&lt;</span><span class="n">number</span><span class="p">&gt;</span> <span class="p">`</span>
-</span><span id="__span-7-5"><a id="__codelineno-7-5" name="__codelineno-7-5" href="#__codelineno-7-5"></a>  <span class="n">-PlanOnly</span>
-</span><span id="__span-7-6"><a id="__codelineno-7-6" name="__codelineno-7-6" href="#__codelineno-7-6"></a>
-</span><span id="__span-7-7"><a id="__codelineno-7-7" name="__codelineno-7-7" href="#__codelineno-7-7"></a><span class="c"># Validate Workstation vmnet inventory.</span>
-</span><span id="__span-7-8"><a id="__codelineno-7-8" name="__codelineno-7-8" href="#__codelineno-7-8"></a><span class="n">pwsh</span> <span class="n">-ExecutionPolicy</span> <span class="n">Bypass</span> <span class="p">`</span>
-</span><span id="__span-7-9"><a id="__codelineno-7-9" name="__codelineno-7-9" href="#__codelineno-7-9"></a>  <span class="o">-File</span> <span class="n">scripts</span><span class="p">/</span><span class="n">windows</span><span class="p">/</span><span class="n">vmware</span><span class="p">/</span><span class="nb">invoke-lifecycle</span><span class="n">-test</span><span class="p">.</span><span class="n">ps1</span> <span class="p">`</span>
-</span><span id="__span-7-10"><a id="__codelineno-7-10" name="__codelineno-7-10" href="#__codelineno-7-10"></a>  <span class="n">-PrepareNetworksOnly</span>
-</span><span id="__span-7-11"><a id="__codelineno-7-11" name="__codelineno-7-11" href="#__codelineno-7-11"></a>
-</span><span id="__span-7-12"><a id="__codelineno-7-12" name="__codelineno-7-12" href="#__codelineno-7-12"></a><span class="c"># Stop and remove one exact retained PR-owned lifecycle lab.</span>
-</span><span id="__span-7-13"><a id="__codelineno-7-13" name="__codelineno-7-13" href="#__codelineno-7-13"></a><span class="n">pwsh</span> <span class="n">-ExecutionPolicy</span> <span class="n">Bypass</span> <span class="p">`</span>
-</span><span id="__span-7-14"><a id="__codelineno-7-14" name="__codelineno-7-14" href="#__codelineno-7-14"></a>  <span class="o">-File</span> <span class="n">scripts</span><span class="p">/</span><span class="n">windows</span><span class="p">/</span><span class="n">vmware</span><span class="p">/</span><span class="nb">invoke-lifecycle</span><span class="n">-test</span><span class="p">.</span><span class="n">ps1</span> <span class="p">`</span>
-</span><span id="__span-7-15"><a id="__codelineno-7-15" name="__codelineno-7-15" href="#__codelineno-7-15"></a>  <span class="n">-PullRequestNumber</span> <span class="p">&lt;</span><span class="n">number</span><span class="p">&gt;</span> <span class="p">`</span>
-</span><span id="__span-7-16"><a id="__codelineno-7-16" name="__codelineno-7-16" href="#__codelineno-7-16"></a>  <span class="n">-CollisionSuffix</span> <span class="s1">&#39;&lt;suffix-reported-by-the-run&gt;&#39;</span> <span class="p">`</span>
-</span><span id="__span-7-17"><a id="__codelineno-7-17" name="__codelineno-7-17" href="#__codelineno-7-17"></a>  <span class="n">-CleanupVmsOnly</span>
+<div class="language-powershell highlight"><pre><span></span><code><span id="__span-8-1"><a id="__codelineno-8-1" name="__codelineno-8-1" href="#__codelineno-8-1"></a><span class="c"># Print selected paths and topology without creating VMs.</span>
+</span><span id="__span-8-2"><a id="__codelineno-8-2" name="__codelineno-8-2" href="#__codelineno-8-2"></a><span class="n">pwsh</span> <span class="n">-ExecutionPolicy</span> <span class="n">Bypass</span> <span class="p">`</span>
+</span><span id="__span-8-3"><a id="__codelineno-8-3" name="__codelineno-8-3" href="#__codelineno-8-3"></a>  <span class="o">-File</span> <span class="n">scripts</span><span class="p">/</span><span class="n">windows</span><span class="p">/</span><span class="n">vmware</span><span class="p">/</span><span class="nb">invoke-lifecycle</span><span class="n">-test</span><span class="p">.</span><span class="n">ps1</span> <span class="p">`</span>
+</span><span id="__span-8-4"><a id="__codelineno-8-4" name="__codelineno-8-4" href="#__codelineno-8-4"></a>  <span class="n">-PullRequestNumber</span> <span class="p">&lt;</span><span class="n">number</span><span class="p">&gt;</span> <span class="p">`</span>
+</span><span id="__span-8-5"><a id="__codelineno-8-5" name="__codelineno-8-5" href="#__codelineno-8-5"></a>  <span class="n">-PlanOnly</span>
+</span><span id="__span-8-6"><a id="__codelineno-8-6" name="__codelineno-8-6" href="#__codelineno-8-6"></a>
+</span><span id="__span-8-7"><a id="__codelineno-8-7" name="__codelineno-8-7" href="#__codelineno-8-7"></a><span class="c"># Validate Workstation vmnet inventory.</span>
+</span><span id="__span-8-8"><a id="__codelineno-8-8" name="__codelineno-8-8" href="#__codelineno-8-8"></a><span class="n">pwsh</span> <span class="n">-ExecutionPolicy</span> <span class="n">Bypass</span> <span class="p">`</span>
+</span><span id="__span-8-9"><a id="__codelineno-8-9" name="__codelineno-8-9" href="#__codelineno-8-9"></a>  <span class="o">-File</span> <span class="n">scripts</span><span class="p">/</span><span class="n">windows</span><span class="p">/</span><span class="n">vmware</span><span class="p">/</span><span class="nb">invoke-lifecycle</span><span class="n">-test</span><span class="p">.</span><span class="n">ps1</span> <span class="p">`</span>
+</span><span id="__span-8-10"><a id="__codelineno-8-10" name="__codelineno-8-10" href="#__codelineno-8-10"></a>  <span class="n">-PrepareNetworksOnly</span>
+</span><span id="__span-8-11"><a id="__codelineno-8-11" name="__codelineno-8-11" href="#__codelineno-8-11"></a>
+</span><span id="__span-8-12"><a id="__codelineno-8-12" name="__codelineno-8-12" href="#__codelineno-8-12"></a><span class="c"># Stop and remove one exact retained PR-owned lifecycle lab.</span>
+</span><span id="__span-8-13"><a id="__codelineno-8-13" name="__codelineno-8-13" href="#__codelineno-8-13"></a><span class="n">pwsh</span> <span class="n">-ExecutionPolicy</span> <span class="n">Bypass</span> <span class="p">`</span>
+</span><span id="__span-8-14"><a id="__codelineno-8-14" name="__codelineno-8-14" href="#__codelineno-8-14"></a>  <span class="o">-File</span> <span class="n">scripts</span><span class="p">/</span><span class="n">windows</span><span class="p">/</span><span class="n">vmware</span><span class="p">/</span><span class="nb">invoke-lifecycle</span><span class="n">-test</span><span class="p">.</span><span class="n">ps1</span> <span class="p">`</span>
+</span><span id="__span-8-15"><a id="__codelineno-8-15" name="__codelineno-8-15" href="#__codelineno-8-15"></a>  <span class="n">-PullRequestNumber</span> <span class="p">&lt;</span><span class="n">number</span><span class="p">&gt;</span> <span class="p">`</span>
+</span><span id="__span-8-16"><a id="__codelineno-8-16" name="__codelineno-8-16" href="#__codelineno-8-16"></a>  <span class="n">-CollisionSuffix</span> <span class="s1">&#39;&lt;suffix-reported-by-the-run&gt;&#39;</span> <span class="p">`</span>
+</span><span id="__span-8-17"><a id="__codelineno-8-17" name="__codelineno-8-17" href="#__codelineno-8-17"></a>  <span class="n">-CleanupVmsOnly</span>
 </span></code></pre></div>
 <p>The plan-only command does not prompt for passwords or create a protected credential bundle because the emitted plan
 does not consume credentials.</p>
@@ -4423,30 +4586,30 @@ configured permitted root, verify the registered task worktree and its exclusive
 lifecycle parent as <code>test-results/vmware-workstation-lifecycle</code> beneath that worktree. Do not derive either trusted root
 from lifecycle metadata. Independently verify the PR, purpose, and collision suffix against the task's creation evidence.
 Use those identities to derive the expected lab path separately from the candidate manifest path:</p>
-<div class="language-powershell highlight"><pre><span></span><code><span id="__span-8-1"><a id="__codelineno-8-1" name="__codelineno-8-1" href="#__codelineno-8-1"></a><span class="nv">$ErrorActionPreference</span> <span class="p">=</span> <span class="s1">&#39;Stop&#39;</span>
-</span><span id="__span-8-2"><a id="__codelineno-8-2" name="__codelineno-8-2" href="#__codelineno-8-2"></a><span class="nb">Import-Module</span> <span class="p">./</span><span class="n">scripts</span><span class="p">/</span><span class="n">windows</span><span class="p">/</span><span class="n">vmware</span><span class="p">/</span><span class="n">Atlaso</span><span class="p">.</span><span class="n">WorkstationCleanup</span><span class="p">.</span><span class="n">psm1</span> <span class="n">-Force</span>
-</span><span id="__span-8-3"><a id="__codelineno-8-3" name="__codelineno-8-3" href="#__codelineno-8-3"></a><span class="nb">Import-Module</span> <span class="p">./</span><span class="n">scripts</span><span class="p">/</span><span class="n">windows</span><span class="p">/</span><span class="n">vmware</span><span class="p">/</span><span class="n">Atlaso</span><span class="p">.</span><span class="n">VmwareTestIdentity</span><span class="p">.</span><span class="n">psm1</span> <span class="n">-Force</span>
-</span><span id="__span-8-4"><a id="__codelineno-8-4" name="__codelineno-8-4" href="#__codelineno-8-4"></a><span class="nb">Assert-AtlasoStrictDescendantPath</span> <span class="p">`</span>
-</span><span id="__span-8-5"><a id="__codelineno-8-5" name="__codelineno-8-5" href="#__codelineno-8-5"></a>  <span class="n">-ParentPath</span> <span class="nv">$configuredPermittedRoot</span> <span class="n">-ChildPath</span> <span class="nv">$verifiedTaskWorktree</span> <span class="p">`</span>
-</span><span id="__span-8-6"><a id="__codelineno-8-6" name="__codelineno-8-6" href="#__codelineno-8-6"></a>  <span class="n">-FailureMessage</span> <span class="s1">&#39;Task worktree is outside the configured permitted root&#39;</span>
-</span><span id="__span-8-7"><a id="__codelineno-8-7" name="__codelineno-8-7" href="#__codelineno-8-7"></a><span class="nv">$canonicalLifecycleParent</span> <span class="p">=</span> <span class="nb">Join-Path</span> <span class="nv">$verifiedTaskWorktree</span> <span class="s1">&#39;test-results/vmware-workstation-lifecycle&#39;</span>
-</span><span id="__span-8-8"><a id="__codelineno-8-8" name="__codelineno-8-8" href="#__codelineno-8-8"></a><span class="nb">Assert-AtlasoStrictDescendantPath</span> <span class="p">`</span>
-</span><span id="__span-8-9"><a id="__codelineno-8-9" name="__codelineno-8-9" href="#__codelineno-8-9"></a>  <span class="n">-ParentPath</span> <span class="nv">$verifiedTaskWorktree</span> <span class="n">-ChildPath</span> <span class="nv">$canonicalLifecycleParent</span> <span class="p">`</span>
-</span><span id="__span-8-10"><a id="__codelineno-8-10" name="__codelineno-8-10" href="#__codelineno-8-10"></a>  <span class="n">-FailureMessage</span> <span class="s1">&#39;Lifecycle parent is outside the verified task worktree&#39;</span>
-</span><span id="__span-8-11"><a id="__codelineno-8-11" name="__codelineno-8-11" href="#__codelineno-8-11"></a><span class="nv">$verifiedLabIdentity</span> <span class="p">=</span> <span class="nb">New-AtlasoVmwareTestIdentity</span> <span class="p">`</span>
-</span><span id="__span-8-12"><a id="__codelineno-8-12" name="__codelineno-8-12" href="#__codelineno-8-12"></a>  <span class="n">-PullRequestNumber</span> <span class="nv">$verifiedPr</span> <span class="n">-Purpose</span> <span class="nv">$verifiedPurpose</span> <span class="n">-CollisionSuffix</span> <span class="nv">$verifiedCollisionSuffix</span>
-</span><span id="__span-8-13"><a id="__codelineno-8-13" name="__codelineno-8-13" href="#__codelineno-8-13"></a><span class="nv">$expectedLabRoot</span> <span class="p">=</span> <span class="nb">Join-Path</span> <span class="nv">$canonicalLifecycleParent</span> <span class="nv">$verifiedLabIdentity</span><span class="p">.</span><span class="n">Name</span>
-</span><span id="__span-8-14"><a id="__codelineno-8-14" name="__codelineno-8-14" href="#__codelineno-8-14"></a><span class="nb">Assert-AtlasoStrictDescendantPath</span> <span class="p">`</span>
-</span><span id="__span-8-15"><a id="__codelineno-8-15" name="__codelineno-8-15" href="#__codelineno-8-15"></a>  <span class="n">-ParentPath</span> <span class="nv">$canonicalLifecycleParent</span> <span class="n">-ChildPath</span> <span class="nv">$expectedLabRoot</span> <span class="p">`</span>
-</span><span id="__span-8-16"><a id="__codelineno-8-16" name="__codelineno-8-16" href="#__codelineno-8-16"></a>  <span class="n">-FailureMessage</span> <span class="s1">&#39;Expected lab is outside the canonical lifecycle parent&#39;</span>
-</span><span id="__span-8-17"><a id="__codelineno-8-17" name="__codelineno-8-17" href="#__codelineno-8-17"></a><span class="nv">$candidateLabRoot</span> <span class="p">=</span> <span class="no">[System.IO.Path]</span><span class="p">::</span><span class="n">GetFullPath</span><span class="p">(</span><span class="nv">$manifestBoundLabRoot</span><span class="p">)</span>
-</span><span id="__span-8-18"><a id="__codelineno-8-18" name="__codelineno-8-18" href="#__codelineno-8-18"></a><span class="k">if</span> <span class="p">(</span><span class="o">-not</span> <span class="nv">$candidateLabRoot</span><span class="p">.</span><span class="n">Equals</span><span class="p">(</span><span class="nv">$expectedLabRoot</span><span class="p">,</span> <span class="no">[System.StringComparison]</span><span class="p">::</span><span class="n">OrdinalIgnoreCase</span><span class="p">))</span> <span class="p">{</span>
-</span><span id="__span-8-19"><a id="__codelineno-8-19" name="__codelineno-8-19" href="#__codelineno-8-19"></a>  <span class="k">throw</span> <span class="s1">&#39;Candidate lab does not match independently derived task identity&#39;</span>
-</span><span id="__span-8-20"><a id="__codelineno-8-20" name="__codelineno-8-20" href="#__codelineno-8-20"></a><span class="p">}</span>
-</span><span id="__span-8-21"><a id="__codelineno-8-21" name="__codelineno-8-21" href="#__codelineno-8-21"></a><span class="nb">Remove-AtlasoWorkstationArtifactRoot</span> <span class="p">`</span>
-</span><span id="__span-8-22"><a id="__codelineno-8-22" name="__codelineno-8-22" href="#__codelineno-8-22"></a>  <span class="n">-VmrunPath</span> <span class="nv">$verifiedVmrunPath</span> <span class="p">`</span>
-</span><span id="__span-8-23"><a id="__codelineno-8-23" name="__codelineno-8-23" href="#__codelineno-8-23"></a>  <span class="n">-ExpectedRemovalRoot</span> <span class="nv">$expectedLabRoot</span> <span class="p">`</span>
-</span><span id="__span-8-24"><a id="__codelineno-8-24" name="__codelineno-8-24" href="#__codelineno-8-24"></a>  <span class="n">-RemovalRoot</span> <span class="nv">$candidateLabRoot</span>
+<div class="language-powershell highlight"><pre><span></span><code><span id="__span-9-1"><a id="__codelineno-9-1" name="__codelineno-9-1" href="#__codelineno-9-1"></a><span class="nv">$ErrorActionPreference</span> <span class="p">=</span> <span class="s1">&#39;Stop&#39;</span>
+</span><span id="__span-9-2"><a id="__codelineno-9-2" name="__codelineno-9-2" href="#__codelineno-9-2"></a><span class="nb">Import-Module</span> <span class="p">./</span><span class="n">scripts</span><span class="p">/</span><span class="n">windows</span><span class="p">/</span><span class="n">vmware</span><span class="p">/</span><span class="n">Atlaso</span><span class="p">.</span><span class="n">WorkstationCleanup</span><span class="p">.</span><span class="n">psm1</span> <span class="n">-Force</span>
+</span><span id="__span-9-3"><a id="__codelineno-9-3" name="__codelineno-9-3" href="#__codelineno-9-3"></a><span class="nb">Import-Module</span> <span class="p">./</span><span class="n">scripts</span><span class="p">/</span><span class="n">windows</span><span class="p">/</span><span class="n">vmware</span><span class="p">/</span><span class="n">Atlaso</span><span class="p">.</span><span class="n">VmwareTestIdentity</span><span class="p">.</span><span class="n">psm1</span> <span class="n">-Force</span>
+</span><span id="__span-9-4"><a id="__codelineno-9-4" name="__codelineno-9-4" href="#__codelineno-9-4"></a><span class="nb">Assert-AtlasoStrictDescendantPath</span> <span class="p">`</span>
+</span><span id="__span-9-5"><a id="__codelineno-9-5" name="__codelineno-9-5" href="#__codelineno-9-5"></a>  <span class="n">-ParentPath</span> <span class="nv">$configuredPermittedRoot</span> <span class="n">-ChildPath</span> <span class="nv">$verifiedTaskWorktree</span> <span class="p">`</span>
+</span><span id="__span-9-6"><a id="__codelineno-9-6" name="__codelineno-9-6" href="#__codelineno-9-6"></a>  <span class="n">-FailureMessage</span> <span class="s1">&#39;Task worktree is outside the configured permitted root&#39;</span>
+</span><span id="__span-9-7"><a id="__codelineno-9-7" name="__codelineno-9-7" href="#__codelineno-9-7"></a><span class="nv">$canonicalLifecycleParent</span> <span class="p">=</span> <span class="nb">Join-Path</span> <span class="nv">$verifiedTaskWorktree</span> <span class="s1">&#39;test-results/vmware-workstation-lifecycle&#39;</span>
+</span><span id="__span-9-8"><a id="__codelineno-9-8" name="__codelineno-9-8" href="#__codelineno-9-8"></a><span class="nb">Assert-AtlasoStrictDescendantPath</span> <span class="p">`</span>
+</span><span id="__span-9-9"><a id="__codelineno-9-9" name="__codelineno-9-9" href="#__codelineno-9-9"></a>  <span class="n">-ParentPath</span> <span class="nv">$verifiedTaskWorktree</span> <span class="n">-ChildPath</span> <span class="nv">$canonicalLifecycleParent</span> <span class="p">`</span>
+</span><span id="__span-9-10"><a id="__codelineno-9-10" name="__codelineno-9-10" href="#__codelineno-9-10"></a>  <span class="n">-FailureMessage</span> <span class="s1">&#39;Lifecycle parent is outside the verified task worktree&#39;</span>
+</span><span id="__span-9-11"><a id="__codelineno-9-11" name="__codelineno-9-11" href="#__codelineno-9-11"></a><span class="nv">$verifiedLabIdentity</span> <span class="p">=</span> <span class="nb">New-AtlasoVmwareTestIdentity</span> <span class="p">`</span>
+</span><span id="__span-9-12"><a id="__codelineno-9-12" name="__codelineno-9-12" href="#__codelineno-9-12"></a>  <span class="n">-PullRequestNumber</span> <span class="nv">$verifiedPr</span> <span class="n">-Purpose</span> <span class="nv">$verifiedPurpose</span> <span class="n">-CollisionSuffix</span> <span class="nv">$verifiedCollisionSuffix</span>
+</span><span id="__span-9-13"><a id="__codelineno-9-13" name="__codelineno-9-13" href="#__codelineno-9-13"></a><span class="nv">$expectedLabRoot</span> <span class="p">=</span> <span class="nb">Join-Path</span> <span class="nv">$canonicalLifecycleParent</span> <span class="nv">$verifiedLabIdentity</span><span class="p">.</span><span class="n">Name</span>
+</span><span id="__span-9-14"><a id="__codelineno-9-14" name="__codelineno-9-14" href="#__codelineno-9-14"></a><span class="nb">Assert-AtlasoStrictDescendantPath</span> <span class="p">`</span>
+</span><span id="__span-9-15"><a id="__codelineno-9-15" name="__codelineno-9-15" href="#__codelineno-9-15"></a>  <span class="n">-ParentPath</span> <span class="nv">$canonicalLifecycleParent</span> <span class="n">-ChildPath</span> <span class="nv">$expectedLabRoot</span> <span class="p">`</span>
+</span><span id="__span-9-16"><a id="__codelineno-9-16" name="__codelineno-9-16" href="#__codelineno-9-16"></a>  <span class="n">-FailureMessage</span> <span class="s1">&#39;Expected lab is outside the canonical lifecycle parent&#39;</span>
+</span><span id="__span-9-17"><a id="__codelineno-9-17" name="__codelineno-9-17" href="#__codelineno-9-17"></a><span class="nv">$candidateLabRoot</span> <span class="p">=</span> <span class="no">[System.IO.Path]</span><span class="p">::</span><span class="n">GetFullPath</span><span class="p">(</span><span class="nv">$manifestBoundLabRoot</span><span class="p">)</span>
+</span><span id="__span-9-18"><a id="__codelineno-9-18" name="__codelineno-9-18" href="#__codelineno-9-18"></a><span class="k">if</span> <span class="p">(</span><span class="o">-not</span> <span class="nv">$candidateLabRoot</span><span class="p">.</span><span class="n">Equals</span><span class="p">(</span><span class="nv">$expectedLabRoot</span><span class="p">,</span> <span class="no">[System.StringComparison]</span><span class="p">::</span><span class="n">OrdinalIgnoreCase</span><span class="p">))</span> <span class="p">{</span>
+</span><span id="__span-9-19"><a id="__codelineno-9-19" name="__codelineno-9-19" href="#__codelineno-9-19"></a>  <span class="k">throw</span> <span class="s1">&#39;Candidate lab does not match independently derived task identity&#39;</span>
+</span><span id="__span-9-20"><a id="__codelineno-9-20" name="__codelineno-9-20" href="#__codelineno-9-20"></a><span class="p">}</span>
+</span><span id="__span-9-21"><a id="__codelineno-9-21" name="__codelineno-9-21" href="#__codelineno-9-21"></a><span class="nb">Remove-AtlasoWorkstationArtifactRoot</span> <span class="p">`</span>
+</span><span id="__span-9-22"><a id="__codelineno-9-22" name="__codelineno-9-22" href="#__codelineno-9-22"></a>  <span class="n">-VmrunPath</span> <span class="nv">$verifiedVmrunPath</span> <span class="p">`</span>
+</span><span id="__span-9-23"><a id="__codelineno-9-23" name="__codelineno-9-23" href="#__codelineno-9-23"></a>  <span class="n">-ExpectedRemovalRoot</span> <span class="nv">$expectedLabRoot</span> <span class="p">`</span>
+</span><span id="__span-9-24"><a id="__codelineno-9-24" name="__codelineno-9-24" href="#__codelineno-9-24"></a>  <span class="n">-RemovalRoot</span> <span class="nv">$candidateLabRoot</span>
 </span></code></pre></div>
 <p>The caller supplies the configured root and verified task/provider identities from independent supported configuration
 and ownership readback. Missing, ambiguous, outside-root, or reparse-point state blocks this sequence. The candidate
@@ -4534,27 +4697,27 @@ descendants of the selected VM output, so sibling-prefix and reparse-point paths
 <h2 id="normal-test-vm">Normal Test VM<a class="headerlink" href="#normal-test-vm" title="Permanent link">&para;</a></h2>
 <p>For a normal Workstation appliance VM, separate from the lifecycle lab, store the exact <code>Atlaso</code> Environment ID once in
 the checkout-local, Git-ignored configuration file. The prompt is masked and the command does not print the ID:</p>
-<div class="language-powershell highlight"><pre><span></span><code><span id="__span-9-1"><a id="__codelineno-9-1" name="__codelineno-9-1" href="#__codelineno-9-1"></a><span class="nv">$atlasoLocal</span> <span class="p">=</span> <span class="nb">Join-Path</span> <span class="p">(</span><span class="n">git</span> <span class="n">rev-parse</span> <span class="p">-</span><span class="n">-show-toplevel</span><span class="p">)</span> <span class="s1">&#39;.atlaso-local&#39;</span>
-</span><span id="__span-9-2"><a id="__codelineno-9-2" name="__codelineno-9-2" href="#__codelineno-9-2"></a><span class="nb">New-Item</span> <span class="n">-ItemType</span> <span class="n">Directory</span> <span class="n">-Path</span> <span class="nv">$atlasoLocal</span> <span class="n">-Force</span> <span class="p">|</span> <span class="nb">Out-Null</span>
-</span><span id="__span-9-3"><a id="__codelineno-9-3" name="__codelineno-9-3" href="#__codelineno-9-3"></a><span class="nv">$atlasoEnvironmentId</span> <span class="p">=</span> <span class="nb">Read-Host</span> <span class="s1">&#39;Paste the Atlaso Environment ID&#39;</span> <span class="n">-MaskInput</span>
-</span><span id="__span-9-4"><a id="__codelineno-9-4" name="__codelineno-9-4" href="#__codelineno-9-4"></a><span class="k">try</span> <span class="p">{</span>
-</span><span id="__span-9-5"><a id="__codelineno-9-5" name="__codelineno-9-5" href="#__codelineno-9-5"></a>    <span class="no">[System.IO.File]</span><span class="p">::</span><span class="n">WriteAllText</span><span class="p">(</span>
-</span><span id="__span-9-6"><a id="__codelineno-9-6" name="__codelineno-9-6" href="#__codelineno-9-6"></a>        <span class="p">(</span><span class="nb">Join-Path</span> <span class="nv">$atlasoLocal</span> <span class="s1">&#39;onepassword-environment-id&#39;</span><span class="p">),</span>
-</span><span id="__span-9-7"><a id="__codelineno-9-7" name="__codelineno-9-7" href="#__codelineno-9-7"></a>        <span class="nv">$atlasoEnvironmentId</span>
-</span><span id="__span-9-8"><a id="__codelineno-9-8" name="__codelineno-9-8" href="#__codelineno-9-8"></a>    <span class="p">)</span>
-</span><span id="__span-9-9"><a id="__codelineno-9-9" name="__codelineno-9-9" href="#__codelineno-9-9"></a><span class="p">}</span>
-</span><span id="__span-9-10"><a id="__codelineno-9-10" name="__codelineno-9-10" href="#__codelineno-9-10"></a><span class="k">finally</span> <span class="p">{</span>
-</span><span id="__span-9-11"><a id="__codelineno-9-11" name="__codelineno-9-11" href="#__codelineno-9-11"></a>    <span class="nb">Remove-Variable</span> <span class="n">atlasoEnvironmentId</span> <span class="n">-ErrorAction</span> <span class="n">SilentlyContinue</span>
-</span><span id="__span-9-12"><a id="__codelineno-9-12" name="__codelineno-9-12" href="#__codelineno-9-12"></a><span class="p">}</span>
+<div class="language-powershell highlight"><pre><span></span><code><span id="__span-10-1"><a id="__codelineno-10-1" name="__codelineno-10-1" href="#__codelineno-10-1"></a><span class="nv">$atlasoLocal</span> <span class="p">=</span> <span class="nb">Join-Path</span> <span class="p">(</span><span class="n">git</span> <span class="n">rev-parse</span> <span class="p">-</span><span class="n">-show-toplevel</span><span class="p">)</span> <span class="s1">&#39;.atlaso-local&#39;</span>
+</span><span id="__span-10-2"><a id="__codelineno-10-2" name="__codelineno-10-2" href="#__codelineno-10-2"></a><span class="nb">New-Item</span> <span class="n">-ItemType</span> <span class="n">Directory</span> <span class="n">-Path</span> <span class="nv">$atlasoLocal</span> <span class="n">-Force</span> <span class="p">|</span> <span class="nb">Out-Null</span>
+</span><span id="__span-10-3"><a id="__codelineno-10-3" name="__codelineno-10-3" href="#__codelineno-10-3"></a><span class="nv">$atlasoEnvironmentId</span> <span class="p">=</span> <span class="nb">Read-Host</span> <span class="s1">&#39;Paste the Atlaso Environment ID&#39;</span> <span class="n">-MaskInput</span>
+</span><span id="__span-10-4"><a id="__codelineno-10-4" name="__codelineno-10-4" href="#__codelineno-10-4"></a><span class="k">try</span> <span class="p">{</span>
+</span><span id="__span-10-5"><a id="__codelineno-10-5" name="__codelineno-10-5" href="#__codelineno-10-5"></a>    <span class="no">[System.IO.File]</span><span class="p">::</span><span class="n">WriteAllText</span><span class="p">(</span>
+</span><span id="__span-10-6"><a id="__codelineno-10-6" name="__codelineno-10-6" href="#__codelineno-10-6"></a>        <span class="p">(</span><span class="nb">Join-Path</span> <span class="nv">$atlasoLocal</span> <span class="s1">&#39;onepassword-environment-id&#39;</span><span class="p">),</span>
+</span><span id="__span-10-7"><a id="__codelineno-10-7" name="__codelineno-10-7" href="#__codelineno-10-7"></a>        <span class="nv">$atlasoEnvironmentId</span>
+</span><span id="__span-10-8"><a id="__codelineno-10-8" name="__codelineno-10-8" href="#__codelineno-10-8"></a>    <span class="p">)</span>
+</span><span id="__span-10-9"><a id="__codelineno-10-9" name="__codelineno-10-9" href="#__codelineno-10-9"></a><span class="p">}</span>
+</span><span id="__span-10-10"><a id="__codelineno-10-10" name="__codelineno-10-10" href="#__codelineno-10-10"></a><span class="k">finally</span> <span class="p">{</span>
+</span><span id="__span-10-11"><a id="__codelineno-10-11" name="__codelineno-10-11" href="#__codelineno-10-11"></a>    <span class="nb">Remove-Variable</span> <span class="n">atlasoEnvironmentId</span> <span class="n">-ErrorAction</span> <span class="n">SilentlyContinue</span>
+</span><span id="__span-10-12"><a id="__codelineno-10-12" name="__codelineno-10-12" href="#__codelineno-10-12"></a><span class="p">}</span>
 </span></code></pre></div>
 <p>Then use the ordinary command without an ID argument:</p>
-<div class="language-powershell highlight"><pre><span></span><code><span id="__span-10-1"><a id="__codelineno-10-1" name="__codelineno-10-1" href="#__codelineno-10-1"></a><span class="n">pwsh</span> <span class="n">-ExecutionPolicy</span> <span class="n">Bypass</span> <span class="p">`</span>
-</span><span id="__span-10-2"><a id="__codelineno-10-2" name="__codelineno-10-2" href="#__codelineno-10-2"></a>  <span class="o">-File</span> <span class="n">scripts</span><span class="p">/</span><span class="n">windows</span><span class="p">/</span><span class="n">vmware</span><span class="p">/</span><span class="n">create-atlaso-test-vm</span><span class="p">.</span><span class="n">ps1</span> <span class="p">`</span>
-</span><span id="__span-10-3"><a id="__codelineno-10-3" name="__codelineno-10-3" href="#__codelineno-10-3"></a>  <span class="n">-PullRequestNumber</span> <span class="p">&lt;</span><span class="n">number</span><span class="p">&gt;</span> <span class="p">`</span>
-</span><span id="__span-10-4"><a id="__codelineno-10-4" name="__codelineno-10-4" href="#__codelineno-10-4"></a>  <span class="n">-Redeploy</span> <span class="p">`</span>
-</span><span id="__span-10-5"><a id="__codelineno-10-5" name="__codelineno-10-5" href="#__codelineno-10-5"></a>  <span class="n">-ResetDataDisks</span> <span class="p">`</span>
-</span><span id="__span-10-6"><a id="__codelineno-10-6" name="__codelineno-10-6" href="#__codelineno-10-6"></a>  <span class="n">-WaitForIp</span> <span class="p">`</span>
-</span><span id="__span-10-7"><a id="__codelineno-10-7" name="__codelineno-10-7" href="#__codelineno-10-7"></a>  <span class="n">-TrustRootCa</span>
+<div class="language-powershell highlight"><pre><span></span><code><span id="__span-11-1"><a id="__codelineno-11-1" name="__codelineno-11-1" href="#__codelineno-11-1"></a><span class="n">pwsh</span> <span class="n">-ExecutionPolicy</span> <span class="n">Bypass</span> <span class="p">`</span>
+</span><span id="__span-11-2"><a id="__codelineno-11-2" name="__codelineno-11-2" href="#__codelineno-11-2"></a>  <span class="o">-File</span> <span class="n">scripts</span><span class="p">/</span><span class="n">windows</span><span class="p">/</span><span class="n">vmware</span><span class="p">/</span><span class="n">create-atlaso-test-vm</span><span class="p">.</span><span class="n">ps1</span> <span class="p">`</span>
+</span><span id="__span-11-3"><a id="__codelineno-11-3" name="__codelineno-11-3" href="#__codelineno-11-3"></a>  <span class="n">-PullRequestNumber</span> <span class="p">&lt;</span><span class="n">number</span><span class="p">&gt;</span> <span class="p">`</span>
+</span><span id="__span-11-4"><a id="__codelineno-11-4" name="__codelineno-11-4" href="#__codelineno-11-4"></a>  <span class="n">-Redeploy</span> <span class="p">`</span>
+</span><span id="__span-11-5"><a id="__codelineno-11-5" name="__codelineno-11-5" href="#__codelineno-11-5"></a>  <span class="n">-ResetDataDisks</span> <span class="p">`</span>
+</span><span id="__span-11-6"><a id="__codelineno-11-6" name="__codelineno-11-6" href="#__codelineno-11-6"></a>  <span class="n">-WaitForIp</span> <span class="p">`</span>
+</span><span id="__span-11-7"><a id="__codelineno-11-7" name="__codelineno-11-7" href="#__codelineno-11-7"></a>  <span class="n">-TrustRootCa</span>
 </span></code></pre></div>
 <p>For exploratory normal-VM testing before a pull request exists, replace <code>-PullRequestNumber &lt;number&gt;</code> with
 <code>-LocalBuilder</code>. A clean checked-out branch derives
@@ -4704,10 +4867,10 @@ closing that stopped tab and completing checked VM cleanup, use the standalone r
 and a Windows restart are unnecessary when the saved proof is valid.</p>
 <p>Use the exact handoff path reported by the build, under the task's
 <code>.atlaso-local/photon-image-build-state/vmware-builder-addresses/pending-releases</code> directory:</p>
-<div class="language-powershell highlight"><pre><span></span><code><span id="__span-11-1"><a id="__codelineno-11-1" name="__codelineno-11-1" href="#__codelineno-11-1"></a><span class="nv">$handoff</span> <span class="p">=</span> <span class="s1">&#39;E:\task\.atlaso-local\photon-image-build-state\vmware-builder-addresses\pending-releases\builder-address-reservation-0123456789abcdef0123456789abcdef.json&#39;</span>
-</span><span id="__span-11-2"><a id="__codelineno-11-2" name="__codelineno-11-2" href="#__codelineno-11-2"></a><span class="p">.\</span><span class="n">scripts</span><span class="p">\</span><span class="n">windows</span><span class="p">\</span><span class="n">vmware</span><span class="p">\</span><span class="n">manage-builder-reservation</span><span class="p">.</span><span class="n">ps1</span> <span class="n">-HandoffPath</span> <span class="nv">$handoff</span> <span class="n">-Json</span>
-</span><span id="__span-11-3"><a id="__codelineno-11-3" name="__codelineno-11-3" href="#__codelineno-11-3"></a><span class="p">.\</span><span class="n">scripts</span><span class="p">\</span><span class="n">windows</span><span class="p">\</span><span class="n">vmware</span><span class="p">\</span><span class="n">manage-builder-reservation</span><span class="p">.</span><span class="n">ps1</span> <span class="n">-HandoffPath</span> <span class="nv">$handoff</span> <span class="n">-Cleanup</span> <span class="n">-WhatIf</span>
-</span><span id="__span-11-4"><a id="__codelineno-11-4" name="__codelineno-11-4" href="#__codelineno-11-4"></a><span class="p">.\</span><span class="n">scripts</span><span class="p">\</span><span class="n">windows</span><span class="p">\</span><span class="n">vmware</span><span class="p">\</span><span class="n">manage-builder-reservation</span><span class="p">.</span><span class="n">ps1</span> <span class="n">-HandoffPath</span> <span class="nv">$handoff</span> <span class="n">-Cleanup</span>
+<div class="language-powershell highlight"><pre><span></span><code><span id="__span-12-1"><a id="__codelineno-12-1" name="__codelineno-12-1" href="#__codelineno-12-1"></a><span class="nv">$handoff</span> <span class="p">=</span> <span class="s1">&#39;E:\task\.atlaso-local\photon-image-build-state\vmware-builder-addresses\pending-releases\builder-address-reservation-0123456789abcdef0123456789abcdef.json&#39;</span>
+</span><span id="__span-12-2"><a id="__codelineno-12-2" name="__codelineno-12-2" href="#__codelineno-12-2"></a><span class="p">.\</span><span class="n">scripts</span><span class="p">\</span><span class="n">windows</span><span class="p">\</span><span class="n">vmware</span><span class="p">\</span><span class="n">manage-builder-reservation</span><span class="p">.</span><span class="n">ps1</span> <span class="n">-HandoffPath</span> <span class="nv">$handoff</span> <span class="n">-Json</span>
+</span><span id="__span-12-3"><a id="__codelineno-12-3" name="__codelineno-12-3" href="#__codelineno-12-3"></a><span class="p">.\</span><span class="n">scripts</span><span class="p">\</span><span class="n">windows</span><span class="p">\</span><span class="n">vmware</span><span class="p">\</span><span class="n">manage-builder-reservation</span><span class="p">.</span><span class="n">ps1</span> <span class="n">-HandoffPath</span> <span class="nv">$handoff</span> <span class="n">-Cleanup</span> <span class="n">-WhatIf</span>
+</span><span id="__span-12-4"><a id="__codelineno-12-4" name="__codelineno-12-4" href="#__codelineno-12-4"></a><span class="p">.\</span><span class="n">scripts</span><span class="p">\</span><span class="n">windows</span><span class="p">\</span><span class="n">vmware</span><span class="p">\</span><span class="n">manage-builder-reservation</span><span class="p">.</span><span class="n">ps1</span> <span class="n">-HandoffPath</span> <span class="nv">$handoff</span> <span class="n">-Cleanup</span>
 </span></code></pre></div>
 <p>The default and <code>-WhatIf</code> verify without changing reservation or handoff contents. <code>-Cleanup</code> rechecks the exact
 allocation under the shared allocator lock, releases only that record, and then removes its handoff. It does not
