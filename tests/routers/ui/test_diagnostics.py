@@ -3,9 +3,52 @@
 import json
 from datetime import timedelta
 
+import pytest
+
 from tests.routers.ui.helpers import login
 
 ROOT = "/ui/management/backup-restore/diagnostics"
+
+
+@pytest.mark.parametrize("cancelled", [False, True])
+def test_running_collection_failure_finishes_task_progress(client, monkeypatch, tmp_path, cancelled):
+    """Terminal collection errors finish progress without reporting success.
+
+    Args:
+        client: Authenticated application client.
+        monkeypatch: Fixture restoring collector behavior.
+        tmp_path: Isolated diagnostic spool fixture.
+        cancelled: Whether cancellation was requested before the collector stopped.
+    """
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.services import diagnostics
+    from atlaso.diagnostics import Collector, EvidenceError
+
+    csrf = prepare(client, monkeypatch, tmp_path)
+    bundle_id = client.post(ROOT + "/create", data={"csrf": csrf}).json()["id"]
+    with SessionLocal() as db:
+        job = diagnostics.find_job(db, bundle_id)
+        job.status = "running"
+        job.progress_percent = 37
+        job.result = json.dumps({"cancel_requested": cancelled})
+        db.commit()
+
+    def stop_capture(*_args):
+        """Simulate a global collector failure after partial progress.
+
+        Args:
+            *_args: Capture arguments unused by the failure fixture.
+        """
+        raise EvidenceError("cancelled" if cancelled else "insufficient_space")
+
+    monkeypatch.setattr(Collector, "capture", stop_capture)
+    diagnostics.run(bundle_id)
+    with SessionLocal() as db:
+        job = diagnostics.find_job(db, bundle_id)
+        assert job.status == ("cancelled" if cancelled else "failed")
+        assert job.progress_percent == 100
+        assert job.finished_at is not None
+    assert not diagnostics.artifact_path(bundle_id).exists()
 
 
 def test_expiry_continues_after_one_artifact_failure(client, monkeypatch, tmp_path):
@@ -289,6 +332,8 @@ def test_cancel_during_publication_removes_only_new_bundle(client, monkeypatch, 
     diagnostics.run(bundle_id)
     assert client.get(ROOT + "/" + bundle_id).json()["status"] == "cancelled"
     assert not diagnostics.artifact_path(bundle_id).exists()
+    with SessionLocal() as db:
+        assert diagnostics.find_job(db, bundle_id).progress_percent == 100
 
 
 def test_expiry_cleans_interrupted_job_without_result(client, monkeypatch, tmp_path):

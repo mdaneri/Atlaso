@@ -276,11 +276,11 @@ def run(job_id: str) -> None:
                 job.result = json.dumps({"bundle_status": "cancelled"})
             else:
                 job.status = "succeeded"
-                job.progress_percent = 100
                 job.result = json.dumps({"bundle_status": manifest["status"], "size_bytes": len(archive),
                     "summary": "Collection completed. Review the contents and omissions before manual sharing.",
                     "omissions": manifest["omissions"]})
             job.finished_at = utcnow()
+            job.progress_percent = 100
             db.commit()
     except (EvidenceError, OSError, ValueError):
         # Never propagate raw source exceptions into the worker's generic logger.
@@ -288,6 +288,7 @@ def run(job_id: str) -> None:
             job = find_job(db, job_id)
             job.status = "cancelled" if result(job).get("cancel_requested") or job.status == "cancelled" else "failed"
             job.finished_at = utcnow()
+            job.progress_percent = 100
             job.error = "Collection stopped. Check available space, source availability and permissions, then retry."
             job.result = json.dumps({"bundle_status": job.status})
             db.commit()

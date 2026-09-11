@@ -1734,9 +1734,13 @@ def test_managed_factory_reset_retains_marker_until_readiness(tmp_path, monkeypa
     monkeypatch.setattr(factory_reset, "_stop_application_services", lambda **_kwargs: None)
     monkeypatch.setattr(factory_reset, "_candidate_database", lambda *_args, **_kwargs: 16)
     import sys
+    from collections import namedtuple
     from types import SimpleNamespace
 
-    monkeypatch.setitem(sys.modules, "pwd", SimpleNamespace(getpwnam=lambda name: SimpleNamespace(pw_uid=tmp_path.stat().st_uid)))
+    passwd_record = namedtuple("PasswdRecord", "pw_name pw_passwd pw_uid pw_gid pw_gecos pw_dir pw_shell")
+    monkeypatch.setitem(sys.modules, "pwd", SimpleNamespace(
+        getpwnam=lambda name: passwd_record(name, "x", tmp_path.stat().st_uid, 0, "", "/", "/bin/sh")
+    ))
     diagnostic_spool = tmp_path / "diagnostics"
     diagnostic_spool.mkdir(mode=0o700)
     diagnostic_archive = diagnostic_spool / "00000000-0000-0000-0000-000000000001.zip"

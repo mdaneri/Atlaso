@@ -106,7 +106,8 @@ Collection requires at least 16 MiB of free spool space and uses bounded memory 
 Web bundles expire 24 hours after their request time and immediately become unavailable to download. The worker removes
 expired terminal artifacts during bounded reconciliation; if the worker is stopped, physical removal resumes when it
 returns. Pending or running jobs remain cancellable after the retention deadline so an unavailable worker cannot
-leave the collection slot blocked. Cancelling a queued bundle records its finish time and completed progress in Tasks.
+leave the collection slot blocked. Every terminal collection records its finish time and completed progress in Tasks,
+including cancellation and failure.
 Expired downloads also attempt cleanup. An item-specific cleanup failure retains that protected artifact for retry and
 storage attention; cleanup continues for the other expired bundles.
 Complete factory reset clears the dedicated diagnostic spool before replacing its job records. A spool with an unsafe
