@@ -3382,10 +3382,10 @@ def test_module_keeps_inventory_work_out_of_normal_delete_path() -> None:
     )
     assert stale_repair.index("if ($OnVerified)", replacement_verification) < replacement_unlock
     assert stale_repair.count("Get-Process vmware -ErrorAction SilentlyContinue") >= 5
-    implementation = re.sub(r"<#.*?#>\s*", "", module, flags=re.DOTALL)
-    # Allow bounded delete diagnostics, shutdown verification, pins, and retirement without
-    # restoring global inventory reconciliation to root-scoped deletion.
-    assert len(implementation.splitlines()) < 1_540
+    implementation = re.sub(r"<#.*?#>\s*", "", normal_path, flags=re.DOTALL)
+    # Bound the root-scoped deletion path, not independent native identity/publisher helpers.
+    # The assertions above separately exclude global inventory reconciliation from this path.
+    assert len(implementation.splitlines()) < 250
 
 
 def test_development_ca_cleanup_releases_recovery_inside_provider_proof() -> None:
