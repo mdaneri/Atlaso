@@ -1385,11 +1385,11 @@ function Get-ApplianceStartupDiagnostic {
         foreach ($pending in @($rawOutput, $publishOutput)) {
             if (Test-Path -LiteralPath $pending) { Remove-Item -LiteralPath $pending -Force }
         }
-        $null = Invoke-AtlasoBoundedVmrun -VmrunPath $resolvedVmrun -ArgumentList @(
+        $null = Invoke-AtlasoBoundedStreamingProcess -FilePath $resolvedVmrun -DiscardOutput -ArgumentList @(
             '-T', 'ws', '-gu', $ApplianceSshUser, '-gp', $ApplianceGuestPassword,
             'runScriptInGuest', $ApplianceVmx, '/bin/sh', $probe
         ) -TimeoutSeconds 15 -Action 'Lifecycle startup query'
-        $null = Invoke-AtlasoBoundedVmrun -VmrunPath $resolvedVmrun -ArgumentList @(
+        $null = Invoke-AtlasoBoundedStreamingProcess -FilePath $resolvedVmrun -DiscardOutput -ArgumentList @(
             '-T', 'ws', '-gu', $ApplianceSshUser, '-gp', $ApplianceGuestPassword,
             'copyFileFromGuestToHost', $ApplianceVmx, $guestOutput, $rawOutput
         ) -TimeoutSeconds 15 -Action 'Lifecycle startup readback'

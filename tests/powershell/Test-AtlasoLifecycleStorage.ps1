@@ -86,9 +86,10 @@ try {
         $script:diagnosticText = "Id=atlaso-data-disks.service`nLoadState=loaded`nActiveState=failed`nSubState=failed`nResult=exit-code`nSECRET_FIXTURE_DO_NOT_REPORT"
         $script:providerFailure = $false
         $script:terminationFailure = $false
-        Set-Item function:script:Invoke-AtlasoBoundedVmrun -Value {
-            param($VmrunPath, $ArgumentList, $TimeoutSeconds, $Action)
+        Set-Item function:script:Invoke-AtlasoBoundedStreamingProcess -Value {
+            param($FilePath, $ArgumentList, $TimeoutSeconds, $Action, [switch]$DiscardOutput)
             if ($TimeoutSeconds -ne 15) { throw 'Unbounded prerequisite query.' }
+            if (-not $DiscardOutput) { throw 'Untrusted provider output was not discarded.' }
             if ($script:providerFailure) { throw 'Fixture provider failure.' }
             if ('copyFileFromGuestToHost' -in $ArgumentList) {
                 if ($ArgumentList[-1] -notlike '*lifecycle-startup-diagnostics*guest-readback.txt') {
@@ -155,4 +156,43 @@ try {
     } $OutputDirectory $cleanupSource
 }
 finally { Remove-Module $module }
+
+# Exercise the actual Windows job boundary with a descendant that outlives its
+# parent unless job completion terminates it. No VMware or credentials are used.
+if (-not $IsWindows) {
+    Write-Output 'Atlaso lifecycle storage tests passed.'
+    return
+}
+. (Join-Path $RepositoryRoot 'scripts/windows/vmware/Atlaso.WorkstationFirstBoot.ps1')
+$workerPath = Join-Path $OutputDirectory 'job-worker.ps1'
+@'
+param([string]$Identity, [string]$Mode)
+Write-Output 'SECRET_FIXTURE_PROVIDER_OUTPUT'
+$payload = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes('Start-Sleep -Seconds 30'))
+$child = Start-Process -FilePath (Get-Command pwsh).Source -WindowStyle Hidden -ArgumentList @('-NoProfile','-EncodedCommand',$payload) -PassThru
+@{pid=$child.Id; start=$child.StartTime.ToUniversalTime().Ticks} | ConvertTo-Json | Set-Content -LiteralPath $Identity
+if ($Mode -eq 'timeout') { Start-Sleep -Seconds 30 }
+'@ | Set-Content -LiteralPath $workerPath
+foreach ($mode in @('timeout', 'parent-exit')) {
+    $identityPath = Join-Path $OutputDirectory "job-$mode.json"
+    $failure = $null
+    try {
+        Invoke-AtlasoBoundedStreamingProcess -FilePath (Get-Command pwsh).Source -DiscardOutput `
+            -ArgumentList @('-NoProfile', '-File', $workerPath, '-Identity', $identityPath, '-Mode', $mode) `
+            -TimeoutSeconds 3 -Action 'Lifecycle job fixture'
+    }
+    catch { $failure = $_ }
+    if (($mode -eq 'timeout' -and ($null -eq $failure -or
+                -not $failure.Exception.Data['AtlasoProcessTreeTerminationProven'])) -or
+        ($mode -eq 'parent-exit' -and $null -ne $failure)) {
+        throw 'Lifecycle job completion did not produce the expected proven outcome.'
+    }
+    $identity = Get-Content -LiteralPath $identityPath -Raw | ConvertFrom-Json
+    $remaining = Get-Process -Id $identity.pid -ErrorAction SilentlyContinue
+    if ($remaining -and $remaining.StartTime.ToUniversalTime().Ticks -eq $identity.start) {
+        $remaining.Kill($true)
+        $null = $remaining.WaitForExit(10000)
+        throw 'Lifecycle job descendant survived; exact fixture cleanup attempted.'
+    }
+}
 Write-Output 'Atlaso lifecycle storage tests passed.'

@@ -819,6 +819,7 @@ def test_vmware_lifecycle_storage_behavior(tmp_path):
     )
     assert result.returncode == 0, result.stdout + result.stderr
     assert "Atlaso lifecycle storage tests passed." in result.stdout
+    assert "SECRET_FIXTURE_PROVIDER_OUTPUT" not in result.stdout + result.stderr
 
 
 def test_wsl_build_contract_and_setup_are_pinned_idempotent_and_non_destructive():
