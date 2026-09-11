@@ -299,7 +299,7 @@ function Resolve-VdiskManagerPath {
     if ($command) {
         return $command.Source
     }
-    throw 'vmware-vdiskmanager.exe was not found. It is required for -FullEsxiPxeInstall.'
+    throw 'vmware-vdiskmanager.exe was not found. It is required for lifecycle appliance storage and -FullEsxiPxeInstall.'
 }
 
 <#
@@ -689,6 +689,7 @@ function Copy-VmDirectory {
             & (Join-Path $PSScriptRoot 'create-atlaso-vm.ps1') `
                 -Name $Name -ApplianceVmxPath $resolvedSourceVmx `
                 -OutputDirectory $DestinationDirectory -VmrunPath $resolvedVmrun `
+                -VdiskManagerPath (Resolve-VdiskManagerPath) `
                 -ManagementNetwork $ManagementNetwork -SkipLabNetworkAdapters | Out-Host
         }
         finally {

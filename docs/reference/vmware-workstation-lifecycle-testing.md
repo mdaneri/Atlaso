@@ -178,6 +178,7 @@ test-results/vmware-workstation-lifecycle/Atlaso-PR-<number>-lifecycle-<collisio
 ```
 
 The appliance is cloned through `create-atlaso-vm.ps1` from the verified, powered-off two-payload-disk template.
+Custom `-VmrunPath` installations also reuse the disk manager discovered beside that executable.
 Before first boot, the shared clone contract creates private 500 GiB thin depot and backup disks inside the lab's
 appliance directory and attaches them at SCSI units 2 and 3. The source template stays unchanged, and no persistent
 data disks from another appliance are reused. Failed disk provisioning retains the clone identity for supported

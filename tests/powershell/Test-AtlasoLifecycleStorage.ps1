@@ -15,7 +15,7 @@ $ErrorActionPreference = 'Stop'
 [IO.Directory]::CreateDirectory($OutputDirectory) | Out-Null
 $runner = Join-Path $RepositoryRoot 'scripts/windows/vmware/run-lifecycle-test.ps1'
 $ast = [Management.Automation.Language.Parser]::ParseFile($runner, [ref]$null, [ref]$null)
-$functions = @('Copy-VmDirectory', 'Get-ApplianceStartupDiagnostic')
+$functions = @('Copy-VmDirectory', 'Get-ApplianceStartupDiagnostic', 'Resolve-VdiskManagerPath')
 $source = @($ast.FindAll({
     param($node)
     $node -is [Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -in $functions
@@ -24,8 +24,9 @@ $modulePath = Join-Path $OutputDirectory 'LifecycleFixture.psm1'
 [IO.File]::WriteAllText($modulePath, $source)
 # The real extracted runner delegates to this harmless clone contract fixture.
 $cloneFixture = @'
-param($Name, $ApplianceVmxPath, $OutputDirectory, $VmrunPath, $ManagementNetwork, [switch]$SkipLabNetworkAdapters)
-if (-not $SkipLabNetworkAdapters -or $VmrunPath -ne 'fixture' -or $ManagementNetwork -ne 'VMnet8') { throw 'Incorrect shared clone contract.' }
+param($Name, $ApplianceVmxPath, $OutputDirectory, $VmrunPath, $VdiskManagerPath, $ManagementNetwork, [switch]$SkipLabNetworkAdapters)
+if (-not $SkipLabNetworkAdapters -or $ManagementNetwork -ne 'VMnet8') { throw 'Incorrect shared clone contract.' }
+if ($VdiskManagerPath -ne (Join-Path (Split-Path -Parent $VmrunPath) 'vmware-vdiskmanager.exe')) { throw 'Custom sibling disk manager was not forwarded.' }
 if (-not (Test-Path -LiteralPath $ApplianceVmxPath)) { throw 'Incorrect clone source.' }
 [IO.Directory]::CreateDirectory($OutputDirectory) | Out-Null
 [IO.File]::WriteAllText((Join-Path $OutputDirectory "$Name.vmx"), 'fixture clone')
@@ -37,7 +38,11 @@ try {
     & $module {
         [CmdletBinding(SupportsShouldProcess = $true)]
         param($FixtureRoot)
-        $script:resolvedVmrun = 'fixture'
+        $toolsRoot = Join-Path $FixtureRoot 'custom VMware tools'
+        [IO.Directory]::CreateDirectory($toolsRoot) | Out-Null
+        $script:resolvedVmrun = Join-Path $toolsRoot 'vmrun.exe'
+        [IO.File]::WriteAllText($script:resolvedVmrun, 'never executed')
+        [IO.File]::WriteAllText((Join-Path $toolsRoot 'vmware-vdiskmanager.exe'), 'never executed')
         $script:ManagementNetwork = 'VMnet8'
         $script:createdVmxPaths = [Collections.Generic.List[string]]::new()
         $script:resultRoot = $FixtureRoot
