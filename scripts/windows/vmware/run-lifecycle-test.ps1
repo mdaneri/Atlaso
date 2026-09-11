@@ -861,6 +861,9 @@ Run the Python lifecycle consumer with a secret envelope supplied through standa
 .PARAMETER Arguments
 Literal Python arguments that contain no lifecycle passwords.
 
+.PARAMETER SourcePins
+Retained admitted-source handles and recursive change guards for this consumer.
+
 .PARAMETER AdminPassword
 Protected Atlaso administrator password written only to the child process standard-input stream.
 
@@ -877,6 +880,7 @@ function Invoke-LifecyclePython {
     [OutputType([int])]
     param(
         [Parameter(Mandatory = $true)][string[]]$Arguments,
+        [Parameter(Mandatory)][AllowEmptyCollection()][Collections.Generic.List[IDisposable]]$SourcePins,
         [Parameter(Mandatory = $true)][SecureString]$AdminPassword,
         [Parameter(Mandatory = $true)][SecureString]$SshPassword,
         [SecureString]$VcfBackupPassword,
@@ -908,8 +912,13 @@ function Invoke-LifecyclePython {
         } | ConvertTo-Json -Compress
         # Keep the child's progress output visible without adding it to this
         # function's success stream, which is reserved for the exit code.
-        $secretPayload | & python @Arguments | Out-Host
-        return $LASTEXITCODE
+        Assert-LifecycleSourcePins -Pins $SourcePins
+        # Isolated mode excludes the script directory, cwd and PYTHONPATH from imports.
+        # Newly added snapshot entries cannot shadow installed consumer dependencies.
+        $secretPayload | & python -I @Arguments | Out-Host
+        $consumerExitCode = $LASTEXITCODE
+        Assert-LifecycleSourcePins -Pins $SourcePins
+        return $consumerExitCode
     }
     finally {
         $adminPasswordText = $null
@@ -2581,7 +2590,7 @@ try {
     }
 
     if ($PSCmdlet.ShouldProcess($LabName, 'Run Workstation lifecycle interop scenario')) {
-        $pythonExitCode = Invoke-LifecyclePython -Arguments $initialPythonArgs `
+        $pythonExitCode = Invoke-LifecyclePython -Arguments $initialPythonArgs -SourcePins $runtimeConsumerPins `
             -AdminPassword $adminPasswordSecure `
             -SshPassword $sshPasswordSecure `
             -VcfBackupPassword $vcfBackupPasswordSecure `
@@ -2622,7 +2631,7 @@ try {
                 '--restored-state-run',
                 '--certificate-baseline-result', (Join-Path $initialResultRoot 'result.json')
             ))
-            $pythonExitCode = Invoke-LifecyclePython -Arguments $restoredPythonArgs `
+            $pythonExitCode = Invoke-LifecyclePython -Arguments $restoredPythonArgs -SourcePins $runtimeConsumerPins `
                 -AdminPassword $adminPasswordSecure `
                 -SshPassword $sshPasswordSecure `
                 -VcfBackupPassword $vcfBackupPasswordSecure `

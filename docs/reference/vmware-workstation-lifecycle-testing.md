@@ -137,6 +137,10 @@ clean-checkout check. The executing entry point and host process remain trusted:
 code that has deliberately removed the verifier. Moving that check into another mutable checkout launcher would not
 establish an independent trust boundary. Host execution-policy enforcement is outside this ownership receipt contract.
 
+Preferences publication rechecks the original file identity immediately before replacement and preserves a competing
+file when drift is already visible. A replacement during the remaining publication window retains ambiguous recovery
+objects for explicit recovery; an unverified backup is never installed automatically.
+
 LAN registration creation independently verifies the exact name and ID under a no-write/no-delete preferences pin and
 retains that pin through result construction, including reuse of an existing shared registration.
 
@@ -170,7 +174,9 @@ artifact-root teardown. Preflight cleanup verifies the original root identity wh
 Retained-root cleanup captures each remaining descendant against the admitted cleanup inventory and deletes through
 those handles; replaced or added entries are refused. Snapshot consumers also retain a native recursive change guard:
 any namespace or security change invalidates admission and wheel output, including a transient added module removed
-before the build finishes. Directory sharing alone does not prevent child creation on Windows.
+before the build finishes. The Python lifecycle consumer checks the retained source guards immediately before and
+after execution and uses Python isolated mode so its script directory, current directory and `PYTHONPATH` cannot
+supply shadow imports. Directory sharing alone does not prevent child creation on Windows.
 Unrecorded additions before capture are preserved. Cleanup rechecks the entire captured path set before marking any
 handle for deletion, so additions observed at that boundary preserve both owned evidence and foreign entries.
 The durable publisher uses its own versioned helper type so existing

@@ -264,6 +264,9 @@ function Update-AtlasoLanPreferences {
         } finally { $writer.Dispose() }
         Assert-AtlasoLanSegmentUiClosed
         if ($Validate) { & $Validate }
+        if ((Get-AtlasoPathIdentity -Path $Path -Description 'LAN preferences before publication') -cne $identity) {
+            throw 'LAN preferences identity changed before publication; competing provider state was preserved.'
+        }
         [System.IO.File]::Replace($stage, $Path, $backup, $true)
         $applied = $true
         # File.Replace is not a compare-and-swap. Inspect what it actually displaced,

@@ -169,9 +169,10 @@ Assert-Refused {
             return ,([Text.Encoding]::UTF8.GetBytes('candidate state'))
         }
     } $concurrentPreferences
-} 'identity is ambiguous'
+} 'identity changed before publication'
+if ([IO.File]::ReadAllText($concurrentPreferences) -cne 'concurrent state') { throw 'Concurrent provider state was replaced.' }
 $concurrentBackup = @(Get-ChildItem -LiteralPath $provider -Filter 'concurrent-preferences.ini.atlaso-lan-*.tmp.backup')
-if ($concurrentBackup.Count -ne 1 -or [IO.File]::ReadAllText($concurrentBackup[0].FullName) -cne 'concurrent state') { throw 'Concurrent recovery evidence was lost.' }
+if ($concurrentBackup.Count -ne 0) { throw 'Drift refusal unexpectedly published preferences.' }
 [IO.File]::WriteAllText($preferences, 'concurrent state')
 # Replace the backup before capture: foreign bytes must never be restored.
 $backupAttackPath = Join-Path $provider 'backup-attack.ini'
@@ -574,6 +575,22 @@ $sourcePinCheck = $runnerAst.Find({ param($node)
     $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -eq 'Assert-LifecycleSourcePins'
 }, $false)
 . ([scriptblock]::Create($sourcePinCheck.Extent.Text))
+$pythonConsumerFunction = $runnerAst.Find({ param($node)
+    $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -eq 'Invoke-LifecyclePython'
+}, $false)
+. ([scriptblock]::Create($pythonConsumerFunction.Extent.Text))
+$pythonFixtureRoot = Join-Path $fixture 'python-consumer'
+[IO.Directory]::CreateDirectory($pythonFixtureRoot) | Out-Null
+[IO.File]::WriteAllText((Join-Path $pythonFixtureRoot 'json.py'), 'raise RuntimeError("shadow dependency executed")')
+$pythonProbe = Join-Path $pythonFixtureRoot 'probe.py'
+[IO.File]::WriteAllText($pythonProbe, "import sys, json; json.loads(sys.stdin.readline()); assert sys.flags.isolated; assert sys.flags.safe_path")
+$fixturePassword = [SecureString]::new()
+$fixturePassword.AppendChar([char]120)
+$fixturePassword.MakeReadOnly()
+$emptyConsumerPins = [Collections.Generic.List[IDisposable]]::new()
+if ((Invoke-LifecyclePython -Arguments @($pythonProbe) -SourcePins $emptyConsumerPins -AdminPassword $fixturePassword -SshPassword $fixturePassword) -ne 0) {
+    throw 'Python consumer did not exclude a shadow import.'
+}
 $namespacePins = [Collections.Generic.List[IDisposable]]::new()
 try {
     $namespaceSnapshot = New-LifecycleSourceSnapshot -RepositoryRoot $sourceRoot -Commit $admitted -ConsumerPins $namespacePins -DestinationRoot $fixture
@@ -588,6 +605,9 @@ try {
     [IO.File]::WriteAllText($injectedModule, 'foreign input')
     [IO.File]::Delete($injectedModule)
     Assert-Refused { Assert-LifecycleSourcePins -Pins $namespacePins } 'source snapshot changed'
+    Assert-Refused {
+        Invoke-LifecyclePython -Arguments @($pythonProbe) -SourcePins $namespacePins -AdminPassword $fixturePassword -SshPassword $fixturePassword
+    } 'source snapshot changed'
 } finally { for ($i = $namespacePins.Count - 1; $i -ge 0; $i--) { $namespacePins[$i].Dispose() } }
 $capturedRoot = Join-Path $fixture 'captured-cleanup'
 [IO.Directory]::CreateDirectory($capturedRoot) | Out-Null
