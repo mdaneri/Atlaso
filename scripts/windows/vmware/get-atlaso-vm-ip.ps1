@@ -16,9 +16,9 @@ Hostname injected into this clone's first-boot environment.
 .PARAMETER VmrunPath
 Optional VMware vmrun executable override.
 .PARAMETER TimeoutSeconds
-Total bounded readiness wait.
+Total bounded readiness wait, from 1 to 2147483 seconds (the provider millisecond limit).
 .PARAMETER PollSeconds
-Delay between transiently incomplete readiness observations.
+Positive delay between transiently incomplete observations, capped to the remaining deadline.
 .PARAMETER PassThruIdentity
 Return the VMX, MAC, hostname, and address object instead of only the address.
 #>
@@ -27,8 +27,8 @@ param(
     [Parameter(Mandatory = $true)][string]$VmxPath,
     [Parameter(Mandatory = $true)][string]$ExpectedHostname,
     [string]$VmrunPath = '',
-    [int]$TimeoutSeconds = 120,
-    [int]$PollSeconds = 5,
+    [ValidateRange(1, 2147483)][int]$TimeoutSeconds = 120,
+    [ValidateRange(1, [int]::MaxValue)][int]$PollSeconds = 5,
     [switch]$PassThruIdentity
 )
 
@@ -318,7 +318,11 @@ do {
                     $lastReadinessError -notlike '*Windows neighbor evidence is <none>*')) { throw }
         }
     }
-    if ((Get-Date) -lt $deadline) { Start-Sleep -Seconds $PollSeconds }
+    # A final partial interval must not extend the provider's shared deadline.
+    $remainingMilliseconds = [Math]::Floor(($deadline - (Get-Date)).TotalMilliseconds)
+    if ($remainingMilliseconds -gt 0) {
+        Start-Sleep -Milliseconds ([int][Math]::Min($remainingMilliseconds, $PollSeconds * 1000.0))
+    }
 } while ((Get-Date) -lt $deadline)
 
 $normalizedExpectedHostname = $ExpectedHostname.Trim().TrimEnd('.').ToLowerInvariant()
