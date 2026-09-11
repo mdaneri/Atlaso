@@ -1370,13 +1370,14 @@ function Get-ApplianceStartupDiagnostic {
     $hostOutput = Join-Path $resultRoot 'appliance-startup-state.txt'
     $units = @('atlaso-data-disks.service', 'atlaso-bootstrap-https.service', 'atlaso.service', 'nginx.service')
     $probe = "systemctl show $($units -join ' ') --property=Id,LoadState,ActiveState,SubState,Result > $guestOutput"
+    $validatedArtifact = $false
     try {
+        if (Test-Path -LiteralPath $hostOutput) { Remove-Item -LiteralPath $hostOutput -Force }
         $observed = Invoke-VmrunBounded -Arguments @(
             '-T', 'ws', '-gu', $ApplianceSshUser, '-gp', $ApplianceGuestPassword,
             'runScriptInGuest', $ApplianceVmx, '/bin/sh', $probe
         ) -TimeoutSeconds 15
         if ($observed.ExitCode -ne 0) { return 'Startup prerequisite state unavailable (guest query failed).' }
-        if (Test-Path -LiteralPath $hostOutput) { Remove-Item -LiteralPath $hostOutput -Force }
         $copied = Invoke-VmrunBounded -Arguments @(
             '-T', 'ws', '-gu', $ApplianceSshUser, '-gp', $ApplianceGuestPassword,
             'copyFileFromGuestToHost', $ApplianceVmx, $guestOutput, $hostOutput
@@ -1394,10 +1395,18 @@ function Get-ApplianceStartupDiagnostic {
             ($_ -match '^Id=(.+)$' -and $Matches[1] -in $units)
         })
         if ($states.Count -eq 0) { return 'Startup prerequisite state unavailable (invalid readback).' }
+        # Retained evidence must contain the same allowlisted data as the error.
+        Set-Content -LiteralPath $hostOutput -Value $states -Encoding utf8
+        $validatedArtifact = $true
         return "Startup prerequisites: $($states -join '; ')."
     }
     catch {
         return 'Startup prerequisite state unavailable (bounded provider failure).'
+    }
+    finally {
+        if (-not $validatedArtifact -and (Test-Path -LiteralPath $hostOutput)) {
+            Remove-Item -LiteralPath $hostOutput -Force -ErrorAction Stop
+        }
     }
 }
 

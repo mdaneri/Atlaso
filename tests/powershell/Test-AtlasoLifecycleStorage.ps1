@@ -87,16 +87,23 @@ try {
         if ($diagnostic -notlike '*Id=atlaso-data-disks.service*ActiveState=failed*' -or $diagnostic -like '*SECRET_FIXTURE*') {
             throw 'Prerequisite failure was not reported with bounded non-secret state.'
         }
+        $artifact = Join-Path $FixtureRoot 'appliance-startup-state.txt'
+        $saved = Get-Content -LiteralPath $artifact -Raw
+        if ($saved -like '*SECRET_FIXTURE*' -or $saved -notlike '*ActiveState=failed*') {
+            throw 'Persisted prerequisite evidence was not sanitized.'
+        }
         $script:providerFailure = $true
         if ((Get-ApplianceStartupDiagnostic -ApplianceVmx $vmx) -notlike '*unavailable*guest query failed*') {
             throw 'Failed provider was treated as valid prerequisite evidence.'
         }
+        if (Test-Path -LiteralPath $artifact) { throw 'Failed provider retained stale evidence.' }
         $script:providerFailure = $false
         foreach ($text in @('invalid fixture', ('x' * 4097))) {
             $script:diagnosticText = $text
             if ((Get-ApplianceStartupDiagnostic -ApplianceVmx $vmx) -notlike '*unavailable*') {
                 throw 'Invalid or oversized prerequisite evidence was accepted.'
             }
+            if (Test-Path -LiteralPath $artifact) { throw 'Rejected raw prerequisite evidence was retained.' }
         }
     } $OutputDirectory
 }
