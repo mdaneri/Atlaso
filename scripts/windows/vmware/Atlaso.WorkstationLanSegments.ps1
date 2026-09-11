@@ -249,8 +249,17 @@ function Update-AtlasoLanPreferences {
             $applied = $false
             throw 'LAN preferences were replaced concurrently; displaced provider state was restored.'
         }
-        if ((Get-AtlasoPathIdentity -Path $Path -Description 'Published LAN preferences') -cne $stageIdentity) {
-            throw "LAN preferences changed after replacement; recovery copy retained at '$backup'."
+        $publishedIdentity = Get-AtlasoPathIdentity -Path $Path -Description 'Published LAN preferences'
+        if ($publishedIdentity -cne $stageIdentity) {
+            [byte[]]$publishedBytes = @(Read-AtlasoStreamBytes -Stream $stageLock)
+            $stageLock.Dispose(); $stageLock = $null
+            $originalLock.Dispose(); $originalLock = $null
+            Restore-AtlasoFileAfterCasFailure -TargetPath $Path -ExpectedCurrentBytes $publishedBytes `
+                -ExpectedCurrentIdentity $publishedIdentity -ReplacementPath $backup `
+                -ReplacementBytes $displacedBytes -ReplacementIdentity $displacedIdentity `
+                -Description 'LAN substituted stage'
+            $applied = $false
+            throw 'LAN preferences staging identity changed; displaced provider state was restored.'
         }
         # Hold the published object against writes while verifying its exact bytes.
         # Recheck the UI as well: it must not retain an obsolete in-memory copy.

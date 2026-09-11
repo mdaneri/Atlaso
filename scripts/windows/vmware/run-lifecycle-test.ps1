@@ -153,11 +153,38 @@ function New-LifecycleSourceSnapshot {
     $archivePath = Join-Path $DestinationRoot "source-$snapshotId.zip"
     $snapshotPath = Join-Path $DestinationRoot "source-$snapshotId"
     if ($PreflightGuard) { $PreflightGuard.Expect($archivePath) }
-    & git -C $RepositoryRoot archive --format=zip --output=$archivePath $Commit
-    if ($LASTEXITCODE -ne 0) { throw 'Could not archive the admitted lifecycle commit.' }
+    # Capture Git output in memory so the trusted archive digest never comes from
+    # a writable pathname. A later disk substitution must match these exact bytes.
+    $archiveProcess = [Diagnostics.Process]::new()
+    $archiveProcess.StartInfo.FileName = (Get-Command git -ErrorAction Stop).Source
+    $archiveProcess.StartInfo.UseShellExecute = $false
+    $archiveProcess.StartInfo.CreateNoWindow = $true
+    $archiveProcess.StartInfo.RedirectStandardOutput = $true
+    $archiveProcess.StartInfo.RedirectStandardError = $true
+    foreach ($argument in @('-C', $RepositoryRoot, 'archive', '--format=zip', $Commit)) {
+        $archiveProcess.StartInfo.ArgumentList.Add($argument)
+    }
+    $archiveMemory = [IO.MemoryStream]::new()
+    try {
+        if (-not $archiveProcess.Start()) { throw 'Could not start admitted commit archiving.' }
+        $archiveError = $archiveProcess.StandardError.ReadToEndAsync()
+        $archiveProcess.StandardOutput.BaseStream.CopyTo($archiveMemory)
+        $archiveProcess.WaitForExit()
+        if ($archiveProcess.ExitCode -ne 0) { throw "Could not archive the admitted lifecycle commit: $($archiveError.GetAwaiter().GetResult())" }
+        $archiveBytes = $archiveMemory.ToArray()
+    } finally { $archiveMemory.Dispose(); $archiveProcess.Dispose() }
+    $archiveDigest = [Security.Cryptography.SHA256]::HashData($archiveBytes)
+    $archiveWriter = [IO.File]::Open($archivePath, 'CreateNew', 'Write', 'None')
+    try { $archiveWriter.Write($archiveBytes); $archiveWriter.Flush($true) } finally { $archiveWriter.Dispose() }
+    $archiveRead = [IO.File]::Open($archivePath, 'Open', 'Read', 'Read')
+    try {
+    if ([Convert]::ToHexString([Security.Cryptography.SHA256]::HashData($archiveRead)) -cne [Convert]::ToHexString($archiveDigest)) {
+        throw 'Admitted source archive bytes changed before extraction.'
+    }
+    $archiveRead.Position = 0
     if ($PreflightGuard) {
         $PreflightGuard.Expect($snapshotPath)
-        $archiveInventory = [IO.Compression.ZipFile]::OpenRead($archivePath)
+        $archiveInventory = [IO.Compression.ZipArchive]::new($archiveRead, [IO.Compression.ZipArchiveMode]::Read, $true)
         try {
             foreach ($entry in $archiveInventory.Entries) {
                 $expectedPath = [IO.Path]::GetFullPath((Join-Path $snapshotPath $entry.FullName))
@@ -181,7 +208,32 @@ function New-LifecycleSourceSnapshot {
     $sourceAcl = Get-Acl -LiteralPath $snapshotPath
     $sourceAcl.AddAccessRule($denyWrite)
     Set-Acl -LiteralPath $snapshotPath -AclObject $sourceAcl -ErrorAction Stop
+    $archiveRead.Position = 0
+    $verifiedArchive = [IO.Compression.ZipArchive]::new($archiveRead, [IO.Compression.ZipArchiveMode]::Read, $true)
+    $expectedFiles = [Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
+    try {
+        foreach ($entry in $verifiedArchive.Entries) {
+            if ($entry.FullName.EndsWith('/')) { continue }
+            $filePath = [IO.Path]::GetFullPath((Join-Path $snapshotPath $entry.FullName))
+            $expectedFiles.Add($filePath) | Out-Null
+            $expectedStream = $entry.Open()
+            $actualStream = [IO.File]::Open($filePath, 'Open', 'Read', 'Read')
+            try {
+                if ([Convert]::ToHexString([Security.Cryptography.SHA256]::HashData($expectedStream)) -cne
+                    [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData($actualStream))) {
+                    throw 'Admitted source snapshot bytes differ from the Git archive.'
+                }
+            } finally { $actualStream.Dispose(); $expectedStream.Dispose() }
+        }
+        foreach ($entry in Get-ChildItem -LiteralPath $snapshotPath -Recurse -Force -ErrorAction Stop) {
+            if ($entry.Attributes -band [IO.FileAttributes]::ReparsePoint -or
+                (-not $entry.PSIsContainer -and -not $expectedFiles.Contains($entry.FullName))) {
+                throw 'Admitted source snapshot contains an unexpected entry.'
+            }
+        }
+    } finally { $verifiedArchive.Dispose() }
     return $snapshotPath
+    } finally { $archiveRead.Dispose() }
 }
 
 <#

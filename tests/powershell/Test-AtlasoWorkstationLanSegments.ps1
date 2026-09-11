@@ -228,6 +228,24 @@ $aliasResult = Remove-AtlasoWorkstationLanSegment @aliasArguments
 if (-not $aliasResult.registration_absent) { throw 'Canonical cleanup rejected alias-created receipt.' }
 $aliasArguments.PreferencesPath = $aliasBuffer.ToString()
 if (-not (Remove-AtlasoWorkstationLanSegment @aliasArguments).registration_absent) { throw 'Alias retry rejected canonical receipt.' }
+Assert-Refused {
+    & $module {
+        param($path)
+        $injected = @{ Done = $false }
+        Update-AtlasoLanPreferences -Path $path -Transform {
+            param($bytes)
+            return ,([Text.Encoding]::UTF8.GetBytes('candidate'))
+        } -Validate {
+            if (-not $injected.Done) {
+                $stagePath = (Get-ChildItem -LiteralPath (Split-Path -Parent $path) -Filter ((Split-Path -Leaf $path) + '.atlaso-lan-*.tmp')).FullName
+                [IO.File]::WriteAllText("$path.foreign-stage", 'substituted stage')
+                [IO.File]::Replace("$path.foreign-stage", $stagePath, "$path.old-stage", $true)
+                $injected.Done = $true
+            }
+        }
+    } $preferences
+} 'staging identity changed; displaced provider state was restored'
+if ([IO.File]::ReadAllText($preferences) -cne 'concurrent state') { throw 'Stage substitution left foreign provider bytes active.' }
 # A second thread holds the provider transaction lock while producing unresolved
 # recovery state. A concurrent retry must refuse before reading its old snapshot.
 $pathKey = [Atlaso.WorkstationFileIdentity]::Get((Split-Path -Parent $preferences)) + ':' + (Split-Path -Leaf $preferences).ToUpperInvariant()
@@ -404,4 +422,12 @@ try {
     Assert-Refused { $lateGuard.Remove() } 'directory is not empty'
 } finally { $lateGuard.Dispose() }
 if ([IO.File]::ReadAllText((Join-Path $lateRoot 'late.txt')) -cne 'preserve late entry') { throw 'Late preflight descendant was deleted.' }
+# Inject immediately after real extraction in this fixture's local function copy.
+$injectedSnapshotSource = $snapshotFunction.Extent.Text.Replace(
+    'Expand-Archive -LiteralPath $archivePath -DestinationPath $snapshotPath -ErrorAction Stop',
+    'Expand-Archive -LiteralPath $archivePath -DestinationPath $snapshotPath -ErrorAction Stop; [IO.File]::WriteAllText((Join-Path $snapshotPath "source.txt"), "construction substitution")')
+. ([scriptblock]::Create($injectedSnapshotSource))
+try {
+    Assert-Refused { New-LifecycleSourceSnapshot -RepositoryRoot $sourceRoot -Commit $admitted -DestinationRoot $fixture } 'snapshot bytes differ from the Git archive'
+} finally { . ([scriptblock]::Create($snapshotFunction.Extent.Text)) }
 Write-Host "LAN segment safety fixtures passed: $fixture"
