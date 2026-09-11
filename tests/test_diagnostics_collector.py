@@ -268,3 +268,20 @@ def test_collector_statuses_cover_application_job_states():
     from atlaso.app.models import JobStatus
 
     assert {status.value for status in JobStatus} | {"no-op", "partial-failure"} == TASK_STATUSES
+
+
+@pytest.mark.parametrize("endpoint", ["[fe80::1%eth0]:443", "[fe80::2%ens192]:22", "[::]:443", "192.0.2.1:80", "*:53"])
+def test_listener_projection_preserves_numeric_scoped_endpoints(monkeypatch, endpoint):
+    """Keep legitimate listeners while rejecting hostnames and malformed endpoints.
+
+    Args:
+        monkeypatch: Fixture restoring the bounded command source.
+        endpoint: Numeric local listener, optionally including an interface zone.
+    """
+    collector = Collector(Options.parse({}))
+    invalid = ["private.example:443", "[fe80::1%]:443", "[fe80::1%bad/zone]:443", "[fe80::1%eth0]:65536", "[::]:https"]
+    output = "\n".join("tcp LISTEN 0 128 " + value + " *:*" for value in [endpoint, *invalid])
+    monkeypatch.setattr(collector, "command", lambda args: output)
+    evidence = collector.listeners()
+    assert evidence["listeners"] == [{"protocol": "tcp", "local": endpoint}]
+    assert evidence["omitted_rows"] == len(invalid)

@@ -193,6 +193,31 @@ def write_new(path: Path, content: bytes) -> None:
         raise
 
 
+def socket_endpoint(value: str) -> str | None:
+    """Validate a numeric socket address, optional interface zone, and port.
+
+    Args:
+        value: Local endpoint emitted by numeric ss output.
+    """
+    host, separator, port = value.rpartition(":")
+    if not separator or not (port == "*" or (re.fullmatch(r"[0-9]{1,5}", port) and int(port) <= 65535)):
+        return None
+    if host.startswith("["):
+        if not host.endswith("]"):
+            return None
+        host = host[1:-1]
+    numeric, zone_separator, zone = host.partition("%")
+    if zone_separator and not re.fullmatch(r"[a-zA-Z0-9_.:@-]{1,15}", zone):
+        return None
+    if numeric == "*":
+        return value if not zone_separator else None
+    try:
+        ipaddress.ip_address(numeric)
+    except ValueError:
+        return None
+    return value
+
+
 class Projection:
     """Keep consistent identifier aliases in memory for exactly one capture."""
 
@@ -410,13 +435,18 @@ class Collector:
         """Retain only numeric socket endpoints, excluding users and owning processes."""
         raw = self.command(["ss", "-H", "-lntu"])
         rows = []
+        omitted = 0
         for line in raw.splitlines()[:500]:
             parts = line.split()
             if len(parts) >= 6 and parts[0] in {"tcp", "udp"}:
                 endpoint = parts[4]
-                if re.fullmatch(r"[0-9a-fA-F:.\[\]*%]+", endpoint):
+                if socket_endpoint(endpoint) is not None:
                     rows.append({"protocol": parts[0], "local": endpoint})
-        return {"listeners": rows}
+                else:
+                    omitted += 1
+            else:
+                omitted += 1
+        return {"listeners": rows, "omitted_rows": omitted}
 
     def resolver(self) -> dict[str, Any]:
         """Use networkd/resolved's numeric status without dumping resolv.conf symlinks."""

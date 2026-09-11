@@ -60,7 +60,8 @@ Browser handshake status and close codes cannot be captured from the appliance; 
 
 Network evidence preserves desired, last-applied and observed state separately. Nginx evidence projects only known listener
 and WebSocket headers from the managed file; it is not a full nginx configuration export. Firewall evidence includes
-numeric matches and standard chain policies, with omitted extensions called out. Logs include classified events rather
+numeric matches and standard chain policies, with omitted extensions called out. Numeric listener endpoints retain
+IPv6 interface zones; invalid endpoint rows are counted as omitted. Logs include classified events rather
 than arbitrary text. An unfamiliar failure may therefore require a separate, carefully scoped investigation.
 
 ## Recovery CLI
