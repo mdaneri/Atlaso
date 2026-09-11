@@ -2865,6 +2865,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#repository-syntax-and-content-checks" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Repository syntax and content checks
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#justify-suppressions" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
@@ -3595,6 +3606,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#repository-syntax-and-content-checks" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Repository syntax and content checks
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#justify-suppressions" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
@@ -3745,6 +3767,16 @@ FastAPI dependency declarations intentionally call factories such as <code>Depen
 new shared mutation or service modules should be made strict-clean and added to the list; existing entries must not be
 removed or weakened to accommodate unrelated debt. Imported type information remains available, but silent import
 following prevents diagnostics from unlisted transitive modules from expanding the ratchet implicitly.</p>
+<h2 id="repository-syntax-and-content-checks">Repository syntax and content checks<a class="headerlink" href="#repository-syntax-and-content-checks" title="Permanent link">&para;</a></h2>
+<p>Run <code>python scripts/check_repo.py</code> for the repository's lightweight syntax and content checks. Default discovery
+excludes the root <code>.atlaso-local/</code> task-state directory before descending into it, so downloaded vendor metadata and
+deliberately malformed validation fixtures do not fail source validation. Existing vendor, environment, and build
+directory exclusions are also pruned before traversal. Other checkable sources, including untracked files, remain
+eligible; this is a fixed exclusion policy rather than a general Git-ignore filter and also works in source archives.</p>
+<p>Explicit file or directory arguments retain their existing behavior. For example,
+<code>python scripts/check_repo.py .atlaso-local/example/fixture.json</code> deliberately validates that fixture, and an explicit
+<code>.atlaso-local/example</code> directory or <code>.</code> includes its checkable descendants. Existing exclusions such as
+<code>node_modules</code> still apply. Keep repository source files outside the reserved root <code>.atlaso-local/</code> directory.</p>
 <h2 id="justify-suppressions">Justify suppressions<a class="headerlink" href="#justify-suppressions" title="Permanent link">&para;</a></h2>
 <p>Prefer correcting the code. When an analyzer cannot model an intentional boundary, keep the exception on the narrowest
 line and include both the exact rule code and a reviewable rationale:</p>
