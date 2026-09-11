@@ -209,6 +209,53 @@ def test_symlink_source_rejected(tmp_path):
         read_source(link)
 
 
+@pytest.mark.parametrize("count", [100, 101])
+def test_task_history_cap_is_reported_in_archive(tmp_path, monkeypatch, count):
+    """Preserve capped task evidence and report whether additional rows matched.
+
+    Args:
+        tmp_path: Isolated SQLite fixture directory.
+        monkeypatch: Fixture restoring unavailable command sources.
+        count: Number of matching task records around the collection boundary.
+    """
+    database = tmp_path / "tasks.db"
+    with sqlite3.connect(database) as db:
+        db.execute("CREATE TABLE jobs(id TEXT,type TEXT,status TEXT,created_at TEXT,started_at TEXT,finished_at TEXT)")
+        db.executemany("INSERT INTO jobs VALUES (?, 'test', 'succeeded', '2026-01-02 12:00:00', NULL, NULL)",
+                       [(f"job_{index:012x}",) for index in range(count)])
+    collector = Collector(Options.parse({"scopes": ["update"], "since": "2026-01-02T00:00:00Z",
+                                         "until": "2026-01-03T00:00:00Z"}), database=database)
+    monkeypatch.setattr(collector, "command", lambda args: "")
+    data, manifest = collector.capture()
+    entry = next(item for item in manifest["collectors"] if item["collector"] == "database")
+    assert entry["status"] == ("truncated" if count > 100 else "success")
+    with zipfile.ZipFile(io.BytesIO(data)) as archive:
+        exported = archive.read(entry["path"])
+        evidence = json.loads(exported)
+        assert len(evidence["tasks"]) == 100
+        assert evidence["task_row_limit"] == 100
+        assert evidence["truncated"] == (count > 100)
+        assert hashlib.sha256(exported).hexdigest() == entry["sha256"]
+    assert ("database: truncated" in manifest["omissions"]) == (count > 100)
+
+
+@pytest.mark.parametrize("count", [500, 503])
+def test_listener_cap_counts_discarded_rows(monkeypatch, count):
+    """The listener limit cannot silently discard valid socket rows.
+
+    Args:
+        monkeypatch: Fixture restoring synthetic socket output.
+        count: Number of valid socket rows around the cap.
+    """
+    collector = Collector(Options.parse({}))
+    monkeypatch.setattr(collector, "command", lambda args: "tcp LISTEN 0 128 192.0.2.1:443 0.0.0.0:*\n" * count)
+    evidence = collector.listeners()
+    assert len(evidence["listeners"]) == 500
+    assert evidence["omitted_rows"] == count - 500
+    assert evidence["truncated"] == (count > 500)
+    assert evidence["row_limit"] == 500
+
+
 def test_recovery_does_not_import_application_database():
     # Importing the CLI itself must never run init_db or consume app settings.
     import ast

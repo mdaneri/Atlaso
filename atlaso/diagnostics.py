@@ -453,8 +453,10 @@ class Collector:
         """Retain only numeric socket endpoints, excluding users and owning processes."""
         raw = self.command(["ss", "-H", "-lntu"])
         rows = []
-        omitted = 0
-        for line in raw.splitlines()[:500]:
+        lines = raw.splitlines()
+        discarded = max(0, len(lines) - 500)
+        omitted = discarded
+        for line in lines[:500]:
             parts = line.split()
             if len(parts) >= 6 and parts[0] in {"tcp", "udp"}:
                 endpoint = parts[4]
@@ -464,7 +466,7 @@ class Collector:
                     omitted += 1
             else:
                 omitted += 1
-        return {"listeners": rows, "omitted_rows": omitted}
+        return {"listeners": rows, "omitted_rows": omitted, "truncated": bool(discarded), "row_limit": 500}
 
     def resolver(self) -> dict[str, Any]:
         """Use networkd/resolved's numeric status without dumping resolv.conf symlinks."""
@@ -647,13 +649,15 @@ class Collector:
                 ]
             if self.options.scopes or self.options.correlation_id:
                 rows = db.execute("SELECT id,type,status,created_at,started_at,finished_at FROM jobs "
-                    "WHERE created_at >= ? AND created_at <= ? AND (? = '' OR id = ?) ORDER BY created_at DESC LIMIT 100",
+                    "WHERE created_at >= ? AND created_at <= ? AND (? = '' OR id = ?) ORDER BY created_at DESC LIMIT 101",
                     (timestamp(self.options.since).replace(tzinfo=None).isoformat(" "),
                      timestamp(self.options.until).replace(tzinfo=None).isoformat(" "),
-                     self.options.correlation_id, self.options.correlation_id))
+                     self.options.correlation_id, self.options.correlation_id)).fetchall()
+                result["truncated"] = len(rows) > 100
+                result["task_row_limit"] = 100
                 result["tasks"] = [{"id": token(row[0], TASK_ID_PATTERN), "type": token(row[1]),
                     "status": row[2] if row[2] in TASK_STATUSES else None,
-                    "timestamps": [token(v, r"[0-9T :.+Z-]{1,40}") for v in row[3:]]} for row in rows]
+                    "timestamps": [token(v, r"[0-9T :.+Z-]{1,40}") for v in row[3:]]} for row in rows[:100]]
         configuration: dict[str, Any] = {key: result[key] for key in ("desired_interfaces", "desired_vlans", "applied_interfaces") if key in result}
         if self.first_configuration is None:
             self.first_configuration = configuration or None
@@ -774,12 +778,14 @@ class Collector:
             entry: dict[str, Any] = {"collector": name, "provenance": provenance, "started_at": begin.isoformat()}
             try:
                 self.check()
-                data = json_bytes(run())
+                evidence = run()
+                data = json_bytes(evidence)
                 if len(data) > SOURCE_LIMIT or sum(map(len, files.values())) + len(data) > TOTAL_LIMIT:
                     raise EvidenceError("truncated")
                 filename = "evidence/" + name + ".json"
                 files[filename] = data
-                entry.update(status="success", path=filename, size_bytes=len(data), sha256=hashlib.sha256(data).hexdigest())
+                entry.update(status="truncated" if evidence.get("truncated") else "success",
+                             path=filename, size_bytes=len(data), sha256=hashlib.sha256(data).hexdigest())
             except EvidenceError as exc:
                 if exc.status == "cancelled":
                     raise
@@ -804,7 +810,7 @@ class Collector:
         # Final names exclude every source identity, regardless of collector order.
         # Recompute the per-source integrity metadata over the exported bytes.
         for entry in entries:
-            if entry["status"] == "success":
+            if "path" in entry:
                 filename = entry["path"]
                 files[filename] = self.projection.render(files[filename])
                 entry.update(size_bytes=len(files[filename]), sha256=hashlib.sha256(files[filename]).hexdigest())

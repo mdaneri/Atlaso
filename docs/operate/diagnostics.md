@@ -56,6 +56,8 @@ to run. The manifest records schema and collector versions, selections, UTC capt
 status, byte counts, and SHA-256 hashes of included evidence. Hashes establish file integrity, not source authenticity.
 
 Collector statuses distinguish success, unavailable, permission denied, truncation, timeout and malformed-source failure.
+Task history retains at most 100 matching rows and numeric listeners at most 500 rows. When more rows match, the
+archive retains the bounded evidence and marks that collector truncated; it does not imply the missing rows were absent.
 Missing values remain null or unavailable rather than healthy or zero. Configuration change comparison covers the selected
 desired/applied database interface fields only; other runtime changes can occur during this non-atomic capture.
 Browser handshake status and close codes cannot be captured from the appliance; collect those separately if needed.
