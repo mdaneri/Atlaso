@@ -93,7 +93,7 @@ namespace Atlaso
                 Handles.Clear();
             }
         }
-        public static IDisposable PinOrdinaryDirectoryPath(string path)
+        public static IDisposable PinOrdinaryDirectoryPath(string path, bool allowWrites = false)
         {
             var pins = new DirectoryPins();
             try
@@ -108,10 +108,12 @@ namespace Atlaso
                 for (int i = -1; i < components.Length; ++i)
                 {
                     if (i >= 0) current = System.IO.Path.Combine(current, components[i]);
+                    // Allowing writes supports atomic child-file publication while still
+                    // excluding directory deletion/replacement. Existing callers stay read-only.
                     // LIST_DIRECTORY makes sharing restrictions effective; an
                     // attributes-only handle does not exclude rename operations.
                     SafeFileHandle handle = CreateFileW(current, FileReadAttributes | 0x1,
-                        FileShareRead, IntPtr.Zero, OpenExisting,
+                        FileShareRead | (allowWrites ? FileShareWrite : 0), IntPtr.Zero, OpenExisting,
                         BackupSemantics | 0x00200000, IntPtr.Zero);
                     pins.Handles.Add(handle);
                     if (handle.IsInvalid) throw new Win32Exception(Marshal.GetLastWin32Error());
@@ -126,9 +128,9 @@ namespace Atlaso
             }
             catch { pins.Dispose(); throw; }
         }
-        public static SafeFileHandle PinOrdinaryReadFile(string path)
+        public static SafeFileHandle PinOrdinaryReadFile(string path, bool singleLink = false, bool allowDelete = false)
         {
-            SafeFileHandle handle = CreateFileW(path, 0x80000000, FileShareRead,
+            SafeFileHandle handle = CreateFileW(path, 0x80000000 | (allowDelete ? 0x10000U : 0), FileShareRead,
                 IntPtr.Zero, OpenExisting, 0x00200000, IntPtr.Zero);
             try
             {
@@ -136,11 +138,20 @@ namespace Atlaso
                 ByHandleFileInformation information;
                 if (!GetFileInformationByHandle(handle, out information))
                     throw new Win32Exception(Marshal.GetLastWin32Error());
-                if ((information.FileAttributes & (0x10 | 0x400)) != 0)
-                    throw new InvalidOperationException("Expected an ordinary file.");
+                if ((information.FileAttributes & (0x10 | 0x400)) != 0 ||
+                    (singleLink && information.NumberOfLinks != 1))
+                    throw new InvalidOperationException("Expected an ordinary single-identity file.");
                 return handle;
             }
             catch { handle.Dispose(); throw; }
+        }
+        public static void DeletePinnedFile(SafeFileHandle handle)
+        {
+            // Retire the same no-follow object that was validated and held through
+            // ledger commit, without reopening a replaceable pathname.
+            byte delete = 1;
+            if (!SetFileInformationByHandle(handle, 4, ref delete, 1))
+                throw new Win32Exception(Marshal.GetLastWin32Error());
         }
         public static void RemoveEmptyOrdinaryDirectory(string path)
         {

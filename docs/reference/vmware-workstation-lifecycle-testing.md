@@ -834,3 +834,41 @@ VMware Workstation vmnets provide isolated layer-2 segments. The lifecycle valid
 reachability, service apply behavior, tty1 console ownership with tty2 left available for normal login, backup/restore
 portability, and host/client integration where separate vmnets are equivalent. Tagged-trunk acceptance requires a
 compatible upstream virtual-network configuration and recorded topology evidence.
+
+## Recover a retained builder address
+
+A failed image build can finish process cleanup while Workstation still holds its stopped VM tab open. The image
+wrapper now saves its exact allocation and process-termination proof before attempting VMware deletion. After
+closing that stopped tab and completing checked VM cleanup, use the standalone reservation command; a new build
+and a Windows restart are unnecessary when the saved proof is valid.
+
+Use the exact handoff path reported by the build, under the task's
+`.atlaso-local/photon-image-build-state/vmware-builder-addresses/pending-releases` directory:
+
+```powershell
+$handoff = 'E:\task\.atlaso-local\photon-image-build-state\vmware-builder-addresses\pending-releases\builder-address-reservation-0123456789abcdef0123456789abcdef.json'
+.\scripts\windows\vmware\manage-builder-reservation.ps1 -HandoffPath $handoff -Json
+.\scripts\windows\vmware\manage-builder-reservation.ps1 -HandoffPath $handoff -Cleanup -WhatIf
+.\scripts\windows\vmware\manage-builder-reservation.ps1 -HandoffPath $handoff -Cleanup
+```
+
+The default and `-WhatIf` verify without changing reservation or handoff contents. `-Cleanup` rechecks the exact
+allocation under the shared allocator lock, releases only that record, and then removes its handoff. It does not
+retrieve credentials, launch a build, stop a VM, delete VM artifacts, or change DHCP. `-ReservationStateRoot` selects
+an explicitly configured existing shared ledger; omit it to use the ordinary allocator location. `-VmrunPath` selects
+the installed Workstation executable when it cannot be found in the standard installation directories.
+
+JSON reports `Id`, `Address`, `Status`, `Reason`, and `HandoffPath`, plus the source checkout, VMX, owner process,
+and recorded/current boot identities. Exit code `0` means verification or release
+completed; `2` means recovery is blocked. A live owner/controller, a running VM, observed address use, changed
+allocation, or unreadable evidence keeps the reservation. `already-released` means ledger removal previously
+completed and cleanup can finish handoff retirement. An interrupted cleanup can be retried with the same handoff.
+
+Older handoffs have no retained process-termination receipt. The tool reports that limitation instead of creating
+proof from VM-file absence or a dead PID. Such records still require independently available termination evidence
+or a changed host boot, followed by the same provider and address checks. Do not edit ledger JSON or insert receipts
+manually. The recovery command never restarts Windows automatically.
+
+A changed host boot supplies process-termination evidence independently of the saved receipt. Recovery therefore
+does not depend on an old receipt's timestamp after a restart; clock corrections cannot strand that allocation.
+Exact allocation identity, owner inactivity, provider state, and address-use checks still apply.

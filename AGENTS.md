@@ -919,12 +919,15 @@ The following cross-cutting boundaries always apply:
   that overlaps a VMware DHCP range or fixed address, and exclude observed non-ICMP use. Serialize the durable ledger
   across Atlaso worktrees, bind each entry to the exact task worktree, source commit, branch, owner process, Windows
   boot identity, output root, VM name, and VMX path, and retain it while that exact VM remains active or recovery
-  evidence is ambiguous. A dead owner cannot release its reservation during the same Windows boot because a surviving
-  descendant could still start the VM. Permit stale recovery only after a changed host-boot identity proves that tree
-  gone and the exact VM and address are inactive. Keep the non-secret release handoff outside temporary credential
+  evidence is ambiguous. A dead owner alone cannot release its reservation during the same Windows boot because a surviving
+  descendant could still start the VM. Permit stale recovery after either a valid controlling-parent termination
+  receipt or a changed host-boot identity proves that tree gone, and the exact VM and address are inactive. Keep the
+  non-secret release handoff outside temporary credential
   storage, never recover it while its exact owner process remains active, retry it after a preserved VM stops, and
   delete it only after exact ledger release succeeds. Never replay a dead same-boot owner's handoff unless the
-  controlling parent proved complete process-tree termination; otherwise require a host-restart boundary. Publish
+  controlling parent proved complete process-tree termination, either in the current invocation or through its
+  durable exact-allocation termination receipt. A later caller must verify that receipt and the original controller
+  is inactive before rechecking VM and address state. Missing legacy proof still requires a host-restart boundary. Publish
   recoverable release intent before ledger admission, then publish both records with write-through replacement plus
   directory metadata synchronization. Release
   normally only after inactive-VM completion. Exclude every IPv4 address on the selected bridged host interface, and never
