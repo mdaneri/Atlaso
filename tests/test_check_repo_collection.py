@@ -13,7 +13,12 @@ from scripts import check_repo
 def test_default_scan_prunes_task_state_and_checks_tracked_sources(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Ignored malformed fixtures must not hide a tracked malformed source."""
+    """Ignored malformed fixtures must not hide a tracked malformed source.
+
+    Args:
+        tmp_path: Isolated repository fixture root.
+        monkeypatch: Replaces the checker root and guards directory traversal.
+    """
     monkeypatch.setattr(check_repo, "ROOT", tmp_path)
     (tmp_path / ".gitignore").write_text("/.atlaso-local/\n", encoding="utf-8")
     local = tmp_path / ".atlaso-local"
@@ -34,7 +39,11 @@ def test_default_scan_prunes_task_state_and_checks_tracked_sources(
     original_scandir = os.scandir
 
     def guarded_scandir(path: str | os.PathLike[str]) -> Iterator[os.DirEntry[str]]:
-        """Fail if discovery even attempts to enumerate excluded directories."""
+        """Fail if discovery even attempts to enumerate excluded directories.
+
+        Args:
+            path: Directory requested by the discovery walker.
+        """
         assert Path(path) not in (local, tmp_path / ".git")
         return original_scandir(path)
 
@@ -51,7 +60,14 @@ def test_default_scan_prunes_task_state_and_checks_tracked_sources(
 def test_explicit_paths_still_validate_local_fixtures(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, selection: str, payload: bytes
 ) -> None:
-    """Explicit paths deliberately include malformed task-local content."""
+    """Explicit paths deliberately include malformed task-local content.
+
+    Args:
+        tmp_path: Isolated repository fixture root.
+        monkeypatch: Replaces the checker root.
+        selection: Explicit file, local directory, or repository root selection.
+        payload: Malformed JSON or non-UTF-8 fixture bytes.
+    """
     monkeypatch.setattr(check_repo, "ROOT", tmp_path)
     local = tmp_path / ".atlaso-local"
     local.mkdir()
@@ -65,7 +81,12 @@ def test_explicit_paths_still_validate_local_fixtures(
 def test_default_exclusion_is_root_scoped_and_does_not_require_git(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Source archives and untracked sources keep the existing check surface."""
+    """Source archives and untracked sources keep the existing check surface.
+
+    Args:
+        tmp_path: Isolated source archive fixture root.
+        monkeypatch: Replaces the checker root.
+    """
     monkeypatch.setattr(check_repo, "ROOT", tmp_path)
     paths = [
         "source.json",
@@ -85,7 +106,12 @@ def test_default_exclusion_is_root_scoped_and_does_not_require_git(
 def test_explicit_paths_preserve_existing_exclusions_and_deduplication(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """The local-state exception does not bypass existing vendor exclusions."""
+    """The local-state exception does not bypass existing vendor exclusions.
+
+    Args:
+        tmp_path: Isolated repository fixture root.
+        monkeypatch: Replaces the checker root.
+    """
     monkeypatch.setattr(check_repo, "ROOT", tmp_path)
     local = tmp_path / ".atlaso-local"
     vendor = local / "node_modules" / "invalid.json"
