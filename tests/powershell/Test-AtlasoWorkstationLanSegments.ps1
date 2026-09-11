@@ -199,6 +199,20 @@ $canonicalAliasPin = [Atlaso.WorkstationFileIdentity]::PinOrdinaryReadFile($prov
 try {
     if ([Atlaso.WorkstationCanonicalProviderV1]::Get($canonicalAliasPin) -ine $preferences) { throw 'Provider alias did not canonicalize.' }
 } finally { $canonicalAliasPin.Dispose() }
+$commitPins = [System.Collections.Generic.List[System.IDisposable]]::new()
+try {
+    & $module {
+        param($path, $commitPins)
+        Update-AtlasoLanPreferences -Path $path -Transform {
+            param($bytes)
+            return ,([Text.Encoding]::UTF8.GetBytes('committed state'))
+        } -Readback { $commitPins.Add([Atlaso.WorkstationFileIdentity]::PinOrdinaryReadFile($path, $true)) }
+    } $preferences $commitPins
+    [IO.File]::WriteAllText("$preferences.after-readback", 'late replacement')
+    Assert-Refused { [IO.File]::Replace("$preferences.after-readback", $preferences, "$preferences.late-backup", $true) } 'used by another process'
+    if ([IO.File]::ReadAllText($preferences) -cne 'committed state') { throw 'Successful readback pin allowed replacement.' }
+} finally { foreach ($pin in $commitPins) { $pin.Dispose() } }
+[IO.File]::WriteAllText($preferences, 'concurrent state')
 # A second thread holds the provider transaction lock while producing unresolved
 # recovery state. A concurrent retry must refuse before reading its old snapshot.
 $pathKey = [Atlaso.WorkstationFileIdentity]::Get((Split-Path -Parent $preferences)) + ':' + (Split-Path -Leaf $preferences).ToUpperInvariant()
@@ -282,7 +296,9 @@ $sourceRoot = Join-Path $fixture 'source'
 & git -C $sourceRoot init -q
 $sourceFile = Join-Path $sourceRoot 'source.txt'
 [IO.File]::WriteAllText($sourceFile, 'initial')
-& git -C $sourceRoot add source.txt
+$helperFile = Join-Path $sourceRoot 'helper.psm1'
+[IO.File]::WriteAllText($helperFile, "function Get-FixtureProvenance { 'initial' }")
+& git -C $sourceRoot add source.txt helper.psm1
 & git -C $sourceRoot -c user.name=Fixture -c user.email=fixture@example.invalid -c commit.gpgsign=false commit -qm initial
 if ($LASTEXITCODE -ne 0) { throw 'Could not prepare source fixture.' }
 $admitted = Get-LifecycleSourceCommit -RepositoryRoot $sourceRoot
@@ -303,11 +319,16 @@ $snapshotFunction = $runnerAst.Find({ param($node)
 }, $false)
 if (-not $snapshotFunction) { throw 'Cannot load immutable source exporter.' }
 . ([scriptblock]::Create($snapshotFunction.Extent.Text))
+[IO.File]::WriteAllText($helperFile, "function Get-FixtureProvenance { 'transient' }")
 [IO.File]::WriteAllText($sourceFile, 'transient build injection')
 [IO.File]::WriteAllText($untracked, 'untracked build injection')
 $snapshot = New-LifecycleSourceSnapshot -RepositoryRoot $sourceRoot -Commit $admitted -DestinationRoot $fixture
 if ([IO.File]::ReadAllText((Join-Path $snapshot 'source.txt')) -cne 'initial' -or
     [IO.File]::Exists((Join-Path $snapshot 'untracked.txt'))) { throw 'Snapshot read live worktree bytes.' }
+Import-Module (Join-Path $snapshot 'helper.psm1') -Force
+if ((Get-FixtureProvenance) -cne 'initial') { throw 'Runtime helper loaded transient checkout code.' }
+Remove-Module helper
+[IO.File]::WriteAllText($helperFile, "function Get-FixtureProvenance { 'initial' }")
 # Restore endpoint state: the snapshot still proves the exact admitted object.
 [IO.File]::WriteAllText($sourceFile, 'next')
 [IO.File]::Delete($untracked)

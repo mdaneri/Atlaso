@@ -109,7 +109,6 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
-Import-Module (Join-Path $PSScriptRoot 'Atlaso.VmwareTestIdentity.psm1') -Force
 
 $repoRoot = Resolve-Path -LiteralPath (Join-Path $PSScriptRoot '..\..\..')
 <#
@@ -132,8 +131,41 @@ function Get-LifecycleSourceCommit {
     }
     return $commit
 }
+
+
+<#
+.SYNOPSIS
+Export an admitted Git object into a fresh task-owned wheel source directory.
+.PARAMETER RepositoryRoot
+Repository containing the admitted immutable commit object.
+.PARAMETER Commit
+Full admitted commit SHA; the live checkout is never a build input.
+.PARAMETER DestinationRoot
+Existing task-owned wheel output root containing the unique archive and source directory.
+#>
+function New-LifecycleSourceSnapshot {
+    param([Parameter(Mandatory)][string]$RepositoryRoot,
+        [Parameter(Mandatory)][ValidatePattern('^[0-9a-f]{40}$')][string]$Commit,
+        [Parameter(Mandatory)][string]$DestinationRoot)
+    $snapshotId = [guid]::NewGuid().ToString('N')
+    $archivePath = Join-Path $DestinationRoot "source-$snapshotId.zip"
+    $snapshotPath = Join-Path $DestinationRoot "source-$snapshotId"
+    & git -C $RepositoryRoot archive --format=zip --output=$archivePath $Commit
+    if ($LASTEXITCODE -ne 0) { throw 'Could not archive the admitted lifecycle commit.' }
+    Expand-Archive -LiteralPath $archivePath -DestinationPath $snapshotPath -ErrorAction Stop
+    return $snapshotPath
+}
+
 # Plan-only output creates no runtime resource and makes no source-provenance claim.
 $sourceCommit = if ($PlanOnly) { '' } else { Get-LifecycleSourceCommit -RepositoryRoot $repoRoot }
+if ($PlanOnly) {
+    Import-Module (Join-Path $PSScriptRoot 'Atlaso.VmwareTestIdentity.psm1') -Force
+} else {
+    $identitySource = @(& git -C $repoRoot show "${sourceCommit}:scripts/windows/vmware/Atlaso.VmwareTestIdentity.psm1")
+    if ($LASTEXITCODE -ne 0) { throw 'Cannot load the admitted lifecycle identity helper.' }
+    New-Module -Name Atlaso.VmwareTestIdentity -ScriptBlock ([scriptblock]::Create(($identitySource -join "`n"))) |
+        Import-Module -Force
+}
 $vmIdentity = New-AtlasoVmwareTestIdentity `
     -PullRequestNumber $PullRequestNumber `
     -Purpose $Purpose `
@@ -146,6 +178,12 @@ $resultRoot = Assert-AtlasoVmwareIdentityDirectory `
 if (Test-Path -LiteralPath $resultRoot) {
     throw "Refusing lifecycle reuse because the exact PR-owned result root already exists: $resultRoot"
 }
+$runtimeSourceRoot = $repoRoot
+if (-not $PlanOnly) {
+    New-Item -ItemType Directory -Path $resultRoot -ErrorAction Stop | Out-Null
+    $runtimeSourceRoot = New-LifecycleSourceSnapshot -RepositoryRoot $repoRoot -Commit $sourceCommit -DestinationRoot $resultRoot
+}
+$runtimeVmwareRoot = Join-Path $runtimeSourceRoot 'scripts/windows/vmware'
 $vmRoot = Join-Path $resultRoot 'vms'
 $seedRoot = Join-Path $resultRoot 'seed'
 $createdVmxPaths = New-Object System.Collections.Generic.List[string]
@@ -189,9 +227,9 @@ if (-not $PlanOnly) {
         $VcfBackupPassword = ConvertFrom-SecureString -SecureString $vcfBackupPasswordSecure -AsPlainText
     }
 }
-. (Join-Path $PSScriptRoot 'Atlaso.WorkstationFirstBoot.ps1')
-Import-Module (Join-Path $PSScriptRoot 'Atlaso.WorkstationCleanup.psm1') -Force
-Import-Module (Join-Path $PSScriptRoot 'Atlaso.VmwarePayload.psm1') -Force
+. (Join-Path $runtimeVmwareRoot 'Atlaso.WorkstationFirstBoot.ps1')
+Import-Module (Join-Path $runtimeVmwareRoot 'Atlaso.WorkstationCleanup.psm1') -Force
+Import-Module (Join-Path $runtimeVmwareRoot 'Atlaso.VmwarePayload.psm1') -Force
 if (-not $SshPassword) {
     $SshPassword = $AdminPassword
 }
@@ -757,7 +795,7 @@ function New-CloudInitSeedIso {
         if ($LASTEXITCODE -ne 0) {
             python -m pip install pycdlib
         }
-        $helper = Join-Path $repoRoot 'scripts\interop\create_nocloud_seed_iso.py'
+        $helper = Join-Path $runtimeSourceRoot 'scripts\interop\create_nocloud_seed_iso.py'
         # The repository-controlled seed helper reads one password line from
         # stdin so the client credential never appears in process arguments.
         $SshPassword | & python $helper --output $Path --hostname $HostName --user $ClientSshUser --password-stdin | Out-Host
@@ -1272,7 +1310,7 @@ VMX path identifying the appliance guest that receives the helper.
 function Sync-ApplianceHelperScript {
     param([string]$ApplianceVmx)
 
-    $localHelper = Join-Path $repoRoot 'scripts\appliance\atlaso-helper'
+    $localHelper = Join-Path $runtimeSourceRoot 'scripts\appliance\atlaso-helper'
     if (-not (Test-Path -LiteralPath $localHelper)) {
         throw "Atlaso helper script not found: $localHelper"
     }
@@ -1287,29 +1325,6 @@ function Sync-ApplianceHelperScript {
         $script = "printf '%s\n' $quotedPassword | sudo -S install -o root -g root -m 0755 $quotedTemp /opt/atlaso/bin/atlaso-helper"
         Invoke-ApplianceGuestScript -ApplianceVmx $ApplianceVmx -Script $script
     }
-}
-
-<#
-.SYNOPSIS
-Export an admitted Git object into a fresh task-owned wheel source directory.
-.PARAMETER RepositoryRoot
-Repository containing the admitted immutable commit object.
-.PARAMETER Commit
-Full admitted commit SHA; the live checkout is never a build input.
-.PARAMETER DestinationRoot
-Existing task-owned wheel output root containing the unique archive and source directory.
-#>
-function New-LifecycleSourceSnapshot {
-    param([Parameter(Mandatory)][string]$RepositoryRoot,
-        [Parameter(Mandatory)][ValidatePattern('^[0-9a-f]{40}$')][string]$Commit,
-        [Parameter(Mandatory)][string]$DestinationRoot)
-    $snapshotId = [guid]::NewGuid().ToString('N')
-    $archivePath = Join-Path $DestinationRoot "source-$snapshotId.zip"
-    $snapshotPath = Join-Path $DestinationRoot "source-$snapshotId"
-    & git -C $RepositoryRoot archive --format=zip --output=$archivePath $Commit
-    if ($LASTEXITCODE -ne 0) { throw 'Could not archive the admitted lifecycle commit.' }
-    Expand-Archive -LiteralPath $archivePath -DestinationPath $snapshotPath -ErrorAction Stop
-    return $snapshotPath
 }
 
 <#
@@ -1759,7 +1774,7 @@ try {
     }
 
     $basePythonArgs = @(
-        (Join-Path $repoRoot 'scripts\interop\lifecycle_test.py'),
+        (Join-Path $runtimeSourceRoot 'scripts\interop\lifecycle_test.py'),
         '--appliance-url', $ApplianceUrl,
         '--appliance-ssh-host', $ApplianceIPAddress,
         '--username', $AdminUsername,

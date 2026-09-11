@@ -114,7 +114,9 @@ must never remove or alter the primary checkout's originals.
 Lifecycle runs that request `lan:<name>` now create an immutable receipt before registering a new segment.
 Runtime admission requires a clean source checkout and rechecks its exact commit before VM/segment creation and before
 and after wheel building. The wheel is built from a fresh Git archive of the admitted commit, so transient edits in
-the live checkout cannot enter the artifact. The durable publisher uses its own versioned helper type so existing
+the live checkout cannot enter the artifact. Runtime modules, seed helpers, the appliance helper, and the interop
+harness also load from the admitted archive; identity naming loads directly from that commit object.
+The durable publisher uses its own versioned helper type so existing
 PowerShell sessions can reload the module after an upgrade. Dirty or changed source is refused before the next
 resource or wheel publication; plan-only
 output makes no runtime source-provenance claim.
@@ -130,7 +132,8 @@ the mutex, so drive/UNC and short-name aliases share transaction exclusion and r
 A provider-path mutex spans recovery preflight, preferences publication, rollback, and artifact retirement across
 processes and Windows sessions. An overlapping transaction refuses immediately; retries inspect retained recovery
 artifacts after the previous transaction releases its lock. Independent final registration and reference readback
-runs before rollback state is retired; a failed final check restores the displaced registration. All directory guards
+runs before rollback state is retired; a failed final check restores the displaced registration. Successful readback
+retains its no-delete provider pin through transaction commit and result creation. All directory guards
 signal one shared native event. Its final check after all requests are armed defines the reference-snapshot
 commit point across roots.
 Missing registered-parent directories are refused immediately rather than rechecked without a guard.

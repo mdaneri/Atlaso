@@ -183,7 +183,7 @@ function Update-AtlasoLanPreferences {
     $pathHash = [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData([Text.Encoding]::UTF8.GetBytes($pathKey)))
     $transactionMutex = [Threading.Mutex]::new($false, "Global\Atlaso-LanPreferences-$pathHash")
     $transactionOwned = $false
-    $pins = $null
+    $providerDirectoryPins = $null
     $originalLock = $null; $stageLock = $null
     $stage = "$Path.atlaso-lan-$([guid]::NewGuid().ToString('N')).tmp"
     $backup = "$stage.backup"
@@ -198,7 +198,7 @@ function Update-AtlasoLanPreferences {
             $transactionOwned = $true
         }
         if (-not $transactionOwned) { throw 'Another LAN preferences transaction is active; retry after it completes.' }
-        $pins = [Atlaso.WorkstationFileIdentity]::PinOrdinaryDirectoryPath((Split-Path -Parent $Path), $true)
+        $providerDirectoryPins = [Atlaso.WorkstationFileIdentity]::PinOrdinaryDirectoryPath((Split-Path -Parent $Path), $true)
         if ([Atlaso.WorkstationFileIdentity]::Get((Split-Path -Parent $Path)) -cne $parentIdentity) {
             throw 'LAN preferences parent identity changed before transaction admission.'
         }
@@ -297,7 +297,7 @@ function Update-AtlasoLanPreferences {
             } finally { $stagePin.Dispose() }
         }
         } finally {
-            if ($pins) { $pins.Dispose() }
+            if ($providerDirectoryPins) { $providerDirectoryPins.Dispose() }
             if ($transactionOwned) { $transactionMutex.ReleaseMutex() }
             $transactionMutex.Dispose()
         }
@@ -513,7 +513,11 @@ function Remove-AtlasoWorkstationLanSegment {
                 }
                 Assert-AtlasoLanSegmentUiClosed
                 Assert-AtlasoLanSegmentUnreferenced -InventoryPath $InventoryPath -VmRoots $VmRoots -SegmentId $receipt.pvn_id -Pins $pins
-            } finally { $readbackPin.Dispose() }
+                # Successful readback transfers this no-delete pin to the caller;
+                # retain it through transaction commit and absence-result creation.
+                $pins.Add($readbackPin)
+                $readbackPin = $null
+            } finally { if ($readbackPin) { $readbackPin.Dispose() } }
         } -Transform {
             param($original)
             $parsed = ConvertFrom-AtlasoLanPreferences -Bytes $original
