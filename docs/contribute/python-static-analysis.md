@@ -51,6 +51,19 @@ new shared mutation or service modules should be made strict-clean and added to 
 removed or weakened to accommodate unrelated debt. Imported type information remains available, but silent import
 following prevents diagnostics from unlisted transitive modules from expanding the ratchet implicitly.
 
+## Repository syntax and content checks
+
+Run `python scripts/check_repo.py` for the repository's lightweight syntax and content checks. Default discovery
+excludes the root `.atlaso-local/` task-state directory before descending into it, so downloaded vendor metadata and
+deliberately malformed validation fixtures do not fail source validation. Existing vendor, environment, and build
+directory exclusions are also pruned before traversal. Other checkable sources, including untracked files, remain
+eligible; this is a fixed exclusion policy rather than a general Git-ignore filter and also works in source archives.
+
+Explicit file or directory arguments retain their existing behavior. For example,
+`python scripts/check_repo.py .atlaso-local/example/fixture.json` deliberately validates that fixture, and an explicit
+`.atlaso-local/example` directory or `.` includes its checkable descendants. Existing exclusions such as
+`node_modules` still apply. Keep repository source files outside the reserved root `.atlaso-local/` directory.
+
 ## Justify suppressions
 
 Prefer correcting the code. When an analyzer cannot model an intentional boundary, keep the exception on the narrowest

@@ -345,3 +345,32 @@ def test_firewall_multiline_description_round_trip(client):
     assert saved['priority'] == 23
     assert saved['enabled'] is False
     assert '<note>' not in page.text
+
+
+def test_firewall_form_description_limit_rejects_before_mutation(client):
+    """Enforce the textarea bound on direct form create and edit submissions.
+
+    Args:
+        client: HTTP test client used to exercise the Atlaso application.
+    """
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import FirewallRule
+
+    login(client)
+    page = client.get("/firewall")
+    csrf = page.text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
+    fields = {"csrf": csrf, "name": "bounded-form-note", "description": "a" * 1000}
+    headers = {"X-Atlaso-Grid": "1"}
+    oversized = {**fields, "description": "x" * 1001}
+    assert client.post("/firewall/rules", data=oversized, headers=headers).status_code == 422
+    created = client.post("/firewall/rules", data=fields, headers=headers)
+    assert created.status_code == 200, created.text
+    rule_id = created.json()["rule"]["id"]
+    endpoint = f"/firewall/rules/{rule_id}/edit"
+    assert client.post(endpoint, data=oversized, headers=headers).status_code == 422
+    with SessionLocal() as db:
+        assert db.get(FirewallRule, rule_id).description == fields["description"]
+    fields["description"] = "b" * 1000
+    updated = client.post(endpoint, data=fields, headers=headers)
+    assert updated.status_code == 200, updated.text
+    assert updated.json()["rule"]["description"] == fields["description"]

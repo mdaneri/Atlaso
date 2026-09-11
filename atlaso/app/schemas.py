@@ -243,7 +243,7 @@ class FirewallRuleCreate(BaseModel):
     interface_name: Annotated[str, Field(description='Requested interface name value for this firewall rule resource.')] = ""
     priority: Annotated[int, Field(description='Requested priority value for this firewall rule resource.')] = 100
     enabled: Annotated[bool, Field(description='Whether the resource is enabled in saved Atlaso state.')] = True
-    description: Annotated[str | None, Field(description='Operator-facing purpose or context for this resource.')] = None
+    description: Annotated[str | None, Field(max_length=1000, description='Optional multiline operator note, at most 1,000 characters on create or update.')] = None
 
 
 class FirewallRuleResponse(FirewallRuleCreate):
@@ -256,6 +256,9 @@ class FirewallRuleResponse(FirewallRuleCreate):
     """
 
     model_config = ConfigDict(from_attributes=True)
+
+    # Existing unbounded notes remain readable; only new writes adopt the limit.
+    description: Annotated[str | None, Field(description='Saved multiline operator note; legacy records may exceed the current 1,000-character write limit.')] = None
 
     id: Annotated[int, Field(description='Unique database identifier assigned to this resource.')]
     created_at: Annotated[datetime, Field(description='UTC timestamp when the resource was created.')]

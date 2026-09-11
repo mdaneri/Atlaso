@@ -164,3 +164,39 @@ def test_flagged_management_listener_preview_matches_ui_and_api(client):
         in line
         for line in ui_management_rules
     )
+
+
+def test_firewall_description_write_limit_preserves_legacy_reads(client):
+    """Reject oversized writes without losing existing or legacy operator notes.
+
+    Args:
+        client: HTTP test client used to exercise the Atlaso application.
+    """
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import FirewallRule
+
+    token, _ = create_token(client, scopes=["read:firewall", "write:firewall"])
+    headers = {"Authorization": f"Bearer {token}"}
+    payload = {"name": "bounded-api-note", "description": "a" * 999 + "b"}
+    oversized = {**payload, "description": "x" * 1001}
+    assert client.post("/api/v1/firewall/rules", headers=headers, json=oversized).status_code == 422
+    created = client.post("/api/v1/firewall/rules", headers=headers, json=payload)
+    assert created.status_code == 200, created.text
+    rule_id = created.json()["id"]
+    assert created.json()["description"] == payload["description"]
+    endpoint = f"/api/v1/firewall/rules/{rule_id}"
+    assert client.patch(endpoint, headers=headers, json=oversized).status_code == 422
+    with SessionLocal() as db:
+        rule = db.get(FirewallRule, rule_id)
+        assert rule.description == payload["description"]
+        rule.description = "legacy" * 200
+        db.commit()
+    listed = client.get("/api/v1/firewall/rules", headers=headers)
+    assert listed.status_code == 200, listed.text
+    assert next(row for row in listed.json() if row["id"] == rule_id)["description"] == "legacy" * 200
+    updated = client.patch(endpoint, headers=headers, json=payload)
+    assert updated.status_code == 200, updated.text
+    assert updated.json()["description"] == payload["description"]
+    schemas = client.get("/openapi.json").json()["components"]["schemas"]
+    note_schema = schemas["FirewallRuleCreate"]["properties"]["description"]
+    assert next(item for item in note_schema["anyOf"] if item["type"] == "string")["maxLength"] == 1000

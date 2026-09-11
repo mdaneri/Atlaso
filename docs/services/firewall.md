@@ -57,6 +57,10 @@ During a protected management handoff, the previous listener retains its SSH rul
 and front door pass readiness. A successful handoff leaves the generated TCP/22 rule on the new listener; rollback
 restores the previous rule with its original Source Group constraint.
 
+Descriptions are limited to 1,000 characters on both API and browser-form create/update requests. Longer submissions
+return HTTP 422 without changing the saved rule. Existing longer notes remain readable and are never truncated;
+shorten them before saving an edit. This tightens write validation while preserving field names and stored content.
+
 ## Verify and recover
 
 After a successful task, test the required TCP or UDP service from the intended network. On the appliance, maintainers
