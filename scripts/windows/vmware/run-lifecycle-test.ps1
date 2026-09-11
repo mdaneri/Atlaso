@@ -175,6 +175,39 @@ namespace Atlaso {
 }
 '@
     }
+    if (-not ('Atlaso.SnapshotDirectoryPinV1' -as [type])) {
+        Add-Type -TypeDefinition @'
+using System;
+using System.IO;
+using System.ComponentModel;
+using System.Runtime.InteropServices;
+using Microsoft.Win32.SafeHandles;
+namespace Atlaso {
+    public static class SnapshotDirectoryPinV1 {
+        [DllImport("kernel32.dll", CharSet=CharSet.Unicode, SetLastError=true)]
+        private static extern SafeFileHandle CreateFile(string path, uint access, uint share,
+            IntPtr security, uint creation, uint flags, IntPtr template);
+        [DllImport("kernel32.dll", SetLastError=true)]
+        private static extern bool GetFileInformationByHandleEx(SafeFileHandle handle, int kind,
+            out TagInfo info, uint size);
+        [StructLayout(LayoutKind.Sequential)] private struct TagInfo { public uint Attributes, Tag; }
+        public static SafeFileHandle Open(string path) {
+            var handle = CreateFile(path, 0x81, 3, IntPtr.Zero, 3, 0x02200000, IntPtr.Zero);
+            if (handle.IsInvalid) { handle.Dispose(); throw new Win32Exception(Marshal.GetLastWin32Error()); }
+            try {
+                TagInfo info;
+                if (!GetFileInformationByHandleEx(handle, 9, out info, 8))
+                    throw new Win32Exception(Marshal.GetLastWin32Error());
+                if ((info.Attributes & 0x410) != 0x10)
+                    throw new IOException("Snapshot directory must be an ordinary non-reparse directory.");
+                return handle;
+            } catch { handle.Dispose(); throw; }
+        }
+    }
+}
+'@
+    }
+    $snapshotDirectoryPins = [Collections.Generic.List[Microsoft.Win32.SafeHandles.SafeFileHandle]]::new()
     $snapshotIdentities = [Collections.Generic.Dictionary[string,string]]::new([StringComparer]::OrdinalIgnoreCase)
     $snapshotPins = [Collections.Generic.List[IO.FileStream]]::new()
     $snapshotId = [guid]::NewGuid().ToString('N')
@@ -225,7 +258,21 @@ namespace Atlaso {
             }
         } finally { $archiveInventory.Dispose() }
     }
+    # Pin ancestors top-down and each fresh directory before any child write.
+    # No delete sharing prevents replacement by a junction during extraction.
+    $snapshotAncestors = [Collections.Generic.Stack[string]]::new()
+    $snapshotAncestor = [IO.Path]::GetFullPath($DestinationRoot)
+    while ($snapshotAncestor) {
+        $snapshotAncestors.Push($snapshotAncestor)
+        $snapshotAncestor = [IO.Path]::GetDirectoryName($snapshotAncestor)
+    }
+    # The preflight guard already pins these ancestors and owns a DELETE handle
+    # on DestinationRoot, which cannot coexist with another no-delete share pin.
+    while (-not $PreflightGuard -and $snapshotAncestors.Count) {
+        $snapshotDirectoryPins.Add([Atlaso.SnapshotDirectoryPinV1]::Open($snapshotAncestors.Pop()))
+    }
     New-Item -ItemType Directory -Path $snapshotPath -ErrorAction Stop | Out-Null
+    $snapshotDirectoryPins.Add([Atlaso.SnapshotDirectoryPinV1]::Open($snapshotPath))
     if ($PreflightGuard) { $PreflightGuard.RecordDirectory($snapshotPath) }
     $archiveRead.Position = 0
     $extractArchive = [IO.Compression.ZipArchive]::new($archiveRead, [IO.Compression.ZipArchiveMode]::Read, $true)
@@ -245,6 +292,7 @@ namespace Atlaso {
             while ($missing.Count) {
                 $directoryPath = $missing.Pop()
                 New-Item -ItemType Directory -Path $directoryPath -ErrorAction Stop | Out-Null
+                $snapshotDirectoryPins.Add([Atlaso.SnapshotDirectoryPinV1]::Open($directoryPath))
                 if ($PreflightGuard) { $PreflightGuard.RecordDirectory($directoryPath) }
                 $createdDirectories.Add($directoryPath) | Out-Null
             }
@@ -305,6 +353,7 @@ namespace Atlaso {
     return $snapshotPath
     } finally {
         foreach ($snapshotFilePin in $snapshotPins) { $snapshotFilePin.Dispose() }
+        for ($pinIndex = $snapshotDirectoryPins.Count - 1; $pinIndex -ge 0; $pinIndex--) { $snapshotDirectoryPins[$pinIndex].Dispose() }
         $archiveRead.Dispose()
     }
 }

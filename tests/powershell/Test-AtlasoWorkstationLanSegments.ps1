@@ -331,7 +331,9 @@ $sourceFile = Join-Path $sourceRoot 'source.txt'
 [IO.File]::WriteAllText($sourceFile, 'initial')
 $helperFile = Join-Path $sourceRoot 'helper.psm1'
 [IO.File]::WriteAllText($helperFile, "function Get-FixtureProvenance { 'initial' }")
-& git -C $sourceRoot add source.txt helper.psm1
+[IO.Directory]::CreateDirectory((Join-Path $sourceRoot 'nested')) | Out-Null
+[IO.File]::WriteAllText((Join-Path $sourceRoot 'nested/child.txt'), 'child')
+& git -C $sourceRoot add source.txt helper.psm1 nested/child.txt
 & git -C $sourceRoot -c user.name=Fixture -c user.email=fixture@example.invalid -c commit.gpgsign=false commit -qm initial
 if ($LASTEXITCODE -ne 0) { throw 'Could not prepare source fixture.' }
 $admitted = Get-LifecycleSourceCommit -RepositoryRoot $sourceRoot
@@ -477,4 +479,16 @@ try {
     Assert-Refused { New-LifecycleSourceSnapshot -RepositoryRoot $sourceRoot -Commit $admitted -DestinationRoot $fixture } 'creation identity or single-link'
 } finally { . ([scriptblock]::Create($snapshotFunction.Extent.Text)) }
 if ((Get-Acl -LiteralPath $externalSnapshotFile).Sddl -cne $externalAclBefore) { throw 'Substituted hard link changed an external ACL.' }
+# Try replacing a directory at the former post-RecordDirectory race boundary.
+$script:directoryRenameBlocked = $false
+$directorySnapshotSource = $snapshotFunction.Extent.Text.Replace(
+    '$createdDirectories.Add($directoryPath) | Out-Null',
+    'try { [IO.Directory]::Move($directoryPath, $directoryPath + "-replaced") } catch [IO.IOException] { $script:directoryRenameBlocked = $true }; if (-not $script:directoryRenameBlocked) { throw "Snapshot directory replacement succeeded." }; $createdDirectories.Add($directoryPath) | Out-Null')
+. ([scriptblock]::Create($directorySnapshotSource))
+try {
+    $directorySnapshot = New-LifecycleSourceSnapshot -RepositoryRoot $sourceRoot -Commit $admitted -DestinationRoot $fixture
+    if (-not $script:directoryRenameBlocked -or [IO.File]::ReadAllText((Join-Path $directorySnapshot 'nested/child.txt')) -cne 'child') {
+        throw 'Snapshot directory pin regression failed.'
+    }
+} finally { . ([scriptblock]::Create($snapshotFunction.Extent.Text)) }
 Write-Host "LAN segment safety fixtures passed: $fixture"
