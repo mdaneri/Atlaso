@@ -278,9 +278,9 @@ def test_photon_wrapper_preflights_credentials_before_image_mutation() -> None:
     assert "MoveFileEx" in runner
     assert "FlushFileBuffers" in runner
     assert "FILE_FLAG_BACKUP_SEMANTICS" in runner
-    assert "StartSuspended($FilePath, $ArgumentList)" in runner
+    assert "StartSuspended($FilePath, $ArgumentList, [bool]$DiscardOutput)" in runner
     assert "ResumeThread(suspendedThreadHandle)" in runner
-    assert "CreateSuspended(filePath, arguments, null)" in runner
+    assert "CreateSuspended(filePath, arguments, null, discardOutput)" in runner
     assert "JOB_OBJECT_LIMIT_BREAKAWAY_OK" not in runner
     assert "CREATE_BREAKAWAY_FROM_JOB" in runner
     assert "Start-AtlasoWorkstationUiBreakawayProcess" not in runner
