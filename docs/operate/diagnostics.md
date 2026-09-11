@@ -18,7 +18,8 @@ anything. A diagnostic bundle is not a settings backup or a promise of source au
 1. Use the bottom **Create diagnostic bundle** row to open the shared four-step wizard.
 2. In **Incident**, keep **Last 30 minutes** or select a custom window of at most seven days. Custom times use the
    displayed browser timezone. An optional task/correlation UUID narrows task history; existing short and full-length
-   `job_` IDs and scheduled `job_schedule_` IDs work too.
+   `job_` IDs and scheduled `job_schedule_` IDs work too. Selecting an ID includes matching task history even when
+   no optional evidence scopes are selected.
    Runtime observations describe capture time, not historical state, and system logs are not filtered by that ID.
 3. In **Contents**, select additional Network, Web Terminal, Appliance Update, or Network Boot / PXE evidence.
    Basic version, clock, resource pressure, service status, and database availability are always included.

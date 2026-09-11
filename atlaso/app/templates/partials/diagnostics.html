@@ -24,7 +24,7 @@
           <label data-diagnostic-time hidden><span>From</span><input type="datetime-local" name="since" disabled></label>
           <label data-diagnostic-time hidden><span>Until</span><input type="datetime-local" name="until" disabled></label>
           <p class="muted full" id="diagnostics-timezone"></p>
-          <label class="full"><span class="field-label"><span>Task / correlation ID (optional)</span><button class="help-icon" type="button" data-help="A task or correlation UUID narrows recorded task history. Existing job_ identifiers are accepted. It does not make appliance observations historical or filter unrelated system events.">i</button></span><input name="correlation_id" autocomplete="off" maxlength="40" pattern="(job_[0-9a-fA-F]{12}|[0-9a-fA-F\-]{32,36})"></label>
+          <label class="full"><span class="field-label"><span>Task / correlation ID (optional)</span><button class="help-icon" type="button" data-help="A task or correlation UUID narrows recorded task history. Existing job_ identifiers are accepted. It does not make appliance observations historical or filter unrelated system events.">i</button></span><input name="correlation_id" autocomplete="off" maxlength="64" pattern="(?:job_[0-9a-fA-F]{12}|job_[0-9a-fA-F]{32}|job_schedule_[0-9]{1,20}_(?:[0-9a-fA-F]{12}|[0-9]{1,20})|[0-9a-fA-F]{32}|[0-9a-fA-F]{8}(?:-[0-9a-fA-F]{4}){3}-[0-9a-fA-F]{12})"></label>
         </div>
       </section>
       <section data-atlaso-wizard-step="contents" hidden>

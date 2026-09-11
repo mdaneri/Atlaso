@@ -98,6 +98,13 @@ def test_maintenance_tabs_keep_recovery_actions(client, monkeypatch, tmp_path):
     assert html.index('>LDAP</button>') < html.index('>Backup</button>') < html.index('>Reset</button>') < html.index('>Diagnostics</button>')
     for text in ("Maintenance", "Download settings backup", "Restore settings backup", "Factory reset appliance", "Download encrypted LDAP recovery", "Anonymize hostnames and usernames"):
         assert text in html
+    import re
+
+    from atlaso.diagnostics import TASK_ID_PATTERN
+
+    correlation = re.search(r'<input name="correlation_id"[^>]+>', html).group()
+    assert f'pattern="{TASK_ID_PATTERN}"' in correlation
+    assert int(re.search(r'maxlength="([0-9]+)"', correlation).group(1)) >= 54
     assert 'name="anonymize" checked' not in html
     assert 'name="detailed_logs" checked' not in html
 

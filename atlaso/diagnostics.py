@@ -594,7 +594,7 @@ class Collector:
                     {"key": token(key), "enabled": bool(enabled)}
                     for key, enabled in db.execute("SELECT key,enabled FROM network_boot_environments LIMIT 100")
                 ]
-            if self.options.scopes:
+            if self.options.scopes or self.options.correlation_id:
                 rows = db.execute("SELECT id,type,status,created_at,started_at,finished_at FROM jobs "
                     "WHERE created_at >= ? AND created_at <= ? AND (? = '' OR id = ?) ORDER BY created_at DESC LIMIT 100",
                     (timestamp(self.options.since).replace(tzinfo=None).isoformat(" "),

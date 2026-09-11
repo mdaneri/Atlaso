@@ -162,15 +162,17 @@ def test_recovery_does_not_import_application_database():
     assert sys.modules["atlaso.diagnostics"]
 
 
+@pytest.mark.parametrize("scopes", [[], ["pxe"]])
 @pytest.mark.parametrize("task_id", ["job_123456abcdef", "job_" + "a" * 32,
     "job_schedule_42_123456abcdef", "job_schedule_42_1789092000",
     "a" * 32, "00000000-0000-0000-0000-000000000001"])
-def test_readonly_database_projection_excludes_task_payloads(tmp_path, task_id):
+def test_readonly_database_projection_excludes_task_payloads(tmp_path, task_id, scopes):
     """Preserve all generated task IDs while excluding task payloads.
 
     Args:
         tmp_path: Task-local isolated filesystem fixture.
         task_id: Server-generated task identifier format.
+        scopes: Optional evidence scopes, including the default empty selection.
     """
     path = tmp_path / "test.db"
     with sqlite3.connect(path) as db:
@@ -178,7 +180,7 @@ def test_readonly_database_projection_excludes_task_payloads(tmp_path, task_id):
         db.execute("INSERT INTO jobs VALUES(?,?,?,?,?,?,?)", (task_id, "appliance-update", "failed", "2026-01-02 12:00:00", None, None, "TOPSECRET"))
         db.execute("CREATE TABLE network_boot_environments(key TEXT,enabled INTEGER)")
     before = path.read_bytes()
-    options = Options.parse({"correlation_id": task_id, "scopes": ["pxe"], "since": "2026-01-02T00:00:00Z", "until": "2026-01-03T00:00:00Z"})
+    options = Options.parse({"correlation_id": task_id, "scopes": scopes, "since": "2026-01-02T00:00:00Z", "until": "2026-01-03T00:00:00Z"})
     evidence = Collector(options, database=path).database_evidence()
     assert "TOPSECRET" not in json.dumps(evidence)
     assert evidence["tasks"][0]["status"] == "failed"
