@@ -12,7 +12,7 @@ from sqlalchemy.orm import Session
 
 from atlaso.app.audit import record_audit
 from atlaso.app.database import get_db
-from atlaso.app.models import Job
+from atlaso.app.models import Job, utcnow
 from atlaso.app.security import Identity, require_session_identity
 from atlaso.app.services import diagnostics
 from atlaso.app.ui_routes import MANAGEMENT_UI_ROOT
@@ -159,6 +159,8 @@ def build_router(*, management: Callable[..., Any], admin: Callable[..., Any],
         state = diagnostics.result(job)
         if job.status == "pending":
             job.status = "cancelled"
+            job.finished_at = utcnow()
+            job.progress_percent = 100
             state["bundle_status"] = "cancelled"
         elif job.status == "running":
             state["cancel_requested"] = True

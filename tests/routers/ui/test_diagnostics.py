@@ -195,6 +195,17 @@ def test_active_delete_blocked_cancel_supported(client, monkeypatch, tmp_path):
     bundle_id = client.post(ROOT + "/create", data={"csrf": csrf}).json()["id"]
     assert client.post(ROOT + "/" + bundle_id + "/delete", data={"csrf": csrf}).status_code == 409
     assert client.post(ROOT + "/" + bundle_id + "/cancel", data={"csrf": csrf}).json()["status"] == "cancelled"
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.services import diagnostics
+
+    with SessionLocal() as db:
+        job = diagnostics.find_job(db, bundle_id)
+        assert job.finished_at is not None
+        assert job.progress_percent == 100
+        finished_at = job.finished_at
+    client.post(ROOT + "/" + bundle_id + "/cancel", data={"csrf": csrf})
+    with SessionLocal() as db:
+        assert diagnostics.find_job(db, bundle_id).finished_at == finished_at
     assert client.post(ROOT + "/" + bundle_id + "/delete", data={"csrf": csrf}).status_code == 200
 
 
