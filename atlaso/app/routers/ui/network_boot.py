@@ -48,6 +48,7 @@ from atlaso.app.services.esxi_pxe import (
     validate_kickstart_vault_references,
 )
 from atlaso.app.services.network_boot import (
+    esxi_boot_management_state,
     lock_esxi_host_reference_lifecycle,
     remove_esxi_host_discovery_state,
 )
@@ -138,7 +139,7 @@ def build_router(dependencies: NetworkBootUiDependencies) -> NetworkBootUiRouter
         kickstart_id: int | None = None,
         identity: Identity = Depends(require_session_identity),
         db: Session = Depends(get_db),
-    ) -> HTMLResponse:
+    ) -> HTMLResponse | JSONResponse:
         """Handle the network boot page endpoint.
 
         Args:
@@ -150,6 +151,20 @@ def build_router(dependencies: NetworkBootUiDependencies) -> NetworkBootUiRouter
         Returns:
             The endpoint response.
         """
+        if request.headers.get("X-Requested-With") == "AtlasoHostReferenceRefresh":
+            # Poll only the dependent choices and safe applied-state projection;
+            # full page rendering also validates media and editable source content.
+            kickstarts = db.scalars(select(EsxiKickstart).order_by(EsxiKickstart.name)).all()
+            hosts = list(db.scalars(select(EsxiPxeHost)).all())
+            return JSONResponse(
+                {
+                    "kickstarts": [{"id": "", "label": "No Kickstart"}, *[{"id": row.id, "label": row.name} for row in kickstarts]],
+                    "authorization_reasons": esxi_boot_management_state(db, hosts)["authorization_reasons"],
+                    "can_write": identity.can("write:esxi-pxe"),
+                    "console_authorization_required": esxi_pxe_boot_settings(db)["console_authorization_required"],
+                },
+                headers={"Cache-Control": "no-store"},
+            )
         return render(
             request,
             "esxi_pxe.html",

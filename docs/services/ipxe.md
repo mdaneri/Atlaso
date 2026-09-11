@@ -138,6 +138,28 @@ again. A newly submitted Inventory Linux report therefore appears without a
 page reload. Refreshes retain the current grid sort, filter, and scroll context;
 if a background request fails, Atlaso keeps the last received host list and
 shows a recoverable refresh message.
+Newly refreshed rows can be promoted immediately, including the first discovery
+on an initially empty page. Promotion loads the selected host's current identity;
+if loading fails, retry the row action after checking the connection.
+
+Host Reference **Installer** refreshes its Kickstart choices whenever you enter
+the step. **Refresh Kickstarts** retries a failed load without clearing identity,
+ISO, or variable edits. A renamed Kickstart retains its selection by identifier.
+A deleted or unavailable selection remains visibly unavailable and blocks
+continuation until you explicitly choose an available Kickstart or **No Kickstart**.
+The **Enabled** step controls inclusion of this host's ESXi boot entry; saving
+does not activate it. Use **Review appliance changes**, then **Submit appliance
+changes**, to change active boot behavior.
+
+**Authorize ESXi boot once** stays visible but disabled when **Require console
+authorization** is off. The menu explains disabled actions, including pending
+Apply or unavailable applied boot state. Turning the setting on alone does not
+authorize boot: it must save successfully and the applied host, Kickstart, and
+listener must be ready. The action rechecks readiness before opening and submitting.
+A newer console-authorization edit stays pending until its own save completes.
+Refreshed Kickstarts also update Host References grid labels and default-row choices.
+If another refresh supersedes that check, retry the action; Atlaso does not use
+the previous readiness result to open or submit authorization.
 Double-click a row or focus it and press Enter to open its semantic hardware
 report. A compact history selector switches among retained reports without
 reloading the page. If several hosts are opened while details or history are
