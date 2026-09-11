@@ -5,6 +5,7 @@ from __future__ import annotations
 import io
 import json
 import logging
+import os
 import re
 import shutil
 import zipfile
@@ -152,6 +153,20 @@ def create(db: Session, options: Options, actor: str) -> Job:
     return job
 
 
+def sync_spool(directory: Path) -> None:
+    """Persist appliance directory changes before lifecycle metadata can commit.
+
+    Args:
+        directory: Validated private spool containing the removed archive.
+    """
+    if os.name == "posix":
+        descriptor = os.open(directory, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0) | getattr(os, "O_NOFOLLOW", 0))
+        try:
+            os.fsync(descriptor)
+        finally:
+            os.close(descriptor)
+
+
 def remove(db: Session, job: Job, *, actor: str, expired: bool = False) -> None:
     """Remove only an owned terminal artifact; never race an active writer.
 
@@ -169,6 +184,8 @@ def remove(db: Session, job: Job, *, actor: str, expired: bool = False) -> None:
         if target.stat().st_nlink != 1:
             raise EvidenceError("permission_denied")
         target.unlink()
+    # Also flush an absent target on retry after an earlier directory-flush failure.
+    sync_spool(target.parent)
     status = "expired" if expired else "deleted"
     job.result = json.dumps({"bundle_status": status})
     db.commit()
@@ -222,11 +239,14 @@ def detail(job: Job) -> dict[str, Any]:
     item = row(job)
     if item["status"] in {"ready", "ready_with_omissions"}:
         data = read_source(artifact_path(job.id), TOTAL_LIMIT + 1024 * 1024)
-        with zipfile.ZipFile(io.BytesIO(data)) as archive:
-            info = archive.getinfo("manifest.json")
-            if info.file_size > 262_144:
-                raise EvidenceError("failed")
-            item["manifest"] = json.loads(archive.read(info))
+        try:
+            with zipfile.ZipFile(io.BytesIO(data)) as archive:
+                info = archive.getinfo("manifest.json")
+                if info.file_size > 262_144:
+                    raise EvidenceError("failed")
+                item["manifest"] = json.loads(archive.read(info))
+        except (zipfile.BadZipFile, KeyError) as exc:
+            raise EvidenceError("failed") from exc
     return item
 
 
@@ -271,7 +291,9 @@ def run(job_id: str) -> None:
             db.execute(text("UPDATE jobs SET progress_percent=progress_percent WHERE 1=0"))
             job = find_job(db, job_id)
             if result(job).get("cancel_requested") or job.status != "running" or expires_at(job) <= utcnow():
-                artifact_path(job_id).unlink(missing_ok=True)
+                target = artifact_path(job_id)
+                target.unlink(missing_ok=True)
+                sync_spool(target.parent)
                 job.status = "cancelled"
                 job.result = json.dumps({"bundle_status": "cancelled"})
             else:

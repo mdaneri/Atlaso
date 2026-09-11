@@ -126,6 +126,8 @@ console-shell value so custom-spool archives are included in cleanup.
 Development-mode reset uses the same cleanup while holding its database writer lock. Finish or cancel any queued or
 running diagnostic collection first; development reset does not stop appliance services to quiesce collectors.
 Expired retained bundles remain manually deletable even while automatic cleanup is unavailable.
+On the appliance, deletion flushes the spool directory before committing lifecycle metadata; a failed flush remains
+retryable. Corrupt archives or missing manifests produce an unavailable-evidence response when inspected.
 Manual deletion affects only the appliance copy. Neither expiry nor deletion promises forensic erasure or removes copies
 the operator downloaded or shared. For storage failures, check free space and private-directory permissions, then retry.
 

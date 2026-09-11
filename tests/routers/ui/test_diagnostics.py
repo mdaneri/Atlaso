@@ -360,3 +360,86 @@ def test_expiry_cleans_interrupted_job_without_result(client, monkeypatch, tmp_p
         db.commit()
         diagnostics.expire(db)
     assert not diagnostics.artifact_path(bundle_id).exists()
+
+
+@pytest.mark.parametrize("missing_manifest", [False, True])
+def test_corrupt_archive_detail_is_unavailable(client, monkeypatch, tmp_path, missing_manifest):
+    """Report damaged archive structure through the bounded detail response.
+
+    Args:
+        client: Application client fixture.
+        monkeypatch: Dependency override fixture.
+        tmp_path: Private test filesystem root.
+        missing_manifest: Select a valid ZIP lacking the required manifest.
+    """
+    import io
+    import zipfile
+
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.services import diagnostics
+    from atlaso.diagnostics import write_new
+
+    csrf = prepare(client, monkeypatch, tmp_path)
+    bundle_id = client.post(ROOT + "/create", data={"csrf": csrf}).json()["id"]
+    data = b"truncated zip"
+    if missing_manifest:
+        buffer = io.BytesIO()
+        with zipfile.ZipFile(buffer, "w") as archive:
+            archive.writestr("summary.txt", "partial")
+        data = buffer.getvalue()
+    write_new(diagnostics.artifact_path(bundle_id), data)
+    with SessionLocal() as db:
+        job = diagnostics.find_job(db, bundle_id)
+        job.status = "succeeded"
+        job.result = '{"bundle_status":"ready"}'
+        db.commit()
+    response = client.get(ROOT + "/" + bundle_id)
+    assert response.status_code == 503
+    assert response.json()["detail"] == "Bundle evidence is unavailable."
+
+
+@pytest.mark.parametrize("expired", [False, True])
+def test_deletion_flush_failure_keeps_lifecycle_retryable(client, monkeypatch, tmp_path, expired):
+    """Keep retention metadata until directory durability succeeds, including retries.
+
+    Args:
+        client: Application client fixture.
+        monkeypatch: Dependency override fixture.
+        tmp_path: Private test filesystem root.
+        expired: Exercise automatic expiry as well as explicit deletion.
+    """
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.services import diagnostics
+    from atlaso.diagnostics import write_new
+
+    csrf = prepare(client, monkeypatch, tmp_path)
+    bundle_id = client.post(ROOT + "/create", data={"csrf": csrf}).json()["id"]
+    target = diagnostics.artifact_path(bundle_id)
+    write_new(target, b"private evidence")
+    attempts = []
+
+    def flush(directory):
+        """Fail once after unlink to exercise the absent-file retry.
+
+        Args:
+            directory: Spool whose deletion is being persisted.
+        """
+        assert directory == target.parent
+        assert not target.exists()
+        attempts.append(directory)
+        if len(attempts) == 1:
+            raise OSError("simulated flush failure")
+
+    monkeypatch.setattr(diagnostics, "sync_spool", flush)
+    with SessionLocal() as db:
+        job = diagnostics.find_job(db, bundle_id)
+        job.status = "succeeded"
+        job.result = '{"bundle_status":"ready"}'
+        db.commit()
+        with pytest.raises(OSError):
+            diagnostics.remove(db, job, actor="admin", expired=expired)
+        db.rollback()
+        assert diagnostics.result(diagnostics.find_job(db, bundle_id))["bundle_status"] == "ready"
+        diagnostics.remove(db, job, actor="admin", expired=expired)
+        assert diagnostics.result(job)["bundle_status"] == ("expired" if expired else "deleted")
+    assert len(attempts) == 2
