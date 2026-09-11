@@ -832,7 +832,7 @@ def test_persisted_environment_read_is_pinned_bounded_and_same_host(monkeypatch,
             Args:
                 endpoint: Selected host.
                 port: Selected HTTPS port.
-                kwargs: Connection controls.
+                **kwargs: Connection controls.
             """
             assert (endpoint, port, kwargs["timeout"]) == ("esxi.example.test", 443, 30)
             self.sock = SimpleNamespace(getpeercert=lambda **_kwargs: certificate)
