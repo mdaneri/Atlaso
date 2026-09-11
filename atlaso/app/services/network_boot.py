@@ -54,6 +54,7 @@ from atlaso.app.services.esxi_pxe import (
     ESXI_PXE_HTTP_BASE,
     ESXI_TFTP_ROOT,
     esxi_http_base_url,
+    esxi_pxe_boot_settings,
     host_variables,
     kickstart_template_variables,
     normalize_pxe_mac,
@@ -2502,17 +2503,24 @@ def _applied_esxi_boot_context(
     return host, artifact, kickstart, dict(boot), manifest
 
 
-def esxi_boot_readiness_warnings(db: Session, hosts: list[EsxiPxeHost]) -> list[str]:
-    """Explain applied-state failures on the authenticated management page only.
+def esxi_boot_management_state(db: Session, hosts: list[EsxiPxeHost]) -> dict[str, Any]:
+    """Project safe warnings and console-action reasons from one applied snapshot.
 
     Args:
         db: Database session used for side-effect-free readiness checks.
         hosts: Desired Host References displayed by management.
     """
     warnings: list[str] = []
+    reasons: dict[int, str] = {}
+    desired_required = esxi_pxe_boot_settings(db).get("console_authorization_required", False)
+    for host in hosts:
+        reasons[host.id] = (
+            "Console authorization is disabled." if not desired_required
+            else "An enabled host with a Kickstart and installer ISO is required."
+        )
     bootable_hosts = [host for host in hosts if host.enabled and host.kickstart_id and host.installer_iso_path]
     if not bootable_hosts:
-        return warnings
+        return {"warnings": warnings, "authorization_reasons": reasons}
     try:
         snapshot = _indexed_applied_esxi_boot_snapshot(db)
     except (TypeError, ValueError):
@@ -2523,6 +2531,11 @@ def esxi_boot_readiness_warnings(db: Session, hosts: list[EsxiPxeHost]) -> list[
                 raise ValueError("Applied ESXi Network Boot state is unavailable.")
             _host, artifact, _kickstart, _boot, _manifest = _applied_esxi_boot_context(db, host_id=host.id, snapshot=snapshot)
             _artifact_listener_origin(artifact)
+            if desired_required:
+                reasons[host.id] = (
+                    "" if _boot.get("console_authorization_required", True) and _boot.get("enabled")
+                    else "Review and submit appliance changes to enable console authorization."
+                )
         except (TypeError, ValueError) as exc:
             # Never expose raw exceptions, manifest fields, or content hashes.
             reason = {
@@ -2535,7 +2548,19 @@ def esxi_boot_readiness_warnings(db: Session, hosts: list[EsxiPxeHost]) -> list[
                 f"{host.hostname}: {reason} "
                 "Review appliance changes and submit a real ESXi PXE Apply, then start a fresh host boot attempt."
             )
-    return warnings
+            if desired_required:
+                reasons[host.id] = f"{reason} Review and submit appliance changes before authorizing boot."
+    return {"warnings": warnings, "authorization_reasons": reasons}
+
+
+def esxi_boot_readiness_warnings(db: Session, hosts: list[EsxiPxeHost]) -> list[str]:
+    """Return applied-state warnings for existing management callers.
+
+    Args:
+        db: Database session used for side-effect-free readiness checks.
+        hosts: Desired Host References displayed by management.
+    """
+    return esxi_boot_management_state(db, hosts)["warnings"]
 
 
 def _artifact_listener_origin(artifact: dict[str, Any]) -> str:
