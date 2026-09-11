@@ -2056,11 +2056,11 @@ function Write-LifecycleIdentityEvidence {
     $identityTempPath = Join-Path $resultRoot ('.vmware-identity.{0}.tmp' -f [guid]::NewGuid().ToString('N'))
     if ($preflightGuard) { $preflightGuard.Expect($identityTempPath) }
     $identityBytes = [System.Text.UTF8Encoding]::new($false).GetBytes($identityJson)
-    $identityWriter = [Atlaso.WorkstationDurablePublisherV2]::CreateStage($identityTempPath)
+    $identityWriter = [Atlaso.WorkstationDurablePublisherV3]::CreateStage($identityTempPath)
     try {
         if ($preflightGuard) { $preflightGuard.Record($identityTempPath, $identityWriter.SafeFileHandle) }
         $identityWriter.Write($identityBytes)
-        [Atlaso.WorkstationDurablePublisherV2]::PublishDurableFile($identityWriter, $identityPath)
+        [Atlaso.WorkstationDurablePublisherV3]::PublishDurableFile($identityWriter, $identityPath)
     }
     finally { $identityWriter.Dispose() }
     if ($preflightGuard) { $preflightGuard.Published($identityTempPath, $identityPath) }

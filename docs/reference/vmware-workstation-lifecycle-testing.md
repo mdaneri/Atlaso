@@ -127,6 +127,13 @@ This prevents a concurrent directory-to-junction replacement from redirecting ar
 Ownership receipts and lifecycle manifests retain their original creation handles with writer and deletion exclusion
 through publication. The publisher flushes before and after renaming that exact handle, so a substituted staging
 pathname cannot replace ownership evidence.
+After publication, the receipt is identity-checked under a retained read pin through independent evidence publication
+and provider registration. Backup capture likewise pins the displaced pathname and requires the original provider
+identity; rollback bytes come from the retained original handle. An ambiguous displaced identity preserves the
+transaction files for explicit recovery rather than automatically restoring potentially substituted bytes.
+Normal rollback retains both source and target pins, captures the verified failed publication by handle, and renames
+the displaced handle without replacing an existing pathname. If a competing pathname appears during that transition,
+rollback refuses and preserves both captured objects for recovery.
 If archive, credential, module, or other pre-resource admission fails, the runner releases only its newly created
 preflight result directory. Cleanup verifies the independently derived parent, rejects links, unexpected entries,
 and nonempty VM/seed roots, and verifies absence so an ordinary preflight failure can be retried. The root is pinned
@@ -207,8 +214,8 @@ exclude writers, atomically replace the file, compare the displaced identity/byt
 Native recursive directory-change requests are armed before enumeration and retained through the final readback.
 Any descendant change, even a transient VMX creation/deletion, or a notification error/overflow refuses the scan;
 read-only file pins alone cannot prevent new VMX files from appearing beneath a storage root.
-Concurrent displaced state is restored through the shared checked recovery helper; a failed or interrupted transaction
-retains its recovery copy and blocks subsequent mutation until reconciled, including the shared rollback helper's
+The verified original displaced state is restored through pinned handles; an ambiguous displaced identity, failed
+rollback, or interrupted transaction retains recovery copies and blocks mutation until reconciled, including retained
 `atlaso-recovery-*.tmp` and `atlaso-cas-*.tmp` artifacts as well as LAN staging and backup files. Never repair that
 condition by deleting a
 backup or rewriting preferences broadly. Registration absence covers the supplied complete storage roots and provider

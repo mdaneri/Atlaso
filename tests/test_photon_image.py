@@ -3295,7 +3295,7 @@ def test_vmware_test_identity_is_bound_to_the_exact_owner():
     assert "Refusing lifecycle reuse because the exact PR-owned result root already exists" in lifecycle_runner
     assert "vmware-identity.json" in lifecycle_runner
     assert "'.vmware-identity.{0}.tmp'" in lifecycle_runner
-    assert "[Atlaso.WorkstationDurablePublisherV2]::PublishDurableFile($identityWriter, $identityPath)" in lifecycle_runner
+    assert "[Atlaso.WorkstationDurablePublisherV3]::PublishDurableFile($identityWriter, $identityPath)" in lifecycle_runner
     assert "Invoke-TrackedLifecycleVmCreation" in lifecycle_runner
     assert "Publish ownership before an external copy or VMX writer" in lifecycle_runner
     assert "pull_request_number = $PullRequestNumber" in lifecycle_runner

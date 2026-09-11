@@ -156,6 +156,38 @@ function ConvertFrom-AtlasoLanPreferences {
 
 <#
 .SYNOPSIS
+Restore a pinned displaced provider without reopening its replaceable pathname.
+.PARAMETER Path
+Provider pathname whose current object must match the failed publication.
+.PARAMETER DisplacedPin
+Original displaced object retained with read and delete access, denying write and delete sharing.
+.PARAMETER ExpectedBytes
+Exact bytes expected at the failed publication.
+.PARAMETER ExpectedIdentity
+Filesystem identity expected at the failed publication.
+#>
+function Restore-AtlasoPinnedLanPreferences {
+    param([string]$Path, [Microsoft.Win32.SafeHandles.SafeFileHandle]$DisplacedPin,
+        [byte[]]$ExpectedBytes, [string]$ExpectedIdentity)
+    $targetPin = [Atlaso.WorkstationFileIdentity]::PinOrdinaryReadFile($Path, $true, $true)
+    $targetStream = [IO.FileStream]::new($targetPin, [IO.FileAccess]::Read)
+    $capturedPath = "$Path.atlaso-cas-$([guid]::NewGuid().ToString('N')).tmp"
+    try {
+        if ((Get-AtlasoPathIdentity -Path $Path -Description 'LAN rollback target') -cne $ExpectedIdentity -or
+            -not (Test-AtlasoByteArraysEqual -Left $ExpectedBytes -Right (Read-AtlasoStreamBytes $targetStream))) {
+            throw 'LAN rollback target changed; preserve transaction files for recovery.'
+        }
+        # Both objects remain pinned. Capture the target by handle, then install
+        # the displaced handle without replacement. A competing new pathname
+        # makes installation fail; both original objects remain recoverable.
+        [Atlaso.WorkstationDurablePublisherV3]::RenamePinnedFile($targetPin, $capturedPath, $false)
+        [Atlaso.WorkstationDurablePublisherV3]::RenamePinnedFile($DisplacedPin, $Path, $false)
+        [Atlaso.WorkstationFileIdentity]::DeletePinnedFile($targetPin)
+    } finally { $targetStream.Dispose() }
+}
+
+<#
+.SYNOPSIS
 Atomically replace exact preferences bytes and verify both displaced and published identities.
 .PARAMETER Path
 Existing provider preferences file.
@@ -184,7 +216,7 @@ function Update-AtlasoLanPreferences {
     $transactionMutex = [Threading.Mutex]::new($false, "Global\Atlaso-LanPreferences-$pathHash")
     $transactionOwned = $false
     $providerDirectoryPins = $null
-    $originalLock = $null; $stageLock = $null
+    $originalLock = $null; $stageLock = $null; $displacedPin = $null
     $stage = "$Path.atlaso-lan-$([guid]::NewGuid().ToString('N')).tmp"
     $backup = "$stage.backup"
     $applied = $false
@@ -235,29 +267,24 @@ function Update-AtlasoLanPreferences {
         $applied = $true
         # File.Replace is not a compare-and-swap. Inspect what it actually displaced,
         # including file identity, before accepting the operation.
-        $displacedIdentity = Get-AtlasoPathIdentity -Path $backup -Description 'Displaced LAN preferences'
-        [byte[]]$displacedBytes = [System.IO.File]::ReadAllBytes($backup)
+        $displacedPin = [Atlaso.WorkstationFileIdentity]::PinOrdinaryReadFile($backup, $true, $true)
+        $capturedIdentity = Get-AtlasoPathIdentity -Path $backup -Description 'Displaced LAN preferences'
+        if ($capturedIdentity -cne $identity) {
+            throw 'Displaced LAN preferences identity is ambiguous; preserve transaction files for identity-checked recovery.'
+        }
+        # The original retained handle is the only authoritative byte source.
+        # A foreign backup pathname must never become automatic rollback input.
+        [byte[]]$displacedBytes = @(Read-AtlasoStreamBytes -Stream $originalLock)
+        $displacedIdentity = $identity
         # Capture rollback evidence before any fallible published-path reopen.
         $stageLock = [System.IO.File]::Open($Path, 'Open', 'Read', ([IO.FileShare]::Read -bor [IO.FileShare]::Delete))
-        if ($displacedIdentity -cne $identity -or
-            -not (Test-AtlasoByteArraysEqual -Left $original -Right $displacedBytes)) {
-            $stageLock.Dispose(); $stageLock = $null
-            Restore-AtlasoFileAfterCasFailure -TargetPath $Path -ExpectedCurrentBytes $replacement `
-                -ExpectedCurrentIdentity $stageIdentity -ReplacementPath $backup `
-                -ReplacementBytes $displacedBytes -ReplacementIdentity $displacedIdentity `
-                -Description 'LAN preferences'
-            $applied = $false
-            throw 'LAN preferences were replaced concurrently; displaced provider state was restored.'
-        }
         $publishedIdentity = Get-AtlasoPathIdentity -Path $Path -Description 'Published LAN preferences'
         if ($publishedIdentity -cne $stageIdentity) {
             [byte[]]$publishedBytes = @(Read-AtlasoStreamBytes -Stream $stageLock)
             $stageLock.Dispose(); $stageLock = $null
             $originalLock.Dispose(); $originalLock = $null
-            Restore-AtlasoFileAfterCasFailure -TargetPath $Path -ExpectedCurrentBytes $publishedBytes `
-                -ExpectedCurrentIdentity $publishedIdentity -ReplacementPath $backup `
-                -ReplacementBytes $displacedBytes -ReplacementIdentity $displacedIdentity `
-                -Description 'LAN substituted stage'
+            Restore-AtlasoPinnedLanPreferences -Path $Path -DisplacedPin $displacedPin `
+                -ExpectedBytes $publishedBytes -ExpectedIdentity $publishedIdentity
             $applied = $false
             throw 'LAN preferences staging identity changed; displaced provider state was restored.'
         }
@@ -276,16 +303,15 @@ function Update-AtlasoLanPreferences {
             (Get-AtlasoPathIdentity -Path $Path -Description 'LAN preferences rollback target') -ceq $stageIdentity) {
             if ($stageLock) { $stageLock.Dispose(); $stageLock = $null }
             if ($originalLock) { $originalLock.Dispose(); $originalLock = $null }
-            Restore-AtlasoFileAfterCasFailure -TargetPath $Path -ExpectedCurrentBytes $replacement `
-                -ExpectedCurrentIdentity $stageIdentity -ReplacementPath $backup `
-                -ReplacementBytes $displacedBytes -ReplacementIdentity $displacedIdentity `
-                -Description 'LAN preferences'
+            Restore-AtlasoPinnedLanPreferences -Path $Path -DisplacedPin $displacedPin `
+                -ExpectedBytes $replacement -ExpectedIdentity $stageIdentity
             $applied = $false
         }
         throw $failure
     } finally {
         if ($stageLock) { $stageLock.Dispose() }
         if ($originalLock) { $originalLock.Dispose() }
+        if ($displacedPin) { $displacedPin.Dispose() }
         try {
         # A failed rollback retains the displaced bytes for explicit recovery.
         if (-not $applied -and (Test-Path -LiteralPath $backup)) {
@@ -340,6 +366,7 @@ function Resolve-AtlasoOwnedLanSegment {
     $receiptRoot = Join-Path $Owner.lab_root 'lan-segments'
     $labPin = [Atlaso.WorkstationFileIdentity]::PinOrdinaryDirectoryPath($Owner.lab_root, $true)
     $receiptPin = $null
+    $receiptFilePins = [Collections.Generic.List[Microsoft.Win32.SafeHandles.SafeFileHandle]]::new()
     try {
         [System.IO.Directory]::CreateDirectory($receiptRoot) | Out-Null
         $receiptPin = [Atlaso.WorkstationFileIdentity]::PinOrdinaryDirectoryPath($receiptRoot, $true)
@@ -363,13 +390,19 @@ function Resolve-AtlasoOwnedLanSegment {
             $receiptPath = Join-Path $receiptRoot "$($receipt.creation_id).json"
             $bytes = [System.Text.UTF8Encoding]::new($false).GetBytes(($receipt | ConvertTo-Json))
             $receiptStage = "$receiptPath.stage"
-            $writer = [Atlaso.WorkstationDurablePublisherV2]::CreateStage($receiptStage)
+            $writer = [Atlaso.WorkstationDurablePublisherV3]::CreateStage($receiptStage)
             try {
                 $writer.Write($bytes)
                 # Flush and publish the original creation handle without replacing
                 # any existing receipt before publishing independent evidence.
-                [Atlaso.WorkstationDurablePublisherV2]::PublishDurableFile($writer, $receiptPath, $false)
+                [Atlaso.WorkstationDurablePublisherV3]::PublishDurableFile($writer, $receiptPath, $false)
+                $receiptIdentity = Get-AtlasoPathIdentity -Path $receiptPath -Description 'Published LAN receipt'
             } finally { $writer.Dispose() }
+            $receiptFilePins.Add([Atlaso.WorkstationFileIdentity]::PinOrdinaryReadFile($receiptPath, $true))
+            if ((Get-AtlasoPathIdentity -Path $receiptPath -Description 'Pinned LAN receipt') -cne $receiptIdentity -or
+                -not (Test-AtlasoByteArraysEqual -Left $bytes -Right ([IO.File]::ReadAllBytes($receiptPath)))) {
+                throw 'LAN receipt identity or bytes changed before registration; provider was preserved.'
+            }
             $result.ReceiptPath = $receiptPath
             $result.ReceiptSha256 = [Convert]::ToHexString([System.Security.Cryptography.SHA256]::HashData($bytes))
             $result.Id = $id
@@ -384,6 +417,7 @@ function Resolve-AtlasoOwnedLanSegment {
         }
         return [pscustomobject]$result
     } finally {
+        foreach ($receiptFilePin in $receiptFilePins) { $receiptFilePin.Dispose() }
         if ($receiptPin) { $receiptPin.Dispose() }
         $labPin.Dispose()
     }

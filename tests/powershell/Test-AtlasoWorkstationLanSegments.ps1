@@ -67,11 +67,13 @@ $publishReceipt = {
     if ((Get-FileHash -LiteralPath $pending.ReceiptPath -Algorithm SHA256).Hash -cne $pending.ReceiptSha256) {
         throw 'Published receipt digest differs.'
     }
+    Assert-Refused { [IO.File]::Delete($pending.ReceiptPath) } 'being used by another process'
+    Assert-Refused { [IO.File]::WriteAllText($pending.ReceiptPath, 'replacement receipt') } 'being used by another process'
     $receiptRecords.Add($pending)
     $evidenceStage = Join-Path $labRoot 'identity.tmp'
     $evidencePath = Join-Path $labRoot 'identity.json'
-    $evidenceWriter = [Atlaso.WorkstationDurablePublisherV2]::CreateStage($evidenceStage)
-    try { $evidenceWriter.Write([Text.Encoding]::UTF8.GetBytes(($receiptRecords | ConvertTo-Json))); [Atlaso.WorkstationDurablePublisherV2]::PublishDurableFile($evidenceWriter, $evidencePath) } finally { $evidenceWriter.Dispose() }
+    $evidenceWriter = [Atlaso.WorkstationDurablePublisherV3]::CreateStage($evidenceStage)
+    try { $evidenceWriter.Write([Text.Encoding]::UTF8.GetBytes(($receiptRecords | ConvertTo-Json))); [Atlaso.WorkstationDurablePublisherV3]::PublishDurableFile($evidenceWriter, $evidencePath) } finally { $evidenceWriter.Dispose() }
 }
 $shared = Resolve-AtlasoOwnedLanSegment -Name Shared -Owner $owner -PreferencesPath $preferences -PublishReceipt $publishReceipt
 if ($shared.ReceiptPath -or [IO.File]::ReadAllText($preferences) -cne $original) { throw 'Shared registration was adopted or changed.' }
@@ -140,7 +142,10 @@ if ([IO.File]::ReadAllText($preferences) -cne $expected) { throw 'Unrelated pref
 $again = Remove-AtlasoWorkstationLanSegment @argsMap
 if ($again.changed -or -not $again.registration_absent) { throw 'Already-absent retry was not verified.' }
 # Force an actual filename replacement after the original object is locked.
-# The displaced competitor's bytes must be restored, never silently discarded.
+# An identity mismatch cannot distinguish a competitor from a substituted backup.
+# Preserve all evidence and require recovery instead of installing untrusted bytes.
+$concurrentPreferences = Join-Path $provider 'concurrent-preferences.ini'
+[IO.File]::WriteAllText($concurrentPreferences, 'original state')
 Assert-Refused {
     & $module {
         param($path)
@@ -150,9 +155,32 @@ Assert-Refused {
             [IO.File]::Replace("$path.competitor", $path, "$path.displaced", $true)
             return ,([Text.Encoding]::UTF8.GetBytes('candidate state'))
         }
-    } $preferences
-} 'displaced provider state was restored'
-if ([IO.File]::ReadAllText($preferences) -cne 'concurrent state') { throw 'Concurrent preferences state was lost.' }
+    } $concurrentPreferences
+} 'identity is ambiguous'
+$concurrentBackup = @(Get-ChildItem -LiteralPath $provider -Filter 'concurrent-preferences.ini.atlaso-lan-*.tmp.backup')
+if ($concurrentBackup.Count -ne 1 -or [IO.File]::ReadAllText($concurrentBackup[0].FullName) -cne 'concurrent state') { throw 'Concurrent recovery evidence was lost.' }
+[IO.File]::WriteAllText($preferences, 'concurrent state')
+# Replace the backup before capture: foreign bytes must never be restored.
+$backupAttackPath = Join-Path $provider 'backup-attack.ini'
+[IO.File]::WriteAllText($backupAttackPath, 'original provider state')
+Assert-Refused {
+    & $module {
+        param($path)
+        $savedUpdate = ${function:Update-AtlasoLanPreferences}.ToString()
+        $attackUpdate = $savedUpdate.Replace(
+            '$applied = $true',
+            '$applied = $true; [IO.File]::Move($backup, "$backup.original"); [IO.File]::WriteAllText($backup, "foreign backup")')
+        Set-Item Function:Update-AtlasoLanPreferences ([scriptblock]::Create($attackUpdate))
+        try {
+            Update-AtlasoLanPreferences -Path $path -Transform { param($bytes) return ,([Text.Encoding]::UTF8.GetBytes('candidate')) }
+        } finally { Set-Item Function:Update-AtlasoLanPreferences ([scriptblock]::Create($savedUpdate)) }
+    } $backupAttackPath
+} 'identity is ambiguous'
+if ([IO.File]::ReadAllText($backupAttackPath) -ceq 'foreign backup') { throw 'Foreign backup was restored.' }
+$retainedOriginal = @(Get-ChildItem -LiteralPath $provider -Filter 'backup-attack.ini.atlaso-lan-*.tmp.backup.original')
+if ($retainedOriginal.Count -ne 1 -or [IO.File]::ReadAllText($retainedOriginal[0].FullName) -cne 'original provider state') {
+    throw 'Displaced original recovery evidence was lost.'
+}
 Assert-Refused {
     & $module {
         param($path)
@@ -372,11 +400,11 @@ Assert-Refused { [IO.File]::WriteAllText((Join-Path $snapshot 'injected.py'), 't
 $reloadScript = Join-Path $fixture 'reload.ps1'
 $reloadCode = "param([string]`$ModulePath, [string]`$Root)`n" +
     "`$ErrorActionPreference = 'Stop'`n" +
-    "Add-Type 'namespace Atlaso { public static class WorkstationFileIdentity {} }'`n" +
+    "Add-Type 'namespace Atlaso { public static class WorkstationFileIdentity {} public static class WorkstationDurablePublisherV2 {} }'`n" +
     "Import-Module `$ModulePath -Force`nImport-Module `$ModulePath -Force`n" +
     "`$stage = Join-Path `$Root 'reload.stage'; `$final = Join-Path `$Root 'reload.final'`n" +
-    "`$writer = [Atlaso.WorkstationDurablePublisherV2]::CreateStage(`$stage); `$writer.Write([Text.Encoding]::UTF8.GetBytes('reload'))`n" +
-    "try { [Atlaso.WorkstationDurablePublisherV2]::PublishDurableFile(`$writer, `$final, `$false) } finally { `$writer.Dispose() }`n" +
+    "`$writer = [Atlaso.WorkstationDurablePublisherV3]::CreateStage(`$stage); `$writer.Write([Text.Encoding]::UTF8.GetBytes('reload'))`n" +
+    "try { [Atlaso.WorkstationDurablePublisherV3]::PublishDurableFile(`$writer, `$final, `$false) } finally { `$writer.Dispose() }`n" +
     "if ([IO.File]::ReadAllText(`$final) -cne 'reload') { throw 'Reload publication failed.' }`n"
 [IO.File]::WriteAllText($reloadScript, $reloadCode)
 & pwsh -NoProfile -File $reloadScript -ModulePath (Join-Path $repositoryRoot 'scripts/windows/vmware/Atlaso.WorkstationCleanup.psm1') -Root $fixture
@@ -492,14 +520,38 @@ try {
     }
 } finally { . ([scriptblock]::Create($snapshotFunction.Extent.Text)) }
 $publicationStage = Join-Path $fixture 'publication-stage.tmp'
+$rollbackRacePath = Join-Path $provider 'rollback-race.ini'
+[IO.File]::WriteAllText($rollbackRacePath, 'original rollback state')
+Assert-Refused {
+    & $module {
+        param($path)
+        $savedRestore = ${function:Restore-AtlasoPinnedLanPreferences}.ToString()
+        $raceRestore = $savedRestore.Replace(
+            '[Atlaso.WorkstationDurablePublisherV3]::RenamePinnedFile($DisplacedPin, $Path, $false)',
+            '[IO.File]::WriteAllText($Path, "competing provider"); [Atlaso.WorkstationDurablePublisherV3]::RenamePinnedFile($DisplacedPin, $Path, $false)')
+        Set-Item Function:Restore-AtlasoPinnedLanPreferences ([scriptblock]::Create($raceRestore))
+        try {
+            $validationCount = @{ Value = 0 }
+            Update-AtlasoLanPreferences -Path $path -Transform { param($bytes) return ,([Text.Encoding]::UTF8.GetBytes('candidate')) } -Validate {
+                $validationCount.Value++
+                if ($validationCount.Value -eq 2) { throw 'Trigger rollback race fixture.' }
+            }
+        } finally { Set-Item Function:Restore-AtlasoPinnedLanPreferences ([scriptblock]::Create($savedRestore)) }
+    } $rollbackRacePath
+} 'exists'
+if ([IO.File]::ReadAllText($rollbackRacePath) -cne 'competing provider') { throw 'Rollback overwrote a competing pathname.' }
+$raceBackup = @(Get-ChildItem -LiteralPath $provider -Filter 'rollback-race.ini.atlaso-lan-*.tmp.backup')
+if ($raceBackup.Count -ne 1 -or [IO.File]::ReadAllText($raceBackup[0].FullName) -cne 'original rollback state') {
+    throw 'Failed rollback lost the pinned original.'
+}
 $publicationFinal = Join-Path $fixture 'publication-final.json'
-$publicationWriter = [Atlaso.WorkstationDurablePublisherV2]::CreateStage($publicationStage)
+$publicationWriter = [Atlaso.WorkstationDurablePublisherV3]::CreateStage($publicationStage)
 try {
     $publicationWriter.Write([Text.Encoding]::UTF8.GetBytes('original ownership'))
     $publicationWriter.Flush($true)
     Assert-Refused { [IO.File]::Move($publicationStage, "$publicationStage.replaced") } 'being used by another process'
     Assert-Refused { [IO.File]::WriteAllText($publicationStage, 'replacement ownership') } 'being used by another process'
-    [Atlaso.WorkstationDurablePublisherV2]::PublishDurableFile($publicationWriter, $publicationFinal, $false)
+    [Atlaso.WorkstationDurablePublisherV3]::PublishDurableFile($publicationWriter, $publicationFinal, $false)
     Assert-Refused { [IO.File]::WriteAllText($publicationFinal, 'replacement ownership') } 'being used by another process'
 } finally { $publicationWriter.Dispose() }
 if ([IO.File]::Exists($publicationStage) -or [IO.File]::ReadAllText($publicationFinal) -cne 'original ownership') {

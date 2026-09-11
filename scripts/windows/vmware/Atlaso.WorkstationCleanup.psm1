@@ -16,7 +16,7 @@ unchanged and does not require them to resolve.
 #>
 
 Set-StrictMode -Version Latest
-if (-not ('Atlaso.WorkstationDurablePublisherV2' -as [type])) {
+if (-not ('Atlaso.WorkstationDurablePublisherV3' -as [type])) {
     Add-Type -TypeDefinition @'
 using System;
 using System.ComponentModel;
@@ -25,7 +25,7 @@ using System.Text;
 using System.Runtime.InteropServices;
 using Microsoft.Win32.SafeHandles;
 namespace Atlaso {
-    public static class WorkstationDurablePublisherV2 {
+    public static class WorkstationDurablePublisherV3 {
         [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
         private static extern SafeFileHandle CreateFileW(string path, uint access, uint share,
             IntPtr security, uint creation, uint flags, IntPtr template);
@@ -39,6 +39,10 @@ namespace Atlaso {
         }
         public static void PublishDurableFile(FileStream stage, string destination, bool replace = true) {
             stage.Flush(true);
+            RenamePinnedFile(stage.SafeFileHandle, destination, replace);
+            stage.Flush(true);
+        }
+        public static void RenamePinnedFile(SafeFileHandle handle, string destination, bool replace = false) {
             byte[] name = Encoding.Unicode.GetBytes(Path.GetFullPath(destination));
             int nameOffset = IntPtr.Size == 8 ? 20 : 12;
             int size = nameOffset + name.Length + 2;
@@ -49,9 +53,8 @@ namespace Atlaso {
                 Marshal.WriteInt32(info, nameOffset - 4, name.Length);
                 Marshal.Copy(name, 0, IntPtr.Add(info, nameOffset), name.Length);
                 // Rename the original creation handle, never a reopened pathname.
-                if (!SetFileInformationByHandle(stage.SafeFileHandle, 3, info, (uint)size))
+                if (!SetFileInformationByHandle(handle, 3, info, (uint)size))
                     throw new Win32Exception(Marshal.GetLastWin32Error());
-                stage.Flush(true);
             } finally { Marshal.FreeHGlobal(info); }
         }
     }
