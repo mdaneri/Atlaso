@@ -158,11 +158,26 @@ authoritative import contract. Atlaso reviews and passes a value for every targe
 standalone ESXi connection is bound to its single host; vCenter retains automatic placement unless an operator selected
 a host. Atlaso then streams the disks through a vSphere NFC lease.
 
-Before power-on or any DNS, trust, or depot follow-up, Atlaso verifies that the imported VM retained every mapped vApp
-property and a supported OVF environment transport (`com.vmware.guestInfo` or `iso`). If verification fails, Atlaso
-removes only the exact VM created by that task. A failed removal is reported as a partial deployment requiring manual
-cleanup. The pre-authentication fingerprint probe requires TLS 1.2 or newer while preserving explicit fingerprint
-confirmation as the trust decision. Atlaso refuses duplicate VM names and waits up to 90 minutes for the VCF API after
+Before power-on or any DNS, trust, or depot follow-up, Atlaso verifies every reviewed OVF value. With vCenter, the
+imported VM must retain its vApp properties and a supported declared transport (`com.vmware.guestInfo` or `iso`).
+Standalone ESXi discards vApp configuration during import, even when its generated import specification contains the
+properties. For that target, Atlaso installs an escaped OVF environment in the exact powered-off VM's
+`guestinfo.ovfEnv` setting and reads it back before allowing power-on. The OVA must declare `com.vmware.guestInfo`.
+Guest keys retain VMware's class and instance qualification, such as `vami.ip0.SDDC-Manager`, while reviewed empty
+values and non-editable appliance defaults are preserved. A missing, malformed, duplicated, or changed environment
+fails verification; the absence of ESXi `vAppConfig` alone is expected.
+
+ESXi can expose an empty `guestinfo.ovfEnv` API value even though the VMX contains the complete XML. In that case,
+Atlaso reads only the exact imported VM's configuration from the selected datastore over HTTPS, checks the certificate
+against the confirmed fingerprint before sending its session cookie, and verifies the decoded XML in memory. The
+deployment account therefore needs permission to read that VMX through the datastore browser. A refused read, changed
+certificate, redirect, or invalid configuration fails verification and triggers the same rollback. Results identify
+this readback as `datastore-vmx`; no configuration file or property values are saved in task logs.
+
+If installation or verification fails, Atlaso removes only the exact VM created by that task. A failed removal is reported
+as a partial deployment requiring manual cleanup. The pre-authentication fingerprint probe requires TLS 1.2 or newer
+while preserving explicit fingerprint confirmation as the trust decision. Atlaso refuses duplicate VM names and waits
+up to 90 minutes for the VCF API after
 a verified VM is powered on.
 
 The form can optionally add managed DNS desired state, deploy Atlaso CA trust, and configure the local offline depot.
@@ -179,9 +194,9 @@ Use a disposable VM name and do not record credentials or OVF property values.
    deployment option, and OVF property key names.
 2. In **Deploy SDDC Manager**, confirm the ESXi TLS fingerprint, select the deployment option and destination, review
    every rendered property key, and deploy with power-on disabled first.
-3. Confirm the task reports `HostAgent`, the selected deployment option, sanitized parser/import warnings, every mapped
-   property key, and an accepted OVF environment transport. In ESXi, confirm the VM's vApp/OVF properties exist without
-   copying their values into the evidence record.
+3. Confirm the task reports `HostAgent`, the selected deployment option, sanitized parser/import warnings, qualified
+   property keys, and the `guestinfo.ovfEnv` verification source with `com.vmware.guestInfo` transport. Compare the
+   persisted environment privately with the reviewed mapping; never copy XML or values into the evidence record.
 4. Power on the verified VM and confirm the VCF Installer consumes its OVF environment and becomes usable. Repeat the
    supported vCenter path as a regression check when a safe vCenter target is available.
 5. For a negative check, use a disposable controlled descriptor or test target that cannot retain the required
@@ -189,7 +204,8 @@ Use a disposable VM name and do not record credentials or OVF property values.
 
 Record only sanitized diagnostics and key names. Never capture passwords, vSphere credentials, private material,
 property values, or the complete VM configuration. If the lab result differs, attach the sanitized task diagnostics to
-issue #595 before approving the pull request.
+issue #801 before approving the pull request. Powered-off import verification does not prove that the appliance consumed
+the environment; complete the real guest boot and readiness check as well.
 
 ## Configure VCF Offline Depot
 
