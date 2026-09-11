@@ -209,7 +209,9 @@ def test_login_and_dashboard_render(client):
     assert '<meta name="theme-color"' not in response.text
     assert "/static/pwa.js?v=issue-287-2" in response.text
     assert "Everything your virtualization lab needs." in response.text
-    assert "Infrastructure â€¢ Storage â€¢ Identity â€¢ Networking â€¢ Lifecycle" in response.text
+    assert "Infrastructure • Storage • Identity • Networking • Lifecycle" in response.text
+    assert 'title="Close preview">×</button>' in response.text
+    assert "Waiting for task status…" in response.text
     assert "simplifying deployment, maintenance, and validation" in response.text
     assert "LF</span>" not in response.text
     assert "/static/vendor/prism/prism-core.min.js" in response.text
@@ -1899,10 +1901,10 @@ def test_login_page_includes_pwa_metadata(client):
     assert '<meta name="theme-color"' not in response.text
     assert "/static/pwa.js?v=issue-287-2" in response.text
     assert response.text.count("/static/brand/atlaso-logo-horizontal-transparent-1200x300.png") == 1
-    assert 'alt="Atlaso â€” Infrastructure â€¢ Connectivity â€¢ Automation"' in response.text
+    assert 'alt="Atlaso — Infrastructure • Connectivity • Automation"' in response.text
     assert "Infrastructure appliance" not in response.text
     assert "Everything your virtualization lab needs." not in response.text
-    assert "Infrastructure â€¢ Storage â€¢ Identity â€¢ Networking â€¢ Lifecycle" not in response.text
+    assert "Infrastructure • Storage • Identity • Networking • Lifecycle" not in response.text
 
 
 def test_shared_shells_use_current_mobile_web_app_metadata(client):
@@ -9062,9 +9064,9 @@ def test_logs_page_renders_refreshable_fixed_source_tabs_and_redacts_logs(client
     assert 'data-log-source-tab="nginx"' in response.text
     assert 'title="systemd journal: nginx.service"' in response.text
     assert 'data-log-source-tab="nginx-access"' in response.text
-    assert 'title="/var/log/nginx/access.log Â· management and service HTTP requests"' in response.text
+    assert 'title="/var/log/nginx/access.log · management and service HTTP requests"' in response.text
     assert 'data-log-source-tab="nginx-error"' in response.text
-    assert 'title="/var/log/nginx/error.log Â· management and service HTTP errors"' in response.text
+    assert 'title="/var/log/nginx/error.log · management and service HTTP errors"' in response.text
     assert 'data-log-source-tab="kms"' in response.text
     kms_tab = response.text.split('data-log-source-tab="kms"', 1)[1].split("</button>", 1)[0]
     assert 'aria-disabled="true"' in kms_tab
@@ -11581,7 +11583,7 @@ def test_vcf_offline_depot_page_redirect_and_uploads_are_sanitized(client, tmp_p
     assert 'controller.setSkippedSteps' in app_js.text
     assert 'wizard.setSkippedSteps' in app_js.text
     assert "data-vcf-depot-configuration-credentials" in page.text
-    assert "0 credentials Â·" not in page.text
+    assert "0 credentials ·" not in page.text
     assert "formatNginxListen(listenAddress, port)" in app_js.text
     assert "initializeVcfDepotProfilesTable" in app_js.text
     assert "initializeVcfDepotTasksTable" not in app_js.text
@@ -12326,7 +12328,7 @@ def test_vcf_offline_depot_tool_package_wizard_endpoint_and_reset_clear_configur
 
     reset_page = client.get("/vcf-offline-depot")
     assert "no package staged" in reset_page.text
-    assert "operator saved Â· saved" not in reset_page.text
+    assert "operator saved · saved" not in reset_page.text
     assert "Properties</small><strong>Default</strong>" in reset_page.text
     assert 'data-vcf-depot-configuration-open data-vcf-depot-requires-tool disabled' in reset_page.text
 
