@@ -55,6 +55,9 @@
         <loc>https://mdaneri.github.io/Atlaso/docs/operate/backup-restore/</loc>
       </url>
       <url>
+        <loc>https://mdaneri.github.io/Atlaso/docs/operate/diagnostics/</loc>
+      </url>
+      <url>
         <loc>https://mdaneri.github.io/Atlaso/docs/operate/automation/</loc>
       </url>
       <url>
@@ -164,6 +167,9 @@
       </url>
       <url>
         <loc>https://mdaneri.github.io/Atlaso/docs/contribute/python-static-analysis/</loc>
+      </url>
+      <url>
+        <loc>https://mdaneri.github.io/Atlaso/docs/contribute/diagnostic-collectors/</loc>
       </url>
       <url>
         <loc>https://mdaneri.github.io/Atlaso/docs/contribute/router-architecture/</loc>

@@ -286,6 +286,8 @@
       
         
       
+        
+      
     
     
     
@@ -422,6 +424,8 @@
       
         
           
+        
+      
         
       
         
@@ -676,6 +680,8 @@
       
         
           
+        
+      
         
       
         
@@ -1264,6 +1270,40 @@
     
   
   Backup and restore
+
+    
+  </span>
+  
+  
+    
+  
+  
+    <span class="md-status md-status--current"></span>
+  
+
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../operate/diagnostics/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Diagnostic support bundles
 
     
   </span>
@@ -2555,6 +2595,8 @@
       
         
       
+        
+      
     
     
     
@@ -2731,6 +2773,40 @@
     
   
   Python static analysis
+
+    
+  </span>
+  
+  
+    
+  
+  
+    <span class="md-status md-status--current"></span>
+  
+
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../contribute/diagnostic-collectors/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Diagnostic collector authoring
 
     
   </span>
@@ -4273,6 +4349,12 @@ manifest, configuration, or result summaries remain semantic markup only while t
 behavior. Any future sortable, filterable, selectable, navigable, editable, or actionable collection must use the
 shared Tabulator foundation or receive explicit maintainer approval through a separately labeled issue.</p>
 <h2 id="completion-rule">Completion rule<a class="headerlink" href="#completion-rule" title="Permanent link">&para;</a></h2>
+<p>Issue #799 reorganizes the existing Maintenance (<code>backup_restore.html</code>) page into LDAP, Backup, Reset and Diagnostics
+tabs. Recovery actions retain their original routes and safeguards. <code>partials/diagnostics.html</code> contains the
+wizard-backed Tabulator collection using Automation Schedules and ESX Storage, the <code>diagnostics-wizard</code> four-step
+creation flow, and the <code>diagnostics-detail</code> read-only result dialog using Tasks conventions. It preserves the native
+read-only fallback, current administrator authorization, explicit omission/status text, keyboard entry and responsive
+shared controls. Diagnostics does not invoke Appliance Apply. Desktop and narrow-view validation belong to #799.</p>
 <p>The matrix is complete only while E1–E8 pass on the same pull-request head. A future failure must be remediated in the
 same change or tracked by a separately labeled issue linked to #115; a new <code>custom/other</code> interaction also requires
 explicit maintainer approval before implementation.</p>

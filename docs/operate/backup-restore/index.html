@@ -18,7 +18,7 @@
         <link rel="prev" href="../onepassword-credential-bridge-recovery/">
       
       
-        <link rel="next" href="../automation/">
+        <link rel="next" href="../diagnostics/">
       
       
         
@@ -288,6 +288,8 @@
       
         
       
+        
+      
     
     
     
@@ -424,6 +426,8 @@
       
         
           
+        
+      
         
       
         
@@ -678,6 +682,8 @@
       
         
           
+        
+      
         
       
         
@@ -1409,6 +1415,40 @@
   
 </nav>
       
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../diagnostics/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Diagnostic support bundles
+
+    
+  </span>
+  
+  
+    
+  
+  
+    <span class="md-status md-status--current"></span>
+  
+
+  
+
+      </a>
     </li>
   
 
@@ -2686,6 +2726,8 @@
       
         
       
+        
+      
     
     
     
@@ -2862,6 +2904,40 @@
     
   
   Python static analysis
+
+    
+  </span>
+  
+  
+    
+  
+  
+    <span class="md-status md-status--current"></span>
+  
+
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../contribute/diagnostic-collectors/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Diagnostic collector authoring
 
     
   </span>
@@ -3691,6 +3767,8 @@
       
         
       
+        
+      
     
     
     
@@ -3734,12 +3812,10 @@
 
 
 <h1 id="backup-and-restore">Backup and restore<a class="headerlink" href="#backup-and-restore" title="Permanent link">&para;</a></h1>
-<p>Traffic Publishing archives include canonical NAT enablement and additive family, translation mode, and fixed-address
-fields. Legacy IPv4 rules retain their meaning; omitted ingress remains pending explicit review. Missing NIC selectors
-are retained only when backed by archived missing-host inventory and never become runtime-eligible on restore.
-Canonical NAT enablement takes precedence over a legacy Routes/WAN projection. Factory reset clears NAT rules,
-disables the NAT replay service, and establishes a disabled <code>nat</code> Apply baseline. See
-<a href="../traffic-publishing/">Traffic Publishing</a> for the source-translation contract.</p>
+<p>Open <strong>Operations &gt; Maintenance</strong>. The <strong>LDAP</strong> tab contains directory recovery; <strong>Backup</strong> groups settings export,
+restore and archive scope; <strong>Reset</strong> retains the confirmed factory-reset workflow. <strong>Diagnostics</strong> collects
+<a href="../diagnostics/">diagnostic support bundles</a> through its own reviewed wizard.
+Existing <code>/ui/management/backup-restore</code> links and recovery actions remain supported.</p>
 <!-- BEGIN GENERATED INTERFACE OVERVIEW -->
 <h2 id="interface-overview">Interface overview<a class="headerlink" href="#interface-overview" title="Permanent link">&para;</a></h2>
 <p>This verified appliance view provides visual orientation before you begin.</p>
@@ -3747,10 +3823,16 @@ disables the NAT replay service, and establishes a disabled <code>nat</code> App
 <p><em>Figure: Backup and Restore in the verified clean-appliance desktop state.</em></p>
 <!-- END GENERATED INTERFACE OVERVIEW -->
 
+<p>Traffic Publishing archives include canonical NAT enablement and additive family, translation mode, and fixed-address
+fields. Legacy IPv4 rules retain their meaning; omitted ingress remains pending explicit review. Missing NIC selectors
+are retained only when backed by archived missing-host inventory and never become runtime-eligible on restore.
+Canonical NAT enablement takes precedence over a legacy Routes/WAN projection. Factory reset clears NAT rules,
+disables the NAT replay service, and establishes a disabled <code>nat</code> Apply baseline. See
+<a href="../traffic-publishing/">Traffic Publishing</a> for the source-translation contract.</p>
 <p>Browser archive imports use the shared <a href="../../services/vcf-helper/#chunked-browser-uploads">chunked upload
 transport</a>. Chunk staging does not restore or apply settings;
 the existing validation, recovery review, and global apply boundaries still govern finalization.</p>
-<p>Open <strong>Backup and Restore</strong> to protect Atlaso settings before maintenance and recover the control-plane configuration
+<p>Open <strong>Maintenance &gt; Backup</strong> to protect Atlaso settings before maintenance and recover the control-plane configuration
 when needed.</p>
 <h2 id="create-a-backup">Create a backup<a class="headerlink" href="#create-a-backup" title="Permanent link">&para;</a></h2>
 <ol>
@@ -4043,13 +4125,13 @@ mapping to <code>access</code>.</p>
         
         
           
-          <a href="../automation/" class="md-footer__link md-footer__link--next" aria-label="Next: Automation">
+          <a href="../diagnostics/" class="md-footer__link md-footer__link--next" aria-label="Next: Diagnostic support bundles">
             <div class="md-footer__title">
               <span class="md-footer__direction">
                 Next
               </span>
               <div class="md-ellipsis">
-                Automation
+                Diagnostic support bundles
               </div>
             </div>
             <div class="md-footer__button md-icon">
