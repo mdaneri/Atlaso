@@ -33,6 +33,7 @@ from uuid import uuid4
 
 from atlaso import __build_git_commit__, __version__
 
+TASK_ID_PATTERN = r"(?:job_[0-9a-fA-F]{12}|job_[0-9a-fA-F]{32}|job_schedule_[0-9]{1,20}_(?:[0-9a-fA-F]{12}|[0-9]{1,20})|[0-9a-fA-F]{32}|[0-9a-fA-F]{8}(?:-[0-9a-fA-F]{4}){3}-[0-9a-fA-F]{12})"
 SCHEMA_VERSION = 1
 SCOPES = ("network", "terminal", "update", "pxe")
 SOURCE_LIMIT = 262_144
@@ -106,7 +107,7 @@ class Options:
             raise ValueError("Unknown diagnostic scope.")
         correlation = str(values.get("correlation_id") or "")
         # Task/correlation identifiers are opaque UUIDs, never arbitrary log queries.
-        if correlation and not re.fullmatch(r"(?:job_[0-9a-fA-F]{12}|[0-9a-fA-F-]{32,36})", correlation):
+        if correlation and not re.fullmatch(TASK_ID_PATTERN, correlation):
             raise ValueError("Use an Atlaso task ID or correlation UUID.")
         lines = int(values.get("log_lines", 500))
         if not 1 <= lines <= 2000:
@@ -136,6 +137,19 @@ def ordinary_path(path: Path) -> None:
         info = parent.lstat()
         if stat.S_ISLNK(info.st_mode) or getattr(info, "st_file_attributes", 0) & 0x400:
             raise EvidenceError("permission_denied")
+
+
+def private_directory(path: Path) -> None:
+    """Require an ordinary private directory owned by the current process user.
+
+    Args:
+        path: Configured diagnostic spool directory to validate without creating it.
+    """
+    ordinary_path(path)
+    info = path.stat()
+    effective_uid = getattr(os, "geteuid", lambda: -1)
+    if not stat.S_ISDIR(info.st_mode) or (os.name == "posix" and (info.st_mode & 0o077 or info.st_uid != effective_uid())):
+        raise EvidenceError("permission_denied")
 
 
 def read_source(path: Path, limit: int = SOURCE_LIMIT) -> bytes:
@@ -500,7 +514,7 @@ class Collector:
                 for key in ("rolled_back", "service_health", "no_change", "terminal", "status_activated"):
                     item[key] = payload.get(key) if isinstance(payload.get(key), bool) else None
                 for key in ("job_id", "task_id"):
-                    item[key] = token(payload.get(key), r"(?:job_[0-9a-f]{12}|[0-9a-f-]{32,36})")
+                    item[key] = token(payload.get(key), TASK_ID_PATTERN)
                 item["candidate_version"] = token(payload.get("candidate_version"), r"\d+\.\d+\.\d+")
                 restoration = payload.get("ui_restoration", {})
                 item["ui_restoration"] = restoration.get("state") if restoration.get("state") in {"held", "pending", "restored"} else None
@@ -586,7 +600,7 @@ class Collector:
                     (timestamp(self.options.since).replace(tzinfo=None).isoformat(" "),
                      timestamp(self.options.until).replace(tzinfo=None).isoformat(" "),
                      self.options.correlation_id, self.options.correlation_id))
-                result["tasks"] = [{"id": token(row[0], r"(?:job_[0-9a-f]{12}|[0-9a-f-]{32,36})"), "type": token(row[1]),
+                result["tasks"] = [{"id": token(row[0], TASK_ID_PATTERN), "type": token(row[1]),
                     "status": row[2] if row[2] in {"pending", "running", "succeeded", "failed", "cancelled"} else None,
                     "timestamps": [token(v, r"[0-9T :.+Z-]{1,40}") for v in row[3:]]} for row in rows]
         configuration: dict[str, Any] = {key: result[key] for key in ("desired_interfaces", "desired_vlans", "applied_interfaces") if key in result}

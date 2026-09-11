@@ -995,7 +995,7 @@ def test_development_reset_cleans_diagnostics_with_admission_locked(tmp_path, mo
         connection.execute("INSERT INTO jobs VALUES (?, 'diagnostic-bundle', ?)",
                            ("bundle", "running" if active else "succeeded"))
     spool = tmp_path / "diagnostics"
-    spool.mkdir()
+    spool.mkdir(mode=0o700)
     archive = spool / "00000000-0000-0000-0000-000000000001.zip"
     archive.write_bytes(b"old evidence")
     monkeypatch.setattr(factory_reset.get_settings(), "diagnostics_spool_path", spool)
@@ -1019,7 +1019,7 @@ def test_factory_reset_clears_diagnostic_archives_and_rejects_shared_root(tmp_pa
     import atlaso.app.factory_reset as factory_reset
 
     spool = tmp_path / "diagnostics"
-    spool.mkdir()
+    spool.mkdir(mode=0o700)
     archive = spool / "00000000-0000-0000-0000-000000000001.zip"
     archive.write_bytes(b"sanitized evidence")
     monkeypatch.setattr(factory_reset.get_settings(), "diagnostics_spool_path", spool)
@@ -1734,7 +1734,7 @@ def test_managed_factory_reset_retains_marker_until_readiness(tmp_path, monkeypa
     monkeypatch.setattr(factory_reset, "_stop_application_services", lambda **_kwargs: None)
     monkeypatch.setattr(factory_reset, "_candidate_database", lambda *_args, **_kwargs: 16)
     diagnostic_spool = tmp_path / "diagnostics"
-    diagnostic_spool.mkdir()
+    diagnostic_spool.mkdir(mode=0o700)
     diagnostic_archive = diagnostic_spool / "00000000-0000-0000-0000-000000000001.zip"
     diagnostic_archive.write_bytes(b"old diagnostic evidence")
     monkeypatch.setattr(factory_reset.get_settings(), "diagnostics_spool_path", diagnostic_spool)
@@ -2454,3 +2454,45 @@ def test_complete_factory_reset_resumes_after_post_replacement_interruption(
     assert result["state"] == "succeeded"
     assert result["applied_unit_count"] == 17
     assert not (state_directory / "request.json").exists()
+
+
+@pytest.mark.parametrize("mode,owner", [(0o40755, 123), (0o40700, 456)])
+def test_factory_reset_preserves_diagnostics_with_unsafe_ownership(tmp_path, monkeypatch, mode, owner):
+    """Reset preserves archives when collection would reject their directory.
+
+    Args:
+        tmp_path: Isolated spool fixture.
+        monkeypatch: Fixture restoring metadata and configured root overrides.
+        mode: Simulated POSIX directory mode.
+        owner: Simulated directory owner.
+    """
+    from types import SimpleNamespace
+
+    import atlaso.app.factory_reset as factory_reset
+    import atlaso.diagnostics as diagnostics
+
+    spool = tmp_path / "diagnostics"
+    spool.mkdir(mode=0o700)
+    archive = spool / "00000000-0000-0000-0000-000000000001.zip"
+    archive.write_bytes(b"preserve")
+    monkeypatch.setattr(factory_reset.get_settings(), "diagnostics_spool_path", spool)
+    original_stat = type(spool).stat
+
+    def metadata(path, *args, **kwargs):
+        """Substitute only the spool's follow-link metadata.
+
+        Args:
+            path: Requested filesystem path.
+            *args: Forwarded stat arguments.
+            **kwargs: Forwarded stat options.
+        """
+        if path == spool and not args and not kwargs:
+            return SimpleNamespace(st_mode=mode, st_uid=owner)
+        return original_stat(path, *args, **kwargs)
+
+    with monkeypatch.context() as patch:
+        patch.setattr(diagnostics, "os", SimpleNamespace(name="posix", geteuid=lambda: 123))
+        patch.setattr(type(spool), "stat", metadata)
+        with pytest.raises(factory_reset.FactoryResetError, match="unsafe"):
+            factory_reset._clear_diagnostic_archives()
+    assert archive.read_bytes() == b"preserve"

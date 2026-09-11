@@ -5,7 +5,6 @@ from __future__ import annotations
 import io
 import json
 import logging
-import os
 import re
 import shutil
 import zipfile
@@ -28,6 +27,7 @@ from atlaso.diagnostics import (
     EvidenceError,
     Options,
     ordinary_path,
+    private_directory,
     read_source,
     write_new,
 )
@@ -44,11 +44,7 @@ def spool() -> Path:
         root.mkdir(mode=0o700)
     except FileExistsError:
         pass
-    ordinary_path(root)
-    info = root.stat()
-    effective_uid = getattr(os, "geteuid", lambda: -1)
-    if not root.is_dir() or (os.name == "posix" and (info.st_mode & 0o077 or info.st_uid != effective_uid())):
-        raise EvidenceError("permission_denied")
+    private_directory(root)
     return root
 
 

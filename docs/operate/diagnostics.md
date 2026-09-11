@@ -17,7 +17,8 @@ anything. A diagnostic bundle is not a settings backup or a promise of source au
 
 1. Use the bottom **Create diagnostic bundle** row to open the shared four-step wizard.
 2. In **Incident**, keep **Last 30 minutes** or select a custom window of at most seven days. Custom times use the
-   displayed browser timezone. An optional task/correlation UUID narrows task history; existing `job_` IDs work too.
+   displayed browser timezone. An optional task/correlation UUID narrows task history; existing short and full-length
+   `job_` IDs and scheduled `job_schedule_` IDs work too.
    Runtime observations describe capture time, not historical state, and system logs are not filtered by that ID.
 3. In **Contents**, select additional Network, Web Terminal, Appliance Update, or Network Boot / PXE evidence.
    Basic version, clock, resource pressure, service status, and database availability are always included.
@@ -101,8 +102,9 @@ Web bundles expire 24 hours after their request time and immediately become unav
 expired terminal artifacts during bounded reconciliation; if the worker is stopped, physical removal resumes when it
 returns. Expired downloads also attempt cleanup. An item-specific cleanup failure retains that protected artifact for
 retry and storage attention; cleanup continues for the other expired bundles.
-Complete factory reset clears the dedicated diagnostic spool before replacing its job records. An unsafe spool path
-or an unrecognized entry blocks reset cleanup so the existing retention records remain available for recovery.
+Complete factory reset clears the dedicated diagnostic spool before replacing its job records. A spool with an unsafe
+path, owner, or permissions or an unrecognized entry blocks reset cleanup so the existing retention records remain
+available for recovery.
 Development-mode reset uses the same cleanup while holding its database writer lock. Finish or cancel any queued or
 running diagnostic collection first; development reset does not stop appliance services to quiesce collectors.
 Manual deletion affects only the appliance copy. Neither expiry nor deletion promises forensic erasure or removes copies

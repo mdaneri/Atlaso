@@ -839,11 +839,11 @@ def _clear_automation_transient_staging() -> None:
 
 def _clear_diagnostic_archives() -> None:
     """Clear the dedicated spool before discarding its job-based retention metadata."""
-    from atlaso.diagnostics import EvidenceError, ordinary_path
+    from atlaso.diagnostics import EvidenceError, private_directory
 
     path = get_settings().diagnostics_spool_path.absolute()
     try:
-        ordinary_path(path)
+        private_directory(path)
     except FileNotFoundError:
         return
     except (OSError, EvidenceError) as exc:
