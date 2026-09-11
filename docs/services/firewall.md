@@ -24,8 +24,15 @@ This verified appliance view provides visual orientation before you begin.
 
 <!-- END GENERATED INTERFACE OVERVIEW -->
 
-Select **Add rule here** or open an existing operator rule to use the five-step guided workflow. Rule identity, traffic
-matching, priority and notes, enablement, and final review are separate decisions. The dedicated **Enablement** step
+Select **Add rule here** or open an existing operator rule to use the four-step guided workflow:
+
+1. **Rule** — enter the name and a multiline Description (up to 1,000 characters), then choose Direction and Action.
+2. **Traffic** — choose Protocol, Source, Destination, Destination ports, Interface, and Priority. Lower priority values
+   are evaluated first.
+3. **Enablement** — choose whether the rule enters rendered desired state.
+4. **Review** — check every field, including the description with its line breaks, before creating or updating the rule.
+
+Existing rules retain their description, priority, and enabled state when reopened. The dedicated **Enablement** step
 makes clear that enabling a rule changes rendered desired state only; enforcement still waits for the global Firewall
 appliance-apply unit.
 

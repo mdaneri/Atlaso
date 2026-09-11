@@ -156,9 +156,8 @@
 </section>
 
 {% set firewall_rule_steps = [
-  {"id": "policy", "label": "Rule", "summary": "Name, direction, and action"},
-  {"id": "match", "label": "Traffic", "summary": "Protocol, endpoints, and ports"},
-  {"id": "state", "label": "State", "summary": "Priority and operator notes"},
+  {"id": "policy", "label": "Rule", "summary": "Name, description, direction, and action"},
+  {"id": "match", "label": "Traffic", "summary": "Protocol, endpoints, ports, interface, and priority"},
   {"id": "enablement", "label": "Enablement", "summary": "Desired rule state"},
   {"id": "review", "label": "Review", "summary": "Confirm desired state"}
 ] %}
@@ -168,14 +167,15 @@
   management_ui_path("/firewall/rules"),
   firewall_rule_steps,
   "Define the firewall rule",
-  "Name the operator rule and choose its nftables direction and action.",
+  "Name and describe the operator rule, then choose its nftables direction and action.",
   "Create firewall rule"
 ) %}
   <input type="hidden" name="csrf" value="{{ csrf_token }}">
   <input type="hidden" name="record_id" value="">
-  <section data-atlaso-wizard-step="policy">
+  <section class="form-stack" data-atlaso-wizard-step="policy">
+    <label><span class="field-label"><span>Name</span><button class="help-icon" type="button" data-help="Stable operator-visible name for this explicit firewall rule.">i</button></span><input name="name" required></label>
+    <label><span class="field-label"><span>Description</span><button class="help-icon" type="button" data-help="Operator note describing the traffic and reason for the rule.">i</button></span><textarea name="description" rows="3" maxlength="1000"></textarea></label>
     <div class="form-grid">
-      <label><span class="field-label"><span>Name</span><button class="help-icon" type="button" data-help="Stable operator-visible name for this explicit firewall rule.">i</button></span><input name="name" required></label>
       <label><span class="field-label"><span>Direction</span><button class="help-icon" type="button" data-help="Input targets the appliance, forward crosses the appliance, and output originates from it.">i</button></span><select name="direction">{% for direction in firewall_directions %}<option value="{{ direction }}">{{ direction }}</option>{% endfor %}</select></label>
       <label><span class="field-label"><span>Action</span><button class="help-icon" type="button" data-help="Accept permits matching traffic; drop or reject blocks it according to nftables behavior.">i</button></span><select name="action">{% for action in firewall_actions %}<option value="{{ action }}">{{ action }}</option>{% endfor %}</select></label>
     </div>
@@ -187,14 +187,9 @@
       <label><span class="field-label"><span>Destination</span><button class="help-icon" type="button" data-help="Destination Source Group or Any traffic.">i</button></span><select name="destination">{% for group in firewall_source_groups %}<option value="{{ group.id }}">{{ group.name }}</option>{% endfor %}</select></label>
       <label><span class="field-label"><span>Destination ports</span><button class="help-icon" type="button" data-help="Optional destination port or validated port expression for protocols that use ports.">i</button></span><input name="destination_port"></label>
       <label><span class="field-label"><span>Interface</span><button class="help-icon" type="button" data-help="Optionally constrain the match to one current service-capable interface.">i</button></span><select name="interface_name"><option value="">any</option>{% for interface in firewall_interface_options %}<option value="{{ interface.name }}">{{ interface.name }}</option>{% endfor %}</select></label>
-    </div>
-    <a class="button ghost compact-button" href="{{ management_ui_path('/network-objects') }}?return_to=firewall-rule" data-source-group-manage="firewall-rule">Manage source groups</a>
-  </section>
-  <section class="hidden" data-atlaso-wizard-step="state">
-    <div class="form-grid">
       <label><span class="field-label"><span>Priority</span><button class="help-icon" type="button" data-help="Lower values are evaluated before higher values within Atlaso's generated ruleset.">i</button></span><input type="number" name="priority" required></label>
     </div>
-    <label><span class="field-label"><span>Description</span><button class="help-icon" type="button" data-help="Operator note describing the traffic and reason for the rule.">i</button></span><input name="description"></label>
+    <a class="button ghost compact-button" href="{{ management_ui_path('/network-objects') }}?return_to=firewall-rule" data-source-group-manage="firewall-rule">Manage source groups</a>
   </section>
   <section class="hidden" data-atlaso-wizard-step="enablement">
     <div class="form-grid">

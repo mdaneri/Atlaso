@@ -307,3 +307,41 @@ def test_firewall_settings_autosave_updates_desired_state_preview(client):
     assert 'comment "mgmt-console"' in enabled_payload["config_preview"]
     assert 'tcp ip saddr' not in enabled_payload["config_preview"]
     assert 'tcp dport { 22, 80, 443 } accept comment "mgmt-console"' in enabled_payload["config_preview"]
+
+
+def test_firewall_multiline_description_round_trip(client):
+    """Preserve multiline operator notes and priority across create, edit, and reload.
+
+    Args:
+        client: HTTP test client used to exercise the Atlaso application.
+    """
+    import html
+    import json
+    import re
+
+    login(client)
+    page = client.get('/firewall')
+    csrf = page.text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
+    fields = dict(csrf=csrf, name='multiline-rule', description='Allow <app> & clients\nSecond line',
+                  direction='input', action='accept', protocol='tcp', source='any', destination='any',
+                  destination_port='8443', interface_name='', priority='17', enabled='on')
+    headers = {'X-Atlaso-Grid': '1'}
+    created = client.post('/firewall/rules', data=fields, headers=headers)
+    assert created.status_code == 200
+    rule = created.json()['rule']
+    assert rule['description'] == fields['description']
+    assert rule['priority'] == 17
+    fields['description'] = 'Updated <note>\n\nPreserved third line'
+    fields['priority'] = '23'
+    del fields['enabled']
+    edited = client.post(f"/firewall/rules/{rule['id']}/edit", data=fields, headers=headers)
+    assert edited.status_code == 200
+    assert edited.json()['rule']['enabled'] is False
+    page = client.get('/firewall')
+    payload = re.search(r'id="firewall-rules-table"[^>]+data-rules=\'([^\']*)\'', page.text, re.S)
+    assert payload is not None
+    saved = next(row for row in json.loads(html.unescape(payload.group(1))) if row['id'] == rule['id'])
+    assert saved['description'] == fields['description']
+    assert saved['priority'] == 23
+    assert saved['enabled'] is False
+    assert '<note>' not in page.text

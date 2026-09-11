@@ -1360,7 +1360,9 @@ function renderAtlasoWizardReview(form, reviewItems = []) {
   const review = form.querySelector("[data-atlaso-resource-review]");
   if (!(review instanceof HTMLElement)) return;
   review.innerHTML = reviewItems.map((item) => (
-    `<div><span>${escapeHtml(item.label)}</span><strong>${escapeHtml(atlasoWizardReviewValue(form, item))}</strong></div>`
+    `<div><span>${escapeHtml(item.label)}</span><strong>${item.multiline
+      ? escapeHtml(atlasoWizardReviewValue(form, item)).replace(/\r\n|\r|\n/g, "<br>")
+      : escapeHtml(atlasoWizardReviewValue(form, item))}</strong></div>`
   )).join("");
 }
 
@@ -4237,15 +4239,16 @@ function initializeFirewallRulesTable() {
     actionErrorSelector: "#firewall-rule-error",
     defaults: newFirewallRuleRow(interfaces[0] || ""),
     steps: [
-      { id: "policy", title: "Define the firewall rule", description: "Name the operator rule and choose its nftables direction and action." },
-      { id: "match", title: "Match network traffic", description: "Choose protocol, source, destination, ports, and optional interface." },
-      { id: "state", title: "Set rule priority and notes", description: "Choose evaluation priority and record the rule's operator purpose." },
+      { id: "policy", title: "Define the firewall rule", description: "Name and describe the operator rule, then choose its nftables direction and action." },
+      { id: "match", title: "Match network traffic", description: "Choose protocol, source, destination, ports, optional interface, and evaluation priority." },
       { id: "enablement", title: "Choose rule enablement", description: "Choose whether the rule enters rendered desired state." },
       { id: "review", title: "Review firewall desired state", description: "Confirm the rule and global appliance-apply boundary." },
     ],
     reviewItems: [
-      { label: "Rule", field: "name" },
-      { label: "Policy", value: (form) => `${form.elements.direction.value} / ${form.elements.action.value}` },
+      { label: "Name", field: "name" },
+      { label: "Description", field: "description", multiline: true },
+      { label: "Direction", field: "direction" },
+      { label: "Action", field: "action" },
       { label: "Protocol", field: "protocol" },
       { label: "Source", field: "source" },
       { label: "Destination", field: "destination" },

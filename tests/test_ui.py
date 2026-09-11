@@ -1721,17 +1721,26 @@ def test_reported_template_accessibility_contracts():
     assert '<dl class="dns-authority-records">' not in dns
     assert '<div class="error-list" role="list" data-oidc-provider-validation-errors>' in authentication
     assert '<ul class="error-list">' not in authentication
-    state_step = firewall[
-        firewall.index('data-atlaso-wizard-step="state"'):
+    policy_step = firewall[
+        firewall.index('data-atlaso-wizard-step="policy"'):
+        firewall.index('data-atlaso-wizard-step="match"')
+    ]
+    match_step = firewall[
+        firewall.index('data-atlaso-wizard-step="match"'):
         firewall.index('data-atlaso-wizard-step="enablement"')
     ]
     enablement_step = firewall[
         firewall.index('data-atlaso-wizard-step="enablement"'):
         firewall.index('data-atlaso-wizard-step="review"')
     ]
-    assert 'name="priority"' in state_step
-    assert 'name="description"' in state_step
-    assert 'name="enabled"' not in state_step
+    assert 'type="number" name="priority" required' in match_step
+    assert '<textarea name="description" rows="3" maxlength="1000">' in policy_step
+    assert 'class="form-stack" data-atlaso-wizard-step="policy"' in firewall
+    assert 'name="description"' not in match_step
+    assert 'name="priority"' not in policy_step
+    assert 'data-atlaso-wizard-step="state"' not in firewall
+    assert '"id": "state"' not in firewall
+    assert 'name="enabled"' not in match_step
     assert 'name="enabled"' in enablement_step
     assert "Enforcement waits for the global Firewall appliance-apply unit." in enablement_step
     assert 'aria-describedby="{{ dialog_id }}-description"' in resource_wizard
