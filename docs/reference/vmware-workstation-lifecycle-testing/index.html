@@ -4023,7 +4023,23 @@ blank-disk claims depend on those identities and reject transient <code>/dev/sdX
 <p>The default lifecycle lab creates isolated VM directories and result/log artifacts under its canonical identity:</p>
 <div class="language-text highlight"><pre><span></span><code><span id="__span-3-1"><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a>test-results/vmware-workstation-lifecycle/Atlaso-PR-&lt;number&gt;-lifecycle-&lt;collision-safe-suffix&gt;/vms
 </span></code></pre></div>
-<p>The appliance VMX is copied from the selected Workstation image output. Client VMs use an Alpine cloud VMDK prepared
+<p>The appliance is cloned through <code>create-atlaso-vm.ps1</code> from the verified, powered-off two-payload-disk template.
+Custom <code>-VmrunPath</code> installations also reuse the disk manager discovered beside that executable.
+Before first boot, the shared clone contract creates private 500 GiB thin depot and backup disks inside the lab's
+appliance directory and attaches them at SCSI units 2 and 3. The source template stays unchanged, and no persistent
+data disks from another appliance are reused. Failed disk provisioning retains the clone identity for supported
+cleanup. If helper or wheel deployment fails, the runner reports bounded state for data-disk initialization, HTTPS
+bootstrap, Atlaso, and nginx, or explicitly reports that guest diagnostics were unavailable. Retained startup
+diagnostics contain only validated unit names and state fields; failed, invalid, or oversized readbacks are removed.
+Raw readbacks use the task checkout's <code>.atlaso-local/lifecycle-startup-diagnostics/&lt;lab-name&gt;/guest-readback.txt</code>,
+outside retained results. Only sanitized bytes are atomically published to the final diagnostic artifact. After a
+provider timeout, the shared Windows job runner terminates and verifies every descendant has exited before staging
+cleanup. It also proves the job empty after normal parent exit and suppresses untrusted provider console output.
+Unproven termination fails closed and blocks final lab and client-seed provider cleanup, even with
+<code>-CleanupCreatedLab</code>, preserving the appliance and exact staging path for recovery. After a
+host/process interruption, preserve that exact staging identity, verify the owning lifecycle and provider processes
+have exited, and remove its readback before sharing evidence or completing task cleanup. Do not archive raw staging.
+Client VMs use an Alpine cloud VMDK prepared
 from a pinned upstream QCOW2 source. The payload and SHA-512 metadata are cached only as
 a verified pair: corrupt entries are removed on an ordinary rerun, downloads stay in unique partial files until
 validation succeeds, and promotion is scoped to the exact expected cache files. The default Alpine artifact uses the
