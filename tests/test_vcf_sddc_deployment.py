@@ -30,6 +30,8 @@ from atlaso.app.services.vcf_sddc_deployment import (
     validate_ova_manifest,
 )
 
+OVF_PLATFORM = {"Kind": "VMware ESXi", "Version": "9.1.0", "Vendor": "VMware, Inc.", "Locale": "en"}
+
 OVF = b"""<?xml version="1.0"?>
 <Envelope xmlns="http://schemas.dmtf.org/ovf/envelope/1">
   <References><File ovf:id="file0" ovf:href="disk.vmdk" ovf:size="4" xmlns:ovf="http://schemas.dmtf.org/ovf/envelope/1"/></References>
@@ -593,7 +595,7 @@ def test_deploy_ova_binds_standalone_host_and_preserves_vcenter_automatic_placem
             )
 
     content = SimpleNamespace(
-        about=SimpleNamespace(apiType=api_type),
+        about=SimpleNamespace(apiType=api_type, version="9.1.0", vendor="VMware, Inc."),
         ovfManager=OvfManager(),
     )
     service_instance = SimpleNamespace(RetrieveContent=lambda: content)
@@ -701,9 +703,12 @@ def test_standalone_environment_preserves_qualified_keys_and_reviewed_empty_valu
     values = {"ROOT_PASSWORD": 'secret<&"\t\nvalue', "ip0": ""}
     properties = _standalone_ovf_properties(spec, descriptor, values)
     assert properties == {"ROOT_PASSWORD": values["ROOT_PASSWORD"], "vami.ip0.SDDC-Manager": "", "hidden": "internal"}
-    payload = _ovf_environment_xml(properties)
+    payload = _ovf_environment_xml(properties, platform=OVF_PLATFORM)
+    environment = ET.fromstring(payload)
+    assert [child.tag.rsplit("}", 1)[-1] for child in environment] == ["PlatformSection", "PropertySection"]
+    assert {child.tag.rsplit("}", 1)[-1]: child.text for child in environment[0]} == OVF_PLATFORM
     vm = SimpleNamespace(Reload=lambda: None, config=SimpleNamespace(extraConfig=[SimpleNamespace(key="guestinfo.ovfEnv", value=payload)]))
-    result = _verify_guestinfo_ovf_environment(vm, properties)
+    result = _verify_guestinfo_ovf_environment(vm, properties, platform=OVF_PLATFORM)
     assert result["property_keys"] == ["ROOT_PASSWORD", "hidden", "vami.ip0.SDDC-Manager"]
     assert values["ROOT_PASSWORD"] not in str(result)
     spec.configSpec.vAppConfig.property.append(SimpleNamespace(info=rows[1]))
@@ -734,7 +739,7 @@ def test_standalone_environment_rejects_incomplete_import_contract(damage):
     assert "secret-value" not in str(caught.value)
 
 
-@pytest.mark.parametrize("damage", ["missing", "mismatch", "duplicate", "namespace", "malformed", "dtd", "oversized"])
+@pytest.mark.parametrize("damage", ["missing", "mismatch", "duplicate", "namespace", "malformed", "dtd", "oversized", "platform_missing", "platform_duplicate", "platform_order", "platform_value"])
 def test_guestinfo_verification_rejects_incomplete_or_ambiguous_documents(damage):
     """Reject malformed or changed readback without disclosing serialized secrets.
 
@@ -742,8 +747,8 @@ def test_guestinfo_verification_rejects_incomplete_or_ambiguous_documents(damage
         damage: Specific corruption applied to the persisted guest environment.
     """
     properties = {"ROOT_PASSWORD": "secret<&value", "vami.ip0.SDDC-Manager": ""}
-    root = ET.fromstring(_ovf_environment_xml(properties))
-    section = root[0]
+    root = ET.fromstring(_ovf_environment_xml(properties, platform=OVF_PLATFORM))
+    section = root[1]
     if damage == "missing":
         section.remove(section[0])
     elif damage == "mismatch":
@@ -752,6 +757,15 @@ def test_guestinfo_verification_rejects_incomplete_or_ambiguous_documents(damage
         section.append(ET.fromstring(ET.tostring(section[0])))
     elif damage == "namespace":
         root.tag = "Environment"
+    elif damage == "platform_missing":
+        root.remove(root[0])
+    elif damage == "platform_duplicate":
+        root.insert(0, ET.fromstring(ET.tostring(root[0])))
+    elif damage == "platform_order":
+        root.append(root[0])
+        root.remove(root[0])
+    elif damage == "platform_value":
+        root[0][1].text = "different-version"
     payload = ET.tostring(root, encoding="unicode")
     if damage == "malformed":
         payload = payload[:-5]
@@ -761,22 +775,22 @@ def test_guestinfo_verification_rejects_incomplete_or_ambiguous_documents(damage
         payload = " " * (128 * 1024 + 1)
     vm = SimpleNamespace(Reload=lambda: None, config=SimpleNamespace(extraConfig=[SimpleNamespace(key="guestinfo.ovfEnv", value=payload)]))
     with pytest.raises(VcfSddcDeploymentError) as caught:
-        _verify_guestinfo_ovf_environment(vm, properties)
+        _verify_guestinfo_ovf_environment(vm, properties, platform=OVF_PLATFORM)
     assert "secret" not in str(caught.value)
 
 
 def test_guestinfo_empty_api_value_requires_verified_persisted_xml():
     """Accept masked API values only when the independently stored XML matches."""
     properties = {"ROOT_PASSWORD": 'sensitive<&"|é', "vami.ip0.SDDC-Manager": ""}
-    payload = _ovf_environment_xml(properties)
+    payload = _ovf_environment_xml(properties, platform=OVF_PLATFORM)
     encoded = payload.replace("|", "|7C").replace('"', "|22").encode("utf-8")
     vmx = b'guestinfo.ovfEnv = "' + encoded + b'"\n'
     vm = SimpleNamespace(Reload=lambda: None, config=SimpleNamespace(extraConfig=[SimpleNamespace(key="guestinfo.ovfEnv", value="")]))
-    result = _verify_guestinfo_ovf_environment(vm, properties, read_persisted=lambda: _ovf_environment_from_vmx(vmx))
+    result = _verify_guestinfo_ovf_environment(vm, properties, platform=OVF_PLATFORM, read_persisted=lambda: _ovf_environment_from_vmx(vmx))
     assert result["readback"] == "datastore-vmx"
     assert "sensitive" not in str(result)
     with pytest.raises(VcfSddcDeploymentError, match="complete reviewed"):
-        _verify_guestinfo_ovf_environment(vm, {"ROOT_PASSWORD": "other"}, read_persisted=lambda: _ovf_environment_from_vmx(vmx))
+        _verify_guestinfo_ovf_environment(vm, {"ROOT_PASSWORD": "other"}, platform=OVF_PLATFORM, read_persisted=lambda: _ovf_environment_from_vmx(vmx))
 
 
 @pytest.mark.parametrize("vmx", [b'', b'guestinfo.ovfEnv = "a"\nguestinfo.ovfenv = "b"', b'guestinfo.ovfEnv = "|zz"', b'guestinfo.ovfEnv = "|ff"', b'x' * (1024 * 1024 + 1)], ids=["missing", "duplicate", "escape", "encoding", "oversize"])

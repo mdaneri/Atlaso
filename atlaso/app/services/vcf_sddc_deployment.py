@@ -845,13 +845,19 @@ def _standalone_ovf_properties(
     return result
 
 
-def _ovf_environment_xml(properties: dict[str, str]) -> str:
+def _ovf_environment_xml(properties: dict[str, str], *, platform: dict[str, str]) -> str:
     """Serialize a bounded, escaped OVF environment without logging its values.
 
     Args:
         properties: Qualified guest keys and their request-local values.
+        platform: Target platform kind, version, vendor, and locale.
     """
-    root = ET.Element(f"{OVF_ENV}Environment", {f"{OVF_ENV}id": ""})
+    if list(platform) != ["Kind", "Version", "Vendor", "Locale"] or not all(platform.values()):
+        raise VcfSddcDeploymentError("The standalone ESXi OVF platform metadata is incomplete.")
+    root = ET.Element(f"{OVF_ENV}Environment", {f"{OVF_ENV}id": "vm"})
+    platform_section = ET.SubElement(root, f"{OVF_ENV}PlatformSection")
+    for key, value in platform.items():
+        ET.SubElement(platform_section, f"{OVF_ENV}{key}").text = value
     section = ET.SubElement(root, f"{OVF_ENV}PropertySection")
     for key, value in properties.items():
         ET.SubElement(section, f"{OVF_ENV}Property", {f"{OVF_ENV}key": key, f"{OVF_ENV}value": value})
@@ -936,13 +942,14 @@ def _read_persisted_ovf_environment(
 
 
 def _verify_guestinfo_ovf_environment(
-    vm: Any, properties: dict[str, str], *, read_persisted: Callable[[], str] | None = None,
+    vm: Any, properties: dict[str, str], *, platform: dict[str, str], read_persisted: Callable[[], str] | None = None,
 ) -> dict[str, Any]:
     """Read back and compare every guest-info property before admitting power-on.
 
     Args:
         vm: Exact powered-off VM returned by this import's NFC lease.
         properties: Expected qualified property mapping, never included in results.
+        platform: Expected platform identity from the connected target.
         read_persisted: Bounded VMX reader for ESXi's empty API representation.
     """
     vm.Reload()
@@ -961,8 +968,11 @@ def _verify_guestinfo_ovf_environment(
     except ET.ParseError:
         raise VcfSddcDeploymentError("The imported VM retained malformed OVF guest-info XML.") from None
     sections = root.findall(f"{OVF_ENV}PropertySection")
-    if root.tag != f"{OVF_ENV}Environment" or len(sections) != 1:
+    if root.tag != f"{OVF_ENV}Environment" or root.get(f"{OVF_ENV}id") != "vm" or [child.tag for child in root] != [f"{OVF_ENV}PlatformSection", f"{OVF_ENV}PropertySection"]:
         raise VcfSddcDeploymentError("The imported VM retained an invalid OVF guest-info document.")
+    platform_section = root[0]
+    if [child.tag for child in platform_section] != [f"{OVF_ENV}{key}" for key in platform] or [child.text for child in platform_section] != list(platform.values()):
+        raise VcfSddcDeploymentError("The imported VM did not retain the complete OVF platform metadata.")
     actual: dict[str, str] = {}
     for entry in sections[0]:
         key = entry.get(f"{OVF_ENV}key")
@@ -1320,6 +1330,7 @@ def deploy_ova(
         params = vim.OvfManager.CreateImportSpecParams(**parameter_values)
         import_warnings = list(descriptor.warnings)
         guest_properties: dict[str, str] | None = None
+        guest_platform: dict[str, str] = {}
         guest_environment = ""
         with tarfile.open(descriptor.path, "r") as archive:
             ovf_source = archive.extractfile(descriptor.ovf_member)
@@ -1336,7 +1347,8 @@ def deploy_ova(
                 progress(10, "reviewed-import-warnings")
             if api_type == "HostAgent":
                 guest_properties = _standalone_ovf_properties(spec.importSpec, descriptor, property_values)
-                guest_environment = _ovf_environment_xml(guest_properties)
+                guest_platform = {"Kind": "VMware ESXi", "Version": str(content.about.version), "Vendor": str(content.about.vendor), "Locale": "en"}
+                guest_environment = _ovf_environment_xml(guest_properties, platform=guest_platform)
             member_sizes, required_bytes = _ova_file_item_sizes(list(spec.fileItem), archive)
             _ensure_datastore_free_space(datastore, required_bytes)
             lease = resource_pool.ImportVApp(spec.importSpec, folder, host)
@@ -1385,7 +1397,7 @@ def deploy_ova(
             if guest_properties is not None:
                 _install_guestinfo_ovf_environment(vm, guest_environment)
                 imported_vm_result["ovf_verification"] = _verify_guestinfo_ovf_environment(
-                    vm, guest_properties, read_persisted=lambda: _read_persisted_ovf_environment(
+                    vm, guest_properties, platform=guest_platform, read_persisted=lambda: _read_persisted_ovf_environment(
                         vm, service_instance, datastore, endpoint=endpoint, port=port, expected_fingerprint=expected_fingerprint,
                     ),
                 )

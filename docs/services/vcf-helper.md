@@ -163,6 +163,8 @@ imported VM must retain its vApp properties and a supported declared transport (
 Standalone ESXi discards vApp configuration during import, even when its generated import specification contains the
 properties. For that target, Atlaso installs an escaped OVF environment in the exact powered-off VM's
 `guestinfo.ovfEnv` setting and reads it back before allowing power-on. The OVA must declare `com.vmware.guestInfo`.
+The environment includes a `PlatformSection` before its properties, identifying VMware ESXi, the connected target's
+version and vendor, and the `en` locale. Readback verifies this platform metadata and section ordering as well.
 Guest keys retain VMware's class and instance qualification, such as `vami.ip0.SDDC-Manager`, while reviewed empty
 values and non-editable appliance defaults are preserved. A missing, malformed, duplicated, or changed environment
 fails verification; the absence of ESXi `vAppConfig` alone is expected.
