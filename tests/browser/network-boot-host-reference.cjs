@@ -129,6 +129,35 @@ const { chromium } = require("playwright");
     });
     assert.match(blocked.reason, /disabled/);
     assert.equal(blocked.opened, false);
+    await page.evaluate(async () => {
+      const setting = document.querySelector('[name="console_authorization_required"]');
+      const form = setting.closest("form");
+      const originalFetch = window.fetch;
+      const requests = [];
+      window.fetch = (url, options) => {
+        if (options?.method?.toUpperCase() === "POST" && String(url) === form.action) {
+          return new Promise((resolve) => requests.push({ value: options.body.has(setting.name), resolve }));
+        }
+        return originalFetch(url, options);
+      };
+      try {
+        setting.checked = true;
+        setting.dispatchEvent(new Event("change", { bubbles: true }));
+        const first = form.atlasoSaveNow();
+        setting.checked = false;
+        setting.dispatchEvent(new Event("change", { bubbles: true }));
+        requests[0].resolve(new Response("{}", { status: 200 }));
+        await first;
+        if (setting.checked || setting.dataset.pending !== "true") throw new Error("Older save replaced newer edit");
+        const second = form.atlasoSaveNow();
+        if (requests[1].value) throw new Error("Newer save lost the unchecked choice");
+        requests[1].resolve(new Response("{}", { status: 200 }));
+        await second;
+        if (setting.dataset.pending !== "false") throw new Error("Current save remains pending");
+      } finally {
+        window.fetch = originalFetch;
+      }
+    });
     assert.deepEqual(failures, []);
     console.log("Network Boot browser regressions passed; desktop and narrow captures saved.");
   } finally {

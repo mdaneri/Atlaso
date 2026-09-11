@@ -2660,6 +2660,16 @@ function esxiHostAuthorizationDisabledReason(data) {
   return reasons[data.id] ?? "Review and submit appliance changes before authorizing boot.";
 }
 
+function initializeEsxiConsoleAuthorizationAutosave(setting) {
+  const form = setting?.closest("form");
+  setting?.addEventListener("change", () => { setting.dataset.pending = "true"; });
+  form?.addEventListener("atlaso:autosave-success", (event) => {
+    if (event.atlasoEditGeneration !== (form.atlasoEditGeneration || 0)) return;
+    setting.dataset.pending = "false";
+    refreshEsxiHostReferenceState().catch(() => {});
+  });
+}
+
 function esxiHostMacKey(value) {
   return String(value || "").toLowerCase().replace(/[:-]/g, "").replace(/\./g, "");
 }
@@ -12254,6 +12264,7 @@ function initializeAutosaveForms(root = document) {
 
     const save = async () => {
       window.clearTimeout(timer);
+      const editGeneration = form.atlasoEditGeneration || 0;
       if (inFlightRequest) {
         inFlightRequest.abort();
       }
@@ -12268,7 +12279,9 @@ function initializeAutosaveForms(root = document) {
           ? await postWithUploadProgress(actionUrl, formData, files)
           : await postWithFetch(actionUrl, formData);
         if (payload.appliance_apply_status) updatePageApplyNotice(payload.appliance_apply_status);
-        form.dispatchEvent(new CustomEvent("atlaso:autosave-success", { detail: payload }));
+        const successEvent = new CustomEvent("atlaso:autosave-success", { detail: payload });
+        successEvent.atlasoEditGeneration = editGeneration;
+        form.dispatchEvent(successEvent);
         if (hasFiles) {
           clearSelectedFileInputs();
         }
@@ -12304,6 +12317,7 @@ function initializeAutosaveForms(root = document) {
     form.atlasoSaveNow = save;
 
     const scheduleSave = () => {
+      form.atlasoEditGeneration = (form.atlasoEditGeneration || 0) + 1;
       window.clearTimeout(timer);
       timer = window.setTimeout(save, 350);
     };
@@ -23530,11 +23544,7 @@ function initializeNetworkBootPage() {
   hostsTable = hostGrid.table;
   hostsElement.atlasoTabulator = hostsTable;
   const consoleSetting = document.querySelector('input[name="console_authorization_required"]');
-  consoleSetting?.addEventListener("change", () => { consoleSetting.dataset.pending = "true"; });
-  consoleSetting?.closest("form")?.addEventListener("atlaso:autosave-success", () => {
-      consoleSetting.dataset.pending = "false";
-      refreshEsxiHostReferenceState().catch(() => {});
-    });
+  initializeEsxiConsoleAuthorizationAutosave(consoleSetting);
   networkBootDiscoveredHostRefresh?.stop?.();
   networkBootDiscoveredHostRefresh = initializeNetworkBootDiscoveredHostRefresh(hostsTable, discoveredStatus);
   hostDialog?.querySelector("[data-network-boot-host-close]")?.addEventListener("click", () => hostDialog.close());

@@ -4,6 +4,27 @@ const test = require("node:test");
 const vm = require("node:vm");
 const source = fs.readFileSync("atlaso/app/static/app.js", "utf8");
 
+test("an older autosave cannot clear a newer pending console edit", () => {
+  const listeners = {};
+  const form = { atlasoEditGeneration: 2, addEventListener: (name, handler) => { listeners[name] = handler; } };
+  const setting = { checked: false, dataset: {}, closest: () => form,
+    addEventListener: (name, handler) => { listeners[name] = handler; } };
+  let refreshes = 0;
+  const context = vm.createContext({ refreshEsxiHostReferenceState: async () => { refreshes++; } });
+  const initializer = source.split("function initializeEsxiConsoleAuthorizationAutosave", 2)[1]
+    .split("function esxiHostMacKey", 1)[0];
+  vm.runInContext(`function initializeEsxiConsoleAuthorizationAutosave${initializer}`, context);
+  context.initializeEsxiConsoleAuthorizationAutosave(setting);
+  listeners.change();
+  listeners["atlaso:autosave-success"]({ atlasoEditGeneration: 1 });
+  assert.equal(setting.dataset.pending, "true");
+  assert.equal(setting.checked, false);
+  assert.equal(refreshes, 0);
+  listeners["atlaso:autosave-success"]({ atlasoEditGeneration: 2 });
+  assert.equal(setting.dataset.pending, "false");
+  assert.equal(refreshes, 1);
+});
+
 test("Kickstart grid refresh replaces labels and removes deleted editor choices without replacing rows", () => {
   const values = { 1: "Original", 2: "Deleted" };
   let reformatted = 0;
