@@ -1,5 +1,7 @@
 """Test Firewall API v1 transport behavior."""
 
+import pytest
+
 from tests.routers.api_v1.helpers import create_token
 
 
@@ -164,3 +166,44 @@ def test_flagged_management_listener_preview_matches_ui_and_api(client):
         in line
         for line in ui_management_rules
     )
+
+
+@pytest.mark.parametrize("valid_note, invalid_note", [("a" * 1000, "x" * 1001), ("\U0001f600" * 500, "\U0001f600" * 501), ("a" * 998 + "\U0001f600", "a" * 999 + "\U0001f600"), ("a" * 997 + "\r\nb", "a" * 998 + "\r\nb")], ids=["ascii", "non-bmp", "mixed", "literal-crlf"])
+def test_firewall_description_write_limit_preserves_legacy_reads(client, valid_note, invalid_note):
+    """Reject oversized writes without losing existing or legacy operator notes.
+
+    Args:
+        client: HTTP test client used to exercise the Atlaso application.
+        valid_note: Note at the browser-compatible write boundary.
+        invalid_note: Note exceeding the browser-compatible write boundary.
+    """
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import FirewallRule
+
+    token, _ = create_token(client, scopes=["read:firewall", "write:firewall"])
+    headers = {"Authorization": f"Bearer {token}"}
+    payload = {"name": "bounded-api-note", "description": valid_note}
+    oversized = {**payload, "description": invalid_note}
+    assert client.post("/api/v1/firewall/rules", headers=headers, json=oversized).status_code == 422
+    created = client.post("/api/v1/firewall/rules", headers=headers, json=payload)
+    assert created.status_code == 200, created.text
+    rule_id = created.json()["id"]
+    assert created.json()["description"] == payload["description"]
+    endpoint = f"/api/v1/firewall/rules/{rule_id}"
+    assert client.patch(endpoint, headers=headers, json=oversized).status_code == 422
+    with SessionLocal() as db:
+        rule = db.get(FirewallRule, rule_id)
+        assert rule.description == payload["description"]
+        rule.description = "legacy" * 200
+        db.commit()
+    listed = client.get("/api/v1/firewall/rules", headers=headers)
+    assert listed.status_code == 200, listed.text
+    assert next(row for row in listed.json() if row["id"] == rule_id)["description"] == "legacy" * 200
+    updated = client.patch(endpoint, headers=headers, json=payload)
+    assert updated.status_code == 200, updated.text
+    assert updated.json()["description"] == payload["description"]
+    schemas = client.get("/openapi.json").json()["components"]["schemas"]
+    note_schema = schemas["FirewallRuleCreate"]["properties"]["description"]
+    assert note_schema["x-maxLengthUtf16CodeUnits"] == 1000
+    assert "maxLength" not in note_schema
+    assert all("maxLength" not in item for item in note_schema["anyOf"])

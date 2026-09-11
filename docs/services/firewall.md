@@ -24,8 +24,15 @@ This verified appliance view provides visual orientation before you begin.
 
 <!-- END GENERATED INTERFACE OVERVIEW -->
 
-Select **Add rule here** or open an existing operator rule to use the five-step guided workflow. Rule identity, traffic
-matching, priority and notes, enablement, and final review are separate decisions. The dedicated **Enablement** step
+Select **Add rule here** or open an existing operator rule to use the four-step guided workflow:
+
+1. **Rule** — enter the name and a multiline Description (up to 1,000 UTF-16 code units), then choose Direction and Action.
+2. **Traffic** — choose Protocol, Source, Destination, Destination ports, Interface, and Priority. Lower priority values
+   are evaluated first.
+3. **Enablement** — choose whether the rule enters rendered desired state.
+4. **Review** — check every field, including the description with its line breaks, before creating or updating the rule.
+
+Existing rules retain their description, priority, and enabled state when reopened. The dedicated **Enablement** step
 makes clear that enabling a rule changes rendered desired state only; enforcement still waits for the global Firewall
 appliance-apply unit.
 
@@ -50,6 +57,17 @@ During a protected management handoff, the previous listener retains its SSH rul
 and front door pass readiness. A successful handoff leaves the generated TCP/22 rule on the new listener; rollback
 restores the previous rule with its original Source Group constraint.
 
+Descriptions are limited to 1,000 UTF-16 code units on both API and browser-form create/update requests. Longer submissions
+return HTTP 422 without changing the saved rule. Most characters count as one unit; characters outside the Basic
+Multilingual Plane, such as many emoji, count as two, matching the browser textarea. Existing longer notes remain readable
+and are never truncated;
+shorten them before saving an edit. This tightens write validation while preserving field names and stored content.
+Browser-form CRLF and CR line endings are normalized to LF before validation and storage, matching the textarea value.
+JSON API notes retain their literal line endings and count every submitted UTF-16 unit.
+The OpenAPI description field publishes `x-maxLengthUtf16CodeUnits: 1000`; clients must enforce this extension using
+UTF-16 length (for example, JavaScript string `length`). Standard JSON Schema `maxLength` counts code points, so it is
+intentionally omitted for this field.
+
 ## Verify and recover
 
 After a successful task, test the required TCP or UDP service from the intended network. On the appliance, maintainers
@@ -73,5 +91,21 @@ These captures show responsive layouts and useful operational states referenced 
 ![Atlaso Firewall page in the clean-appliance responsive viewport.](../assets/screenshots/firewall-clean-responsive.webp)
 
 *Figure: Firewall in the verified clean-appliance responsive state.*
+
+![Atlaso Firewall Review step showing escaped operator notes with preserved line breaks and rule priority.](../assets/screenshots/firewall-rule-review-desktop.webp)
+
+*Figure: Review the multiline description, traffic fields, priority, and enabled state before saving desired state.*
+
+![Atlaso Firewall Review step showing escaped operator notes with preserved line breaks and rule priority.](../assets/screenshots/firewall-rule-review-responsive.webp)
+
+*Figure: Review the multiline description, traffic fields, priority, and enabled state before saving desired state.*
+
+![Atlaso Firewall Rule step with a full-width multiline Description and the four-step navigation.](../assets/screenshots/firewall-rule-wizard-desktop.webp)
+
+*Figure: Start a rule with its identity and multiline description before choosing traffic and priority.*
+
+![Atlaso Firewall Rule step with a full-width multiline Description and the four-step navigation.](../assets/screenshots/firewall-rule-wizard-responsive.webp)
+
+*Figure: Start a rule with its identity and multiline description before choosing traffic and priority.*
 
 <!-- END GENERATED ADDITIONAL SCREENSHOTS -->

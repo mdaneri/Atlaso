@@ -1,5 +1,7 @@
 """Test Firewall management UI transport behavior."""
 
+import pytest
+
 from tests.routers.ui.helpers import assert_apply_redirect, login
 
 
@@ -307,3 +309,73 @@ def test_firewall_settings_autosave_updates_desired_state_preview(client):
     assert 'comment "mgmt-console"' in enabled_payload["config_preview"]
     assert 'tcp ip saddr' not in enabled_payload["config_preview"]
     assert 'tcp dport { 22, 80, 443 } accept comment "mgmt-console"' in enabled_payload["config_preview"]
+
+
+def test_firewall_multiline_description_round_trip(client):
+    """Preserve multiline operator notes and priority across create, edit, and reload.
+
+    Args:
+        client: HTTP test client used to exercise the Atlaso application.
+    """
+    import html
+    import json
+    import re
+
+    login(client)
+    page = client.get('/firewall')
+    csrf = page.text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
+    fields = dict(csrf=csrf, name='multiline-rule', description='Allow <app> & clients\nSecond line',
+                  direction='input', action='accept', protocol='tcp', source='any', destination='any',
+                  destination_port='8443', interface_name='', priority='17', enabled='on')
+    headers = {'X-Atlaso-Grid': '1'}
+    created = client.post('/firewall/rules', data=fields, headers=headers)
+    assert created.status_code == 200
+    rule = created.json()['rule']
+    assert rule['description'] == fields['description']
+    assert rule['priority'] == 17
+    fields['description'] = 'Updated <note>\n\nPreserved third line'
+    fields['priority'] = '23'
+    del fields['enabled']
+    edited = client.post(f"/firewall/rules/{rule['id']}/edit", data=fields, headers=headers)
+    assert edited.status_code == 200
+    assert edited.json()['rule']['enabled'] is False
+    page = client.get('/firewall')
+    payload = re.search(r'id="firewall-rules-table"[^>]+data-rules=\'([^\']*)\'', page.text, re.S)
+    assert payload is not None
+    saved = next(row for row in json.loads(html.unescape(payload.group(1))) if row['id'] == rule['id'])
+    assert saved['description'] == fields['description']
+    assert saved['priority'] == 23
+    assert saved['enabled'] is False
+    assert '<note>' not in page.text
+
+
+@pytest.mark.parametrize("valid_note, invalid_note", [("a" * 1000, "x" * 1001), ("\U0001f600" * 500, "\U0001f600" * 501), ("a" * 998 + "\U0001f600", "a" * 999 + "\U0001f600"), ("a" * 998 + "\r\nb", "a" * 999 + "\r\nb"), ("a" * 998 + "\rb", "a" * 999 + "\rb")], ids=["ascii", "non-bmp", "mixed", "crlf", "cr"])
+def test_firewall_form_description_limit_rejects_before_mutation(client, valid_note, invalid_note):
+    """Enforce the textarea bound on direct form create and edit submissions.
+
+    Args:
+        client: HTTP test client used to exercise the Atlaso application.
+        valid_note: Note at the browser-compatible write boundary.
+        invalid_note: Note exceeding the browser-compatible write boundary.
+    """
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import FirewallRule
+
+    login(client)
+    page = client.get("/firewall")
+    csrf = page.text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
+    fields = {"csrf": csrf, "name": "bounded-form-note", "description": valid_note}
+    headers = {"X-Atlaso-Grid": "1"}
+    oversized = {**fields, "description": invalid_note}
+    assert client.post("/firewall/rules", data=oversized, headers=headers).status_code == 422
+    created = client.post("/firewall/rules", data=fields, headers=headers)
+    assert created.status_code == 200, created.text
+    rule_id = created.json()["rule"]["id"]
+    endpoint = f"/firewall/rules/{rule_id}/edit"
+    assert client.post(endpoint, data=oversized, headers=headers).status_code == 422
+    with SessionLocal() as db:
+        assert db.get(FirewallRule, rule_id).description == valid_note.replace("\r\n", "\n").replace("\r", "\n")
+    fields["description"] = "b" * 1000
+    updated = client.post(endpoint, data=fields, headers=headers)
+    assert updated.status_code == 200, updated.text
+    assert updated.json()["rule"]["description"] == fields["description"]
