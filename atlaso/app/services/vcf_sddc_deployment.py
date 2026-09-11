@@ -1338,6 +1338,10 @@ def deploy_ova(
                 raise VcfSddcDeploymentError("The OVA descriptor could not be read for deployment.")
             spec = content.ovfManager.CreateImportSpec(ovf_source.read().decode("utf-8"), resource_pool, datastore, params)
             if spec.error:
+                if api_type == "HostAgent":
+                    # Failed specifications can omit the metadata needed to
+                    # identify every secret-bearing appliance default.
+                    raise VcfSddcDeploymentError("vSphere rejected the standalone OVA import specification; vendor diagnostic text was withheld.")
                 messages = "; ".join(_ovf_diagnostic_messages(spec.error, property_values=property_values))
                 raise VcfSddcDeploymentError(f"vSphere rejected the OVA import specification: {messages}")
             diagnostic_properties = dict(property_values)
@@ -1427,6 +1431,7 @@ def deploy_ova(
         if not power_on:
             if progress:
                 progress(100, "deployed-powered-off")
+            _check_cancelled(cancelled)
             return imported_vm_result
         if progress:
             progress(75, "powering-on")

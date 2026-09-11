@@ -431,6 +431,10 @@ def test_imported_ovf_verification_requires_all_keys_and_transport():
         ("HostAgent", True, True, "cancel-reconfigure"),
         ("HostAgent", True, True, "cancel-readback"),
         ("VirtualCenter", False, True, "cancel-readback"),
+        ("HostAgent", True, True, "cancel-reconfigure-off"),
+        ("HostAgent", True, True, "cancel-readback-off"),
+        ("VirtualCenter", False, True, "cancel-readback-off"),
+        ("HostAgent", True, True, "spec-error"),
     ],
 )
 def test_deploy_ova_binds_standalone_host_and_preserves_vcenter_automatic_placement(
@@ -587,6 +591,8 @@ def test_deploy_ova_binds_standalone_host_and_preserves_vcenter_automatic_placem
                 params: VMware import parameters under test.
             """
             captured["params"] = params
+            if failure_mode == "spec-error":
+                return SimpleNamespace(error=[SimpleNamespace(localizedMessage="Rejected one-time-secret and default-only-secret")], importSpec=None)
             return SimpleNamespace(
                 error=[],
                 warning=[SimpleNamespace(localizedMessage="Accepted one-time-secret for ROOT_PASSWORD and default-only-secret")],
@@ -648,12 +654,19 @@ def test_deploy_ova_binds_standalone_host_and_preserves_vcenter_automatic_placem
             vm_name="sddc-test",
             property_values={"ROOT_PASSWORD": "one-time-secret", "vami.hostname": "target.example.test"},
             deployment_option="small",
-            power_on=True,
+            power_on=not failure_mode.endswith("-off"),
             cancelled=lambda: bool(
-                (failure_mode == "cancel-reconfigure" and captured.get("reconfigured"))
-                or (failure_mode == "cancel-readback" and captured.get("reloaded"))
+                (failure_mode.startswith("cancel-reconfigure") and captured.get("reconfigured"))
+                or (failure_mode.startswith("cancel-readback") and captured.get("reloaded"))
             ),
         )
+    if failure_mode == "spec-error":
+        with pytest.raises(VcfSddcDeploymentError, match="rejected the standalone OVA import specification") as caught:
+            deploy()
+        assert "one-time-secret" not in str(caught.value)
+        assert "default-only-secret" not in str(caught.value)
+        assert "import_host" not in captured
+        return
     if failure_mode.startswith("cancel-"):
         with pytest.raises(VcfSddcPostImportError, match="cancelled") as caught:
             deploy()

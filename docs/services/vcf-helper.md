@@ -169,6 +169,8 @@ Guest keys retain VMware's class and instance qualification, such as `vami.ip0.S
 values and non-editable appliance defaults are preserved. A missing, malformed, duplicated, or changed environment
 fails verification; the absence of ESXi `vAppConfig` alone is expected.
 Standalone import warnings are redacted against both reviewed values and the additional non-editable defaults.
+Failed standalone import specifications may omit property metadata, so their vendor diagnostic text is withheld.
+Cancellation during metadata work is checked before either powered-off completion or power-on.
 
 ESXi can expose an empty `guestinfo.ovfEnv` API value even though the VMX contains the complete XML. In that case,
 Atlaso reads only the exact imported VM's configuration from the selected datastore over HTTPS, checks the certificate
