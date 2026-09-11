@@ -438,7 +438,13 @@ class Collector:
         links = json.loads(self.command(["ip", "-j", "address", "show"]))
         routes = json.loads(self.command(["ip", "-j", "route", "show", "table", "all"]))
         routes += json.loads(self.command(["ip", "-6", "-j", "route", "show", "table", "all"]))
+        discarded_links = max(0, len(links) - 100)
+        discarded_addresses = sum(max(0, len(row.get("addr_info", [])) - 100) for row in links[:100])
+        discarded_routes = max(0, len(routes) - 500)
         return {
+            "truncated": bool(discarded_links or discarded_addresses or discarded_routes),
+            "omitted_interfaces": discarded_links, "omitted_addresses": discarded_addresses,
+            "omitted_routes": discarded_routes,
             "interfaces": [{"name": token(row.get("ifname")), "mtu": number(row.get("mtu")),
                             "mac": address(row.get("address")),
                             "operstate": row.get("operstate") if row.get("operstate") in {"UP", "DOWN", "UNKNOWN", "DORMANT", "LOWERLAYERDOWN"} else None,
@@ -485,6 +491,8 @@ class Collector:
             return self.privileged("firewall-nftables")
         payload = json.loads(self.command(["nft", "-j", "-nn", "list", "table", "inet", "atlaso"]))
         chains, rules = [], []
+        discarded_entries = max(0, len(payload["nftables"]) - 1000)
+        discarded_expressions = 0
         for entry in payload["nftables"][:1000]:
             chain = entry.get("chain")
             if isinstance(chain, dict) and chain.get("family") == "inet" and chain.get("table") == "atlaso" and chain.get("name") in {"input", "output", "forward"}:
@@ -493,7 +501,8 @@ class Collector:
             if not isinstance(rule, dict) or rule.get("family") != "inet" or rule.get("table") != "atlaso" or rule.get("chain") not in {"input", "output", "forward"}:
                 continue
             expressions = []
-            omitted = 0
+            omitted = max(0, len(rule.get("expr", [])) - 100)
+            discarded_expressions += omitted
             for expression in rule.get("expr", [])[:100]:
                 if len(expression) == 1 and next(iter(expression)) in {"accept", "drop", "return", "reject"}:
                     expressions.append({"verdict": next(iter(expression))})
@@ -513,6 +522,8 @@ class Collector:
                     omitted += 1
             rules.append({"chain": rule["chain"], "expressions": expressions, "omitted_expressions": omitted})
         return {"family": "inet", "table": "atlaso", "chains": chains, "rules": rules,
+                "truncated": bool(discarded_entries or discarded_expressions),
+                "omitted_entries": discarded_entries, "capped_expressions": discarded_expressions,
                 "omitted": "Comments, counters, other tables and unsupported expressions are excluded; this is not a complete ruleset."}
 
     @staticmethod
@@ -629,7 +640,7 @@ class Collector:
                     "ipv4": address(row[2]), "ipv6": address(row[3]),
                     "role": row[4] if row[4] in {"access", "management", "route", "unused"} else None,
                     "admin_state": row[5] if row[5] in {"up", "down"} else None,
-                    "management_ui": bool(row[6])} for row in db.execute(f"SELECT {cols} FROM physical_interfaces LIMIT 100")]
+                    "management_ui": bool(row[6])} for row in db.execute(f"SELECT {cols} FROM physical_interfaces LIMIT 101")]
                 baseline = db.execute("SELECT substr(value,1,262145) FROM settings WHERE key=?", ("appliance_apply.baselines.v1",)).fetchone()
                 result["applied_interfaces"] = None
                 if baseline and len(baseline[0]) <= SOURCE_LIMIT:
@@ -641,11 +652,11 @@ class Collector:
                     "ipv4": address(ipv4), "ipv6": address(ipv6),
                     "role": role if role in {"access", "management", "route", "unused"} else None,
                     "management_ui": bool(management)} for name, parent, ipv4, ipv6, role, management in db.execute(
-                        "SELECT name,parent_interface,ip_cidr,ipv6_cidr,role,access_management_ui_enabled FROM vlan_interfaces LIMIT 100")]
+                        "SELECT name,parent_interface,ip_cidr,ipv6_cidr,role,access_management_ui_enabled FROM vlan_interfaces LIMIT 101")]
             if "pxe" in self.options.scopes:
                 result["network_boot_environments"] = [
                     {"key": token(key), "enabled": bool(enabled)}
-                    for key, enabled in db.execute("SELECT key,enabled FROM network_boot_environments LIMIT 100")
+                    for key, enabled in db.execute("SELECT key,enabled FROM network_boot_environments LIMIT 101")
                 ]
             if self.options.scopes or self.options.correlation_id:
                 rows = db.execute("SELECT id,type,status,created_at,started_at,finished_at FROM jobs "
@@ -658,6 +669,16 @@ class Collector:
                 result["tasks"] = [{"id": token(row[0], TASK_ID_PATTERN), "type": token(row[1]),
                     "status": row[2] if row[2] in TASK_STATUSES else None,
                     "timestamps": [token(v, r"[0-9T :.+Z-]{1,40}") for v in row[3:]]} for row in rows[:100]]
+        capped = []
+        for field, limit in (("desired_interfaces", 100), ("desired_vlans", 100),
+                             ("network_boot_environments", 100), ("applied_interfaces", 200)):
+            values = result.get(field)
+            if isinstance(values, list) and len(values) > limit:
+                result[field] = values[:limit]
+                capped.append(field)
+        if capped:
+            result["truncated"] = True
+        result["capped_collections"] = capped
         configuration: dict[str, Any] = {key: result[key] for key in ("desired_interfaces", "desired_vlans", "applied_interfaces") if key in result}
         if self.first_configuration is None:
             self.first_configuration = configuration or None
@@ -687,7 +708,7 @@ class Collector:
                 rows[-1][key] = address(value)
             elif rows and key in {"role", "mode", "admin_state", "access_management_ui_enabled"}:
                 rows[-1][key] = value if value in {"management", "access", "route", "unused", "up", "down", "true", "false", "yes", "no", "1", "0"} else None
-        return rows[:200]
+        return rows[:201]
 
     def journal(self, unit: str) -> dict[str, Any]:
         """Export timestamp/severity and fixed categories, never arbitrary log messages.

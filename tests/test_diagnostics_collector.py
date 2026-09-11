@@ -256,6 +256,72 @@ def test_listener_cap_counts_discarded_rows(monkeypatch, count):
     assert evidence["row_limit"] == 500
 
 
+@pytest.mark.parametrize("extra", [0, 1])
+def test_network_and_firewall_caps_are_explicit(monkeypatch, extra):
+    """Report every observed network/firewall cap at its exact boundary.
+
+    Args:
+        monkeypatch: Fixture restoring synthetic command responses.
+        extra: Extra row beyond each independently enforced limit.
+    """
+    monkeypatch.setattr("atlaso.diagnostics.os.geteuid", lambda: 0, raising=False)
+    collector = Collector(Options.parse({}))
+    links = [{"ifname": "eth0", "addr_info": [{"local": "192.0.2.1"}] * (100 + extra)}]
+    links += [{"ifname": "eth1"}] * (99 + extra)
+    ipv4 = [{"dst": "default"}] * 500
+    ipv6 = [{"dst": "2001:db8::/64"}] * extra
+    entries = [{"rule": {"family": "inet", "table": "atlaso", "chain": "input",
+                          "expr": [{"accept": None}] * (100 + extra)}}] + [{}] * (999 + extra)
+
+    def command(args):
+        """Return bounded fixtures for each fixed command.
+
+        Args:
+            args: Collector command arguments.
+        """
+        if args[0] == "nft":
+            return json.dumps({"nftables": entries})
+        return json.dumps(links if "address" in args else ipv6 if "-6" in args else ipv4)
+
+    monkeypatch.setattr(collector, "command", command)
+    network = collector.network()
+    assert network["truncated"] == bool(extra)
+    assert network["omitted_interfaces"] == network["omitted_addresses"] == network["omitted_routes"] == extra
+    firewall = collector.firewall()
+    assert firewall["truncated"] == bool(extra)
+    assert firewall["omitted_entries"] == firewall["capped_expressions"] == extra
+    assert firewall["rules"][0]["omitted_expressions"] == extra
+    assert len(firewall["rules"][0]["expressions"]) == 100
+
+
+def test_remaining_database_caps_preserve_bounded_prefixes(tmp_path):
+    """Identify capped desired and applied collections independently of task history.
+
+    Args:
+        tmp_path: Isolated database fixture directory.
+    """
+    database = tmp_path / "network.db"
+    with sqlite3.connect(database) as db:
+        db.executescript("CREATE TABLE settings(key TEXT,value TEXT);"
+                        "CREATE TABLE jobs(id TEXT,type TEXT,status TEXT,created_at TEXT,started_at TEXT,finished_at TEXT);"
+                        "CREATE TABLE physical_interfaces(name TEXT,mac_address TEXT,ip_cidr TEXT,ipv6_cidr TEXT,role TEXT,admin_state TEXT,access_management_ui_enabled INT);"
+                        "CREATE TABLE vlan_interfaces(name TEXT,parent_interface TEXT,ip_cidr TEXT,ipv6_cidr TEXT,role TEXT,access_management_ui_enabled INT);"
+                        "CREATE TABLE network_boot_environments(key TEXT,enabled INT);")
+        for index in range(101):
+            db.execute("INSERT INTO physical_interfaces VALUES (?,NULL,NULL,NULL,'access','up',0)", (f"eth{index}",))
+            db.execute("INSERT INTO vlan_interfaces VALUES (?,'eth0',NULL,NULL,'access',0)", (f"vlan{index}",))
+            db.execute("INSERT INTO network_boot_environments VALUES (?,0)", (f"env{index}",))
+        preview = "[physical_interfaces]\n" + "interface=eth0\n" * 201
+        db.execute("INSERT INTO settings VALUES ('appliance_apply.baselines.v1',?)",
+                   (json.dumps({"network": {"config_preview": preview}}),))
+    evidence = Collector(Options.parse({"scopes": ["network", "pxe"]}), database=database).database_evidence()
+    assert evidence["truncated"] is True
+    assert set(evidence["capped_collections"]) == {"desired_interfaces", "desired_vlans", "network_boot_environments", "applied_interfaces"}
+    assert len(evidence["applied_interfaces"]) == 200
+    for field in ("desired_interfaces", "desired_vlans", "network_boot_environments"):
+        assert len(evidence[field]) == 100
+
+
 def test_recovery_does_not_import_application_database():
     # Importing the CLI itself must never run init_db or consume app settings.
     import ast
