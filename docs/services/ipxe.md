@@ -156,6 +156,7 @@ authorization** is off. The menu explains disabled actions, including pending
 Apply or unavailable applied boot state. Turning the setting on alone does not
 authorize boot: it must save successfully and the applied host, Kickstart, and
 listener must be ready. The action rechecks readiness before opening and submitting.
+Refreshed Kickstarts also update Host References grid labels and default-row choices.
 If another refresh supersedes that check, retry the action; Atlaso does not use
 the previous readiness result to open or submit authorization.
 Double-click a row or focus it and press Enter to open its semantic hardware

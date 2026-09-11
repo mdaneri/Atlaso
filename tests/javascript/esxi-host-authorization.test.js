@@ -4,6 +4,21 @@ const test = require("node:test");
 const vm = require("node:vm");
 const source = fs.readFileSync("atlaso/app/static/app.js", "utf8");
 
+test("Kickstart grid refresh replaces labels and removes deleted editor choices without replacing rows", () => {
+  const values = { 1: "Original", 2: "Deleted" };
+  let reformatted = 0;
+  const context = vm.createContext({
+    kickstartValues: values, tableElement: {},
+    table: { getRows: () => [{ reformat: () => { reformatted++; } }] },
+  });
+  const callback = source.split("tableElement.atlasoRefreshKickstartOptions =", 2)[1]
+    .split("tableElement.atlasoRefreshIsoOptions", 1)[0];
+  vm.runInContext(`tableElement.atlasoRefreshKickstartOptions = ${callback}`, context);
+  context.tableElement.atlasoRefreshKickstartOptions([{ id: 1, label: "Renamed" }, { id: 3, label: "Created" }]);
+  assert.deepEqual(values, { 1: "Renamed", 3: "Created" });
+  assert.equal(reformatted, 1);
+});
+
 function harness() {
   const element = { dataset: { canWrite: "true", authorizationReasons: '{"1":""}' } };
   const setting = { checked: true, dataset: {} };

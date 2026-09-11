@@ -81,6 +81,14 @@ const { chromium } = require("playwright");
     await wizard.locator("[data-esxi-host-refresh-kickstarts]").click();
     await page.waitForFunction(() => document.querySelector("[data-esxi-host-kickstart-status]").dataset.state === "ready");
     await wizard.locator('[name="kickstart_id"]').selectOption(String(kickstart.id));
+    await page.evaluate(async (item) => {
+      const table = document.getElementById("esxi-pxe-hosts-table").atlasoTabulator;
+      const row = await table.addRow({ id: -809, hostname: "grid-refresh-proof", kickstart_id: item.id });
+      if (row.getCell("kickstart_id").getElement().textContent !== item.name) throw new Error("Stale grid label");
+      const values = table.getColumn("kickstart_id").getDefinition().editorParams().values;
+      if (values[item.id] !== item.name) throw new Error("Stale default-row choices");
+      await row.delete();
+    }, kickstart);
     await wizard.locator("[data-esxi-host-refresh-kickstarts]").click();
     await page.waitForFunction(() => document.querySelector("[data-esxi-host-kickstart-status]").dataset.state === "ready");
     assert.equal(await wizard.locator('[name="kickstart_id"]').inputValue(), String(kickstart.id));

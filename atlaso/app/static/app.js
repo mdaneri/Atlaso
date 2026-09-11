@@ -2633,6 +2633,7 @@ async function refreshEsxiHostReferenceState() {
     if (sequence !== esxiHostReferenceRefreshSequence) return null;
     element.dataset.authorizationReasons = JSON.stringify(state.authorization_reasons);
     element.dataset.kickstartOptions = JSON.stringify(state.kickstarts);
+    element.atlasoRefreshKickstartOptions?.(state.kickstarts);
     element.dataset.canWrite = String(state.can_write);
     element.dataset.authorizationRefreshError = "";
     const setting = document.querySelector('input[name="console_authorization_required"]');
@@ -11357,7 +11358,7 @@ function initializeEsxiPxeHostsTable() {
           field: "kickstart_id",
           editor: canWrite ? "list" : false,
           editable: (cell) => canWrite && cell.getRow().getData().is_default,
-          editorParams: { values: kickstartValues },
+          editorParams: () => ({ values: { ...kickstartValues } }),
           formatter: (cell) => esxiHostKickstartFormatter(cell, kickstartValues),
           minWidth: 180,
           cellEdited: (cell) => autoSaveEsxiHost(cell, csrf),
@@ -11451,6 +11452,12 @@ function initializeEsxiPxeHostsTable() {
     });
     table = grid.table;
     tableElement.atlasoTabulator = table;
+    tableElement.atlasoRefreshKickstartOptions = (options) => {
+      // Keep formatter closures current; editor parameters snapshot this map on each open.
+      Object.keys(kickstartValues).forEach((id) => delete kickstartValues[id]);
+      Object.assign(kickstartValues, Object.fromEntries(options.map((item) => [item.id, item.label])));
+      table?.getRows?.().forEach((row) => row.reformat());
+    };
     tableElement.atlasoRefreshIsoOptions = async (path, label) => {
       isoValues[path] = label;
       const isoColumn = table?.getColumn?.("installer_iso_path");

@@ -1763,9 +1763,13 @@ Terminal order:
   deployable properties, defaults, deployment options, warnings, and errors. Pass the complete reviewed property
   mapping to `CreateImportSpec`; sanitize warnings against every submitted value. Bind a direct `HostAgent` connection
   to its one host while preserving vCenter automatic placement unless a host was selected. Before power-on or follow-up
-  DNS, trust, or depot work, require the imported VM to retain every mapped vApp property and a supported OVF environment
-  transport. Verification failure must remove only the exact task-created VM; cleanup failure remains a truthful partial
-  deployment.
+  DNS, trust, or depot work, verify every reviewed property through the target's supported OVF transport. Direct ESXi
+  discards `vAppConfig` during import: install a bounded, escaped `guestinfo.ovfEnv` document on the exact powered-off
+  imported VM, using the generated import specification's qualified class/id/instance keys, reviewed values (including
+  empty values), and non-editable defaults. Require the descriptor's `com.vmware.guestInfo` transport and fresh complete
+  XML/value readback; reject missing, duplicated, malformed, or changed properties. Keep vCenter's vApp-property and
+  declared-transport verification. Installation or verification failure must remove only the exact task-created VM;
+  cleanup failure remains a truthful partial deployment. Never expose serialized XML or property values in diagnostics.
 - Starting address input is one IPv4 or IPv6 CIDR. IPv4 creates A records and IPv6 creates AAAA records. Allocate
   sequential usable addresses inside that network, skip occupied DNS addresses of the selected family, and also skip
   IPv4 DHCP reservation addresses.
