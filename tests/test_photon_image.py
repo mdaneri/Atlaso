@@ -3349,7 +3349,7 @@ def test_lifecycle_vmware_script_supports_routing_wan_only_and_esxi_pxe_install(
     assert "if ($Vmnet -match '^(?i)vmnet(\\d+)$')" in runner
     assert '$Vmnet = "VMnet$($Matches[1])"' in runner
     assert "function Resolve-LanSegmentId" in runner
-    assert "pref.namedPVNs$nextIndex.name" in runner
+    assert "Resolve-AtlasoOwnedLanSegment -Name $Name -Owner $lanSegmentOwner" in runner
     assert "connectionType\" -Value 'pvn'" in runner
     assert "$prefix.pvnID" in runner
     assert "Remove-VmxValue -Path $Path -Key \"$prefix.vnet\"" in runner

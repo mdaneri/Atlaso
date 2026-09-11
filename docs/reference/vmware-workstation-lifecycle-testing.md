@@ -109,6 +109,63 @@ Repeated setup copies nothing when the destination is already valid. Keep config
 release artifacts, and logs. Record ownership of only the task's copied configuration; later task-worktree cleanup
 must never remove or alter the primary checkout's originals.
 
+### Release task-owned LAN segments
+
+Lifecycle runs that request `lan:<name>` now create an immutable receipt before registering a new segment.
+The receipt binds its random VMware ID, exact name and preferences path to the task ID, repository, source commit,
+PR number, and lifecycle result root. `plan.json` records `lan_segment_owner`; `vmware-identity.json` records
+`lan_segments` with each original receipt path and SHA-256. Outside Codex, the unique canonical lab name is the task ID.
+An existing named segment is reused without claiming ownership or rewriting its ID. Shared segments and legacy residue
+without creation evidence remain preserved for maintainer-directed reconciliation.
+
+After removing the owned VMs through `remove-lifecycle-vms.ps1` or the lifecycle cleanup option, separately release
+each owned segment through `Remove-AtlasoWorkstationLanSegment`, exported by `Atlaso.WorkstationCleanup.psm1`.
+VM removal alone does not release a LAN registration. Preserve the creation receipts and their original hashes on the
+durable controller evidence surface before deleting any lifecycle result root.
+
+1. Independently verify the originating task, repository, creation commit, exact PR, canonical lab root, and original
+   receipt hash against the task's creation evidence and lifecycle identity. Do not derive expected ownership or a new
+   expected hash from the candidate receipt during cleanup.
+2. Close the Workstation UI normally and finish VMware VM/vmrun activity. The cleanup operation never closes the UI,
+   stops another VM, or terminates another task's process. Coordinate with other validation tasks before proceeding.
+3. Supply every independently configured VM storage root in `$vmRoots`, including locations of unregistered VMX files.
+   The operation additionally inspects all paths in Workstation's inventory. Missing configured roots, inaccessible
+   registered directories, malformed adapter/inventory records, links, and surviving references refuse cleanup.
+4. Preview and execute the exact receipt-bound operation:
+
+   ```powershell
+   Import-Module ./scripts/windows/vmware/Atlaso.WorkstationCleanup.psm1
+   $owner = @{
+       task_id = $verifiedTaskId
+       repository = 'mdaneri/Atlaso'
+       source_commit = $verifiedCreationCommit
+       pr = $verifiedPrNumber
+       lab_root = $verifiedLabRoot
+   }
+   $arguments = @{
+       ReceiptPath = $preservedReceiptPath
+       ReceiptSha256 = $originalReceiptSha256
+       Owner = $owner
+       VmRoots = $vmRoots
+   }
+   Remove-AtlasoWorkstationLanSegment @arguments -WhatIf
+   $releaseEvidence = Remove-AtlasoWorkstationLanSegment @arguments -Confirm:$false
+   ```
+
+5. Retain the returned `provider_id`, receipt digest, task/PR binding, `registration_absent`, and
+   `adapter_references_absent` in `validation_resource_release_evidence`. The cleanup controller performs a separate
+   exact-identity invocation/readback before accepting resource absence. An already-absent retry still validates the
+   original ownership and current adapter references.
+
+The operation requires existing UTF-8 preferences without a BOM and an existing inventory. It removes only the two
+exact segment records, preserving all other bytes, line endings, segment indices, and the provider's high-water count.
+Duplicate or unsupported registration fields and name/ID drift fail closed. Preferences updates pin ordinary paths,
+exclude writers, atomically replace the file, compare the displaced identity/bytes, and independently verify absence.
+Concurrent displaced state is restored through the shared checked recovery helper; a failed or interrupted transaction
+retains its recovery copy and blocks subsequent mutation until reconciled. Never repair that condition by deleting a
+backup or rewriting preferences broadly. Registration absence covers the supplied complete storage roots and provider
+inventory; a caller must not omit an unregistered VM storage location to obtain a successful result.
+
 ### Wheel-only deployment authentication
 
 For a wheel-only deployment to the canonical test VM, use `scripts/windows/vmware/deploy-wheel.ps1` with the secure

@@ -190,6 +190,19 @@ credential bridges, processes, and configuration require their own documented re
 substitute broad deletion or stop unrelated processes. Return `success: true` only after that tool succeeds. The script
 requests another independent `resource.inspect`; release acknowledgement alone cannot complete the resource gate.
 Generated trees are removed by this command and still receive independent absence readback.
+
+Treat a task-created VMware LAN segment as a separate `configuration` resource with its exact `provider_id`, original
+creation commit, and preserved receipt path/hash in `ownership_manifest`. Use
+`cleanup_tool: "Remove-AtlasoWorkstationLanSegment"`; never inventory the entire shared preferences file as a removable
+resource. Its provider registration has no filesystem removal scope (`removal_scopes: []`). Complete the
+[receipt-bound LAN segment release](../reference/vmware-workstation-lifecycle-testing.md#release-task-owned-lan-segments)
+after VM removal and before releasing lifecycle result roots. Independently verify the receipt's task/PR/source binding,
+complete configured VM search roots, absent adapter references, and absent exact provider registration on each readback.
+The owning operation retains creation evidence and changes only the selected provider records. Open Workstation UI,
+active VMware processes, references, ambiguous ownership, or recovery residue keep `validation_resources_released`
+blocked. Preserve legacy segments without receipts and report the exact missing ownership evidence; VM absence alone
+never authorizes their deletion.
+
 Before recording the aggregate resource-release gate, the command reinspects every resource, including whether its
 durable evidence survived release. Later eligibility
 checks repeat that aggregate readback and require completed remote/local ref gates to remain absent, even if a

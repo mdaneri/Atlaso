@@ -483,128 +483,18 @@ function Remove-VmxValue {
 
 <#
 .SYNOPSIS
-Create deterministic SCSI-compatible IDs for LAN segments.
-
+Resolve a LAN segment and retain creation receipts only for this lifecycle task.
 .PARAMETER Name
-Segment name used as input entropy.
-#>
-function New-LanSegmentId {
-    param([string]$Name)
-
-    $sha = [System.Security.Cryptography.SHA256]::Create()
-    try {
-        $bytes = $sha.ComputeHash([System.Text.Encoding]::UTF8.GetBytes("${LabName}:$Name"))
-    } finally {
-        $sha.Dispose()
-    }
-    $idBytes = [byte[]]$bytes[0..15]
-    $idBytes[0] = 0x52
-    $first = (($idBytes[0..7] | ForEach-Object { $_.ToString('x2') }) -join ' ')
-    $second = (($idBytes[8..15] | ForEach-Object { $_.ToString('x2') }) -join ' ')
-    return "$first-$second"
-}
-
-<#
-.SYNOPSIS
-Resolve or create a VMware LAN segment ID for a named segment.
-
-.PARAMETER Name
-LAN segment name to resolve.
+Exact requested LAN segment name.
 #>
 function Resolve-LanSegmentId {
     param([string]$Name)
-
-    $preferenceDirectory = Join-Path $env:APPDATA 'VMware'
-    $preferencePath = Join-Path $preferenceDirectory 'preferences.ini'
-    if (-not (Test-Path -LiteralPath $preferenceDirectory)) {
-        New-Item -ItemType Directory -Force -Path $preferenceDirectory | Out-Null
+    $segment = Resolve-AtlasoOwnedLanSegment -Name $Name -Owner $lanSegmentOwner
+    if ($segment.ReceiptPath) {
+        $ownedLanSegments.Add($segment)
+        Write-LifecycleIdentityEvidence
     }
-    $content = if (Test-Path -LiteralPath $preferencePath) {
-        @(Get-Content -LiteralPath $preferencePath)
-    } else {
-        @()
-    }
-
-    $segments = @{}
-    for ($index = 0; $index -lt $content.Count; $index++) {
-        if ($content[$index] -match '^pref\.namedPVNs(?<id>\d+)\.name\s*=\s*"(?<name>.*)"\s*$') {
-            $entry = [int]$matches.id
-            if (-not $segments.ContainsKey($entry)) {
-                $segments[$entry] = @{}
-            }
-            $segments[$entry].Name = $matches.name
-        } elseif ($content[$index] -match '^pref\.namedPVNs(?<id>\d+)\.pvnID\s*=\s*"(?<pvn>.*)"\s*$') {
-            $entry = [int]$matches.id
-            if (-not $segments.ContainsKey($entry)) {
-                $segments[$entry] = @{}
-            }
-            $segments[$entry].PvnId = $matches.pvn
-        }
-    }
-
-    $requiredCount = 0
-    if ($segments.Count -gt 0) {
-        $requiredCount = (($segments.Keys | Measure-Object -Maximum).Maximum + 1)
-    }
-
-    $countUpdated = $false
-    $countChanged = $false
-    $content = @($content | ForEach-Object {
-        if ($_ -match '^pref\.namedPVNs\.count\s*=') {
-            $countUpdated = $true
-            $desiredLine = "pref.namedPVNs.count = $(ConvertTo-VmxString -Value ([string]$requiredCount))"
-            if ($_ -ne $desiredLine) {
-                $countChanged = $true
-                $desiredLine
-            } else {
-                $_
-            }
-        } else {
-            $_
-        }
-    })
-    if (-not $countUpdated -and $requiredCount -gt 0) {
-        $content += "pref.namedPVNs.count = $(ConvertTo-VmxString -Value ([string]$requiredCount))"
-        $countChanged = $true
-    }
-    if ($countChanged) {
-        [System.IO.File]::WriteAllLines($preferencePath, [string[]]$content, [System.Text.UTF8Encoding]::new($false))
-    }
-
-    foreach ($entry in $segments.GetEnumerator()) {
-        if ($entry.Value.Name -eq $Name -and $entry.Value.PvnId) {
-            if ($entry.Value.PvnId -notmatch '^52 ') {
-                $pvnId = New-LanSegmentId -Name $Name
-                $content = @($content | ForEach-Object {
-                    if ($_ -match "^pref\.namedPVNs$($entry.Key)\.pvnID\s*=") {
-                        "pref.namedPVNs$($entry.Key).pvnID = $(ConvertTo-VmxString -Value $pvnId)"
-                    } else {
-                        $_
-                    }
-                })
-                [System.IO.File]::WriteAllLines($preferencePath, [string[]]$content, [System.Text.UTF8Encoding]::new($false))
-                return $pvnId
-            }
-            return $entry.Value.PvnId
-        }
-    }
-
-    $nextIndex = $requiredCount
-    $pvnId = New-LanSegmentId -Name $Name
-    $content += "pref.namedPVNs$nextIndex.name = $(ConvertTo-VmxString -Value $Name)"
-    $content += "pref.namedPVNs$nextIndex.pvnID = $(ConvertTo-VmxString -Value $pvnId)"
-    $content = @($content | ForEach-Object {
-        if ($_ -match '^pref\.namedPVNs\.count\s*=') {
-            "pref.namedPVNs.count = $(ConvertTo-VmxString -Value ([string]($nextIndex + 1)))"
-        } else {
-            $_
-        }
-    })
-    if (-not ($content | Where-Object { $_ -match '^pref\.namedPVNs\.count\s*=' })) {
-        $content += "pref.namedPVNs.count = $(ConvertTo-VmxString -Value ([string]($nextIndex + 1)))"
-    }
-    [System.IO.File]::WriteAllLines($preferencePath, [string[]]$content, [System.Text.UTF8Encoding]::new($false))
-    return $pvnId
+    return $segment.Id
 }
 
 <#
@@ -1547,7 +1437,18 @@ $esxiMacAddress = if ($FullEsxiPxeInstall) { New-StaticVmwareMac } else { '' }
 $planApplianceVmx = if (Test-Path -LiteralPath $ApplianceVmxPath) { (Resolve-Path -LiteralPath $ApplianceVmxPath).Path } else { $ApplianceVmxPath }
 $planClientVmdk = if (Test-Path -LiteralPath $ClientVmdkPath) { (Resolve-Path -LiteralPath $ClientVmdkPath).Path } else { $ClientVmdkPath }
 
+$sourceCommit = (& git -C $repoRoot rev-parse HEAD).Trim()
+if ($LASTEXITCODE -ne 0 -or $sourceCommit -notmatch '^[0-9a-f]{40}$') {
+    throw 'Cannot bind lifecycle LAN segments to the source commit.'
+}
+$lanSegmentOwner = @{
+    task_id = $(if ($env:CODEX_THREAD_ID) { $env:CODEX_THREAD_ID } else { $LabName })
+    repository = 'mdaneri/Atlaso'; source_commit = $sourceCommit
+    pr = $PullRequestNumber; lab_root = $resultRoot
+}
+$ownedLanSegments = [System.Collections.Generic.List[object]]::new()
 $plan = [ordered]@{
+    lan_segment_owner     = $lanSegmentOwner
     name                  = 'vmware workstation lifecycle interop'
     lab_name              = $LabName
     pull_request_number   = $PullRequestNumber
@@ -1609,6 +1510,7 @@ function Write-LifecycleIdentityEvidence {
         result_root         = $resultRoot
         log_identity        = $LabName
         vms                 = @($identityVms)
+        lan_segments        = @($ownedLanSegments)
     } | ConvertTo-Json -Depth 5
 
     # Keep every observable ownership manifest complete. The temporary file is

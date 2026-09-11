@@ -1849,7 +1849,11 @@ function Remove-AtlasoWorkstationArtifactRoot {
     }
 }
 
+. (Join-Path $PSScriptRoot 'Atlaso.WorkstationLanSegments.ps1')
+
 Export-ModuleMember -Function @(
+    'Resolve-AtlasoOwnedLanSegment',
+    'Remove-AtlasoWorkstationLanSegment',
     'Assert-AtlasoStrictDescendantPath',
     'ConvertFrom-AtlasoVmrunListOutput',
     'Get-AtlasoPathIdentity',
