@@ -34,10 +34,14 @@ if ($Name -eq 'failed-disk') { throw 'Fixture disk creation failed.' }
 '@
 [IO.File]::WriteAllText((Join-Path $OutputDirectory 'create-atlaso-vm.ps1'), $cloneFixture)
 $module = Import-Module $modulePath -Force -PassThru
+$runnerText = Get-Content -LiteralPath $runner -Raw
+$cleanupStart = $runnerText.IndexOf('# No further provider operations are safe while a diagnostic writer may survive.')
+if ($cleanupStart -lt 0) { throw 'Lifecycle cleanup gate is missing.' }
+$cleanupSource = $runnerText.Substring($cleanupStart)
 try {
     & $module {
         [CmdletBinding(SupportsShouldProcess = $true)]
-        param($FixtureRoot)
+        param($FixtureRoot, $CleanupSource)
         $toolsRoot = Join-Path $FixtureRoot 'custom VMware tools'
         [IO.Directory]::CreateDirectory($toolsRoot) | Out-Null
         $script:resolvedVmrun = Join-Path $toolsRoot 'vmrun.exe'
@@ -135,8 +139,20 @@ try {
             -not (Test-Path -LiteralPath $raw) -or (Test-Path -LiteralPath $artifact)) {
             throw 'Unproven writer termination did not preserve recoverable staging and fail closed.'
         }
+        $script:cleanupCalls = 0
+        Set-Item function:script:Remove-ClientSeedArtifacts -Value { $script:cleanupCalls++ }
+        Set-Item function:script:Remove-AtlasoWorkstationVmArtifacts -Value { $script:cleanupCalls++ }
+        $CleanupCreatedLab = $true
+        $seedArtifactsRetired = $false
+        $vmRoot = $FixtureRoot
+        $failure = $null
+        try { & ([scriptblock]::Create($CleanupSource)) }
+        catch { $failure = $_ }
+        if ($null -eq $failure -or $failure.Exception.Message -notlike '*cleanup is blocked*' -or $script:cleanupCalls -ne 0) {
+            throw 'Unproven diagnostic termination allowed final lifecycle provider cleanup.'
+        }
         Remove-Item -LiteralPath $raw
-    } $OutputDirectory
+    } $OutputDirectory $cleanupSource
 }
 finally { Remove-Module $module }
 Write-Output 'Atlaso lifecycle storage tests passed.'

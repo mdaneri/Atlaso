@@ -127,6 +127,7 @@ if (Test-Path -LiteralPath $resultRoot) {
 $vmRoot = Join-Path $resultRoot 'vms'
 $seedRoot = Join-Path $resultRoot 'seed'
 $createdVmxPaths = New-Object System.Collections.Generic.List[string]
+$diagnosticTerminationUnproven = $false
 
 # Plan-only execution consumes no credentials. Runtime execution imports the
 # current-user-protected bundle before VMware or the harness needs plaintext.
@@ -1418,6 +1419,7 @@ function Get-ApplianceStartupDiagnostic {
             $failure = $failure.InnerException
         }
         if ($terminationUnproven) {
+            $script:diagnosticTerminationUnproven = $true
             throw "Startup diagnostic process termination is unproven. Preserve staging for recovery: $stagingRoot"
         }
         return 'Startup prerequisite state unavailable (bounded provider failure).'
@@ -2010,6 +2012,11 @@ try {
     }
 } catch {
     $scenarioFailure = $_
+}
+
+# No further provider operations are safe while a diagnostic writer may survive.
+if ($diagnosticTerminationUnproven) {
+    throw "Lifecycle provider termination is unproven. VM and diagnostic staging cleanup is blocked; preserve lab '$LabName' at '$vmRoot' until the owning process tree is proven inactive."
 }
 
 $seedCleanupFailure = $null
