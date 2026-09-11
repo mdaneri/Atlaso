@@ -919,7 +919,7 @@ def _read_persisted_ovf_environment(
         connection = http.client.HTTPSConnection(endpoint, port, timeout=30, context=context)
         connection.connect()
         certificate = connection.sock.getpeercert(binary_form=True)
-        if hashlib.sha256(certificate).hexdigest().upper() != expected_fingerprint.upper():
+        if hashlib.sha256(certificate).hexdigest().upper() != expected_fingerprint.replace(":", "").upper():
             raise ValueError("Certificate changed")
         # Send the session cookie only after checking this connection's certificate.
         # http.client does not follow redirects or inherit proxy configuration.

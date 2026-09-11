@@ -791,12 +791,14 @@ def test_persisted_environment_rejects_ambiguous_or_invalid_vmx(vmx):
 
 
 @pytest.mark.parametrize("fault", ["", "pin", "redirect", "path", "oversize"])
-def test_persisted_environment_read_is_pinned_bounded_and_same_host(monkeypatch, fault):
+@pytest.mark.parametrize("fingerprint_style", ["plain", "colon"])
+def test_persisted_environment_read_is_pinned_bounded_and_same_host(monkeypatch, fault, fingerprint_style):
     """Never send a session cookie to an unconfirmed or redirected endpoint.
 
     Args:
         monkeypatch: Isolated transport replacement.
         fault: Failed trust, response, or path constraint.
+        fingerprint_style: Plain hexadecimal or the colon-separated UI representation.
     """
     from pyVmomi import vim
 
@@ -856,9 +858,12 @@ def test_persisted_environment_read_is_pinned_bounded_and_same_host(monkeypatch,
     monkeypatch.setattr("atlaso.app.services.vcf_sddc_deployment.http.client.HTTPSConnection", Connection)
     si = SimpleNamespace(_stub=SimpleNamespace(cookie="session-secret"), RetrieveContent=lambda: SimpleNamespace(rootFolder=SimpleNamespace(childEntity=[Datacenter()])))
     vm = SimpleNamespace(runtime=SimpleNamespace(powerState="poweredOff"), config=SimpleNamespace(files=SimpleNamespace(vmPathName="[store] ../vm.vmx" if fault == "path" else "[store] task vm/vm.vmx")))
+    fingerprint = hashlib.sha256(certificate).hexdigest()
+    if fingerprint_style == "colon":
+        fingerprint = ":".join(fingerprint[index:index + 2] for index in range(0, len(fingerprint), 2)).upper()
     def read():
         """Read the selected VMX using the confirmed certificate pin."""
-        return _read_persisted_ovf_environment(vm, si, SimpleNamespace(name="store"), endpoint="esxi.example.test", port=443, expected_fingerprint="incorrect" if fault == "pin" else hashlib.sha256(certificate).hexdigest())
+        return _read_persisted_ovf_environment(vm, si, SimpleNamespace(name="store"), endpoint="esxi.example.test", port=443, expected_fingerprint="incorrect" if fault == "pin" else fingerprint)
     if fault:
         with pytest.raises(VcfSddcDeploymentError) as caught:
             read()
