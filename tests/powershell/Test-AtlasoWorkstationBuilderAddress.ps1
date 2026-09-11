@@ -577,6 +577,25 @@ catch {
         throw 'A hard-linked handoff was accepted for mutation.'
     }
     Remove-Item -LiteralPath $linkedHandoff
+    # A wall-clock rollback invalidates same-boot proof, but cannot invalidate
+    # the independent process-termination boundary supplied by a later boot.
+    $clockSkew = $receiptBytes | ConvertFrom-Json
+    $clockSkew.TerminationProof.CompletedUtc = [DateTime]::UtcNow.AddDays(1).ToString('o')
+    [IO.File]::WriteAllText($handoffPath, ($clockSkew | ConvertTo-Json -Depth 8))
+    $sameBootSkew = Invoke-AtlasoBuilderReservationRecovery -HandoffPath $handoffPath -VmrunPath $vmrunPath -StateRoot $recoveryState
+    if ($sameBootSkew.Status -ne 'blocked') { throw 'Future-dated same-boot proof was accepted.' }
+    $ledgerBytes = [IO.File]::ReadAllText($recoveryLedger)
+    $priorBootLedger = $ledgerBytes | ConvertFrom-Json
+    $priorBootLedger.Reservations[0].HostBootIdentity = '1'
+    $clockSkew.HostBootIdentity = '1'
+    [IO.File]::WriteAllText($recoveryLedger, ($priorBootLedger | ConvertTo-Json -Depth 8))
+    [IO.File]::WriteAllText($handoffPath, ($clockSkew | ConvertTo-Json -Depth 8))
+    $priorBootSkew = Invoke-AtlasoBuilderReservationRecovery -HandoffPath $handoffPath -VmrunPath $vmrunPath -StateRoot $recoveryState
+    if ($priorBootSkew.Status -ne 'releasable') {
+        throw "Prior-boot recovery incorrectly depended on its stale receipt: $($priorBootSkew.Reason)"
+    }
+    [IO.File]::WriteAllText($recoveryLedger, $ledgerBytes)
+    [IO.File]::WriteAllText($handoffPath, $receiptBytes)
     $altered = $receiptBytes | ConvertFrom-Json
     $altered.SourceBranch = 'changed'
     [IO.File]::WriteAllText($handoffPath, ($altered | ConvertTo-Json -Depth 8))

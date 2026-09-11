@@ -868,3 +868,7 @@ Older handoffs have no retained process-termination receipt. The tool reports th
 proof from VM-file absence or a dead PID. Such records still require independently available termination evidence
 or a changed host boot, followed by the same provider and address checks. Do not edit ledger JSON or insert receipts
 manually. The recovery command never restarts Windows automatically.
+
+A changed host boot supplies process-termination evidence independently of the saved receipt. Recovery therefore
+does not depend on an old receipt's timestamp after a restart; clock corrections cannot strand that allocation.
+Exact allocation identity, owner inactivity, provider state, and address-use checks still apply.

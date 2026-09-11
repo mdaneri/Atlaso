@@ -1051,9 +1051,6 @@ function Exit-AtlasoVmwareBuilderAddressReservation {
             )) {
             throw 'The exact VMware builder-address reservation could not be proven for release.'
         }
-        $receiptProven = if ($ProcessTreeTerminationProven) { $false } else {
-            Test-AtlasoBuilderTerminationProof -Reservation $Reservation
-        }
         $currentOwner = Get-Process -Id $PID -ErrorAction Stop
         $isExactCurrentOwner = (
             [int]$matching[0].OwnerPid -eq $PID -and
@@ -1067,9 +1064,11 @@ function Exit-AtlasoVmwareBuilderAddressReservation {
                 throw "Builder address $($matching[0].Address) remains reserved because its exact owner process is still active."
             }
             $currentBootIdentity = Get-AtlasoBuilderHostBootIdentity
+            # A new boot proves the old tree gone independently of receipt clocks
+            # or contents. Only same-boot recovery depends on that extra evidence.
             if ([string]$matching[0].HostBootIdentity -ceq $currentBootIdentity -and
                 -not $ProcessTreeTerminationProven -and
-                -not $receiptProven) {
+                -not (Test-AtlasoBuilderTerminationProof -Reservation $Reservation)) {
                 throw "Builder address $($matching[0].Address) remains reserved because a dead same-boot owner does not prove its descendants are inactive."
             }
         }
