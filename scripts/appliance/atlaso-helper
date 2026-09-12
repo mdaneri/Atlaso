@@ -11965,6 +11965,223 @@ def _listen_address_and_port(value: str) -> tuple[str, int]:
     return host, port
 
 
+def _vcf_depot_listener_overlap(candidate: tuple[str, int], occupied: tuple[str, int]) -> bool:
+    """Identify TCP address overlap, conservatively treating IPv6 wildcard as dual-stack.
+
+    Args:
+        candidate: Desired nginx address and port.
+        occupied: Observed listener address and port.
+    """
+    if candidate[1] != occupied[1]:
+        return False
+    desired = ip_address(candidate[0].split("%", 1)[0])
+    current = ip_address(occupied[0].split("%", 1)[0])
+    desired = getattr(desired, "ipv4_mapped", None) or desired
+    current = getattr(current, "ipv4_mapped", None) or current
+    if current.version == 6 and current.is_unspecified:
+        return True
+    if desired.version != current.version:
+        return False
+    return desired.is_unspecified or current.is_unspecified or desired == current
+
+
+def _vcf_depot_listener_is_nginx(pid: int, nginx_path: Path) -> bool:
+    """Require the listener process to be nginx inside the nginx systemd service.
+
+    Args:
+        pid: Listener owner reported by the kernel socket inventory.
+        nginx_path: Verified local nginx executable.
+    """
+    if pid <= 0:
+        return False
+    process = Path("/proc") / str(pid)
+    try:
+        if (process / "exe").resolve(strict=True) != nginx_path.resolve(strict=True):
+            return False
+        cgroups = (process / "cgroup").read_text(encoding="utf-8")
+    except OSError:
+        return False
+    return any(
+        line.split(":", 2)[-1].rstrip("/").endswith("/nginx.service")
+        for line in cgroups.splitlines()
+    )
+
+
+def _vcf_depot_listener_admission(text: str) -> str:
+    """Reject overlapping TCP listeners unless every observed owner is service nginx.
+
+    Args:
+        text: Validated candidate depot nginx configuration.
+    """
+    candidates = [_listen_address_and_port(value) for value in _nginx_directive(text, "listen")]
+    nginx = _nginx_binary()
+    if not nginx:
+        return "Cannot verify depot listener ownership: nginx is unavailable."
+    for family, wildcard in (("-4", "0.0.0.0"), ("-6", "::")):
+        try:
+            inventory = _run(["ss", "-H", "-lntp", family], timeout=5)
+        except (OSError, subprocess.TimeoutExpired):
+            return "Cannot verify depot listener ownership: TCP inventory is unavailable."
+        if inventory.returncode != 0:
+            return "Cannot verify depot listener ownership: TCP inventory failed."
+        for line in inventory.stdout.splitlines():
+            fields = line.split()
+            if len(fields) < 5 or fields[0] != "LISTEN":
+                return "Cannot verify depot listener ownership: unexpected TCP inventory."
+            try:
+                host, port = fields[3].rsplit(":", 1)
+                host = host.strip("[]")
+                occupied = (wildcard if host == "*" else host, int(port))
+                overlaps = any(_vcf_depot_listener_overlap(candidate, occupied) for candidate in candidates)
+            except ValueError:
+                return "Cannot verify depot listener ownership: invalid TCP endpoint."
+            if not overlaps:
+                continue
+            owners = {int(value) for value in re.findall(r"\bpid=(\d+)", line)}
+            if not owners or not all(_vcf_depot_listener_is_nginx(pid, Path(nginx)) for pid in owners):
+                return (
+                    f"VCF Offline Depot TCP port {occupied[1]} overlaps a listener outside nginx.service "
+                    "or with unverifiable ownership. Choose another port or address; no listener was stopped."
+                )
+    return ""
+
+
+def _vcf_depot_endpoint_ready(text: str) -> bool:
+    """Verify each configured listener serves the expected TLS identity and login route.
+
+    Args:
+        text: Validated candidate depot nginx configuration.
+    """
+    try:
+        hostname = _nginx_directive(text, "server_name")[0].split()[0]
+        certificate = _nginx_directive(text, "ssl_certificate")[0]
+        context = ssl.create_default_context(cafile=certificate)
+        # Trust the exact installed leaf as an anchor, including private CA leaves,
+        # while retaining certificate validity and hostname verification.
+        context.verify_flags |= ssl.VERIFY_X509_PARTIAL_CHAIN
+        listeners = {_listen_address_and_port(value) for value in _nginx_directive(text, "listen")}
+        deadline = time.monotonic() + 30
+        for address, port in sorted(listeners):
+            destination = "127.0.0.1" if address == "0.0.0.0" else "::1" if address == "::" else address
+            ready = False
+            for _attempt in range(3):
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    return False
+                try:
+                    with socket.create_connection((destination, port), timeout=min(5, remaining)) as connection:
+                        remaining = deadline - time.monotonic()
+                        if remaining <= 0:
+                            return False
+                        connection.settimeout(min(5, remaining))
+                        with context.wrap_socket(connection, server_hostname=hostname.strip("[]")) as secured:
+                            remaining = deadline - time.monotonic()
+                            if remaining <= 0:
+                                return False
+                            secured.settimeout(min(5, remaining))
+                            host = f"[{hostname.strip('[]')}]" if ":" in hostname else hostname
+                            secured.sendall(
+                                f"GET /PROD/login HTTP/1.1\r\nHost: {host}:{port}\r\nConnection: close\r\n\r\n".encode("ascii")
+                            )
+                            status_line = bytearray()
+                            while len(status_line) < 256 and not status_line.endswith(b"\n"):
+                                remaining = deadline - time.monotonic()
+                                if remaining <= 0:
+                                    return False
+                                secured.settimeout(min(5, remaining))
+                                chunk = secured.recv(1)
+                                if not chunk:
+                                    break
+                                status_line.extend(chunk)
+                            ready = time.monotonic() < deadline and bool(
+                                re.fullmatch(rb"HTTP/1\.[01] 200 [^\r\n]*\r\n", bytes(status_line))
+                            )
+                    if ready:
+                        break
+                except (OSError, ValueError):
+                    pass
+                # A successful reload can return before new workers accept sockets.
+                remaining = deadline - time.monotonic()
+                if _attempt < 2 and remaining > 0:
+                    time.sleep(min(0.25, remaining))
+            if not ready:
+                return False
+        return bool(listeners)
+    except (OSError, ValueError, IndexError, UnicodeError):
+        return False
+
+
+def _apply_vcf_depot_site(text: str, *, disabled: bool) -> int:
+    """Apply one depot site and restore its previous files if activation fails.
+
+    Args:
+        text: Validated candidate nginx configuration.
+        disabled: Whether the candidate removes the depot listener.
+    """
+    snapshots = {}
+    try:
+        for path in (VCF_DEPOT_SITE_PATH, VCF_DEPOT_HTPASSWD_PATH):
+            if path.is_symlink():
+                raise ValueError("Depot activation refuses linked managed files.")
+            if path.exists():
+                metadata = path.stat()
+                if not stat.S_ISREG(metadata.st_mode) or metadata.st_nlink != 1:
+                    raise ValueError("Depot activation requires ordinary managed files.")
+                snapshots[path] = (path.read_bytes(), metadata)
+            else:
+                snapshots[path] = None
+        conflict = "" if disabled else _nginx_site_conflict(VCF_DEPOT_SITE_PATH, text)
+        if conflict:
+            print(conflict, file=sys.stderr)
+            return 2
+    except (OSError, ValueError) as exc:
+        print(str(exc), file=sys.stderr)
+        return 2
+
+    try:
+        _install_nginx_include()
+        if disabled:
+            _remove_vcf_depot_htpasswd()
+            VCF_DEPOT_SITE_PATH.unlink(missing_ok=True)
+        else:
+            if _vcf_depot_auth_required(text):
+                if _write_vcf_depot_htpasswd(_vcf_depot_auth_username(text)) != 0:
+                    raise ValueError("Depot authentication preparation failed.")
+            else:
+                _remove_vcf_depot_htpasswd()
+            _prepare_vcf_depot_web_tree(text)
+            _write_secret_file(VCF_DEPOT_SITE_PATH, text, 0o644)
+        if _nginx_test_command().returncode != 0:
+            raise ValueError("Depot nginx configuration validation failed.")
+        active = _run(["systemctl", "is-active", "--quiet", "nginx"], timeout=5).returncode == 0
+        command = ["systemctl", "reload", "nginx"] if active else ["systemctl", "enable", "--now", "nginx"]
+        if (active or not disabled) and _run(command, timeout=30).returncode != 0:
+            raise ValueError("Depot nginx activation failed.")
+        if not disabled and not _vcf_depot_endpoint_ready(text):
+            raise ValueError("Depot TLS/HTTP readiness failed.")
+        return 0
+    except (OSError, ValueError, subprocess.TimeoutExpired) as exc:
+        print(str(exc), file=sys.stderr)
+        try:
+            for path, snapshot in snapshots.items():
+                if snapshot is None:
+                    path.unlink(missing_ok=True)
+                else:
+                    content, metadata = snapshot
+                    path.write_bytes(content)
+                    os.chmod(path, stat.S_IMODE(metadata.st_mode))
+                    if os.name == "posix":
+                        os.chown(path, metadata.st_uid, metadata.st_gid)
+            if _nginx_test_command().returncode != 0 or _run(["systemctl", "reload", "nginx"], timeout=30).returncode != 0:
+                raise ValueError("Previous nginx configuration could not be reloaded.")
+            previous = snapshots[VCF_DEPOT_SITE_PATH]
+            if previous is not None and not _vcf_depot_endpoint_ready(previous[0].decode("utf-8")):
+                raise ValueError("Previous depot endpoint readiness could not be verified.")
+        except (OSError, ValueError, subprocess.TimeoutExpired) as rollback_error:
+            print(f"Depot rollback needs attention: {rollback_error}", file=sys.stderr)
+        return 2
+
+
 def _vcf_depot_config_errors(path: Path) -> list[str]:
     """Perform VCF depot config errors.
 
@@ -12782,6 +12999,11 @@ def _handle_vcf_offline_depot(action: str, args: list[str]) -> int:
         return 2
     text = config_path.read_text(encoding="utf-8")
     disabled = "VCF Offline Depot HTTPS endpoint is disabled" in text
+    if not disabled and action in {"validate", "apply-https"}:
+        admission_error = _vcf_depot_listener_admission(text)
+        if admission_error:
+            print(admission_error, file=sys.stderr)
+            return 2
 
     if action == "validate":
         print(
@@ -12799,18 +13021,7 @@ def _handle_vcf_offline_depot(action: str, args: list[str]) -> int:
         print(json.dumps({"vcf_offline_depot": "sync command intent recorded", "enabled": not disabled}, sort_keys=True))
         return 0
     if action == "apply-https":
-        if disabled:
-            _remove_vcf_depot_htpasswd()
-            result = _remove_nginx_site(VCF_DEPOT_SITE_PATH)
-        else:
-            if _vcf_depot_auth_required(text):
-                username = _vcf_depot_auth_username(text)
-                if username and _write_vcf_depot_htpasswd(username) != 0:
-                    return 2
-            else:
-                _remove_vcf_depot_htpasswd()
-            _prepare_vcf_depot_web_tree(text)
-            result = _install_nginx_site(VCF_DEPOT_SITE_PATH, text)
+        result = _apply_vcf_depot_site(text, disabled=disabled)
         if result != 0:
             return result
         print(

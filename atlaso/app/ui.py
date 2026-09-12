@@ -65,6 +65,7 @@ from atlaso.app.factory_reset import (
     replace_database_with_factory_candidate,
 )
 from atlaso.app.models import (
+    VCF_OFFLINE_DEPOT_DEFAULT_PORT,
     ApiToken,
     ApplianceSettings,
     AuditEvent,
@@ -1702,6 +1703,7 @@ def get_vcf_offline_depot_settings_row(
         settings = VcfOfflineDepotSettings(
             hostname=hostname,
             server_certificate=hostname,
+            port=VCF_OFFLINE_DEPOT_DEFAULT_PORT,
             http_user_id=default_user.id if default_user else None,
         )
         if reconcile:
@@ -8240,7 +8242,7 @@ def local_vcf_depot_target_context(db: Session) -> dict[str, Any]:
         "available": not reasons,
         "reasons": reasons,
         "hostname": settings.hostname.strip(),
-        "port": int(settings.port or 443),
+        "port": int(settings.port if settings.port is not None else VCF_OFFLINE_DEPOT_DEFAULT_PORT),
         "url": url,
         "username": username,
         "software_depot_id": software_depot.get("id", ""),
@@ -16499,6 +16501,10 @@ def _submit_appliance_apply(
             if unit_id in unit_map and unit_map[unit_id]["changed"]
         )
     depot_context_for_apply = unit_map.get("vcf_offline_depot", {}).get("context", {})
+    # Depot listener edits change generated admission. Include that reviewed
+    # component before the existing NAT and management dependency expansion.
+    if "vcf_offline_depot" in selected_ids and unit_map.get("firewall", {}).get("changed"):
+        selected_ids.add("firewall")
     depot_settings_for_apply = depot_context_for_apply.get("vcf_depot_settings")
     depot_publishing_units = {"vcf_offline_depot", "public_services"}
     depot_http_user_id = getattr(depot_settings_for_apply, "http_user_id", None)

@@ -2353,7 +2353,7 @@ def build_router(dependencies: VcfWorkflowsUiDependencies) -> VcfWorkflowsUiRout
         listen_addresses_present: str | None = Form(None),
         listen_interface: str = Form(""),
         listen_address: str = Form(""),
-        port: int = Form(443),
+        port: int | None = Form(None, ge=1, le=65535),
         http_user_id: str = Form(""),
         allow_unauthenticated_access: str | None = Form(None),
         server_certificate: str | None = Form(None),
@@ -2416,7 +2416,8 @@ def build_router(dependencies: VcfWorkflowsUiDependencies) -> VcfWorkflowsUiRout
         settings.hostname = hostname.strip() or settings.hostname
         settings.listen_interface = selected_interfaces
         settings.listen_address = selected_addresses
-        settings.port = port
+        if port is not None:
+            settings.port = port
         settings.http_user_id = user_id
         settings.allow_unauthenticated_access = allow_unauthenticated_access == "on"
         settings.server_certificate = settings.hostname
