@@ -12203,30 +12203,46 @@ def _apply_vcf_depot_site(text: str, *, disabled: bool) -> int:
         return 0
     except (OSError, ValueError, subprocess.TimeoutExpired) as exc:
         print(str(exc), file=sys.stderr)
-        try:
-            if activation_attempted and not active:
-                if _run(["systemctl", "stop", "nginx"], timeout=30).returncode != 0:
-                    raise ValueError("Candidate nginx service could not be stopped.")
-                if _run(["systemctl", "is-active", "--quiet", "nginx"], timeout=5).returncode != 3:
-                    raise ValueError("Candidate nginx service is not verified inactive.")
-                if previous_enablement == "disabled":
-                    if _run(["systemctl", "disable", "nginx"], timeout=30).returncode != 0:
-                        raise ValueError("Previous nginx enablement could not be restored.")
-                    if _run(["systemctl", "is-enabled", "nginx"], timeout=5).stdout.strip() != "disabled":
-                        raise ValueError("Previous nginx enablement could not be verified.")
-            for path, snapshot in snapshots.items():
+        rollback_errors = []
+        if activation_attempted and not active:
+            checks = [
+                (["systemctl", "stop", "nginx"], 30, 0, None),
+                (["systemctl", "is-active", "--quiet", "nginx"], 5, 3, None),
+            ]
+            if previous_enablement == "disabled":
+                checks.extend([
+                    (["systemctl", "disable", "nginx"], 30, 0, None),
+                    (["systemctl", "is-enabled", "nginx"], 5, 1, "disabled"),
+                ])
+            for command, timeout, expected_code, expected_output in checks:
+                try:
+                    result = _run(command, timeout=timeout)
+                    if result.returncode != expected_code or (expected_output is not None and result.stdout.strip() != expected_output):
+                        raise ValueError("Service state was not restored.")
+                except (OSError, ValueError, subprocess.TimeoutExpired):
+                    rollback_errors.append(f"nginx {command[1]} rollback failed")
+        # Every independent restore must run even when service cleanup or another
+        # file fails; a later reload must not inherit the rejected candidate.
+        for path, snapshot in snapshots.items():
+            try:
                 if snapshot is None:
                     path.unlink(missing_ok=True)
+                    _fsync_directory(path.parent)
                 else:
                     content, metadata = snapshot
                     _replace_vcf_depot_file(path, content, stat.S_IMODE(metadata.st_mode), (metadata.st_uid, metadata.st_gid))
+            except (OSError, ValueError):
+                rollback_errors.append(f"{path.name} restoration failed")
+        try:
             if _nginx_test_command().returncode != 0 or (active and _run(["systemctl", "reload", "nginx"], timeout=30).returncode != 0):
                 raise ValueError("Previous nginx configuration could not be reloaded.")
             previous = snapshots[VCF_DEPOT_SITE_PATH]
             if active and previous is not None and not _vcf_depot_endpoint_ready(previous[0].decode("utf-8")):
                 raise ValueError("Previous depot endpoint readiness could not be verified.")
         except (OSError, ValueError, subprocess.TimeoutExpired) as rollback_error:
-            print(f"Depot rollback needs attention: {rollback_error}", file=sys.stderr)
+            rollback_errors.append(str(rollback_error))
+        if rollback_errors:
+            print(f"Depot rollback needs attention: {'; '.join(rollback_errors)}", file=sys.stderr)
         return 2
 
 

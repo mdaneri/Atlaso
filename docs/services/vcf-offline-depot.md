@@ -60,6 +60,7 @@ unauthenticated browsing do not extend a browser session.
    nginx service. Candidate site and rollback files use complete, flushed sibling files and atomic replacement.
    If first activation started a previously inactive nginx service, rollback stops that service and restores its
    previous enablement; nginx that was already running remains running.
+   File restoration is attempted even if service cleanup fails, and incomplete rollback is reported in the task log.
    A successful listener check does not establish VCF target authentication or metadata synchronization.
 3. Select **Add** or **Update** for the VCF Download Tool package. The two-step package wizard reviews the archive name,
    size, and desired-state boundary before upload. During upload, Review remains visible and reports transferred bytes

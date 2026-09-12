@@ -502,13 +502,19 @@ def test_depot_activation_restores_previous_files(monkeypatch, tmp_path, capsys,
     (False, False, "readiness", "enabled"),
     (False, False, "readiness", "enabled-runtime"),
     (False, False, "readiness", "static"),
+    (False, False, "cleanup-stop", "disabled"),
+    (False, False, "cleanup-timeout", "disabled"),
+    (False, False, "cleanup-is-active", "disabled"),
+    (False, False, "cleanup-disable", "disabled"),
+    (False, False, "cleanup-is-enabled", "disabled"),
 ])
-def test_depot_first_activation_and_disable(monkeypatch, tmp_path, disabled, active, failure, enablement):
+def test_depot_first_activation_and_disable(monkeypatch, tmp_path, capsys, disabled, active, failure, enablement):
     """Start nginx only for an enabled endpoint and reload an existing service.
 
     Args:
         monkeypatch: Dependency replacement fixture.
         tmp_path: Isolated managed-file root.
+        capsys: Captured incomplete-rollback diagnostics.
         disabled: Whether this operation removes the endpoint.
         active: Initial nginx service state.
         failure: Failure after attempting first activation.
@@ -517,7 +523,8 @@ def test_depot_first_activation_and_disable(monkeypatch, tmp_path, disabled, act
     helper = load_helper_module()
     site = tmp_path / "depot.conf"
     auth = tmp_path / "depot.htpasswd"
-    if disabled:
+    cleanup_failure = failure.startswith("cleanup-")
+    if disabled or cleanup_failure:
         site.write_text("previous depot")
         auth.write_text("synthetic authentication")
     monkeypatch.setattr(helper, "VCF_DEPOT_SITE_PATH", site)
@@ -527,7 +534,7 @@ def test_depot_first_activation_and_disable(monkeypatch, tmp_path, disabled, act
     monkeypatch.setattr(helper, "_prepare_vcf_depot_web_tree", lambda _text: None)
     monkeypatch.setattr(helper, "_vcf_depot_auth_required", lambda _text: False)
     monkeypatch.setattr(helper, "_nginx_test_command", lambda: subprocess.CompletedProcess([], 0, "", ""))
-    ready = MagicMock(return_value=failure != "readiness")
+    ready = MagicMock(return_value=failure != "readiness" and not cleanup_failure)
     monkeypatch.setattr(helper, "_vcf_depot_endpoint_ready", ready)
     commands = []
 
@@ -539,6 +546,11 @@ def test_depot_first_activation_and_disable(monkeypatch, tmp_path, disabled, act
             **_kwargs: Bounded execution options.
         """
         commands.append(command)
+        if cleanup_failure and command[1] == failure.removeprefix("cleanup-"):
+            if command[1] not in {"is-active", "is-enabled"} or sum(item[1] == command[1] for item in commands) > 1:
+                return subprocess.CompletedProcess(command, 2, "unknown", "")
+        if failure == "cleanup-timeout" and command[1] == "stop":
+            raise subprocess.TimeoutExpired(command, 30)
         if "is-enabled" in command:
             return subprocess.CompletedProcess(command, int(enablement == "disabled"), f"{enablement}\n", "")
         if "enable" in command:
@@ -559,6 +571,11 @@ def test_depot_first_activation_and_disable(monkeypatch, tmp_path, disabled, act
         if enablement == "disabled":
             expected.append(["systemctl", "disable", "nginx"])
     assert mutations == expected
-    assert site.exists() == (not disabled and failure == "none")
-    assert not auth.exists()
+    assert site.exists() == (cleanup_failure or (not disabled and failure == "none"))
+    if cleanup_failure:
+        assert site.read_text() == "previous depot"
+        assert auth.read_text() == "synthetic authentication"
+        assert "Depot rollback needs attention" in capsys.readouterr().err
+    else:
+        assert not auth.exists()
     assert ready.call_count == int(not disabled and failure not in {"partial-start", "timeout"})
