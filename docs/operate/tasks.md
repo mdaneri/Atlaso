@@ -105,13 +105,11 @@ These captures show responsive layouts and useful operational states referenced 
 
 *Figure: Failed appliance apply task with redacted operator detail.*
 
-![Atlaso task detail dialog showing a successful DNS appliance
-apply.](../assets/screenshots/tasks-apply-succeeded-detail-desktop.webp)
+![Atlaso task detail dialog showing a successful DNS appliance apply.](../assets/screenshots/tasks-apply-succeeded-detail-desktop.webp)
 
 *Figure: Successful appliance apply task with verified dnsmasq output.*
 
-![Atlaso task log showing successful dnsmasq validation, apply, and
-reload.](../assets/screenshots/tasks-apply-succeeded-log-desktop.webp)
+![Atlaso task log showing successful dnsmasq validation, apply, and reload.](../assets/screenshots/tasks-apply-succeeded-log-desktop.webp)
 
 *Figure: Successful appliance apply log with captured commands and audit events.*
 
