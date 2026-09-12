@@ -1567,7 +1567,6 @@ class PhysicalInterfaceResponse(BaseModel):
 
     Attributes:
         check_duplicate_ip_addresses: Native IPv4 conflict-detection policy; Network Apply activates changes.
-        check_duplicate_ip_addresses: Native IPv4 conflict-detection policy; Network Apply activates changes.
         id: Unique database identifier assigned to this resource.
         name: Stable operator-facing name of this resource.
         mac_address: Normalized hardware MAC address used to identify the network interface or host.
