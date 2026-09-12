@@ -219,6 +219,45 @@ def test_upgrade_defaults_on_without_overwriting_explicit_opt_out(client):
             assert connection.execute(text(f"SELECT COUNT(*) FROM {table} WHERE check_duplicate_ip_addresses != 0")).scalar_one() == 0
 
 
+def test_postgresql_startup_adds_address_checks_under_schema_lock(monkeypatch):
+    """Exercise the PostgreSQL startup branch and repeat it without rewriting values.
+
+    Args:
+        monkeypatch: Supply a recording PostgreSQL connection without a server.
+    """
+    from contextlib import nullcontext
+    from types import SimpleNamespace
+
+    from atlaso.app import database
+
+    calls = []
+    columns = {table: [{"name": "id"}] for table in ("physical_interfaces", "vlan_interfaces")}
+
+    def execute(statement, _parameters=None):
+        """Record the advisory lock and apply additive metadata changes.
+
+        Args:
+            statement: Startup SQL statement.
+            _parameters: Advisory lock parameter binding.
+        """
+        sql = str(statement)
+        calls.append(sql)
+        if sql.startswith("ALTER TABLE"):
+            assert "pg_advisory_xact_lock" in calls[0]
+            assert sql.endswith("BOOLEAN NOT NULL DEFAULT TRUE")
+            columns[sql.split()[2]].append({"name": "check_duplicate_ip_addresses"})
+
+    connection = SimpleNamespace(execute=execute)
+    engine = SimpleNamespace(dialect=SimpleNamespace(name="postgresql"), begin=lambda: nullcontext(connection))
+    monkeypatch.setattr(database, "inspect", lambda _connection: SimpleNamespace(get_columns=columns.__getitem__))
+    monkeypatch.setattr(database.Base.metadata, "create_all", lambda **_kwargs: None)
+    monkeypatch.setattr(database, "_reconcile_nat_ingress_column", lambda _connection: None)
+    database._create_database_schema(engine)
+    database._create_database_schema(engine)
+    assert len([sql for sql in calls if sql.startswith("ALTER TABLE")]) == 2
+    assert len([sql for sql in calls if "pg_advisory_xact_lock" in sql]) == 2
+
+
 def test_archive_preserves_opt_out_and_defaults_legacy_omission(client):
     """Transport the setting but exclude operational conflict observations from backups.
 
