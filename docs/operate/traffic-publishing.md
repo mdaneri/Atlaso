@@ -79,6 +79,8 @@ and publishes both atomically. It commits both application baselines before ackn
 record. Management changes include this pair in the protected management handoff and its wider rollback.
 Both ordinary Apply and management handoff preserve connections for unchanged mappings and retire only changed IDs.
 Handoff failures before paired publication skip connection retirement; later rollback retires only candidate changes.
+When reusing a service endpoint, select its shutdown or listener change in the same Apply. Selected listener services
+run before forwarding publication so the live socket check observes the released endpoint.
 Inventory reconciliation follows a verified NIC rename, including child VLAN listeners. A missing NIC keeps its
 inert identity and exact mapping, disables the forward, and requires operator review before reactivation.
 
@@ -163,6 +165,8 @@ does not inherit the previous mapping's counters. Packet and byte counts are nul
 not reported as zero. Applied status requires the DNAT rule, both generated Firewall admission directions, and the
 owned counter and both guard admission directions to remain present in one runtime snapshot. Missing members report
 degraded even if counters survive.
+The observed DNAT predicates, translated address and port mapping, source boundary, and connection mark must also
+match the saved mapping; retaining a generated comment alone does not establish applied state.
 The page summary includes enabled port forwards independently of source NAT and reports their validation errors.
 These counters describe matched traffic, not proof that an application at the target is healthy.
 

@@ -11,16 +11,18 @@ from atlaso.app.models import Job
 
 
 @pytest.mark.parametrize("management_move", [False, True])
-def test_global_submission_publishes_captured_port_forward_pair(client, management_move):
+@pytest.mark.parametrize("release_listener", [False, True])
+def test_global_submission_publishes_captured_port_forward_pair(client, management_move, release_listener):
     """The real submission and task runner keep Firewall/NAT baselines together.
 
     Args:
         client: Isolated application with dry-run host adapters.
         management_move: Include the pair in a protected management handoff.
+        release_listener: Disable KMS while assigning its previous endpoint to forwarding.
     """
     from sqlalchemy import select
 
-    from atlaso.app.models import PhysicalInterface, PortForward
+    from atlaso.app.models import KmsSettings, PhysicalInterface, PortForward
     from tests.routers.ui.helpers import login
     from tests.services.test_port_forwarding import payload
 
@@ -29,29 +31,44 @@ def test_global_submission_publishes_captured_port_forward_pair(client, manageme
     csrf = page.text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
     with SessionLocal() as db:
         ui.set_setting_value(db, "routes_wan.routing_enabled", "true")
+        interface = db.scalar(select(PhysicalInterface).where(PhysicalInterface.name == "eth2"))
+        kms = db.scalar(select(KmsSettings))
+        if release_listener:
+            kms.enabled = True
+            kms.port = 5696
+            kms.listen_interface = "eth2"
+            kms.listen_address = interface.ip_cidr.split("/")[0]
         db.commit()
         before = ui.appliance_apply_units(db)
         ui.update_appliance_apply_baselines(db, before, {unit["id"] for unit in before})
         interface = db.scalar(select(PhysicalInterface).where(PhysicalInterface.name == "eth2"))
-        db.add(PortForward(**payload(ingress_interface="eth2", listener_address=interface.ip_cidr.split("/")[0])))
+        forwarding = payload(ingress_interface="eth2", listener_address=interface.ip_cidr.split("/")[0])
+        if release_listener:
+            kms.enabled = False
+            forwarding.update(external_port_start=5696, external_port_end=5696, target_port_end=13000)
+        db.add(PortForward(**forwarding))
         if management_move:
             management = db.scalar(select(PhysicalInterface).where(PhysicalInterface.name == "eth0"))
             management.ip_cidr = "192.168.49.21/24"
         db.commit()
-    response = client.post("/appliance-apply", data={"csrf": csrf, "selected_units": "nat"},
+    response = client.post("/appliance-apply", data={"csrf": csrf, "selected_units": ["nat", "kms"] if release_listener else "nat"},
                            headers={"Accept": "application/json"})
     assert response.status_code == 202, response.text
     with SessionLocal() as db:
         job = db.get(Job, response.json()["job_id"])
         result = json.loads(job.result)
         assert job.status == "succeeded", result
+        if release_listener:
+            assert result["selected_units"].index("kms") < result["selected_units"].index("firewall")
+            if management_move:
+                assert result["selected_units"].index("kms") < result["selected_units"].index("network")
         if management_move:
             assert result["management_handoff"] is True
             assert "nat" in result["management_handoff_units"]
         else:
             assert result["traffic_publishing_pair"] is True
             assert result["traffic_publishing_runtime_commit_pending"] is False
-            assert [unit["unit_id"] for unit in result["units"]] == ["firewall", "nat"]
+            assert [unit["unit_id"] for unit in result["units"]] == (["kms"] if release_listener else []) + ["firewall", "nat"]
         baselines = ui.load_appliance_apply_baselines(db)
         assert "Atlaso port forward" in baselines["firewall"]["config_preview"]
         assert "[port_forwards]" in baselines["nat"]["config_preview"]

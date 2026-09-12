@@ -16562,6 +16562,16 @@ def _submit_appliance_apply(
         selected_ordered_units = [unit for unit in selected_ordered_units if unit["id"] != "firewall"]
         nat_index = next(index for index, unit in enumerate(selected_ordered_units) if unit["id"] == "nat")
         selected_ordered_units.insert(nat_index, unit_map["firewall"])
+    if publishing_pair_required and "nat" in selected_ids:
+        # Release selected service sockets before the paired live-listener check.
+        # Handoff publishes as one group at its first member, not at the NAT row.
+        grouped = set(MANAGEMENT_HANDOFF_UNIT_IDS) if management_handoff else {"firewall", "nat"}
+        releases = [unit for unit in selected_ordered_units
+                    if unit["id"] in listener_units - grouped]
+        selected_ordered_units = [unit for unit in selected_ordered_units if unit not in releases]
+        publication_index = next(index for index, unit in enumerate(selected_ordered_units)
+                                 if unit["id"] in grouped)
+        selected_ordered_units[publication_index:publication_index] = releases
     skipped_changed_units = [
         {"unit_id": unit["id"], "label": unit["label"], "summary": unit["summary"]}
         for unit in units

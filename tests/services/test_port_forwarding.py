@@ -148,6 +148,89 @@ def test_signed_upgrade_bootstraps_conntrack(monkeypatch, tmp_path, installed, s
     assert "ExecStartPre=+/opt/atlaso/bin/atlaso-helper appliance-update bootstrap-port-forwarding --real /opt/atlaso/current" in unit
 
 
+def observed_dnat_expressions(row):
+    """Model the native nftables JSON shape captured on the VMware appliance.
+
+    Args:
+        row: Complete mapping used to construct the independent observation fixture.
+    """
+    family = "ip" if row["ip_family"] == 4 else "ip6"
+    return [
+        {"match": {"op": "==", "left": {"meta": {"key": "iif"}}, "right": "eth1"}},
+        {"match": {"op": "==", "left": {"meta": {"key": "iifname"}}, "right": "eth1"}},
+        {"match": {"op": "==", "left": {"payload": {"protocol": family, "field": "daddr"}},
+                   "right": row["listener_address"]}},
+        {"match": {"op": "==", "left": {"payload": {"protocol": "tcp", "field": "dport"}},
+                   "right": {"range": [12000, 12002]}}},
+        {"mangle": {"key": {"ct": {"key": "mark"}}, "value": 0xA7000001}},
+        {"dnat": {"addr": row["target_address"], "port": {"map": {
+            "key": {"payload": {"protocol": "tcp", "field": "dport"}},
+            "data": {"set": [[12000, 13000], [12001, 13001], [12002, 13002]]},
+        }}}},
+    ]
+
+
+@pytest.mark.parametrize("family", [4, 6])
+@pytest.mark.parametrize("drift", [None, "target", "port", "listener", "ingress", "mark", "source", "transport"])
+def test_runtime_dnat_drift_cannot_inherit_applied_status(family, drift):
+    """Generated comments cannot mask changes to the actual translation boundary.
+
+    Args:
+        family: IPv4 DNAT or stateful NAT66.
+        drift: Observed mapping member altered after publication.
+    """
+    helper = load_helper_module()
+    row = {"id": 1, **payload(ip_family=family,
+        listener_address="192.0.2.1" if family == 4 else "2001:db8:2::1",
+        target_address="198.51.100.10" if family == 4 else "2001:db8:3::2"), "source_networks": []}
+    expressions = observed_dnat_expressions(row)
+    if drift == "target":
+        expressions[-1]["dnat"]["addr"] = "198.51.100.11" if family == 4 else "2001:db8:3::3"
+    elif drift == "port":
+        expressions[-1]["dnat"]["port"]["map"]["data"]["set"][1][1] = 13009
+    elif drift == "listener":
+        expressions[2]["match"]["right"] = "192.0.2.9" if family == 4 else "2001:db8:2::9"
+    elif drift == "ingress":
+        expressions[1]["match"]["right"] = "eth9"
+    elif drift == "mark":
+        expressions[-2]["mangle"]["value"] = 0xA7000002
+    elif drift == "source":
+        row["source_networks"] = ["192.0.2.0/24" if family == 4 else "2001:db8:2::/64"]
+    elif drift == "transport":
+        expressions[3]["match"]["left"]["payload"]["protocol"] = "udp"
+    assert helper._port_forward_dnat_matches(expressions, row) is (drift is None)
+
+
+@pytest.mark.parametrize("family", [4, 6])
+@pytest.mark.parametrize("mapping", ["offset", "single", "same-port"])
+def test_observed_dnat_normalizes_source_sets_and_port_forms(family, mapping):
+    """Native prefix sets and address-only DNAT retain their exact saved semantics.
+
+    Args:
+        family: IPv4 or IPv6 observation.
+        mapping: Offset map, single translated port, or unchanged port range.
+    """
+    helper = load_helper_module()
+    protocol = "ip" if family == 4 else "ip6"
+    prefix, length, host = ("192.0.2.0", 25, "192.0.2.200") if family == 4 else ("2001:db8:2::", 80, "2001:db8:4::2")
+    row = {"id": 1, **payload(ip_family=family,
+        listener_address="192.0.2.1" if family == 4 else "2001:db8:2::1",
+        target_address="198.51.100.10" if family == 4 else "2001:db8:3::2"),
+        "source_networks": [f"{prefix}/{length}", f"{host}/{'32' if family == 4 else '128'}"]}
+    expressions = observed_dnat_expressions(row)
+    expressions.insert(3, {"match": {"op": "==", "left": {"payload": {"protocol": protocol, "field": "saddr"}},
+                                     "right": {"set": [host, {"prefix": {"addr": prefix, "len": length}}]}}})
+    if mapping == "single":
+        row["external_port_end"] = 12000
+        row["target_port_end"] = 13000
+        expressions[4]["match"]["right"] = 12000
+        expressions[-1]["dnat"]["port"] = 13000
+    elif mapping == "same-port":
+        row.update(target_port_start=12000, target_port_end=12002)
+        expressions[-1]["dnat"].pop("port")
+    assert helper._port_forward_dnat_matches(expressions, row)
+
+
 @pytest.mark.parametrize("family", [4, 6])
 @pytest.mark.parametrize("missing", [None, "dnat", "original", "reply", "guard-original", "guard-reply"])
 def test_status_requires_translation_and_both_admissions(family, missing, monkeypatch, tmp_path, capsys):
@@ -163,7 +246,10 @@ def test_status_requires_translation_and_both_admissions(family, missing, monkey
     helper = load_helper_module()
     path = tmp_path / "nat.conf"
     path.write_text("applied", encoding="utf-8")
-    row = {"id": 1, "ip_family": family}
+    row = {"id": 1, **payload(ip_family=family,
+                             listener_address="192.0.2.1" if family == 4 else "2001:db8:2::1",
+                             target_address="198.51.100.10" if family == 4 else "2001:db8:3::2"),
+           "source_networks": []}
     monkeypatch.setattr(helper, "NAT_RUNTIME_CONFIG_PATH", path)
     monkeypatch.setattr(helper, "_parse_wan_config", lambda path: {})
     monkeypatch.setattr(helper, "_port_forward_records", lambda parsed: [row])
@@ -173,7 +259,7 @@ def test_status_requires_translation_and_both_admissions(family, missing, monkey
     if missing != "dnat":
         entries.append({"rule": {"family": "ip" if family == 4 else "ip6", "table": "atlaso_nat",
                                  "chain": "prerouting", "comment": "Atlaso port forward 1",
-                                 "expr": [{"dnat": {"addr": "198.51.100.10"}}]}})
+                                 "expr": observed_dnat_expressions(row)}})
     for direction in ("original", "reply"):
         if missing != f"guard-{direction}":
             entries.append({"rule": {"family": "inet", "table": "atlaso_port_forwards", "chain": "forward",

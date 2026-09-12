@@ -10459,6 +10459,80 @@ def _port_forward_target_warnings(rows: list[dict]) -> dict[int, str]:
     return warnings
 
 
+def _port_forward_dnat_matches(expressions: list, row: dict) -> bool:
+    """Compare the observed ingress, tuple, source boundary, mark and translation.
+
+    Args:
+        expressions: Observed nftables rule expressions.
+        row: Effective saved mapping to verify without trusting its comment.
+    """
+    family = "ip" if row["ip_family"] == 4 else "ip6"
+    transport = {"payload": {"protocol": row["protocol"], "field": "dport"}}
+    start, end = row["external_port_start"], row["external_port_end"]
+    expected = [
+        ({"meta": {"key": "iifname"}}, row["ingress_interface"]),
+        ({"payload": {"protocol": family, "field": "daddr"}}, row["listener_address"]),
+        (transport, start if start == end else {"range": [start, end]}),
+    ]
+    matches = []
+    sources = []
+    marks = []
+    translations = []
+    ingress_seen = False
+    source_seen = False
+    for expression in expressions:
+        if not isinstance(expression, dict) or len(expression) != 1:
+            return False
+        if "match" in expression:
+            match = expression["match"]
+            if not isinstance(match, dict) or match.get("op") != "==":
+                return False
+            left, right = match.get("left"), match.get("right")
+            if left == {"meta": {"key": "iif"}}:
+                if ingress_seen:
+                    return False
+                ingress_seen = True
+                if right != row["ingress_interface"]:
+                    index_path = SYSTEMD_NETWORK_INTERFACE_DIR / row["ingress_interface"] / "ifindex"
+                    try:
+                        if type(right) is not int or right != int(index_path.read_text().strip()):
+                            return False
+                    except (OSError, ValueError):
+                        return False
+            elif left == {"payload": {"protocol": family, "field": "saddr"}}:
+                if source_seen or not row["source_networks"]:
+                    return False
+                source_seen = True
+                values = right.get("set", [right]) if isinstance(right, dict) else [right]
+                try:
+                    for value in values:
+                        if isinstance(value, dict):
+                            prefix = value["prefix"]
+                            value = f'{prefix["addr"]}/{prefix["len"]}'
+                        sources.append(str(ip_network(value, strict=False)))
+                except (KeyError, TypeError, ValueError):
+                    return False
+            else:
+                matches.append((left, right))
+        elif "mangle" in expression:
+            marks.append(expression["mangle"])
+        elif "dnat" in expression:
+            translations.append(expression["dnat"])
+        else:
+            return False
+    translation = {"addr": row["target_address"]}
+    if start == end:
+        translation["port"] = row["target_port_start"]
+    elif start != row["target_port_start"]:
+        translation["port"] = {"map": {"key": transport, "data": {"set": [
+            [port, row["target_port_start"] + port - start] for port in range(start, end + 1)
+        ]}}}
+    return (ingress_seen and len(matches) == len(expected) and all(item in matches for item in expected)
+            and sorted(sources) == sorted(str(ip_network(value, strict=False)) for value in row["source_networks"])
+            and marks == [{"key": {"ct": {"key": "mark"}}, "value": int(_port_forward_mark(row), 16)}]
+            and translations == [translation])
+
+
 def _port_forward_publication_present(entries: list, row: dict) -> bool:
     """Require translation and both generated admission directions in one observation.
 
@@ -10472,7 +10546,7 @@ def _port_forward_publication_present(entries: list, row: dict) -> bool:
     owned = [rule for rule in rules if rule.get("comment") == f'Atlaso port forward {row["id"]}']
     translation = any(rule.get("family") == family and rule.get("table") == "atlaso_nat"
                       and rule.get("chain") == "prerouting"
-                      and any(isinstance(expr, dict) and "dnat" in expr for expr in rule.get("expr", []))
+                      and _port_forward_dnat_matches(rule.get("expr", []), row)
                       for rule in owned)
     directions = {"atlaso": set(), "atlaso_port_forwards": set()}
     for rule in rules:
