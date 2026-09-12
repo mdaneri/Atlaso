@@ -252,7 +252,7 @@ def build_routers(
         return render(
             request,
             "appliance_update.html",
-            {"identity": identity, **appliance_update_context(db)},
+            {"identity": identity, **appliance_update_context(db, identity=identity)},
         )
 
     @update_router.post("/appliance-update/settings", response_model=None)
@@ -296,7 +296,7 @@ def build_routers(
                 "appliance_update.html",
                 {
                     "identity": identity,
-                    **appliance_update_context(db),
+                    **appliance_update_context(db, identity=identity),
                     "update_error": " ".join(errors),
                 },
                 status_code=422,
@@ -444,7 +444,7 @@ def build_routers(
                 "appliance_update.html",
                 {
                     "identity": identity,
-                    **appliance_update_context(db),
+                    **appliance_update_context(db, identity=identity),
                     "update_error": " ".join(errors),
                 },
                 status_code=422,
@@ -469,7 +469,7 @@ def build_routers(
                 "appliance_update.html",
                 {
                     "identity": identity,
-                    **appliance_update_context(db),
+                    **appliance_update_context(db, identity=identity),
                     "update_error": message,
                 },
                 status_code=409,
@@ -578,7 +578,7 @@ def build_routers(
                 "appliance_update.html",
                 {
                     "identity": identity,
-                    **appliance_update_context(db),
+                    **appliance_update_context(db, identity=identity),
                     "update_error": " ".join(errors),
                 },
                 status_code=422,
@@ -599,7 +599,7 @@ def build_routers(
                 "appliance_update.html",
                 {
                     "identity": identity,
-                    **appliance_update_context(db),
+                    **appliance_update_context(db, identity=identity),
                     "update_error": message,
                 },
                 status_code=409,
@@ -664,7 +664,7 @@ def build_routers(
                 "appliance_update.html",
                 {
                     "identity": identity,
-                    **appliance_update_context(db),
+                    **appliance_update_context(db, identity=identity),
                     "update_error": (
                         "Reassign or delete packages using this source first: "
                         f"{names}."
@@ -746,7 +746,7 @@ def build_routers(
                 "appliance_update.html",
                 {
                     "identity": identity,
-                    **appliance_update_context(db),
+                    **appliance_update_context(db, identity=identity),
                     "update_error": " ".join(errors),
                 },
                 status_code=422,
@@ -767,7 +767,7 @@ def build_routers(
                 "appliance_update.html",
                 {
                     "identity": identity,
-                    **appliance_update_context(db),
+                    **appliance_update_context(db, identity=identity),
                     "update_error": message,
                 },
                 status_code=409,
@@ -865,7 +865,7 @@ def build_routers(
                 "appliance_update.html",
                 {
                     "identity": identity,
-                    **appliance_update_context(db),
+                    **appliance_update_context(db, identity=identity),
                     "update_error": " ".join(errors),
                 },
                 status_code=422,
@@ -890,7 +890,7 @@ def build_routers(
                 "appliance_update.html",
                 {
                     "identity": identity,
-                    **appliance_update_context(db),
+                    **appliance_update_context(db, identity=identity),
                     "update_error": message,
                 },
                 status_code=409,
@@ -1005,7 +1005,7 @@ def build_routers(
                 "appliance_update.html",
                 {
                     "identity": identity,
-                    **appliance_update_context(db),
+                    **appliance_update_context(db, identity=identity),
                     "update_error": " ".join(errors),
                 },
                 status_code=422,
@@ -1056,7 +1056,7 @@ def build_routers(
             "appliance_update.html",
             {
                 "identity": identity,
-                **appliance_update_context(db),
+                **appliance_update_context(db, identity=identity),
                 "appliance_update_task": job,
                 "appliance_update_task_result": {
                     "status": "pending",

@@ -446,7 +446,19 @@ def recover_interrupted_worker_jobs(
         db: Active database session.
         release_finalizer_ready: Whether the runtime restart gate opened before recovery.
     """
-    media_swaps = recover_interrupted_network_boot_media_swaps(db)
+    media_cleanup_ready = True
+    media_cancellation_pending = db.scalar(select(Job.id).where(
+        Job.type == "pxe-media-sync", Job.status == JobStatus.RUNNING.value,
+        Job.cancel_requested_at.is_not(None),
+    ).limit(1)) is not None
+    try:
+        media_swaps = (recover_interrupted_network_boot_media_swaps(db, require_complete=True)
+                       if media_cancellation_pending else recover_interrupted_network_boot_media_swaps(db))
+    except (OSError, ValueError):
+        if not media_cancellation_pending:
+            raise
+        media_cleanup_ready, media_swaps = False, 0
+        LOGGER.warning("Media cancellation recovery retains unresolved filesystem ownership.")
     if media_swaps:
         LOGGER.warning(
             "Recovered %s interrupted Network Boot media swap(s).",
@@ -483,7 +495,18 @@ def recover_interrupted_worker_jobs(
             task_cancellation.finish_stop(db, job, detail="Startup recovery verified every task-owned check unit stopped and scoped credentials removed.")
             continue
         if job.type == "pxe-media-sync":
-            cleanup_network_boot_upload(job.id)
+            if job.cancel_requested_at is not None and not media_cleanup_ready:
+                job.cancel_outcome = "cleanup-required"
+                job.error = "Media recovery has unresolved journal, swap, or staging evidence."
+                continue
+            try:
+                cleanup_network_boot_upload(job.id)
+            except (OSError, ValueError):
+                if job.cancel_requested_at is None:
+                    raise
+                job.cancel_outcome = "cleanup-required"
+                job.error = "Media recovery could not verify owned-upload cleanup."
+                continue
             if job.cancel_requested_at is not None:
                 task_cancellation.finish_stop(db, job, detail="Startup recovery restored interrupted media swaps and removed the task-owned upload.")
                 continue

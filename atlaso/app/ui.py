@@ -12020,12 +12020,14 @@ def appliance_update_availability_summary(
 def appliance_update_context(
     db: Session,
     *,
+    identity: Identity,
     selected_stream_ids: list[str] | tuple[str, ...] | None = None,
 ) -> dict[str, Any]:
     """Return appliance update context.
 
     Args:
         db: Active database session.
+        identity: Current caller whose task action permissions are displayed.
         selected_stream_ids: Optional submitted stream selection to preserve.
     """
     settings = appliance_update_settings(db)
@@ -12212,7 +12214,7 @@ def appliance_update_context(
         "current_version_info": current_version_info(),
         "appliance_update_manifest_preview": manifest_preview,
         "appliance_update_staged_config_path": APPLIANCE_UPDATE_STAGED_CONFIG_PATH,
-        "recent_update_tasks": [_task_row(job) for job in recent_jobs],
+        "recent_update_tasks": [_task_row(job, identity) for job in recent_jobs],
         "task_component_filter_options": _task_component_filter_options(db),
         "appliance_update_info_path": APPLIANCE_UPDATE_INFO_PATH,
         "update_info_file": appliance_update_evidence_state(
@@ -15124,7 +15126,7 @@ def submit_appliance_update(
             "appliance_update.html",
             {
                 "identity": identity,
-                **appliance_update_context(db, selected_stream_ids=selected),
+                **appliance_update_context(db, identity=identity, selected_stream_ids=selected),
                 "selected_update_stream_ids": selected,
                 "update_error": " ".join(errors),
             },
@@ -15145,7 +15147,7 @@ def submit_appliance_update(
             "appliance_update.html",
             {
                 "identity": identity,
-                **appliance_update_context(db, selected_stream_ids=selected),
+                **appliance_update_context(db, identity=identity, selected_stream_ids=selected),
                 "selected_update_stream_ids": selected,
                 "update_error": detail,
             },
@@ -15210,7 +15212,7 @@ def submit_appliance_update(
         "appliance_update.html",
         {
             "identity": identity,
-            **appliance_update_context(db, selected_stream_ids=selected),
+            **appliance_update_context(db, identity=identity, selected_stream_ids=selected),
             "selected_update_stream_ids": selected,
             "appliance_update_task": job,
             "appliance_update_task_result": update_result,

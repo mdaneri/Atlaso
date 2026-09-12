@@ -337,3 +337,71 @@ def test_media_error_racing_cancellation_releases_clean_ownership(db, monkeypatc
         assert not backup_dir.exists()
     assert not db.scalars(select(Job).where(Job.status.in_(cancellation.ACTIVE), Job.cancel_outcome == "cleanup-required")).all()
     assert worker.claim_next_job(db).id == following.id
+
+
+def test_media_startup_requires_complete_recovery_before_confirmation(db, monkeypatch, tmp_path):
+    """Malformed recovery evidence retains ownership until real rollback succeeds.
+
+    Args:
+        db: Isolated lifecycle database.
+        monkeypatch: Bind recovery to the owned test media root.
+        tmp_path: Owned recovery journal and cache directories.
+    """
+    from functools import partial
+
+    from atlaso.app import worker
+    from atlaso.app.services import network_boot
+
+    job = make_job(db, "pxe-media-sync", "running", source="download", environment="shredos")
+    following = make_job(db)
+    cancellation.request(db, job, ADMIN)
+    media_root = tmp_path / "media"
+    environment = media_root / "shredos"
+    final_dir = environment / "1.0"
+    backup_dir = environment / (".1.0.replacement-" + "a" * 32)
+    final_dir.mkdir(parents=True)
+    backup_dir.mkdir()
+    (final_dir / "image").write_bytes(b"replacement")
+    (backup_dir / "image").write_bytes(b"original")
+    journal = environment / (".atlaso-media-sync-" + "a" * 32 + ".json")
+    journal.write_text("invalid journal", encoding="utf-8")
+    monkeypatch.setattr(worker, "recover_interrupted_network_boot_media_swaps", partial(network_boot.recover_interrupted_network_boot_media_swaps, media_root=media_root))
+    monkeypatch.setattr(worker, "_release_finalizer", lambda: {})
+    uploads = []
+    monkeypatch.setattr(worker, "cleanup_network_boot_upload", uploads.append)
+    worker.recover_interrupted_worker_jobs(db)
+    db.refresh(job)
+    assert job.status == "running"
+    assert job.cancel_outcome == "cleanup-required"
+    assert job.cancel_completed_at is None
+    assert journal.exists() and backup_dir.exists()
+    assert uploads == []
+    journal.write_text(json.dumps({"environment": "shredos", "version": "1.0"}), encoding="utf-8")
+    worker.recover_interrupted_worker_jobs(db)
+    db.refresh(job)
+    assert job.status == "cancelled"
+    assert job.cancel_outcome == "confirmed"
+    assert job.cancel_completed_at is not None
+    assert not journal.exists() and not backup_dir.exists()
+    assert (final_dir / "image").read_bytes() == b"original"
+    assert uploads == [job.id]
+    assert worker.claim_next_job(db).id == following.id
+
+
+@pytest.mark.parametrize("role,allowed", [("admin", True), ("viewer", False), ("service-admin", False)])
+def test_embedded_update_capability_uses_caller_identity(db, role, allowed):
+    """Embedded task rows advertise only cancellation actions the caller can submit.
+
+    Args:
+        db: Isolated lifecycle database.
+        role: Current browser caller role.
+        allowed: Whether that role can cancel an update check.
+    """
+    from atlaso.app import ui
+
+    job = make_job(db, "appliance-update", "running", mode="check", selected_streams=["atlaso_release"])
+    context = ui.appliance_update_context(db, identity=Identity("caller", role, set()))
+    row = next(row for row in context["recent_update_tasks"] if row["id"] == job.id)
+    assert row["can_cancel"] is allowed
+    if not allowed:
+        assert "permission" in row["cancel_reason"]

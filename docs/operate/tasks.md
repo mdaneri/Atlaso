@@ -65,7 +65,9 @@ backend policy. An accepted request records `cancel_requested_at` and `cancel_re
 active status until its owner verifies the stop and cleanup. `cancel_completed_at` and `cancel_outcome` record the
 final disposition. `cleanup-required` remains active and blocks worker admission while recovery needs attention.
 A media failure racing an accepted cancellation confirms the stop once rollback and upload cleanup succeed;
-only unresolved cleanup retains that queue hold.
+only unresolved cleanup retains that queue hold. Startup recovery also requires proof that no unresolved swap journal,
+replacement tree, or staging directory remains. Malformed recovery evidence retains the request and queue hold
+until recovery succeeds. Embedded Appliance Update actions use the current caller's permissions.
 Do not interpret a cancellation request as proof that a local process or a remote operation stopped.
 
 | Task owner | Queued cancellation | Running cancellation |
