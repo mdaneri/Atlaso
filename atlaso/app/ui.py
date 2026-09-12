@@ -585,6 +585,9 @@ from atlaso.app.services.vcf_depot_downloads import (
     vcf_depot_job_profile_id,
     vcf_depot_task_log_reference,
 )
+from atlaso.app.services.vcf_depot_permissions import (
+    prepare_downloaded_depot_permissions,
+)
 from atlaso.app.services.vcf_depot_target import (
     LocalDepotEndpoint,
     VcfDepotTargetError,
@@ -4067,6 +4070,7 @@ def run_vcf_depot_download_job(job_id: str, profile_id: int) -> None:
             db.commit()
         if not job:
             return
+        settings: VcfOfflineDepotSettings | None = None
         try:
             if profile is None:
                 raise ValueError("The VCF Offline Depot profile no longer exists.")
@@ -4140,6 +4144,14 @@ def run_vcf_depot_download_job(job_id: str, profile_id: int) -> None:
                 db.commit()
                 if completed.returncode != 0:
                     raise RuntimeError(f"VCFDT command exited with code {completed.returncode}.")
+                # VCFDT can create 0640 companion files under the worker umask.
+                # Persist command evidence before repairing public content, including
+                # artifacts skipped on retries. The failure handler also repairs it.
+                try:
+                    repaired = prepare_downloaded_depot_permissions(settings.depot_store_path)
+                except (OSError, ValueError) as exc:
+                    raise RuntimeError("VCFDT finished, but depot read permissions could not be prepared. Inspect published PROD content before retrying.") from exc
+                append_vcf_depot_task_log(job_id, profile.name, f"Prepared depot read permissions: {repaired} entries updated.\n")
             finished = utcnow()
             profile.status = "synced"
             profile.updated_at = finished
@@ -4169,6 +4181,13 @@ def run_vcf_depot_download_job(job_id: str, profile_id: int) -> None:
             )
             db.commit()
         except Exception as exc:  # noqa: BLE001 - background worker must persist failures instead of crashing silently.
+            # Even interrupted/failed downloads can leave usable companion files.
+            # A preflight failure has no validated store and must not touch it.
+            if settings is not None:
+                try:
+                    prepare_downloaded_depot_permissions(settings.depot_store_path)
+                except (OSError, ValueError):
+                    exc = RuntimeError(f"{exc} Depot read-permission repair also failed; inspect published PROD content.")
             finished = utcnow()
             profile_name = profile.name if profile is not None else "deleted-profile"
             if profile is not None:
