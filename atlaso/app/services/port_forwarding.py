@@ -5,6 +5,7 @@ import json
 import re
 from dataclasses import dataclass
 from ipaddress import IPv4Address, IPv6Address, ip_address, ip_interface, ip_network
+from pathlib import Path
 from typing import Any, cast
 
 from sqlalchemy import select
@@ -21,7 +22,11 @@ from atlaso.app.services.firewall import (
     firewall_source_group_state,
 )
 from atlaso.app.services.network_objects import acquire_network_objects_write_lock
-from atlaso.app.services.traffic_publishing import nat_targets, resolved_nat_source
+from atlaso.app.services.traffic_publishing import (
+    NAT_RUNTIME_PATH,
+    nat_targets,
+    resolved_nat_source,
+)
 
 MAX_PORT_FORWARDS = 256
 MAX_MAPPED_PORTS = 65535
@@ -260,6 +265,24 @@ def save_port_forward(db: Session, payload: PortForwardCreate, *, actor: str, ru
     except Exception:
         db.rollback()
         raise
+
+
+def runtime_has_port_forwards() -> bool:
+    """Retain paired publication when durable runtime intent outlives Apply baselines.
+
+    Unreadable or oversized runtime intent conservatively requires the root-owned
+    paired validator; only a missing file proves there is no durable publication.
+    """
+    try:
+        with Path(NAT_RUNTIME_PATH).open("rb") as snapshot:
+            content = snapshot.read(2_000_001)
+        if len(content) > 2_000_000:
+            return True
+        return snapshot_has_port_forwards(content.decode("utf-8"))
+    except FileNotFoundError:
+        return False
+    except (OSError, UnicodeError):
+        return True
 
 
 def snapshot_has_port_forwards(preview: str) -> bool:

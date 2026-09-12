@@ -495,6 +495,7 @@ from atlaso.app.services.oidc import (
 from atlaso.app.services.port_forwarding import (
     port_forward_firewall_projection,
     render_port_forward_records,
+    runtime_has_port_forwards,
     snapshot_has_port_forwards,
     validate_port_forward,
 )
@@ -16508,6 +16509,7 @@ def _submit_appliance_apply(
     publishing_pair_required = bool(
         unit_map.get("nat", {}).get("context", {}).get("port_forwards")
         or snapshot_has_port_forwards(str(nat_baseline.get("config_preview") or ""))
+        or runtime_has_port_forwards()
     )
     listener_units = {"appliance_settings", "dnsmasq", "esxi_pxe", "esx_storage", "ca", "kms", "ldap",
                       "ntpd", "vcf_backups", "vcf_offline_depot", "vcf_private_registry", "public_services"}

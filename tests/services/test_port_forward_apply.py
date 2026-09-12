@@ -10,6 +10,102 @@ from atlaso.app.database import SessionLocal
 from atlaso.app.models import Job
 
 
+@pytest.mark.parametrize("management_handoff", [False, True])
+def test_legacy_restore_retires_runtime_forwards_without_baselines(client, monkeypatch, tmp_path, management_handoff):
+    """A full restore must not send durable old forwards through standalone Apply.
+
+    Args:
+        client: Isolated application with dry-run publication.
+        monkeypatch: Bind runtime observation to the saved pre-restore intent.
+        tmp_path: Isolated durable runtime snapshot.
+        management_handoff: Exercise both ordinary publication and protected management recovery.
+    """
+    from sqlalchemy import select
+
+    from atlaso.app.models import PhysicalInterface, PortForward
+    from atlaso.app.services import port_forwarding
+    from atlaso.app.services.settings_archive import (
+        export_settings_archive,
+        restore_settings_archive,
+    )
+    from tests.routers.ui.helpers import login
+    from tests.services.test_port_forwarding import payload
+
+    runtime = tmp_path / "runtime-nat.conf"
+    monkeypatch.setattr(port_forwarding, "NAT_RUNTIME_PATH", str(runtime))
+    with SessionLocal() as db:
+        ui.set_setting_value(db, "routes_wan.routing_enabled", "true")
+        interface = db.scalar(select(PhysicalInterface).where(PhysicalInterface.name == "eth2"))
+        db.add(PortForward(**payload(ingress_interface="eth2", listener_address=interface.ip_cidr.split("/")[0])))
+        db.commit()
+        units = ui.appliance_apply_units(db)
+        ui.update_appliance_apply_baselines(db, units, {unit["id"] for unit in units})
+        runtime.write_text(ui.load_appliance_apply_baselines(db)["nat"]["config_preview"], encoding="utf-8")
+        archive = export_settings_archive(db, actor="test")
+        archive["data"].pop("port_forwards")
+        restore_settings_archive(db, archive)
+        assert not ui.load_appliance_apply_baselines(db)
+        assert db.scalar(select(PortForward)) is None
+    original_units = ui.appliance_apply_units
+
+    def observed_units(db, **kwargs):
+        """Control only whether the restored management front door requires handoff.
+
+        Args:
+            db: Current restored desired state with empty Apply baselines.
+            **kwargs: Preserve the caller's inventory reconciliation selection.
+        """
+        units = original_units(db, **kwargs)
+        network = next(unit for unit in units if unit["id"] == "network")
+        network["management_handoff_required"] = management_handoff
+        network["management_default_mirror_change"] = False
+        return units
+
+    monkeypatch.setattr(ui, "appliance_apply_units", observed_units)
+    login(client)
+    page = client.get("/dashboard")
+    csrf = page.text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
+    response = client.post("/appliance-apply", data={"csrf": csrf, "selected_units": ["firewall", "nat"]},
+                           headers={"Accept": "application/json"})
+    assert response.status_code == 202, response.text
+    with SessionLocal() as db:
+        job = db.get(Job, response.json()["job_id"])
+        result = json.loads(job.result)
+        assert job.status == "succeeded", result
+        if management_handoff:
+            assert result["management_handoff"] is True
+            assert "nat" in result["management_handoff_units"]
+        else:
+            assert result["traffic_publishing_pair"] is True
+            assert result["traffic_publishing_runtime_commit_pending"] is False
+        assert not port_forwarding.snapshot_has_port_forwards(ui.load_appliance_apply_baselines(db)["nat"]["config_preview"])
+
+
+@pytest.mark.parametrize("content,expected", [(None, False), (b"[nat_rules]\n", False),
+    (b"[port_forwards]\njson=[]\n", False), (b'[port_forwards]\njson=[{"id":1}]\n', True),
+    (b"[port_forwards]\njson=broken\n", True), (b"\xff", True), (b"x" * 2_000_001, True)],
+    ids=["missing", "source-only", "empty", "retained", "malformed", "encoding", "oversized"])
+def test_runtime_forward_presence_is_bounded_and_conservative(monkeypatch, tmp_path, content, expected):
+    """Only readable empty runtime intent permits standalone source-NAT publication.
+
+    Args:
+        monkeypatch: Bind the fixed runtime path to an isolated snapshot.
+        tmp_path: Test-owned runtime directory.
+        content: Missing, valid, malformed or oversized runtime intent.
+        expected: Whether paired validation is required.
+    """
+    from atlaso.app.services import port_forwarding
+
+    path = tmp_path / "nat.conf"
+    monkeypatch.setattr(port_forwarding, "NAT_RUNTIME_PATH", str(path))
+    if content is not None:
+        path.write_bytes(content)
+    assert port_forwarding.runtime_has_port_forwards() is expected
+    if content is None:
+        path.mkdir()
+        assert port_forwarding.runtime_has_port_forwards() is True
+
+
 @pytest.mark.parametrize("management_move", [False, True])
 @pytest.mark.parametrize("release_listener", [False, True])
 def test_global_submission_publishes_captured_port_forward_pair(client, management_move, release_listener):
