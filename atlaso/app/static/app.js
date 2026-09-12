@@ -14587,6 +14587,7 @@ let atlasoTasksTable = null;
 let atlasoTasks = [];
 let atlasoTaskComponentOptions = [];
 let atlasoSelectedTaskId = "";
+let atlasoTaskDetail = null;
 let atlasoNewTaskId = "";
 let atlasoTasksRefreshTimer = 0;
 let atlasoTasksReopenSelected = false;
@@ -15215,6 +15216,7 @@ function renderTaskDetail(task) {
     return;
   }
   atlasoSelectedTaskId = task.id;
+  atlasoTaskDetail = task;
   const title = modal.querySelector("[data-task-detail-title]");
   const statusPill = modal.querySelector("[data-task-detail-status]");
   const summary = modal.querySelector("[data-task-detail-summary]");
@@ -15510,7 +15512,7 @@ async function cancelTask(taskId) {
   if (!(page instanceof HTMLElement)) {
     return;
   }
-  const observedTask = taskById(taskId);
+  const observedTask = atlasoTaskDetail?.id === taskId ? atlasoTaskDetail : taskById(taskId);
   if (!observedTask?.can_cancel) return;
   const confirmed = await requestConfirmation({
     title: "Cancel task",

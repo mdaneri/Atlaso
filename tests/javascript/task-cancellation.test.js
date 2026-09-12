@@ -16,7 +16,7 @@ for (const allowed of [true, false]) {
     const renders = [];
     const context = vm.createContext({
       HTMLElement: Element, document: { querySelector: () => new Element() }, URLSearchParams,
-      taskById: () => current, managementUiPath: (value) => value,
+      atlasoTaskDetail: null, taskById: () => current, managementUiPath: (value) => value,
       requestConfirmation: async (value) => { confirmations.push(value); return true; },
       fetch: async (url, options) => { requests.push({ url, options }); return { ok: true, json: async () => ({ task: returned }) }; },
       refreshTasksPage: async () => {}, renderTaskDetail: (task) => renders.push(task),
@@ -60,3 +60,34 @@ for (const [outcome, expected] of [
     assert.equal(refreshes, 1);
   });
 }
+
+
+test("off-page task detail cancellation uses the rendered capability and refreshes it", async () => {
+  class Element { constructor() { this.dataset = { csrf: "synthetic" }; } }
+  class Dialog extends Element { querySelector() { return null; } }
+  const page = new Element();
+  const modal = new Dialog();
+  const requests = [];
+  const confirmations = [];
+  const selected = { id: "off-page", can_cancel: true, cancel_confirmation: "Finish and clean up." };
+  const returned = { ...selected, can_cancel: false, cancel_requested_at: "now", status: "running" };
+  const context = vm.createContext({
+    HTMLElement: Element, HTMLDialogElement: Dialog, HTMLDetailsElement: Element, HTMLButtonElement: Element,
+    document: { querySelector: () => page, getElementById: () => modal }, URLSearchParams,
+    atlasoTaskDetail: null, atlasoSelectedTaskId: "", taskById: () => null,
+    managementUiPath: (value) => value,
+    requestConfirmation: async (value) => { confirmations.push(value); return true; },
+    fetch: async (url) => { requests.push(url); return { ok: true, json: async () => ({ task: returned }) }; },
+    refreshTasksPage: async () => {},
+  });
+  const render = source.slice(source.indexOf("function renderTaskDetail("), source.indexOf("function openTaskDetail("));
+  vm.runInContext(render + action, context);
+  context.renderTaskDetail(selected);
+  await context.cancelTask("off-page");
+  assert.deepEqual(requests, ["/tasks/off-page/cancel"]);
+  assert.equal(confirmations[0].message, selected.cancel_confirmation);
+  assert.equal(context.atlasoTaskDetail, returned);
+  await context.cancelTask("off-page");
+  await context.cancelTask("different-task");
+  assert.equal(requests.length, 1);
+});
