@@ -247,6 +247,7 @@ def save_port_forward(db: Session, payload: PortForwardCreate, *, actor: str, ru
         else:
             for key, value in values.items():
                 setattr(current, key, value)
+            current.updated_at = models.utcnow()
         current.restore_review_required = False
         db.flush()
         if not 1 <= current.id <= 0xFFFFFF:

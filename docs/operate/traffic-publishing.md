@@ -148,6 +148,10 @@ default disabled. Validation failures use ProblemDetails and preserve the previo
 Complete replacements revalidate bindings, source restrictions, target safety, and listener collisions even when
 disabled. Only archive restoration may retain unavailable disabled relationships for later review.
 Saving never invokes host enforcement; global Appliance Apply owns translation changes.
+Successful replacements, including enable/disable changes, refresh the API's `updated_at` timestamp.
+Signed upgrades install missing `conntrack-tools` through the candidate service's pre-start hook, including upgrades
+performed by older installed helpers. Existing installations are reused. Installation failure blocks candidate startup
+and leaves the upgrade's normal rollback path responsible for recovery; restore Photon repository access before retrying.
 
 Status distinguishes disabled, pending, suspended, applied, and degraded records. An edited target or source boundary
 does not inherit the previous mapping's counters. Packet and byte counts are nullable: unavailable observations are

@@ -3,6 +3,7 @@
 import hashlib
 import json
 import subprocess
+from datetime import datetime, timezone
 
 import pytest
 from pydantic import ValidationError
@@ -31,6 +32,80 @@ from atlaso.app.services.traffic_publishing import (
     render_nat_config,
 )
 from tests.test_appliance_helper import load_helper_module
+
+
+def test_replacement_refreshes_desired_timestamp(monkeypatch):
+    """Return the mutation timestamp for edits and enabled-state replacements.
+
+    Args:
+        monkeypatch: Set a deterministic service clock after initial creation.
+    """
+    from atlaso.app import models
+
+    engine = create_engine("sqlite://")
+    Base.metadata.create_all(engine)
+    with Session(engine) as db:
+        db.add_all(interfaces())
+        db.commit()
+        saved = save_port_forward(db, PortForwardCreate(**payload()), actor="operator")
+        for day, enabled in ((1, False), (2, True)):
+            timestamp = datetime(2030, 1, day, tzinfo=timezone.utc)
+            monkeypatch.setattr(models, "utcnow", lambda value=timestamp: value)
+            changed = save_port_forward(db, PortForwardCreate(**payload(enabled=enabled)),
+                                       actor="operator", rule_id=saved.id)
+            assert changed.updated_at.replace(tzinfo=timezone.utc) == timestamp
+
+
+@pytest.mark.parametrize("installed", [False, True])
+@pytest.mark.parametrize("succeeds", [False, True])
+def test_signed_upgrade_bootstraps_conntrack(monkeypatch, tmp_path, installed, succeeds):
+    """An older updater starts the candidate hook before exposing forwarding.
+
+    Args:
+        monkeypatch: Replace package and command observations.
+        tmp_path: Isolated active signed-release layout.
+        installed: Whether the previous image already contains the package.
+        succeeds: Whether Photon can provide the missing executable.
+    """
+    from pathlib import Path
+
+    helper = load_helper_module()
+    release = tmp_path / "releases/candidate"
+    release.mkdir(parents=True)
+    current = tmp_path / "current"
+    current.symlink_to(release, target_is_directory=True)
+    monkeypatch.setattr(helper, "ATLASO_CURRENT_LINK", current)
+    monkeypatch.setattr(helper, "ATLASO_RELEASES_DIR", release.parent)
+    available = {"tdnf": "/usr/bin/tdnf"}
+    if installed:
+        available["conntrack"] = "/usr/sbin/conntrack"
+    monkeypatch.setattr(helper, "_command_path", available.get)
+    commands = []
+
+    def install(command, *, timeout):
+        """Simulate the single bounded fixed-package installation.
+
+        Args:
+            command: Exact package installation command.
+            timeout: Maximum installation duration.
+        """
+        assert command == ["/usr/bin/tdnf", "install", "-y", "conntrack-tools"]
+        assert timeout == 60
+        commands.append(command)
+        if succeeds:
+            available["conntrack"] = "/usr/sbin/conntrack"
+        return subprocess.CompletedProcess(command, 0 if succeeds else 1, "", "")
+
+    monkeypatch.setattr(helper, "_run", install)
+    if not installed and not succeeds:
+        with pytest.raises(ValueError, match="prerequisite installation failed"):
+            helper._bootstrap_port_forwarding(release)
+    else:
+        helper._bootstrap_port_forwarding(release)
+        assert helper._bootstrap_port_forwarding(release) == []
+    assert len(commands) == (0 if installed else 1)
+    unit = Path("image/common/systemd/atlaso.service").read_text(encoding="utf-8")
+    assert "ExecStartPre=+/opt/atlaso/bin/atlaso-helper appliance-update bootstrap-port-forwarding --real /opt/atlaso/current" in unit
 
 
 @pytest.mark.parametrize("family", [4, 6])

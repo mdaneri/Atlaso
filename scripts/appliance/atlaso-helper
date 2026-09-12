@@ -107,6 +107,7 @@ COMMANDS: dict[str, set[str]] = {
         "restart-complete",
         "restart-inspect",
         "bootstrap-data-disk-safety",
+        "bootstrap-port-forwarding",
         "guard-release",
         "recover-release",
         "complete-committed-release",
@@ -14822,6 +14823,31 @@ def _record_data_disk_safety_bootstrap_complete() -> None:
         temporary.unlink(missing_ok=True)
 
 
+def _bootstrap_port_forwarding(release_root: Path) -> list[dict]:
+    """Provide the OS prerequisite when an older updater installs this release.
+
+    Args:
+        release_root: Active release selected by the signed update transaction.
+    """
+    resolved = release_root.resolve(strict=True)
+    if (not ATLASO_CURRENT_LINK.is_symlink() or ATLASO_CURRENT_LINK.resolve(strict=True) != resolved
+            or not resolved.is_relative_to(ATLASO_RELEASES_DIR.resolve(strict=True))):
+        raise ValueError("Port-forward bootstrap requires the active signed release")
+    if _command_path("conntrack"):
+        return []
+    tdnf = _command_path("tdnf")
+    if not tdnf:
+        raise ValueError("Port-forward bootstrap requires Photon tdnf to install conntrack-tools")
+    command = [tdnf, "install", "-y", "conntrack-tools"]
+    try:
+        result = _run(command, timeout=60)
+    except subprocess.TimeoutExpired as exc:
+        raise ValueError("Port-forward prerequisite installation timed out; review Photon package state before retrying") from exc
+    if result.returncode != 0 or not _command_path("conntrack"):
+        raise ValueError("Port-forward prerequisite installation failed; restore Photon repository access and retry")
+    return [{"command": command, "success": True, "returncode": 0, "stdout": "", "stderr": ""}]
+
+
 def _bootstrap_release_data_disk_safety(release_root: Path) -> list[dict]:
     """Transactionally migrate, install, and validate safety for a previous updater.
 
@@ -23964,12 +23990,13 @@ def _handle_appliance_update(action: str, args: list[str]) -> int:
             print(str(result["error"]), file=sys.stderr)
         return 75
 
-    if action == "bootstrap-data-disk-safety":
+    if action in {"bootstrap-data-disk-safety", "bootstrap-port-forwarding"}:
         if len(args) != 1:
-            print("bootstrap-data-disk-safety requires exactly one active release path", file=sys.stderr)
+            print(f"{action} requires exactly one active release path", file=sys.stderr)
             return 2
         try:
-            commands = _bootstrap_release_data_disk_safety(Path(args[0]))
+            bootstrap = _bootstrap_port_forwarding if action == "bootstrap-port-forwarding" else _bootstrap_release_data_disk_safety
+            commands = bootstrap(Path(args[0]))
         except (OSError, ValueError) as exc:
             print(str(exc), file=sys.stderr)
             return 1

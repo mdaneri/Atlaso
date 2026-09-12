@@ -16,6 +16,7 @@ UMask=0027
 ExecStartPre=+/opt/atlaso/bin/atlaso-helper management-front-door recover --real
 ExecStartPre=+/opt/atlaso/bin/atlaso-helper factory-reset resume --real
 ExecStartPre=+/opt/atlaso/bin/atlaso-helper appliance-update bootstrap-data-disk-safety --real /opt/atlaso/current
+ExecStartPre=+/opt/atlaso/bin/atlaso-helper appliance-update bootstrap-port-forwarding --real /opt/atlaso/current
 ExecStartPre=+/opt/atlaso/bin/atlaso-helper wan reconcile-nat --real
 ExecStart=/opt/atlaso/.venv/bin/python -m uvicorn atlaso.app.main:app --host 127.0.0.1 --port 8000
 Restart=on-failure
