@@ -1690,6 +1690,75 @@ def _read_dnsmasq_leases() -> int:
     return 0
 
 
+def _tail_offset(handle, *, compressed: bool, deadline: float) -> tuple[int, bool]:
+    """Locate the newest bounded group without replaying pages to the client.
+
+    Args:
+        handle: Verified regular source stream.
+        compressed: Whether seeking requires bounded decompression.
+        deadline: Shared monotonic deadline for the request.
+    """
+    if compressed:
+        data, total = b"", 0
+        handle.seek(0)
+        while chunk := handle.read(65536):
+            if time.monotonic() > deadline:
+                raise ValueError("Archived tail scan exceeded its deadline; open from the beginning.")
+            total += len(chunk)
+            data = (data + chunk)[-1024 * 1024:]
+    else:
+        total = handle.seek(0, os.SEEK_END)
+        handle.seek(max(0, total - 1024 * 1024))
+        data = handle.read(1024 * 1024)
+    offset = total - len(data)
+    if offset:
+        boundary = data.find(b"\n")
+        if boundary < 0:
+            return total, True
+        offset += boundary + 1
+        data = data[boundary + 1:]
+    starts = [0] + [match.end() for match in re.finditer(b"\n", data) if match.end() < len(data)]
+    if len(starts) > 500:
+        offset += starts[-500]
+    return offset, False
+
+
+def _tail_private_key(paths: list[Path], offset: int, *, deadline: float) -> bool:
+    """Recover redaction state before a tail boundary without retaining source contents.
+
+    Args:
+        paths: Fixed retained files through the selected newest source.
+        offset: Uncompressed byte boundary within the selected source.
+        deadline: Shared monotonic deadline for the request.
+    """
+    import contextlib
+    import gzip
+    import stat
+
+    opened = False
+    carry = b""
+    for index, path in enumerate(paths):
+        descriptor = os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_BINARY", 0) | getattr(os, "O_NONBLOCK", 0))
+        with os.fdopen(descriptor, "rb") as raw:
+            if not stat.S_ISREG(os.fstat(raw.fileno()).st_mode):
+                raise ValueError("Retained log is not a regular file.")
+            with (gzip.GzipFile(fileobj=raw) if path.suffix == ".gz" else contextlib.nullcontext(raw)) as stream:
+                remaining = offset if index == len(paths) - 1 else None
+                while remaining is None or remaining > 0:
+                    if time.monotonic() > deadline:
+                        raise ValueError("Tail redaction scan exceeded its deadline; open from the beginning.")
+                    chunk = stream.read(min(65536, remaining) if remaining is not None else 65536)
+                    if not chunk:
+                        break
+                    if remaining is not None:
+                        remaining -= len(chunk)
+                    window = carry + chunk
+                    for match in re.finditer(rb"-----(BEGIN|END) [A-Z ]*PRIVATE KEY-----", window):
+                        opened = match.group(1) == b"BEGIN"
+                    carry = window[-128:]
+    return opened
+
+
 def _read_fixed_log_history(path: Path, position: dict) -> dict:
     """Read retained numbered rotations and the current fixed log in order.
 
@@ -1703,12 +1772,13 @@ def _read_fixed_log_history(path: Path, position: dict) -> dict:
         match = re.fullmatch(re.escape(path.name) + r"\.(\d+)(\.gz)?", candidate.name)
         if match:
             rotations.append((int(match[1]), candidate))
+    deadline = time.monotonic() + 10
     paths = [candidate for _, candidate in sorted(rotations, key=lambda item: item[0], reverse=True)]
     if path.exists():
         paths.append(path)
     if not paths:
         return {"lines": [], "file_position": {}, "has_more": False, "available": False}
-    selected = 0
+    selected = len(paths) - 1 if position.get("tail") else 0
     offset = position.get("offset", 0)
     if type(offset) is not int or offset < 0:
         raise ValueError("invalid file offset")
@@ -1733,6 +1803,11 @@ def _read_fixed_log_history(path: Path, position: dict) -> dict:
         generation = f"{metadata.st_dev}:{metadata.st_ino}"
         handle = gzip.GzipFile(fileobj=raw) if candidate.suffix == ".gz" else raw
         try:
+            initial_private_key = position.get("private_key") is True
+            if position.get("tail"):
+                offset, oversized = _tail_offset(handle, compressed=candidate.suffix == ".gz", deadline=deadline)
+                initial_private_key = _tail_private_key(paths[:selected + 1], offset, deadline=deadline)
+                position = {"oversized": oversized}
             prefix_length = position.get("prefix_length", 0)
             if type(prefix_length) is not int or not 0 <= prefix_length <= 4096:
                 raise ValueError("invalid prefix length")
@@ -1744,7 +1819,18 @@ def _read_fixed_log_history(path: Path, position: dict) -> dict:
                                 "oversized": not reset and position.get("oversized") is True,
                                 "prefix_length": 0 if reset else prefix_length,
                                 "prefix": "" if reset else position.get("prefix", "")}
-            handle.seek(offset)
+            if candidate.suffix == ".gz":
+                handle.seek(0)
+                remaining = offset
+                while remaining:
+                    if time.monotonic() > deadline:
+                        raise ValueError("compressed history scan exceeded its deadline")
+                    skipped = handle.read(min(65536, remaining))
+                    if not skipped:
+                        raise ValueError("compressed history position is unavailable")
+                    remaining -= len(skipped)
+            else:
+                handle.seek(offset)
             lines = []
             consumed = 0
             partial = False
@@ -1783,8 +1869,76 @@ def _read_fixed_log_history(path: Path, position: dict) -> dict:
         next_position = {"generation": generation, "offset": next_offset}
         more = True
     return {"lines": lines, "file_position": next_position,
-            "current_position": current_position,
+            "current_position": current_position, "initial_private_key": initial_private_key,
             "has_more": more, "available": True, "reset": reset}
+
+
+def _oversized_journal_entry(first, stream):
+    """Discard oversized message bytes while retaining trusted cursor metadata.
+
+    Args:
+        first: First bounded fragment of one journalctl JSON record.
+        stream: Owned journalctl output pipe positioned within that record.
+    """
+    metadata = {}
+    carry = b""
+    marker_state = None
+    raw = first
+    while raw:
+        window = carry + raw
+        for field in ("__CURSOR", "__REALTIME_TIMESTAMP"):
+            match = re.search(rb'"' + field.encode() + rb'"\s*:\s*("(?:[^"\\]|\\.)*")', window)
+            if match:
+                metadata[field] = json.loads(match.group(1))
+        for match in re.finditer(rb"-----(BEGIN|END) [A-Z ]*PRIVATE KEY-----", window):
+            marker_state = match.group(1) == b"BEGIN"
+        if raw.endswith(b"\n"):
+            break
+        carry = window[-4096:]
+        raw = stream.readline(65536)
+    if "__CURSOR" not in metadata or "__REALTIME_TIMESTAMP" not in metadata:
+        raise ValueError("oversized journal metadata is incomplete")
+    message = "[Oversized journal entry omitted: exceeds 1 MiB; continuing with the next entry.]"
+    if marker_state is not None:
+        message += "\n-----BEGIN PRIVATE KEY-----" if marker_state else "\n-----END PRIVATE KEY-----"
+    return {**metadata, "MESSAGE": message}
+
+
+def _journal_history_entries(command, *, deadline):
+    """Read complete bounded representations from one deadline-owned journal process.
+
+    Args:
+        command: Fixed allowlisted journal invocation.
+        deadline: Shared monotonic deadline for this history request.
+    """
+    import threading
+
+    selected, consumed, more = [], 0, False
+    with subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE) as process:
+        timer = threading.Timer(max(.001, deadline - time.monotonic()), process.kill)
+        timer.start()
+        try:
+            while raw := process.stdout.readline(1024 * 1024 + 1):
+                if selected and (len(selected) >= 500 or consumed + len(raw) > 1024 * 1024):
+                    more = True
+                    break
+                entry = _oversized_journal_entry(raw, process.stdout) if len(raw) > 1024 * 1024 else json.loads(raw)
+                if not isinstance(entry.get("MESSAGE"), str):
+                    entry["MESSAGE"] = "[Binary journal entry omitted.]"
+                selected.append(entry)
+                consumed += len(raw)
+            if not more:
+                code = process.wait(timeout=2)
+                diagnostic = process.stderr.read(8193)
+                no_match = code == 1 and not selected and not diagnostic and any(arg.startswith("--grep=") for arg in command)
+                if code != 0 and not no_match:
+                    raise ValueError("journal history is unavailable")
+        finally:
+            timer.cancel()
+            if process.poll() is None:
+                process.kill()
+                process.wait(timeout=2)
+    return selected, more
 
 
 def _read_log_history(args: list[str]) -> int:
@@ -1807,40 +1961,31 @@ def _read_log_history(args: list[str]) -> int:
         if args[0] in files:
             print(json.dumps(_read_fixed_log_history(files[args[0]], position)))
             return 0
-        cursor = position.get("journal_cursor", "")
+        cursor = position.get("journal_cursor", position.get("journal_start_cursor", ""))
         if not isinstance(cursor, str) or len(cursor) > 2048 or any(ord(char) < 32 for char in cursor):
             raise ValueError("invalid journal cursor")
+        tail = position.get("tail") is True and not cursor
         command = [shutil.which("journalctl") or "journalctl", "--unit", units[args[0]],
-                   "--no-pager", "--output=json", "--lines=+501",
+                   "--no-pager", "--output=json", "--lines=500" if tail else "--lines=+501",
                    "--output-fields=MESSAGE,__CURSOR,__REALTIME_TIMESTAMP"]
         if cursor:
-            command.append(f"--after-cursor={cursor}")
-        selected = []
-        more = False
-        consumed = 0
-        with subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL) as process:
-            try:
-                # Stop at complete entries so a large batch always makes forward progress.
-                import threading
-                timer = threading.Timer(10, process.kill)
-                timer.start()
-                try:
-                    while raw := process.stdout.readline(1024 * 1024 + 1):
-                        if selected and (len(selected) >= 500 or consumed + len(raw) > 1024 * 1024):
-                            more = True
-                            break
-                        if len(raw) > 1024 * 1024:
-                            raise ValueError("journal entry exceeds display size")
-                        selected.append(json.loads(raw))
-                        consumed += len(raw)
-                    if not more and process.wait(timeout=2) != 0:
-                        raise ValueError("journal history is unavailable")
-                finally:
-                    timer.cancel()
-            finally:
-                if process.poll() is None:
-                    process.kill()
-                    process.wait(timeout=2)
+            command.append(f"--cursor={cursor}" if position.get("journal_start_cursor") else f"--after-cursor={cursor}")
+        deadline = time.monotonic() + 10
+        selected, more = _journal_history_entries(command, deadline=deadline)
+        initial_private_key = position.get("private_key") is True
+        current_position = {key: position[key] for key in ("journal_cursor", "journal_start_cursor") if key in position}
+        if tail and selected:
+            first_cursor = selected[0]["__CURSOR"]
+            current_position = {"journal_start_cursor": first_cursor}
+            # Recover cross-record PEM state before jumping into retained history.
+            prefix_command = [command[0], "--unit", units[args[0]], "--no-pager", "--output=json",
+                              "--output-fields=MESSAGE,__CURSOR,__REALTIME_TIMESTAMP", "--reverse",
+                              f"--cursor={first_cursor}", "--lines=2", "--grep=-----(BEGIN|END) [A-Z ]*PRIVATE KEY-----"]
+            predecessors, _ = _journal_history_entries(prefix_command, deadline=deadline)
+            predecessor = next((entry for entry in predecessors if entry["__CURSOR"] != first_cursor), None)
+            if predecessor is not None:
+                markers = list(re.finditer(r"-----(BEGIN|END) [A-Z ]*PRIVATE KEY-----", predecessor["MESSAGE"]))
+                initial_private_key = bool(markers and markers[-1].group(1) == "BEGIN")
         lines = []
         for entry in selected:
             message = entry.get("MESSAGE")
@@ -1849,7 +1994,7 @@ def _read_log_history(args: list[str]) -> int:
             timestamp = datetime.fromtimestamp(int(entry["__REALTIME_TIMESTAMP"]) / 1000000, timezone.utc).isoformat()
             lines.extend(f"{timestamp} {line}" for line in message.splitlines())
         print(json.dumps({"lines": lines, "journal_cursor": selected[-1]["__CURSOR"] if selected else cursor,
-                          "has_more": more}))
+                          "has_more": more, "current_position": current_position, "initial_private_key": initial_private_key}))
         return 0
     except (ValueError, TypeError, AttributeError, KeyError, OSError, subprocess.TimeoutExpired):
         print("Log history page could not be read completely. Reopen the source to retry.", file=sys.stderr)

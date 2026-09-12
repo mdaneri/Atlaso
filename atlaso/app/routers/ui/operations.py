@@ -501,7 +501,7 @@ def build_router(dependencies: OperationsUiDependencies) -> OperationsUiRouter:
             if not source:
                 return JSONResponse({"text": "No dedicated log source is configured for this service.", "status": "succeeded"})
             try:
-                return JSONResponse(log_viewer.source_page(source, cursor=request.query_params.get("cursor", "")),
+                return JSONResponse(log_viewer.source_page(source, cursor=request.query_params.get("cursor", ""), tail=request.query_params.get("tail") == "1"),
                                     headers={"Cache-Control": "no-store"})
             except (ValueError, OSError) as exc:
                 raise HTTPException(status_code=400, detail=str(exc)) from exc
@@ -573,6 +573,7 @@ def build_router(dependencies: OperationsUiDependencies) -> OperationsUiRouter:
         lines: int = Query(100),
         source: str = Query(""),
         cursor: str = Query("", max_length=4096),
+        tail: bool = Query(False),
         _identity: Identity = Depends(require_session_identity),
     ) -> JSONResponse:
         """Handle the logs data endpoint.
@@ -581,6 +582,7 @@ def build_router(dependencies: OperationsUiDependencies) -> OperationsUiRouter:
             lines: Lines supplied by the caller.
             source: Fixed source whose complete retained history is requested.
             cursor: Signed history position bound to that source.
+            tail: Open the newest retained group without replaying older pages.
             _identity: Authenticated identity supplied by the dependency layer.
 
         Returns:
@@ -588,7 +590,7 @@ def build_router(dependencies: OperationsUiDependencies) -> OperationsUiRouter:
         """
         if source:
             try:
-                return JSONResponse(log_viewer.source_page(source, cursor=cursor), headers={"Cache-Control": "no-store"})
+                return JSONResponse(log_viewer.source_page(source, cursor=cursor, tail=tail), headers={"Cache-Control": "no-store"})
             except (ValueError, OSError) as exc:
                 raise HTTPException(status_code=400, detail=str(exc)) from exc
         line_count = normalized_log_line_count(lines)
@@ -798,6 +800,7 @@ def build_router(dependencies: OperationsUiDependencies) -> OperationsUiRouter:
     def task_log(
         job_id: str,
         cursor: str = Query("", max_length=4096),
+        tail: bool = Query(False),
         identity: Identity = Depends(require_session_identity),
         db: Session = Depends(get_db),
     ) -> JSONResponse:
@@ -806,6 +809,7 @@ def build_router(dependencies: OperationsUiDependencies) -> OperationsUiRouter:
         Args:
             job_id: Identifier of the job.
             cursor: Signed position in the complete retained task projection.
+            tail: Open the newest byte-bounded part of the retained task log.
             identity: Authenticated identity authorizing the request.
             db: Active database session.
 
@@ -820,7 +824,7 @@ def build_router(dependencies: OperationsUiDependencies) -> OperationsUiRouter:
             raise HTTPException(status_code=404, detail="Task not found")
         row = _task_row(job)
         try:
-            history = log_viewer.text_page("\n".join(_task_log_lines(job, db, include_metadata=False)), source=f"task:{job.id}", cursor=cursor)
+            history = log_viewer.text_page("\n".join(_task_log_lines(job, db, include_metadata=False)), source=f"task:{job.id}", cursor=cursor, tail=tail)
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
         return JSONResponse(

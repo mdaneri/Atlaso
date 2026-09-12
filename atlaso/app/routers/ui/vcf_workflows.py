@@ -2268,6 +2268,7 @@ def build_router(dependencies: VcfWorkflowsUiDependencies) -> VcfWorkflowsUiRout
         if request.headers.get("X-Atlaso-Task-Log") == "1":
             try:
                 history = log_viewer.file_page(Path(task_log["path"]), source=f"task:{job.id}",
+                                               tail=request.query_params.get("tail") == "1",
                                                cursor=request.query_params.get("cursor", ""),
                                                complete=job.status not in {JobStatus.RUNNING.value, JobStatus.PENDING.value})
             except (ValueError, OSError) as exc:

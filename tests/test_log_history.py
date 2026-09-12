@@ -368,3 +368,136 @@ def test_audit_live_tail_avoids_replaying_old_groups(client):
     beginning = client.get("/ui/management/audit-log", headers=headers).json()
     assert beginning["rows"][0]["id"] <= first_id
     assert beginning["has_more"]
+
+
+def test_task_pages_bound_utf8_bytes_and_tail(monkeypatch):
+    """Multilingual output remains character-safe within the transport byte budget.
+
+    Args:
+        monkeypatch: Reduce the budget to exercise multiple pages cheaply.
+    """
+    monkeypatch.setattr(log_viewer, "PAGE_BYTES", 100)
+    text = ("漢字🙂\n" * 100)
+    cursor, actual = "", ""
+    while True:
+        page = log_viewer.text_page(text, source="utf8", cursor=cursor)
+        assert len(page["text"].encode("utf-8")) <= 100
+        actual += page["text"]
+        cursor = page["next_cursor"]
+        if not page["has_more"]:
+            break
+    assert actual == text
+    tail = log_viewer.text_page(text, source="utf8", tail=True)
+    assert len(tail["text"].encode("utf-8")) <= 100
+    assert text.endswith(tail["text"])
+    assert not tail["has_more"]
+
+
+@pytest.mark.parametrize("privileged", [False, True])
+def test_file_tail_is_bounded_and_preserves_rotated_key_state(tmp_path, privileged):
+    """Jumping to the newest group preserves redaction state from earlier rotations.
+
+    Args:
+        tmp_path: Fixed retained source directory.
+        privileged: Exercise the standalone helper contract too.
+    """
+    from tests.test_appliance_helper import load_helper_module
+
+    path = tmp_path / "history.log"
+    (tmp_path / "history.log.1").write_text("-----BEGIN PRIVATE KEY-----\n", encoding="utf-8")
+    path.write_text("".join(f"hidden-fragment-{i}\n" for i in range(1500)) + "-----END PRIVATE KEY-----\nvisible\n", encoding="utf-8")
+    if privileged:
+        helper = load_helper_module()
+        page = helper._read_fixed_log_history(path, {"tail": True})
+        assert page["initial_private_key"]
+        lines, _ = log_viewer.redact_lines(page["lines"], private_key=page["initial_private_key"])
+    else:
+        page = log_viewer.file_page(path, source="tail", tail=True)
+        assert log_viewer.decode_cursor(page["cursor"], "tail")["private_key"]
+        lines = page["text"].splitlines()
+    assert len(lines) == 500
+    assert lines[-1] == "visible"
+    assert "hidden-fragment" not in "\n".join(lines)
+    assert not page["has_more"]
+
+
+def test_journal_oversized_record_advances_metadata_after_message(monkeypatch, capsys):
+    """A large journal message cannot hide its cursor or any following entries.
+
+    Args:
+        monkeypatch: Replace the owned subprocess transport.
+        capsys: Read the helper's structured response.
+    """
+    import io
+    import json
+    from unittest.mock import MagicMock
+
+    from tests.test_appliance_helper import load_helper_module
+
+    helper = load_helper_module()
+    entry = {"MESSAGE": "private-fragment" * 200000, "__CURSOR": "large-cursor", "__REALTIME_TIMESTAMP": "1000000"}
+    later = {"MESSAGE": "later", "__CURSOR": "later-cursor", "__REALTIME_TIMESTAMP": "1000001"}
+    process = MagicMock()
+    process.__enter__.return_value = process
+    process.wait.return_value = process.poll.return_value = 0
+    process.stdout = io.BytesIO((json.dumps(entry) + "\n" + json.dumps(later) + "\n").encode())
+    monkeypatch.setattr(helper.subprocess, "Popen", lambda *args, **kwargs: process)
+    assert helper._read_log_history(["nginx", "{}"]) == 0
+    page = json.loads(capsys.readouterr().out)
+    assert page["journal_cursor"] == "large-cursor"
+    assert page["has_more"]
+    assert "Oversized journal entry omitted" in page["lines"][0]
+    assert "private-fragment" not in str(page)
+    process.stdout = io.BytesIO((json.dumps(later) + "\n").encode())
+    assert helper._read_log_history(["nginx", json.dumps({"journal_cursor": page["journal_cursor"]})]) == 0
+    assert json.loads(capsys.readouterr().out)["lines"][0].endswith(" later")
+
+
+def test_journal_tail_recovers_prior_key_state(monkeypatch, capsys):
+    """The latest journal group has a stable start and redaction predecessor.
+
+    Args:
+        monkeypatch: Substitute the owned journal transport.
+        capsys: Read the helper page.
+    """
+    import io
+    import json
+    from unittest.mock import MagicMock
+
+    from tests.test_appliance_helper import load_helper_module
+
+    helper = load_helper_module()
+    commands = []
+    def launch(command, **_kwargs):
+        commands.append(command)
+        message, cursor = ("-----BEGIN PRIVATE KEY-----", "prior") if "--reverse" in command else ("hidden", "latest")
+        process = MagicMock()
+        process.__enter__.return_value = process
+        process.wait.return_value = process.poll.return_value = 0
+        process.stdout = io.BytesIO((json.dumps({"MESSAGE": message, "__CURSOR": cursor,
+                                               "__REALTIME_TIMESTAMP": "1000000"}) + "\n").encode())
+        return process
+    monkeypatch.setattr(helper.subprocess, "Popen", launch)
+    assert helper._read_log_history(["nginx", '{"tail":true}']) == 0
+    page = json.loads(capsys.readouterr().out)
+    assert page["initial_private_key"]
+    assert page["current_position"] == {"journal_start_cursor": "latest"}
+    assert "--lines=500" in commands[0]
+    assert "--cursor=latest" in commands[1]
+
+
+def test_tail_of_unfinished_oversized_key_keeps_future_fragments_redacted(tmp_path):
+    """A tail positioned inside a huge unfinished line retains its complete key state.
+
+    Args:
+        tmp_path: Fixed log source owned by the test.
+    """
+    path = tmp_path / "unfinished.log"
+    path.write_bytes(b"prefix" * 200000 + b"-----BEGIN PRIVATE KEY-----" + b"hidden" * 200000)
+    first = log_viewer.file_page(path, source="unfinished", tail=True)
+    assert log_viewer.decode_cursor(first["next_cursor"], "unfinished")["private_key"]
+    with path.open("ab") as handle:
+        handle.write(b"\nprivate-fragment\n-----END PRIVATE KEY-----\nvisible\n")
+    later = log_viewer.file_page(path, source="unfinished", cursor=first["next_cursor"])
+    assert "private-fragment" not in later["text"]
+    assert later["text"].endswith("visible")

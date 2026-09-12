@@ -324,3 +324,18 @@ test("an authentication redirect stops the live viewer", async () => {
   assert.match(harness.meta.textContent, /Access expired/);
   assert.equal(harness.timers.size, 0);
 });
+
+test("task logs open at the tail and keep the returned stable page cursor", async () => {
+  const harness = taskLogHarness();
+  const initial = harness.context.openTaskLog({ id: "A" });
+  assert.equal(new URL(harness.requests[0].url).searchParams.get("tail"), "1");
+  harness.complete(0, { status: "running", text: "latest", cursor: "stable-start", next_cursor: "latest-end" });
+  await initial;
+  const refresh = fireTimer(harness, 5000);
+  const url = new URL(harness.requests[1].url);
+  assert.equal(url.searchParams.get("cursor"), "stable-start");
+  assert.equal(url.searchParams.get("tail"), null);
+  harness.complete(1, { status: "running", text: "latest\nnew", cursor: "stable-start", next_cursor: "new-end" });
+  await refresh;
+  harness.context.closeTaskLogModal();
+});

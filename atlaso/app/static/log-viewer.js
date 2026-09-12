@@ -163,11 +163,13 @@
     document.querySelectorAll("[data-live-log-url]").forEach((root) => {
       create({
         output: root.querySelector("[data-live-log-output]"),
+        initialCursor: "tail",
         status: root.querySelector("[data-live-log-status]"),
         controls: root.querySelector("[data-live-log-controls]"),
         fetchPage: (cursor, signal) => {
           const url = new URL(root.dataset.liveLogUrl, window.location.href);
-          if (cursor) url.searchParams.set("cursor", cursor);
+          if (cursor === "tail") url.searchParams.set("tail", "1");
+          else if (cursor) url.searchParams.set("cursor", cursor);
           return fetchJson(url, signal);
         },
       });

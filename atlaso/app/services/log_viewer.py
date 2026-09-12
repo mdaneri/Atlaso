@@ -24,25 +24,29 @@ PAGE_BYTES = 1024 * 1024
 LINE_BYTES = 64 * 1024
 
 
-def source_page(source: str, *, cursor: str = "") -> dict[str, Any]:
+def source_page(source: str, *, cursor: str = "", tail: bool = False) -> dict[str, Any]:
     """Read one authorized fixed-source page and redact before transport.
 
     Args:
         source: Fixed source selected in the authenticated Logs viewer.
         cursor: Signed position belonging to this source.
+        tail: Open the newest retained page when no cursor is supplied.
     """
     if source == "app":
-        return file_page(get_settings().app_log_path, source=source, cursor=cursor)
+        return file_page(get_settings().app_log_path, source=source, cursor=cursor, tail=tail)
     if source == "kms":
-        return file_page(Path("/var/log/atlaso/kmip/server.log"), source=source, cursor=cursor)
+        return file_page(Path("/var/log/atlaso/kmip/server.log"), source=source, cursor=cursor, tail=tail)
     if source not in {"dnsmasq-dns", "dnsmasq-dhcp", "dnsmasq-tftp", "ldap", "ntp", "esx-storage", "nginx", "nginx-access", "nginx-error"}:
         raise ValueError("Unknown log source.")
     position = decode_cursor(cursor, source)
+    if tail and not cursor:
+        position["tail"] = True
     result = SystemAdapter().read_log_history(source, position)
     if result.returncode:
         raise ValueError("Log history is temporarily unavailable. Your displayed page is preserved.")
     payload = json.loads(result.stdout)
-    lines, private_key = redact_lines(payload["lines"], private_key=not payload.get("reset") and position.get("private_key") is True)
+    initial_private_key = not payload.get("reset") and payload.get("initial_private_key", position.get("private_key")) is True
+    lines, private_key = redact_lines(payload["lines"], private_key=initial_private_key)
     if source.startswith("dnsmasq-"):
         category = source.removeprefix("dnsmasq-")
         lines = [line for line in lines if (
@@ -50,7 +54,7 @@ def source_page(source: str, *, cursor: str = "") -> dict[str, Any]:
             else "tftp" if re.search(r"\bdnsmasq-tftp(?:\[\d+\])?:", line) else "dns"
         ) == category]
     next_position = payload.get("file_position", {"journal_cursor": payload.get("journal_cursor", "")})
-    current = encode_cursor(source, **payload["current_position"], private_key=not payload.get("reset") and position.get("private_key") is True) if "current_position" in payload else cursor
+    current = encode_cursor(source, **payload["current_position"], private_key=initial_private_key) if "current_position" in payload else cursor
     return {"source": source, "available": payload.get("available", True), "text": "\n".join(lines), "cursor": current,
             "next_cursor": encode_cursor(source, **next_position, private_key=private_key),
             "has_more": payload["has_more"], "notice": "Retained history changed; reopened the oldest available file." if payload.get("reset") else "",
@@ -112,8 +116,73 @@ def redact_lines(lines: list[str], *, private_key: bool = False) -> tuple[list[s
     return output, private_key
 
 
+def _tail_offset(handle: Any, *, compressed: bool, deadline: float) -> tuple[int, bool]:
+    """Locate the newest bounded group without replaying pages to the client.
+
+    Args:
+        handle: Verified regular source stream.
+        compressed: Whether seeking requires bounded decompression.
+        deadline: Shared monotonic deadline for the request.
+    """
+    if compressed:
+        data, total = b"", 0
+        handle.seek(0)
+        while chunk := handle.read(65536):
+            if time.monotonic() > deadline:
+                raise ValueError("Archived tail scan exceeded its deadline; open from the beginning.")
+            total += len(chunk)
+            data = (data + chunk)[-1024 * 1024:]
+    else:
+        total = handle.seek(0, os.SEEK_END)
+        handle.seek(max(0, total - 1024 * 1024))
+        data = handle.read(1024 * 1024)
+    offset = total - len(data)
+    if offset:
+        boundary = data.find(b"\n")
+        if boundary < 0:
+            return total, True
+        offset += boundary + 1
+        data = data[boundary + 1:]
+    starts = [0] + [match.end() for match in re.finditer(b"\n", data) if match.end() < len(data)]
+    if len(starts) > 500:
+        offset += starts[-500]
+    return offset, False
+
+
+def _tail_private_key(paths: list[Path], offset: int, *, deadline: float) -> bool:
+    """Recover redaction state before a tail boundary without retaining source contents.
+
+    Args:
+        paths: Fixed retained files through the selected newest source.
+        offset: Uncompressed byte boundary within the selected source.
+        deadline: Shared monotonic deadline for the request.
+    """
+    opened = False
+    carry = b""
+    for index, path in enumerate(paths):
+        descriptor = os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_BINARY", 0) | getattr(os, "O_NONBLOCK", 0))
+        with os.fdopen(descriptor, "rb") as raw:
+            if not stat.S_ISREG(os.fstat(raw.fileno()).st_mode):
+                raise ValueError("Retained log is not a regular file.")
+            with (gzip.GzipFile(fileobj=raw) if path.suffix == ".gz" else nullcontext(raw)) as stream:
+                remaining = offset if index == len(paths) - 1 else None
+                while remaining is None or remaining > 0:
+                    if time.monotonic() > deadline:
+                        raise ValueError("Tail redaction scan exceeded its deadline; open from the beginning.")
+                    chunk = stream.read(min(65536, remaining) if remaining is not None else 65536)
+                    if not chunk:
+                        break
+                    if remaining is not None:
+                        remaining -= len(chunk)
+                    window = carry + chunk
+                    for match in re.finditer(rb"-----(BEGIN|END) [A-Z ]*PRIVATE KEY-----", window):
+                        opened = match.group(1) == b"BEGIN"
+                    carry = window[-128:]
+    return opened
+
+
 def file_page(path: Path, *, source: str, cursor: str = "", limit: int = PAGE_LINES,
-              complete: bool = False) -> dict[str, Any]:
+              complete: bool = False, tail: bool = False) -> dict[str, Any]:
     """Read current and numbered retained rotations without a total-history cap.
 
     Args:
@@ -122,7 +191,9 @@ def file_page(path: Path, *, source: str, cursor: str = "", limit: int = PAGE_LI
         cursor: Signed file identity, position, and redaction state.
         limit: Per-page line count, bounded independently of total history.
         complete: Include a terminal task's final line without a newline.
+        tail: Start at the newest bounded group while preserving earlier navigation.
     """
+    deadline = time.monotonic() + 10
     position = decode_cursor(cursor, source)
     rotations = []
     for candidate in path.parent.glob(f"{path.name}.*"):
@@ -135,7 +206,7 @@ def file_page(path: Path, *, source: str, cursor: str = "", limit: int = PAGE_LI
     if not paths:
         return {"text": "", "available": False, "has_more": False, "cursor": "", "next_cursor": "",
                 "notice": "Log file has not been written yet.", "source": source}
-    index = 0
+    index = len(paths) - 1 if tail and not cursor else 0
     reset = False
     if position.get("generation"):
         for candidate_index, candidate in enumerate(paths):
@@ -157,6 +228,9 @@ def file_page(path: Path, *, source: str, cursor: str = "", limit: int = PAGE_LI
         with (gzip.GzipFile(fileobj=raw) if compressed else nullcontext(raw)) as handle:
             generation = f"{metadata.st_dev}:{metadata.st_ino}"
             offset = position.get("offset", 0)
+            if tail and not cursor:
+                offset, oversized = _tail_offset(handle, compressed=compressed, deadline=deadline)
+                position = {"oversized": oversized, "private_key": _tail_private_key(paths[:index + 1], offset, deadline=deadline)}
             if type(offset) is not int or offset < 0:
                 raise ValueError("Invalid log history position.")
             prefix_length = position.get("prefix_length", 0)
@@ -167,7 +241,6 @@ def file_page(path: Path, *, source: str, cursor: str = "", limit: int = PAGE_LI
                     (prefix_length and hashlib.sha256(prefix).hexdigest() != position.get("prefix"))):
                 offset, position, reset = 0, {}, True
             handle.seek(0)
-            deadline = time.monotonic() + 10
             remaining = offset if compressed else 0
             if not compressed:
                 handle.seek(offset)
@@ -218,23 +291,31 @@ def file_page(path: Path, *, source: str, cursor: str = "", limit: int = PAGE_LI
             "notice": "Retained history changed; reopened the oldest available file." if reset else ""}
 
 
-def text_page(text: str, *, source: str, cursor: str = "") -> dict[str, Any]:
+def text_page(text: str, *, source: str, cursor: str = "", tail: bool = False) -> dict[str, Any]:
     """Page an already-redacted task projection without shortening its history.
 
     Args:
         text: Complete retained task projection after existing redaction.
         source: Stable task identity.
         cursor: Opaque source-bound character position.
+        tail: Open the newest byte-bounded part of the retained projection.
     """
     position = decode_cursor(cursor, source)
     offset = position.get("offset", 0)
     if type(offset) is not int or offset < 0:
         raise ValueError("Invalid log history position.")
+    if tail and not cursor:
+        suffix = text[-PAGE_BYTES:].encode("utf-8")[-PAGE_BYTES:].decode("utf-8", errors="ignore")
+        offset = len(text) - len(suffix)
+        if offset and "\n" in suffix:
+            offset += suffix.index("\n") + 1
+        position["prefix"] = hashlib.sha256(text[:offset].encode("utf-8")).hexdigest()
     fingerprint = hashlib.sha256(text[:offset].encode("utf-8")).hexdigest()
     reset = offset > len(text) or (offset > 0 and fingerprint != position.get("prefix"))
     if reset:
         offset = 0
-    end = min(len(text), offset + PAGE_BYTES)
+    bounded = text[offset:offset + PAGE_BYTES].encode("utf-8")[:PAGE_BYTES].decode("utf-8", errors="ignore")
+    end = offset + len(bounded)
     if end < len(text):
         boundary = text.rfind("\n", offset, end)
         if boundary > offset:

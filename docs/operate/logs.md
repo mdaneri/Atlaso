@@ -64,6 +64,11 @@ Logs are evidence, not an enforcement surface. Correct desired state in the owni
 Physical file entries larger than 64 KiB are represented by an explicit omission marker. The reader advances through
 them in bounded pages so later entries remain reachable; omitted entry contents are not exposed.
 
+Live viewers open at the newest retained group. **From beginning** reads earlier history, and **Follow live** returns
+to recent output. Tail reads preserve private-key redaction across older entries. If a retained archive cannot be
+scanned within the read deadline, use **From beginning** to read it in pages. Journal records larger than 1 MiB use
+an explicit omission marker and preserve continuation to newer entries.
+
 <!-- BEGIN GENERATED ADDITIONAL SCREENSHOTS -->
 ## Additional verified states
 

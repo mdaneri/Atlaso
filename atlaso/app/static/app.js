@@ -15196,12 +15196,14 @@ async function openTaskLog(taskOrId) {
   atlasoTaskLogRequest = { controller: { abort() {} }, requestId };
   const viewer = window.AtlasoLogViewer.create({
     output: content,
+    initialCursor: "tail",
     status: meta,
     controls: modal.querySelector("[data-task-log-history-controls]"),
     active: () => modal.open && atlasoTaskLogRequest?.requestId === requestId,
     fetchPage: (cursor, signal) => {
       const url = new URL(logUrl, window.location.href);
-      if (cursor) url.searchParams.set("cursor", cursor);
+      if (cursor === "tail") url.searchParams.set("tail", "1");
+      else if (cursor) url.searchParams.set("cursor", cursor);
       return window.AtlasoLogViewer.fetchJson(url, signal);
     },
     onPage: (payload) => {
@@ -17688,7 +17690,7 @@ function initializeLogsPage() {
     const output = panel?.querySelector("[data-log-lines-output]");
     if (!(output instanceof HTMLElement)) return;
     viewer = window.AtlasoLogViewer.create({
-      output, status, controls, active: () => !panel.hidden,
+      output, status, controls, initialCursor: "tail", active: () => !panel.hidden,
       onPage: (page) => {
         const meta = panel.querySelector("[data-log-meta]");
         if (meta) meta.textContent = page.available ? "Retained history · up to 500 entries per page" : "Waiting for log entries";
@@ -17696,7 +17698,8 @@ function initializeLogsPage() {
       fetchPage: (cursor, signal) => {
         const url = new URL(refreshUrl, window.location.href);
         url.searchParams.set("source", source);
-        if (cursor) url.searchParams.set("cursor", cursor);
+        if (cursor === "tail") url.searchParams.set("tail", "1");
+      else if (cursor) url.searchParams.set("cursor", cursor);
         return window.AtlasoLogViewer.fetchJson(url, signal);
       },
     });
