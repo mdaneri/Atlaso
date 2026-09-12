@@ -1,6 +1,6 @@
 [project]
 name = "atlaso"
-version = "0.9.353"
+version = "0.9.354"
 description = "Atlaso supports POC, lab, and test environments by simplifying deployment, maintenance, and validation."
 readme = "README.md"
 license = "MIT"
@@ -92,8 +92,10 @@ files = [
   "atlaso/app/services/diagnostics.py",
   "atlaso/app/routers/ui/diagnostics.py",
   "atlaso/app/factory_reset.py",
+  "atlaso/app/port_forward_schemas.py",
   "atlaso/app/routers/api_v1/firewall.py",
   "atlaso/app/routers/api_v1/physical_vlans.py",
+  "atlaso/app/routers/api_v1/port_forwards.py",
   "atlaso/app/routers/api_v1/routes_wan.py",
   "atlaso/app/routers/contracts.py",
   "atlaso/app/routers/registry.py",
@@ -104,6 +106,7 @@ files = [
   "atlaso/app/services/interface_updates.py",
   "atlaso/app/services/management_bindings.py",
   "atlaso/app/services/physical_interfaces.py",
+  "atlaso/app/services/port_forwarding.py",
   "atlaso/app/services/service_dns_defaults.py",
     "atlaso/app/services/service_registry.py",
     "atlaso/app/services/vcf_sddc_upload.py",

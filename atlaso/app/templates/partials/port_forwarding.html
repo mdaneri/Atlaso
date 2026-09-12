@@ -1,0 +1,74 @@
+{% macro forward_label(label, help) -%}
+<span class="field-label"><span id="port-forward-{{ label | lower | replace(' ', '-') }}-label">{{ label }}</span><button class="help-icon" type="button" data-help="{{ help }}">i</button></span>
+{%- endmacro %}
+<div id="port-forward-panel" class="tab-panel" hidden>
+  <div class="section-head compact-section-head">
+    <div><h3>Port Forwarding</h3><p class="muted">Publish one exact listener and preserve the original client address by default.</p></div>
+    <button class="button ghost compact-button" type="button" data-port-forward-refresh>Refresh status</button>
+  </div>
+  <div id="port-forward-error" class="alert error hidden" role="alert"></div>
+  <p class="muted" data-port-forward-observation aria-live="polite">Runtime observations have not been refreshed.</p>
+  <div id="port-forward-table" class="tabulator-shell routes-wan-table"
+    data-port-forward-rows='{{ port_forward_rows | tojson }}'
+    data-port-forward-targets='{{ wan_nat_targets | tojson }}'
+    data-source-groups='{{ wan_source_groups | tojson }}'
+    data-csrf="{{ csrf_token }}" data-can-write="{{ 'true' if routes_wan_can_write else 'false' }}"
+    data-fallback-id="port-forward-fallback"></div>
+  <table id="port-forward-fallback" class="data-table dns-fallback-table">
+    <thead><tr><th>Name</th><th>Listener</th><th>Protocol</th><th>External ports</th><th>Target</th><th>Source</th><th>Reply mode</th><th>Enabled</th><th>Actions</th></tr></thead>
+    <tbody>{% for rule in port_forwards %}<tr>
+      <td>{{ rule.name }}</td><td>{{ rule.ingress_interface }} · {{ rule.listener_address }}</td><td>IPv{{ rule.ip_family }} {{ rule.protocol | upper }}</td>
+      <td>{{ rule.external_port_start }}–{{ rule.external_port_end }}</td><td>{{ rule.target_address }} · {{ rule.target_port_start }}–{{ rule.target_port_end }}</td>
+      <td>{{ rule.source }}</td><td>{{ 'Preserve client' if rule.reply_mode == 'preserve' else 'Masquerade replies' }}</td>
+      <td>{{ 'Enabled' if rule.enabled else 'Disabled' }}{% if rule.restore_review_required %} · Review restored listener{% endif %}</td>
+      <td>{% if routes_wan_can_write %}
+        <button class="button tiny" type="button" data-port-forward-edit="{{ rule.id }}">Edit</button>
+      {% else %}<span class="muted">Read only</span>{% endif %}</td>
+    </tr>{% endfor %}</tbody>
+  </table>
+</div>
+{% if routes_wan_can_write %}
+{% set forward_steps = [
+  {"id": "identity", "label": "Identity", "summary": "Name and purpose"},
+  {"id": "listener", "label": "Listener", "summary": "Exact ingress and ports"},
+  {"id": "target", "label": "Target and source", "summary": "Mapping and client scope"},
+  {"id": "state", "label": "State", "summary": "Replies and activation"},
+  {"id": "review", "label": "Review", "summary": "Confirm publication"}
+] %}
+{% call resource_wizard("port-forward-dialog", "port-forward-wizard", management_ui_root ~ "/traffic-publishing/port-forwards", forward_steps, "Add port forward", "Review one destination translation without changing the appliance.", "Add port forward") %}
+  <input type="hidden" name="csrf" value="{{ csrf_token }}"><input type="hidden" name="source" value="any">
+  <section class="vcf-sddc-step-page" data-atlaso-wizard-step="identity"><div class="form-stack">
+    <label for="port-forward-name">{{ forward_label("Name", "Unique stable name for this published endpoint.") }}<input id="port-forward-name" aria-labelledby="port-forward-name-label" name="name" required maxlength="120"></label>
+    <label for="port-forward-description">{{ forward_label("Description", "Why clients need this target and who operates it.") }}<textarea id="port-forward-description" aria-labelledby="port-forward-description-label" name="description" rows="3" maxlength="1000"></textarea></label>
+    <label for="port-forward-priority">{{ forward_label("Priority", "Lower values are evaluated first. Enabled mappings still cannot overlap.") }}<input id="port-forward-priority" aria-labelledby="port-forward-priority-label" type="number" name="priority" min="0" max="2147483647" value="100" required></label>
+  </div></section>
+  <section class="vcf-sddc-step-page hidden" data-atlaso-wizard-step="listener"><div class="form-grid">
+    <label for="port-forward-ip-family">{{ forward_label("IP family", "IPv4 DNAT or stateful IPv6 NAT66. Listener, target, and every source CIDR must match.") }}<select id="port-forward-ip-family" aria-labelledby="port-forward-ip-family-label" name="ip_family"><option value="4">IPv4</option><option value="6">IPv6</option></select></label>
+    <label for="port-forward-protocol">{{ forward_label("Protocol", "Use one transport protocol for both sides of the port mapping.") }}<select id="port-forward-protocol" aria-labelledby="port-forward-protocol-label" name="protocol"><option value="tcp">TCP</option><option value="udp">UDP</option></select></label>
+    <label for="port-forward-ingress-interface-or-vlan">{{ forward_label("Ingress interface or VLAN", "One addressed, enabled access or route target. Dedicated management is excluded; an access-management flag does not remove lab eligibility.") }}<select id="port-forward-ingress-interface-or-vlan" aria-labelledby="port-forward-ingress-interface-or-vlan-label" name="ingress_interface" required><option value="">Choose an ingress</option></select></label>
+    <label for="port-forward-listener-address">{{ forward_label("Listener address", "Choose the exact assigned address on the selected ingress. Existing unavailable listeners can be retained only on disabled rules.") }}<select id="port-forward-listener-address" aria-labelledby="port-forward-listener-address-label" name="listener_address" required><option value="">Choose an assigned listener</option></select></label>
+    <label for="port-forward-external-port-start">{{ forward_label("External port start", "First inclusive external port. Atlaso-owned service listeners cannot be forwarded.") }}<input id="port-forward-external-port-start" aria-labelledby="port-forward-external-port-start-label" type="number" name="external_port_start" min="1" max="65535" required></label>
+    <label for="port-forward-external-port-end">{{ forward_label("External port end", "Last inclusive external port. Use the same start and end for one port.") }}<input id="port-forward-external-port-end" aria-labelledby="port-forward-external-port-end-label" type="number" name="external_port_end" min="1" max="65535" required></label>
+  </div></section>
+  <section class="vcf-sddc-step-page hidden" data-atlaso-wizard-step="target"><div class="form-grid">
+    <label for="port-forward-target-address">{{ forward_label("Target address", "Same-family ordinary unicast destination. Appliance-owned addresses and dedicated management networks are excluded.") }}<input id="port-forward-target-address" aria-labelledby="port-forward-target-address-label" name="target_address" maxlength="45" required></label>
+    <label for="port-forward-target-port-start">{{ forward_label("Target port start", "First translated port. Each external port maps to the target port at the same offset.") }}<input id="port-forward-target-port-start" aria-labelledby="port-forward-target-port-start-label" type="number" name="target_port_start" min="1" max="65535" required></label>
+    <label for="port-forward-target-port-end">{{ forward_label("Target port end", "The target and external inclusive ranges must contain exactly the same number of ports.") }}<input id="port-forward-target-port-end" aria-labelledby="port-forward-target-port-end-label" type="number" name="target_port_end" min="1" max="65535" required></label>
+    <label for="port-forward-source-type">{{ forward_label("Source type", "Restrict client addresses inside the exact ingress. A source choice never grants another interface access.") }}<select id="port-forward-source-type" aria-labelledby="port-forward-source-type-label" data-port-forward-source-mode><option value="any">Any same-family source</option><option value="group">Source Group</option><option value="cidrs">Source CIDRs</option></select></label>
+    <label data-port-forward-group-panel hidden for="port-forward-source-group">{{ forward_label("Source Group", "Use a stable shared group whose entire expansion matches the selected family.") }}<select id="port-forward-source-group" aria-labelledby="port-forward-source-group-label" data-port-forward-group></select></label>
+    <label data-port-forward-cidrs-panel hidden for="port-forward-source-cidrs">{{ forward_label("Source CIDRs", "Up to 128 comma- or line-separated networks in the selected family.") }}<textarea id="port-forward-source-cidrs" aria-labelledby="port-forward-source-cidrs-label" data-port-forward-cidrs rows="3" maxlength="4096"></textarea></label>
+  </div><a class="button ghost compact-button" href="{{ management_ui_root }}/network-objects" target="_blank" rel="noopener" data-port-forward-manage-groups>Manage source groups (new tab)</a></section>
+  <section class="vcf-sddc-step-page hidden" data-atlaso-wizard-step="state"><div class="form-stack">
+    <label for="port-forward-reply-mode">{{ forward_label("Reply mode", "Preserve the original client address by default. The target needs a return path through Atlaso. Masquerade hides client addresses from the target.") }}<select id="port-forward-reply-mode" aria-labelledby="port-forward-reply-mode-label" name="reply_mode"><option value="preserve">Preserve original client</option><option value="masquerade">Masquerade replies</option></select></label>
+    <label data-port-forward-ack-panel hidden for="port-forward-acknowledge-client-visibility-loss">{{ forward_label("Acknowledge client visibility loss", "Required when saving reply masquerade. Target logs and access controls will see the Atlaso egress address instead of the original client.") }}<input id="port-forward-acknowledge-client-visibility-loss" aria-labelledby="port-forward-acknowledge-client-visibility-loss-label" type="checkbox" name="acknowledge_source_loss"></label>
+    <label class="switch-field" for="port-forward-enabled">{{ forward_label("Enabled", "Save active intent only after reviewing the full boundary. Routing must be enabled; global Appliance Apply owns Firewall and NAT enforcement.") }}<input id="port-forward-enabled" aria-labelledby="port-forward-enabled-label" class="switch-input" type="checkbox" name="enabled"><span class="switch-track" aria-hidden="true"></span></label>
+  </div></section>
+  <section class="vcf-sddc-step-page hidden" data-atlaso-wizard-step="review">
+    <div class="settings-list">
+      {% for key, label in [("name", "Rule"), ("listener", "Exact listener"), ("mapping", "Target mapping"), ("source", "Client boundary"), ("reply", "Reply behavior"), ("state", "Desired state")] %}
+      <div><span>{{ label }}</span><strong data-port-forward-review="{{ key }}"></strong></div>
+      {% endfor %}
+    </div><p class="muted">Saving changes desired state only. Global Appliance Apply validates and publishes the paired Firewall admission and translation.</p>
+  </section>
+{% endcall %}
+{% endif %}

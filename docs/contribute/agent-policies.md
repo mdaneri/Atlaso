@@ -1864,12 +1864,15 @@ Terminal order:
   desired-state, and helper inputs reject retired or unknown roles. Bounded upgrade and settings-archive compatibility
   maps only the retired `services` and `storage` values to `access` without changing any other interface state.
   `Routing & WAN` and `Traffic Publishing` are explicit routing, translation, and loss workflows, not interface classes.
-- Traffic Publishing supports explicit IPv4/IPv6 masquerade and fixed SNAT to a same-family assigned egress address.
-  Do not add destination NAT, port forwarding, automatic broad NAT, or
+- Traffic Publishing supports explicit IPv4/IPv6 masquerade, fixed SNAT to a same-family assigned egress address,
+  and managed destination NAT with exact listener, source, equal-length port mapping, and reviewed reply mode.
+  Port forwards require Routing and paired Firewall/NAT validation, publication, rollback, and baseline recording.
+  Generated admission is read-only and owned by its port-forward resource. Retire only owned connection marks when
+  removing effective mappings; never flush unrelated connections. Do not add automatic broad NAT or
   non-reviewable NAT inferred only from interface role. Route-role networks may forward to other route-role networks by
   default; access networks require explicit routing rules; management is never a route, NAT, or routing-permission
   target.
-- NAT requires one or more explicit inbound interfaces and one distinct outbound interface. Both sides use enabled,
+- Source NAT requires one or more explicit inbound interfaces and one distinct outbound interface. Both sides use enabled,
   available access-mode physical interfaces or enabled VLANs on available trunk parents, with matching-family CIDRs
   and an access or route role. The dedicated management role and wrong-family targets are excluded;
   access-management flags do not

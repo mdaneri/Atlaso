@@ -39,6 +39,14 @@ the existing validation, recovery review, and global apply boundaries still gove
 Open **Maintenance > Backup** to protect Atlaso settings before maintenance and recover the control-plane configuration
 when needed.
 
+Port-forward archives preserve listener identities, source restrictions, port mappings, reply mode, and desired
+enablement. Restore reconstructs Source Group references and retains unavailable ingress relationships as disabled
+rules requiring review. It never substitutes another listener or broadens the source boundary. Factory reset deletes
+these desired rules and retires their generated admissions, counters, and marked sessions through its managed runtime
+cleanup before applying defaults. Unresolved publication recovery blocks reset until reconciliation completes.
+Before replacing desired state, restore rejects enabled mappings that collide with reserved protocol ports or
+service listeners configured in the archive, including custom ports and Network Boot bindings.
+
 ## Create a backup
 
 1. Create a named backup before a high-risk configuration or update operation.
