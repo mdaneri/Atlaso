@@ -225,3 +225,67 @@ def test_journal_history_is_bounded_and_uses_fixed_units(monkeypatch, capsys):
     assert "--after-cursor=prior" in command
     assert helper._read_log_history(["../../secret", "{}"]) == 2
     assert launch.call_count == 1
+
+
+def test_journal_large_batch_advances_complete_entries(monkeypatch, capsys):
+    """A batch exceeding the byte budget still returns a usable continuation.
+
+    Args:
+        monkeypatch: Replace the fixed journal transport with retained entries.
+        capsys: Read the helper response.
+    """
+    import io
+    import json
+    from unittest.mock import MagicMock
+
+    from tests.test_appliance_helper import load_helper_module
+
+    helper = load_helper_module()
+    entries = [{"MESSAGE": f"event {index} " + "x" * 10000, "__CURSOR": f"c-{index}",
+                "__REALTIME_TIMESTAMP": "1000000"} for index in range(501)]
+    process = MagicMock()
+    process.__enter__.return_value = process
+    process.wait.return_value = 0
+    process.poll.return_value = 0
+    monkeypatch.setattr(helper.subprocess, "Popen", lambda *args, **kwargs: process)
+    offset, actual = 0, []
+    while offset < len(entries):
+        process.stdout = io.BytesIO("\n".join(json.dumps(entry) for entry in entries[offset:]).encode())
+        assert helper._read_log_history(["nginx", json.dumps({"journal_cursor": f"c-{offset - 1}"})]) == 0
+        page = json.loads(capsys.readouterr().out)
+        assert page["lines"]
+        actual.extend(page["lines"])
+        offset = int(page["journal_cursor"].removeprefix("c-")) + 1
+        assert page["has_more"] == (offset < len(entries))
+    assert len(actual) == 501
+    assert all(f"event {index} " in line for index, line in enumerate(actual))
+
+
+def test_task_progress_does_not_reset_later_history(client, monkeypatch):
+    """Mutable summary fields cannot invalidate an older output page.
+
+    Args:
+        client: Initialized application database.
+        monkeypatch: Use small pages to exercise pagination boundaries.
+    """
+    import json
+
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import Job
+    from atlaso.app.ui import _task_log_lines
+
+    monkeypatch.setattr(log_viewer, "PAGE_BYTES", 100)
+    with SessionLocal() as db:
+        job = Job(id="progress-history", type="managed-script", status="running", created_by="admin",
+                  result=json.dumps({"state": "starting", "log_lines": [f"entry {i}" for i in range(100)]}))
+        db.add(job)
+        db.commit()
+        first = log_viewer.text_page("\n".join(_task_log_lines(job, db, include_metadata=False)), source="task:test")
+        before = log_viewer.text_page("\n".join(_task_log_lines(job, db, include_metadata=False)), source="task:test", cursor=first["next_cursor"])
+        job.progress_percent = 75
+        job.status = "succeeded"
+        job.result = json.dumps({"state": "completed", "log_lines": [f"entry {i}" for i in range(101)]})
+        db.commit()
+        after = log_viewer.text_page("\n".join(_task_log_lines(job, db, include_metadata=False)), source="task:test", cursor=first["next_cursor"])
+        assert not after["reset"]
+        assert after["text"] == before["text"]

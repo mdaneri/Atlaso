@@ -8710,12 +8710,13 @@ def _task_component_filter_options(db: Session) -> list[str]:
     return sorted(options, key=str.lower)
 
 
-def _task_log_lines(job: Job, db: Session) -> list[str]:
+def _task_log_lines(job: Job, db: Session, *, include_metadata: bool = True) -> list[str]:
     """Return task log lines.
 
     Args:
         job: Job being processed.
         db: Active database session.
+        include_metadata: Include mutable summary fields for the legacy projection.
     """
     row = _task_row(job)
     lines = [
@@ -8732,6 +8733,8 @@ def _task_log_lines(job: Job, db: Session) -> list[str]:
         lines.append(f"Summary: {row['summary']}")
     if row["error"]:
         lines.append(f"Error: {row['error']}")
+    if not include_metadata:
+        lines = []
     result = row["result"]
     if isinstance(result, dict):
         for key, value in result.items():

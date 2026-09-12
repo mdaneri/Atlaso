@@ -820,7 +820,7 @@ def build_router(dependencies: OperationsUiDependencies) -> OperationsUiRouter:
             raise HTTPException(status_code=404, detail="Task not found")
         row = _task_row(job)
         try:
-            history = log_viewer.text_page("\n".join(_task_log_lines(job, db)), source=f"task:{job.id}", cursor=cursor)
+            history = log_viewer.text_page("\n".join(_task_log_lines(job, db, include_metadata=False)), source=f"task:{job.id}", cursor=cursor)
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
         return JSONResponse(

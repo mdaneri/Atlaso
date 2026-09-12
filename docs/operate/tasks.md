@@ -87,3 +87,6 @@ These captures show responsive layouts and useful operational states referenced 
 *Figure: Tasks in the verified clean-appliance responsive state.*
 
 <!-- END GENERATED ADDITIONAL SCREENSHOTS -->
+
+Task history pages exclude the changing status and progress summary, which remains in the task detail dialog.
+Updating that summary does not reset an older log page.

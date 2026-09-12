@@ -1807,26 +1807,32 @@ def _read_log_history(args: list[str]) -> int:
                    "--output-fields=MESSAGE,__CURSOR,__REALTIME_TIMESTAMP"]
         if cursor:
             command.append(f"--after-cursor={cursor}")
+        selected = []
+        more = False
+        consumed = 0
         with subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL) as process:
             try:
-                # Bound both the transport and response even for oversized journal entries.
+                # Stop at complete entries so a large batch always makes forward progress.
                 import threading
                 timer = threading.Timer(10, process.kill)
                 timer.start()
                 try:
-                    raw = process.stdout.read(1024 * 1024 + 1)
+                    while raw := process.stdout.readline(1024 * 1024 + 1):
+                        if selected and (len(selected) >= 500 or consumed + len(raw) > 1024 * 1024):
+                            more = True
+                            break
+                        if len(raw) > 1024 * 1024:
+                            raise ValueError("journal entry exceeds display size")
+                        selected.append(json.loads(raw))
+                        consumed += len(raw)
+                    if not more and process.wait(timeout=2) != 0:
+                        raise ValueError("journal history is unavailable")
                 finally:
                     timer.cancel()
-                if len(raw) > 1024 * 1024:
-                    raise ValueError("journal page exceeds display size")
-                if process.wait(timeout=2) != 0:
-                    raise ValueError("journal history is unavailable")
             finally:
                 if process.poll() is None:
                     process.kill()
-                    process.wait()
-        entries = [json.loads(line) for line in raw.splitlines()]
-        selected = entries[:500]
+                    process.wait(timeout=2)
         lines = []
         for entry in selected:
             message = entry.get("MESSAGE")
@@ -1835,7 +1841,7 @@ def _read_log_history(args: list[str]) -> int:
             timestamp = datetime.fromtimestamp(int(entry["__REALTIME_TIMESTAMP"]) / 1000000, timezone.utc).isoformat()
             lines.extend(f"{timestamp} {line}" for line in message.splitlines())
         print(json.dumps({"lines": lines, "journal_cursor": selected[-1]["__CURSOR"] if selected else cursor,
-                          "has_more": len(entries) > 500}))
+                          "has_more": more}))
         return 0
     except (ValueError, TypeError, AttributeError, KeyError, OSError, subprocess.TimeoutExpired):
         print("Log history page could not be read completely. Reopen the source to retry.", file=sys.stderr)
