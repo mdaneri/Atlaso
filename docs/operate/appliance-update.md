@@ -71,6 +71,26 @@ verified candidate-worker handoff has
 no pending post-release child and suppresses the former extra Photon-triggered delayed restart. The parent succeeds only
 when every selected child succeeds and all required restoration evidence is durable.
 
+## Check deadlines and queued work
+
+Each real update check has a five-minute execution deadline, followed by up to 30 seconds
+for its systemd service to stop all child processes. The check wrapper independently
+verifies that its task-owned helper stopped and cleans abandoned volatile repository
+credentials before recording failure. Package installation does not use this deadline.
+Checks can refresh package metadata, so a timed-out check is not retried automatically.
+
+The durable worker processes queued operations sequentially. While a check runs, later
+work can remain pending and the current stream can remain at 1%; that percentage measures
+completed steps rather than network or package-manager progress. A failed check proceeds
+to the other selected check streams and ultimately releases the queue without a reboot.
+
+If helper shutdown or credential cleanup cannot be verified, the parent and current child
+remain active with **cleanup-required** evidence, and later durable work stays queued.
+Capture the task ID, stream, timestamps and sanitized helper/unit evidence for an
+administrator. Do not delete package locks or kill unrelated processes. Worker startup
+recovery must prove the exact helper stopped before it can terminalize the interrupted
+hierarchy; a failed proof deliberately retains ownership.
+
 ## Update-only browser surface
 
 Task polling recognizes the update-mode response and opens the status page automatically. Its refresh URL retains the
