@@ -8473,6 +8473,7 @@ def _apply_vlan_interfaces(
     *,
     preserve_address_links: set[str] | None = None,
     defer_removed: bool = False,
+    removed_only: bool = False,
 ) -> int:
     """Perform apply VLAN interfaces.
 
@@ -8480,6 +8481,7 @@ def _apply_vlan_interfaces(
         path: Filesystem path read, validated, or updated by the operation.
         preserve_address_links: VLAN links whose current global addresses remain during a transition.
         defer_removed: Whether removed VLAN deletion waits for transaction commit.
+        removed_only: Retire removed VLANs without restarting the ready candidate links.
     """
     if shutil.which("ip") is None:
         print("ip command not found", file=sys.stderr)
@@ -8490,6 +8492,8 @@ def _apply_vlan_interfaces(
             print(error, file=sys.stderr)
         return 2
     _physical_interfaces, vlan_interfaces, removed_vlan_interfaces = _parse_network_config(path)
+    if removed_only:
+        vlan_interfaces = []
     preserve_address_links = preserve_address_links or set()
     removed_names: list[str] = []
     for vlan in removed_vlan_interfaces:
@@ -8853,6 +8857,73 @@ def _wait_network_addresses(path: Path, *, attempts: int = 15, started_at: str |
     raise ValueError("Unable to verify candidate addresses: " + ", ".join(f"{name} {address}" for name, address in missing))
 
 
+@contextmanager
+def _network_apply_transaction(path: Path):
+    """Restore installed files and link state if an ordinary candidate is rejected.
+
+    Args:
+        path: Validated staged Network intent.
+    """
+    files, _links, _down = _systemd_networkd_files(path)
+    physical, vlans, link_states = _management_handoff_candidate_links(
+        {"network_config_path": str(path)}, include_removed=True,
+    )
+    paths = {
+        NETWORKD_MGMT_CONFIG_PATH,
+        *(NETWORKD_CONFIG_DIR / name for name in files),
+        *(NETWORKD_CONFIG_DIR / name for name in NETWORKD_DEFAULT_APPLIANCE_FILES),
+        *(item for item in NETWORKD_CONFIG_DIR.glob(f"{NETWORKD_MANAGED_PREFIX}*")
+          if item.suffix in {".network", ".netdev"}),
+    }
+    backup_root = Path(tempfile.mkdtemp(prefix=".network-rollback-", dir=NETWORK_APPLY_DIR))
+    snapshots = []
+    retain_backup = False
+    try:
+        for index, target in enumerate(sorted(paths)):
+            if target.is_symlink() or (target.exists() and not target.is_file()):
+                raise ValueError(f"network rollback target is not an ordinary file: {target}")
+            item = {"path": str(target), "existed": target.is_file()}
+            if target.is_file():
+                backup = backup_root / f"{index:03d}.bin"
+                shutil.copy2(target, backup)
+                metadata = target.stat()
+                item.update(backup=str(backup), mode=metadata.st_mode & 0o777,
+                            uid=metadata.st_uid, gid=metadata.st_gid)
+                _fsync_file(backup)
+            snapshots.append(item)
+        state = {"snapshots": snapshots, "candidate_physical_interfaces": physical,
+                 "candidate_vlan_interfaces": vlans, "candidate_link_states": link_states}
+        _durable_management_handoff_state_write(state, backup_root / "state.json")
+        try:
+            yield
+        except (OSError, ValueError, subprocess.TimeoutExpired) as exc:
+            failures = []
+            for item in snapshots:
+                try:
+                    _restore_management_handoff_snapshot(item)
+                except (OSError, ValueError) as restore_exc:
+                    failures.append(str(restore_exc))
+            try:
+                if _run(["networkctl", "reload"]).returncode != 0:
+                    raise ValueError("restored networkd configuration reload failed")
+            except (OSError, ValueError, subprocess.TimeoutExpired) as restore_exc:
+                failures.append(str(restore_exc))
+            try:
+                _restore_management_handoff_links(state, [])
+            except (OSError, ValueError, subprocess.TimeoutExpired) as restore_exc:
+                failures.append(str(restore_exc))
+            if failures:
+                retain_backup = True
+                raise ValueError(
+                    f"{exc}; network rollback incomplete; retained evidence: {backup_root}; "
+                    + "; ".join(failures[:8])
+                ) from exc
+            raise ValueError(f"{exc}; previous network configuration restored") from exc
+    finally:
+        if not retain_backup:
+            shutil.rmtree(backup_root)
+
+
 def _handle_network(action: str, args: list[str]) -> int:
     """Handle network.
 
@@ -8914,16 +8985,19 @@ def _handle_network(action: str, args: list[str]) -> int:
     except (ValueError, OSError, subprocess.TimeoutExpired) as exc:
         print(str(exc), file=sys.stderr)
         return 2
-    activation_started = datetime.now(timezone.utc).isoformat()
-    install_returncode, installed, reconfigure_links, admin_down_links = _install_systemd_networkd_files(config_path)
-    if install_returncode != 0:
-        return install_returncode
-    vlan_returncode = _apply_vlan_interfaces(config_path)
-    if vlan_returncode != 0:
-        return vlan_returncode
     try:
-        _wait_network_addresses(config_path, started_at=activation_started)
-    except ValueError as exc:
+        with _network_apply_transaction(config_path):
+            activation_started = datetime.now(timezone.utc).isoformat()
+            install_returncode, installed, reconfigure_links, admin_down_links = _install_systemd_networkd_files(config_path)
+            if install_returncode != 0:
+                raise ValueError(f"network configuration installation failed ({install_returncode})")
+            if _apply_vlan_interfaces(config_path, defer_removed=True) != 0:
+                raise ValueError("candidate VLAN activation failed")
+            _wait_network_addresses(config_path, started_at=activation_started)
+            # Retire old VLANs only after the candidate addresses have activated.
+            if _apply_vlan_interfaces(config_path, removed_only=True) != 0:
+                raise ValueError("previous VLAN retirement failed")
+    except (ValueError, OSError, subprocess.TimeoutExpired) as exc:
         print(str(exc), file=sys.stderr)
         return 2
     print(
@@ -21311,16 +21385,21 @@ def _sync_management_handoff_candidate(state: dict, payload: dict) -> None:
         _fsync_directory(directory)
 
 
-def _management_handoff_candidate_links(payload: dict) -> tuple[list[str], list[str], dict[str, dict[str, object]]]:
+def _management_handoff_candidate_links(
+    payload: dict, *, include_removed: bool = False,
+) -> tuple[list[str], list[str], dict[str, dict[str, object]]]:
     """Capture candidate link identity and pre-mutation administrative state.
 
     Args:
         payload: Validated handoff payload.
+        include_removed: Capture retired VLANs for ordinary Network rollback.
 
     Returns:
         Candidate physical links, VLAN links, and their pre-mutation state.
     """
-    physical, vlans, _removed = _parse_network_config(Path(str(payload["network_config_path"])))
+    physical, vlans, removed = _parse_network_config(Path(str(payload["network_config_path"])))
+    if include_removed:
+        vlans = [*vlans, *removed]
     physical_names = list(dict.fromkeys(str(row.get("name") or "") for row in physical if row.get("name")))
     vlan_names = list(dict.fromkeys(str(row.get("name") or "") for row in vlans if row.get("name")))
     link_states: dict[str, dict[str, object]] = {}
@@ -22144,7 +22223,7 @@ def _restore_management_handoff_links(state: dict, commands: list[dict[str, obje
 
     restored_interfaces = previous_interfaces | {
         interface
-        for interface in candidate_vlans
+        for interface in candidate_physical | candidate_vlans
         if bool((link_states.get(interface) or {}).get("existed"))
     }
     for interface in sorted(restored_interfaces):
@@ -22157,7 +22236,7 @@ def _restore_management_handoff_links(state: dict, commands: list[dict[str, obje
             continue
         saved = link_states.get(interface) if isinstance(link_states.get(interface), dict) else {}
         saved_mtu = saved.get("mtu")
-        if interface in candidate_vlans and bool(saved.get("existed")) and saved_mtu is not None:
+        if bool(saved.get("existed")) and saved_mtu is not None:
             if not isinstance(saved_mtu, int) or saved_mtu <= 0:
                 errors.append(f"restored link {interface} MTU evidence is invalid")
             else:

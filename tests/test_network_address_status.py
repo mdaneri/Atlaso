@@ -2,6 +2,8 @@
 
 from datetime import datetime, timezone
 
+import pytest
+
 from atlaso.app.services.network_address_status import project_status, row_status
 
 
@@ -401,3 +403,115 @@ def test_apply_rejects_partial_native_evidence_before_install(tmp_path, monkeypa
         path.write_text(config, encoding="utf-8")
         assert helper._handle_network("apply", [str(path)]) == 2
         assert "native networkd evidence is unavailable" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize("failure", ["install", "readiness", "retirement", "rollback", "none"])
+def test_ordinary_apply_restores_rejected_candidate(tmp_path, monkeypatch, capsys, failure):
+    """Restore persistent bytes and links, retaining evidence when rollback fails.
+
+    Args:
+        tmp_path: Isolated staged intent and runtime configuration.
+        monkeypatch: Replace native commands with an observable link simulation.
+        capsys: Capture the operator recovery diagnostic.
+        failure: Transaction stage to reject, or successful activation.
+    """
+    import subprocess
+
+    from tests.test_appliance_helper import load_helper_module, network_config_text
+
+    helper = load_helper_module()
+    config = tmp_path / "candidate.conf"
+    config.write_text(network_config_text(include_vlan=False), encoding="utf-8")
+    runtime = tmp_path / "networkd"
+    runtime.mkdir()
+    previous = runtime / "10-atlaso-eth0.network"
+    previous.write_bytes(b"[Match]\nName=eth0\n[Network]\nAddress=192.0.2.10/24\n")
+    original = previous.read_bytes()
+    candidate_only = runtime / "10-atlaso-eth0.20.netdev"
+    state = {"eth0": {"existed": True, "admin_up": True, "mtu": 1500},
+             "eth0.20": {"existed": False, "admin_up": False, "mtu": None}}
+    live = {"eth0"}
+    commands = []
+    vlan_stages = []
+    monkeypatch.setattr(helper, "NETWORK_APPLY_DIR", tmp_path)
+    monkeypatch.setattr(helper, "NETWORKD_CONFIG_DIR", runtime)
+    monkeypatch.setattr(helper, "NETWORKD_MGMT_CONFIG_PATH", runtime / "00-atlaso-mgmt.network")
+    monkeypatch.setattr(helper, "_validate_network_config_path", lambda _path: config)
+    monkeypatch.setattr(helper, "_network_detection_preflight", lambda _path: None)
+    monkeypatch.setattr(helper, "_systemd_networkd_files", lambda _path: (
+        {previous.name: "candidate", candidate_only.name: "new VLAN"}, ["eth0"], [],
+    ))
+    monkeypatch.setattr(helper, "_management_handoff_candidate_links", lambda _payload, **_kwargs: (
+        ["eth0"], ["eth0.20"], state,
+    ))
+    monkeypatch.setattr(helper.os, "chown", lambda *_args: None, raising=False)
+    monkeypatch.setattr(helper, "_link_exists", lambda name: name in live)
+
+    def run(command):
+        """Record native rollback and remove the simulated candidate-only VLAN.
+
+        Args:
+            command: Native command to simulate.
+        """
+        commands.append(command)
+        if command[:3] == ["ip", "link", "delete"]:
+            live.discard(command[-1])
+        return subprocess.CompletedProcess(command, int(failure == "rollback"), "", "")
+
+    def install(_path):
+        """Install a candidate before simulating a partial installer failure.
+
+        Args:
+            _path: Validated intent path.
+        """
+        previous.write_bytes(b"rejected candidate")
+        candidate_only.write_bytes(b"new VLAN")
+        live.add("eth0.20")
+        return int(failure == "install"), [str(previous)], ["eth0"], []
+
+    def apply_vlans(_path, *, defer_removed=False, removed_only=False):
+        """Record that old VLAN retirement is deferred until readiness.
+
+        Args:
+            _path: Validated intent path.
+            defer_removed: Whether old VLAN removal must wait.
+            removed_only: Avoid reconfiguring ready candidate links during retirement.
+        """
+        vlan_stages.append(defer_removed)
+        assert removed_only is not defer_removed
+        return int(failure == "retirement" and not defer_removed)
+
+    def wait(_path, **_kwargs):
+        """Reject address readiness without probing a real network.
+
+        Args:
+            _path: Validated intent path.
+            **_kwargs: Activation timestamp supplied by the transaction.
+        """
+        if failure in {"readiness", "rollback"}:
+            raise ValueError("candidate address conflict")
+
+    monkeypatch.setattr(helper, "_run", run)
+    monkeypatch.setattr(helper, "_install_systemd_networkd_files", install)
+    monkeypatch.setattr(helper, "_apply_vlan_interfaces", apply_vlans)
+    monkeypatch.setattr(helper, "_wait_network_addresses", wait)
+    assert helper._handle_network("apply", [str(config)]) == (0 if failure == "none" else 2)
+    backups = list(tmp_path.glob(".network-rollback-*"))
+    if failure == "none":
+        assert previous.read_bytes() == b"rejected candidate"
+        assert candidate_only.is_file()
+        assert vlan_stages == [True, False]
+    else:
+        assert previous.read_bytes() == original
+        assert not candidate_only.exists()
+        assert ["networkctl", "reload"] in commands
+        if failure == "rollback":
+            assert len(backups) == 1
+            assert (backups[0] / "state.json").is_file()
+            assert "rollback incomplete" in capsys.readouterr().err
+            return
+        assert "eth0.20" not in live
+        assert ["networkctl", "reconfigure", "eth0"] in commands
+        assert ["ip", "link", "set", "dev", "eth0", "up"] in commands
+        assert "previous network configuration restored" in capsys.readouterr().err
+    assert not backups
