@@ -20,6 +20,37 @@ JOB = "job_123456789abc"
 FIREWALL = "flush ruleset\ntable inet atlaso {\n chain forward { type filter hook forward priority 0; policy drop; }\n}\n"
 
 
+@pytest.mark.parametrize("state,expected", [("missing", False), ("source-only", False), ("retained", True),
+    ("disabled", True), ("malformed", None), ("oversized", None), ("encoding", None)])
+def test_privileged_status_projects_durable_intent_without_counters(transaction, monkeypatch, capsys, state, expected):
+    """Root-only snapshots yield a bounded intent projection even when nft is unavailable.
+
+    Args:
+        transaction: Isolated root helper runtime.
+        monkeypatch: Simulate unavailable kernel counters.
+        capsys: Capture only the public helper projection.
+        state: Durable snapshot condition.
+        expected: Proven presence or unavailable projection.
+    """
+    helper, nat, _firewall, _previous, _programs, _commands = transaction
+    runtime = helper.NAT_RUNTIME_CONFIG_PATH
+    if state == "missing":
+        runtime.unlink()
+    elif state in {"retained", "disabled"}:
+        runtime.write_text(nat.read_text().replace('"enabled":true', '"enabled":false') if state == "disabled" else nat.read_text())
+    elif state == "malformed":
+        runtime.write_text("[port_forwards]\njson=broken\n")
+    elif state == "oversized":
+        runtime.write_bytes(b"x" * 2_000_001)
+    elif state == "encoding":
+        runtime.write_bytes(b"\xff")
+    if runtime.exists():
+        runtime.chmod(0o600)
+    monkeypatch.setattr(helper, "_run", lambda *args, **kwargs: subprocess.CompletedProcess([], 1, "", ""))
+    assert helper._port_forward_status() == 0
+    assert json.loads(capsys.readouterr().out)["runtime_has_port_forwards"] is expected
+
+
 @pytest.mark.parametrize("change", ["unchanged", "metadata", "target", "removed"])
 def test_pair_preserves_unchanged_connections(transaction, change):
     """Unrelated submissions retain sessions and mapping edits retire only their own marks.

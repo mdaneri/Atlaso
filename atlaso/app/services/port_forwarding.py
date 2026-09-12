@@ -5,7 +5,6 @@ import json
 import re
 from dataclasses import dataclass
 from ipaddress import IPv4Address, IPv6Address, ip_address, ip_interface, ip_network
-from pathlib import Path
 from typing import Any, cast
 
 from sqlalchemy import select
@@ -23,7 +22,6 @@ from atlaso.app.services.firewall import (
 )
 from atlaso.app.services.network_objects import acquire_network_objects_write_lock
 from atlaso.app.services.traffic_publishing import (
-    NAT_RUNTIME_PATH,
     nat_targets,
     resolved_nat_source,
 )
@@ -272,19 +270,18 @@ def save_port_forward(db: Session, payload: PortForwardCreate, *, actor: str, ru
 def runtime_has_port_forwards() -> bool:
     """Retain paired publication when durable runtime intent outlives Apply baselines.
 
-    Unreadable or oversized runtime intent conservatively requires the root-owned
-    paired validator; only a missing file proves there is no durable publication.
+    The root-owned snapshot is projected by the bounded read-only helper. Unknown
+    intent blocks submission rather than silently expanding the selected units.
     """
     try:
-        with Path(NAT_RUNTIME_PATH).open("rb") as snapshot:
-            content = snapshot.read(2_000_001)
-        if len(content) > 2_000_000:
-            return True
-        return snapshot_has_port_forwards(content.decode("utf-8"))
-    except FileNotFoundError:
-        return False
-    except (OSError, UnicodeError):
-        return True
+        result = SystemAdapter().port_forward_status()
+        if result.returncode == 0 and len(result.stdout) <= 2_000_000:
+            value = json.loads(result.stdout).get("runtime_has_port_forwards")
+            if type(value) is bool:
+                return value
+    except (OSError, ValueError, AttributeError):
+        pass
+    raise ValueError("Cannot verify applied forwarding intent; restore helper readiness before submitting appliance changes.")
 
 
 def snapshot_has_port_forwards(preview: str) -> bool:

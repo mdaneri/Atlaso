@@ -10631,15 +10631,21 @@ def _port_forward_publication_present(entries: list, row: dict) -> bool:
 
 def _port_forward_status() -> int:
     """Observe only the fixed applied rule set and owned counters without mutation."""
-    if not NAT_RUNTIME_CONFIG_PATH.is_file():
-        print(json.dumps({"available": True, "rules": []}))
+    if not NAT_RUNTIME_CONFIG_PATH.exists():
+        print(json.dumps({"available": True, "rules": [], "runtime_has_port_forwards": False}))
         return 0
+    runtime_has_port_forwards = None
     try:
-        parsed = _parse_wan_config(NAT_RUNTIME_CONFIG_PATH)
+        with NAT_RUNTIME_CONFIG_PATH.open("rb") as snapshot:
+            content = snapshot.read(2_000_001)
+        if len(content) > 2_000_000:
+            raise ValueError("NAT runtime snapshot exceeds the observation bound")
+        parsed = _parse_wan_config(NAT_RUNTIME_CONFIG_PATH, content=content.decode("utf-8"))
         rows = _port_forward_records(parsed)
+        runtime_has_port_forwards = bool(parsed["port_forwards"] and json.loads(parsed["port_forwards"][0]["name"]))
         result = _run(["nft", "-j", "list", "ruleset"], timeout=2)
         if result.returncode:
-            print(json.dumps({"available": not rows, "rules": []}))
+            print(json.dumps({"available": not rows, "rules": [], "runtime_has_port_forwards": runtime_has_port_forwards}))
             return 0
         if len(result.stdout) > 2_000_000:
             raise ValueError("Port-forward runtime response exceeds the observation bound")
@@ -10660,10 +10666,10 @@ def _port_forward_status() -> int:
                              "state": "applied" if complete and row["id"] not in warnings else "degraded",
                              "warning": warnings.get(row["id"], ""),
                              "detail": "Applied translation; verify target reachability from a selected client." if complete else "Translation, Firewall admission, or counter is missing; review runtime state and apply again."})
-        print(json.dumps({"available": True, "rules": observed}))
+        print(json.dumps({"available": True, "rules": observed, "runtime_has_port_forwards": runtime_has_port_forwards}))
         return 0
     except (OSError, ValueError, KeyError, TypeError, subprocess.TimeoutExpired):
-        print(json.dumps({"available": False, "rules": []}))
+        print(json.dumps({"available": False, "rules": [], "runtime_has_port_forwards": runtime_has_port_forwards}))
         return 0
 
 

@@ -115,7 +115,9 @@ unavailable during import may skip the ingress assignment check; an archived rev
 Source references, target restrictions, and reserved-listener checks still apply when the ingress is unavailable.
 Older v2 archives without a `port_forwards` section restore an empty forwarding collection, replacing any current
 desired mappings. Other required sections and explicitly malformed forwarding sections remain subject to validation.
-Global Apply also inspects durable runtime intent when selecting paired Firewall/NAT publication. Clearing desired
+Global Apply reads a bounded privileged projection of durable runtime intent when selecting paired Firewall/NAT
+publication. The application does not open root-owned snapshots. An unavailable projection blocks submission instead
+of implicitly selecting additional units; source-NAT-only intent does not expand a listener-only selection. Clearing desired
 rules and Apply baselines through restore therefore still retires previously applied forwards through the paired path.
 Factory reset removes desired mappings and retires their runtime state before
 replacing interface configuration. A pending publication recovery must be reconciled before reset can continue.

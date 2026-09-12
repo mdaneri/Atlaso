@@ -11,13 +11,12 @@ from atlaso.app.models import Job
 
 
 @pytest.mark.parametrize("management_handoff", [False, True])
-def test_legacy_restore_retires_runtime_forwards_without_baselines(client, monkeypatch, tmp_path, management_handoff):
+def test_legacy_restore_retires_runtime_forwards_without_baselines(client, monkeypatch, management_handoff):
     """A full restore must not send durable old forwards through standalone Apply.
 
     Args:
         client: Isolated application with dry-run publication.
         monkeypatch: Bind runtime observation to the saved pre-restore intent.
-        tmp_path: Isolated durable runtime snapshot.
         management_handoff: Exercise both ordinary publication and protected management recovery.
     """
     from sqlalchemy import select
@@ -31,8 +30,6 @@ def test_legacy_restore_retires_runtime_forwards_without_baselines(client, monke
     from tests.routers.ui.helpers import login
     from tests.services.test_port_forwarding import payload
 
-    runtime = tmp_path / "runtime-nat.conf"
-    monkeypatch.setattr(port_forwarding, "NAT_RUNTIME_PATH", str(runtime))
     with SessionLocal() as db:
         ui.set_setting_value(db, "routes_wan.routing_enabled", "true")
         interface = db.scalar(select(PhysicalInterface).where(PhysicalInterface.name == "eth2"))
@@ -40,12 +37,15 @@ def test_legacy_restore_retires_runtime_forwards_without_baselines(client, monke
         db.commit()
         units = ui.appliance_apply_units(db)
         ui.update_appliance_apply_baselines(db, units, {unit["id"] for unit in units})
-        runtime.write_text(ui.load_appliance_apply_baselines(db)["nat"]["config_preview"], encoding="utf-8")
+        assert port_forwarding.snapshot_has_port_forwards(ui.load_appliance_apply_baselines(db)["nat"]["config_preview"])
         archive = export_settings_archive(db, actor="test")
         archive["data"].pop("port_forwards")
         restore_settings_archive(db, archive)
         assert not ui.load_appliance_apply_baselines(db)
         assert db.scalar(select(PortForward)) is None
+    monkeypatch.setattr(SystemAdapter, "port_forward_status", lambda self: AdapterResult(
+        command=[], dry_run=False, stdout='{"runtime_has_port_forwards":true}',
+    ))
     original_units = ui.appliance_apply_units
 
     def observed_units(db, **kwargs):
@@ -81,29 +81,58 @@ def test_legacy_restore_retires_runtime_forwards_without_baselines(client, monke
         assert not port_forwarding.snapshot_has_port_forwards(ui.load_appliance_apply_baselines(db)["nat"]["config_preview"])
 
 
-@pytest.mark.parametrize("content,expected", [(None, False), (b"[nat_rules]\n", False),
-    (b"[port_forwards]\njson=[]\n", False), (b'[port_forwards]\njson=[{"id":1}]\n', True),
-    (b"[port_forwards]\njson=broken\n", True), (b"\xff", True), (b"x" * 2_000_001, True)],
-    ids=["missing", "source-only", "empty", "retained", "malformed", "encoding", "oversized"])
-def test_runtime_forward_presence_is_bounded_and_conservative(monkeypatch, tmp_path, content, expected):
-    """Only readable empty runtime intent permits standalone source-NAT publication.
+@pytest.mark.parametrize("content,expected", [('{"runtime_has_port_forwards":false}', False),
+    ('{"runtime_has_port_forwards":true}', True), ('{}', None), ('{"runtime_has_port_forwards":null}', None),
+    ('{"runtime_has_port_forwards":1}', None), ('broken', None), ('x' * 2_000_001, None)],
+    ids=["absent", "retained", "missing-projection", "unknown", "wrong-type", "malformed", "oversized"])
+def test_runtime_forward_presence_uses_bounded_privileged_projection(monkeypatch, content, expected):
+    """Unknown runtime intent blocks submission instead of inferring a dependency.
 
     Args:
-        monkeypatch: Bind the fixed runtime path to an isolated snapshot.
-        tmp_path: Test-owned runtime directory.
-        content: Missing, valid, malformed or oversized runtime intent.
-        expected: Whether paired validation is required.
+        monkeypatch: Substitute the bounded privileged projection.
+        content: Helper response without exposing the root-owned snapshot.
+        expected: Proven intent or unknown state requiring rejection.
     """
     from atlaso.app.services import port_forwarding
 
-    path = tmp_path / "nat.conf"
-    monkeypatch.setattr(port_forwarding, "NAT_RUNTIME_PATH", str(path))
-    if content is not None:
-        path.write_bytes(content)
-    assert port_forwarding.runtime_has_port_forwards() is expected
-    if content is None:
-        path.mkdir()
-        assert port_forwarding.runtime_has_port_forwards() is True
+    monkeypatch.setattr(SystemAdapter, "port_forward_status", lambda self: AdapterResult(
+        command=[], dry_run=False, stdout=content,
+    ))
+    if expected is None:
+        with pytest.raises(ValueError, match="Cannot verify applied forwarding"):
+            port_forwarding.runtime_has_port_forwards()
+    else:
+        assert port_forwarding.runtime_has_port_forwards() is expected
+
+
+@pytest.mark.parametrize("presence", [False, None])
+def test_listener_only_apply_does_not_infer_forwarding_from_unreadable_snapshot(client, monkeypatch, presence):
+    """A source-only root snapshot cannot select unrelated Firewall/NAT intent.
+
+    Args:
+        client: Isolated application and dry-run task runner.
+        monkeypatch: Supply the privileged projection without application file access.
+        presence: Known source-only intent or failed observation.
+    """
+    from tests.routers.ui.helpers import login
+
+    monkeypatch.setattr(SystemAdapter, "port_forward_status", lambda self: AdapterResult(
+        command=[], dry_run=False, stdout=json.dumps({"runtime_has_port_forwards": presence}),
+    ))
+    login(client)
+    page = client.get("/dashboard")
+    csrf = page.text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
+    response = client.post("/appliance-apply", data={"csrf": csrf, "selected_units": ["kms"]},
+                           headers={"Accept": "application/json"})
+    if presence is None:
+        assert response.status_code == 422
+        assert "Cannot verify applied forwarding" in response.json()["detail"]
+    else:
+        assert response.status_code == 202, response.text
+        with SessionLocal() as db:
+            result = json.loads(db.get(Job, response.json()["job_id"]).result)
+            assert result["selected_units"] == ["kms"]
+            assert not result["traffic_publishing_pair"]
 
 
 @pytest.mark.parametrize("management_move", [False, True])

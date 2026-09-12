@@ -102,7 +102,7 @@ class SystemAdapter:
     def port_forward_status(self) -> AdapterResult:
         """Read bounded applied destination-translation counters without mutation."""
         return self._helper_result("nat", "status", timeout_seconds=10,
-                                   dry_run_message='{"available":false,"rules":[]}')
+                                   dry_run_message='{"available":false,"rules":[],"runtime_has_port_forwards":false}')
 
     def validate_traffic_publishing(self, job_id: str, nat_path: str, firewall_path: str) -> AdapterResult:
         """Validate the complete captured Firewall and translation pair.

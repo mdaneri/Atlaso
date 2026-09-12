@@ -348,7 +348,7 @@ def test_status_requires_translation_and_both_admissions(family, missing, reply_
                              target_address="198.51.100.10" if family == 4 else "2001:db8:3::2"),
            "source_networks": []}
     monkeypatch.setattr(helper, "NAT_RUNTIME_CONFIG_PATH", path)
-    monkeypatch.setattr(helper, "_parse_wan_config", lambda path: {})
+    monkeypatch.setattr(helper, "_parse_wan_config", lambda path, **kwargs: {"port_forwards": [{"name": json.dumps([row])}]})
     monkeypatch.setattr(helper, "_port_forward_records", lambda parsed: [row])
     monkeypatch.setattr(helper, "_port_forward_target_warnings", lambda rows: {})
     entries = [{"counter": {"family": "inet", "table": "atlaso_port_forwards",
@@ -721,7 +721,7 @@ def test_status_cli_has_no_mutation_or_recovery_side_effects(tmp_path, monkeypat
     monkeypatch.setattr(helper, "_nat_write", forbidden)
     monkeypatch.setattr(helper, "_run_real_action_with_systemd", forbidden)
     assert helper.main(["atlaso-helper", "nat", "status", "--real"]) == 0
-    assert json.loads(capsys.readouterr().out) == {"available": True, "rules": []}
+    assert json.loads(capsys.readouterr().out) == {"available": True, "rules": [], "runtime_has_port_forwards": False}
     assert helper._handle_nat("status", ["unexpected"]) == 2
 
 
