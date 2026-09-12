@@ -1,6 +1,7 @@
 """Test vmware ovf customization behavior."""
 
 import base64
+import configparser
 import importlib.util
 import json
 import os
@@ -2373,6 +2374,10 @@ def test_vmware_ovf_customizer_renders_dhcp_network_and_interface_scoped_firewal
     firewall = customizer.FIREWALL_CONFIG_PATH.read_text(encoding="utf-8")
     assert "DHCP=ipv4" in networkd
     assert "Address=" not in networkd
+    parsed = configparser.ConfigParser(strict=False)
+    parsed.read_string(networkd)
+    assert parsed["DHCPv4"].getboolean("SendRelease") is False
+    assert "DNS" in parsed["Network"]
     assert 'iifname "eth0" meta nfproto ipv4 tcp dport { 22, 80, 443 } accept' in firewall
 
 

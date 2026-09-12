@@ -6,13 +6,94 @@ import pytest
 from sqlalchemy import select
 
 from atlaso.app.database import SessionLocal
-from atlaso.app.models import PhysicalInterface, PortForward
+from atlaso.app.models import KmsSettings, PhysicalInterface, PortForward
 from atlaso.app.services.settings_archive import (
+    _archive_port_forward_listener_claims,
     export_settings_archive,
     factory_reset_desired_state,
     restore_settings_archive,
 )
 from tests.services.test_port_forwarding import payload
+
+
+def test_archive_network_boot_claim_uses_restored_dhcp_selection(client):
+    """Custom PXE ports follow the archived DHCP binding, not the legacy fallback.
+
+    Args:
+        client: Isolated initialized appliance.
+    """
+    with SessionLocal() as db:
+        archive = export_settings_archive(db, actor="test")
+    data = archive["data"]
+    scope = data["dhcp_scopes"][0]
+    scope["enabled"] = True
+    scope["interface_name"] = "eth2"
+    values = {
+        "esxi_pxe.boot.enabled": "true", "esxi_pxe.boot.http_port": "18081",
+        "esxi_pxe.boot.dhcp_scope_ids": "1", "esxi_pxe.boot.listen_interface": "eth9",
+    }
+    data["settings"] = [row for row in data["settings"] if row["key"] not in values]
+    data["settings"].extend({"key": key, "value": value} for key, value in values.items())
+    claims = _archive_port_forward_listener_claims(data)
+    assert any(claim.interface == "eth2" and claim.protocol == "tcp" and claim.start == 18081 for claim in claims)
+    assert not any(claim.interface == "eth9" and claim.start == 18081 for claim in claims)
+
+
+@pytest.mark.parametrize(("protocol", "port"), [
+    ("tcp", 22), ("tcp", 80), ("tcp", 443), ("udp", 53), ("udp", 69), ("tcp", 2049),
+])
+def test_archive_rejects_reserved_listener_before_replacing_desired_state(client, protocol, port):
+    """Always-reserved endpoints cannot be introduced through archive restore.
+
+    Args:
+        client: Isolated initialized appliance.
+        protocol: Reserved transport.
+        port: Reserved service endpoint.
+    """
+    with SessionLocal() as db:
+        interface = db.scalar(select(PhysicalInterface).where(PhysicalInterface.name == "eth2"))
+        db.add(PortForward(**payload(ingress_interface="eth2", listener_address=interface.ip_cidr.split("/")[0])))
+        db.commit()
+        archive = export_settings_archive(db, actor="test")
+        archive["data"]["port_forwards"][0].update(
+            protocol=protocol, external_port_start=port, external_port_end=port, target_port_end=13000,
+        )
+        with pytest.raises(ValueError, match="port-forward.*collides"):
+            restore_settings_archive(db, archive)
+        db.expire_all()
+        assert db.scalar(select(PortForward)).external_port_start == 12000
+
+
+@pytest.mark.parametrize("archived_enabled", [False, True])
+def test_archive_listener_claims_use_archived_service_settings(client, archived_enabled):
+    """Restore admission follows candidate services rather than destination settings.
+
+    Args:
+        client: Isolated initialized appliance.
+        archived_enabled: Whether the archived custom service owns the mapping.
+    """
+    with SessionLocal() as db:
+        interface = db.scalar(select(PhysicalInterface).where(PhysicalInterface.name == "eth2"))
+        db.add(PortForward(**payload(ingress_interface="eth2", listener_address=interface.ip_cidr.split("/")[0])))
+        db.commit()
+        archive = export_settings_archive(db, actor="test")
+        archive["data"]["kms_settings"][0].update(enabled=archived_enabled, port=12000,
+                                                   listen_interface="eth2", listen_address=interface.ip_cidr.split("/")[0])
+        current = db.scalar(select(KmsSettings))
+        current.enabled = not archived_enabled
+        current.port = 12000
+        current.listen_interface = "eth2"
+        current.listen_address = interface.ip_cidr.split("/")[0]
+        db.commit()
+        if archived_enabled:
+            with pytest.raises(ValueError, match="port-forward.*collides"):
+                restore_settings_archive(db, archive)
+            db.expire_all()
+            assert db.scalar(select(KmsSettings)).enabled is False
+        else:
+            restore_settings_archive(db, archive)
+            assert db.scalar(select(KmsSettings)).enabled is False
+            assert db.scalar(select(PortForward)).enabled is True
 
 
 def test_archive_retains_exact_mapping_and_disables_unavailable_listener(client):

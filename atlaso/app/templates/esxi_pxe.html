@@ -142,7 +142,7 @@
       <ol class="vcf-sddc-step-list">
         <li><button class="vcf-sddc-step-button active" type="button" data-atlaso-wizard-nav="identity"><span>1</span><strong>Identity</strong><small>Hostname, MAC, and address</small></button></li>
         <li><button class="vcf-sddc-step-button" type="button" data-atlaso-wizard-nav="installer" disabled><span>2</span><strong>Installer</strong><small>Kickstart and ISO</small></button></li>
-        <li><button class="vcf-sddc-step-button" type="button" data-atlaso-wizard-nav="enablement" disabled><span>3</span><strong>Enabled</strong><small>Desired-state enablement</small></button></li>
+        <li><button class="vcf-sddc-step-button" type="button" data-atlaso-wizard-nav="enablement" disabled><span>3</span><strong>Enabled</strong><small>Network Boot availability</small></button></li>
         <li><button class="vcf-sddc-step-button" type="button" data-atlaso-wizard-nav="review" disabled><span>4</span><strong>Review</strong><small>Confirm desired state</small></button></li>
       </ol>
     </aside>
@@ -161,7 +161,8 @@
           </div>
         </div></section>
         <section class="vcf-sddc-step-page hidden" data-atlaso-wizard-step="installer"><div class="form-stack">
-          <label><span>Kickstart</span><select name="kickstart_id">{% for option in esxi_pxe_host_kickstart_options %}<option value="{{ option.id }}">{{ option.label }}</option>{% endfor %}</select></label>
+          <label><span>Kickstart</span><select name="kickstart_id" aria-describedby="esxi-host-kickstart-status">{% for option in esxi_pxe_host_kickstart_options %}<option value="{{ option.id }}">{{ option.label }}</option>{% endfor %}</select></label>
+          <div><p id="esxi-host-kickstart-status" class="autosave-status" role="status" data-esxi-host-kickstart-status></p><button class="button secondary" type="button" data-esxi-host-refresh-kickstarts>Refresh Kickstarts</button></div>
           <label><span>Installer ISO</span><select name="installer_iso_path">{% for option in esxi_pxe_host_iso_options %}<option value="{{ option.id }}">{{ option.label }}</option>{% endfor %}</select></label>
           <input type="hidden" name="variables" value="{}">
           <div class="form-stack">
@@ -182,9 +183,10 @@
             </div>
           </div>
         </div></section>
-        <section class="vcf-sddc-step-page host-reference-enable-step hidden" data-atlaso-wizard-step="enablement">
-          <label class="switch-field"><span>Enabled</span><input class="switch-input" type="checkbox" name="enabled"><span class="switch-track" aria-hidden="true"></span></label>
-          <p class="muted">Saving creates desired state only. The global apply workflow remains the sole host-mutation path.</p>
+        <section class="vcf-sddc-step-page hidden" data-atlaso-wizard-step="enablement"><div class="form-stack">
+          <label class="switch-field"><span class="field-label"><span>Enabled</span><button class="help-icon" type="button" data-help="Include this host's ESXi entry in Network Boot. Saving does not change active boot behavior; use Review appliance changes and Submit appliance changes to activate it.">i</button></span><input class="switch-input" type="checkbox" name="enabled"><span class="switch-track" aria-hidden="true"></span></label>
+          <p class="muted">Changes take effect after you review and submit appliance changes.</p>
+        </div>
         </section>
         <section class="vcf-sddc-step-page hidden" data-atlaso-wizard-step="review"><div class="settings-list" data-atlaso-resource-review></div></section>
       </div>
@@ -330,6 +332,10 @@
       <input type="hidden" name="tftp_root" value="{{ esxi_pxe_boot.tftp_root }}">
       <input type="hidden" name="bios_bootfile" value="{{ esxi_pxe_boot.bios_bootfile }}">
       <input type="hidden" name="uefi_bootfile" value="{{ esxi_pxe_boot.uefi_bootfile }}">
+      <label class="switch-field">
+        <span class="field-label"><span>Require console authorization</span><button class="help-icon" type="button" data-help="Off by default: assigned hosts continue into ESXi installation without a console-code approval. Enable to require an administrator to approve each exact boot attempt. Save changes, then use global Apply to activate this policy.">i</button></span>
+        <input class="switch-input" type="checkbox" name="console_authorization_required" {{ "checked" if esxi_pxe_boot.console_authorization_required else "" }} {{ "disabled" if not esxi_can_write else "" }}><span class="switch-track" aria-hidden="true"></span>
+      </label>
       <div class="form-grid">
         <label class="switch-field">
           <span class="field-label"><span>Native UEFI HTTP</span><button class="help-icon" type="button" data-help="Adds DHCP matching for UEFI HTTPClient firmware and loads the generated iPXE first stage. Every client then resolves the safe per-host Network Boot menu.">i</button></span>
@@ -454,6 +460,7 @@
             class="tabulator-shell esxi-pxe-hosts-table"
             data-hosts='{{ esxi_pxe_host_rows | tojson }}'
             data-kickstart-options='{{ esxi_pxe_host_kickstart_options | tojson }}'
+            data-authorization-reasons='{{ esxi_boot_authorization_reasons | default({}) | tojson }}'
             data-iso-options='{{ esxi_pxe_host_iso_options | tojson }}'
             data-csrf="{{ csrf_token }}"
             data-can-write="{{ 'true' if esxi_can_write else 'false' }}"
@@ -666,8 +673,11 @@
     <div class="panel">
       <div class="panel-head">
         <h2>Validation</h2>
-        <span class="status-pill {{ 'good' if not esxi_pxe_validation_errors else 'warn' }}">{{ "valid" if not esxi_pxe_validation_errors else "needs attention" }}</span>
+        <span class="status-pill {{ 'good' if not esxi_pxe_validation_errors and not esxi_boot_readiness_warnings else 'warn' }}">{{ "valid" if not esxi_pxe_validation_errors and not esxi_boot_readiness_warnings else "needs attention" }}</span>
       </div>
+      {% for warning in esxi_boot_readiness_warnings %}
+        <div class="alert warning" role="alert">{{ warning }}</div>
+      {% endfor %}
       {% if esxi_selected_kickstart and esxi_selected_kickstart_json.drift_state == "filesystem_modified" %}
         <div class="alert warning">Filesystem copy differs from database source. The next ESXi PXE apply will overwrite the filesystem copy from the database.</div>
       {% endif %}

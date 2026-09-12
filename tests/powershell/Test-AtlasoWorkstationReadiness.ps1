@@ -15,6 +15,21 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
+$readinessScript = Join-Path $RepositoryRoot 'scripts/windows/vmware/get-atlaso-vm-ip.ps1'
+# Invalid timing must fail during binding, before path or provider access.
+foreach ($invalidTiming in @(
+        @{ TimeoutSeconds = 0 }, @{ TimeoutSeconds = -1 },
+        @{ TimeoutSeconds = 2147484 }, @{ PollSeconds = 0 }, @{ PollSeconds = -1 }
+    )) {
+    $bindingError = $null
+    try {
+        & $readinessScript -VmxPath 'does-not-exist.vmx' -ExpectedHostname 'fixture.invalid' @invalidTiming
+    }
+    catch { $bindingError = $_ }
+    if ($null -eq $bindingError -or $bindingError.FullyQualifiedErrorId -notlike 'ParameterArgumentValidationError*') {
+        throw 'Invalid readiness timing did not fail parameter validation before filesystem access.'
+    }
+}
 Import-Module (Join-Path $RepositoryRoot 'scripts/windows/vmware/Atlaso.WorkstationReadiness.psm1') -Force
 [System.IO.Directory]::CreateDirectory($OutputDirectory) | Out-Null
 $targetVmx = Join-Path $OutputDirectory 'Issue-535.vmx'
@@ -36,6 +51,26 @@ $concurrentVmx = Join-Path $OutputDirectory 'Concurrent-Clone.vmx'
     [System.Text.UTF8Encoding]::new($false)
 )
 $fakeVmrun = Join-Path $OutputDirectory 'fake-vmrun.cmd'
+$failingVmrun = Join-Path $OutputDirectory 'fast-failing-vmrun.cmd'
+[System.IO.File]::WriteAllText($failingVmrun, "@echo off`r`nexit /b 1`r`n")
+foreach ($pollInterval in @(5, [int]::MaxValue)) {
+    $timer = [System.Diagnostics.Stopwatch]::StartNew()
+    $timeoutError = $null
+    try {
+        & $readinessScript -VmxPath $targetVmx -ExpectedHostname 'fixture.invalid' `
+            -VmrunPath $failingVmrun -TimeoutSeconds 1 -PollSeconds $pollInterval | Out-Null
+    }
+    catch { $timeoutError = $_ }
+    $timer.Stop()
+    if ($null -eq $timeoutError -or $timeoutError.Exception.Message -notlike 'No uniquely bound IPv4 address*within 1 seconds*') {
+        throw 'The fast-failing fixture did not reach the expected readiness timeout.'
+    }
+    # Allow scheduler/module-loading overhead but reject the old full five-second sleep.
+    if ($timer.Elapsed.TotalSeconds -lt 0.9 -or $timer.Elapsed.TotalSeconds -ge 2.5) {
+        throw "Readiness deadline was not bounded: $($timer.Elapsed.TotalSeconds) seconds, poll $pollInterval."
+    }
+    Write-Output "Bounded readiness: timeout 1s, poll $pollInterval s, elapsed $($timer.Elapsed.TotalSeconds.ToString('F3'))s."
+}
 [System.IO.File]::WriteAllText(
     $fakeVmrun,
     "@echo off`r`nif /I `"%3`"==`"getGuestIPAddress`" (`r`n  echo 192.168.167.134`r`n  exit /b 0`r`n)`r`nif /I `"%3`"==`"readVariable`" (`r`n  if /I not `"%5`"==`"runtimeConfig`" exit /b 8`r`n  echo `"issue-535.atlaso.internal`"`r`n  exit /b 0`r`n)`r`nif /I `"%3`"==`"list`" (`r`n  echo Total running VMs: 2`r`n  echo `"$targetVmx`"`r`n  echo `"$sourceVmx`"`r`n  exit /b 0`r`n)`r`nexit /b 9`r`n",

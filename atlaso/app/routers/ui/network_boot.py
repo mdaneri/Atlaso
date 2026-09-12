@@ -18,6 +18,7 @@ from atlaso.app.audit import record_audit
 from atlaso.app.config import get_settings
 from atlaso.app.database import get_db
 from atlaso.app.models import EsxiKickstart, EsxiPxeHost, utcnow
+from atlaso.app.routers.chunk_uploads import ChunkedUploadRoute
 from atlaso.app.security import Identity, require_session_identity
 from atlaso.app.services.esxi_pxe import (
     ESXI_PXE_HTTP_PORT,
@@ -47,6 +48,7 @@ from atlaso.app.services.esxi_pxe import (
     validate_kickstart_vault_references,
 )
 from atlaso.app.services.network_boot import (
+    esxi_boot_management_state,
     lock_esxi_host_reference_lifecycle,
     remove_esxi_host_discovery_state,
 )
@@ -91,6 +93,7 @@ def build_router(dependencies: NetworkBootUiDependencies) -> NetworkBootUiRouter
         dependencies: Stable facade dependencies used by Network Boot transports.
     """
     router = APIRouter(
+        route_class=ChunkedUploadRoute,
         prefix=MANAGEMENT_UI_ROOT,
         dependencies=[Depends(dependencies.require_management_ui_request)],
     )
@@ -136,7 +139,7 @@ def build_router(dependencies: NetworkBootUiDependencies) -> NetworkBootUiRouter
         kickstart_id: int | None = None,
         identity: Identity = Depends(require_session_identity),
         db: Session = Depends(get_db),
-    ) -> HTMLResponse:
+    ) -> HTMLResponse | JSONResponse:
         """Handle the network boot page endpoint.
 
         Args:
@@ -148,6 +151,20 @@ def build_router(dependencies: NetworkBootUiDependencies) -> NetworkBootUiRouter
         Returns:
             The endpoint response.
         """
+        if request.headers.get("X-Requested-With") == "AtlasoHostReferenceRefresh":
+            # Poll only the dependent choices and safe applied-state projection;
+            # full page rendering also validates media and editable source content.
+            kickstarts = db.scalars(select(EsxiKickstart).order_by(EsxiKickstart.name)).all()
+            hosts = list(db.scalars(select(EsxiPxeHost)).all())
+            return JSONResponse(
+                {
+                    "kickstarts": [{"id": "", "label": "No Kickstart"}, *[{"id": row.id, "label": row.name} for row in kickstarts]],
+                    "authorization_reasons": esxi_boot_management_state(db, hosts)["authorization_reasons"],
+                    "can_write": identity.can("write:esxi-pxe"),
+                    "console_authorization_required": esxi_pxe_boot_settings(db)["console_authorization_required"],
+                },
+                headers={"Cache-Control": "no-store"},
+            )
         return render(
             request,
             "esxi_pxe.html",
@@ -176,6 +193,7 @@ def build_router(dependencies: NetworkBootUiDependencies) -> NetworkBootUiRouter
         bios_bootfile: str = Form(...),
         uefi_bootfile: str = Form(...),
         native_uefi_http_enabled: bool = Form(False),
+        console_authorization_required: bool = Form(False),
         native_uefi_http_url: str = Form(""),
         csrf: str = Form(...),
         identity: Identity = Depends(require_session_identity),
@@ -200,6 +218,7 @@ def build_router(dependencies: NetworkBootUiDependencies) -> NetworkBootUiRouter
             bios_bootfile: Bios bootfile supplied by the caller.
             uefi_bootfile: Uefi bootfile supplied by the caller.
             native_uefi_http_enabled: Native uefi http enabled supplied by the caller.
+            console_authorization_required: Whether each boot needs an administrator-entered console code.
             native_uefi_http_url: URL for the native uefi http.
             csrf: Validated CSRF token authorizing the request.
             identity: Authenticated identity authorizing the request.
@@ -235,6 +254,7 @@ def build_router(dependencies: NetworkBootUiDependencies) -> NetworkBootUiRouter
                 bios_bootfile=bios_bootfile,
                 uefi_bootfile=uefi_bootfile,
                 native_uefi_http_enabled=native_uefi_http_enabled,
+                console_authorization_required=console_authorization_required,
                 native_uefi_http_url=native_uefi_http_url,
             )
             dns_record_action = ensure_dns_for_esxi_pxe(
@@ -921,7 +941,8 @@ def build_router(dependencies: NetworkBootUiDependencies) -> NetworkBootUiRouter
         wants_json = request.headers.get("X-Atlaso-Upload") == "1"
         try:
             iso = await store_installer_iso_upload(
-                iso_file, max_bytes=get_settings().esxi_installer_iso_max_bytes
+                iso_file, max_bytes=get_settings().esxi_installer_iso_max_bytes,
+                publication=getattr(request.state, "upload_publication", None),
             )
         except ValueError as exc:
             status_code = 413 if "too large" in str(exc).lower() else 400

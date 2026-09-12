@@ -9,12 +9,10 @@ status: current
 
 # Backup and restore
 
-Traffic Publishing archives include canonical NAT enablement and additive family, translation mode, and fixed-address
-fields. Legacy IPv4 rules retain their meaning; omitted ingress remains pending explicit review. Missing NIC selectors
-are retained only when backed by archived missing-host inventory and never become runtime-eligible on restore.
-Canonical NAT enablement takes precedence over a legacy Routes/WAN projection. Factory reset clears NAT rules,
-disables the NAT replay service, and establishes a disabled `nat` Apply baseline. See
-[Traffic Publishing](traffic-publishing.md) for the translation contract.
+Open **Operations > Maintenance**. The **LDAP** tab contains directory recovery; **Backup** groups settings export,
+restore and archive scope; **Reset** retains the confirmed factory-reset workflow. **Diagnostics** collects
+[diagnostic support bundles](diagnostics.md) through its own reviewed wizard.
+Existing `/ui/management/backup-restore` links and recovery actions remain supported.
 
 <!-- BEGIN GENERATED INTERFACE OVERVIEW -->
 ## Interface overview
@@ -27,7 +25,18 @@ This verified appliance view provides visual orientation before you begin.
 
 <!-- END GENERATED INTERFACE OVERVIEW -->
 
-Open **Backup and Restore** to protect Atlaso settings before maintenance and recover the control-plane configuration
+Traffic Publishing archives include canonical NAT enablement and additive family, translation mode, and fixed-address
+fields. Legacy IPv4 rules retain their meaning; omitted ingress remains pending explicit review. Missing NIC selectors
+are retained only when backed by archived missing-host inventory and never become runtime-eligible on restore.
+Canonical NAT enablement takes precedence over a legacy Routes/WAN projection. Factory reset clears NAT rules,
+disables the NAT replay service, and establishes a disabled `nat` Apply baseline. See
+[Traffic Publishing](traffic-publishing.md) for the source-translation contract.
+
+Browser archive imports use the shared [chunked upload
+transport](../services/vcf-helper.md#chunked-browser-uploads). Chunk staging does not restore or apply settings;
+the existing validation, recovery review, and global apply boundaries still govern finalization.
+
+Open **Maintenance > Backup** to protect Atlaso settings before maintenance and recover the control-plane configuration
 when needed.
 
 Port-forward archives preserve listener identities, source restrictions, port mappings, reply mode, and desired
@@ -35,6 +44,8 @@ enablement. Restore reconstructs Source Group references and retains unavailable
 rules requiring review. It never substitutes another listener or broadens the source boundary. Factory reset deletes
 these desired rules and retires their generated admissions, counters, and marked sessions through its managed runtime
 cleanup before applying defaults. Unresolved publication recovery blocks reset until reconciliation completes.
+Before replacing desired state, restore rejects enabled mappings that collide with reserved protocol ports or
+service listeners configured in the archive, including custom ports and Network Boot bindings.
 
 ## Create a backup
 

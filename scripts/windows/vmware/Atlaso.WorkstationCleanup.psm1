@@ -16,6 +16,208 @@ unchanged and does not require them to resolve.
 #>
 
 Set-StrictMode -Version Latest
+if (-not ('Atlaso.WorkstationCapturedContentsV1' -as [type])) {
+        Add-Type -TypeDefinition @'
+using System;
+using System.IO;
+using System.Collections.Generic;
+using System.ComponentModel;
+using System.Runtime.InteropServices;
+using Microsoft.Win32.SafeHandles;
+namespace Atlaso {
+    public sealed class WorkstationCapturedContentsV1 : IDisposable {
+        [DllImport("kernel32.dll", CharSet=CharSet.Unicode, SetLastError=true)]
+        private static extern SafeFileHandle CreateFileW(string p, uint a, uint s, IntPtr x, uint d, uint f, IntPtr t);
+        [DllImport("kernel32.dll", SetLastError=true)]
+        private static extern bool SetFileInformationByHandle(SafeFileHandle h, int c, ref byte data, uint n);
+        [DllImport("kernel32.dll", SetLastError=true)]
+        private static extern bool GetFileInformationByHandleEx(SafeFileHandle h, int c, out TagInfo data, uint n);
+        [StructLayout(LayoutKind.Sequential)] private struct TagInfo { public uint Attributes, Tag; }
+        [DllImport("advapi32.dll", SetLastError=true)]
+        private static extern bool GetKernelObjectSecurity(SafeFileHandle h, uint info, byte[] data, uint size, out uint needed);
+        [DllImport("advapi32.dll", SetLastError=true)]
+        private static extern bool SetKernelObjectSecurity(SafeFileHandle h, uint info, byte[] data);
+        [StructLayout(LayoutKind.Sequential)] private struct FileInfo {
+            public uint Attributes, CreateLow, CreateHigh, AccessLow, AccessHigh, WriteLow, WriteHigh;
+            public uint Volume, SizeHigh, SizeLow, Links, IndexHigh, IndexLow;
+        }
+        [DllImport("kernel32.dll", SetLastError=true)]
+        private static extern bool GetFileInformationByHandle(SafeFileHandle h, out FileInfo info);
+        private readonly Dictionary<SafeFileHandle,byte[]> frozenAcls = new Dictionary<SafeFileHandle,byte[]>();
+        private void Freeze(SafeFileHandle handle) {
+            uint needed;
+            GetKernelObjectSecurity(handle, 4, null, 0, out needed);
+            if (needed == 0) throw new Win32Exception(Marshal.GetLastWin32Error());
+            var original = new byte[needed];
+            if (!GetKernelObjectSecurity(handle, 4, original, needed, out needed))
+                throw new Win32Exception(Marshal.GetLastWin32Error());
+            var acl = new System.Security.AccessControl.DirectorySecurity();
+            acl.SetSecurityDescriptorBinaryForm(original);
+            acl.AddAccessRule(new System.Security.AccessControl.FileSystemAccessRule(
+                System.Security.Principal.WindowsIdentity.GetCurrent().User,
+                System.Security.AccessControl.FileSystemRights.Write,
+                System.Security.AccessControl.AccessControlType.Deny));
+            frozenAcls.Add(handle, original);
+            if (!SetKernelObjectSecurity(handle, 4, acl.GetSecurityDescriptorBinaryForm()))
+                throw new Win32Exception(Marshal.GetLastWin32Error());
+        }
+        public void RestorePermissions() {
+            foreach (var entry in frozenAcls) {
+                if (!entry.Key.IsClosed && !SetKernelObjectSecurity(entry.Key, 4, entry.Value))
+                    throw new Win32Exception(Marshal.GetLastWin32Error());
+            }
+            frozenAcls.Clear();
+        }
+        public string Root { get; private set; }
+        private string rootIdentity;
+        private readonly List<SafeFileHandle> ancestors = new List<SafeFileHandle>();
+        private readonly List<SafeFileHandle> entries = new List<SafeFileHandle>();
+        private readonly HashSet<string> capturedPaths = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        private readonly List<string> capturedDirectories = new List<string>();
+        private readonly Dictionary<string,string> expected = new Dictionary<string,string>(StringComparer.OrdinalIgnoreCase);
+        [StructLayout(LayoutKind.Sequential)] private struct FileId { public ulong Volume, Low, High; }
+        [DllImport("kernel32.dll", EntryPoint="GetFileInformationByHandleEx", SetLastError=true)]
+        private static extern bool GetIdentity(SafeFileHandle h, int c, out FileId data, uint n);
+        private string Identity(SafeFileHandle h) {
+            FileInfo info;
+            if (!GetFileInformationByHandle(h, out info)) throw new Win32Exception(Marshal.GetLastWin32Error());
+            return String.Format("{0:X8}:{1:X8}{2:X8}", info.Volume, info.IndexHigh, info.IndexLow);
+        }
+        public void Record(string path, SafeFileHandle handle) { expected[Path.GetFullPath(path).TrimEnd(Path.DirectorySeparatorChar)] = Identity(handle); }
+        public void RecordDirectory(string path) { using (var h = Open(path, false, true)) Record(path, h); }
+        public void Published(string stage, string destination) {
+            expected[Path.GetFullPath(destination)] = expected[Path.GetFullPath(stage)];
+        }
+        public void Expect(string path) {
+            string full = Path.GetFullPath(path).TrimEnd(Path.DirectorySeparatorChar);
+            if (!full.StartsWith(Root + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase))
+                throw new IOException("Preflight inventory path escaped its root.");
+            if (!expected.ContainsKey(full)) expected.Add(full, null);
+        }
+        private SafeFileHandle Open(string path, bool delete, bool directory, bool acl = false) {
+            var h = CreateFileW(path, 0x81u | (delete ? (directory ? 0x70000u : 0x10000u) : (acl ? 0x60000u : 0)), directory ? 3u : 1u,
+                IntPtr.Zero, 3, 0x02200000, IntPtr.Zero);
+            if (h.IsInvalid) { h.Dispose(); throw new Win32Exception(Marshal.GetLastWin32Error()); }
+            TagInfo tag;
+            if (!GetFileInformationByHandleEx(h, 9, out tag, 8) || (tag.Attributes & 0x400) != 0 ||
+                ((tag.Attributes & 0x10) != 0) != directory) {
+                h.Dispose(); throw new IOException("Preflight entry changed type or is a reparse point.");
+            }
+            if (!directory) {
+                FileInfo info;
+                if (!GetFileInformationByHandle(h, out info) || info.Links != 1) {
+                    h.Dispose(); throw new IOException("Preflight artifact is not an ordinary single-link file.");
+                }
+            }
+            return h;
+        }
+        public WorkstationCapturedContentsV1(string path, string expectedRoot, IDictionary<string,string> inventory) {
+            Root = Path.GetFullPath(path);
+            try {
+                var chain = new Stack<string>();
+                for (var p = Directory.GetParent(Root); p != null; p = p.Parent) chain.Push(p.FullName);
+                foreach (var p in chain) ancestors.Add(Open(p, false, true));
+                entries.Add(Open(Root, false, true, true));
+                rootIdentity = Identity(entries[0]);
+                if (rootIdentity != expectedRoot) throw new IOException("Cleanup root identity changed.");
+                foreach (var entry in inventory) expected.Add(Path.GetFullPath(Path.Combine(Root, entry.Key)), entry.Value);
+                capturedDirectories.Add(Root);
+            } catch { Dispose(); throw; }
+        }
+        private void Capture(string parent) {
+            foreach (string path in Directory.GetFileSystemEntries(parent)) {
+                if (!expected.ContainsKey(Path.GetFullPath(path)))
+                    throw new IOException("Unrecorded preflight artifact; preserve the result root.");
+                bool directory = (File.GetAttributes(path) & FileAttributes.Directory) != 0;
+                var captured = Open(path, true, directory);
+                entries.Add(captured);
+                if (expected[Path.GetFullPath(path)] == null || Identity(captured) != expected[Path.GetFullPath(path)])
+                    throw new IOException("Preflight artifact creation identity changed; preserve the result root.");
+                capturedPaths.Add(Path.GetFullPath(path));
+                if (directory) { Freeze(captured); capturedDirectories.Add(path); Capture(path); }
+            }
+        }
+        public void CaptureSnapshot() { Freeze(entries[0]); Capture(Root); }
+        public void Remove() {
+            // Check the entire captured namespace before the first destructive step.
+            // Pins prevent replacement/removal; unfamiliar descendants refuse the
+            // whole operation instead of first consuming owned evidence.
+            var observed = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            foreach (string directory in capturedDirectories) {
+                foreach (string path in Directory.GetFileSystemEntries(directory)) {
+                    string full = Path.GetFullPath(path);
+                    if (!capturedPaths.Contains(full))
+                        throw new IOException("Preflight descendant set changed before deletion.");
+                    observed.Add(full);
+                }
+            }
+            if (!observed.SetEquals(capturedPaths)) throw new IOException("Preflight descendant set changed before deletion.");
+            // Capture each child under its already pinned parent. No recursive path
+            // deletion: additions after capture make directory deletion fail closed.
+            for (int i = entries.Count - 1; i >= 1; --i) {
+                byte delete = 1;
+                if (!SetFileInformationByHandle(entries[i], 4, ref delete, 1))
+                    throw new Win32Exception(Marshal.GetLastWin32Error());
+                entries[i].Dispose();
+            }
+        }
+        public void Dispose() {
+            try { RestorePermissions(); }
+            finally {
+                for (int i = entries.Count - 1; i >= 0; --i) entries[i].Dispose();
+                for (int i = ancestors.Count - 1; i >= 0; --i) ancestors[i].Dispose();
+            }
+        }
+    }
+}
+'@
+    }
+
+if (-not ('Atlaso.WorkstationDurablePublisherV3' -as [type])) {
+    Add-Type -TypeDefinition @'
+using System;
+using System.ComponentModel;
+using System.IO;
+using System.Text;
+using System.Runtime.InteropServices;
+using Microsoft.Win32.SafeHandles;
+namespace Atlaso {
+    public static class WorkstationDurablePublisherV3 {
+        [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+        private static extern SafeFileHandle CreateFileW(string path, uint access, uint share,
+            IntPtr security, uint creation, uint flags, IntPtr template);
+        [DllImport("kernel32.dll", SetLastError = true)]
+        private static extern bool SetFileInformationByHandle(SafeFileHandle handle, int kind, IntPtr info, uint size);
+        public static FileStream CreateStage(string path) {
+            // DELETE access belongs to this handle; deny other writers and deleters.
+            var handle = CreateFileW(path, 0xC0010000, 1, IntPtr.Zero, 1, 0x80200000, IntPtr.Zero);
+            if (handle.IsInvalid) { handle.Dispose(); throw new Win32Exception(Marshal.GetLastWin32Error()); }
+            return new FileStream(handle, FileAccess.ReadWrite);
+        }
+        public static void PublishDurableFile(FileStream stage, string destination, bool replace = true) {
+            stage.Flush(true);
+            RenamePinnedFile(stage.SafeFileHandle, destination, replace);
+            stage.Flush(true);
+        }
+        public static void RenamePinnedFile(SafeFileHandle handle, string destination, bool replace = false) {
+            byte[] name = Encoding.Unicode.GetBytes(Path.GetFullPath(destination));
+            int nameOffset = IntPtr.Size == 8 ? 20 : 12;
+            int size = nameOffset + name.Length + 2;
+            IntPtr info = Marshal.AllocHGlobal(size);
+            try {
+                for (int i = 0; i < size; i++) Marshal.WriteByte(info, i, 0);
+                Marshal.WriteByte(info, 0, replace ? (byte)1 : (byte)0);
+                Marshal.WriteInt32(info, nameOffset - 4, name.Length);
+                Marshal.Copy(name, 0, IntPtr.Add(info, nameOffset), name.Length);
+                // Rename the original creation handle, never a reopened pathname.
+                if (!SetFileInformationByHandle(handle, 3, info, (uint)size))
+                    throw new Win32Exception(Marshal.GetLastWin32Error());
+            } finally { Marshal.FreeHGlobal(info); }
+        }
+    }
+}
+'@
+}
 if (-not ('Atlaso.WorkstationFileIdentity' -as [type])) {
     Add-Type -TypeDefinition @'
 using System;
@@ -93,7 +295,7 @@ namespace Atlaso
                 Handles.Clear();
             }
         }
-        public static IDisposable PinOrdinaryDirectoryPath(string path)
+        public static IDisposable PinOrdinaryDirectoryPath(string path, bool allowWrites = false)
         {
             var pins = new DirectoryPins();
             try
@@ -108,10 +310,12 @@ namespace Atlaso
                 for (int i = -1; i < components.Length; ++i)
                 {
                     if (i >= 0) current = System.IO.Path.Combine(current, components[i]);
+                    // Allowing writes supports atomic child-file publication while still
+                    // excluding directory deletion/replacement. Existing callers stay read-only.
                     // LIST_DIRECTORY makes sharing restrictions effective; an
                     // attributes-only handle does not exclude rename operations.
                     SafeFileHandle handle = CreateFileW(current, FileReadAttributes | 0x1,
-                        FileShareRead, IntPtr.Zero, OpenExisting,
+                        FileShareRead | (allowWrites ? FileShareWrite : 0), IntPtr.Zero, OpenExisting,
                         BackupSemantics | 0x00200000, IntPtr.Zero);
                     pins.Handles.Add(handle);
                     if (handle.IsInvalid) throw new Win32Exception(Marshal.GetLastWin32Error());
@@ -126,9 +330,9 @@ namespace Atlaso
             }
             catch { pins.Dispose(); throw; }
         }
-        public static SafeFileHandle PinOrdinaryReadFile(string path)
+        public static SafeFileHandle PinOrdinaryReadFile(string path, bool singleLink = false, bool allowDelete = false)
         {
-            SafeFileHandle handle = CreateFileW(path, 0x80000000, FileShareRead,
+            SafeFileHandle handle = CreateFileW(path, 0x80000000 | (allowDelete ? 0x10000U : 0), FileShareRead,
                 IntPtr.Zero, OpenExisting, 0x00200000, IntPtr.Zero);
             try
             {
@@ -136,11 +340,20 @@ namespace Atlaso
                 ByHandleFileInformation information;
                 if (!GetFileInformationByHandle(handle, out information))
                     throw new Win32Exception(Marshal.GetLastWin32Error());
-                if ((information.FileAttributes & (0x10 | 0x400)) != 0)
-                    throw new InvalidOperationException("Expected an ordinary file.");
+                if ((information.FileAttributes & (0x10 | 0x400)) != 0 ||
+                    (singleLink && information.NumberOfLinks != 1))
+                    throw new InvalidOperationException("Expected an ordinary single-identity file.");
                 return handle;
             }
             catch { handle.Dispose(); throw; }
+        }
+        public static void DeletePinnedFile(SafeFileHandle handle)
+        {
+            // Retire the same no-follow object that was validated and held through
+            // ledger commit, without reopening a replaceable pathname.
+            byte delete = 1;
+            if (!SetFileInformationByHandle(handle, 4, ref delete, 1))
+                throw new Win32Exception(Marshal.GetLastWin32Error());
         }
         public static void RemoveEmptyOrdinaryDirectory(string path)
         {
@@ -395,16 +608,85 @@ function Invoke-AtlasoVmrunChecked {
         [Parameter(Mandatory = $true)][string[]]$Arguments,
         [Parameter(Mandatory = $true)][string]$Action
     )
+    $startedUtc = [DateTime]::UtcNow
     $output = @(& $VmrunPath @Arguments 2>&1)
     $exitCode = $LASTEXITCODE
     if ($exitCode -ne 0) {
         $detail = ($output | ForEach-Object { $_.ToString().Trim() } | Where-Object { $_ }) -join ' '
+        if ($Arguments.Count -eq 4 -and $Arguments[2] -ceq 'deleteVM') {
+            $diagnostic = Get-AtlasoWorkstationDeleteDiagnostic -VmxPath $Arguments[3] -SinceUtc $startedUtc
+            $detail = "$detail $diagnostic".Trim()
+        }
         if ($detail) {
             throw "$Action failed with exit code $exitCode. vmrun output: $detail"
         }
         throw "$Action failed with exit code $exitCode."
     }
     return $output
+}
+<#
+.SYNOPSIS
+Describe a failed deletion without treating provider diagnostics as cleanup authority.
+
+.PARAMETER VmxPath
+Exact VMX passed to the failed provider deletion.
+
+.PARAMETER SinceUtc
+Start of this provider invocation; older log evidence is ignored.
+
+.PARAMETER LogDirectory
+Existing VMware diagnostic directory, read only and never created here.
+#>
+function Get-AtlasoWorkstationDeleteDiagnostic {
+    param(
+        [Parameter(Mandatory = $true)][string]$VmxPath,
+        [Parameter(Mandatory = $true)][datetime]$SinceUtc,
+        [string]$LogDirectory = (Join-Path ([System.IO.Path]::GetTempPath()) "vmware-$([Environment]::UserName)")
+    )
+    $guidance = "Deletion was not verified; remaining artifacts and any builder reservation must be preserved. A stopped VM does not prove that Workstation released its GUI/file locks. Close the exact stopped VM's tab; if necessary, close Workstation after reviewing other VMs, then retry checked cleanup. Do not remove .lck files or change permissions based only on this provider error."
+    $untilUtc = [datetime]::UtcNow
+    try {
+        # Logs are optional, bounded diagnostics only. Never print arbitrary log
+        # lines or use their process identities to authorize mutation or retries.
+        $logs = @(Get-ChildItem -LiteralPath $LogDirectory -Filter 'vmware-vix-*.log' -File -ErrorAction Stop |
+            Where-Object { $_.LastWriteTimeUtc -ge $SinceUtc -and -not ($_.Attributes -band [IO.FileAttributes]::ReparsePoint) } |
+            Sort-Object LastWriteTimeUtc -Descending | Select-Object -First 8)
+        foreach ($log in $logs) {
+            $stream = [IO.File]::Open($log.FullName, 'Open', 'Read', 'ReadWrite')
+            try {
+                $offset = [Math]::Max(0, $stream.Length - 65536)
+                [void]$stream.Seek($offset, 'Begin')
+                $buffer = [byte[]]::new(65536)
+                $count = $stream.Read($buffer, 0, $buffer.Length)
+                $tail = [Text.Encoding]::UTF8.GetString($buffer, 0, $count)
+            } finally { $stream.Dispose() }
+            $recent = @($tail -split '\r?\n' | Where-Object {
+                $stamp = [datetime]::MinValue
+                $_ -match '^(\S+) ' -and [datetime]::TryParse($Matches[1], [ref]$stamp) -and $stamp.ToUniversalTime() -ge $SinceUtc -and $stamp.ToUniversalTime() -le $untilUtc
+            })
+            foreach ($line in $recent) {
+                if ($line -notmatch "FileLockWaitForPossession timeout on '([^']+)' due to a local process '(\d+)-(\d+)\(vmware\.exe\)'") { continue }
+                $lockPath = $Matches[1]
+                $ownerId = [int]$Matches[2]
+                $ownerStart = [long]$Matches[3]
+                if (-not (Test-AtlasoSamePath -Left ([IO.Path]::GetDirectoryName($lockPath)) -Right "$VmxPath.lck")) { continue }
+                if (-not (Test-Path -LiteralPath $lockPath -PathType Leaf)) { continue }
+                $owner = Get-Process -Id $ownerId -ErrorAction Stop
+                try {
+                    if ($owner.ProcessName -cne 'vmware' -or $owner.StartTime.ToUniversalTime().ToFileTimeUtc() -ne $ownerStart -or $owner.HasExited) { continue }
+                    $transition = if (($recent -match 'VMHS_UnmanageVM failed').Count -and ($recent -match 'CnxAuthdConnect.*failed|unable to contact authd').Count) {
+                        ' VIX also recorded an Authd connection failure and failed GUI unmanage transition; this does not establish that VMAuthdService is stopped.'
+                    } else { '' }
+                    return "VIX reported a lock on this exact VMX held by the still-live Workstation GUI (PID $ownerId, start FILETIME $ownerStart).$transition $guidance"
+                } finally { $owner.Dispose() }
+            }
+        }
+    } catch {
+        # Missing logs, process exit/reuse, and unreadable diagnostics cannot
+        # replace the original provider failure or establish a lock owner.
+        return "Lock-owner diagnostics were unavailable. The provider error does not establish a filesystem permission denial or a live lock owner. $guidance"
+    }
+    return "The provider error does not establish a filesystem permission denial or a live lock owner. $guidance"
 }
 <#
 .SYNOPSIS
@@ -1508,6 +1790,8 @@ Exact non-reparse-point artifact root to remove.
 
 .PARAMETER AllowMissingRegistrationsUnderRoot
 Optional containing scope for narrow stale-registration repair.
+.PARAMETER KeepRemovalRoot
+Remove validated contents but retain the empty root for a caller holding its lifetime identity pin.
 #>
 function Remove-AtlasoWorkstationVmArtifacts {
     [CmdletBinding(SupportsShouldProcess = $true)]
@@ -1515,7 +1799,8 @@ function Remove-AtlasoWorkstationVmArtifacts {
         [Parameter(Mandatory = $true)][string]$VmrunPath,
         [Parameter(Mandatory = $true)][AllowEmptyCollection()][string[]]$VmxPaths,
         [Parameter(Mandatory = $true)][string]$RemovalRoot,
-        [Parameter(Mandatory = $false)][AllowEmptyString()][string]$AllowMissingRegistrationsUnderRoot = ''
+        [Parameter(Mandatory = $false)][AllowEmptyString()][string]$AllowMissingRegistrationsUnderRoot = '',
+        [switch]$KeepRemovalRoot
     )
     $resolvedRemovalRoot = Get-AtlasoCanonicalPath -Path $RemovalRoot
     $filesystemRoot = [System.IO.Path]::GetPathRoot($resolvedRemovalRoot)
@@ -1701,6 +1986,21 @@ function Remove-AtlasoWorkstationVmArtifacts {
     }
     if (-not $providerRemovedRoot) {
         Assert-AtlasoRootSnapshotUnreplaced -RemovalRoot $resolvedRemovalRoot -Snapshot $snapshot
+        if ($KeepRemovalRoot) {
+            $retainedRootPin = [Atlaso.WorkstationFileIdentity]::PinOrdinaryDirectoryPath($resolvedRemovalRoot, $true)
+            try {
+                Assert-AtlasoRootSnapshotUnreplaced -RemovalRoot $resolvedRemovalRoot -Snapshot $snapshot
+                $capturedInventory = [Collections.Generic.Dictionary[string,string]]::new([StringComparer]::OrdinalIgnoreCase)
+                foreach ($relativePath in $snapshot.Items.Keys) { $capturedInventory.Add($relativePath, $snapshot.Items[$relativePath]) }
+                $capturedRemoval = [Atlaso.WorkstationCapturedContentsV1]::new($resolvedRemovalRoot, $snapshot.RootIdentity, $capturedInventory)
+                try { $capturedRemoval.CaptureSnapshot(); $capturedRemoval.Remove() }
+                finally { $capturedRemoval.Dispose() }
+                if (@(Get-ChildItem -LiteralPath $resolvedRemovalRoot -Force -ErrorAction Stop).Count) {
+                    throw 'VMware artifact root still contains entries after cleanup.'
+                }
+            } finally { $retainedRootPin.Dispose() }
+            return
+        }
         if (Test-Path -LiteralPath $resolvedRemovalRoot) { Remove-Item -LiteralPath $resolvedRemovalRoot -Recurse -Force -ErrorAction Stop }
     }
     if (Test-Path -LiteralPath $resolvedRemovalRoot) {
@@ -1769,7 +2069,11 @@ function Remove-AtlasoWorkstationArtifactRoot {
     }
 }
 
+. (Join-Path $PSScriptRoot 'Atlaso.WorkstationLanSegments.ps1')
+
 Export-ModuleMember -Function @(
+    'Resolve-AtlasoOwnedLanSegment',
+    'Remove-AtlasoWorkstationLanSegment',
     'Assert-AtlasoStrictDescendantPath',
     'ConvertFrom-AtlasoVmrunListOutput',
     'Get-AtlasoPathIdentity',

@@ -27,6 +27,7 @@ from atlaso.app.adapters.system import AdapterResult, SystemAdapter
 from atlaso.app.config import get_settings
 from atlaso.app.database import Base
 from atlaso.app.models import CaCertificate, PhysicalInterface, Setting, User
+from atlaso.app.secrets import encrypt_secret
 from atlaso.app.seed import (
     FACTORY_MANAGEMENT_CIDR,
     SEED_EXAMPLES_SETTING_KEY,
@@ -46,6 +47,7 @@ from atlaso.app.services.local_users import (
     restore_pending_os_password_snapshot,
     stage_user_os_password,
 )
+from atlaso.app.services.network_boot import save_esxi_applied_runtime
 from atlaso.app.services.networking import (
     HostPhysicalInterface,
     discover_host_physical_interfaces,
@@ -835,6 +837,41 @@ def _clear_automation_transient_staging() -> None:
         _clear_symlink_resistant_directory(path, label=label)
 
 
+def _clear_diagnostic_archives(*, service_account: bool = False) -> None:
+    """Clear the dedicated spool before discarding its job-based retention metadata.
+
+    Args:
+        service_account: Whether appliance services own the spool instead of the development process.
+    """
+    from atlaso.diagnostics import EvidenceError, ordinary_path, private_directory
+
+    path = get_settings().diagnostics_spool_path.absolute()
+    try:
+        ordinary_path(path)
+        owner_uid = None
+        if service_account:
+            import pwd
+
+            lookup = getattr(pwd, "getpwnam", None)
+            if lookup is None:
+                raise FactoryResetError("Factory reset cannot verify the Atlaso service account.")
+            owner_uid = int(lookup("atlaso").pw_uid)
+        private_directory(path, owner_uid=owner_uid)
+    except FileNotFoundError:
+        return
+    except (OSError, EvidenceError, ImportError, KeyError, AttributeError) as exc:
+        raise FactoryResetError("Factory reset diagnostic spool is unsafe or unavailable.") from exc
+    # Refuse misconfigured shared directories: the collector publishes only UUID ZIPs.
+    if not path.is_dir() or path == path.parent:
+        raise FactoryResetError("Factory reset diagnostic spool is unsafe.")
+    for child in path.iterdir():
+        if not re.fullmatch(r"[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}\.zip", child.name):
+            raise FactoryResetError("Factory reset diagnostic spool contains an unrecognized entry.")
+        if child.is_dir() and not child.is_symlink():
+            raise FactoryResetError("Factory reset diagnostic spool contains an unsafe directory.")
+    _clear_symlink_resistant_directory(path, label="diagnostic archives")
+
+
 def _require_terminal_release_update() -> None:
     """Reject reset while durable signed-release recovery remains pending."""
     try:
@@ -1403,10 +1440,20 @@ def _candidate_database(
             if runtime_cleanup.returncode != 0:
                 raise FactoryResetError("Factory reset could not clear Atlaso-managed network runtime state.")
 
+            esxi_runtime_receipt: dict[str, str] = {}
             for unit in units:
+                encrypted_runtime = (
+                    encrypt_secret(unit["raw_config_preview"])
+                    if unit["id"] == "esxi_pxe" and not adapter.dry_run else None
+                )
                 result = execute_appliance_apply_unit(unit, adapter=adapter, db=db)
                 if not result["success"]:
                     raise FactoryResetError(f"Factory reset activation failed for {unit['label']}.")
+                if encrypted_runtime is not None and not result.get("dry_run"):
+                    save_esxi_applied_runtime(db, encrypted_runtime)
+                    esxi_runtime_receipt = {
+                        "runtime_config_preview": unit["config_preview"],
+                    }
                 db.flush()
             if not adapter.dry_run:
                 retained_runtime_cleanup = adapter.reset_factory_retained_runtime()
@@ -1426,6 +1473,9 @@ def _candidate_database(
             # the transient VLAN-removal summary that disappears after reset.
             save_appliance_apply_baselines(db, {})
             final_units = appliance_apply_units(db, reconcile=False)
+            for unit in final_units:
+                if unit["id"] == "esxi_pxe":
+                    unit.update(esxi_runtime_receipt)
             final_unit_ids = {unit["id"] for unit in final_units}
             update_appliance_apply_baselines(
                 db,
@@ -1572,6 +1622,18 @@ def _replace_sqlite_database_contents(source_path: Path, candidate_path: Path) -
                 raise FactoryResetError(
                     "Factory reset cannot replace a development database with a different schema."
                 )
+            if {"type", "status"}.issubset(installed.get("jobs", ())):
+                active_bundle = destination_connection.execute(
+                    "SELECT 1 FROM main.jobs WHERE type='diagnostic-bundle' "
+                    "AND status IN ('pending', 'running') LIMIT 1"
+                ).fetchone()
+                if active_bundle:
+                    raise FactoryResetError(
+                        "Wait for diagnostic collection to finish or cancel it before development factory reset."
+                    )
+                # Hold the admission writer lock through spool cleanup and replacement.
+                # An active collector is rejected above because development has no service quiescence.
+                _clear_diagnostic_archives()
             for table_name, columns in installed.items():
                 quoted_table = '"' + table_name.replace('"', '""') + '"'
                 quoted_columns = ", ".join(
@@ -1650,6 +1712,9 @@ def _run_factory_reset_locked(
             credential_plan=credential_plan,
         )
         _update_request("committing", "Replacing the Atlaso database with the validated factory database.")
+        if not (adapter and adapter.dry_run):
+            # Root performs reset, but the stopped Atlaso services own their spool.
+            _clear_diagnostic_archives(service_account=True)
         _replace_database(source_path, candidate_path)
         if not (adapter and adapter.dry_run):
             _clear_apply_staging()

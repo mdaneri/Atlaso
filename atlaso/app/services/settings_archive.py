@@ -7,13 +7,13 @@ from copy import deepcopy
 from datetime import datetime, timezone
 from ipaddress import ip_address, ip_interface, ip_network
 from pathlib import PurePosixPath
-from typing import Any
+from typing import Any, cast
 from uuid import UUID
 
 from cryptography import x509
 from cryptography.hazmat.primitives import hashes, serialization
 from sqlalchemy import DateTime as SqlDateTime
-from sqlalchemy import delete, select, text
+from sqlalchemy import create_engine, delete, select, text
 from sqlalchemy.exc import IntegrityError, StatementError
 from sqlalchemy.orm import Session
 
@@ -123,6 +123,7 @@ from atlaso.app.services.esx_storage import StorageInterface, validate_storage_s
 from atlaso.app.services.esxi_pxe import (
     ESXI_PXE_CUSTOM_VARIABLE_LIMIT,
     ESXI_PXE_CUSTOM_VARIABLES_KEY,
+    esxi_pxe_boot_settings,
     host_variables_json,
     kickstart_template_validation_errors,
     kickstart_validation,
@@ -174,7 +175,13 @@ from atlaso.app.services.oidc import (
     validate_persisted_client_policy,
     validate_redirect_uri_list,
 )
-from atlaso.app.services.port_forwarding import MAX_PORT_FORWARDS, validate_port_forward
+from atlaso.app.services.port_forwarding import (
+    MAX_PORT_FORWARDS,
+    ListenerClaim,
+    ServiceListenerSettings,
+    listener_claims_for_settings,
+    validate_port_forward,
+)
 from atlaso.app.services.routes_wan import (
     ROUTES_WAN_SETTING_KEYS,
     RoutesWanSettings,
@@ -1956,6 +1963,45 @@ def _archive_routes_wan_feature_state(
     )
 
 
+def _archive_port_forward_listener_claims(data: dict[str, list[dict[str, Any]]]) -> list[ListenerClaim]:
+    """Resolve listener claims against the candidate archive without touching live state.
+
+    Args:
+        data: Structurally validated archive sections.
+
+    The same resolver must interpret custom service ports, optional protocol
+    toggles and Network Boot's DHCP selection on both restore and ordinary save.
+    A disposable in-memory database reproduces restored scalar defaults and row
+    identities without borrowing the destination appliance's listener settings.
+    """
+    service_sections = (
+        "kms_settings", "ldap_settings",
+        "oidc_provider_settings", "ntp_settings", "vcf_backup_settings",
+        "vcf_offline_depot_settings", "vcf_private_registry_settings",
+    )
+    services = cast(list[ServiceListenerSettings], [
+        ARCHIVE_SECTION_MODELS[name](**_model_kwargs_with_scalar_defaults(ARCHIVE_SECTION_MODELS[name], row))
+        for name in service_sections for row in data.get(name, [])
+    ])
+    # Only Network Boot's existing relational selector needs a database. Service
+    # credentials and unrelated foreign-key targets are never staged here.
+    models = {name: ARCHIVE_SECTION_MODELS[name] for name in ("appliance_settings", "dhcp_scopes", "settings")}
+    engine = create_engine("sqlite://")
+    try:
+        Base.metadata.create_all(engine, tables=[
+            *(model.__table__ for model in models.values()), EsxiPxeHost.__table__,
+        ])
+        with Session(engine) as candidate_db:
+            for section, model in models.items():
+                candidate_db.add_all([
+                    model(**_model_kwargs_with_scalar_defaults(model, row))
+                    for row in data.get(section, [])
+                ])
+            return listener_claims_for_settings(services, esxi_pxe_boot_settings(candidate_db))
+    finally:
+        engine.dispose()
+
+
 def _validate_archive_relationships(data: dict[str, list[dict[str, Any]]]) -> None:
     """Validate archive relationships that restore resolves by public names.
 
@@ -2591,7 +2637,8 @@ def _validate_archive_relationships(data: dict[str, list[dict[str, Any]]]) -> No
             row["enabled"] = False
             row["restore_review_required"] = True
     forward_context = {"targets": traffic_targets, "interfaces": [*archived_interfaces, *archived_vlans],
-                       "groups": firewall_source_groups, "claims": []}
+                       "groups": firewall_source_groups,
+                       "claims": _archive_port_forward_listener_claims(data) if forwards else []}
     for row_index, candidate in enumerate(forwards, start=1):
         errors = validate_port_forward(candidate, forwards, forward_context, require_binding=candidate.enabled)
         if errors:

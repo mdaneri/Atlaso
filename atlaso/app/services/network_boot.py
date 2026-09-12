@@ -49,10 +49,12 @@ from atlaso.app.models import (
     Setting,
     utcnow,
 )
+from atlaso.app.secrets import decrypt_secret
 from atlaso.app.services.esxi_pxe import (
     ESXI_PXE_HTTP_BASE,
     ESXI_TFTP_ROOT,
     esxi_http_base_url,
+    esxi_pxe_boot_settings,
     host_variables,
     kickstart_template_variables,
     normalize_pxe_mac,
@@ -99,6 +101,7 @@ NETWORK_BOOT_HTTP_ROOT = Path("/var/lib/atlaso/pxe/http")
 NETWORK_BOOT_STAGED_CONFIG_PATH = "/var/lib/atlaso/apply/esxi-pxe/atlaso-esxi-pxe.json"
 NETWORK_BOOT_UNIT_ID = "esxi_pxe"
 APPLIANCE_APPLY_BASELINES_KEY = "appliance_apply.baselines.v1"
+ESXI_APPLIED_RUNTIME_KEY = "network_boot.esxi_applied_runtime_encrypted.v1"
 _MEDIA_SWAP_THREAD_LOCK = threading.Lock()
 _MEDIA_STAGING_THREAD_LOCK = threading.Lock()
 _ACTIVE_MEDIA_STAGING_DIRECTORIES: set[str] = set()
@@ -404,14 +407,25 @@ def desired_environment_manifest_rows(db: Session) -> list[dict[str, Any]]:
     return rows
 
 
-def mark_network_boot_environments_applied(db: Session) -> None:
-    """Handle mark network boot environments applied.
+def mark_network_boot_environments_applied(
+    db: Session, *, applied_manifest: dict[str, Any] | None = None,
+) -> None:
+    """Activate only the media versions captured by the successful Apply.
 
     Args:
         db: Active database session.
+        applied_manifest: Exact staged manifest; omitted by legacy direct callers.
     """
+    applied_rows = {
+        row["key"]: row
+        for row in (applied_manifest or {}).get("network_boot", {}).get("environments", [])
+    }
     for state in ensure_environment_rows(db):
-        state.active_version = state.desired_version if state.enabled else ""
+        if applied_manifest is None:
+            state.active_version = state.desired_version if state.enabled else ""
+        else:
+            row = applied_rows.get(state.key, {})
+            state.active_version = str(row.get("desired_version") or "") if row.get("enabled") else ""
         state.updated_at = utcnow()
         db.add(state)
 
@@ -2103,24 +2117,52 @@ def send_wake_on_lan(
     return sent_targets
 
 
+def load_esxi_applied_runtime(db: Session) -> str | None:
+    """Read protected runtime evidence from its dedicated, non-exported record.
+
+    Args:
+        db: Active database session owned by the caller.
+    """
+    row = db.scalar(select(Setting).where(Setting.key == ESXI_APPLIED_RUNTIME_KEY))
+    return row.value if row is not None else None
+
+
+def save_esxi_applied_runtime(db: Session, encrypted: str) -> None:
+    """Stage a successful real activation receipt in the caller's transaction.
+
+    Args:
+        db: Active database session owned by the caller.
+        encrypted: Encrypted exact manifest from successful real activation.
+    """
+    row = db.scalar(select(Setting).where(Setting.key == ESXI_APPLIED_RUNTIME_KEY))
+    if row is None:
+        row = Setting(key=ESXI_APPLIED_RUNTIME_KEY, value=encrypted)
+    else:
+        row.value = encrypted
+    db.add(row)
+    db.flush()
+
+
 def _applied_esxi_pxe_manifest(db: Session) -> dict[str, Any]:
     """Return applied esxi pxe manifest.
 
     Args:
         db: Active database session.
     """
-    setting = db.execute(
-        select(Setting).where(Setting.key == APPLIANCE_APPLY_BASELINES_KEY)
-    ).scalar_one_or_none()
-    if setting is None:
-        return {}
     try:
-        baselines = json.loads(setting.value or "{}")
-        baseline = baselines.get(NETWORK_BOOT_UNIT_ID)
-        runtime_preview = (baseline or {}).get(
-            "runtime_config_preview",
-            (baseline or {}).get("config_preview"),
-        )
+        # Display previews may replace an entire Kickstart with [redacted]. Only
+        # the protected snapshot retains the exact bytes admitted by real Apply.
+        # An unreadable new snapshot must never fall back to older runtime data.
+        encrypted = load_esxi_applied_runtime(db)
+        if encrypted is not None:
+            runtime_preview = decrypt_secret(encrypted)
+        else:
+            setting = db.scalar(select(Setting).where(Setting.key == APPLIANCE_APPLY_BASELINES_KEY))
+            baselines = json.loads((setting.value if setting is not None else "") or "{}")
+            baseline = baselines.get(NETWORK_BOOT_UNIT_ID)
+            runtime_preview = (baseline or {}).get(
+                "runtime_config_preview", (baseline or {}).get("config_preview"),
+            )
         manifest = json.loads(str(runtime_preview or "{}"))
     except (AttributeError, TypeError, ValueError, json.JSONDecodeError):
         return {}
@@ -2138,6 +2180,8 @@ def _has_explicit_esxi_pxe_runtime_preview(db: Session) -> bool:
     Args:
         db: Active database session.
     """
+    if load_esxi_applied_runtime(db) is not None:
+        return True
     setting = db.execute(
         select(Setting).where(Setting.key == APPLIANCE_APPLY_BASELINES_KEY)
     ).scalar_one_or_none()
@@ -2366,16 +2410,22 @@ def _request_http_origin(boot: dict[str, Any], requested_origin: str) -> str:
     return f"http://{rendered_host}:{port}"
 
 
-def _applied_esxi_boot_context(
-    db: Session,
-    *,
-    host_id: int,
-) -> tuple[dict[str, Any], dict[str, Any], dict[str, Any], dict[str, Any], dict[str, Any]]:
-    """Return the exact applied host, artifact, Kickstart, boot, and manifest.
+@dataclass
+class _AppliedEsxiBootSnapshot:
+    """Keep request-local applied indexes and verified Kickstart revisions."""
+
+    manifest: dict[str, Any]
+    hosts: dict[int, dict[str, Any]]
+    artifacts: dict[int, dict[str, Any]]
+    kickstarts: dict[int, dict[str, Any]]
+    revisions: dict[int, bool]
+
+
+def _indexed_applied_esxi_boot_snapshot(db: Session) -> _AppliedEsxiBootSnapshot:
+    """Decrypt and index one applied snapshot, preserving first-match semantics.
 
     Args:
-        db: Database session used to compare desired and applied state.
-        host_id: ESXi Host Reference identifier to resolve.
+        db: Active database session owned by the caller.
     """
     manifest = _applied_esxi_pxe_manifest(db)
     boot = manifest.get("boot")
@@ -2386,20 +2436,39 @@ def _applied_esxi_boot_context(
         (boot, dict), (hosts, list), (artifacts, list), (kickstarts, list),
     )):
         raise ValueError("Applied ESXi Network Boot state is unavailable.")
-    host = next(
-        (row for row in hosts if isinstance(row, dict) and row.get("id") == host_id),
-        None,
-    )
-    artifact = next(
-        (
-            row
-            for row in artifacts
-            if isinstance(row, dict)
-            and row.get("host_id") == host_id
-            and not row.get("is_default")
-        ),
-        None,
-    )
+    indexes: list[dict[int, dict[str, Any]]] = []
+    for rows, key, kind in ((hosts, "id", "host"), (artifacts, "host_id", "artifact"), (kickstarts, "id", "kickstart")):
+        index: dict[int, dict[str, Any]] = {}
+        for row in rows:
+            if not isinstance(row, dict) or not isinstance(row.get(key), int):
+                continue
+            if kind == "artifact" and row.get("is_default"):
+                continue
+            if kind == "kickstart" and not row.get("enabled"):
+                continue
+            index.setdefault(row[key], row)
+        indexes.append(index)
+    return _AppliedEsxiBootSnapshot(manifest, *indexes, {})
+
+
+def _applied_esxi_boot_context(
+    db: Session,
+    *,
+    host_id: int,
+    snapshot: _AppliedEsxiBootSnapshot | None = None,
+) -> tuple[dict[str, Any], dict[str, Any], dict[str, Any], dict[str, Any], dict[str, Any]]:
+    """Return the exact applied host, artifact, Kickstart, boot, and manifest.
+
+    Args:
+        db: Database session used to compare desired and applied state.
+        host_id: ESXi Host Reference identifier to resolve.
+        snapshot: Optional request-local index reused by management diagnostics.
+    """
+    snapshot = snapshot or _indexed_applied_esxi_boot_snapshot(db)
+    manifest = snapshot.manifest
+    boot = manifest["boot"]
+    host = snapshot.hosts.get(host_id)
+    artifact = snapshot.artifacts.get(host_id)
     if not host or not host.get("enabled") or not artifact:
         raise ValueError("Enabled applied ESXi host state is unavailable.")
     current_host = db.get(EsxiPxeHost, host_id)
@@ -2416,26 +2485,82 @@ def _applied_esxi_boot_context(
     ):
         raise ValueError("The ESXi Host Reference differs from applied state; review and apply it before authorizing boot.")
     kickstart_id = host.get("kickstart_id")
-    kickstart = next(
-        (
-            row
-            for row in kickstarts
-            if isinstance(row, dict)
-            and row.get("id") == kickstart_id
-            and row.get("enabled")
-        ),
-        None,
-    )
+    kickstart = snapshot.kickstarts.get(kickstart_id)
     if not kickstart or artifact.get("kickstart_id") != kickstart_id:
         raise ValueError("Applied ESXi Kickstart state is unavailable.")
-    content = str(kickstart.get("content") or "")
-    revision = str(kickstart.get("content_hash") or "").lower()
-    if not re.fullmatch(r"[0-9a-f]{64}", revision) or hashlib.sha256(content.encode("utf-8")).hexdigest() != revision:
+    if kickstart_id not in snapshot.revisions:
+        content = str(kickstart.get("content") or "")
+        revision = str(kickstart.get("content_hash") or "").lower()
+        snapshot.revisions[kickstart_id] = bool(
+            re.fullmatch(r"[0-9a-f]{64}", revision)
+            and hashlib.sha256(content.encode("utf-8")).hexdigest() == revision
+        )
+    if not snapshot.revisions[kickstart_id]:
         raise ValueError("Applied ESXi Kickstart revision is invalid.")
     expected_mac = normalize_mac(str(host.get("mac_address") or ""))
     if normalize_pxe_mac(expected_mac) != str(artifact.get("mac_key") or ""):
         raise ValueError("Applied ESXi host binding is invalid.")
     return host, artifact, kickstart, dict(boot), manifest
+
+
+def esxi_boot_management_state(db: Session, hosts: list[EsxiPxeHost]) -> dict[str, Any]:
+    """Project safe warnings and console-action reasons from one applied snapshot.
+
+    Args:
+        db: Database session used for side-effect-free readiness checks.
+        hosts: Desired Host References displayed by management.
+    """
+    warnings: list[str] = []
+    reasons: dict[int, str] = {}
+    desired_required = esxi_pxe_boot_settings(db).get("console_authorization_required", False)
+    for host in hosts:
+        reasons[host.id] = (
+            "Console authorization is disabled." if not desired_required
+            else "An enabled host with a Kickstart and installer ISO is required."
+        )
+    bootable_hosts = [host for host in hosts if host.enabled and host.kickstart_id and host.installer_iso_path]
+    if not bootable_hosts:
+        return {"warnings": warnings, "authorization_reasons": reasons}
+    try:
+        snapshot = _indexed_applied_esxi_boot_snapshot(db)
+    except (TypeError, ValueError):
+        snapshot = None
+    for host in bootable_hosts:
+        try:
+            if snapshot is None:
+                raise ValueError("Applied ESXi Network Boot state is unavailable.")
+            _host, artifact, _kickstart, _boot, _manifest = _applied_esxi_boot_context(db, host_id=host.id, snapshot=snapshot)
+            _artifact_listener_origin(artifact)
+            if desired_required:
+                reasons[host.id] = (
+                    "" if _boot.get("console_authorization_required", True) and _boot.get("enabled")
+                    else "Review and submit appliance changes to enable console authorization."
+                )
+        except (TypeError, ValueError) as exc:
+            # Never expose raw exceptions, manifest fields, or content hashes.
+            reason = {
+                "Applied ESXi Kickstart revision is invalid.": "The applied Kickstart snapshot is incomplete or invalid.",
+                "The ESXi Host Reference differs from applied state; review and apply it before authorizing boot.":
+                    "The Host Reference differs from its applied snapshot.",
+                "Applied ESXi listener binding is invalid.": "The applied boot listener is invalid.",
+            }.get(str(exc), "The applied ESXi boot snapshot is unavailable or incomplete.")
+            warnings.append(
+                f"{host.hostname}: {reason} "
+                "Review appliance changes and submit a real ESXi PXE Apply, then start a fresh host boot attempt."
+            )
+            if desired_required:
+                reasons[host.id] = f"{reason} Review and submit appliance changes before authorizing boot."
+    return {"warnings": warnings, "authorization_reasons": reasons}
+
+
+def esxi_boot_readiness_warnings(db: Session, hosts: list[EsxiPxeHost]) -> list[str]:
+    """Return applied-state warnings for existing management callers.
+
+    Args:
+        db: Database session used for side-effect-free readiness checks.
+        hosts: Desired Host References displayed by management.
+    """
+    return esxi_boot_management_state(db, hosts)["warnings"]
 
 
 def _artifact_listener_origin(artifact: dict[str, Any]) -> str:
@@ -2546,7 +2671,7 @@ def create_esxi_boot_claim(
         request_origin: HTTP listener origin serving the host's iPXE request.
     """
     cleanup_esxi_boot_authorizations(db)
-    host, artifact, kickstart, _boot, _manifest = _applied_esxi_boot_context(db, host_id=host_id)
+    host, artifact, kickstart, applied_boot, _manifest = _applied_esxi_boot_context(db, host_id=host_id)
     listener_origin = _artifact_listener_origin(artifact)
     if listener_origin != request_origin.rstrip("/").lower():
         raise ValueError("The request did not arrive on the applied ESXi PXE listener.")
@@ -2566,10 +2691,10 @@ def create_esxi_boot_claim(
         kickstart_id=int(kickstart["id"]),
         kickstart_revision=str(kickstart["content_hash"]).lower(),
         listener_origin=listener_origin,
-        requested_by="",
+        requested_by="" if applied_boot.get("console_authorization_required", True) else "boot-policy",
         requested_at=now,
         expires_at=now + NETWORK_BOOT_ESXI_CAPABILITY_LIFETIME,
-        authorized_at=None,
+        authorized_at=None if applied_boot.get("console_authorization_required", True) else now,
         consumed_at=None,
     )
     db.add(capability)
@@ -2692,6 +2817,14 @@ def _prepare_esxi_boot_attempt(
 
     http_attempt = ESXI_PXE_HTTP_BASE / "attempts" / capability.attempt_id
     tftp_attempt = ESXI_TFTP_ROOT / "attempts" / capability.attempt_id
+    # The service runs with umask 0027; nginx and TFTP need directory traversal.
+    # Only these generated public artifact directories receive relaxed modes.
+    for directory in (
+        http_attempt.parent, http_attempt, tftp_attempt.parent, tftp_attempt,
+        ESXI_TFTP_ROOT / "pxelinux.cfg" / "attempts",
+    ):
+        directory.mkdir(parents=True, exist_ok=True)
+        os.chmod(directory, 0o755)
     _atomic_write_text(http_attempt / "boot.cfg", attempt_boot_cfg)
     _atomic_write_text(tftp_attempt / "boot.cfg", attempt_boot_cfg)
     source_mboot = source_http.parent / "mboot.efi"
@@ -2766,6 +2899,8 @@ def render_esxi_boot_claim(
             db,
             host_id=capability.host_id,
         )
+        if capability.requested_by == "boot-policy" and _boot.get("console_authorization_required", True):
+            raise ValueError("Console authorization is now required; start a fresh boot attempt.")
         if (
             capability.kickstart_id != int(kickstart.get("id") or 0)
             or capability.kickstart_revision != str(kickstart.get("content_hash") or "").lower()
@@ -2853,6 +2988,8 @@ def consume_esxi_boot_capability(
         return None
     try:
         host, artifact, kickstart, boot, manifest = _applied_esxi_boot_context(db, host_id=capability.host_id)
+        if capability.requested_by == "boot-policy" and boot.get("console_authorization_required", True):
+            raise ValueError("Console authorization is now required; start a fresh boot attempt.")
         if (
             normalize_pxe_mac(str(host.get("mac_address") or "")) != mac_key
             or str(kickstart.get("content_hash") or "").lower() != kickstart_revision
@@ -3003,6 +3140,11 @@ def render_network_boot_menu(
             ]
         plaintext_claim = str(getattr(claim, "_plaintext_claim", ""))
         boot_code = str(getattr(claim, "_boot_code", ""))
+        if claim.authorized_at is not None:
+            return [
+                "echo Starting assigned ESXi installer...",
+                f"chain {http_origin}/pxe/esxi/claim/{plaintext_claim}.ipxe?firmware=${{platform}} || goto menu",
+            ]
         return [
             "echo Authorize this exact boot attempt in Atlaso.",
             f"echo Console code: {boot_code}",

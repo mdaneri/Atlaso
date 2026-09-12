@@ -6,7 +6,7 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 from uuid import uuid4
 
-from fastapi import FastAPI, Request
+from fastapi import Depends, FastAPI, Request
 from fastapi.responses import JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from sqlalchemy.orm import Session
@@ -27,8 +27,10 @@ from atlaso.app.oidc import public_router as oidc_public_router
 from atlaso.app.openapi import API_VALIDATION_RESPONSES, OPENAPI_TAGS
 from atlaso.app.operational_logging import configure_operational_logging
 from atlaso.app.problem import install_problem_handlers, redacted_request_path
+from atlaso.app.routers.chunk_uploads import router as chunk_upload_router
 from atlaso.app.routers.registry import include_facade_router
 from atlaso.app.seed import seed_initial_data
+from atlaso.app.services.chunk_uploads import upload_store
 from atlaso.app.services.monitoring import start_monitor_sampler
 from atlaso.app.services.network_boot import (
     ensure_environment_rows,
@@ -51,6 +53,7 @@ from atlaso.app.ui import (
     recover_interrupted_appliance_apply_jobs,
     recover_interrupted_vcf_depot_software_id_jobs,
     recover_interrupted_vcf_helper_jobs,
+    require_management_ui_request,
 )
 from atlaso.app.ui import router as ui_router
 from atlaso.app.ui_routes import (
@@ -143,6 +146,7 @@ async def lifespan(app: FastAPI):
     try:
         yield
     finally:
+        upload_store.close()
         if monitor_sampler:
             monitor_sampler.stop()
 
@@ -310,6 +314,8 @@ def create_app() -> FastAPI:
     app.include_router(web_terminal_public_router, include_in_schema=False)
     app.include_router(web_terminal_management_router, include_in_schema=False)
     include_facade_router(app, ui_router, include_in_schema=False)
+
+    app.include_router(chunk_upload_router, dependencies=[Depends(require_management_ui_request)])
 
     return app
 

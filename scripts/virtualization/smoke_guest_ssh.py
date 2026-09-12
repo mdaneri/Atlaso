@@ -209,9 +209,11 @@ grep -qx 'platform=hyperv' /var/lib/atlaso-privileged/guest-agent/guest-agent.ap
 rpm -q hyper-v >/dev/null
 ! rpm -q open-vm-tools >/dev/null 2>&1
 ! rpm -q qemu-guest-agent atlaso-qemu-guest-agent >/dev/null 2>&1
-for service in hv_kvp_daemon.service hv_fcopy_daemon.service hv_vss_daemon.service; do
+for service in hv_kvp_daemon.service hv_vss_daemon.service; do
   systemctl is-active --quiet "$service"
 done
+! systemctl is-active --quiet hv_fcopy_daemon.service
+! systemctl is-enabled --quiet hv_fcopy_daemon.service
 ! systemctl is-active --quiet vmtoolsd.service
 ! systemctl is-active --quiet qemu-guest-agent.service
 """,

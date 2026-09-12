@@ -1141,6 +1141,12 @@ Terminal order:
   numeric `.cfg` files, writes HTTP `boot.ipxe` even without host profiles, validates selected ISO paths stay under the
   ESX_HOST folder, updates rendered/applied timestamps, and redacts root passwords, tokens, keys, licenses, and other
   secret-looking values from previews, diffs, jobs, logs, audit events, and final responses.
+- Store the exact successful ESXi activation manifest in its dedicated encrypted runtime record, outside Apply
+  baselines and portable settings exports. Real Apply and factory reset publish that record in the same database
+  transaction as their completion metadata; failures and dry runs cannot replace it. Bind hidden input changes with
+  the ESXi-specific keyed snapshot marker before shared Apply projection. Never authorize from redacted previews or
+  fall back when a protected record is unreadable. Recovery requires real Apply and a fresh client boot attempt;
+  report it in the existing Validation rail using one request-local manifest index and shared revision checks.
 - Kickstart vault access is declared only through exact
   `{{vault.<vaultname>.<key>.<username|password|uri1..uri9>}}` markers. Saving and request-time rendering must validate
   every named vault, key, and subkey, resolve only those exact values, and fail closed without exposing secret values.
@@ -1757,9 +1763,13 @@ Terminal order:
   deployable properties, defaults, deployment options, warnings, and errors. Pass the complete reviewed property
   mapping to `CreateImportSpec`; sanitize warnings against every submitted value. Bind a direct `HostAgent` connection
   to its one host while preserving vCenter automatic placement unless a host was selected. Before power-on or follow-up
-  DNS, trust, or depot work, require the imported VM to retain every mapped vApp property and a supported OVF environment
-  transport. Verification failure must remove only the exact task-created VM; cleanup failure remains a truthful partial
-  deployment.
+  DNS, trust, or depot work, verify every reviewed property through the target's supported OVF transport. Direct ESXi
+  discards `vAppConfig` during import: install a bounded, escaped `guestinfo.ovfEnv` document on the exact powered-off
+  imported VM, using the generated import specification's qualified class/id/instance keys, reviewed values (including
+  empty values), and non-editable defaults. Require the descriptor's `com.vmware.guestInfo` transport and fresh complete
+  XML/value readback; reject missing, duplicated, malformed, or changed properties. Keep vCenter's vApp-property and
+  declared-transport verification. Installation or verification failure must remove only the exact task-created VM;
+  cleanup failure remains a truthful partial deployment. Never expose serialized XML or property values in diagnostics.
 - Starting address input is one IPv4 or IPv6 CIDR. IPv4 creates A records and IPv6 creates AAAA records. Allocate
   sequential usable addresses inside that network, skip occupied DNS addresses of the selected family, and also skip
   IPv4 DHCP reservation addresses.

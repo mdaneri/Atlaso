@@ -210,6 +210,8 @@ def test_login_and_dashboard_render(client):
     assert "/static/pwa.js?v=issue-287-2" in response.text
     assert "Everything your virtualization lab needs." in response.text
     assert "Infrastructure • Storage • Identity • Networking • Lifecycle" in response.text
+    assert 'title="Close preview">×</button>' in response.text
+    assert "Waiting for task status…" in response.text
     assert "simplifying deployment, maintenance, and validation" in response.text
     assert "LF</span>" not in response.text
     assert "/static/vendor/prism/prism-core.min.js" in response.text
@@ -1086,7 +1088,7 @@ def test_pwa_manifest_service_worker_and_offline_shell(client):
     assert "ATLASO_CACHE" in service_worker.text
     assert "atlaso-management-pwa-v" in service_worker.text
     assert "ATLASO_CACHE_PREFIX" in service_worker.text
-    assert 'const ATLASO_CACHE = `${ATLASO_CACHE_PREFIX}312`;' in service_worker.text
+    assert 'const ATLASO_CACHE = `${ATLASO_CACHE_PREFIX}325`;' in service_worker.text
     assert 'fetch(asset, { cache: "reload" })' in service_worker.text
     assert "Required precache request failed" in service_worker.text
     assert "key.startsWith(ATLASO_CACHE_PREFIX)" in service_worker.text
@@ -1102,11 +1104,11 @@ def test_pwa_manifest_service_worker_and_offline_shell(client):
     assert 'accept.includes("text/html")' in service_worker.text
     assert '!hasDownloadLikePath(url)' in service_worker.text
     assert "/static/vendor/monaco/atlaso-monaco.min.js?v=atlaso-monaco-20260806-7" in service_worker.text
-    assert "/static/app.css?v=issues-515-519-10-605-1-660-3-662-663-1-721-3-777-1" in service_worker.text
+    assert "/static/app.css?v=issues-803-807-799-1" in service_worker.text
     assert "/static/ui-patterns.js?v=atlaso-ui-foundation-20260726-10" in service_worker.text
     assert "/static/appliance-apply-polling.js?v=issue-420-6" in service_worker.text
     assert "/static/ui-routes.js?v=issue-287-1" in service_worker.text
-    assert "/static/app.js?v=issues-776-777-2" in service_worker.text
+    assert "/static/app.js?v=issue-339-2" in service_worker.text
     assert "/static/terminal.js?v=issue-287-2" in service_worker.text
     assert "/static/pwa.js?v=issue-287-2" in service_worker.text
     assert "vcfdt-configuration-248-20260807-14" not in service_worker.text
@@ -1132,7 +1134,7 @@ def test_pwa_manifest_service_worker_and_offline_shell(client):
     )
     assert offline_stylesheet is not None
     assert offline_stylesheet.group(1) == (
-        "/static/app.css?v=issues-515-519-10-605-1-660-3-662-663-1-721-3-777-1"
+        "/static/app.css?v=issues-803-807-799-1"
     )
     assert f'"{offline_stylesheet.group(1)}"' in service_worker.text
 
@@ -1160,7 +1162,7 @@ def test_shared_ui_pattern_shell_and_wizard_contracts(client):
     base = (templates / "base.html").read_text(encoding="utf-8")
     public_base = (templates / "public_portal_base.html").read_text(encoding="utf-8")
     for shell, app_asset in (
-        (base, "/static/app.js?v=issues-776-777-2"),
+        (base, "/static/app.js?v=issue-339-2"),
         (public_base, "/static/app.js?v=issues-515-519-12-513-328-1-595-6-605-1-606-607-1-660-4-662-663-3-682-1"),
         (base, "/static/appliance-apply-polling.js?v=issue-420-6"),
     ):
@@ -1721,17 +1723,26 @@ def test_reported_template_accessibility_contracts():
     assert '<dl class="dns-authority-records">' not in dns
     assert '<div class="error-list" role="list" data-oidc-provider-validation-errors>' in authentication
     assert '<ul class="error-list">' not in authentication
-    state_step = firewall[
-        firewall.index('data-atlaso-wizard-step="state"'):
+    policy_step = firewall[
+        firewall.index('data-atlaso-wizard-step="policy"'):
+        firewall.index('data-atlaso-wizard-step="match"')
+    ]
+    match_step = firewall[
+        firewall.index('data-atlaso-wizard-step="match"'):
         firewall.index('data-atlaso-wizard-step="enablement"')
     ]
     enablement_step = firewall[
         firewall.index('data-atlaso-wizard-step="enablement"'):
         firewall.index('data-atlaso-wizard-step="review"')
     ]
-    assert 'name="priority"' in state_step
-    assert 'name="description"' in state_step
-    assert 'name="enabled"' not in state_step
+    assert 'type="number" name="priority" required' in match_step
+    assert '<textarea name="description" rows="3" maxlength="1000">' in policy_step
+    assert 'class="form-stack" data-atlaso-wizard-step="policy"' in firewall
+    assert 'name="description"' not in match_step
+    assert 'name="priority"' not in policy_step
+    assert 'data-atlaso-wizard-step="state"' not in firewall
+    assert '"id": "state"' not in firewall
+    assert 'name="enabled"' not in match_step
     assert 'name="enabled"' in enablement_step
     assert "Enforcement waits for the global Firewall appliance-apply unit." in enablement_step
     assert 'aria-describedby="{{ dialog_id }}-description"' in resource_wizard
@@ -1818,9 +1829,9 @@ def test_monitor_page_renders_template_and_browser_assets(client):
     assert "Loading devices" not in page.text
     assert "<th>Device</th><th>Read/s</th><th>Write/s</th>" in page.text
     assert "swagger-link-icon" in page.text
-    assert "/static/app.css?v=issues-515-519-10-605-1-660-3" in page.text
+    assert "/static/app.css?v=issues-803-807-799-1" in page.text
     assert "/static/ui-patterns.js?v=atlaso-ui-foundation-20260726-10" in page.text
-    assert "/static/app.js?v=issues-776-777-2" in page.text
+    assert "/static/app.js?v=issue-339-2" in page.text
     app_css = client.get("/static/app.css")
     assert app_css.status_code == 200
     assert ".split-workspace > .wide-panel" in app_css.text
@@ -2750,11 +2761,17 @@ def test_appliance_apply_status_api_tracks_autosaved_desired_state(client):
         client: HTTP test client used to exercise the Atlaso application.
     """
     from atlaso.app.database import SessionLocal
+    from atlaso.app.secrets import encrypt_secret
     from atlaso.app.ui import appliance_apply_units, update_appliance_apply_baselines
 
     login(client)
     with SessionLocal() as db:
         units = appliance_apply_units(db)
+        # Model a completed real Apply, including its protected runtime receipt.
+        for unit in units:
+            if unit["id"] == "esxi_pxe":
+                from atlaso.app.services.network_boot import save_esxi_applied_runtime
+                save_esxi_applied_runtime(db, encrypt_secret(unit["raw_config_preview"]))
         update_appliance_apply_baselines(db, units, {unit["id"] for unit in units})
         db.commit()
 
@@ -7236,8 +7253,11 @@ def test_network_boot_host_management_report_and_print_contract(client):
     assert "flex: 1 1 auto;" in app_css
     assert "min-height: 0;" in app_css
     assert "height: 240px !important;" in app_css
-    assert ".host-reference-enable-step" in app_css
-    assert "justify-items: center;" in app_css
+    enablement = page.text.split('data-atlaso-wizard-step="enablement"', 1)[1].split("</section>", 1)[0]
+    assert 'class="form-stack"' in enablement
+    assert 'class="switch-field"' in enablement
+    assert 'class="switch-input" type="checkbox" name="enabled"' in enablement
+    assert "Changes take effect after you review and submit appliance changes." in enablement
     print_css = app_css.split("@media print", 1)[1]
     assert "@page atlaso-network-boot-report" in print_css
     assert "page: atlaso-network-boot-report;" in print_css
@@ -9372,7 +9392,8 @@ def test_new_record_rows_lock_defaults_until_required_field(client):
     assert 'toggle.className = "inline-boolean-toggle"' in configured_columns_block
     assert "void saveInlineEnabled(cell, previousValue)" in configured_columns_block
     assert "cell.setValue(previousValue)" in app_js.text
-    assert firewall_block.index('{ id: "state"') < firewall_block.index('{ id: "enablement"')
+    assert '{ id: "state"' not in firewall_block
+    assert firewall_block.index('{ id: "match"') < firewall_block.index('{ id: "enablement"')
     assert firewall_block.index('{ id: "enablement"') < firewall_block.index('{ id: "review"')
     assert 'title: "Choose rule enablement"' in firewall_block
     assert ".new-record-row-pending" in app_css.text
@@ -11940,6 +11961,7 @@ def test_vcf_offline_depot_tool_upload_marks_apply_pending_without_profiles(clie
         update_appliance_apply_baselines,
     )
 
+    monkeypatch.setattr("atlaso.app.ui.VCF_DEPOT_UPLOAD_DIR", tmp_path / "uploads")
     monkeypatch.setattr("atlaso.app.ui.find_local_vcf_download_tool_archive", lambda: None)
 
     login(client)
@@ -12111,6 +12133,7 @@ def test_vcf_offline_depot_apply_stages_tool_without_download_profiles(client, t
     from atlaso.app.database import SessionLocal
     from atlaso.app.models import Job, VcfDepotDownloadProfile
 
+    monkeypatch.setattr("atlaso.app.ui.VCF_DEPOT_UPLOAD_DIR", tmp_path / "uploads")
     monkeypatch.setattr("atlaso.app.ui.find_local_vcf_download_tool_archive", lambda: None)
 
     archive_path = tmp_path / "vcf-download-tool-9.1.0.test.tar.gz"
@@ -12225,6 +12248,7 @@ def test_vcf_offline_depot_tool_package_wizard_endpoint_and_reset_clear_configur
         VCF_DEPOT_TOOL_VERSION_SOURCE_KEY,
     )
 
+    monkeypatch.setattr("atlaso.app.ui.VCF_DEPOT_UPLOAD_DIR", tmp_path / "uploads")
     monkeypatch.setattr("atlaso.app.ui.find_local_vcf_download_tool_archive", lambda: None)
 
     archive_path = tmp_path / "vcf-download-tool-9.1.0.test.tar.gz"
@@ -12243,6 +12267,18 @@ def test_vcf_offline_depot_tool_package_wizard_endpoint_and_reset_clear_configur
         files={"tool_archive_file": ("vcf-download-tool-9.1.0.test.tar.gz", archive_path.read_bytes(), "application/gzip")},
     )
     assert upload.status_code == 200
+    from atlaso.app.ui import VCF_DEPOT_UPLOAD_DIR
+
+    stored_archive = VCF_DEPOT_UPLOAD_DIR / archive_path.name
+    original_bytes = stored_archive.read_bytes()
+    rejected = client.post(
+        "/vcf-offline-depot/tool-package", data={"csrf": csrf},
+        files={"tool_archive_file": (archive_path.name, archive_path.read_bytes(), "application/gzip")},
+    )
+    assert rejected.status_code == 400
+    assert "confirm any overwrite" in rejected.text
+    assert stored_archive.read_bytes() == original_bytes
+    assert not list(stored_archive.parent.glob(".*.upload"))
     upload_payload = upload.json()
     assert upload_payload["tool_archive_name"] == "vcf-download-tool-9.1.0.test.tar.gz"
     assert upload_payload["tool_archive_uploaded"] is True
@@ -15727,6 +15763,11 @@ def test_successful_esxi_pxe_apply_marks_network_boot_state_in_job_session(
             "marker": "current-desired-state",
         }
     )
+    desired_payload = json.loads(desired_preview)
+    desired_payload["network_boot"]["environments"] = [
+        {"key": "memtest86plus", "enabled": True, "desired_version": "8.10"},
+    ]
+    desired_preview = json.dumps(desired_payload)
     unit = {
         "id": "esxi_pxe",
         "label": "ESXi PXE",
@@ -15736,6 +15777,7 @@ def test_successful_esxi_pxe_apply_marks_network_boot_state_in_job_session(
         "validation_warnings": [],
         "config_path": "/var/lib/atlaso/apply/esxi-pxe/atlaso-esxi-pxe.json",
         "config_preview": desired_preview,
+        "raw_config_preview": desired_preview,
         "config_diff": "",
         "context": {},
     }
@@ -17562,7 +17604,7 @@ def test_vcf_helper_page_renders_domain_dropdown(client):
     visible_workspace = response.text.split('<section class="split-workspace vcf-helper-workspace"', 1)[1].split("</section>", 1)[0]
     assert "VCF Certificate Trust" in visible_workspace
     assert "Review DNS" not in visible_workspace
-    assert visible_workspace.count('class="info-band vcf-helper-action-band"') == 7
+    assert visible_workspace.count('class="info-band vcf-helper-action-band"') == 8
     assert "Import passwords into a vault" in visible_workspace
     assert 'id="vcf-helper-platform-title">SDDC Manager / VCF Installer</h3>' in visible_workspace
     assert 'id="vcf-helper-ldap-title">LDAP</h3>' in visible_workspace

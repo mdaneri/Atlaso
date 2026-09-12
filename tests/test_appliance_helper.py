@@ -1,6 +1,7 @@
 """Test appliance helper behavior."""
 
 import base64
+import configparser
 import hashlib
 import importlib.machinery
 import importlib.util
@@ -4281,6 +4282,10 @@ def test_factory_reset_runner_uses_persistent_powershell_environment(
         ),
     )
 
+    installed_environment = tmp_path / "atlaso.env"
+    installed_environment.write_text('ATLASO_DIAGNOSTICS_SPOOL_PATH="/var/lib/atlaso/custom diagnostics"\n', encoding="utf-8")
+    monkeypatch.setattr(helper, "ATLASO_ENV_PATH", installed_environment)
+    monkeypatch.setenv("ATLASO_DIAGNOSTICS_SPOOL_PATH", "/wrong-console-path")
     result = helper._factory_reset_runner(boot_resume=boot_resume)
 
     assert result.returncode == 0
@@ -4291,6 +4296,7 @@ def test_factory_reset_runner_uses_persistent_powershell_environment(
     assert environment["XDG_CONFIG_HOME"] == str(powershell_home / ".config")
     assert environment["XDG_DATA_HOME"] == str(powershell_home / ".local" / "share")
     assert environment["ATLASO_DATABASE_URL"] == "sqlite:////var/lib/atlaso/atlaso.db"
+    assert environment["ATLASO_DIAGNOSTICS_SPOOL_PATH"] == "/var/lib/atlaso/custom diagnostics"
     assert (environment.get("ATLASO_FACTORY_RESET_BOOT_RESUME") == "1") is boot_resume
     assert powershell_home.is_dir()
 
@@ -7138,6 +7144,10 @@ def test_network_helper_renders_management_dhcp_networkd(tmp_path):
     assert "Address=" not in management_network
     assert "IPv6AcceptRA=no" in management_network
     assert "LinkLocalAddressing=no" in management_network
+    parsed = configparser.ConfigParser()
+    parsed.read_string(management_network)
+    assert parsed["DHCPv4"].getboolean("SendRelease") is False
+    assert parsed["Network"]["LinkLocalAddressing"] == "no"
 
 
 def test_network_helper_preserves_automatic_ipv6_for_management(tmp_path):
@@ -7175,6 +7185,10 @@ def test_network_helper_preserves_automatic_ipv6_for_management(tmp_path):
     assert "DHCP=ipv4" in management_network
     assert "IPv6AcceptRA=yes" in management_network
     assert "LinkLocalAddressing=ipv6" in management_network
+    parsed = configparser.ConfigParser()
+    parsed.read_string(management_network)
+    assert parsed["DHCPv4"].getboolean("SendRelease") is False
+    assert parsed["Network"].getboolean("IPv6AcceptRA") is True
 
 
 def test_network_helper_renders_static_management_ipv6_gateway_in_main_and_table_100(tmp_path):
@@ -14997,3 +15011,23 @@ def test_esx_storage_rejects_wrong_mount_at_bind_target(monkeypatch):
 
     with pytest.raises(ValueError, match="does not match ESX Storage source"):
         helper._esx_storage_bind_mount_matches("/usr/bin/findmnt", source, target)
+
+
+@pytest.mark.parametrize("configured", [None, "relative/path", "/", "/var/../other", '"/unterminated'])
+def test_recovery_diagnostic_spool_configuration(tmp_path, monkeypatch, configured):
+    """Use the default only when absent and reject unsafe installed selections.
+
+    Args:
+        tmp_path: Isolated installed environment fixture.
+        monkeypatch: Fixture restoring helper path overrides.
+        configured: Missing or invalid spool assignment.
+    """
+    helper = load_helper_module()
+    environment = tmp_path / "atlaso.env"
+    environment.write_text("" if configured is None else "ATLASO_DIAGNOSTICS_SPOOL_PATH=" + configured + "\n", encoding="utf-8")
+    monkeypatch.setattr(helper, "ATLASO_ENV_PATH", environment)
+    if configured is None:
+        assert helper._installed_diagnostics_spool() == "/var/lib/atlaso/diagnostics"
+    else:
+        with pytest.raises(ValueError):
+            helper._installed_diagnostics_spool()

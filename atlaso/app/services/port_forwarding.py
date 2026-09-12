@@ -77,6 +77,20 @@ def source_networks(source: str, family: int, groups: list[dict[str, Any]]) -> l
 
 
 def listener_claims(db: Session) -> list[ListenerClaim]:
+    """Resolve desired listener settings in the owning transaction.
+
+    Args:
+        db: Desired-state transaction containing service configurations.
+    """
+    settings = [row for model in (
+        models.KmsSettings, models.LdapSettings, models.OidcProviderSettings,
+        models.NtpSettings, models.VcfBackupSettings, models.VcfOfflineDepotSettings,
+        models.VcfPrivateRegistrySettings,
+    ) if (row := cast(ServiceListenerSettings | None, db.scalar(select(model)))) is not None]
+    return listener_claims_for_settings(settings, esxi_pxe_boot_settings(db))
+
+
+def listener_claims_for_settings(settings: list[ServiceListenerSettings], pxe: dict[str, Any]) -> list[ListenerClaim]:
     """Reserve stable protocol front doors and configured service listener ports.
 
     The browser/API, CA and public protocol routes share HTTP front doors. Keep
@@ -84,7 +98,8 @@ def listener_claims(db: Session) -> list[ListenerClaim]:
     enabling a service cannot silently redirect its authentication to a target.
 
     Args:
-        db: Desired-state transaction containing service listener configurations.
+        settings: Live or archived service listener configurations.
+        pxe: Network Boot settings resolved from the same candidate state.
     """
     claims = [ListenerClaim("*", "*", "tcp", port, port) for port in (22, 80, 443)]
     specs = (
@@ -99,7 +114,7 @@ def listener_claims(db: Session) -> list[ListenerClaim]:
         (models.VcfPrivateRegistrySettings, "port", "tcp"),
     )
     for model, field, protocol in specs:
-        row = cast(ServiceListenerSettings | None, db.scalar(select(model)))
+        row = next((item for item in settings if isinstance(item, model)), None)
         if row is None or not row.enabled:
             continue
         if isinstance(row, models.LdapSettings) and not (row.ldaps_enabled if field == "port" else row.ldap_enabled):
@@ -114,7 +129,6 @@ def listener_claims(db: Session) -> list[ListenerClaim]:
     # their ports must never become a destination-translation editing shortcut.
     for protocol, ports in (("udp", (53, 67, 68, 69, 111, 547)), ("tcp", (53, 111, 2049, 20048))):
         claims.extend(ListenerClaim("*", "*", protocol, port, port) for port in ports)
-    pxe = esxi_pxe_boot_settings(db)
     if pxe["enabled"]:
         for name in re.split(r"[,\s]+", pxe["listen_interface"]):
             if name:

@@ -9,6 +9,7 @@ import re
 import shutil
 import subprocess
 import sys
+from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
@@ -1375,6 +1376,35 @@ def test_already_unregistered_vm_uses_filesystem_cleanup_only(tmp_path: Path) ->
 
     assert result.returncode == 0, result.stdout + result.stderr
     assert not root.exists()
+    assert "deleteVM" not in [command[2] for command in _commands(log)]
+
+
+def test_cleanup_can_retain_a_caller_pinned_empty_root(tmp_path: Path) -> None:
+    """Remove validated VM contents while preserving the caller's root identity.
+
+    Args:
+        tmp_path: Pytest temporary directory path.
+    """
+    root = tmp_path / "artifacts" / "vm"
+    vmx = root / "Atlaso.vmx"
+    _write_vmx(vmx)
+    vmrun, environment, log, _ = _write_fake_vmrun(tmp_path / "fake", [vmx])
+    module = VMWARE_SCRIPT_ROOT / "Atlaso.WorkstationCleanup.psm1"
+    wrapper = tmp_path / "retained-root.ps1"
+    wrapper.write_text(
+        f"""$ErrorActionPreference = 'Stop'
+Import-Module '{module}' -Force
+$pin = [Atlaso.WorkstationFileIdentity]::PinOrdinaryDirectoryPath('{root}', $true)
+try {{
+    Remove-AtlasoWorkstationVmArtifacts -VmrunPath '{vmrun}' -VmxPaths @('{vmx}') -RemovalRoot '{root}' -KeepRemovalRoot -Confirm:$false
+}} finally {{ $pin.Dispose() }}
+""",
+        encoding="utf-8",
+    )
+    result = _run_script(wrapper, environment=environment)
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert root.is_dir()
+    assert not list(root.iterdir())
     assert "deleteVM" not in [command[2] for command in _commands(log)]
 
 
@@ -2829,6 +2859,77 @@ def test_vmrun_failures_preserve_artifacts(
     assert result.returncode != 0
     assert expected in result.stderr
     assert root.exists()
+    if delete_exit:
+        diagnostic = " ".join(result.stderr.split())
+        assert "does not establish a filesystem permission denial" in diagnostic
+        assert "builder reservation must be preserved" in diagnostic
+
+
+@pytest.mark.parametrize(
+    "case", ["live", "reused", "exited", "old", "future", "unrelated", "missing", "released"]
+)
+def test_delete_diagnostics_bind_exact_current_gui_owner(tmp_path: Path, case: str) -> None:
+    """Only fresh exact-target evidence plus a matching live process identifies a GUI owner.
+
+    Args:
+        tmp_path: Isolated diagnostic fixture root.
+        case: Ownership, freshness, or availability condition to exercise.
+    """
+    vmx = tmp_path / "owned.vmx"
+    log_vmx = tmp_path / "other.vmx" if case == "unrelated" else vmx
+    log = tmp_path / "vmware-vix-123.log"
+    stamp = datetime.now(UTC).isoformat()
+    if case == "old":
+        stamp = "2020-01-01T00:00:00.000Z"
+    elif case == "future":
+        stamp = "2099-01-01T00:00:00.000Z"
+    if case != "released":
+        lock = Path(f"{log_vmx}.lck") / "M1.lck"
+        lock.parent.mkdir()
+        lock.touch()
+    if case != "missing":
+        log.write_text(
+            f"{stamp} unable to contact authd\n"
+            f"{stamp} VMHS_UnmanageVM failed (1).\n"
+            f"{stamp} FileLockWaitForPossession timeout on '{log_vmx}.lck/M1.lck' "
+            "due to a local process '123-132223104000000000(vmware.exe)'\n"
+            f"{stamp} arbitrary-secret-must-not-be-printed\n",
+            encoding="utf-8",
+        )
+    harness = tmp_path / "diagnostic.ps1"
+    harness.write_text(
+        "param([string]$Module, [string]$Target, [string]$Logs, [string]$Case)\n"
+        "$ErrorActionPreference = 'Stop'\n"
+        "$moduleObject = Import-Module $Module -Force -PassThru\n"
+        "& $moduleObject { param($Target, $Logs, $Case)\n"
+        "  function Get-Process { param($Id, $ErrorAction)\n"
+        "    $start = [datetime]::FromFileTimeUtc(132223104000000000)\n"
+        "    if ($Case -eq 'reused') { $start = $start.AddSeconds(1) }\n"
+        "    $p = [pscustomobject]@{ProcessName='vmware'; StartTime=$start; HasExited=($Case -eq 'exited')}\n"
+        "    $p | Add-Member ScriptMethod Dispose {}\n"
+        "    return $p\n"
+        "  }\n"
+        "  Get-AtlasoWorkstationDeleteDiagnostic -VmxPath $Target -LogDirectory $Logs "
+        "-SinceUtc ([datetime]'2025-01-01T00:00:00Z')\n"
+        "} $Target $Logs $Case\n",
+        encoding="utf-8",
+    )
+    result = _run_script(
+        harness,
+        str(VMWARE_SCRIPT_ROOT / "Atlaso.WorkstationCleanup.psm1"),
+        str(vmx),
+        str(tmp_path),
+        case,
+        environment=os.environ.copy(),
+    )
+    assert result.returncode == 0, result.stderr
+    assert "arbitrary-secret" not in result.stdout
+    assert "builder reservation must be preserved" in result.stdout
+    if case == "live":
+        assert "still-live Workstation GUI (PID 123" in result.stdout
+        assert "failed GUI unmanage transition" in result.stdout
+    else:
+        assert "does not establish a filesystem permission denial" in result.stdout
 
 
 @pytest.mark.parametrize(
@@ -3281,10 +3382,10 @@ def test_module_keeps_inventory_work_out_of_normal_delete_path() -> None:
     )
     assert stale_repair.index("if ($OnVerified)", replacement_verification) < replacement_unlock
     assert stale_repair.count("Get-Process vmware -ErrorAction SilentlyContinue") >= 5
-    implementation = re.sub(r"<#.*?#>\s*", "", module, flags=re.DOTALL)
-    # Allow the bounded shutdown verifier, directory pins, and atomic retirement without
-    # restoring global inventory reconciliation to root-scoped deletion.
-    assert len(implementation.splitlines()) < 1_465
+    implementation = re.sub(r"<#.*?#>\s*", "", normal_path, flags=re.DOTALL)
+    # Bound the root-scoped deletion path, not independent native identity/publisher helpers.
+    # The assertions above separately exclude global inventory reconciliation from this path.
+    assert len(implementation.splitlines()) < 250
 
 
 def test_development_ca_cleanup_releases_recovery_inside_provider_proof() -> None:

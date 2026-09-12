@@ -824,7 +824,7 @@ def seed_update_sources(db: Session) -> None:
                 name="VCF.PowerCLI",
                 source_id=powershell_source.id,
                 policy="pinned",
-                target_version="9.1.0.25380678",
+                target_version="9.1.1.25718932",
                 enabled=True,
             )
         )

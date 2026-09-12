@@ -259,6 +259,16 @@ def test_esxi_pxe_iso_upload_and_host_selection(client, monkeypatch, tmp_path):
     assert uploaded.headers["location"] == "/ui/management/esxi-pxe#esxi-pxe-isos-panel"
     iso_path = iso_root / "VMware-VMvisor-Installer-8.0U3.iso"
     assert iso_path.read_bytes() == b"iso bytes"
+    for headers in ({}, {"X-Atlaso-Upload": "1"}):
+        rejected = client.post(
+            "/esxi-pxe/isos/upload", data={"csrf": csrf},
+            files={"iso_file": (iso_path.name, b"replacement bytes", "application/octet-stream")},
+            headers=headers,
+        )
+        assert rejected.status_code == 400
+        assert "confirm any overwrite" in rejected.text
+        assert iso_path.read_bytes() == b"iso bytes"
+    assert not list(iso_root.glob(".*.uploading"))
 
     ajax_upload = client.post(
         "/esxi-pxe/isos/upload",
@@ -452,7 +462,8 @@ def test_esxi_pxe_host_reference_wizard_and_grid_responses(client):
     assert "Six hexadecimal octets; unicast addresses only." in host_wizard
     assert "IP address (optional — leave blank for DHCP)" in host_wizard
     assert "Boot MAC" in host_wizard
-    assert "host-reference-enable-step" in host_wizard
+    assert "host-reference-enable-step" not in host_wizard
+    assert 'data-atlaso-wizard-step="enablement"><div class="form-stack">' in host_wizard
     assert "Variables JSON" not in host_wizard
     assert "Custom Variables definition" in host_wizard
     assert "Default value" in host_wizard
@@ -684,6 +695,7 @@ def test_esxi_pxe_default_host_edit_marks_appliance_apply_pending(client):
     """
     from atlaso.app.database import SessionLocal
     from atlaso.app.models import EsxiKickstart
+    from atlaso.app.secrets import encrypt_secret
     from atlaso.app.services import esxi_pxe
     from atlaso.app.ui import (
         appliance_apply_status,
@@ -706,6 +718,10 @@ def test_esxi_pxe_default_host_edit_marks_appliance_apply_pending(client):
         db.flush()
         kickstart_id = kickstart.id
         units = appliance_apply_units(db)
+        for unit in units:
+            if unit["id"] == "esxi_pxe":
+                from atlaso.app.services.network_boot import save_esxi_applied_runtime
+                save_esxi_applied_runtime(db, encrypt_secret(unit["raw_config_preview"]))
         update_appliance_apply_baselines(db, units, {unit["id"] for unit in units})
         db.commit()
     with SessionLocal() as db:

@@ -1,5 +1,6 @@
 """Test photon image behavior."""
 
+import configparser
 import hashlib
 import importlib.util
 import io
@@ -790,6 +791,37 @@ def test_vmware_workstation_address_readiness_behavior(tmp_path):
     assert "Atlaso VMware Workstation readiness tests passed." in result.stdout
 
 
+def test_vmware_lifecycle_storage_behavior(tmp_path):
+    """Verify clone delegation, failed-provisioning cleanup identity, and diagnostics.
+
+    Args:
+        tmp_path: Fixture directory for synthetic lifecycle storage evidence.
+    """
+    pwsh = shutil.which("pwsh")
+    if pwsh is None:
+        pytest.skip("PowerShell 7 is not available")
+    result = subprocess.run(
+        [
+            pwsh,
+            "-NoProfile",
+            "-NonInteractive",
+            "-File",
+            "tests/powershell/Test-AtlasoLifecycleStorage.ps1",
+            "-RepositoryRoot",
+            str(Path.cwd()),
+            "-OutputDirectory",
+            str(tmp_path / "lifecycle-storage"),
+        ],
+        check=False,
+        capture_output=True,
+        text=True,
+        timeout=60,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "Atlaso lifecycle storage tests passed." in result.stdout
+    assert "SECRET_FIXTURE_PROVIDER_OUTPUT" not in result.stdout + result.stderr
+
+
 def test_wsl_build_contract_and_setup_are_pinned_idempotent_and_non_destructive():
     """Verify that wsl build contract and setup are pinned idempotent and non destructive."""
     contract = json.loads(
@@ -911,6 +943,45 @@ def test_photon_provisioning_management_network_matches_eth0_only():
     assert 'install -d -o atlaso -g atlaso -m 0700 "$ATLASO_STATE/vcfDownloadTool/active-tool/secrets"' in script
 
 
+@pytest.mark.skipif(os.name == "nt", reason="executes the image's POSIX shell renderer")
+@pytest.mark.parametrize("dhcp", ["true", "false"])
+def test_photon_management_lease_retention(dhcp: str) -> None:
+    """Execute the image renderer and keep DHCP options out of static networking.
+
+    Args:
+        dhcp: Whether the image uses dynamic management addressing.
+    """
+    script = Path("image/common/scripts/provision-atlaso.sh").read_text(encoding="utf-8")
+    renderer = script.split('log_step "configuring final appliance management network"\n', 1)[1]
+    renderer = renderer.split(">/etc/systemd/network/00-atlaso-mgmt.network", 1)[0]
+    result = subprocess.run(
+        ["sh", "-eu", "-c", renderer],
+        env={
+            **os.environ,
+            "ATLASO_MGMT_INTERFACE": "eth0",
+            "ATLASO_MGMT_USES_DHCP": dhcp,
+            "ATLASO_MGMT_ADDRESS": "192.0.2.10/24",
+            "ATLASO_MGMT_GATEWAY": "192.0.2.1",
+            "ATLASO_MGMT_DNS": "192.0.2.53",
+        },
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    parsed = configparser.ConfigParser()
+    parsed.read_string(result.stdout)
+    assert parsed["Match"]["Name"] == "eth0"
+    if dhcp == "true":
+        assert parsed["Network"]["DHCP"] == "ipv4"
+        assert parsed["DHCPv4"].getboolean("SendRelease") is False
+        assert "Address" not in parsed["Network"]
+    else:
+        assert "DHCPv4" not in parsed
+        assert parsed["Network"]["Address"] == "192.0.2.10/24"
+        assert parsed["Network"]["Gateway"] == "192.0.2.1"
+        assert parsed["Network"]["DNS"] == "192.0.2.53"
+
+
 def test_photon_provisioning_installs_default_nginx_management_proxy():
     """Verify that photon provisioning installs default nginx management proxy."""
     script = Path("image/common/scripts/provision-atlaso.sh").read_text(encoding="utf-8")
@@ -940,14 +1011,20 @@ def test_photon_provisioning_installs_default_nginx_management_proxy():
     assert 'ENV{ID_SERIAL}==""' not in script
     assert "powershell" in script
     assert "VCF.PowerCLI" in script
-    assert "9.1.0.25380678" in script
-    assert "Connect-VIServer" in script
-    assert "Set-PowerCLIConfiguration -ParticipateInCeip $false -Scope AllUsers -Confirm:$false" in script
-    assert "Get-PowerCLIConfiguration -Scope AllUsers" in script
+    powercli_lock = json.loads(Path("image/common/powershell/powercli-lock.json").read_text(encoding="utf-8"))
+    assert powercli_lock["suite_version"] in script
+    powercli = Path("image/common/powershell/provision-powercli.ps1").read_text(encoding="utf-8")
+    assert "Connect-VIServer" in powercli
+    assert "Set-PowerCLIConfiguration -ParticipateInCeip $false -Scope AllUsers -Confirm:$false" in powercli
+    assert "Get-PowerCLIConfiguration -Scope AllUsers" in powercli
+    assert "-Mode Validate -ModuleRoot" in script
+    assert "-Mode Verify -ConfigureCeip" in script
+    assert "chmod 0755 /var/opt/VMware /var/opt/VMware/PowerCLI" in script
+    assert "chmod 0644 /var/opt/VMware/PowerCLI/PowerCLI_Settings.xml" in script
     assert "ATLASO_POWERCLI_MODULE_SOURCE" in script
     assert 'awk \'$2 == "/tmp" { print $3; exit }\' /proc/mounts' in script
     assert "mount -o remount,size=4G /tmp" in script
-    assert script.index("mount -o remount,size=4G /tmp") < script.index("Install-Module -Name VCF.PowerCLI")
+    assert script.index("mount -o remount,size=4G /tmp") < script.index("-Mode Install")
     assert "chmod 0755 /usr/local/share/powershell /usr/local/share/powershell/Modules" in script
     assert "chmod -R a+rX,go-w /usr/local/share/powershell/Modules" in script
     assert "ipxe" in script
@@ -992,7 +1069,7 @@ def test_photon_provisioning_installs_default_nginx_management_proxy():
         'sudo -H -u "$BOOTSTRAP_USERNAME" env -u PSModulePath '
         'ATLASO_POWERCLI_VERSION="$ATLASO_POWERCLI_VERSION"'
     ) in script
-    assert "is not available to the bootstrap administrator" in script
+    assert '-File "$ATLASO_HOME/image/common/powershell/provision-powercli.ps1"' in script
     assert 'chmod 0711 "$ATLASO_STATE"' in script
     assert 'chown "$BOOTSTRAP_USERNAME:$(id -gn "$BOOTSTRAP_USERNAME")" "$ATLASO_STATE/users/$BOOTSTRAP_USERNAME"' in script
     assert 'chmod 0750 "$ATLASO_STATE/users/$BOOTSTRAP_USERNAME"' in script
@@ -1699,11 +1776,11 @@ def test_photon_provisioning_prepares_attached_data_disks():
     final_bootstrap_powercli_index = provision.rindex("verify_bootstrap_powercli")
     assert final_profile_install_index < final_bootstrap_powercli_index
     assert final_profile_install_index < provision.rindex(
-        "Import-Module VCF.PowerCLI -RequiredVersion"
+        "-Mode Verify"
     )
     assert final_bootstrap_powercli_index < provision.rindex("nginx -t")
     assert 'sudo -H -u "$BOOTSTRAP_USERNAME"' in provision
-    assert "Get-Command Connect-VIServer" in provision
+    assert "provision-powercli.ps1" in provision
     assert final_update_index < provision.rindex("nginx -t")
     assert final_update_index < provision.rindex(
         '"$ATLASO_HOME/.venv/bin/python" '
@@ -2676,10 +2753,10 @@ def test_create_atlaso_vmware_test_vm_wrapper_uses_common_helpers():
         "scripts/windows/vmware/run-lifecycle-test.ps1"
     ).read_text(encoding="utf-8")
     assert "Assert-AtlasoVmwarePayloadProvenance -VmxPath $resolvedSourceVmx" in lifecycle_script
-    assert "Get-AtlasoVmwarePayloadLayout -VmxPath $targetVmx -RequireExactlyTwoVmdks" in lifecycle_script
+    assert "'create-atlaso-vm.ps1'" in lifecycle_script
     assert lifecycle_script.index(
         "Assert-AtlasoVmwarePayloadProvenance -VmxPath $resolvedSourceVmx"
-    ) < lifecycle_script.index("Copy-Item -LiteralPath $sourceDirectory")
+    ) < lifecycle_script.index("'create-atlaso-vm.ps1'")
     assert '"$prefix.vnet"' in nics_script
     assert "if ($Vmnet -match '^(?i)vmnet(\\d+)$')" in nics_script
     assert '$Vmnet = "VMnet$($Matches[1])"' in nics_script
@@ -3218,7 +3295,7 @@ def test_vmware_test_identity_is_bound_to_the_exact_owner():
     assert "Refusing lifecycle reuse because the exact PR-owned result root already exists" in lifecycle_runner
     assert "vmware-identity.json" in lifecycle_runner
     assert "'.vmware-identity.{0}.tmp'" in lifecycle_runner
-    assert "[System.IO.File]::Move($identityTempPath, $identityPath, $true)" in lifecycle_runner
+    assert "[Atlaso.WorkstationDurablePublisherV3]::PublishDurableFile($identityWriter, $identityPath)" in lifecycle_runner
     assert "Invoke-TrackedLifecycleVmCreation" in lifecycle_runner
     assert "Publish ownership before an external copy or VMX writer" in lifecycle_runner
     assert "pull_request_number = $PullRequestNumber" in lifecycle_runner
@@ -3257,7 +3334,7 @@ def test_lifecycle_vmware_script_supports_routing_wan_only_and_esxi_pxe_install(
     assert "Remove-Item -LiteralPath $secretBundlePath -Force -ErrorAction Stop" in wrapper
     assert "-GuestPassword $esxiPasswordSecure" in runner
     assert "'--secret-stdin'" in runner
-    assert "$secretPayload | & python @Arguments | Out-Host" in runner
+    assert "$secretPayload | & python -I @Arguments | Out-Host" in runner
     assert "'--esxi-password'," not in runner
 
     assert "function Get-GuestIPv4ViaGuestOps" in runner
@@ -3282,7 +3359,8 @@ def test_lifecycle_vmware_script_supports_routing_wan_only_and_esxi_pxe_install(
     assert "copyFileFromHostToGuest $ApplianceVmx $localHelper $guestTemp" in runner
     assert "install -o root -g root -m 0755 $quotedTemp /opt/atlaso/bin/atlaso-helper" in runner
     assert "function Sync-ApplianceApplicationWheel" in runner
-    assert "python -m pip wheel $repoRoot --no-deps -w $wheelRoot" in runner
+    assert "New-LifecycleSourceSnapshot -RepositoryRoot $repoRoot -Commit $sourceCommit" in runner
+    assert "python -m pip wheel $wheelSource --no-deps -w $wheelRoot" in runner
     assert "pip install --force-reinstall --no-deps $quotedWheel" in runner
     assert "systemctl restart atlaso.service" in runner
     assert "$applianceWheelPath = Sync-ApplianceApplicationWheel -ApplianceVmx $applianceVmx" in runner
@@ -3303,7 +3381,7 @@ def test_lifecycle_vmware_script_supports_routing_wan_only_and_esxi_pxe_install(
     assert "if ($Vmnet -match '^(?i)vmnet(\\d+)$')" in runner
     assert '$Vmnet = "VMnet$($Matches[1])"' in runner
     assert "function Resolve-LanSegmentId" in runner
-    assert "pref.namedPVNs$nextIndex.name" in runner
+    assert "Resolve-AtlasoOwnedLanSegment -Name $Name -Owner $lanSegmentOwner" in runner
     assert "connectionType\" -Value 'pvn'" in runner
     assert "$prefix.pvnID" in runner
     assert "Remove-VmxValue -Path $Path -Key \"$prefix.vnet\"" in runner

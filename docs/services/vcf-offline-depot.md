@@ -21,6 +21,10 @@ This verified appliance view provides visual orientation before you begin.
 
 <!-- END GENERATED INTERFACE OVERVIEW -->
 
+VCFDT package and credential-file uploads use the shared [chunked browser
+transport](vcf-helper.md#chunked-browser-uploads). Progress tracks acknowledged chunks, transient failures retry
+the current chunk, and credential files remain in memory until existing validation and secret storage consume them.
+
 The published `/PROD/` directory uses the public Atlaso shell and a read-only contents grid. Directory links navigate
 within the depot, file links retain their exact artifact URL, and **Up one level** returns to the parent directory.
 Authenticated and unauthenticated access continue to follow the configured depot policy; a server-rendered contents

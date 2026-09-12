@@ -443,6 +443,10 @@ if [ -f "$SUCCESS_MARKER" ]; then
   [ -f "$MACHINE_IDENTITY_INITIALIZER" ] && [ ! -L "$MACHINE_IDENTITY_INITIALIZER" ] ||
     fail "Machine-identity initializer is missing or unsafe."
   if [ "$marker_platform" = "hyperv" ]; then
+    # Photon ships the legacy fcopy daemon, whose kernel transport was removed
+    # before the supported 6.12 kernel. File copy is not an appliance dependency.
+    systemctl disable --now hv_fcopy_daemon.service
+    verify_service_absent hv_fcopy_daemon.service
     # The KVP daemon caches its pool. Keep it stopped while removing Atlaso's
     # one-time record, then reload the retained pool before serving the host.
     systemctl stop hv_kvp_daemon.service
@@ -506,10 +510,13 @@ case "$platform" in
     # stopped until the initializer has atomically published Atlaso's record.
     systemctl enable hv_kvp_daemon.service
     systemctl is-enabled --quiet hv_kvp_daemon.service
-    for service in hv_fcopy_daemon.service hv_vss_daemon.service; do
-      systemctl enable --now "$service"
-      systemctl is-active --quiet "$service"
-    done
+    # The Photon hyper-v RPM still contains the pre-UIO fcopy daemon. Requiring
+    # that obsolete transport blocks identity initialization and therefore DHCP.
+    # Keep KVP and VSS mandatory; host-to-guest file copy is not supported here.
+    systemctl disable --now hv_fcopy_daemon.service
+    verify_service_absent hv_fcopy_daemon.service
+    systemctl enable --now hv_vss_daemon.service
+    systemctl is-active --quiet hv_vss_daemon.service
     rpm -q hyper-v >/dev/null
     verify_absent '^open-vm-tools|^qemu-guest-agent$|^atlaso-qemu-guest-agent$'
     verify_service_absent vmtoolsd.service

@@ -188,7 +188,7 @@ are explicitly inventoried so route/template changes cannot silently escape the 
   `ldap-password-modal`, `ldap-group-members-modal`, `ldap-generate-modal`, `vsphere-provider-dialog`,
   `vsphere-vcenter-dialog`, and `vsphere-certificate-dialog`.
 - Network Boot and storage: `network-boot-host-dialog`, `network-boot-upload-dialog`,
-  `network-boot-promote-dialog`, `esxi-iso-upload-dialog`, `esxi-custom-variable-wizard-dialog`,
+  `network-boot-promote-dialog`, `esxi-iso-upload-dialog`, `sddc-ova-upload-dialog`, `esxi-custom-variable-wizard-dialog`,
   `esxi-boot-authorization-dialog`, `kickstart-wizard-dialog`, `esx-storage-volume-modal`, and
   `esx-storage-share-modal`.
 - Routing and WAN: `routes-wan-route-dialog`, `routes-wan-routing-dialog`, `routes-wan-nat-dialog`, and
@@ -222,7 +222,7 @@ Shared-only templates are `base.html`, `public_portal_base.html`, `partials/appl
 `partials/brand_mark.html`, `partials/config_preview_action.html`, `partials/resource_wizard.html`,
 `partials/port_forwarding.html`,
 `partials/task_grid.html`, `partials/task_modals.html`, `partials/terminal_panel.html`, `partials/vcf_ldap_modal.html`,
-`partials/vcf_sddc_deploy_modal.html`, `partials/vcf_target_depot_modal.html`, `partials/vcf_trust_modal.html`,
+`partials/vcf_sddc_deploy_modal.html`, `partials/vcf_sddc_upload_modal.html`, `partials/vcf_target_depot_modal.html`, `partials/vcf_trust_modal.html`,
 `partials/vcf_vault_credential_picker.html`, and `partials/vcf_vault_import_modal.html`.
 
 The only non-fallback native tables are the reviewed #115 semantic summaries: backup archive scope, generated DHCP PXE
@@ -232,6 +232,13 @@ behavior. Any future sortable, filterable, selectable, navigable, editable, or a
 shared Tabulator foundation or receive explicit maintainer approval through a separately labeled issue.
 
 ## Completion rule
+
+Issue #799 reorganizes the existing Maintenance (`backup_restore.html`) page into LDAP, Backup, Reset and Diagnostics
+tabs. Recovery actions retain their original routes and safeguards. `partials/diagnostics.html` contains the
+wizard-backed Tabulator collection using Automation Schedules and ESX Storage, the `diagnostics-wizard` four-step
+creation flow, and the `diagnostics-detail` read-only result dialog using Tasks conventions. It preserves the native
+read-only fallback, current administrator authorization, explicit omission/status text, keyboard entry and responsive
+shared controls. Diagnostics does not invoke Appliance Apply. Desktop and narrow-view validation belong to #799.
 
 The matrix is complete only while E1–E8 pass on the same pull-request head. A future failure must be remediated in the
 same change or tracked by a separately labeled issue linked to #115; a new `custom/other` interaction also requires

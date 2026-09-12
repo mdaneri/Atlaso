@@ -43,7 +43,8 @@ the main DNS helper workspace. See [VCF Certificate Trust](vcf-trust.md).
 An administrator can select **Vault** and then **Key** anywhere VCF Helper requests a remote vCenter, ESXi, SDDC
 Manager, VCF Installer, or VCF Automation login. Atlaso fills the server from the HTTP or HTTPS URI selected for the
 entry and fills its username. The server control is read-only, the manual-login controls are disabled, and the login
-page is skipped. The picker omits keys without an HTTP or HTTPS URI and shows one choice per valid URI when a key has several.
+page is skipped. The picker omits keys without an HTTP or HTTPS URI and shows one choice per valid URI when a key has
+several.
 If the selected vault has no usable keys, it shows **No HTTP/HTTPS credentials available** and keeps manual mode active.
 
 Address fields display only the selected hostname, IP, and non-default port; they do not display `http://` or
@@ -64,6 +65,91 @@ and OVA appliance passwords remain separate fields and are never filled from thi
 
 ## Deploy SDDC Manager
 
+### Upload an OVA without VCFDT
+
+Administrators and service administrators can select **Add SDDC Manager OVA** under **SDDC Manager / VCF Installer**.
+Choose the original `.ova` file from your computer, review its filename, size, and destination, then select
+**Upload SDDC Manager OVA**. The two-step wizard follows **Add ESX ISO**, but accepts deployment OVAs rather than
+ISO boot images. JavaScript is required for the chunked upload. The limit is 16 GiB.
+
+The final destination is `/mnt/atlaso-vcf-offline-depot/PROD/COMP/SDDC_MANAGER_VCF/<original-filename>.ova`, directly
+inside the component folder without an extra version or upload directory. This matches the packaged VCFDT
+`application-prodv2.properties` defaults and the
+[VMware Holodeck offline depot layout](https://github.com/vmware/Holodeck/blob/main/docs/offline_depot.md).
+Keep the vendor filename; only letters, numbers, dots, underscores, and hyphens are accepted.
+
+The wizard reports transfer progress, then shows validation while Atlaso checks the OVF, referenced files, and manifest
+checksums. Admission limits archive metadata to 8 MiB, 4,096 members, a 4 MiB OVF, and a 1 MiB manifest before
+using the deployment parser. OVA staging writes and disk flushing run outside the event loop so slow depot storage
+does not block management requests. After success, the page refreshes and **Deploy SDDC Manager** discovers the
+package in the same folder used
+by VCFDT. Uploading does not deploy a VM, enable the depot, or require global Appliance Apply. It does not require
+VCFDT, Broadcom credentials, or a software depot ID, and does not populate the metadata needed to serve a complete
+offline depot to VCF.
+
+For an existing OVA, ESX ISO, or VCF Download Tool filename, Atlaso shows **Overwrite existing file?** before sending
+file bytes. **Cancel** keeps the original file; **Overwrite** replaces it only after validation succeeds. Confirmation
+is bound to the current file revision: if another upload changes it during transfer, select the file again and confirm
+the new warning. ESX ISO names use the same whitespace trimming for overwrite checks and final storage.
+A failed OVA audit commit restores the previous package. Optional audit refresh or operational logging failures after
+a successful commit preserve the published OVA and its durable success record. For invalid or truncated files, obtain
+the complete
+original OVA and retry. For storage failures, check depot free space and write access.
+Failed or disconnected uploads are removed from staging; a process interruption can leave a private staging directory
+outside deployment discovery, but never a partially uploaded selectable OVA.
+
+### Chunked browser uploads
+
+Multipart and no-JavaScript media uploads may create a new filename but cannot replace an existing file without
+revision-bound overwrite consent. Use the browser confirmation flow to replace existing media. After publication,
+backup-link and caller-owned staging-file cleanup errors are logged without changing the upload result; cleanup
+still attempts each private link. ISO permissions are set before publication.
+
+VCF Download Tool filenames are validated before chunk storage is reserved. Final chunk cleanup attempts every staged
+file; a handle-close error is logged without replacing the consuming endpoint result. Expiry sweeps and shutdown
+also attempt every eligible handle after a close failure, and expiry continues for remaining sessions.
+Replaced OVA backup links
+are removed with private staging in the shielded worker cleanup, so old-file deallocation does not block management requests.
+
+Browser file uploads use a shared sequential transport, including SDDC Manager OVA, ESX ISO, VCFDT packages,
+Network Boot media, credential files, registry CA bundles, and backup imports. Each request carries at most 8 MiB;
+small files use one chunk. Hashing supports both HTTP and HTTPS management pages. This works with the existing
+management proxy limit without applying Appliance Settings.
+Successful finalization retains the shared pending-changes sidebar refresh; staging reservations, chunks, and
+cancellation do not trigger extra status requests. Progress counts acknowledged bytes.
+A failed chunk retries up to three times with the same offset and SHA-256
+checksum; already acknowledged chunks are not resent. Atlaso rejects changed retries, gaps, and size overruns.
+OVA filenames are validated before reserving a session, so unsupported names transfer no file bytes.
+Archive members and their total logical size are each limited to 16 GiB before manifest hashing, including
+sparse disk members whose logical size exceeds their physical archive size. Manifest entries must reference
+unique regular files, and total hashing work is bounded by the same limit.
+Final validation and publication use the existing endpoint, permissions, duplicate policy, and desired-state boundary.
+A lost final response is not retried automatically: inspect the destination before submitting again.
+
+The OVA wizard locks Back, Cancel, step navigation, and Escape during transfer and validation.
+A staging cleanup error after successful publication and audit does not turn the completed upload into a failure.
+Keep the page open during transfer and validation. Sessions expire after 30 minutes without an accepted chunk;
+page reload, logout, application restart, or exhausting retries requires selecting and uploading the file again.
+Browser completion or failure releases staging in a worker thread, including when finalization is canceled,
+so closing large temporary files does not block management requests. Rejected OVA staging directories also
+use shielded worker-thread cleanup. Abandoned sessions expire automatically.
+Files up to 16 MiB stay
+in memory, so credential-file contents never enter chunk staging on disk. Larger files use private anonymous
+files beneath `/mnt/atlaso-vcf-offline-depot/.atlaso-uploads`, outside artifact discovery. The depot volume must be
+available and staging must not be writable by other users. The service reserves capacity for upload and validation,
+with at most four sessions per browser, sixteen per process, and 32 GiB of total declared file sizes. Existing
+file-specific limits still apply (including the configured ESX ISO limit); VCFDT packages are limited to 2 GiB,
+LDAP recovery archives to 1 GiB, and credential/CA files to 1 MiB in this browser transport.
+
+The browser protocol is excluded from OpenAPI: `POST /ui/management/uploads/chunks` creates a session,
+`PUT /ui/management/uploads/chunks/data` appends a checked chunk, and `DELETE` on that same data route cancels it.
+All operations require a current browser session and `X-CSRF-Token`. Session identifiers travel in headers,
+not URLs. Finalization sends a bounded form envelope with `X-Atlaso-Chunked: 1` to the original upload endpoint.
+Existing multipart API clients and server-rendered fallback forms remain compatible; they do not gain automatic
+chunk retries. Local file imports into text editors remain editor operations rather than binary file uploads.
+
+### Deploy a validated package
+
 `Deploy SDDC Manager` becomes available when a valid OVA is present beneath
 `/mnt/atlaso-vcf-offline-depot/PROD/COMP/SDDC_MANAGER_VCF`. Atlaso validates the OVA manifest, reads its
 user-configurable OVF properties, confirms the vCenter or ESXi TLS fingerprint, and asks the selected target to parse
@@ -72,11 +158,37 @@ authoritative import contract. Atlaso reviews and passes a value for every targe
 standalone ESXi connection is bound to its single host; vCenter retains automatic placement unless an operator selected
 a host. Atlaso then streams the disks through a vSphere NFC lease.
 
-Before power-on or any DNS, trust, or depot follow-up, Atlaso verifies that the imported VM retained every mapped vApp
-property and a supported OVF environment transport (`com.vmware.guestInfo` or `iso`). If verification fails, Atlaso
-removes only the exact VM created by that task. A failed removal is reported as a partial deployment requiring manual
-cleanup. The pre-authentication fingerprint probe requires TLS 1.2 or newer while preserving explicit fingerprint
-confirmation as the trust decision. Atlaso refuses duplicate VM names and waits up to 90 minutes for the VCF API after
+Before power-on or any DNS, trust, or depot follow-up, Atlaso verifies every reviewed OVF value. With vCenter, the
+imported VM must retain its vApp properties and a supported declared transport (`com.vmware.guestInfo` or `iso`).
+Standalone ESXi discards vApp configuration during import, even when its generated import specification contains the
+properties. For that target, Atlaso installs an escaped OVF environment in the exact powered-off VM's
+`guestinfo.ovfEnv` setting and reads it back before allowing power-on. The OVA must declare `com.vmware.guestInfo`.
+The environment includes a `PlatformSection` before its properties, identifying VMware ESXi, the connected target's
+version and vendor, and the `en` locale. Readback verifies this platform metadata and section ordering as well.
+Guest keys retain VMware's class and instance qualification, such as `vami.ip0.SDDC-Manager`, while reviewed empty
+values and non-editable appliance defaults are preserved. A missing, malformed, duplicated, or changed environment
+fails verification; the absence of ESXi `vAppConfig` alone is expected.
+Standalone import warnings are redacted against both reviewed values and the additional non-editable defaults.
+Values are redacted before whitespace normalization or truncation. Standalone parser diagnostic text is withheld
+because the parser can omit defaults revealed only by the later import specification.
+Failed standalone import specifications may omit property metadata, so their vendor diagnostic text is withheld.
+Cancellation during metadata work is checked before either powered-off completion or power-on.
+VMX responses enforce one 30-second deadline starting before the request, including headers, chunk framing, and body.
+Socket inactivity polls retry within that deadline and check cancellation without discarding buffered response bytes.
+
+ESXi can expose an empty `guestinfo.ovfEnv` API value even though the VMX contains the complete XML. In that case,
+Atlaso reads only the exact imported VM's configuration from the selected datastore over HTTPS, checks the certificate
+against the confirmed fingerprint before sending its session cookie, and verifies the decoded XML in memory. The
+deployment account therefore needs permission to read that VMX through the datastore browser. A refused read, changed
+certificate, redirect, or invalid configuration fails verification and triggers the same rollback. Results identify
+this readback as `datastore-vmx`; no configuration file or property values are saved in task logs.
+If cancellation arrives during metadata installation or readback, Atlaso finishes that verification but checks
+cancellation again before starting power-on. The verified VM remains powered off and is reported as a partial deployment.
+
+If installation or verification fails, Atlaso removes only the exact VM created by that task. A failed removal is reported
+as a partial deployment requiring manual cleanup. The pre-authentication fingerprint probe requires TLS 1.2 or newer
+while preserving explicit fingerprint confirmation as the trust decision. Atlaso refuses duplicate VM names and waits
+up to 90 minutes for the VCF API after
 a verified VM is powered on.
 
 The form can optionally add managed DNS desired state, deploy Atlaso CA trust, and configure the local offline depot.
@@ -93,9 +205,9 @@ Use a disposable VM name and do not record credentials or OVF property values.
    deployment option, and OVF property key names.
 2. In **Deploy SDDC Manager**, confirm the ESXi TLS fingerprint, select the deployment option and destination, review
    every rendered property key, and deploy with power-on disabled first.
-3. Confirm the task reports `HostAgent`, the selected deployment option, sanitized parser/import warnings, every mapped
-   property key, and an accepted OVF environment transport. In ESXi, confirm the VM's vApp/OVF properties exist without
-   copying their values into the evidence record.
+3. Confirm the task reports `HostAgent`, the selected deployment option, sanitized parser/import warnings, qualified
+   property keys, and the `guestinfo.ovfEnv` verification source with `com.vmware.guestInfo` transport. Compare the
+   persisted environment privately with the reviewed mapping; never copy XML or values into the evidence record.
 4. Power on the verified VM and confirm the VCF Installer consumes its OVF environment and becomes usable. Repeat the
    supported vCenter path as a regression check when a safe vCenter target is available.
 5. For a negative check, use a disposable controlled descriptor or test target that cannot retain the required
@@ -103,7 +215,8 @@ Use a disposable VM name and do not record credentials or OVF property values.
 
 Record only sanitized diagnostics and key names. Never capture passwords, vSphere credentials, private material,
 property values, or the complete VM configuration. If the lab result differs, attach the sanitized task diagnostics to
-issue #595 before approving the pull request.
+issue #801 before approving the pull request. Powered-off import verification does not prove that the appliance consumed
+the environment; complete the real guest boot and readiness check as well.
 
 ## Configure VCF Offline Depot
 
@@ -228,6 +341,7 @@ match the current catalog.
 - `POST /ui/management/vcf-helper/generated-fqdns` validates and creates missing records.
 - `POST /ui/management/vcf-helper/generated-fqdns/delete` deletes matching helper-owned records.
 - `POST /ui/management/vcf-helper/sddc-manager/inventory` confirms TLS and discovers vSphere inventory.
+- `POST /ui/management/vcf-helper/sddc-manager/ovas/upload` streams an OVA after session, role, and CSRF checks.
 - `POST /ui/management/vcf-helper/sddc-manager/deploy` queues an OVA deployment.
 - `GET /ui/management/vcf-helper/sddc-manager/tasks/{job_id}` reports deployment progress.
 - `POST /ui/management/vcf-helper/offline-depot/inspect-target` previews remote depot state.

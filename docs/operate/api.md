@@ -218,6 +218,11 @@ PXE state changes only through global Appliance Apply.
 
 ## Authorize one ESXi boot
 
+This operation is used when the applied Boot Service **Require console authorization**
+switch is enabled. The switch defaults off; after a successful ESXi PXE Apply,
+assigned hosts can continue without this API call. Saving the desired switch alone
+does not change the running policy. Both modes retain per-attempt, single-use capabilities.
+
 `POST /api/v1/network-boot/esxi-hosts/{host_id}/authorize-boot-once` requires
 `write:pxe` and accepts JSON containing the `boot_code` displayed by the exact
 pending host-console attempt, for example `{"boot_code":"ABCD-EFGH"}`. Start

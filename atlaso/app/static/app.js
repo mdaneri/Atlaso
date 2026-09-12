@@ -1,3 +1,5 @@
+// All browser file-bearing requests use the shared chunk transport.
+const fetch = (...args) => window.AtlasoUploads ? window.AtlasoUploads.fetch(...args) : window.fetch(...args);
 const managementUiPath = (path = "") => window.AtlasoRoutes.management(path);
 
 document.addEventListener("click", (event) => {
@@ -1358,7 +1360,9 @@ function renderAtlasoWizardReview(form, reviewItems = []) {
   const review = form.querySelector("[data-atlaso-resource-review]");
   if (!(review instanceof HTMLElement)) return;
   review.innerHTML = reviewItems.map((item) => (
-    `<div><span>${escapeHtml(item.label)}</span><strong>${escapeHtml(atlasoWizardReviewValue(form, item))}</strong></div>`
+    `<div><span>${escapeHtml(item.label)}</span><strong>${item.multiline
+      ? escapeHtml(atlasoWizardReviewValue(form, item)).replace(/\r\n|\r|\n/g, "<br>")
+      : escapeHtml(atlasoWizardReviewValue(form, item))}</strong></div>`
   )).join("");
 }
 
@@ -2606,10 +2610,67 @@ function clearEsxiHostError() {
 }
 
 let esxiHostReferenceWizard = null;
+let esxiHostReferenceOpening = false;
 let esxiBootAuthorizationWizard = null;
 let esxiInstallerIsosTable = null;
 let esxiIsoUploadWizard = null;
 let networkBootDiscoveredHostRefresh = null;
+let esxiHostReferenceRefreshSequence = 0;
+
+async function refreshEsxiHostReferenceState() {
+  const element = document.getElementById("esxi-pxe-hosts-table");
+  if (!element) throw new Error("Host Reference choices are unavailable.");
+  const sequence = ++esxiHostReferenceRefreshSequence;
+  try {
+    const response = await fetch(managementUiPath("/network-boot"), {
+      credentials: "same-origin", cache: "no-store",
+      headers: { "X-Requested-With": "AtlasoHostReferenceRefresh" },
+    });
+    if (!response.ok) throw new Error("Host Reference choices could not be refreshed. Retry Refresh Kickstarts.");
+    const state = await response.json();
+    if (!Array.isArray(state.kickstarts) || !state.authorization_reasons
+      || typeof state.authorization_reasons !== "object" || typeof state.can_write !== "boolean") {
+      throw new Error("Host Reference choices are unavailable. Retry Refresh Kickstarts.");
+    }
+    if (sequence !== esxiHostReferenceRefreshSequence) return null;
+    element.dataset.authorizationReasons = JSON.stringify(state.authorization_reasons);
+    element.dataset.kickstartOptions = JSON.stringify(state.kickstarts);
+    element.atlasoRefreshKickstartOptions?.(state.kickstarts);
+    element.dataset.canWrite = String(state.can_write);
+    element.dataset.authorizationRefreshError = "";
+    const setting = document.querySelector('input[name="console_authorization_required"]');
+    if (setting && setting.dataset.pending !== "true") setting.checked = state.console_authorization_required === true;
+    return state;
+  } catch (error) {
+    if (sequence !== esxiHostReferenceRefreshSequence) return null;
+    element.dataset.authorizationRefreshError = "Boot readiness could not be refreshed. Retry after checking the connection.";
+    throw error;
+  }
+}
+
+function esxiHostAuthorizationDisabledReason(data) {
+  const element = document.getElementById("esxi-pxe-hosts-table");
+  if (element?.dataset.canWrite !== "true") return "ESXi write permission is required.";
+  const setting = document.querySelector('input[name="console_authorization_required"]');
+  if (!setting?.checked) return "Console authorization is disabled.";
+  if (setting.dataset.pending === "true") return "Wait for Boot Service settings to save successfully.";
+  if (!data || data.is_new || data.is_default || !data.enabled || !data.kickstart_id) {
+    return "An enabled host with a Kickstart is required.";
+  }
+  if (element.dataset.authorizationRefreshError) return element.dataset.authorizationRefreshError;
+  const reasons = JSON.parse(element.dataset.authorizationReasons || "{}");
+  return reasons[data.id] ?? "Review and submit appliance changes before authorizing boot.";
+}
+
+function initializeEsxiConsoleAuthorizationAutosave(setting) {
+  const form = setting?.closest("form");
+  setting?.addEventListener("change", () => { setting.dataset.pending = "true"; });
+  form?.addEventListener("atlaso:autosave-success", (event) => {
+    if (event.atlasoEditGeneration !== (form.atlasoEditGeneration || 0)) return;
+    setting.dataset.pending = "false";
+    refreshEsxiHostReferenceState().catch(() => {});
+  });
+}
 
 function esxiHostMacKey(value) {
   return String(value || "").toLowerCase().replace(/[:-]/g, "").replace(/\./g, "");
@@ -2756,6 +2817,54 @@ function initializeEsxiHostReferenceWizard() {
   const variablesStatus = form.querySelector("[data-esxi-host-variables-status]");
   const installerIsoSelect = form.elements.installer_iso_path;
   const enabledInput = form.elements.enabled;
+  const kickstartSelect = form.elements.kickstart_id;
+  const kickstartStatus = form.querySelector("[data-esxi-host-kickstart-status]");
+  let kickstartRefreshSequence = 0;
+  let kickstartLoading = false;
+  let kickstartError = "";
+  const validateKickstartChoice = () => {
+    const unavailable = kickstartSelect.selectedOptions[0]?.dataset.unavailable === "true";
+    const message = kickstartLoading ? "Wait for Kickstart choices to finish loading."
+      : kickstartError || (unavailable ? "The selected Kickstart is unavailable. Choose an available Kickstart or explicitly choose No Kickstart." : "");
+    kickstartSelect.setCustomValidity(message);
+    kickstartSelect.setAttribute("aria-invalid", String(Boolean(message)));
+    kickstartStatus.textContent = message || (kickstartSelect.options.length > 1 ? "Kickstart choices are current." : "No Kickstarts available. You can continue without one.");
+    kickstartStatus.dataset.state = message ? (kickstartLoading ? "loading" : "error") : "ready";
+    return !message;
+  };
+  const preserveKickstartChoice = (value) => {
+    const selected = String(value || "");
+    if (selected && ![...kickstartSelect.options].some((option) => option.value === selected)) {
+      const missing = new Option(`Unavailable Kickstart (${selected})`, selected);
+      missing.dataset.unavailable = "true";
+      kickstartSelect.add(missing);
+    }
+    kickstartSelect.value = selected;
+  };
+  const refreshKickstartChoices = async () => {
+    const sequence = ++kickstartRefreshSequence;
+    kickstartLoading = true;
+    kickstartError = "";
+    validateKickstartChoice();
+    try {
+      const state = await refreshEsxiHostReferenceState();
+      if (sequence !== kickstartRefreshSequence) return;
+      if (!state) throw new Error("Choices changed while loading. Retry Refresh Kickstarts.");
+      const selected = kickstartSelect.value;
+      kickstartSelect.replaceChildren(...state.kickstarts.map((item) => new Option(item.label, item.id)));
+      preserveKickstartChoice(selected);
+    } catch (error) {
+      if (sequence !== kickstartRefreshSequence) return;
+      kickstartError = error instanceof Error ? error.message : "Kickstart choices could not be refreshed. Retry Refresh Kickstarts.";
+    } finally {
+      if (sequence === kickstartRefreshSequence) {
+        kickstartLoading = false;
+        validateKickstartChoice();
+      }
+    }
+  };
+  form.querySelector("[data-esxi-host-refresh-kickstarts]").addEventListener("click", refreshKickstartChoices);
+  kickstartSelect.addEventListener("change", validateKickstartChoice);
   const canPromote = discoveredTableElement?.dataset.canWrite === "true";
   const discoveredRows = () => {
     const tableRows = discoveredTableElement?.atlasoTabulator?.getData?.();
@@ -2993,12 +3102,23 @@ function initializeEsxiHostReferenceWizard() {
     steps: [
       { id: "identity", title: "Choose host identity", description: "Select a discovered host or enter an explicit ESXi identity." },
       { id: "installer", title: "Choose installer inputs", description: "Select the Kickstart, installer ISO, and reviewed variables." },
-      { id: "enablement", title: "Choose desired-state enablement", description: "Enabled is reviewed last before the summary." },
+      { id: "enablement", title: "Enable this host", description: "Choose whether to include this host's ESXi entry in Network Boot." },
       { id: "review", title: "Review Host Reference", description: "Saving creates desired state only and does not run appliance apply." },
     ],
     discardTitle: "Discard Host Reference changes?",
     discardMessage: "The Host Reference values entered in this wizard will be lost.",
+    onStepChange: ({ step }) => {
+      if (step.id === "installer") refreshKickstartChoices();
+    },
+    onClose: () => {
+      discoveredSelectionSequence += 1;
+      kickstartRefreshSequence += 1;
+      pendingDiscoveredSelection = null;
+    },
     onOpen: async ({ context }) => {
+      kickstartRefreshSequence += 1;
+      kickstartLoading = false;
+      kickstartError = "";
       discoveredSelectionSequence += 1;
       pendingDiscoveredSelection = null;
       activeContext = { ...(context || {}) };
@@ -3027,14 +3147,16 @@ function initializeEsxiHostReferenceWizard() {
         form.elements.record_id.value = host.id;
         form.elements.hostname.value = host.hostname || "";
         form.elements.manual_mac_address.value = host.mac_address || "";
+        updateManualMacValidity();
         form.elements.ip_address.value = host.ip_address || "";
-        form.elements.kickstart_id.value = host.kickstart_id || "";
+        preserveKickstartChoice(host.kickstart_id);
         form.elements.installer_iso_path.value = host.installer_iso_path || "";
         form.elements.variables.value = host.variables_json || "{}";
         form.elements.enabled.checked = Boolean(host.enabled);
         await loadVariables(host.variables_json || "{}");
         if (wizardTitle) wizardTitle.textContent = "Edit Host Reference";
         if (submitButton) submitButton.textContent = "Save host reference";
+        validateKickstartChoice();
         return;
       }
 
@@ -3057,6 +3179,9 @@ function initializeEsxiHostReferenceWizard() {
       if (source === "discovered") await selectDiscoveredHost();
     },
     validateStep: async ({ step }) => {
+      if (step.id === "installer" && !validateKickstartChoice()) {
+        return { valid: false, message: kickstartSelect.validationMessage, field: "kickstart_id" };
+      }
       if (step.id === "identity" && sourceSelect.value === "discovered" && pendingDiscoveredSelection) {
         try {
           await pendingDiscoveredSelection;
@@ -3101,6 +3226,8 @@ function initializeEsxiHostReferenceWizard() {
       ]);
     },
     onSubmit: async () => {
+      await refreshKickstartChoices();
+      if (!validateKickstartChoice()) return { valid: false, message: kickstartSelect.validationMessage, field: "kickstart_id", step: "installer" };
       const parsed = parseVariables();
       if (!parsed.valid) return { ok: false, ...parsed, step: "installer" };
       const payload = buildHostPayload(parsed.variables);
@@ -3189,9 +3316,15 @@ function initializeEsxiHostReferenceWizard() {
   });
 }
 
-function openEsxiHostReferenceWizard(context) {
+async function openEsxiHostReferenceWizard(context) {
   if (!esxiHostReferenceWizard) throw new Error("The Host Reference wizard is unavailable.");
-  return esxiHostReferenceWizard.open({ launcher: context.launcher, context });
+  if (esxiHostReferenceOpening) throw new Error("A Host Reference is still loading. Wait for it to open, then retry.");
+  esxiHostReferenceOpening = true;
+  try {
+    return await esxiHostReferenceWizard.open({ launcher: context.launcher, context });
+  } finally {
+    esxiHostReferenceOpening = false;
+  }
 }
 
 async function postEsxiHostAction(url, data, csrf, options = {}) {
@@ -3340,8 +3473,12 @@ async function requestEsxiHostInventoryBoot(row) {
 async function requestEsxiHostBootAuthorization(row) {
   clearEsxiHostError();
   const data = row.getData();
-  if (data.is_new || data.is_default || !data.enabled || !data.kickstart_id) return;
+  if (esxiHostAuthorizationDisabledReason(data)) return;
   try {
+    const state = await refreshEsxiHostReferenceState();
+    if (!state) throw new Error("Boot readiness changed while checking. Retry the authorization action.");
+    const reason = esxiHostAuthorizationDisabledReason(row.getData());
+    if (reason) throw new Error(reason);
     if (!esxiBootAuthorizationWizard) throw new Error("The ESXi boot authorization wizard is unavailable.");
     await esxiBootAuthorizationWizard.open({ launcher: row.getElement(), context: { host: data } });
   } catch (error) {
@@ -3389,6 +3526,10 @@ function initializeEsxiBootAuthorizationWizard() {
       ]);
     },
     onSubmit: async () => {
+      const state = await refreshEsxiHostReferenceState();
+      if (!state) return { valid: false, message: "Boot readiness changed while checking. Retry authorization." };
+      const reason = esxiHostAuthorizationDisabledReason(activeHost);
+      if (reason) return { valid: false, message: reason };
       const result = await networkBootRequest(
         `/api/v1/network-boot/esxi-hosts/${activeHost.id}/authorize-boot-once`,
         { method: "POST", body: JSON.stringify({ boot_code: normalizeCode() }) },
@@ -4235,15 +4376,16 @@ function initializeFirewallRulesTable() {
     actionErrorSelector: "#firewall-rule-error",
     defaults: newFirewallRuleRow(interfaces[0] || ""),
     steps: [
-      { id: "policy", title: "Define the firewall rule", description: "Name the operator rule and choose its nftables direction and action." },
-      { id: "match", title: "Match network traffic", description: "Choose protocol, source, destination, ports, and optional interface." },
-      { id: "state", title: "Set rule priority and notes", description: "Choose evaluation priority and record the rule's operator purpose." },
+      { id: "policy", title: "Define the firewall rule", description: "Name and describe the operator rule, then choose its nftables direction and action." },
+      { id: "match", title: "Match network traffic", description: "Choose protocol, source, destination, ports, optional interface, and evaluation priority." },
       { id: "enablement", title: "Choose rule enablement", description: "Choose whether the rule enters rendered desired state." },
       { id: "review", title: "Review firewall desired state", description: "Confirm the rule and global appliance-apply boundary." },
     ],
     reviewItems: [
-      { label: "Rule", field: "name" },
-      { label: "Policy", value: (form) => `${form.elements.direction.value} / ${form.elements.action.value}` },
+      { label: "Name", field: "name" },
+      { label: "Description", field: "description", multiline: true },
+      { label: "Direction", field: "direction" },
+      { label: "Action", field: "action" },
       { label: "Protocol", field: "protocol" },
       { label: "Source", field: "source" },
       { label: "Destination", field: "destination" },
@@ -11482,7 +11624,7 @@ function initializeEsxiPxeHostsTable() {
           field: "kickstart_id",
           editor: canWrite ? "list" : false,
           editable: (cell) => canWrite && cell.getRow().getData().is_default,
-          editorParams: { values: kickstartValues },
+          editorParams: () => ({ values: { ...kickstartValues } }),
           formatter: (cell) => esxiHostKickstartFormatter(cell, kickstartValues),
           minWidth: 180,
           cellEdited: (cell) => autoSaveEsxiHost(cell, csrf),
@@ -11554,11 +11696,11 @@ function initializeEsxiPxeHostsTable() {
           action: (_event, row) => requestEsxiHostInventoryBoot(row),
         },
         {
-          label: "Authorize ESXi boot once",
-          disabled: (component) => {
-            const data = component.getData();
-            return data.is_new || data.is_default || !data.enabled || !data.kickstart_id;
+          label: (component) => {
+            const reason = esxiHostAuthorizationDisabledReason(component.getData());
+            return reason ? `Authorize ESXi boot once (${reason})` : "Authorize ESXi boot once";
           },
+          disabled: (component) => Boolean(esxiHostAuthorizationDisabledReason(component.getData())),
           action: (_event, row) => requestEsxiHostBootAuthorization(row),
         },
         {
@@ -11576,6 +11718,12 @@ function initializeEsxiPxeHostsTable() {
     });
     table = grid.table;
     tableElement.atlasoTabulator = table;
+    tableElement.atlasoRefreshKickstartOptions = (options) => {
+      // Keep formatter closures current; editor parameters snapshot this map on each open.
+      Object.keys(kickstartValues).forEach((id) => delete kickstartValues[id]);
+      Object.assign(kickstartValues, Object.fromEntries(options.map((item) => [item.id, item.label])));
+      table?.getRows?.().forEach((row) => row.reformat());
+    };
     tableElement.atlasoRefreshIsoOptions = async (path, label) => {
       isoValues[path] = label;
       const isoColumn = table?.getColumn?.("installer_iso_path");
@@ -12329,7 +12477,7 @@ function initializeAutosaveForms(root = document) {
 
     const postWithUploadProgress = (actionUrl, formData, files) =>
       new Promise((resolve, reject) => {
-        const xhr = new XMLHttpRequest();
+        const xhr = new window.AtlasoUploads.Request();
         const request = { abort: () => xhr.abort() };
         inFlightRequest = request;
         const progress = uploadProgress();
@@ -12372,6 +12520,7 @@ function initializeAutosaveForms(root = document) {
 
     const save = async () => {
       window.clearTimeout(timer);
+      const editGeneration = form.atlasoEditGeneration || 0;
       if (inFlightRequest) {
         inFlightRequest.abort();
       }
@@ -12386,7 +12535,9 @@ function initializeAutosaveForms(root = document) {
           ? await postWithUploadProgress(actionUrl, formData, files)
           : await postWithFetch(actionUrl, formData);
         if (payload.appliance_apply_status) updatePageApplyNotice(payload.appliance_apply_status);
-        form.dispatchEvent(new CustomEvent("atlaso:autosave-success", { detail: payload }));
+        const successEvent = new CustomEvent("atlaso:autosave-success", { detail: payload });
+        successEvent.atlasoEditGeneration = editGeneration;
+        form.dispatchEvent(successEvent);
         if (hasFiles) {
           clearSelectedFileInputs();
         }
@@ -12422,6 +12573,7 @@ function initializeAutosaveForms(root = document) {
     form.atlasoSaveNow = save;
 
     const scheduleSave = () => {
+      form.atlasoEditGeneration = (form.atlasoEditGeneration || 0) + 1;
       window.clearTimeout(timer);
       timer = window.setTimeout(save, 350);
     };
@@ -16537,7 +16689,7 @@ function initializeVcfDepotToolPackageWizard() {
     status.dataset.state = state;
   };
   const uploadPackage = (file) => new Promise((resolve, reject) => {
-    const xhr = new XMLHttpRequest();
+    const xhr = new window.AtlasoUploads.Request();
     xhr.open("POST", form.action);
     xhr.setRequestHeader("Accept", "application/json");
     xhr.upload.addEventListener("loadstart", () => {
@@ -17077,7 +17229,7 @@ function initializeEsxiIsoUploadForms() {
     status.dataset.state = state;
   };
   const selectedFile = () => fileInput instanceof HTMLInputElement ? fileInput.files?.[0] : null;
-  const updateIsoConsumers = async (uploaded) => {
+  const updateIsoConsumers = async (uploaded, replaced) => {
     const label = `${uploaded.relative_path || uploaded.name} (${uploaded.source_label || "Uploaded by user"})`;
     document.querySelectorAll('select[name="installer_iso_path"]').forEach((select) => {
       if (!(select instanceof HTMLSelectElement)) return;
@@ -17089,13 +17241,13 @@ function initializeEsxiIsoUploadForms() {
     await hostsElement?.atlasoRefreshIsoOptions?.(uploaded.path, label);
     const summary = document.querySelector("[data-esxi-pxe-summary]");
     if (summary instanceof HTMLElement) {
-      const count = Number(summary.dataset.isoCount || "0") + 1;
+      const count = Number(summary.dataset.isoCount || "0") + (replaced ? 0 : 1);
       summary.dataset.isoCount = String(count);
       summary.textContent = `${summary.dataset.kickstartCount || "0"} Kickstarts / ${count} ISOs`;
     }
   };
   const upload = (file) => new Promise((resolve, reject) => {
-    const xhr = new XMLHttpRequest();
+    const xhr = new window.AtlasoUploads.Request();
     xhr.open("POST", form.action);
     xhr.setRequestHeader("X-Atlaso-Upload", "1");
     xhr.upload.addEventListener("loadstart", () => {
@@ -17167,7 +17319,7 @@ function initializeEsxiIsoUploadForms() {
         const existing = esxiInstallerIsosTable?.getRow?.(uploaded.path);
         if (existing) await existing.update(uploaded);
         else await esxiInstallerIsosTable?.addRow?.(uploaded, true, "__new__");
-        await updateIsoConsumers(uploaded);
+        await updateIsoConsumers(uploaded, Boolean(existing));
         setStatus(`${uploaded.name || file.name} uploaded.`, "saved");
         showTransientGridStatus(`${uploaded.name || file.name} added to ESX installer ISOs.`);
         return { valid: true };
@@ -17177,6 +17329,129 @@ function initializeEsxiIsoUploadForms() {
         return { valid: false, message, step: "review" };
       }
     },
+  });
+}
+
+function initializeSddcOvaUploadForms() {
+  const form = document.querySelector("[data-sddc-ova-upload]");
+  const dialog = document.getElementById("sddc-ova-upload-dialog");
+  if (!(form instanceof HTMLFormElement) || !(dialog instanceof HTMLDialogElement)) return;
+  const fileInput = form.elements.ova_file;
+  const progress = form.querySelector("[data-sddc-ova-upload-progress]");
+  const status = form.querySelector("[data-sddc-ova-upload-status]");
+  const reviewName = form.querySelector("[data-sddc-ova-review-name]");
+  const reviewSize = form.querySelector("[data-sddc-ova-review-size]");
+  let uploading = false;
+  const setUploading = (busy) => {
+    uploading = busy;
+    form.toggleAttribute("aria-busy", busy);
+    form.querySelectorAll("[data-atlaso-wizard-nav], [data-atlaso-wizard-back], [data-atlaso-wizard-cancel], [data-atlaso-wizard-submit]").forEach((control) => {
+      if (control instanceof HTMLButtonElement) control.disabled = busy;
+    });
+  };
+  dialog.addEventListener("cancel", (event) => {
+    if (!uploading) return;
+    event.preventDefault();
+    event.stopImmediatePropagation();
+  });
+  const setStatus = (message, state = "idle") => {
+    if (!(status instanceof HTMLElement)) return;
+    status.textContent = message;
+    status.dataset.state = state;
+  };
+  const selectedFile = () => fileInput instanceof HTMLInputElement ? fileInput.files?.[0] : null;
+  const upload = (file) => new Promise((resolve, reject) => {
+    const xhr = new window.AtlasoUploads.Request();
+    xhr.open("POST", form.action);
+    xhr.setRequestHeader("Content-Type", "application/octet-stream");
+    xhr.setRequestHeader("X-CSRF-Token", form.elements.csrf.value);
+    xhr.setRequestHeader("X-Atlaso-Filename", encodeURIComponent(file.name));
+    xhr.upload.addEventListener("load", () => {
+      if (progress instanceof HTMLProgressElement) progress.removeAttribute("value");
+      setStatus("Upload received. Validating the OVA and manifest; keep this page open...", "saving");
+    });
+    xhr.upload.addEventListener("loadstart", () => {
+      if (progress instanceof HTMLProgressElement) {
+        progress.hidden = false;
+        progress.value = 0;
+      }
+      setStatus(`Uploading ${file.name}...`, "saving");
+    });
+    xhr.upload.addEventListener("progress", (event) => {
+      if (!(progress instanceof HTMLProgressElement) || !event.lengthComputable) return;
+      const percent = Math.max(0, Math.min(100, Math.round((event.loaded / event.total) * 100)));
+      progress.value = percent;
+      setStatus(`Uploading ${file.name}: ${percent}%`, "saving");
+    });
+    xhr.addEventListener("load", () => {
+      let payload = {};
+      try {
+        payload = xhr.responseText ? JSON.parse(xhr.responseText) : {};
+      } catch (_error) {
+        payload = {};
+      }
+      if (xhr.status >= 200 && xhr.status < 300 && payload.path) {
+        resolve(payload);
+        return;
+      }
+      reject(new Error(payload.detail || (xhr.status === 413
+        ? "Upload is too large. SDDC Manager OVA uploads are limited to 16 GiB."
+        : `Upload failed with HTTP ${xhr.status}.`)));
+    });
+    xhr.addEventListener("error", () => reject(new Error("Upload failed before Atlaso received the file. Check appliance connectivity and upload size.")));
+    xhr.addEventListener("abort", () => reject(new Error("Upload canceled.")));
+    xhr.send(file);
+  });
+  const wizard = window.AtlasoUiPatterns.createWizard({
+    form,
+    dialog,
+    steps: [
+      { id: "file", title: "Choose an SDDC Manager OVA", description: "Select one OVA to add to the VCFDT SDDC_MANAGER_VCF folder." },
+      { id: "review", title: "Review the SDDC Manager OVA", description: "Review the destination. Uploading does not deploy a VM or configure the offline depot." },
+    ],
+    discardTitle: "Discard SDDC Manager OVA upload?",
+    discardMessage: "The selected deployment OVA will not be uploaded.",
+    onOpen: () => {
+      form.reset();
+      if (progress instanceof HTMLProgressElement) {
+        progress.hidden = true;
+        progress.value = 0;
+      }
+      setStatus("Ready to upload the reviewed OVA.");
+    },
+    validateStep: ({ step }) => {
+      if (step.id !== "file") return { valid: true };
+      const file = selectedFile();
+      if (!file) return { valid: false, message: "Choose an SDDC Manager OVA before continuing.", field: "ova_file" };
+      if (!file.name.toLowerCase().endsWith(".ova")) return { valid: false, message: "Choose a .ova installer file.", field: "ova_file" };
+      if (file.size > 16 * 1024 ** 3) return { valid: false, message: "Choose an OVA no larger than 16 GiB.", field: "ova_file" };
+      return { valid: true };
+    },
+    prepareReview: () => {
+      const file = selectedFile();
+      if (reviewName instanceof HTMLElement) reviewName.textContent = file?.name || "Not selected";
+      if (reviewSize instanceof HTMLElement) reviewSize.textContent = file ? formatMonitorBytes(file.size) : "Not available";
+    },
+    onSubmit: async () => {
+      const file = selectedFile();
+      if (!file) return { valid: false, message: "Choose an SDDC Manager OVA.", step: "file", field: "ova_file" };
+      setUploading(true);
+      try {
+        await upload(file);
+        setStatus(`${file.name} validated and added. Refreshing deployment choices...`, "saved");
+        window.location.reload();
+        return { valid: true };
+      } catch (error) {
+        const message = error instanceof Error ? error.message : "The SDDC Manager OVA could not be uploaded.";
+        setStatus(message, "error");
+        return { valid: false, message, step: "review" };
+      } finally {
+        setUploading(false);
+      }
+    },
+  });
+  document.querySelectorAll("[data-sddc-ova-upload-open]").forEach((launcher) => {
+    launcher.addEventListener("click", () => wizard.open({ launcher }));
   });
 }
 
@@ -23263,6 +23538,9 @@ function initializeNetworkBootDiscoveredHostRefresh(
       const hostReferencesTable = document.getElementById?.("esxi-pxe-hosts-table")?.atlasoTabulator;
       await reconcileNetworkBootDiscoveredHosts(hostsTable, hosts, hostReferencesTable);
       setStatus();
+      if (hostReferencesTable && !document.getElementById("network-boot-promote-dialog")?.open) {
+        await refreshEsxiHostReferenceState();
+      }
     } catch (error) {
       setStatus(error instanceof Error
         ? `Automatic refresh unavailable: ${error.message} Showing the last received host list.`
@@ -23348,11 +23626,6 @@ function initializeNetworkBootPage() {
   let hostsTable = null;
   let environmentTable = null;
   let environmentRefreshPromise = null;
-  const loadHost = async (row) => {
-    const host = await networkBootRequest(`/api/v1/network-boot/hosts/${row.id}`);
-    const history = await networkBootRequest(`/api/v1/network-boot/hosts/${row.id}/history`);
-    return { host, history };
-  };
   const loadLatestHost = createLatestNetworkBootHostLoader(networkBootRequest);
   const selectReport = (historyItem) => {
     if (!selectedHost || !historyItem) return;
@@ -23464,12 +23737,12 @@ function initializeNetworkBootPage() {
   };
   const promoteHost = async (row, launcher = null) => {
     const data = row?.getData ? row.getData() : row;
-    if (!data?.id || data.assigned_to_esxi) return;
+    if (!canWrite || !data?.id || data.assigned_to_esxi) return;
     try {
-      const loaded = selectedHost?.id === data.id ? { host: selectedHost } : await loadHost(data);
-      selectedHost = loaded.host;
+      showTransientGridStatus("Loading the discovered host for promotion…");
       if (hostDialog?.open) hostDialog.close();
-      await openEsxiHostReferenceWizard({ mode: "promote", discoveredHost: selectedHost, launcher });
+      await openEsxiHostReferenceWizard({ mode: "promote", discoveredHost: data, launcher });
+      document.getElementById("grid-status-toast")?.classList.remove("visible");
     } catch (error) {
       showTransientGridStatus(error instanceof Error ? error.message : "The discovered host could not be loaded for promotion.");
     }
@@ -23525,6 +23798,9 @@ function initializeNetworkBootPage() {
     },
   });
   hostsTable = hostGrid.table;
+  hostsElement.atlasoTabulator = hostsTable;
+  const consoleSetting = document.querySelector('input[name="console_authorization_required"]');
+  initializeEsxiConsoleAuthorizationAutosave(consoleSetting);
   networkBootDiscoveredHostRefresh?.stop?.();
   networkBootDiscoveredHostRefresh = initializeNetworkBootDiscoveredHostRefresh(hostsTable, discoveredStatus);
   hostDialog?.querySelector("[data-network-boot-host-close]")?.addEventListener("click", () => hostDialog.close());
@@ -23774,7 +24050,7 @@ function initializeNetworkBootPage() {
     }
     const file = fileInput.files[0];
     const body = new FormData(uploadForm);
-    const request = new XMLHttpRequest();
+    const request = new window.AtlasoUploads.Request();
     request.open("POST", `/api/v1/network-boot/environments/${environmentKey}/upload`);
     request.setRequestHeader("Accept", "application/json");
     const csrf = document.querySelector("input[name='csrf']")?.value || "";
@@ -23981,6 +24257,7 @@ document.addEventListener("DOMContentLoaded", initializeVcfDepotTokenPaste);
 document.addEventListener("DOMContentLoaded", initializeVcfDepotActivationPaste);
 document.addEventListener("DOMContentLoaded", initializeFileUploadControls);
 document.addEventListener("DOMContentLoaded", initializeEsxiIsoUploadForms);
+document.addEventListener("DOMContentLoaded", initializeSddcOvaUploadForms);
 document.addEventListener("DOMContentLoaded", () => initializeTagEditors());
 document.addEventListener("DOMContentLoaded", () => initializeServiceBindEditors());
 document.addEventListener("DOMContentLoaded", initializeTabs);

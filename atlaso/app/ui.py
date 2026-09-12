@@ -2,6 +2,7 @@
 
 import difflib
 import hashlib
+import hmac
 import json
 import logging
 import os
@@ -153,6 +154,7 @@ from atlaso.app.routers.ui.dashboard_monitor import DashboardMonitorUiDependenci
 from atlaso.app.routers.ui.dashboard_monitor import (
     build_router as build_dashboard_monitor_ui_router,
 )
+from atlaso.app.routers.ui.diagnostics import build_router as build_diagnostics_router
 from atlaso.app.routers.ui.dns_dhcp import DnsDhcpUiDependencies
 from atlaso.app.routers.ui.dns_dhcp import build_router as build_dns_dhcp_ui_router
 from atlaso.app.routers.ui.esx_storage import EsxStorageUiDependencies
@@ -559,6 +561,10 @@ from atlaso.app.services.update_sources import (
     update_source_settings,
     validate_managed_package,
     validate_update_source,
+)
+from atlaso.app.services.upload_publication import (
+    UploadPublication,
+    cleanup_private_upload,
 )
 from atlaso.app.services.vaults import (
     VaultEntryInput,
@@ -2780,12 +2786,14 @@ def store_pasted_vcf_depot_secret(
     return display_name
 
 
-def store_uploaded_vcf_depot_archive(settings: VcfOfflineDepotSettings, archive_file: UploadFile | None) -> str | None:
+def store_uploaded_vcf_depot_archive(settings: VcfOfflineDepotSettings, archive_file: UploadFile | None,
+                                     *, publication: UploadPublication | None = None) -> str | None:
     """Persist uploaded vcf depot archive.
 
     Args:
         settings: Current Atlaso settings used to configure the operation.
         archive_file: Archive file consumed by store uploaded VCF depot archive.
+        publication: Optional browser consent bound to the existing destination.
 
 
     Returns:
@@ -2807,14 +2815,14 @@ def store_uploaded_vcf_depot_archive(settings: VcfOfflineDepotSettings, archive_
         with temp_path.open("wb") as destination:
             shutil.copyfileobj(archive_file.file, destination)
         validate_vcf_download_tool_upload_envelope(temp_path)
-        temp_path.replace(archive_path)
+        with (publication or UploadPublication(archive_path, None)).publish(temp_path, archive_path):
+            pass
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except OSError as exc:
         raise HTTPException(status_code=500, detail="Unable to store the VCF Download Tool archive.") from exc
     finally:
-        if temp_path.exists():
-            temp_path.unlink(missing_ok=True)
+        cleanup_private_upload(temp_path)
     settings.tool_archive_path = str(archive_path)
     settings.tool_version = ""
     return archive_name
@@ -10384,6 +10392,33 @@ def wan_rollback_config_preview(
     return "\n".join(lines).lstrip("\n") + "\n"
 
 
+def esxi_apply_comparison_preview(preview: str) -> str:
+    """Exclude media activation receipts from desired ESXi Apply comparison.
+
+    Args:
+        preview: Exact ESXi manifest text before display redaction.
+    """
+    manifest = json.loads(preview)
+    for row in manifest.get("network_boot", {}).get("environments", []):
+        row.pop("active_version", None)
+    return json.dumps(manifest, sort_keys=True)
+
+
+def esxi_apply_snapshot_marker(preview: str) -> dict[str, Any]:
+    """Bind hidden ESXi edits before entering the shared Apply projection.
+
+    Args:
+        preview: Exact ESXi manifest text before display redaction.
+    """
+    settings = get_settings()
+    revision = hmac.digest(
+        (settings.secrets_key or settings.secret_key).encode("utf-8"),
+        b"atlaso-esxi-apply-v1\x00" + esxi_apply_comparison_preview(preview).encode("utf-8"),
+        "sha256",
+    ).hex()
+    return {"protected_runtime_manifest": 1, "revision": revision}
+
+
 def make_appliance_apply_unit(
     *,
     unit_id: str,
@@ -10398,6 +10433,7 @@ def make_appliance_apply_unit(
     baseline: dict[str, Any] | None,
     raw_config_preview: str | None = None,
     snapshot_marker: Any = None,
+    runtime_config_encrypted: str | None = None,
 ) -> dict[str, Any]:
     """Build appliance apply unit.
 
@@ -10414,20 +10450,48 @@ def make_appliance_apply_unit(
         baseline: Baseline supplied by the caller.
         raw_config_preview: Raw config preview supplied by the caller.
         snapshot_marker: Snapshot marker supplied by the caller.
+        runtime_config_encrypted: Internal runtime record used only for ESXi comparison.
 
     Returns:
         The make appliance apply unit result.
     """
     redacted_preview = redact_config_preview(config_preview)
+    protected_esxi = (
+        unit_id == "esxi_pxe" and isinstance(snapshot_marker, dict)
+        and snapshot_marker.get("protected_runtime_manifest") == 1
+    )
     snapshot_payload = {
         "unit_id": unit_id,
         "summary": summary,
         "config_path": config_path,
-        "config_preview": redacted_preview,
+        "config_preview": esxi_apply_comparison_preview(redacted_preview) if protected_esxi else redacted_preview,
         "snapshot_marker": snapshot_marker,
     }
     current_hash = appliance_snapshot_hash(snapshot_payload)
     baseline_hash = str((baseline or {}).get("snapshot_hash") or "")
+    runtime_pending = False
+    if protected_esxi:
+        # A dry run can advance the display baseline, but recovery must remain
+        # selectable until real Apply records the exact protected runtime input.
+        try:
+            runtime_pending = esxi_apply_comparison_preview(
+                decrypt_secret(runtime_config_encrypted or "")
+            ) != esxi_apply_comparison_preview(
+                raw_config_preview if raw_config_preview is not None else config_preview
+            )
+        except (AttributeError, TypeError, ValueError):
+            runtime_pending = True
+        if runtime_config_encrypted is None:
+            desired_manifest = json.loads(raw_config_preview if raw_config_preview is not None else config_preview)
+            # A pristine factory reset has no boot consumers to admit. Its
+            # non-appliance dry-run path must not invent real runtime evidence.
+            runtime_pending = bool(
+                desired_manifest.get("boot", {}).get("enabled")
+                or desired_manifest.get("hosts")
+                or desired_manifest.get("kickstarts")
+                or desired_manifest.get("default_host", {}).get("enabled")
+                or any(row.get("enabled") for row in desired_manifest.get("network_boot", {}).get("environments", []))
+            )
     return {
         "id": unit_id,
         "label": label,
@@ -10441,7 +10505,7 @@ def make_appliance_apply_unit(
         "raw_config_preview": raw_config_preview if raw_config_preview is not None else config_preview,
         "config_preview": redacted_preview,
         "snapshot_hash": current_hash,
-        "changed": current_hash != baseline_hash,
+        "changed": current_hash != baseline_hash or runtime_pending,
         "has_baseline": bool(baseline_hash),
         "last_applied_at": (baseline or {}).get("applied_at"),
         "config_diff": config_diff_for_unit(unit_id, redacted_preview, baseline),
@@ -10827,6 +10891,8 @@ def appliance_apply_units(db: Session, *, reconcile: bool = True) -> list[dict[s
         db: Active database session.
         reconcile: Whether dependent desired state should be reconciled.
     """
+    from atlaso.app.services.network_boot import load_esxi_applied_runtime
+
     baselines = load_appliance_apply_baselines(db)
     local_users = local_users_apply_context(db, baselines.get("local_users"))
     appliance_settings = appliance_settings_context(db, reconcile_dns=reconcile)
@@ -11036,6 +11102,8 @@ def appliance_apply_units(db: Session, *, reconcile: bool = True) -> list[dict[s
             config_path=esxi_pxe["esxi_pxe_config_path"],
             config_preview=esxi_pxe["esxi_pxe_manifest"],
             baseline=baselines.get("esxi_pxe"),
+            snapshot_marker=esxi_apply_snapshot_marker(esxi_pxe["esxi_pxe_manifest"]),
+            runtime_config_encrypted=load_esxi_applied_runtime(db),
         ),
         make_appliance_apply_unit(
             unit_id="esx_storage",
@@ -13695,7 +13763,7 @@ def execute_appliance_apply_unit(
     elif unit_id == "esxi_pxe":
         config_path = context["esxi_pxe_config_path"]
         if not adapter.dry_run:
-            config_path = stage_appliance_apply_config(ESXI_PXE_STAGED_CONFIG_PATH, context["esxi_pxe_manifest"])
+            config_path = stage_appliance_apply_config(ESXI_PXE_STAGED_CONFIG_PATH, unit["raw_config_preview"])
         results = run_adapter_steps(
             [
                 lambda: adapter.validate_esxi_pxe_config(config_path),
@@ -15891,6 +15959,13 @@ def run_appliance_apply_job(job_id: str, *, force_real: bool = False) -> None:
                             job_result.get("refresh_vcf_depot_software_depot_id")
                         ),
                     }
+                # Seal the exact staged input before host mutation, not a later
+                # refreshed desired state or a redacted task/display result.
+                esxi_runtime_encrypted = (
+                    encrypt_secret(execution_unit["raw_config_preview"])
+                    if unit["id"] == "esxi_pxe"
+                    else None
+                )
                 result = execute_appliance_apply_unit(
                     execution_unit,
                     adapter=SystemAdapter(dry_run=False) if force_real else None,
@@ -15924,9 +15999,14 @@ def run_appliance_apply_job(job_id: str, *, force_real: bool = False) -> None:
                         from atlaso.app.services.network_boot import (
                             mark_network_boot_environments_applied,
                             prune_superseded_shredos_media,
+                            save_esxi_applied_runtime,
                         )
 
-                        mark_network_boot_environments_applied(db)
+                        assert esxi_runtime_encrypted is not None
+                        save_esxi_applied_runtime(db, esxi_runtime_encrypted)
+                        mark_network_boot_environments_applied(
+                            db, applied_manifest=json.loads(execution_unit["raw_config_preview"]),
+                        )
                         prune_network_boot_media = True
                     if unit["id"] == "esx_storage" and not result.get("dry_run"):
                         inventory_result = SystemAdapter(dry_run=False).esx_storage_inventory()
@@ -15965,6 +16045,7 @@ def run_appliance_apply_job(job_id: str, *, force_real: bool = False) -> None:
                                 )
                             )
                         else:
+                            applied_unit = unit
                             runtime_config_preview = str(
                                 applied_unit["config_preview"]
                             )
@@ -17226,6 +17307,8 @@ def backup_restore_context(db: Session, result: dict[str, Any] | None = None, er
         result: Operation result to summarize, validate, or persist.
         error: Public-safe error detail to record or return.
     """
+    from atlaso.app.services import diagnostics
+
     counts = desired_state_counts(db)
     ldap_recovery_archive = db.execute(
         select(LdapRecoveryArchive)
@@ -17233,6 +17316,9 @@ def backup_restore_context(db: Session, result: dict[str, Any] | None = None, er
         .order_by(LdapRecoveryArchive.created_at.desc())
     ).scalars().first()
     return {
+        "diagnostics_rows": [diagnostics.row(job) for job in db.scalars(
+            select(Job).where(Job.type == diagnostics.JOB_TYPE).order_by(Job.created_at.desc()).limit(100)
+        ).all()],
         "settings_backup_counts": counts,
         "settings_backup_total_rows": sum(counts.values()),
         "backup_restore_result": result,
@@ -17299,6 +17385,7 @@ def esxi_pxe_page_context(
     from atlaso.app.models import NetworkBootDiscoveredHost
     from atlaso.app.services.network_boot import (
         catalog_rows,
+        esxi_boot_management_state,
         esxi_host_assignments_by_mac,
     )
     from atlaso.app.services.network_boot import (
@@ -17306,6 +17393,9 @@ def esxi_pxe_page_context(
     )
 
     context = esxi_pxe_context(db)
+    boot_management = esxi_boot_management_state(db, context["esxi_pxe_hosts"])
+    context["esxi_boot_readiness_warnings"] = boot_management["warnings"]
+    context["esxi_boot_authorization_reasons"] = boot_management["authorization_reasons"]
     kickstarts = context["esxi_kickstarts"]
     selected = next((row for row in kickstarts if row.id == selected_id), None) or (kickstarts[0] if kickstarts else None)
     selected_validation = {"valid": True, "errors": [], "warnings": []}
@@ -17655,6 +17745,12 @@ _settings_backup_ui = build_settings_backup_ui_router(
     )
 )
 settings_backup_router = _settings_backup_ui.router
+
+diagnostics_router = build_diagnostics_router(
+    management=require_management_ui_request,
+    admin=require_admin_identity,
+    csrf=verify_csrf,
+)
 backup_restore_page = _settings_backup_ui.endpoints["backup_restore_page"]
 export_backup_restore_archive = _settings_backup_ui.endpoints[
     "export_backup_restore_archive"
@@ -17880,6 +17976,10 @@ UI_ROUTER_REGISTRY.register(
     (RouterContribution(plane="management", router=settings_backup_router),),
 )
 UI_ROUTER_REGISTRY.register(
+    "diagnostics",
+    (RouterContribution(plane="management", router=diagnostics_router),),
+)
+UI_ROUTER_REGISTRY.register(
     "facade_after_settings_backup",
     (
         RouterContribution(
@@ -17918,6 +18018,7 @@ UI_ROUTER_REGISTRY.validate_domains(
         "facade_between_identity_network_boot",
         "network_boot",
         "settings_backup",
+        "diagnostics",
         "facade_after_settings_backup",
     )
 )

@@ -38,17 +38,207 @@ if ($version -notmatch '^\d+\.\d+\.\d+$') {
 $hyperVAdapters = @(
     [pscustomobject]@{
         Name = 'Services'; Id = 'service-id'; SwitchName = 'Services';
-        MacAddress = '00155D445566'; IPAddresses = @('198.51.100.20')
+        MacAddress = '00155D445566'; IPAddresses = @('198.51.100.20'); DynamicMacAddressEnabled = $true
     },
     [pscustomobject]@{
         Name = 'Management'; Id = 'management-id'; SwitchName = 'Management';
-        MacAddress = '00155D112233'; IPAddresses = @('192.0.2.20')
+        MacAddress = '00155D112233'; IPAddresses = @('192.0.2.20'); DynamicMacAddressEnabled = $true
     }
 )
 $hyperVIdentity = Resolve-AtlasoHyperVSmokeNetworkIdentity `
     -Adapters $hyperVAdapters `
     -ManagementSwitch 'Management' `
     -ServiceSwitch 'Services'
+
+# Before first start Hyper-V reports zero dynamic MACs. Pin topology then each
+# allocated MAC, even when the other adapter or management DHCP is still pending.
+$pendingAdapters = @($hyperVAdapters | ForEach-Object { $_.PSObject.Copy() })
+foreach ($adapter in $pendingAdapters) {
+    $adapter.MacAddress = '000000000000'
+}
+$pendingIdentity = Resolve-AtlasoHyperVSmokeNetworkIdentity -Adapters $pendingAdapters `
+    -ManagementSwitch Management -ServiceSwitch Services -AllowMissingAddress -AllowPendingMacAddress
+if (-not $pendingIdentity.ServiceMacPending -or -not $pendingIdentity.ManagementMacPending) {
+    throw 'Unassigned dynamic adapters were not marked pending.'
+}
+foreach ($adapterIndex in @(0, 1)) {
+    foreach ($allocationMode in @('static', 'missing')) {
+        $modeChangedAdapters = @($hyperVAdapters | ForEach-Object { $_.PSObject.Copy() })
+        if ($allocationMode -eq 'static') {
+            $modeChangedAdapters[$adapterIndex].DynamicMacAddressEnabled = $false
+        } else {
+            $modeChangedAdapters[$adapterIndex].PSObject.Properties.Remove('DynamicMacAddressEnabled')
+        }
+        $modeRejected = $false
+        try {
+            Resolve-AtlasoHyperVSmokeNetworkIdentity -Adapters $modeChangedAdapters `
+                -ManagementSwitch Management -ServiceSwitch Services -ExpectedIdentity $pendingIdentity `
+                -AllowPendingMacAddress | Out-Null
+        } catch {
+            if ($_.Exception.Message -notmatch 'stopped being explicitly dynamic') { throw }
+            $expectedMode = if ($allocationMode -eq 'static') { 'False' } else { 'missing' }
+            $expectedMac = if ($adapterIndex -eq 0) { '00:15:5d:44:55:66' } else { '00:15:5d:11:22:33' }
+            foreach ($detail in @(
+                    "Expected dynamic mode 'True', observed '$expectedMode'",
+                    "Expected MAC '00:00:00:00:00:00', observed '$expectedMac'",
+                    "Management='management-id'", "Services='service-id'"
+                )) {
+                if (-not $_.Exception.Message.Contains($detail)) {
+                    throw "Dynamic-mode rejection omitted diagnostic detail: $detail"
+                }
+            }
+            $modeRejected = $true
+        }
+        if (-not $modeRejected) { throw "Pending allocation admitted $allocationMode mode for adapter $adapterIndex." }
+    }
+}
+foreach ($adapterIndex in @(0, 1)) {
+    foreach ($allocationMode in @('static', 'missing')) {
+        $zeroAdapters = @($pendingAdapters | ForEach-Object { $_.PSObject.Copy() })
+        if ($allocationMode -eq 'static') {
+            $zeroAdapters[$adapterIndex].DynamicMacAddressEnabled = $false
+        } else {
+            $zeroAdapters[$adapterIndex].PSObject.Properties.Remove('DynamicMacAddressEnabled')
+        }
+        $modeRejected = $false
+        try {
+            Resolve-AtlasoHyperVSmokeNetworkIdentity -Adapters $zeroAdapters `
+                -ManagementSwitch Management -ServiceSwitch Services -ExpectedIdentity $pendingIdentity `
+                -AllowMissingAddress -AllowPendingMacAddress | Out-Null
+        } catch {
+            $expectedMode = if ($allocationMode -eq 'static') { 'False' } else { 'missing' }
+            foreach ($detail in @(
+                    'no assigned dynamic MAC address',
+                    "Expected MAC '00:00:00:00:00:00', observed '00:00:00:00:00:00'",
+                    "Expected dynamic mode 'True' for an unassigned MAC, observed '$expectedMode'",
+                    "Pending acquisition allowed='True'",
+                    "Management='management-id'", "Services='service-id'"
+                )) {
+                if (-not $_.Exception.Message.Contains($detail)) { throw "Zero-MAC diagnostic omitted: $detail" }
+            }
+            $modeRejected = $true
+        }
+        if (-not $modeRejected) { throw "Zero MAC admitted $allocationMode mode for adapter $adapterIndex." }
+    }
+}
+$pendingAdapters[1].MacAddress = '00155D112233'
+$partialIdentity = Resolve-AtlasoHyperVSmokeNetworkIdentity -Adapters $pendingAdapters `
+    -ManagementSwitch Management -ServiceSwitch Services -ExpectedIdentity $pendingIdentity `
+    -AllowMissingAddress -AllowPendingMacAddress
+foreach ($mutation in @('MacAddress', 'Id', 'SwitchName')) {
+    $changedAdapters = @($pendingAdapters | ForEach-Object { $_.PSObject.Copy() })
+    $changedAdapters[1].$mutation = switch ($mutation) {
+        MacAddress { '00155DAABBCC' }; Id { 'replacement-id' }; SwitchName { 'other-switch' }
+    }
+    $rejected = $false
+    try {
+        Resolve-AtlasoHyperVSmokeNetworkIdentity -Adapters $changedAdapters `
+            -ManagementSwitch Management -ServiceSwitch Services -ExpectedIdentity $partialIdentity `
+            -AllowMissingAddress -AllowPendingMacAddress | Out-Null
+    } catch { $rejected = $true }
+    if (-not $rejected) { throw "Pending service allocation hid a management $mutation replacement." }
+}
+$pendingAdapters[0].MacAddress = '00155D445566'
+$allocatedIdentity = Resolve-AtlasoHyperVSmokeNetworkIdentity -Adapters $pendingAdapters `
+    -ManagementSwitch Management -ServiceSwitch Services -ExpectedIdentity $partialIdentity `
+    -AllowMissingAddress -AllowPendingMacAddress
+Resolve-AtlasoHyperVSmokeNetworkIdentity -Adapters $pendingAdapters -ManagementSwitch Management `
+    -ServiceSwitch Services -ExpectedIdentity $allocatedIdentity | Out-Null
+foreach ($replacementMac in @('00155D667788', '000000000000')) {
+    $pendingAdapters[0].MacAddress = $replacementMac
+    $rejected = $false
+    try {
+        Resolve-AtlasoHyperVSmokeNetworkIdentity -Adapters $pendingAdapters -ManagementSwitch Management `
+            -ServiceSwitch Services -ExpectedIdentity $allocatedIdentity -AllowPendingMacAddress | Out-Null
+    } catch { $rejected = $true }
+    if (-not $rejected) { throw 'An allocated service MAC changed without rejection.' }
+}
+$pendingAdapters[0].DynamicMacAddressEnabled = $false
+$rejected = $false
+try {
+    Resolve-AtlasoHyperVSmokeNetworkIdentity -Adapters $pendingAdapters -ManagementSwitch Management `
+        -ServiceSwitch Services -AllowPendingMacAddress | Out-Null
+} catch { $rejected = $true }
+if (-not $rejected) { throw 'An unassigned static MAC was admitted as pending.' }
+
+& {
+    $parseTokens = $null
+    $parseErrors = $null
+    $smokeAst = [System.Management.Automation.Language.Parser]::ParseFile(
+        $hyperVSmokePath, [ref]$parseTokens, [ref]$parseErrors)
+    $waitFunction = $smokeAst.Find({ param($node)
+        $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and
+        $node.Name -eq 'Wait-AtlasoHyperVSmokeNetworkIdentity'
+    }, $true)
+    . ([scriptblock]::Create($waitFunction.Extent.Text.Replace('Start-Sleep -Seconds 5', '')))
+    $script:addressScenario = ''
+    <#
+    .SYNOPSIS
+    Return successive provider snapshots for the isolated startup fixture.
+    .PARAMETER VM
+    Unused invocation-owned VM placeholder.
+    .PARAMETER ErrorAction
+    Caller error preference accepted by the fixture.
+    #>
+    function Get-VMNetworkAdapter {
+        param($VM, $ErrorAction)
+        $state = @($hyperVAdapters | ForEach-Object { $_.PSObject.Copy() })
+        if ($script:addressScenario) {
+            $state[1].IPAddresses = if ($script:macSample -lt 2) { @() } else { @($script:addressScenario) }
+        } elseif ($script:macSample -eq 0) {
+            $state[0].MacAddress = '000000000000'
+        } elseif ($script:replaceAssignedMac) { $state[1].MacAddress = '00155DAABBCC' }
+        $script:macSample++
+        return $state
+    }
+    foreach ($replace in @($false, $true)) {
+        $script:macSample = 0
+        $script:replaceAssignedMac = $replace
+        $failed = $false
+        try {
+            $result = Wait-AtlasoHyperVSmokeNetworkIdentity -Vm ([pscustomobject]@{}) `
+                -ManagementSwitch Management -ServiceSwitch Services -ExpectedIdentity $pendingIdentity `
+                -Deadline ([DateTimeOffset]::UtcNow.AddSeconds(30))
+            if ($result.ServiceMacPending -or $script:macSample -ne 2) {
+                throw 'Wait returned before both MAC allocations completed.'
+            }
+        } catch {
+            if (-not $replace -or $_.Exception.Message -notmatch 'changed at field ManagementMac') { throw }
+            $failed = $true
+        }
+        if ($replace -and -not $failed) { throw 'Wait forgot the first assigned management MAC.' }
+    }
+    foreach ($returnedAddress in @('192.0.2.20', '192.0.2.21')) {
+        $script:addressScenario = $returnedAddress
+        $script:macSample = 0
+        $failed = $false
+        try {
+            $result = Wait-AtlasoHyperVSmokeNetworkIdentity -Vm ([pscustomobject]@{}) `
+                -ManagementSwitch Management -ServiceSwitch Services -ExpectedIdentity $hyperVIdentity `
+                -Deadline ([DateTimeOffset]::UtcNow.AddSeconds(30))
+            if ($script:macSample -ne 3 -or $result.Address -ne '192.0.2.20') {
+                throw 'Wait returned stale or changed address evidence.'
+            }
+        } catch {
+            if ($returnedAddress -eq '192.0.2.20' -or
+                $_.Exception.Message -notmatch 'IPv4 address changed') { throw }
+            foreach ($detail in @(
+                    "Expected '192.0.2.20'", "observed '192.0.2.21'",
+                    "Management='$($hyperVIdentity.ManagementAdapterId)'",
+                    "Services='$($hyperVIdentity.ServiceAdapterId)'"
+                )) {
+                if (-not $_.Exception.Message.Contains($detail)) {
+                    throw "Address-change diagnostic omitted: $detail"
+                }
+            }
+            $failed = $true
+        }
+        if ($returnedAddress -ne '192.0.2.20' -and -not $failed) {
+            throw 'Empty provider reports erased the pinned address.'
+        }
+        if ($hyperVIdentity.Address -ne '192.0.2.20') { throw 'Wait mutated the caller identity.' }
+    }
+}
 if ($hyperVIdentity.Address -ne '192.0.2.20' -or
     $hyperVIdentity.ManagementMac -ne '00:15:5d:11:22:33') {
     throw 'Services-first Hyper-V evidence did not select the named Management adapter address.'

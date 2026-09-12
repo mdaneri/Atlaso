@@ -647,9 +647,12 @@ The following cross-cutting boundaries always apply:
   promotion directly with the review handshake cleared; never route finalization failure back to network correction.
 - VCF Helper VCF Installer imports use the destination `OvfManager.ParseDescriptor` contract and a complete reviewed
   property mapping. Direct standalone ESXi imports bind deterministically to the endpoint's single host. Before power-on
-  or DNS, trust, and depot follow-up, verify that the exact imported VM retained every mapped vApp property and a
-  supported OVF environment transport; remove only that task-created VM if verification fails, and report cleanup
-  failure as a partial deployment. Sanitize parser and import warnings against all submitted property values.
+  or DNS, trust, and depot follow-up, verify every reviewed value through the target's OVF transport. Direct ESXi
+  requires a bounded, escaped `guestinfo.ovfEnv` document using the generated import specification's qualified
+  class/id/instance keys and appliance defaults, followed by fresh exact-value readback. Do not require ESXi to retain
+  `vAppConfig`, which it discards during import. Preserve vCenter's vApp property and declared-transport verification.
+  Remove only that task-created VM if installation or verification fails, and report cleanup failure as a partial
+  deployment. Never log the environment XML or values. Sanitize parser and import warnings against all submitted values.
 - VMware release images use separate compacted Photon OS and required Atlaso system-content payload VMDKs, followed by
   empty 500 GiB depot and backup disks. Preserve `/opt/atlaso` and appliance-wide PowerShell modules on the UUID-mounted
   system-content disk, size-gate individual OVF release assets below 2 GiB, and publish the aggregate OVA only when it
@@ -838,6 +841,14 @@ The following cross-cutting boundaries always apply:
   the address with every running Workstation VM and fail closed with the conflicting VMX, MAC, and address when another
   guest reports it or the host-facing neighbor maps elsewhere. Never continue SSH or HTTPS validation through an
   ambiguous address and never modify the user's SSH `known_hosts` automatically during recovery.
+- ESXi boot authorization must consume the exact successful real-Apply manifest from the dedicated encrypted runtime
+  record, never a redacted display preview. Keep ciphertext out of Apply baselines and portable settings exports;
+  publish the runtime record transactionally after successful activation, including factory reset, and preserve it
+  across failed and dry-run applies. Bind hidden desired edits to the submitted snapshot with the ESXi-specific keyed
+  marker. Corrupt protected evidence must fail closed without legacy fallback. Keep incomplete runtime state selectable
+  for real Apply, explain recovery in the existing Validation rail, and require a fresh host boot attempt afterward.
+  Reuse one request-local manifest index and revision check across management diagnostics. Preserve standalone IP,
+  MAC, and host UUID identifiers without adding UUID as an authorization requirement. See [ESXi Network Boot](docs/services/ipxe.md).
 - Inventory Linux reports use bounded schema v2 while accepting and normalizing legacy v1. Keep sysfs authoritative for
   device enumeration, use metadata tools only for structured enrichment/readable names, retain JSON in the existing
   report column, enforce the 256 KiB boundary, and never submit raw command output. Its five-minute local console
@@ -913,12 +924,15 @@ The following cross-cutting boundaries always apply:
   that overlaps a VMware DHCP range or fixed address, and exclude observed non-ICMP use. Serialize the durable ledger
   across Atlaso worktrees, bind each entry to the exact task worktree, source commit, branch, owner process, Windows
   boot identity, output root, VM name, and VMX path, and retain it while that exact VM remains active or recovery
-  evidence is ambiguous. A dead owner cannot release its reservation during the same Windows boot because a surviving
-  descendant could still start the VM. Permit stale recovery only after a changed host-boot identity proves that tree
-  gone and the exact VM and address are inactive. Keep the non-secret release handoff outside temporary credential
+  evidence is ambiguous. A dead owner alone cannot release its reservation during the same Windows boot because a surviving
+  descendant could still start the VM. Permit stale recovery after either a valid controlling-parent termination
+  receipt or a changed host-boot identity proves that tree gone, and the exact VM and address are inactive. Keep the
+  non-secret release handoff outside temporary credential
   storage, never recover it while its exact owner process remains active, retry it after a preserved VM stops, and
   delete it only after exact ledger release succeeds. Never replay a dead same-boot owner's handoff unless the
-  controlling parent proved complete process-tree termination; otherwise require a host-restart boundary. Publish
+  controlling parent proved complete process-tree termination, either in the current invocation or through its
+  durable exact-allocation termination receipt. A later caller must verify that receipt and the original controller
+  is inactive before rechecking VM and address state. Missing legacy proof still requires a host-restart boundary. Publish
   recoverable release intent before ledger admission, then publish both records with write-through replacement plus
   directory metadata synchronization. Release
   normally only after inactive-VM completion. Exclude every IPv4 address on the selected bridged host interface, and never
@@ -1051,6 +1065,20 @@ The following cross-cutting boundaries always apply:
   construct a root-only repository view in volatile `/run` storage, pass only its non-secret path to TDNF, and remove
   that view when each command exits. Never place Photon repository credentials in durable package-client configuration
   or command arguments.
+- Maintenance retains the Backup / Restore route and groups LDAP, Backup, Reset, and Diagnostics in shared tabs.
+  Diagnostic bundles are administrator-only, bounded observational captures through the shared grid and reviewed wizard;
+  the recovery CLI must remain independent of web, worker, writable database, and application startup. Default to a
+  30-minute window, minimal evidence, detailed logs off, and hostname/username anonymization off. When selected, assign
+  consistent per-bundle aliases only after reserving all collected source identities; never export their mapping or
+  internal markers. Preserve IP and MAC addresses. Exclude secrets, arbitrary files, free-form logs, environments, and
+  command lines regardless of privacy selection. Privileged reads use only fixed helper source allowlists and bounded
+  projections; never accept arbitrary commands or paths. Recompute integrity metadata over final exported bytes and
+  report unavailable, truncated, or failed evidence truthfully. Publish private archives with current authorization,
+  mode `0600`, non-cacheable downloads, cancellation, manual deletion of retained expired bundles, and 24-hour managed
+  retention. CLI archives remain operator-owned. Factory reset must safely clear the dedicated spool before replacing
+  retention records. Collection never applies configuration, restarts services, repairs state, or uploads evidence.
+  Keep the [operator guide](docs/operate/diagnostics.md) and
+  [collector contract](docs/contribute/diagnostic-collectors.md) aligned with these boundaries.
 - Preflight every settings archive section, required row field, relationship, and enabled VLAN or static-route target
   before clearing desired state. A failed restore must roll back database changes and preserve separately staged LDAP
   recovery metadata and in-memory bytes. Clear staged recovery material only after a successful restore commit or
@@ -1094,10 +1122,13 @@ The following cross-cutting boundaries always apply:
 - Use the locally bundled `window.AtlasoMonaco` integration for code or configuration editing. ESXi Kickstarts use the
   dedicated Kickstart language and derive vault scope only from exact source markers; never restore an explicit
   Kickstart-to-vault selector or expose resolved values in browser state or completion metadata. Dynamic Kickstart
-  retrieval requires a cryptographically random pending boot claim plus an administrator-entered one-time code shown
-  by the intended host console. Only that exact claim may receive a short-lived, atomic single-use boot capability
+  retrieval requires a cryptographically random boot claim. The applied **Require console authorization** policy is
+  off by default; enabling it additionally requires an administrator-entered one-time code shown by the intended host
+  console. Desired policy edits take effect only after successful Apply; legacy snapshots retain approval until then.
+  Only that exact claim may receive a short-lived, atomic single-use boot capability
   bound to the applied host, full Kickstart revision, listener, and generated attempt. Store only claim, code, and
-  capability verifiers, never treat a MAC address as authentication, and never expose capability paths in management
+  capability verifiers. Automatic mode admits assigned applied hosts without console authentication; never represent
+  a MAC address as proof of identity, and never expose capability paths in management
   UI/API, audit, job, problem, or log data. The exact pending boot protocol response may carry only its own claim.
 - Browser navigation to a globally disabled Web Terminal must render the authenticated Atlaso unavailable-state page;
   reserve JSON and protocol errors for ticket, API, and WebSocket consumers.

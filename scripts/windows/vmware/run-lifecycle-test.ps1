@@ -109,9 +109,665 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
-Import-Module (Join-Path $PSScriptRoot 'Atlaso.VmwareTestIdentity.psm1') -Force
 
 $repoRoot = Resolve-Path -LiteralPath (Join-Path $PSScriptRoot '..\..\..')
+<#
+.SYNOPSIS
+Refuse consumer output after any snapshot namespace or security change.
+.PARAMETER Pins
+Retained snapshot objects including native recursive change guards.
+#>
+function Assert-LifecycleSourcePins {
+    param([Collections.Generic.List[IDisposable]]$Pins)
+    foreach ($pin in $Pins) {
+        if ($pin.GetType().FullName -eq 'Atlaso.LifecycleSourceChangeGuardV1') { $pin.AssertUnchanged() }
+    }
+}
+<#
+.SYNOPSIS
+Bind runtime lifecycle resources to one clean source commit.
+.PARAMETER RepositoryRoot
+Exact lifecycle source checkout to inspect.
+.PARAMETER ExpectedCommit
+Previously admitted source commit required for a later resource or wheel operation.
+#>
+function Get-LifecycleSourceCommit {
+    param([Parameter(Mandatory)][string]$RepositoryRoot, [string]$ExpectedCommit = '')
+    $activeSourcePins = Get-Variable -Name runtimeConsumerPins -ValueOnly -ErrorAction SilentlyContinue
+    if ($activeSourcePins) { Assert-LifecycleSourcePins -Pins $activeSourcePins }
+    $commit = (& git -C $RepositoryRoot rev-parse HEAD).Trim()
+    if ($LASTEXITCODE -ne 0 -or $commit -notmatch '^[0-9a-f]{40}$') { throw 'Cannot resolve lifecycle source commit.' }
+    $changes = @(& git -C $RepositoryRoot status --porcelain --untracked-files=normal)
+    if ($LASTEXITCODE -ne 0 -or $changes.Count -gt 0) { throw 'Lifecycle runtime requires a clean source worktree before resource creation or wheel publication.' }
+    $confirmed = (& git -C $RepositoryRoot rev-parse HEAD).Trim()
+    if ($LASTEXITCODE -ne 0 -or $confirmed -cne $commit -or ($ExpectedCommit -and $ExpectedCommit -cne $commit)) {
+        throw 'Lifecycle source commit changed after admission.'
+    }
+    return $commit
+}
+
+
+<#
+.SYNOPSIS
+Verify the already parsed orchestration script against the admitted Git object.
+.PARAMETER RepositoryRoot
+Repository containing the admitted runner object.
+.PARAMETER Commit
+Full admitted source commit.
+.PARAMETER ParsedScript
+Text from the executing script block AST, not a reread of its mutable pathname.
+#>
+function Assert-LifecycleRunnerSource {
+    param([Parameter(Mandatory)][string]$RepositoryRoot,
+        [Parameter(Mandatory)][string]$Commit, [Parameter(Mandatory)][string]$ParsedScript)
+    $admittedLines = @(& git -C $RepositoryRoot show "${Commit}:scripts/windows/vmware/run-lifecycle-test.ps1")
+    if ($LASTEXITCODE -ne 0) { throw 'Cannot read the admitted lifecycle runner object.' }
+    $admittedText = ($admittedLines -join "`n").TrimStart([char]0xFEFF).TrimEnd("`r", "`n")
+    $parsedText = $ParsedScript.Replace("`r`n", "`n").TrimStart([char]0xFEFF).TrimEnd("`r", "`n")
+    if ($parsedText -cne $admittedText) {
+        throw 'Parsed lifecycle runner differs from the admitted commit; no resources may be created.'
+    }
+}
+
+<#
+.SYNOPSIS
+Export an admitted Git object into a fresh task-owned wheel source directory.
+.PARAMETER RepositoryRoot
+Repository containing the admitted immutable commit object.
+.PARAMETER Commit
+Full admitted commit SHA; the live checkout is never a build input.
+.PARAMETER DestinationRoot
+Existing task-owned wheel output root containing the unique archive and source directory.
+.PARAMETER PreflightGuard
+Optional invocation inventory receiving the exact archive paths before extraction.
+.PARAMETER ConsumerPins
+Caller-owned directory pins that must remain alive until every snapshot consumer exits.
+#>
+function New-LifecycleSourceSnapshot {
+    param([Parameter(Mandatory)][string]$RepositoryRoot,
+        [Parameter(Mandatory)][ValidatePattern('^[0-9a-f]{40}$')][string]$Commit,
+        [Parameter(Mandatory)][string]$DestinationRoot, [object]$PreflightGuard,
+        [Parameter(Mandatory)][AllowEmptyCollection()][Collections.Generic.List[IDisposable]]$ConsumerPins)
+    if (-not ('Atlaso.SnapshotFileIdentityV1' -as [type])) {
+        Add-Type -TypeDefinition @'
+using System;
+using System.IO;
+using System.ComponentModel;
+using System.Runtime.InteropServices;
+using Microsoft.Win32.SafeHandles;
+namespace Atlaso {
+    public static class SnapshotFileIdentityV1 {
+        [StructLayout(LayoutKind.Sequential)] private struct Info {
+            public uint Attributes, CreateLow, CreateHigh, AccessLow, AccessHigh, WriteLow, WriteHigh;
+            public uint Volume, SizeHigh, SizeLow, Links, IndexHigh, IndexLow;
+        }
+        [DllImport("kernel32.dll", SetLastError=true)]
+        private static extern bool GetFileInformationByHandle(SafeFileHandle h, out Info info);
+        public static string Get(SafeFileHandle handle) {
+            Info info;
+            if (!GetFileInformationByHandle(handle, out info)) throw new Win32Exception(Marshal.GetLastWin32Error());
+            if (info.Links != 1 || (info.Attributes & 0x410) != 0)
+                throw new IOException("Snapshot creation identity or single-link requirement failed.");
+            return info.Volume.ToString("X8") + info.IndexHigh.ToString("X8") + info.IndexLow.ToString("X8");
+        }
+    }
+}
+'@
+    }
+    if (-not ('Atlaso.SnapshotDirectoryPinV2' -as [type])) {
+        Add-Type -TypeDefinition @'
+using System;
+using System.IO;
+using System.ComponentModel;
+using System.Runtime.InteropServices;
+using Microsoft.Win32.SafeHandles;
+namespace Atlaso {
+    public static class SnapshotDirectoryPinV2 {
+        [DllImport("kernel32.dll", CharSet=CharSet.Unicode, SetLastError=true)]
+        private static extern SafeFileHandle CreateFile(string path, uint access, uint share,
+            IntPtr security, uint creation, uint flags, IntPtr template);
+        [DllImport("kernel32.dll", SetLastError=true)]
+        private static extern bool GetFileInformationByHandleEx(SafeFileHandle handle, int kind,
+            out TagInfo info, uint size);
+        [StructLayout(LayoutKind.Sequential)] private struct TagInfo { public uint Attributes, Tag; }
+        [DllImport("advapi32.dll", SetLastError=true)]
+        private static extern bool SetKernelObjectSecurity(SafeFileHandle handle, uint information, byte[] descriptor);
+        public static void SetDacl(SafeFileHandle handle, byte[] descriptor) {
+            // Set only this kernel object: do not propagate ACLs into unverified children.
+            if (!SetKernelObjectSecurity(handle, 4, descriptor))
+                throw new Win32Exception(Marshal.GetLastWin32Error());
+        }
+        public static SafeFileHandle Open(string path, bool writeDacl = false) {
+            var handle = CreateFile(path, writeDacl ? 0x40081u : 0x81u, 3, IntPtr.Zero, 3, 0x02200000, IntPtr.Zero);
+            if (handle.IsInvalid) { handle.Dispose(); throw new Win32Exception(Marshal.GetLastWin32Error()); }
+            try {
+                TagInfo info;
+                if (!GetFileInformationByHandleEx(handle, 9, out info, 8))
+                    throw new Win32Exception(Marshal.GetLastWin32Error());
+                if ((info.Attributes & 0x410) != 0x10)
+                    throw new IOException("Snapshot directory must be an ordinary non-reparse directory.");
+                return handle;
+            } catch { handle.Dispose(); throw; }
+        }
+    }
+}
+'@
+    }
+if (-not ('Atlaso.LifecycleSourceChangeGuardV1' -as [type])) {
+    Add-Type -TypeDefinition @'
+using System;
+using System.ComponentModel;
+using System.Threading;
+using System.Runtime.InteropServices;
+using Microsoft.Win32.SafeHandles;
+namespace Atlaso {
+    public sealed class LifecycleSourceChangeGuardV1 : IDisposable {
+        [StructLayout(LayoutKind.Sequential)]
+        private struct Overlapped {
+            public IntPtr Internal, InternalHigh;
+            public uint Offset, OffsetHigh;
+            public IntPtr Event;
+        }
+        [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+        private static extern SafeFileHandle CreateFileW(string path, uint access, uint sharing,
+            IntPtr security, uint disposition, uint flags, IntPtr template);
+        [DllImport("kernel32.dll", SetLastError = true)]
+        private static extern bool ReadDirectoryChangesW(SafeFileHandle directory, IntPtr buffer,
+            uint length, bool subtree, uint filter, IntPtr returned, IntPtr overlapped, IntPtr completion);
+        [DllImport("kernel32.dll", SetLastError = true)]
+        private static extern bool GetOverlappedResult(SafeFileHandle directory, IntPtr overlapped,
+            out uint transferred, bool wait);
+        [DllImport("kernel32.dll", SetLastError = true)]
+        private static extern bool CancelIoEx(SafeFileHandle directory, IntPtr overlapped);
+        private SafeFileHandle handle;
+        private IntPtr buffer, overlapped;
+        private bool pending;
+        public LifecycleSourceChangeGuardV1(string path, EventWaitHandle changes) {
+            try {
+                // Arm before enumeration. Unlike FileSystemWatcher callbacks, polling
+                // the native completion has no managed event-delivery lag. One event or
+                // buffer overflow permanently invalidates this scan; never rearm it.
+                handle = CreateFileW(path, 1, 3, IntPtr.Zero, 3, 0x42000000, IntPtr.Zero);
+                if (handle.IsInvalid) throw new Win32Exception(Marshal.GetLastWin32Error());
+                buffer = Marshal.AllocHGlobal(65536);
+                overlapped = Marshal.AllocHGlobal(Marshal.SizeOf<Overlapped>());
+                Marshal.StructureToPtr(new Overlapped { Event = changes.SafeWaitHandle.DangerousGetHandle() }, overlapped, false);
+                if (!ReadDirectoryChangesW(handle, buffer, 65536, true, 0x15F,
+                    IntPtr.Zero, overlapped, IntPtr.Zero))
+                    throw new Win32Exception(Marshal.GetLastWin32Error());
+                pending = true;
+            } catch { Dispose(); throw; }
+        }
+        public void AssertUnchanged() {
+            uint transferred;
+            if (GetOverlappedResult(handle, overlapped, out transferred, false))
+                throw new InvalidOperationException("Admitted source snapshot changed during consumption.");
+            int error = Marshal.GetLastWin32Error();
+            if (error != 996) // ERROR_IO_INCOMPLETE is the only unchanged state.
+                throw new Win32Exception(error, "Admitted source snapshot change tracking failed.");
+        }
+        public void Dispose() {
+            if (handle != null && !handle.IsClosed) {
+                if (pending) {
+                    CancelIoEx(handle, overlapped);
+                    uint transferred;
+                    // Another request can signal the shared event before this cancellation
+                    // completes. Confirm this exact request is terminal before freeing.
+                    while (!GetOverlappedResult(handle, overlapped, out transferred, false) &&
+                        Marshal.GetLastWin32Error() == 996) Thread.Sleep(1);
+                    pending = false;
+                }
+                handle.Dispose();
+            }
+            if (overlapped != IntPtr.Zero) { Marshal.FreeHGlobal(overlapped); overlapped = IntPtr.Zero; }
+            if (buffer != IntPtr.Zero) { Marshal.FreeHGlobal(buffer); buffer = IntPtr.Zero; }
+        }
+    }
+}
+'@
+}
+
+    $snapshotChangePins = [Collections.Generic.List[IDisposable]]::new()
+    $snapshotDirectoryPins = [Collections.Generic.List[Microsoft.Win32.SafeHandles.SafeFileHandle]]::new()
+    $snapshotDirectoryHandles = @{}
+    $snapshotDirectoryAcls = @{}
+    $snapshotFileAcls = @{}
+    $snapshotAclApplied = $false
+    $snapshotAccepted = $false
+    $snapshotIdentities = [Collections.Generic.Dictionary[string,string]]::new([StringComparer]::OrdinalIgnoreCase)
+    $snapshotPins = [Collections.Generic.List[IO.FileStream]]::new()
+    $snapshotId = [guid]::NewGuid().ToString('N')
+    $archivePath = Join-Path $DestinationRoot "source-$snapshotId.zip"
+    $snapshotPath = Join-Path $DestinationRoot "source-$snapshotId"
+    if ($PreflightGuard) { $PreflightGuard.Expect($archivePath) }
+    # Capture Git output in memory so the trusted archive digest never comes from
+    # a writable pathname. A later disk substitution must match these exact bytes.
+    $archiveProcess = [Diagnostics.Process]::new()
+    $archiveProcess.StartInfo.FileName = (Get-Command git -ErrorAction Stop).Source
+    $archiveProcess.StartInfo.UseShellExecute = $false
+    $archiveProcess.StartInfo.CreateNoWindow = $true
+    $archiveProcess.StartInfo.RedirectStandardOutput = $true
+    $archiveProcess.StartInfo.RedirectStandardError = $true
+    foreach ($argument in @('-C', $RepositoryRoot, 'archive', '--format=zip', $Commit)) {
+        $archiveProcess.StartInfo.ArgumentList.Add($argument)
+    }
+    $archiveMemory = [IO.MemoryStream]::new()
+    try {
+        if (-not $archiveProcess.Start()) { throw 'Could not start admitted commit archiving.' }
+        $archiveError = $archiveProcess.StandardError.ReadToEndAsync()
+        $archiveProcess.StandardOutput.BaseStream.CopyTo($archiveMemory)
+        $archiveProcess.WaitForExit()
+        if ($archiveProcess.ExitCode -ne 0) { throw "Could not archive the admitted lifecycle commit: $($archiveError.GetAwaiter().GetResult())" }
+        $archiveBytes = $archiveMemory.ToArray()
+    } finally { $archiveMemory.Dispose(); $archiveProcess.Dispose() }
+    $archiveDigest = [Security.Cryptography.SHA256]::HashData($archiveBytes)
+    $archiveWriter = [IO.File]::Open($archivePath, 'CreateNew', 'Write', 'None')
+    try { if ($PreflightGuard) { $PreflightGuard.Record($archivePath, $archiveWriter.SafeFileHandle) }; $archiveWriter.Write($archiveBytes); $archiveWriter.Flush($true) } finally { $archiveWriter.Dispose() }
+    $archiveRead = [IO.File]::Open($archivePath, 'Open', 'Read', 'Read')
+    try {
+    if ([Convert]::ToHexString([Security.Cryptography.SHA256]::HashData($archiveRead)) -cne [Convert]::ToHexString($archiveDigest)) {
+        throw 'Admitted source archive bytes changed before extraction.'
+    }
+    $archiveRead.Position = 0
+    if ($PreflightGuard) {
+        $PreflightGuard.Expect($snapshotPath)
+        $archiveInventory = [IO.Compression.ZipArchive]::new($archiveRead, [IO.Compression.ZipArchiveMode]::Read, $true)
+        try {
+            foreach ($entry in $archiveInventory.Entries) {
+                $expectedPath = [IO.Path]::GetFullPath((Join-Path $snapshotPath $entry.FullName))
+                $PreflightGuard.Expect($expectedPath)
+                $expectedParent = [IO.Path]::GetDirectoryName($expectedPath)
+                while ($expectedParent -and $expectedParent.Length -ge $snapshotPath.Length) {
+                    $PreflightGuard.Expect($expectedParent)
+                    $expectedParent = [IO.Path]::GetDirectoryName($expectedParent)
+                }
+            }
+        } finally { $archiveInventory.Dispose() }
+    }
+    # Pin ancestors top-down and each fresh directory before any child write.
+    # No delete sharing prevents replacement by a junction during extraction.
+    $snapshotAncestors = [Collections.Generic.Stack[string]]::new()
+    $snapshotAncestor = [IO.Path]::GetFullPath($DestinationRoot)
+    while ($snapshotAncestor) {
+        $snapshotAncestors.Push($snapshotAncestor)
+        $snapshotAncestor = [IO.Path]::GetDirectoryName($snapshotAncestor)
+    }
+    # The preflight guard already retains these ancestor and result-root pins.
+    while (-not $PreflightGuard -and $snapshotAncestors.Count) {
+        $snapshotDirectoryPins.Add([Atlaso.SnapshotDirectoryPinV2]::Open($snapshotAncestors.Pop()))
+    }
+    New-Item -ItemType Directory -Path $snapshotPath -ErrorAction Stop | Out-Null
+    $snapshotRootPin = [Atlaso.SnapshotDirectoryPinV2]::Open($snapshotPath, $true)
+    $snapshotDirectoryPins.Add($snapshotRootPin)
+    $snapshotDirectoryHandles[$snapshotPath] = $snapshotRootPin
+    if ($PreflightGuard) { $PreflightGuard.RecordDirectory($snapshotPath) }
+    $archiveRead.Position = 0
+    $extractArchive = [IO.Compression.ZipArchive]::new($archiveRead, [IO.Compression.ZipArchiveMode]::Read, $true)
+    $createdDirectories = [Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
+    $createdDirectories.Add($snapshotPath) | Out-Null
+    try {
+        foreach ($entry in $extractArchive.Entries) {
+            $entryPath = [IO.Path]::GetFullPath((Join-Path $snapshotPath $entry.FullName)).TrimEnd([IO.Path]::DirectorySeparatorChar)
+            if (-not $entryPath.StartsWith($snapshotPath + [IO.Path]::DirectorySeparatorChar, [StringComparison]::OrdinalIgnoreCase)) {
+                throw 'Archive entry escaped its snapshot root.'
+            }
+            $directoryPath = if ($entry.FullName.EndsWith('/')) { $entryPath } else { [IO.Path]::GetDirectoryName($entryPath) }
+            $missing = [Collections.Generic.Stack[string]]::new()
+            while (-not $createdDirectories.Contains($directoryPath)) {
+                $missing.Push($directoryPath); $directoryPath = [IO.Path]::GetDirectoryName($directoryPath)
+            }
+            while ($missing.Count) {
+                $directoryPath = $missing.Pop()
+                New-Item -ItemType Directory -Path $directoryPath -ErrorAction Stop | Out-Null
+                $snapshotChildPin = [Atlaso.SnapshotDirectoryPinV2]::Open($directoryPath, $true)
+                $snapshotDirectoryPins.Add($snapshotChildPin)
+                $snapshotDirectoryHandles[$directoryPath] = $snapshotChildPin
+                if ($PreflightGuard) { $PreflightGuard.RecordDirectory($directoryPath) }
+                $createdDirectories.Add($directoryPath) | Out-Null
+            }
+            if ($entry.FullName.EndsWith('/')) { continue }
+            $entryWriter = [IO.File]::Open($entryPath, 'CreateNew', 'Write', 'None')
+            try {
+                $snapshotIdentities.Add($entryPath, [Atlaso.SnapshotFileIdentityV1]::Get($entryWriter.SafeFileHandle))
+                if ($PreflightGuard) { $PreflightGuard.Record($entryPath, $entryWriter.SafeFileHandle) }
+                $entryReader = $entry.Open()
+                try { $entryReader.CopyTo($entryWriter) } finally { $entryReader.Dispose() }
+                $entryWriter.Flush($true)
+            } finally { $entryWriter.Dispose() }
+        }
+    } finally { $extractArchive.Dispose() }
+    # Deny ordinary same-user writes, including creation/replacement beneath every
+    # directory. Keep DELETE rights available to supported owned-artifact cleanup.
+    # Pin the actual creation objects before propagating any inherited ACL. A
+    # same-byte hard-link substitution must never change an external descriptor.
+    foreach ($createdFile in $snapshotIdentities.Keys) {
+        $snapshotFilePin = [IO.File]::Open($createdFile, 'Open', 'Read', 'Read')
+        $snapshotPins.Add($snapshotFilePin)
+        if ([Atlaso.SnapshotFileIdentityV1]::Get($snapshotFilePin.SafeFileHandle) -cne $snapshotIdentities[$createdFile]) {
+            throw 'Snapshot creation identity or single-link requirement failed.'
+        }
+        $snapshotFileAcls[$createdFile] = Get-Acl -LiteralPath $createdFile
+    }
+    $sourceSid = [Security.Principal.WindowsIdentity]::GetCurrent().User
+    $directoryOnlyDeny = [Security.AccessControl.FileSystemAccessRule]::new($sourceSid,
+        [Security.AccessControl.FileSystemRights]::Write, [Security.AccessControl.AccessControlType]::Deny)
+    foreach ($expectedDirectory in $createdDirectories) {
+        $directoryAcl = Get-Acl -LiteralPath $expectedDirectory
+        $snapshotDirectoryAcls[$expectedDirectory] = $directoryAcl.GetSecurityDescriptorBinaryForm()
+        $directoryAcl.AddAccessRule($directoryOnlyDeny)
+        [Atlaso.SnapshotDirectoryPinV2]::SetDacl($snapshotDirectoryHandles[$expectedDirectory], $directoryAcl.GetSecurityDescriptorBinaryForm())
+    }
+    # Every expected directory now rejects child creation. Inspect immediate entries
+    # only, refusing unknown directories before traversing or touching their ACLs.
+    foreach ($expectedDirectory in $createdDirectories) {
+        foreach ($child in Get-ChildItem -LiteralPath $expectedDirectory -Force -ErrorAction Stop) {
+            if ($child.Attributes -band [IO.FileAttributes]::ReparsePoint -or
+                ($child.PSIsContainer -and -not $createdDirectories.Contains($child.FullName)) -or
+                (-not $child.PSIsContainer -and -not $snapshotIdentities.ContainsKey($child.FullName))) {
+                throw 'Admitted source snapshot contains an unexpected entry before ACL propagation.'
+            }
+        }
+    }
+    $denyWrite = [Security.AccessControl.FileSystemAccessRule]::new($sourceSid,
+        [Security.AccessControl.FileSystemRights]::Write,
+        ([Security.AccessControl.InheritanceFlags]::ContainerInherit -bor [Security.AccessControl.InheritanceFlags]::ObjectInherit),
+        [Security.AccessControl.PropagationFlags]::None, [Security.AccessControl.AccessControlType]::Deny)
+    $sourceAcl = Get-Acl -LiteralPath $snapshotPath
+    $sourceAcl.AddAccessRule($denyWrite)
+    $snapshotAclApplied = $true
+    Set-Acl -LiteralPath $snapshotPath -AclObject $sourceAcl -ErrorAction Stop
+    $sourceChanges = [Threading.EventWaitHandle]::new($false, [Threading.EventResetMode]::ManualReset)
+    $snapshotChangePins.Add($sourceChanges)
+    $sourceChangeGuard = [Atlaso.LifecycleSourceChangeGuardV1]::new($snapshotPath, $sourceChanges)
+    $snapshotChangePins.Add($sourceChangeGuard)
+    $archiveRead.Position = 0
+    $verifiedArchive = [IO.Compression.ZipArchive]::new($archiveRead, [IO.Compression.ZipArchiveMode]::Read, $true)
+    $expectedFiles = [Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
+    try {
+        foreach ($entry in $verifiedArchive.Entries) {
+            if ($entry.FullName.EndsWith('/')) { continue }
+            $filePath = [IO.Path]::GetFullPath((Join-Path $snapshotPath $entry.FullName))
+            $expectedFiles.Add($filePath) | Out-Null
+            $expectedStream = $entry.Open()
+            $actualStream = [IO.File]::Open($filePath, 'Open', 'Read', 'Read')
+            try {
+                if ([Convert]::ToHexString([Security.Cryptography.SHA256]::HashData($expectedStream)) -cne
+                    [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData($actualStream))) {
+                    throw 'Admitted source snapshot bytes differ from the Git archive.'
+                }
+            } finally { $actualStream.Dispose(); $expectedStream.Dispose() }
+        }
+        foreach ($entry in Get-ChildItem -LiteralPath $snapshotPath -Recurse -Force -ErrorAction Stop) {
+            if ($entry.Attributes -band [IO.FileAttributes]::ReparsePoint -or
+                (-not $entry.PSIsContainer -and -not $expectedFiles.Contains($entry.FullName))) {
+                throw 'Admitted source snapshot contains an unexpected entry.'
+            }
+        }
+    } finally { $verifiedArchive.Dispose() }
+    $sourceChangeGuard.AssertUnchanged()
+    $snapshotAccepted = $true
+    foreach ($directoryPin in $snapshotDirectoryPins) { $ConsumerPins.Add($directoryPin) }
+    foreach ($filePin in $snapshotPins) { $ConsumerPins.Add($filePin) }
+    $snapshotDirectoryPins.Clear()
+    $snapshotPins.Clear()
+    foreach ($changePin in $snapshotChangePins) { $ConsumerPins.Add($changePin) }
+    $snapshotChangePins.Clear()
+    return $snapshotPath
+    } finally {
+        try {
+        if (-not $snapshotAccepted) {
+            foreach ($frozenDirectory in $snapshotDirectoryAcls.Keys) {
+                [Atlaso.SnapshotDirectoryPinV2]::SetDacl($snapshotDirectoryHandles[$frozenDirectory], $snapshotDirectoryAcls[$frozenDirectory])
+            }
+            if ($snapshotAclApplied) {
+                foreach ($createdFile in $snapshotFileAcls.Keys) { Set-Acl -LiteralPath $createdFile -AclObject $snapshotFileAcls[$createdFile] -ErrorAction Stop }
+            }
+        }
+        } finally {
+        for ($pinIndex = $snapshotChangePins.Count - 1; $pinIndex -ge 0; $pinIndex--) { $snapshotChangePins[$pinIndex].Dispose() }
+        foreach ($snapshotFilePin in $snapshotPins) { $snapshotFilePin.Dispose() }
+        for ($pinIndex = $snapshotDirectoryPins.Count - 1; $pinIndex -ge 0; $pinIndex--) { $snapshotDirectoryPins[$pinIndex].Dispose() }
+        $archiveRead.Dispose()
+        }
+    }
+}
+
+<#
+.SYNOPSIS
+Pin a fresh preflight root and delete only individually pinned descendants on failure.
+.PARAMETER Path
+Fresh result directory owned by this invocation.
+#>
+function New-LifecyclePreflightGuard {
+    param([Parameter(Mandatory)][string]$Path)
+    if (-not ('Atlaso.PreflightRootGuardV3' -as [type])) {
+        Add-Type -TypeDefinition @'
+using System;
+using System.IO;
+using System.Collections.Generic;
+using System.ComponentModel;
+using System.Runtime.InteropServices;
+using Microsoft.Win32.SafeHandles;
+namespace Atlaso {
+    public sealed class PreflightRootGuardV3 : IDisposable {
+        [DllImport("kernel32.dll", CharSet=CharSet.Unicode, SetLastError=true)]
+        private static extern SafeFileHandle CreateFileW(string p, uint a, uint s, IntPtr x, uint d, uint f, IntPtr t);
+        [DllImport("kernel32.dll", SetLastError=true)]
+        private static extern bool SetFileInformationByHandle(SafeFileHandle h, int c, ref byte data, uint n);
+        [DllImport("kernel32.dll", SetLastError=true)]
+        private static extern bool GetFileInformationByHandleEx(SafeFileHandle h, int c, out TagInfo data, uint n);
+        [StructLayout(LayoutKind.Sequential)] private struct TagInfo { public uint Attributes, Tag; }
+        [DllImport("advapi32.dll", SetLastError=true)]
+        private static extern bool GetKernelObjectSecurity(SafeFileHandle h, uint info, byte[] data, uint size, out uint needed);
+        [DllImport("advapi32.dll", SetLastError=true)]
+        private static extern bool SetKernelObjectSecurity(SafeFileHandle h, uint info, byte[] data);
+        [StructLayout(LayoutKind.Sequential)] private struct FileInfo {
+            public uint Attributes, CreateLow, CreateHigh, AccessLow, AccessHigh, WriteLow, WriteHigh;
+            public uint Volume, SizeHigh, SizeLow, Links, IndexHigh, IndexLow;
+        }
+        [DllImport("kernel32.dll", SetLastError=true)]
+        private static extern bool GetFileInformationByHandle(SafeFileHandle h, out FileInfo info);
+        private readonly Dictionary<SafeFileHandle,byte[]> frozenAcls = new Dictionary<SafeFileHandle,byte[]>();
+        private void Freeze(SafeFileHandle handle) {
+            uint needed;
+            GetKernelObjectSecurity(handle, 4, null, 0, out needed);
+            if (needed == 0) throw new Win32Exception(Marshal.GetLastWin32Error());
+            var original = new byte[needed];
+            if (!GetKernelObjectSecurity(handle, 4, original, needed, out needed))
+                throw new Win32Exception(Marshal.GetLastWin32Error());
+            var acl = new System.Security.AccessControl.DirectorySecurity();
+            acl.SetSecurityDescriptorBinaryForm(original);
+            acl.AddAccessRule(new System.Security.AccessControl.FileSystemAccessRule(
+                System.Security.Principal.WindowsIdentity.GetCurrent().User,
+                System.Security.AccessControl.FileSystemRights.Write,
+                System.Security.AccessControl.AccessControlType.Deny));
+            frozenAcls.Add(handle, original);
+            if (!SetKernelObjectSecurity(handle, 4, acl.GetSecurityDescriptorBinaryForm()))
+                throw new Win32Exception(Marshal.GetLastWin32Error());
+        }
+        public void RestorePermissions() {
+            foreach (var entry in frozenAcls) {
+                if (!entry.Key.IsClosed && !SetKernelObjectSecurity(entry.Key, 4, entry.Value))
+                    throw new Win32Exception(Marshal.GetLastWin32Error());
+            }
+            frozenAcls.Clear();
+        }
+        public string Root { get; private set; }
+        private string rootIdentity;
+        private readonly List<SafeFileHandle> ancestors = new List<SafeFileHandle>();
+        private readonly List<SafeFileHandle> entries = new List<SafeFileHandle>();
+        private readonly HashSet<string> capturedPaths = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        private readonly List<string> capturedDirectories = new List<string>();
+        private readonly Dictionary<string,string> expected = new Dictionary<string,string>(StringComparer.OrdinalIgnoreCase);
+        [StructLayout(LayoutKind.Sequential)] private struct FileId { public ulong Volume, Low, High; }
+        [DllImport("kernel32.dll", EntryPoint="GetFileInformationByHandleEx", SetLastError=true)]
+        private static extern bool GetIdentity(SafeFileHandle h, int c, out FileId data, uint n);
+        private string Identity(SafeFileHandle h) {
+            FileId id;
+            if (!GetIdentity(h, 18, out id, 24)) throw new Win32Exception(Marshal.GetLastWin32Error());
+            return id.Volume.ToString("X16") + id.Low.ToString("X16") + id.High.ToString("X16");
+        }
+        public void Record(string path, SafeFileHandle handle) { expected[Path.GetFullPath(path).TrimEnd(Path.DirectorySeparatorChar)] = Identity(handle); }
+        public void RecordDirectory(string path) { using (var h = Open(path, false, true)) Record(path, h); }
+        public void Published(string stage, string destination) {
+            expected[Path.GetFullPath(destination)] = expected[Path.GetFullPath(stage)];
+        }
+        public void Expect(string path) {
+            string full = Path.GetFullPath(path).TrimEnd(Path.DirectorySeparatorChar);
+            if (!full.StartsWith(Root + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase))
+                throw new IOException("Preflight inventory path escaped its root.");
+            if (!expected.ContainsKey(full)) expected.Add(full, null);
+        }
+        private SafeFileHandle Open(string path, bool delete, bool directory) {
+            var h = CreateFileW(path, 0x81u | (delete ? (directory ? 0x70000u : 0x10000u) : 0), directory ? 3u : 1u,
+                IntPtr.Zero, 3, 0x02200000, IntPtr.Zero);
+            if (h.IsInvalid) { h.Dispose(); throw new Win32Exception(Marshal.GetLastWin32Error()); }
+            TagInfo tag;
+            if (!GetFileInformationByHandleEx(h, 9, out tag, 8) || (tag.Attributes & 0x400) != 0 ||
+                ((tag.Attributes & 0x10) != 0) != directory) {
+                h.Dispose(); throw new IOException("Preflight entry changed type or is a reparse point.");
+            }
+            if (!directory) {
+                FileInfo info;
+                if (!GetFileInformationByHandle(h, out info) || info.Links != 1) {
+                    h.Dispose(); throw new IOException("Preflight artifact is not an ordinary single-link file.");
+                }
+            }
+            return h;
+        }
+        public PreflightRootGuardV3(string path) {
+            Root = Path.GetFullPath(path);
+            try {
+                var chain = new Stack<string>();
+                for (var p = Directory.GetParent(Root); p != null; p = p.Parent) chain.Push(p.FullName);
+                foreach (var p in chain) ancestors.Add(Open(p, false, true));
+                entries.Add(Open(Root, false, true));
+                rootIdentity = Identity(entries[0]);
+                capturedDirectories.Add(Root);
+            } catch { Dispose(); throw; }
+        }
+        private void Capture(string parent) {
+            foreach (string path in Directory.GetFileSystemEntries(parent)) {
+                if (!expected.ContainsKey(Path.GetFullPath(path)))
+                    throw new IOException("Unrecorded preflight artifact; preserve the result root.");
+                bool directory = (File.GetAttributes(path) & FileAttributes.Directory) != 0;
+                var captured = Open(path, true, directory);
+                entries.Add(captured);
+                if (expected[Path.GetFullPath(path)] == null || Identity(captured) != expected[Path.GetFullPath(path)])
+                    throw new IOException("Preflight artifact creation identity changed; preserve the result root.");
+                capturedPaths.Add(Path.GetFullPath(path));
+                if (directory) { Freeze(captured); capturedDirectories.Add(path); Capture(path); }
+            }
+        }
+        public void CaptureSnapshot() {
+            // Upgrade only for failure cleanup, verifying the creation identity
+            // before touching any ACL or descendant after the handle transition.
+            entries[0].Dispose();
+            entries[0] = Open(Root, true, true);
+            if (Identity(entries[0]) != rootIdentity)
+                throw new IOException("Preflight root creation identity changed; preserve all resources.");
+            Freeze(entries[0]); Capture(Root);
+        }
+        public void Remove() {
+            // Check the entire captured namespace before the first destructive step.
+            // Pins prevent replacement/removal; unfamiliar descendants refuse the
+            // whole operation instead of first consuming owned evidence.
+            var observed = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            foreach (string directory in capturedDirectories) {
+                foreach (string path in Directory.GetFileSystemEntries(directory)) {
+                    string full = Path.GetFullPath(path);
+                    if (!capturedPaths.Contains(full))
+                        throw new IOException("Preflight descendant set changed before deletion.");
+                    observed.Add(full);
+                }
+            }
+            if (!observed.SetEquals(capturedPaths)) throw new IOException("Preflight descendant set changed before deletion.");
+            // Capture each child under its already pinned parent. No recursive path
+            // deletion: additions after capture make directory deletion fail closed.
+            for (int i = entries.Count - 1; i >= 0; --i) {
+                byte delete = 1;
+                if (!SetFileInformationByHandle(entries[i], 4, ref delete, 1))
+                    throw new Win32Exception(Marshal.GetLastWin32Error());
+                entries[i].Dispose();
+            }
+        }
+        public void Dispose() {
+            try { RestorePermissions(); }
+            finally {
+                for (int i = entries.Count - 1; i >= 0; --i) entries[i].Dispose();
+                for (int i = ancestors.Count - 1; i >= 0; --i) ancestors[i].Dispose();
+            }
+        }
+    }
+}
+'@
+    }
+    return [Atlaso.PreflightRootGuardV3]::new($Path)
+}
+
+<#
+.SYNOPSIS
+Release only this invocation's result directory after a pre-resource failure.
+.PARAMETER Path
+Fresh result directory created by the current preflight invocation.
+.PARAMETER ExpectedParent
+Independently derived lifecycle results parent in the admitted repository.
+.PARAMETER Guard
+Root identity pin retained from this invocation's directory creation.
+#>
+function Remove-LifecyclePreflightArtifacts {
+    param([Parameter(Mandatory)][string]$Path, [Parameter(Mandatory)][string]$ExpectedParent,
+        [Parameter(Mandatory)][object]$Guard)
+    $fullPath = [IO.Path]::GetFullPath($Path)
+    $parentPath = [IO.Path]::GetFullPath($ExpectedParent)
+    if (-not [IO.Path]::GetDirectoryName($fullPath).Equals($parentPath, [StringComparison]::OrdinalIgnoreCase)) {
+        throw 'Preflight cleanup root is outside its independently derived lifecycle parent.'
+    }
+    $cursor = $fullPath
+    while ($cursor) {
+        $entry = Get-Item -LiteralPath $cursor -Force -ErrorAction Stop
+        if ($entry.Attributes -band [IO.FileAttributes]::ReparsePoint) { throw 'Preflight cleanup path contains a reparse point; preserve it.' }
+        $cursor = [IO.Path]::GetDirectoryName($cursor)
+    }
+    if (-not $Guard.Root.Equals($fullPath, [StringComparison]::OrdinalIgnoreCase)) { throw 'Preflight root guard mismatch.' }
+    try {
+    $Guard.CaptureSnapshot()
+    # This entry point is reachable only before provider/resource creation. Refuse
+    # unexpected output instead of turning a preflight retry into VM cleanup.
+    foreach ($entry in Get-ChildItem -LiteralPath $fullPath -Force -ErrorAction Stop) {
+        if ($entry.Name -notmatch '^(source-[0-9a-f]{32}(\.zip)?|plan\.json|vmware-identity\.json|\.vmware-identity\..*\.tmp|vms|seed)$') {
+            throw 'Unexpected preflight artifact; preserve the result root for diagnosis.'
+        }
+        if ($entry.Name -in @('vms', 'seed') -and @(Get-ChildItem -LiteralPath $entry.FullName -Force).Count) {
+            throw 'Preflight root contains runtime artifacts; preserve it for owned resource cleanup.'
+        }
+    }
+    if (@(Get-ChildItem -LiteralPath $fullPath -Force -Recurse -ErrorAction Stop |
+        Where-Object { $_.Attributes -band [IO.FileAttributes]::ReparsePoint }).Count) {
+        throw 'Preflight artifacts contain a reparse point; preserve them.'
+    }
+    if (-not $Guard.Root.Equals($fullPath, [StringComparison]::OrdinalIgnoreCase)) { throw 'Preflight root guard mismatch.' }
+    $Guard.Remove()
+    if (Test-Path -LiteralPath $fullPath) { throw 'Preflight artifact removal was not verified.' }
+    } finally {
+        $Guard.RestorePermissions()
+    }
+}
+
+# Plan-only output creates no runtime resource and makes no source-provenance claim.
+$sourceCommit = if ($PlanOnly) { '' } else { Get-LifecycleSourceCommit -RepositoryRoot $repoRoot }
+if (-not $PlanOnly) {
+    Assert-LifecycleRunnerSource -RepositoryRoot $repoRoot -Commit $sourceCommit `
+        -ParsedScript $MyInvocation.MyCommand.ScriptBlock.Ast.Extent.Text
+}
+if ($PlanOnly) {
+    Import-Module (Join-Path $PSScriptRoot 'Atlaso.VmwareTestIdentity.psm1') -Force
+} else {
+    $identitySource = @(& git -C $repoRoot show "${sourceCommit}:scripts/windows/vmware/Atlaso.VmwareTestIdentity.psm1")
+    if ($LASTEXITCODE -ne 0) { throw 'Cannot load the admitted lifecycle identity helper.' }
+    New-Module -Name Atlaso.VmwareTestIdentity -ScriptBlock ([scriptblock]::Create(($identitySource -join "`n"))) |
+        Import-Module -Force
+}
 $vmIdentity = New-AtlasoVmwareTestIdentity `
     -PullRequestNumber $PullRequestNumber `
     -Purpose $Purpose `
@@ -124,9 +780,26 @@ $resultRoot = Assert-AtlasoVmwareIdentityDirectory `
 if (Test-Path -LiteralPath $resultRoot) {
     throw "Refusing lifecycle reuse because the exact PR-owned result root already exists: $resultRoot"
 }
+$preflightRootCreated = $false
+$preflightGuard = $null
+$runtimeConsumerPins = [Collections.Generic.List[IDisposable]]::new()
+try {
+try {
+$runtimeSourceRoot = $repoRoot
+if (-not $PlanOnly) {
+    New-Item -ItemType Directory -Path $resultRoot -ErrorAction Stop | Out-Null
+    $preflightRootCreated = $true
+    $preflightGuard = New-LifecyclePreflightGuard -Path $resultRoot
+    foreach ($artifact in @('plan.json', 'vmware-identity.json', 'vms', 'seed')) {
+        $preflightGuard.Expect((Join-Path $resultRoot $artifact))
+    }
+    $runtimeSourceRoot = New-LifecycleSourceSnapshot -RepositoryRoot $repoRoot -Commit $sourceCommit -DestinationRoot $resultRoot -PreflightGuard $preflightGuard -ConsumerPins $runtimeConsumerPins
+}
+$runtimeVmwareRoot = Join-Path $runtimeSourceRoot 'scripts/windows/vmware'
 $vmRoot = Join-Path $resultRoot 'vms'
 $seedRoot = Join-Path $resultRoot 'seed'
 $createdVmxPaths = New-Object System.Collections.Generic.List[string]
+$diagnosticTerminationUnproven = $false
 
 # Plan-only execution consumes no credentials. Runtime execution imports the
 # current-user-protected bundle before VMware or the harness needs plaintext.
@@ -167,9 +840,9 @@ if (-not $PlanOnly) {
         $VcfBackupPassword = ConvertFrom-SecureString -SecureString $vcfBackupPasswordSecure -AsPlainText
     }
 }
-. (Join-Path $PSScriptRoot 'Atlaso.WorkstationFirstBoot.ps1')
-Import-Module (Join-Path $PSScriptRoot 'Atlaso.WorkstationCleanup.psm1') -Force
-Import-Module (Join-Path $PSScriptRoot 'Atlaso.VmwarePayload.psm1') -Force
+. (Join-Path $runtimeVmwareRoot 'Atlaso.WorkstationFirstBoot.ps1')
+Import-Module (Join-Path $runtimeVmwareRoot 'Atlaso.WorkstationCleanup.psm1') -Force
+Import-Module (Join-Path $runtimeVmwareRoot 'Atlaso.VmwarePayload.psm1') -Force
 if (-not $SshPassword) {
     $SshPassword = $AdminPassword
 }
@@ -188,6 +861,9 @@ Run the Python lifecycle consumer with a secret envelope supplied through standa
 .PARAMETER Arguments
 Literal Python arguments that contain no lifecycle passwords.
 
+.PARAMETER SourcePins
+Retained admitted-source handles and recursive change guards for this consumer.
+
 .PARAMETER AdminPassword
 Protected Atlaso administrator password written only to the child process standard-input stream.
 
@@ -204,6 +880,7 @@ function Invoke-LifecyclePython {
     [OutputType([int])]
     param(
         [Parameter(Mandatory = $true)][string[]]$Arguments,
+        [Parameter(Mandatory)][AllowEmptyCollection()][Collections.Generic.List[IDisposable]]$SourcePins,
         [Parameter(Mandatory = $true)][SecureString]$AdminPassword,
         [Parameter(Mandatory = $true)][SecureString]$SshPassword,
         [SecureString]$VcfBackupPassword,
@@ -235,8 +912,13 @@ function Invoke-LifecyclePython {
         } | ConvertTo-Json -Compress
         # Keep the child's progress output visible without adding it to this
         # function's success stream, which is reserved for the exit code.
-        $secretPayload | & python @Arguments | Out-Host
-        return $LASTEXITCODE
+        Assert-LifecycleSourcePins -Pins $SourcePins
+        # Isolated mode excludes the script directory, cwd and PYTHONPATH from imports.
+        # Newly added snapshot entries cannot shadow installed consumer dependencies.
+        $secretPayload | & python -I @Arguments | Out-Host
+        $consumerExitCode = $LASTEXITCODE
+        Assert-LifecycleSourcePins -Pins $SourcePins
+        return $consumerExitCode
     }
     finally {
         $adminPasswordText = $null
@@ -299,7 +981,7 @@ function Resolve-VdiskManagerPath {
     if ($command) {
         return $command.Source
     }
-    throw 'vmware-vdiskmanager.exe was not found. It is required for -FullEsxiPxeInstall.'
+    throw 'vmware-vdiskmanager.exe was not found. It is required for lifecycle appliance storage and -FullEsxiPxeInstall.'
 }
 
 <#
@@ -483,128 +1165,19 @@ function Remove-VmxValue {
 
 <#
 .SYNOPSIS
-Create deterministic SCSI-compatible IDs for LAN segments.
-
+Resolve a LAN segment and retain creation receipts only for this lifecycle task.
 .PARAMETER Name
-Segment name used as input entropy.
-#>
-function New-LanSegmentId {
-    param([string]$Name)
-
-    $sha = [System.Security.Cryptography.SHA256]::Create()
-    try {
-        $bytes = $sha.ComputeHash([System.Text.Encoding]::UTF8.GetBytes("${LabName}:$Name"))
-    } finally {
-        $sha.Dispose()
-    }
-    $idBytes = [byte[]]$bytes[0..15]
-    $idBytes[0] = 0x52
-    $first = (($idBytes[0..7] | ForEach-Object { $_.ToString('x2') }) -join ' ')
-    $second = (($idBytes[8..15] | ForEach-Object { $_.ToString('x2') }) -join ' ')
-    return "$first-$second"
-}
-
-<#
-.SYNOPSIS
-Resolve or create a VMware LAN segment ID for a named segment.
-
-.PARAMETER Name
-LAN segment name to resolve.
+Exact requested LAN segment name.
 #>
 function Resolve-LanSegmentId {
     param([string]$Name)
-
-    $preferenceDirectory = Join-Path $env:APPDATA 'VMware'
-    $preferencePath = Join-Path $preferenceDirectory 'preferences.ini'
-    if (-not (Test-Path -LiteralPath $preferenceDirectory)) {
-        New-Item -ItemType Directory -Force -Path $preferenceDirectory | Out-Null
+    Get-LifecycleSourceCommit -RepositoryRoot $repoRoot -ExpectedCommit $sourceCommit | Out-Null
+    $segment = Resolve-AtlasoOwnedLanSegment -Name $Name -Owner $lanSegmentOwner -PublishReceipt {
+        param($pendingSegment)
+        $ownedLanSegments.Add($pendingSegment)
+        Write-LifecycleIdentityEvidence
     }
-    $content = if (Test-Path -LiteralPath $preferencePath) {
-        @(Get-Content -LiteralPath $preferencePath)
-    } else {
-        @()
-    }
-
-    $segments = @{}
-    for ($index = 0; $index -lt $content.Count; $index++) {
-        if ($content[$index] -match '^pref\.namedPVNs(?<id>\d+)\.name\s*=\s*"(?<name>.*)"\s*$') {
-            $entry = [int]$matches.id
-            if (-not $segments.ContainsKey($entry)) {
-                $segments[$entry] = @{}
-            }
-            $segments[$entry].Name = $matches.name
-        } elseif ($content[$index] -match '^pref\.namedPVNs(?<id>\d+)\.pvnID\s*=\s*"(?<pvn>.*)"\s*$') {
-            $entry = [int]$matches.id
-            if (-not $segments.ContainsKey($entry)) {
-                $segments[$entry] = @{}
-            }
-            $segments[$entry].PvnId = $matches.pvn
-        }
-    }
-
-    $requiredCount = 0
-    if ($segments.Count -gt 0) {
-        $requiredCount = (($segments.Keys | Measure-Object -Maximum).Maximum + 1)
-    }
-
-    $countUpdated = $false
-    $countChanged = $false
-    $content = @($content | ForEach-Object {
-        if ($_ -match '^pref\.namedPVNs\.count\s*=') {
-            $countUpdated = $true
-            $desiredLine = "pref.namedPVNs.count = $(ConvertTo-VmxString -Value ([string]$requiredCount))"
-            if ($_ -ne $desiredLine) {
-                $countChanged = $true
-                $desiredLine
-            } else {
-                $_
-            }
-        } else {
-            $_
-        }
-    })
-    if (-not $countUpdated -and $requiredCount -gt 0) {
-        $content += "pref.namedPVNs.count = $(ConvertTo-VmxString -Value ([string]$requiredCount))"
-        $countChanged = $true
-    }
-    if ($countChanged) {
-        [System.IO.File]::WriteAllLines($preferencePath, [string[]]$content, [System.Text.UTF8Encoding]::new($false))
-    }
-
-    foreach ($entry in $segments.GetEnumerator()) {
-        if ($entry.Value.Name -eq $Name -and $entry.Value.PvnId) {
-            if ($entry.Value.PvnId -notmatch '^52 ') {
-                $pvnId = New-LanSegmentId -Name $Name
-                $content = @($content | ForEach-Object {
-                    if ($_ -match "^pref\.namedPVNs$($entry.Key)\.pvnID\s*=") {
-                        "pref.namedPVNs$($entry.Key).pvnID = $(ConvertTo-VmxString -Value $pvnId)"
-                    } else {
-                        $_
-                    }
-                })
-                [System.IO.File]::WriteAllLines($preferencePath, [string[]]$content, [System.Text.UTF8Encoding]::new($false))
-                return $pvnId
-            }
-            return $entry.Value.PvnId
-        }
-    }
-
-    $nextIndex = $requiredCount
-    $pvnId = New-LanSegmentId -Name $Name
-    $content += "pref.namedPVNs$nextIndex.name = $(ConvertTo-VmxString -Value $Name)"
-    $content += "pref.namedPVNs$nextIndex.pvnID = $(ConvertTo-VmxString -Value $pvnId)"
-    $content = @($content | ForEach-Object {
-        if ($_ -match '^pref\.namedPVNs\.count\s*=') {
-            "pref.namedPVNs.count = $(ConvertTo-VmxString -Value ([string]($nextIndex + 1)))"
-        } else {
-            $_
-        }
-    })
-    if (-not ($content | Where-Object { $_ -match '^pref\.namedPVNs\.count\s*=' })) {
-        $content += "pref.namedPVNs.count = $(ConvertTo-VmxString -Value ([string]($nextIndex + 1)))"
-    }
-    [System.IO.File]::WriteAllLines($preferencePath, [string[]]$content, [System.Text.UTF8Encoding]::new($false))
-    return $pvnId
+    return $segment.Id
 }
 
 <#
@@ -657,7 +1230,7 @@ function Set-VmxNetworkAdapter {
 
 <#
 .SYNOPSIS
-Copy a source VMX into a managed lifecycle lab directory.
+Clone a verified appliance with its required data disks into the lifecycle lab.
 
 .PARAMETER SourceVmx
 Source VMX path.
@@ -675,23 +1248,31 @@ function Copy-VmDirectory {
 
     Assert-SafeLifecycleName -Name $Name
     $resolvedSourceVmx = (Resolve-Path -LiteralPath $SourceVmx).Path
+    Assert-AtlasoTemplatePoweredOff -VmxPath $resolvedSourceVmx -VmrunPath $resolvedVmrun
     Assert-AtlasoVmwarePayloadProvenance -VmxPath $resolvedSourceVmx | Out-Null
     if (Test-Path -LiteralPath $DestinationDirectory) {
         throw "Lifecycle VM directory already exists: $DestinationDirectory"
     }
-    $sourceDirectory = Split-Path -Parent $resolvedSourceVmx
-    if ($PSCmdlet.ShouldProcess($DestinationDirectory, "Copy Workstation VM $Name")) {
-        Copy-Item -LiteralPath $sourceDirectory -Destination $DestinationDirectory -Recurse
-    }
-    $vmx = Get-ChildItem -LiteralPath $DestinationDirectory -Filter '*.vmx' | Select-Object -First 1
-    if (-not $vmx) {
-        throw "Copied Workstation VM has no VMX: $DestinationDirectory"
-    }
     $targetVmx = Join-Path $DestinationDirectory "$Name.vmx"
-    Rename-Item -LiteralPath $vmx.FullName -NewName "$Name.vmx"
-    Set-VmxValue -Path $targetVmx -Key 'displayName' -Value $Name
-    Get-AtlasoVmwarePayloadLayout -VmxPath $targetVmx -RequireExactlyTwoVmdks | Out-Null
-    $createdVmxPaths.Add($targetVmx)
+    if ($PSCmdlet.ShouldProcess($DestinationDirectory, "Clone Workstation VM $Name with dedicated storage")) {
+        try {
+            # Reuse the normal clone contract: immutable two-payload source,
+            # private 500 GiB thin depot/backup disks at SCSI units 2 and 3.
+            # Lifecycle-specific LAN adapters are configured by the caller.
+            & (Join-Path $runtimeVmwareRoot 'create-atlaso-vm.ps1') `
+                -Name $Name -ApplianceVmxPath $resolvedSourceVmx `
+                -OutputDirectory $DestinationDirectory -VmrunPath $resolvedVmrun `
+                -VdiskManagerPath (Resolve-VdiskManagerPath) `
+                -ManagementNetwork $ManagementNetwork -SkipLabNetworkAdapters | Out-Host
+        }
+        finally {
+            # A failed disk creation can leave a valid clone. Retain its exact
+            # identity for supported cleanup even when provisioning throws.
+            if (Test-Path -LiteralPath $targetVmx -PathType Leaf) {
+                $createdVmxPaths.Add($targetVmx)
+            }
+        }
+    }
     return $targetVmx
 }
 
@@ -844,7 +1425,7 @@ function New-CloudInitSeedIso {
         if ($LASTEXITCODE -ne 0) {
             python -m pip install pycdlib
         }
-        $helper = Join-Path $repoRoot 'scripts\interop\create_nocloud_seed_iso.py'
+        $helper = Join-Path $runtimeSourceRoot 'scripts\interop\create_nocloud_seed_iso.py'
         # The repository-controlled seed helper reads one password line from
         # stdin so the client credential never appears in process arguments.
         $SshPassword | & python $helper --output $Path --hostname $HostName --user $ClientSshUser --password-stdin | Out-Host
@@ -1352,6 +1933,83 @@ function Test-ApplianceOpenApi {
 
 <#
 .SYNOPSIS
+Read bounded, non-secret startup prerequisite state after a lifecycle deployment failure.
+.PARAMETER ApplianceVmx
+Exact task-owned appliance VMX whose service states are queried.
+#>
+function Get-ApplianceStartupDiagnostic {
+    param([Parameter(Mandatory = $true)][string]$ApplianceVmx)
+
+    $guestOutput = '/tmp/atlaso-lifecycle-startup-state.txt'
+    $hostOutput = Join-Path $resultRoot 'appliance-startup-state.txt'
+    # Keep untrusted readback outside retained results. The deterministic lab
+    # directory identifies interrupted staging for operator recovery.
+    $stagingRoot = Join-Path $repoRoot ".atlaso-local/lifecycle-startup-diagnostics/$LabName"
+    $rawOutput = Join-Path $stagingRoot 'guest-readback.txt'
+    $publishOutput = Join-Path $resultRoot 'appliance-startup-state.pending'
+    $units = @('atlaso-data-disks.service', 'atlaso-bootstrap-https.service', 'atlaso.service', 'nginx.service')
+    $probe = "systemctl show $($units -join ' ') --property=Id,LoadState,ActiveState,SubState,Result > $guestOutput"
+    $validatedArtifact = $false
+    $terminationUnproven = $false
+    try {
+        if (Test-Path -LiteralPath $hostOutput) { Remove-Item -LiteralPath $hostOutput -Force }
+        [IO.Directory]::CreateDirectory($stagingRoot) | Out-Null
+        foreach ($pending in @($rawOutput, $publishOutput)) {
+            if (Test-Path -LiteralPath $pending) { Remove-Item -LiteralPath $pending -Force }
+        }
+        $null = Invoke-AtlasoBoundedStreamingProcess -FilePath $resolvedVmrun -DiscardOutput -ArgumentList @(
+            '-T', 'ws', '-gu', $ApplianceSshUser, '-gp', $ApplianceGuestPassword,
+            'runScriptInGuest', $ApplianceVmx, '/bin/sh', $probe
+        ) -TimeoutSeconds 15 -Action 'Lifecycle startup query'
+        $null = Invoke-AtlasoBoundedStreamingProcess -FilePath $resolvedVmrun -DiscardOutput -ArgumentList @(
+            '-T', 'ws', '-gu', $ApplianceSshUser, '-gp', $ApplianceGuestPassword,
+            'copyFileFromGuestToHost', $ApplianceVmx, $guestOutput, $rawOutput
+        ) -TimeoutSeconds 15 -Action 'Lifecycle startup readback'
+        if (-not (Test-Path -LiteralPath $rawOutput -PathType Leaf)) {
+            return 'Startup prerequisite state unavailable (guest readback failed).'
+        }
+        if ((Get-Item -LiteralPath $rawOutput).Length -gt 4096) {
+            return 'Startup prerequisite state unavailable (oversized readback).'
+        }
+        # Report only fixed unit names and systemd state tokens, never journals,
+        # guest commands, or arbitrary guest output from a failed operation.
+        $states = @(Get-Content -LiteralPath $rawOutput | Where-Object {
+            $_ -match '^(?:LoadState|ActiveState|SubState|Result)=[a-z-]{1,40}$' -or
+            ($_ -match '^Id=(.+)$' -and $Matches[1] -in $units)
+        })
+        if ($states.Count -eq 0) { return 'Startup prerequisite state unavailable (invalid readback).' }
+        # Retained evidence must contain the same allowlisted data as the error.
+        Set-Content -LiteralPath $publishOutput -Value $states -Encoding utf8
+        [IO.File]::Move($publishOutput, $hostOutput)
+        $validatedArtifact = $true
+        return "Startup prerequisites: $($states -join '; ')."
+    }
+    catch {
+        $failure = $_.Exception
+        while ($null -ne $failure) {
+            if ($failure.Data['AtlasoProcessTreeTerminationUnproven']) { $terminationUnproven = $true }
+            $failure = $failure.InnerException
+        }
+        if ($terminationUnproven) {
+            $script:diagnosticTerminationUnproven = $true
+            throw "Startup diagnostic process termination is unproven. Preserve staging for recovery: $stagingRoot"
+        }
+        return 'Startup prerequisite state unavailable (bounded provider failure).'
+    }
+    finally {
+        if (-not $terminationUnproven) {
+            foreach ($pending in @($rawOutput, $publishOutput)) {
+                if (Test-Path -LiteralPath $pending) { Remove-Item -LiteralPath $pending -Force -ErrorAction Stop }
+            }
+        }
+        if (-not $validatedArtifact -and (Test-Path -LiteralPath $hostOutput)) {
+            Remove-Item -LiteralPath $hostOutput -Force -ErrorAction Stop
+        }
+    }
+}
+
+<#
+.SYNOPSIS
 Upload the lifecycle helper script to the appliance guest.
 .PARAMETER ApplianceVmx
 VMX path identifying the appliance guest that receives the helper.
@@ -1359,7 +2017,7 @@ VMX path identifying the appliance guest that receives the helper.
 function Sync-ApplianceHelperScript {
     param([string]$ApplianceVmx)
 
-    $localHelper = Join-Path $repoRoot 'scripts\appliance\atlaso-helper'
+    $localHelper = Join-Path $runtimeSourceRoot 'scripts\appliance\atlaso-helper'
     if (-not (Test-Path -LiteralPath $localHelper)) {
         throw "Atlaso helper script not found: $localHelper"
     }
@@ -1378,6 +2036,37 @@ function Sync-ApplianceHelperScript {
 
 <#
 .SYNOPSIS
+Pin the single wheel matching the filename and digest emitted by this build.
+.PARAMETER OutputRoot
+Fresh output directory retained under the build's directory pins.
+.PARAMETER BuildOutput
+Captured pip output from this invocation, including its created-wheel digest.
+.PARAMETER ConsumerPins
+Caller-owned pins retained through guest upload and installation.
+#>
+function Get-LifecycleBuiltWheel {
+    param([string]$OutputRoot, [object[]]$BuildOutput,
+        [Parameter(Mandatory)][AllowEmptyCollection()][Collections.Generic.List[IDisposable]]$ConsumerPins)
+    $records = [regex]::Matches(($BuildOutput -join "`n"),
+        '(?im)^\s*Created wheel for atlaso: filename=(atlaso-[A-Za-z0-9_.+\-]+\.whl) size=(\d+) sha256=([a-f0-9]{64})\s*$')
+    if ($records.Count -ne 1) { throw 'Build did not report one exact Atlaso wheel identity and digest.' }
+    $record = $records[0]
+    $candidates = @(Get-ChildItem -LiteralPath $OutputRoot -Filter '*.whl' -File -Force)
+    if ($candidates.Count -ne 1 -or $candidates[0].Name -cne $record.Groups[1].Value) {
+        throw 'Wheel output does not contain exactly the artifact reported by this build.'
+    }
+    $wheel = $candidates[0]
+    $ConsumerPins.Add([Atlaso.WorkstationFileIdentity]::PinOrdinaryReadFile($wheel.FullName, $true))
+    $wheel.Refresh()
+    $digest = (Get-FileHash -LiteralPath $wheel.FullName -Algorithm SHA256).Hash
+    if ($wheel.Length -ne [long]$record.Groups[2].Value -or $digest -ine $record.Groups[3].Value) {
+        throw 'Built wheel bytes differ from the digest reported by this invocation.'
+    }
+    return [pscustomobject]@{ Name = $wheel.Name; FullName = $wheel.FullName; Sha256 = $digest }
+}
+
+<#
+.SYNOPSIS
 Upload and install the lifecycle application wheel in the appliance guest.
 .PARAMETER ApplianceVmx
 VMX path identifying the appliance guest where the wheel is installed.
@@ -1385,43 +2074,49 @@ VMX path identifying the appliance guest where the wheel is installed.
 function Sync-ApplianceApplicationWheel {
     param([string]$ApplianceVmx)
 
+    Get-LifecycleSourceCommit -RepositoryRoot $repoRoot -ExpectedCommit $sourceCommit | Out-Null
     $wheelRoot = Join-Path $resultRoot 'wheel'
     if (Test-Path -LiteralPath $wheelRoot) {
-        Remove-Item -LiteralPath $wheelRoot -Recurse -Force
+        throw 'Lifecycle wheel output root already exists; preserve it for ownership-aware cleanup.'
     }
-    New-Item -ItemType Directory -Force -Path $wheelRoot | Out-Null
-    Write-Host "Building Atlaso wheel from current branch."
-    & python -m pip wheel $repoRoot --no-deps -w $wheelRoot | Out-Host
-    if ($LASTEXITCODE -ne 0) {
-        throw "Failed to build Atlaso wheel from $repoRoot."
-    }
-    $wheel = Get-ChildItem -LiteralPath $wheelRoot -Filter 'atlaso-*.whl' -File |
-        Sort-Object LastWriteTime -Descending |
-        Select-Object -First 1
-    if (-not $wheel) {
-        throw "Built wheel was not found under $wheelRoot."
-    }
-
-    $guestWheel = "/tmp/$($wheel.Name)"
-    if ($PSCmdlet.ShouldProcess($ApplianceVmx, "Install current Atlaso wheel into appliance")) {
-        & $resolvedVmrun -T ws -gu $ApplianceSshUser -gp $ApplianceGuestPassword copyFileFromHostToGuest $ApplianceVmx $wheel.FullName $guestWheel | Out-Host
+    New-Item -ItemType Directory -Path $wheelRoot -ErrorAction Stop | Out-Null
+    $wheelConsumerPins = [Collections.Generic.List[IDisposable]]::new()
+    try {
+        $wheelSource = New-LifecycleSourceSnapshot -RepositoryRoot $repoRoot -Commit $sourceCommit -DestinationRoot $wheelRoot -ConsumerPins $wheelConsumerPins
+        Write-Host "Building Atlaso wheel from admitted commit $sourceCommit."
+        Assert-LifecycleSourcePins -Pins $wheelConsumerPins
+        $wheelBuildOutput = @(& python -m pip wheel $wheelSource --no-deps -w $wheelRoot 2>&1)
+        $wheelBuildOutput | ForEach-Object { Write-Host $_ }
         if ($LASTEXITCODE -ne 0) {
-            throw "Failed to copy Atlaso wheel into the appliance with VMware guest operations."
+            throw "Failed to build Atlaso wheel from $repoRoot."
         }
-        $quotedPassword = ConvertTo-GuestShellSingleQuote -Value $ApplianceGuestPassword
-        $quotedWheel = ConvertTo-GuestShellSingleQuote -Value $guestWheel
-        $script = "printf '%s\n' $quotedPassword | sudo -S /opt/atlaso/.venv/bin/python -m pip install --force-reinstall --no-deps $quotedWheel && printf '%s\n' $quotedPassword | sudo -S find /opt/atlaso/.venv -type d -exec chmod 0755 {} + && printf '%s\n' $quotedPassword | sudo -S find /opt/atlaso/.venv -type f -exec chmod 0644 {} + && printf '%s\n' $quotedPassword | sudo -S find /opt/atlaso/.venv/bin -type f -exec chmod 0755 {} + && printf '%s\n' $quotedPassword | sudo -S systemctl restart atlaso.service"
-        Invoke-ApplianceGuestScript -ApplianceVmx $ApplianceVmx -Script $script
-    }
+        Get-LifecycleSourceCommit -RepositoryRoot $repoRoot -ExpectedCommit $sourceCommit | Out-Null
+        Assert-LifecycleSourcePins -Pins $wheelConsumerPins
+        $wheel = Get-LifecycleBuiltWheel -OutputRoot $wheelRoot -BuildOutput $wheelBuildOutput -ConsumerPins $wheelConsumerPins
 
-    $deadline = (Get-Date).AddMinutes(3)
-    do {
-        if (Test-ApplianceOpenApi -Url "$ApplianceUrl/openapi.json") {
-            return $wheel.FullName
+        $guestWheel = "/tmp/$($wheel.Name)"
+        if ($PSCmdlet.ShouldProcess($ApplianceVmx, "Install current Atlaso wheel into appliance")) {
+            & $resolvedVmrun -T ws -gu $ApplianceSshUser -gp $ApplianceGuestPassword copyFileFromHostToGuest $ApplianceVmx $wheel.FullName $guestWheel | Out-Host
+            if ($LASTEXITCODE -ne 0) {
+                throw "Failed to copy Atlaso wheel into the appliance with VMware guest operations."
+            }
+            $quotedPassword = ConvertTo-GuestShellSingleQuote -Value $ApplianceGuestPassword
+            $quotedWheel = ConvertTo-GuestShellSingleQuote -Value $guestWheel
+            $script = "printf '%s  %s\n' '$($wheel.Sha256)' $quotedWheel | sha256sum -c - && printf '%s\n' $quotedPassword | sudo -S /opt/atlaso/.venv/bin/python -m pip install --force-reinstall --no-deps $quotedWheel && printf '%s\n' $quotedPassword | sudo -S find /opt/atlaso/.venv -type d -exec chmod 0755 {} + && printf '%s\n' $quotedPassword | sudo -S find /opt/atlaso/.venv -type f -exec chmod 0644 {} + && printf '%s\n' $quotedPassword | sudo -S find /opt/atlaso/.venv/bin -type f -exec chmod 0755 {} + && printf '%s\n' $quotedPassword | sudo -S systemctl restart atlaso.service"
+            Invoke-ApplianceGuestScript -ApplianceVmx $ApplianceVmx -Script $script
         }
-        Start-Sleep -Seconds 5
-    } while ((Get-Date) -lt $deadline)
-    throw "Timed out waiting for Atlaso web service after installing $($wheel.Name)."
+
+        $deadline = (Get-Date).AddMinutes(3)
+        do {
+            if (Test-ApplianceOpenApi -Url "$ApplianceUrl/openapi.json") {
+                return $wheel.FullName
+            }
+            Start-Sleep -Seconds 5
+        } while ((Get-Date) -lt $deadline)
+        throw "Timed out waiting for Atlaso web service after installing $($wheel.Name)."
+    } finally {
+        for ($pinIndex = $wheelConsumerPins.Count - 1; $pinIndex -ge 0; $pinIndex--) { $wheelConsumerPins[$pinIndex].Dispose() }
+    }
 }
 
 <#
@@ -1547,7 +2242,14 @@ $esxiMacAddress = if ($FullEsxiPxeInstall) { New-StaticVmwareMac } else { '' }
 $planApplianceVmx = if (Test-Path -LiteralPath $ApplianceVmxPath) { (Resolve-Path -LiteralPath $ApplianceVmxPath).Path } else { $ApplianceVmxPath }
 $planClientVmdk = if (Test-Path -LiteralPath $ClientVmdkPath) { (Resolve-Path -LiteralPath $ClientVmdkPath).Path } else { $ClientVmdkPath }
 
+$lanSegmentOwner = @{
+    task_id = $(if ($env:CODEX_THREAD_ID) { $env:CODEX_THREAD_ID } else { $LabName })
+    repository = 'mdaneri/Atlaso'; source_commit = $sourceCommit
+    pr = $PullRequestNumber; lab_root = $resultRoot
+}
+$ownedLanSegments = [System.Collections.Generic.List[object]]::new()
 $plan = [ordered]@{
+    lan_segment_owner     = $lanSegmentOwner
     name                  = 'vmware workstation lifecycle interop'
     lab_name              = $LabName
     pull_request_number   = $PullRequestNumber
@@ -1583,7 +2285,12 @@ if ($PlanOnly) {
 # Cleanup must retain the same identity proof for a kept runtime lab that it
 # receives for a plan-only lab. Publish it before any VM can be created.
 New-Item -ItemType Directory -Force -Path $resultRoot | Out-Null
-$planJson | Set-Content -LiteralPath (Join-Path $resultRoot 'plan.json') -Encoding UTF8
+$planPath = Join-Path $resultRoot 'plan.json'
+$planWriter = [IO.File]::Open($planPath, 'CreateNew', 'Write', 'None')
+try {
+    $preflightGuard.Record($planPath, $planWriter.SafeFileHandle)
+    $planWriter.Write([Text.UTF8Encoding]::new($false).GetBytes($planJson)); $planWriter.Flush($true)
+} finally { $planWriter.Dispose() }
 
 $firstBootOvfEnvironment = New-AtlasoWorkstationOvfEnvironment `
     -Fqdn (New-AtlasoWorkstationFqdn -Name $applianceName) `
@@ -1591,8 +2298,12 @@ $firstBootOvfEnvironment = New-AtlasoWorkstationOvfEnvironment `
     -RootPassword $adminPasswordSecure `
     -RootSshEnabled:($ApplianceSshUser -eq 'root')
 
-New-Item -ItemType Directory -Force -Path $vmRoot | Out-Null
-New-Item -ItemType Directory -Force -Path $seedRoot | Out-Null
+New-Item -ItemType Directory -Path $vmRoot -ErrorAction Stop | Out-Null
+$runtimeConsumerPins.Add([Atlaso.SnapshotDirectoryPinV2]::Open($vmRoot))
+$preflightGuard.RecordDirectory($vmRoot)
+New-Item -ItemType Directory -Path $seedRoot -ErrorAction Stop | Out-Null
+$runtimeConsumerPins.Add([Atlaso.SnapshotDirectoryPinV2]::Open($seedRoot))
+$preflightGuard.RecordDirectory($seedRoot)
 $identityPath = Join-Path $resultRoot 'vmware-identity.json'
 $identityVms = [System.Collections.Generic.List[object]]::new()
 
@@ -1609,24 +2320,24 @@ function Write-LifecycleIdentityEvidence {
         result_root         = $resultRoot
         log_identity        = $LabName
         vms                 = @($identityVms)
+        lan_segments        = @($ownedLanSegments)
     } | ConvertTo-Json -Depth 5
 
     # Keep every observable ownership manifest complete. The temporary file is
     # created beside the destination so the final replace stays on one volume.
     $identityTempPath = Join-Path $resultRoot ('.vmware-identity.{0}.tmp' -f [guid]::NewGuid().ToString('N'))
+    if ($preflightGuard) { $preflightGuard.Expect($identityTempPath) }
+    $identityBytes = [System.Text.UTF8Encoding]::new($false).GetBytes($identityJson)
+    $identityWriter = [Atlaso.WorkstationDurablePublisherV3]::CreateStage($identityTempPath)
     try {
-        [System.IO.File]::WriteAllText(
-            $identityTempPath,
-            $identityJson,
-            [System.Text.UTF8Encoding]::new($false)
-        )
-        [System.IO.File]::Move($identityTempPath, $identityPath, $true)
+        if ($preflightGuard) { $preflightGuard.Record($identityTempPath, $identityWriter.SafeFileHandle) }
+        $identityWriter.Write($identityBytes)
+        [Atlaso.WorkstationDurablePublisherV3]::PublishDurableFile($identityWriter, $identityPath)
     }
-    finally {
-        if (Test-Path -LiteralPath $identityTempPath -PathType Leaf) {
-            Remove-Item -LiteralPath $identityTempPath -Force
-        }
-    }
+    finally { $identityWriter.Dispose() }
+    if ($preflightGuard) { $preflightGuard.Published($identityTempPath, $identityPath) }
+    # Failed publication retains its exact stage for ownership-aware recovery;
+    # never delete a reopened staging pathname after releasing its creation handle.
 }
 
 <#
@@ -1654,6 +2365,7 @@ function Invoke-TrackedLifecycleVmCreation {
     )
 
     $expectedVmxPath = [System.IO.Path]::GetFullPath($VmxPath)
+    Get-LifecycleSourceCommit -RepositoryRoot $repoRoot -ExpectedCommit $sourceCommit | Out-Null
     $record = [ordered]@{
         role         = $Role
         display_name = $DisplayName
@@ -1689,6 +2401,20 @@ function Invoke-TrackedLifecycleVmCreation {
 }
 
 Write-LifecycleIdentityEvidence
+} catch {
+    $preflightFailure = $_
+    for ($pinIndex = $runtimeConsumerPins.Count - 1; $pinIndex -ge 0; $pinIndex--) { $runtimeConsumerPins[$pinIndex].Dispose() }
+    $runtimeConsumerPins.Clear()
+    if ($preflightRootCreated) {
+        try {
+            Remove-LifecyclePreflightArtifacts -Path $resultRoot `
+                -ExpectedParent (Join-Path $repoRoot 'test-results/vmware-workstation-lifecycle') -Guard $preflightGuard
+        } catch {
+            throw "Lifecycle preflight failed: $($preflightFailure.Exception.Message) Preflight cleanup refused: $($_.Exception.Message)"
+        }
+    }
+    throw $preflightFailure
+}
 
 $clientASeedIso = ''
 $clientBSeedIso = ''
@@ -1789,8 +2515,18 @@ try {
         appliance_ip  = $ApplianceIPAddress
         appliance_url = $ApplianceUrl
     } | ConvertTo-Json -Depth 3 | Set-Content -LiteralPath (Join-Path $resultRoot 'discovered-appliance.json') -Encoding UTF8
-    Sync-ApplianceHelperScript -ApplianceVmx $applianceVmx
-    $applianceWheelPath = Sync-ApplianceApplicationWheel -ApplianceVmx $applianceVmx
+    try {
+        Sync-ApplianceHelperScript -ApplianceVmx $applianceVmx
+        $applianceWheelPath = Sync-ApplianceApplicationWheel -ApplianceVmx $applianceVmx
+    }
+    catch {
+        $deploymentFailure = $_
+        $startupDiagnostic = Get-ApplianceStartupDiagnostic -ApplianceVmx $applianceVmx
+        throw [System.InvalidOperationException]::new(
+            "Lifecycle application deployment failed. $startupDiagnostic Original failure: $($deploymentFailure.Exception.Message)",
+            $deploymentFailure.Exception
+        )
+    }
     $applianceHostKey = Get-PlinkHostKey -HostName $ApplianceIPAddress -UserName $ApplianceSshUser -Password $adminPasswordSecure
     $clientAHost = ''
     $clientBHost = ''
@@ -1812,7 +2548,7 @@ try {
     }
 
     $basePythonArgs = @(
-        (Join-Path $repoRoot 'scripts\interop\lifecycle_test.py'),
+        (Join-Path $runtimeSourceRoot 'scripts\interop\lifecycle_test.py'),
         '--appliance-url', $ApplianceUrl,
         '--appliance-ssh-host', $ApplianceIPAddress,
         '--username', $AdminUsername,
@@ -1854,7 +2590,7 @@ try {
     }
 
     if ($PSCmdlet.ShouldProcess($LabName, 'Run Workstation lifecycle interop scenario')) {
-        $pythonExitCode = Invoke-LifecyclePython -Arguments $initialPythonArgs `
+        $pythonExitCode = Invoke-LifecyclePython -Arguments $initialPythonArgs -SourcePins $runtimeConsumerPins `
             -AdminPassword $adminPasswordSecure `
             -SshPassword $sshPasswordSecure `
             -VcfBackupPassword $vcfBackupPasswordSecure `
@@ -1895,7 +2631,7 @@ try {
                 '--restored-state-run',
                 '--certificate-baseline-result', (Join-Path $initialResultRoot 'result.json')
             ))
-            $pythonExitCode = Invoke-LifecyclePython -Arguments $restoredPythonArgs `
+            $pythonExitCode = Invoke-LifecyclePython -Arguments $restoredPythonArgs -SourcePins $runtimeConsumerPins `
                 -AdminPassword $adminPasswordSecure `
                 -SshPassword $sshPasswordSecure `
                 -VcfBackupPassword $vcfBackupPasswordSecure `
@@ -1916,6 +2652,11 @@ try {
     }
 } catch {
     $scenarioFailure = $_
+}
+
+# No further provider operations are safe while a diagnostic writer may survive.
+if ($diagnosticTerminationUnproven) {
+    throw "Lifecycle provider termination is unproven. VM and diagnostic staging cleanup is blocked; preserve lab '$LabName' at '$vmRoot' until the owning process tree is proven inactive."
 }
 
 $seedCleanupFailure = $null
@@ -1942,6 +2683,7 @@ if ($CleanupCreatedLab) {
                     -VmrunPath $resolvedVmrun `
                     -VmxPaths $createdVmxPathArray `
                     -RemovalRoot $vmRoot `
+                    -KeepRemovalRoot `
                     -Confirm:$false
             }
         } catch {
@@ -1971,4 +2713,8 @@ if ($seedCleanupFailure) {
 }
 if ($cleanupFailure) {
     throw $cleanupFailure
+}
+} finally {
+    for ($pinIndex = $runtimeConsumerPins.Count - 1; $pinIndex -ge 0; $pinIndex--) { $runtimeConsumerPins[$pinIndex].Dispose() }
+    if ($preflightGuard) { $preflightGuard.Dispose() }
 }

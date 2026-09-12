@@ -2,6 +2,9 @@
 .SYNOPSIS
 Build or validate the supported Atlaso VMware Workstation Photon image.
 .DESCRIPTION
+Refreshes the PowerCLI suite baseline before source admission. An already-current
+lock is untouched; updated source must be reviewed and committed before retrying.
+Protected release builders check for updates without modifying immutable source.
 Authenticates published software with Python bytecode writing disabled before
 source ACL protection and again before Packer admission. Verification preserves
 the complete admitted source inventory without caller environment configuration.
@@ -1485,6 +1488,14 @@ function Invoke-AtlasoLegacyBuilderAddressHandoffRecovery {
 }
 
 $repoRoot = (Resolve-Path -LiteralPath (Join-Path $PSScriptRoot '..\..\..')).Path
+if (-not $CredentialChild) {
+    $powerCliRefreshArguments = @((Join-Path $repoRoot 'scripts/update_powercli_lock.py'), '--before-build')
+    if ($ReleaseBuilder) { $powerCliRefreshArguments += '--check' }
+    & python @powerCliRefreshArguments
+    if ($LASTEXITCODE -ne 0) {
+        throw 'PowerCLI refresh did not admit the build. Follow the refresh diagnostic, then rerun.'
+    }
+}
 $resolvedPackageSource = $null
 if (-not $CredentialChild) {
     # Resolve the pair before artifact, network, output, or provider work. A
@@ -2434,6 +2445,17 @@ else {
             }
             $checkedFailureHandlingError = $null
             try {
+                # Persist proven job termination before checked deleteVM can fail. The
+                # credential marker is retired independently and cannot carry this proof.
+                if ($isolatedBuildFailure.Exception.Data['AtlasoProcessTreeTerminationProven'] -and
+                    (Test-Path -LiteralPath $childBuilderAddressReservationPath -PathType Leaf)) {
+                    Save-AtlasoBuilderTerminationProof `
+                        -HandoffPath $childBuilderAddressReservationPath `
+                        -ExpectedOwnerPid ([int]$processOwnershipPayload.ChildProcessId) `
+                        -ExpectedOwnerStartTimeUtcTicks ([DateTime]::FromFileTimeUtc(
+                            [long]$processOwnershipPayload.ChildProcessStartFileTimeUtc
+                        ).Ticks)
+                }
                 if ($isolatedBuildFailure.Exception.Data['AtlasoProcessTreeTerminationProven'] -and
                     $PackerOnError -eq 'cleanup' -and (
                         (Test-Path -LiteralPath $childOutputCleanupClaimPath -PathType Leaf)

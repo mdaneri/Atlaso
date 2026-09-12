@@ -20,6 +20,12 @@ brings infrastructure, storage, identity, networking, and lifecycle workflows in
 [Appliance Update](docs/operate/appliance-update.md) follows one durable task through service restarts and recovery,
 with automatic browser status navigation and a final result backed by active-release and service checks.
 
+[Maintenance](docs/operate/backup-restore.md) groups LDAP, Backup, Reset, and Diagnostics into separate tabs.
+Administrators can create [diagnostic support bundles](docs/operate/diagnostics.md) through a reviewed wizard or use
+the recovery CLI when the web service, worker, or database is unavailable. Optional hostname and username aliases are
+consistent within each bundle; IP and MAC addresses stay unchanged, and secrets are always excluded. Managed bundles
+expire after 24 hours and support manual deletion. Collection is observational and never uploads evidence automatically.
+
 Successful `main` CI automatically publishes the immutable wheel handoff, creates the signed software Release, and
 advances `development`. Promotion to `preview` or `stable` and all OVA/virtualization production remain explicit manual
 operations.
@@ -73,6 +79,15 @@ See [Getting started](docs/getting-started/index.md) for the first-use path and
 
 Development appliances keep host-mutating adapters in dry-run mode by default. Operators edit desired state, review
 the resulting appliance changes, and explicitly submit valid units through the global Appliance Apply workflow.
+
+[ESXi Network Boot](docs/services/ipxe.md) authorizes against the exact successfully applied configuration, retained
+in a dedicated encrypted runtime record. Display previews and Apply baselines remain redacted; standalone IP addresses,
+MAC addresses, and host UUIDs remain visible operational identifiers. Recovery from an incomplete applied snapshot
+requires a real ESXi PXE Apply followed by a fresh host boot attempt; a dry run does not repair it.
+
+The Boot Service **Require console authorization** switch is off by default. Apply this policy to let assigned ESXi
+hosts continue without a console code, or enable it for per-attempt administrator approval. Generated attempt
+directories remain readable by the boot servers even under the appliance service's restrictive umask.
 
 ## Project and community
 
