@@ -61,6 +61,8 @@ def _configuration_readback(api: VcfDepotApiClient, local: LocalDepotEndpoint) -
     """
     try:
         remote = api.depot_settings()
+        if not all(isinstance(remote.get(key), dict) for key in ("depotConfiguration", "offlineAccount")):
+            return {"configuration_verified": False, "configuration_readback": "unavailable"}
         sanitized = sanitize_remote_depot(remote)
         # Retain only required evidence: vendor URLs and messages can carry
         # authentication material and must not reach durable task results.

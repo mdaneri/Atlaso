@@ -206,6 +206,39 @@ def test_readback_failure_is_unknown_not_configuration_failure(target):
     assert "secret-bearing" not in str(caught.value)
 
 
+@pytest.mark.parametrize("key", ["depotConfiguration", "offlineAccount"])
+@pytest.mark.parametrize("value", [[], [1], "invalid", 42, True, None])
+def test_malformed_nested_readback_preserves_sync_evidence(target, monkeypatch, key, value):
+    """Keep sync evidence when nested configuration cannot be interpreted.
+
+    Args:
+        target: Fake target fixture.
+        monkeypatch: Dependency replacement fixture.
+        key: Nested vendor configuration field.
+        value: Invalid nested response value.
+    """
+    read_settings = target.depot_settings
+
+    def malformed_readback():
+        """Return valid initial settings followed by malformed failure readback."""
+        payload = read_settings()
+        if target.reads > 1:
+            payload[key] = value
+        return payload
+
+    target.responses = [snapshot(), snapshot("FAILED", NEW, "Metadata failed.")]
+    monkeypatch.setattr(target, "depot_settings", malformed_readback)
+    with pytest.raises(service.VcfDepotTargetPartialError) as caught:
+        configure()
+    result = caught.value.outcome
+    assert result["configuration_readback"] == "unavailable"
+    assert result["configuration_verified"] is False
+    assert result["manual_recovery_required"] is False
+    assert result["sync"]["request_accepted"] is True
+    assert result["sync"]["before_request"]["last_completed_at"] == OLD
+    assert result["sync"]["latest_observation"]["last_completed_at"] == NEW
+
+
 def test_request_error_keeps_configuration_readback(target, monkeypatch):
     """A rejected sync request must not lose a verified existing configuration.
 
