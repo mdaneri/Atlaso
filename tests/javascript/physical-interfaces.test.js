@@ -148,11 +148,12 @@ test("address evidence keeps failed attempts distinct from restored addresses an
     escapeHtml: (value) => String(value).replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;"),
   });
   vm.runInContext(`${functionSource("networkAddressStatusHtml")} globalThis.render = networkAddressStatusHtml;`, context);
-  const rendered = context.render({ state: "conflict", detail: "Rejected 192.0.2.20 <script>", active_addresses: ["192.0.2.10"], last_conflict: { detected_at: "2026-09-12T00:00:00Z", mac: "" } });
+  const rendered = context.render({ state: "conflict", detail: "Rejected 192.0.2.20 <script> <SCRIPT>", active_addresses: ["192.0.2.10"], last_conflict: { detected_at: "2026-09-12T00:00:00Z", mac: "" } });
   assert.match(rendered, /IP conflict/);
   assert.match(rendered, /Active: 192.0.2.10/);
   assert.match(rendered, /Detected: 2026-09-12/);
-  assert.doesNotMatch(rendered, /<script>|MAC:/);
+  assert.ok(rendered.includes("Rejected 192.0.2.20 &lt;script&gt; &lt;SCRIPT&gt;"));
+  assert.equal(rendered.includes("MAC:"), false);
   assert.match(context.render({}), /Unable to check/);
 });
 

@@ -308,3 +308,40 @@ def test_vlan_evidence_requires_actual_tag_and_parent():
         wrong["links"][1].update(changed)
         assert project_status(wrong, {}, [candidate])["rows"]["vlan:1"]["state"] == "unknown"
         assert helper._native_vlan_matches(staged, {row["name"]: row for row in wrong["links"]}) is False
+
+
+def test_status_command_entrypoint_returns_one_json_document(monkeypatch, capsys):
+    """The worker's exact no-path invocation reaches observation with parseable stdout.
+
+    Args:
+        monkeypatch: Replace native reads while exercising the actual command dispatcher.
+        capsys: Capture the protocol response.
+    """
+    import json
+
+    from tests.test_appliance_helper import load_helper_module
+
+    helper = load_helper_module()
+    native = observation()
+    monkeypatch.setattr(helper, "_network_address_observation", lambda: native)
+    assert helper.main(["atlaso-helper", "network", "address-status", "--real"]) == 0
+    assert json.loads(capsys.readouterr().out) == native
+    assert helper.main(["atlaso-helper", "network", "address-status", "unexpected", "--real"]) == 2
+
+
+def test_dhcp_decline_remains_conflict_until_a_replacement_lease_activates():
+    """A dropped DHCP offer has no desired static address, but still represents a conflict."""
+    event = {"name": "eth0", "address": "192.0.2.20", "detected_at": "2026-09-12T00:00:00+00:00", "mac": ""}
+    desired = resource()
+    desired.update(desired=[], dhcp4=True)
+    native = observation(conflicts=[event])
+    native["links"][0]["addresses"] = []
+    rejected = project_status(native, {}, [desired])
+    assert rejected["rows"]["physical:1"]["state"] == "conflict"
+    native["conflicts"] = []
+    native["links"][0]["addresses"] = [{"address": "192.0.2.10", "state": "assigned", "source": "static"}]
+    assert project_status(native, rejected, [desired])["rows"]["physical:1"]["state"] == "conflict"
+    native["links"][0]["addresses"][0]["source"] = "DHCPv4"
+    recovered = project_status(native, rejected, [desired])["rows"]["physical:1"]
+    assert recovered["state"] == "assigned"
+    assert recovered["last_conflict"] == event

@@ -255,6 +255,8 @@ is not proof of global uniqueness.
 The **Address status** column refreshes while the page is visible. The VLAN wizard also shows the
 selected row's evidence. **Checking**, **IP conflict**, **Addresses active**, and **Unable to check**
 distinguish tentative addresses, confirmed rejection, observed activation, and missing/stale evidence.
+A declined DHCPv4 offer stays a confirmed conflict until a replacement DHCP lease becomes active;
+a retained static address does not count as that replacement.
 The retained failure names the attempted address, link, and detection time; a conflicting MAC appears
 only when the native evidence supplies one. Native networkd rejection messages do not normally include
 that MAC, so Atlaso does not infer it from stale neighbor entries.

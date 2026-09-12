@@ -171,6 +171,7 @@ SYSTEMD_RUN_CHILD_ENV = "ATLASO_HELPER_SYSTEMD_RUN_CHILD"
 SYSTEMD_RUN_ACTION_UNIT_PREFIX = "atlaso-helper-action"
 UPDATE_RELEASE_NOTES_URL_MAX_LENGTH = 2048
 NO_PATH_ACTIONS = {
+    ("network", "address-status"),
     ("wan", "reconcile-nat"),
     ("dnsmasq", "leases"),
     ("dnsmasq", "logs"),
@@ -23548,6 +23549,8 @@ def main(argv: list[str]) -> int:
         print(str(exc), file=sys.stderr)
         return 2
 
+    if (group, action) == ("network", "address-status") and real_apply:
+        return _handle_network(action, normalized_args)
     if (group, action) == ("kms", "status"):
         return _handle_kms(action, normalized_args)
     if (group, action) == ("diagnostics", "source"):

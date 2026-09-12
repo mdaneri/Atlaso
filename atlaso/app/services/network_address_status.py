@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 from datetime import datetime, timezone
-from ipaddress import ip_interface
+from ipaddress import ip_address, ip_interface
 from typing import Any
 
 from sqlalchemy import select
@@ -84,7 +84,10 @@ def project_status(
                 detail = "Unable to check: no usable address has been observed."
         if last_conflict:
             address = last_conflict["address"]
-            if address in resource["desired"] and address not in assigned:
+            replacement_lease = bool(link.get("configured") and observation.get("complete") and any(
+                item["state"] == "assigned" and item.get("source") == "DHCPv4" for item in records))
+            declined_offer = resource.get("dhcp4") and ip_address(address).version == 4 and not replacement_lease
+            if (address in resource["desired"] and address not in assigned) or declined_offer:
                 state = "conflict"
                 detail = f"IP conflict: {address}. The failed attempted address is not active."
                 if assigned:
@@ -139,6 +142,7 @@ def refresh_status(db: Session) -> None:
                     continue
             resources.append({"key": f"{kind}:{row.id}", "name": row.name, "identity": identity,
                               "desired": desired, "physical": kind == "physical",
+                              "dhcp4": isinstance(row, PhysicalInterface) and row.ipv4_method == "dhcp",
                               "parent": row.parent_interface if isinstance(row, VlanInterface) else "",
                               "checking": row.check_duplicate_ip_addresses is not False})
     projection = project_status(observation, read_status(db), resources)
