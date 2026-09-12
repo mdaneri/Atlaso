@@ -201,6 +201,7 @@ interface=eth1
             "name": "eth0",
             "parent": "",
             "parent_admin_state": "",
+            "check_duplicate_ip_addresses": "false",
             "role": "management",
             "mtu": "",
             "ipv4_method": "static",
@@ -217,6 +218,7 @@ interface=eth1
             "name": "eth1",
             "parent": "",
             "parent_admin_state": "",
+            "check_duplicate_ip_addresses": "false",
             "role": "access",
             "mtu": "",
             "ipv4_method": "",
@@ -234,6 +236,11 @@ interface=eth1
     assert not management_handoff_required(
         {"raw_config_preview": dedicated},
         {"config_preview": dedicated},
+    )
+    checked = dedicated.replace("role=management", "role=management\n  check_duplicate_ip_addresses=true")
+    assert network_management_paths(checked)[0]["check_duplicate_ip_addresses"] == "true"
+    assert management_handoff_required(
+        {"raw_config_preview": checked}, {"config_preview": dedicated},
     )
 
 
