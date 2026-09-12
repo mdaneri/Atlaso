@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import time
 from dataclasses import dataclass
+from datetime import datetime
 from ipaddress import IPv6Address, ip_address
 from typing import Any, Callable
 
@@ -21,8 +22,57 @@ class VcfDepotTargetError(RuntimeError):
 
 
 class VcfDepotTargetPartialError(VcfDepotTargetError):
-    """Report a vcf depot target partial error."""
-    pass
+    """Retain independent configuration and sync evidence after partial completion."""
+
+    def __init__(self, message: str, *, outcome: dict[str, Any] | None = None):
+        """Initialize the failure with a safe message and independently read outcome.
+
+        Args:
+            message: Safe explanation of the incomplete operation.
+            outcome: Sanitized configuration and synchronization evidence.
+        """
+        super().__init__(message)
+        self.outcome = outcome if outcome is not None else {"manual_recovery_required": True}
+
+
+def _sync_evidence(payload: dict[str, Any]) -> dict[str, Any]:
+    """Project bounded lifecycle evidence without retaining free-form vendor errors.
+
+    Args:
+        payload: Observed target synchronization response.
+    """
+    status = str(payload.get("syncStatus") or "").upper()
+    if status not in {"PENDING", "RUNNING", "IN_PROGRESS", "SYNCING", "STARTING", "STARTED",
+                      "COMPLETED", "SUCCESS", "SUCCEEDED", "FAILED", "FAILURE", "ERROR"}:
+        status = "UNKNOWN"
+    try:
+        completed = datetime.fromisoformat(str(payload.get("lastSyncCompletionTimestamp") or "")).isoformat()
+    except ValueError:
+        completed = ""
+    return {"status": status, "last_completed_at": completed, "error_present": bool(payload.get("errorMessage"))}
+
+
+def _configuration_readback(api: VcfDepotApiClient, local: LocalDepotEndpoint) -> dict[str, Any]:
+    """Read configuration independently of metadata success without changing it.
+
+    Args:
+        api: Authenticated target API client.
+        local: Expected local depot endpoint.
+    """
+    try:
+        remote = api.depot_settings()
+        if not all(isinstance(remote.get(key), dict) for key in ("depotConfiguration", "offlineAccount")):
+            return {"configuration_verified": False, "configuration_readback": "unavailable"}
+        sanitized = sanitize_remote_depot(remote)
+        # Retain only required evidence: vendor URLs and messages can carry
+        # authentication material and must not reach durable task results.
+        depot = {key: sanitized[key] for key in ("is_offline", "hostname", "port", "username", "status")}
+        matches = depot_matches(remote, local)
+        connected = depot["status"] == "DEPOT_CONNECTION_SUCCESSFUL"
+        return {"depot": depot, "configuration_verified": matches and connected,
+                "configuration_readback": "verified" if matches and connected else "mismatch"}
+    except (VcfDepotTargetError, httpx.HTTPError, ValueError, TypeError, OverflowError):
+        return {"configuration_verified": False, "configuration_readback": "unavailable"}
 
 
 @dataclass(frozen=True)
@@ -89,6 +139,7 @@ class VcfDepotApiClient:
         client: Client maintained by this vcfdepotapiclient.
         username: Username maintained by this vcfdepotapiclient.
         password: Password maintained by this vcfdepotapiclient.
+        sync_request_accepted: HTTP acceptance, or None when transport leaves it unknown.
     """
     def __init__(self, address: str, username: str, password: str, *, port: int = 443, timeout: float = 30.0, expected_fingerprint: str = ""):
         """Initialize the vcf depot api client.
@@ -116,6 +167,7 @@ class VcfDepotApiClient:
         self.client = httpx.Client(base_url=f"https://{api_host}{port_suffix}", verify=False, timeout=timeout)
         self.username = username
         self.password = password
+        self.sync_request_accepted: bool | None = False
 
     def __enter__(self) -> "VcfDepotApiClient":
         """Enter the managed context.
@@ -219,7 +271,10 @@ class VcfDepotApiClient:
 
     def start_sync(self) -> dict[str, Any]:
         """Return start sync."""
+        self.sync_request_accepted = None
         response = self.client.patch("/v1/system/settings/depot/depot-sync-info")
+        # A successful HTTP response proves acceptance even if its body cannot be decoded.
+        self.sync_request_accepted = response.is_success
         self._raise(response, "VCF rejected the depot metadata sync request")
         return dict(response.json())
 
@@ -293,27 +348,52 @@ def configure_target_depot(
                 raise VcfDepotTargetError(returned["message"] or f"VCF reported depot status {returned['status']}.")
         if progress:
             progress(50, "starting-metadata-sync")
-        before = api.sync_info()
-        api.start_sync()
-        started = time.monotonic()
+        before: dict[str, Any] = {}
         latest: dict[str, Any] = {}
-        while time.monotonic() - started < timeout:
-            latest = api.sync_info()
-            error = str(latest.get("errorMessage") or "").strip()
-            if error:
-                raise VcfDepotTargetPartialError(f"Depot configuration succeeded, but metadata sync failed: {error}")
-            status = str(latest.get("syncStatus") or "").upper()
-            old_timestamp = str(before.get("lastSyncCompletionTimestamp") or "")
-            new_timestamp = str(latest.get("lastSyncCompletionTimestamp") or "")
-            in_progress = any(value in status for value in ("PENDING", "RUNNING", "PROGRESS", "SYNCING", "START"))
-            if new_timestamp and new_timestamp != old_timestamp and not in_progress:
-                break
-            if progress:
-                elapsed_fraction = min(1.0, (time.monotonic() - started) / max(timeout, 1))
-                progress(55 + int(elapsed_fraction * 35), "syncing-metadata")
-            time.sleep(poll_interval)
-        else:
-            raise VcfDepotTargetPartialError("Depot configuration succeeded, but metadata sync did not complete before the timeout.")
+        request_accepted = False
+        try:
+            before = api.sync_info()
+            api.start_sync()
+            request_accepted = True
+            started = time.monotonic()
+            while time.monotonic() - started < timeout:
+                latest = api.sync_info()
+                error = str(latest.get("errorMessage") or "").strip()
+                if error:
+                    raise VcfDepotTargetPartialError(f"Depot configuration succeeded, but metadata sync failed: {error}")
+                status = str(latest.get("syncStatus") or "").upper()
+                old_timestamp = str(before.get("lastSyncCompletionTimestamp") or "")
+                new_timestamp = str(latest.get("lastSyncCompletionTimestamp") or "")
+                in_progress = any(value in status for value in ("PENDING", "RUNNING", "PROGRESS", "SYNCING", "START"))
+                if new_timestamp and new_timestamp != old_timestamp and not in_progress:
+                    break
+                if progress:
+                    elapsed_fraction = min(1.0, (time.monotonic() - started) / max(timeout, 1))
+                    progress(55 + int(elapsed_fraction * 35), "syncing-metadata")
+                time.sleep(poll_interval)
+            else:
+                raise VcfDepotTargetPartialError("Depot configuration succeeded, but metadata sync did not complete before the timeout.")
+        except (VcfDepotTargetError, httpx.HTTPError, ValueError, TypeError) as exc:
+            readback = _configuration_readback(api, local)
+            outcome = {
+                "appliance": appliance,
+                "configuration": "updated" if configured else "unchanged",
+                **readback,
+                "sync": {
+                    "request_accepted": getattr(api, "sync_request_accepted", request_accepted),
+                    "before_request": _sync_evidence(before),
+                    "latest_observation": _sync_evidence(latest),
+                    "historical_error_possible": bool(
+                        latest.get("errorMessage")
+                        and latest.get("errorMessage") == before.get("errorMessage")
+                        and latest.get("lastSyncCompletionTimestamp") == before.get("lastSyncCompletionTimestamp")
+                    ),
+                },
+                "manual_recovery_required": readback["configuration_readback"] == "mismatch",
+                "next_step": "Inspect target metadata sync status before retrying. A matching depot is preserved on retry.",
+            }
+            message = str(exc) if isinstance(exc, VcfDepotTargetPartialError) else "Metadata sync could not be requested or observed. Inspect target status before retrying."
+            raise VcfDepotTargetPartialError(message, outcome=outcome) from exc
         verified = api.depot_settings()
         sanitized_verified = sanitize_remote_depot(verified)
         if not depot_matches(verified, local):
