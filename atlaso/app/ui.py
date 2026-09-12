@@ -8849,7 +8849,7 @@ def run_vcf_target_depot_job(
             job.status = "partial-failure"
             job.finished_at = utcnow()
             job.error = str(exc)
-            _update_job(job, db, 100, "partial-failure", target=address, port=port, manual_recovery_required=True)
+            _update_job(job, db, 100, "partial-failure", target=address, port=port, **exc.outcome)
             success = False
         except Exception as exc:  # noqa: BLE001 - persist a sanitized terminal task state.
             job.status = JobStatus.FAILED.value
@@ -9202,7 +9202,7 @@ def run_vcf_sddc_deployment_job(
             job.status = "partial-failure"
             job.finished_at = utcnow()
             job.error = str(exc)
-            _update_job(job, db, 100, "partial-failure", target=target_address, vm_preserved=vm_created, manual_recovery_required=True)
+            _update_job(job, db, 100, "partial-failure", target=target_address, vm_preserved=vm_created, **exc.outcome)
             success = False
         except VcfSddcPostImportError as exc:
             vm_created = True
