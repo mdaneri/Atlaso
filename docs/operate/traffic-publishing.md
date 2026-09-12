@@ -85,14 +85,17 @@ family when the socket observation cannot establish IPv6-only ownership.
 Handoff failures before paired publication skip connection retirement; later rollback retires only candidate changes.
 When reusing a service endpoint, select its shutdown or listener change in the same Apply. Selected listener services
 run before forwarding publication so the live socket check observes the released endpoint.
-NTS enablement during a management handoff runs after the handoff deploys its required CA certificate and key;
-desired listener collision checks still protect forwarding publication.
+During a management handoff, only service shutdowns run early. Enabled certificate consumers, including KMS and NTS,
+wait for the CA-bearing handoff. Desired listener collision checks still protect forwarding publication; an existing
+socket conflict blocks publication, so release that endpoint in a separate Apply before moving an enabled listener.
 Startup also reconciles an interrupted first publication when its recovery journal exists but no NAT snapshot was
 written, restoring the previous Firewall before application-level recovery.
 Inventory reconciliation follows a verified NIC rename, including child VLAN listeners, and refreshes each changed
 forward's desired-state update timestamp. Reconciliation without a binding change preserves the timestamp. A missing NIC
 keeps its inert identity and exact mapping, disables the forward, and requires operator review before reactivation.
 The grid's Review column identifies these rules as **Review restored listener**, matching the no-JavaScript table.
+Archives must use canonical listener and target IP literals, including lowercase compressed IPv6, matching runtime
+validation. Noncanonical archived literals are rejected before any desired-state replacement.
 
 Removing, disabling, or suspending a rule retires its counters and Atlaso-marked connections during Apply. Sessions
 through that mapping must reconnect. Unchanged mappings retain their connections during unrelated Apply submissions;

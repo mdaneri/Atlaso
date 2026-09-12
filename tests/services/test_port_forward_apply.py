@@ -125,9 +125,14 @@ def test_global_submission_publishes_captured_port_forward_pair(client, manageme
         NtpSettings,
         PhysicalInterface,
         PortForward,
+        VsphereKeyProvider,
+        VsphereTrustedVcenter,
+        VsphereTrustedVcenterCertificate,
     )
+    from atlaso.app.services.vsphere_key_providers import parse_public_certificate
     from tests.routers.ui.helpers import login
     from tests.services.test_port_forwarding import payload
+    from tests.test_vsphere_key_providers import _public_client_certificate
 
     login(client)
     page = client.get("/dashboard")
@@ -158,11 +163,23 @@ def test_global_submission_publishes_captured_port_forward_pair(client, manageme
             ntp.hostname = "ntp.atlaso.internal"
             ntp.listen_interface = "eth2"
             ntp.listen_address = interface.ip_cidr.split("/")[0]
+            if not release_listener:
+                kms.enabled = True
+                kms.listen_interface = "eth2"
+                kms.listen_address = interface.ip_cidr.split("/")[0]
+                public_pem, _private_pem = _public_client_certificate()
+                provider = VsphereKeyProvider(name="Apply ordering provider", enabled=True)
+                vcenter = VsphereTrustedVcenter(name="Apply ordering vCenter", hostname="vcsa.atlaso.internal", enabled=True)
+                vcenter.certificates.append(VsphereTrustedVcenterCertificate(
+                    source="uploaded_public", **parse_public_certificate(public_pem),
+                ))
+                provider.trusted_vcenters.append(vcenter)
+                db.add(provider)
         if management_move:
             management = db.scalar(select(PhysicalInterface).where(PhysicalInterface.name == "eth0"))
             management.ip_cidr = "192.168.49.21/24"
         db.commit()
-    selected = ["nat"] + (["kms"] if release_listener else []) + (["ntpd"] if enable_nts else [])
+    selected = ["nat"] + (["kms"] if release_listener or enable_nts else []) + (["ntpd"] if enable_nts else [])
     if enable_nts:
         with SessionLocal() as db:
             errors = {unit["id"]: unit["validation_errors"] for unit in ui.appliance_apply_units(db)
@@ -177,6 +194,8 @@ def test_global_submission_publishes_captured_port_forward_pair(client, manageme
         assert job.status == "succeeded", result
         if enable_nts:
             assert result["selected_units"].index("ca") < result["selected_units"].index("ntpd")
+            if not release_listener:
+                assert result["selected_units"].index("ca") < result["selected_units"].index("kms")
             if management_move:
                 assert result["selected_units"].index("network") < result["selected_units"].index("ntpd")
         if release_listener:

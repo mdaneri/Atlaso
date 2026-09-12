@@ -16569,10 +16569,26 @@ def _submit_appliance_apply(
         # Handoff publishes as one group at its first member, not at the NAT row.
         grouped = set(MANAGEMENT_HANDOFF_UNIT_IDS) if management_handoff else {"firewall", "nat"}
         release_ids = listener_units - grouped
-        if management_handoff and ca_required_for_nts:
-            # The handoff deploys CA material needed by NTS validation. Keep NTP
-            # after that group; desired listener validation still guards the pair.
-            release_ids.discard("ntpd")
+        if management_handoff:
+            # Only shutdowns can precede the CA-bearing group. Enabled consumers
+            # may need newly deployed certificates, even for a listener change.
+            shutdown_settings = {
+                "dnsmasq": ("dns_settings", "dhcp_settings"),
+                "esx_storage": ("esx_storage_settings",), "kms": ("kms_settings",),
+                "ldap": ("ldap_settings",), "ntpd": ("ntp_settings",),
+                "vcf_backups": ("vcf_backup_settings",),
+                "vcf_offline_depot": ("vcf_depot_settings",),
+                "vcf_private_registry": ("vcf_registry_settings",),
+            }
+            release_ids = {
+                unit_id for unit_id in release_ids
+                if unit_id in shutdown_settings and all(
+                    getattr(unit_map.get(unit_id, {}).get("context", {}).get(key), "enabled", None) is False
+                    for key in shutdown_settings[unit_id]
+                )
+            }
+            if unit_map.get("esxi_pxe", {}).get("context", {}).get("esxi_pxe_boot", {}).get("enabled") is False:
+                release_ids.add("esxi_pxe")
         releases = [unit for unit in selected_ordered_units
                     if unit["id"] in release_ids]
         selected_ordered_units = [unit for unit in selected_ordered_units if unit not in releases]

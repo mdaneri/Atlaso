@@ -16,7 +16,7 @@ from atlaso.app.services.settings_archive import (
 from tests.services.test_port_forwarding import payload
 
 
-@pytest.mark.parametrize("invalid", [None, "group", "target", "listener"])
+@pytest.mark.parametrize("invalid", [None, "group", "target", "listener", "expanded_target", "uppercase_listener"])
 @pytest.mark.parametrize("claimed_review", [False, True])
 @pytest.mark.parametrize("missing_listener", [False, True])
 def test_disabled_archive_rules_validate_available_relationships(client, invalid, claimed_review, missing_listener):
@@ -44,8 +44,15 @@ def test_disabled_archive_rules_validate_available_relationships(client, invalid
             row["target_address"] = address
         elif invalid == "listener":
             row.update(external_port_start=22, external_port_end=22, target_port_end=13000)
+        elif invalid in {"expanded_target", "uppercase_listener"}:
+            row.update(ip_family=6, listener_address="2001:db8:abcd::1", target_address="2001:db8:ffff::10")
+            if invalid == "expanded_target":
+                row["target_address"] = "2001:0db8:ffff:0000:0000:0000:0000:0010"
+            else:
+                row["listener_address"] = "2001:DB8:ABCD::1"
         if invalid:
-            with pytest.raises(ValueError, match="port-forward"):
+            expected_error = "canonical IP" if invalid in {"expanded_target", "uppercase_listener"} else "port-forward"
+            with pytest.raises(ValueError, match=expected_error):
                 restore_settings_archive(db, archive)
             db.expire_all()
             saved = db.scalar(select(PortForward))
