@@ -19,7 +19,7 @@ import time
 import xml.etree.ElementTree as ET
 from collections.abc import Callable
 from datetime import datetime, timezone
-from ipaddress import ip_interface
+from ipaddress import ip_address, ip_interface
 from pathlib import Path
 from uuid import UUID
 
@@ -78,6 +78,7 @@ DEVELOPMENT_ROOT_CA_STAGING_PATH = Path(
 )
 LOG_PATH = Path("/var/log/atlaso/vmware-ovf-customize.log")
 DEFAULT_INTERFACE = "eth0"
+HELPER_PATH = Path("/opt/atlaso/bin/atlaso-helper")
 NETWORK_REVIEW_POLL_SECONDS = 1.0
 OVF_ENVIRONMENT_POLL_SECONDS = 1.0
 PENDING_EMPTY_CONFIRMATION_READS = 30
@@ -889,12 +890,13 @@ def pending_marker_matches_current_deployment(ovf_env_file: str) -> bool:
     )
 
 
-def wait_for_network_review(properties: dict[str, str], error: str) -> int:
+def wait_for_network_review(properties: dict[str, str], error: str, *, prepare_only: bool = False) -> int:
     """Wait visibly for tty1 to provide a valid first-boot network correction.
 
     Args:
         properties: Original OVF properties retained in process memory.
         error: Initial safe management-network validation message.
+        prepare_only: Keep the review handshake and OVF envelope for activation after networkd starts.
 
     Returns:
         Zero after corrected customization succeeds.
@@ -928,10 +930,15 @@ def wait_for_network_review(properties: dict[str, str], error: str) -> int:
             return 2
         try:
             run_initialization_layer("pending success marker invalidation", invalidate_pending_marker)
-            summary = apply_customization(config)
+            summary = apply_customization(config, prepare_only=True) if prepare_only else apply_customization(config)
         except OvfFinalizationError as exc:
             log(f"VMware OVF customization is retrying first-boot finalization: {exc}")
             return recover_pending_customization()
+        except OvfManagementNetworkError as exc:
+            write_network_review(corrected_properties, str(exc))
+            NETWORK_CORRECTION_PATH.unlink(missing_ok=True)
+            log(f"VMware OVF management address activation requires correction: {exc}")
+            continue
         except OvfCustomizationError as exc:
             write_network_review(
                 corrected_properties,
@@ -949,8 +956,9 @@ def wait_for_network_review(properties: dict[str, str], error: str) -> int:
             NETWORK_CORRECTION_PATH.unlink(missing_ok=True)
             log(f"VMware OVF customization could not apply the console correction: {type(exc).__name__}")
             continue
-        complete_first_boot_initialization()
-        log("Applied corrected Atlaso VMware OVF customization: " + json.dumps(summary, sort_keys=True))
+        if not prepare_only:
+            complete_first_boot_initialization()
+        log(("Prepared" if prepare_only else "Applied") + " corrected Atlaso VMware OVF customization: " + json.dumps(summary, sort_keys=True))
         return 0
 
 
@@ -1449,6 +1457,67 @@ def write_networkd_config(config: dict[str, object]) -> None:
     os.chmod(NETWORKD_PATH, 0o644)
 
 
+def wait_for_native_management_addresses(config: dict[str, object]) -> None:
+    """Require native activation before retiring the recoverable first-boot state.
+
+    Args:
+        config: Validated static or dynamic management address requirements.
+
+    Raises:
+        OvfManagementNetworkError: If DAD fails or native readiness cannot be proven.
+    """
+    requirements = [str(config["cidr"]) if config["management_mode"] != "dhcp" else "dhcp4"]
+    if config["ipv6_mode"] != "disabled":
+        requirements.append(str(config["ipv6_cidr"]) if config["ipv6_mode"] == "static" else "auto6")
+    started_at = datetime.now(timezone.utc).isoformat()
+    try:
+        version = subprocess.run(["networkctl", "--version"], check=True, text=True, capture_output=True, timeout=4)
+        match = re.search(r"systemd (\d+)", version.stdout)
+        if not match or int(match[1]) < 252:
+            raise OvfManagementNetworkError("Native address checking requires systemd-networkd 252 or newer.")
+        for command in (["networkctl", "reload"], ["networkctl", "reconfigure", DEFAULT_INTERFACE]):
+            subprocess.run(command, check=True, text=True, capture_output=True, timeout=10)
+        deadline = time.monotonic() + 30
+        for _attempt in range(31):
+            result = subprocess.run([str(HELPER_PATH), "network", "address-status", "--real"],
+                                    check=True, text=True, capture_output=True, timeout=20)
+            if len(result.stdout) > 1048576:
+                raise OvfManagementNetworkError("Native address evidence exceeded its bounded size.")
+            observation = json.loads(result.stdout)
+            link = next((row for row in observation.get("links", []) if row.get("name") == DEFAULT_INTERFACE), {})
+            records = link.get("addresses", [])
+            ready = bool(observation.get("complete") and link.get("configured") and link.get("ethernet") and link.get("mac"))
+            for address in requirements:
+                static = "/" in address
+                candidate_ip = str(ip_interface(address).ip) if static else ""
+                matches = [row for row in records if (
+                    static and row.get("cidr") == str(ip_interface(address)) and row.get("source") == "static"
+                ) or (
+                    not static and ip_address(row["address"]).version == (4 if address == "dhcp4" else 6)
+                    and not ip_address(row["address"]).is_link_local
+                    and row.get("source") in ({"DHCPv4"} if address == "dhcp4" else {"DHCPv6", "NDisc"})
+                )]
+                if any(row.get("state") == "conflict" for row in records
+                       if row in matches or row.get("address") == candidate_ip) or any(
+                    row.get("name") == DEFAULT_INTERFACE and row.get("address") == candidate_ip
+                    and str(row.get("detected_at", "")) >= started_at
+                    for row in observation.get("conflicts", [])
+                ):
+                    raise OvfManagementNetworkError(f"IP conflict on {DEFAULT_INTERFACE}: {address}. Review management networking.")
+                ready = ready and any(row.get("state") == "assigned" for row in matches)
+            if ready:
+                return
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                break
+            time.sleep(min(1.0, remaining))
+    except (OSError, ValueError, KeyError, TypeError, subprocess.SubprocessError) as exc:
+        if isinstance(exc, OvfManagementNetworkError):
+            raise
+        raise OvfManagementNetworkError("Native management address activation could not be verified.") from exc
+    raise OvfManagementNetworkError("Native management addresses did not activate; review conflicts and network connectivity.")
+
+
 def write_resolv_conf(config: dict[str, object]) -> None:
     """Persist resolv conf.
 
@@ -1830,6 +1899,10 @@ def run_initialization_layer(
         stage_reporter(stage)
     try:
         operation()
+    except OvfManagementNetworkError:
+        if stage_reporter is not None:
+            stage_reporter(f"failed-{stage}")
+        raise
     except (OvfCustomizationError, OSError, subprocess.CalledProcessError) as exc:
         if stage_reporter is not None:
             stage_reporter(f"failed-{stage}")
@@ -1888,12 +1961,13 @@ def appliance_environment_values(config: dict[str, object]) -> dict[str, object]
     }
 
 
-def apply_customization(config: dict[str, object], *, dry_run: bool = False) -> dict[str, object]:
+def apply_customization(config: dict[str, object], *, dry_run: bool = False, prepare_only: bool = False) -> dict[str, object]:
     """Update customization.
 
     Args:
         config: Validated configuration consumed by the operation.
         dry_run: Whether to report planned actions without mutating host state.
+        prepare_only: Configure credentials and host state before networkd without recording success.
 
 
     Returns:
@@ -1968,6 +2042,10 @@ def apply_customization(config: dict[str, object], *, dry_run: bool = False) -> 
         lambda: stage_development_root_ca(config),
     )
     run_layer("console credential refresh", restart_console)
+    if prepare_only:
+        run_layer("host state durability", sync_customized_host_state)
+        return summary
+    run_layer("native address activation", lambda: wait_for_native_management_addresses(config))
     run_layer("host state durability", sync_customized_host_state)
     run_layer(
         "pending success marker",
@@ -1993,6 +2071,7 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Apply Atlaso VMware OVF deployment properties.")
     parser.add_argument("--ovf-env-file", default="", help="Read OVF environment XML from a file instead of VMware Tools.")
     parser.add_argument("--dry-run", action="store_true", help="Validate and print the redacted summary without changing the host.")
+    parser.add_argument("--prepare-only", action="store_true", help="Prepare host state before networkd; retain the first-boot handshake for activation validation.")
     args = parser.parse_args(argv)
 
     if not args.dry_run and not args.ovf_env_file:
@@ -2084,18 +2163,23 @@ def main(argv: list[str] | None = None) -> int:
         properties, non_network = ovf_properties
 
     try:
+        if not args.dry_run and NETWORK_REVIEW_PATH.exists():
+            correction = read_network_correction()
+            if correction is not None:
+                properties = properties_with_network_correction(properties, correction)
         config = validate_properties(properties, non_network=non_network)
     except OvfManagementNetworkError as exc:
         if args.dry_run:
             log(f"VMware OVF customization failed validation: {exc}")
             return 2
-        return wait_for_network_review(properties, str(exc))
+        return wait_for_network_review(properties, str(exc), prepare_only=True) if args.prepare_only else wait_for_network_review(properties, str(exc))
     except OvfCustomizationError as exc:
         log(f"VMware OVF customization failed validation: {exc}")
         return 2
 
     try:
-        summary = apply_customization(config, dry_run=args.dry_run)
+        summary = (apply_customization(config, dry_run=args.dry_run, prepare_only=True)
+                   if args.prepare_only else apply_customization(config, dry_run=args.dry_run))
     except OvfFinalizationError as exc:
         log(f"VMware OVF customization is retrying first-boot finalization: {exc}")
         return recover_pending_customization()
@@ -2103,15 +2187,16 @@ def main(argv: list[str] | None = None) -> int:
         log(f"VMware OVF customization could not finish after validation: {exc}")
         if args.dry_run:
             return 2
-        return wait_for_network_review(
-            properties,
-            "The management network validated, but first-time initialization did not finish. "
-            "Resolve the condition reported in the customization log, then submit the network review to retry.",
-        )
+        message = ("The management network validated, but first-time initialization did not finish. "
+                   "Resolve the condition reported in the customization log, then submit the network review to retry.")
+        if isinstance(exc, OvfManagementNetworkError):
+            message = str(exc)
+        return (wait_for_network_review(properties, message, prepare_only=True)
+                if args.prepare_only else wait_for_network_review(properties, message))
 
-    if not args.dry_run:
+    if not args.dry_run and not args.prepare_only:
         complete_first_boot_initialization()
-    log("Applied Atlaso VMware OVF customization: " + json.dumps(summary, sort_keys=True))
+    log(("Prepared" if args.prepare_only else "Applied") + " Atlaso VMware OVF customization: " + json.dumps(summary, sort_keys=True))
     return 0
 
 

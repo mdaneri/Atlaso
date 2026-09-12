@@ -795,11 +795,13 @@ fi
 if [ "$ATLASO_GUEST_PLATFORM" = "vmware" ]; then
   install -o root -g root -m 0755 "$ATLASO_HOME/scripts/appliance/atlaso-vmware-ovf-customize.py" "$ATLASO_HOME/bin/atlaso-vmware-ovf-customize.py"
   install -o root -g root -m 0644 "$ATLASO_HOME/$ATLASO_IMAGE_ASSET_DIR/systemd/atlaso-vmware-ovf-customize.service" /etc/systemd/system/atlaso-vmware-ovf-customize.service
+  install -o root -g root -m 0644 "$ATLASO_HOME/$ATLASO_IMAGE_ASSET_DIR/systemd/atlaso-vmware-ovf-prepare.service" /etc/systemd/system/atlaso-vmware-ovf-prepare.service
 fi
 install -o root -g root -m 0440 "$ATLASO_HOME/image/common/sudoers.d/atlaso-helper" /etc/sudoers.d/atlaso-helper
 sed -i 's/\r$//' /etc/systemd/system/atlaso.service /etc/systemd/system/atlaso-worker.service /etc/systemd/system/atlaso-console.service /etc/systemd/system/atlaso-guest-agent-select.service /etc/systemd/system.conf.d/atlaso-console.conf "$ATLASO_HOME/bin/atlaso-helper" "$ATLASO_HOME/bin/atlaso-install-boot-branding" "$ATLASO_HOME/bin/atlaso-mount-data-disks" "$ATLASO_HOME/bin/atlaso-select-guest-agent" "$ATLASO_HOME/bin/atlaso-initialize-machine-identity.py" "$ATLASO_HOME/bin/atlaso-bootstrap-https" /etc/sudoers.d/atlaso-helper
 if [ "$ATLASO_GUEST_PLATFORM" = "vmware" ]; then
   sed -i 's/\r$//' "$ATLASO_HOME/bin/atlaso-vmware-ovf-customize.py" /etc/systemd/system/atlaso-vmware-ovf-customize.service
+  sed -i 's/\r$//' /etc/systemd/system/atlaso-vmware-ovf-prepare.service
 fi
 visudo -cf /etc/sudoers.d/atlaso-helper
 
@@ -907,6 +909,7 @@ if [ "$ATLASO_GUEST_PLATFORM" = "vmware" ]; then
   install -o root -g root -m 0640 /dev/null "$ATLASO_STATE/vmware-ovf-initializing"
   systemctl enable --now vmtoolsd
   systemctl enable atlaso-vmware-ovf-customize.service
+  systemctl enable atlaso-vmware-ovf-prepare.service
 fi
 systemctl enable atlaso-guest-agent-select.service
 systemctl enable atlaso-data-disks.service

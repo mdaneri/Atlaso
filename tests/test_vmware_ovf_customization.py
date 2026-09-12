@@ -951,12 +951,14 @@ def test_vmware_ovf_customizer_rejects_non_network_correction_fields(tmp_path):
         customizer.read_network_correction()
 
 
-def test_vmware_ovf_customizer_waits_for_nonsecret_console_correction(tmp_path, monkeypatch):
+@pytest.mark.parametrize("prepare_only", [False, True])
+def test_vmware_ovf_customizer_waits_for_nonsecret_console_correction(tmp_path, monkeypatch, prepare_only):
     """Verify invalid networking pauses before mutation and resumes from tty1 correction.
 
     Args:
         tmp_path: Temporary directory provided by pytest for isolated filesystem state.
         monkeypatch: Pytest helper used to replace first-boot state and actions.
+        prepare_only: Preserve the correction and lock for the activation stage.
     """
     customizer = load_customizer()
     customizer.NETWORK_REVIEW_PATH = tmp_path / "network-review.json"
@@ -994,12 +996,13 @@ def test_vmware_ovf_customizer_waits_for_nonsecret_console_correction(tmp_path, 
             mode=0o600,
         )
 
-    def apply_correction(config, *, dry_run=False):
+    def apply_correction(config, *, dry_run=False, prepare_only=False):
         """Record the first mutation and create the marker as the real apply does.
 
         Args:
             config: Validated corrected OVF customization values.
             dry_run: Whether mutation should be suppressed.
+            prepare_only: Whether only the early host preparation is requested.
 
         Returns:
             The safe customization summary written to the marker.
@@ -1007,20 +1010,21 @@ def test_vmware_ovf_customizer_waits_for_nonsecret_console_correction(tmp_path, 
         assert dry_run is False
         applied.append(config)
         summary = customizer.redacted_summary(config)
-        customizer.write_json_atomic(customizer.MARKER_PATH, summary)
+        if not prepare_only:
+            customizer.write_json_atomic(customizer.MARKER_PATH, summary)
         return summary
 
     monkeypatch.setattr(customizer.time, "sleep", supply_correction)
     monkeypatch.setattr(customizer, "apply_customization", apply_correction)
 
-    assert customizer.wait_for_network_review(properties, "Management gateway must be on-link.") == 0
+    assert customizer.wait_for_network_review(properties, "Management gateway must be on-link.", prepare_only=prepare_only) == 0
 
     assert applied[0]["cidr"] == "192.168.1.254/24"
     assert applied[0]["gateway"] == "192.168.1.1"
-    assert customizer.MARKER_PATH.exists()
-    assert not customizer.NETWORK_REVIEW_PATH.exists()
-    assert not customizer.NETWORK_CORRECTION_PATH.exists()
-    assert not customizer.INITIALIZATION_LOCK_PATH.exists()
+    assert customizer.MARKER_PATH.exists() is not prepare_only
+    assert customizer.NETWORK_REVIEW_PATH.exists() is prepare_only
+    assert customizer.NETWORK_CORRECTION_PATH.exists() is prepare_only
+    assert customizer.INITIALIZATION_LOCK_PATH.exists() is prepare_only
     assert "admin-secret" not in captured_review[0]
     assert "root-secret1" not in captured_review[0]
 
@@ -2382,12 +2386,14 @@ def test_vmware_ovf_customizer_renders_dhcp_network_and_interface_scoped_firewal
     assert 'iifname "eth0" meta nfproto ipv4 tcp dport { 22, 80, 443 } accept' in firewall
 
 
-def test_vmware_ovf_customizer_rotates_clone_specific_env_secrets(tmp_path, monkeypatch):
+@pytest.mark.parametrize("native_outcome", ["ready", "prepare", "conflict"])
+def test_vmware_ovf_customizer_rotates_clone_specific_env_secrets(tmp_path, monkeypatch, native_outcome):
     """Verify that vmware ovf customizer rotates clone specific env secrets.
 
     Args:
         tmp_path: Temporary directory provided by pytest for isolated filesystem state.
         monkeypatch: Pytest fixture used to replace the host sync primitive.
+        native_outcome: Native activation success, conflict, or early preparation only.
     """
     customizer = load_customizer()
     customizer.ENV_PATH = tmp_path / "atlaso.env"
@@ -2451,7 +2457,29 @@ def test_vmware_ovf_customizer_rotates_clone_specific_env_secrets(tmp_path, monk
     properties[customizer.PROPERTY_NORMAL_TEST_VM] = "true"
     config = customizer.validate_properties(properties)
 
-    summary = customizer.apply_customization(config)
+    def native_activation(_config):
+        """Require prepared credentials while preserving the unfinalized state.
+
+        Args:
+            _config: Validated network intent.
+        """
+        assert console_restarted == [True]
+        assert not customizer.PENDING_MARKER_PATH.exists()
+        assert not customizer.MARKER_PATH.exists()
+        assert not scrubbed
+        assert native_outcome != "prepare"
+        if native_outcome == "conflict":
+            raise customizer.OvfManagementNetworkError("IP conflict")
+
+    monkeypatch.setattr(customizer, "wait_for_native_management_addresses", native_activation)
+    if native_outcome == "conflict":
+        with pytest.raises(customizer.OvfManagementNetworkError, match="IP conflict"):
+            customizer.apply_customization(config)
+        assert not customizer.PENDING_MARKER_PATH.exists()
+        assert not customizer.MARKER_PATH.exists()
+        assert not scrubbed
+        return
+    summary = customizer.apply_customization(config, prepare_only=native_outcome == "prepare")
 
     rendered = customizer.ENV_PATH.read_text(encoding="utf-8")
     assert 'ATLASO_SECRET_KEY="rotated-secret-key"' in rendered
@@ -2464,6 +2492,12 @@ def test_vmware_ovf_customizer_rotates_clone_specific_env_secrets(tmp_path, monk
     assert 'ATLASO_APPLIANCE_MANAGEMENT_IPV6_ENABLED="true"' in rendered
     assert 'ATLASO_APPLIANCE_MANAGEMENT_IPV6_GATEWAY="fe80::1"' in rendered
     assert 'ATLASO_APPLIANCE_ROOT_SSH_ENABLED="true"' in rendered
+    if native_outcome == "prepare":
+        assert not customizer.PENDING_MARKER_PATH.exists()
+        assert not customizer.MARKER_PATH.exists()
+        assert not scrubbed
+        assert synchronized == [True]
+        return
     marker = json.loads(customizer.MARKER_PATH.read_text(encoding="utf-8"))
     assert console_restarted == [True]
     assert synchronized == [True]
@@ -2476,6 +2510,50 @@ def test_vmware_ovf_customizer_rotates_clone_specific_env_secrets(tmp_path, monk
     assert "root-secret1" not in str(marker)
     assert VALID_ED25519_PUBLIC_KEY not in str(marker)
     assert marker["development_admin_ssh_key_set"] is True
+
+
+@pytest.mark.parametrize("outcome", ["static", "dynamic", "tentative", "conflict", "missing", "wrong-prefix"])
+def test_first_boot_requires_native_address_activation(monkeypatch, outcome):
+    """Accept proven addresses and reject conflict or unverified native results.
+
+    Args:
+        monkeypatch: Supply bounded native command observations without network probes.
+        outcome: Address activation scenario.
+    """
+    customizer = load_customizer()
+    config = {"management_mode": "dhcp" if outcome == "dynamic" else "static",
+              "cidr": "192.0.2.10/24", "ipv6_mode": "static", "ipv6_cidr": "2001:db8::10/64"}
+    records = [{"address": "192.0.2.10", "cidr": "192.0.2.10/24",
+                "source": "DHCPv4" if outcome == "dynamic" else "static", "state": "assigned"},
+               {"address": "2001:db8::10", "cidr": "2001:db8::10/64", "source": "static", "state": "assigned"}]
+    if outcome in {"tentative", "conflict"}:
+        records[1]["state"] = "checking" if outcome == "tentative" else "conflict"
+    if outcome == "wrong-prefix":
+        records[0]["cidr"] = "192.0.2.10/25"
+    payload = {"complete": outcome != "missing", "links": [{"name": "eth0", "configured": True,
+               "ethernet": True, "mac": "00:11:22:33:44:55", "addresses": records}], "conflicts": []}
+    calls = []
+
+    def run(command, **_kwargs):
+        """Return the native version and exact bounded helper observation.
+
+        Args:
+            command: Fixed native operation.
+            **_kwargs: Required timeout and capture options.
+        """
+        calls.append(command)
+        return subprocess.CompletedProcess(command, 0, "systemd 257" if "--version" in command else json.dumps(payload), "")
+
+    monkeypatch.setattr(customizer.subprocess, "run", run)
+    monkeypatch.setattr(customizer.time, "sleep", lambda _seconds: None)
+    if outcome in {"static", "dynamic"}:
+        customizer.wait_for_native_management_addresses(config)
+    else:
+        with pytest.raises(customizer.OvfManagementNetworkError):
+            customizer.wait_for_native_management_addresses(config)
+    assert calls[:3] == [["networkctl", "--version"], ["networkctl", "reload"], ["networkctl", "reconfigure", "eth0"]]
+    assert all(command[1:] == ["network", "address-status", "--real"] for command in calls[3:])
+    assert len(calls) <= 34
 
 
 def test_vmware_ovf_export_and_image_plumbing_are_present():
@@ -2629,7 +2707,12 @@ def test_vmware_ovf_export_and_image_plumbing_are_present():
     assert 'str(HELPER_PATH), "ca", action, str(CA_STAGED_CONFIG_PATH), "--real"' in bootstrap_script
     assert "systemctl enable atlaso-vmware-ovf-customize.service" in provision_script
     assert "systemctl enable atlaso-bootstrap-https.service" in provision_script
-    assert "Before=network-pre.target" in vmware_unit
+    prepare_unit = Path("image/vmware-workstation/systemd/atlaso-vmware-ovf-prepare.service").read_text(encoding="utf-8")
+    assert "Before=network-pre.target systemd-networkd.service" in prepare_unit
+    assert "--prepare-only" in prepare_unit
+    assert "RequiredBy=systemd-networkd.service" in prepare_unit
+    assert "atlaso-vmware-ovf-prepare.service systemd-networkd.service" in vmware_unit
+    assert "Before=network-pre.target" not in vmware_unit
     assert "After=local-fs.target atlaso-console.service" in vmware_unit
     assert "Wants=atlaso-console.service" in vmware_unit
     assert "atlaso-data-disks.service" in vmware_unit

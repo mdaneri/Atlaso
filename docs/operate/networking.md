@@ -278,6 +278,11 @@ until the application commits the exact executed Network baseline. Startup resto
 uncommitted candidates or acknowledges an already committed baseline. Recovery refuses to race a
 live helper, and an unresolved marker blocks another Apply. Terminal backup cleanup warnings do
 not cause committed configuration to be rolled back on a later restart.
+VMware OVF first boot prepares configuration and deployment credentials before networkd starts.
+A second customization stage reloads the management link and verifies native address activation
+before recording success or clearing the console review handshake. A conflict or unavailable
+native evidence keeps first boot recoverable through network review; it does not finalize the
+applied marker. Console corrections survive the preparation stage and are revalidated for activation.
 The retained failure names the attempted address, link, and detection time; a conflicting MAC appears
 only when the native evidence supplies one. Native networkd rejection messages do not normally include
 that MAC, so Atlaso does not infer it from stale neighbor entries.
