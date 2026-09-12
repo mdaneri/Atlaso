@@ -255,6 +255,13 @@ and must not depend on browser pages or non-`/api/v1` protocol routes as generat
 
 ## NAT ingress compatibility
 
+Destination translations use the separate `/api/v1/traffic-publishing/port-forwards` collection. CRUD and status
+require `read:firewall` or `write:firewall` as appropriate; legacy WAN scopes do not grant access. Complete create and
+replace requests define one exact listener and equal-length port mapping. Writes save desired state only, and
+validation failures use ProblemDetails without committing a partial rule. The bounded status operation returns
+nullable packet/byte counters and pending, applied, suspended, disabled, or degraded state. See the
+[port-forward API contract](traffic-publishing.md#port-forward-api) for methods and source-loss acknowledgement.
+
 `POST /api/v1/nat/rules` and `PATCH /api/v1/nat/rules/{rule_id}` accept `inbound_interfaces`, an array of explicit
 interface/VLAN names. New rules and enabled updates require at least one enabled same-family lab target different from
 `outbound_interface`. Existing paths, operation IDs, and `read:wan` / `write:wan` authorization remain unchanged.

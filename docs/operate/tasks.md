@@ -92,6 +92,8 @@ Cancellation does not
 interrupt filesystem publication halfway through. Failed cleanup retains active ownership and the request for
 recovery. Worker restart
 revalidates task-owned update units or restores interrupted media swaps before confirming cancellation.
+Web startup confirms accepted queued Apply cancellations before classifying other interrupted Apply jobs.
+Paired Firewall/NAT publication finishes as one transaction; a request after its final work preserves completion.
 
 Completed child results remain intact. A verified parent stop skips children that never started. If completion wins
 the race, Atlaso preserves success or failure and records `completion-won`; repeated requests never rewrite that result.

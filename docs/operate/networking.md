@@ -190,8 +190,9 @@ VLAN reaches that network directly. A supplied gateway must use the same address
 clients remain compatible with `POST` or `PATCH /api/v1/routes` requests
 that use canonical `0.0.0.0/0` or `::/0`; those payloads must also include the required same-family gateway.
 
-Source NAT rules now live on [Traffic Publishing](traffic-publishing.md). That guide covers the dual-stack wizard,
-explicit ingress, fixed SNAT, eligibility, upgrade, and boot recovery. Routing & WAN retains static routes, routing
+Source NAT and port-forward rules live on [Traffic Publishing](traffic-publishing.md). That guide covers dual-stack
+wizards, explicit ingress, fixed SNAT, exact destination mappings, eligibility, upgrade, and boot recovery. Routing & WAN
+retains static routes, routing
 permissions, and interface-level WAN policies.
 
 After global Appliance Apply, inspect `nft list table ip atlaso_nat`: every masquerade rule must contain `iifname` and

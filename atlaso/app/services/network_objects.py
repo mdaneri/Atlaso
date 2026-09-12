@@ -10,7 +10,7 @@ from typing import Any
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
-from atlaso.app.models import FirewallRule, NatRule
+from atlaso.app.models import FirewallRule, NatRule, PortForward
 from atlaso.app.services.firewall import (
     FIREWALL_ANY_SOURCE_GROUP_ID,
     FIREWALL_SOURCE_GROUP_REFERENCE_PREFIX,
@@ -252,7 +252,7 @@ def source_group_consumers(
     groups: list[dict[str, Any]],
     assignments: dict[str, str],
     firewall_rules: Iterable[FirewallRule],
-    nat_rules: Iterable[NatRule],
+    nat_rules: Iterable[NatRule | PortForward],
 ) -> list[dict[str, str]]:
     """Return every saved consumer that prevents source-group deletion.
 
@@ -303,17 +303,38 @@ def source_group_consumers(
         if source_group_reference_target(str(nat_rule.source), groups) == group_id:
             consumers.append(
                 {
-                    "kind": "nat_rule",
-                    "label": f"NAT rule: {nat_rule.name}",
+                    "kind": "port_forward" if isinstance(nat_rule, PortForward) else "nat_rule",
+                    "label": f"Port forward: {nat_rule.name}" if isinstance(nat_rule, PortForward) else f"NAT rule: {nat_rule.name}",
                     "detail": "Source restriction",
                 }
             )
     return sorted(consumers, key=lambda item: (item["kind"], item["label"].lower(), item["detail"]))
 
 
+def _nat_consumer_errors(rule: NatRule | PortForward, groups: list[dict[str, Any]]) -> list[str]:
+    """Validate the complete source boundary for each translation consumer.
+
+    Args:
+        rule: Saved source NAT or port-forward consumer.
+        groups: Candidate Source Groups from the locked edit transaction.
+    """
+    if isinstance(rule, PortForward):
+        # The forwarding service owns family-strict expansion. Import locally
+        # because that owner also uses this module's shared transaction lock.
+        from atlaso.app.services.port_forwarding import source_networks
+
+        try:
+            source_networks(rule.source, rule.ip_family, groups)
+        except ValueError as exc:
+            return [f"Port forward {rule.name}: {exc}"]
+        return []
+    group_ids = {str(group.get("id", "")) for group in groups}
+    return [f"NAT rule {rule.name}: {error}" for error in validate_nat_source(str(rule.source), group_ids, groups)]
+
+
 def source_group_nat_validation_errors(
     groups: list[dict[str, Any]],
-    nat_rules: Iterable[NatRule],
+    nat_rules: Iterable[NatRule | PortForward],
     *,
     include_disabled: bool = False,
 ) -> dict[str, list[str]]:
@@ -327,7 +348,6 @@ def source_group_nat_validation_errors(
     Returns:
         Deterministically ordered NAT validation failures by Source Group ID.
     """
-    source_group_ids = {str(group.get("id", "")) for group in groups}
     errors_by_group: dict[str, list[str]] = {}
     for nat_rule in nat_rules:
         if not include_disabled and not nat_rule.enabled:
@@ -335,10 +355,7 @@ def source_group_nat_validation_errors(
         group_id = source_group_reference_target(str(nat_rule.source), groups)
         if not group_id:
             continue
-        errors = [
-            f"NAT rule {nat_rule.name}: {error}"
-            for error in validate_nat_source(str(nat_rule.source), source_group_ids, groups)
-        ]
+        errors = _nat_consumer_errors(nat_rule, groups)
         if errors:
             errors_by_group.setdefault(group_id, []).extend(errors)
     return {
@@ -350,7 +367,7 @@ def source_group_nat_validation_errors(
 def orphaned_source_group_consumer_errors(
     groups: list[dict[str, Any]],
     firewall_rules: Iterable[FirewallRule],
-    nat_rules: Iterable[NatRule],
+    nat_rules: Iterable[NatRule | PortForward],
 ) -> list[str]:
     """Return rule errors whose referenced Source Group no longer exists.
 
@@ -370,13 +387,12 @@ def orphaned_source_group_consumer_errors(
             for error in validate_firewall_rule(firewall_rule, groups)
             if missing_reference in error
         )
-    source_group_ids = {str(group.get("id", "")) for group in groups}
     for nat_rule in nat_rules:
         if not nat_rule.enabled:
             continue
         errors.extend(
-            f"NAT rule {nat_rule.name}: {error}"
-            for error in validate_nat_source(str(nat_rule.source), source_group_ids, groups)
+            error
+            for error in _nat_consumer_errors(nat_rule, groups)
             if missing_reference in error
         )
     return sorted(dict.fromkeys(errors))
@@ -386,7 +402,7 @@ def source_group_rows(
     groups: list[dict[str, Any]],
     assignments: dict[str, str],
     firewall_rules: Iterable[FirewallRule],
-    nat_rules: Iterable[NatRule],
+    nat_rules: Iterable[NatRule | PortForward],
 ) -> list[dict[str, Any]]:
     """Build escaped-at-the-sink browser rows with validation and usage state.
 

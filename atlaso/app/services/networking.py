@@ -22,6 +22,7 @@ from atlaso.app.models import (
     KmsSettings,
     NatRule,
     PhysicalInterface,
+    PortForward,
     Route,
     RoutingRule,
     Setting,
@@ -629,6 +630,16 @@ def _cleanup_missing_interface_references(db: Session, missing_renames: dict[str
             if previous_targets != (rule.outbound_interface, rule.inbound_interfaces):
                 details.append(f"NAT rule {rule.name} requires review: a selected interface is missing")
 
+    for rule in db.execute(select(PortForward)).scalars().all():
+        if rule.ingress_interface in unavailable_targets:
+            replacement = target_replacements.get(rule.ingress_interface, rule.ingress_interface)
+            if rule.ingress_interface != replacement or rule.enabled or not rule.restore_review_required:
+                rule.ingress_interface = replacement
+                rule.enabled = False
+                rule.restore_review_required = True
+                rule.updated_at = utcnow()
+                details.append(f"disabled port forward {rule.name}: selected interface is missing")
+
     for rule in db.execute(select(RoutingRule)).scalars().all():
         removed_bindings = []
         if rule.source_interface in unavailable_targets:
@@ -755,6 +766,7 @@ def _retarget_interface_references(db: Session, renames: dict[str, str]) -> None
     scalar_targets = [
         (Route, "interface_name"),
         (NatRule, "outbound_interface"),
+        (PortForward, "ingress_interface"),
         (RoutingRule, "source_interface"),
         (RoutingRule, "destination_interface"),
         (FirewallRule, "interface_name"),
@@ -764,8 +776,10 @@ def _retarget_interface_references(db: Session, renames: dict[str, str]) -> None
     for model, field_name in scalar_targets:
         for row in db.execute(select(model)).scalars().all():
             current = getattr(row, field_name)
-            if current in expanded_renames:
+            if current in expanded_renames and expanded_renames[current] != current:
                 setattr(row, field_name, expanded_renames[current])
+                if isinstance(row, PortForward):
+                    row.updated_at = utcnow()
 
     for rule in db.execute(select(NatRule)).scalars().all():
         # Follow the same MAC-bound rename as egress without dropping unavailable members.

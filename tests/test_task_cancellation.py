@@ -459,3 +459,51 @@ def test_pending_apply_cancellation_releases_lock_without_execution(db, monkeypa
     assert ui.active_appliance_apply_job(db) is None
     replacement = make_job(db, "appliance-apply", "pending")
     assert ui.active_appliance_apply_job(db).id == replacement.id
+
+
+def test_web_startup_confirms_reserved_apply_before_interruption_recovery(db, monkeypatch):
+    """Lifespan honors pre-claim cancellation even behind a full worker request batch.
+
+    Args:
+        db: Isolated lifecycle database.
+        monkeypatch: Isolate unrelated startup services while retaining real Apply recovery.
+    """
+    import asyncio
+    from types import SimpleNamespace
+
+    from atlaso.app import main, ui
+    from atlaso.app.models import utcnow
+
+    # Unrelated reservations must not crowd this owner out of a bounded worker pass.
+    for index in range(101):
+        db.add(Job(id=f"earlier-{index}", type="managed-script", status="pending", created_by="operator",
+                   cancel_requested_at=utcnow(), cancel_requested_by="operator", cancel_outcome="requested"))
+    reserved = make_job(db, "appliance-apply", "pending")
+    interrupted = make_job(db, "appliance-apply", "pending")
+    reserved.cancel_requested_at = utcnow()
+    reserved.cancel_requested_by = "operator"
+    reserved.cancel_outcome = "requested"
+    db.add(JobStep(id=reserved.id + ":firewall", job_id=reserved.id, component_key="firewall", label="Firewall", position=0, status="pending"))
+    db.commit()
+    monkeypatch.setattr(main, "SessionLocal", lambda: Session(db.get_bind()))
+    monkeypatch.setattr(main, "get_settings", lambda: SimpleNamespace(environment="development"))
+    for name in ("cleanup_transient_secret_staging_files", "configure_logging", "init_db", "seed_initial_data",
+                 "ensure_environment_rows", "recover_interrupted_network_boot_media_swaps", "register_bundled_inventory_media",
+                 "recover_interrupted_vcf_depot_software_id_jobs", "ensure_vcf_depot_running_operation_index",
+                 "recover_interrupted_vcf_helper_jobs", "refresh_startup_host_inventory", "initialize_factory_appliance_apply_baseline",
+                 "validate_enabled_provider_at_startup", "start_monitor_sampler"):
+        monkeypatch.setattr(main, name, lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(main.upload_store, "close", lambda: None)
+    async def startup():
+        async with main.lifespan(main.app):
+            pass
+    asyncio.run(startup())
+    db.expire_all()
+    assert reserved.status == "cancelled"
+    assert reserved.cancel_outcome == "confirmed"
+    assert reserved.cancel_completed_at is not None
+    assert reserved.started_at is None
+    assert db.get(JobStep, reserved.id + ":firewall").status == "skipped"
+    assert interrupted.status == "failed"
+    assert ui.active_appliance_apply_job(db) is None
+    assert db.get(Job, "earlier-0").status == "pending"
