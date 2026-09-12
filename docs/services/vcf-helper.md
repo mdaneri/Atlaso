@@ -243,6 +243,7 @@ The failure details include bounded pre-request and latest observed sync states 
 request was accepted, and whether an unchanged error and completion marker could describe a historical failure.
 HTTP acceptance is retained even if the response body is unusable; acceptance is unknown when transport fails
 before a response arrives.
+Retained configuration evidence excludes vendor URLs and free-form messages.
 That historical-error indication is a diagnostic hint, not proof of the cause or a successful current sync.
 Existing synchronization and terminal status behavior is unchanged. Read current target sync status before retrying:
 a remote sync may still be active. Retrying against a matching depot preserves that configuration.

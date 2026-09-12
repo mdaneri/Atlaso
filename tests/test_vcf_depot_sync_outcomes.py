@@ -154,6 +154,43 @@ def test_timeout_retains_working_configuration_evidence(target):
     assert caught.value.outcome["manual_recovery_required"] is False
 
 
+@pytest.mark.parametrize("url", [
+    "https://example-user:example-password@depot.example.test/PROD",
+    "https://depot.example.test/PROD?access_token=example-token",
+    "https://depot.example.test/PROD#example-fragment",
+])
+def test_readback_excludes_vendor_urls_from_task_evidence(target, monkeypatch, url):
+    """Omit entire vendor URLs before partial outcomes can be persisted in tasks.
+
+    Args:
+        target: Fake target fixture.
+        monkeypatch: Dependency replacement fixture.
+        url: Synthetic vendor URL with authentication or opaque material.
+    """
+    import json
+
+    read_settings = target.depot_settings
+
+    def readback_with_url():
+        """Add vendor URL material only to the post-failure readback."""
+        payload = read_settings()
+        if target.reads > 1:
+            payload["depotConfiguration"]["url"] = url
+        return payload
+
+    target.responses = [snapshot(), snapshot("FAILED", NEW, "Metadata failed.")]
+    monkeypatch.setattr(target, "depot_settings", readback_with_url)
+    with pytest.raises(service.VcfDepotTargetPartialError) as caught:
+        configure()
+    result = caught.value.outcome
+    assert set(result["depot"]) == {"is_offline", "hostname", "port", "username", "status"}
+    assert result["depot"]["hostname"] == LOCAL.hostname
+    assert url not in json.dumps(result)
+    assert "example-password" not in json.dumps(result)
+    assert "example-token" not in json.dumps(result)
+    assert "example-fragment" not in json.dumps(result)
+
+
 def test_readback_failure_is_unknown_not_configuration_failure(target):
     """Unavailable independent evidence must not invent an intervention requirement.
 

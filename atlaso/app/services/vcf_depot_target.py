@@ -61,10 +61,10 @@ def _configuration_readback(api: VcfDepotApiClient, local: LocalDepotEndpoint) -
     """
     try:
         remote = api.depot_settings()
-        depot = sanitize_remote_depot(remote)
-        # Vendor messages are not required for this projection and may contain
-        # credentials or URLs. Retain only the connection status and endpoint.
-        depot.pop("message", None)
+        sanitized = sanitize_remote_depot(remote)
+        # Retain only required evidence: vendor URLs and messages can carry
+        # authentication material and must not reach durable task results.
+        depot = {key: sanitized[key] for key in ("is_offline", "hostname", "port", "username", "status")}
         matches = depot_matches(remote, local)
         connected = depot["status"] == "DEPOT_CONNECTION_SUCCESSFUL"
         return {"depot": depot, "configuration_verified": matches and connected,
