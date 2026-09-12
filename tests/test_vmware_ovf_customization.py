@@ -2708,6 +2708,8 @@ def test_vmware_ovf_export_and_image_plumbing_are_present():
     assert "systemctl enable atlaso-vmware-ovf-customize.service" in provision_script
     assert "systemctl enable atlaso-bootstrap-https.service" in provision_script
     prepare_unit = Path("image/vmware-workstation/systemd/atlaso-vmware-ovf-prepare.service").read_text(encoding="utf-8")
+    assert "ConditionPathExists=!/var/lib/atlaso/vmware-ovf-customization.applied" in prepare_unit
+    assert "ConditionPathExists=!/var/lib/atlaso/vmware-ovf-customization.applied" not in vmware_unit
     assert "Before=network-pre.target systemd-networkd.service" in prepare_unit
     assert "--prepare-only" in prepare_unit
     assert "RequiredBy=systemd-networkd.service" in prepare_unit

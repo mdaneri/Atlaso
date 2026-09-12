@@ -289,6 +289,8 @@ A second customization stage reloads the management link and verifies native add
 before recording success or clearing the console review handshake. A conflict or unavailable
 native evidence keeps first boot recoverable through network review; it does not finalize the
 applied marker. Console corrections survive the preparation stage and are revalidated for activation.
+The early VMware preparation service skips appliances with a completed OVF marker on later boots;
+the normal customization stage retains its credential cleanup and test-identity republishing checks.
 The retained failure names the attempted address, link, and detection time; a conflicting MAC appears
 only when the native evidence supplies one. Native networkd rejection messages do not normally include
 that MAC, so Atlaso does not infer it from stale neighbor entries.
