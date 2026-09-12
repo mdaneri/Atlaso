@@ -56,9 +56,11 @@ def test_inventory_reconciliation_preserves_listener_identity(vlan, missing):
         if vlan:
             db.add(VlanInterface(name="eth1.20", parent_interface="eth1", vlan_id=20, enabled=True))
         rule = PortForward(**payload(ingress_interface="eth1.20" if vlan else "eth1"))
+        rule.updated_at = datetime(2000, 1, 1, tzinfo=timezone.utc)
         db.add(rule)
         db.commit()
         replacement = "missing_old_eth1" if missing else "eth9"
+        original_updated_at = rule.updated_at
         if missing:
             _cleanup_missing_interface_references(db, {"eth1": replacement})
         else:
@@ -69,8 +71,14 @@ def test_inventory_reconciliation_preserves_listener_identity(vlan, missing):
         assert rule.target_address == "198.51.100.10"
         assert rule.enabled is (not missing)
         assert rule.restore_review_required is missing
+        assert rule.updated_at > original_updated_at
+        updated_at = rule.updated_at
         if missing:
             assert _cleanup_missing_interface_references(db, {replacement: replacement}) == []
+        else:
+            _retarget_interface_references(db, {replacement: replacement})
+        db.commit()
+        assert rule.updated_at == updated_at
     engine.dispose()
 
 

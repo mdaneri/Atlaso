@@ -85,8 +85,9 @@ family when the socket observation cannot establish IPv6-only ownership.
 Handoff failures before paired publication skip connection retirement; later rollback retires only candidate changes.
 When reusing a service endpoint, select its shutdown or listener change in the same Apply. Selected listener services
 run before forwarding publication so the live socket check observes the released endpoint.
-Inventory reconciliation follows a verified NIC rename, including child VLAN listeners. A missing NIC keeps its
-inert identity and exact mapping, disables the forward, and requires operator review before reactivation.
+Inventory reconciliation follows a verified NIC rename, including child VLAN listeners, and refreshes each changed
+forward's desired-state update timestamp. Reconciliation without a binding change preserves the timestamp. A missing NIC
+keeps its inert identity and exact mapping, disables the forward, and requires operator review before reactivation.
 
 Removing, disabling, or suspending a rule retires its counters and Atlaso-marked connections during Apply. Sessions
 through that mapping must reconnect. Unchanged mappings retain their connections during unrelated Apply submissions;

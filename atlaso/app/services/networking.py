@@ -776,8 +776,10 @@ def _retarget_interface_references(db: Session, renames: dict[str, str]) -> None
     for model, field_name in scalar_targets:
         for row in db.execute(select(model)).scalars().all():
             current = getattr(row, field_name)
-            if current in expanded_renames:
+            if current in expanded_renames and expanded_renames[current] != current:
                 setattr(row, field_name, expanded_renames[current])
+                if isinstance(row, PortForward):
+                    row.updated_at = utcnow()
 
     for rule in db.execute(select(NatRule)).scalars().all():
         # Follow the same MAC-bound rename as egress without dropping unavailable members.
