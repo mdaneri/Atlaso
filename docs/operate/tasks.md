@@ -57,6 +57,43 @@ Read the failed step and sanitized task log, then correlate its identifier with 
 [Audit log](audit-log.md). Correct desired state in the owning page and submit a new task. Do not edit task history or
 fabricate a successful result.
 
+## Cancellation and execution ownership
+
+Tasks and the API expose the same backend-owned `can_cancel`, `cancel_reason`, and `cancel_confirmation` fields.
+The task detail shows the reason even when cancellation is unavailable. A stale browser action cannot override the
+backend policy. An accepted request records `cancel_requested_at` and `cancel_requested_by`; running work keeps its
+active status until its owner verifies the stop and cleanup. `cancel_completed_at` and `cancel_outcome` record the
+final disposition. `cleanup-required` remains active and blocks worker admission while recovery needs attention.
+Do not interpret a cancellation request as proof that a local process or a remote operation stopped.
+
+| Task owner | Queued cancellation | Running cancellation |
+| --- | --- | --- |
+| Appliance Update check | Reserved before worker claim | Current bounded check finishes and cleans credentials; remaining checks skipped |
+| Appliance Update installation or source synchronization | Reserved before worker claim | Unavailable; existing update/recovery owner must finish |
+| Appliance Apply | Owner observes request before the next component | Current component and cleanup finish; remaining components skipped; applied changes remain |
+| Network Boot media download/upload | Reserved before claim; owned upload removed | Transfer/extraction checkpoint, then staged filesystem rollback and upload cleanup |
+| Network Boot media deletion | Reserved before worker claim | Unavailable once destructive deletion starts |
+| Managed script | Reserved before worker claim | Unavailable because script side effects have no generic rollback contract |
+| VCF depot download | Reserved before claim; queued profile status restored | Unavailable until the VCFDT owner finishes |
+| Diagnostic bundle | Reserved before worker claim | Unavailable; bounded collector descendant shutdown is not verified |
+| VCF software identity replacement | Unavailable | Unavailable; identity operation owner must finish |
+| Remote SDDC deployment, depot target configuration, or CA trust | Unavailable | Unavailable; stopping a watcher does not stop or undo remote work |
+| Manual placeholder | Cancelled before execution | Unavailable |
+| Other/unregistered task types | Unavailable | Unavailable until an explicit safe owner contract is registered |
+
+An update check request can wait up to six minutes for the current helper's deadline and credential cleanup. Media
+cancellation checks before each transfer attempt and after each 1 MiB read. A network operation can wait up to its
+300-second socket timeout (including each bounded redirect); extraction commands have 60-second deadlines.
+Cancellation does not
+interrupt filesystem publication halfway through. Failed cleanup retains active ownership and the request for
+recovery. Worker restart
+revalidates task-owned update units or restores interrupted media swaps before confirming cancellation.
+
+Completed child results remain intact. A verified parent stop skips children that never started. If completion wins
+the race, Atlaso preserves success or failure and records `completion-won`; repeated requests never rewrite that result.
+The API requires `admin:all`; browser administrators can request supported cancellations, while service administrators
+are limited to supported Network Boot media tasks. Child rows cannot independently cancel their parent's operation.
+
 <!-- BEGIN GENERATED ADDITIONAL SCREENSHOTS -->
 ## Additional verified states
 
@@ -68,11 +105,13 @@ These captures show responsive layouts and useful operational states referenced 
 
 *Figure: Failed appliance apply task with redacted operator detail.*
 
-![Atlaso task detail dialog showing a successful DNS appliance apply.](../assets/screenshots/tasks-apply-succeeded-detail-desktop.webp)
+![Atlaso task detail dialog showing a successful DNS appliance
+apply.](../assets/screenshots/tasks-apply-succeeded-detail-desktop.webp)
 
 *Figure: Successful appliance apply task with verified dnsmasq output.*
 
-![Atlaso task log showing successful dnsmasq validation, apply, and reload.](../assets/screenshots/tasks-apply-succeeded-log-desktop.webp)
+![Atlaso task log showing successful dnsmasq validation, apply, and
+reload.](../assets/screenshots/tasks-apply-succeeded-log-desktop.webp)
 
 *Figure: Successful appliance apply log with captured commands and audit events.*
 

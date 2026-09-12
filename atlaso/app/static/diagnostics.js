@@ -106,6 +106,7 @@
       const contents = document.getElementById("diagnostics-detail-contents"); contents.replaceChildren();
       reviewLine(contents, "Created", selected.created_at);
       reviewLine(contents, "Automatic deletion", selected.expires_at);
+      reviewLine(contents, "Cancellation", selected.cancel_reason);
       reviewLine(contents, "Anonymization", selected.anonymize ? "Hostnames and usernames replaced; IP / MAC unchanged" : "Off; IP / MAC unchanged");
       for (const item of selected.manifest?.collectors || []) reviewLine(contents, item.collector, item.status.replaceAll("_", " "));
       const omissions = document.getElementById("diagnostics-omissions"); omissions.replaceChildren();
@@ -114,7 +115,7 @@
       link.hidden = !["ready", "ready_with_omissions"].includes(selected.status);
       link.classList.toggle("hidden", link.hidden);
       link.href = `${root}/${encodeURIComponent(selected.id)}/download`;
-      for (const [id, enabled] of [["diagnostics-cancel", ["pending", "running"].includes(selected.status)], ["diagnostics-remove", !["pending", "running", "deleted"].includes(selected.status)]]) {
+      for (const [id, enabled] of [["diagnostics-cancel", selected.can_cancel], ["diagnostics-remove", !["pending", "running", "deleted"].includes(selected.status)]]) {
         const button = document.getElementById(id);
         button.hidden = !enabled;
         button.classList.toggle("hidden", !enabled);
@@ -127,7 +128,7 @@
     try {
       const body = new FormData(); body.set("csrf", form.elements.csrf.value);
       await request(`${root}/${encodeURIComponent(data.id)}/cancel`, { method: "POST", body });
-      status.textContent = "Cancellation requested. The collector will stop before publishing more evidence.";
+      status.textContent = "Queued collection cancelled before execution.";
       await refresh();
     } catch (error) { status.textContent = error.message; }
   }
@@ -157,7 +158,7 @@
       index: "id", data: [{ id: "new", is_new: true }], layout: "fitColumns", minHeight: 240,
       rowContextMenu: [
         { label: "View contents", disabled: (row) => row.getData().is_new, action: (_event, row) => openDetail(row.getData()) },
-        { label: "Cancel collection", disabled: (row) => !["pending", "running"].includes(row.getData().status), action: (_event, row) => cancel(row.getData()) },
+        { label: "Cancel collection", disabled: (row) => !row.getData().can_cancel, action: (_event, row) => cancel(row.getData()) },
         { label: "Delete bundle", disabled: (row) => row.getData().is_new || ["pending", "running", "deleted"].includes(row.getData().status), action: (_event, row) => remove(row.getData()) },
       ],
       columns: [

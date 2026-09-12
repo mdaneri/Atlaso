@@ -2809,6 +2809,10 @@ class Job(Base):
         network_boot_source: Persisted network boot source for the job resource.
         vcf_depot_profile_id: Identifier of the queued VCF Offline Depot profile.
         vcf_depot_operation: Persisted vcf depot operation for the job resource.
+        cancel_requested_at: Durable cancellation request time, independent of worker results.
+        cancel_requested_by: Authenticated actor who requested the safe stop.
+        cancel_completed_at: Time the cancellation request received a final disposition.
+        cancel_outcome: Requested, confirmed, completion-won, or cleanup-required disposition.
         steps: Persisted steps for the job resource.
     """
     __tablename__ = "jobs"
@@ -2844,6 +2848,10 @@ class Job(Base):
     trigger: Mapped[str] = mapped_column(String(20), default="manual")
     planned_for: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     task_config_json: Mapped[str] = mapped_column(Text, default="{}")
+    cancel_requested_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    cancel_requested_by: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    cancel_completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    cancel_outcome: Mapped[str | None] = mapped_column(String(40), nullable=True)
     network_boot_environment_key: Mapped[str | None] = mapped_column(String(80), nullable=True)
     network_boot_source: Mapped[str | None] = mapped_column(String(20), nullable=True)
     vcf_depot_profile_id: Mapped[int | None] = mapped_column(Integer, nullable=True)

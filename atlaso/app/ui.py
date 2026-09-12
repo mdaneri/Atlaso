@@ -211,6 +211,7 @@ from atlaso.app.security import (
     start_browser_session,
     user_roles,
 )
+from atlaso.app.services import task_cancellation
 from atlaso.app.services.appliance_settings import (
     APPLIANCE_DNS_RECORD_DESCRIPTION,
     APPLIANCE_SETTINGS_STAGED_CONFIG_PATH,
@@ -8522,28 +8523,7 @@ def _can_cancel_task(job: Job, identity: Identity | None = None) -> bool:
         job: Job being processed.
         identity: Authenticated identity authorizing the request.
     """
-    if job.status not in ACTIVE_JOB_STATUSES:
-        return False
-    if job.type == "pxe-media-sync" and job.status == JobStatus.RUNNING.value:
-        try:
-            config = json.loads(job.task_config_json or "{}")
-        except json.JSONDecodeError:
-            config = {}
-        if config.get("source") == "delete":
-            return False
-    if job.type == "appliance-apply" and _job_payload(job).get("cancel_requested"):
-        return False
-    if job.type == "appliance-update" and job.status == JobStatus.RUNNING.value:
-        return False
-    if job.type == "vcf-depot-software-id":
-        return False
-    if job.type == "vcf-depot-download" and job.status == JobStatus.RUNNING.value:
-        return False
-    if identity is None:
-        return True
-    if identity.has_role(Role.ADMIN.value):
-        return True
-    return identity.has_role(Role.SERVICE_ADMIN.value) and job.type in SERVICE_ADMIN_CANCELLABLE_JOB_TYPES
+    return task_cancellation.capability(job, identity).can_cancel
 
 
 def _job_step_payload(step: JobStep) -> dict[str, Any]:
@@ -8568,10 +8548,13 @@ def _task_row(job: Job, identity: Identity | None = None) -> dict[str, Any]:
         job: Job being processed.
         identity: Authenticated identity authorizing the request.
     """
+    cancellation = task_cancellation.capability(job, identity)
     raw_result = _job_payload(job)
     result = _redact_task_value(raw_result)
     status_value = str(job.status or "")
     state = str(result.get("state") or status_value)
+    if job.cancel_requested_at is not None and status_value in ACTIVE_JOB_STATUSES:
+        state = "cancellation-cleanup-required" if job.cancel_outcome == "cleanup-required" else "cancellation-requested"
     summary = str(result.get("target") or result.get("fqdn") or result.get("vm_name") or result.get("profile_name") or "")
     if not summary and isinstance(result.get("vm"), dict):
         summary = str(result["vm"].get("vm_name") or result["vm"].get("guest_ip") or "")
@@ -8603,7 +8586,14 @@ def _task_row(job: Job, identity: Identity | None = None) -> dict[str, Any]:
         "console_stderr": console_stderr,
         "error": error,
         "error_messages": error_messages,
-        "can_cancel": _can_cancel_task(job, identity),
+        "can_cancel": cancellation.can_cancel,
+        "cancel_reason": cancellation.reason,
+        "cancel_confirmation": cancellation.confirmation,
+        "cancel_requested": job.cancel_requested_at is not None and status_value in ACTIVE_JOB_STATUSES,
+        "cancel_requested_at": _task_time_label(job.cancel_requested_at),
+        "cancel_requested_by": job.cancel_requested_by or "",
+        "cancel_completed_at": _task_time_label(job.cancel_completed_at),
+        "cancel_outcome": job.cancel_outcome or "",
         "can_start": False,
     }
     if job.type == "vcf-depot-download":
@@ -8655,6 +8645,7 @@ def _job_step_row(step: JobStep) -> dict[str, Any]:
         "error": error,
         "error_messages": error_messages,
         "can_cancel": False,
+        "cancel_reason": "Child execution is owned by its parent task.",
         "is_step": True,
         "position": step.position,
     }
@@ -15538,7 +15529,7 @@ def run_appliance_apply_job(job_id: str, *, force_real: bool = False) -> None:
             for index, unit in enumerate(selected_units, start=1):
                 db.refresh(job)
                 current_payload = _job_payload(job)
-                if current_payload.get("cancel_requested"):
+                if job.cancel_requested_at is not None or current_payload.get("cancel_requested"):
                     cancelled = True
                     for remaining_unit in selected_units[index - 1 :]:
                         remaining = steps_by_key.get(remaining_unit["id"])
@@ -15907,7 +15898,7 @@ def run_appliance_apply_job(job_id: str, *, force_real: bool = False) -> None:
                         remaining.finished_at = utcnow()
                         remaining.error = f"Skipped because {unit['label']} failed."
                         remaining.result = json.dumps({"summary": remaining_unit["summary"], "reason": "previous_component_failed"}, indent=2)
-                if current_payload.get("cancel_requested") and not failed:
+                if (job.cancel_requested_at is not None or current_payload.get("cancel_requested")) and not failed and index < len(selected_units):
                     cancelled = True
                     for remaining_unit in selected_units[index:]:
                         remaining = steps_by_key.get(remaining_unit["id"])
@@ -15961,6 +15952,9 @@ def run_appliance_apply_job(job_id: str, *, force_real: bool = False) -> None:
             job.finished_at = utcnow()
             job.progress_percent = 100
             job.result = json.dumps(job_result, indent=2)
+            if job.cancel_requested_at is not None:
+                job.cancel_completed_at = utcnow()
+                job.cancel_outcome = "confirmed" if cancelled else "completion-won"
             db.commit()
             record_audit(
                 db,

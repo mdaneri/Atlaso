@@ -3403,6 +3403,8 @@ class BoundedHttpsDownloader:
         digest = hashlib.sha256()
         response = None
         for attempt in range(1, self.open_attempts + 1):
+            if cancelled and cancelled():
+                raise NetworkBootMediaSyncCancelled("Network Boot media task was cancelled before a transfer retry.")
             request = urllib.request.Request(
                 url,
                 headers={"User-Agent": "Atlaso-Network-Boot/1"},

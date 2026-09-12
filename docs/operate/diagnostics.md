@@ -34,8 +34,10 @@ anything. A diagnostic bundle is not a settings backup or a promise of source au
 
 The page uses the established Atlaso grid and wizard controls, including keyboard row opening and context-menu actions.
 Use **Collect again** to reopen the previous selections for review; it does not silently expand collection scope.
-The row context menu offers cancellation while pending/running and confirmed deletion after collection stops.
-If collection finishes before a cancellation request arrives, the request reports a conflict; refresh the bundle status.
+The row context menu offers cancellation while queued and confirmed deletion after collection stops.
+Running collection finishes under its bounded execution owner; cancellation is unavailable because stopping all
+privileged descendants has no verified task-owned contract. The detail dialog explains this restriction.
+If collection finishes before a cancellation request arrives, the request preserves its completed result.
 When JavaScript is unavailable, the page retains a read-only collection; use the CLI for recovery collection.
 
 ## Privacy and contents
@@ -114,8 +116,9 @@ Collection requires at least 16 MiB of free spool space and uses bounded memory 
 
 Web bundles expire 24 hours after their request time and immediately become unavailable to download. The worker removes
 expired terminal artifacts during bounded reconciliation; if the worker is stopped, physical removal resumes when it
-returns. Pending or running jobs remain cancellable after the retention deadline so an unavailable worker cannot
-leave the collection slot blocked. Every terminal collection records its finish time and completed progress in Tasks,
+returns. Queued jobs remain cancellable after the retention deadline. Interrupted running collection is recovered by
+the worker; a cancellation request cannot substitute for execution-owner recovery. Every terminal collection records its
+finish time and completed progress in Tasks,
 including cancellation and failure.
 Expired downloads also attempt cleanup. An item-specific cleanup failure retains that protected artifact for retry and
 storage attention; cleanup continues for the other expired bundles.

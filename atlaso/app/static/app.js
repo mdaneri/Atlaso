@@ -14993,6 +14993,8 @@ function renderTaskDetail(task) {
       ["Started", task.started_at || "—"],
       ["Finished", task.finished_at || "—"],
       ["Created by", task.created_by || "—"],
+      ["Cancellation", task.cancel_reason || "Unavailable"],
+      ["Requested by", task.cancel_requested_by || "—"],
     ].forEach(([label, value]) => {
       const row = document.createElement("div");
       const key = document.createElement("span");
@@ -15027,7 +15029,8 @@ function renderTaskDetail(task) {
     highlightConfigPreviewElement(result);
   }
   if (cancelButton instanceof HTMLButtonElement) {
-    cancelButton.classList.toggle("hidden", !task.can_cancel);
+    cancelButton.classList.toggle("hidden", !!task.is_step);
+    cancelButton.title = task.cancel_reason || "";
     cancelButton.disabled = !task.can_cancel;
     cancelButton.dataset.taskId = task.id;
   }
@@ -15253,9 +15256,11 @@ async function cancelTask(taskId) {
   if (!(page instanceof HTMLElement)) {
     return;
   }
+  const observedTask = taskById(taskId);
+  if (!observedTask?.can_cancel) return;
   const confirmed = await requestConfirmation({
     title: "Cancel task",
-    message: `Cancel task ${taskId}? If the worker is already inside a target system operation, Atlaso will request cancellation and record the task as cancelled.`,
+    message: observedTask.cancel_confirmation || observedTask.cancel_reason,
     label: "Cancel task",
   });
   if (!confirmed) {
@@ -15334,7 +15339,8 @@ function initializeTasksPage() {
           action: (_event, row) => openTaskLog(row.getData()),
         },
         {
-          label: "Cancel task",
+          label: (component) => component.getData().can_cancel ? "Cancel task"
+            : `Cancellation unavailable: ${escapeHtml(component.getData().cancel_reason || "No safe stop contract.")}`,
           disabled: (component) => !component.getData().can_cancel,
           action: (_event, row) => {
             const task = row.getData();
@@ -18211,7 +18217,12 @@ function renderApplianceApplyTask(task) {
       : `${children.length} components · appliance changes are unlocked`;
   }
   if (elements.cancel instanceof HTMLButtonElement) {
-    elements.cancel.classList.toggle("hidden", !task.can_cancel);
+    elements.cancel.classList.toggle("hidden", !active);
+    elements.cancel.title = task.cancel_reason || "";
+    if (active && !task.can_cancel && elements.liveSummary instanceof HTMLElement) {
+      elements.liveSummary.textContent += ` · ${task.cancel_reason || ""}`;
+    }
+    elements.cancel.dataset.confirmation = task.cancel_confirmation || task.cancel_reason || "";
     elements.cancel.disabled = !task.can_cancel;
     elements.cancel.dataset.taskId = task.id || "";
   }
@@ -18364,7 +18375,7 @@ function initializeApplianceApplyProgress() {
     if (!taskId) return;
     const confirmed = await requestConfirmation({
       title: "Cancel appliance apply",
-      message: "The running component will finish safely. Remaining components will be skipped and the global lock will remain until cancellation completes.",
+      message: elements.cancel?.dataset.confirmation || "Request cancellation at the next safe checkpoint?",
       label: "Request cancellation",
     });
     if (!confirmed) return;

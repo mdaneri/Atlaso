@@ -15,7 +15,7 @@ from secrets import compare_digest
 from typing import Any
 from uuid import uuid4
 
-from sqlalchemy import select, update
+from sqlalchemy import and_, or_, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -36,6 +36,7 @@ from atlaso.app.models import (
     Vault,
     utcnow,
 )
+from atlaso.app.services import task_cancellation
 from atlaso.app.services.appliance_update import (
     APPLIANCE_UPDATE_EXECUTION_ORDER,
     APPLIANCE_UPDATE_FINALIZER_PATH,
@@ -125,6 +126,7 @@ def claim_next_job(db: Session) -> Job | None:
         ).scalar_one_or_none()
         pending_filter = [
             Job.status == JobStatus.PENDING.value,
+            Job.cancel_requested_at.is_(None),
             Job.type.in_(WORKER_JOB_TYPES),
         ]
         if running_vcf_operation is not None:
@@ -141,7 +143,7 @@ def claim_next_job(db: Session) -> Job | None:
         try:
             claimed = db.execute(
                 update(Job)
-                .where(Job.id == candidate, Job.status == JobStatus.PENDING.value)
+                .where(Job.id == candidate, Job.status == JobStatus.PENDING.value, Job.cancel_requested_at.is_(None))
                 .values(
                     status=JobStatus.RUNNING.value,
                     started_at=started_at,
@@ -467,8 +469,24 @@ def recover_interrupted_worker_jobs(
             ):
                 jobs.append(finalizer_job)
     for job in jobs:
+        if (job.type == "appliance-update" and _job_config(job).get("mode") == "check"
+                and job.cancel_requested_at is not None):
+            streams = _job_config(job).get("selected_streams", [])
+            if not isinstance(streams, list) or not streams or any(not isinstance(stream, str) or stream not in UPDATE_STREAM_LABELS for stream in streams):
+                job.cancel_outcome = "cleanup-required"
+                job.error = "Cancellation recovery needs a valid persisted check ownership contract."
+                continue
+            if any(not _quiesce_appliance_update_action(job.id, str(stream)) for stream in streams):
+                job.cancel_outcome = "cleanup-required"
+                job.error = "Cancellation recovery could not verify helper shutdown and credential cleanup."
+                continue
+            task_cancellation.finish_stop(db, job, detail="Startup recovery verified every task-owned check unit stopped and scoped credentials removed.")
+            continue
         if job.type == "pxe-media-sync":
             cleanup_network_boot_upload(job.id)
+            if job.cancel_requested_at is not None:
+                task_cancellation.finish_stop(db, job, detail="Startup recovery restored interrupted media swaps and removed the task-owned upload.")
+                continue
         definitive = (
             finalizer
             if job.type == "appliance-update" and str(finalizer.get("job_id") or "") == job.id
@@ -1263,7 +1281,7 @@ def _reconcile_appliance_update_status_surface() -> bool:
     return _publish_appliance_update_status(marker_job_id, finish=True)
 
 
-def _set_appliance_update_step_running(job_id: str, stream: str, *, completed: int, total: int) -> None:
+def _set_appliance_update_step_running(job_id: str, stream: str, *, completed: int, total: int) -> bool:
     """Update appliance update step running.
 
     Args:
@@ -1276,7 +1294,14 @@ def _set_appliance_update_step_running(job_id: str, stream: str, *, completed: i
         job = db.get(Job, job_id)
         step = db.get(JobStep, f"{job_id}:{stream}")
         if job is None or step is None:
-            return
+            return False
+        if _job_config(job).get("mode") == "check":
+            reserved = db.execute(update(Job).where(Job.id == job.id, Job.status == JobStatus.RUNNING.value,
+                                                   Job.cancel_requested_at.is_(None))
+                                  .values(progress_percent=Job.progress_percent))
+            if reserved.rowcount != 1:
+                db.rollback()
+                return False
         now = utcnow()
         step.status = JobStatus.RUNNING.value
         step.started_at = step.started_at or now
@@ -1285,6 +1310,7 @@ def _set_appliance_update_step_running(job_id: str, stream: str, *, completed: i
         job.progress_percent = max(int(job.progress_percent or 0), int((completed / max(total, 1)) * 90))
         db.add_all([job, step])
         db.commit()
+        return True
 
 
 def _mark_appliance_update_apply_started(job_id: str, stream: str) -> None:
@@ -1382,6 +1408,23 @@ def _persist_appliance_update_step_completion(
     step.error = None if result.get("success") else _appliance_update_result_error(result)
     job.progress_percent = max(int(job.progress_percent or 0), int((completed / max(total, 1)) * 90))
     db.add_all([job, step])
+
+
+def _cancel_update_check_if_requested(job_id: str) -> bool:
+    """Stop between verified check helpers without starting another child.
+
+    Args:
+        job_id: Exact parent whose previous helper has returned with cleanup proven.
+    """
+    with SessionLocal() as db:
+        job = db.get(Job, job_id)
+        if job is None or _job_config(job).get("mode") != "check" or job.cancel_requested_at is None:
+            return False
+        if not any(step.status in task_cancellation.ACTIVE for step in job.steps):
+            return False
+        stopped = task_cancellation.finish_stop(db, job, detail="Current bounded check stopped and cleaned credentials; remaining child checks skipped.")
+        db.commit()
+        return stopped
 
 
 def _run_appliance_update(job_id: str) -> None:
@@ -1526,6 +1569,8 @@ def _run_appliance_update(job_id: str) -> None:
         stream_results: list[dict[str, Any]] = []
         earlier_failed = status_surface_failed
         for index, stream in enumerate(execution_streams, start=1):
+            if mode == "check" and _cancel_update_check_if_requested(job_id):
+                return
             if stream in terminal_stream_results:
                 stream_result = terminal_stream_results[stream]
             elif (
@@ -1555,12 +1600,15 @@ def _run_appliance_update(job_id: str) -> None:
                     "error": skip_reason,
                 }
             else:
-                _set_appliance_update_step_running(
+                started = _set_appliance_update_step_running(
                     job_id,
                     stream,
                     completed=index - 1,
                     total=len(execution_streams),
                 )
+                if started is False:
+                    _cancel_update_check_if_requested(job_id)
+                    return
                 if status_surface_required and not _publish_appliance_update_status(job_id):
                     status_surface_failed = True
                     earlier_failed = True
@@ -1612,6 +1660,8 @@ def _run_appliance_update(job_id: str) -> None:
                     held_job = db.get(Job, job_id)
                     if held_job is not None:
                         held_job.error = "Update check cleanup needs attention; helper ownership remains unresolved."
+                        if held_job.cancel_requested_at is not None:
+                            held_job.cancel_outcome = "cleanup-required"
                         held_job.result = json.dumps({
                             "state": "cleanup-required",
                             "ownership_unresolved": True,
@@ -1862,10 +1912,10 @@ def _run_pxe_media_sync(db: Session, job: Job) -> None:
 
     def cancelled() -> bool:
         """Return cancelled."""
-        status = db.execute(
-            select(Job.status).where(Job.id == job.id)
-        ).scalar_one()
-        return status == JobStatus.CANCELLED.value
+        status, requested = db.execute(
+            select(Job.status, Job.cancel_requested_at).where(Job.id == job.id)
+        ).one()
+        return status == JobStatus.CANCELLED.value or requested is not None
 
     filesystem_sync: DeferredNetworkBootMediaSync | None = None
     try:
@@ -1905,6 +1955,7 @@ def _run_pxe_media_sync(db: Session, job: Job) -> None:
             .where(
                 Job.id == job.id,
                 Job.status == JobStatus.RUNNING.value,
+                Job.cancel_requested_at.is_(None),
             )
             .values(
                 status=JobStatus.SUCCEEDED.value,
@@ -1932,10 +1983,28 @@ def _run_pxe_media_sync(db: Session, job: Job) -> None:
             )
         )
         db.commit()
-    except Exception:
+    except Exception as exc:
         db.rollback()
-        if filesystem_sync is not None:
-            filesystem_sync.rollback_filesystem()
+        try:
+            if filesystem_sync is not None:
+                filesystem_sync.rollback_filesystem()
+            cleanup_network_boot_upload(job.id)
+        except (OSError, ValueError):
+            db.refresh(job)
+            if job.cancel_requested_at is not None:
+                job.cancel_outcome = "cleanup-required"
+                job.error = "Cancellation rollback or staging cleanup could not be verified."
+                db.commit()
+            raise
+        db.refresh(job)
+        if isinstance(exc, NetworkBootMediaSyncCancelled) and job.cancel_requested_at is not None:
+            task_cancellation.finish_stop(db, job, detail="Staged media execution stopped; previous cache restored and owned upload removed.")
+            db.commit()
+            return
+        if job.cancel_requested_at is not None:
+            job.cancel_outcome = "cleanup-required"
+            job.error = "Media execution failed while stopping; recovery must verify all staging and swap cleanup."
+            db.commit()
         raise
     filesystem_sync.commit_filesystem()
 
@@ -1959,10 +2028,13 @@ def run_worker_once() -> str | None:
     if not _reconcile_appliance_update_status_surface():
         return None
     with SessionLocal() as db:
+        task_cancellation.reconcile_requests(db)
         # Startup recovery may retain an interrupted helper, including a check
         # that does not own the installation-only browser maintenance marker.
         if db.execute(select(Job.id).where(
-            Job.type == "appliance-update", Job.status == JobStatus.RUNNING.value,
+            Job.status.in_(task_cancellation.ACTIVE),
+            or_(and_(Job.type == "appliance-update", Job.status == JobStatus.RUNNING.value),
+                Job.cancel_outcome == "cleanup-required"),
         ).limit(1)).scalar_one_or_none() is not None:
             return None
         enqueue_due_schedules(db)
@@ -2005,7 +2077,11 @@ def run_worker_once() -> str | None:
         with SessionLocal() as db:
             job = db.get(Job, job_id)
             if job is not None and job.status in {JobStatus.PENDING.value, JobStatus.RUNNING.value}:
+                if job.cancel_outcome == "cleanup-required":
+                    return job_id
                 _fail_job(db, job, exc)
+    with SessionLocal() as db:
+        task_cancellation.reconcile_requests(db)
     return job_id
 
 
