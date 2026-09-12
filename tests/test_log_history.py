@@ -249,15 +249,19 @@ def test_journal_large_batch_advances_complete_entries(monkeypatch, capsys):
     process.wait.return_value = 0
     process.poll.return_value = 0
     monkeypatch.setattr(helper.subprocess, "Popen", lambda *args, **kwargs: process)
-    offset, actual = 0, []
-    while offset < len(entries):
+    offset, actual, position = 0, [], {"journal_cursor": "c--1"}
+    for _ in range(10):
         process.stdout = io.BytesIO("\n".join(json.dumps(entry) for entry in entries[offset:]).encode())
-        assert helper._read_log_history(["nginx", json.dumps({"journal_cursor": f"c-{offset - 1}"})]) == 0
+        assert helper._read_log_history(["nginx", json.dumps(position)]) == 0
         page = json.loads(capsys.readouterr().out)
         assert page["lines"]
         actual.extend(page["lines"])
-        offset = int(page["journal_cursor"].removeprefix("c-")) + 1
+        position = page["journal_position"]
+        offset = (int(position["journal_start_cursor"].removeprefix("c-"))
+                  if "journal_start_cursor" in position else int(position["journal_cursor"].removeprefix("c-")) + 1)
         assert page["has_more"] == (offset < len(entries))
+        if not page["has_more"]:
+            break
     assert len(actual) == 501
     assert all(f"event {index} " in line for index, line in enumerate(actual))
 
@@ -1145,3 +1149,68 @@ def test_file_pages_bound_json_escaping_without_losing_lines(tmp_path, privilege
     assert len(JSONResponse(older).body) <= 1024 * 1024
     older_lines = older["lines"] if privileged else older["text"].splitlines()
     assert older_lines == lines[-len(tail_lines)-len(older_lines):-len(tail_lines)]
+
+
+@pytest.mark.parametrize("multiline", [False, True])
+def test_task_pages_bound_escaped_transport_and_preserve_characters(multiline):
+    """Task prefix, tail and predecessor pages share the escaped-byte budget.
+
+    Args:
+        multiline: Include line boundaries or require character-safe slicing inside a long line.
+    """
+    from starlette.responses import JSONResponse
+
+    block = "\x00\t\\漢字🙂" * 20000 + ("\n" if multiline else "")
+    text = block * 8
+    actual, cursor = "", ""
+    for _ in range(30):
+        page = log_viewer.text_page(text, source="escaped-task", cursor=cursor)
+        assert len(JSONResponse(page).body) <= 1024 * 1024
+        actual += page["text"]
+        cursor = page["next_cursor"]
+        if not page["has_more"]:
+            break
+    assert actual == text
+    tail = log_viewer.text_page(text, source="escaped-task", tail=True)
+    assert len(JSONResponse(tail).body) <= 1024 * 1024
+    assert text.endswith(tail["text"])
+    assert not tail["has_more"]
+    older = log_viewer.text_page(text, source="escaped-task", cursor=tail["previous_cursor"])
+    assert len(JSONResponse(older).body) <= 1024 * 1024
+    assert text.endswith(older["text"] + tail["text"])
+
+
+@pytest.mark.parametrize("row", ["漢" * 600, "\x00" * 345, "\\\t" * 300], ids=["unicode", "nul", "escapes"])
+def test_journal_transport_budgets_utf8_and_escaped_rows(monkeypatch, capsys, row):
+    """The actual privileged JSON output stays bounded through prefix and tail expansion.
+
+    Args:
+        monkeypatch: Supply a retained multiline record within the raw JSON record limit.
+        capsys: Capture actual serialized helper transport.
+        row: Non-ASCII or escape-heavy retained content.
+    """
+    from tests.test_appliance_helper import load_helper_module
+
+    helper = load_helper_module()
+    entry = {"MESSAGE": "\n".join([row] * 500), "__CURSOR": "escaped-journal", "__REALTIME_TIMESTAMP": "1000000"}
+    assert len(json.dumps(entry, ensure_ascii=False).encode()) < 1024 * 1024
+    def entries(command, **_kwargs):
+        return ([], False) if any(arg.startswith("--grep=") for arg in command) else ([entry], False)
+    monkeypatch.setattr(helper, "_journal_history_entries", entries)
+    position, actual = {}, []
+    for _ in range(4):
+        assert helper._read_log_history(["nginx", json.dumps(position)]) == 0
+        transport = capsys.readouterr().out
+        assert len(transport.encode()) <= 1024 * 1024
+        page = json.loads(transport)
+        actual.extend(line.split(" ", 1)[1] for line in page["lines"])
+        position = page["journal_position"]
+        if not page["has_more"]:
+            break
+    assert actual == [row] * 500
+    assert helper._read_log_history(["nginx", '{"tail":true}']) == 0
+    transport = capsys.readouterr().out
+    assert len(transport.encode()) <= 1024 * 1024
+    tail = json.loads(transport)
+    assert tail["lines"]
+    assert not tail["has_more"]

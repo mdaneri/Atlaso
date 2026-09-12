@@ -427,6 +427,25 @@ def file_page(path: Path, *, source: str, cursor: str = "", limit: int = PAGE_LI
             "notice": "Retained history changed; reopened the oldest available file." if reset else ""}
 
 
+def _bounded_json_text(text: str, *, suffix: bool = False) -> str:
+    """Select a character-safe prefix or suffix within the escaped text budget.
+
+    Args:
+        text: Bounded candidate retained text.
+        suffix: Select the newest characters instead of the oldest.
+    """
+    budget = PAGE_BYTES - min(16384, PAGE_BYTES // 4)
+    low, high = 0, min(len(text), budget)
+    while low < high:
+        count = (low + high + 1) // 2
+        candidate = text[-count:] if suffix else text[:count]
+        if _log_wire_size(candidate) <= budget:
+            low = count
+        else:
+            high = count - 1
+    return (text[-low:] if low else "") if suffix else text[:low]
+
+
 def text_page(text: str, *, source: str, cursor: str = "", tail: bool = False) -> dict[str, Any]:
     """Page an already-redacted task projection without shortening its history.
 
@@ -442,7 +461,7 @@ def text_page(text: str, *, source: str, cursor: str = "", tail: bool = False) -
         raise ValueError("Invalid log history position.")
     before_end = offset if position.get("before") is True else (position.get("page_end") or len(text))
     if (tail and not cursor) or position.get("before") is True:
-        suffix = text[:before_end][-PAGE_BYTES:].encode("utf-8")[-PAGE_BYTES:].decode("utf-8", errors="ignore")
+        suffix = _bounded_json_text(text[max(0, before_end - PAGE_BYTES):before_end], suffix=True)
         offset = before_end - len(suffix)
         if offset and "\n" in suffix:
             offset += suffix.index("\n") + 1
@@ -451,7 +470,7 @@ def text_page(text: str, *, source: str, cursor: str = "", tail: bool = False) -
     reset = offset > len(text) or (offset > 0 and fingerprint != position.get("prefix"))
     if reset:
         offset = 0
-    bounded = text[offset:min(offset + PAGE_BYTES, before_end)].encode("utf-8")[:PAGE_BYTES].decode("utf-8", errors="ignore")
+    bounded = _bounded_json_text(text[offset:min(offset + PAGE_BYTES, before_end)])
     end = offset + len(bounded)
     if end < len(text):
         boundary = text.rfind("\n", offset, end)

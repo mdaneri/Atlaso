@@ -2136,8 +2136,8 @@ def _journal_text_rows(entry, offset=0):
         if not raw:
             break
         line = prefix + raw.rstrip(chr(13) + chr(10))
-        if len(line.encode("utf-8")) + 1 > 1024 * 1024:
-            line = f"{timestamp} [Oversized journal line omitted: exceeds 1 MiB.]"
+        if _log_wire_size(line) > 1024 * 1024 - 16384:
+            line = f"{timestamp} [Oversized journal line omitted: exceeds the encoded page byte budget.]"
         yield start, line
 
 
@@ -2219,10 +2219,10 @@ def _read_log_history(args: list[str]) -> int:
             expanded_bytes = 0
             for index, entry in enumerate(selected):
                 for start, line in _journal_text_rows(entry):
-                    size = len(line.encode("utf-8")) + 1
+                    size = _log_wire_size(line)
                     recent.append((index, start, size))
                     expanded_bytes += size
-                    while len(recent) > limit or expanded_bytes > 1024 * 1024:
+                    while len(recent) > limit or expanded_bytes > 1024 * 1024 - 16384:
                         expanded_bytes -= recent.popleft()[2]
             if recent:
                 first_index, text_offset, _ = recent[0]
@@ -2257,8 +2257,8 @@ def _read_log_history(args: list[str]) -> int:
             paused = False
             row_key_state = initial_private_key if index == 0 and text_offset else entry.get("_private_key_before", initial_private_key)
             for start, line in _journal_text_rows(entry, text_offset if index == 0 else 0):
-                size = len(line.encode("utf-8")) + 1
-                if len(lines) >= limit or expanded_bytes + size > 1024 * 1024:
+                size = _log_wire_size(line)
+                if len(lines) >= limit or expanded_bytes + size > 1024 * 1024 - 16384:
                     next_position = {"journal_start_cursor": entry["__CURSOR"], "journal_text_offset": start}
                     more = paused = True
                     break
@@ -2285,7 +2285,7 @@ def _read_log_history(args: list[str]) -> int:
                           "journal_position": next_position, "previous_position": previous_position, "has_more": more,
                           "line_private_keys": line_private_keys if category is not None else None,
                           "final_private_key": final_private_key if category is not None and not paused else None,
-                          "current_position": current_position, "initial_private_key": initial_private_key}))
+                          "current_position": current_position, "initial_private_key": initial_private_key}, ensure_ascii=False))
         return 0
     except (ValueError, TypeError, AttributeError, KeyError, OSError, subprocess.TimeoutExpired):
         print("Log history page could not be read completely. Reopen the source to retry.", file=sys.stderr)
