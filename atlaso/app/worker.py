@@ -492,6 +492,7 @@ def recover_interrupted_worker_jobs(
                 job.cancel_outcome = "cleanup-required"
                 job.error = "Cancellation recovery could not verify helper shutdown and credential cleanup."
                 continue
+            _record_cancelled_check_availability(db, job)
             task_cancellation.finish_stop(db, job, detail="Startup recovery verified every task-owned check unit stopped and scoped credentials removed.")
             continue
         if job.type == "pxe-media-sync":
@@ -1433,6 +1434,58 @@ def _persist_appliance_update_step_completion(
     db.add_all([job, step])
 
 
+def _record_cancelled_check_availability(db: Session, job: Job) -> None:
+    """Retain completed child checks before confirming a parent cancellation.
+
+    Args:
+        db: Execution owner's transaction, committed with cancellation confirmation.
+        job: Check parent whose helper ownership has been released.
+    """
+    from atlaso.app.services.appliance_update import (
+        record_update_availability_attempt,
+        update_availability_to_json,
+        update_stream_configuration_fingerprint,
+    )
+    from atlaso.app.ui import (
+        APPLIANCE_UPDATE_AVAILABILITY_KEY,
+        appliance_update_availability_state,
+        appliance_update_settings,
+        set_setting_value,
+    )
+
+    config = _job_config(job)
+    settings = config.get("settings")
+    settings = settings if isinstance(settings, dict) else appliance_update_settings(db)
+    state = appliance_update_availability_state(db)
+    changed = False
+    for step in job.steps:
+        if (step.component_key not in config.get("selected_streams", []) or step.finished_at is None
+                or step.status not in {"succeeded", "failed", "no-op", "partial-failure"}):
+            continue
+        result = task_cancellation.payload(step.result)
+        if result.get("unit_id") != step.component_key:
+            continue
+        checked_at = step.finished_at.replace(tzinfo=timezone.utc) if step.finished_at.tzinfo is None else step.finished_at
+        attempt = state["streams"].get(step.component_key, {}).get("last_attempt", {})
+        try:
+            prior = datetime.fromisoformat(str(attempt.get("checked_at", "")))
+            prior = prior.replace(tzinfo=timezone.utc) if prior.tzinfo is None else prior
+            if prior > checked_at:
+                continue
+        except ValueError:
+            pass
+        availability = result.get("availability")
+        if not isinstance(availability, dict):
+            availability = {"state": "failed", "remediation": "Review the completed child check task."}
+        state = record_update_availability_attempt(
+            state, stream=step.component_key, job_id=job.id, checked_at=checked_at,
+            fingerprint=update_stream_configuration_fingerprint(step.component_key, settings), result=availability,
+        )
+        changed = True
+    if changed:
+        set_setting_value(db, APPLIANCE_UPDATE_AVAILABILITY_KEY, update_availability_to_json(state))
+
+
 def _cancel_update_check_if_requested(job_id: str) -> bool:
     """Stop between verified check helpers without starting another child.
 
@@ -1445,6 +1498,7 @@ def _cancel_update_check_if_requested(job_id: str) -> bool:
             return False
         if not any(step.status in task_cancellation.ACTIVE for step in job.steps):
             return False
+        _record_cancelled_check_availability(db, job)
         stopped = task_cancellation.finish_stop(db, job, detail="Current bounded check stopped and cleaned credentials; remaining child checks skipped.")
         db.commit()
         return stopped

@@ -507,3 +507,65 @@ def test_web_startup_confirms_reserved_apply_before_interruption_recovery(db, mo
     assert interrupted.status == "failed"
     assert ui.active_appliance_apply_job(db) is None
     assert db.get(Job, "earlier-0").status == "pending"
+
+
+@pytest.mark.parametrize("startup", [False, True])
+@pytest.mark.parametrize("newer_confirmation", [False, True])
+def test_cancelled_check_retains_completed_availability(db, monkeypatch, startup, newer_confirmation):
+    """Completed check state survives cancellation while skipped and newer evidence stays intact.
+
+    Args:
+        db: Isolated lifecycle database.
+        monkeypatch: Bind checkpoint sessions and prove startup helper shutdown.
+        startup: Exercise restart recovery instead of the between-child checkpoint.
+        newer_confirmation: Preserve a confirmation newer than this completed child.
+    """
+    from datetime import timedelta
+
+    from atlaso.app import ui, worker
+    from atlaso.app.models import utcnow
+    from atlaso.app.services.appliance_update import (
+        empty_update_availability,
+        record_update_availability_attempt,
+        update_availability_summary,
+        update_availability_to_json,
+        update_stream_configuration_fingerprint,
+    )
+
+    finished = utcnow()
+    settings = {}
+    state = empty_update_availability()
+    for stream in ("atlaso_release", "photon_os"):
+        state = record_update_availability_attempt(
+            state, stream=stream, job_id="prior", checked_at=finished + timedelta(minutes=1 if newer_confirmation else -1),
+            fingerprint=update_stream_configuration_fingerprint(stream, settings),
+            result={"state": "available", "update_available": True, "change_count": 1},
+        )
+    untouched = state["streams"]["photon_os"]
+    ui.set_setting_value(db, ui.APPLIANCE_UPDATE_AVAILABILITY_KEY, update_availability_to_json(state))
+    job = make_job(db, "appliance-update", "running", mode="check", selected_streams=["atlaso_release", "photon_os"], settings=settings)
+    db.add(JobStep(id=job.id + ":release", job_id=job.id, component_key="atlaso_release", label="Release", position=0,
+                   status="succeeded", finished_at=finished, result=json.dumps({"unit_id": "atlaso_release", "success": True,
+                   "availability": {"state": "up_to_date", "update_available": False, "change_count": 0}})))
+    db.add(JobStep(id=job.id + ":photon", job_id=job.id, component_key="photon_os", label="Photon", position=1, status="pending"))
+    db.commit()
+    cancellation.request(db, job, ADMIN)
+    if startup:
+        monkeypatch.setattr(worker, "recover_interrupted_network_boot_media_swaps", lambda _db: 0)
+        monkeypatch.setattr(worker, "_release_finalizer", lambda: {})
+        monkeypatch.setattr(worker, "_quiesce_appliance_update_action", lambda *_args: True)
+        worker.recover_interrupted_worker_jobs(db)
+    else:
+        monkeypatch.setattr(worker, "SessionLocal", lambda: Session(db.get_bind()))
+        assert worker._cancel_update_check_if_requested(job.id)
+    db.expire_all()
+    assert job.status == "cancelled"
+    assert job.cancel_outcome == "confirmed"
+    assert db.get(JobStep, job.id + ":release").status == "succeeded"
+    assert db.get(JobStep, job.id + ":photon").status == "skipped"
+    actual = ui.appliance_update_availability_state(db)
+    assert actual["streams"]["photon_os"] == untouched
+    assert actual["streams"]["atlaso_release"]["confirmed"]["update_available"] is newer_confirmation
+    summary = update_availability_summary(actual, settings, result_streams=["atlaso_release"])
+    release = next(row for row in summary["streams"] if row["id"] == "atlaso_release")
+    assert release["confirmed"]["change_count"] == (1 if newer_confirmation else 0)

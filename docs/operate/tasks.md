@@ -95,7 +95,9 @@ revalidates task-owned update units or restores interrupted media swaps before c
 Web startup confirms accepted queued Apply cancellations before classifying other interrupted Apply jobs.
 Paired Firewall/NAT publication finishes as one transaction; a request after its final work preserves completion.
 
-Completed child results remain intact. A verified parent stop skips children that never started. If completion wins
+Completed child results remain intact. Completed update checks refresh availability before cancellation is confirmed,
+including during restart recovery; skipped streams retain their previous confirmation. A verified parent stop skips
+children that never started. If completion wins
 the race, Atlaso preserves success or failure and records `completion-won`; repeated requests never rewrite that result.
 The API requires `admin:all`; browser administrators can request supported cancellations, while service administrators
 are limited to supported Network Boot media tasks. Child rows cannot independently cancel their parent's operation.
