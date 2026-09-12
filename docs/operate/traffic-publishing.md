@@ -203,6 +203,9 @@ Both guard and Firewall admissions must match the complete original tuple, sourc
 connection direction, DNAT status, and ingress or return interface. Changed predicates report degraded state.
 When Firewall is disabled, paired Apply creates a minimal accept-policy forwarding chain with the generated
 admissions; this preserves disabled Firewall behavior while retaining complete forwarding observation.
+The captured Firewall preview includes that minimal chain and both admissions, matching the paired Apply program.
+If the interactive grid fails to load, its fallback remains readable; deletion is available only through the grid's
+confirmed action.
 The page summary includes enabled port forwards independently of source NAT and reports their validation errors.
 These counters describe matched traffic, not proof that an application at the target is healthy.
 

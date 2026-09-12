@@ -466,18 +466,22 @@ def test_applied_forward_presence_preserves_retirement_boundary(preview, expecte
 
 @pytest.mark.parametrize("family", [4, 6])
 @pytest.mark.parametrize("routing", [False, True])
-def test_firewall_preview_matches_independent_helper_admission(family, routing):
+@pytest.mark.parametrize("firewall_enabled", [False, True])
+def test_firewall_preview_matches_independent_helper_admission(family, routing, firewall_enabled):
     """Preview and root validation agree without editable generated rules.
 
     Args:
         family: Original tuple address family.
         routing: Whether the admission is effective.
+        firewall_enabled: Whether the base snapshot includes a forwarding chain.
     """
     values = payload(ip_family=family)
     if family == 6:
         values.update(listener_address="2001:db8:2::1", target_address="2001:db8:3::10")
     rule = PortForward(id=1, **values)
     firewall = "flush ruleset\ntable inet atlaso {\n chain forward { type filter hook forward priority 0; policy drop; }\n}\n"
+    if not firewall_enabled:
+        firewall = "flush ruleset\n"
     preview, rows = port_forward_firewall_projection(firewall, [rule], [], routing_enabled=routing)
     record = json.loads(render_port_forward_records([rule], []).split("json=", 1)[1])[0]
     assert preview == load_helper_module()._render_port_forward_firewall(firewall, [record] if routing else [])

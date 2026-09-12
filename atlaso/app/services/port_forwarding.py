@@ -337,6 +337,9 @@ def port_forward_firewall_projection(
     active = [rule for rule in rules if rule.enabled and routing_enabled]
     rows: list[dict[str, Any]] = []
     lines = [firewall.rstrip(), "# BEGIN ATLASO PORT FORWARD ADMISSION"]
+    if active and not re.search(r"^table inet atlaso\s*\{", firewall, re.MULTILINE):
+        lines.extend(["table inet atlaso {", "  chain forward {",
+                      "    type filter hook forward priority filter; policy accept;", "  }", "}"])
     for rule in sorted(active, key=lambda item: (item.priority, item.id)):
         sources = source_networks(rule.source, rule.ip_family, groups)
         family = "ip" if rule.ip_family == 4 else "ip6"
@@ -360,7 +363,7 @@ def port_forward_firewall_projection(
                             f"{rule.target_address}:{rule.target_port_start}-{rule.target_port_end}; "
                             f"reply mode {rule.reply_mode}. Edit this resource in Traffic Publishing."),
         })
-    if not active or not re.search(r"^table inet atlaso\s*\{", firewall, re.MULTILINE):
+    if not active:
         return firewall, rows
     return "\n".join([*lines, "# END ATLASO PORT FORWARD ADMISSION"]) + "\n", rows
 

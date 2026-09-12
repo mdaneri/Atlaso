@@ -121,6 +121,10 @@ def test_port_forward_wizard_and_forms_preserve_desired_only_boundary(client, mo
     row = response.json()["rows"][0]
     assert row["enabled"] is True
     assert "[port_forwards]" in response.json()["config_preview"]
+    fallback_page = client.get("/ui/management/traffic-publishing")
+    fallback = fallback_page.text.split('id="port-forward-fallback"', 1)[1].split("</table>", 1)[0]
+    assert values["name"] in fallback
+    assert "<form" not in fallback and 'type="submit"' not in fallback
     response = client.post(f"{root}/{row['id']}/enabled", data={"csrf": csrf, "enabled": "off"}, headers={"Accept": "application/json"})
     assert response.status_code == 200, response.text
     with SessionLocal() as db:
