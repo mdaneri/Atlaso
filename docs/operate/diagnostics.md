@@ -38,6 +38,7 @@ The row context menu offers cancellation while queued and confirmed deletion aft
 Running collection finishes under its bounded execution owner; cancellation is unavailable because stopping all
 privileged descendants has no verified task-owned contract. The detail dialog explains this restriction.
 If collection finishes before a cancellation request arrives, the request preserves its completed result.
+The confirmation reports that returned state rather than claiming the completed collection was cancelled.
 When JavaScript is unavailable, the page retains a read-only collection; use the CLI for recovery collection.
 
 ## Privacy and contents

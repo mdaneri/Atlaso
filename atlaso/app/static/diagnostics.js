@@ -127,8 +127,17 @@
   async function cancel(data) {
     try {
       const body = new FormData(); body.set("csrf", form.elements.csrf.value);
-      await request(`${root}/${encodeURIComponent(data.id)}/cancel`, { method: "POST", body });
-      status.textContent = "Queued collection cancelled before execution.";
+      const returned = await request(`${root}/${encodeURIComponent(data.id)}/cancel`, { method: "POST", body });
+      const messages = {
+        cancelled: "Queued collection cancelled before execution.",
+        succeeded: "Collection completed before cancellation; its result was preserved.",
+        ready: "Collection completed before cancellation; its result was preserved.",
+        ready_with_omissions: "Collection completed with omissions before cancellation; its result was preserved.",
+        failed: "Collection failed before cancellation; its result was preserved.",
+        expired: "Collection has expired; cancellation did not change its result.",
+        deleted: "Collection was already deleted; cancellation did not change its state.",
+      };
+      status.textContent = messages[returned?.status] || "Cancellation is not confirmed. Review the collection's current state.";
       await refresh();
     } catch (error) { status.textContent = error.message; }
   }

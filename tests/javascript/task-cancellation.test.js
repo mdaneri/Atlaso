@@ -32,3 +32,31 @@ for (const allowed of [true, false]) {
     }
   });
 }
+
+
+const diagnosticsSource = fs.readFileSync(path.join(__dirname, "../../atlaso/app/static/diagnostics.js"), "utf8");
+const diagnosticsCancel = diagnosticsSource.slice(diagnosticsSource.indexOf("async function cancel(data)"), diagnosticsSource.indexOf("async function remove(data)"));
+for (const [outcome, expected] of [
+  ["cancelled", /cancelled before execution/],
+  ["succeeded", /completed before cancellation/],
+  ["ready", /completed before cancellation/],
+  ["ready_with_omissions", /completed with omissions/],
+  ["failed", /failed before cancellation/],
+  ["expired", /has expired/],
+  ["deleted", /already deleted/],
+  ["running", /not confirmed/],
+  [undefined, /not confirmed/],
+]) {
+  test(`diagnostics cancellation reports returned disposition ${outcome}`, async () => {
+    const status = {};
+    let refreshes = 0;
+    const context = vm.createContext({ status, root: "/diagnostics", FormData: class { set() {} },
+      form: { elements: { csrf: { value: "synthetic" } } },
+      request: async () => ({ status: outcome }), refresh: async () => { refreshes += 1; } });
+    vm.runInContext(diagnosticsCancel, context);
+    await context.cancel({ id: "bundle", status: "pending" });
+    assert.match(status.textContent, expected);
+    if (outcome !== "cancelled") assert.doesNotMatch(status.textContent, /cancelled before execution/);
+    assert.equal(refreshes, 1);
+  });
+}
