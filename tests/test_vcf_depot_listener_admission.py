@@ -385,6 +385,56 @@ def test_depot_readiness_shares_deadline(monkeypatch, stage):
         assert secured.settimeout.call_args.args == (2.0,)
 
 
+@pytest.mark.parametrize("failure", ["none", "flush", "replace"])
+def test_depot_atomic_publication_preserves_complete_previous_file(monkeypatch, tmp_path, failure):
+    """An interrupted candidate write cannot truncate the live rollback target.
+
+    Args:
+        monkeypatch: Failure injection fixture.
+        tmp_path: Managed destination directory.
+        failure: Publication boundary that fails.
+    """
+    helper = load_helper_module()
+    target = tmp_path / "depot.conf"
+    target.write_bytes(b"previous complete site")
+    replace = Path.replace
+
+    def publish(path, destination):
+        """Check both complete versions immediately before replacement.
+
+        Args:
+            path: Complete sibling candidate.
+            destination: Existing live site.
+        """
+        assert path.parent == target.parent
+        assert target.read_bytes() == b"previous complete site"
+        assert path.read_bytes() == b"candidate complete site"
+        if failure == "replace":
+            raise OSError("injected rename failure")
+        return replace(path, destination)
+
+    def flush(path):
+        """Fail before publication when durable candidate storage fails.
+
+        Args:
+            path: Candidate file to flush.
+        """
+        assert path != target
+        assert target.read_bytes() == b"previous complete site"
+        if failure == "flush":
+            raise OSError("injected flush failure")
+
+    monkeypatch.setattr(Path, "replace", publish)
+    monkeypatch.setattr(helper, "_fsync_file", flush)
+    if failure == "none":
+        helper._replace_vcf_depot_file(target, b"candidate complete site", 0o644)
+    else:
+        with pytest.raises(OSError):
+            helper._replace_vcf_depot_file(target, b"candidate complete site", 0o644)
+    assert target.read_bytes() == (b"candidate complete site" if failure == "none" else b"previous complete site")
+    assert list(tmp_path.iterdir()) == [target]
+
+
 @pytest.mark.parametrize("failure", ["none", "syntax", "reload", "readiness", "rollback"])
 def test_depot_activation_restores_previous_files(monkeypatch, tmp_path, capsys, failure):
     """Keep the previous depot and shared nginx running when activation fails.

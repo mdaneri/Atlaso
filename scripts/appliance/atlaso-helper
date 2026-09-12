@@ -12112,6 +12112,32 @@ def _vcf_depot_endpoint_ready(text: str) -> bool:
         return False
 
 
+def _replace_vcf_depot_file(path: Path, content: bytes, mode: int, owner: tuple[int, int] | None = None) -> None:
+    """Publish complete depot configuration bytes through a durable sibling replacement.
+
+    Args:
+        path: Managed destination path.
+        content: Complete candidate or rollback bytes.
+        mode: Permissions applied before publication.
+        owner: Previous POSIX owner and group when restoring a snapshot.
+    """
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = None
+    try:
+        with tempfile.NamedTemporaryFile("wb", prefix=f".{path.name}.", suffix=".tmp", dir=path.parent, delete=False) as handle:
+            temporary = Path(handle.name)
+            handle.write(content)
+        os.chmod(temporary, mode)
+        if owner is not None and os.name == "posix":
+            os.chown(temporary, *owner)
+        _fsync_file(temporary)
+        temporary.replace(path)
+        _fsync_directory(path.parent)
+    finally:
+        if temporary is not None:
+            temporary.unlink(missing_ok=True)
+
+
 def _apply_vcf_depot_site(text: str, *, disabled: bool) -> int:
     """Apply one depot site and restore its previous files if activation fails.
 
@@ -12151,7 +12177,7 @@ def _apply_vcf_depot_site(text: str, *, disabled: bool) -> int:
             else:
                 _remove_vcf_depot_htpasswd()
             _prepare_vcf_depot_web_tree(text)
-            _write_secret_file(VCF_DEPOT_SITE_PATH, text, 0o644)
+            _replace_vcf_depot_file(VCF_DEPOT_SITE_PATH, text.encode("utf-8"), 0o644)
         if _nginx_test_command().returncode != 0:
             raise ValueError("Depot nginx configuration validation failed.")
         active = _run(["systemctl", "is-active", "--quiet", "nginx"], timeout=5).returncode == 0
@@ -12169,10 +12195,7 @@ def _apply_vcf_depot_site(text: str, *, disabled: bool) -> int:
                     path.unlink(missing_ok=True)
                 else:
                     content, metadata = snapshot
-                    path.write_bytes(content)
-                    os.chmod(path, stat.S_IMODE(metadata.st_mode))
-                    if os.name == "posix":
-                        os.chown(path, metadata.st_uid, metadata.st_gid)
+                    _replace_vcf_depot_file(path, content, stat.S_IMODE(metadata.st_mode), (metadata.st_uid, metadata.st_gid))
             if _nginx_test_command().returncode != 0 or _run(["systemctl", "reload", "nginx"], timeout=30).returncode != 0:
                 raise ValueError("Previous nginx configuration could not be reloaded.")
             previous = snapshots[VCF_DEPOT_SITE_PATH]
