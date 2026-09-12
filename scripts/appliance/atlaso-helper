@@ -9581,11 +9581,12 @@ def _render_port_forward_firewall(firewall: str, rows: list[dict]) -> str:
     """
     start = "# BEGIN ATLASO PORT FORWARD ADMISSION"
     end = "# END ATLASO PORT FORWARD ADMISSION"
-    if start in firewall or end in firewall:
-        if firewall.count(start) != 1 or firewall.count(end) != 1 or firewall.index(end) < firewall.index(start):
+    markers = list(re.finditer(r"^# (?:BEGIN|END) ATLASO PORT FORWARD ADMISSION\r?$", firewall, re.MULTILINE))
+    if markers:
+        if len(markers) != 2 or [marker.group().rstrip("\r") for marker in markers] != [start, end]:
             raise ValueError("Generated port-forward admission markers are invalid")
-        before, generated = firewall.split(start, 1)
-        _old_rules, after = generated.split(end, 1)
+        before = firewall[:markers[0].start()]
+        after = firewall[markers[1].end():]
         firewall = before.rstrip() + "\n" + after.lstrip("\n")
     if not rows:
         return firewall

@@ -242,6 +242,43 @@ def test_disabled_firewall_renders_minimal_forwarding_admissions():
     assert helper._render_port_forward_firewall(rendered, []) == "flush ruleset\n"
 
 
+@pytest.mark.parametrize("newline", ["\n", "\r\n"])
+@pytest.mark.parametrize("name", [
+    "# BEGIN ATLASO PORT FORWARD ADMISSION",
+    "# END ATLASO PORT FORWARD ADMISSION",
+    "prefix # BEGIN ATLASO PORT FORWARD ADMISSION and # END ATLASO PORT FORWARD ADMISSION suffix",
+])
+def test_firewall_comment_markers_survive_admission_replacement(name, newline):
+    """Operator comments cannot collide with standalone generated delimiters.
+
+    Args:
+        name: Valid operator rule name containing delimiter text.
+        newline: Existing snapshot line ending.
+    """
+    helper = load_helper_module()
+    row = {"id": 1, **payload(), "source_networks": []}
+    firewall = newline.join(["table inet atlaso {", " chain forward {",
+                             f"  accept comment {json.dumps(name)}", " }", "}", ""])
+    rendered = helper._render_port_forward_firewall(firewall, [row])
+    assert json.dumps(name) in rendered
+    assert rendered.count("add rule inet atlaso forward") == 2
+    assert helper._render_port_forward_firewall(rendered, [row]) == rendered
+    assert helper._render_port_forward_firewall(rendered, []) == firewall.rstrip() + "\n"
+
+
+@pytest.mark.parametrize("markers", ["BEGIN", "END", "END BEGIN", "BEGIN BEGIN END", "BEGIN END END"])
+def test_firewall_rejects_malformed_standalone_admission_markers(markers):
+    """Missing, duplicated, and reversed owned delimiters still fail closed.
+
+    Args:
+        markers: Invalid standalone delimiter sequence.
+    """
+    helper = load_helper_module()
+    firewall = "\n".join(f"# {marker} ATLASO PORT FORWARD ADMISSION" for marker in markers.split())
+    with pytest.raises(ValueError, match="admission markers are invalid"):
+        helper._render_port_forward_firewall(firewall, [])
+
+
 def observed_dnat_expressions(row):
     """Model the native nftables JSON shape captured on the VMware appliance.
 

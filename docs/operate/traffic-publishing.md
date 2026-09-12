@@ -75,7 +75,9 @@ does not configure proxies, address pools, or NPTv6.
 6. Review the complete mapping and enablement. New rules default disabled. Save desired state, then use global
    Appliance Apply. Routing must be enabled for activation; the Source NAT enable switch does not control port forwards.
 
-Firewall shows generated admission attributed to the owning port forward. These rows are read-only; edit their source
+Firewall rule names may contain generated admission marker text; only complete standalone marker lines delimit
+the generated block during Apply. Firewall shows generated admission attributed to the owning port forward.
+These rows are read-only; edit their source
 boundary and listener in Traffic Publishing. Apply captures Firewall and NAT together, validates their complete program,
 and publishes both atomically. It commits both application baselines before acknowledging the root-owned recovery
 record. Management changes include this pair in the protected management handoff and its wider rollback.
