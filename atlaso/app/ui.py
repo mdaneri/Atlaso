@@ -12645,6 +12645,7 @@ def execute_appliance_update_job(
         "success": succeeded,
         "dry_run": any(result.dry_run for result in results),
         "apply_started": mode == "run" and len(results) > 1 and not results[1].dry_run,
+        "ownership_unresolved": results[0].returncode == 75,
         "restart_after_commit": mode == "run"
         and succeeded
         and bool({"atlaso_release", "photon_os"} & set(selected_stream_ids)),
