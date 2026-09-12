@@ -8671,6 +8671,8 @@ def _network_address_observation() -> dict:
             "--no-pager", "--lines=256", "--output=json",
             "--output-fields=MESSAGE,INTERFACE,__REALTIME_TIMESTAMP,_BOOT_ID",
         ], timeout=4)
+        # In systemd 252 and 257, JSON list calls the manager Describe method,
+        # bypassing the human summary table and returning detailed Interfaces.
         networkd = _network_observation_command(["networkctl", "--json=short", "list"], timeout=4)
         native_links = {}
         if networkd.returncode == 0:
@@ -8801,12 +8803,12 @@ def _network_detection_preflight(path: Path) -> None:
             raise ValueError(f"Unable to check IPv4 addresses on {name}: Ethernet link identity unavailable")
 
 
-def _wait_network_addresses(path: Path, *, attempts: int = 15, started_at: str | None = None) -> dict:
+def _wait_network_addresses(path: Path, *, attempts: int = 31, started_at: str | None = None) -> dict:
     """Wait for candidate addresses without treating a missing result as a conflict.
 
     Args:
         path: Exact staged intent whose activation must be proven.
-        attempts: Bounded number of readiness samples for all links together.
+        attempts: Sample limit; the default permits the full 30-second readiness window.
         started_at: Candidate activation start, excluding failures from earlier attempts.
     """
     physical, vlans, _removed = _parse_network_config(path)
@@ -8849,7 +8851,7 @@ def _wait_network_addresses(path: Path, *, attempts: int = 15, started_at: str |
         if time.monotonic() >= deadline:
             break
         if attempt + 1 < attempts:
-            time.sleep(1)
+            time.sleep(min(1, max(0, deadline - time.monotonic())))
     conflicts = {(row["name"], row["address"]) for row in observation["conflicts"] if row["detected_at"] >= started_at}
     for name, address in missing:
         if (name, address) in conflicts:

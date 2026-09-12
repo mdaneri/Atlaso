@@ -260,7 +260,8 @@ a retained static address does not count as that replacement. Once resolved, the
 does not become a current conflict again merely because a lease later disappears. Missing native
 networkd evidence blocks Apply before configuration installation, including with IPv4 checking disabled.
 If an ordinary Network Apply fails during installation or address readiness, Atlaso restores the
-previous networkd files and reconfigures the previous links. Old VLAN deletion waits until candidate
+previous networkd files and reconfigures the previous links. Address readiness allows a 30-second
+window for DHCP or IPv6 autoconfiguration. Old VLAN deletion waits until candidate
 readiness succeeds. An incomplete rollback reports failure and retains its backup location for
 operator recovery; it never advances the applied baseline.
 The retained failure names the attempted address, link, and detection time; a conflicting MAC appears

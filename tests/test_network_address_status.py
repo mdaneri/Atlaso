@@ -515,3 +515,52 @@ def test_ordinary_apply_restores_rejected_candidate(tmp_path, monkeypatch, capsy
         assert ["ip", "link", "set", "dev", "eth0", "up"] in commands
         assert "previous network configuration restored" in capsys.readouterr().err
     assert not backups
+
+
+@pytest.mark.parametrize("ready_at", [20, 30, None])
+def test_address_readiness_uses_full_thirty_second_window(tmp_path, monkeypatch, ready_at):
+    """Accept late DHCP leases and exhaust the deadline without real sleeping.
+
+    Args:
+        tmp_path: Isolated network intent.
+        monkeypatch: Supply a deterministic monotonic clock and native evidence.
+        ready_at: Simulated lease acquisition time, or no lease before timeout.
+    """
+    from tests.test_appliance_helper import load_helper_module
+
+    helper = load_helper_module()
+    elapsed = [0.0]
+    samples = []
+    monkeypatch.setattr(helper, "_parse_network_config", lambda _path: (
+        [{"name": "eth0", "ipv4_method": "dhcp", "ipv6_enabled": "false"}], [], [],
+    ))
+    monkeypatch.setattr(helper.time, "monotonic", lambda: elapsed[0])
+
+    def sleep(seconds):
+        """Advance the fake clock.
+
+        Args:
+            seconds: Requested bounded sleep duration.
+        """
+        elapsed[0] += seconds
+
+    def observe():
+        """Return the lease only after the simulated acquisition time."""
+        samples.append(elapsed[0])
+        native = observation()
+        if ready_at is None or elapsed[0] < ready_at:
+            native["links"][0]["addresses"] = []
+        else:
+            native["links"][0]["addresses"][0]["source"] = "DHCPv4"
+        return native
+
+    monkeypatch.setattr(helper.time, "sleep", sleep)
+    monkeypatch.setattr(helper, "_network_address_observation", observe)
+    if ready_at is None:
+        with pytest.raises(ValueError):
+            helper._wait_network_addresses(tmp_path / "intent.conf")
+        assert elapsed[0] == 30
+    else:
+        helper._wait_network_addresses(tmp_path / "intent.conf")
+        assert elapsed[0] == ready_at
+    assert samples[-1] == elapsed[0]
