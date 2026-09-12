@@ -1595,6 +1595,21 @@ def _run_appliance_update(job_id: str) -> None:
                             mode=mode,
                             exc=exc,
                         )
+            if stream_result.get("ownership_unresolved") is True:
+                # Keep the child and parent active until the exact helper is
+                # proven stopped. A timeout is not proof of released ownership.
+                with SessionLocal() as db:
+                    held_job = db.get(Job, job_id)
+                    if held_job is not None:
+                        held_job.error = "Update check cleanup needs attention; helper ownership remains unresolved."
+                        held_job.result = json.dumps({
+                            "state": "cleanup-required",
+                            "ownership_unresolved": True,
+                            "stream": stream,
+                            "mode": mode,
+                        }, sort_keys=True)
+                        db.commit()
+                return
             stream_results.append(stream_result)
             earlier_failed = earlier_failed or not bool(stream_result.get("success"))
             if stream not in terminal_stream_results:
@@ -1934,6 +1949,12 @@ def run_worker_once() -> str | None:
     if not _reconcile_appliance_update_status_surface():
         return None
     with SessionLocal() as db:
+        # Startup recovery may retain an interrupted helper, including a check
+        # that does not own the installation-only browser maintenance marker.
+        if db.execute(select(Job.id).where(
+            Job.type == "appliance-update", Job.status == JobStatus.RUNNING.value,
+        ).limit(1)).scalar_one_or_none() is not None:
+            return None
         enqueue_due_schedules(db)
         job = claim_next_job(db)
         if job is None:

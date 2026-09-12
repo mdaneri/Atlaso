@@ -168,6 +168,8 @@ SYSTEMD_RUN_REAL_ACTIONS = {
 }
 SYSTEMD_RUN_CHILD_ENV = "ATLASO_HELPER_SYSTEMD_RUN_CHILD"
 SYSTEMD_RUN_ACTION_UNIT_PREFIX = "atlaso-helper-action"
+UPDATE_CHECK_TIMEOUT_SECONDS = 300
+UPDATE_CHECK_STOP_SECONDS = 30
 UPDATE_RELEASE_NOTES_URL_MAX_LENGTH = 2048
 NO_PATH_ACTIONS = {
     ("wan", "reconcile-nat"),
@@ -813,7 +815,7 @@ def _run_real_action_with_systemd(group: str, action: str, args: list[str]) -> i
     helper_path = str(Path(__file__).resolve())
     unit_name = _systemd_run_action_unit_name()
     if group == "appliance-update":
-        if action == "apply":
+        if action in {"apply", "check"}:
             unit_name = _appliance_update_action_unit_from_config(args) or unit_name
         elif action in {"status-publish", "status-finish"}:
             if len(args) != 1:
@@ -835,6 +837,17 @@ def _run_real_action_with_systemd(group: str, action: str, args: list[str]) -> i
         f"--setenv={SYSTEMD_RUN_CHILD_ENV}=1",
         f"--unit={unit_name}",
     ]
+    bounded_check = group == "appliance-update" and action == "check"
+    if bounded_check:
+        # Bound the entire check, including network waits and descendants. An
+        # adapter timeout alone only kills the systemd-run client, not its unit.
+        command.extend([
+            f"--setenv=ATLASO_UPDATE_CHECK_OWNER={unit_name}",
+            f"--property=RuntimeMaxSec={UPDATE_CHECK_TIMEOUT_SECONDS}",
+            f"--property=TimeoutStopSec={UPDATE_CHECK_STOP_SECONDS}",
+            "--property=KillMode=control-group",
+            "--property=SendSIGKILL=yes",
+        ])
     if group == "management-handoff" and action in {"apply", "recover"}:
         unit = MANAGEMENT_HANDOFF_APPLY_UNIT
         if action == "recover":
@@ -867,7 +880,26 @@ def _run_real_action_with_systemd(group: str, action: str, args: list[str]) -> i
             ]
         )
     command.extend([helper_path, group, action, "--real", *args])
-    result = _run(command)
+    if bounded_check:
+        try:
+            result = _run(command, timeout=UPDATE_CHECK_TIMEOUT_SECONDS + UPDATE_CHECK_STOP_SECONDS + 30)
+        except subprocess.TimeoutExpired:
+            result = subprocess.CompletedProcess(command, 124, "", "Appliance Update check exceeded its five-minute deadline.\n")
+        try:
+            _quiesce_appliance_update_unit(f"{unit_name}.service", bounded=True)
+            # SIGKILL cannot unwind TemporaryDirectory in the checked helper.
+            # Reuse the owner-identity checked volatile credential cleanup only
+            # after its complete unit has stopped; never force-remove live views.
+            _cleanup_stale_photon_repository_views(check_owner=unit_name)
+        except (ValueError, OSError, subprocess.TimeoutExpired):
+            # A caller must retain ownership rather than terminalize a task
+            # whose privileged descendants could still be touching caches.
+            print("Appliance Update check cleanup could not be verified; task ownership is retained.", file=sys.stderr)
+            return 75
+        if result.returncode != 0:
+            print("Appliance Update check failed or exceeded its five-minute deadline; its helper has stopped.", file=sys.stderr)
+    else:
+        result = _run(command)
     print(result.stdout, end="")
     print(result.stderr, end="", file=sys.stderr)
     return result.returncode
@@ -12737,11 +12769,12 @@ def _process_start_identity(pid: int) -> str:
     return start_ticks if start_ticks.isdigit() else ""
 
 
-def _cleanup_stale_photon_repository_views(*, force: bool = False) -> None:
+def _cleanup_stale_photon_repository_views(*, force: bool = False, check_owner: str = "") -> None:
     """Remove inactive root-owned authenticated repository views from volatile storage.
 
     Args:
         force: Remove every validated view under an exclusive recovery transaction.
+        check_owner: Limit cleanup to this exact check unit's repository views.
     """
     runtime_root = _photon_repository_runtime_root()
     pattern = re.compile(
@@ -12750,6 +12783,10 @@ def _cleanup_stale_photon_repository_views(*, force: bool = False) -> None:
     for candidate in runtime_root.glob("atlaso-tdnf-repositories-*"):
         match = pattern.fullmatch(candidate.name)
         if match is None:
+            continue
+        if check_owner and not candidate.name.startswith(
+            f"atlaso-tdnf-repositories-{match.group(1)}-{match.group(2)}-{check_owner}-"
+        ):
             continue
         try:
             metadata = candidate.lstat()
@@ -12765,6 +12802,8 @@ def _cleanup_stale_photon_repository_views(*, force: bool = False) -> None:
         owner_pid = int(match.group(1))
         owner_start_identity = match.group(2)
         if not force and _process_start_identity(owner_pid) == owner_start_identity:
+            if check_owner:
+                raise ValueError("Photon check repository credentials still have a live owner")
             continue
         shutil.rmtree(candidate)
 
@@ -12788,8 +12827,10 @@ def _temporary_photon_repository_options(
     runtime_root = _photon_repository_runtime_root()
     _cleanup_stale_photon_repository_views()
     process_start_identity = _process_start_identity(os.getpid()) or str(time.monotonic_ns())
+    check_owner = os.environ.get("ATLASO_UPDATE_CHECK_OWNER", "")
+    owner_suffix = f"{check_owner}-" if re.fullmatch(r"atlaso-helper-action-[0-9a-f]{32}", check_owner) else ""
     with tempfile.TemporaryDirectory(
-        prefix=f"atlaso-tdnf-repositories-{os.getpid()}-{process_start_identity}-",
+        prefix=f"atlaso-tdnf-repositories-{os.getpid()}-{process_start_identity}-{owner_suffix}",
         dir=runtime_root,
     ) as directory:
         repository_dir = Path(directory)
@@ -22476,11 +22517,12 @@ def _quiesce_management_handoff_unit(unit_name: str, unit_label: str) -> dict[st
     }
 
 
-def _quiesce_appliance_update_unit(unit_name: str) -> dict[str, object]:
+def _quiesce_appliance_update_unit(unit_name: str, *, bounded: bool = False) -> dict[str, object]:
     """Stop and verify one fixed-identity Appliance Update helper unit.
 
     Args:
         unit_name: Exact systemd service unit selected for serialization.
+        bounded: Enforce deadlines on check cleanup's systemctl operations.
 
     Returns:
         Bounded systemd unit evidence without command or environment contents.
@@ -22506,15 +22548,17 @@ def _quiesce_appliance_update_unit(unit_name: str) -> dict[str, object]:
             raise ValueError(f"{stage} Appliance Update helper state could not be verified")
         return state
 
-    initial = _run(["systemctl", "is-active", unit_name])
+    probe_options = {"timeout": 10} if bounded else {}
+    stop_options = {"timeout": UPDATE_CHECK_STOP_SECONDS + 10} if bounded else {}
+    initial = _run(["systemctl", "is-active", unit_name], **probe_options)
     state = verified_state(initial, "initial")
     stopped = False
     if state in {"active", "activating", "deactivating", "reloading"}:
-        stop = _run(["systemctl", "stop", unit_name])
+        stop = _run(["systemctl", "stop", unit_name], **stop_options)
         if stop.returncode != 0:
             raise ValueError("surviving Appliance Update helper could not be stopped")
         stopped = True
-    final = _run(["systemctl", "is-active", unit_name])
+    final = _run(["systemctl", "is-active", unit_name], **probe_options)
     final_state = verified_state(final, "post-stop")
     if final_state in {"active", "activating", "deactivating", "reloading"}:
         raise ValueError("surviving Appliance Update helper did not stop")
@@ -22531,9 +22575,14 @@ def _quiesce_appliance_update_action_unit(job_id: str, stream: str) -> dict[str,
     Returns:
         Bounded systemd unit evidence without command or environment contents.
     """
-    return _quiesce_appliance_update_unit(
-        f"{_appliance_update_action_unit_name(job_id, stream)}.service"
-    )
+    unit_name = _appliance_update_action_unit_name(job_id, stream)
+    evidence = _quiesce_appliance_update_unit(f"{unit_name}.service", bounded=True)
+    # Reconstruct the same owner from the persisted task and stream. A stopped
+    # unit alone is insufficient after a failed credential cleanup or SIGKILL.
+    # Failure must propagate so startup recovery retains the task and queue hold.
+    _cleanup_stale_photon_repository_views(check_owner=unit_name)
+    evidence["credential_cleanup_verified"] = True
+    return evidence
 
 
 def _quiesce_appliance_update_status_unit(job_id: str) -> dict[str, object]:
@@ -22986,8 +23035,8 @@ def _handle_appliance_update(action: str, args: list[str]) -> int:
             return 2
         try:
             evidence = _quiesce_appliance_update_action_unit(args[0], args[1])
-        except ValueError as exc:
-            print(str(exc), file=sys.stderr)
+        except (ValueError, OSError, subprocess.TimeoutExpired):
+            print("Appliance Update helper shutdown or credential cleanup could not be verified.", file=sys.stderr)
             return 1
         print(json.dumps(evidence, sort_keys=True))
         return 0
@@ -23291,6 +23340,12 @@ def main(argv: list[str]) -> int:
         return _handle_kms(action, normalized_args)
     if (group, action) == ("diagnostics", "source"):
         return _handle_diagnostic_source(normalized_args)
+
+    if real_apply and (group, action) == ("appliance-update", "check") and os.environ.get(SYSTEMD_RUN_CHILD_ENV) != "1":
+        if shutil.which("systemd-run") is None:
+            print("systemd-run is required for bounded Appliance Update checks", file=sys.stderr)
+            return 2
+        return _run_real_action_with_systemd(group, action, normalized_args)
 
     if real_apply and _should_run_real_action_with_systemd(action):
         return _run_real_action_with_systemd(group, action, normalized_args)
