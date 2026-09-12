@@ -505,6 +505,17 @@ def build_router(dependencies: OperationsUiDependencies) -> OperationsUiRouter:
                                     headers={"Cache-Control": "no-store"})
             except (ValueError, OSError) as exc:
                 raise HTTPException(status_code=400, detail=str(exc)) from exc
+        if get_settings().dry_run_system_adapters:
+            snapshot = [f"dry-run log source for {service}", "No host journal is read in development mode."]
+        elif not source:
+            snapshot = ["No dedicated log source is configured for this service."]
+        else:
+            try:
+                snapshot = log_viewer.source_page(source, tail=True, limit=100)["text"].splitlines()
+                if not snapshot:
+                    snapshot = ["No retained log entries are available."]
+            except (ValueError, OSError):
+                snapshot = ["Log history is temporarily unavailable. Reload this page to retry."]
         return render(
             request,
             "services.html",
@@ -514,7 +525,7 @@ def build_router(dependencies: OperationsUiDependencies) -> OperationsUiRouter:
                 "service_logs": {
                     "service": row.display_name,
                     "url": str(request.url.path),
-                    "lines": ["Loading retained service history…"],
+                    "lines": snapshot,
                 },
             },
         )

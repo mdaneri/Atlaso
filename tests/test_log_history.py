@@ -1214,3 +1214,42 @@ def test_journal_transport_budgets_utf8_and_escaped_rows(monkeypatch, capsys, ro
     tail = json.loads(transport)
     assert tail["lines"]
     assert not tail["has_more"]
+
+
+@pytest.mark.parametrize("mode", ["snapshot", "empty", "unavailable", "dry-run"])
+def test_service_log_html_has_readable_fallback(client, monkeypatch, mode):
+    """Direct service-log responses remain useful before client scripting runs.
+
+    Args:
+        client: Initialized authenticated application transport.
+        monkeypatch: Supply bounded source output without a host journal.
+        mode: Available, empty, failed or development source state.
+    """
+    from atlaso.app.config import get_settings
+    from tests.routers.ui.helpers import login
+
+    login(client)
+    monkeypatch.setattr(get_settings(), "dry_run_system_adapters", mode == "dry-run")
+    calls = []
+    def read(source, **options):
+        calls.append((source, options))
+        if mode == "unavailable":
+            raise OSError("internal transport detail")
+        return {"text": "retained service entry\n<script>not executable</script>" if mode == "snapshot" else ""}
+    monkeypatch.setattr(log_viewer, "source_page", read)
+    response = client.get("/ui/management/services/dns/logs")
+    assert response.status_code == 200
+    assert "Loading retained service history" not in response.text
+    if mode == "dry-run":
+        assert not calls
+        assert "No host journal is read in development mode." in response.text
+    else:
+        assert calls == [("dnsmasq-dns", {"tail": True, "limit": 100})]
+        if mode == "snapshot":
+            assert "retained service entry" in response.text
+            assert "&lt;script&gt;not executable&lt;/script&gt;" in response.text
+        elif mode == "empty":
+            assert "No retained log entries are available." in response.text
+        else:
+            assert "Log history is temporarily unavailable." in response.text
+            assert "internal transport detail" not in response.text
