@@ -1,9 +1,11 @@
 """Describe bounded Traffic Publishing destination translation API contracts."""
 
 from datetime import datetime
-from typing import Literal
+from typing import Annotated, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import AfterValidator, BaseModel, ConfigDict, Field, model_validator
+
+from .schemas import validate_firewall_description
 
 
 class PortForwardCreate(BaseModel):
@@ -11,7 +13,9 @@ class PortForwardCreate(BaseModel):
 
     model_config = ConfigDict(extra="forbid", str_strip_whitespace=True, strict=True)
     name: str = Field(min_length=1, max_length=120, description="Unique stable operator name for this port forward.")
-    description: str = Field(default="", max_length=1000, description="Operator purpose for this forwarding rule.")
+    description: Annotated[str, AfterValidator(validate_firewall_description)] = Field(
+        default="", description="Operator purpose, at most 1,000 UTF-16 code units, matching browser maxlength. Enforce x-maxLengthUtf16CodeUnits; JSON Schema maxLength counts code points and is intentionally omitted.",
+        json_schema_extra={"x-maxLengthUtf16CodeUnits": 1000})
     priority: int = Field(default=100, ge=0, le=2147483647, description="Non-negative rule ordering; lower values come first.")
     enabled: bool = Field(default=False, description="Desired enablement; global Appliance Apply and Routing govern activation.")
     ip_family: Literal[4, 6] = Field(default=4, description="IPv4 DNAT (4) or stateful IPv6 NAT66 (6); NPTv6 is unsupported.")

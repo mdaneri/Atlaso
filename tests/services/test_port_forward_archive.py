@@ -16,6 +16,42 @@ from atlaso.app.services.settings_archive import (
 from tests.services.test_port_forwarding import payload
 
 
+@pytest.mark.parametrize("invalid", [None, "group", "target", "listener"])
+@pytest.mark.parametrize("claimed_review", [False, True])
+def test_disabled_archive_rules_validate_available_relationships(client, invalid, claimed_review):
+    """Disabled intent cannot bypass validation using enablement or an archived review flag.
+
+    Args:
+        client: Isolated initialized appliance.
+        invalid: Relationship corrupted while the original listener remains available.
+        claimed_review: Untrusted archive flag must not grant relaxed validation.
+    """
+    with SessionLocal() as db:
+        interface = db.scalar(select(PhysicalInterface).where(PhysicalInterface.name == "eth2"))
+        address = interface.ip_cidr.split("/")[0]
+        db.add(PortForward(**payload(ingress_interface="eth2", listener_address=address)))
+        db.commit()
+        archive = export_settings_archive(db, actor="test")
+        row = archive["data"]["port_forwards"][0]
+        row.update(enabled=False, restore_review_required=claimed_review)
+        if invalid == "group":
+            row["source"] = "group:999999"
+        elif invalid == "target":
+            row["target_address"] = address
+        elif invalid == "listener":
+            row.update(external_port_start=22, external_port_end=22, target_port_end=13000)
+        if invalid:
+            with pytest.raises(ValueError, match="port-forward"):
+                restore_settings_archive(db, archive)
+            db.expire_all()
+            saved = db.scalar(select(PortForward))
+            assert saved.enabled and saved.source == "any" and saved.external_port_start == 12000
+            assert saved.target_address != address
+        else:
+            restore_settings_archive(db, archive)
+            assert db.scalar(select(PortForward)).enabled is False
+
+
 def test_archive_network_boot_claim_uses_restored_dhcp_selection(client):
     """Custom PXE ports follow the archived DHCP binding, not the legacy fallback.
 

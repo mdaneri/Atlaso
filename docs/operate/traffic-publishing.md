@@ -59,6 +59,8 @@ does not configure proxies, address pools, or NPTv6.
 ## Configure port forwarding
 
 1. Select the **Port Forwarding** tab and add a rule. Enter its name, purpose, and priority.
+   Descriptions allow 1,000 UTF-16 code units in both the browser and API; an emoji outside the BMP uses two units.
+   API clients should enforce `x-maxLengthUtf16CodeUnits` from the request schema.
 2. Choose IPv4 or IPv6, one eligible addressed ingress interface or VLAN, and its exact listener address.
    Dedicated management interfaces are excluded. An access interface with the management UI flag remains eligible,
    but Atlaso service listener ports cannot be redirected.
@@ -96,7 +98,10 @@ route or an unresolved neighbor does not prove application health: test from an 
 service. Status performs bounded read-only observations and does not probe target ports.
 
 Archives preserve complete mappings and source references. An unavailable restored interface relationship remains
-saved but disabled and marked for review. Factory reset removes desired mappings and retires their runtime state before
+saved but disabled and marked for review. Disabled rules with an available listener still validate Source Groups,
+appliance-owned targets, and listener collisions before restore changes desired state. Only bindings identified as
+unavailable during import receive relaxed validation; an archived review flag does not grant that exception.
+Factory reset removes desired mappings and retires their runtime state before
 replacing interface configuration. A pending publication recovery must be reconciled before reset can continue.
 
 ## Verify and recover

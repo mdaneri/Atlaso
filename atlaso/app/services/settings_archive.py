@@ -2626,6 +2626,7 @@ def _validate_archive_relationships(data: dict[str, list[dict[str, Any]]]) -> No
     forwards = [PortForward(id=index, **_model_kwargs_with_scalar_defaults(PortForward, row))
                 for index, row in enumerate(forward_rows, start=1)]
     target_by_name = {target["name"]: target for target in traffic_targets}
+    unavailable_forward_ids: set[int] = set()
     for candidate, row in zip(forwards, forward_rows, strict=True):
         target = target_by_name.get(candidate.ingress_interface, {})
         cidr = target.get("ip_cidr" if candidate.ip_family == 4 else "ipv6_cidr", "")
@@ -2634,13 +2635,15 @@ def _validate_archive_relationships(data: dict[str, list[dict[str, Any]]]) -> No
             # another interface, listener address, or an Any ingress on import.
             candidate.enabled = False
             candidate.restore_review_required = True
+            unavailable_forward_ids.add(candidate.id)
             row["enabled"] = False
             row["restore_review_required"] = True
     forward_context = {"targets": traffic_targets, "interfaces": [*archived_interfaces, *archived_vlans],
                        "groups": firewall_source_groups,
                        "claims": _archive_port_forward_listener_claims(data) if forwards else []}
     for row_index, candidate in enumerate(forwards, start=1):
-        errors = validate_port_forward(candidate, forwards, forward_context, require_binding=candidate.enabled)
+        errors = validate_port_forward(candidate, forwards, forward_context,
+                                       require_binding=candidate.id not in unavailable_forward_ids)
         if errors:
             raise ValueError(f"Settings archive port-forward row {row_index} is invalid: {errors[0]}")
 

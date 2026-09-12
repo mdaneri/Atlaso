@@ -55,6 +55,15 @@ def test_port_forward_crud_requires_firewall_scope_and_preserves_rejected_intent
     assert invalid.json()["status"] == 422
     assert invalid.json()["error_code"] == "VALIDATION_ERROR"
     assert client.get(rule_path, headers=headers).json()["target_port_end"] == 13002
+    boundary = "😀" * 500
+    updated = client.put(rule_path, json=payload(description=boundary), headers=headers)
+    assert updated.status_code == 200 and updated.json()["description"] == boundary
+    invalid = client.put(rule_path, json=payload(description=boundary + "a"), headers=headers)
+    assert invalid.status_code == 422
+    assert client.get(rule_path, headers=headers).json()["description"] == boundary
+    description_schema = client.get("/openapi.json").json()["components"]["schemas"]["PortForwardCreate"]["properties"]["description"]
+    assert description_schema["x-maxLengthUtf16CodeUnits"] == 1000
+    assert "maxLength" not in description_schema
     updated = client.put(rule_path, json=payload(enabled=False), headers=headers)
     assert updated.status_code == 200, updated.text
     assert updated.json()["enabled"] is False
