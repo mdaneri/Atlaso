@@ -268,6 +268,7 @@ from atlaso.app.services.automation import (
     SCHEDULE_TASK_TYPES,
     SCRIPT_INTERPRETERS,
     create_script_revision,
+    json_object,
     normalize_script_content,
 )
 from atlaso.app.services.ca import (
@@ -4075,6 +4076,12 @@ def run_vcf_depot_download_job(job_id: str, profile_id: int) -> None:
             if profile is None:
                 raise ValueError("The VCF Offline Depot profile no longer exists.")
             settings, commands, validation_warnings = vcf_depot_download_preflight(db, profile)
+            # Persist the validated destination before any child can create files,
+            # so restart recovery does not rely on subsequently edited settings.
+            task_config = json_object(job.task_config_json or "{}", label="Job configuration")
+            task_config["depot_permission_store"] = settings.depot_store_path
+            job.task_config_json = json.dumps(task_config)
+            db.commit()
             active_log_path = filesystem_path(VCF_DEPOT_VDT_LOG_PATH)
             active_log_path.parent.mkdir(parents=True, exist_ok=True)
             active_log_path.write_text("", encoding="utf-8")

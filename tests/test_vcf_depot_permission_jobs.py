@@ -43,6 +43,9 @@ def test_download_job_repairs_public_content_on_failure(client, monkeypatch, tmp
             **_kwargs: Subprocess options.
         """
         events.append("execute")
+        with SessionLocal() as evidence_db:
+            durable = evidence_db.get(Job, "job_permissions")
+            assert json.loads(durable.task_config_json)["depot_permission_store"] == str(store)
         if failure == "launch":
             raise OSError("launch failed")
         return subprocess.CompletedProcess([], 1 if failure in {"exit", "both"} else 0, "output", "")
@@ -94,3 +97,55 @@ def test_download_job_repairs_public_content_on_failure(client, monkeypatch, tmp
             assert json.loads(job.result)["commands"][0]["returncode"] == (1 if failure == "both" else 0)
         if failure == "both":
             assert "code 1" in job.error
+
+
+@pytest.mark.parametrize("failure", [False, True])
+@pytest.mark.parametrize("recorded", [False, True])
+def test_restart_repairs_recorded_download_store(client, monkeypatch, tmp_path, failure, recorded):
+    """Recover partial downloads without changing failure or touching queued jobs.
+
+    Args:
+        client: Isolated application/database fixture.
+        monkeypatch: Dependency replacement fixture.
+        tmp_path: Task-owned test artifact root.
+        failure: Whether permission repair fails.
+        recorded: Whether preflight persisted the original destination.
+    """
+    from atlaso.app import worker
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import Job
+
+    store = str(tmp_path / "original-depot")
+    repaired = []
+
+    def repair(path):
+        """Record the original store and optionally simulate a filesystem failure.
+
+        Args:
+            path: Persisted preflight destination.
+        """
+        repaired.append(path)
+        if failure:
+            raise OSError("synthetic failure")
+        return 1
+
+    monkeypatch.setattr(worker, "prepare_downloaded_depot_permissions", repair)
+    monkeypatch.setattr(worker, "recover_interrupted_network_boot_media_swaps", lambda _db: 0)
+    monkeypatch.setattr(worker, "_release_finalizer", lambda: {})
+    config = json.dumps({"depot_permission_store": store} if recorded else {})
+    with SessionLocal() as db:
+        for job_id, status in (("interrupted", "running"), ("queued", "pending")):
+            db.add(Job(id=job_id, type="vcf-depot-download", status=status, created_by="admin",
+                       task_config_json=config, result=json.dumps({"commands": [{"returncode": 0}]})))
+        db.commit()
+        assert worker.recover_interrupted_worker_jobs(db) == 1
+        job = db.get(Job, "interrupted")
+        assert job.status == "failed"
+        assert "restarted" in job.error
+        assert ("repair also failed" in job.error) == (recorded and failure)
+        result = json.loads(job.result)
+        assert result["commands"] == [{"returncode": 0}]
+        assert result["error"] == job.error
+        assert repaired == ([store] if recorded else [])
+        assert db.get(Job, "queued").status == "pending"
+        assert worker.recover_interrupted_worker_jobs(db) == 0
