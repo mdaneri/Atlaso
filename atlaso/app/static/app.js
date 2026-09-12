@@ -17677,9 +17677,25 @@ function initializeTabs() {
   });
 }
 
+function applyLogSourceAvailability(root, sources) {
+  if (!Array.isArray(sources)) return;
+  const tabs = Array.from(root.querySelectorAll("[data-log-source-tab]"));
+  sources.forEach((source) => {
+    if (typeof source.available !== "boolean") return;
+    const tab = tabs.find((candidate) => candidate.dataset.logSourceTab === source.id);
+    if (!tab) return;
+    tab.disabled = !source.available;
+    tab.setAttribute("aria-disabled", String(tab.disabled));
+  });
+  const active = root.querySelector("[data-log-source-tab].active");
+  if (!active || active.disabled) tabs.find((tab) => !tab.disabled)?.click();
+}
+
 function initializeLogsPage() {
   const root = document.querySelector("[data-logs-page]");
   if (!(root instanceof HTMLElement) || !window.AtlasoLogViewer) return;
+  if (root.dataset.logsInitialized === "1") return;
+  root.dataset.logsInitialized = "1";
   const status = root.querySelector("[data-log-refresh-status]");
   const controls = root.querySelector("[data-log-history-controls]");
   const refreshUrl = root.dataset.logRefreshUrl || managementUiPath("/logs/data");
@@ -17722,6 +17738,18 @@ function initializeLogsPage() {
   lineSelector?.addEventListener("change", () => {
     const active = root.querySelector("[data-log-source-tab].active:not(:disabled)");
     if (active) open(active.dataset.logSourceTab);
+  });
+  window.AtlasoLogViewer.create({
+    output: document.createElement("span"),
+    active: () => root.isConnected,
+    pageText: (page) => JSON.stringify(page.sources || []),
+    renderPage: () => {},
+    onPage: (page) => applyLogSourceAvailability(root, page.sources),
+    fetchPage: (_cursor, signal) => {
+      const url = new URL(refreshUrl, window.location.href);
+      url.searchParams.set("availability", "1");
+      return window.AtlasoLogViewer.fetchJson(url, signal);
+    },
   });
   const selected = root.querySelector("[data-log-source-tab].active");
   if (selected && !selected.disabled) open(selected.dataset.logSourceTab);

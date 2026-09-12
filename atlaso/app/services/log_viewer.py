@@ -24,6 +24,43 @@ PAGE_BYTES = 1024 * 1024
 LINE_BYTES = 64 * 1024
 
 
+def _file_available(path: Path) -> bool:
+    """Probe readable retained-file metadata without loading log contents.
+
+    Args:
+        path: Server-owned current log path and numbered rotation prefix.
+    """
+    try:
+        candidates = [path] + [candidate for candidate in path.parent.glob(f"{path.name}.*")
+                               if re.fullmatch(re.escape(path.name) + r"\.\d+(\.gz)?", candidate.name)]
+        for candidate in candidates:
+            if candidate.is_symlink():
+                continue
+            try:
+                descriptor = os.open(candidate, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0))
+                try:
+                    if stat.S_ISREG(os.fstat(descriptor).st_mode):
+                        return True
+                finally:
+                    os.close(descriptor)
+            except OSError:
+                continue
+    except OSError:
+        pass
+    return False
+
+
+def source_availability() -> dict[str, Any]:
+    """Return fixed-source metadata so disabled tabs can recover without reading history."""
+    sources = [{"id": "app", "available": _file_available(get_settings().app_log_path)},
+               {"id": "kms", "available": _file_available(Path("/var/log/atlaso/kmip/server.log"))}]
+    result = SystemAdapter().read_log_history("availability", {})
+    if not result.returncode:
+        payload = json.loads(result.stdout)
+        sources.extend(payload.get("sources", []))
+    return {"sources": sources}
+
+
 def source_page(source: str, *, cursor: str = "", tail: bool = False, limit: int = PAGE_LINES) -> dict[str, Any]:
     """Read one authorized fixed-source page and redact before transport.
 

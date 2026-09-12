@@ -2088,11 +2088,17 @@ def _read_log_history(args: list[str]) -> int:
         "ntp": "ntpd.service", "esx-storage": "nfs-server.service", "nginx": "nginx.service",
     }
     files = {"nginx-access": NGINX_ACCESS_LOG_PATH, "nginx-error": NGINX_ERROR_LOG_PATH}
-    if len(args) != 2 or args[0] not in (units.keys() | files.keys()) or len(args[1]) > 4096:
+    if len(args) != 2 or args[0] not in (units.keys() | files.keys() | {"availability"}) or len(args[1]) > 4096:
         print("Invalid log history request.", file=sys.stderr)
         return 2
     try:
         position = json.loads(args[1])
+        if args[0] == "availability":
+            journal_available = shutil.which("journalctl") is not None
+            sources = [{"id": source, "available": journal_available} for source in units]
+            sources.extend({"id": source, "available": path.is_file() and not path.is_symlink()} for source, path in files.items())
+            print(json.dumps({"sources": sources}))
+            return 0
         if args[0] in files:
             print(json.dumps(_read_fixed_log_history(files[args[0]], position)))
             return 0

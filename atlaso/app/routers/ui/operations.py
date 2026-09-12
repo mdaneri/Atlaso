@@ -571,6 +571,7 @@ def build_router(dependencies: OperationsUiDependencies) -> OperationsUiRouter:
     @router.get("/logs/data", response_class=JSONResponse, response_model=None)
     def logs_data(
         lines: int = Query(100),
+        availability: bool = Query(False),
         source: str = Query(""),
         cursor: str = Query("", max_length=4096),
         tail: bool = Query(False),
@@ -580,6 +581,7 @@ def build_router(dependencies: OperationsUiDependencies) -> OperationsUiRouter:
 
         Args:
             lines: Lines supplied by the caller.
+            availability: Probe fixed-source metadata without loading log history.
             source: Fixed source whose complete retained history is requested.
             cursor: Signed history position bound to that source.
             tail: Open the newest retained group without replaying older pages.
@@ -588,6 +590,8 @@ def build_router(dependencies: OperationsUiDependencies) -> OperationsUiRouter:
         Returns:
             The endpoint response.
         """
+        if availability:
+            return JSONResponse(log_viewer.source_availability(), headers={"Cache-Control": "no-store"})
         if source:
             try:
                 return JSONResponse(log_viewer.source_page(source, cursor=cursor, tail=tail, limit=normalized_log_line_count(lines)), headers={"Cache-Control": "no-store"})

@@ -742,6 +742,11 @@ def test_logs_controls_preserve_availability_and_selected_page_limit(client, mon
     response = client.get("/ui/management/logs/data", params={"source": "nginx", "lines": 200, "tail": "true"})
     assert response.status_code == 200
     assert selected == [("nginx", 200)]
+    monkeypatch.setattr(log_viewer, "source_availability", lambda: {"sources": [{"id": "app", "available": True}]})
+    response = client.get("/ui/management/logs/data", params={"availability": "1"})
+    assert response.status_code == 200
+    assert response.json()["sources"] == [{"id": "app", "available": True}]
+    assert selected == [("nginx", 200)]
 
 
 @pytest.mark.parametrize("limit", [100, 200, 500])
@@ -860,3 +865,56 @@ def test_sparse_dnsmasq_tail_classifies_before_limit_and_preserves_redaction(mon
         assert "newer DNS" not in page["text"]
     assert "--lines=all" in commands[0]
     assert commands[0][commands[0].index("--unit") + 1] == "dnsmasq.service"
+
+
+def test_local_log_availability_recovers_without_reading_contents(tmp_path, monkeypatch):
+    """A newly created log re-enables its source using metadata rather than a tail read.
+
+    Args:
+        tmp_path: Owned current and rotated log paths.
+        monkeypatch: Replace the fixed privileged metadata transport.
+    """
+    from types import SimpleNamespace
+
+    path = tmp_path / "availability.log"
+    monkeypatch.setattr(log_viewer, "get_settings", lambda: SimpleNamespace(app_log_path=path))
+    calls = []
+    def metadata(_self, source, position):
+        calls.append((source, position))
+        return SimpleNamespace(returncode=0, stdout='{"sources":[]}')
+    monkeypatch.setattr(log_viewer.SystemAdapter, "read_log_history", metadata)
+    def available():
+        return next(source["available"] for source in log_viewer.source_availability()["sources"] if source["id"] == "app")
+    assert not available()
+    path.write_text("retained output", encoding="utf-8")
+    assert available()
+    path.rename(tmp_path / "availability.log.1")
+    assert available()
+    assert calls == [("availability", {})] * 3
+
+
+def test_helper_availability_reads_metadata_without_launching_journal(monkeypatch, tmp_path, capsys):
+    """Source discovery does not read or spawn the privileged journal transport.
+
+    Args:
+        monkeypatch: Fix source paths and reject any subprocess creation.
+        tmp_path: Owned fixed log metadata.
+        capsys: Capture the structured availability response.
+    """
+    from tests.test_appliance_helper import load_helper_module
+
+    helper = load_helper_module()
+    access, error = tmp_path / "access.log", tmp_path / "error.log"
+    access.write_text("", encoding="utf-8")
+    monkeypatch.setattr(helper, "NGINX_ACCESS_LOG_PATH", access)
+    monkeypatch.setattr(helper, "NGINX_ERROR_LOG_PATH", error)
+    monkeypatch.setattr(helper.shutil, "which", lambda _name: "/usr/bin/journalctl")
+    def unexpected(*_args, **_kwargs):
+        pytest.fail("Availability launched a journal process")
+    monkeypatch.setattr(helper.subprocess, "Popen", unexpected)
+    assert helper._read_log_history(["availability", "{}"]) == 0
+    payload = json.loads(capsys.readouterr().out)
+    sources = {source["id"]: source["available"] for source in payload["sources"]}
+    assert sources["nginx-access"] and not sources["nginx-error"]
+    assert sources["dnsmasq-dhcp"] and sources["dnsmasq-tftp"]
+    assert "lines" not in payload

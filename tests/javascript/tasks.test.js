@@ -409,3 +409,26 @@ for (const status of ["no-op", "partial-failure"]) {
     harness.context.closeTaskLogModal();
   });
 }
+
+test("log availability re-enables new sources without stealing an available selection", () => {
+  let active = null;
+  const clicks = [];
+  const tab = (id, disabled) => ({ dataset: { logSourceTab: id }, disabled,
+    setAttribute(name, value) { this[name] = value; },
+    click() { active = this; clicks.push(id); } });
+  const app = tab("app", true), kms = tab("kms", true), nginx = tab("nginx", false);
+  active = nginx;
+  const root = { querySelectorAll: () => [app, kms, nginx], querySelector: () => active };
+  const context = vm.createContext({});
+  vm.runInContext(functionSource("applyLogSourceAvailability"), context);
+  context.applyLogSourceAvailability(root, [{ id: "kms", available: true }]);
+  assert.equal(kms.disabled, false);
+  assert.equal(kms["aria-disabled"], "false");
+  assert.deepEqual(clicks, []);
+  context.applyLogSourceAvailability(root, [{ id: "nginx", available: false }]);
+  assert.equal(nginx.disabled, true);
+  assert.deepEqual(clicks, ["kms"]);
+  context.applyLogSourceAvailability(root, [{ id: "app", available: true }]);
+  assert.equal(app.disabled, false);
+  assert.deepEqual(clicks, ["kms"]);
+});
