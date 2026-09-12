@@ -1690,26 +1690,32 @@ def _read_dnsmasq_leases() -> int:
     return 0
 
 
-def _tail_offset(handle, *, compressed: bool, deadline: float) -> tuple[int, bool]:
+def _tail_offset(handle, *, compressed: bool, deadline: float, end: int | None = None) -> tuple[int, bool]:
     """Locate the newest bounded group without replaying pages to the client.
 
     Args:
         handle: Verified regular source stream.
         compressed: Whether seeking requires bounded decompression.
         deadline: Shared monotonic deadline for the request.
+        end: Optional exclusive boundary for the preceding page.
     """
     if compressed:
         data, total = b"", 0
         handle.seek(0)
-        while chunk := handle.read(65536):
+        while end is None or total < end:
+            chunk = handle.read(min(65536, end - total) if end is not None else 65536)
+            if not chunk:
+                break
             if time.monotonic() > deadline:
                 raise ValueError("Archived tail scan exceeded its deadline; open from the beginning.")
             total += len(chunk)
             data = (data + chunk)[-1024 * 1024:]
     else:
         total = handle.seek(0, os.SEEK_END)
+        if end is not None:
+            total = min(total, end)
         handle.seek(max(0, total - 1024 * 1024))
-        data = handle.read(1024 * 1024)
+        data = handle.read(min(total, 1024 * 1024))
     offset = total - len(data)
     if offset:
         boundary = data.find(b"\n")
@@ -1759,8 +1765,8 @@ def _tail_private_key(paths: list[Path], offset: int, *, deadline: float) -> boo
     return opened
 
 
-def _history_anchor(handle, offset: int, *, compressed: bool, deadline: float) -> dict:
-    """Fingerprint the content immediately before a retained byte position.
+def _history_window(handle, offset: int, *, compressed: bool, deadline: float) -> bytes:
+    """Read a bounded content window immediately before a retained byte position.
 
     Args:
         handle: Verified regular retained stream.
@@ -1779,8 +1785,20 @@ def _history_anchor(handle, offset: int, *, compressed: bool, deadline: float) -
         if not chunk:
             raise ValueError("Retained history position is unavailable.")
         remaining -= len(chunk)
-    window = handle.read(length)
-    return {"anchor_length": length, "anchor": hashlib.sha256(window).hexdigest()}
+    return handle.read(length)
+
+
+def _history_anchor(handle, offset: int, *, compressed: bool, deadline: float) -> dict:
+    """Fingerprint the content immediately before a retained byte position.
+
+    Args:
+        handle: Verified regular retained stream.
+        offset: Uncompressed position whose preceding content must remain stable.
+        compressed: Whether seeking needs bounded decompression.
+        deadline: Shared request deadline.
+    """
+    window = _history_window(handle, offset, compressed=compressed, deadline=deadline)
+    return {"anchor_length": min(offset, 4096), "anchor": hashlib.sha256(window).hexdigest()}
 
 
 def _read_fixed_log_history(path: Path, position: dict) -> dict:
@@ -1816,6 +1834,12 @@ def _read_fixed_log_history(path: Path, position: dict) -> dict:
                 break
         else:
             selected, offset, reset = 0, 0, True
+    backward = position.get("before") is True
+    before_end = offset if backward else None
+    if backward and offset == 0 and selected > 0:
+        selected -= 1
+        before_end = None
+    page_end = before_end if backward else position.get("page_end")
     candidate = paths[selected]
     if candidate.is_symlink():
         raise ValueError("linked log source")
@@ -1828,8 +1852,8 @@ def _read_fixed_log_history(path: Path, position: dict) -> dict:
         handle = gzip.GzipFile(fileobj=raw) if candidate.suffix == ".gz" else raw
         try:
             initial_private_key = position.get("private_key") is True
-            if position.get("tail"):
-                offset, oversized = _tail_offset(handle, compressed=candidate.suffix == ".gz", deadline=deadline)
+            if position.get("tail") or backward:
+                offset, oversized = _tail_offset(handle, compressed=candidate.suffix == ".gz", deadline=deadline, end=before_end)
                 initial_private_key = _tail_private_key(paths[:selected + 1], offset, deadline=deadline)
                 position = {"oversized": oversized}
             prefix_length = position.get("prefix_length", 0)
@@ -1849,7 +1873,7 @@ def _read_fixed_log_history(path: Path, position: dict) -> dict:
             current_position = {"generation": generation, "offset": offset,
                                 "oversized": not reset and position.get("oversized") is True,
                                 "prefix_length": 0 if reset else prefix_length,
-                                "prefix": "" if reset else position.get("prefix", ""), **anchor}
+                                "prefix": "" if reset else position.get("prefix", ""), "page_end": page_end, **anchor}
             if candidate.suffix == ".gz":
                 handle.seek(0)
                 remaining = offset
@@ -1862,21 +1886,25 @@ def _read_fixed_log_history(path: Path, position: dict) -> dict:
                     remaining -= len(skipped)
             else:
                 handle.seek(offset)
+            marker_prefix = _history_window(handle, offset, compressed=candidate.suffix == ".gz", deadline=deadline)[-128:]
             lines = []
             consumed = 0
             partial = False
             oversized = not reset and position.get("oversized") is True
-            while len(lines) < 500 and consumed < 1024 * 1024:
+            while len(lines) < 500 and consumed < 1024 * 1024 and (page_end is None or handle.tell() < page_end):
                 start = handle.tell()
-                line = handle.readline(65537)
+                line = handle.readline(min(65537, page_end - start) if page_end is not None else 65537)
                 if not line:
                     break
                 if oversized or len(line) > 65536:
                     consumed += len(line)
                     if not oversized:
-                        if b"-----BEGIN " in line and b"PRIVATE KEY-----" in line:
-                            lines.append("-----BEGIN PRIVATE KEY-----")
                         lines.append("[Oversized log entry omitted: exceeds 64 KiB; continuing with the next complete entry.]")
+                    window = marker_prefix + line
+                    markers = list(re.finditer(rb"-----(BEGIN|END) [A-Z ]*PRIVATE KEY-----", window))
+                    if markers:
+                        lines.append(markers[-1].group().decode("ascii"))
+                    marker_prefix = window[-128:]
                     oversized = not line.endswith(b"\n")
                     continue
                 if not line.endswith(b"\n") and candidate == path:
@@ -1884,6 +1912,7 @@ def _read_fixed_log_history(path: Path, position: dict) -> dict:
                     partial = True
                     break
                 consumed += len(line)
+                marker_prefix = b""
                 lines.append(line.decode("utf-8", errors="replace").rstrip("\r\n"))
             next_offset = handle.tell()
             more = bool(handle.read(1)) and not partial
@@ -1902,6 +1931,7 @@ def _read_fixed_log_history(path: Path, position: dict) -> dict:
         more = True
     return {"lines": lines, "file_position": next_position,
             "current_position": current_position, "initial_private_key": initial_private_key,
+            "previous_position": {"generation": current_position["generation"], "offset": offset, "before": True} if offset or selected else None,
             "has_more": more, "available": True, "reset": reset}
 
 
@@ -2025,7 +2055,8 @@ def _read_log_history(args: list[str]) -> int:
         text_offset = position.get("journal_text_offset", 0)
         if type(text_offset) is not int or not 0 <= text_offset <= 1024 * 1024 or (text_offset and not position.get("journal_start_cursor")):
             raise ValueError("invalid journal text position")
-        tail = position.get("tail") is True and not cursor
+        backward = position.get("before") is True
+        tail = (position.get("tail") is True and not cursor) or backward
         command = [shutil.which("journalctl") or "journalctl", "--unit", units[args[0]],
                    "--no-pager", "--output=json", "--lines=500" if tail else "--lines=+501",
                    "--output-fields=MESSAGE,__CURSOR,__REALTIME_TIMESTAMP"]
@@ -2035,6 +2066,23 @@ def _read_log_history(args: list[str]) -> int:
             command.append(f"--cursor={cursor}" if position.get("journal_start_cursor") else f"--after-cursor={cursor}")
         deadline = time.monotonic() + 10
         selected, more = _journal_history_entries(command, deadline=deadline)
+        if backward and selected and selected[0]["__CURSOR"] == cursor:
+            if text_offset:
+                selected[0] = {**selected[0], "MESSAGE": selected[0]["MESSAGE"][:text_offset]}
+            else:
+                selected = selected[1:]
+        boundary_position = {"journal_start_cursor": cursor, "journal_text_offset": text_offset}
+        page_end_cursor = cursor if backward else position.get("journal_end_cursor")
+        page_end_offset = text_offset if backward else position.get("journal_end_offset", 0)
+        if page_end_cursor is not None:
+            if not isinstance(page_end_cursor, str) or len(page_end_cursor) > 2048 or type(page_end_offset) is not int or not 0 <= page_end_offset <= 1024 * 1024:
+                raise ValueError("invalid journal page boundary")
+            if not backward:
+                for index, entry in enumerate(selected):
+                    if entry["__CURSOR"] == page_end_cursor:
+                        selected = selected[:index] + ([{**entry, "MESSAGE": entry["MESSAGE"][:page_end_offset]}] if page_end_offset else [])
+                        break
+            boundary_position = {"journal_start_cursor": page_end_cursor, "journal_text_offset": page_end_offset}
         initial_private_key = position.get("private_key") is True
         current_position = {key: position[key] for key in ("journal_cursor", "journal_start_cursor", "journal_text_offset") if key in position}
         if tail and selected:
@@ -2073,6 +2121,7 @@ def _read_log_history(args: list[str]) -> int:
         lines = []
         expanded_bytes = 0
         next_position = dict(current_position)
+        paused = False
         for index, entry in enumerate(selected):
             message = entry.get("MESSAGE")
             if not isinstance(message, str):
@@ -2089,8 +2138,14 @@ def _read_log_history(args: list[str]) -> int:
             if paused:
                 break
             next_position = {"journal_cursor": entry["__CURSOR"]}
+        if page_end_cursor is not None and not paused:
+            next_position = boundary_position
+            more = True
+        previous_position = {**current_position, "before": True} if current_position and selected else None
+        if page_end_cursor is not None:
+            current_position.update(journal_end_cursor=page_end_cursor, journal_end_offset=page_end_offset)
         print(json.dumps({"lines": lines, "journal_cursor": next_position.get("journal_cursor", cursor),
-                          "journal_position": next_position, "has_more": more,
+                          "journal_position": next_position, "previous_position": previous_position, "has_more": more,
                           "current_position": current_position, "initial_private_key": initial_private_key}))
         return 0
     except (ValueError, TypeError, AttributeError, KeyError, OSError, subprocess.TimeoutExpired):

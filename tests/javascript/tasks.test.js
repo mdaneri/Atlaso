@@ -347,3 +347,20 @@ test("task logs open at the tail and keep the returned stable page cursor", asyn
   await refresh;
   harness.context.closeTaskLogModal();
 });
+
+
+test("Previous page navigates directly from the initial live tail", async () => {
+  const harness = taskLogHarness();
+  const initial = harness.context.openTaskLog({ id: "A" });
+  harness.complete(0, { status: "running", text: "latest", cursor: "tail-start", previous_cursor: "before-tail" });
+  await initial;
+  const button = harness.buttons.find((element) => element.textContent === "Previous page");
+  assert.equal(button.disabled, false);
+  button.click();
+  const older = fireTimer(harness, 0);
+  assert.equal(new URL(harness.requests[1].url).searchParams.get("cursor"), "before-tail");
+  harness.complete(1, { status: "running", text: "preceding group", cursor: "older-start" });
+  await older;
+  assert.equal(harness.content.textContent, "preceding group");
+  harness.context.closeTaskLogModal();
+});

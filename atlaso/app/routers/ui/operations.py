@@ -1102,6 +1102,8 @@ def build_router(dependencies: OperationsUiDependencies) -> OperationsUiRouter:
                 after = position.get("after", 0)
                 if request.query_params.get("tail") == "1" and not position:
                     after = db.scalar(select(AuditEvent.id).order_by(AuditEvent.id.desc()).offset(500).limit(1)) or 0
+                if position.get("before") is True:
+                    after = db.scalar(select(AuditEvent.id).where(AuditEvent.id <= after).order_by(AuditEvent.id.desc()).offset(500).limit(1)) or 0
                 if type(after) is not int or after < 0:
                     raise ValueError("Invalid audit history position.")
             except ValueError as exc:
@@ -1113,6 +1115,7 @@ def build_router(dependencies: OperationsUiDependencies) -> OperationsUiRouter:
                      "success": event.success, "detail": event.detail or ""} for event in events[:500]]
             return JSONResponse({"rows": rows, "cursor": log_viewer.encode_cursor("audit", after=after),
                                  "next_cursor": log_viewer.encode_cursor("audit", after=rows[-1]["id"] if rows else after),
+                                 "previous_cursor": log_viewer.encode_cursor("audit", after=after, before=True) if after else "",
                                  "has_more": len(events) > 500}, headers={"Cache-Control": "no-store"})
         return render(
             request,

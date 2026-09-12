@@ -26,7 +26,8 @@ This verified appliance view provides visual orientation before you begin.
 ## Investigate a problem
 
 The selected source updates automatically every five seconds. **From beginning** opens its oldest retained entries;
-**Next page** and **Previous page** move through the complete retained history in bounded pages. The page size limits
+**Next page** and **Previous page** move through the complete retained history in bounded pages. From the live tail,
+**Previous page** opens the preceding group directly, including within a multiline journal record. The page size limits
 each response, not the total history you can inspect. Numbered file rotations, including compressed archives, are
 included. Journal history remains subject to the appliance's journal retention policy.
 
@@ -63,7 +64,8 @@ Logs are evidence, not an enforcement surface. Correct desired state in the owni
 [local appliance console](appliance-console.md).
 
 Physical file entries larger than 64 KiB are represented by an explicit omission marker. The reader advances through
-them in bounded pages so later entries remain reachable; omitted entry contents are not exposed.
+them in bounded pages so later entries remain reachable; omitted entry contents are not exposed. Private-key markers
+inside discarded fragments still update redaction state for following lines and pages.
 
 Live viewers open at the newest retained group. **From beginning** reads earlier history, and **Follow live** returns
 to recent output. Tail reads preserve private-key redaction across older entries. If a retained archive cannot be

@@ -366,6 +366,9 @@ def test_audit_live_tail_avoids_replaying_old_groups(client):
     assert tail["rows"][0]["id"] == last_id - 499
     assert tail["rows"][-1]["id"] == last_id
     assert not tail["has_more"]
+    previous = client.get("/ui/management/audit-log", params={"cursor": tail["previous_cursor"]}, headers=headers).json()
+    assert len(previous["rows"]) == 500
+    assert previous["rows"][-1]["id"] == tail["rows"][0]["id"] - 1
     beginning = client.get("/ui/management/audit-log", headers=headers).json()
     assert beginning["rows"][0]["id"] <= first_id
     assert beginning["has_more"]
@@ -559,6 +562,17 @@ def test_expanded_journal_message_pages_without_loss_and_tail_skips_history(monk
     assert [line.split(" ", 1)[1] for line in tail["lines"]] == messages[-500:]
     assert not tail["has_more"]
     assert tail["current_position"]["journal_text_offset"] > 0
+    assert helper._read_log_history(["nginx", json.dumps(tail["previous_position"])]) == 0
+    previous = json.loads(capsys.readouterr().out)
+    assert [line.split(" ", 1)[1] for line in previous["lines"]] == messages[-1000:-500]
+    assert previous["journal_position"]["journal_text_offset"] == tail["current_position"]["journal_text_offset"]
+    # The final short predecessor must remain bounded on refresh too.
+    for _ in range(2):
+        assert helper._read_log_history(["nginx", json.dumps(previous["previous_position"])]) == 0
+        previous = json.loads(capsys.readouterr().out)
+    assert len(previous["lines"]) == 1
+    assert helper._read_log_history(["nginx", json.dumps(previous["current_position"])]) == 0
+    assert json.loads(capsys.readouterr().out)["lines"] == previous["lines"]
     assert helper._read_log_history(["nginx", json.dumps(tail["current_position"])]) == 0
     assert json.loads(capsys.readouterr().out)["lines"] == tail["lines"]
 
@@ -584,3 +598,84 @@ def test_expanded_journal_page_includes_timestamp_byte_budget(monkeypatch, capsy
     second = json.loads(capsys.readouterr().out)
     assert len(first["lines"]) + len(second["lines"]) == 500
     assert not second["has_more"]
+
+
+@pytest.mark.parametrize("privileged", [False, True])
+@pytest.mark.parametrize("padding", [65530, 1048580])
+def test_discarded_file_fragments_preserve_key_state(tmp_path, privileged, padding):
+    """Markers crossing discarded chunk and page boundaries still protect later lines.
+
+    Args:
+        tmp_path: Owned fixed log path.
+        privileged: Exercise the privileged reader and its redaction handoff.
+        padding: Locate a split marker at a chunk or page boundary.
+    """
+    from tests.test_appliance_helper import load_helper_module
+
+    path = tmp_path / "discarded-key.log"
+    path.write_bytes(b"x" * padding + b"-----BEGIN PRIVATE KEY-----" + b"y" * 70000 +
+                     b"\nprivate-fragment\n-----END PRIVATE KEY-----\nvisible\n")
+    helper = load_helper_module() if privileged else None
+    cursor, actual, private_key = ({} if privileged else ""), [], False
+    for _ in range(8):
+        if privileged:
+            page = helper._read_fixed_log_history(path, cursor)
+            lines, private_key = log_viewer.redact_lines(page["lines"], private_key=private_key)
+            cursor = page["file_position"]
+        else:
+            page = log_viewer.file_page(path, source="discarded-key", cursor=cursor)
+            lines = page["text"].splitlines()
+            cursor = page["next_cursor"]
+        actual.extend(lines)
+        if not page["has_more"]:
+            break
+    assert actual[-1] == "visible"
+    assert "private-fragment" not in "\n".join(actual)
+    assert "[redacted private key]" in actual
+
+
+@pytest.mark.parametrize("privileged", [False, True])
+@pytest.mark.parametrize("compressed", [False, True])
+def test_previous_file_page_opens_group_before_tail(tmp_path, privileged, compressed):
+    """Backward paging starts beside the live tail, including compressed rotations.
+
+    Args:
+        tmp_path: Owned retained log directory.
+        privileged: Exercise both independent file readers.
+        compressed: Store the history in an archived gzip file.
+    """
+    from tests.test_appliance_helper import load_helper_module
+
+    path = tmp_path / "backward.log"
+    text = "".join(f"line-{index}\n" for index in range(1501))
+    if compressed:
+        with gzip.open(tmp_path / "backward.log.1.gz", "wb") as handle:
+            handle.write(text.encode())
+    else:
+        path.write_text(text, encoding="utf-8")
+    helper = load_helper_module() if privileged else None
+    page = helper._read_fixed_log_history(path, {"tail": True}) if privileged else log_viewer.file_page(path, source="backward", tail=True)
+    for expected_start, expected_end in [(501, 1000), (1, 500), (0, 0)]:
+        if privileged:
+            page = helper._read_fixed_log_history(path, page["previous_position"])
+            lines = page["lines"]
+        else:
+            page = log_viewer.file_page(path, source="backward", cursor=page["previous_cursor"])
+            lines = page["text"].splitlines()
+        assert lines == [f"line-{index}" for index in range(expected_start, expected_end + 1)]
+    assert not page.get("previous_position" if privileged else "previous_cursor")
+
+
+def test_previous_text_page_is_adjacent_and_refresh_stable(monkeypatch):
+    """A task can inspect the group before its tail without replaying older output.
+
+    Args:
+        monkeypatch: Use a small byte budget for multiple pages.
+    """
+    monkeypatch.setattr(log_viewer, "PAGE_BYTES", 100)
+    text = "".join(f"row-{index}\n" for index in range(100))
+    tail = log_viewer.text_page(text, source="back-text", tail=True)
+    older = log_viewer.text_page(text, source="back-text", cursor=tail["previous_cursor"])
+    assert log_viewer.decode_cursor(older["next_cursor"], "back-text")["offset"] == log_viewer.decode_cursor(tail["cursor"], "back-text")["offset"]
+    assert older["text"] not in tail["text"]
+    assert log_viewer.text_page(text, source="back-text", cursor=older["cursor"])["text"] == older["text"]

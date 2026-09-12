@@ -9,6 +9,7 @@
     let timer = null;
     let cursor = initialCursor;
     let nextCursor = "";
+    let previousCursor = "";
     let hasMore = false;
     let following = true;
     let failures = 0;
@@ -39,7 +40,7 @@
     const atBottom = () => !scroll || scroll.scrollHeight - scroll.scrollTop - scroll.clientHeight < 32;
     const message = (text) => { if (status) status.textContent = text; };
     const updateButtons = () => {
-      if (buttons.previous) buttons.previous.disabled = previous.length === 0;
+      if (buttons.previous) buttons.previous.disabled = previous.length === 0 && !previousCursor;
       if (buttons.next) buttons.next.disabled = !hasMore;
       if (buttons.follow) buttons.follow.setAttribute("aria-pressed", String(following));
     };
@@ -55,7 +56,7 @@
     };
     button("first", "From beginning", () => { following = false; navigate("", true); });
     button("previous", "Previous page", () => {
-      if (previous.length) { following = false; navigate(previous.pop()); }
+      if (previous.length || previousCursor) { following = false; navigate(previous.pop() || previousCursor); }
     });
     button("next", "Next page", () => {
       if (hasMore) { following = false; previous.push(cursor); navigate(nextCursor); }
@@ -82,6 +83,7 @@
         failures = 0;
         hasMore = Boolean(page.has_more);
         nextCursor = page.next_cursor || "";
+        previousCursor = page.previous_cursor || "";
         cursor = page.cursor || cursor;
         const text = pageText(page);
         const bottom = atBottom();
