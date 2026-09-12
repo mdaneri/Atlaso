@@ -67,6 +67,7 @@ test("off-page task detail cancellation uses the rendered capability and refresh
   class Dialog extends Element { querySelector() { return null; } }
   const page = new Element();
   const modal = new Dialog();
+  modal.open = true;
   const requests = [];
   const confirmations = [];
   const selected = { id: "off-page", can_cancel: true, cancel_confirmation: "Finish and clean up." };
@@ -91,3 +92,28 @@ test("off-page task detail cancellation uses the rendered capability and refresh
   await context.cancelTask("different-task");
   assert.equal(requests.length, 1);
 });
+
+
+for (const open of [false, true]) {
+  for (const allowed of [false, true]) {
+    test(`fresh grid capability overrides stale detail: open=${open}, allowed=${allowed}`, async () => {
+      class Element { constructor() { this.dataset = {}; } }
+      const confirmations = [];
+      const current = { id: "task", can_cancel: allowed, cancel_confirmation: "Running changes remain; finish cleanup." };
+      const context = vm.createContext({
+        HTMLElement: Element, document: { querySelector: () => new Element(), getElementById: () => ({ open }) },
+        atlasoTaskDetail: { id: "task", can_cancel: true, cancel_confirmation: "Prevent from starting." },
+        taskById: () => current,
+        requestConfirmation: async (value) => { confirmations.push(value); return false; },
+      });
+      vm.runInContext(action, context);
+      await context.cancelTask("task");
+      assert.equal(confirmations.length, allowed ? 1 : 0);
+      if (allowed) assert.equal(confirmations[0].message, current.cancel_confirmation);
+      context.taskById = () => null;
+      context.document.getElementById = () => ({ open: false });
+      await context.cancelTask("task");
+      assert.equal(confirmations.length, allowed ? 1 : 0);
+    });
+  }
+}

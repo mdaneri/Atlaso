@@ -61,15 +61,16 @@ fabricate a successful result.
 
 Tasks and the API expose the same backend-owned `can_cancel`, `cancel_reason`, and `cancel_confirmation` fields.
 The task detail shows the reason even when cancellation is unavailable. Its Cancel action also works for a task
-opened directly outside the current grid page or filters. A stale browser action cannot override the
-backend policy. An accepted request records `cancel_requested_at` and `cancel_requested_by`; running work keeps its
-active status until its owner verifies the stop and cleanup. `cancel_completed_at` and `cancel_outcome` record the
-final disposition. `cleanup-required` remains active and blocks worker admission while recovery needs attention.
-A media failure racing an accepted cancellation confirms the stop once rollback and upload cleanup succeed;
-only unresolved cleanup retains that queue hold. Startup recovery also requires proof that no unresolved swap journal,
-replacement tree, or staging directory remains. Malformed recovery evidence retains the request and queue hold
-until recovery succeeds. Embedded Appliance Update actions use the current caller's permissions.
-Do not interpret a cancellation request as proof that a local process or a remote operation stopped.
+opened directly outside the current grid page or filters. Cancellation uses the refreshed grid capability when
+available; a closed detail dialog cannot override the current confirmation or eligibility. A stale browser action
+cannot override the backend policy. An accepted request records `cancel_requested_at` and `cancel_requested_by`;
+running work keeps its active status until its owner verifies the stop and cleanup. `cancel_completed_at` and
+`cancel_outcome` record the final disposition. `cleanup-required` remains active and blocks worker admission while
+recovery needs attention. A media failure racing an accepted cancellation confirms the stop once rollback and
+upload cleanup succeed; only unresolved cleanup retains that queue hold. Startup recovery also requires proof that
+no unresolved swap journal, replacement tree, or staging directory remains. Malformed recovery evidence retains the
+request and queue hold until recovery succeeds. Embedded Appliance Update actions use the current caller's
+permissions. Do not interpret a cancellation request as proof that a local process or a remote operation stopped.
 
 | Task owner | Queued cancellation | Running cancellation |
 | --- | --- | --- |

@@ -15512,7 +15512,9 @@ async function cancelTask(taskId) {
   if (!(page instanceof HTMLElement)) {
     return;
   }
-  const observedTask = atlasoTaskDetail?.id === taskId ? atlasoTaskDetail : taskById(taskId);
+  const observedTask = taskById(taskId) || (
+    document.getElementById("task-detail-modal")?.open && atlasoTaskDetail?.id === taskId ? atlasoTaskDetail : null
+  );
   if (!observedTask?.can_cancel) return;
   const confirmed = await requestConfirmation({
     title: "Cancel task",
