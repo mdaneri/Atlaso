@@ -10674,7 +10674,7 @@ def _port_forward_status() -> int:
             raise ValueError("NAT runtime snapshot exceeds the observation bound")
         parsed = _parse_wan_config(NAT_RUNTIME_CONFIG_PATH, content=content.decode("utf-8"))
         rows = _port_forward_records(parsed)
-        runtime_has_port_forwards = bool(parsed["port_forwards"] and json.loads(parsed["port_forwards"][0]["name"]))
+        runtime_has_port_forwards = bool(rows)
         result = _run(["nft", "-j", "list", "ruleset"], timeout=2)
         if result.returncode:
             print(json.dumps({"available": not rows, "rules": [], "runtime_has_port_forwards": runtime_has_port_forwards}))
@@ -11147,8 +11147,7 @@ def _handle_nat_locked(action: str, args: list[str]) -> int:
             current = (_parse_wan_config(NAT_RUNTIME_CONFIG_PATH)
                        if NAT_RUNTIME_CONFIG_PATH.exists() else {"port_forwards": []})
             for snapshot in (parsed, current):
-                containers = snapshot.get("port_forwards", [])
-                if containers and (len(containers) != 1 or json.loads(containers[0]["name"])):
+                if _port_forward_records(snapshot):
                     raise ValueError("Port forwards require paired Firewall and NAT publication")
         errors = _wan_config_errors(path, parsed=parsed)
         if errors:

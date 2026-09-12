@@ -16507,17 +16507,18 @@ def _submit_appliance_apply(
     if selected_ids.intersection({"wan", "network", "firewall"}) and "nat" in unit_map:
         selected_ids.add("nat")
     nat_baseline = load_appliance_apply_baselines(db).get("nat") or {}
+    listener_units = {"appliance_settings", "dnsmasq", "esxi_pxe", "esx_storage", "ca", "kms", "ldap",
+                      "ntpd", "vcf_backups", "vcf_offline_depot", "vcf_private_registry", "public_services"}
+    forwarding_relevant = bool(selected_ids.intersection(listener_units | {"network", "wan", "firewall", "nat"}))
     try:
-        publishing_pair_required = bool(
-            unit_map.get("nat", {}).get("context", {}).get("port_forwards")
+        publishing_pair_required = forwarding_relevant and bool(
+            unit_map.get("nat", {}).get("context", {}).get("port_forward_effective")
             or snapshot_has_port_forwards(str(nat_baseline.get("config_preview") or ""))
             or runtime_has_port_forwards()
         )
     except ValueError:
         detail = "Cannot verify applied forwarding intent; restore helper readiness before submitting appliance changes."
         return JSONResponse({"detail": detail}, status_code=422) if wants_json else Response(detail, status_code=422, media_type="text/plain")
-    listener_units = {"appliance_settings", "dnsmasq", "esxi_pxe", "esx_storage", "ca", "kms", "ldap",
-                      "ntpd", "vcf_backups", "vcf_offline_depot", "vcf_private_registry", "public_services"}
     if publishing_pair_required and selected_ids.intersection(listener_units) and "nat" in unit_map:
         # Service publication must pass the same desired-listener collision check
         # even when the operator selected only that service in global Apply.

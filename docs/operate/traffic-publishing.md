@@ -117,8 +117,11 @@ Older v2 archives without a `port_forwards` section restore an empty forwarding 
 desired mappings. Other required sections and explicitly malformed forwarding sections remain subject to validation.
 Global Apply reads a bounded privileged projection of durable runtime intent when selecting paired Firewall/NAT
 publication. The application does not open root-owned snapshots. An unavailable projection blocks submission instead
-of implicitly selecting additional units; source-NAT-only intent does not expand a listener-only selection. Clearing desired
-rules and Apply baselines through restore therefore still retires previously applied forwards through the paired path.
+of implicitly selecting additional units; source-NAT-only intent does not expand a listener-only selection.
+Disabled-only or Routing-suspended mappings do not add paired publication dependencies. Independent selections such as
+Local Users do not query forwarding runtime readiness. Previously effective applied mappings still require paired retirement.
+Clearing desired rules and Apply baselines through restore still retires previously applied forwards through the
+paired path.
 Factory reset removes desired mappings and retires their runtime state before
 replacing interface configuration. A pending publication recovery must be reconciled before reset can continue.
 

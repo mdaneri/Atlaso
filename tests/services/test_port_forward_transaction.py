@@ -21,7 +21,7 @@ FIREWALL = "flush ruleset\ntable inet atlaso {\n chain forward { type filter hoo
 
 
 @pytest.mark.parametrize("state,expected", [("missing", False), ("source-only", False), ("retained", True),
-    ("disabled", True), ("malformed", None), ("oversized", None), ("encoding", None)])
+    ("disabled", False), ("suspended", False), ("malformed", None), ("oversized", None), ("encoding", None)])
 def test_privileged_status_projects_durable_intent_without_counters(transaction, monkeypatch, capsys, state, expected):
     """Root-only snapshots yield a bounded intent projection even when nft is unavailable.
 
@@ -36,6 +36,8 @@ def test_privileged_status_projects_durable_intent_without_counters(transaction,
     runtime = helper.NAT_RUNTIME_CONFIG_PATH
     if state == "missing":
         runtime.unlink()
+    elif state == "suspended":
+        runtime.write_text(nat.read_text().replace("routing_enabled=true", "routing_enabled=false"))
     elif state in {"retained", "disabled"}:
         runtime.write_text(nat.read_text().replace('"enabled":true', '"enabled":false') if state == "disabled" else nat.read_text())
     elif state == "malformed":
@@ -49,6 +51,26 @@ def test_privileged_status_projects_durable_intent_without_counters(transaction,
     monkeypatch.setattr(helper, "_run", lambda *args, **kwargs: subprocess.CompletedProcess([], 1, "", ""))
     assert helper._port_forward_status() == 0
     assert json.loads(capsys.readouterr().out)["runtime_has_port_forwards"] is expected
+
+
+@pytest.mark.parametrize("previous_active", [False, True])
+def test_standalone_nat_accepts_disabled_intent_only_without_active_prior_pair(transaction, monkeypatch, previous_active):
+    """Disabled saved rows need no pair, but retiring an applied mapping still does.
+
+    Args:
+        transaction: Isolated source and destination translation runtime.
+        monkeypatch: Bind boot recovery identity to the test directory.
+        previous_active: Existing applied mapping requiring paired retirement.
+    """
+    helper, nat, _firewall, _previous, _programs, _commands = transaction
+    active = nat.read_text()
+    disabled = active.replace('"enabled":true', '"enabled":false')
+    nat.write_text(disabled)
+    helper.NAT_RUNTIME_CONFIG_PATH.write_text(active if previous_active else disabled)
+    boot = nat.parent / "boot-id"
+    boot.write_text("test-boot")
+    monkeypatch.setattr(helper, "NAT_BOOT_ID_PATH", boot)
+    assert helper._handle_nat_locked("apply", [str(nat)]) == (1 if previous_active else 0)
 
 
 @pytest.mark.parametrize("change", ["unchanged", "metadata", "target", "removed"])

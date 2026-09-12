@@ -294,18 +294,25 @@ def snapshot_has_port_forwards(preview: str) -> bool:
     silently falling back to a source-NAT-only publication.
     """
     active = False
+    feature_settings = False
+    routing_enabled = True
     for line in preview.splitlines():
         line = line.strip()
         if line.startswith("["):
             if active:
                 return True
             active = line == "[port_forwards]"
+            feature_settings = line == "[feature_settings]"
+        elif feature_settings and line.startswith("routing_enabled="):
+            routing_enabled = line.split("=", 1)[1].strip().lower() not in {"false", "0", "no", "off"}
         elif active and line.startswith("json="):
             try:
                 records = json.loads(line[5:])
             except ValueError:
                 return True
-            return not isinstance(records, list) or bool(records)
+            return not isinstance(records, list) or (routing_enabled and any(
+                not isinstance(row, dict) or row.get("enabled") is not False for row in records
+            ))
     return active
 
 

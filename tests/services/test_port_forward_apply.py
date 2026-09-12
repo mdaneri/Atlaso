@@ -106,15 +106,33 @@ def test_runtime_forward_presence_uses_bounded_privileged_projection(monkeypatch
 
 
 @pytest.mark.parametrize("presence", [False, None])
-def test_listener_only_apply_does_not_infer_forwarding_from_unreadable_snapshot(client, monkeypatch, presence):
+@pytest.mark.parametrize("selected_unit", ["kms", "local_users"])
+@pytest.mark.parametrize("disabled_rule", [False, True])
+def test_listener_only_apply_does_not_infer_forwarding_from_unreadable_snapshot(client, monkeypatch, presence, selected_unit, disabled_rule):
     """A source-only root snapshot cannot select unrelated Firewall/NAT intent.
 
     Args:
         client: Isolated application and dry-run task runner.
         monkeypatch: Supply the privileged projection without application file access.
         presence: Known source-only intent or failed observation.
+        selected_unit: Listener-related or independent requested unit.
+        disabled_rule: Retain a disabled desired row and disabled applied baseline.
     """
     from tests.routers.ui.helpers import login
+
+    if disabled_rule:
+        from sqlalchemy import select
+
+        from atlaso.app.models import PhysicalInterface, PortForward
+        from tests.services.test_port_forwarding import payload
+
+        with SessionLocal() as db:
+            ui.set_setting_value(db, "routes_wan.routing_enabled", "true")
+            interface = db.scalar(select(PhysicalInterface).where(PhysicalInterface.name == "eth2"))
+            db.add(PortForward(**payload(enabled=False, ingress_interface="eth2", listener_address=interface.ip_cidr.split("/")[0])))
+            db.commit()
+            units = ui.appliance_apply_units(db)
+            ui.update_appliance_apply_baselines(db, units, {"nat"})
 
     monkeypatch.setattr(SystemAdapter, "port_forward_status", lambda self: AdapterResult(
         command=[], dry_run=False, stdout=json.dumps({"runtime_has_port_forwards": presence}),
@@ -127,9 +145,9 @@ def test_listener_only_apply_does_not_infer_forwarding_from_unreadable_snapshot(
     login(client)
     page = client.get("/dashboard")
     csrf = page.text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
-    response = client.post("/appliance-apply", data={"csrf": csrf, "selected_units": ["kms"]},
+    response = client.post("/appliance-apply", data={"csrf": csrf, "selected_units": [selected_unit]},
                            headers={"Accept": "application/json"})
-    if presence is None:
+    if presence is None and selected_unit == "kms":
         assert response.status_code == 422
         assert "Cannot verify applied forwarding" in response.json()["detail"]
         assert "internal runtime diagnostic sentinel" not in response.text
@@ -137,7 +155,7 @@ def test_listener_only_apply_does_not_infer_forwarding_from_unreadable_snapshot(
         assert response.status_code == 202, response.text
         with SessionLocal() as db:
             result = json.loads(db.get(Job, response.json()["job_id"]).result)
-            assert result["selected_units"] == ["kms"]
+            assert result["selected_units"] == [selected_unit]
             assert not result["traffic_publishing_pair"]
 
 

@@ -404,6 +404,8 @@ def test_status_requires_translation_and_both_admissions(family, missing, reply_
     ("[nat_rules]\n", False),
     ("[port_forwards]\njson=[]\n", False),
     ('[port_forwards]\njson=[{"id":1}]\n', True),
+    ('[port_forwards]\njson=[{"id":1,"enabled":false}]\n', False),
+    ('[feature_settings]\nrouting_enabled=false\n[port_forwards]\njson=[{"id":1,"enabled":true}]\n', False),
     ("[port_forwards]\njson=broken\n", True),
     ("[port_forwards]\njson={}\n", True),
     ("[port_forwards]\n[another]\n", True),
