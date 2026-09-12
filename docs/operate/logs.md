@@ -41,7 +41,8 @@ Closing a viewer, switching sources or hiding the browser suspends its requests.
 than silently continuing a position in a different file.
 
 Task Log dialogs and standalone download logs use the same controls. Completed tasks receive a final trailing read
-before automatic refresh stops. Only retained output is available: entries removed by retention or never captured by
+before automatic refresh stops, including `no-op` and `partial-failure` outcomes. Only retained output is available:
+entries removed by retention or never captured by
 the producing command cannot be recovered by the viewer. Downloaded log files are snapshots taken at download time.
 
 1. Set a narrow time window around the observed failure.
@@ -59,6 +60,9 @@ encrypted-at-rest ciphertext do not. Review the complete excerpt before sharing 
 cryptographic context can make an otherwise ordinary identifier sensitive. This classification does not make
 authenticated logs public or override site handling policy.
 
+DNS, DHCP, and TFTP are classified before each journal page is limited, so a quiet protocol's recent history remains
+visible even after many newer entries from another protocol. Redaction state is preserved across those skipped records.
+
 ## Next steps
 
 Logs are evidence, not an enforcement surface. Correct desired state in the owning service page and submit it through
@@ -72,7 +76,8 @@ inside discarded fragments still update redaction state for following lines and 
 Live viewers open at the newest retained group. **From beginning** reads earlier history, and **Follow live** returns
 to recent output. Tail reads preserve private-key redaction across older entries. If a retained archive cannot be
 scanned within the read deadline, use **From beginning** to read it in pages. Journal records larger than 1 MiB use
-an explicit omission marker and preserve continuation to newer entries. Multiline journal messages are paged within
+an explicit omission marker and preserve continuation to newer entries. Backward navigation also advances across
+oversized entries, including an unfinished final entry. Multiline journal messages are paged within
 the record so each response remains within 500 displayed lines and 1 MiB, including timestamps. Replacing a file
 behind an unchanged opening banner invalidates its previous position and reopens retained history.
 

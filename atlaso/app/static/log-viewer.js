@@ -116,7 +116,7 @@
         message(held && text !== rendered ? "New output available · reading position preserved" :
           `${page.job_id ? `${page.job_id} · ` : ""}${page.status || "Updated"} · ${new Date().toLocaleTimeString()}${page.notice ? ` · ${page.notice}` : ""}`);
         updateButtons();
-        const terminal = ["succeeded", "failed", "cancelled", "skipped"].includes(page.status);
+        const terminal = ["succeeded", "failed", "cancelled", "skipped", "no-op", "partial-failure"].includes(page.status);
         terminalReads = terminal && !hasMore ? terminalReads + 1 : 0;
         if (page.reset) previous = [];
         if (following && hasMore && !held && nextCursor !== cursor) {

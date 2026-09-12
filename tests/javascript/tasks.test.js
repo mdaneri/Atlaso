@@ -394,3 +394,18 @@ test("navigation serializes asynchronous renders and ignores stale completion", 
   assert.equal(harness.content.textContent, "current");
   viewer.close();
 });
+
+for (const status of ["no-op", "partial-failure"]) {
+  test(`${status} task logs stop after the final trailing read`, async () => {
+    const harness = taskLogHarness();
+    const initial = harness.context.openTaskLog({ id: "A" });
+    harness.complete(0, { status, text: "terminal output" });
+    await initial;
+    const trailing = fireTimer(harness, 5000);
+    harness.complete(1, { status, text: "terminal output" });
+    await trailing;
+    assert.equal(harness.requests.length, 2);
+    assert.equal(harness.timers.size, 0);
+    harness.context.closeTaskLogModal();
+  });
+}

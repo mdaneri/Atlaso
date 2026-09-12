@@ -1721,7 +1721,9 @@ def _tail_offset(handle, *, compressed: bool, deadline: float, end: int | None =
     if offset:
         boundary = data.find(b"\n")
         if boundary < 0:
-            return total, True
+            return (offset if end is not None else total), True
+        if boundary == len(data) - 1:
+            return offset, True
         offset += boundary + 1
         data = data[boundary + 1:]
     starts = [0] + [match.end() for match in re.finditer(b"\n", data) if match.end() < len(data)]
@@ -1839,6 +1841,7 @@ def _read_fixed_log_history(path: Path, position: dict) -> dict:
         else:
             selected, offset, reset = 0, 0, True
     backward = position.get("before") is True
+    opening_tail = position.get("tail") is True or backward
     before_end = offset if backward else None
     if backward and offset == 0 and selected > 0:
         selected -= 1
@@ -1856,7 +1859,7 @@ def _read_fixed_log_history(path: Path, position: dict) -> dict:
         handle = gzip.GzipFile(fileobj=raw) if candidate.suffix == ".gz" else raw
         try:
             initial_private_key = position.get("private_key") is True
-            if position.get("tail") or backward:
+            if opening_tail:
                 offset, oversized = _tail_offset(handle, compressed=candidate.suffix == ".gz", deadline=deadline, end=before_end, limit=limit)
                 initial_private_key = _tail_private_key(paths[:selected + 1], offset, deadline=deadline)
                 position = {"oversized": oversized}
@@ -1893,6 +1896,9 @@ def _read_fixed_log_history(path: Path, position: dict) -> dict:
             marker_prefix = _history_window(handle, offset, compressed=candidate.suffix == ".gz", deadline=deadline)[-128:]
             lines = []
             consumed = 0
+            if opening_tail:
+                if position.get("oversized") is True:
+                    lines.append("[Oversized log entry omitted: reading retained history in bounded groups.]")
             partial = False
             oversized = not reset and position.get("oversized") is True
             while len(lines) < limit and consumed < 1024 * 1024 and (page_end is None or handle.tell() < page_end):
@@ -1952,7 +1958,7 @@ def _oversized_journal_entry(first, stream):
     raw = first
     while raw:
         window = carry + raw
-        for field in ("__CURSOR", "__REALTIME_TIMESTAMP"):
+        for field in ("__CURSOR", "__REALTIME_TIMESTAMP", "SYSLOG_IDENTIFIER", "_PID"):
             match = re.search(rb'"' + field.encode() + rb'"\s*:\s*("(?:[^"\\]|\\.)*")', window)
             if match:
                 metadata[field] = json.loads(match.group(1))
@@ -1970,28 +1976,63 @@ def _oversized_journal_entry(first, stream):
     return {**metadata, "MESSAGE": message}
 
 
-def _journal_history_entries(command, *, deadline):
+def _journal_entry_category(entry):
+    """Classify one dnsmasq record before applying a retained page limit.
+
+    Args:
+        entry: Journal metadata and its bounded message representation.
+    """
+    identifier = entry.get("SYSLOG_IDENTIFIER", "")
+    message = entry["MESSAGE"]
+    if identifier == "dnsmasq-dhcp" or re.search(r"\bdnsmasq-dhcp(?:\[\d+\])?:", message):
+        return "dhcp"
+    if identifier == "dnsmasq-tftp" or re.search(r"\bdnsmasq-tftp(?:\[\d+\])?:", message):
+        return "tftp"
+    return "dns"
+
+
+def _journal_history_entries(command, *, deadline, category=None, initial_private_key=False):
     """Read complete bounded representations from one deadline-owned journal process.
 
     Args:
         command: Fixed allowlisted journal invocation.
         deadline: Shared monotonic deadline for this history request.
+        category: Optional classified view of the fixed dnsmasq unit.
+        initial_private_key: Redaction state preceding a forward cursor.
     """
     import threading
 
     selected, consumed, more = [], 0, False
+    pending_state = []
+    reverse = "--reverse" in command
+    key_state = initial_private_key
     with subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE) as process:
         timer = threading.Timer(max(.001, deadline - time.monotonic()), process.kill)
         timer.start()
         try:
             while raw := process.stdout.readline(1024 * 1024 + 1):
-                if selected and (len(selected) >= 500 or consumed + len(raw) > 1024 * 1024):
-                    more = True
-                    break
                 entry = _oversized_journal_entry(raw, process.stdout) if len(raw) > 1024 * 1024 else json.loads(raw)
                 if not isinstance(entry.get("MESSAGE"), str):
                     entry["MESSAGE"] = "[Binary journal entry omitted.]"
+                if category is not None:
+                    markers = list(re.finditer(r"-----(BEGIN|END) [A-Z ]*PRIVATE KEY-----", entry["MESSAGE"]))
+                    if reverse:
+                        if markers:
+                            for newer in pending_state:
+                                newer["_private_key_before"] = markers[-1].group(1) == "BEGIN"
+                            pending_state.clear()
+                    else:
+                        entry["_private_key_before"] = key_state
+                        if markers:
+                            key_state = markers[-1].group(1) == "BEGIN"
+                    if _journal_entry_category(entry) != category:
+                        continue
+                if selected and (len(selected) >= 500 or consumed + len(raw) > 1024 * 1024):
+                    more = True
+                    break
                 selected.append(entry)
+                if category is not None and reverse:
+                    pending_state.append(entry)
                 consumed += len(raw)
             if not more:
                 code = process.wait(timeout=2)
@@ -2020,6 +2061,8 @@ def _journal_text_rows(entry, offset=0):
     if offset > len(message):
         raise ValueError("Journal message position is unavailable.")
     timestamp = datetime.fromtimestamp(int(entry["__REALTIME_TIMESTAMP"]) / 1000000, timezone.utc).isoformat()
+    identifier = entry.get("SYSLOG_IDENTIFIER")
+    prefix = f"{timestamp} {identifier}: " if isinstance(identifier, str) and identifier else f"{timestamp} "
     stream = io.StringIO(message)
     stream.seek(offset)
     while True:
@@ -2027,7 +2070,7 @@ def _journal_text_rows(entry, offset=0):
         raw = stream.readline()
         if not raw:
             break
-        line = f"{timestamp} {raw.rstrip(chr(13) + chr(10))}"
+        line = prefix + raw.rstrip(chr(13) + chr(10))
         if len(line.encode("utf-8")) + 1 > 1024 * 1024:
             line = f"{timestamp} [Oversized journal line omitted: exceeds 1 MiB.]"
         yield start, line
@@ -2064,15 +2107,17 @@ def _read_log_history(args: list[str]) -> int:
             raise ValueError("invalid journal text position")
         backward = position.get("before") is True
         tail = (position.get("tail") is True and not cursor) or backward
+        category = args[0].removeprefix("dnsmasq-") if args[0].startswith("dnsmasq-") else None
+        lines_option = "--lines=all" if category is not None else (f"--lines={limit + (1 if backward else 0)}" if tail else "--lines=+501")
         command = [shutil.which("journalctl") or "journalctl", "--unit", units[args[0]],
-                   "--no-pager", "--output=json", f"--lines={limit + (1 if backward else 0)}" if tail else "--lines=+501",
-                   "--output-fields=MESSAGE,__CURSOR,__REALTIME_TIMESTAMP"]
+                   "--no-pager", "--output=json", lines_option,
+                   "--output-fields=MESSAGE,__CURSOR,__REALTIME_TIMESTAMP,SYSLOG_IDENTIFIER,_PID"]
         if tail:
             command.append("--reverse")
         if cursor:
             command.append(f"--cursor={cursor}" if position.get("journal_start_cursor") else f"--after-cursor={cursor}")
         deadline = time.monotonic() + 10
-        selected, more = _journal_history_entries(command, deadline=deadline)
+        selected, more = _journal_history_entries(command, deadline=deadline, category=category, initial_private_key=position.get("private_key") is True)
         if backward and selected and selected[0]["__CURSOR"] == cursor:
             if text_offset:
                 selected[0] = {**selected[0], "MESSAGE": selected[0]["MESSAGE"][:text_offset]}
@@ -2126,6 +2171,7 @@ def _read_log_history(args: list[str]) -> int:
             for match in re.finditer(r"-----(BEGIN|END) [A-Z ]*PRIVATE KEY-----", selected[0]["MESSAGE"][:text_offset]):
                 initial_private_key = match.group(1) == "BEGIN"
         lines = []
+        line_private_keys = []
         expanded_bytes = 0
         next_position = dict(current_position)
         paused = False
@@ -2134,6 +2180,7 @@ def _read_log_history(args: list[str]) -> int:
             if not isinstance(message, str):
                 raise ValueError("journal entry cannot be displayed completely")
             paused = False
+            row_key_state = initial_private_key if index == 0 and text_offset else entry.get("_private_key_before", initial_private_key)
             for start, line in _journal_text_rows(entry, text_offset if index == 0 else 0):
                 size = len(line.encode("utf-8")) + 1
                 if len(lines) >= limit or expanded_bytes + size > 1024 * 1024:
@@ -2141,6 +2188,9 @@ def _read_log_history(args: list[str]) -> int:
                     more = paused = True
                     break
                 lines.append(line)
+                line_private_keys.append(row_key_state)
+                for match in re.finditer(r"-----(BEGIN|END) [A-Z ]*PRIVATE KEY-----", line):
+                    row_key_state = match.group(1) == "BEGIN"
                 expanded_bytes += size
             if paused:
                 break
@@ -2153,6 +2203,7 @@ def _read_log_history(args: list[str]) -> int:
             current_position.update(journal_end_cursor=page_end_cursor, journal_end_offset=page_end_offset)
         print(json.dumps({"lines": lines, "journal_cursor": next_position.get("journal_cursor", cursor),
                           "journal_position": next_position, "previous_position": previous_position, "has_more": more,
+                          "line_private_keys": line_private_keys if category is not None else None,
                           "current_position": current_position, "initial_private_key": initial_private_key}))
         return 0
     except (ValueError, TypeError, AttributeError, KeyError, OSError, subprocess.TimeoutExpired):

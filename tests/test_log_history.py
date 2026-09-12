@@ -765,3 +765,98 @@ def test_journal_selected_tail_size(monkeypatch, capsys, limit):
     assert len(page["lines"]) == limit
     assert page["lines"][0].endswith(f" row-{1501-limit}")
     assert not page["has_more"]
+
+
+@pytest.mark.parametrize("privileged", [False, True])
+@pytest.mark.parametrize("compressed", [False, True])
+@pytest.mark.parametrize("complete", [False, True])
+def test_previous_page_advances_across_oversized_tail(tmp_path, privileged, compressed, complete):
+    """Every bounded predecessor advances until entries before an oversized tail appear.
+
+    Args:
+        tmp_path: Owned retained source directory.
+        privileged: Exercise both independent file readers.
+        compressed: Exercise bounded gzip seeking too.
+        complete: Whether the oversized physical entry has its final newline.
+    """
+    from tests.test_appliance_helper import load_helper_module
+
+    path = tmp_path / "large-tail.log"
+    contents = b"older retained entry\n" + b"x" * (3 * 1024 * 1024) + (b"\n" if complete else b"")
+    if compressed:
+        with gzip.open(tmp_path / "large-tail.log.1.gz", "wb") as handle:
+            handle.write(contents)
+    else:
+        path.write_bytes(contents)
+    helper = load_helper_module() if privileged else None
+    page = helper._read_fixed_log_history(path, {"tail": True}) if privileged else log_viewer.file_page(path, source="large-tail", tail=True)
+    seen = set()
+    for _ in range(6):
+        text = "\n".join(page["lines"]) if privileged else page["text"]
+        if "older retained entry" in text:
+            break
+        assert "Oversized log entry omitted" in text
+        position = page["previous_position"] if privileged else log_viewer.decode_cursor(page["previous_cursor"], "large-tail")
+        assert position["offset"] not in seen
+        seen.add(position["offset"])
+        page = helper._read_fixed_log_history(path, position) if privileged else log_viewer.file_page(path, source="large-tail", cursor=page["previous_cursor"])
+    else:
+        pytest.fail("Backward paging did not reach the earlier retained entry")
+
+
+@pytest.mark.parametrize("category", ["dhcp", "tftp"])
+def test_sparse_dnsmasq_tail_classifies_before_limit_and_preserves_redaction(monkeypatch, capsys, category):
+    """Other protocols cannot hide retained entries or reset their private-key state.
+
+    Args:
+        monkeypatch: Supply one fixed journal stream and the privileged adapter response.
+        capsys: Capture bounded helper pages.
+        category: Sparse protocol whose newest entries precede many DNS records.
+    """
+    import io
+    from types import SimpleNamespace
+    from unittest.mock import MagicMock
+
+    from tests.test_appliance_helper import load_helper_module
+
+    helper = load_helper_module()
+    pairs = [("dnsmasq", "-----BEGIN PRIVATE KEY-----"),
+             (f"dnsmasq-{category}", "private-fragment"),
+             ("dnsmasq", "-----END PRIVATE KEY-----"),
+             (f"dnsmasq-{category}", "retained protocol entry")]
+    pairs.extend(("dnsmasq", f"newer DNS entry {index}") for index in range(700))
+    records = [{"__CURSOR": str(index), "__REALTIME_TIMESTAMP": str(1000000 + index),
+                "SYSLOG_IDENTIFIER": identifier, "MESSAGE": message} for index, (identifier, message) in enumerate(pairs)]
+    commands = []
+    def launch(command, **_kwargs):
+        commands.append(command)
+        rows = list(records)
+        reverse = "--reverse" in command
+        for argument in command:
+            if argument.startswith("--cursor="):
+                index = int(argument.split("=", 1)[1])
+                rows = rows[:index + 1] if reverse else rows[index:]
+        if any(argument.startswith("--grep=") for argument in command):
+            rows = [entry for entry in rows if "PRIVATE KEY-----" in entry["MESSAGE"]]
+        if reverse:
+            rows.reverse()
+        process = MagicMock()
+        process.__enter__.return_value = process
+        process.wait.return_value = process.poll.return_value = 0
+        process.stdout = io.BytesIO("".join(json.dumps(entry) + "\n" for entry in rows).encode())
+        process.stderr = io.BytesIO()
+        return process
+    monkeypatch.setattr(helper.subprocess, "Popen", launch)
+    for position in ({"tail": True, "limit": 100}, {"limit": 100}):
+        assert helper._read_log_history([f"dnsmasq-{category}", json.dumps(position)]) == 0
+        payload = json.loads(capsys.readouterr().out)
+        assert len(payload["lines"]) == 2
+        assert payload["line_private_keys"] == [True, False]
+        assert not payload["has_more"]
+        monkeypatch.setattr(log_viewer.SystemAdapter, "read_log_history", lambda *_args, payload=payload: SimpleNamespace(returncode=0, stdout=json.dumps(payload)))
+        page = log_viewer.source_page(f"dnsmasq-{category}", tail=True, limit=100)
+        assert "private-fragment" not in page["text"]
+        assert "retained protocol entry" in page["text"]
+        assert "newer DNS" not in page["text"]
+    assert "--lines=all" in commands[0]
+    assert commands[0][commands[0].index("--unit") + 1] == "dnsmasq.service"

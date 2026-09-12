@@ -49,12 +49,14 @@ def source_page(source: str, *, cursor: str = "", tail: bool = False, limit: int
     payload = json.loads(result.stdout)
     initial_private_key = not payload.get("reset") and payload.get("initial_private_key", position.get("private_key")) is True
     lines, private_key = redact_lines(payload["lines"], private_key=initial_private_key)
-    if source.startswith("dnsmasq-"):
-        category = source.removeprefix("dnsmasq-")
-        lines = [line for line in lines if (
-            "dhcp" if re.search(r"\bdnsmasq-dhcp(?:\[\d+\])?:", line)
-            else "tftp" if re.search(r"\bdnsmasq-tftp(?:\[\d+\])?:", line) else "dns"
-        ) == category]
+    if payload.get("line_private_keys") is not None:
+        states = payload["line_private_keys"]
+        if not isinstance(states, list) or len(states) != len(payload["lines"]) or any(type(state) is not bool for state in states):
+            raise ValueError("Invalid classified log redaction state.")
+        lines = []
+        for line, state in zip(payload["lines"], states, strict=True):
+            safe, private_key = redact_lines([line], private_key=state)
+            lines.extend(safe)
     previous_position = payload.get("previous_position")
     next_position = payload.get("file_position", payload.get("journal_position", {"journal_cursor": payload.get("journal_cursor", "")}))
     current = encode_cursor(source, **payload["current_position"], private_key=initial_private_key) if "current_position" in payload else cursor
@@ -151,7 +153,9 @@ def _tail_offset(handle: Any, *, compressed: bool, deadline: float, end: int | N
     if offset:
         boundary = data.find(b"\n")
         if boundary < 0:
-            return total, True
+            return (offset if end is not None else total), True
+        if boundary == len(data) - 1:
+            return offset, True
         offset += boundary + 1
         data = data[boundary + 1:]
     starts = [0] + [match.end() for match in re.finditer(b"\n", data) if match.end() < len(data)]
@@ -316,6 +320,9 @@ def file_page(path: Path, *, source: str, cursor: str = "", limit: int = PAGE_LI
                                     prefix=position.get("prefix", ""), page_end=page_end, **anchor)
             marker_prefix = _history_window(handle, offset, compressed=compressed, deadline=deadline)[-128:]
             lines: list[str] = []
+            if (tail and not cursor) or backward:
+                if position.get("oversized") is True:
+                    lines.append("[Oversized log entry omitted: reading retained history in bounded groups.]")
             partial = False
             oversized = position.get("oversized") is True
             while len(lines) < max(1, min(PAGE_LINES, limit)) and handle.tell() - offset < PAGE_BYTES and (page_end is None or handle.tell() < page_end):
