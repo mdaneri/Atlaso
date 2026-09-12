@@ -1104,23 +1104,30 @@ def build_router(dependencies: OperationsUiDependencies) -> OperationsUiRouter:
             try:
                 position = log_viewer.decode_cursor(request.query_params.get("cursor", ""), "audit")
                 after = position.get("after", 0)
+                end = position.get("end")
+                if type(after) is not int or after < 0 or (end is not None and (type(end) is not int or end <= after)):
+                    raise ValueError("Invalid audit history position.")
                 if request.query_params.get("tail") == "1" and not position:
                     after = db.scalar(select(AuditEvent.id).order_by(AuditEvent.id.desc()).offset(500).limit(1)) or 0
                 if position.get("before") is True:
+                    end = after
                     after = db.scalar(select(AuditEvent.id).where(AuditEvent.id <= after).order_by(AuditEvent.id.desc()).offset(500).limit(1)) or 0
                 if type(after) is not int or after < 0:
                     raise ValueError("Invalid audit history position.")
             except ValueError as exc:
                 raise HTTPException(status_code=400, detail=str(exc)) from exc
-            events = db.execute(select(AuditEvent).where(AuditEvent.id > after).order_by(AuditEvent.id).limit(501)).scalars().all()
+            query = select(AuditEvent).where(AuditEvent.id > after)
+            if end is not None:
+                query = query.where(AuditEvent.id <= end)
+            events = db.execute(query.order_by(AuditEvent.id).limit(501)).scalars().all()
             rows = [{"id": event.id, "created_at": event.created_at.strftime("%Y-%m-%d %H:%M:%S"),
                      "actor": event.actor, "action": event.action,
                      "resource": f"{event.resource_type}:{event.resource_id}" if event.resource_id else event.resource_type,
                      "success": event.success, "detail": event.detail or ""} for event in events[:500]]
-            return JSONResponse({"rows": rows, "cursor": log_viewer.encode_cursor("audit", after=after),
+            return JSONResponse({"rows": rows, "cursor": log_viewer.encode_cursor("audit", after=after, end=end),
                                  "next_cursor": log_viewer.encode_cursor("audit", after=rows[-1]["id"] if rows else after),
                                  "previous_cursor": log_viewer.encode_cursor("audit", after=after, before=True) if after else "",
-                                 "has_more": len(events) > 500}, headers={"Cache-Control": "no-store"})
+                                 "has_more": len(events) > 500 or (end is not None and db.scalar(select(AuditEvent.id).where(AuditEvent.id > end).limit(1)) is not None)}, headers={"Cache-Control": "no-store"})
         return render(
             request,
             "audit.html",

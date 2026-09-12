@@ -486,3 +486,36 @@ for (const dir of ["asc", "desc"]) {
     assert.equal(page, dir === "desc" ? 2 : 3);
   });
 }
+
+
+for (const stored of ["200", "500", "invalid", null, "unavailable"]) {
+  test(`log page size restores and saves browser preference: ${stored}`, () => {
+    const requests = [], writes = [];
+    const selector = { value: "100", addEventListener: (_name, callback) => { selector.change = callback; } };
+    class Element {
+      constructor() { this.dataset = {}; }
+      querySelector() { return null; }
+      addEventListener() {}
+    }
+    const root = new Element(), output = new Element();
+    const tab = { dataset: { logSourceTab: "app" }, disabled: false };
+    root.querySelector = (query) => query === "[data-log-lines]" ? selector : query.includes("data-log-source-tab") ? tab : null;
+    const panel = { hidden: false, querySelector: () => output };
+    const context = vm.createContext({ HTMLElement: Element, URL, managementUiPath: (path) => path,
+      document: { querySelector: () => root, getElementById: () => panel, createElement: () => new Element() },
+      window: { location: { href: "https://atlaso.test/ui/management/logs" }, localStorage: {
+        getItem: () => { if (stored === "unavailable") throw new Error("denied"); return stored; },
+        setItem: (key, value) => { if (stored === "unavailable") throw new Error("denied"); writes.push([key, value]); },
+      }, AtlasoLogViewer: { create: (options) => {
+        if (options.initialCursor) options.fetchPage("tail", null);
+        return { close() {} };
+      }, fetchJson: (url) => requests.push(url.searchParams.get("lines")) } } });
+    vm.runInContext(functionSource("initializeLogsPage"), context);
+    context.initializeLogsPage();
+    assert.equal(requests[0], ["200", "500"].includes(stored) ? stored : "100");
+    selector.value = "500";
+    selector.change();
+    assert.equal(requests[1], "500");
+    assert.deepEqual(writes, stored === "unavailable" ? [] : [["atlaso:logs:line-count", "500"]]);
+  });
+}

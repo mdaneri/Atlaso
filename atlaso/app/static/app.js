@@ -17954,6 +17954,10 @@ function initializeLogsPage() {
   const controls = root.querySelector("[data-log-history-controls]");
   const refreshUrl = root.dataset.logRefreshUrl || managementUiPath("/logs/data");
   const lineSelector = root.querySelector("[data-log-lines]");
+  try {
+    const savedLines = window.localStorage.getItem("atlaso:logs:line-count");
+    if (lineSelector && ["100", "200", "500"].includes(savedLines)) lineSelector.value = savedLines;
+  } catch (_error) { /* Keep the server default when browser storage is unavailable. */ }
   let viewer = null;
   const open = (source) => {
     viewer?.close();
@@ -17990,6 +17994,8 @@ function initializeLogsPage() {
     if (tab && !tab.disabled) open(tab.dataset.logSourceTab);
   });
   lineSelector?.addEventListener("change", () => {
+    try { window.localStorage.setItem("atlaso:logs:line-count", lineSelector.value); }
+    catch (_error) { /* Page-size changes remain usable without browser storage. */ }
     const active = root.querySelector("[data-log-source-tab].active:not(:disabled)");
     if (active) open(active.dataset.logSourceTab);
   });

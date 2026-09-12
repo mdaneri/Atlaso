@@ -958,3 +958,35 @@ def test_quiet_journal_previous_requires_retained_older_rows(monkeypatch, capsys
         assert older["previous_position"] is None
         assert helper._read_log_history(["nginx", json.dumps({**older["current_position"], "limit": 100})]) == 0
         assert json.loads(capsys.readouterr().out)["previous_position"] is None
+
+
+def test_audit_backward_short_page_keeps_boundary_on_refresh_and_next(client):
+    """The oldest partial group never repeats entries from its adjacent page.
+
+    Args:
+        client: Authenticated application transport using the isolated database.
+    """
+    from sqlalchemy import delete
+
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import AuditEvent
+    from tests.routers.ui.helpers import login
+
+    login(client)
+    with SessionLocal() as db:
+        db.execute(delete(AuditEvent))
+        db.add_all([AuditEvent(actor="boundary", action="test", resource_type="test", success=True) for _ in range(1501)])
+        db.commit()
+    headers = {"X-Atlaso-Task-Log": "1"}
+    def read(cursor):
+        return client.get("/ui/management/audit-log", params={"cursor": cursor}, headers=headers).json()
+    page = client.get("/ui/management/audit-log", params={"tail": "1"}, headers=headers).json()
+    groups = [page]
+    while page["previous_cursor"]:
+        page = read(page["previous_cursor"])
+        groups.append(page)
+        assert len(groups) <= 4
+    assert [len(group["rows"]) for group in groups] == [500, 500, 500, 1]
+    assert len({row["id"] for group in groups for row in group["rows"]}) == 1501
+    assert read(page["cursor"])["rows"] == page["rows"]
+    assert read(page["next_cursor"])["rows"] == groups[-2]["rows"]
