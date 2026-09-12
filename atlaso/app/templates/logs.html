@@ -11,6 +11,14 @@
       <div class="logs-toolbar">
         <span class="status-pill muted logs-refresh-status" data-log-refresh-status role="status">Loading history…</span>
         <span class="status-pill muted">{{ log_sources|length }} sources</span>
+        <label class="logs-line-selector">
+          <span class="field-label"><span>Lines per page</span><button class="help-icon" type="button" data-help="Choose the live tail and history page size. All retained history remains available through Previous page, Next page, and From beginning.">i</button></span>
+          <select data-log-lines aria-label="Log lines per page">
+            {% for option in [100, 200, 500] %}
+              <option value="{{ option }}" {{ "selected" if log_line_count == option else "" }}>{{ option }}</option>
+            {% endfor %}
+          </select>
+        </label>
         <div data-log-history-controls aria-label="Log history"></div>
       </div>
     </div>
@@ -26,7 +34,7 @@
     {% endif %}
     <div class="tab-buttons tool-tabs" role="tablist" aria-label="Log sources" data-tab-storage-key="atlaso:logs:active-tab">
       {% for source in log_sources %}
-        <button class="tab-button {{ 'active' if active_log_tab.id == source.id else '' }}" type="button" role="tab" data-tab-target="logs-{{ source.id }}-panel" data-log-source-tab="{{ source.id }}" {% if active_log_tab.id == source.id %}aria-selected="true"{% else %}aria-selected="false"{% endif %} title="{{ source.path }}">{{ source.label }}</button>
+        <button class="tab-button {{ 'active' if active_log_tab.id == source.id else '' }}" type="button" role="tab" data-tab-target="logs-{{ source.id }}-panel" data-log-source-tab="{{ source.id }}" {% if active_log_tab.id == source.id %}aria-selected="true"{% else %}aria-selected="false"{% endif %} {% if not source.available %}disabled aria-disabled="true"{% else %}aria-disabled="false"{% endif %} title="{{ source.path }}">{{ source.label }}</button>
       {% endfor %}
     </div>
 

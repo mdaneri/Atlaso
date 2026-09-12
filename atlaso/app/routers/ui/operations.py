@@ -590,7 +590,7 @@ def build_router(dependencies: OperationsUiDependencies) -> OperationsUiRouter:
         """
         if source:
             try:
-                return JSONResponse(log_viewer.source_page(source, cursor=cursor, tail=tail), headers={"Cache-Control": "no-store"})
+                return JSONResponse(log_viewer.source_page(source, cursor=cursor, tail=tail, limit=normalized_log_line_count(lines)), headers={"Cache-Control": "no-store"})
             except (ValueError, OSError) as exc:
                 raise HTTPException(status_code=400, detail=str(exc)) from exc
         line_count = normalized_log_line_count(lines)

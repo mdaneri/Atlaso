@@ -17,6 +17,7 @@
     let previous = [];
     let generation = 0;
     let rendered = null;
+    let rendering = null;
     const scroll = ["auto", "scroll"].includes(window.getComputedStyle?.(output)?.overflowY) ? output : output.parentElement;
     const buttons = {};
     const button = (name, label, action) => {
@@ -79,6 +80,7 @@
       const deadline = window.setTimeout(() => controller.abort(), 20000);
       try {
         const page = await fetchPage(cursor, controller.signal);
+        if (rendering) await rendering.catch(() => {});
         if (closed || generation !== sequence || !active()) return;
         failures = 0;
         hasMore = Boolean(page.has_more);
@@ -92,7 +94,12 @@
           const navigated = rendered === null;
           const offset = navigated ? 0 : scroll?.scrollTop || 0;
           if (renderPage) {
-            await renderPage(page, { following, navigated: rendered === null });
+            const pendingRender = Promise.resolve(renderPage(page, { following, navigated: rendered === null,
+              isCurrent: () => !closed && generation === sequence && active() }));
+            rendering = pendingRender;
+            try { await pendingRender; }
+            finally { if (rendering === pendingRender) rendering = null; }
+            if (closed || generation !== sequence || !active()) return;
           } else if (rendered && text.startsWith(rendered)) {
             output.append(document.createTextNode(text.slice(rendered.length)));
           } else {
@@ -105,6 +112,7 @@
           if (scroll) scroll.scrollTop = following && (bottom || navigated) ? scroll.scrollHeight : offset;
         }
         onPage(page);
+        if (closed || generation !== sequence || !active()) return;
         message(held && text !== rendered ? "New output available · reading position preserved" :
           `${page.job_id ? `${page.job_id} · ` : ""}${page.status || "Updated"} · ${new Date().toLocaleTimeString()}${page.notice ? ` · ${page.notice}` : ""}`);
         updateButtons();

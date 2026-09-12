@@ -364,3 +364,33 @@ test("Previous page navigates directly from the initial live tail", async () => 
   assert.equal(harness.content.textContent, "preceding group");
   harness.context.closeTaskLogModal();
 });
+
+
+test("navigation serializes asynchronous renders and ignores stale completion", async () => {
+  const harness = taskLogHarness();
+  const delayed = deferred(), started = deferred();
+  const rendered = [], published = [];
+  let calls = 0;
+  const viewer = harness.context.window.AtlasoLogViewer.create({
+    output: harness.content, status: harness.meta, initialCursor: "tail",
+    fetchPage: async () => ({ text: ++calls === 1 ? "stale" : "current", status: "running" }),
+    renderPage: async (page, { isCurrent }) => {
+      if (page.text === "stale") { started.resolve(); await delayed.promise; }
+      rendered.push(page.text);
+      if (isCurrent()) harness.content.textContent = page.text;
+    },
+    onPage: (page) => published.push(page.text),
+  });
+  await started.promise;
+  harness.buttons.find((button) => button.textContent === "From beginning").click();
+  const current = fireTimer(harness, 0);
+  await Promise.resolve();
+  assert.deepEqual(rendered, []);
+  delayed.resolve();
+  await viewer.ready;
+  await current;
+  assert.deepEqual(rendered, ["stale", "current"]);
+  assert.deepEqual(published, ["current"]);
+  assert.equal(harness.content.textContent, "current");
+  viewer.close();
+});

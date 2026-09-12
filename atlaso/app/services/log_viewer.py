@@ -24,23 +24,25 @@ PAGE_BYTES = 1024 * 1024
 LINE_BYTES = 64 * 1024
 
 
-def source_page(source: str, *, cursor: str = "", tail: bool = False) -> dict[str, Any]:
+def source_page(source: str, *, cursor: str = "", tail: bool = False, limit: int = PAGE_LINES) -> dict[str, Any]:
     """Read one authorized fixed-source page and redact before transport.
 
     Args:
         source: Fixed source selected in the authenticated Logs viewer.
         cursor: Signed position belonging to this source.
         tail: Open the newest retained page when no cursor is supplied.
+        limit: Selected bounded page size; total retained history is unchanged.
     """
     if source == "app":
-        return file_page(get_settings().app_log_path, source=source, cursor=cursor, tail=tail)
+        return file_page(get_settings().app_log_path, source=source, cursor=cursor, tail=tail, limit=limit)
     if source == "kms":
-        return file_page(Path("/var/log/atlaso/kmip/server.log"), source=source, cursor=cursor, tail=tail)
+        return file_page(Path("/var/log/atlaso/kmip/server.log"), source=source, cursor=cursor, tail=tail, limit=limit)
     if source not in {"dnsmasq-dns", "dnsmasq-dhcp", "dnsmasq-tftp", "ldap", "ntp", "esx-storage", "nginx", "nginx-access", "nginx-error"}:
         raise ValueError("Unknown log source.")
     position = decode_cursor(cursor, source)
     if tail and not cursor:
         position["tail"] = True
+    position["limit"] = max(1, min(PAGE_LINES, limit))
     result = SystemAdapter().read_log_history(source, position)
     if result.returncode:
         raise ValueError("Log history is temporarily unavailable. Your displayed page is preserved.")
@@ -118,7 +120,7 @@ def redact_lines(lines: list[str], *, private_key: bool = False) -> tuple[list[s
     return output, private_key
 
 
-def _tail_offset(handle: Any, *, compressed: bool, deadline: float, end: int | None = None) -> tuple[int, bool]:
+def _tail_offset(handle: Any, *, compressed: bool, deadline: float, end: int | None = None, limit: int = 500) -> tuple[int, bool]:
     """Locate the newest bounded group without replaying pages to the client.
 
     Args:
@@ -126,6 +128,7 @@ def _tail_offset(handle: Any, *, compressed: bool, deadline: float, end: int | N
         compressed: Whether seeking requires bounded decompression.
         deadline: Shared monotonic deadline for the request.
         end: Optional exclusive boundary for the preceding page.
+        limit: Maximum physical lines in the selected group.
     """
     if compressed:
         data, total = b"", 0
@@ -152,8 +155,8 @@ def _tail_offset(handle: Any, *, compressed: bool, deadline: float, end: int | N
         offset += boundary + 1
         data = data[boundary + 1:]
     starts = [0] + [match.end() for match in re.finditer(b"\n", data) if match.end() < len(data)]
-    if len(starts) > 500:
-        offset += starts[-500]
+    if len(starts) > limit:
+        offset += starts[-limit:][0]
     return offset, False
 
 
@@ -279,7 +282,7 @@ def file_page(path: Path, *, source: str, cursor: str = "", limit: int = PAGE_LI
             generation = f"{metadata.st_dev}:{metadata.st_ino}"
             offset = position.get("offset", 0)
             if (tail and not cursor) or backward:
-                offset, oversized = _tail_offset(handle, compressed=compressed, deadline=deadline, end=before_end)
+                offset, oversized = _tail_offset(handle, compressed=compressed, deadline=deadline, end=before_end, limit=max(1, min(PAGE_LINES, limit)))
                 position = {"oversized": oversized, "private_key": _tail_private_key(paths[:index + 1], offset, deadline=deadline)}
             if type(offset) is not int or offset < 0:
                 raise ValueError("Invalid log history position.")

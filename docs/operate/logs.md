@@ -25,7 +25,9 @@ This verified appliance view provides visual orientation before you begin.
 
 ## Investigate a problem
 
-The selected source updates automatically every five seconds. **From beginning** opens its oldest retained entries;
+The selected source updates automatically every five seconds. **Lines per page** selects 100, 200, or 500 lines
+for the live tail and history pages; it never limits the total retained history. Unavailable source tabs are disabled,
+and a source that becomes unavailable yields to another available tab. **From beginning** opens its oldest retained entries;
 **Next page** and **Previous page** move through the complete retained history in bounded pages. From the live tail,
 **Previous page** opens the preceding group directly, including within a multiline journal record. The page size limits
 each response, not the total history you can inspect. Numbered file rotations, including compressed archives, are

@@ -679,3 +679,89 @@ def test_previous_text_page_is_adjacent_and_refresh_stable(monkeypatch):
     assert log_viewer.decode_cursor(older["next_cursor"], "back-text")["offset"] == log_viewer.decode_cursor(tail["cursor"], "back-text")["offset"]
     assert older["text"] not in tail["text"]
     assert log_viewer.text_page(text, source="back-text", cursor=older["cursor"])["text"] == older["text"]
+
+
+@pytest.mark.parametrize("limit", [100, 200, 500])
+def test_selected_page_size_preserves_complete_file_history(tmp_path, limit):
+    """Choosing a smaller live tail changes page size without discarding history.
+
+    Args:
+        tmp_path: Owned file source.
+        limit: Established operator page-size choice.
+    """
+    from tests.test_appliance_helper import load_helper_module
+
+    path = tmp_path / "selected-size.log"
+    path.write_text("".join(f"row-{i}\n" for i in range(1501)), encoding="utf-8")
+    tail = log_viewer.file_page(path, source="size", tail=True, limit=limit)
+    assert len(tail["text"].splitlines()) == limit
+    assert tail["text"].splitlines()[0] == f"row-{1501-limit}"
+    helper = load_helper_module()
+    raw = helper._read_fixed_log_history(path, {"tail": True, "limit": limit})
+    assert raw["lines"] == tail["text"].splitlines()
+    cursor, lines = "", []
+    while True:
+        page = log_viewer.file_page(path, source="size", cursor=cursor, limit=limit)
+        lines.extend(page["text"].splitlines())
+        assert len(page["text"].splitlines()) <= limit
+        if not page["has_more"]:
+            break
+        cursor = page["next_cursor"]
+    assert lines == [f"row-{i}" for i in range(1501)]
+
+
+def test_logs_controls_preserve_availability_and_selected_page_limit(client, monkeypatch):
+    """The rendered controls distinguish unavailable sources and pass page-size choices.
+
+    Args:
+        client: Initialized application transport.
+        monkeypatch: Supply fixed availability and capture the reader contract.
+    """
+    import re
+
+    from atlaso.app import ui
+    from tests.routers.ui.helpers import login
+
+    login(client)
+    monkeypatch.setattr(ui, "log_sources_context", lambda **_kwargs: [
+        {"id": "app", "label": "Atlaso App", "available": False, "path": "/missing", "size_bytes": 0, "lines": []},
+        {"id": "nginx", "label": "Nginx", "available": True, "path": "journal", "size_bytes": 0, "lines": []},
+    ])
+    response = client.get("/ui/management/logs")
+    assert response.status_code == 200
+    missing = re.search(r'<button[^>]*data-log-source-tab="app"[^>]*>', response.text).group()
+    available = re.search(r'<button[^>]*data-log-source-tab="nginx"[^>]*>', response.text).group()
+    assert 'disabled aria-disabled="true"' in missing
+    assert 'aria-disabled="false"' in available
+    assert 'data-log-lines aria-label="Log lines per page"' in response.text
+    selected = []
+    def page(source, **kwargs):
+        selected.append((source, kwargs["limit"]))
+        return {"text": "", "available": True, "has_more": False}
+    monkeypatch.setattr(log_viewer, "source_page", page)
+    response = client.get("/ui/management/logs/data", params={"source": "nginx", "lines": 200, "tail": "true"})
+    assert response.status_code == 200
+    assert selected == [("nginx", 200)]
+
+
+@pytest.mark.parametrize("limit", [100, 200, 500])
+def test_journal_selected_tail_size(monkeypatch, capsys, limit):
+    """Journal expansion respects the selected line count as well as its byte budget.
+
+    Args:
+        monkeypatch: Provide a bounded immutable journal message.
+        capsys: Capture the helper response.
+        limit: Operator-selected page size.
+    """
+    from tests.test_appliance_helper import load_helper_module
+
+    helper = load_helper_module()
+    entry = {"MESSAGE": "\n".join(f"row-{i}" for i in range(1501)), "__CURSOR": "selected", "__REALTIME_TIMESTAMP": "1000000"}
+    def entries(command, **_kwargs):
+        return ([], False) if any(arg.startswith("--grep=") for arg in command) else ([entry], False)
+    monkeypatch.setattr(helper, "_journal_history_entries", entries)
+    assert helper._read_log_history(["nginx", json.dumps({"tail": True, "limit": limit})]) == 0
+    page = json.loads(capsys.readouterr().out)
+    assert len(page["lines"]) == limit
+    assert page["lines"][0].endswith(f" row-{1501-limit}")
+    assert not page["has_more"]

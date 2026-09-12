@@ -17683,9 +17683,12 @@ function initializeLogsPage() {
   const status = root.querySelector("[data-log-refresh-status]");
   const controls = root.querySelector("[data-log-history-controls]");
   const refreshUrl = root.dataset.logRefreshUrl || managementUiPath("/logs/data");
+  const lineSelector = root.querySelector("[data-log-lines]");
   let viewer = null;
   const open = (source) => {
     viewer?.close();
+    const tab = root.querySelector(`[data-log-source-tab="${source}"]`);
+    if (!tab || tab.disabled) return;
     const panel = document.getElementById(`logs-${source}-panel`);
     const output = panel?.querySelector("[data-log-lines-output]");
     if (!(output instanceof HTMLElement)) return;
@@ -17693,23 +17696,36 @@ function initializeLogsPage() {
       output, status, controls, initialCursor: "tail", active: () => !panel.hidden,
       onPage: (page) => {
         const meta = panel.querySelector("[data-log-meta]");
-        if (meta) meta.textContent = page.available ? "Retained history · up to 500 entries per page" : "Waiting for log entries";
+        if (page.available === false) {
+          tab.disabled = true;
+          tab.setAttribute("aria-disabled", "true");
+          viewer?.close();
+          root.querySelector("[data-log-source-tab]:not(:disabled)")?.click();
+          return;
+        }
+        if (meta) meta.textContent = page.available ? `Retained history · up to ${lineSelector?.value || 100} entries per page` : "Waiting for log entries";
       },
       fetchPage: (cursor, signal) => {
         const url = new URL(refreshUrl, window.location.href);
         url.searchParams.set("source", source);
+        url.searchParams.set("lines", lineSelector?.value || "100");
         if (cursor === "tail") url.searchParams.set("tail", "1");
-      else if (cursor) url.searchParams.set("cursor", cursor);
+        else if (cursor) url.searchParams.set("cursor", cursor);
         return window.AtlasoLogViewer.fetchJson(url, signal);
       },
     });
   };
   root.addEventListener("click", (event) => {
     const tab = event.target.closest("[data-log-source-tab]");
-    if (tab) open(tab.dataset.logSourceTab);
+    if (tab && !tab.disabled) open(tab.dataset.logSourceTab);
+  });
+  lineSelector?.addEventListener("change", () => {
+    const active = root.querySelector("[data-log-source-tab].active:not(:disabled)");
+    if (active) open(active.dataset.logSourceTab);
   });
   const selected = root.querySelector("[data-log-source-tab].active");
-  if (selected) open(selected.dataset.logSourceTab);
+  if (selected && !selected.disabled) open(selected.dataset.logSourceTab);
+  else root.querySelector("[data-log-source-tab]:not(:disabled)")?.click();
 }
 
 function initializeAuditEventsTable() {
@@ -17768,9 +17784,10 @@ function initializeAuditEventsTable() {
           else if (cursor) url.searchParams.set("cursor", cursor);
           return window.AtlasoLogViewer.fetchJson(url, signal);
         },
-        renderPage: async (page, { following, navigated }) => {
+        renderPage: async (page, { following, navigated, isCurrent }) => {
           const selectedPage = table.getPage();
           await table.replaceData(page.rows);
+          if (!isCurrent()) return;
           await table.setPage(following ? "last" : navigated ? 1 : Math.min(selectedPage, table.getPageMax()) || 1);
         },
       });

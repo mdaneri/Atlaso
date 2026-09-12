@@ -1690,7 +1690,7 @@ def _read_dnsmasq_leases() -> int:
     return 0
 
 
-def _tail_offset(handle, *, compressed: bool, deadline: float, end: int | None = None) -> tuple[int, bool]:
+def _tail_offset(handle, *, compressed: bool, deadline: float, end: int | None = None, limit: int = 500) -> tuple[int, bool]:
     """Locate the newest bounded group without replaying pages to the client.
 
     Args:
@@ -1698,6 +1698,7 @@ def _tail_offset(handle, *, compressed: bool, deadline: float, end: int | None =
         compressed: Whether seeking requires bounded decompression.
         deadline: Shared monotonic deadline for the request.
         end: Optional exclusive boundary for the preceding page.
+        limit: Maximum physical lines in the selected group.
     """
     if compressed:
         data, total = b"", 0
@@ -1724,8 +1725,8 @@ def _tail_offset(handle, *, compressed: bool, deadline: float, end: int | None =
         offset += boundary + 1
         data = data[boundary + 1:]
     starts = [0] + [match.end() for match in re.finditer(b"\n", data) if match.end() < len(data)]
-    if len(starts) > 500:
-        offset += starts[-500]
+    if len(starts) > limit:
+        offset += starts[-limit]
     return offset, False
 
 
@@ -1809,6 +1810,9 @@ def _read_fixed_log_history(path: Path, position: dict) -> dict:
         position: File identity and byte offset from the authenticated cursor.
     """
     import gzip
+    limit = position.get("limit", 500)
+    if type(limit) is not int or not 1 <= limit <= 500:
+        raise ValueError("invalid log page limit")
     rotations = []
     for candidate in path.parent.glob(f"{path.name}.*"):
         match = re.fullmatch(re.escape(path.name) + r"\.(\d+)(\.gz)?", candidate.name)
@@ -1853,7 +1857,7 @@ def _read_fixed_log_history(path: Path, position: dict) -> dict:
         try:
             initial_private_key = position.get("private_key") is True
             if position.get("tail") or backward:
-                offset, oversized = _tail_offset(handle, compressed=candidate.suffix == ".gz", deadline=deadline, end=before_end)
+                offset, oversized = _tail_offset(handle, compressed=candidate.suffix == ".gz", deadline=deadline, end=before_end, limit=limit)
                 initial_private_key = _tail_private_key(paths[:selected + 1], offset, deadline=deadline)
                 position = {"oversized": oversized}
             prefix_length = position.get("prefix_length", 0)
@@ -1891,7 +1895,7 @@ def _read_fixed_log_history(path: Path, position: dict) -> dict:
             consumed = 0
             partial = False
             oversized = not reset and position.get("oversized") is True
-            while len(lines) < 500 and consumed < 1024 * 1024 and (page_end is None or handle.tell() < page_end):
+            while len(lines) < limit and consumed < 1024 * 1024 and (page_end is None or handle.tell() < page_end):
                 start = handle.tell()
                 line = handle.readline(min(65537, page_end - start) if page_end is not None else 65537)
                 if not line:
@@ -2049,6 +2053,9 @@ def _read_log_history(args: list[str]) -> int:
         if args[0] in files:
             print(json.dumps(_read_fixed_log_history(files[args[0]], position)))
             return 0
+        limit = position.get("limit", 500)
+        if type(limit) is not int or not 1 <= limit <= 500:
+            raise ValueError("invalid log page limit")
         cursor = position.get("journal_cursor", position.get("journal_start_cursor", ""))
         if not isinstance(cursor, str) or len(cursor) > 2048 or any(ord(char) < 32 for char in cursor):
             raise ValueError("invalid journal cursor")
@@ -2058,7 +2065,7 @@ def _read_log_history(args: list[str]) -> int:
         backward = position.get("before") is True
         tail = (position.get("tail") is True and not cursor) or backward
         command = [shutil.which("journalctl") or "journalctl", "--unit", units[args[0]],
-                   "--no-pager", "--output=json", "--lines=500" if tail else "--lines=+501",
+                   "--no-pager", "--output=json", f"--lines={limit + (1 if backward else 0)}" if tail else "--lines=+501",
                    "--output-fields=MESSAGE,__CURSOR,__REALTIME_TIMESTAMP"]
         if tail:
             command.append("--reverse")
@@ -2097,7 +2104,7 @@ def _read_log_history(args: list[str]) -> int:
                     size = len(line.encode("utf-8")) + 1
                     recent.append((index, start, size))
                     expanded_bytes += size
-                    while len(recent) > 500 or expanded_bytes > 1024 * 1024:
+                    while len(recent) > limit or expanded_bytes > 1024 * 1024:
                         expanded_bytes -= recent.popleft()[2]
             if recent:
                 first_index, text_offset, _ = recent[0]
@@ -2129,7 +2136,7 @@ def _read_log_history(args: list[str]) -> int:
             paused = False
             for start, line in _journal_text_rows(entry, text_offset if index == 0 else 0):
                 size = len(line.encode("utf-8")) + 1
-                if len(lines) >= 500 or expanded_bytes + size > 1024 * 1024:
+                if len(lines) >= limit or expanded_bytes + size > 1024 * 1024:
                     next_position = {"journal_start_cursor": entry["__CURSOR"], "journal_text_offset": start}
                     more = paused = True
                     break
