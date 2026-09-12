@@ -820,7 +820,7 @@ def test_tasks_page_lists_redacts_logs_and_cancels(client):
     assert ".task-row-menu" not in app_css
     assert ".task-result-preview code," in app_css
     assert "highlightConfigPreviewElement(result);" in app_js
-    assert "highlightConfigPreviewElement(content);" in app_js
+    assert "window.highlightConfigPreviewElement(output);" in Path("atlaso/app/static/log-viewer.js").read_text(encoding="utf-8")
     assert 'errorContent.textContent = errorMessages.join("\\n\\n");' in app_js
     assert 'modal.querySelector("[data-task-detail-error]")' not in app_js
 
@@ -8960,7 +8960,7 @@ def test_logs_page_shows_unavailable_state_when_every_source_is_unavailable(clie
     app_tab = response.text.split('data-log-source-tab="app"', 1)[1].split("</button>", 1)[0]
     assert 'class="tab-button active"' in response.text.split('data-log-source-tab="app"', 1)[0].rsplit("<button", 1)[1]
     assert 'aria-selected="true"' in app_tab
-    assert 'aria-disabled="true"' in app_tab
+    assert "disabled" not in app_tab
     app_panel = response.text.split('id="logs-app-panel"', 1)[1].split('id="logs-kms-panel"', 1)[0]
     assert 'id="logs-app-panel" class="tab-panel active"' in response.text
     assert "Log file has not been written yet." in app_panel
@@ -9081,18 +9081,15 @@ def test_logs_page_renders_refreshable_fixed_source_tabs_and_redacts_logs(client
     assert 'title="/var/log/nginx/error.log · management and service HTTP errors"' in response.text
     assert 'data-log-source-tab="kms"' in response.text
     kms_tab = response.text.split('data-log-source-tab="kms"', 1)[1].split("</button>", 1)[0]
-    assert 'aria-disabled="true"' in kms_tab
-    assert "disabled" in kms_tab
+    assert "disabled" not in kms_tab
     assert "data-log-availability" not in response.text
-    assert 'data-log-lines aria-label="Log lines"' in response.text
-    assert '<option value="100" selected>100</option>' in response.text
-    assert '<option value="200" >200</option>' in response.text
-    assert '<option value="500" >500</option>' in response.text
-    assert "Refresh 5s" in response.text
+    assert 'data-log-history-controls aria-label="Log history"' in response.text
+    assert 'data-log-lines aria-label="Log lines"' not in response.text
+    assert "Loading history" in response.text
     assert 'class="language-atlaso-log" data-log-lines-output' in response.text
     assert response.text.count('data-terminal-note-open="false"') == 11
     toolbar = response.text.split('<div class="logs-toolbar">', 1)[1].split("</div>", 1)[0]
-    assert toolbar.index("data-log-refresh-status") < toolbar.index("data-log-lines")
+    assert toolbar.index("data-log-refresh-status") < toolbar.index("data-log-history-controls")
     assert "logs-refresh-status" in toolbar
     assert "token= [redacted]" in response.text
     assert "https://dl.broadcom.com/[redacted-token]/PROD/file.json" in response.text
@@ -9146,14 +9143,14 @@ def test_logs_page_renders_refreshable_fixed_source_tabs_and_redacts_logs(client
 
     js = client.get("/static/app.js")
     assert "function initializeLogsPage" in js.text
-    assert 'window.setInterval(refresh, 5000)' in js.text
-    assert 'atlaso:logs:line-count' in js.text
-    assert "refreshQueued = true" in js.text
-    assert "tabButton.disabled = !source.available" in js.text
-    assert "activeButton.disabled" in js.text
+    viewer_js = client.get("/static/log-viewer.js").text
+    assert "window.AtlasoLogViewer.create" in js.text
+    assert "schedule(5000)" in viewer_js
+    assert "From beginning" in viewer_js
+    assert "request?.abort()" in viewer_js
     assert 'window.Prism.languages["atlaso-log"]' in js.text
     assert '"level-error"' in js.text
-    assert "highlightConfigPreviewElement(output);" in js.text
+    assert "highlightConfigPreviewElement(output);" in viewer_js
     css = client.get("/static/app.css")
     assert "height: calc(100vh - 120px);" in css.text
     assert "flex: 1 1 0;" in css.text

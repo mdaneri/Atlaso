@@ -37,6 +37,18 @@ class SystemAdapter:
 
     HELPER_PATH = "/opt/atlaso/bin/atlaso-helper"
 
+    def read_log_history(self, source: str, position: dict[str, object]) -> AdapterResult:
+        """Read one fixed-source history page through the privileged boundary.
+
+        Args:
+            source: Allowlisted log source identifier.
+            position: Verified cursor contents, excluding browser authorization.
+        """
+        return self._helper_result(
+            "logs", "page", source, json.dumps(position), timeout_seconds=15,
+            dry_run_message=json.dumps({"lines": [], "journal_cursor": "", "has_more": False}),
+        )
+
     def __init__(self, dry_run: bool | None = None) -> None:
         """Initialize the system adapter.
 

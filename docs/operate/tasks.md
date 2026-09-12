@@ -34,6 +34,12 @@ When you open several task logs in quick succession, the last task selected owns
 older request where possible and ignores any stale success or error that arrives after the newer selection or after the
 dialog was closed.
 
+An open log refreshes automatically while its task is active and reads trailing output after completion. Use
+**From beginning** and the page controls to inspect its complete retained history; **Follow live** advances with new
+output. Reading older entries preserves your position and selection. A stale-connection notice keeps the last useful
+output visible while the viewer retries. These controls also apply to standalone VCF download logs and service logs;
+see [Operational logs](logs.md) for retention and refresh behavior.
+
 Pending and running tasks are not proof that appliance state changed. Treat only a successful terminal result plus the
 service-specific verification as success.
 

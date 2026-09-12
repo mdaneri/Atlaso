@@ -25,6 +25,21 @@ This verified appliance view provides visual orientation before you begin.
 
 ## Investigate a problem
 
+The selected source updates automatically every five seconds. **From beginning** opens its oldest retained entries;
+**Next page** and **Previous page** move through the complete retained history in bounded pages. The page size limits
+each response, not the total history you can inspect. Numbered file rotations, including compressed archives, are
+included. Journal history remains subject to the appliance's journal retention policy.
+
+**Follow live** advances to new output. Scrolling up or selecting text preserves your reading position and shows when
+new output is available. Empty sources remain selectable and populate when their first entries arrive. A connection
+failure preserves the displayed page and retries with a bounded delay; the freshness indicator identifies stale output.
+Closing a viewer, switching sources or hiding the browser suspends its requests. Retention changes are reported rather
+than silently continuing a position in a different file.
+
+Task Log dialogs and standalone download logs use the same controls. Completed tasks receive a final trailing read
+before automatic refresh stops. Only retained output is available: entries removed by retention or never captured by
+the producing command cannot be recovered by the viewer. Downloaded log files are snapshots taken at download time.
+
 1. Set a narrow time window around the observed failure.
 2. Filter by severity and the affected Atlaso component.
 3. Correlate task identifiers with [Tasks](tasks.md) and operator actions with the [Audit log](audit-log.md).

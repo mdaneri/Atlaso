@@ -20,10 +20,12 @@ function functionSource(name) {
 
 function deferred() {
   let resolve;
-  const promise = new Promise((resolvePromise) => {
+  let reject;
+  const promise = new Promise((resolvePromise, rejectPromise) => {
     resolve = resolvePromise;
+    reject = rejectPromise;
   });
-  return { promise, resolve };
+  return { promise, resolve, reject };
 }
 
 function sourceBetween(startMarker, endMarker) {
@@ -39,6 +41,11 @@ function taskLogHarness() {
     constructor() {
       this.textContent = "";
     }
+    querySelector() { return null; }
+    addEventListener() {}
+    setAttribute() {}
+    append(node) { this.textContent += node.textContent; }
+    contains(node) { return node === this; }
   }
 
   class FakeDialog extends FakeElement {
@@ -61,11 +68,18 @@ function taskLogHarness() {
   const meta = new FakeElement();
   const content = new FakeElement();
   const requests = [];
+  const timers = new Map();
+  let timerId = 0;
   const taskLogContext = vm.createContext({
     AbortController,
+    URL,
     HTMLElement: FakeElement,
     HTMLDialogElement: FakeDialog,
     document: {
+      createElement: () => new FakeElement(),
+      createTextNode: (textContent) => ({ textContent }),
+      addEventListener() {},
+      removeEventListener() {},
       getElementById: (id) => id === "task-log-modal" ? modal : null,
       querySelector: (selector) => ({
         "[data-task-log-title]": title,
@@ -81,7 +95,16 @@ function taskLogHarness() {
     highlightConfigPreviewElement: () => {},
     managementUiPath: (path) => path,
     taskById: () => null,
+    window: {
+      location: { href: "https://atlaso.test/" },
+      getSelection: () => null,
+      setTimeout: (callback, delay) => { timers.set(++timerId, { callback, delay }); return timerId; },
+      clearTimeout: (id) => timers.delete(id),
+      addEventListener() {},
+      removeEventListener() {},
+    },
   });
+  vm.runInContext(fs.readFileSync("atlaso/app/static/log-viewer.js", "utf8"), taskLogContext);
   vm.runInContext(
     "let atlasoTaskLogRequest = null; let atlasoTaskLogRequestSequence = 0;\n" +
       `${sourceBetween("async function openTaskLog", "async function cancelTask")}\n` +
@@ -91,7 +114,7 @@ function taskLogHarness() {
   const complete = (index, payload, ok = true) => {
     requests[index].resolve({ ok, json: async () => payload });
   };
-  return { complete, content, context: taskLogContext, meta, modal, requests, title };
+  return { complete, content, context: taskLogContext, meta, modal, requests, title, timers };
 }
 
 const context = vm.createContext({});
@@ -139,7 +162,7 @@ test("latest task log selection wins when the newer response finishes first", as
   await first;
 
   assert.equal(harness.title.textContent, "B title");
-  assert.equal(harness.meta.textContent, "B · succeeded");
+  assert.match(harness.meta.textContent, /^B · succeeded · /);
   assert.equal(harness.content.textContent, "B log");
 });
 
@@ -157,7 +180,7 @@ test("latest task log selection wins when the older response finishes first", as
   harness.complete(1, { job_id: "B", status: "failed", text: "B log", title: "B title" });
   await second;
   assert.equal(harness.title.textContent, "B title");
-  assert.equal(harness.meta.textContent, "B · failed");
+  assert.match(harness.meta.textContent, /^B · failed · /);
   assert.equal(harness.content.textContent, "B log");
 });
 
@@ -199,4 +222,105 @@ test("task log dismissal invalidates pending ownership for button and keyboard c
   assert.match(appSource, /addEventListener\("click", closeTaskLogModal\)/);
   assert.match(appSource, /taskLogModal\?\.addEventListener\("cancel"/);
   assert.match(appSource, /taskLogModal\?\.addEventListener\("close"/);
+});
+
+function fireTimer(harness, delay) {
+  const entry = [...harness.timers].find(([, timer]) => timer.delay === delay);
+  assert.ok(entry, `expected a ${delay}ms timer`);
+  harness.timers.delete(entry[0]);
+  return entry[1].callback();
+}
+
+test("running task logs append and perform a final trailing read before stopping", async () => {
+  const harness = taskLogHarness();
+  const initial = harness.context.openTaskLog({ id: "A" });
+  harness.complete(0, { job_id: "A", status: "running", text: "first" });
+  await initial;
+  const next = fireTimer(harness, 5000);
+  harness.complete(1, { job_id: "A", status: "succeeded", text: "first\nfinished" });
+  await next;
+  assert.equal(harness.content.textContent, "first\nfinished");
+  const trailing = fireTimer(harness, 5000);
+  harness.complete(2, { job_id: "A", status: "succeeded", text: "first\nfinished\ntrailing" });
+  await trailing;
+  assert.equal(harness.content.textContent, "first\nfinished\ntrailing");
+  assert.equal(harness.timers.size, 0);
+});
+
+test("reading older output preserves scroll and selection until the reader follows", async () => {
+  const harness = taskLogHarness();
+  const scroll = { scrollTop: 900, scrollHeight: 1000, clientHeight: 100 };
+  harness.content.parentElement = scroll;
+  const initial = harness.context.openTaskLog({ id: "A" });
+  harness.complete(0, { status: "running", text: "first" });
+  await initial;
+  scroll.scrollTop = 100;
+  harness.context.window.getSelection = () => ({ isCollapsed: false, anchorNode: harness.content });
+  const next = fireTimer(harness, 5000);
+  harness.complete(1, { status: "running", text: "first\nsecond" });
+  await next;
+  assert.equal(harness.content.textContent, "first");
+  assert.equal(scroll.scrollTop, 100);
+  assert.match(harness.meta.textContent, /New output available/);
+  harness.context.closeTaskLogModal();
+  assert.equal(harness.timers.size, 0);
+});
+
+test("deadline failure retains output and reconnects with bounded backoff", async () => {
+  const harness = taskLogHarness();
+  const initial = harness.context.openTaskLog({ id: "A" });
+  harness.complete(0, { status: "running", text: "useful output" });
+  await initial;
+  const next = fireTimer(harness, 5000);
+  fireTimer(harness, 20000);
+  assert.equal(harness.requests[1].options.signal.aborted, true);
+  harness.requests[1].reject(new Error("aborted"));
+  await next;
+  assert.equal(harness.content.textContent, "useful output");
+  assert.match(harness.meta.textContent, /may be stale/);
+  assert.equal([...harness.timers.values()][0].delay, 5000);
+  harness.context.closeTaskLogModal();
+});
+
+test("revoked access stops polling without clearing the retained page", async () => {
+  const harness = taskLogHarness();
+  const initial = harness.context.openTaskLog({ id: "A" });
+  harness.complete(0, { status: "running", text: "useful output" });
+  await initial;
+  const next = fireTimer(harness, 5000);
+  harness.requests[1].resolve({ ok: false, status: 403 });
+  await next;
+  assert.equal(harness.content.textContent, "useful output");
+  assert.match(harness.meta.textContent, /Access expired/);
+  assert.equal(harness.timers.size, 0);
+});
+
+test("the scrolling code element owns follow and reading-position preservation", async () => {
+  const harness = taskLogHarness();
+  Object.assign(harness.content, { scrollTop: 0, scrollHeight: 1000, clientHeight: 100 });
+  harness.content.parentElement = { scrollTop: 0, scrollHeight: 100, clientHeight: 100 };
+  harness.context.window.getComputedStyle = () => ({ overflowY: "auto" });
+  const initial = harness.context.openTaskLog({ id: "A" });
+  harness.complete(0, { status: "running", text: "first" });
+  await initial;
+  assert.equal(harness.content.scrollTop, 1000);
+  assert.equal(harness.content.parentElement.scrollTop, 0);
+  harness.content.scrollTop = 100;
+  const next = fireTimer(harness, 5000);
+  harness.complete(1, { status: "running", text: "first\nsecond" });
+  await next;
+  assert.equal(harness.content.scrollTop, 100);
+  assert.equal(harness.content.textContent, "first");
+  assert.match(harness.meta.textContent, /reading position preserved/);
+  harness.context.closeTaskLogModal();
+});
+
+test("an authentication redirect stops the live viewer", async () => {
+  const harness = taskLogHarness();
+  const initial = harness.context.openTaskLog({ id: "A" });
+  harness.requests[0].resolve({ ok: true, redirected: true, status: 200,
+    url: "https://atlaso.test/ui/management/login?next=/tasks" });
+  await initial;
+  assert.match(harness.meta.textContent, /Access expired/);
+  assert.equal(harness.timers.size, 0);
 });
