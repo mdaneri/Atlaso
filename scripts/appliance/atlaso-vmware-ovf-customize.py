@@ -1426,20 +1426,23 @@ def write_networkd_config(config: dict[str, object]) -> None:
     if config["management_mode"] == "dhcp":
         lines.append("DHCP=ipv4")
     else:
-        lines.append(f"Address={config['cidr']}")
         lines.append(f"Gateway={config['gateway']}")
     if config["ipv6_mode"] == "disabled":
         lines.extend(["IPv6AcceptRA=no", "LinkLocalAddressing=no"])
     elif config["ipv6_mode"] == "auto":
         lines.extend(["IPv6AcceptRA=yes", "LinkLocalAddressing=ipv6"])
     else:
-        lines.extend(["IPv6AcceptRA=no", "LinkLocalAddressing=ipv6", f"Address={config['ipv6_cidr']}"])
+        lines.extend(["IPv6AcceptRA=no", "LinkLocalAddressing=ipv6"])
         if config["ipv6_gateway"]:
             lines.append(f"Gateway={config['ipv6_gateway']}")
     lines.extend(f"DNS={server}" for server in config["dns_servers"])
     if config["management_mode"] == "dhcp":
         # Match the portable image and Network Apply lease-retention policy.
-        lines.extend(["", "[DHCPv4]", "SendRelease=no"])
+        lines.extend(["", "[DHCPv4]", "SendRelease=no", "SendDecline=yes"])
+    if config["management_mode"] != "dhcp":
+        lines.extend(["", "[Address]", f"Address={config['cidr']}", "DuplicateAddressDetection=ipv4"])
+    if config["ipv6_mode"] == "static":
+        lines.extend(["", "[Address]", f"Address={config['ipv6_cidr']}", "DuplicateAddressDetection=ipv6"])
     content = "\n".join(lines).strip() + "\n"
     NETWORKD_PATH.parent.mkdir(parents=True, exist_ok=True)
     NETWORKD_PATH.write_text(content, encoding="utf-8")

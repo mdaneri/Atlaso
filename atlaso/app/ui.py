@@ -5289,6 +5289,9 @@ def network_context(db: Session) -> dict:
     Args:
         db: Active database session.
     """
+    from atlaso.app.services.network_address_status import read_status, row_status
+
+    address_evidence = read_status(db)
     interfaces = db.execute(select(PhysicalInterface).order_by(PhysicalInterface.name)).scalars().all()
     vlans = db.execute(select(VlanInterface).order_by(VlanInterface.parent_interface, VlanInterface.vlan_id)).scalars().all()
     interfaces_by_name = {interface.name: interface for interface in interfaces}
@@ -5306,19 +5309,19 @@ def network_context(db: Session) -> dict:
     return {
         "physical_interfaces": interfaces,
         "physical_interface_rows": [
-            physical_interface_to_dict(
+            dict(physical_interface_to_dict(
                 interface,
                 vlan_counts.get(interface.name, 0),
                 observed_ipv4_gateway=observed_ipv4_gateways.get(interface.name, ""),
-            )
+            ), address_status=row_status(address_evidence, "physical", interface.id))
             for interface in interfaces
         ],
         "vlan_interfaces": vlans,
         "vlan_interface_rows": [
-            vlan_interface_to_dict(
+            dict(vlan_interface_to_dict(
                 vlan,
                 parent_missing=bool((parent := interfaces_by_name.get(vlan.parent_interface)) and parent.oper_state == "missing"),
-            )
+            ), address_status=row_status(address_evidence, "vlan", vlan.id))
             for vlan in vlans
         ],
         "interface_names": [interface.name for interface in interfaces],
@@ -9748,6 +9751,7 @@ def network_management_paths(config_preview: str) -> list[dict[str, str]]:
                 "name": row.get("name", ""),
                 "parent": row.get("parent", ""),
                 "parent_admin_state": physical_admin_states.get(row.get("parent", ""), ""),
+                "check_duplicate_ip_addresses": row.get("check_duplicate_ip_addresses", "false"),
                 "role": row.get("role", ""),
                 "mtu": row.get("mtu", ""),
                 "ipv4_method": row.get("ipv4_method", ""),

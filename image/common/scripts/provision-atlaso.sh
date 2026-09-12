@@ -837,15 +837,15 @@ log_step "configuring final appliance management network"
   if [ "$ATLASO_MGMT_USES_DHCP" = "true" ]; then
     printf 'DHCP=ipv4\n'
     # Keep the server's lease through reboot, matching Photon's DHCP default.
-    printf '\n[DHCPv4]\nSendRelease=no\n'
+    printf '\n[DHCPv4]\nSendRelease=no\nSendDecline=yes\n'
   else
-    printf 'Address=%s\n' "$ATLASO_MGMT_ADDRESS"
     if [ -n "$ATLASO_MGMT_GATEWAY" ]; then
       printf 'Gateway=%s\n' "$ATLASO_MGMT_GATEWAY"
     fi
     for dns_server in $ATLASO_MGMT_DNS; do
       printf 'DNS=%s\n' "$dns_server"
     done
+    printf '\n[Address]\nAddress=%s\nDuplicateAddressDetection=ipv4\n' "$ATLASO_MGMT_ADDRESS"
   fi
 } >/etc/systemd/network/00-atlaso-mgmt.network
 chmod 0644 /etc/systemd/network/00-atlaso-mgmt.network

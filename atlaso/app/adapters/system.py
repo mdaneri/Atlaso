@@ -299,6 +299,13 @@ class SystemAdapter:
         """Return esx storage logs."""
         return self._helper_result("esx-storage", "logs", dry_run_message="dry-run: ESX Storage log read command recorded", timeout_seconds=5)
 
+    def read_network_address_status(self) -> AdapterResult:
+        """Read sanitized native network outcomes without sending packets or changing configuration."""
+        return self._helper_result(
+            "network", "address-status", timeout_seconds=15,
+            dry_run_message='{"complete":false,"links":[],"conflicts":[]}',
+        )
+
     def read_dhcp_leases(self) -> AdapterResult:
         """Return dhcp leases."""
         if self.dry_run:

@@ -141,3 +141,37 @@ test("management-to-access conversion warns when no gateway can be migrated", as
   assert.match(options.detail, /IPv4 default route: not staged - no prior gateway/);
   assert.match(options.detail, /IPv6 default route: not staged - no prior gateway/);
 });
+
+
+test("address evidence keeps failed attempts distinct from restored addresses and escapes text", () => {
+  const context = vm.createContext({
+    escapeHtml: (value) => String(value).replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;"),
+  });
+  vm.runInContext(`${functionSource("networkAddressStatusHtml")} globalThis.render = networkAddressStatusHtml;`, context);
+  const rendered = context.render({ state: "conflict", detail: "Rejected 192.0.2.20 <script>", active_addresses: ["192.0.2.10"], last_conflict: { detected_at: "2026-09-12T00:00:00Z", mac: "" } });
+  assert.match(rendered, /IP conflict/);
+  assert.match(rendered, /Active: 192.0.2.10/);
+  assert.match(rendered, /Detected: 2026-09-12/);
+  assert.doesNotMatch(rendered, /<script>|MAC:/);
+  assert.match(context.render({}), /Unable to check/);
+});
+
+test("address status refresh never replaces a desired edit in progress", async () => {
+  class Element {}
+  const element = new Element();
+  const desired = { id: 1, ip_cidr: "192.0.2.30/24", check_duplicate_ip_addresses: false };
+  const updates = [];
+  element.atlasoTabulator = { getRow: () => ({ update: async (value) => { updates.push(value); Object.assign(desired, value); } }) };
+  const context = vm.createContext({
+    HTMLElement: Element, URL,
+    document: { querySelector: () => element, getElementById: () => null, visibilityState: "visible", addEventListener() {} },
+    window: { location: { href: "https://atlaso.test/physical-interfaces" }, clearTimeout() {}, setTimeout() {} },
+    fetch: async () => ({ ok: true, json: async () => ({ rows: [{ id: 1, ip_cidr: "192.0.2.10/24", check_duplicate_ip_addresses: true, address_status: { state: "checking" } }] }) }),
+  });
+  vm.runInContext(`${functionSource("initializeNetworkAddressStatusRefresh")} initializeNetworkAddressStatusRefresh();`, context);
+  await new Promise(setImmediate);
+  assert.equal(updates.length, 1);
+  assert.deepEqual(Object.keys(updates[0]), ["address_status"]);
+  assert.equal(desired.ip_cidr, "192.0.2.30/24");
+  assert.equal(desired.check_duplicate_ip_addresses, false);
+});

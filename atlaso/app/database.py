@@ -446,6 +446,11 @@ def init_db() -> None:
                             "access_management_ui_enabled BOOLEAN NOT NULL DEFAULT 0"
                         )
                     )
+                if "check_duplicate_ip_addresses" not in interface_columns:
+                    connection.execute(text(
+                        f"ALTER TABLE {table_name} ADD COLUMN "
+                        "check_duplicate_ip_addresses BOOLEAN NOT NULL DEFAULT 1"
+                    ))
             columns = {
                 row[1]
                 for row in connection.execute(

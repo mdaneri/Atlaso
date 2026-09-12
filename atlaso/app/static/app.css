@@ -3330,6 +3330,11 @@ textarea {
   padding: 4px 6px;
 }
 
+.tabulator .tabulator-row .tabulator-cell[tabulator-field="address_status"] {
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
 .tabulator .tabulator-row .tabulator-cell.tabulator-editing {
   overflow: visible;
   z-index: 30;

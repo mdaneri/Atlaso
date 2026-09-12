@@ -203,6 +203,7 @@ class PhysicalInterface(Base):
     """Represent physical interface.
 
     Attributes:
+        check_duplicate_ip_addresses: Desired native IPv4 conflict detection policy, activated by Network Apply.
         id: Unique database identifier for the resource.
         name: Operator-facing name of the resource.
         mac_address: Persisted mac address for the physicalinterface resource.
@@ -230,6 +231,8 @@ class PhysicalInterface(Base):
         missing_since: Persisted missing since for the physicalinterface resource.
     """
     __tablename__ = "physical_interfaces"
+
+    check_duplicate_ip_addresses: Mapped[bool] = mapped_column(Boolean, default=True, server_default="1")
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     name: Mapped[str] = mapped_column(String(50), unique=True, index=True)
@@ -262,6 +265,7 @@ class VlanInterface(Base):
     """Represent vlan interface.
 
     Attributes:
+        check_duplicate_ip_addresses: Desired native IPv4 conflict detection policy, activated by Network Apply.
         id: Unique database identifier for the resource.
         name: Operator-facing name of the resource.
         parent_interface: Persisted parent interface for the vlaninterface resource.
@@ -274,6 +278,8 @@ class VlanInterface(Base):
         access_management_ui_enabled: Whether an enabled access VLAN also exposes the management UI.
     """
     __tablename__ = "vlan_interfaces"
+
+    check_duplicate_ip_addresses: Mapped[bool] = mapped_column(Boolean, default=True, server_default="1")
     __table_args__ = (UniqueConstraint("parent_interface", "vlan_id", name="uq_vlan_parent_id"),)
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)

@@ -231,6 +231,42 @@ with its entered values. Saving refreshes validation and the configuration previ
 global **Appliance Apply** with the `network` unit when the reviewed desired state is ready for enforcement. Delete
 remains a confirmed row-context action.
 
+## Check for duplicate IP addresses
+
+Physical Interfaces and the VLAN addressing wizard expose **Check for duplicate IP addresses**.
+It defaults to enabled, including when an older database or settings archive lacks the field.
+Explicit opt-outs survive edits, upgrades, and backup/restore. Saving changes desired state only;
+use **Appliance Apply** with Network selected to activate the policy. An upgrade does not silently
+reconfigure existing host interfaces.
+
+On Ethernet and tagged VLAN links, static IPv4 uses systemd-networkd ARP address conflict detection
+before activation. Management DHCPv4 uses networkd's `SendDecline=yes`: a rejected offered address
+is declined and the native client retries. Atlaso retains `SendRelease=no` during reconfiguration.
+Turning this setting off disables these IPv4 checks for that interface. It never chooses a replacement
+static address. The helper requires systemd 252 or newer and a usable Ethernet identity before
+installing an enabled IPv4 candidate; unsupported or unavailable evidence produces **Unable to check**.
+
+IPv6 is independent: static addresses retain native IPv6 DAD, and existing RA/SLAAC and DHCPv6
+behavior continues to use native IPv6 detection. This switch does not enable DHCPv6, disable IPv6 DAD,
+or change router-advertisement policy. An address on a different link or VLAN is not, by itself,
+evidence of a conflict. Native detection can miss a silent, offline, or isolated peer; an active address
+is not proof of global uniqueness.
+
+The **Address status** column refreshes while the page is visible. The VLAN wizard also shows the
+selected row's evidence. **Checking**, **IP conflict**, **Addresses active**, and **Unable to check**
+distinguish tentative addresses, confirmed rejection, observed activation, and missing/stale evidence.
+The retained failure names the attempted address, link, and detection time; a conflicting MAC appears
+only when the native evidence supplies one. Native networkd rejection messages do not normally include
+that MAC, so Atlaso does not infer it from stale neighbor entries.
+
+A rejected management candidate fails Apply and follows the protected management rollback path. The
+last attempted address stays visible separately from currently active addresses, including a restored
+working management address. Correct the desired address and apply again. Later successful activation
+resolves the current warning while retaining the last failure for diagnosis. Runtime observations are
+bounded to 256 interface records, retained separately from desired/applied baselines, and excluded from
+settings archives. Evidence older than 30 seconds is marked stale. The worker observes native outcomes
+at boot and during DHCP/reconfigure activity without issuing extra probes or changing host settings.
+
 ## Verify and roll back
 
 Confirm the management URL, expected routes, and interface state after apply and again after an appliance reboot. For a

@@ -26,6 +26,7 @@ import subprocess
 import sys
 import tarfile
 import tempfile
+import threading
 import time
 import uuid
 from collections.abc import Callable
@@ -83,7 +84,7 @@ COMMANDS: dict[str, set[str]] = {
     "local-users": {"validate", "apply", "status", "authenticate"},
     "appliance-settings": {"validate", "preflight", "apply"},
     "web-terminal": {"status", "sign"},
-    "network": {"validate", "apply", "dhcp-dns"},
+    "network": {"validate", "apply", "dhcp-dns", "address-status"},
     "management-front-door": {"recover"},
     "management-handoff": {"validate", "apply", "acknowledge", "recover"},
     "firewall": {"validate", "apply"},
@@ -219,6 +220,7 @@ NON_PATH_ARGUMENT_ACTIONS = {
     ("automation", "run"),
     ("vcf-offline-depot", "apply-ceip"),
     ("network", "dhcp-dns"),
+    ("network", "address-status"),
     ("management-handoff", "acknowledge"),
     ("appliance-update", "status-publish"),
     ("appliance-update", "status-finish"),
@@ -8105,13 +8107,12 @@ def _systemd_networkd_files(path: Path) -> tuple[dict[str, str], list[str], list
         ]
         if ipv4_method == "dhcp":
             lines.append("DHCP=ipv4")
-        elif interface.get("ip_cidr"):
-            lines.append(f"Address={interface['ip_cidr']}")
+
         if not ipv6_enabled:
             lines.extend(["IPv6AcceptRA=no", "LinkLocalAddressing=no"])
         elif interface.get("ipv6_cidr"):
             lines.extend(["IPv6AcceptRA=no", "LinkLocalAddressing=ipv6"])
-            lines.append(f"Address={interface['ipv6_cidr']}")
+
         else:
             lines.extend(["IPv6AcceptRA=yes", "LinkLocalAddressing=ipv6"])
         if name == management_name:
@@ -8167,9 +8168,14 @@ def _systemd_networkd_files(path: Path) -> tuple[dict[str, str], list[str], list
                         f"Table={MANAGEMENT_ROUTE_TABLE_ID}",
                     ]
                 )
-        if name == management_name and ipv4_method == "dhcp":
+        if ipv4_method == "dhcp":
             # Preserve the image's lease-retention policy when Network Apply rewrites this file.
-            lines.extend(["", "[DHCPv4]", "SendRelease=no"])
+            lines.extend(["", "[DHCPv4]", "SendRelease=no",
+                          "SendDecline=" + ("no" if interface.get("check_duplicate_ip_addresses") == "false" else "yes")])
+        for key, family in (("ip_cidr", "ipv4"), ("ipv6_cidr", "ipv6")):
+            if interface.get(key) and (family != "ipv4" or ipv4_method != "dhcp") and (family != "ipv6" or ipv6_enabled):
+                detection = "none" if family == "ipv4" and interface.get("check_duplicate_ip_addresses") == "false" else family
+                lines.extend(["", "[Address]", f"Address={interface[key]}", f"DuplicateAddressDetection={detection}"])
         filename = "00-atlaso-mgmt.network" if name == management_name else _networkd_managed_filename(name, "network")
         files[filename] = "\n".join(lines).strip() + "\n"
         if name != management_name:
@@ -8198,10 +8204,10 @@ def _systemd_networkd_files(path: Path) -> tuple[dict[str, str], list[str], list
             "[Network]",
             "IPv6AcceptRA=no",
         ]
-        if vlan.get("ip_cidr"):
-            network_lines.append(f"Address={vlan['ip_cidr']}")
-        if vlan.get("ipv6_cidr"):
-            network_lines.append(f"Address={vlan['ipv6_cidr']}")
+        for key, family in (("ip_cidr", "ipv4"), ("ipv6_cidr", "ipv6")):
+            if vlan.get(key):
+                detection = "none" if family == "ipv4" and vlan.get("check_duplicate_ip_addresses") == "false" else family
+                network_lines.extend(["", "[Address]", f"Address={vlan[key]}", f"DuplicateAddressDetection={detection}"])
         if not vlan.get("ip_cidr") and not vlan.get("ipv6_cidr"):
             network_lines.append("LinkLocalAddressing=no")
         files[_networkd_managed_filename(name, "network")] = "\n".join(network_lines).strip() + "\n"
@@ -8237,6 +8243,9 @@ def _network_config_errors(path: Path) -> list[str]:
     """
     physical_interfaces, vlan_interfaces, removed_vlan_interfaces = _parse_network_config(path)
     errors: list[str] = []
+    for row in physical_interfaces + vlan_interfaces:
+        if row.get("check_duplicate_ip_addresses", "true") not in {"true", "false"}:
+            errors.append("check_duplicate_ip_addresses must be true or false.")
     physical_modes = {row.get("name", ""): row.get("mode", "") for row in physical_interfaces}
     physical_names = set(physical_modes)
     management_entries = [row for row in physical_interfaces if row.get("role") == "management"]
@@ -8521,24 +8530,12 @@ def _apply_vlan_interfaces(
         print(link_up.stderr, end="", file=sys.stderr)
         if link_up.returncode != 0:
             return link_up.returncode
-        if name not in preserve_address_links:
-            flush = _run(["ip", "address", "flush", "dev", name, "scope", "global"])
-            print(flush.stdout, end="")
-            print(flush.stderr, end="", file=sys.stderr)
-            if flush.returncode != 0:
-                return flush.returncode
-        if vlan.get("ip_cidr"):
-            address = _run(["ip", "address", "replace", vlan["ip_cidr"], "dev", name])
-            print(address.stdout, end="")
-            print(address.stderr, end="", file=sys.stderr)
-            if address.returncode != 0:
-                return address.returncode
-        if vlan.get("ipv6_cidr"):
-            address = _run(["ip", "address", "replace", vlan["ipv6_cidr"], "dev", name])
-            print(address.stdout, end="")
-            print(address.stderr, end="", file=sys.stderr)
-            if address.returncode != 0:
-                return address.returncode
+        # networkd owns address activation, including ARP ACD and IPv6 DAD.
+        # Direct address replacement would bypass its before-use conflict check.
+        reconfigure = _run(["networkctl", "reconfigure", name])
+        if reconfigure.returncode != 0:
+            print(f"Could not reconfigure VLAN {name}", file=sys.stderr)
+            return reconfigure.returncode
     print(
         json.dumps(
             {"network": "vlan apply complete", "removed_vlans": removed_names, "vlans": [vlan["name"] for vlan in vlan_interfaces]},
@@ -8617,6 +8614,234 @@ def _install_systemd_networkd_files(
     return 0, installed, reconfigure_links, admin_down_links
 
 
+def _network_observation_command(command: list[str], *, timeout: float = 4) -> subprocess.CompletedProcess[str]:
+    """Bound native observation output in memory and reap the child on timeout.
+
+    Args:
+        command: Fixed internal read-only command, never supplied by API callers.
+        timeout: Maximum command runtime in seconds.
+    """
+    buffer = bytearray()
+    overflow = threading.Event()
+    with subprocess.Popen(command, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
+                          stderr=subprocess.DEVNULL, env={"PATH": "/usr/sbin:/usr/bin:/sbin:/bin", "LC_ALL": "C"}) as process:
+        assert process.stdout is not None
+        stdout = process.stdout
+
+        def drain() -> None:
+            """Read no more than the observation cap without retaining raw stderr."""
+            while chunk := stdout.read(4096):
+                if len(buffer) + len(chunk) > 262144:
+                    overflow.set()
+                    return
+                buffer.extend(chunk)
+
+        reader = threading.Thread(target=drain, daemon=True)
+        reader.start()
+        deadline = time.monotonic() + timeout
+        try:
+            while process.poll() is None:
+                if overflow.is_set() or time.monotonic() >= deadline:
+                    raise ValueError("Native address observation exceeded its output or time limit")
+                time.sleep(0.05)
+            reader.join(timeout=1)
+            if overflow.is_set() or reader.is_alive():
+                raise ValueError("Native address observation was incomplete")
+        finally:
+            if process.poll() is None:
+                process.kill()
+            process.wait(timeout=2)
+            reader.join(timeout=2)
+    return subprocess.CompletedProcess(command, process.returncode, buffer.decode("utf-8", errors="strict"), "")
+
+
+def _network_address_observation() -> dict:
+    """Return bounded, sanitized native address and conflict evidence without probing links."""
+    observed_at = datetime.now(timezone.utc).isoformat()
+    result = {"observed_at": observed_at, "links": [], "conflicts": [], "complete": False}
+    try:
+        addresses = _network_observation_command(["ip", "-j", "-d", "address", "show"], timeout=4)
+        journal = _network_observation_command([
+            "journalctl", "--boot", "--unit=systemd-networkd.service", "--since=-1day",
+            "--no-pager", "--lines=256", "--output=json",
+            "--output-fields=MESSAGE,INTERFACE,__REALTIME_TIMESTAMP,_BOOT_ID",
+        ], timeout=4)
+        networkd = _network_observation_command(["networkctl", "--json=short", "list"], timeout=4)
+        native_links = {}
+        if networkd.returncode == 0:
+            native = json.loads(networkd.stdout)
+            for item in native.get("Interfaces", [])[:256]:
+                if isinstance(item, dict):
+                    native_links[item.get("Name", "")] = item
+        if addresses.returncode or len(addresses.stdout) > 262144:
+            return result
+        rows = json.loads(addresses.stdout)
+        if not isinstance(rows, list) or len(rows) > 256:
+            return result
+        for row in rows:
+            if not isinstance(row, dict):
+                continue
+            name = str(row.get("ifname", ""))
+            if not _valid_network_interface_name(name):
+                continue
+            native_link = native_links.get(name, {})
+            sources = {}
+            for item in native_link.get("Addresses", [])[:32]:
+                try:
+                    native_address = str(ip_address(bytes(item["Address"])))
+                    sources[native_address] = item.get("ConfigSource", "")
+                except (ValueError, TypeError, KeyError):
+                    continue
+            records = []
+            for info in row.get("addr_info", [])[:32]:
+                if not isinstance(info, dict):
+                    continue
+                try:
+                    address = str(ip_address(info.get("local", "")))
+                except ValueError:
+                    continue
+                flags = set(info.get("flags", []))
+                flags.update(key for key in ("tentative", "dadfailed") if info.get(key))
+                records.append({"address": address, "source": sources.get(address, ""), "state": "conflict" if "dadfailed" in flags else "checking" if "tentative" in flags else "assigned"})
+            mac = str(row.get("address", "")).lower()
+            link_info = row.get("linkinfo") or {}
+            vlan_data = link_info.get("info_data") or {}
+            result["links"].append({
+                "name": name, "ifindex": row.get("ifindex"),
+                "kind": "vlan" if link_info.get("info_kind") == "vlan" else "",
+                "vlan_id": vlan_data.get("id") if isinstance(vlan_data.get("id"), int) else None,
+                "parent_index": row.get("link_index") if isinstance(row.get("link_index"), int) else None,
+                "parent": row.get("link", "") if _valid_network_interface_name(str(row.get("link", ""))) else "",
+                "mac": mac if re.fullmatch(r"(?:[0-9a-f]{2}:){5}[0-9a-f]{2}", mac) else "",
+                "ethernet": row.get("link_type") == "ether", "configured": native_link.get("AdministrativeState") == "configured",
+                "configuring": native_link.get("AdministrativeState") == "configuring",
+                "up": "UP" in row.get("flags", []),
+                "carrier": "LOWER_UP" in row.get("flags", []), "addresses": records,
+            })
+        if journal.returncode or len(journal.stdout) > 262144:
+            return result
+        for line in journal.stdout.splitlines()[-256:]:
+            entry = json.loads(line)
+            if not isinstance(entry, dict):
+                continue
+            message = entry.get("MESSAGE", "")
+            if not isinstance(message, str) or len(message) > 2048:
+                continue
+            match = re.fullmatch(r"([A-Za-z0-9_.-]+): Dropping address ([0-9.]+), as an address conflict was detected\.", message)
+            if not match or entry.get("INTERFACE", match[1]) != match[1]:
+                continue
+            try:
+                address = str(ip_address(match[2]))
+                detected_at = datetime.fromtimestamp(int(entry["__REALTIME_TIMESTAMP"]) / 1000000, timezone.utc).isoformat()
+            except (ValueError, KeyError, OverflowError, OSError):
+                continue
+            result["conflicts"].append({"name": match[1], "address": address, "detected_at": detected_at, "mac": ""})
+        result["complete"] = networkd.returncode == 0 and bool(native_links)
+    except (OSError, ValueError, TypeError, subprocess.TimeoutExpired):
+        return result
+    return result
+
+
+def _native_vlan_matches(row: dict, links: dict) -> bool:
+    """Require the configured VLAN tag and actual parent link to match.
+
+    Args:
+        row: Validated staged VLAN identity.
+        links: Sanitized native link observations indexed by name.
+    """
+    link = links.get(row["name"], {})
+    parent = links.get(row["parent"], {})
+    return bool(link and parent and link.get("kind") == "vlan"
+                and str(link.get("vlan_id")) == str(row["vlan_id"])
+                and (link.get("parent") == row["parent"]
+                     or (link.get("parent_index") and link.get("parent_index") == parent.get("ifindex"))))
+
+
+def _network_detection_preflight(path: Path) -> None:
+    """Require native IPv4 ACD support before installing any candidate files.
+
+    Args:
+        path: Validated staged network intent.
+    """
+    physical, vlans, _removed = _parse_network_config(path)
+    checked = [row for row in physical + vlans
+               if row.get("check_duplicate_ip_addresses", "true") != "false"
+               and row.get("admin_state", "up") != "down"
+               and (row.get("ip_cidr") or row.get("ipv4_method") == "dhcp")]
+    if not checked:
+        return
+    version = _run(["networkctl", "--version"], timeout=4)
+    match = re.search(r"systemd (\d+)", version.stdout)
+    if version.returncode or not match or int(match[1]) < 252:
+        raise ValueError("Unable to check IPv4 addresses: systemd-networkd 252 or newer is required")
+    observation = _network_address_observation()
+    links = {row["name"]: row for row in observation["links"]}
+    for row in vlans:
+        if row["name"] in links and not _native_vlan_matches(row, links):
+            raise ValueError(f"Unable to check VLAN {row['name']}: native tag or parent identity differs")
+    for row in checked:
+        name = row.get("parent", row.get("name", ""))
+        link = links.get(name)
+        if not link or not link["ethernet"] or not link["mac"]:
+            raise ValueError(f"Unable to check IPv4 addresses on {name}: Ethernet link identity unavailable")
+
+
+def _wait_network_addresses(path: Path, *, attempts: int = 15, started_at: str | None = None) -> dict:
+    """Wait for candidate addresses without treating a missing result as a conflict.
+
+    Args:
+        path: Exact staged intent whose activation must be proven.
+        attempts: Bounded number of readiness samples for all links together.
+        started_at: Candidate activation start, excluding failures from earlier attempts.
+    """
+    physical, vlans, _removed = _parse_network_config(path)
+    requirements = []
+    for row in physical + vlans:
+        if row.get("admin_state", "up") == "down":
+            continue
+        for key in ("ip_cidr", "ipv6_cidr"):
+            if key == "ipv6_cidr" and row.get("ipv6_enabled") == "false":
+                continue
+            if row.get(key):
+                requirements.append((row["name"], str(ip_interface(row[key]).ip)))
+        if row.get("ipv4_method") == "dhcp":
+            requirements.append((row["name"], "dhcp4"))
+        if row.get("ipv6_enabled") == "true" and not row.get("ipv6_cidr"):
+            requirements.append((row["name"], "auto6"))
+    missing = []
+    started_at = started_at or datetime.now(timezone.utc).isoformat()
+    deadline = time.monotonic() + 30
+    for attempt in range(max(1, attempts)):
+        observation = _network_address_observation()
+        links = {row["name"]: row for row in observation["links"]}
+        missing = []
+        for vlan in vlans:
+            if vlan["name"] in links and not _native_vlan_matches(vlan, links):
+                raise ValueError(f"Unable to check VLAN {vlan['name']}: native tag or parent identity differs")
+        for name, address in requirements:
+            records = links.get(name, {}).get("addresses", [])
+            matches = [item for item in records if item["address"] == address or (
+                address in {"dhcp4", "auto6"}
+                and ip_address(item["address"]).version == (4 if address == "dhcp4" else 6)
+                and not ip_address(item["address"]).is_link_local
+                and item.get("source") in ({"DHCPv4"} if address == "dhcp4" else {"DHCPv6", "NDisc"}))]
+            if any(item["state"] == "conflict" for item in matches):
+                raise ValueError(f"IP conflict on {name}: {address}")
+            if not links.get(name, {}).get("configured") or not any(item["state"] == "assigned" for item in matches):
+                missing.append((name, address))
+        if not missing:
+            return observation
+        if time.monotonic() >= deadline:
+            break
+        if attempt + 1 < attempts:
+            time.sleep(1)
+    conflicts = {(row["name"], row["address"]) for row in observation["conflicts"] if row["detected_at"] >= started_at}
+    for name, address in missing:
+        if (name, address) in conflicts:
+            raise ValueError(f"IP conflict on {name}: {address}")
+    raise ValueError("Unable to verify candidate addresses: " + ", ".join(f"{name} {address}" for name, address in missing))
+
+
 def _handle_network(action: str, args: list[str]) -> int:
     """Handle network.
 
@@ -8624,6 +8849,12 @@ def _handle_network(action: str, args: list[str]) -> int:
         action: Action consumed by handle network.
         args: Parsed command-line options consumed by the operation.
     """
+    if action == "address-status":
+        if args:
+            print("network address-status accepts no arguments", file=sys.stderr)
+            return 2
+        print(json.dumps(_network_address_observation(), sort_keys=True))
+        return 0
     if action == "dhcp-dns":
         if len(args) != 1:
             print("network dhcp-dns requires exactly one interface name", file=sys.stderr)
@@ -8667,12 +8898,23 @@ def _handle_network(action: str, args: list[str]) -> int:
             )
         )
         return 0
+    try:
+        _network_detection_preflight(config_path)
+    except (ValueError, OSError, subprocess.TimeoutExpired) as exc:
+        print(str(exc), file=sys.stderr)
+        return 2
+    activation_started = datetime.now(timezone.utc).isoformat()
     install_returncode, installed, reconfigure_links, admin_down_links = _install_systemd_networkd_files(config_path)
     if install_returncode != 0:
         return install_returncode
     vlan_returncode = _apply_vlan_interfaces(config_path)
     if vlan_returncode != 0:
         return vlan_returncode
+    try:
+        _wait_network_addresses(config_path, started_at=activation_started)
+    except ValueError as exc:
+        print(str(exc), file=sys.stderr)
+        return 2
     print(
         json.dumps(
             {
@@ -21251,9 +21493,16 @@ def _networkd_handoff_text(previous: str, candidate: str) -> str:
     """
     candidate_lines = candidate.rstrip().splitlines()
     previous_lines = previous.rstrip().splitlines()
+    previous_network_lines = []
+    section = ""
+    for line in previous_lines:
+        if line.startswith("["):
+            section = line
+        elif section == "[Network]":
+            previous_network_lines.append(line)
     network_values = [
         line
-        for line in previous_lines
+        for line in previous_network_lines
         if re.match(r"^(Address|DHCP|DNS|Domains|IPv6AcceptRA|LinkLocalAddressing)=", line)
         and line not in candidate_lines
         and not (line == "IPv6AcceptRA=no" and "IPv6AcceptRA=yes" in candidate_lines)
@@ -21271,7 +21520,7 @@ def _networkd_handoff_text(previous: str, candidate: str) -> str:
     previous_blocks: list[list[str]] = []
     index = 0
     while index < len(previous_lines):
-        if previous_lines[index] not in {"[Route]", "[RoutingPolicyRule]"}:
+        if previous_lines[index] not in {"[Address]", "[DHCPv4]", "[Route]", "[RoutingPolicyRule]"}:
             index += 1
             continue
         end = index + 1
@@ -21281,7 +21530,12 @@ def _networkd_handoff_text(previous: str, candidate: str) -> str:
         index = end
     candidate_text = "\n".join(candidate_lines)
     for block in previous_blocks:
+        if block[0] == "[DHCPv4]" and "[DHCPv4]" in candidate_lines:
+            continue
         block_text = "\n".join(block).strip()
+        address_line = next((line for line in block if line.startswith("Address=")), "")
+        if block and block[0] == "[Address]" and address_line in candidate_lines:
+            continue
         if block_text and block_text not in candidate_text:
             candidate_lines.extend(["", *block])
             candidate_text = "\n".join(candidate_lines)
@@ -21583,6 +21837,8 @@ def _management_handoff_addresses(
                 continue
             for entry in entries:
                 for info in entry.get("addr_info", []):
+                    if info.get("tentative") or info.get("dadfailed") or {"tentative", "dadfailed"}.intersection(info.get("flags", [])):
+                        continue
                     local = str(info.get("local") or "")
                     family = str(info.get("family") or "")
                     if info.get("scope") != "global" or not local or family not in families:
@@ -22727,6 +22983,8 @@ def _apply_management_handoff(payload: dict) -> int:
         return 1
     failing_layer = "snapshot"
     try:
+        failing_layer = "address detection preflight"
+        _network_detection_preflight(Path(str(payload["network_config_path"])))
         failing_layer = "previous-path preflight"
         previous_preflight = _management_handoff_readiness(
             list(state["previous_management_addresses"]),
@@ -22750,7 +23008,10 @@ def _apply_management_handoff(payload: dict) -> int:
             or (443 if candidate_https else 80)
         )
         failing_layer = "network"
+        activation_started = datetime.now(timezone.utc).isoformat()
         _apply_management_candidate_network(Path(str(payload["network_config_path"])), state)
+        failing_layer = "address activation"
+        _wait_network_addresses(Path(str(payload["network_config_path"])), started_at=activation_started)
         previous_firewall = FIREWALL_CONFIG_PATH.read_text(encoding="utf-8") if FIREWALL_CONFIG_PATH.is_file() else ""
         candidate_firewall_path = Path(str(payload["firewall_config_path"]))
         candidate_firewall = candidate_firewall_path.read_text(encoding="utf-8")
