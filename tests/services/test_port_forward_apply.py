@@ -119,6 +119,11 @@ def test_listener_only_apply_does_not_infer_forwarding_from_unreadable_snapshot(
     monkeypatch.setattr(SystemAdapter, "port_forward_status", lambda self: AdapterResult(
         command=[], dry_run=False, stdout=json.dumps({"runtime_has_port_forwards": presence}),
     ))
+    if presence is None:
+        def unavailable():
+            """Model an internal exception that must not reach the public response."""
+            raise ValueError("internal runtime diagnostic sentinel")
+        monkeypatch.setattr(ui, "runtime_has_port_forwards", unavailable)
     login(client)
     page = client.get("/dashboard")
     csrf = page.text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
@@ -127,6 +132,7 @@ def test_listener_only_apply_does_not_infer_forwarding_from_unreadable_snapshot(
     if presence is None:
         assert response.status_code == 422
         assert "Cannot verify applied forwarding" in response.json()["detail"]
+        assert "internal runtime diagnostic sentinel" not in response.text
     else:
         assert response.status_code == 202, response.text
         with SessionLocal() as db:

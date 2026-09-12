@@ -12679,6 +12679,7 @@ def execute_appliance_update_job(
         "success": succeeded,
         "dry_run": any(result.dry_run for result in results),
         "apply_started": mode == "run" and len(results) > 1 and not results[1].dry_run,
+        "ownership_unresolved": results[0].returncode == 75,
         "restart_after_commit": mode == "run"
         and succeeded
         and bool({"atlaso_release", "photon_os"} & set(selected_stream_ids)),
@@ -16512,8 +16513,8 @@ def _submit_appliance_apply(
             or snapshot_has_port_forwards(str(nat_baseline.get("config_preview") or ""))
             or runtime_has_port_forwards()
         )
-    except ValueError as exc:
-        detail = str(exc)
+    except ValueError:
+        detail = "Cannot verify applied forwarding intent; restore helper readiness before submitting appliance changes."
         return JSONResponse({"detail": detail}, status_code=422) if wants_json else Response(detail, status_code=422, media_type="text/plain")
     listener_units = {"appliance_settings", "dnsmasq", "esxi_pxe", "esx_storage", "ca", "kms", "ldap",
                       "ntpd", "vcf_backups", "vcf_offline_depot", "vcf_private_registry", "public_services"}

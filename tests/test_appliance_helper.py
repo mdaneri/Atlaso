@@ -9142,11 +9142,12 @@ def test_appliance_update_quiescence_stops_and_verifies_the_exact_unit(monkeypat
     commands = []
     states = iter(["active\n", "inactive\n"])
 
-    def fake_run(command):
+    def fake_run(command, *, timeout):
         """Return bounded systemctl state transitions.
 
         Args:
             command: Command and arguments to execute.
+            timeout: Bounded recovery command deadline.
         """
         commands.append(command)
         if command[1] == "is-active":
@@ -9154,6 +9155,8 @@ def test_appliance_update_quiescence_stops_and_verifies_the_exact_unit(monkeypat
         return subprocess.CompletedProcess(command, 0, "", "")
 
     monkeypatch.setattr(helper, "_run", fake_run)
+    cleaned = []
+    monkeypatch.setattr(helper, "_cleanup_stale_photon_repository_views", lambda **kwargs: cleaned.append(kwargs))
 
     evidence = helper._quiesce_appliance_update_action_unit(
         "job_012345abcdef",
@@ -9166,7 +9169,8 @@ def test_appliance_update_quiescence_stops_and_verifies_the_exact_unit(monkeypat
         ["systemctl", "stop", unit],
         ["systemctl", "is-active", unit],
     ]
-    assert evidence == {"unit": unit, "state": "inactive", "stopped": True}
+    assert evidence == {"unit": unit, "state": "inactive", "stopped": True, "credential_cleanup_verified": True}
+    assert cleaned == [{"check_owner": unit.removesuffix(".service")}]
 
 
 @pytest.mark.parametrize("action", ["status-publish", "status-finish"])
@@ -9443,11 +9447,13 @@ def test_appliance_update_receives_writable_powershell_environment(monkeypatch, 
     monkeypatch.setattr(
         helper,
         "_run",
-        lambda command: (
+        lambda command, **kwargs: (
             commands.append(command)
             or subprocess.CompletedProcess(command, 0, "", "")
         ),
     )
+    monkeypatch.setattr(helper, "_quiesce_appliance_update_unit", lambda *args, **kwargs: {})
+    monkeypatch.setattr(helper, "_cleanup_stale_photon_repository_views", lambda **kwargs: None)
 
     assert helper._run_real_action_with_systemd(
         "appliance-update",
