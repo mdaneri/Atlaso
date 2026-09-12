@@ -34,6 +34,7 @@ when their log files appear, without loading inactive log contents. These checks
 **Next page** and **Previous page** move through the complete retained history in bounded pages. From the live tail,
 **Previous page** opens the preceding group directly, including within a multiline journal record. The page size limits
 each response, not the total history you can inspect. Previous is unavailable at the oldest retained journal page.
+File pages include JSON escaping in their byte limit and retain complete-line continuation boundaries.
 Numbered file rotations, including compressed archives, are
 included and keep nginx sources available even when their current file is absent. Journal history remains subject
 to the appliance's journal retention policy. Classified DNS/DHCP/TFTP history also bounds raw scan windows; a window

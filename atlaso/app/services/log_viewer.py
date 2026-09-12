@@ -161,6 +161,15 @@ def redact_lines(lines: list[str], *, private_key: bool = False) -> tuple[list[s
     return output, private_key
 
 
+def _log_wire_size(line: str) -> int:
+    """Measure a displayed line after JSON escaping, including its separator.
+
+    Args:
+        line: Decoded retained line before transport serialization.
+    """
+    return len(json.dumps(line, ensure_ascii=False).encode("utf-8")) + 1
+
+
 def _tail_offset(handle: Any, *, compressed: bool, deadline: float, end: int | None = None, limit: int = 500) -> tuple[int, bool]:
     """Locate the newest bounded group without replaying pages to the client.
 
@@ -198,9 +207,16 @@ def _tail_offset(handle: Any, *, compressed: bool, deadline: float, end: int | N
         offset += boundary + 1
         data = data[boundary + 1:]
     starts = [0] + [match.end() for match in re.finditer(b"\n", data) if match.end() < len(data)]
-    if len(starts) > limit:
-        offset += starts[-limit:][0]
-    return offset, False
+    selected_start, wire_bytes, boundary = len(data), 0, len(data)
+    for start in reversed(starts[-limit:]):
+        line = data[start:boundary]
+        size = _log_wire_size(line.decode("utf-8", errors="replace").rstrip("\r\n")) if len(line) <= 65536 else 128
+        if wire_bytes and wire_bytes + size > 1024 * 1024 - 16384:
+            break
+        selected_start = start
+        wire_bytes += size
+        boundary = start
+    return offset + selected_start, False
 
 
 def _tail_private_key(paths: list[Path], offset: int, *, deadline: float) -> bool:
@@ -362,6 +378,7 @@ def file_page(path: Path, *, source: str, cursor: str = "", limit: int = PAGE_LI
             if (tail and not cursor) or backward:
                 if position.get("oversized") is True:
                     lines.append("[Oversized log entry omitted: reading retained history in bounded groups.]")
+            wire_bytes = 0
             partial = False
             oversized = position.get("oversized") is True
             while len(lines) < max(1, min(PAGE_LINES, limit)) and handle.tell() - offset < PAGE_BYTES and (page_end is None or handle.tell() < page_end):
@@ -383,8 +400,14 @@ def file_page(path: Path, *, source: str, cursor: str = "", limit: int = PAGE_LI
                     handle.seek(start)
                     partial = True
                     break
+                decoded = line.decode("utf-8", errors="replace").rstrip("\r\n")
+                size = _log_wire_size(decoded)
+                if wire_bytes + size > PAGE_BYTES - 16384:
+                    handle.seek(start)
+                    break
+                wire_bytes += size
                 marker_prefix = b""
-                lines.append(line.decode("utf-8", errors="replace").rstrip("\r\n"))
+                lines.append(decoded)
             next_offset = handle.tell()
             more = bool(handle.read(1)) and not partial
             handle.seek(0)

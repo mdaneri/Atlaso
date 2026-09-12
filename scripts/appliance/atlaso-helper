@@ -1699,6 +1699,15 @@ def _read_dnsmasq_leases() -> int:
     return 0
 
 
+def _log_wire_size(line: str) -> int:
+    """Measure a displayed line after JSON escaping, including its separator.
+
+    Args:
+        line: Decoded retained line before transport serialization.
+    """
+    return len(json.dumps(line, ensure_ascii=False).encode("utf-8")) + 1
+
+
 def _tail_offset(handle, *, compressed: bool, deadline: float, end: int | None = None, limit: int = 500) -> tuple[int, bool]:
     """Locate the newest bounded group without replaying pages to the client.
 
@@ -1736,9 +1745,16 @@ def _tail_offset(handle, *, compressed: bool, deadline: float, end: int | None =
         offset += boundary + 1
         data = data[boundary + 1:]
     starts = [0] + [match.end() for match in re.finditer(b"\n", data) if match.end() < len(data)]
-    if len(starts) > limit:
-        offset += starts[-limit]
-    return offset, False
+    selected_start, wire_bytes, boundary = len(data), 0, len(data)
+    for start in reversed(starts[-limit:]):
+        line = data[start:boundary]
+        size = _log_wire_size(line.decode("utf-8", errors="replace").rstrip("\r\n")) if len(line) <= 65536 else 128
+        if wire_bytes and wire_bytes + size > 1024 * 1024 - 16384:
+            break
+        selected_start = start
+        wire_bytes += size
+        boundary = start
+    return offset + selected_start, False
 
 
 def _tail_private_key(paths: list[Path], offset: int, *, deadline: float) -> bool:
@@ -1904,7 +1920,7 @@ def _read_fixed_log_history(path: Path, position: dict) -> dict:
                 handle.seek(offset)
             marker_prefix = _history_window(handle, offset, compressed=candidate.suffix == ".gz", deadline=deadline)[-128:]
             lines = []
-            consumed = 0
+            consumed = wire_bytes = 0
             if opening_tail:
                 if position.get("oversized") is True:
                     lines.append("[Oversized log entry omitted: reading retained history in bounded groups.]")
@@ -1930,9 +1946,15 @@ def _read_fixed_log_history(path: Path, position: dict) -> dict:
                     handle.seek(start)
                     partial = True
                     break
+                decoded = line.decode("utf-8", errors="replace").rstrip("\r\n")
+                size = _log_wire_size(decoded)
+                if wire_bytes + size > 1024 * 1024 - 16384:
+                    handle.seek(start)
+                    break
+                wire_bytes += size
                 consumed += len(line)
                 marker_prefix = b""
-                lines.append(line.decode("utf-8", errors="replace").rstrip("\r\n"))
+                lines.append(decoded)
             next_offset = handle.tell()
             more = bool(handle.read(1)) and not partial
             handle.seek(0)
@@ -2143,7 +2165,7 @@ def _read_log_history(args: list[str]) -> int:
             print(json.dumps({"sources": sources}))
             return 0
         if args[0] in files:
-            print(json.dumps(_read_fixed_log_history(files[args[0]], position)))
+            print(json.dumps(_read_fixed_log_history(files[args[0]], position), ensure_ascii=False))
             return 0
         limit = position.get("limit", 500)
         if type(limit) is not int or not 1 <= limit <= 500:
@@ -2204,7 +2226,7 @@ def _read_log_history(args: list[str]) -> int:
                         expanded_bytes -= recent.popleft()[2]
             if recent:
                 first_index, text_offset, _ = recent[0]
-                has_previous = has_previous or first_index > 0 or text_offset > 0
+                has_previous = has_previous or any(not entry.get("_filtered") for entry in selected[:first_index]) or text_offset > 0
                 selected = selected[first_index:]
             more = False
             first_cursor = selected[0]["__CURSOR"]

@@ -858,6 +858,7 @@ def test_sparse_dnsmasq_tail_classifies_before_limit_and_preserves_redaction(mon
         assert len(payload["lines"]) == 2
         assert payload["line_private_keys"] == [True, False]
         assert not payload["has_more"]
+        assert payload["previous_position"] is None
         monkeypatch.setattr(log_viewer.SystemAdapter, "read_log_history", lambda *_args, payload=payload: SimpleNamespace(returncode=0, stdout=json.dumps(payload)))
         page = log_viewer.source_page(f"dnsmasq-{category}", tail=True, limit=100)
         assert "private-fragment" not in page["text"]
@@ -1096,3 +1097,51 @@ def test_sparse_journal_windows_advance_and_preserve_filtered_key_state(monkeypa
     assert "private-fragment" not in "\n".join(reverse_texts)
     assert any("[redacted private key]" in text for text in reverse_texts)
     assert max(raw_counts) <= 5001
+
+
+@pytest.mark.parametrize("privileged", [False, True])
+@pytest.mark.parametrize("compressed", [False, True])
+def test_file_pages_bound_json_escaping_without_losing_lines(tmp_path, privileged, compressed):
+    """Control bytes cannot expand retained file pages beyond the encoded transport bound.
+
+    Args:
+        tmp_path: Owned retained file directory.
+        privileged: Exercise the fixed-source helper rather than the application reader.
+        compressed: Read a numbered compressed rotation without a current file.
+    """
+    import gzip
+
+    from starlette.responses import JSONResponse
+
+    from tests.test_appliance_helper import load_helper_module
+
+    helper = load_helper_module()
+    path = tmp_path / "escaped.log"
+    lines = [f"line-{index}:" + "\x00" * 60000 + "\\" * 1024 for index in range(30)]
+    content = ("\n".join(lines) + "\n").encode()
+    if compressed:
+        with gzip.open(tmp_path / "escaped.log.1.gz", "wb") as handle:
+            handle.write(content)
+    else:
+        path.write_bytes(content)
+    def read(position=None, tail=False):
+        return (helper._read_fixed_log_history(path, {**(position or {}), **({"tail": True} if tail else {})}) if privileged
+                else log_viewer.file_page(path, source="escaping", cursor=position or "", tail=tail))
+    position, actual = None, []
+    for _ in range(35):
+        page = read(position)
+        assert len(JSONResponse(page).body) <= 1024 * 1024
+        actual.extend(page["lines"] if privileged else page["text"].splitlines())
+        position = page["file_position"] if privileged else page["next_cursor"]
+        if not page["has_more"]:
+            break
+    assert actual == lines
+    tail = read(tail=True)
+    assert len(JSONResponse(tail).body) <= 1024 * 1024
+    assert not tail["has_more"]
+    tail_lines = tail["lines"] if privileged else tail["text"].splitlines()
+    assert tail_lines == lines[-len(tail_lines):]
+    older = read(tail["previous_position"] if privileged else tail["previous_cursor"])
+    assert len(JSONResponse(older).body) <= 1024 * 1024
+    older_lines = older["lines"] if privileged else older["text"].splitlines()
+    assert older_lines == lines[-len(tail_lines)-len(older_lines):-len(tail_lines)]
