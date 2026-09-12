@@ -146,7 +146,11 @@ def test_vcf_offline_depot_model_default_port_is_8443():
 
 
 def test_vcf_offline_depot_archive_restore_defaults_missing_port_to_443(client):
-    """Verify legacy archive restore uses 443 when depot port is omitted."""
+    """Verify legacy archive restore uses 443 when depot port is omitted.
+
+    Args:
+        client: HTTP test client with isolated application settings.
+    """
     from atlaso.app.database import SessionLocal
 
     with SessionLocal() as db:
@@ -162,7 +166,11 @@ def test_vcf_offline_depot_archive_restore_defaults_missing_port_to_443(client):
 
 
 def test_vcf_offline_depot_archive_restore_preserves_custom_port(client):
-    """Verify archive restore preserves explicit custom port values."""
+    """Verify archive restore preserves explicit custom port values.
+
+    Args:
+        client: HTTP test client with isolated application settings.
+    """
     from atlaso.app.database import SessionLocal
 
     with SessionLocal() as db:
@@ -178,7 +186,11 @@ def test_vcf_offline_depot_archive_restore_preserves_custom_port(client):
 
 
 def test_update_vcf_offline_depot_settings_omits_port_keeps_saved_value(client):
-    """Verify omitted form port does not overwrite stored port."""
+    """Verify omitted form port does not overwrite stored port.
+
+    Args:
+        client: HTTP test client with isolated application settings.
+    """
     from atlaso.app.database import SessionLocal
 
     with SessionLocal() as db:
@@ -208,7 +220,11 @@ def test_update_vcf_offline_depot_settings_omits_port_keeps_saved_value(client):
 
 
 def test_update_vcf_offline_depot_settings_invalid_port_is_rejected(client):
-    """Verify form parsing rejects non-integer port values."""
+    """Verify form parsing rejects non-integer port values.
+
+    Args:
+        client: HTTP test client with isolated application settings.
+    """
     login(client)
     page = client.get("/vcf-offline-depot")
     csrf = page.text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
