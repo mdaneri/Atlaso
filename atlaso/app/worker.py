@@ -61,6 +61,9 @@ from atlaso.app.services.vaults import (
     redact_secret_values,
     vault_scope_identity,
 )
+from atlaso.app.services.vcf_depot_permissions import (
+    prepare_downloaded_depot_permissions,
+)
 
 LOGGER = logging.getLogger("atlaso.worker")
 POLL_SECONDS = 5
@@ -794,6 +797,13 @@ def recover_interrupted_worker_jobs(
             if job.status == JobStatus.SUCCEEDED.value
             else str(definitive.get("error") or "The Atlaso worker restarted while this task was running. The task was not rerun automatically.")
         )
+        if job.type == "vcf-depot-download":
+            try:
+                store = _job_config(job).get("depot_permission_store")
+                if isinstance(store, str) and store:
+                    prepare_downloaded_depot_permissions(store)
+            except (OSError, ValueError):
+                job.error = f"{job.error} Depot read-permission repair also failed; inspect published PROD content."
         try:
             result = json.loads(job.result or "{}")
         except json.JSONDecodeError:
