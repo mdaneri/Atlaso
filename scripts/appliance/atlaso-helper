@@ -10601,6 +10601,15 @@ def _port_forward_publication_present(entries: list, row: dict) -> bool:
                       and rule.get("chain") == "prerouting"
                       and _port_forward_dnat_matches(rule.get("expr", []), row)
                       for rule in owned)
+    reply_action = "masquerade" if row["reply_mode"] == "masquerade" else "return"
+    reply_expressions = [
+        {"match": {"op": "==", "left": {"ct": {"key": "mark"}}, "right": int(_port_forward_mark(row), 16)}},
+        {"match": {"op": "in", "left": {"ct": {"key": "status"}}, "right": "dnat"}},
+        {reply_action: None},
+    ]
+    reply_publication = any(rule.get("family") == family and rule.get("table") == "atlaso_nat"
+                            and rule.get("chain") == "postrouting" and rule.get("expr") == reply_expressions
+                            for rule in rules)
     directions = {"atlaso": set(), "atlaso_port_forwards": set()}
     for rule in rules:
         table = rule.get("table")
@@ -10617,7 +10626,7 @@ def _port_forward_publication_present(entries: list, row: dict) -> bool:
         for direction in ("original", "reply"):
             if _port_forward_admission_matches(expressions, row, direction, guard=table == "atlaso_port_forwards"):
                 directions[table].add(direction)
-    return translation and all(value == {"original", "reply"} for value in directions.values())
+    return translation and reply_publication and all(value == {"original", "reply"} for value in directions.values())
 
 
 def _port_forward_status() -> int:

@@ -318,13 +318,16 @@ def test_observed_dnat_normalizes_source_sets_and_port_forms(family, mapping):
 
 
 @pytest.mark.parametrize("family", [4, 6])
-@pytest.mark.parametrize("missing", [None, "dnat", "original", "reply", "guard-original", "guard-reply"])
-def test_status_requires_translation_and_both_admissions(family, missing, monkeypatch, tmp_path, capsys):
+@pytest.mark.parametrize("missing", [None, "dnat", "original", "reply", "guard-original", "guard-reply",
+                                     "postrouting", "post-mark", "post-status", "post-action", "post-family"])
+@pytest.mark.parametrize("reply_mode", ["preserve", "masquerade"])
+def test_status_requires_translation_and_both_admissions(family, missing, reply_mode, monkeypatch, tmp_path, capsys):
     """Surviving counters cannot conceal partially removed publication members.
 
     Args:
         family: Applied destination address family.
         missing: Member removed independently after a successful apply.
+        reply_mode: Saved source preservation or explicit reply masquerade behavior.
         monkeypatch: Replace host observations with a bounded runtime snapshot.
         tmp_path: Isolated applied configuration path.
         capsys: Capture the public status response.
@@ -332,7 +335,7 @@ def test_status_requires_translation_and_both_admissions(family, missing, monkey
     helper = load_helper_module()
     path = tmp_path / "nat.conf"
     path.write_text("applied", encoding="utf-8")
-    row = {"id": 1, **payload(ip_family=family,
+    row = {"id": 1, **payload(ip_family=family, reply_mode=reply_mode,
                              listener_address="192.0.2.1" if family == 4 else "2001:db8:2::1",
                              target_address="198.51.100.10" if family == 4 else "2001:db8:3::2"),
            "source_networks": []}
@@ -342,6 +345,22 @@ def test_status_requires_translation_and_both_admissions(family, missing, monkey
     monkeypatch.setattr(helper, "_port_forward_target_warnings", lambda rows: {})
     entries = [{"counter": {"family": "inet", "table": "atlaso_port_forwards",
                             "name": "pf_1", "packets": 7, "bytes": 700}}]
+    postrouting = {"family": "ip" if family == 4 else "ip6", "table": "atlaso_nat", "chain": "postrouting",
+                   "expr": [
+                       {"match": {"op": "==", "left": {"ct": {"key": "mark"}}, "right": 0xA7000001}},
+                       {"match": {"op": "in", "left": {"ct": {"key": "status"}}, "right": "dnat"}},
+                       {"masquerade" if reply_mode == "masquerade" else "return": None},
+                   ]}
+    if missing == "post-mark":
+        postrouting["expr"][0]["match"]["right"] = 0xA7000002
+    elif missing == "post-status":
+        postrouting["expr"][1]["match"]["right"] = "snat"
+    elif missing == "post-action":
+        postrouting["expr"][2] = {"return" if reply_mode == "masquerade" else "masquerade": None}
+    elif missing == "post-family":
+        postrouting["family"] = "ip6" if family == 4 else "ip"
+    if missing != "postrouting":
+        entries.append({"rule": postrouting})
     if missing != "dnat":
         entries.append({"rule": {"family": "ip" if family == 4 else "ip6", "table": "atlaso_nat",
                                  "chain": "prerouting", "comment": "Atlaso port forward 1",
