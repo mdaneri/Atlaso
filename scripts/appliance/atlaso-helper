@@ -12146,7 +12146,18 @@ def _apply_vcf_depot_site(text: str, *, disabled: bool) -> int:
         disabled: Whether the candidate removes the depot listener.
     """
     snapshots = {}
+    activation_attempted = False
     try:
+        active_result = _run(["systemctl", "is-active", "--quiet", "nginx"], timeout=5)
+        if active_result.returncode not in {0, 3}:
+            raise ValueError("Cannot determine the previous nginx service state.")
+        active = active_result.returncode == 0
+        previous_enablement = ""
+        if not active and not disabled:
+            enabled_result = _run(["systemctl", "is-enabled", "nginx"], timeout=5)
+            previous_enablement = enabled_result.stdout.strip()
+            if previous_enablement not in {"enabled", "enabled-runtime", "disabled", "static", "indirect"}:
+                raise ValueError("Cannot safely preserve nginx enablement for first activation.")
         for path in (VCF_DEPOT_SITE_PATH, VCF_DEPOT_HTPASSWD_PATH):
             if path.is_symlink():
                 raise ValueError("Depot activation refuses linked managed files.")
@@ -12161,7 +12172,7 @@ def _apply_vcf_depot_site(text: str, *, disabled: bool) -> int:
         if conflict:
             print(conflict, file=sys.stderr)
             return 2
-    except (OSError, ValueError) as exc:
+    except (OSError, ValueError, subprocess.TimeoutExpired) as exc:
         print(str(exc), file=sys.stderr)
         return 2
 
@@ -12180,26 +12191,39 @@ def _apply_vcf_depot_site(text: str, *, disabled: bool) -> int:
             _replace_vcf_depot_file(VCF_DEPOT_SITE_PATH, text.encode("utf-8"), 0o644)
         if _nginx_test_command().returncode != 0:
             raise ValueError("Depot nginx configuration validation failed.")
-        active = _run(["systemctl", "is-active", "--quiet", "nginx"], timeout=5).returncode == 0
-        command = ["systemctl", "reload", "nginx"] if active else ["systemctl", "enable", "--now", "nginx"]
-        if (active or not disabled) and _run(command, timeout=30).returncode != 0:
-            raise ValueError("Depot nginx activation failed.")
+        if active or not disabled:
+            command = ["systemctl", "reload", "nginx"] if active else (
+                ["systemctl", "enable", "--now", "nginx"] if previous_enablement == "disabled" else ["systemctl", "start", "nginx"]
+            )
+            activation_attempted = True
+            if _run(command, timeout=30).returncode != 0:
+                raise ValueError("Depot nginx activation failed.")
         if not disabled and not _vcf_depot_endpoint_ready(text):
             raise ValueError("Depot TLS/HTTP readiness failed.")
         return 0
     except (OSError, ValueError, subprocess.TimeoutExpired) as exc:
         print(str(exc), file=sys.stderr)
         try:
+            if activation_attempted and not active:
+                if _run(["systemctl", "stop", "nginx"], timeout=30).returncode != 0:
+                    raise ValueError("Candidate nginx service could not be stopped.")
+                if _run(["systemctl", "is-active", "--quiet", "nginx"], timeout=5).returncode != 3:
+                    raise ValueError("Candidate nginx service is not verified inactive.")
+                if previous_enablement == "disabled":
+                    if _run(["systemctl", "disable", "nginx"], timeout=30).returncode != 0:
+                        raise ValueError("Previous nginx enablement could not be restored.")
+                    if _run(["systemctl", "is-enabled", "nginx"], timeout=5).stdout.strip() != "disabled":
+                        raise ValueError("Previous nginx enablement could not be verified.")
             for path, snapshot in snapshots.items():
                 if snapshot is None:
                     path.unlink(missing_ok=True)
                 else:
                     content, metadata = snapshot
                     _replace_vcf_depot_file(path, content, stat.S_IMODE(metadata.st_mode), (metadata.st_uid, metadata.st_gid))
-            if _nginx_test_command().returncode != 0 or _run(["systemctl", "reload", "nginx"], timeout=30).returncode != 0:
+            if _nginx_test_command().returncode != 0 or (active and _run(["systemctl", "reload", "nginx"], timeout=30).returncode != 0):
                 raise ValueError("Previous nginx configuration could not be reloaded.")
             previous = snapshots[VCF_DEPOT_SITE_PATH]
-            if previous is not None and not _vcf_depot_endpoint_ready(previous[0].decode("utf-8")):
+            if active and previous is not None and not _vcf_depot_endpoint_ready(previous[0].decode("utf-8")):
                 raise ValueError("Previous depot endpoint readiness could not be verified.")
         except (OSError, ValueError, subprocess.TimeoutExpired) as rollback_error:
             print(f"Depot rollback needs attention: {rollback_error}", file=sys.stderr)

@@ -492,8 +492,18 @@ def test_depot_activation_restores_previous_files(monkeypatch, tmp_path, capsys,
         assert "Depot rollback needs attention" in capsys.readouterr().err
 
 
-@pytest.mark.parametrize("disabled,active", [(False, False), (True, False), (True, True)])
-def test_depot_first_activation_and_disable(monkeypatch, tmp_path, disabled, active):
+@pytest.mark.parametrize("disabled,active,failure,enablement", [
+    (False, False, "none", "disabled"),
+    (True, False, "none", "disabled"),
+    (True, True, "none", "enabled"),
+    (False, False, "readiness", "disabled"),
+    (False, False, "partial-start", "disabled"),
+    (False, False, "timeout", "disabled"),
+    (False, False, "readiness", "enabled"),
+    (False, False, "readiness", "enabled-runtime"),
+    (False, False, "readiness", "static"),
+])
+def test_depot_first_activation_and_disable(monkeypatch, tmp_path, disabled, active, failure, enablement):
     """Start nginx only for an enabled endpoint and reload an existing service.
 
     Args:
@@ -501,6 +511,8 @@ def test_depot_first_activation_and_disable(monkeypatch, tmp_path, disabled, act
         tmp_path: Isolated managed-file root.
         disabled: Whether this operation removes the endpoint.
         active: Initial nginx service state.
+        failure: Failure after attempting first activation.
+        enablement: Initial service enablement that rollback must preserve.
     """
     helper = load_helper_module()
     site = tmp_path / "depot.conf"
@@ -515,7 +527,7 @@ def test_depot_first_activation_and_disable(monkeypatch, tmp_path, disabled, act
     monkeypatch.setattr(helper, "_prepare_vcf_depot_web_tree", lambda _text: None)
     monkeypatch.setattr(helper, "_vcf_depot_auth_required", lambda _text: False)
     monkeypatch.setattr(helper, "_nginx_test_command", lambda: subprocess.CompletedProcess([], 0, "", ""))
-    ready = MagicMock(return_value=True)
+    ready = MagicMock(return_value=failure != "readiness")
     monkeypatch.setattr(helper, "_vcf_depot_endpoint_ready", ready)
     commands = []
 
@@ -527,12 +539,26 @@ def test_depot_first_activation_and_disable(monkeypatch, tmp_path, disabled, act
             **_kwargs: Bounded execution options.
         """
         commands.append(command)
-        return subprocess.CompletedProcess(command, int("is-active" in command and not active), "", "")
+        if "is-enabled" in command:
+            return subprocess.CompletedProcess(command, int(enablement == "disabled"), f"{enablement}\n", "")
+        if "enable" in command:
+            if failure == "timeout":
+                raise subprocess.TimeoutExpired(command, 30)
+            if failure == "partial-start":
+                return subprocess.CompletedProcess(command, 1, "", "")
+        return subprocess.CompletedProcess(command, 3 if "is-active" in command and not active else 0, "", "")
 
     monkeypatch.setattr(helper, "_run", run)
-    assert helper._apply_vcf_depot_site("candidate depot", disabled=disabled) == 0
-    mutations = [command for command in commands if "is-active" not in command]
-    assert mutations == ([] if disabled and not active else [["systemctl", "reload", "nginx"]] if active else [["systemctl", "enable", "--now", "nginx"]])
-    assert site.exists() is not disabled
+    assert helper._apply_vcf_depot_site("candidate depot", disabled=disabled) == (0 if failure == "none" else 2)
+    mutations = [command for command in commands if "is-active" not in command and "is-enabled" not in command]
+    expected = [] if disabled and not active else [["systemctl", "reload", "nginx"]] if active else [["systemctl", "enable", "--now", "nginx"]]
+    if not active and not disabled and enablement != "disabled":
+        expected = [["systemctl", "start", "nginx"]]
+    if failure != "none":
+        expected.append(["systemctl", "stop", "nginx"])
+        if enablement == "disabled":
+            expected.append(["systemctl", "disable", "nginx"])
+    assert mutations == expected
+    assert site.exists() == (not disabled and failure == "none")
     assert not auth.exists()
-    assert ready.call_count == int(not disabled)
+    assert ready.call_count == int(not disabled and failure not in {"partial-start", "timeout"})
