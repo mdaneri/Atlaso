@@ -6952,10 +6952,10 @@
           },
           "description": {
             "default": "",
-            "description": "Operator purpose for this forwarding rule.",
-            "maxLength": 1000,
+            "description": "Operator purpose, at most 1,000 UTF-16 code units, matching browser maxlength. Enforce x-maxLengthUtf16CodeUnits; JSON Schema maxLength counts code points and is intentionally omitted.",
             "title": "Description",
-            "type": "string"
+            "type": "string",
+            "x-maxLengthUtf16CodeUnits": 1000
           },
           "enabled": {
             "default": false,
