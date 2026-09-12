@@ -144,6 +144,7 @@ def finish_stop(db: Session, job: Job, *, detail: str) -> bool:
         return False
     now = utcnow()
     state = payload(job.result)
+    state.pop("ownership_unresolved", None)
     state.update(state="cancelled", cancelled_by=job.cancel_requested_by, cancelled_at=now.isoformat())
     if job.type == "diagnostic-bundle":
         state["bundle_status"] = "cancelled"

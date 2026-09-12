@@ -139,12 +139,15 @@ def test_verified_parent_stop_preserves_finished_children(db):
                        result='{"proof":"retained"}'))
     db.commit()
     cancellation.request(db, job, ADMIN)
+    job.result = json.dumps({"ownership_unresolved": True})
+    db.commit()
     cancellation.finish_stop(db, job, detail="Synthetic owner proved stop and cleanup.")
     db.commit()
     children = db.scalars(select(JobStep).where(JobStep.job_id == job.id).order_by(JobStep.component_key)).all()
     assert [step.status for step in children] == ["succeeded", "failed", "skipped"]
     assert children[0].result == children[1].result == '{"proof":"retained"}'
     assert job.cancel_requested_by == "operator"
+    assert "ownership_unresolved" not in json.loads(job.result)
     assert len(db.scalars(select(AuditEvent)).all()) == 2
 
 
@@ -268,3 +271,28 @@ def test_staged_download_cancellation_rolls_back_before_confirmation(db, monkeyp
     assert not backup_dir.exists()
     assert job.status == "cancelled"
     assert job.cancel_outcome == "confirmed"
+
+
+def test_download_request_is_rechecked_before_connection_retry(monkeypatch, tmp_path):
+    """A failed connection does not delay cancellation through additional attempts.
+
+    Args:
+        monkeypatch: Replace only the network opener and retry sleep.
+        tmp_path: Owned destination for the unstarted download.
+    """
+    import urllib.error
+
+    from atlaso.app.services import network_boot
+
+    requested, attempts = [], []
+    class Opener:
+        def open(self, *_args, **_kwargs):
+            attempts.append(True)
+            requested.append(True)
+            raise urllib.error.URLError("synthetic connection failure")
+    monkeypatch.setattr(network_boot.urllib.request, "build_opener", lambda *_args: Opener())
+    monkeypatch.setattr(network_boot.time, "sleep", lambda *_args: None)
+    with pytest.raises(network_boot.NetworkBootMediaSyncCancelled):
+        network_boot.BoundedHttpsDownloader().download("https://example.test/media", tmp_path / "media", cancelled=lambda: bool(requested))
+    assert len(attempts) == 1
+    assert not (tmp_path / "media").exists()
