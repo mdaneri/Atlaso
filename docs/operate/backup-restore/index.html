@@ -3834,6 +3834,13 @@ transport</a>. Chunk staging does not restore or apply settings;
 the existing validation, recovery review, and global apply boundaries still govern finalization.</p>
 <p>Open <strong>Maintenance &gt; Backup</strong> to protect Atlaso settings before maintenance and recover the control-plane configuration
 when needed.</p>
+<p>Port-forward archives preserve listener identities, source restrictions, port mappings, reply mode, and desired
+enablement. Restore reconstructs Source Group references and retains unavailable ingress relationships as disabled
+rules requiring review. It never substitutes another listener or broadens the source boundary. Factory reset deletes
+these desired rules and retires their generated admissions, counters, and marked sessions through its managed runtime
+cleanup before applying defaults. Unresolved publication recovery blocks reset until reconciliation completes.
+Before replacing desired state, restore rejects enabled mappings that collide with reserved protocol ports or
+service listeners configured in the archive, including custom ports and Network Boot bindings.</p>
 <h2 id="create-a-backup">Create a backup<a class="headerlink" href="#create-a-backup" title="Permanent link">&para;</a></h2>
 <ol>
 <li>Create a named backup before a high-risk configuration or update operation.</li>

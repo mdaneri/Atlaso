@@ -4210,8 +4210,9 @@ may be saved; move or edit the existing default instead of creating a conflictin
 VLAN reaches that network directly. A supplied gateway must use the same address family as the destination. API
 clients remain compatible with <code>POST</code> or <code>PATCH /api/v1/routes</code> requests
 that use canonical <code>0.0.0.0/0</code> or <code>::/0</code>; those payloads must also include the required same-family gateway.</p>
-<p>Source NAT rules now live on <a href="../traffic-publishing/">Traffic Publishing</a>. That guide covers the dual-stack wizard,
-explicit ingress, fixed SNAT, eligibility, upgrade, and boot recovery. Routing &amp; WAN retains static routes, routing
+<p>Source NAT and port-forward rules live on <a href="../traffic-publishing/">Traffic Publishing</a>. That guide covers dual-stack
+wizards, explicit ingress, fixed SNAT, exact destination mappings, eligibility, upgrade, and boot recovery. Routing &amp; WAN
+retains static routes, routing
 permissions, and interface-level WAN policies.</p>
 <p>After global Appliance Apply, inspect <code>nft list table ip atlaso_nat</code>: every masquerade rule must contain <code>iifname</code> and
 <code>oifname</code>, plus an IPv4 source expression only when configured. Verify traffic from selected and unselected ingress

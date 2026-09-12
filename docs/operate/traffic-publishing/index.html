@@ -6,7 +6,7 @@
       <meta charset="utf-8">
       <meta name="viewport" content="width=device-width,initial-scale=1">
       
-        <meta name="description" content="Configure explicit IPv4 and IPv6 source translation and apply it safely.">
+        <meta name="description" content="Configure explicit IPv4 and IPv6 source translation and port forwarding.">
       
       
         <meta name="author" content="Atlaso contributors">
@@ -1226,6 +1226,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#configure-port-forwarding" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Configure port forwarding
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#verify-and-recover" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
@@ -1244,6 +1255,34 @@
       </span>
     </span>
   </a>
+  
+    <nav class="md-nav" aria-label="Upgrade, archives, and API compatibility">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#port-forward-api" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Port-forward API
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#source-nat-compatibility" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Source NAT compatibility
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
   
 </li>
       
@@ -3634,6 +3673,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#configure-port-forwarding" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Configure port forwarding
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#verify-and-recover" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
@@ -3652,6 +3702,34 @@
       </span>
     </span>
   </a>
+  
+    <nav class="md-nav" aria-label="Upgrade, archives, and API compatibility">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#port-forward-api" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Port-forward API
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#source-nat-compatibility" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Source NAT compatibility
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
   
 </li>
       
@@ -3812,7 +3890,8 @@
 
 
 <h1 id="traffic-publishing">Traffic Publishing<a class="headerlink" href="#traffic-publishing" title="Permanent link">&para;</a></h1>
-<p>Use <strong>Traffic Publishing</strong> at <code>/ui/management/traffic-publishing</code> to configure source NAT. <strong>Routing &amp; WAN</strong>
+<p>Use <strong>Traffic Publishing</strong> at <code>/ui/management/traffic-publishing</code> to configure source NAT and port forwarding.
+<strong>Routing &amp; WAN</strong>
 at <code>/ui/management/routes-wan</code> owns static routes, routing permissions, forwarding, and WAN simulation. Traffic
 Publishing requires Firewall read permission; changing its browser settings or rules requires Firewall write permission.</p>
 <!-- BEGIN GENERATED INTERFACE OVERVIEW -->
@@ -3851,7 +3930,76 @@ Publishing requires Firewall read permission; changing its browser settings or r
 </ol>
 <p>Saving only changes desired state. There is no rule-specific Apply action. Disabled features preserve their rows.
 Every rendered rule includes explicit ingress selectors, so appliance-originated traffic cannot match it. This page
-does not configure destination NAT, port forwarding, proxies, address pools, or NPTv6.</p>
+does not configure proxies, address pools, or NPTv6.</p>
+<h2 id="configure-port-forwarding">Configure port forwarding<a class="headerlink" href="#configure-port-forwarding" title="Permanent link">&para;</a></h2>
+<ol>
+<li>Select the <strong>Port Forwarding</strong> tab and add a rule. Enter its name, purpose, and priority.
+   Descriptions allow 1,000 UTF-16 code units in both the browser and API; an emoji outside the BMP uses two units.
+   API clients should enforce <code>x-maxLengthUtf16CodeUnits</code> from the request schema.</li>
+<li>Choose IPv4 or IPv6, one eligible addressed ingress interface or VLAN, and its exact listener address.
+   Dedicated management interfaces are excluded. An access interface with the management UI flag remains eligible,
+   but Atlaso service listener ports cannot be redirected.</li>
+<li>Choose TCP or UDP and the external port range. Enter the same-family target address and an equally sized target
+   port range. For example, <code>12000–12002</code> to <code>13000–13002</code> maps each port by its offset. The target must be another
+   host and cannot be a dedicated management-network address. IPv6 forwarding uses stateful NAT66.</li>
+<li>Choose Any, a shared Source Group, or explicit same-family CIDRs. The source restriction applies only inside the
+   selected ingress boundary. Overlapping enabled listeners are rejected even when their source restrictions differ.</li>
+<li>Keep <strong>Preserve client source</strong> unless the target's return path requires reply masquerade. With preservation,
+   arrange the target's route back to the client through Atlaso. Masquerade replaces the original client source;
+   selecting it requires an explicit acknowledgement before saving.</li>
+<li>Review the complete mapping and enablement. New rules default disabled. Save desired state, then use global
+   Appliance Apply. Routing must be enabled for activation; the Source NAT enable switch does not control port forwards.</li>
+</ol>
+<p>Firewall rule names may contain generated admission marker text; only complete standalone marker lines delimit
+the generated block. Custom service ports reserve their configured listener addresses, allowing an independent
+forward on the other address family; standard appliance protocol ports remain reserved across both families.
+Firewall shows generated admission attributed to the owning port forward.
+These rows are read-only; edit their source
+boundary and listener in Traffic Publishing. Apply captures Firewall and NAT together, validates their complete program,
+and publishes both atomically. It commits both application baselines before acknowledging the root-owned recovery
+record. Management changes include this pair in the protected management handoff and its wider rollback.
+Both ordinary Apply and management handoff preserve connections for unchanged mappings and retire only changed IDs.
+Live IPv4 wildcard sockets block only IPv4 mappings. IPv6 and unspecified wildcards remain reserved for either
+family when the socket observation cannot establish IPv6-only ownership.
+Handoff failures before paired publication skip connection retirement; later rollback retires only candidate changes.
+When reusing a service endpoint, select its shutdown or listener change in the same Apply. Selected listener services
+run before forwarding publication so the live socket check observes the released endpoint.
+During a management handoff, only service shutdowns run early. Enabled certificate consumers, including KMS and NTS,
+wait for the CA-bearing handoff. Desired listener collision checks still protect forwarding publication; an existing
+socket conflict blocks publication, so release that endpoint in a separate Apply before moving an enabled listener.
+Startup also reconciles an interrupted first publication when its recovery journal exists but no NAT snapshot was
+written, restoring the previous Firewall before application-level recovery.
+Inventory reconciliation follows a verified NIC rename, including child VLAN listeners, and refreshes each changed
+forward's desired-state update timestamp. Reconciliation without a binding change preserves the timestamp. A missing NIC
+keeps its inert identity and exact mapping, disables the forward, and requires operator review before reactivation.
+The grid's Review column identifies these rules as <strong>Review restored listener</strong>, matching the no-JavaScript table.
+Archives must use canonical listener and target IP literals, including lowercase compressed IPv6, matching runtime
+validation. Noncanonical archived literals are rejected before any desired-state replacement.</p>
+<p>Removing, disabling, or suspending a rule retires its counters and Atlaso-marked connections during Apply. Sessions
+through that mapping must reconnect. Unchanged mappings retain their connections during unrelated Apply submissions;
+edits retire only changed rule marks. This retirement never flushes unrelated connection tracking. Appliance
+images and wheel deployments include <code>conntrack-tools</code>; its daemon is not required. An unavailable retirement tool
+blocks publication rather than leaving stale translations active.</p>
+<p>Refresh status after applying. A missing lab route or a failed target/next-hop neighbor produces a degraded warning
+while keeping the safe mapping applied. Review Routing &amp; WAN, the target address, power, and connectivity. A present
+route or an unresolved neighbor does not prove application health: test from an allowed client and check the target
+service. Status performs bounded read-only observations and does not probe target ports.</p>
+<p>Archives preserve complete mappings and source references. An unavailable restored interface relationship remains
+saved but disabled and marked for review. Disabled rules with an available listener still validate Source Groups,
+appliance-owned targets, and listener collisions before restore changes desired state. Only bindings identified as
+unavailable during import may skip the ingress assignment check; an archived review flag does not grant that exception.
+Source references, target restrictions, and reserved-listener checks still apply when the ingress is unavailable.
+Older v2 archives without a <code>port_forwards</code> section restore an empty forwarding collection, replacing any current
+desired mappings. Other required sections and explicitly malformed forwarding sections remain subject to validation.
+Global Apply reads a bounded privileged projection of durable runtime intent when selecting paired Firewall/NAT
+publication. The application does not open root-owned snapshots. An unavailable projection blocks submission instead
+of implicitly selecting additional units; source-NAT-only intent does not expand a listener-only selection.
+Disabled-only or Routing-suspended mappings do not add paired publication dependencies. Independent selections such as
+Local Users do not query forwarding runtime readiness. Previously effective applied mappings still require paired retirement.
+Clearing desired rules and Apply baselines through restore still retires previously applied forwards through the
+paired path.
+Factory reset removes desired mappings and retires their runtime state before
+replacing interface configuration. A pending publication recovery must be reconciled before reset can continue.</p>
 <h2 id="verify-and-recover">Verify and recover<a class="headerlink" href="#verify-and-recover" title="Permanent link">&para;</a></h2>
 <p>At boot, the NAT replay service runs after Routing &amp; WAN and before Atlaso startup. Atlaso's subsequent startup
 reconciliation therefore verifies the saved NAT state without racing the replay service.</p>
@@ -3865,13 +4013,89 @@ that a fixed address is actually assigned to the live egress. It atomically repl
 without replacing unrelated nftables tables. A durable recovery record restores the previous configuration, runtime
 program, and service enablement if persistence or activation fails. Failed recovery remains actionable.</p>
 <p>Successful Apply persists <code>/etc/atlaso/traffic-publishing/atlaso-nat.conf</code> and enables <code>atlaso-nat.service</code> only while
-NAT intent is enabled. Disabling NAT or factory reset disables that replay service and clears translation. Boot and
+source NAT or port-forward intent is enabled. Disabling Source NAT does not disable port forwards. Factory reset clears
+both kinds of translation. Boot and
 control-plane startup rebuild selectors using current interface indexes. A replaced or missing NIC, or an unavailable
 fixed address, quarantines translation and requires review. The saved desired rule is preserved. Do not hand-edit
 <code>/etc/atlaso/nftables.d/atlaso-nat.nft</code>; the managed include path remains stable.</p>
 <p>Management handoff rollback restores Firewall before replaying NAT, so a firewall ruleset replacement cannot erase
 the restored source translations.</p>
 <h2 id="upgrade-archives-and-api-compatibility">Upgrade, archives, and API compatibility<a class="headerlink" href="#upgrade-archives-and-api-compatibility" title="Permanent link">&para;</a></h2>
+<h3 id="port-forward-api">Port-forward API<a class="headerlink" href="#port-forward-api" title="Permanent link">&para;</a></h3>
+<p>The <code>/api/v1/traffic-publishing/port-forwards</code> collection owns destination-translation intent independently of the
+legacy source NAT collection. List and read operations require <code>read:firewall</code>; create, replace, and delete require
+<code>write:firewall</code>. WAN permission does not grant access to these operations.</p>
+<table>
+<thead>
+<tr>
+<th>Operation</th>
+<th>Meaning</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>GET /api/v1/traffic-publishing/port-forwards</code></td>
+<td>List up to 256 saved rules, including disabled intent.</td>
+</tr>
+<tr>
+<td><code>POST /api/v1/traffic-publishing/port-forwards</code></td>
+<td>Validate and create a complete rule; return <code>201</code>.</td>
+</tr>
+<tr>
+<td><code>GET /api/v1/traffic-publishing/port-forwards/{id}</code></td>
+<td>Read one saved rule; return <code>404</code> when absent.</td>
+</tr>
+<tr>
+<td><code>PUT /api/v1/traffic-publishing/port-forwards/{id}</code></td>
+<td>Validate and atomically replace the complete saved rule.</td>
+</tr>
+<tr>
+<td><code>DELETE /api/v1/traffic-publishing/port-forwards/{id}</code></td>
+<td>Delete desired intent and return <code>204</code> without a body.</td>
+</tr>
+<tr>
+<td><code>GET /api/v1/traffic-publishing/port-forwards/status</code></td>
+<td>Compare current intent with bounded applied observations.</td>
+</tr>
+</tbody>
+</table>
+<p>A complete rule names one IP family, exact assigned ingress listener, TCP or UDP, ordered external and target port
+ranges of equal length, and a same-family target address. Each external port maps to the target port at the same
+offset. Source restrictions may use Any, a shared Source Group, or up to 128 same-family CIDRs. Source Groups containing
+both families are rejected instead of silently filtering their members. Enabled rules cannot overlap on the same
+family, listener, protocol, and external ports, even when their source restrictions differ. At most 65,535 external
+ports may be mapped across enabled rules.</p>
+<p><code>reply_mode=preserve</code> keeps the original client address. Selecting <code>reply_mode=masquerade</code> requires
+<code>acknowledge_source_loss=true</code> in the create or replacement request. The acknowledgement is request-only. New rules
+default disabled. Validation failures use ProblemDetails and preserve the previous row and its audit history.
+Complete replacements revalidate bindings, source restrictions, target safety, and listener collisions even when
+disabled. Archive restoration and missing-NIC reconciliation may retain unavailable disabled relationships for review.
+Saving never invokes host enforcement; global Appliance Apply owns translation changes.
+Successful replacements, including enable/disable changes, refresh the API's <code>updated_at</code> timestamp.
+Signed upgrades install missing <code>conntrack-tools</code> through the candidate service's pre-start hook, including upgrades
+performed by older installed helpers. Existing installations are reused. Installation failure blocks candidate startup
+and leaves the upgrade's normal rollback path responsible for recovery; restore Photon repository access before retrying.</p>
+<p>Status distinguishes disabled, pending, suspended, applied, and degraded records. An edited target or source boundary
+does not inherit the previous mapping's counters. Packet and byte counts are nullable: unavailable observations are
+not reported as zero. Applied status requires the DNAT rule, both generated Firewall admission directions, and the
+owned counter and both guard admission directions to remain present in one runtime snapshot. Missing members report
+degraded even if counters survive.
+The observed DNAT predicates, translated address and port mapping, source boundary, and connection mark must also
+match the saved mapping; retaining a generated comment alone does not establish applied state.
+The family-specific postrouting rule must retain the exact private mark, DNAT status predicate, and saved preserve
+or masquerade action. Missing or changed reply handling reports degraded state even when DNAT and admissions remain.
+Both guard and Firewall admissions must match the complete original tuple, source boundary, private mark,
+connection direction, DNAT status, and ingress or return interface. Changed predicates report degraded state.
+When Firewall is disabled, paired Apply creates a minimal accept-policy forwarding chain with the generated
+admissions; this preserves disabled Firewall behavior while retaining complete forwarding observation.
+The captured Firewall preview includes that minimal chain and both admissions, matching the paired Apply program.
+If the interactive grid fails to load, its fallback remains readable; deletion is available only through the grid's
+confirmed action.
+Listener-related Apply preflight also reads NAT status when no forwarding rules are saved, so it can detect mappings
+retained from an earlier runtime. An unavailable status blocks submission until helper readiness is restored.
+The page summary includes enabled port forwards independently of source NAT and reports their validation errors.
+These counters describe matched traffic, not proof that an application at the target is healthy.</p>
+<h3 id="source-nat-compatibility">Source NAT compatibility<a class="headerlink" href="#source-nat-compatibility" title="Permanent link">&para;</a></h3>
 <p>Existing IPv4 rules gain <code>ip_family=4</code>, <code>translation_mode=masquerade</code>, and an empty <code>translated_address</code>. Existing
 explicit NAT enablement migrates to the single <code>traffic_publishing.nat_enabled</code> setting. When neither global switch
 exists, enabled legacy NAT rules preserve inferred activation; explicit disable and factory reset still take
@@ -3893,6 +4117,14 @@ mutations are never replayed through <code>307</code> or <code>308</code>. Use t
 <h2 id="additional-verified-states">Additional verified states<a class="headerlink" href="#additional-verified-states" title="Permanent link">&para;</a></h2>
 <p>These captures show responsive layouts and useful operational states referenced by this page.</p>
 <h3 id="traffic-publishing_1">Traffic Publishing<a class="headerlink" href="#traffic-publishing_1" title="Permanent link">&para;</a></h3>
+<p><img alt="Atlaso Port Forwarding grid with an enabled TCP range mapping and source NAT disabled." src="../../assets/screenshots/traffic-publishing-port-forwarding-desktop.webp" /></p>
+<p><em>Figure: Port Forwarding is independent of source NAT; counters do not prove target health.</em></p>
+<p><img alt="Atlaso Port Forwarding grid with an enabled TCP range mapping and source NAT disabled." src="../../assets/screenshots/traffic-publishing-port-forwarding-responsive.webp" /></p>
+<p><em>Figure: Port Forwarding is independent of source NAT; counters do not prove target health.</em></p>
+<p><img alt="Atlaso port-forward review wizard showing a three-port TCP mapping, restricted client CIDR, and original client preservation." src="../../assets/screenshots/traffic-publishing-port-forwarding-review-desktop.webp" /></p>
+<p><em>Figure: Review the listener, port mapping, client boundary, and replies before saving desired state.</em></p>
+<p><img alt="Atlaso port-forward review wizard showing a three-port TCP mapping, restricted client CIDR, and original client preservation." src="../../assets/screenshots/traffic-publishing-port-forwarding-review-responsive.webp" /></p>
+<p><em>Figure: Review the listener, port mapping, client boundary, and replies before saving desired state.</em></p>
 <p><img alt="Atlaso Traffic Publishing showing explicit eth2 ingress, eth3 egress, and enabled source NAT." src="../../assets/screenshots/traffic-publishing-responsive.webp" /></p>
 <p><em>Figure: Traffic Publishing with reviewed IPv4 masquerade and the canonical NAT setting.</em></p>
 <p><img alt="Atlaso NAT translation step with aligned ingress labels, an assigned-address selector, and Manage source groups." src="../../assets/screenshots/traffic-publishing-translation-desktop.webp" /></p>

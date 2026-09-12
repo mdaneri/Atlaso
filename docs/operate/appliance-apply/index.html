@@ -3904,10 +3904,10 @@ before submitting it.</p>
 can require <strong>Appliance Settings</strong>, <strong>Public Services</strong>, and <strong>Firewall</strong>. A management-to-access conversion with a
 gateway change also selects <strong>Routing &amp; WAN</strong> with Network and uses the protected handoff. A WAN-only change
 to a mirrored management default uses the same handoff. Each WAN unit executes from its captured snapshot.</p>
-<p>The <code>wan</code> unit owns Routing and WAN Simulation. The separate <strong>Traffic Publishing</strong> (<code>nat</code>) unit owns source
-translation and its baseline. Turning a feature off removes its Atlaso-owned runtime state while preserving saved rows.
-NAT reports <strong>suspended</strong> when NAT is on but Routing is off. Network or WAN submissions include NAT reconciliation;
-activating NAT also includes changed target and Routing dependencies before management-handoff classification.</p>
+<p><strong>Routing &amp; WAN</strong> owns routing and WAN simulation; <strong>Traffic Publishing</strong> owns source NAT and port forwarding.
+Turning either feature off removes its runtime state while preserving saved rows. NAT is <strong>suspended</strong> while Routing
+is off. Port forwards couple Firewall and Traffic Publishing, including when deleting the last mapping; service edits
+also validate listener conflicts. See <a href="../traffic-publishing/">Traffic Publishing</a> for dependencies and recovery.</p>
 <h2 id="review-pending-changes">Review pending changes<a class="headerlink" href="#review-pending-changes" title="Permanent link">&para;</a></h2>
 <ol>
 <li>Finish editing the desired state on the relevant service pages.</li>

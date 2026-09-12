@@ -3860,6 +3860,11 @@ The OpenAPI description field publishes <code>x-maxLengthUtf16CodeUnits: 1000</c
 UTF-16 length (for example, JavaScript string <code>length</code>). Standard JSON Schema <code>maxLength</code> counts code points, so it is
 intentionally omitted for this field.</p>
 <h2 id="verify-and-recover">Verify and recover<a class="headerlink" href="#verify-and-recover" title="Permanent link">&para;</a></h2>
+<p>Port-forward admissions appear as read-only generated rows attributed to their Traffic Publishing resource. They
+match the original listener, protocol, external ports, source boundary, and ingress of the translated connection.
+Edit the owning <a href="../../operate/traffic-publishing/#configure-port-forwarding">port forward</a> to change that boundary.
+Firewall and NAT are captured and published together whenever port-forward state must be installed or retired.
+Removing a rule also retires its owned connection marks and counters; unrelated connections are preserved.</p>
 <p>After a successful task, test the required TCP or UDP service from the intended network. On the appliance, maintainers
 can verify the effective state with <code>nft list ruleset</code>. If a rule removes management access, recover through the
 <a href="../../operate/appliance-console/">local appliance console</a> and restore the previous desired state.</p>
