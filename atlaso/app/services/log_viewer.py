@@ -94,6 +94,8 @@ def source_page(source: str, *, cursor: str = "", tail: bool = False, limit: int
         for line, state in zip(payload["lines"], states, strict=True):
             safe, private_key = redact_lines([line], private_key=state)
             lines.extend(safe)
+    if type(payload.get("final_private_key")) is bool:
+        private_key = payload["final_private_key"]
     previous_position = payload.get("previous_position")
     next_position = payload.get("file_position", payload.get("journal_position", {"journal_cursor": payload.get("journal_cursor", "")}))
     current = encode_cursor(source, **payload["current_position"], private_key=initial_private_key) if "current_position" in payload else cursor

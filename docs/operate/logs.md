@@ -35,7 +35,9 @@ when their log files appear, without loading inactive log contents. These checks
 **Previous page** opens the preceding group directly, including within a multiline journal record. The page size limits
 each response, not the total history you can inspect. Previous is unavailable at the oldest retained journal page.
 Numbered file rotations, including compressed archives, are
-included. Journal history remains subject to the appliance's journal retention policy.
+included and keep nginx sources available even when their current file is absent. Journal history remains subject
+to the appliance's journal retention policy. Classified DNS/DHCP/TFTP history also bounds raw scan windows; a window
+with no matching rows can still advance to the next retained window while preserving redaction state.
 
 **Follow live** resumes new output with one click, including after scrolling up. Scrolling up or selecting text preserves
 your reading position and shows when

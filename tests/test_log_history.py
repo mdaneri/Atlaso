@@ -863,7 +863,7 @@ def test_sparse_dnsmasq_tail_classifies_before_limit_and_preserves_redaction(mon
         assert "private-fragment" not in page["text"]
         assert "retained protocol entry" in page["text"]
         assert "newer DNS" not in page["text"]
-    assert "--lines=all" in commands[0]
+    assert "--lines=5001" in commands[0]
     assert commands[0][commands[0].index("--unit") + 1] == "dnsmasq.service"
 
 
@@ -990,3 +990,109 @@ def test_audit_backward_short_page_keeps_boundary_on_refresh_and_next(client):
     assert len({row["id"] for group in groups for row in group["rows"]}) == 1501
     assert read(page["cursor"])["rows"] == page["rows"]
     assert read(page["next_cursor"])["rows"] == groups[-2]["rows"]
+
+
+@pytest.mark.parametrize("rotation", ["1", "2.gz"])
+def test_helper_availability_includes_retained_nginx_rotations(tmp_path, monkeypatch, capsys, rotation):
+    """Readable rotations keep nginx history available without a current file.
+
+    Args:
+        tmp_path: Owned fixed-source directory.
+        monkeypatch: Bind helper sources and reject content reads.
+        capsys: Capture metadata-only availability.
+        rotation: Plain or compressed retained filename.
+    """
+    from pathlib import Path
+
+    from tests.test_appliance_helper import load_helper_module
+
+    helper = load_helper_module()
+    path = tmp_path / "access.log"
+    (tmp_path / f"access.log.{rotation}").write_bytes(b"retained")
+    monkeypatch.setattr(helper, "NGINX_ACCESS_LOG_PATH", path)
+    monkeypatch.setattr(helper, "NGINX_ERROR_LOG_PATH", tmp_path / "error.log")
+    def reject_read(*_args, **_kwargs):
+        raise AssertionError("availability must not read log contents")
+    monkeypatch.setattr(Path, "read_bytes", reject_read)
+    assert helper._read_log_history(["availability", "{}"]) == 0
+    sources = {item["id"]: item["available"] for item in json.loads(capsys.readouterr().out)["sources"]}
+    assert sources["nginx-access"]
+    assert not sources["nginx-error"]
+
+
+def test_sparse_journal_windows_advance_and_preserve_filtered_key_state(monkeypatch, capsys):
+    """Bounded empty windows advance in both directions without leaking skipped keys.
+
+    Args:
+        monkeypatch: Supply immutable sparse records through the owned process transport.
+        capsys: Capture each helper page before source-bound cursor encoding.
+    """
+    import io
+    from types import SimpleNamespace
+    from unittest.mock import MagicMock
+
+    from tests.test_appliance_helper import load_helper_module
+
+    helper = load_helper_module()
+    records = [{"__CURSOR": str(index), "__REALTIME_TIMESTAMP": "1000000", "SYSLOG_IDENTIFIER": "dnsmasq", "MESSAGE": "DNS"} for index in range(12005)]
+    records[0]["MESSAGE"] = "-----BEGIN PRIVATE KEY-----"
+    records[5001].update(SYSLOG_IDENTIFIER="dnsmasq-dhcp", MESSAGE="private-fragment")
+    records[10002]["MESSAGE"] = "-----END PRIVATE KEY-----"
+    records[10003].update(SYSLOG_IDENTIFIER="dnsmasq-dhcp", MESSAGE="visible-dhcp")
+    raw_counts = []
+    def launch(command, **_kwargs):
+        rows = list(records)
+        reverse = "--reverse" in command
+        for argument in command:
+            if argument.startswith(("--cursor=", "--after-cursor=")):
+                index = int(argument.split("=", 1)[1])
+                inclusive = argument.startswith("--cursor=")
+                rows = [row for row in rows if (int(row["__CURSOR"]) <= index if reverse and inclusive else
+                        int(row["__CURSOR"]) < index if reverse else
+                        int(row["__CURSOR"]) >= index if inclusive else int(row["__CURSOR"]) > index)]
+        if any(arg.startswith("--grep=") for arg in command):
+            rows = [row for row in rows if "PRIVATE KEY-----" in row["MESSAGE"]]
+        if reverse:
+            rows.reverse()
+        process = MagicMock()
+        process.__enter__.return_value = process
+        process.wait.return_value = process.poll.return_value = 0
+        class Stream(io.BytesIO):
+            def readline(self, *args):
+                raw_counts[-1] += 1
+                return super().readline(*args)
+        raw_counts.append(0)
+        process.stdout = Stream("".join(json.dumps(row) + "\n" for row in rows).encode())
+        process.stderr = io.BytesIO()
+        return process
+    monkeypatch.setattr(helper.subprocess, "Popen", launch)
+    def adapter(_self, source, position):
+        assert helper._read_log_history([source, json.dumps(position)]) == 0
+        return SimpleNamespace(returncode=0, stdout=capsys.readouterr().out)
+    monkeypatch.setattr(log_viewer.SystemAdapter, "read_log_history", adapter)
+    cursor, texts, positions = "", [], []
+    for _ in range(5):
+        page = log_viewer.source_page("dnsmasq-dhcp", cursor=cursor)
+        texts.append(page["text"])
+        positions.append(page["next_cursor"])
+        cursor = page["next_cursor"]
+        if not page["has_more"]:
+            break
+    assert len(texts) == 3
+    assert texts[0] == ""
+    assert len(set(positions)) == 3
+    assert "private-fragment" not in "\n".join(texts)
+    assert "[redacted private key]" in texts[1]
+    assert "visible-dhcp" in texts[2]
+    page = log_viewer.source_page("dnsmasq-dhcp", tail=True)
+    reverse_texts = [page["text"]]
+    for _ in range(6):
+        if not page["previous_cursor"]:
+            break
+        page = log_viewer.source_page("dnsmasq-dhcp", cursor=page["previous_cursor"])
+        reverse_texts.append(page["text"])
+    assert not page["previous_cursor"]
+    assert "visible-dhcp" in reverse_texts[0]
+    assert "private-fragment" not in "\n".join(reverse_texts)
+    assert any("[redacted private key]" in text for text in reverse_texts)
+    assert max(raw_counts) <= 5001
