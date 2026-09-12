@@ -188,6 +188,31 @@ def test_request_error_keeps_configuration_readback(target, monkeypatch):
     assert "private request detail" not in str(caught.value)
 
 
+@pytest.mark.parametrize("method", ["sync_info", "start_sync"])
+@pytest.mark.parametrize("payload", [None, 42, [1]])
+def test_non_object_sync_json_preserves_readback(target, monkeypatch, method, payload):
+    """Retain configuration evidence when decoding a vendor JSON object fails.
+
+    Args:
+        target: Fake target fixture.
+        monkeypatch: Dependency replacement fixture.
+        method: Sync endpoint receiving the malformed shape.
+        payload: Valid JSON value which cannot become a response dictionary.
+    """
+    target.responses = [snapshot()]
+
+    def malformed():
+        """Model the API client's response dictionary conversion."""
+        return dict(payload)
+
+    monkeypatch.setattr(target, method, malformed)
+    with pytest.raises(service.VcfDepotTargetPartialError) as caught:
+        configure()
+    assert caught.value.outcome["configuration_verified"] is True
+    assert caught.value.outcome["manual_recovery_required"] is False
+    assert caught.value.outcome["sync"]["request_accepted"] is False
+
+
 def test_failed_sync_evidence_is_bounded_and_does_not_echo_errors(target):
     """Record usable timestamps without publishing arbitrary target diagnostics.
 
@@ -203,12 +228,14 @@ def test_failed_sync_evidence_is_bounded_and_does_not_echo_errors(target):
     assert "private error detail" not in str(caught.value.outcome)
 
 
-def test_partial_job_preserves_component_evidence(client, monkeypatch):
+@pytest.mark.parametrize("deployment", [False, True])
+def test_partial_job_preserves_component_evidence(client, monkeypatch, deployment):
     """Keep a working depot distinct from metadata failure in task and audit state.
 
     Args:
         client: Isolated application and database fixture.
         monkeypatch: Dependency replacement fixture.
+        deployment: Whether configuration follows an appliance deployment.
     """
     import json
 
@@ -237,9 +264,22 @@ def test_partial_job_preserves_component_evidence(client, monkeypatch):
     with SessionLocal() as db:
         db.add(Job(id="job_sync_outcome", type="vcf-offline-depot-target-config", status="pending", created_by="admin"))
         db.commit()
-    ui.run_vcf_target_depot_job("job_sync_outcome", address="target.example.test", port=443,
-                              api_username="admin", api_password="test-api", depot_password="test-depot",
-                              replace_existing=False, expected_fingerprint="")
+    if deployment:
+        monkeypatch.setattr(ui, "inspect_ova", lambda _path: object())
+        monkeypatch.setattr(ui, "deploy_ova", lambda *_args, **_kwargs: {"guest_ip": "target.example.test"})
+        monkeypatch.setattr(ui, "_wait_for_vcf_api", lambda *_args, **_kwargs: {"role": "VcfInstaller"})
+        monkeypatch.setattr(ui, "_configure_deployed_target_depot", fail)
+        ui.run_vcf_sddc_deployment_job(
+            "job_sync_outcome", ova_path="fake.ova", endpoint="vcenter.example.test",
+            endpoint_username="admin", endpoint_password="test", endpoint_fingerprint="",
+            destination={}, vm_name="test", disk_provisioning="thin", power_on=True,
+            property_values={}, add_dns=False, apply_trust=False, configure_offline_depot=True,
+            depot_password="test-depot",
+        )
+    else:
+        ui.run_vcf_target_depot_job("job_sync_outcome", address="target.example.test", port=443,
+                                  api_username="admin", api_password="test-api", depot_password="test-depot",
+                                  replace_existing=False, expected_fingerprint="")
     with SessionLocal() as db:
         job = db.get(Job, "job_sync_outcome")
         assert job.status == "partial-failure"
@@ -247,5 +287,8 @@ def test_partial_job_preserves_component_evidence(client, monkeypatch):
         assert result["configuration_verified"] is True
         assert result["sync"]["outcome"] == "failed"
         assert result["manual_recovery_required"] is False
+        if deployment:
+            assert result["vm_preserved"] is True
+            assert result["target"] == "target.example.test"
         audit = db.scalars(select(AuditEvent).where(AuditEvent.resource_id == job.id)).one()
         assert audit.success is False

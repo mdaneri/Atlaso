@@ -236,6 +236,8 @@ request/observation failure, or timeout, Atlaso independently reads the target d
 status. A verified configuration does not prove that compatibility metadata synchronized. Unavailable readback is
 explicitly unverified; it does not by itself mean the configuration needs changing. The manual-recovery flag is set
 only when readback demonstrates a mismatch or unsuccessful connection.
+This evidence is retained for standalone configuration and configuration during deployment, including when a sync
+endpoint returns an unusable JSON response.
 
 The failure details include bounded pre-request and latest observed sync states and timestamps, whether the sync
 request was accepted, and whether an unchanged error and completion marker could describe a historical failure.

@@ -366,7 +366,7 @@ def configure_target_depot(
                 time.sleep(poll_interval)
             else:
                 raise VcfDepotTargetPartialError("Depot configuration succeeded, but metadata sync did not complete before the timeout.")
-        except (VcfDepotTargetError, httpx.HTTPError, ValueError) as exc:
+        except (VcfDepotTargetError, httpx.HTTPError, ValueError, TypeError) as exc:
             readback = _configuration_readback(api, local)
             outcome = {
                 "appliance": appliance,
