@@ -273,6 +273,11 @@ Backup disposal failure after successful activation is reported as a cleanup war
 retained location; Apply remains successful so the baseline matches the installed configuration.
 Existing SQLite and PostgreSQL databases gain the enabled setting during serialized schema startup;
 later startups preserve saved opt-outs.
+Ordinary Apply writes a durable transaction marker before changing networkd files and retains it
+until the application commits the exact executed Network baseline. Startup restores interrupted
+uncommitted candidates or acknowledges an already committed baseline. Recovery refuses to race a
+live helper, and an unresolved marker blocks another Apply. Terminal backup cleanup warnings do
+not cause committed configuration to be rolled back on a later restart.
 The retained failure names the attempted address, link, and detection time; a conflicting MAC appears
 only when the native evidence supplies one. Native networkd rejection messages do not normally include
 that MAC, so Atlaso does not infer it from stale neighbor entries.

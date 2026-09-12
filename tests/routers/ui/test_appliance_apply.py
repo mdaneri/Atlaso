@@ -9,6 +9,168 @@ import pytest
 from tests.routers.ui.helpers import login
 
 
+@pytest.mark.parametrize("commit_fails", [False, True])
+def test_network_apply_acknowledges_only_durable_executed_baseline(client, monkeypatch, commit_fails):
+    """Bind runtime acknowledgement to the executed snapshot and database commit.
+
+    Args:
+        client: Isolated application database fixture.
+        monkeypatch: Replace host operations and inject the commit failure.
+        commit_fails: Fail the baseline transaction after its flag was assigned.
+    """
+    from sqlalchemy.orm import Session
+
+    from atlaso.app import ui
+    from atlaso.app.adapters.system import AdapterResult
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import Job, JobStatus, JobStep
+
+    unit = {
+        "id": "network", "label": "Network", "snapshot_hash": "executed",
+        "summary": [], "validation_errors": [], "validation_warnings": [],
+        "config_path": "/etc/atlaso/network.conf", "config_preview": "executed\n", "config_diff": "",
+    }
+    with SessionLocal() as db:
+        job = Job(id="network-commit-test", type="appliance-apply", status=JobStatus.PENDING.value,
+                  created_by="admin", result=json.dumps({"selected_units": ["network"],
+                  "captured_units": [{"unit_id": "network", "snapshot_hash": "executed"}]}))
+        db.add(job)
+        db.add(JobStep(id="network-commit-test:network", job=job, component_key="network", label="Network",
+                       position=1, status=JobStatus.PENDING.value, result="{}"))
+        db.commit()
+
+    executed = False
+    acknowledgements = []
+
+    class Adapter:
+        """Inspect the committed database before allowing helper acknowledgement."""
+
+        dry_run = False
+
+        def __init__(self, **_kwargs):
+            """Accept production options.
+
+            Args:
+                **_kwargs: Unused host adapter configuration.
+            """
+
+        def reconcile_network_transaction(self, job_id, *, committed=False):
+            """Read durable evidence in a separate database session.
+
+            Args:
+                job_id: Transaction-owning task.
+                committed: Requested helper disposition.
+            """
+            with SessionLocal() as verify_db:
+                payload = json.loads(verify_db.get(Job, job_id).result)
+                baseline = ui.load_appliance_apply_baselines(verify_db).get("network", {})
+                assert payload["network_application_committed"] is committed
+                assert (baseline.get("snapshot_hash") == "executed") is committed
+            acknowledgements.append(committed)
+            return AdapterResult(command=["network", "reconcile"], returncode=0, dry_run=False)
+
+    def execute(candidate, **_kwargs):
+        """Verify pending ownership was persisted before host mutation.
+
+        Args:
+            candidate: Captured Network intent with task binding.
+            **_kwargs: Production execution options.
+        """
+        nonlocal executed
+        assert candidate["network_transaction_job_id"] == "network-commit-test"
+        with SessionLocal() as verify_db:
+            payload = json.loads(verify_db.get(Job, "network-commit-test").result)
+            assert payload["network_runtime_commit_pending"] is True
+            assert payload["network_application_committed"] is False
+        executed = True
+        return {**unit, "unit_id": "network", "success": True,
+                "status": JobStatus.SUCCEEDED.value, "dry_run": False, "commands": []}
+
+    original_commit = Session.commit
+    injected = False
+
+    def commit(db):
+        """Fail only the transaction attempting to record the applied baseline.
+
+        Args:
+            db: Active database session.
+        """
+        nonlocal injected
+        if commit_fails and not injected:
+            for item in db.dirty:
+                if isinstance(item, Job) and json.loads(item.result).get("network_application_committed") is True:
+                    injected = True
+                    raise RuntimeError("injected baseline commit failure")
+        return original_commit(db)
+
+    monkeypatch.setattr(ui, "SystemAdapter", Adapter)
+    monkeypatch.setattr(ui, "execute_appliance_apply_unit", execute)
+    monkeypatch.setattr(ui, "appliance_apply_units", lambda _db, **_kwargs: [
+        {**unit, "snapshot_hash": "newer-desired", "config_preview": "newer\n"} if executed else unit,
+    ])
+    monkeypatch.setattr(Session, "commit", commit)
+    ui.run_appliance_apply_job("network-commit-test")
+    assert acknowledgements == [not commit_fails]
+    assert injected is commit_fails
+    with SessionLocal() as db:
+        completed = db.get(Job, "network-commit-test")
+        assert completed.status == (JobStatus.FAILED.value if commit_fails else JobStatus.SUCCEEDED.value)
+        assert json.loads(completed.result)["network_runtime_commit_pending"] is False
+
+
+def test_interrupted_network_apply_uses_durable_application_commit(client, monkeypatch):
+    """Recover uncommitted work, acknowledge committed work, and retain failed ownership.
+
+    Args:
+        client: Isolated application database fixture.
+        monkeypatch: Replace privileged recovery calls with recorded results.
+    """
+    from atlaso.app import ui
+    from atlaso.app.adapters.system import AdapterResult
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import Job, JobStatus
+
+    calls = []
+
+    class RecoveryAdapter:
+        """Record whether the database committed the executed candidate."""
+
+        def __init__(self, **_kwargs):
+            """Accept adapter configuration.
+
+            Args:
+                **_kwargs: Production options unused by this recorder.
+            """
+
+        def reconcile_network_transaction(self, job_id, *, committed=False):
+            """Return success except when the original helper still owns its lock.
+
+            Args:
+                job_id: Exact task owning the helper marker.
+                committed: Whether its executed baseline is durable.
+            """
+            calls.append((job_id, committed))
+            return AdapterResult(command=["network", "reconcile", job_id], dry_run=False,
+                                 returncode=2 if job_id == "network-busy" else 0)
+
+    monkeypatch.setattr(ui, "SystemAdapter", RecoveryAdapter)
+    with SessionLocal() as db:
+        for name, committed in (("network-interrupted", False), ("network-committed", True), ("network-busy", False)):
+            db.add(Job(id=name, type="appliance-apply", status=JobStatus.FAILED.value, created_by="admin",
+                       result=json.dumps({"network_runtime_commit_pending": True,
+                                          "network_application_committed": committed})))
+        db.commit()
+        assert ui.active_appliance_apply_job(db) is not None
+        assert ui.recover_interrupted_appliance_apply_jobs(db) == 3
+        assert set(calls) == {("network-interrupted", False), ("network-committed", True), ("network-busy", False)}
+        for name in ("network-interrupted", "network-committed"):
+            assert json.loads(db.get(Job, name).result)["network_runtime_commit_pending"] is False
+        busy = db.get(Job, "network-busy")
+        assert busy.status == JobStatus.RUNNING.value
+        assert json.loads(busy.result)["network_runtime_commit_pending"] is True
+        assert ui.active_appliance_apply_job(db).id == "network-busy"
+
+
 def test_management_path_signature_covers_dedicated_and_flagged_access_transitions():
     """Detect every supported management-listener topology change."""
     from atlaso.app.ui import management_handoff_required, network_management_paths

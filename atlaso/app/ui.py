@@ -3291,6 +3291,7 @@ def recover_interrupted_appliance_apply_jobs(db: Session) -> int:
         for job in candidate_jobs
         if job.status in {JobStatus.PENDING.value, JobStatus.RUNNING.value}
         or _job_payload(job).get("management_handoff_runtime_commit_pending")
+        or _job_payload(job).get("network_runtime_commit_pending")
     ]
     if not jobs:
         return 0
@@ -3371,6 +3372,23 @@ def recover_interrupted_appliance_apply_jobs(db: Session) -> int:
         payload["state"] = "failed"
         payload["interrupted"] = True
         payload["interrupted_at"] = finished.isoformat()
+        if payload.get("network_runtime_commit_pending"):
+            recovery = SystemAdapter(dry_run=False).reconcile_network_transaction(
+                job.id, committed=payload.get("network_application_committed") is True,
+            )
+            payload["network_transaction_recovery"] = adapter_result_to_payload(recovery)
+            if recovery.returncode == 0:
+                payload["network_runtime_commit_pending"] = False
+                job.error = (
+                    "Restarted after the executed Network baseline was committed; its candidate remains active."
+                    if payload.get("network_application_committed") else
+                    "Interrupted Network Apply was reconciled to its previous configuration."
+                )
+            else:
+                job.status = JobStatus.RUNNING.value
+                job.finished_at = None
+                job.error = "Network transaction recovery needs attention; runtime ownership remains pending."
+                payload["state"] = "cleanup-required"
         if handoff_recovery is not None:
             recovery_result, recovery_evidence = handoff_recovery
             payload["management_handoff_recovery"] = adapter_result_to_payload(
@@ -13609,6 +13627,8 @@ def execute_appliance_apply_unit(
         config_path = context["network_config_path"]
         if not adapter.dry_run:
             config_preview = network_config_with_removed_vlans(unit["raw_config_preview"], unit.get("removed_vlan_interfaces", []))
+            if unit.get("network_transaction_job_id"):
+                config_preview = f"# atlaso-network-task: {unit['network_transaction_job_id']}\n" + config_preview
             config_path = stage_appliance_apply_config(NETWORK_STAGED_CONFIG_PATH, config_preview)
         results = run_adapter_steps(
             [
@@ -15369,6 +15389,7 @@ def active_appliance_apply_job(db: Session) -> Job | None:
             or_(
                 Job.status.in_([JobStatus.PENDING.value, JobStatus.RUNNING.value]),
                 Job.result.like('%"management_handoff_runtime_commit_pending": true%'),
+                Job.result.like('%"network_runtime_commit_pending": true%'),
             ),
         )
         .order_by(Job.created_at)
@@ -15812,9 +15833,18 @@ def run_appliance_apply_job(job_id: str, *, force_real: bool = False) -> None:
                     if unit["id"] == "esxi_pxe"
                     else None
                 )
+                execution_adapter = SystemAdapter(dry_run=False) if force_real else SystemAdapter()
+                network_transaction_pending = unit["id"] == "network" and not execution_adapter.dry_run
+                if network_transaction_pending:
+                    execution_unit = {**execution_unit, "network_transaction_job_id": job.id}
+                    pending_payload = _job_payload(job)
+                    pending_payload["network_runtime_commit_pending"] = True
+                    pending_payload["network_application_committed"] = False
+                    job.result = json.dumps(pending_payload, indent=2)
+                    db.commit()
                 result = execute_appliance_apply_unit(
                     execution_unit,
-                    adapter=SystemAdapter(dry_run=False) if force_real else None,
+                    adapter=execution_adapter,
                     db=db,
                 )
                 persist_vcf_depot_metadata_from_apply(db, [result])
@@ -15876,6 +15906,10 @@ def run_appliance_apply_job(job_id: str, *, force_real: bool = False) -> None:
                     db.expire_all()
                     refreshed_units = appliance_apply_units(db, reconcile=False)
                     applied_unit = next((candidate for candidate in refreshed_units if candidate["id"] == unit["id"]), unit)
+                    if unit["id"] == "network":
+                        # Commit exactly the executed intent, including when desired
+                        # state changed while native address readiness was running.
+                        applied_unit = unit
                     if unit["id"] == "esxi_pxe":
                         if result.get("dry_run"):
                             previous_baseline = load_appliance_apply_baselines(db).get(
@@ -15922,7 +15956,26 @@ def run_appliance_apply_job(job_id: str, *, force_real: bool = False) -> None:
                         remaining.finished_at = utcnow()
                         remaining.error = "Skipped after the master task cancellation request."
                         remaining.result = json.dumps({"summary": remaining_unit["summary"], "reason": "cancelled"}, indent=2)
+                if network_transaction_pending:
+                    pending_payload = _job_payload(job)
+                    pending_payload["network_application_committed"] = bool(result["success"])
+                    job.result = json.dumps(pending_payload, indent=2)
                 db.commit()
+                if network_transaction_pending:
+                    acknowledgement = execution_adapter.reconcile_network_transaction(
+                        job.id, committed=bool(result["success"]),
+                    )
+                    pending_payload = _job_payload(job)
+                    pending_payload["network_transaction_recovery"] = adapter_result_to_payload(acknowledgement)
+                    if acknowledgement.returncode != 0:
+                        pending_payload["state"] = "cleanup-required"
+                        job.error = "Network transaction acknowledgement or recovery needs attention."
+                        job.result = json.dumps(pending_payload, indent=2)
+                        db.commit()
+                        return
+                    pending_payload["network_runtime_commit_pending"] = False
+                    job.result = json.dumps(pending_payload, indent=2)
+                    db.commit()
                 if prune_network_boot_media:
                     removed_media = prune_superseded_shredos_media(db)
                     if removed_media:
@@ -15989,6 +16042,16 @@ def run_appliance_apply_job(job_id: str, *, force_real: bool = False) -> None:
             if job is None:
                 return
             safe_error = str(exc) if isinstance(exc, ApplianceApplyJobError) else "Appliance apply task failed unexpectedly."
+            network_payload = _job_payload(job)
+            if network_payload.get("network_runtime_commit_pending"):
+                # The rollback above expires uncommitted ORM state. Only the
+                # durable flag may authorize disposal of the runtime backup.
+                network_recovery = SystemAdapter(dry_run=False).reconcile_network_transaction(
+                    job.id, committed=network_payload.get("network_application_committed") is True,
+                )
+                network_payload["network_transaction_recovery"] = adapter_result_to_payload(network_recovery)
+                network_payload["network_runtime_commit_pending"] = network_recovery.returncode != 0
+                job.result = json.dumps(network_payload, indent=2)
             recovery_evidence: dict[str, Any] = {}
             if exception_recovery is not None:
                 recovery_result, recovery_evidence = exception_recovery

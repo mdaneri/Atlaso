@@ -214,6 +214,7 @@ def test_static_readiness_requires_candidate_prefix_and_source(tmp_path, monkeyp
 
     helper = load_helper_module()
     monkeypatch.setattr(helper, "NETWORK_APPLY_DIR", tmp_path)
+    monkeypatch.setattr(helper, "NETWORK_TRANSACTION_DIR", tmp_path / "transaction")
     parsed = ip_interface(candidate)
     row = {"name": "eth0", "ipv6_enabled": "true" if parsed.version == 6 else "false",
            "ipv6_cidr" if parsed.version == 6 else "ip_cidr": candidate}
@@ -246,6 +247,7 @@ def test_candidate_vlan_conflict_survives_link_removal(tmp_path, monkeypatch):
 
     helper = load_helper_module()
     monkeypatch.setattr(helper, "NETWORK_APPLY_DIR", tmp_path)
+    monkeypatch.setattr(helper, "NETWORK_TRANSACTION_DIR", tmp_path / "transaction")
     candidate = {"name": "eth0.20", "parent": "eth0", "vlan_id": "20", "ip_cidr": "192.0.2.20/24"}
     monkeypatch.setattr(helper, "_parse_network_config", lambda _path: ([], [candidate], []))
     native = observation()
@@ -497,6 +499,8 @@ def test_apply_rejects_partial_native_evidence_before_install(tmp_path, monkeypa
 
     helper = load_helper_module()
     path = tmp_path / "network.conf"
+    monkeypatch.setattr(helper, "NETWORK_TRANSACTION_DIR", tmp_path / "transaction")
+    monkeypatch.setattr(helper, "fcntl", None)
     monkeypatch.setattr(helper, "_validate_network_config_path", lambda _value: path)
     monkeypatch.setattr(helper, "_run", lambda args, **_kwargs: subprocess.CompletedProcess(args, 0, "systemd 257", ""))
     native = observation(complete=False)
@@ -520,7 +524,43 @@ def test_apply_rejects_partial_native_evidence_before_install(tmp_path, monkeypa
         assert "native networkd evidence is unavailable" in capsys.readouterr().err
 
 
-@pytest.mark.parametrize("failure", ["install", "readiness", "retirement", "rollback", "cleanup", "none"])
+def test_network_transaction_excludes_a_live_helper(tmp_path, monkeypatch):
+    """Use real POSIX locking to refuse recovery until the owning helper exits.
+
+    Args:
+        tmp_path: Isolated transaction directory.
+        monkeypatch: Map root ownership checks onto the unprivileged test directory.
+    """
+    from types import SimpleNamespace
+
+    from tests.test_appliance_helper import load_helper_module
+
+    helper = load_helper_module()
+    if helper.fcntl is None:
+        pytest.skip("POSIX flock is verified on Linux CI")
+    monkeypatch.setattr(helper, "NETWORK_TRANSACTION_DIR", tmp_path / "transaction")
+    original_fstat = helper.os.fstat
+
+    def root_metadata(descriptor):
+        """Preserve actual filesystem type and permissions while substituting UID.
+
+        Args:
+            descriptor: Real directory or lock-file descriptor.
+        """
+        value = original_fstat(descriptor)
+        return SimpleNamespace(st_uid=0, st_mode=value.st_mode, st_nlink=value.st_nlink)
+
+    monkeypatch.setattr(helper.os, "fstat", root_metadata)
+    with helper._network_transaction_lock():
+        with pytest.raises(ValueError, match="live helper"):
+            with helper._network_transaction_lock():
+                pytest.fail("a second owner acquired the transaction lock")
+    with helper._network_transaction_lock():
+        assert helper._network_transaction_state() == {}
+
+
+@pytest.mark.parametrize("failure", ["install", "readiness", "retirement", "rollback", "cleanup", "none",
+                                     "interrupted", "awaiting", "acknowledged"])
 def test_ordinary_apply_restores_rejected_candidate(tmp_path, monkeypatch, capsys, failure):
     """Restore persistent bytes and links, retaining evidence when rollback fails.
 
@@ -537,6 +577,8 @@ def test_ordinary_apply_restores_rejected_candidate(tmp_path, monkeypatch, capsy
     helper = load_helper_module()
     config = tmp_path / "candidate.conf"
     config.write_text(network_config_text(include_vlan=False), encoding="utf-8")
+    if failure in {"interrupted", "awaiting", "acknowledged"}:
+        config.write_text("# atlaso-network-task: test-task\n" + config.read_text(encoding="utf-8"), encoding="utf-8")
     runtime = tmp_path / "networkd"
     runtime.mkdir()
     previous = runtime / "10-atlaso-eth0.network"
@@ -549,7 +591,9 @@ def test_ordinary_apply_restores_rejected_candidate(tmp_path, monkeypatch, capsy
     commands = []
     vlan_stages = []
     monkeypatch.setattr(helper, "NETWORK_APPLY_DIR", tmp_path)
+    monkeypatch.setattr(helper, "NETWORK_TRANSACTION_DIR", tmp_path / "transaction")
     monkeypatch.setattr(helper, "NETWORKD_CONFIG_DIR", runtime)
+    monkeypatch.setattr(helper, "fcntl", None)
     monkeypatch.setattr(helper, "NETWORKD_MGMT_CONFIG_PATH", runtime / "00-atlaso-mgmt.network")
     monkeypatch.setattr(helper, "_validate_network_config_path", lambda _path: config)
     monkeypatch.setattr(helper, "_network_detection_preflight", lambda _path: None)
@@ -605,6 +649,8 @@ def test_ordinary_apply_restores_rejected_candidate(tmp_path, monkeypatch, capsy
         """
         if failure in {"readiness", "rollback"}:
             raise ValueError("candidate address conflict")
+        if failure == "interrupted":
+            raise KeyboardInterrupt("helper stopped before readiness")
 
     monkeypatch.setattr(helper, "_run", run)
     monkeypatch.setattr(helper, "_install_systemd_networkd_files", install)
@@ -620,9 +666,24 @@ def test_ordinary_apply_restores_rejected_candidate(tmp_path, monkeypatch, capsy
             raise OSError("backup cleanup unavailable")
 
         monkeypatch.setattr(helper.shutil, "rmtree", fail_cleanup)
-    assert helper._handle_network("apply", [str(config)]) == (0 if failure in {"none", "cleanup"} else 2)
-    backups = list(tmp_path.glob(".network-rollback-*"))
-    if failure in {"none", "cleanup"}:
+    if failure == "interrupted":
+        with pytest.raises(KeyboardInterrupt):
+            helper._handle_network("apply", [str(config)])
+        assert helper._network_transaction_state()["phase"] == "applying"
+        assert helper._handle_network("apply", [str(config)]) == 2
+        assert helper._handle_network("acknowledge", ["test-task"]) == 2
+        assert helper._handle_network("recover", ["test-task"]) == 0
+    elif failure in {"awaiting", "acknowledged"}:
+        assert helper._handle_network("apply", [str(config)]) == 0
+        assert helper._network_transaction_state()["phase"] == "awaiting-commit"
+        assert helper._handle_network("acknowledge", ["wrong-task"]) == 2
+        action = "acknowledge" if failure == "acknowledged" else "recover"
+        assert helper._handle_network(action, ["test-task"]) == 0
+        assert helper._handle_network(action, ["test-task"]) == 0
+    else:
+        assert helper._handle_network("apply", [str(config)]) == (0 if failure in {"none", "cleanup"} else 2)
+    backups = list((tmp_path / "transaction").glob("backup-*"))
+    if failure in {"none", "cleanup", "acknowledged"}:
         assert previous.read_bytes() == b"rejected candidate"
         assert candidate_only.is_file()
         assert vlan_stages == [True, False]
@@ -637,13 +698,14 @@ def test_ordinary_apply_restores_rejected_candidate(tmp_path, monkeypatch, capsy
         assert ["networkctl", "reload"] in commands
         if failure == "rollback":
             assert len(backups) == 1
-            assert (backups[0] / "state.json").is_file()
+            assert (tmp_path / "transaction" / "state.json").is_file()
             assert "rollback incomplete" in capsys.readouterr().err
             return
         assert "eth0.20" not in live
         assert ["networkctl", "reconfigure", "eth0"] in commands
         assert ["ip", "link", "set", "dev", "eth0", "up"] in commands
-        assert "previous network configuration restored" in capsys.readouterr().err
+        if failure not in {"interrupted", "awaiting"}:
+            assert "previous network configuration restored" in capsys.readouterr().err
     assert not backups
 
 

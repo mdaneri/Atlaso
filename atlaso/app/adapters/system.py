@@ -601,6 +601,21 @@ class SystemAdapter:
         """
         return self._helper_result("network", "validate", config_path, dry_run_message="dry-run: network validation command recorded")
 
+    def reconcile_network_transaction(self, job_id: str, *, committed: bool = False) -> AdapterResult:
+        """Acknowledge a committed Network baseline or recover its interrupted helper.
+
+        Args:
+            job_id: Exact owning application task, or manual for standalone helper work.
+            committed: Whether the executed baseline and task result are durably committed.
+
+        Returns:
+            Bounded helper reconciliation result.
+        """
+        return self._helper_result(
+            "network", "acknowledge" if committed else "recover", job_id,
+            dry_run_message="dry-run: network transaction reconciliation recorded", timeout_seconds=180,
+        )
+
     def validate_management_handoff(self, manifest_path: str) -> AdapterResult:
         """Validate a staged management-plane handoff.
 

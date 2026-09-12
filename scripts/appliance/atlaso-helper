@@ -84,7 +84,7 @@ COMMANDS: dict[str, set[str]] = {
     "local-users": {"validate", "apply", "status", "authenticate"},
     "appliance-settings": {"validate", "preflight", "apply"},
     "web-terminal": {"status", "sign"},
-    "network": {"validate", "apply", "dhcp-dns", "address-status"},
+    "network": {"validate", "apply", "dhcp-dns", "address-status", "recover", "acknowledge"},
     "management-front-door": {"recover"},
     "management-handoff": {"validate", "apply", "acknowledge", "recover"},
     "firewall": {"validate", "apply"},
@@ -217,6 +217,8 @@ NO_PATH_ACTIONS = {
     ("appliance-update", "quiesce-action"),
 }
 NON_PATH_ARGUMENT_ACTIONS = {
+    ("network", "recover"),
+    ("network", "acknowledge"),
     ("diagnostics", "source"),
     ("local-users", "authenticate"),
     ("ldap", "authenticate"),
@@ -420,6 +422,7 @@ NTP_DRIFT_PATH = NTP_STATE_DIR / "ntp.drift"
 NTP_NTS_COOKIE_PATH = NTP_STATE_DIR / "nts-keys"
 NTP_CERT_DIR = Path("/etc/atlaso/ntp/certs")
 NETWORK_APPLY_DIR = Path("/var/lib/atlaso/apply/network")
+NETWORK_TRANSACTION_DIR = ATLASO_STATE_DIR / "network-transaction"
 MANAGEMENT_HANDOFF_APPLY_DIR = Path("/var/lib/atlaso/apply/management-handoff")
 MANAGEMENT_HANDOFF_STATE_DIR = ATLASO_STATE_DIR / "management-handoff"
 MANAGEMENT_HANDOFF_STATE_PATH = MANAGEMENT_HANDOFF_STATE_DIR / "state.json"
@@ -8972,12 +8975,142 @@ def _wait_network_addresses(path: Path, *, attempts: int = 31, started_at: str |
 
 
 @contextmanager
+def _network_transaction_lock():
+    """Exclude live Apply helpers while recovering the root-owned transaction."""
+    root = NETWORK_TRANSACTION_DIR
+    if root.is_symlink():
+        raise ValueError("network transaction directory is unsafe")
+    root.mkdir(mode=0o700, parents=True, exist_ok=True)
+    _fsync_directory(root.parent)
+    if fcntl is None:
+        yield
+        return
+    directory_fd = os.open(root, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+    try:
+        metadata = os.fstat(directory_fd)
+        if metadata.st_uid != 0 or metadata.st_mode & 0o077:
+            raise ValueError("network transaction directory is not root-owned and private")
+        descriptor = os.open(".lock", os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW, 0o600, dir_fd=directory_fd)
+        with os.fdopen(descriptor, "a+b") as handle:
+            metadata = os.fstat(handle.fileno())
+            if metadata.st_uid != 0 or not stat.S_ISREG(metadata.st_mode) or metadata.st_nlink != 1:
+                raise ValueError("network transaction lock is unsafe")
+            try:
+                fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except BlockingIOError as exc:
+                raise ValueError("network transaction is still owned by a live helper") from exc
+            try:
+                yield
+            finally:
+                fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+    finally:
+        os.close(directory_fd)
+
+
+def _network_transaction_state() -> dict:
+    """Read the actionable marker without accepting paths outside owned roots."""
+    marker = NETWORK_TRANSACTION_DIR / "state.json"
+    if not marker.exists():
+        return {}
+    if marker.is_symlink() or marker.stat().st_size > 1048576:
+        raise ValueError("network transaction marker is unsafe")
+    state = json.loads(marker.read_text(encoding="utf-8"))
+    if not isinstance(state, dict) or state.get("phase") not in {"applying", "awaiting-commit", "committed", "rolled-back"}:
+        raise ValueError("network transaction marker is invalid")
+    backup = Path(str(state.get("backup_root", "")))
+    if backup.parent != NETWORK_TRANSACTION_DIR or not backup.name.startswith("backup-") or backup.is_symlink():
+        raise ValueError("network transaction backup root is unsafe")
+    for item in state.get("snapshots", []):
+        target = Path(str(item.get("path", "")))
+        if target.parent != NETWORKD_CONFIG_DIR or target.suffix not in {".network", ".netdev"}:
+            raise ValueError("network transaction target is unsafe")
+        if item.get("existed") and Path(str(item.get("backup", ""))).parent != backup:
+            raise ValueError("network transaction backup is outside its root")
+    return state
+
+
+def _finish_network_transaction(state: dict, phase: str) -> None:
+    """Persist the terminal outcome before disposing backups.
+
+    Args:
+        state: Validated transaction metadata.
+        phase: Committed or rolled-back terminal phase.
+    """
+    marker = NETWORK_TRANSACTION_DIR / "state.json"
+    state["phase"] = phase
+    _durable_management_handoff_state_write(state, marker)
+    try:
+        if Path(state["backup_root"]).exists():
+            shutil.rmtree(Path(state["backup_root"]))
+        _durable_management_handoff_unlink(marker)
+    except OSError:
+        print(f"Network rollback backup cleanup incomplete: {state['backup_root']}", file=sys.stderr)
+
+
+def _restore_network_transaction(state: dict) -> None:
+    """Restore every file and link, retaining the marker if any stage fails.
+
+    Args:
+        state: Validated pre-mutation snapshot.
+    """
+    failures = []
+    for item in state["snapshots"]:
+        try:
+            _restore_management_handoff_snapshot(item)
+        except (OSError, ValueError) as exc:
+            failures.append(str(exc))
+    try:
+        if _run(["networkctl", "reload"]).returncode != 0:
+            raise ValueError("restored networkd configuration reload failed")
+    except (OSError, ValueError, subprocess.TimeoutExpired) as exc:
+        failures.append(str(exc))
+    try:
+        _restore_management_handoff_links(state, [])
+    except (OSError, ValueError, subprocess.TimeoutExpired) as exc:
+        failures.append(str(exc))
+    if failures:
+        raise ValueError("network rollback incomplete: " + "; ".join(failures[:8]))
+    _finish_network_transaction(state, "rolled-back")
+
+
+def _reconcile_network_transaction(job_id: str, *, committed: bool) -> None:
+    """Reconcile only the transaction owned by the supplied application task.
+
+    Args:
+        job_id: Exact task ID, or manual for an unbound helper invocation.
+        committed: Whether the application durably committed the executed baseline.
+    """
+    state = _network_transaction_state()
+    if not state:
+        return
+    if state["phase"] in {"committed", "rolled-back"}:
+        _finish_network_transaction(state, state["phase"])
+        return
+    if state.get("job_id") != job_id:
+        raise ValueError("network transaction belongs to a different task")
+    if committed:
+        if state["phase"] != "awaiting-commit":
+            raise ValueError("network candidate did not complete readiness")
+        _finish_network_transaction(state, "committed")
+    else:
+        _restore_network_transaction(state)
+
+
+@contextmanager
 def _network_apply_transaction(path: Path):
     """Restore installed files and link state if an ordinary candidate is rejected.
 
     Args:
         path: Validated staged Network intent.
     """
+    existing = _network_transaction_state()
+    if existing:
+        if existing["phase"] in {"committed", "rolled-back"} or existing.get("job_id") == "manual":
+            _reconcile_network_transaction(str(existing["job_id"]), committed=False)
+        if _network_transaction_state():
+            raise ValueError("pending network transaction requires application recovery before another Apply")
+    binding = re.search(r"(?m)^# atlaso-network-task: ([A-Za-z0-9_-]{1,128})$", path.read_text(encoding="utf-8"))
+    job_id = binding[1] if binding else "manual"
     files, _links, _down = _systemd_networkd_files(path)
     physical, vlans, link_states = _management_handoff_candidate_links(
         {"network_config_path": str(path)}, include_removed=True,
@@ -8989,9 +9122,9 @@ def _network_apply_transaction(path: Path):
         *(item for item in NETWORKD_CONFIG_DIR.glob(f"{NETWORKD_MANAGED_PREFIX}*")
           if item.suffix in {".network", ".netdev"}),
     }
-    backup_root = Path(tempfile.mkdtemp(prefix=".network-rollback-", dir=NETWORK_APPLY_DIR))
+    backup_root = Path(tempfile.mkdtemp(prefix="backup-", dir=NETWORK_TRANSACTION_DIR))
     snapshots = []
-    retain_backup = False
+    published = False
     try:
         for index, target in enumerate(sorted(paths)):
             if target.is_symlink() or (target.exists() and not target.is_file()):
@@ -9006,35 +9139,29 @@ def _network_apply_transaction(path: Path):
                 _fsync_file(backup)
             snapshots.append(item)
         state = {"snapshots": snapshots, "candidate_physical_interfaces": physical,
-                 "candidate_vlan_interfaces": vlans, "candidate_link_states": link_states}
-        _durable_management_handoff_state_write(state, backup_root / "state.json")
+                 "candidate_vlan_interfaces": vlans, "candidate_link_states": link_states,
+                 "backup_root": str(backup_root), "job_id": job_id, "phase": "applying"}
+        _fsync_directory(backup_root)
+        _durable_management_handoff_state_write(state, NETWORK_TRANSACTION_DIR / "state.json")
+        published = True
         try:
             yield
+            for target in paths:
+                if target.is_file():
+                    _fsync_file(target)
+            _fsync_directory(NETWORKD_CONFIG_DIR)
+            state["phase"] = "awaiting-commit"
+            _durable_management_handoff_state_write(state, NETWORK_TRANSACTION_DIR / "state.json")
+            if job_id == "manual":
+                _finish_network_transaction(state, "committed")
         except (OSError, ValueError, subprocess.TimeoutExpired) as exc:
-            failures = []
-            for item in snapshots:
-                try:
-                    _restore_management_handoff_snapshot(item)
-                except (OSError, ValueError) as restore_exc:
-                    failures.append(str(restore_exc))
             try:
-                if _run(["networkctl", "reload"]).returncode != 0:
-                    raise ValueError("restored networkd configuration reload failed")
+                _restore_network_transaction(state)
             except (OSError, ValueError, subprocess.TimeoutExpired) as restore_exc:
-                failures.append(str(restore_exc))
-            try:
-                _restore_management_handoff_links(state, [])
-            except (OSError, ValueError, subprocess.TimeoutExpired) as restore_exc:
-                failures.append(str(restore_exc))
-            if failures:
-                retain_backup = True
-                raise ValueError(
-                    f"{exc}; network rollback incomplete; retained evidence: {backup_root}; "
-                    + "; ".join(failures[:8])
-                ) from exc
+                raise ValueError(f"{exc}; network rollback incomplete: {restore_exc}") from exc
             raise ValueError(f"{exc}; previous network configuration restored") from exc
     finally:
-        if not retain_backup:
+        if not published:
             try:
                 shutil.rmtree(backup_root)
             except OSError:
@@ -9044,12 +9171,33 @@ def _network_apply_transaction(path: Path):
 
 
 def _handle_network(action: str, args: list[str]) -> int:
+    """Serialize network mutation and recovery while leaving observation read-only.
+
+    Args:
+        action: Validated network operation.
+        args: Operation arguments.
+    """
+    try:
+        with _network_transaction_lock() if action in {"apply", "recover", "acknowledge"} else nullcontext():
+            return _handle_network_locked(action, args)
+    except (OSError, ValueError, subprocess.TimeoutExpired) as exc:
+        print(str(exc), file=sys.stderr)
+        return 2
+
+
+def _handle_network_locked(action: str, args: list[str]) -> int:
     """Handle network.
 
     Args:
         action: Action consumed by handle network.
         args: Parsed command-line options consumed by the operation.
     """
+    if action in {"recover", "acknowledge"}:
+        if len(args) != 1 or not re.fullmatch(r"[A-Za-z0-9_-]{1,128}", args[0]):
+            raise ValueError("network reconciliation requires an exact task identity")
+        _reconcile_network_transaction(args[0], committed=action == "acknowledge")
+        print(json.dumps({"network_transaction": "reconciled", "job_id": args[0]}))
+        return 0
     if action == "address-status":
         if args:
             print("network address-status accepts no arguments", file=sys.stderr)
