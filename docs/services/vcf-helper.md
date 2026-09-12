@@ -245,6 +245,7 @@ HTTP acceptance is retained even if the response body is unusable; acceptance is
 before a response arrives.
 Retained configuration evidence excludes vendor URLs and free-form messages.
 Malformed nested configuration or account objects make the readback unavailable while preserving sync evidence.
+Nonfinite numeric values in the readback are likewise unavailable evidence.
 That historical-error indication is a diagnostic hint, not proof of the cause or a successful current sync.
 Existing synchronization and terminal status behavior is unchanged. Read current target sync status before retrying:
 a remote sync may still be active. Retrying against a matching depot preserves that configuration.

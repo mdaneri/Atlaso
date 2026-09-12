@@ -71,7 +71,7 @@ def _configuration_readback(api: VcfDepotApiClient, local: LocalDepotEndpoint) -
         connected = depot["status"] == "DEPOT_CONNECTION_SUCCESSFUL"
         return {"depot": depot, "configuration_verified": matches and connected,
                 "configuration_readback": "verified" if matches and connected else "mismatch"}
-    except (VcfDepotTargetError, httpx.HTTPError, ValueError, TypeError):
+    except (VcfDepotTargetError, httpx.HTTPError, ValueError, TypeError, OverflowError):
         return {"configuration_verified": False, "configuration_readback": "unavailable"}
 
 

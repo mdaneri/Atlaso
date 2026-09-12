@@ -239,6 +239,35 @@ def test_malformed_nested_readback_preserves_sync_evidence(target, monkeypatch, 
     assert result["sync"]["latest_observation"]["last_completed_at"] == NEW
 
 
+@pytest.mark.parametrize("port", [float("inf"), float("-inf"), float("nan")])
+def test_nonfinite_readback_port_preserves_sync_evidence(target, monkeypatch, port):
+    """Treat nonfinite vendor port numbers as unavailable configuration evidence.
+
+    Args:
+        target: Fake target fixture.
+        monkeypatch: Dependency replacement fixture.
+        port: Nonfinite decoded JSON port value.
+    """
+    read_settings = target.depot_settings
+
+    def malformed_readback():
+        """Inject the malformed value into only the post-failure readback."""
+        payload = read_settings()
+        if target.reads > 1:
+            payload["depotConfiguration"]["port"] = port
+        return payload
+
+    target.responses = [snapshot(), snapshot("FAILED", NEW, "Metadata failed.")]
+    monkeypatch.setattr(target, "depot_settings", malformed_readback)
+    with pytest.raises(service.VcfDepotTargetPartialError) as caught:
+        configure()
+    result = caught.value.outcome
+    assert result["configuration_readback"] == "unavailable"
+    assert result["sync"]["request_accepted"] is True
+    assert result["sync"]["before_request"]["last_completed_at"] == OLD
+    assert result["sync"]["latest_observation"]["last_completed_at"] == NEW
+
+
 def test_request_error_keeps_configuration_readback(target, monkeypatch):
     """A rejected sync request must not lose a verified existing configuration.
 
