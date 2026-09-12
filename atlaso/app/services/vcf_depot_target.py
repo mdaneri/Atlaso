@@ -137,6 +137,7 @@ class VcfDepotApiClient:
         client: Client maintained by this vcfdepotapiclient.
         username: Username maintained by this vcfdepotapiclient.
         password: Password maintained by this vcfdepotapiclient.
+        sync_request_accepted: HTTP acceptance, or None when transport leaves it unknown.
     """
     def __init__(self, address: str, username: str, password: str, *, port: int = 443, timeout: float = 30.0, expected_fingerprint: str = ""):
         """Initialize the vcf depot api client.
@@ -164,6 +165,7 @@ class VcfDepotApiClient:
         self.client = httpx.Client(base_url=f"https://{api_host}{port_suffix}", verify=False, timeout=timeout)
         self.username = username
         self.password = password
+        self.sync_request_accepted: bool | None = False
 
     def __enter__(self) -> "VcfDepotApiClient":
         """Enter the managed context.
@@ -267,7 +269,10 @@ class VcfDepotApiClient:
 
     def start_sync(self) -> dict[str, Any]:
         """Return start sync."""
+        self.sync_request_accepted = None
         response = self.client.patch("/v1/system/settings/depot/depot-sync-info")
+        # A successful HTTP response proves acceptance even if its body cannot be decoded.
+        self.sync_request_accepted = response.is_success
         self._raise(response, "VCF rejected the depot metadata sync request")
         return dict(response.json())
 
@@ -373,7 +378,7 @@ def configure_target_depot(
                 "configuration": "updated" if configured else "unchanged",
                 **readback,
                 "sync": {
-                    "request_accepted": request_accepted,
+                    "request_accepted": getattr(api, "sync_request_accepted", request_accepted),
                     "before_request": _sync_evidence(before),
                     "latest_observation": _sync_evidence(latest),
                     "historical_error_possible": bool(

@@ -1,5 +1,6 @@
 """Exercise asynchronous sync attribution and independent configuration evidence."""
 
+import httpx
 import pytest
 
 from atlaso.app.services import vcf_depot_target as service
@@ -7,6 +8,7 @@ from atlaso.app.services import vcf_depot_target as service
 LOCAL = service.LocalDepotEndpoint("depot.example.test", 443, "https://depot.example.test", "depot")
 OLD = "2026-09-11T20:30:00+00:00"
 NEW = "2026-09-11T20:42:00+00:00"
+API_CLIENT = service.VcfDepotApiClient
 
 
 def snapshot(status="COMPLETED", timestamp=OLD, error=""):
@@ -188,15 +190,13 @@ def test_request_error_keeps_configuration_readback(target, monkeypatch):
     assert "private request detail" not in str(caught.value)
 
 
-@pytest.mark.parametrize("method", ["sync_info", "start_sync"])
 @pytest.mark.parametrize("payload", [None, 42, [1]])
-def test_non_object_sync_json_preserves_readback(target, monkeypatch, method, payload):
+def test_non_object_sync_json_preserves_readback(target, monkeypatch, payload):
     """Retain configuration evidence when decoding a vendor JSON object fails.
 
     Args:
         target: Fake target fixture.
         monkeypatch: Dependency replacement fixture.
-        method: Sync endpoint receiving the malformed shape.
         payload: Valid JSON value which cannot become a response dictionary.
     """
     target.responses = [snapshot()]
@@ -205,12 +205,47 @@ def test_non_object_sync_json_preserves_readback(target, monkeypatch, method, pa
         """Model the API client's response dictionary conversion."""
         return dict(payload)
 
-    monkeypatch.setattr(target, method, malformed)
+    monkeypatch.setattr(target, "sync_info", malformed)
     with pytest.raises(service.VcfDepotTargetPartialError) as caught:
         configure()
     assert caught.value.outcome["configuration_verified"] is True
     assert caught.value.outcome["manual_recovery_required"] is False
     assert caught.value.outcome["sync"]["request_accepted"] is False
+
+
+@pytest.mark.parametrize("response_body", [b"null", b"42", b"[1]", b"not-json"])
+@pytest.mark.parametrize("status", [200, 202, 503, None])
+def test_sync_acceptance_survives_unusable_response(target, monkeypatch, response_body, status):
+    """Separate HTTP acceptance from body decoding and uncertain transport failure.
+
+    Args:
+        target: Fake target fixture.
+        monkeypatch: Dependency replacement fixture.
+        response_body: Vendor response bytes.
+        status: HTTP response status, or None for a transport timeout.
+    """
+    from types import MethodType
+
+    def respond(request):
+        """Serve a response without external network access.
+
+        Args:
+            request: Captured outgoing HTTP request.
+        """
+        assert request.method == "PATCH"
+        if status is None:
+            raise httpx.ReadTimeout("response unavailable", request=request)
+        return httpx.Response(status, content=response_body)
+
+    target.responses = [snapshot()]
+    with httpx.Client(base_url="https://target.example.test", transport=httpx.MockTransport(respond)) as client:
+        monkeypatch.setattr(target, "client", client, raising=False)
+        monkeypatch.setattr(target, "_raise", API_CLIENT._raise, raising=False)
+        monkeypatch.setattr(target, "start_sync", MethodType(API_CLIENT.start_sync, target))
+        with pytest.raises(service.VcfDepotTargetPartialError) as caught:
+            configure()
+    assert caught.value.outcome["configuration_verified"] is True
+    assert caught.value.outcome["sync"]["request_accepted"] is (None if status is None else status < 300)
 
 
 def test_failed_sync_evidence_is_bounded_and_does_not_echo_errors(target):
