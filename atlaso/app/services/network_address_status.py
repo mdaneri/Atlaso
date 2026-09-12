@@ -62,7 +62,8 @@ def project_status(
             prior = {}
         records = link.get("addresses", [])
         assigned = [row["address"] for row in records if row["state"] == "assigned"]
-        events = [item for item in observation.get("conflicts", []) if link and item["name"] == resource["name"]]
+        events = [item for item in observation.get("conflicts", []) if item["name"] == resource["name"]
+                  and (item.get("identity") == identity or (link and not item.get("identity")))]
         events.extend({"name": resource["name"], "address": item["address"], "detected_at": now, "mac": ""}
                       for item in records if item["state"] == "conflict")
         last_conflict = prior.get("last_conflict")

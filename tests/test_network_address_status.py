@@ -213,6 +213,7 @@ def test_static_readiness_requires_candidate_prefix_and_source(tmp_path, monkeyp
     from tests.test_appliance_helper import load_helper_module
 
     helper = load_helper_module()
+    monkeypatch.setattr(helper, "NETWORK_APPLY_DIR", tmp_path)
     parsed = ip_interface(candidate)
     row = {"name": "eth0", "ipv6_enabled": "true" if parsed.version == 6 else "false",
            "ipv6_cidr" if parsed.version == 6 else "ip_cidr": candidate}
@@ -232,6 +233,42 @@ def test_static_readiness_requires_candidate_prefix_and_source(tmp_path, monkeyp
     record["state"] = "conflict"
     with pytest.raises(ValueError, match="IP conflict"):
         helper._wait_network_addresses(path, attempts=1)
+
+
+def test_candidate_vlan_conflict_survives_link_removal(tmp_path, monkeypatch):
+    """Capture identity-bound rejection before rollback, without a worker sample.
+
+    Args:
+        tmp_path: Task-owned native evidence root.
+        monkeypatch: Supply candidate topology and rejection evidence.
+    """
+    from tests.test_appliance_helper import load_helper_module
+
+    helper = load_helper_module()
+    monkeypatch.setattr(helper, "NETWORK_APPLY_DIR", tmp_path)
+    candidate = {"name": "eth0.20", "parent": "eth0", "vlan_id": "20", "ip_cidr": "192.0.2.20/24"}
+    monkeypatch.setattr(helper, "_parse_network_config", lambda _path: ([], [candidate], []))
+    native = observation()
+    native["links"][0]["ifindex"] = 2
+    native["links"].append({"name": "eth0.20", "kind": "vlan", "vlan_id": 20,
+                            "parent_index": 2, "configured": False, "addresses": []})
+    native["conflicts"] = [{"name": "eth0.20", "address": "192.0.2.20",
+                            "detected_at": native["observed_at"], "mac": ""}]
+    monkeypatch.setattr(helper, "_network_address_observation", lambda: native)
+    with pytest.raises(ValueError, match="IP conflict"):
+        helper._wait_network_addresses(tmp_path / "intent.conf", attempts=1, started_at="2026-01-01T00:00:00+00:00")
+    retained = helper._read_retained_network_conflicts()
+    assert retained[0]["identity"] == "00:11:22:33:44:55:20"
+    native["links"] = native["links"][:1]
+    native["conflicts"] = retained
+    desired = resource(key="vlan:2", name="eth0.20", identity="00:11:22:33:44:55:20")
+    desired.update(physical=False, parent="eth0")
+    projected = project_status(native, {}, [desired])["rows"]["vlan:2"]
+    assert projected["state"] == "conflict"
+    assert projected["active_addresses"] == []
+    assert projected["last_conflict"]["address"] == "192.0.2.20"
+    desired["identity"] = "00:11:22:33:44:66:20"
+    assert project_status(native, {}, [desired])["rows"]["vlan:2"]["last_conflict"] is None
 
 
 def test_upgrade_defaults_on_without_overwriting_explicit_opt_out(client):

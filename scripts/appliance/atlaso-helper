@@ -8692,10 +8692,77 @@ def _network_observation_command(command: list[str], *, timeout: float = 4) -> s
     return subprocess.CompletedProcess(command, process.returncode, buffer.decode("utf-8", errors="strict"), "")
 
 
+def _read_retained_network_conflicts() -> list[dict]:
+    """Read bounded identity-bound failures captured before candidate link removal."""
+    try:
+        path = NETWORK_APPLY_DIR / "address-conflicts.json"
+        if path.is_symlink() or path.stat().st_size > 262144:
+            return []
+        value = json.loads(path.read_text(encoding="utf-8"))
+        if not isinstance(value, list):
+            return []
+        return [item for item in value[-256:] if isinstance(item, dict)
+                and all(isinstance(item.get(key), str) for key in ("name", "address", "detected_at", "identity"))]
+    except (OSError, ValueError):
+        return []
+
+
+def _retain_network_conflicts(path: Path, observation: dict, started_at: str) -> None:
+    """Bind confirmed native failures to actual link identity before rollback.
+
+    Args:
+        path: Validated staged candidate intent.
+        observation: Native evidence sampled while candidate links still exist.
+        started_at: Earliest event timestamp belonging to this activation.
+    """
+    physical, vlans, _removed = _parse_network_config(path)
+    links = {row["name"]: row for row in observation.get("links", [])}
+    captured = []
+    for row in physical + vlans:
+        link = links.get(row["name"], {})
+        if row in vlans:
+            if not _native_vlan_matches(row, links):
+                continue
+            identity = f"{links[row['parent']].get('mac', '')}:{row['vlan_id']}"
+        else:
+            identity = str(link.get("mac") or "")
+        if not re.fullmatch(r"(?:[0-9a-f]{2}:){5}[0-9a-f]{2}(?::[0-9]+)?", identity):
+            continue
+        events = [event for event in observation.get("conflicts", [])
+                  if event["name"] == row["name"] and event["detected_at"] >= started_at
+                  and not event.get("identity")]
+        events.extend({"address": item["address"], "detected_at": observation["observed_at"]}
+                      for item in link.get("addresses", []) if item["state"] == "conflict")
+        for event in events:
+            captured.append({"name": row["name"], "address": str(ip_address(event["address"])),
+                             "detected_at": event["detected_at"], "identity": identity, "mac": ""})
+    if not captured:
+        return
+    retained = {(item["identity"], item["name"], item["address"]): item
+                for item in _read_retained_network_conflicts()}
+    for event in captured:
+        key = (event["identity"], event["name"], event["address"])
+        if key not in retained or retained[key]["detected_at"] < event["detected_at"]:
+            retained[key] = event
+    # The root helper alone writes this sanitized record; a unique temporary file
+    # avoids following a pre-existing temporary-file link in the staging directory.
+    descriptor, temporary_name = tempfile.mkstemp(prefix=".address-conflicts-", dir=NETWORK_APPLY_DIR)
+    temporary = Path(temporary_name)
+    try:
+        with os.fdopen(descriptor, "w", encoding="utf-8") as stream:
+            json.dump(sorted(retained.values(), key=lambda item: item["detected_at"])[-256:], stream)
+            stream.flush()
+            os.fsync(stream.fileno())
+        temporary.replace(NETWORK_APPLY_DIR / "address-conflicts.json")
+        _fsync_directory(NETWORK_APPLY_DIR)
+    finally:
+        temporary.unlink(missing_ok=True)
+
+
 def _network_address_observation() -> dict:
     """Return bounded, sanitized native address and conflict evidence without probing links."""
     observed_at = datetime.now(timezone.utc).isoformat()
-    result = {"observed_at": observed_at, "links": [], "conflicts": [], "complete": False}
+    result = {"observed_at": observed_at, "links": [], "conflicts": _read_retained_network_conflicts(), "complete": False}
     try:
         addresses = _network_observation_command(["ip", "-j", "-d", "address", "show"], timeout=4)
         journal = _network_observation_command([
@@ -8869,6 +8936,7 @@ def _wait_network_addresses(path: Path, *, attempts: int = 31, started_at: str |
     deadline = time.monotonic() + 30
     for attempt in range(max(1, attempts)):
         observation = _network_address_observation()
+        _retain_network_conflicts(path, observation, started_at)
         links = {row["name"]: row for row in observation["links"]}
         missing = []
         for vlan in vlans:

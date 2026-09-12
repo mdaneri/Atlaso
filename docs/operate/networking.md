@@ -266,6 +266,9 @@ readiness succeeds. An incomplete rollback reports failure and retains its backu
 operator recovery; it never advances the applied baseline.
 Static readiness requires the complete address and prefix with native static-source evidence;
 an old DHCP lease or an address with a different prefix cannot satisfy it.
+Apply retains confirmed native failures with the observed interface or VLAN-parent identity before
+rollback removes a candidate-only VLAN. The next status refresh can therefore show the failed attempt
+even if the worker never sampled that transient link.
 Backup disposal failure after successful activation is reported as a cleanup warning with the
 retained location; Apply remains successful so the baseline matches the installed configuration.
 Existing SQLite and PostgreSQL databases gain the enabled setting during serialized schema startup;
