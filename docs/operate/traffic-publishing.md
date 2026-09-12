@@ -206,6 +206,8 @@ admissions; this preserves disabled Firewall behavior while retaining complete f
 The captured Firewall preview includes that minimal chain and both admissions, matching the paired Apply program.
 If the interactive grid fails to load, its fallback remains readable; deletion is available only through the grid's
 confirmed action.
+Listener-related Apply preflight also reads NAT status when no forwarding rules are saved, so it can detect mappings
+retained from an earlier runtime. An unavailable status blocks submission until helper readiness is restored.
 The page summary includes enabled port forwards independently of source NAT and reports their validation errors.
 These counters describe matched traffic, not proof that an application at the target is healthy.
 
