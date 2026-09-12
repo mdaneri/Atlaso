@@ -10,15 +10,6 @@ status: current
 
 Open **VCF Offline Depot** to configure the local content repository used by supported VCF workflows.
 
-Download tasks prepare public `PROD` file permissions after each successful VCFDT command and on task errors after
-preflight has validated the store. This also repairs existing artifacts that VCFDT skips as already downloaded.
-Regular files gain read permission and directories gain read/traverse permission so nginx can serve YAML, TAR, OVA,
-and other companion artifacts regardless of the worker's restrictive umask. A successful task means this preparation
-also succeeded. If preparation fails, the task retains the command result and reports the permission failure.
-Symlinks, hard links, and special files are refused; inspect those entries before retrying. Credential files and other
-content outside `PROD` keep their permissions. This applies to Atlaso-managed tasks, not independent shell downloads,
-and cannot repair an externally changed parent-directory ACL or a read-only mount.
-
 <!-- BEGIN GENERATED INTERFACE OVERVIEW -->
 ## Interface overview
 
@@ -29,6 +20,15 @@ This verified appliance view provides visual orientation before you begin.
 *Figure: VCF Offline Depot with metadata first and the compact VCFDT configuration summary in the desktop settings rail.*
 
 <!-- END GENERATED INTERFACE OVERVIEW -->
+
+Download tasks prepare public `PROD` file permissions after each successful VCFDT command and on task errors after
+preflight has validated the store. This also repairs existing artifacts that VCFDT skips as already downloaded.
+Regular files gain read permission and directories gain read/traverse permission so nginx can serve YAML, TAR, OVA,
+and other companion artifacts regardless of the worker's restrictive umask. A successful task means this preparation
+also succeeded. If preparation fails, the task retains the command result and reports the permission failure.
+Symlinks, hard links, and special files are refused; inspect those entries before retrying. Credential files and other
+content outside `PROD` keep their permissions. This applies to Atlaso-managed tasks, not independent shell downloads,
+and cannot repair an externally changed parent-directory ACL or a read-only mount.
 
 VCFDT package and credential-file uploads use the shared [chunked browser
 transport](vcf-helper.md#chunked-browser-uploads). Progress tracks acknowledged chunks, transient failures retry
