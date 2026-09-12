@@ -2,6 +2,7 @@
 
 import json
 import subprocess
+from contextlib import nullcontext
 
 import pytest
 
@@ -188,13 +189,17 @@ def test_legacy_publication_cannot_bypass_the_pair(transaction):
     assert all(path.read_text() == content for path, content in previous.items())
 
 
-def test_factory_reset_retires_only_owned_forwarding_sessions(transaction):
+def test_factory_reset_retires_only_owned_forwarding_sessions(transaction, monkeypatch):
     """Reset disables new admissions before retiring both marked families.
 
     Args:
         transaction: Isolated helper and durable snapshots.
+        monkeypatch: Substitute root-owned lock admission for this unprivileged fixture.
     """
     helper, nat, firewall, _previous, programs, commands = transaction
+    # Exercise retirement and pending-journal behavior without requiring the CI
+    # account to own root's runtime directory. Production lock checks stay intact.
+    monkeypatch.setattr(helper, "_nat_transaction_lock", nullcontext)
     helper._publishing_apply(JOB, str(nat), str(firewall))
     with pytest.raises(ValueError, match="reconciliation"):
         helper._reset_factory_port_forward_runtime()

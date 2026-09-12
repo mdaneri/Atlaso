@@ -202,7 +202,8 @@ def test_facades_register_extracted_domains_in_exact_order():
         "atlaso.app.routers.ui.vaults"
     }
     assert {route.endpoint.__module__ for route in ui.routes_wan_router.routes} == {
-        "atlaso.app.routers.ui.routes_wan"
+        "atlaso.app.routers.ui.routes_wan",
+        "atlaso.app.routers.ui.port_forwards",
     }
     assert {
         route.endpoint.__module__ for route in ui.network_objects_router.routes
@@ -253,7 +254,8 @@ def test_facades_register_extracted_domains_in_exact_order():
         route.endpoint.__module__ for route in ui.settings_backup_router.routes
     } == {"atlaso.app.routers.ui.settings_backup"}
     assert {route.endpoint.__module__ for route in v1.routes_wan_router.routes} == {
-        "atlaso.app.routers.api_v1.routes_wan"
+        "atlaso.app.routers.api_v1.routes_wan",
+        "atlaso.app.routers.api_v1.port_forwards",
     }
     assert {
         route.endpoint.__module__ for route in v1.dashboard_monitor_router.routes

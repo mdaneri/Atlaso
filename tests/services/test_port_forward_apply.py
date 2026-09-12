@@ -94,7 +94,6 @@ def test_acknowledgement_observes_both_durable_captured_baselines(publication, m
         """Read through a separate session at the acknowledgement boundary.
 
         Args:
-            self: Real-mode adapter with a substituted host boundary.
             group: Constrained helper group.
             action: Publication phase.
             *args: Non-secret task identity and managed paths.
@@ -133,7 +132,6 @@ def test_pair_failure_preserves_the_correct_commit_decision(publication, monkeyp
         """Fail only the selected host phase.
 
         Args:
-            self: Adapter whose host boundary is replaced.
             group: Constrained helper group.
             action: Current transaction phase.
             *args: Admitted helper arguments.
