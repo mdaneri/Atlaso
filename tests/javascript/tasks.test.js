@@ -432,3 +432,57 @@ test("log availability re-enables new sources without stealing an available sele
   assert.equal(app.disabled, false);
   assert.deepEqual(clicks, ["kms"]);
 });
+
+
+test("terminal historical pages stop polling but manual Next remains usable", async () => {
+  const harness = taskLogHarness();
+  const initial = harness.context.openTaskLog({ id: "A" });
+  harness.complete(0, { status: "succeeded", text: "tail", previous_cursor: "older" });
+  await initial;
+  harness.buttons.find((button) => button.textContent === "Previous page").click();
+  const older = fireTimer(harness, 0);
+  harness.complete(1, { status: "succeeded", text: "older", cursor: "older", next_cursor: "tail", has_more: true });
+  await older;
+  const trailing = fireTimer(harness, 5000);
+  harness.complete(2, { status: "succeeded", text: "older", cursor: "older", next_cursor: "tail", has_more: true });
+  await trailing;
+  assert.equal(harness.timers.size, 0);
+  const next = harness.buttons.find((button) => button.textContent === "Next page");
+  assert.equal(next.disabled, false);
+  next.click();
+  const resumed = fireTimer(harness, 0);
+  harness.complete(3, { status: "succeeded", text: "tail" });
+  await resumed;
+  assert.equal(harness.content.textContent, "tail");
+  harness.context.closeTaskLogModal();
+});
+
+for (const dir of ["asc", "desc"]) {
+  test(`Audit follows the newest local page with Time ${dir}`, async () => {
+    const holder = { scrollTop: 0, scrollHeight: 1000, clientHeight: 100 };
+    class Element {
+      constructor() { this.dataset = {}; this.clientHeight = 500; }
+      querySelector() { return holder; }
+    }
+    const element = new Element();
+    let options, built, page = 1;
+    const table = { getSorters: () => [{ field: "created_at", dir }], getPage: () => page,
+      getPageMax: () => 4, replaceData: async () => {},
+      setPage: async (value) => { page = value === "last" ? 4 : value; },
+      on: (_event, callback) => { built = callback; } };
+    const context = vm.createContext({ HTMLElement: Element, Tabulator: {}, atlasoBooleanFormatter: () => {},
+      ResizeObserver: class { observe() {} },
+      document: { getElementById: (id) => id === "audit-events-table" ? element : null, querySelector: () => null },
+      window: { AtlasoUiPatterns: { createGrid: () => ({ table }) }, AtlasoLogViewer: { create: (value) => { options = value; } } } });
+    vm.runInContext(functionSource("auditNewestFirst") + functionSource("initializeAuditEventsTable"), context);
+    context.initializeAuditEventsTable();
+    built();
+    await options.renderPage({ rows: [] }, { following: true, navigated: true, isCurrent: () => true });
+    assert.equal(page, dir === "desc" ? 1 : 4);
+    assert.equal(options.holdPage(), false);
+    page = dir === "desc" ? 2 : 3;
+    assert.equal(options.holdPage(), true);
+    await options.renderPage({ rows: [] }, { following: false, navigated: false, isCurrent: () => true });
+    assert.equal(page, dir === "desc" ? 2 : 3);
+  });
+}

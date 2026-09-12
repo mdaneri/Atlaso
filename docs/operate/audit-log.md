@@ -28,6 +28,7 @@ This verified appliance view provides visual orientation before you begin.
 The open grid refreshes automatically. **From beginning**, **Previous page**, and **Next page** access all retained
 events in groups of up to 500; the grid's own page controls navigate within that group. Column filters and sorting
 apply to the displayed group and remain selected when it refreshes. **Follow live** advances to the newest group.
+With Time sorted descending, the newest rows appear on the first local page; ascending uses the last local page.
 Reading an earlier grid page or selecting text holds the displayed rows and reports newly available output.
 
 1. Filter the grid by actor, action, resource, or time.

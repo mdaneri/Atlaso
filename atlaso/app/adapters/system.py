@@ -111,6 +111,51 @@ class SystemAdapter:
         """
         return self._helper_result("nat", "apply", config_path, dry_run_message="dry-run: NAT apply recorded")
 
+    def port_forward_status(self) -> AdapterResult:
+        """Read bounded applied destination-translation counters without mutation."""
+        return self._helper_result("nat", "status", timeout_seconds=10,
+                                   dry_run_message='{"available":false,"rules":[],"runtime_has_port_forwards":false}')
+
+    def validate_traffic_publishing(self, job_id: str, nat_path: str, firewall_path: str) -> AdapterResult:
+        """Validate the complete captured Firewall and translation pair.
+
+        Args:
+            job_id: Exact global Appliance Apply task.
+            nat_path: Task-owned staged translation snapshot.
+            firewall_path: Task-owned staged Firewall snapshot.
+        """
+        return self._helper_result("nat", "validate-publishing", job_id, nat_path, firewall_path,
+                                   dry_run_message="dry-run: paired Firewall and NAT validation recorded")
+
+    def apply_traffic_publishing(self, job_id: str, nat_path: str, firewall_path: str) -> AdapterResult:
+        """Publish both runtimes while retaining rollback for application commit.
+
+        Args:
+            job_id: Exact global Appliance Apply task.
+            nat_path: Task-owned staged translation snapshot.
+            firewall_path: Task-owned staged Firewall snapshot.
+        """
+        return self._helper_result("nat", "apply-publishing", job_id, nat_path, firewall_path,
+                                   dry_run_message="dry-run: paired Firewall and NAT publication recorded")
+
+    def acknowledge_traffic_publishing(self, job_id: str) -> AdapterResult:
+        """Acknowledge only after both captured application baselines are durable.
+
+        Args:
+            job_id: Exact owner of the paired transaction.
+        """
+        return self._helper_result("nat", "acknowledge-publishing", job_id,
+                                   dry_run_message="dry-run: paired publication acknowledgement recorded")
+
+    def recover_traffic_publishing(self, job_id: str) -> AdapterResult:
+        """Restore the pair owned by an application task that did not commit.
+
+        Args:
+            job_id: Exact owner; another task's transaction is never recovered.
+        """
+        return self._helper_result("nat", "recover-publishing", job_id,
+                                   dry_run_message="dry-run: paired publication recovery recorded")
+
     def apply_wan_config(self, config_path: str) -> AdapterResult:
         """Update wan config.
 

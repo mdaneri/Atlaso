@@ -7818,7 +7818,9 @@ function initializeTrafficPublishingSettings(root = document) {
 
 function rememberRoutesWanTab(targetId) {
   try {
-    window.localStorage.setItem("atlaso:routes-wan:active-tab", targetId);
+    const key = window.location.pathname === managementUiPath("/traffic-publishing")
+      ? "atlaso:traffic-publishing:active-tab" : "atlaso:routes-wan:active-tab";
+    window.localStorage.setItem(key, targetId);
   } catch {
     // The first tab remains a safe fallback when storage is unavailable.
   }
@@ -8762,6 +8764,258 @@ function initializeRoutesWanWizards() {
     if (!(launcher instanceof HTMLElement)) return;
     openRoutesWanWizard(launcher.dataset.routesWanWizardOpen, null, launcher);
   });
+}
+
+function initializePortForwarding() {
+  const element = document.getElementById("port-forward-table");
+  if (!(element instanceof HTMLElement)) return;
+  const canWrite = element.dataset.canWrite === "true";
+  const rows = JSON.parse(element.dataset.portForwardRows || "[]");
+  let targets = JSON.parse(element.dataset.portForwardTargets || "[]");
+  let groups = JSON.parse(element.dataset.sourceGroups || "[]");
+  const form = document.querySelector("[data-port-forward-wizard]");
+  const dialog = form?.closest("dialog");
+  const root = managementUiPath("/traffic-publishing/port-forwards");
+  const csrf = element.dataset.csrf || "";
+  let table;
+  let wizard;
+  let editing = null;
+  let refreshGroupsOnReturn = false;
+  let refreshSequence = 0;
+  const field = (name) => form?.elements.namedItem(name);
+  const fail = (message) => showWanMessage("port-forward-error", message);
+  const range = (start, end) => Number(start) === Number(end) ? String(start) : `${start}–${end}`;
+  const post = async (url, body) => {
+    const response = await fetch(url, { method: "POST", body, credentials: "same-origin", headers: { Accept: "application/json" } });
+    if (!response.ok) throw new Error(routesWanResponseMessage(await response.text(), "The port forward could not be saved."));
+    return response.json();
+  };
+  const reload = () => {
+    rememberRoutesWanTab("port-forward-panel");
+    window.location.hash = "port-forward-panel";
+    window.location.reload();
+  };
+  const syncChoices = (preferredIngress = field("ingress_interface")?.value, preferredAddress = field("listener_address")?.value) => {
+    if (!(form instanceof HTMLFormElement)) return;
+    const family = Number(field("ip_family").value);
+    const ingress = field("ingress_interface");
+    const listener = field("listener_address");
+    const available = targets.filter((target) => (target.ip_families || []).includes(family));
+    ingress.replaceChildren(new Option("Choose an ingress", ""));
+    for (const target of available) ingress.add(new Option(target.label || target.name, target.name));
+    if (editing && family === editing.ip_family && preferredIngress === editing.ingress_interface && !available.some((target) => target.name === preferredIngress)) {
+      ingress.add(new Option(`${preferredIngress} (unavailable; disabled rule only)`, preferredIngress));
+    }
+    ingress.value = preferredIngress || "";
+    const selected = available.find((target) => target.name === ingress.value);
+    const address = String(selected?.[family === 6 ? "ipv6_cidr" : "ip_cidr"] || "").split("/")[0];
+    listener.replaceChildren(new Option(address ? "Choose an assigned listener" : "No assigned listener available", ""));
+    if (address) listener.add(new Option(address, address));
+    if (editing && family === editing.ip_family && ingress.value === editing.ingress_interface && preferredAddress === editing.listener_address && address !== preferredAddress) {
+      listener.add(new Option(`${preferredAddress} (unavailable; disabled rule only)`, preferredAddress));
+    }
+    listener.value = preferredAddress || address || "";
+    if (!listener.value && address) listener.value = address;
+    const group = form.querySelector("[data-port-forward-group]");
+    const selectedGroup = group.value;
+    group.replaceChildren(new Option("Choose a Source Group", ""));
+    for (const item of groups) group.add(new Option(item.name, `group:${item.id}`));
+    if (selectedGroup && !Array.from(group.options).some((option) => option.value === selectedGroup)) {
+      group.add(new Option(`${selectedGroup} (unavailable; review source)`, selectedGroup));
+    }
+    group.value = selectedGroup;
+  };
+  const syncSource = () => {
+    const mode = form.querySelector("[data-port-forward-source-mode]").value;
+    for (const [selector, visible] of [["[data-port-forward-group-panel]", mode === "group"], ["[data-port-forward-cidrs-panel]", mode === "cidrs"]]) {
+      const panel = form.querySelector(selector);
+      panel.hidden = !visible;
+      panel.classList.toggle("hidden", !visible);
+    }
+    field("source").value = mode === "group" ? form.querySelector("[data-port-forward-group]").value
+      : mode === "cidrs" ? form.querySelector("[data-port-forward-cidrs]").value.trim() : "any";
+    const masquerade = field("reply_mode").value === "masquerade";
+    const ack = form.querySelector("[data-port-forward-ack-panel]");
+    ack.hidden = !masquerade;
+    ack.classList.toggle("hidden", !masquerade);
+    field("acknowledge_source_loss").required = masquerade;
+    if (!masquerade) field("acknowledge_source_loss").checked = false;
+  };
+  const refresh = async () => {
+    const sequence = ++refreshSequence;
+    const caption = document.querySelector("[data-port-forward-observation]");
+    const controller = new AbortController();
+    const timeout = window.setTimeout(() => controller.abort(), 15000);
+    try {
+      const response = await fetch(`${root}/status`, { credentials: "same-origin", headers: { Accept: "application/json" }, signal: controller.signal });
+      if (!response.ok) throw new Error("Runtime observations are unavailable. Refresh after checking appliance readiness.");
+      const data = await response.json();
+      if (sequence !== refreshSequence) return;
+      if (!Array.isArray(data.rules) || data.rules.length > 256) throw new Error("The runtime observation response is invalid.");
+      targets = data.targets || targets;
+      groups = data.source_groups || groups;
+      if (dialog?.open) syncChoices();
+      const observed = new Map(data.rules.map((row) => [row.id, row]));
+      const updates = rows.map((row) => {
+        const status = observed.get(row.id);
+        return { id: row.id, runtime_state: status?.state || "degraded", runtime_packets: status?.packets ?? null,
+          runtime_bytes: status?.bytes ?? null, runtime_detail: status?.detail || "Observation unavailable." };
+      });
+      if (table && updates.length) await table.updateData(updates);
+      if (caption) caption.textContent = "Runtime observations refreshed. Counters measure matched traffic, not target application health.";
+    } catch (error) {
+      if (sequence !== refreshSequence) return;
+      if (table && rows.length) await table.updateData(rows.map((row) => ({ id: row.id, runtime_state: "degraded", runtime_packets: null, runtime_bytes: null })));
+      if (caption) caption.textContent = error instanceof Error ? error.message : "Runtime observations are unavailable.";
+    } finally {
+      window.clearTimeout(timeout);
+    }
+  };
+  if (canWrite && form instanceof HTMLFormElement && dialog instanceof HTMLDialogElement) {
+    wizard = window.AtlasoUiPatterns.createWizard({
+      form, dialog,
+      steps: [
+        { id: "identity", title: "Name the published endpoint", description: "Describe this exact destination translation." },
+        { id: "listener", title: "Choose one external listener", description: "Choose the ingress, assigned address, protocol, and external ports." },
+        { id: "target", title: "Define the target and clients", description: "Map equal-length port ranges and restrict the original client addresses." },
+        { id: "state", title: "Review replies and activation", description: "Preserve client visibility by default. New rules start disabled." },
+        { id: "review", title: "Review the port forward", description: "Confirm the complete boundary before saving desired state." },
+      ],
+      onOpen: ({ context }) => {
+        editing = context?.id && !context.is_new ? context : null;
+        form.reset();
+        const defaults = { name: "", description: "", priority: 100, ip_family: 4, protocol: "tcp", ingress_interface: "", listener_address: "", external_port_start: "", external_port_end: "", target_address: "", target_port_start: "", target_port_end: "", source: "any", reply_mode: "preserve", enabled: false };
+        for (const [name, value] of Object.entries({ ...defaults, ...(editing || {}) })) {
+          if (field(name)) setRoutesWanField(form, name, value);
+        }
+        field("acknowledge_source_loss").checked = false;
+        syncChoices(editing?.ingress_interface || "", editing?.listener_address || "");
+        const source = editing?.source || "any";
+        form.querySelector("[data-port-forward-source-mode]").value = source.toLowerCase() === "any" ? "any" : source.startsWith("group:") ? "group" : "cidrs";
+        if (source.startsWith("group:")) {
+          const group = form.querySelector("[data-port-forward-group]");
+          if (!Array.from(group.options).some((option) => option.value === source)) group.add(new Option(`${source} (unavailable; review source)`, source));
+          group.value = source;
+        } else if (source !== "any") form.querySelector("[data-port-forward-cidrs]").value = source;
+        syncSource();
+        form.querySelector("#port-forward-dialog-title").textContent = editing ? "Edit port forward" : "Add port forward";
+        form.querySelector("[data-atlaso-wizard-submit]").textContent = editing ? "Update port forward" : "Add port forward";
+      },
+      validateStep: ({ step }) => {
+        syncSource();
+        if (step.id === "listener" && Number(field("external_port_end").value) < Number(field("external_port_start").value)) {
+          return { valid: false, message: "External ports must form an ordered inclusive range.", field: field("external_port_end") };
+        }
+        if (step.id === "target") {
+          const validAddress = field("ip_family").value === "6" ? isValidIpv6Address(field("target_address").value) : isValidIpv4Address(field("target_address").value);
+          if (!validAddress) return { valid: false, message: "Enter a target address in the selected IP family.", field: field("target_address") };
+          const externalSize = Number(field("external_port_end").value) - Number(field("external_port_start").value);
+          const targetSize = Number(field("target_port_end").value) - Number(field("target_port_start").value);
+          if (targetSize < 0 || targetSize !== externalSize) return { valid: false, message: "External and target ranges must contain the same number of ports.", field: field("target_port_end") };
+          if (!field("source").value) return { valid: false, message: "Choose a Source Group or enter same-family CIDRs." };
+        }
+        return true;
+      },
+      prepareReview: () => {
+        syncSource();
+        const values = {
+          name: `${field("name").value} · priority ${field("priority").value}`,
+          listener: `IPv${field("ip_family").value} ${field("protocol").value.toUpperCase()} · ${field("ingress_interface").value} · ${field("listener_address").value}`,
+          mapping: `${range(field("external_port_start").value, field("external_port_end").value)} → ${field("target_address").value} · ${range(field("target_port_start").value, field("target_port_end").value)}`,
+          source: field("source").value,
+          reply: field("reply_mode").value === "preserve" ? "Preserve original client address" : "Masquerade replies; target loses original client visibility",
+          state: field("enabled").checked ? "Enabled intent; Routing and global Appliance Apply required" : "Disabled intent",
+        };
+        for (const [key, value] of Object.entries(values)) form.querySelector(`[data-port-forward-review="${key}"]`).textContent = value;
+        return true;
+      },
+      onSubmit: async () => {
+        syncSource();
+        try {
+          await post(editing ? `${root}/${editing.id}/edit` : root, new FormData(form));
+          reload();
+          return { valid: true, close: false };
+        } catch (error) {
+          return { valid: false, message: error instanceof Error ? error.message : "The port forward could not be saved." };
+        }
+      },
+      closeOnSubmit: false,
+    });
+    field("ip_family").addEventListener("change", () => syncChoices("", ""));
+    field("ingress_interface").addEventListener("change", () => syncChoices(field("ingress_interface").value, ""));
+    form.addEventListener("change", syncSource);
+    form.querySelector("[data-port-forward-cidrs]").addEventListener("input", syncSource);
+    form.querySelector("[data-port-forward-manage-groups]").addEventListener("click", () => { refreshGroupsOnReturn = true; });
+    window.addEventListener("focus", () => {
+      if (dialog.open && refreshGroupsOnReturn) { refreshGroupsOnReturn = false; void refresh(); }
+    });
+  }
+  const edit = (row, launcher = null) => {
+    if (!canWrite || !wizard) return;
+    const data = row?.getData?.() || row;
+    wizard.open({ context: data?.is_new ? null : data, launcher: launcher || row?.getElement?.() });
+  };
+  document.addEventListener("click", (event) => {
+    if (!(event.target instanceof Element)) return;
+    const add = event.target.closest("[data-port-forward-add]");
+    const editButton = event.target.closest("[data-port-forward-edit]");
+    if (add) edit(null, add);
+    if (editButton) edit(rows.find((row) => String(row.id) === editButton.dataset.portForwardEdit), editButton);
+  });
+  document.querySelector("[data-port-forward-refresh]")?.addEventListener("click", () => { void refresh(); });
+  if (typeof Tabulator === "undefined") { fail("Tabulator did not load. Showing the fallback table."); return; }
+  const text = (cell) => cell.getRow().getData().is_new ? "" : escapeHtml(cell.getValue() ?? "—");
+  try {
+    table = window.AtlasoUiPatterns.createGrid({
+      element, pattern: "wizard-backed", permission: { allowed: canWrite, message: "You have read-only access to port forwards." },
+      onOpenRow: canWrite ? (row) => edit(row) : null,
+      options: {
+        data: canWrite ? [...rows, { id: "__new__", is_new: true }] : rows, index: "id", layout: "fitColumns", height: "100%", rowHeight: 28,
+        placeholder: "No port forwards configured.", rowDblClick: (_event, row) => edit(row),
+        rowContextMenu: canWrite ? [
+          { label: "Edit port forward", disabled: (row) => row.getData().is_new, action: (_event, row) => edit(row) },
+          { label: "Delete port forward", disabled: (row) => row.getData().is_new, action: async (_event, row) => {
+            const data = row.getData();
+            if (!await requestConfirmation({ title: `Delete port forward ${data.name}?`, message: "Remove desired intent. Global Appliance Apply retires translation and generated Firewall admission.", label: "Delete port forward" })) return;
+            const body = new FormData(); body.set("csrf", csrf);
+            try { await post(`${root}/${data.id}/delete`, body); reload(); } catch (error) { fail(error.message); }
+          } },
+        ] : [],
+        columns: [
+          { title: "Name", field: "name", minWidth: 150, formatter: (cell) => cell.getRow().getData().is_new ? '<button class="add-row-button" type="button" data-port-forward-add>+ Add port forward here</button>' : text(cell) },
+          { title: "Listener", field: "listener_address", minWidth: 190, formatter: (cell) => { const row = cell.getRow().getData(); return row.is_new ? "" : escapeHtml(`IPv${row.ip_family} ${row.protocol.toUpperCase()} · ${row.ingress_interface} · ${row.listener_address}:${range(row.external_port_start, row.external_port_end)}`); } },
+          { title: "Target", field: "target_address", minWidth: 170, formatter: (cell) => { const row = cell.getRow().getData(); return row.is_new ? "" : escapeHtml(`${row.target_address}:${range(row.target_port_start, row.target_port_end)}`); } },
+          { title: "Source", field: "source", minWidth: 140, formatter: text },
+          { title: "Reply mode", field: "reply_mode", minWidth: 110, formatter: (cell) => cell.getRow().getData().is_new ? "" : cell.getValue() === "preserve" ? "Preserve client" : "Masquerade" },
+          { title: "Enabled", field: "enabled", width: 85, hozAlign: "center", headerSort: false, editor: "tickCross", editable: (cell) => canWrite && !cell.getRow().getData().is_new,
+            formatter: (cell) => cell.getRow().getData().is_new ? "" : atlasoBooleanFormatter(cell), cellEdited: async (cell) => {
+              const body = new FormData(); body.set("csrf", csrf); body.set("enabled", cell.getValue() ? "on" : "off");
+              try { await post(`${root}/${cell.getRow().getData().id}/enabled`, body); showTransientGridStatus("Saved"); await refreshNetworkSideStack(); await refresh(); }
+              catch (error) { cell.restoreOldValue?.(); fail(error.message); }
+            } },
+          { title: "Runtime", field: "runtime_state", minWidth: 105, formatter: text, tooltip: (cell) => escapeHtml(cell.getRow().getData().runtime_detail || "Refresh runtime observations.") },
+          { title: "Review", field: "restore_review_required", minWidth: 180, formatter: (cell) => cell.getRow().getData().is_new || !cell.getValue() ? "" : "Review restored listener" },
+          { title: "Packets", field: "runtime_packets", width: 95, formatter: text },
+          { title: "Bytes", field: "runtime_bytes", width: 100, formatter: text },
+        ],
+        rowFormatter: (row) => markNewRecordRow(row, "name"),
+      },
+    }).table;
+    let tableReady = false;
+    const resize = () => {
+      if (!tableReady) return;
+      const footer = document.querySelector(".management-info-footnote")?.getBoundingClientRect().height || 0;
+      if (resizeDnsRecordsTableElement(element, window.innerHeight - footer)) table?.redraw(true);
+    };
+    let resizeFrame = null;
+    const scheduleResize = () => {
+      if (resizeFrame !== null) return;
+      resizeFrame = window.requestAnimationFrame(() => { resizeFrame = null; resize(); });
+    };
+    table?.on("tableBuilt", () => { tableReady = true; scheduleResize(); void refresh(); });
+    window.addEventListener("resize", scheduleResize);
+    if (typeof ResizeObserver !== "undefined") new ResizeObserver(scheduleResize).observe(element.closest(".wide-panel") || element);
+  } catch (error) { fail(error instanceof Error ? error.message : "The port-forward grid could not load. Showing fallback rows."); }
 }
 
 function showNetworkMessage(elementId, message) {
@@ -17756,6 +18010,12 @@ function initializeLogsPage() {
   else root.querySelector("[data-log-source-tab]:not(:disabled)")?.click();
 }
 
+// Time-descending audit pages place the live edge at the beginning of the grid.
+function auditNewestFirst(table) {
+  const sorter = table.getSorters()[0];
+  return sorter?.field === "created_at" && sorter.dir === "desc";
+}
+
 function initializeAuditEventsTable() {
   const tableElement = document.getElementById("audit-events-table");
   if (!(tableElement instanceof HTMLElement) || typeof Tabulator === "undefined") {
@@ -17803,8 +18063,9 @@ function initializeAuditEventsTable() {
         pageText: (page) => JSON.stringify(page.rows),
         holdPage: () => {
           const holder = tableElement.querySelector(".tabulator-tableholder");
-          return table.getPage() < table.getPageMax() || Boolean(holder &&
-            holder.scrollHeight - holder.scrollTop - holder.clientHeight >= 32);
+          const newestFirst = auditNewestFirst(table);
+          return table.getPage() !== (newestFirst ? 1 : table.getPageMax()) || Boolean(holder &&
+            (newestFirst ? holder.scrollTop >= 32 : holder.scrollHeight - holder.scrollTop - holder.clientHeight >= 32));
         },
         fetchPage: (cursor, signal) => {
           const url = new URL(tableElement.dataset.historyUrl, window.location.href);
@@ -17816,7 +18077,10 @@ function initializeAuditEventsTable() {
           const selectedPage = table.getPage();
           await table.replaceData(page.rows);
           if (!isCurrent()) return;
-          await table.setPage(following ? "last" : navigated ? 1 : Math.min(selectedPage, table.getPageMax()) || 1);
+          await table.setPage(following ? (auditNewestFirst(table) ? 1 : "last") : navigated ? 1 : Math.min(selectedPage, table.getPageMax()) || 1);
+          if (!isCurrent()) return;
+          const holder = tableElement.querySelector(".tabulator-tableholder");
+          if (following && holder) holder.scrollTop = auditNewestFirst(table) ? 0 : holder.scrollHeight;
         },
       });
     });
@@ -23932,6 +24196,7 @@ document.addEventListener("DOMContentLoaded", initializeFactoryResetPasswords);
 document.addEventListener("DOMContentLoaded", initializeRoutesWanRoutesTable);
 document.addEventListener("DOMContentLoaded", initializeRoutesWanRoutingTable);
 document.addEventListener("DOMContentLoaded", initializeRoutesWanNatTable);
+document.addEventListener("DOMContentLoaded", initializePortForwarding);
 document.addEventListener("DOMContentLoaded", initializeRoutesWanPoliciesTable);
 document.addEventListener("DOMContentLoaded", initializeRoutesWanWizards);
 document.addEventListener("DOMContentLoaded", () => initializeRoutesWanSettings());

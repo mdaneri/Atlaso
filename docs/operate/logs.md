@@ -32,7 +32,8 @@ when their log files appear, without loading inactive log contents. These checks
 **From beginning** opens its oldest retained entries;
 **Next page** and **Previous page** move through the complete retained history in bounded pages. From the live tail,
 **Previous page** opens the preceding group directly, including within a multiline journal record. The page size limits
-each response, not the total history you can inspect. Numbered file rotations, including compressed archives, are
+each response, not the total history you can inspect. Previous is unavailable at the oldest retained journal page.
+Numbered file rotations, including compressed archives, are
 included. Journal history remains subject to the appliance's journal retention policy.
 
 **Follow live** resumes new output with one click, including after scrolling up. Scrolling up or selecting text preserves
@@ -43,7 +44,8 @@ Closing a viewer, switching sources or hiding the browser suspends its requests.
 than silently continuing a position in a different file.
 
 Task Log dialogs and standalone download logs use the same controls. Completed tasks receive a final trailing read
-before automatic refresh stops, including `no-op` and `partial-failure` outcomes. Only retained output is available:
+before automatic refresh stops, including while browsing older pages and for `no-op` and `partial-failure` outcomes.
+Manual history navigation remains available afterward. Only retained output is available:
 entries removed by retention or never captured by
 the producing command cannot be recovered by the viewer. Downloaded log files are snapshots taken at download time.
 

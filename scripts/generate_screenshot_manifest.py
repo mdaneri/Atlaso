@@ -20,6 +20,17 @@ CANONICAL_BROWSER_ROOTS = {
 
 CAPTURE_OVERRIDES = {
     **{
+        f"traffic-publishing-{stem}": {
+            "source_commit": "17771e868071812d41fcfa2c783cd646d0c44132",
+            "atlaso_version": "0.9.351",
+            "capture_method": "codex-in-app-browser",
+        }
+        for stem in (
+            "port-forwarding-desktop", "port-forwarding-responsive",
+            "port-forwarding-review-desktop", "port-forwarding-review-responsive",
+        )
+    },
+    **{
         stem: {
             "source_commit": "08dec140c7316b91e102260bdb2a36df628f1a34",
             "atlaso_version": "0.9.346",
@@ -341,6 +352,22 @@ ROUTES = {
 }
 
 SPECIAL = {
+    **{
+        f"traffic-publishing-port-forwarding-{viewport}": (
+            "/ui/management/traffic-publishing", "port-forwarding",
+            "Port Forwarding is independent of source NAT; counters do not prove target health.",
+            "Atlaso Port Forwarding grid with an enabled TCP range mapping and source NAT disabled.",
+        )
+        for viewport in ("desktop", "responsive")
+    },
+    **{
+        f"traffic-publishing-port-forwarding-review-{viewport}": (
+            "/ui/management/traffic-publishing", "port-forwarding-review",
+            "Review the listener, port mapping, client boundary, and replies before saving desired state.",
+            "Atlaso port-forward review wizard showing a three-port TCP mapping, restricted client CIDR, and original client preservation.",
+        )
+        for viewport in ("desktop", "responsive")
+    },
     **{
         stem: (
             "/ui/management/firewall", "rule-wizard",

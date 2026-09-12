@@ -117,14 +117,15 @@
           `${page.job_id ? `${page.job_id} · ` : ""}${page.status || "Updated"} · ${new Date().toLocaleTimeString()}${page.notice ? ` · ${page.notice}` : ""}`);
         updateButtons();
         const terminal = ["succeeded", "failed", "cancelled", "skipped", "no-op", "partial-failure"].includes(page.status);
-        terminalReads = terminal && !hasMore ? terminalReads + 1 : 0;
+        terminalReads = terminal ? terminalReads + 1 : 0;
         if (page.reset) previous = [];
         if (following && hasMore && !held && nextCursor !== cursor) {
           previous.push(cursor);
           cursor = nextCursor;
+          terminalReads = 0;
           rendered = null;
           schedule(250);
-        } else if (terminalReads < 2 || hasMore) {
+        } else if (terminalReads < 2) {
           schedule(5000);
         }
       } catch (error) {

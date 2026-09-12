@@ -7,13 +7,13 @@ from copy import deepcopy
 from datetime import datetime, timezone
 from ipaddress import ip_address, ip_interface, ip_network
 from pathlib import PurePosixPath
-from typing import Any
+from typing import Any, cast
 from uuid import UUID
 
 from cryptography import x509
 from cryptography.hazmat.primitives import hashes, serialization
 from sqlalchemy import DateTime as SqlDateTime
-from sqlalchemy import delete, select, text
+from sqlalchemy import create_engine, delete, select, text
 from sqlalchemy.exc import IntegrityError, StatementError
 from sqlalchemy.orm import Session
 
@@ -63,6 +63,7 @@ from atlaso.app.models import (
     OidcSigningKey,
     OidcSubject,
     PhysicalInterface,
+    PortForward,
     Route,
     RoutingRule,
     Schedule,
@@ -122,6 +123,7 @@ from atlaso.app.services.esx_storage import StorageInterface, validate_storage_s
 from atlaso.app.services.esxi_pxe import (
     ESXI_PXE_CUSTOM_VARIABLE_LIMIT,
     ESXI_PXE_CUSTOM_VARIABLES_KEY,
+    esxi_pxe_boot_settings,
     host_variables_json,
     kickstart_template_validation_errors,
     kickstart_validation,
@@ -172,6 +174,13 @@ from atlaso.app.services.oidc import (
     validate_group_mapping_values,
     validate_persisted_client_policy,
     validate_redirect_uri_list,
+)
+from atlaso.app.services.port_forwarding import (
+    MAX_PORT_FORWARDS,
+    ListenerClaim,
+    ServiceListenerSettings,
+    listener_claims_for_settings,
+    validate_port_forward,
 )
 from atlaso.app.services.routes_wan import (
     ROUTES_WAN_SETTING_KEYS,
@@ -232,6 +241,7 @@ SCALAR_TABLES = {
     "vlan_interfaces": VlanInterface,
     "wan_policies": WanPolicy,
     "nat_rules": NatRule,
+    "port_forwards": PortForward,
     "routing_rules": RoutingRule,
     "service_states": ServiceState,
     "appliance_settings": ApplianceSettings,
@@ -390,6 +400,7 @@ RESTORE_DELETE_MODELS = [
     Route,
     RoutingRule,
     NatRule,
+    PortForward,
     WanPolicy,
     VlanInterface,
     PhysicalInterface,
@@ -1452,7 +1463,7 @@ def _restore_settings_archive_data(db: Session, data: dict[str, Any]) -> dict[st
     _clear_desired_state(db)
 
     counts: dict[str, int] = {}
-    for key in ["physical_interfaces", "vlan_interfaces", "wan_policies", "nat_rules", "routing_rules"]:
+    for key in ["physical_interfaces", "vlan_interfaces", "wan_policies", "nat_rules", "port_forwards", "routing_rules"]:
         counts[key] = _insert_rows(db, SCALAR_TABLES[key], data.get(key, []))
     db.flush()
 
@@ -1762,9 +1773,12 @@ def _validate_archive(archive: dict[str, Any]) -> None:
     data = archive["data"]
     if any(section_name not in ARCHIVE_SECTION_NAMES for section_name in data):
         raise ValueError("The settings archive contains an unsupported data section.")
-    missing_sections = ARCHIVE_SECTION_NAMES.difference(data)
+    # v2 archives exported before managed forwarding have no such collection.
+    # Preserve their replacement semantics while keeping every older section mandatory.
+    missing_sections = ARCHIVE_SECTION_NAMES.difference(data, {"port_forwards"})
     if missing_sections:
         raise ValueError("The settings archive is missing a required data section.")
+    data.setdefault("port_forwards", [])
     for section_name, rows in data.items():
         if not isinstance(rows, list):
             raise ValueError(f"The settings archive data section '{section_name}' must be a list.")
@@ -1788,6 +1802,7 @@ ARCHIVE_UNGUARDED_UNIQUE_IDENTITIES: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("vlan_interfaces", ("parent_interface", "vlan_id")),
     ("wan_policies", ("name",)),
     ("nat_rules", ("name",)),
+    ("port_forwards", ("name",)),
     ("routing_rules", ("name",)),
     ("service_states", ("service",)),
     ("dns_records", ("hostname", "record_type", "address")),
@@ -1949,6 +1964,45 @@ def _archive_routes_wan_feature_state(
             else inferred.wan_simulation_enabled
         ),
     )
+
+
+def _archive_port_forward_listener_claims(data: dict[str, list[dict[str, Any]]]) -> list[ListenerClaim]:
+    """Resolve listener claims against the candidate archive without touching live state.
+
+    Args:
+        data: Structurally validated archive sections.
+
+    The same resolver must interpret custom service ports, optional protocol
+    toggles and Network Boot's DHCP selection on both restore and ordinary save.
+    A disposable in-memory database reproduces restored scalar defaults and row
+    identities without borrowing the destination appliance's listener settings.
+    """
+    service_sections = (
+        "kms_settings", "ldap_settings",
+        "oidc_provider_settings", "ntp_settings", "vcf_backup_settings",
+        "vcf_offline_depot_settings", "vcf_private_registry_settings",
+    )
+    services = cast(list[ServiceListenerSettings], [
+        ARCHIVE_SECTION_MODELS[name](**_model_kwargs_with_scalar_defaults(ARCHIVE_SECTION_MODELS[name], row))
+        for name in service_sections for row in data.get(name, [])
+    ])
+    # Only Network Boot's existing relational selector needs a database. Service
+    # credentials and unrelated foreign-key targets are never staged here.
+    models = {name: ARCHIVE_SECTION_MODELS[name] for name in ("appliance_settings", "dhcp_scopes", "settings")}
+    engine = create_engine("sqlite://")
+    try:
+        Base.metadata.create_all(engine, tables=[
+            *(model.__table__ for model in models.values()), EsxiPxeHost.__table__,
+        ])
+        with Session(engine) as candidate_db:
+            for section, model in models.items():
+                candidate_db.add_all([
+                    model(**_model_kwargs_with_scalar_defaults(model, row))
+                    for row in data.get(section, [])
+                ])
+            return listener_claims_for_settings(services, esxi_pxe_boot_settings(candidate_db))
+    finally:
+        engine.dispose()
 
 
 def _validate_archive_relationships(data: dict[str, list[dict[str, Any]]]) -> None:
@@ -2568,6 +2622,33 @@ def _validate_archive_relationships(data: dict[str, list[dict[str, Any]]]) -> No
         errors = validate_nat_rule(candidate, [*traffic_targets, *retained_targets], firewall_source_groups, allow_legacy=True)
         if errors:
             raise ValueError(f"Settings archive NAT row {row_index} is invalid: {errors[0]}")
+
+    forward_rows = data.get("port_forwards", [])
+    if len(forward_rows) > MAX_PORT_FORWARDS:
+        raise ValueError("Settings archives may retain at most 256 port forwards.")
+    forwards = [PortForward(id=index, **_model_kwargs_with_scalar_defaults(PortForward, row))
+                for index, row in enumerate(forward_rows, start=1)]
+    target_by_name = {target["name"]: target for target in traffic_targets}
+    unavailable_forward_ids: set[int] = set()
+    for candidate, row in zip(forwards, forward_rows, strict=True):
+        target = target_by_name.get(candidate.ingress_interface, {})
+        cidr = target.get("ip_cidr" if candidate.ip_family == 4 else "ipv6_cidr", "")
+        if not cidr or str(ip_interface(cidr).ip) != candidate.listener_address:
+            # Preserve the exact saved relationship for review; never substitute
+            # another interface, listener address, or an Any ingress on import.
+            candidate.enabled = False
+            candidate.restore_review_required = True
+            unavailable_forward_ids.add(candidate.id)
+            row["enabled"] = False
+            row["restore_review_required"] = True
+    forward_context = {"targets": traffic_targets, "interfaces": [*archived_interfaces, *archived_vlans],
+                       "groups": firewall_source_groups,
+                       "claims": _archive_port_forward_listener_claims(data) if forwards else []}
+    for row_index, candidate in enumerate(forwards, start=1):
+        errors = validate_port_forward(candidate, forwards, forward_context,
+                                       require_binding=candidate.id not in unavailable_forward_ids)
+        if errors:
+            raise ValueError(f"Settings archive port-forward row {row_index} is invalid: {errors[0]}")
 
     for row_index, row in enumerate(data.get("routing_rules", []), start=1):
         enabled = row.get("enabled", True)

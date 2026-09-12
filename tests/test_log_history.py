@@ -485,8 +485,8 @@ def test_journal_tail_recovers_prior_key_state(monkeypatch, capsys):
     assert helper._read_log_history(["nginx", '{"tail":true}']) == 0
     page = json.loads(capsys.readouterr().out)
     assert page["initial_private_key"]
-    assert page["current_position"] == {"journal_start_cursor": "latest"}
-    assert "--lines=500" in commands[0]
+    assert page["current_position"] == {"journal_start_cursor": "latest", "journal_has_previous": False}
+    assert "--lines=501" in commands[0]
     assert "--cursor=latest" in commands[1]
 
 
@@ -918,3 +918,43 @@ def test_helper_availability_reads_metadata_without_launching_journal(monkeypatc
     assert sources["nginx-access"] and not sources["nginx-error"]
     assert sources["dnsmasq-dhcp"] and sources["dnsmasq-tftp"]
     assert "lines" not in payload
+
+
+@pytest.mark.parametrize("count", [10, 100, 101])
+def test_quiet_journal_previous_requires_retained_older_rows(monkeypatch, capsys, count):
+    """Tail and refresh offer Previous only when a row before this page was observed.
+
+    Args:
+        monkeypatch: Replace the journal transport with immutable retained records.
+        capsys: Capture structured helper pages.
+        count: Retained rows around the selected page-size boundary.
+    """
+    from tests.test_appliance_helper import load_helper_module
+
+    helper = load_helper_module()
+    entries = [{"MESSAGE": f"row-{i}", "__CURSOR": str(i), "__REALTIME_TIMESTAMP": "1000000"} for i in range(count)]
+    def read(command, **_kwargs):
+        if any(arg.startswith("--grep=") for arg in command):
+            return [], False
+        selected = list(entries)
+        cursor = next((arg.split("=", 1)[1] for arg in command if arg.startswith("--cursor=")), None)
+        if cursor is not None:
+            selected = [entry for entry in selected if (int(entry["__CURSOR"]) <= int(cursor) if "--reverse" in command else int(entry["__CURSOR"]) >= int(cursor))]
+        if "--reverse" in command:
+            selected.reverse()
+        return selected, False
+    monkeypatch.setattr(helper, "_journal_history_entries", read)
+    position = {"tail": True, "limit": 100}
+    for _ in range(2):
+        assert helper._read_log_history(["nginx", json.dumps(position)]) == 0
+        page = json.loads(capsys.readouterr().out)
+        assert len(page["lines"]) == min(count, 100)
+        assert bool(page["previous_position"]) == (count > 100)
+        position = {**page["current_position"], "limit": 100}
+    if count > 100:
+        assert helper._read_log_history(["nginx", json.dumps({**page["previous_position"], "limit": 100})]) == 0
+        older = json.loads(capsys.readouterr().out)
+        assert len(older["lines"]) == 1
+        assert older["previous_position"] is None
+        assert helper._read_log_history(["nginx", json.dumps({**older["current_position"], "limit": 100})]) == 0
+        assert json.loads(capsys.readouterr().out)["previous_position"] is None
