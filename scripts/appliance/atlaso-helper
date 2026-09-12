@@ -12056,6 +12056,7 @@ def _vcf_depot_endpoint_ready(text: str) -> bool:
         hostname = _nginx_directive(text, "server_name")[0].split()[0]
         certificate = _nginx_directive(text, "ssl_certificate")[0]
         context = ssl.create_default_context(cafile=certificate)
+        context.minimum_version = ssl.TLSVersion.TLSv1_2
         # Trust the exact installed leaf as an anchor, including private CA leaves,
         # while retaining certificate validity and hostname verification.
         context.verify_flags |= ssl.VERIFY_X509_PARTIAL_CHAIN

@@ -73,6 +73,7 @@ def test_depot_readiness_real_tls(tmp_path, scenario):
 
     server = HTTPServer(("127.0.0.1", 0), Handler)
     context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+    context.minimum_version = ssl.TLSVersion.TLSv1_2
     context.load_cert_chain(cert_path, key_path)
     server.socket = context.wrap_socket(server.socket, server_side=True)
     port = server.server_port
@@ -318,6 +319,7 @@ def test_depot_readiness_checks_tls_name_and_selected_port(monkeypatch, status, 
     text = "server_name depot.example;\nssl_certificate /trusted/depot.pem;\nlisten 192.0.2.1:8443 ssl;\n"
     assert helper._vcf_depot_endpoint_ready(text) is expected
     create_context.assert_called_once_with(cafile="/trusted/depot.pem")
+    assert context.minimum_version == ssl.TLSVersion.TLSv1_2
     assert connect.call_args.args[0] == ("192.0.2.1", 8443)
     assert context.wrap_socket.call_args.kwargs["server_hostname"] == "depot.example"
     assert b"Host: depot.example:8443" in secured.sendall.call_args.args[0]
