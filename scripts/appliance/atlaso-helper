@@ -8955,7 +8955,12 @@ def _network_apply_transaction(path: Path):
             raise ValueError(f"{exc}; previous network configuration restored") from exc
     finally:
         if not retain_backup:
-            shutil.rmtree(backup_root)
+            try:
+                shutil.rmtree(backup_root)
+            except OSError:
+                # Backup disposal cannot invalidate an already activated candidate
+                # or replace the original failure after successful restoration.
+                print(f"Network rollback backup cleanup incomplete: {backup_root}", file=sys.stderr)
 
 
 def _handle_network(action: str, args: list[str]) -> int:

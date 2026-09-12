@@ -405,7 +405,7 @@ def test_apply_rejects_partial_native_evidence_before_install(tmp_path, monkeypa
         assert "native networkd evidence is unavailable" in capsys.readouterr().err
 
 
-@pytest.mark.parametrize("failure", ["install", "readiness", "retirement", "rollback", "none"])
+@pytest.mark.parametrize("failure", ["install", "readiness", "retirement", "rollback", "cleanup", "none"])
 def test_ordinary_apply_restores_rejected_candidate(tmp_path, monkeypatch, capsys, failure):
     """Restore persistent bytes and links, retaining evidence when rollback fails.
 
@@ -495,12 +495,27 @@ def test_ordinary_apply_restores_rejected_candidate(tmp_path, monkeypatch, capsy
     monkeypatch.setattr(helper, "_install_systemd_networkd_files", install)
     monkeypatch.setattr(helper, "_apply_vlan_interfaces", apply_vlans)
     monkeypatch.setattr(helper, "_wait_network_addresses", wait)
-    assert helper._handle_network("apply", [str(config)]) == (0 if failure == "none" else 2)
+    if failure == "cleanup":
+        def fail_cleanup(_path):
+            """Simulate backup disposal failure after successful activation.
+
+            Args:
+                _path: Transaction-owned backup directory.
+            """
+            raise OSError("backup cleanup unavailable")
+
+        monkeypatch.setattr(helper.shutil, "rmtree", fail_cleanup)
+    assert helper._handle_network("apply", [str(config)]) == (0 if failure in {"none", "cleanup"} else 2)
     backups = list(tmp_path.glob(".network-rollback-*"))
-    if failure == "none":
+    if failure in {"none", "cleanup"}:
         assert previous.read_bytes() == b"rejected candidate"
         assert candidate_only.is_file()
         assert vlan_stages == [True, False]
+        if failure == "cleanup":
+            assert len(backups) == 1
+            assert "backup cleanup incomplete" in capsys.readouterr().err
+            assert not commands
+            return
     else:
         assert previous.read_bytes() == original
         assert not candidate_only.exists()

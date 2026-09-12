@@ -264,6 +264,8 @@ previous networkd files and reconfigures the previous links. Address readiness a
 window for DHCP or IPv6 autoconfiguration. Old VLAN deletion waits until candidate
 readiness succeeds. An incomplete rollback reports failure and retains its backup location for
 operator recovery; it never advances the applied baseline.
+Backup disposal failure after successful activation is reported as a cleanup warning with the
+retained location; Apply remains successful so the baseline matches the installed configuration.
 The retained failure names the attempted address, link, and detection time; a conflicting MAC appears
 only when the native evidence supplies one. Native networkd rejection messages do not normally include
 that MAC, so Atlaso does not infer it from stale neighbor entries.
