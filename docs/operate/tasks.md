@@ -64,6 +64,8 @@ The task detail shows the reason even when cancellation is unavailable. A stale 
 backend policy. An accepted request records `cancel_requested_at` and `cancel_requested_by`; running work keeps its
 active status until its owner verifies the stop and cleanup. `cancel_completed_at` and `cancel_outcome` record the
 final disposition. `cleanup-required` remains active and blocks worker admission while recovery needs attention.
+A media failure racing an accepted cancellation confirms the stop once rollback and upload cleanup succeed;
+only unresolved cleanup retains that queue hold.
 Do not interpret a cancellation request as proof that a local process or a remote operation stopped.
 
 | Task owner | Queued cancellation | Running cancellation |

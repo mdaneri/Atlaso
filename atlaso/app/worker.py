@@ -1983,7 +1983,7 @@ def _run_pxe_media_sync(db: Session, job: Job) -> None:
             )
         )
         db.commit()
-    except Exception as exc:
+    except Exception:
         db.rollback()
         try:
             if filesystem_sync is not None:
@@ -1997,14 +1997,10 @@ def _run_pxe_media_sync(db: Session, job: Job) -> None:
                 db.commit()
             raise
         db.refresh(job)
-        if isinstance(exc, NetworkBootMediaSyncCancelled) and job.cancel_requested_at is not None:
+        if job.cancel_requested_at is not None:
             task_cancellation.finish_stop(db, job, detail="Staged media execution stopped; previous cache restored and owned upload removed.")
             db.commit()
             return
-        if job.cancel_requested_at is not None:
-            job.cancel_outcome = "cleanup-required"
-            job.error = "Media execution failed while stopping; recovery must verify all staging and swap cleanup."
-            db.commit()
         raise
     filesystem_sync.commit_filesystem()
 

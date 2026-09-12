@@ -296,3 +296,44 @@ def test_download_request_is_rechecked_before_connection_retry(monkeypatch, tmp_
         network_boot.BoundedHttpsDownloader().download("https://example.test/media", tmp_path / "media", cancelled=lambda: bool(requested))
     assert len(attempts) == 1
     assert not (tmp_path / "media").exists()
+
+
+@pytest.mark.parametrize("after_staging", [False, True])
+def test_media_error_racing_cancellation_releases_clean_ownership(db, monkeypatch, tmp_path, after_staging):
+    """Ordinary media failures do not retain a queue hold after verified cleanup.
+
+    Args:
+        db: Isolated lifecycle database.
+        monkeypatch: Fail media execution while accepting a cancellation request.
+        tmp_path: Owned original and replacement cache paths.
+        after_staging: Exercise errors before and after a rollback object exists.
+    """
+    from atlaso.app import worker
+    from atlaso.app.services import network_boot
+
+    job = make_job(db, "pxe-media-sync", "running", source="download", environment="shredos")
+    following = make_job(db)
+    final_dir, backup_dir = tmp_path / "current", tmp_path / "backup"
+    final_dir.mkdir()
+    backup_dir.mkdir()
+    (final_dir / "image").write_bytes(b"replacement")
+    (backup_dir / "image").write_bytes(b"original")
+    staged = network_boot.DeferredNetworkBootMediaSync(media=None, final_dir=final_dir, backup_dir=backup_dir)
+    cleaned = []
+    def fail(*_args, **_kwargs):
+        cancellation.request(db, job, ADMIN)
+        raise ValueError("synthetic media validation failure")
+    monkeypatch.setattr(network_boot, "sync_network_boot_media", (lambda *_args, **_kwargs: staged) if after_staging else fail)
+    monkeypatch.setattr(network_boot, "media_to_dict", fail)
+    monkeypatch.setattr(worker, "cleanup_network_boot_upload", cleaned.append)
+    worker._run_pxe_media_sync(db, job)
+    db.refresh(job)
+    assert cleaned == [job.id]
+    assert job.status == "cancelled"
+    assert job.cancel_outcome == "confirmed"
+    assert job.cancel_completed_at is not None
+    if after_staging:
+        assert (final_dir / "image").read_bytes() == b"original"
+        assert not backup_dir.exists()
+    assert not db.scalars(select(Job).where(Job.status.in_(cancellation.ACTIVE), Job.cancel_outcome == "cleanup-required")).all()
+    assert worker.claim_next_job(db).id == following.id
