@@ -9555,9 +9555,12 @@ def _render_port_forward_firewall(firewall: str, rows: list[dict]) -> str:
         before, generated = firewall.split(start, 1)
         _old_rules, after = generated.split(end, 1)
         firewall = before.rstrip() + "\n" + after.lstrip("\n")
-    if not rows or not re.search(r"^table inet atlaso\s*\{", firewall, re.MULTILINE):
+    if not rows:
         return firewall
     lines = [firewall.rstrip(), start]
+    if not re.search(r"^table inet atlaso\s*\{", firewall, re.MULTILINE):
+        lines.extend(["table inet atlaso {", "  chain forward {",
+                      "    type filter hook forward priority filter; policy accept;", "  }", "}"])
     for row in rows:
         for reply in (False, True):
             lines.append(f'add rule inet atlaso forward {_port_forward_filter_match(row, reply=reply)} accept comment "Atlaso port forward {row["id"]}"')
@@ -10533,6 +10536,52 @@ def _port_forward_dnat_matches(expressions: list, row: dict) -> bool:
             and translations == [translation])
 
 
+def _port_forward_admission_matches(expressions: list, row: dict, direction: str, *, guard: bool) -> bool:
+    """Verify every admission predicate and verdict against the saved original tuple.
+
+    Args:
+        expressions: Native nftables expressions from a generated admission.
+        row: Effective saved mapping.
+        direction: Original or reply connection direction.
+        guard: Require the owned named counter in the early guard chain.
+    """
+    family = "ip" if row["ip_family"] == 4 else "ip6"
+    start, end = row["external_port_start"], row["external_port_end"]
+    expected = [
+        {"match": {"op": "==", "left": {"ct": {"key": "mark"}}, "right": int(_port_forward_mark(row), 16)}},
+        {"match": {"op": "in", "left": {"ct": {"key": "status"}}, "right": "dnat"}},
+        {"match": {"op": "==", "left": {"ct": {"key": "direction"}}, "right": direction}},
+        {"match": {"op": "==", "left": {"meta": {"key": "oifname" if direction == "reply" else "iifname"}},
+                   "right": row["ingress_interface"]}},
+        {"match": {"op": "==", "left": {"ct": {"key": f"{family} daddr", "dir": "original"}},
+                   "right": row["listener_address"]}},
+        {"match": {"op": "==", "left": {"meta": {"key": "l4proto"}}, "right": row["protocol"]}},
+        {"match": {"op": "==", "left": {"ct": {"key": "proto-dst", "dir": "original"}},
+                   "right": start if start == end else {"range": [start, end]}}},
+    ]
+    remaining = list(expressions)
+    if row["source_networks"]:
+        sources = [expr for expr in remaining if isinstance(expr, dict)
+                   and isinstance(expr.get("match"), dict)
+                   and expr["match"].get("left") == {"ct": {"key": f"{family} saddr", "dir": "original"}}]
+        if len(sources) != 1 or set(sources[0]) != {"match"} or sources[0]["match"].get("op") != "==":
+            return False
+        right = sources[0]["match"].get("right")
+        values = right.get("set", [right]) if isinstance(right, dict) else [right]
+        try:
+            networks = [str(ip_network(f'{value["prefix"]["addr"]}/{value["prefix"]["len"]}'
+                                      if isinstance(value, dict) else value, strict=False)) for value in values]
+        except (KeyError, TypeError, ValueError):
+            return False
+        if sorted(networks) != sorted(str(ip_network(value, strict=False)) for value in row["source_networks"]):
+            return False
+        remaining.remove(sources[0])
+    if guard:
+        expected.append({"counter": f'pf_{row["id"]}'})
+    expected.append({"accept": None})
+    return remaining == expected
+
+
 def _port_forward_publication_present(entries: list, row: dict) -> bool:
     """Require translation and both generated admission directions in one observation.
 
@@ -10561,11 +10610,9 @@ def _port_forward_publication_present(entries: list, row: dict) -> bool:
             continue
         if not any(isinstance(expr, dict) and "accept" in expr for expr in expressions):
             continue
-        for expr in expressions:
-            match = expr.get("match", {}) if isinstance(expr, dict) else {}
-            if match.get("left") == {"ct": {"key": "direction"}} and match.get("op") == "==":
-                if match.get("right") in ("original", "reply"):
-                    directions[table].add(match["right"])
+        for direction in ("original", "reply"):
+            if _port_forward_admission_matches(expressions, row, direction, guard=table == "atlaso_port_forwards"):
+                directions[table].add(direction)
     return translation and all(value == {"original", "reply"} for value in directions.values())
 
 

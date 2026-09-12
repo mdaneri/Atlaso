@@ -167,6 +167,10 @@ owned counter and both guard admission directions to remain present in one runti
 degraded even if counters survive.
 The observed DNAT predicates, translated address and port mapping, source boundary, and connection mark must also
 match the saved mapping; retaining a generated comment alone does not establish applied state.
+Both guard and Firewall admissions must match the complete original tuple, source boundary, private mark,
+connection direction, DNAT status, and ingress or return interface. Changed predicates report degraded state.
+When Firewall is disabled, paired Apply creates a minimal accept-policy forwarding chain with the generated
+admissions; this preserves disabled Firewall behavior while retaining complete forwarding observation.
 The page summary includes enabled port forwards independently of source NAT and reports their validation errors.
 These counters describe matched traffic, not proof that an application at the target is healthy.
 

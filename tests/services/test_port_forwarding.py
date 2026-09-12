@@ -148,6 +148,92 @@ def test_signed_upgrade_bootstraps_conntrack(monkeypatch, tmp_path, installed, s
     assert "ExecStartPre=+/opt/atlaso/bin/atlaso-helper appliance-update bootstrap-port-forwarding --real /opt/atlaso/current" in unit
 
 
+def observed_admission_expressions(row, direction, guard):
+    """Build native admission observations independently from the helper renderer.
+
+    Args:
+        row: Saved original tuple.
+        direction: Original or reply traffic.
+        guard: Include the named guard counter.
+    """
+    family = "ip" if row["ip_family"] == 4 else "ip6"
+    predicates = [
+        ({"ct": {"key": "mark"}}, 0xA7000001),
+        ({"ct": {"key": "status"}}, "dnat"),
+        ({"ct": {"key": "direction"}}, direction),
+        ({"meta": {"key": "oifname" if direction == "reply" else "iifname"}}, "eth1"),
+        ({"ct": {"key": f"{family} daddr", "dir": "original"}}, row["listener_address"]),
+        ({"meta": {"key": "l4proto"}}, "tcp"),
+        ({"ct": {"key": "proto-dst", "dir": "original"}}, {"range": [12000, 12002]}),
+    ]
+    expressions = [{"match": {"op": "in" if index == 1 else "==", "left": left, "right": right}}
+                   for index, (left, right) in enumerate(predicates)]
+    if guard:
+        expressions.append({"counter": "pf_1"})
+    return [*expressions, {"accept": None}]
+
+
+@pytest.mark.parametrize("family", [4, 6])
+@pytest.mark.parametrize("direction", ["original", "reply"])
+@pytest.mark.parametrize("guard", [False, True])
+@pytest.mark.parametrize("drift", [None, 0, 1, 2, 3, 4, 5, 6, "source", "verdict", "extra"])
+def test_admission_drift_cannot_inherit_applied_status(family, direction, guard, drift):
+    """Every generated predicate must survive observation, including reply boundaries.
+
+    Args:
+        family: Original IPv4 or IPv6 tuple.
+        direction: Direction whose admission is changed.
+        guard: Early guard or main Firewall admission.
+        drift: Predicate or verdict changed independently after Apply.
+    """
+    helper = load_helper_module()
+    row = {"id": 1, **payload(ip_family=family,
+        listener_address="192.0.2.1" if family == 4 else "2001:db8:2::1"), "source_networks": []}
+    expressions = observed_admission_expressions(row, direction, guard)
+    if isinstance(drift, int):
+        expressions[drift]["match"]["right"] = "changed"
+    elif drift == "source":
+        row["source_networks"] = ["192.0.2.0/24" if family == 4 else "2001:db8:2::/64"]
+    elif drift == "verdict":
+        expressions[-1] = {"drop": None}
+    elif drift == "extra":
+        expressions.insert(0, expressions[0])
+    assert helper._port_forward_admission_matches(expressions, row, direction, guard=guard) is (drift is None)
+
+
+@pytest.mark.parametrize("family", [4, 6])
+def test_admission_source_sets_and_single_ports(family):
+    """Canonical native source sets and single ports match saved admission intent.
+
+    Args:
+        family: Original IPv4 or IPv6 tuple.
+    """
+    helper = load_helper_module()
+    prefix, length = ("192.0.2.0", 24) if family == 4 else ("2001:db8:2::", 64)
+    row = {"id": 1, **payload(ip_family=family, external_port_end=12000),
+           "source_networks": [f"{prefix}/{length}"]}
+    expressions = observed_admission_expressions(row, "original", True)
+    expressions[6]["match"]["right"] = 12000
+    expressions.insert(5, {"match": {"op": "==", "left": {"ct": {
+        "key": f"{'ip' if family == 4 else 'ip6'} saddr", "dir": "original"}},
+        "right": {"set": [{"prefix": {"addr": prefix, "len": length}}]}}})
+    assert helper._port_forward_admission_matches(expressions, row, "original", guard=True)
+    expressions[5]["match"]["right"]["set"][0]["prefix"]["len"] = length + 1
+    assert not helper._port_forward_admission_matches(expressions, row, "original", guard=True)
+
+
+def test_disabled_firewall_renders_minimal_forwarding_admissions():
+    """Disabled Firewall retains accept policy while publishing both owned admissions."""
+    helper = load_helper_module()
+    row = {"id": 1, **payload(), "source_networks": []}
+    rendered = helper._render_port_forward_firewall("flush ruleset\n", [row])
+    assert "type filter hook forward priority filter; policy accept;" in rendered
+    assert rendered.count("add rule inet atlaso forward") == 2
+    assert "ct direction original" in rendered and "ct direction reply" in rendered
+    assert helper._render_port_forward_firewall(rendered, [row]) == rendered
+    assert helper._render_port_forward_firewall(rendered, []) == "flush ruleset\n"
+
+
 def observed_dnat_expressions(row):
     """Model the native nftables JSON shape captured on the VMware appliance.
 
@@ -263,13 +349,11 @@ def test_status_requires_translation_and_both_admissions(family, missing, monkey
     for direction in ("original", "reply"):
         if missing != f"guard-{direction}":
             entries.append({"rule": {"family": "inet", "table": "atlaso_port_forwards", "chain": "forward",
-                                     "expr": [{"match": {"op": "==", "left": {"ct": {"key": "direction"}},
-                                                         "right": direction}}, {"counter": "pf_1"}, {"accept": None}]}})
+                                     "expr": observed_admission_expressions(row, direction, True)}})
         if missing != direction:
             entries.append({"rule": {"family": "inet", "table": "atlaso", "chain": "forward",
-                                     "comment": "Atlaso port forward 1", "expr": [
-                                         {"match": {"op": "==", "left": {"ct": {"key": "direction"}},
-                                                    "right": direction}}, {"accept": None}]}})
+                                     "comment": "Atlaso port forward 1",
+                                     "expr": observed_admission_expressions(row, direction, False)}})
 
     def observe(command, *, timeout):
         """Allow exactly one read-only bounded nftables observation.
