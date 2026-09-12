@@ -32,37 +32,7 @@ class VcfDepotTargetPartialError(VcfDepotTargetError):
             outcome: Sanitized configuration and synchronization evidence.
         """
         super().__init__(message)
-        self.outcome = outcome or {}
-
-
-def _sync_running(payload: dict[str, Any]) -> bool:
-    """Identify active sync states without interpreting retained error text.
-
-    Args:
-        payload: Target depot synchronization response.
-    """
-    return str(payload.get("syncStatus") or "").upper() in {
-        "PENDING", "RUNNING", "IN_PROGRESS", "SYNCING", "STARTING", "STARTED",
-    }
-
-
-def _new_sync_completion(before: dict[str, Any], latest: dict[str, Any]) -> bool:
-    """Require changed completion evidence and reject older comparable timestamps.
-
-    Args:
-        before: Snapshot immediately before the accepted request.
-        latest: Latest observed target response.
-    """
-    old = str(before.get("lastSyncCompletionTimestamp") or "")
-    new = str(latest.get("lastSyncCompletionTimestamp") or "")
-    if not new or new == old:
-        return False
-    # The vendor contract specifies a string, not a date format. Preserve opaque
-    # completion markers, while refusing a regressed timestamp when both parse.
-    try:
-        return datetime.fromisoformat(new) > datetime.fromisoformat(old)
-    except (ValueError, TypeError):
-        return True
+        self.outcome = outcome if outcome is not None else {"manual_recovery_required": True}
 
 
 def _sync_evidence(payload: dict[str, Any]) -> dict[str, Any]:
@@ -362,8 +332,6 @@ def configure_target_depot(
             has_existing = bool(sanitized_current["hostname"] or sanitized_current["url"] or sanitized_current["username"])
             if has_existing and not replace_existing:
                 raise VcfDepotTargetError("The target already uses a different depot; confirm replacement before continuing.")
-            if _sync_running(api.sync_info()):
-                raise VcfDepotTargetError("A metadata sync is already active. Wait for it to finish before changing the target depot; no configuration was changed.")
             if progress:
                 progress(25, "configuring-depot")
             response = api.update_depot(local, depot_password)
@@ -373,69 +341,66 @@ def configure_target_depot(
                 raise VcfDepotTargetError(returned["message"] or f"VCF reported depot status {returned['status']}.")
         if progress:
             progress(50, "starting-metadata-sync")
-        configuration = "updated" if configured else "unchanged"
-        sync_outcome = "unknown"
-        request_accepted = False
         before: dict[str, Any] = {}
         latest: dict[str, Any] = {}
+        request_accepted = False
         try:
             before = api.sync_info()
-            if _sync_running(before):
-                sync_outcome = "already-running"
-                raise VcfDepotTargetPartialError("A metadata sync is already active. No additional sync was requested; inspect its completion before retrying.")
             api.start_sync()
             request_accepted = True
             started = time.monotonic()
             while time.monotonic() - started < timeout:
                 latest = api.sync_info()
+                error = str(latest.get("errorMessage") or "").strip()
+                if error:
+                    raise VcfDepotTargetPartialError(f"Depot configuration succeeded, but metadata sync failed: {error}")
                 status = str(latest.get("syncStatus") or "").upper()
-                # An error can describe the previous completion while the new
-                # request is pending. Neither that error nor an old completion
-                # proves a result for the accepted request.
-                if not _sync_running(latest) and _new_sync_completion(before, latest):
-                    error = str(latest.get("errorMessage") or "").strip()
-                    if error or status in {"FAILED", "FAILURE", "ERROR"}:
-                        sync_outcome = "failed"
-                        component = "Compatibility metadata download" if "compatibility" in error.lower() else "Metadata synchronization"
-                        raise VcfDepotTargetPartialError(f"{component} failed on the target. Inspect the target sync diagnostics before retrying.")
-                    if status in {"COMPLETED", "SUCCESS", "SUCCEEDED"}:
-                        sync_outcome = "succeeded"
-                        break
+                old_timestamp = str(before.get("lastSyncCompletionTimestamp") or "")
+                new_timestamp = str(latest.get("lastSyncCompletionTimestamp") or "")
+                in_progress = any(value in status for value in ("PENDING", "RUNNING", "PROGRESS", "SYNCING", "START"))
+                if new_timestamp and new_timestamp != old_timestamp and not in_progress:
+                    break
                 if progress:
                     elapsed_fraction = min(1.0, (time.monotonic() - started) / max(timeout, 1))
                     progress(55 + int(elapsed_fraction * 35), "syncing-metadata")
-                time.sleep(min(max(poll_interval, 0), max(0, timeout - (time.monotonic() - started))))
+                time.sleep(poll_interval)
             else:
-                sync_outcome = "unconfirmed"
-                raise VcfDepotTargetPartialError("The requested metadata sync did not reach a confirmed terminal result before the timeout. Read target status before retrying; the remote sync may still be running.")
+                raise VcfDepotTargetPartialError("Depot configuration succeeded, but metadata sync did not complete before the timeout.")
         except (VcfDepotTargetError, httpx.HTTPError, ValueError) as exc:
             readback = _configuration_readback(api, local)
             outcome = {
                 "appliance": appliance,
-                "configuration": configuration,
+                "configuration": "updated" if configured else "unchanged",
                 **readback,
-                "sync": {"outcome": sync_outcome, "request_accepted": request_accepted,
-                         "before_request": _sync_evidence(before), "latest_observation": _sync_evidence(latest)},
+                "sync": {
+                    "request_accepted": request_accepted,
+                    "before_request": _sync_evidence(before),
+                    "latest_observation": _sync_evidence(latest),
+                    "historical_error_possible": bool(
+                        latest.get("errorMessage")
+                        and latest.get("errorMessage") == before.get("errorMessage")
+                        and latest.get("lastSyncCompletionTimestamp") == before.get("lastSyncCompletionTimestamp")
+                    ),
+                },
                 "manual_recovery_required": readback["configuration_readback"] == "mismatch",
                 "next_step": "Inspect target metadata sync status before retrying. A matching depot is preserved on retry.",
             }
             message = str(exc) if isinstance(exc, VcfDepotTargetPartialError) else "Metadata sync could not be requested or observed. Inspect target status before retrying."
             raise VcfDepotTargetPartialError(message, outcome=outcome) from exc
-        readback = _configuration_readback(api, local)
-        outcome = {
+        verified = api.depot_settings()
+        sanitized_verified = sanitize_remote_depot(verified)
+        if not depot_matches(verified, local):
+            raise VcfDepotTargetPartialError("Depot configuration succeeded, but the target did not return the expected Atlaso depot settings.")
+        if sanitized_verified["status"] != "DEPOT_CONNECTION_SUCCESSFUL":
+            raise VcfDepotTargetPartialError(sanitized_verified["message"] or f"VCF reported depot status {sanitized_verified['status'] or 'unknown'}.")
+        if progress:
+            progress(100, "succeeded")
+        return {
             "appliance": appliance,
-            "configuration": configuration,
-            **readback,
+            "depot": sanitized_verified,
             "sync": {
                 "status": str(latest.get("syncStatus") or ""),
                 "last_completed_at": str(latest.get("lastSyncCompletionTimestamp") or ""),
-                "outcome": sync_outcome,
-                "request_accepted": request_accepted,
             },
-            "manual_recovery_required": readback["configuration_readback"] == "mismatch",
+            "configuration": "updated" if configured else "unchanged",
         }
-        if not readback["configuration_verified"]:
-            raise VcfDepotTargetPartialError("Metadata synchronized, but the expected depot configuration and connection could not be verified. Inspect target depot settings before retrying.", outcome=outcome)
-        if progress:
-            progress(100, "succeeded")
-        return outcome

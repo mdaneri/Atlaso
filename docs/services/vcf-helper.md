@@ -231,17 +231,17 @@ Atlaso calls `PUT /v1/system/settings/depot`, triggers metadata refresh with
 the local depot user's password for each run and never stores it. Certificate trust is not implicit; configure it
 separately when the target does not yet trust the Atlaso CA.
 
-Task details separate the depot configuration readback from metadata synchronization. A working depot does not prove
-that compatibility metadata synchronized. Atlaso waits for a new completion marker and an explicit successful status;
-an error retained from an earlier completion does not end a pending new request. An already-running sync is not
-requested again. Unknown statuses or unchanged completion markers remain unconfirmed until the bounded wait expires.
+Task details separate configuration readback from metadata synchronization failures. After a metadata error,
+request/observation failure, or timeout, Atlaso independently reads the target depot configuration and connection
+status. A verified configuration does not prove that compatibility metadata synchronized. Unavailable readback is
+explicitly unverified; it does not by itself mean the configuration needs changing. The manual-recovery flag is set
+only when readback demonstrates a mismatch or unsuccessful connection.
 
-After a sync failure or observation timeout, Atlaso independently reads the depot settings. A verified configuration
-is preserved, and retrying against that matching endpoint does not replace it. Read the target's current metadata sync
-status before retrying because a timed-out remote sync may still be active. Task details identify a failed metadata
-component when available; inspect sanitized target diagnostics to distinguish missing depot content from transport
-failures. The manual-recovery flag is set only when configuration readback demonstrates a mismatch or unsuccessful
-connection; unavailable readback remains explicitly unverified rather than proving that configuration needs changing.
+The failure details include bounded pre-request and latest observed sync states and timestamps, whether the sync
+request was accepted, and whether an unchanged error and completion marker could describe a historical failure.
+That historical-error indication is a diagnostic hint, not proof of the cause or a successful current sync.
+Existing synchronization and terminal status behavior is unchanged. Read current target sync status before retrying:
+a remote sync may still be active. Retrying against a matching depot preserves that configuration.
 
 ## Generate FQDNs
 
