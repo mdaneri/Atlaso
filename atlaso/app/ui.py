@@ -16568,8 +16568,13 @@ def _submit_appliance_apply(
         # Release selected service sockets before the paired live-listener check.
         # Handoff publishes as one group at its first member, not at the NAT row.
         grouped = set(MANAGEMENT_HANDOFF_UNIT_IDS) if management_handoff else {"firewall", "nat"}
+        release_ids = listener_units - grouped
+        if management_handoff and ca_required_for_nts:
+            # The handoff deploys CA material needed by NTS validation. Keep NTP
+            # after that group; desired listener validation still guards the pair.
+            release_ids.discard("ntpd")
         releases = [unit for unit in selected_ordered_units
-                    if unit["id"] in listener_units - grouped]
+                    if unit["id"] in release_ids]
         selected_ordered_units = [unit for unit in selected_ordered_units if unit not in releases]
         publication_index = next(index for index, unit in enumerate(selected_ordered_units)
                                  if unit["id"] in grouped)

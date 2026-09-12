@@ -108,17 +108,24 @@ def test_runtime_forward_presence_is_bounded_and_conservative(monkeypatch, tmp_p
 
 @pytest.mark.parametrize("management_move", [False, True])
 @pytest.mark.parametrize("release_listener", [False, True])
-def test_global_submission_publishes_captured_port_forward_pair(client, management_move, release_listener):
+@pytest.mark.parametrize("enable_nts", [False, True])
+def test_global_submission_publishes_captured_port_forward_pair(client, management_move, release_listener, enable_nts):
     """The real submission and task runner keep Firewall/NAT baselines together.
 
     Args:
         client: Isolated application with dry-run host adapters.
         management_move: Include the pair in a protected management handoff.
         release_listener: Disable KMS while assigning its previous endpoint to forwarding.
+        enable_nts: Preserve CA deployment before first NTS enablement.
     """
     from sqlalchemy import select
 
-    from atlaso.app.models import KmsSettings, PhysicalInterface, PortForward
+    from atlaso.app.models import (
+        KmsSettings,
+        NtpSettings,
+        PhysicalInterface,
+        PortForward,
+    )
     from tests.routers.ui.helpers import login
     from tests.services.test_port_forwarding import payload
 
@@ -143,17 +150,35 @@ def test_global_submission_publishes_captured_port_forward_pair(client, manageme
             kms.enabled = False
             forwarding.update(external_port_start=5696, external_port_end=5696, target_port_end=13000)
         db.add(PortForward(**forwarding))
+        if enable_nts:
+            ui.get_ca_settings_row(db).enabled = True
+            ntp = db.scalar(select(NtpSettings))
+            ntp.enabled = True
+            ntp.nts_server_enabled = True
+            ntp.hostname = "ntp.atlaso.internal"
+            ntp.listen_interface = "eth2"
+            ntp.listen_address = interface.ip_cidr.split("/")[0]
         if management_move:
             management = db.scalar(select(PhysicalInterface).where(PhysicalInterface.name == "eth0"))
             management.ip_cidr = "192.168.49.21/24"
         db.commit()
-    response = client.post("/appliance-apply", data={"csrf": csrf, "selected_units": ["nat", "kms"] if release_listener else "nat"},
+    selected = ["nat"] + (["kms"] if release_listener else []) + (["ntpd"] if enable_nts else [])
+    if enable_nts:
+        with SessionLocal() as db:
+            errors = {unit["id"]: unit["validation_errors"] for unit in ui.appliance_apply_units(db)
+                      if unit["id"] in {*selected, "ca"} and unit["validation_errors"]}
+            assert not errors, errors
+    response = client.post("/appliance-apply", data={"csrf": csrf, "selected_units": selected},
                            headers={"Accept": "application/json"})
     assert response.status_code == 202, response.text
     with SessionLocal() as db:
         job = db.get(Job, response.json()["job_id"])
         result = json.loads(job.result)
         assert job.status == "succeeded", result
+        if enable_nts:
+            assert result["selected_units"].index("ca") < result["selected_units"].index("ntpd")
+            if management_move:
+                assert result["selected_units"].index("network") < result["selected_units"].index("ntpd")
         if release_listener:
             assert result["selected_units"].index("kms") < result["selected_units"].index("firewall")
             if management_move:
@@ -164,7 +189,8 @@ def test_global_submission_publishes_captured_port_forward_pair(client, manageme
         else:
             assert result["traffic_publishing_pair"] is True
             assert result["traffic_publishing_runtime_commit_pending"] is False
-            assert [unit["unit_id"] for unit in result["units"]] == (["kms"] if release_listener else []) + ["firewall", "nat"]
+            if not enable_nts:
+                assert [unit["unit_id"] for unit in result["units"]] == (["kms"] if release_listener else []) + ["firewall", "nat"]
         baselines = ui.load_appliance_apply_baselines(db)
         assert "Atlaso port forward" in baselines["firewall"]["config_preview"]
         assert "[port_forwards]" in baselines["nat"]["config_preview"]
