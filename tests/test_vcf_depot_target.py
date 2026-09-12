@@ -95,7 +95,7 @@ def test_configure_target_updates_syncs_and_verifies(monkeypatch):
         def sync_info(self):
             """Return sync info."""
             self.sync_calls += 1
-            return {"syncStatus": "COMPLETED", "errorMessage": "", "lastSyncCompletionTimestamp": "new" if self.sync_calls > 1 else "old"}
+            return {"syncStatus": "COMPLETED", "errorMessage": "", "lastSyncCompletionTimestamp": "new" if self.sync_calls > 2 else "old"}
         def start_sync(self):
             """Return start sync."""
             return {"syncStatus": "IN_PROGRESS"}

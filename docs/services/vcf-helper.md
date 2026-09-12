@@ -231,6 +231,18 @@ Atlaso calls `PUT /v1/system/settings/depot`, triggers metadata refresh with
 the local depot user's password for each run and never stores it. Certificate trust is not implicit; configure it
 separately when the target does not yet trust the Atlaso CA.
 
+Task details separate the depot configuration readback from metadata synchronization. A working depot does not prove
+that compatibility metadata synchronized. Atlaso waits for a new completion marker and an explicit successful status;
+an error retained from an earlier completion does not end a pending new request. An already-running sync is not
+requested again. Unknown statuses or unchanged completion markers remain unconfirmed until the bounded wait expires.
+
+After a sync failure or observation timeout, Atlaso independently reads the depot settings. A verified configuration
+is preserved, and retrying against that matching endpoint does not replace it. Read the target's current metadata sync
+status before retrying because a timed-out remote sync may still be active. Task details identify a failed metadata
+component when available; inspect sanitized target diagnostics to distinguish missing depot content from transport
+failures. The manual-recovery flag is set only when configuration readback demonstrates a mismatch or unsuccessful
+connection; unavailable readback remains explicitly unverified rather than proving that configuration needs changing.
+
 ## Generate FQDNs
 
 Open `Generated VCF FQDNs` and select:
