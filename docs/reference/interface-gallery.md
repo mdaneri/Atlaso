@@ -563,6 +563,22 @@ Route: `/ui/management/traffic-publishing`
 
 Figure: Traffic Publishing with reviewed IPv4 masquerade and the canonical NAT setting.
 
+![Atlaso Port Forwarding grid with an enabled TCP range mapping and source NAT disabled.](../assets/screenshots/traffic-publishing-port-forwarding-desktop.webp)
+
+Figure: Port Forwarding is independent of source NAT; counters do not prove target health.
+
+![Atlaso Port Forwarding grid with an enabled TCP range mapping and source NAT disabled.](../assets/screenshots/traffic-publishing-port-forwarding-responsive.webp)
+
+Figure: Port Forwarding is independent of source NAT; counters do not prove target health.
+
+![Atlaso port-forward review wizard showing a three-port TCP mapping, restricted client CIDR, and original client preservation.](../assets/screenshots/traffic-publishing-port-forwarding-review-desktop.webp)
+
+Figure: Review the listener, port mapping, client boundary, and replies before saving desired state.
+
+![Atlaso port-forward review wizard showing a three-port TCP mapping, restricted client CIDR, and original client preservation.](../assets/screenshots/traffic-publishing-port-forwarding-review-responsive.webp)
+
+Figure: Review the listener, port mapping, client boundary, and replies before saving desired state.
+
 ![Atlaso Traffic Publishing showing explicit eth2 ingress, eth3 egress, and enabled source NAT.](../assets/screenshots/traffic-publishing-responsive.webp)
 
 Figure: Traffic Publishing with reviewed IPv4 masquerade and the canonical NAT setting.
