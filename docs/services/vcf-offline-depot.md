@@ -54,7 +54,9 @@ unauthenticated browsing do not extend a browser session.
    Validation checks active TCP listener ownership before activation. Overlapping listeners must belong to the nginx
    executable in `nginx.service`; otherwise choose another address or port. Unavailable ownership evidence blocks
    activation. An existing IPv6 wildcard listener is conservatively treated as potentially dual-stack.
-   Activation verifies the selected listeners with TLS 1.2 or newer, the configured TLS identity and depot login response.
+   Activation verifies the selected listeners with TLS 1.2 or newer, the configured TLS identity and nginx-owned
+   `/PROD` redirect.
+   This check uses the submitted configuration, so newer pending settings do not affect listener readiness.
    On failure,
    Atlaso restores the previous depot site and authentication file and reports failure; it does not restart the shared
    nginx service. Candidate site and rollback files use complete, flushed sibling files and atomic replacement.

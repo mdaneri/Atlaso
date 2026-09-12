@@ -12047,7 +12047,7 @@ def _vcf_depot_listener_admission(text: str) -> str:
 
 
 def _vcf_depot_endpoint_ready(text: str) -> bool:
-    """Verify each configured listener serves the expected TLS identity and login route.
+    """Verify each configured listener serves the expected TLS identity and static depot redirect.
 
     Args:
         text: Validated candidate depot nginx configuration.
@@ -12081,8 +12081,10 @@ def _vcf_depot_endpoint_ready(text: str) -> bool:
                                 return False
                             secured.settimeout(min(5, remaining))
                             host = f"[{hostname.strip('[]')}]" if ":" in hostname else hostname
+                            # This nginx-owned redirect uses the submitted configuration;
+                            # application login authorization reads mutable desired settings.
                             secured.sendall(
-                                f"GET /PROD/login HTTP/1.1\r\nHost: {host}:{port}\r\nConnection: close\r\n\r\n".encode("ascii")
+                                f"GET /PROD HTTP/1.1\r\nHost: {host}:{port}\r\nConnection: close\r\n\r\n".encode("ascii")
                             )
                             status_line = bytearray()
                             while len(status_line) < 256 and not status_line.endswith(b"\n"):
@@ -12095,7 +12097,7 @@ def _vcf_depot_endpoint_ready(text: str) -> bool:
                                     break
                                 status_line.extend(chunk)
                             ready = time.monotonic() < deadline and bool(
-                                re.fullmatch(rb"HTTP/1\.[01] 200 [^\r\n]*\r\n", bytes(status_line))
+                                re.fullmatch(rb"HTTP/1\.[01] 301 [^\r\n]*\r\n", bytes(status_line))
                             )
                     if ready:
                         break

@@ -60,7 +60,7 @@ def test_depot_readiness_real_tls(tmp_path, scenario):
         def do_GET(self):
             """Record the request and return its route status."""
             requests.append((self.path, self.headers.get("Host")))
-            self.send_response(200 if self.path == "/PROD/login" else 404)
+            self.send_response(301 if self.path == "/PROD" else 404)
             self.end_headers()
 
         def log_message(self, _format, *args):
@@ -83,7 +83,7 @@ def test_depot_readiness_real_tls(tmp_path, scenario):
         hostname = "wrong.example" if scenario == "wrong-hostname" else "depot.example"
         text = f"server_name {hostname};\nssl_certificate {trusted_path.as_posix()};\nlisten 127.0.0.1:{port} ssl;\n"
         assert helper._vcf_depot_endpoint_ready(text) is (scenario == "trusted")
-        assert requests == ([("/PROD/login", f"depot.example:{port}")] if scenario == "trusted" else [])
+        assert requests == ([("/PROD", f"depot.example:{port}")] if scenario == "trusted" else [])
     finally:
         server.shutdown()
         server.server_close()
@@ -296,7 +296,7 @@ def test_admission_rejection_precedes_depot_mutation(monkeypatch, tmp_path):
     assert helper._handle_vcf_offline_depot("apply-https", [str(config)]) == 2
 
 
-@pytest.mark.parametrize("status,expected", [(b"HTTP/1.1 200 OK\r\n", True), (b"HTTP/1.1 503 Error\r\n", False)])
+@pytest.mark.parametrize("status,expected", [(b"HTTP/1.1 301 Moved Permanently\r\n", True), (b"HTTP/1.1 200 OK\r\n", False), (b"HTTP/1.1 503 Error\r\n", False)])
 def test_depot_readiness_checks_tls_name_and_selected_port(monkeypatch, status, expected):
     """Verify the configured endpoint without relying on DNS or disabling TLS checks.
 
@@ -322,6 +322,7 @@ def test_depot_readiness_checks_tls_name_and_selected_port(monkeypatch, status, 
     assert context.minimum_version == ssl.TLSVersion.TLSv1_2
     assert connect.call_args.args[0] == ("192.0.2.1", 8443)
     assert context.wrap_socket.call_args.kwargs["server_hostname"] == "depot.example"
+    assert secured.sendall.call_args.args[0].startswith(b"GET /PROD HTTP/1.1\r\n")
     assert b"Host: depot.example:8443" in secured.sendall.call_args.args[0]
 
 
