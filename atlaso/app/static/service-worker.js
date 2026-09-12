@@ -1,5 +1,5 @@
 const ATLASO_CACHE_PREFIX = "atlaso-management-pwa-v";
-const ATLASO_CACHE = `${ATLASO_CACHE_PREFIX}329`;
+const ATLASO_CACHE = `${ATLASO_CACHE_PREFIX}330`;
 const ATLASO_ASSETS = [
   "/manifest.webmanifest",
   "/favicon.ico",

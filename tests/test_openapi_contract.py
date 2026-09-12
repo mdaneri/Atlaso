@@ -228,6 +228,7 @@ def test_physical_interface_patch_uses_typed_atomic_update_schema(client):
         "mtu",
         "admin_state",
         "access_management_ui_enabled",
+        "check_duplicate_ip_addresses",
     }
     assert "atomically reconciles" in operation["description"]
     assert "Network Boot" in update_schema["properties"]["ip_cidr"]["description"]

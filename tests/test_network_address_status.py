@@ -184,7 +184,7 @@ def test_native_observation_sanitizes_and_attributes_structured_sources(monkeypa
 
         Args:
             args: Fixed command under test.
-            _kwargs: Runtime bound retained by the caller.
+            **_kwargs: Runtime bound retained by the caller.
         """
         value = json.dumps(ip_rows) if args[0] == "ip" else json.dumps(networkd) if args[0] == "networkctl" else "\n".join(json.dumps(item) for item in journal)
         return subprocess.CompletedProcess(args, 0, value, "")
