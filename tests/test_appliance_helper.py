@@ -1639,13 +1639,15 @@ def test_management_handoff_rollback_continues_after_missing_snapshot(monkeypatc
 
 
 @pytest.mark.parametrize("prior_firewall", [False, True])
-def test_management_handoff_rollback_preserves_nat_after_firewall(monkeypatch, tmp_path, prior_firewall):
+@pytest.mark.parametrize("publication", ["before", "unchanged", "changed", "legacy"])
+def test_management_handoff_rollback_preserves_nat_after_firewall(monkeypatch, tmp_path, prior_firewall, publication):
     """Keep both NAT families after rollback replaces or clears the firewall.
 
     Args:
         monkeypatch: Fixture isolating host services and simulated kernel state.
         tmp_path: Directory holding the prior canonical NAT snapshot.
         prior_firewall: Whether rollback restores a prior firewall program.
+        publication: Durable publication progress and effective mapping change.
     """
     helper = load_helper_module()
     runtime = tmp_path / "nat.conf"
@@ -1689,7 +1691,15 @@ def test_management_handoff_rollback_preserves_nat_after_firewall(monkeypatch, t
     monkeypatch.setattr(helper, "_run", lambda command: subprocess.CompletedProcess(command, 0))
     monkeypatch.setattr(helper, "_management_handoff_readiness", lambda *_args: {"stable_samples": 3})
 
-    helper._restore_management_handoff({"snapshots": []})
+    retired = []
+    monkeypatch.setattr(helper, "_retire_port_forward_connections", lambda ids=None: retired.append(ids))
+    state = {"snapshots": [], "publishing_included": True}
+    if publication != "legacy":
+        state.update(publishing_started=publication != "before",
+                     publishing_retire_rule_ids=[1] if publication == "changed" else [])
+    helper._restore_management_handoff(state)
+
+    assert retired == {"before": [], "unchanged": [[]], "changed": [[1]], "legacy": [None]}[publication]
 
     assert tables == {"ip atlaso_nat", "ip6 atlaso_nat"} | ({"firewall"} if prior_firewall else set())
 
@@ -2930,6 +2940,9 @@ def test_management_handoff_candidate_durability_gates_ack(
             assert not durability_calls
             assert retire_connections is (mapping_change != "unchanged")
             assert retire_rule_ids == ([] if mapping_change == "unchanged" else [1])
+            assert state["publishing_started"] is True
+            assert state["publishing_retire_rule_ids"] == retire_rule_ids
+            assert phases[-1] == "publishing"
             paired_calls.append((intent, program))
             applied_firewalls.append(firewall)
 

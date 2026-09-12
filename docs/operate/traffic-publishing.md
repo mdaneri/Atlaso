@@ -78,6 +78,7 @@ boundary and listener in Traffic Publishing. Apply captures Firewall and NAT tog
 and publishes both atomically. It commits both application baselines before acknowledging the root-owned recovery
 record. Management changes include this pair in the protected management handoff and its wider rollback.
 Both ordinary Apply and management handoff preserve connections for unchanged mappings and retire only changed IDs.
+Handoff failures before paired publication skip connection retirement; later rollback retires only candidate changes.
 Inventory reconciliation follows a verified NIC rename, including child VLAN listeners. A missing NIC keeps its
 inert identity and exact mapping, disables the forward, and requires operator review before reactivation.
 

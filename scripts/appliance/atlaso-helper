@@ -22046,6 +22046,8 @@ def _snapshot_management_handoff(payload: dict) -> dict:
         "previous_firewall_config_existed": previous_firewall_config_existed,
         "previous_firewall_service_existed": previous_firewall_service_existed,
         "publishing_included": bool(payload.get("nat_config_path")),
+        "publishing_started": False,
+        "publishing_retire_rule_ids": [],
         "previous_nat_enabled": (_run(["systemctl", "is-enabled", "atlaso-nat.service"]).returncode == 0
                                  if payload.get("nat_config_path") else False),
         "wan_rollback_config_path": str(payload.get("wan_rollback_config_path") or ""),
@@ -23098,8 +23100,11 @@ def _restore_management_handoff(state: dict) -> dict:
     )
     # Firewall restoration flushes the ruleset; replay canonical NAT after that final flush.
     attempt("firewall restore", lambda: _restore_management_handoff_firewall(state, commands))
-    if state.get("publishing_included"):
-        attempt("port-forward connection retirement", _retire_port_forward_connections)
+    # Older journals lack publication progress; retain conservative recovery for them.
+    # New journals distinguish pre-publication failures from admitted candidate mappings.
+    if state.get("publishing_started", state.get("publishing_included")):
+        attempt("port-forward connection retirement",
+                lambda: _retire_port_forward_connections(state.get("publishing_retire_rule_ids")))
     if NAT_RUNTIME_CONFIG_PATH.exists():
         def restore_nat() -> None:
             """Rebuild prior NAT selectors after restoring Network and WAN."""
@@ -23741,6 +23746,9 @@ def _apply_management_handoff(payload: dict) -> int:
                 previous_nat = (NAT_RUNTIME_CONFIG_PATH.read_text(encoding="utf-8")
                                 if NAT_RUNTIME_CONFIG_PATH.exists() else "")
                 changed_ids = _port_forward_changed_ids(previous_nat, nat_intent)
+                state["publishing_started"] = True
+                state["publishing_retire_rule_ids"] = changed_ids
+                _write_management_handoff_state(state, "publishing")
                 _publishing_install(nat_intent, paired_firewall, nat_program,
                                     retire_connections=bool(changed_ids), retire_rule_ids=changed_ids)
         else:
