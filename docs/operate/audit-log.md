@@ -50,6 +50,9 @@ Use [Operational logs](logs.md) for runtime diagnostics. Preserve the relevant t
 escalating; do not copy credentials or raw secrets into an issue. The data classification does not make authenticated
 audit history public or override site handling policy.
 
+The live view opens at the newest retained group. **From beginning** reads the oldest retained entries; **Follow live**
+returns directly to the newest group.
+
 <!-- BEGIN GENERATED ADDITIONAL SCREENSHOTS -->
 ## Additional verified states
 

@@ -3,11 +3,11 @@
   "use strict";
 
   function create({ output, status, controls, fetchPage, active = () => true, onPage = () => {},
-    pageText = (page) => String(page.text || ""), renderPage = null, holdPage = () => false }) {
+    pageText = (page) => String(page.text || ""), renderPage = null, holdPage = () => false, initialCursor = "" }) {
     let closed = false;
     let request = null;
     let timer = null;
-    let cursor = "";
+    let cursor = initialCursor;
     let nextCursor = "";
     let hasMore = false;
     let following = true;
@@ -63,6 +63,7 @@
     button("follow", "Follow live", () => {
       following = !following;
       terminalReads = 0;
+      if (following && initialCursor) navigate(initialCursor, true);
       if (following && scroll) scroll.scrollTop = scroll.scrollHeight;
       updateButtons();
       schedule(0);

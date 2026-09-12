@@ -1096,6 +1096,8 @@ def build_router(dependencies: OperationsUiDependencies) -> OperationsUiRouter:
             try:
                 position = log_viewer.decode_cursor(request.query_params.get("cursor", ""), "audit")
                 after = position.get("after", 0)
+                if request.query_params.get("tail") == "1" and not position:
+                    after = db.scalar(select(AuditEvent.id).order_by(AuditEvent.id.desc()).offset(500).limit(1)) or 0
                 if type(after) is not int or after < 0:
                     raise ValueError("Invalid audit history position.")
             except ValueError as exc:

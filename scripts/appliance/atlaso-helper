@@ -1741,19 +1741,27 @@ def _read_fixed_log_history(path: Path, position: dict) -> dict:
                     (prefix_length and hashlib.sha256(prefix).hexdigest() != position.get("prefix"))):
                 offset, reset = 0, True
             current_position = {"generation": generation, "offset": offset,
+                                "oversized": not reset and position.get("oversized") is True,
                                 "prefix_length": 0 if reset else prefix_length,
                                 "prefix": "" if reset else position.get("prefix", "")}
             handle.seek(offset)
             lines = []
             consumed = 0
             partial = False
+            oversized = not reset and position.get("oversized") is True
             while len(lines) < 500 and consumed < 1024 * 1024:
                 start = handle.tell()
                 line = handle.readline(65537)
                 if not line:
                     break
-                if len(line) > 65536:
-                    raise ValueError("oversized log entry")
+                if oversized or len(line) > 65536:
+                    consumed += len(line)
+                    if not oversized:
+                        if b"-----BEGIN " in line and b"PRIVATE KEY-----" in line:
+                            lines.append("-----BEGIN PRIVATE KEY-----")
+                        lines.append("[Oversized log entry omitted: exceeds 64 KiB; continuing with the next complete entry.]")
+                    oversized = not line.endswith(b"\n")
+                    continue
                 if not line.endswith(b"\n") and candidate == path:
                     handle.seek(start)
                     partial = True
@@ -1764,7 +1772,7 @@ def _read_fixed_log_history(path: Path, position: dict) -> dict:
             more = bool(handle.read(1)) and not partial
             handle.seek(0)
             prefix = handle.read(min(next_offset, 4096))
-            next_position = {"generation": generation, "offset": next_offset,
+            next_position = {"generation": generation, "offset": next_offset, "oversized": oversized,
                              "prefix_length": len(prefix), "prefix": hashlib.sha256(prefix).hexdigest()}
         finally:
             if handle is not raw:

@@ -178,17 +178,24 @@ def file_page(path: Path, *, source: str, cursor: str = "", limit: int = PAGE_LI
                 remaining -= len(skipped)
             private_key = position.get("private_key") is True
             current = encode_cursor(source, generation=generation, offset=offset, private_key=private_key,
+                                    oversized=position.get("oversized") is True,
                                     prefix_length=prefix_length if position else 0,
                                     prefix=position.get("prefix", ""))
             lines: list[str] = []
             partial = False
+            oversized = position.get("oversized") is True
             while len(lines) < max(1, min(PAGE_LINES, limit)) and handle.tell() - offset < PAGE_BYTES:
                 start = handle.tell()
                 line = handle.readline(LINE_BYTES + 1)
                 if not line:
                     break
-                if len(line) > LINE_BYTES:
-                    raise ValueError("A log entry exceeds the safe page size; the complete page could not be displayed.")
+                if oversized or len(line) > LINE_BYTES:
+                    if not oversized:
+                        if b"-----BEGIN " in line and b"PRIVATE KEY-----" in line:
+                            lines.append("-----BEGIN PRIVATE KEY-----")
+                        lines.append("[Oversized log entry omitted: exceeds 64 KiB; continuing with the next complete entry.]")
+                    oversized = not line.endswith(b"\n")
+                    continue
                 if not line.endswith(b"\n") and not (complete or selected != path):
                     handle.seek(start)
                     partial = True
@@ -198,7 +205,7 @@ def file_page(path: Path, *, source: str, cursor: str = "", limit: int = PAGE_LI
             more = bool(handle.read(1)) and not partial
             handle.seek(0)
             prefix = handle.read(min(next_offset, 4096))
-            next_position = {"generation": generation, "offset": next_offset,
+            next_position = {"generation": generation, "offset": next_offset, "oversized": oversized,
                              "prefix_length": len(prefix), "prefix": hashlib.sha256(prefix).hexdigest()}
     if not more and index + 1 < len(paths):
         following = paths[index + 1].lstat()

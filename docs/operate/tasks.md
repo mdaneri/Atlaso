@@ -63,6 +63,9 @@ Read the failed step and sanitized task log, then correlate its identifier with 
 [Audit log](audit-log.md). Correct desired state in the owning page and submit a new task. Do not edit task history or
 fabricate a successful result.
 
+Task history pages exclude the changing status and progress summary, which remains in the task detail dialog.
+Updating that summary does not reset an older log page.
+
 <!-- BEGIN GENERATED ADDITIONAL SCREENSHOTS -->
 ## Additional verified states
 
@@ -87,6 +90,3 @@ These captures show responsive layouts and useful operational states referenced 
 *Figure: Tasks in the verified clean-appliance responsive state.*
 
 <!-- END GENERATED ADDITIONAL SCREENSHOTS -->
-
-Task history pages exclude the changing status and progress summary, which remains in the task detail dialog.
-Updating that summary does not reset an older log page.

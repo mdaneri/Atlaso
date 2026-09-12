@@ -61,6 +61,9 @@ Logs are evidence, not an enforcement surface. Correct desired state in the owni
 [Appliance Apply](appliance-apply.md). For local recovery when the web UI is unavailable, use the
 [local appliance console](appliance-console.md).
 
+Physical file entries larger than 64 KiB are represented by an explicit omission marker. The reader advances through
+them in bounded pages so later entries remain reachable; omitted entry contents are not exposed.
+
 <!-- BEGIN GENERATED ADDITIONAL SCREENSHOTS -->
 ## Additional verified states
 

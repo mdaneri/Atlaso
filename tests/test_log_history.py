@@ -289,3 +289,82 @@ def test_task_progress_does_not_reset_later_history(client, monkeypatch):
         after = log_viewer.text_page("\n".join(_task_log_lines(job, db, include_metadata=False)), source="task:test", cursor=first["next_cursor"])
         assert not after["reset"]
         assert after["text"] == before["text"]
+
+
+@pytest.mark.parametrize("privileged", [False, True])
+def test_oversized_file_entry_advances_without_exposing_fragments(tmp_path, privileged):
+    """An oversized physical line cannot hide newer entries or leak discarded pieces.
+
+    Args:
+        tmp_path: Test-owned log source.
+        privileged: Exercise the fixed privileged reader as well as the web reader.
+    """
+    from tests.test_appliance_helper import load_helper_module
+
+    path = tmp_path / "oversized.log"
+    path.write_bytes(b"first\n" + b"private-fragment" * 200000 + b"\nlast\n")
+    cursor, actual, pages = ({} if privileged else ""), [], 0
+    helper = load_helper_module() if privileged else None
+    while True:
+        if privileged:
+            page = helper._read_fixed_log_history(path, cursor)
+            actual.extend(page["lines"])
+            cursor = page["file_position"]
+        else:
+            page = log_viewer.file_page(path, source="oversized", cursor=cursor)
+            actual.extend(page["text"].splitlines())
+            cursor = page["next_cursor"]
+        pages += 1
+        assert pages < 10
+        if not page["has_more"]:
+            break
+    assert actual[0] == "first"
+    assert actual[-1] == "last"
+    assert sum("Oversized log entry omitted" in line for line in actual) == 1
+    assert "private-fragment" not in "\n".join(actual)
+
+
+def test_failed_task_error_survives_paginated_projection(client):
+    """A terminal error remains readable even without result or audit output.
+
+    Args:
+        client: Initialized application database.
+    """
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import Job
+    from atlaso.app.ui import _task_log_lines
+
+    with SessionLocal() as db:
+        job = Job(id="error-history", type="managed-script", status="failed", created_by="admin",
+                  error="Owned script exited with code 7.")
+        db.add(job)
+        db.commit()
+        lines = _task_log_lines(job, db, include_metadata=False)
+        assert lines == ["Error: Owned script exited with code 7."]
+
+
+def test_audit_live_tail_avoids_replaying_old_groups(client):
+    """The initial live request reads only the newest group; history remains explicit.
+
+    Args:
+        client: Authenticated application transport.
+    """
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import AuditEvent
+    from tests.routers.ui.helpers import login
+
+    login(client)
+    with SessionLocal() as db:
+        entries = [AuditEvent(actor="tail-test", action=f"entry-{i}", resource_type="test", success=True) for i in range(1501)]
+        db.add_all(entries)
+        db.commit()
+        first_id, last_id = entries[0].id, entries[-1].id
+    headers = {"X-Atlaso-Task-Log": "1"}
+    tail = client.get("/ui/management/audit-log", params={"tail": "1"}, headers=headers).json()
+    assert len(tail["rows"]) == 500
+    assert tail["rows"][0]["id"] == last_id - 499
+    assert tail["rows"][-1]["id"] == last_id
+    assert not tail["has_more"]
+    beginning = client.get("/ui/management/audit-log", headers=headers).json()
+    assert beginning["rows"][0]["id"] <= first_id
+    assert beginning["has_more"]

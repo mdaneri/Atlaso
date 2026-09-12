@@ -8756,6 +8756,8 @@ def _task_log_lines(job: Job, db: Session, *, include_metadata: bool = True) -> 
             detail = _redact_task_value(event.detail or "")
             outcome = "success" if event.success else "failed"
             lines.append(f"{event.created_at.isoformat()} {event.action} {outcome} {detail}".rstrip())
+    if not include_metadata and row["error"] and job.status not in ACTIVE_JOB_STATUSES:
+        lines.append(f"Error: {row['error']}")
     return [str(_redact_task_value(line)) for line in lines]
 
 

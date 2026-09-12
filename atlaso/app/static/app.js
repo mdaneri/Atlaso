@@ -17750,6 +17750,7 @@ function initializeAuditEventsTable() {
     table.on("tableBuilt", () => {
       window.AtlasoLogViewer.create({
         output: tableElement,
+        initialCursor: "tail",
         status: document.querySelector("[data-audit-live-status]"),
         controls: document.querySelector("[data-audit-history-controls]"),
         pageText: (page) => JSON.stringify(page.rows),
@@ -17760,7 +17761,8 @@ function initializeAuditEventsTable() {
         },
         fetchPage: (cursor, signal) => {
           const url = new URL(tableElement.dataset.historyUrl, window.location.href);
-          if (cursor) url.searchParams.set("cursor", cursor);
+          if (cursor === "tail") url.searchParams.set("tail", "1");
+          else if (cursor) url.searchParams.set("cursor", cursor);
           return window.AtlasoLogViewer.fetchJson(url, signal);
         },
         renderPage: async (page, { following, navigated }) => {
