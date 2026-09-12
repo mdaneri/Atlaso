@@ -77,6 +77,9 @@ Firewall shows generated admission attributed to the owning port forward. These 
 boundary and listener in Traffic Publishing. Apply captures Firewall and NAT together, validates their complete program,
 and publishes both atomically. It commits both application baselines before acknowledging the root-owned recovery
 record. Management changes include this pair in the protected management handoff and its wider rollback.
+Both ordinary Apply and management handoff preserve connections for unchanged mappings and retire only changed IDs.
+Inventory reconciliation follows a verified NIC rename, including child VLAN listeners. A missing NIC keeps its
+inert identity and exact mapping, disables the forward, and requires operator review before reactivation.
 
 Removing, disabling, or suspending a rule retires its counters and Atlaso-marked connections during Apply. Sessions
 through that mapping must reconnect. Unchanged mappings retain their connections during unrelated Apply submissions;
@@ -147,7 +150,7 @@ ports may be mapped across enabled rules.
 `acknowledge_source_loss=true` in the create or replacement request. The acknowledgement is request-only. New rules
 default disabled. Validation failures use ProblemDetails and preserve the previous row and its audit history.
 Complete replacements revalidate bindings, source restrictions, target safety, and listener collisions even when
-disabled. Only archive restoration may retain unavailable disabled relationships for later review.
+disabled. Archive restoration and missing-NIC reconciliation may retain unavailable disabled relationships for review.
 Saving never invokes host enforcement; global Appliance Apply owns translation changes.
 Successful replacements, including enable/disable changes, refresh the API's `updated_at` timestamp.
 Signed upgrades install missing `conntrack-tools` through the candidate service's pre-start hook, including upgrades

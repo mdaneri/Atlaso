@@ -10652,6 +10652,24 @@ def _publishing_install(intent: str, firewall: str, nat_program: str, *, retire_
         raise ValueError("Traffic Publishing boot replay enablement failed")
 
 
+def _port_forward_changed_ids(previous_intent: str, candidate_intent: str) -> list[int]:
+    """Select only changed effective mappings for ordinary Apply and protected handoff.
+
+    Args:
+        previous_intent: Captured previously installed Traffic Publishing intent.
+        candidate_intent: Reviewed candidate Traffic Publishing intent.
+    """
+    previous_forwards = _port_forward_records(_parse_wan_config(NAT_RUNTIME_CONFIG_PATH, content=previous_intent))
+    candidate_forwards = _port_forward_records(_parse_wan_config(NAT_RUNTIME_CONFIG_PATH, content=candidate_intent))
+    metadata = {"name", "description", "priority", "source", "enabled"}
+    previous_mappings = {row["id"]: {key: value for key, value in row.items() if key not in metadata}
+                         for row in previous_forwards}
+    candidate_mappings = {row["id"]: {key: value for key, value in row.items() if key not in metadata}
+                          for row in candidate_forwards}
+    return sorted(identity for identity in previous_mappings.keys() | candidate_mappings.keys()
+                  if previous_mappings.get(identity) != candidate_mappings.get(identity))
+
+
 def _publishing_apply(job_id: str, nat_path: str, firewall_path: str, *, validate_only: bool = False) -> dict:
     """Stage one paired publication and retain rollback until application commit.
 
@@ -10685,15 +10703,7 @@ def _publishing_apply(job_id: str, nat_path: str, firewall_path: str, *, validat
         raise ValueError("Traffic Publishing task is already committed; reconcile its recorded result")
     previous = {str(item): item.read_text(encoding="utf-8") if item.exists() else None for item in _publishing_files()}
     previous_intent = previous[str(NAT_RUNTIME_CONFIG_PATH)] or ""
-    previous_forwards = _port_forward_records(_parse_wan_config(NAT_RUNTIME_CONFIG_PATH, content=previous_intent))
-    candidate_forwards = _port_forward_records(_parse_wan_config(NAT_RUNTIME_CONFIG_PATH, content=intent))
-    metadata = {"name", "description", "priority", "source", "enabled"}
-    previous_mappings = {row["id"]: {key: value for key, value in row.items() if key not in metadata}
-                         for row in previous_forwards}
-    candidate_mappings = {row["id"]: {key: value for key, value in row.items() if key not in metadata}
-                          for row in candidate_forwards}
-    changed_ids = sorted(identity for identity in previous_mappings.keys() | candidate_mappings.keys()
-                         if previous_mappings.get(identity) != candidate_mappings.get(identity))
+    changed_ids = _port_forward_changed_ids(previous_intent, intent)
     state = {
         "job_id": job_id, "phase": "prepared", "files": previous,
         "enabled": {service: _run(["systemctl", "is-enabled", service]).returncode == 0
@@ -23728,7 +23738,11 @@ def _apply_management_handoff(payload: dict) -> int:
                     raise ValueError("Final Firewall and Traffic Publishing validation failed")
                 # The wider management journal already owns these five files and
                 # the application acknowledgement. Do not create a second journal.
-                _publishing_install(nat_intent, paired_firewall, nat_program, retire_connections=True)
+                previous_nat = (NAT_RUNTIME_CONFIG_PATH.read_text(encoding="utf-8")
+                                if NAT_RUNTIME_CONFIG_PATH.exists() else "")
+                changed_ids = _port_forward_changed_ids(previous_nat, nat_intent)
+                _publishing_install(nat_intent, paired_firewall, nat_program,
+                                    retire_connections=bool(changed_ids), retire_rule_ids=changed_ids)
         else:
             transition_path.write_text(final_firewall, encoding="utf-8")
             os.chmod(transition_path, 0o600)

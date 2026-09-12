@@ -34,6 +34,46 @@ from atlaso.app.services.traffic_publishing import (
 from tests.test_appliance_helper import load_helper_module
 
 
+@pytest.mark.parametrize("vlan", [False, True])
+@pytest.mark.parametrize("missing", [False, True])
+def test_inventory_reconciliation_preserves_listener_identity(vlan, missing):
+    """Known renames follow the NIC while missing identities stay inert and reviewed.
+
+    Args:
+        vlan: Exercise a child VLAN listener as well as a physical listener.
+        missing: Reconcile disappearance instead of a known MAC-bound rename.
+    """
+    from atlaso.app.models import VlanInterface
+    from atlaso.app.services.networking import (
+        _cleanup_missing_interface_references,
+        _retarget_interface_references,
+    )
+
+    engine = create_engine("sqlite://")
+    Base.metadata.create_all(engine)
+    with Session(engine) as db:
+        db.add_all(interfaces())
+        if vlan:
+            db.add(VlanInterface(name="eth1.20", parent_interface="eth1", vlan_id=20, enabled=True))
+        rule = PortForward(**payload(ingress_interface="eth1.20" if vlan else "eth1"))
+        db.add(rule)
+        db.commit()
+        replacement = "missing_old_eth1" if missing else "eth9"
+        if missing:
+            _cleanup_missing_interface_references(db, {"eth1": replacement})
+        else:
+            _retarget_interface_references(db, {"eth1": replacement})
+        db.commit()
+        assert rule.ingress_interface == replacement + (".20" if vlan else "")
+        assert rule.listener_address == "192.0.2.1"
+        assert rule.target_address == "198.51.100.10"
+        assert rule.enabled is (not missing)
+        assert rule.restore_review_required is missing
+        if missing:
+            assert _cleanup_missing_interface_references(db, {replacement: replacement}) == []
+    engine.dispose()
+
+
 def test_replacement_refreshes_desired_timestamp(monkeypatch):
     """Return the mutation timestamp for edits and enabled-state replacements.
 
