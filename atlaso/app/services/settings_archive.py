@@ -1773,9 +1773,12 @@ def _validate_archive(archive: dict[str, Any]) -> None:
     data = archive["data"]
     if any(section_name not in ARCHIVE_SECTION_NAMES for section_name in data):
         raise ValueError("The settings archive contains an unsupported data section.")
-    missing_sections = ARCHIVE_SECTION_NAMES.difference(data)
+    # v2 archives exported before managed forwarding have no such collection.
+    # Preserve their replacement semantics while keeping every older section mandatory.
+    missing_sections = ARCHIVE_SECTION_NAMES.difference(data, {"port_forwards"})
     if missing_sections:
         raise ValueError("The settings archive is missing a required data section.")
+    data.setdefault("port_forwards", [])
     for section_name, rows in data.items():
         if not isinstance(rows, list):
             raise ValueError(f"The settings archive data section '{section_name}' must be a list.")

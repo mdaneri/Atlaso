@@ -104,6 +104,8 @@ saved but disabled and marked for review. Disabled rules with an available liste
 appliance-owned targets, and listener collisions before restore changes desired state. Only bindings identified as
 unavailable during import may skip the ingress assignment check; an archived review flag does not grant that exception.
 Source references, target restrictions, and reserved-listener checks still apply when the ingress is unavailable.
+Older v2 archives without a `port_forwards` section restore an empty forwarding collection, replacing any current
+desired mappings. Other required sections and explicitly malformed forwarding sections remain subject to validation.
 Factory reset removes desired mappings and retires their runtime state before
 replacing interface configuration. A pending publication recovery must be reconciled before reset can continue.
 

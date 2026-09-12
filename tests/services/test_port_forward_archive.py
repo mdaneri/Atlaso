@@ -59,6 +59,38 @@ def test_disabled_archive_rules_validate_available_relationships(client, invalid
                 assert saved.ingress_interface == "missing_reviewed_adapter" and saved.restore_review_required
 
 
+@pytest.mark.parametrize("invalid", [None, "missing_settings", "malformed_forwards"])
+def test_legacy_v2_archive_without_port_forwards_restores_empty_collection(client, invalid):
+    """Pre-forwarding v2 recovery archives remain valid replacements of desired state.
+
+    Args:
+        client: Isolated initialized appliance.
+        invalid: Older required sections and explicitly malformed forwarding remain rejected.
+    """
+    with SessionLocal() as db:
+        interface = db.scalar(select(PhysicalInterface).where(PhysicalInterface.name == "eth2"))
+        db.add(PortForward(**payload(ingress_interface="eth2", listener_address=interface.ip_cidr.split("/")[0])))
+        db.commit()
+        archive = export_settings_archive(db, actor="test")
+        assert archive["schema_version"] == 2
+        archive["data"].pop("port_forwards")
+        if invalid == "missing_settings":
+            archive["data"].pop("settings")
+        elif invalid == "malformed_forwards":
+            archive["data"]["port_forwards"] = None
+        original = deepcopy(archive)
+        if invalid:
+            with pytest.raises(ValueError, match="required data section|must be a list"):
+                restore_settings_archive(db, archive)
+            assert db.scalar(select(PortForward)) is not None
+        else:
+            result = restore_settings_archive(db, archive)
+            assert result["port_forwards"] == 0
+            assert db.scalar(select(PortForward)) is None
+            assert export_settings_archive(db, actor="test")["data"]["port_forwards"] == []
+        assert archive == original
+
+
 def test_archive_network_boot_claim_uses_restored_dhcp_selection(client):
     """Custom PXE ports follow the archived DHCP binding, not the legacy fallback.
 
