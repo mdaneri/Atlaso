@@ -11344,7 +11344,9 @@ def _reconcile_startup_nat() -> int:
     Repeating this on service restart avoids relying on a migration marker that
     could survive an application rollback while old rules are restored.
     """
-    if NAT_RUNTIME_CONFIG_PATH.exists() or NAT_RUNTIME_CONFIG_PATH.with_suffix(".recovery.json").exists():
+    if (NAT_RUNTIME_CONFIG_PATH.exists()
+            or NAT_RUNTIME_CONFIG_PATH.with_suffix(".recovery.json").exists()
+            or NAT_RUNTIME_CONFIG_PATH.with_suffix(".publishing-recovery.json").exists()):
         return _handle_nat("restore", [str(NAT_RUNTIME_CONFIG_PATH)])
     retired: dict[str, list[dict[str, str]]] = {
         "feature_settings": [{"routing_enabled": "false", "nat_enabled": "false"}],

@@ -8994,6 +8994,7 @@ function initializePortForwarding() {
               catch (error) { cell.restoreOldValue?.(); fail(error.message); }
             } },
           { title: "Runtime", field: "runtime_state", minWidth: 105, formatter: text, tooltip: (cell) => escapeHtml(cell.getRow().getData().runtime_detail || "Refresh runtime observations.") },
+          { title: "Review", field: "restore_review_required", minWidth: 180, formatter: (cell) => cell.getRow().getData().is_new || !cell.getValue() ? "" : "Review restored listener" },
           { title: "Packets", field: "runtime_packets", width: 95, formatter: text },
           { title: "Bytes", field: "runtime_bytes", width: 100, formatter: text },
         ],

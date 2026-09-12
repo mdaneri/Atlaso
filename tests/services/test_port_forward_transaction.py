@@ -287,6 +287,43 @@ def test_boot_retains_candidate_until_application_commit_is_known(transaction):
     assert not marker.exists()
 
 
+def test_first_apply_crash_restores_firewall_without_nat_snapshot(transaction, monkeypatch):
+    """Startup restores a journaled first publication before control-plane recovery.
+
+    Args:
+        transaction: Isolated helper and durable snapshots.
+        monkeypatch: Interrupt the first NAT snapshot write and isolate locking.
+    """
+    helper, nat, firewall, previous, programs, _commands = transaction
+    helper.NAT_RUNTIME_CONFIG_PATH.unlink()
+    write = helper._nat_write
+
+    def interrupted_write(path, content):
+        """Simulate power loss after Firewall persistence but before NAT persistence.
+
+        Args:
+            path: Durable output selected by the transaction.
+            content: Candidate file content.
+        """
+        if path == helper.NAT_RUNTIME_CONFIG_PATH:
+            raise SystemExit("power loss")
+        write(path, content)
+
+    with monkeypatch.context() as crash:
+        crash.setattr(helper, "_nat_write", interrupted_write)
+        with pytest.raises(SystemExit, match="power loss"):
+            helper._publishing_apply(JOB, str(nat), str(firewall))
+    assert not helper.NAT_RUNTIME_CONFIG_PATH.exists()
+    assert helper.FIREWALL_CONFIG_PATH.read_text() != previous[helper.FIREWALL_CONFIG_PATH]
+    monkeypatch.setattr(helper, "_nat_transaction_lock", nullcontext)
+    assert helper._reconcile_startup_nat() == 0
+    assert helper.FIREWALL_CONFIG_PATH.read_text() == previous[helper.FIREWALL_CONFIG_PATH]
+    assert not helper.NAT_RUNTIME_CONFIG_PATH.exists()
+    assert "dnat to" not in programs[-1]
+    marker = helper.NAT_RUNTIME_CONFIG_PATH.with_suffix(".publishing-recovery.json")
+    assert json.loads(marker.read_text())["runtime_restored"] is True
+
+
 def test_boot_without_application_commit_recovers_prior_pair(transaction):
     """An uncommitted database must never cause boot to activate the candidate.
 
