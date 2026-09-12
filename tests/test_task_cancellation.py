@@ -405,3 +405,57 @@ def test_embedded_update_capability_uses_caller_identity(db, role, allowed):
     assert row["can_cancel"] is allowed
     if not allowed:
         assert "permission" in row["cancel_reason"]
+
+
+@pytest.mark.parametrize("boundary", ["before_start", "claim_race", "reconciliation"])
+def test_pending_apply_cancellation_releases_lock_without_execution(db, monkeypatch, boundary):
+    """Queued apply cancellation wins atomically and releases the global apply owner.
+
+    Args:
+        db: Isolated task database.
+        monkeypatch: Bind the actual execution entry point to this database.
+        boundary: Exercise direct cancellation, the start race, and an old pending request.
+    """
+    from contextlib import contextmanager
+
+    from atlaso.app import ui
+    from atlaso.app.models import utcnow
+
+    job = make_job(db, "appliance-apply", "pending")
+    db.add(JobStep(id=job.id + ":unit", job_id=job.id, component_key="test", label="Test", position=0, status="pending"))
+    db.commit()
+    def unexpected_units(_db):
+        pytest.fail("A cancelled queued apply reached execution preparation")
+    monkeypatch.setattr(ui, "appliance_apply_units", unexpected_units)
+    @contextmanager
+    def execution_session():
+        with Session(db.get_bind()) as execution_db:
+            original = execution_db.execute
+            raced = False
+            def execute(statement, *args, **kwargs):
+                nonlocal raced
+                if boundary == "claim_race" and not raced and str(statement).startswith("UPDATE jobs SET"):
+                    raced = True
+                    cancellation.request(db, job, ADMIN)
+                return original(statement, *args, **kwargs)
+            monkeypatch.setattr(execution_db, "execute", execute)
+            yield execution_db
+    monkeypatch.setattr(ui, "SessionLocal", execution_session)
+    if boundary == "before_start":
+        cancellation.request(db, job, ADMIN)
+    elif boundary == "reconciliation":
+        job.cancel_requested_at = utcnow()
+        job.cancel_requested_by = ADMIN.username
+        job.cancel_outcome = "requested"
+        db.commit()
+        cancellation.reconcile_requests(db)
+    ui.run_appliance_apply_job(job.id)
+    db.refresh(job)
+    assert job.status == "cancelled"
+    assert job.cancel_outcome == "confirmed"
+    assert job.cancel_completed_at is not None
+    assert job.started_at is None
+    assert db.get(JobStep, job.id + ":unit").status == "skipped"
+    assert ui.active_appliance_apply_job(db) is None
+    replacement = make_job(db, "appliance-apply", "pending")
+    assert ui.active_appliance_apply_job(db).id == replacement.id

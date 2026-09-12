@@ -13,7 +13,7 @@ from atlaso.app.models import AuditEvent, Job, JobStatus, JobStep, Role, utcnow
 from atlaso.app.security import Identity
 
 ACTIVE = {JobStatus.PENDING.value, JobStatus.RUNNING.value}
-PENDING_TYPES = {"appliance-update", "vcf-depot-download", "managed-script", "pxe-media-sync",
+PENDING_TYPES = {"appliance-apply", "appliance-update", "vcf-depot-download", "managed-script", "pxe-media-sync",
                  "diagnostic-bundle", "manual-placeholder"}
 SERVICE_ADMIN_TYPES = {"pxe-media-sync"}
 

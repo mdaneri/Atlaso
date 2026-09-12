@@ -51,7 +51,7 @@ from fastapi.responses import (
     Response,
 )
 from fastapi.templating import Jinja2Templates
-from sqlalchemy import String, and_, cast, delete, desc, func, or_, select
+from sqlalchemy import String, and_, cast, delete, desc, func, or_, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, selectinload
 
@@ -15480,10 +15480,15 @@ def run_appliance_apply_job(job_id: str, *, force_real: bool = False) -> None:
             return
         if force_real and job.created_by != "console:root":
             raise ValueError("Forced-real appliance apply is restricted to local console tasks.")
-        job.status = JobStatus.RUNNING.value
-        job.started_at = utcnow()
-        job.progress_percent = 1
+        claimed = db.execute(update(Job).where(
+            Job.id == job_id, Job.type == "appliance-apply", Job.status == JobStatus.PENDING.value,
+            Job.cancel_requested_at.is_(None),
+        ).values(status=JobStatus.RUNNING.value, started_at=utcnow(), progress_percent=1))
+        if getattr(claimed, "rowcount", 0) != 1:
+            db.rollback()
+            return
         db.commit()
+        db.refresh(job)
 
         unit_results: list[dict[str, Any]] = []
         handoff_recovery_adapter: SystemAdapter | None = None

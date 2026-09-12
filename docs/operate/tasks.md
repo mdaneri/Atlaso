@@ -74,7 +74,7 @@ Do not interpret a cancellation request as proof that a local process or a remot
 | --- | --- | --- |
 | Appliance Update check | Reserved before worker claim | Current bounded check finishes and cleans credentials; remaining checks skipped |
 | Appliance Update installation or source synchronization | Reserved before worker claim | Unavailable; existing update/recovery owner must finish |
-| Appliance Apply | Owner observes request before the next component | Current component and cleanup finish; remaining components skipped; applied changes remain |
+| Appliance Apply | Cancelled before its atomic execution claim; apply lock released | Current component and cleanup finish; remaining components skipped; applied changes remain |
 | Network Boot media download/upload | Reserved before claim; owned upload removed | Transfer/extraction checkpoint, then staged filesystem rollback and upload cleanup |
 | Network Boot media deletion | Reserved before worker claim | Unavailable once destructive deletion starts |
 | Managed script | Reserved before worker claim | Unavailable because script side effects have no generic rollback contract |
