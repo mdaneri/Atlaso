@@ -270,6 +270,9 @@ an old DHCP lease or an address with a different prefix cannot satisfy it.
 Apply retains confirmed native failures with the observed interface or VLAN-parent identity before
 rollback removes a candidate-only VLAN. The next status refresh can therefore show the failed attempt
 even if the worker never sampled that transient link.
+After observing a NIC or VLAN-parent replacement, status ignores name-only journal events from
+before that observation. The boundary persists across refreshes so old events cannot be reassigned
+to the replacement hardware. Identity-bound Apply evidence and subsequent native events remain usable.
 Backup disposal failure after successful activation is reported as a cleanup warning with the
 retained location; Apply remains successful so the baseline matches the installed configuration.
 Existing SQLite and PostgreSQL databases gain the enabled setting during serialized schema startup;

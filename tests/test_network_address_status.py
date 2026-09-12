@@ -73,6 +73,50 @@ def test_unavailable_and_tentative_are_not_conflicts_or_success():
     assert row_status(checking, "physical", 1)["state"] == "unknown"
 
 
+@pytest.mark.parametrize("vlan", [False, True])
+@pytest.mark.parametrize("recreated", [False, True])
+def test_replacement_link_does_not_replay_name_only_journal_history(vlan, recreated):
+    """Keep old journal events out of a replacement NIC or VLAN parent's identity.
+
+    Args:
+        vlan: Exercise parent-MAC identity as well as a physical NIC replacement.
+        recreated: Recreate the database row while retaining its link name.
+    """
+    name = "eth0.20" if vlan else "eth0"
+    key = "vlan:1" if vlan else "physical:1"
+    suffix = ":20" if vlan else ""
+    desired = resource(key=key, name=name, identity="00:11:22:33:44:55" + suffix)
+    desired.update(physical=not vlan, parent="eth0", dhcp4=not vlan)
+    native = observation()
+    native["observed_at"] = "2026-09-12T00:01:00+00:00"
+    native["links"][0].update(ifindex=2, addresses=[])
+    if vlan:
+        native["links"].append({"name": name, "kind": "vlan", "vlan_id": 20,
+                                "parent_index": 2, "up": True, "carrier": True,
+                                "configured": True, "addresses": []})
+    event = {"name": name, "address": "192.0.2.20", "detected_at": "2026-09-12T00:00:00+00:00"}
+    native["conflicts"] = [event]
+    old = project_status(native, {}, [desired])
+    assert old["rows"][key]["state"] == "conflict"
+    desired["identity"] = "00:11:22:33:44:66" + suffix
+    if recreated:
+        key = key.replace(":1", ":2")
+        desired["key"] = key
+    native["links"][0]["mac"] = "00:11:22:33:44:66"
+    native["observed_at"] = "2026-09-12T00:02:00+00:00"
+    changed = project_status(native, old, [desired])
+    assert changed["rows"][key]["last_conflict"] is None
+    assert changed["rows"][key]["state"] == "unknown"
+    native["observed_at"] = "2026-09-12T00:03:00+00:00"
+    repeated = project_status(native, changed, [desired])
+    assert repeated["rows"][key]["last_conflict"] is None
+    assert repeated["rows"][key]["identity_since"] == "2026-09-12T00:02:00+00:00"
+    native["conflicts"] = [dict(event, detected_at="2026-09-12T00:02:30+00:00")]
+    assert project_status(native, repeated, [desired])["rows"][key]["state"] == "conflict"
+    native["conflicts"] = [dict(event, identity=desired["identity"])]
+    assert project_status(native, repeated, [desired])["rows"][key]["state"] == "conflict"
+
+
 def test_successful_reverification_retains_history():
     """A newly active formerly rejected address resolves current conflict without losing history."""
     event = {"name": "eth0", "address": "192.0.2.20", "detected_at": "2026-09-12T00:00:00+00:00", "mac": ""}

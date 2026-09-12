@@ -17,6 +17,21 @@ STATUS_KEY = "network.address_status.v1"
 MAX_RECORDS = 256
 
 
+def _event_after_identity_change(event: dict[str, Any], identity_since: str) -> bool:
+    """Reject unbound journal history predating a detected link replacement.
+
+    Args:
+        event: Name-only native conflict event without a stable hardware identity.
+        identity_since: First observation of the replacement identity, retained across polls.
+    """
+    if not identity_since:
+        return True
+    try:
+        return datetime.fromisoformat(event["detected_at"]) > datetime.fromisoformat(identity_since)
+    except (KeyError, TypeError, ValueError):
+        return False
+
+
 def read_status(db: Session) -> dict[str, Any]:
     """Read operational evidence without reconciling desired state or touching the host.
 
@@ -57,13 +72,20 @@ def project_status(
                 link.get("parent_index") and link.get("parent_index") == parent.get("ifindex"))
             if link.get("kind") != "vlan" or expected != identity or not parent_matches:
                 link = {}
-        prior = previous.get("rows", {}).get(key, {})
+        previous_rows = previous.get("rows", {})
+        prior = previous_rows.get(key, {})
+        same_name: dict[str, Any] = next((row for row in previous_rows.values()
+                                          if row.get("name") == resource["name"]), {})
+        identity_since = prior.get("identity_since", same_name.get("identity_since", ""))
+        if any(row and row.get("identity") != identity for row in (prior, same_name)):
+            identity_since = now
         if prior.get("identity") != identity:
             prior = {}
         records = link.get("addresses", [])
         assigned = [row["address"] for row in records if row["state"] == "assigned"]
         events = [item for item in observation.get("conflicts", []) if item["name"] == resource["name"]
-                  and (item.get("identity") == identity or (link and not item.get("identity")))]
+                  and (item.get("identity") == identity or (
+                      link and not item.get("identity") and _event_after_identity_change(item, identity_since)))]
         events.extend({"name": resource["name"], "address": item["address"], "detected_at": now, "mac": ""}
                       for item in records if item["state"] == "conflict")
         last_conflict = prior.get("last_conflict")
@@ -106,7 +128,8 @@ def project_status(
         if not resource["checking"]:
             detail += " IPv4 checking is disabled in desired state; Apply is required to activate edits. IPv6 DAD is retained."
         result["rows"][key] = {
-            "identity": identity, "name": resource["name"], "state": state, "detail": detail,
+            "identity": identity, "identity_since": identity_since,
+            "name": resource["name"], "state": state, "detail": detail,
             "active_addresses": assigned, "last_conflict": last_conflict, "conflict_resolved": conflict_resolved, "observed_at": now,
         }
     return result
