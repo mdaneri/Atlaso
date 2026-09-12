@@ -3,7 +3,6 @@
 import os
 import stat
 import subprocess
-import sys
 import tempfile
 import unittest
 from pathlib import Path
@@ -87,7 +86,7 @@ class DepotPermissionsTests(unittest.TestCase):
                 path: Candidate public or private file.
             """
             return subprocess.run(
-                [sys.executable, "-c", "import pathlib,sys; pathlib.Path(sys.argv[1]).read_bytes()", str(path)],
+                ["/bin/cat", "--", str(path)],
                 user=65534, group=65534, extra_groups=[], capture_output=True, check=False,
             ).returncode == 0
 
