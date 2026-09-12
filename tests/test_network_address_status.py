@@ -172,8 +172,11 @@ def test_native_observation_sanitizes_and_attributes_structured_sources(monkeypa
     from tests.test_appliance_helper import load_helper_module
 
     helper = load_helper_module()
-    ip_rows = [{"ifname": "eth0", "ifindex": 2, "address": "00:11:22:33:44:55", "link_type": "ether", "flags": ["UP", "LOWER_UP"], "addr_info": [{"local": "192.0.2.10"}]}]
-    networkd = {"Interfaces": [{"Name": "eth0", "AdministrativeState": "configured", "Addresses": [{"Address": [192, 0, 2, 10], "ConfigSource": "DHCPv4"}]}]}
+    ip_rows = [{"ifname": "eth0", "ifindex": 2, "address": "00:11:22:33:44:55", "link_type": "ether", "flags": ["UP", "LOWER_UP"], "addr_info": [{"local": "192.0.2.10", "prefixlen": 24}]}]
+    networkd = {"Interfaces": [{"Name": "eth0", "AdministrativeState": "configured", "Addresses": [{"Address": [192, 0, 2, 10], "PrefixLength": 24, "ConfigSource": "DHCPv4"}]}]}
+    networkd["Interfaces"][0]["Addresses"].append(
+        {"Address": [192, 0, 2, 10], "PrefixLength": 25, "ConfigSource": "static"},
+    )
     journal = [{"MESSAGE": "eth0: Dropping address 192.0.2.20, as an address conflict was detected.", "INTERFACE": "eth0", "__REALTIME_TIMESTAMP": "1789171200000000"}, {"MESSAGE": "unrelated-sensitive-text"}]
 
     def command(args, **_kwargs):
@@ -190,9 +193,45 @@ def test_native_observation_sanitizes_and_attributes_structured_sources(monkeypa
     result = helper._network_address_observation()
     assert result["complete"] is True
     assert result["links"][0]["addresses"][0]["source"] == "DHCPv4"
+    assert result["links"][0]["addresses"][0]["cidr"] == "192.0.2.10/24"
     assert result["conflicts"][0]["address"] == "192.0.2.20"
     assert result["conflicts"][0]["mac"] == ""
     assert "unrelated-sensitive-text" not in json.dumps(result)
+
+
+@pytest.mark.parametrize("candidate", ["192.0.2.10/25", "2001:db8::10/80"])
+def test_static_readiness_requires_candidate_prefix_and_source(tmp_path, monkeypatch, candidate):
+    """Holdovers at the same IP cannot prove a static prefix or source transition.
+
+    Args:
+        tmp_path: Isolated intent path.
+        monkeypatch: Replace native observation with successive handoff states.
+        candidate: IPv4 or IPv6 candidate with a changed prefix.
+    """
+    from ipaddress import ip_interface
+
+    from tests.test_appliance_helper import load_helper_module
+
+    helper = load_helper_module()
+    parsed = ip_interface(candidate)
+    row = {"name": "eth0", "ipv6_enabled": "true" if parsed.version == 6 else "false",
+           "ipv6_cidr" if parsed.version == 6 else "ip_cidr": candidate}
+    monkeypatch.setattr(helper, "_parse_network_config", lambda _path: ([row], [], []))
+    native = observation(address=str(parsed.ip))
+    record = native["links"][0]["addresses"][0]
+    record.update(source="static", cidr=f"{parsed.ip}/{24 if parsed.version == 4 else 64}")
+    monkeypatch.setattr(helper, "_network_address_observation", lambda: native)
+    path = tmp_path / "intent.conf"
+    with pytest.raises(ValueError, match="Unable to verify"):
+        helper._wait_network_addresses(path, attempts=1)
+    record.update(cidr=candidate, source="DHCPv4" if parsed.version == 4 else "DHCPv6")
+    with pytest.raises(ValueError, match="Unable to verify"):
+        helper._wait_network_addresses(path, attempts=1)
+    record["source"] = "static"
+    assert helper._wait_network_addresses(path, attempts=1) == native
+    record["state"] = "conflict"
+    with pytest.raises(ValueError, match="IP conflict"):
+        helper._wait_network_addresses(path, attempts=1)
 
 
 def test_upgrade_defaults_on_without_overwriting_explicit_opt_out(client):

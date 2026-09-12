@@ -8728,7 +8728,10 @@ def _network_address_observation() -> dict:
             for item in native_link.get("Addresses", [])[:32]:
                 try:
                     native_address = str(ip_address(bytes(item["Address"])))
-                    sources[native_address] = item.get("ConfigSource", "")
+                    prefix = item.get("PrefixLength")
+                    if isinstance(prefix, int):
+                        cidr = str(ip_interface(f"{native_address}/{prefix}"))
+                        sources[cidr] = item.get("ConfigSource", "")
                 except (ValueError, TypeError, KeyError):
                     continue
             records = []
@@ -8741,7 +8744,11 @@ def _network_address_observation() -> dict:
                     continue
                 flags = set(info.get("flags", []))
                 flags.update(key for key in ("tentative", "dadfailed") if info.get(key))
-                records.append({"address": address, "source": sources.get(address, ""), "state": "conflict" if "dadfailed" in flags else "checking" if "tentative" in flags else "assigned"})
+                try:
+                    cidr = str(ip_interface(f"{address}/{info['prefixlen']}"))
+                except (ValueError, KeyError):
+                    cidr = ""
+                records.append({"address": address, "cidr": cidr, "source": sources.get(cidr, ""), "state": "conflict" if "dadfailed" in flags else "checking" if "tentative" in flags else "assigned"})
             mac = str(row.get("address", "")).lower()
             link_info = row.get("linkinfo") or {}
             vlan_data = link_info.get("info_data") or {}
@@ -8852,7 +8859,7 @@ def _wait_network_addresses(path: Path, *, attempts: int = 31, started_at: str |
             if key == "ipv6_cidr" and row.get("ipv6_enabled") == "false":
                 continue
             if row.get(key):
-                requirements.append((row["name"], str(ip_interface(row[key]).ip)))
+                requirements.append((row["name"], str(ip_interface(row[key]))))
         if row.get("ipv4_method") == "dhcp":
             requirements.append((row["name"], "dhcp4"))
         if row.get("ipv6_enabled") == "true" and not row.get("ipv6_cidr"):
@@ -8869,14 +8876,18 @@ def _wait_network_addresses(path: Path, *, attempts: int = 31, started_at: str |
                 raise ValueError(f"Unable to check VLAN {vlan['name']}: native tag or parent identity differs")
         for name, address in requirements:
             records = links.get(name, {}).get("addresses", [])
-            matches = [item for item in records if item["address"] == address or (
+            matches = [item for item in records if (
+                item.get("cidr") == address and item.get("source") == "static"
+            ) or (
                 address in {"dhcp4", "auto6"}
                 and ip_address(item["address"]).version == (4 if address == "dhcp4" else 6)
                 and not ip_address(item["address"]).is_link_local
                 and item.get("source") in ({"DHCPv4"} if address == "dhcp4" else {"DHCPv6", "NDisc"}))]
-            if any(item["state"] == "conflict" for item in matches):
+            candidate_ip = str(ip_interface(address).ip) if "/" in address else ""
+            if any(item["state"] == "conflict" for item in records
+                   if item in matches or item["address"] == candidate_ip):
                 raise ValueError(f"IP conflict on {name}: {address}")
-            if not links.get(name, {}).get("configured") or not any(item["state"] == "assigned" for item in matches):
+            if not observation.get("complete") or not links.get(name, {}).get("configured") or not any(item["state"] == "assigned" for item in matches):
                 missing.append((name, address))
         if not missing:
             return observation
@@ -8886,7 +8897,8 @@ def _wait_network_addresses(path: Path, *, attempts: int = 31, started_at: str |
             time.sleep(min(1, max(0, deadline - time.monotonic())))
     conflicts = {(row["name"], row["address"]) for row in observation["conflicts"] if row["detected_at"] >= started_at}
     for name, address in missing:
-        if (name, address) in conflicts:
+        candidate_ip = str(ip_interface(address).ip) if "/" in address else address
+        if (name, candidate_ip) in conflicts:
             raise ValueError(f"IP conflict on {name}: {address}")
     raise ValueError("Unable to verify candidate addresses: " + ", ".join(f"{name} {address}" for name, address in missing))
 
