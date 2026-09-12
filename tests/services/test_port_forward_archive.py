@@ -7,13 +7,14 @@ from sqlalchemy import select
 
 from atlaso.app.database import SessionLocal
 from atlaso.app.models import KmsSettings, PhysicalInterface, PortForward
+from atlaso.app.services.port_forwarding import validate_port_forward
 from atlaso.app.services.settings_archive import (
     _archive_port_forward_listener_claims,
     export_settings_archive,
     factory_reset_desired_state,
     restore_settings_archive,
 )
-from tests.services.test_port_forwarding import payload
+from tests.services.test_port_forwarding import context, payload
 
 
 @pytest.mark.parametrize("invalid", [None, "group", "target", "listener", "expanded_target", "uppercase_listener"])
@@ -144,6 +145,26 @@ def test_archive_rejects_reserved_listener_before_replacing_desired_state(client
             restore_settings_archive(db, archive)
         db.expire_all()
         assert db.scalar(select(PortForward)).external_port_start == 12000
+
+
+@pytest.mark.parametrize("family", [4, 6])
+@pytest.mark.parametrize("service_family", [4, 6])
+def test_archive_claim_projection_preserves_service_address_family(family, service_family):
+    """Archived claims retain exact bindings before broader archive preflight.
+
+    Args:
+        family: Forwarding listener family.
+        service_family: Archived custom service listener family.
+    """
+    address = "192.0.2.1" if service_family == 4 else "2001:db8:2::1"
+    state = context()
+    state["claims"] = _archive_port_forward_listener_claims({"kms_settings": [dict(
+        enabled=True, port=12000, listen_interface="eth1", listen_address=address,
+    )]})
+    changes = {} if family == 4 else dict(ip_family=6, listener_address="2001:db8:2::1", target_address="2001:db8:3::10")
+    errors = validate_port_forward(PortForward(**payload(**changes)), [], state)
+    assert bool(errors) is (family == service_family)
+    assert all("collides" in error for error in errors)
 
 
 @pytest.mark.parametrize("archived_enabled", [False, True])

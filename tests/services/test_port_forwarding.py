@@ -10,7 +10,13 @@ from pydantic import ValidationError
 from sqlalchemy import create_engine, select
 from sqlalchemy.orm import Session
 
-from atlaso.app.models import AuditEvent, Base, PhysicalInterface, PortForward
+from atlaso.app.models import (
+    AuditEvent,
+    Base,
+    KmsSettings,
+    PhysicalInterface,
+    PortForward,
+)
 from atlaso.app.port_forward_schemas import PortForwardCreate
 from atlaso.app.services.network_objects import (
     source_group_consumers,
@@ -18,6 +24,7 @@ from atlaso.app.services.network_objects import (
 )
 from atlaso.app.services.port_forwarding import (
     ListenerClaim,
+    listener_claims_for_settings,
     port_forward_firewall_projection,
     port_forward_status,
     render_port_forward_records,
@@ -606,6 +613,29 @@ def test_overlap_is_global_to_listener_not_source_or_interface_name():
     candidate.enabled = True
     candidate.protocol = "udp"
     assert not validate_port_forward(candidate, [old], context())
+
+
+@pytest.mark.parametrize("family", [4, 6])
+@pytest.mark.parametrize("address,blocked", [
+    ("192.0.2.1", {4}), ("2001:0db8:2:0:0:0:0:1", {6}),
+    ("192.0.2.1,2001:db8:2::1", {4, 6}), ("192.0.2.9", set()),
+    ("0.0.0.0", {4}), ("::", {4, 6}), ("", {4, 6}),
+])
+def test_service_claims_respect_explicit_listener_address(family, address, blocked):
+    """Configured custom service ports reserve only their actual address boundary.
+
+    Args:
+        family: Forwarding listener family on a dual-stack interface.
+        address: Explicit, multiple, or wildcard service binding.
+        blocked: Families that overlap this service binding.
+    """
+    service = KmsSettings(enabled=True, listen_interface="eth1", listen_address=address, port=12000)
+    state = context()
+    state["claims"] = listener_claims_for_settings([service], {"enabled": False})
+    changes = {} if family == 4 else dict(ip_family=6, listener_address="2001:db8:2::1", target_address="2001:db8:3::10")
+    errors = validate_port_forward(PortForward(**payload(**changes)), [], state)
+    assert bool(errors) is (family in blocked)
+    assert all("collides" in error for error in errors)
 
 
 def test_owned_listener_claim_catches_intersecting_external_range():

@@ -76,7 +76,9 @@ does not configure proxies, address pools, or NPTv6.
    Appliance Apply. Routing must be enabled for activation; the Source NAT enable switch does not control port forwards.
 
 Firewall rule names may contain generated admission marker text; only complete standalone marker lines delimit
-the generated block during Apply. Firewall shows generated admission attributed to the owning port forward.
+the generated block. Custom service ports reserve their configured listener addresses, allowing an independent
+forward on the other address family; standard appliance protocol ports remain reserved across both families.
+Firewall shows generated admission attributed to the owning port forward.
 These rows are read-only; edit their source
 boundary and listener in Traffic Publishing. Apply captures Firewall and NAT together, validates their complete program,
 and publishes both atomically. It commits both application baselines before acknowledging the root-owned recovery

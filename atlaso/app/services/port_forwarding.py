@@ -14,6 +14,7 @@ from sqlalchemy.orm import Session
 from atlaso.app import models
 from atlaso.app.adapters.system import SystemAdapter
 from atlaso.app.port_forward_schemas import PortForwardCreate, PortForwardStatus
+from atlaso.app.services.dnsmasq import split_addresses
 from atlaso.app.services.esxi_pxe import esxi_pxe_boot_settings
 from atlaso.app.services.firewall import (
     FIREWALL_SOURCE_GROUPS_SETTING_KEY,
@@ -125,9 +126,10 @@ def listener_claims_for_settings(settings: list[ServiceListenerSettings], pxe: d
         if isinstance(row, models.NtpSettings) and field == "nts_ke_port" and not row.nts_server_enabled:
             continue
         port = int(getattr(row, field))
+        addresses = [str(ip_address(address)) for address in split_addresses(row.listen_address)] or ["*"]
         for name in re.split(r"[,\s]+", row.listen_interface or ""):
             if name:
-                claims.append(ListenerClaim(name, "*", protocol, port, port))
+                claims.extend(ListenerClaim(name, address, protocol, port, port) for address in addresses)
     # DNS/DHCP and Network Boot include socket-activated protocol endpoints;
     # their ports must never become a destination-translation editing shortcut.
     for protocol, ports in (("udp", (53, 67, 68, 69, 111, 547)), ("tcp", (53, 111, 2049, 20048))):
@@ -196,7 +198,9 @@ def validate_port_forward(rule: models.PortForward, peers: list[models.PortForwa
                     errors.append("Listener and target addresses cannot be subnet network or broadcast addresses.")
     for claim in context["claims"]:
         if (claim.interface in ("*", rule.ingress_interface)
-                and claim.address in ("*", str(listener)) and claim.protocol == rule.protocol
+                and (claim.address in ("*", "::", str(listener))
+                     or claim.address == "0.0.0.0" and rule.ip_family == 4)
+                and claim.protocol == rule.protocol
                 and rule.external_port_start <= claim.end and claim.start <= rule.external_port_end):
             errors.append("The external mapping collides with an Atlaso-owned service or protocol listener.")
             break
