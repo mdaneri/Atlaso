@@ -20,6 +20,34 @@ JOB = "job_123456789abc"
 FIREWALL = "flush ruleset\ntable inet atlaso {\n chain forward { type filter hook forward priority 0; policy drop; }\n}\n"
 
 
+@pytest.mark.parametrize("change", ["unchanged", "metadata", "target", "removed"])
+def test_pair_preserves_unchanged_connections(transaction, change):
+    """Unrelated submissions retain sessions and mapping edits retire only their own marks.
+
+    Args:
+        transaction: Isolated publication fixture with captured host commands.
+        change: Candidate modification relative to two existing effective mappings.
+    """
+    helper, nat, firewall, _previous, _programs, commands = transaction
+    prefix = render_nat_config([], nat_targets(interfaces(), []), [], TrafficPublishingSettings(False, True))
+    first = PortForward(id=1, **payload())
+    second = PortForward(id=2, **payload(name="second", external_port_start=14000, external_port_end=14002))
+    helper.NAT_RUNTIME_CONFIG_PATH.write_text(prefix + render_port_forward_records([first, second], []))
+    if change == "metadata":
+        first.description = "Updated operator notes"
+    elif change == "target":
+        first.target_address = "198.51.100.11"
+    candidate = [second] if change == "removed" else [first, second]
+    nat.write_text(prefix + render_port_forward_records(candidate, []))
+    helper._publishing_apply(JOB, str(nat), str(firewall))
+    retirement = [command for command in commands if command[0] == "conntrack"]
+    if change in {"unchanged", "metadata"}:
+        assert retirement == []
+    else:
+        assert len(retirement) == 2
+        assert all(command[-1] == "0xa7000001/0xffffffff" for command in retirement)
+
+
 @pytest.fixture()
 def transaction(tmp_path, monkeypatch):
     """Bind every durable path and privileged command to an isolated fixture.

@@ -9433,17 +9433,24 @@ def _port_forward_mark(row: dict) -> str:
     return hex(0xA7000000 | row["id"])
 
 
-def _retire_port_forward_connections() -> None:
+def _retire_port_forward_connections(rule_ids: list[int] | None = None) -> None:
     """Remove only Atlaso destination translations from both conntrack families.
 
     A rule edit can preserve its identifier while changing its target or source
     boundary. Retiring the private mark namespace prevents the old translation
     from inheriting the replacement rule's admission or counters. Never flush
     unrelated source NAT, management, or operator-owned tracked connections.
+
+    Args:
+        rule_ids: Exact changed identities; None retires the whole owned namespace for reset or legacy recovery.
     """
-    for family in ("ipv4", "ipv6"):
+    if rule_ids is not None and (not isinstance(rule_ids, list) or len(rule_ids) > 512
+                                or any(type(value) is not int or not 1 <= value <= 0xFFFFFF for value in rule_ids)):
+        raise ValueError("Port-forward retirement identities are invalid")
+    selectors = ["0xa7000000/0xff000000"] if rule_ids is None else [f"{hex(0xa7000000 | value)}/0xffffffff" for value in sorted(set(rule_ids))]
+    for family, selector in ((family, selector) for family in ("ipv4", "ipv6") for selector in selectors):
         result = _run(["conntrack", "--delete", "--family", family,
-                       "--mark", "0xa7000000/0xff000000"])
+                       "--mark", selector])
         # conntrack reports an empty successful selection with exit status 1.
         empty = result.returncode == 1 and not result.stdout.strip() and re.fullmatch(
             r"conntrack v[^\s]+ \(conntrack-tools\): 0 flow entries have been deleted\.",
@@ -10467,19 +10474,25 @@ def _port_forward_publication_present(entries: list, row: dict) -> bool:
                       and rule.get("chain") == "prerouting"
                       and any(isinstance(expr, dict) and "dnat" in expr for expr in rule.get("expr", []))
                       for rule in owned)
-    directions = set()
-    for rule in owned:
-        if (rule.get("family"), rule.get("table"), rule.get("chain")) != ("inet", "atlaso", "forward"):
+    directions = {"atlaso": set(), "atlaso_port_forwards": set()}
+    for rule in rules:
+        table = rule.get("table")
+        if rule.get("family") != "inet" or table not in directions or rule.get("chain") != "forward":
             continue
         expressions = rule.get("expr", [])
+        if table == "atlaso" and rule not in owned:
+            continue
+        if table == "atlaso_port_forwards" and not any(
+                isinstance(expr, dict) and expr.get("counter") == f'pf_{row["id"]}' for expr in expressions):
+            continue
         if not any(isinstance(expr, dict) and "accept" in expr for expr in expressions):
             continue
         for expr in expressions:
             match = expr.get("match", {}) if isinstance(expr, dict) else {}
             if match.get("left") == {"ct": {"key": "direction"}} and match.get("op") == "==":
                 if match.get("right") in ("original", "reply"):
-                    directions.add(match["right"])
-    return translation and directions == {"original", "reply"}
+                    directions[table].add(match["right"])
+    return translation and all(value == {"original", "reply"} for value in directions.values())
 
 
 def _port_forward_status() -> int:
@@ -10584,7 +10597,7 @@ def _publishing_restore(state: dict) -> None:
     if state["retire_connections"]:
         if _run_with_input(["nft", "-f", "-"], _quiesce_port_forward_config()).returncode:
             raise ValueError("Traffic Publishing recovery could not quiesce translations")
-        _retire_port_forward_connections()
+        _retire_port_forward_connections(state.get("retire_rule_ids"))
     program = restored_firewall.rstrip() + "\n" + restored_nat
     if _validate_wan_nat_config(program).returncode or _run_with_input(["nft", "-f", "-"], program).returncode:
         raise ValueError("Traffic Publishing recovery could not atomically restore Firewall and NAT")
@@ -10606,7 +10619,8 @@ def _publishing_restore(state: dict) -> None:
             raise ValueError("Traffic Publishing recovery could not restore service enablement")
 
 
-def _publishing_install(intent: str, firewall: str, nat_program: str, *, retire_connections: bool) -> None:
+def _publishing_install(intent: str, firewall: str, nat_program: str, *, retire_connections: bool,
+                        retire_rule_ids: list[int] | None = None) -> None:
     """Install a validated complete pair without independently restarting Firewall.
 
     Args:
@@ -10614,11 +10628,12 @@ def _publishing_install(intent: str, firewall: str, nat_program: str, *, retire_
         firewall: Complete generated Firewall program.
         nat_program: Complete generated translation and retirement guard program.
         retire_connections: Retire only Atlaso-owned destination translations first.
+        retire_rule_ids: Exact changed identities, or all owned connections for legacy recovery.
     """
     if retire_connections:
         if _run_with_input(["nft", "-f", "-"], _quiesce_port_forward_config()).returncode:
             raise ValueError("Traffic Publishing could not quiesce the previous translations")
-        _retire_port_forward_connections()
+        _retire_port_forward_connections(retire_rule_ids)
     if _run_with_input(["nft", "-f", "-"], firewall.rstrip() + "\n" + nat_program).returncode:
         raise ValueError("Atomic Firewall and NAT publication failed")
     for output, content in (
@@ -10656,7 +10671,7 @@ def _publishing_apply(job_id: str, nat_path: str, firewall_path: str, *, validat
     firewall = firewall_candidate.read_text(encoding="utf-8")
     if len(intent) > 2_000_000 or len(firewall) > 2_000_000:
         raise ValueError("Traffic Publishing paired snapshot exceeds its size bound")
-    final_firewall, nat_program, active_forwards = _publishing_program(intent, firewall, observed=not validate_only)
+    final_firewall, nat_program, _active_forwards = _publishing_program(intent, firewall, observed=not validate_only)
     combined = final_firewall.rstrip() + "\n" + nat_program
     if _validate_wan_nat_config(combined).returncode:
         raise ValueError("Combined Firewall and NAT validation failed")
@@ -10671,17 +10686,26 @@ def _publishing_apply(job_id: str, nat_path: str, firewall_path: str, *, validat
     previous = {str(item): item.read_text(encoding="utf-8") if item.exists() else None for item in _publishing_files()}
     previous_intent = previous[str(NAT_RUNTIME_CONFIG_PATH)] or ""
     previous_forwards = _port_forward_records(_parse_wan_config(NAT_RUNTIME_CONFIG_PATH, content=previous_intent))
+    candidate_forwards = _port_forward_records(_parse_wan_config(NAT_RUNTIME_CONFIG_PATH, content=intent))
+    metadata = {"name", "description", "priority", "source", "enabled"}
+    previous_mappings = {row["id"]: {key: value for key, value in row.items() if key not in metadata}
+                         for row in previous_forwards}
+    candidate_mappings = {row["id"]: {key: value for key, value in row.items() if key not in metadata}
+                          for row in candidate_forwards}
+    changed_ids = sorted(identity for identity in previous_mappings.keys() | candidate_mappings.keys()
+                         if previous_mappings.get(identity) != candidate_mappings.get(identity))
     state = {
         "job_id": job_id, "phase": "prepared", "files": previous,
         "enabled": {service: _run(["systemctl", "is-enabled", service]).returncode == 0
                     for service in ("atlaso-firewall.service", "atlaso-nat.service")},
-        "retire_connections": active_forwards or bool(previous_forwards),
+        "retire_connections": bool(changed_ids), "retire_rule_ids": changed_ids,
         "candidate": {"intent": intent, "firewall": firewall},
         "runtime_restored": False,
     }
     _nat_write(marker, json.dumps(state, sort_keys=True))
     try:
-        _publishing_install(intent, final_firewall, nat_program, retire_connections=state["retire_connections"])
+        _publishing_install(intent, final_firewall, nat_program, retire_connections=state["retire_connections"],
+                            retire_rule_ids=changed_ids)
         state["phase"] = "awaiting-application-commit"
         _nat_write(marker, json.dumps(state, sort_keys=True))
     except (OSError, ValueError) as original:
@@ -10720,10 +10744,11 @@ def _publishing_acknowledge(job_id: str) -> None:
         if (not isinstance(candidate, dict) or set(candidate) != {"intent", "firewall"}
                 or any(not isinstance(value, str) or len(value) > 2_000_000 for value in candidate.values())):
             raise ValueError("Traffic Publishing recovery candidate is invalid")
-        firewall, program, active = _publishing_program(candidate["intent"], candidate["firewall"], observed=True)
+        firewall, program, _active = _publishing_program(candidate["intent"], candidate["firewall"], observed=True)
         if _validate_wan_nat_config(firewall.rstrip() + "\n" + program).returncode:
             raise ValueError("Traffic Publishing committed candidate no longer validates")
-        _publishing_install(candidate["intent"], firewall, program, retire_connections=active or state["retire_connections"])
+        _publishing_install(candidate["intent"], firewall, program, retire_connections=state["retire_connections"],
+                            retire_rule_ids=state.get("retire_rule_ids"))
         state["runtime_restored"] = False
         _nat_write(marker, json.dumps(state, sort_keys=True))
     _nat_write(receipt, json.dumps({"job_id": job_id, "phase": "committed"}))

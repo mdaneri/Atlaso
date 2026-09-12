@@ -78,8 +78,9 @@ boundary and listener in Traffic Publishing. Apply captures Firewall and NAT tog
 and publishes both atomically. It commits both application baselines before acknowledging the root-owned recovery
 record. Management changes include this pair in the protected management handoff and its wider rollback.
 
-Removing, disabling, or suspending a rule retires its counters and Atlaso-marked connections during Apply. Existing
-sessions through that mapping must reconnect. This retirement never flushes unrelated connection tracking. Appliance
+Removing, disabling, or suspending a rule retires its counters and Atlaso-marked connections during Apply. Sessions
+through that mapping must reconnect. Unchanged mappings retain their connections during unrelated Apply submissions;
+edits retire only changed rule marks. This retirement never flushes unrelated connection tracking. Appliance
 images and wheel deployments include `conntrack-tools`; its daemon is not required. An unavailable retirement tool
 blocks publication rather than leaving stale translations active.
 
@@ -156,7 +157,8 @@ and leaves the upgrade's normal rollback path responsible for recovery; restore 
 Status distinguishes disabled, pending, suspended, applied, and degraded records. An edited target or source boundary
 does not inherit the previous mapping's counters. Packet and byte counts are nullable: unavailable observations are
 not reported as zero. Applied status requires the DNAT rule, both generated Firewall admission directions, and the
-owned counter to remain present in one runtime snapshot. Missing members report degraded even if counters survive.
+owned counter and both guard admission directions to remain present in one runtime snapshot. Missing members report
+degraded even if counters survive.
 The page summary includes enabled port forwards independently of source NAT and reports their validation errors.
 These counters describe matched traffic, not proof that an application at the target is healthy.
 

@@ -109,7 +109,7 @@ def test_signed_upgrade_bootstraps_conntrack(monkeypatch, tmp_path, installed, s
 
 
 @pytest.mark.parametrize("family", [4, 6])
-@pytest.mark.parametrize("missing", [None, "dnat", "original", "reply"])
+@pytest.mark.parametrize("missing", [None, "dnat", "original", "reply", "guard-original", "guard-reply"])
 def test_status_requires_translation_and_both_admissions(family, missing, monkeypatch, tmp_path, capsys):
     """Surviving counters cannot conceal partially removed publication members.
 
@@ -135,6 +135,10 @@ def test_status_requires_translation_and_both_admissions(family, missing, monkey
                                  "chain": "prerouting", "comment": "Atlaso port forward 1",
                                  "expr": [{"dnat": {"addr": "198.51.100.10"}}]}})
     for direction in ("original", "reply"):
+        if missing != f"guard-{direction}":
+            entries.append({"rule": {"family": "inet", "table": "atlaso_port_forwards", "chain": "forward",
+                                     "expr": [{"match": {"op": "==", "left": {"ct": {"key": "direction"}},
+                                                         "right": direction}}, {"counter": "pf_1"}, {"accept": None}]}})
         if missing != direction:
             entries.append({"rule": {"family": "inet", "table": "atlaso", "chain": "forward",
                                      "comment": "Atlaso port forward 1", "expr": [
