@@ -62,6 +62,9 @@ from atlaso.app.services.vaults import (
     redact_secret_values,
     vault_scope_identity,
 )
+from atlaso.app.services.vcf_depot_permissions import (
+    prepare_downloaded_depot_permissions,
+)
 
 LOGGER = logging.getLogger("atlaso.worker")
 POLL_SECONDS = 5
@@ -795,6 +798,13 @@ def recover_interrupted_worker_jobs(
             if job.status == JobStatus.SUCCEEDED.value
             else str(definitive.get("error") or "The Atlaso worker restarted while this task was running. The task was not rerun automatically.")
         )
+        if job.type == "vcf-depot-download":
+            try:
+                store = _job_config(job).get("depot_permission_store")
+                if isinstance(store, str) and store:
+                    prepare_downloaded_depot_permissions(store)
+            except (OSError, ValueError):
+                job.error = f"{job.error} Depot read-permission repair also failed; inspect published PROD content."
         try:
             result = json.loads(job.result or "{}")
         except json.JSONDecodeError:
@@ -1596,6 +1606,21 @@ def _run_appliance_update(job_id: str) -> None:
                             mode=mode,
                             exc=exc,
                         )
+            if stream_result.get("ownership_unresolved") is True:
+                # Keep the child and parent active until the exact helper is
+                # proven stopped. A timeout is not proof of released ownership.
+                with SessionLocal() as db:
+                    held_job = db.get(Job, job_id)
+                    if held_job is not None:
+                        held_job.error = "Update check cleanup needs attention; helper ownership remains unresolved."
+                        held_job.result = json.dumps({
+                            "state": "cleanup-required",
+                            "ownership_unresolved": True,
+                            "stream": stream,
+                            "mode": mode,
+                        }, sort_keys=True)
+                        db.commit()
+                return
             stream_results.append(stream_result)
             earlier_failed = earlier_failed or not bool(stream_result.get("success"))
             if stream not in terminal_stream_results:
@@ -1935,6 +1960,12 @@ def run_worker_once() -> str | None:
     if not _reconcile_appliance_update_status_surface():
         return None
     with SessionLocal() as db:
+        # Startup recovery may retain an interrupted helper, including a check
+        # that does not own the installation-only browser maintenance marker.
+        if db.execute(select(Job.id).where(
+            Job.type == "appliance-update", Job.status == JobStatus.RUNNING.value,
+        ).limit(1)).scalar_one_or_none() is not None:
+            return None
         enqueue_due_schedules(db)
         job = claim_next_job(db)
         if job is None:
