@@ -30,7 +30,8 @@ The selected source updates automatically every five seconds. **From beginning**
 each response, not the total history you can inspect. Numbered file rotations, including compressed archives, are
 included. Journal history remains subject to the appliance's journal retention policy.
 
-**Follow live** advances to new output. Scrolling up or selecting text preserves your reading position and shows when
+**Follow live** resumes new output with one click, including after scrolling up. Scrolling up or selecting text preserves
+your reading position and shows when
 new output is available. Empty sources remain selectable and populate when their first entries arrive. A connection
 failure preserves the displayed page and retries with a bounded delay; the freshness indicator identifies stale output.
 Closing a viewer, switching sources or hiding the browser suspends its requests. Retention changes are reported rather
@@ -67,7 +68,9 @@ them in bounded pages so later entries remain reachable; omitted entry contents 
 Live viewers open at the newest retained group. **From beginning** reads earlier history, and **Follow live** returns
 to recent output. Tail reads preserve private-key redaction across older entries. If a retained archive cannot be
 scanned within the read deadline, use **From beginning** to read it in pages. Journal records larger than 1 MiB use
-an explicit omission marker and preserve continuation to newer entries.
+an explicit omission marker and preserve continuation to newer entries. Multiline journal messages are paged within
+the record so each response remains within 500 displayed lines and 1 MiB, including timestamps. Replacing a file
+behind an unchanged opening banner invalidates its previous position and reopens retained history.
 
 <!-- BEGIN GENERATED ADDITIONAL SCREENSHOTS -->
 ## Additional verified states

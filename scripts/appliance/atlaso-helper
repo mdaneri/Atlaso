@@ -1759,6 +1759,30 @@ def _tail_private_key(paths: list[Path], offset: int, *, deadline: float) -> boo
     return opened
 
 
+def _history_anchor(handle, offset: int, *, compressed: bool, deadline: float) -> dict:
+    """Fingerprint the content immediately before a retained byte position.
+
+    Args:
+        handle: Verified regular retained stream.
+        offset: Uncompressed position whose preceding content must remain stable.
+        compressed: Whether seeking needs bounded decompression.
+        deadline: Shared request deadline.
+    """
+    length = min(offset, 4096)
+    start = offset - length
+    handle.seek(0 if compressed else start)
+    remaining = start if compressed else 0
+    while remaining:
+        if time.monotonic() > deadline:
+            raise ValueError("Retained history scan exceeded its deadline.")
+        chunk = handle.read(min(65536, remaining))
+        if not chunk:
+            raise ValueError("Retained history position is unavailable.")
+        remaining -= len(chunk)
+    window = handle.read(length)
+    return {"anchor_length": length, "anchor": hashlib.sha256(window).hexdigest()}
+
+
 def _read_fixed_log_history(path: Path, position: dict) -> dict:
     """Read retained numbered rotations and the current fixed log in order.
 
@@ -1811,14 +1835,21 @@ def _read_fixed_log_history(path: Path, position: dict) -> dict:
             prefix_length = position.get("prefix_length", 0)
             if type(prefix_length) is not int or not 0 <= prefix_length <= 4096:
                 raise ValueError("invalid prefix length")
+            handle.seek(0)
             prefix = handle.read(prefix_length)
+            anchor_length = position.get("anchor_length", 0)
+            if type(anchor_length) is not int or not 0 <= anchor_length <= min(offset, 4096):
+                raise ValueError("Invalid log history anchor.")
+            anchor = _history_anchor(handle, offset, compressed=candidate.suffix == ".gz", deadline=deadline) if anchor_length else {}
             if ((candidate.suffix != ".gz" and offset > metadata.st_size) or
-                    (prefix_length and hashlib.sha256(prefix).hexdigest() != position.get("prefix"))):
+                    (prefix_length and hashlib.sha256(prefix).hexdigest() != position.get("prefix")) or
+                    (anchor_length and anchor.get("anchor") != position.get("anchor"))):
                 offset, reset = 0, True
+            anchor = _history_anchor(handle, offset, compressed=candidate.suffix == ".gz", deadline=deadline)
             current_position = {"generation": generation, "offset": offset,
                                 "oversized": not reset and position.get("oversized") is True,
                                 "prefix_length": 0 if reset else prefix_length,
-                                "prefix": "" if reset else position.get("prefix", "")}
+                                "prefix": "" if reset else position.get("prefix", ""), **anchor}
             if candidate.suffix == ".gz":
                 handle.seek(0)
                 remaining = offset
@@ -1859,7 +1890,8 @@ def _read_fixed_log_history(path: Path, position: dict) -> dict:
             handle.seek(0)
             prefix = handle.read(min(next_offset, 4096))
             next_position = {"generation": generation, "offset": next_offset, "oversized": oversized,
-                             "prefix_length": len(prefix), "prefix": hashlib.sha256(prefix).hexdigest()}
+                             "prefix_length": len(prefix), "prefix": hashlib.sha256(prefix).hexdigest(),
+                             **_history_anchor(handle, next_offset, compressed=candidate.suffix == ".gz", deadline=deadline)}
         finally:
             if handle is not raw:
                 handle.close()
@@ -1941,6 +1973,32 @@ def _journal_history_entries(command, *, deadline):
     return selected, more
 
 
+def _journal_text_rows(entry, offset=0):
+    """Yield formatted physical rows with resumable character positions.
+
+    Args:
+        entry: Bounded journal representation with trusted timestamp metadata.
+        offset: Character position inside this immutable journal message.
+    """
+    import io
+
+    message = entry["MESSAGE"]
+    if offset > len(message):
+        raise ValueError("Journal message position is unavailable.")
+    timestamp = datetime.fromtimestamp(int(entry["__REALTIME_TIMESTAMP"]) / 1000000, timezone.utc).isoformat()
+    stream = io.StringIO(message)
+    stream.seek(offset)
+    while True:
+        start = stream.tell()
+        raw = stream.readline()
+        if not raw:
+            break
+        line = f"{timestamp} {raw.rstrip(chr(13) + chr(10))}"
+        if len(line.encode("utf-8")) + 1 > 1024 * 1024:
+            line = f"{timestamp} [Oversized journal line omitted: exceeds 1 MiB.]"
+        yield start, line
+
+
 def _read_log_history(args: list[str]) -> int:
     """Read a bounded page from a fixed journal source without arbitrary commands.
 
@@ -1964,19 +2022,43 @@ def _read_log_history(args: list[str]) -> int:
         cursor = position.get("journal_cursor", position.get("journal_start_cursor", ""))
         if not isinstance(cursor, str) or len(cursor) > 2048 or any(ord(char) < 32 for char in cursor):
             raise ValueError("invalid journal cursor")
+        text_offset = position.get("journal_text_offset", 0)
+        if type(text_offset) is not int or not 0 <= text_offset <= 1024 * 1024 or (text_offset and not position.get("journal_start_cursor")):
+            raise ValueError("invalid journal text position")
         tail = position.get("tail") is True and not cursor
         command = [shutil.which("journalctl") or "journalctl", "--unit", units[args[0]],
                    "--no-pager", "--output=json", "--lines=500" if tail else "--lines=+501",
                    "--output-fields=MESSAGE,__CURSOR,__REALTIME_TIMESTAMP"]
+        if tail:
+            command.append("--reverse")
         if cursor:
             command.append(f"--cursor={cursor}" if position.get("journal_start_cursor") else f"--after-cursor={cursor}")
         deadline = time.monotonic() + 10
         selected, more = _journal_history_entries(command, deadline=deadline)
         initial_private_key = position.get("private_key") is True
-        current_position = {key: position[key] for key in ("journal_cursor", "journal_start_cursor") if key in position}
+        current_position = {key: position[key] for key in ("journal_cursor", "journal_start_cursor", "journal_text_offset") if key in position}
         if tail and selected:
+            from collections import deque
+
+            # The raw budget is read newest-first; retain only the newest expanded rows.
+            selected.reverse()
+            recent = deque()
+            expanded_bytes = 0
+            for index, entry in enumerate(selected):
+                for start, line in _journal_text_rows(entry):
+                    size = len(line.encode("utf-8")) + 1
+                    recent.append((index, start, size))
+                    expanded_bytes += size
+                    while len(recent) > 500 or expanded_bytes > 1024 * 1024:
+                        expanded_bytes -= recent.popleft()[2]
+            if recent:
+                first_index, text_offset, _ = recent[0]
+                selected = selected[first_index:]
+            more = False
             first_cursor = selected[0]["__CURSOR"]
             current_position = {"journal_start_cursor": first_cursor}
+            if text_offset:
+                current_position["journal_text_offset"] = text_offset
             # Recover cross-record PEM state before jumping into retained history.
             prefix_command = [command[0], "--unit", units[args[0]], "--no-pager", "--output=json",
                               "--output-fields=MESSAGE,__CURSOR,__REALTIME_TIMESTAMP", "--reverse",
@@ -1986,15 +2068,30 @@ def _read_log_history(args: list[str]) -> int:
             if predecessor is not None:
                 markers = list(re.finditer(r"-----(BEGIN|END) [A-Z ]*PRIVATE KEY-----", predecessor["MESSAGE"]))
                 initial_private_key = bool(markers and markers[-1].group(1) == "BEGIN")
+            for match in re.finditer(r"-----(BEGIN|END) [A-Z ]*PRIVATE KEY-----", selected[0]["MESSAGE"][:text_offset]):
+                initial_private_key = match.group(1) == "BEGIN"
         lines = []
-        for entry in selected:
+        expanded_bytes = 0
+        next_position = dict(current_position)
+        for index, entry in enumerate(selected):
             message = entry.get("MESSAGE")
             if not isinstance(message, str):
                 raise ValueError("journal entry cannot be displayed completely")
-            timestamp = datetime.fromtimestamp(int(entry["__REALTIME_TIMESTAMP"]) / 1000000, timezone.utc).isoformat()
-            lines.extend(f"{timestamp} {line}" for line in message.splitlines())
-        print(json.dumps({"lines": lines, "journal_cursor": selected[-1]["__CURSOR"] if selected else cursor,
-                          "has_more": more, "current_position": current_position, "initial_private_key": initial_private_key}))
+            paused = False
+            for start, line in _journal_text_rows(entry, text_offset if index == 0 else 0):
+                size = len(line.encode("utf-8")) + 1
+                if len(lines) >= 500 or expanded_bytes + size > 1024 * 1024:
+                    next_position = {"journal_start_cursor": entry["__CURSOR"], "journal_text_offset": start}
+                    more = paused = True
+                    break
+                lines.append(line)
+                expanded_bytes += size
+            if paused:
+                break
+            next_position = {"journal_cursor": entry["__CURSOR"]}
+        print(json.dumps({"lines": lines, "journal_cursor": next_position.get("journal_cursor", cursor),
+                          "journal_position": next_position, "has_more": more,
+                          "current_position": current_position, "initial_private_key": initial_private_key}))
         return 0
     except (ValueError, TypeError, AttributeError, KeyError, OSError, subprocess.TimeoutExpired):
         print("Log history page could not be read completely. Reopen the source to retry.", file=sys.stderr)

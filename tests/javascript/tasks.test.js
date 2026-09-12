@@ -42,7 +42,7 @@ function taskLogHarness() {
       this.textContent = "";
     }
     querySelector() { return null; }
-    addEventListener() {}
+    addEventListener(name, action) { this[name] = action; }
     setAttribute() {}
     append(node) { this.textContent += node.textContent; }
     contains(node) { return node === this; }
@@ -67,6 +67,7 @@ function taskLogHarness() {
   const title = new FakeElement();
   const meta = new FakeElement();
   const content = new FakeElement();
+  const buttons = [];
   const requests = [];
   const timers = new Map();
   let timerId = 0;
@@ -76,7 +77,7 @@ function taskLogHarness() {
     HTMLElement: FakeElement,
     HTMLDialogElement: FakeDialog,
     document: {
-      createElement: () => new FakeElement(),
+      createElement: () => { const element = new FakeElement(); buttons.push(element); return element; },
       createTextNode: (textContent) => ({ textContent }),
       addEventListener() {},
       removeEventListener() {},
@@ -114,7 +115,7 @@ function taskLogHarness() {
   const complete = (index, payload, ok = true) => {
     requests[index].resolve({ ok, json: async () => payload });
   };
-  return { complete, content, context: taskLogContext, meta, modal, requests, title, timers };
+  return { buttons, complete, content, context: taskLogContext, meta, modal, requests, title, timers };
 }
 
 const context = vm.createContext({});
@@ -312,6 +313,13 @@ test("the scrolling code element owns follow and reading-position preservation",
   assert.equal(harness.content.scrollTop, 100);
   assert.equal(harness.content.textContent, "first");
   assert.match(harness.meta.textContent, /reading position preserved/);
+  harness.buttons.find((button) => button.textContent === "Follow live").click();
+  const resumed = fireTimer(harness, 0);
+  assert.equal(new URL(harness.requests[2].url).searchParams.get("tail"), "1");
+  harness.complete(2, { status: "running", text: "latest" });
+  await resumed;
+  assert.equal(harness.content.textContent, "latest");
+  assert.equal(harness.content.scrollTop, 1000);
   harness.context.closeTaskLogModal();
 });
 

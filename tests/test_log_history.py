@@ -1,6 +1,7 @@
 """Verify full retained history and source-bound redaction across pages."""
 
 import gzip
+import json
 from pathlib import Path
 
 import pytest
@@ -470,7 +471,7 @@ def test_journal_tail_recovers_prior_key_state(monkeypatch, capsys):
     commands = []
     def launch(command, **_kwargs):
         commands.append(command)
-        message, cursor = ("-----BEGIN PRIVATE KEY-----", "prior") if "--reverse" in command else ("hidden", "latest")
+        message, cursor = ("-----BEGIN PRIVATE KEY-----", "prior") if any(arg.startswith("--grep=") for arg in command) else ("hidden", "latest")
         process = MagicMock()
         process.__enter__.return_value = process
         process.wait.return_value = process.poll.return_value = 0
@@ -501,3 +502,85 @@ def test_tail_of_unfinished_oversized_key_keeps_future_fragments_redacted(tmp_pa
     later = log_viewer.file_page(path, source="unfinished", cursor=first["next_cursor"])
     assert "private-fragment" not in later["text"]
     assert later["text"].endswith("visible")
+
+
+@pytest.mark.parametrize("privileged", [False, True])
+def test_copytruncate_same_banner_resets_cursor(tmp_path, privileged):
+    """A regrown file with an unchanged banner must not conceal replacement history.
+
+    Args:
+        tmp_path: Owned retained log directory.
+        privileged: Exercise both independent file readers.
+    """
+    from tests.test_appliance_helper import load_helper_module
+
+    path = tmp_path / "replacement.log"
+    banner = b"banner" * 900 + b"\n"
+    path.write_bytes(banner + b"old entry\n" * 600)
+    helper = load_helper_module() if privileged else None
+    first = helper._read_fixed_log_history(path, {}) if privileged else log_viewer.file_page(path, source="replacement")
+    position = first["file_position"] if privileged else first["next_cursor"]
+    path.write_bytes(banner + b"replacement entry\n" * 900)
+    page = helper._read_fixed_log_history(path, position) if privileged else log_viewer.file_page(path, source="replacement", cursor=position)
+    assert page["reset"]
+    text = "\n".join(page["lines"]) if privileged else page["text"]
+    assert text.startswith(banner.decode().rstrip())
+    assert "replacement entry" in text
+
+
+def test_expanded_journal_message_pages_without_loss_and_tail_skips_history(monkeypatch, capsys):
+    """One multiline record stays bounded, resumes exactly, and opens at its latest rows.
+
+    Args:
+        monkeypatch: Substitute only the journal process reader.
+        capsys: Capture structured helper pages.
+    """
+    from tests.test_appliance_helper import load_helper_module
+
+    helper = load_helper_module()
+    messages = [f"row-{index}" for index in range(1501)]
+    entry = {"MESSAGE": "\n".join(messages), "__CURSOR": "multiline", "__REALTIME_TIMESTAMP": "1000000"}
+    def entries(command, **_kwargs):
+        return ([], False) if any(arg.startswith("--grep=") for arg in command) else ([entry], False)
+    monkeypatch.setattr(helper, "_journal_history_entries", entries)
+    position, actual = {}, []
+    for _ in range(5):
+        assert helper._read_log_history(["nginx", json.dumps(position)]) == 0
+        page = json.loads(capsys.readouterr().out)
+        assert len(page["lines"]) <= 500
+        assert len("\n".join(page["lines"]).encode("utf-8")) <= 1024 * 1024
+        actual.extend(line.split(" ", 1)[1] for line in page["lines"])
+        position = page["journal_position"]
+        if not page["has_more"]:
+            break
+    assert actual == messages
+    assert helper._read_log_history(["nginx", '{"tail":true}']) == 0
+    tail = json.loads(capsys.readouterr().out)
+    assert [line.split(" ", 1)[1] for line in tail["lines"]] == messages[-500:]
+    assert not tail["has_more"]
+    assert tail["current_position"]["journal_text_offset"] > 0
+    assert helper._read_log_history(["nginx", json.dumps(tail["current_position"])]) == 0
+    assert json.loads(capsys.readouterr().out)["lines"] == tail["lines"]
+
+
+def test_expanded_journal_page_includes_timestamp_byte_budget(monkeypatch, capsys):
+    """Timestamp expansion is included in the byte budget and preserves continuation.
+
+    Args:
+        monkeypatch: Substitute immutable journal entries.
+        capsys: Capture helper output.
+    """
+    from tests.test_appliance_helper import load_helper_module
+
+    helper = load_helper_module()
+    message = ("x" * 2074 + "\n") * 500
+    entry = {"MESSAGE": message, "__CURSOR": "byte-bound", "__REALTIME_TIMESTAMP": "1000000"}
+    monkeypatch.setattr(helper, "_journal_history_entries", lambda *args, **kwargs: ([entry], False))
+    assert helper._read_log_history(["nginx", "{}"]) == 0
+    first = json.loads(capsys.readouterr().out)
+    assert first["has_more"]
+    assert len("\n".join(first["lines"]).encode()) <= 1024 * 1024
+    assert helper._read_log_history(["nginx", json.dumps(first["journal_position"])]) == 0
+    second = json.loads(capsys.readouterr().out)
+    assert len(first["lines"]) + len(second["lines"]) == 500
+    assert not second["has_more"]

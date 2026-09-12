@@ -53,7 +53,7 @@ def source_page(source: str, *, cursor: str = "", tail: bool = False) -> dict[st
             "dhcp" if re.search(r"\bdnsmasq-dhcp(?:\[\d+\])?:", line)
             else "tftp" if re.search(r"\bdnsmasq-tftp(?:\[\d+\])?:", line) else "dns"
         ) == category]
-    next_position = payload.get("file_position", {"journal_cursor": payload.get("journal_cursor", "")})
+    next_position = payload.get("file_position", payload.get("journal_position", {"journal_cursor": payload.get("journal_cursor", "")}))
     current = encode_cursor(source, **payload["current_position"], private_key=initial_private_key) if "current_position" in payload else cursor
     return {"source": source, "available": payload.get("available", True), "text": "\n".join(lines), "cursor": current,
             "next_cursor": encode_cursor(source, **next_position, private_key=private_key),
@@ -181,6 +181,30 @@ def _tail_private_key(paths: list[Path], offset: int, *, deadline: float) -> boo
     return opened
 
 
+def _history_anchor(handle: Any, offset: int, *, compressed: bool, deadline: float) -> dict[str, Any]:
+    """Fingerprint the content immediately before a retained byte position.
+
+    Args:
+        handle: Verified regular retained stream.
+        offset: Uncompressed position whose preceding content must remain stable.
+        compressed: Whether seeking needs bounded decompression.
+        deadline: Shared request deadline.
+    """
+    length = min(offset, 4096)
+    start = offset - length
+    handle.seek(0 if compressed else start)
+    remaining = start if compressed else 0
+    while remaining:
+        if time.monotonic() > deadline:
+            raise ValueError("Retained history scan exceeded its deadline.")
+        chunk = handle.read(min(65536, remaining))
+        if not chunk:
+            raise ValueError("Retained history position is unavailable.")
+        remaining -= len(chunk)
+    window = handle.read(length)
+    return {"anchor_length": length, "anchor": hashlib.sha256(window).hexdigest()}
+
+
 def file_page(path: Path, *, source: str, cursor: str = "", limit: int = PAGE_LINES,
               complete: bool = False, tail: bool = False) -> dict[str, Any]:
     """Read current and numbered retained rotations without a total-history cap.
@@ -236,10 +260,17 @@ def file_page(path: Path, *, source: str, cursor: str = "", limit: int = PAGE_LI
             prefix_length = position.get("prefix_length", 0)
             if type(prefix_length) is not int or not 0 <= prefix_length <= 4096:
                 raise ValueError("Invalid log history position.")
+            handle.seek(0)
             prefix = handle.read(prefix_length)
+            anchor_length = position.get("anchor_length", 0)
+            if type(anchor_length) is not int or not 0 <= anchor_length <= min(offset, 4096):
+                raise ValueError("Invalid log history anchor.")
+            anchor = _history_anchor(handle, offset, compressed=compressed, deadline=deadline) if anchor_length else {}
             if ((not compressed and offset > metadata.st_size) or
-                    (prefix_length and hashlib.sha256(prefix).hexdigest() != position.get("prefix"))):
+                    (prefix_length and hashlib.sha256(prefix).hexdigest() != position.get("prefix")) or
+                    (anchor_length and anchor.get("anchor") != position.get("anchor"))):
                 offset, position, reset = 0, {}, True
+            anchor = _history_anchor(handle, offset, compressed=compressed, deadline=deadline)
             handle.seek(0)
             remaining = offset if compressed else 0
             if not compressed:
@@ -253,7 +284,7 @@ def file_page(path: Path, *, source: str, cursor: str = "", limit: int = PAGE_LI
             current = encode_cursor(source, generation=generation, offset=offset, private_key=private_key,
                                     oversized=position.get("oversized") is True,
                                     prefix_length=prefix_length if position else 0,
-                                    prefix=position.get("prefix", ""))
+                                    prefix=position.get("prefix", ""), **anchor)
             lines: list[str] = []
             partial = False
             oversized = position.get("oversized") is True
@@ -279,7 +310,8 @@ def file_page(path: Path, *, source: str, cursor: str = "", limit: int = PAGE_LI
             handle.seek(0)
             prefix = handle.read(min(next_offset, 4096))
             next_position = {"generation": generation, "offset": next_offset, "oversized": oversized,
-                             "prefix_length": len(prefix), "prefix": hashlib.sha256(prefix).hexdigest()}
+                             "prefix_length": len(prefix), "prefix": hashlib.sha256(prefix).hexdigest(),
+                             **_history_anchor(handle, next_offset, compressed=compressed, deadline=deadline)}
     if not more and index + 1 < len(paths):
         following = paths[index + 1].lstat()
         next_position = {"generation": f"{following.st_dev}:{following.st_ino}", "offset": 0}

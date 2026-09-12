@@ -61,7 +61,7 @@
       if (hasMore) { following = false; previous.push(cursor); navigate(nextCursor); }
     });
     button("follow", "Follow live", () => {
-      following = !following;
+      following = true;
       terminalReads = 0;
       if (following && initialCursor) navigate(initialCursor, true);
       if (following && scroll) scroll.scrollTop = scroll.scrollHeight;
