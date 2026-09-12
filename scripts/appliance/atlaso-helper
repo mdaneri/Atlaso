@@ -22575,9 +22575,14 @@ def _quiesce_appliance_update_action_unit(job_id: str, stream: str) -> dict[str,
     Returns:
         Bounded systemd unit evidence without command or environment contents.
     """
-    return _quiesce_appliance_update_unit(
-        f"{_appliance_update_action_unit_name(job_id, stream)}.service"
-    )
+    unit_name = _appliance_update_action_unit_name(job_id, stream)
+    evidence = _quiesce_appliance_update_unit(f"{unit_name}.service", bounded=True)
+    # Reconstruct the same owner from the persisted task and stream. A stopped
+    # unit alone is insufficient after a failed credential cleanup or SIGKILL.
+    # Failure must propagate so startup recovery retains the task and queue hold.
+    _cleanup_stale_photon_repository_views(check_owner=unit_name)
+    evidence["credential_cleanup_verified"] = True
+    return evidence
 
 
 def _quiesce_appliance_update_status_unit(job_id: str) -> dict[str, object]:
@@ -23030,8 +23035,8 @@ def _handle_appliance_update(action: str, args: list[str]) -> int:
             return 2
         try:
             evidence = _quiesce_appliance_update_action_unit(args[0], args[1])
-        except ValueError as exc:
-            print(str(exc), file=sys.stderr)
+        except (ValueError, OSError, subprocess.TimeoutExpired):
+            print("Appliance Update helper shutdown or credential cleanup could not be verified.", file=sys.stderr)
             return 1
         print(json.dumps(evidence, sort_keys=True))
         return 0

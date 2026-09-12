@@ -117,12 +117,14 @@ def test_check_cleanup_preserves_other_owners(helper, monkeypatch, tmp_path):
     assert foreign.exists()
 
 
-def test_unverified_check_retains_parent_child_and_blocks_queue(client, monkeypatch):
+def test_unverified_check_retains_parent_child_and_blocks_queue(client, monkeypatch, helper, tmp_path):
     """Do not run another child or queued job while the previous owner may live.
 
     Args:
         client: Isolated database/application fixture.
         monkeypatch: Replacement of privileged work and status probes.
+        helper: Isolated privileged helper module.
+        tmp_path: Synthetic credential runtime root.
     """
     from atlaso.app import ui, worker
     from atlaso.app.database import SessionLocal
@@ -149,6 +151,45 @@ def test_unverified_check_retains_parent_child_and_blocks_queue(client, monkeypa
         assert json.loads(parent.result)["state"] == "cleanup-required"
         assert [step.status for step in parent.steps] == ["running", "pending"]
         assert db.get(Job, "queued-script").status == "pending"
+
+    owner = helper._appliance_update_action_unit_name("job_012345abcdef", "photon_os")
+    credentials = tmp_path / f"atlaso-tdnf-repositories-100-200-{owner}-test"
+    credentials.mkdir(mode=0o700)
+    foreign = tmp_path / "atlaso-tdnf-repositories-101-201-other-test"
+    foreign.mkdir(mode=0o700)
+    monkeypatch.setattr(helper, "_photon_repository_runtime_root", lambda: tmp_path)
+    monkeypatch.setattr(helper, "_process_start_identity", lambda pid: "")
+    monkeypatch.setattr(helper, "_run", lambda command, **kwargs: subprocess.CompletedProcess(command, 3, "inactive\n", ""))
+    monkeypatch.setattr(worker, "_release_finalizer", lambda: {})
+    monkeypatch.setattr(worker, "_quiesce_appliance_update_action", lambda job, stream: helper._handle_appliance_update("quiesce-action", [job, stream]) == 0)
+    remove = helper.shutil.rmtree
+
+    def deny_cleanup(path):
+        """Simulate a credential deletion failure after systemd has stopped.
+
+        Args:
+            path: Exact scoped credential directory.
+        """
+        raise PermissionError("synthetic cleanup failure")
+
+    with monkeypatch.context() as cleanup_patch:
+        cleanup_patch.setattr(helper.shutil, "rmtree", deny_cleanup)
+        with SessionLocal() as db:
+            worker.recover_interrupted_worker_jobs(db)
+            db.commit()
+            assert db.get(Job, "job_012345abcdef").status == "running"
+            assert db.get(Job, "job_012345abcdef").steps[0].status == "running"
+        assert credentials.exists()
+        assert worker.run_worker_once() is None
+
+    assert helper.shutil.rmtree is remove
+    with SessionLocal() as db:
+        worker.recover_interrupted_worker_jobs(db)
+        db.commit()
+        assert db.get(Job, "job_012345abcdef").status == "failed"
+        assert db.get(Job, "job_012345abcdef").steps[0].status == "failed"
+    assert not credentials.exists()
+    assert foreign.exists()
 
 
 def test_stopped_failed_check_finishes_other_streams_and_releases_queue(client, monkeypatch):

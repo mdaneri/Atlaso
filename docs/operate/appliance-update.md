@@ -88,8 +88,10 @@ If helper shutdown or credential cleanup cannot be verified, the parent and curr
 remain active with **cleanup-required** evidence, and later durable work stays queued.
 Capture the task ID, stream, timestamps and sanitized helper/unit evidence for an
 administrator. Do not delete package locks or kill unrelated processes. Worker startup
-recovery must prove the exact helper stopped before it can terminalize the interrupted
-hierarchy; a failed proof deliberately retains ownership.
+recovery must prove the exact helper stopped and retry its scoped repository credential
+cleanup before it can terminalize the interrupted hierarchy. The persisted task and stream
+identify the same credential owner across restarts; a failed cleanup deliberately retains
+ownership and the queue hold until a later recovery attempt verifies both steps.
 
 ## Update-only browser surface
 
