@@ -249,5 +249,3 @@ def test_partial_job_preserves_component_evidence(client, monkeypatch):
         assert result["manual_recovery_required"] is False
         audit = db.scalars(select(AuditEvent).where(AuditEvent.resource_id == job.id)).one()
         assert audit.success is False
-
-
