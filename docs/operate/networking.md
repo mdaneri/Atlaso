@@ -278,7 +278,8 @@ retained location; Apply remains successful so the baseline matches the installe
 Existing SQLite and PostgreSQL databases gain the enabled setting during serialized schema startup;
 later startups preserve saved opt-outs.
 Ordinary Apply writes a durable transaction marker before changing networkd files and retains it
-until the application commits the exact executed Network baseline. Startup restores interrupted
+with its referenced backups if marker publication becomes visible but directory synchronization fails.
+The marker remains until the application commits the exact executed Network baseline. Startup restores interrupted
 uncommitted candidates or acknowledges an already committed baseline. Recovery refuses to race a
 live helper, and an unresolved marker blocks another Apply. Terminal backup cleanup warnings do
 not cause committed configuration to be rolled back on a later restart.

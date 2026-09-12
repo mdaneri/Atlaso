@@ -661,7 +661,7 @@ def test_network_transaction_excludes_a_live_helper(tmp_path, monkeypatch):
 
 
 @pytest.mark.parametrize("failure", ["install", "readiness", "retirement", "rollback", "cleanup", "none",
-                                     "interrupted", "awaiting", "acknowledged"])
+                                     "interrupted", "awaiting", "acknowledged", "publication"])
 def test_ordinary_apply_restores_rejected_candidate(tmp_path, monkeypatch, capsys, failure):
     """Restore persistent bytes and links, retaining evidence when rollback fails.
 
@@ -678,7 +678,7 @@ def test_ordinary_apply_restores_rejected_candidate(tmp_path, monkeypatch, capsy
     helper = load_helper_module()
     config = tmp_path / "candidate.conf"
     config.write_text(network_config_text(include_vlan=False), encoding="utf-8")
-    if failure in {"interrupted", "awaiting", "acknowledged"}:
+    if failure in {"interrupted", "awaiting", "acknowledged", "publication"}:
         config.write_text("# atlaso-network-task: test-task\n" + config.read_text(encoding="utf-8"), encoding="utf-8")
     runtime = tmp_path / "networkd"
     runtime.mkdir()
@@ -767,7 +767,34 @@ def test_ordinary_apply_restores_rejected_candidate(tmp_path, monkeypatch, capsy
             raise OSError("backup cleanup unavailable")
 
         monkeypatch.setattr(helper.shutil, "rmtree", fail_cleanup)
-    if failure == "interrupted":
+    if failure == "publication":
+        original_replace = helper.Path.replace
+
+        def fail_after_rename(source, target):
+            """Expose the marker, then fail before the parent-directory sync.
+
+            Args:
+                source: Temporary marker file being atomically published.
+                target: Destination marker path.
+            """
+            result = original_replace(source, target)
+            if target == helper.NETWORK_TRANSACTION_DIR / "state.json":
+                raise OSError("marker parent sync unavailable")
+            return result
+
+        monkeypatch.setattr(helper.Path, "replace", fail_after_rename)
+        assert helper._handle_network("apply", [str(config)]) == 2
+        pending = helper._network_transaction_state()
+        assert pending["phase"] == "applying"
+        for snapshot in pending["snapshots"]:
+            if snapshot["existed"]:
+                assert helper.Path(snapshot["backup"]).read_bytes() == original
+        assert previous.read_bytes() == original
+        assert not commands and not vlan_stages and not candidate_only.exists()
+        monkeypatch.setattr(helper.Path, "replace", original_replace)
+        assert helper._handle_network("recover", ["test-task"]) == 0
+        assert helper._network_transaction_state() == {}
+    elif failure == "interrupted":
         with pytest.raises(KeyboardInterrupt):
             helper._handle_network("apply", [str(config)])
         assert helper._network_transaction_state()["phase"] == "applying"
@@ -805,7 +832,7 @@ def test_ordinary_apply_restores_rejected_candidate(tmp_path, monkeypatch, capsy
         assert "eth0.20" not in live
         assert ["networkctl", "reconfigure", "eth0"] in commands
         assert ["ip", "link", "set", "dev", "eth0", "up"] in commands
-        if failure not in {"interrupted", "awaiting"}:
+        if failure not in {"interrupted", "awaiting", "publication"}:
             assert "previous network configuration restored" in capsys.readouterr().err
     assert not backups
 

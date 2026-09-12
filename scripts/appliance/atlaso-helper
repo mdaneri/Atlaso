@@ -9160,8 +9160,17 @@ def _network_apply_transaction(path: Path):
                  "candidate_vlan_interfaces": vlans, "candidate_link_states": link_states,
                  "backup_root": str(backup_root), "job_id": job_id, "phase": "applying"}
         _fsync_directory(backup_root)
-        _durable_management_handoff_state_write(state, NETWORK_TRANSACTION_DIR / "state.json")
         published = True
+        marker = NETWORK_TRANSACTION_DIR / "state.json"
+        try:
+            _durable_management_handoff_state_write(state, marker)
+        finally:
+            # Rename can publish the marker before its parent sync fails. Only
+            # proven absence permits deleting the backups that it references.
+            try:
+                marker.lstat()
+            except FileNotFoundError:
+                published = False
         try:
             yield
             for target in paths:
