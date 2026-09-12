@@ -3,10 +3,39 @@
 import importlib.machinery
 import importlib.util
 import json
+import os
 import subprocess
 from pathlib import Path
 
 import pytest
+
+
+@pytest.fixture
+def root_owned_views(monkeypatch, tmp_path):
+    """Model only fixture credential directories as owned by root on CI.
+
+    Args:
+        monkeypatch: Test-local metadata replacement.
+        tmp_path: Exact test-owned runtime directory.
+    """
+    original_lstat = Path.lstat
+
+    def root_owned_lstat(path, *args, **kwargs):
+        """Preserve real file identity and permissions while modelling ownership.
+
+        Args:
+            path: Path whose metadata is requested.
+            *args: Positional stat options.
+            **kwargs: Keyword stat options.
+        """
+        metadata = original_lstat(path, *args, **kwargs)
+        if path.parent == tmp_path and path.name.startswith("atlaso-tdnf-repositories-"):
+            fields = list(metadata)
+            fields[4] = 0  # st_uid: privileged helper creates these as root.
+            return os.stat_result(fields)
+        return metadata
+
+    monkeypatch.setattr(Path, "lstat", root_owned_lstat)
 
 
 @pytest.fixture
@@ -93,13 +122,14 @@ def test_install_has_no_check_deadline(helper, monkeypatch):
     assert not any("RuntimeMaxSec" in item for item in commands[0])
 
 
-def test_check_cleanup_preserves_other_owners(helper, monkeypatch, tmp_path):
+def test_check_cleanup_preserves_other_owners(helper, monkeypatch, tmp_path, root_owned_views):
     """Release only this stopped check's credential view, never foreign state.
 
     Args:
         helper: Isolated helper module.
         monkeypatch: Test-local process and path replacement.
         tmp_path: Private synthetic runtime root.
+        root_owned_views: Root ownership metadata for only these test directories.
     """
     owner = "atlaso-helper-action-" + "a" * 32
     own = tmp_path / f"atlaso-tdnf-repositories-100-200-{owner}-test"
@@ -117,7 +147,7 @@ def test_check_cleanup_preserves_other_owners(helper, monkeypatch, tmp_path):
     assert foreign.exists()
 
 
-def test_unverified_check_retains_parent_child_and_blocks_queue(client, monkeypatch, helper, tmp_path):
+def test_unverified_check_retains_parent_child_and_blocks_queue(client, monkeypatch, helper, tmp_path, root_owned_views):
     """Do not run another child or queued job while the previous owner may live.
 
     Args:
@@ -125,6 +155,7 @@ def test_unverified_check_retains_parent_child_and_blocks_queue(client, monkeypa
         monkeypatch: Replacement of privileged work and status probes.
         helper: Isolated privileged helper module.
         tmp_path: Synthetic credential runtime root.
+        root_owned_views: Root ownership metadata for only these test directories.
     """
     from atlaso.app import ui, worker
     from atlaso.app.database import SessionLocal

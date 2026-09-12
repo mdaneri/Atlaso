@@ -9379,11 +9379,13 @@ def test_appliance_update_receives_writable_powershell_environment(monkeypatch, 
     monkeypatch.setattr(
         helper,
         "_run",
-        lambda command: (
+        lambda command, **kwargs: (
             commands.append(command)
             or subprocess.CompletedProcess(command, 0, "", "")
         ),
     )
+    monkeypatch.setattr(helper, "_quiesce_appliance_update_unit", lambda *args, **kwargs: {})
+    monkeypatch.setattr(helper, "_cleanup_stale_photon_repository_views", lambda **kwargs: None)
 
     assert helper._run_real_action_with_systemd(
         "appliance-update",
