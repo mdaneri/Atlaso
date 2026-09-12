@@ -10451,6 +10451,36 @@ def _port_forward_target_warnings(rows: list[dict]) -> dict[int, str]:
     return warnings
 
 
+def _port_forward_publication_present(entries: list, row: dict) -> bool:
+    """Require translation and both generated admission directions in one observation.
+
+    Args:
+        entries: Bounded nftables JSON snapshot.
+        row: Effective applied publication whose members must still exist.
+    """
+    family = "ip" if row["ip_family"] == 4 else "ip6"
+    rules = [item["rule"] for item in entries if isinstance(item, dict)
+             and isinstance(item.get("rule"), dict)]
+    owned = [rule for rule in rules if rule.get("comment") == f'Atlaso port forward {row["id"]}']
+    translation = any(rule.get("family") == family and rule.get("table") == "atlaso_nat"
+                      and rule.get("chain") == "prerouting"
+                      and any(isinstance(expr, dict) and "dnat" in expr for expr in rule.get("expr", []))
+                      for rule in owned)
+    directions = set()
+    for rule in owned:
+        if (rule.get("family"), rule.get("table"), rule.get("chain")) != ("inet", "atlaso", "forward"):
+            continue
+        expressions = rule.get("expr", [])
+        if not any(isinstance(expr, dict) and "accept" in expr for expr in expressions):
+            continue
+        for expr in expressions:
+            match = expr.get("match", {}) if isinstance(expr, dict) else {}
+            if match.get("left") == {"ct": {"key": "direction"}} and match.get("op") == "==":
+                if match.get("right") in ("original", "reply"):
+                    directions.add(match["right"])
+    return translation and directions == {"original", "reply"}
+
+
 def _port_forward_status() -> int:
     """Observe only the fixed applied rule set and owned counters without mutation."""
     if not NAT_RUNTIME_CONFIG_PATH.is_file():
@@ -10459,25 +10489,29 @@ def _port_forward_status() -> int:
     try:
         parsed = _parse_wan_config(NAT_RUNTIME_CONFIG_PATH)
         rows = _port_forward_records(parsed)
-        result = _run(["nft", "-j", "list", "table", "inet", "atlaso_port_forwards"], timeout=2)
+        result = _run(["nft", "-j", "list", "ruleset"], timeout=2)
         if result.returncode:
             print(json.dumps({"available": not rows, "rules": []}))
             return 0
         if len(result.stdout) > 2_000_000:
             raise ValueError("Port-forward runtime response exceeds the observation bound")
         entries = json.loads(result.stdout).get("nftables", [])
-        counters = {item["counter"]["name"]: item["counter"] for item in entries if isinstance(item, dict) and "counter" in item}
+        counters = {item["counter"]["name"]: item["counter"] for item in entries
+                    if isinstance(item, dict) and isinstance(item.get("counter"), dict)
+                    and item["counter"].get("family") == "inet"
+                    and item["counter"].get("table") == "atlaso_port_forwards"}
         observed = []
         warnings = _port_forward_target_warnings(rows)
         for row in rows:
             counter = counters.get(f'pf_{row["id"]}')
             valid = counter is not None and all(type(counter.get(key)) is int and counter[key] >= 0 for key in ("packets", "bytes"))
+            complete = valid and _port_forward_publication_present(entries, row)
             observed.append({"id": row["id"], "packets": counter["packets"] if valid else None,
                              "snapshot_hash": hashlib.sha256(json.dumps(row, sort_keys=True, separators=(",", ":")).encode()).hexdigest(),
                              "bytes": counter["bytes"] if valid else None,
-                             "state": "applied" if valid and row["id"] not in warnings else "degraded",
+                             "state": "applied" if complete and row["id"] not in warnings else "degraded",
                              "warning": warnings.get(row["id"], ""),
-                             "detail": "Applied translation; verify target reachability from a selected client." if valid else "Applied translation counter is unavailable; review runtime state and apply again."})
+                             "detail": "Applied translation; verify target reachability from a selected client." if complete else "Translation, Firewall admission, or counter is missing; review runtime state and apply again."})
         print(json.dumps({"available": True, "rules": observed}))
         return 0
     except (OSError, ValueError, KeyError, TypeError, subprocess.TimeoutExpired):

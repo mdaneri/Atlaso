@@ -5496,6 +5496,9 @@ def traffic_publishing_context(db: Session) -> dict:
     except ValueError:
         forward_errors.append("Resolve port-forward source validation before rendering the complete snapshot.")
         forward_preview = "\n# Port-forward configuration requires source validation.\n"
+    publishing_enabled = settings.nat_enabled or any(rule.enabled for rule in forwards)
+    validation_errors = [*(errors if settings.effective_nat_enabled else []),
+                         *(forward_errors if settings.routing_enabled else [])]
     return {
         "nat_rules": rules, "nat_rule_rows": [nat_rule_to_dict(rule) for rule in rules],
         "port_forwards": forwards,
@@ -5506,10 +5509,10 @@ def traffic_publishing_context(db: Session) -> dict:
         "wan_source_groups": groups, "traffic_publishing_settings": settings,
         "nat_config_path": NAT_CONFIG_PATH,
         "nat_config_preview": render_nat_config(rules, targets, groups, settings) + forward_preview,
-        "nat_validation_errors": [*(errors if settings.effective_nat_enabled else []),
-                                  *(forward_errors if settings.routing_enabled else [])],
+        "nat_validation_errors": validation_errors,
         "nat_rule_validation_errors": errors,
-        "nat_status": "suspended" if settings.suspended else "disabled" if not settings.nat_enabled else "needs attention" if errors else "valid",
+        "nat_status": ("disabled" if not publishing_enabled else "suspended" if not settings.routing_enabled
+                       else "needs attention" if validation_errors else "valid"),
     }
 
 

@@ -33,6 +33,57 @@ from atlaso.app.services.traffic_publishing import (
 from tests.test_appliance_helper import load_helper_module
 
 
+@pytest.mark.parametrize("family", [4, 6])
+@pytest.mark.parametrize("missing", [None, "dnat", "original", "reply"])
+def test_status_requires_translation_and_both_admissions(family, missing, monkeypatch, tmp_path, capsys):
+    """Surviving counters cannot conceal partially removed publication members.
+
+    Args:
+        family: Applied destination address family.
+        missing: Member removed independently after a successful apply.
+        monkeypatch: Replace host observations with a bounded runtime snapshot.
+        tmp_path: Isolated applied configuration path.
+        capsys: Capture the public status response.
+    """
+    helper = load_helper_module()
+    path = tmp_path / "nat.conf"
+    path.write_text("applied", encoding="utf-8")
+    row = {"id": 1, "ip_family": family}
+    monkeypatch.setattr(helper, "NAT_RUNTIME_CONFIG_PATH", path)
+    monkeypatch.setattr(helper, "_parse_wan_config", lambda path: {})
+    monkeypatch.setattr(helper, "_port_forward_records", lambda parsed: [row])
+    monkeypatch.setattr(helper, "_port_forward_target_warnings", lambda rows: {})
+    entries = [{"counter": {"family": "inet", "table": "atlaso_port_forwards",
+                            "name": "pf_1", "packets": 7, "bytes": 700}}]
+    if missing != "dnat":
+        entries.append({"rule": {"family": "ip" if family == 4 else "ip6", "table": "atlaso_nat",
+                                 "chain": "prerouting", "comment": "Atlaso port forward 1",
+                                 "expr": [{"dnat": {"addr": "198.51.100.10"}}]}})
+    for direction in ("original", "reply"):
+        if missing != direction:
+            entries.append({"rule": {"family": "inet", "table": "atlaso", "chain": "forward",
+                                     "comment": "Atlaso port forward 1", "expr": [
+                                         {"match": {"op": "==", "left": {"ct": {"key": "direction"}},
+                                                    "right": direction}}, {"accept": None}]}})
+
+    def observe(command, *, timeout):
+        """Allow exactly one read-only bounded nftables observation.
+
+        Args:
+            command: Fixed ruleset inspection command.
+            timeout: Maximum observation duration.
+        """
+        assert command == ["nft", "-j", "list", "ruleset"]
+        assert timeout == 2
+        return subprocess.CompletedProcess(command, 0, json.dumps({"nftables": entries}), "")
+
+    monkeypatch.setattr(helper, "_run", observe)
+    assert helper._port_forward_status() == 0
+    observed = json.loads(capsys.readouterr().out)["rules"][0]
+    assert observed["state"] == ("applied" if missing is None else "degraded")
+    assert observed["packets"] == 7
+
+
 @pytest.mark.parametrize(("preview", "expected"), [
     ("[nat_rules]\n", False),
     ("[port_forwards]\njson=[]\n", False),

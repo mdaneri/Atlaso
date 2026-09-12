@@ -151,7 +151,10 @@ Saving never invokes host enforcement; global Appliance Apply owns translation c
 
 Status distinguishes disabled, pending, suspended, applied, and degraded records. An edited target or source boundary
 does not inherit the previous mapping's counters. Packet and byte counts are nullable: unavailable observations are
-not reported as zero. These counters describe matched traffic, not proof that an application at the target is healthy.
+not reported as zero. Applied status requires the DNAT rule, both generated Firewall admission directions, and the
+owned counter to remain present in one runtime snapshot. Missing members report degraded even if counters survive.
+The page summary includes enabled port forwards independently of source NAT and reports their validation errors.
+These counters describe matched traffic, not proof that an application at the target is healthy.
 
 ### Source NAT compatibility
 

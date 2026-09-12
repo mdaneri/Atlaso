@@ -1,5 +1,6 @@
 """Test management-plane Port Forwarding forms and authorization boundaries."""
 
+import pytest
 from sqlalchemy import select
 
 from atlaso.app.database import SessionLocal
@@ -7,6 +8,33 @@ from atlaso.app.models import PhysicalInterface, PortForward, Role, User
 from atlaso.app.security import roles_to_json
 from tests.routers.ui.helpers import login
 from tests.services.test_port_forwarding import payload
+
+
+@pytest.mark.parametrize(("routing", "enabled", "invalid", "expected"), [
+    (True, True, False, "valid"), (True, True, True, "needs attention"),
+    (False, True, False, "suspended"), (True, False, False, "disabled"),
+])
+def test_forward_only_publishing_status(client, routing, enabled, invalid, expected):
+    """Report destination publication even when source NAT is disabled.
+
+    Args:
+        client: Isolated application database fixture.
+        routing: Global forwarding intent.
+        enabled: Destination translation intent.
+        invalid: Whether its listener conflicts with a reserved service.
+        expected: Combined Traffic Publishing summary.
+    """
+    from atlaso.app import ui
+
+    with SessionLocal() as db:
+        interface = db.scalar(select(PhysicalInterface).where(PhysicalInterface.name == "eth2"))
+        db.add(PortForward(**payload(ingress_interface="eth2", listener_address=interface.ip_cidr.split("/")[0],
+                                    enabled=enabled, external_port_start=22 if invalid else 12000,
+                                    external_port_end=24 if invalid else 12002)))
+        ui.set_setting_value(db, "routes_wan.routing_enabled", str(routing).lower())
+        ui.set_setting_value(db, "traffic_publishing.nat_enabled", "false")
+        db.commit()
+        assert ui.traffic_publishing_context(db)["nat_status"] == expected
 
 
 def test_service_only_apply_cannot_redirect_an_enabled_port_forward(client, monkeypatch):
