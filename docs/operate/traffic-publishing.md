@@ -80,6 +80,8 @@ boundary and listener in Traffic Publishing. Apply captures Firewall and NAT tog
 and publishes both atomically. It commits both application baselines before acknowledging the root-owned recovery
 record. Management changes include this pair in the protected management handoff and its wider rollback.
 Both ordinary Apply and management handoff preserve connections for unchanged mappings and retire only changed IDs.
+Live IPv4 wildcard sockets block only IPv4 mappings. IPv6 and unspecified wildcards remain reserved for either
+family when the socket observation cannot establish IPv6-only ownership.
 Handoff failures before paired publication skip connection retirement; later rollback retires only candidate changes.
 When reusing a service endpoint, select its shutdown or listener change in the same Apply. Selected listener services
 run before forwarding publication so the live socket check observes the released endpoint.

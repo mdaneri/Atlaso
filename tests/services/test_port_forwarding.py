@@ -704,6 +704,8 @@ def test_status_cli_has_no_mutation_or_recovery_side_effects(tmp_path, monkeypat
     ("broadcast_target", "broadcast"), ("tentative", "live appliance addresses"),
     ("wildcard_socket", "live appliance service"), ("exact_socket", "live appliance service"),
     ("loopback_socket", ""), ("unselected_socket", ""),
+    ("ipv6_ipv4_socket", ""), ("ipv6_wildcard_socket", "live appliance service"),
+    ("dualstack_socket", "live appliance service"), ("ambiguous_socket", "live appliance service"),
 ])
 def test_helper_rechecks_actual_addresses_and_owned_sockets(monkeypatch, change, error):
     """Desired validation cannot bypass changed kernel addresses or local listeners.
@@ -730,8 +732,13 @@ def test_helper_rechecks_actual_addresses_and_owned_sockets(monkeypatch, change,
     elif change == "tentative":
         addresses[1]["addr_info"][0]["tentative"] = True
     elif change.endswith("socket"):
+        if change.startswith("ipv6_"):
+            row.update(ip_family=6, listener_address="2001:db8:2::1", target_address="2001:db8:3::2")
+            addresses[1]["addr_info"] = [{"local": "2001:db8:2::1", "prefixlen": 64}]
         address = {"wildcard_socket": "0.0.0.0", "exact_socket": "192.0.2.1",
-                   "loopback_socket": "127.0.0.1", "unselected_socket": "10.1.1.1"}[change]
+                   "loopback_socket": "127.0.0.1", "unselected_socket": "10.1.1.1",
+                   "ipv6_ipv4_socket": "0.0.0.0", "ipv6_wildcard_socket": "[::]",
+                   "dualstack_socket": "[::]", "ambiguous_socket": "*"}[change]
         sockets = f"tcp LISTEN 0 128 {address}:12001 0.0.0.0:*\n"
 
     def run(command):

@@ -10411,7 +10411,11 @@ def _port_forward_observed_interfaces(parsed: dict[str, list[dict[str, str]]], r
         for row in rows:
             if (fields[0] == row["protocol"] and row["external_port_start"] <= int(port) <= row["external_port_end"]
                     and (not device or device == row["ingress_interface"])
-                    and address in ("*", "0.0.0.0", "::", row["listener_address"])):
+                    # An IPv4 wildcard cannot own an IPv6 endpoint. IPv6 and
+                    # unspecified wildcards remain conservative because this
+                    # socket inventory does not establish IPV6_V6ONLY.
+                    and (address in ("*", "::", row["listener_address"])
+                         or address == "0.0.0.0" and row["ip_family"] == 4)):
                 raise ValueError("Port-forward external port collides with a live appliance service")
     return indexes
 
