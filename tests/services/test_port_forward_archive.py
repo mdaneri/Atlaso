@@ -18,13 +18,15 @@ from tests.services.test_port_forwarding import payload
 
 @pytest.mark.parametrize("invalid", [None, "group", "target", "listener"])
 @pytest.mark.parametrize("claimed_review", [False, True])
-def test_disabled_archive_rules_validate_available_relationships(client, invalid, claimed_review):
+@pytest.mark.parametrize("missing_listener", [False, True])
+def test_disabled_archive_rules_validate_available_relationships(client, invalid, claimed_review, missing_listener):
     """Disabled intent cannot bypass validation using enablement or an archived review flag.
 
     Args:
         client: Isolated initialized appliance.
         invalid: Relationship corrupted while the original listener remains available.
         claimed_review: Untrusted archive flag must not grant relaxed validation.
+        missing_listener: Retain an unavailable ingress without relaxing unrelated relationships.
     """
     with SessionLocal() as db:
         interface = db.scalar(select(PhysicalInterface).where(PhysicalInterface.name == "eth2"))
@@ -34,6 +36,8 @@ def test_disabled_archive_rules_validate_available_relationships(client, invalid
         archive = export_settings_archive(db, actor="test")
         row = archive["data"]["port_forwards"][0]
         row.update(enabled=False, restore_review_required=claimed_review)
+        if missing_listener:
+            row["ingress_interface"] = "missing_reviewed_adapter"
         if invalid == "group":
             row["source"] = "group:999999"
         elif invalid == "target":
@@ -49,7 +53,10 @@ def test_disabled_archive_rules_validate_available_relationships(client, invalid
             assert saved.target_address != address
         else:
             restore_settings_archive(db, archive)
-            assert db.scalar(select(PortForward)).enabled is False
+            saved = db.scalar(select(PortForward))
+            assert saved.enabled is False
+            if missing_listener:
+                assert saved.ingress_interface == "missing_reviewed_adapter" and saved.restore_review_required
 
 
 def test_archive_network_boot_claim_uses_restored_dhcp_selection(client):

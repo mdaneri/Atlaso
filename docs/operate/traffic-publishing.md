@@ -100,7 +100,8 @@ service. Status performs bounded read-only observations and does not probe targe
 Archives preserve complete mappings and source references. An unavailable restored interface relationship remains
 saved but disabled and marked for review. Disabled rules with an available listener still validate Source Groups,
 appliance-owned targets, and listener collisions before restore changes desired state. Only bindings identified as
-unavailable during import receive relaxed validation; an archived review flag does not grant that exception.
+unavailable during import may skip the ingress assignment check; an archived review flag does not grant that exception.
+Source references, target restrictions, and reserved-listener checks still apply when the ingress is unavailable.
 Factory reset removes desired mappings and retires their runtime state before
 replacing interface configuration. A pending publication recovery must be reconciled before reset can continue.
 

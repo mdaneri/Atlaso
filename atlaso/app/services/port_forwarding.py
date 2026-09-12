@@ -157,7 +157,7 @@ def validate_port_forward(rule: models.PortForward, peers: list[models.PortForwa
         rule: Complete candidate destination translation.
         peers: Saved rules inspected under the same write lock.
         context: Captured interfaces, Source Groups and owned listener claims.
-        require_binding: False only for retained disabled archive relationships.
+        require_binding: False relaxes only the unavailable ingress assignment on retained archive rules.
     """
     errors: list[str] = []
     try:
@@ -165,12 +165,9 @@ def validate_port_forward(rule: models.PortForward, peers: list[models.PortForwa
                              if field != "acknowledge_source_loss"}, acknowledge_source_loss=True)
         listener = unicast_address(rule.listener_address, rule.ip_family)
         target = unicast_address(rule.target_address, rule.ip_family)
-        if require_binding or rule.enabled:
-            source_networks(rule.source, rule.ip_family, context["groups"])
+        source_networks(rule.source, rule.ip_family, context["groups"])
     except ValueError:
         return ["Review the name, family, source boundary, unicast addresses, protocol and equal-length port mapping."]
-    if not require_binding and not rule.enabled:
-        return []
     eligible = {item["name"]: item for item in context["targets"]}
     ingress = eligible.get(rule.ingress_interface)
     if require_binding:
