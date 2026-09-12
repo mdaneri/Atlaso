@@ -422,6 +422,38 @@ class NatRule(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
 
+class PortForward(Base):
+    """Store reviewed destination translation independently of source NAT rules.
+
+    The ingress name and address are both required: a source CIDR never selects
+    a listener. Ports describe an inclusive deterministic offset mapping. Runtime
+    counters and connection tracking are deliberately absent from desired state.
+    """
+
+    __tablename__ = "port_forwards"
+    __table_args__ = (UniqueConstraint("name", name="uq_port_forward_name"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    name: Mapped[str] = mapped_column(String(120), unique=True, index=True)
+    description: Mapped[str] = mapped_column(Text, default="")
+    priority: Mapped[int] = mapped_column(Integer, default=100)
+    enabled: Mapped[bool] = mapped_column(Boolean, default=False)
+    ip_family: Mapped[int] = mapped_column(Integer, default=4)
+    ingress_interface: Mapped[str] = mapped_column(String(80))
+    listener_address: Mapped[str] = mapped_column(String(45))
+    protocol: Mapped[str] = mapped_column(String(3))
+    external_port_start: Mapped[int] = mapped_column(Integer)
+    external_port_end: Mapped[int] = mapped_column(Integer)
+    target_address: Mapped[str] = mapped_column(String(45))
+    target_port_start: Mapped[int] = mapped_column(Integer)
+    target_port_end: Mapped[int] = mapped_column(Integer)
+    source: Mapped[str] = mapped_column(String(4096), default="any")
+    reply_mode: Mapped[str] = mapped_column(String(16), default="preserve")
+    restore_review_required: Mapped[bool] = mapped_column(Boolean, default=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
 class ServiceState(Base):
     """Represent service state.
 

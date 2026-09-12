@@ -18,6 +18,7 @@ from atlaso.app.models import (
     FirewallRule,
     NatRule,
     PhysicalInterface,
+    PortForward,
     VlanInterface,
     utcnow,
 )
@@ -122,7 +123,10 @@ def build_router(dependencies: NetworkObjectsUiDependencies) -> NetworkObjectsUi
         """
         state = source_group_state_for_db(db)
         firewall_rules = db.execute(select(FirewallRule).order_by(FirewallRule.priority, FirewallRule.name)).scalars().all()
-        nat_rules = db.execute(select(NatRule).order_by(NatRule.priority, NatRule.name)).scalars().all()
+        nat_rules: list[NatRule | PortForward] = [
+            *db.scalars(select(NatRule).order_by(NatRule.priority, NatRule.name)),
+            *db.scalars(select(PortForward).order_by(PortForward.priority, PortForward.name)),
+        ]
         rows = source_group_rows(state["groups"], state["assignments"], firewall_rules, nat_rules)
         validation_errors = validate_firewall_source_groups(state["groups"])
         validation_errors.extend(
@@ -308,7 +312,10 @@ def build_router(dependencies: NetworkObjectsUiDependencies) -> NetworkObjectsUi
             if not existing:
                 raise HTTPException(status_code=404, detail="Source Group not found.")
             firewall_rules = db.execute(select(FirewallRule).order_by(FirewallRule.priority, FirewallRule.name)).scalars().all()
-            nat_rules = db.execute(select(NatRule).order_by(NatRule.priority, NatRule.name)).scalars().all()
+            nat_rules: list[NatRule | PortForward] = [
+                *db.scalars(select(NatRule).order_by(NatRule.priority, NatRule.name)),
+                *db.scalars(select(PortForward).order_by(PortForward.priority, PortForward.name)),
+            ]
             consumers = source_group_consumers(requested_group_id, groups, assignments, firewall_rules, nat_rules)
             if consumers:
                 return JSONResponse(
@@ -352,7 +359,10 @@ def build_router(dependencies: NetworkObjectsUiDependencies) -> NetworkObjectsUi
                 )
 
         errors = validate_firewall_source_groups(groups)
-        nat_rules = db.execute(select(NatRule).order_by(NatRule.priority, NatRule.name)).scalars().all()
+        nat_rules = [
+            *db.scalars(select(NatRule).order_by(NatRule.priority, NatRule.name)),
+            *db.scalars(select(PortForward).order_by(PortForward.priority, PortForward.name)),
+        ]
         errors.extend(
             error
             for nat_errors in source_group_nat_validation_errors(
@@ -477,7 +487,10 @@ def build_router(dependencies: NetworkObjectsUiDependencies) -> NetworkObjectsUi
                     )
                 )
             aggregate_errors = validate_firewall_source_groups(groups)
-            nat_rules = db.execute(select(NatRule).order_by(NatRule.priority, NatRule.name)).scalars().all()
+            nat_rules: list[NatRule | PortForward] = [
+                *db.scalars(select(NatRule).order_by(NatRule.priority, NatRule.name)),
+                *db.scalars(select(PortForward).order_by(PortForward.priority, PortForward.name)),
+            ]
             aggregate_errors.extend(
                 error
                 for nat_errors in source_group_nat_validation_errors(

@@ -192,7 +192,7 @@ are explicitly inventoried so route/template changes cannot silently escape the 
   `esxi-boot-authorization-dialog`, `kickstart-wizard-dialog`, `esx-storage-volume-modal`, and
   `esx-storage-share-modal`.
 - Routing and WAN: `routes-wan-route-dialog`, `routes-wan-routing-dialog`, `routes-wan-nat-dialog`, and
-  `routes-wan-policy-dialog`.
+  `routes-wan-policy-dialog`, and `port-forward-dialog` (Traffic Publishing).
 - VCF workflows: `vcf-fqdn-modal`, `vcf-ldap-modal`, `vcf-trust-modal`, `vcf-sddc-deploy-modal`, `vcf-target-depot-modal`,
   `vcf-vault-import-modal`, `vcf-depot-profile-dialog`, `vcf-depot-tool-package-dialog`,
   `vcf-depot-configuration-dialog`, `vcf-depot-tool-reset-modal`, `vcf-depot-schedule-modal`, and
@@ -220,6 +220,7 @@ Page templates covered by the route rows are `appliance_update.html`, `audit.htm
 
 Shared-only templates are `base.html`, `public_portal_base.html`, `partials/appliance_apply_status.html`,
 `partials/brand_mark.html`, `partials/config_preview_action.html`, `partials/resource_wizard.html`,
+`partials/port_forwarding.html`,
 `partials/task_grid.html`, `partials/task_modals.html`, `partials/terminal_panel.html`, `partials/vcf_ldap_modal.html`,
 `partials/vcf_sddc_deploy_modal.html`, `partials/vcf_sddc_upload_modal.html`, `partials/vcf_target_depot_modal.html`, `partials/vcf_trust_modal.html`,
 `partials/vcf_vault_credential_picker.html`, and `partials/vcf_vault_import_modal.html`.

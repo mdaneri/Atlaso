@@ -190,8 +190,9 @@ VLAN reaches that network directly. A supplied gateway must use the same address
 clients remain compatible with `POST` or `PATCH /api/v1/routes` requests
 that use canonical `0.0.0.0/0` or `::/0`; those payloads must also include the required same-family gateway.
 
-Source NAT rules now live on [Traffic Publishing](traffic-publishing.md). That guide covers the dual-stack wizard,
-explicit ingress, fixed SNAT, eligibility, upgrade, and boot recovery. Routing & WAN retains static routes, routing
+Source NAT and port-forward rules live on [Traffic Publishing](traffic-publishing.md). That guide covers dual-stack
+wizards, explicit ingress, fixed SNAT, exact destination mappings, eligibility, upgrade, and boot recovery. Routing & WAN
+retains static routes, routing
 permissions, and interface-level WAN policies.
 
 After global Appliance Apply, inspect `nft list table ip atlaso_nat`: every masquerade rule must contain `iifname` and
@@ -278,6 +279,8 @@ until the application commits the exact executed Network baseline. Startup resto
 uncommitted candidates or acknowledges an already committed baseline. Recovery refuses to race a
 live helper, and an unresolved marker blocks another Apply. Terminal backup cleanup warnings do
 not cause committed configuration to be rolled back on a later restart.
+Acknowledgement remains pending until backup removal and durable marker cleanup succeed;
+cleanup failure preserves the committed baseline and blocks another Apply until recovery completes.
 VMware OVF first boot prepares configuration and deployment credentials before networkd starts.
 A second customization stage reloads the management link and verifies native address activation
 before recording success or clearing the console review handshake. A conflict or unavailable

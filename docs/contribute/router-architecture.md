@@ -15,6 +15,11 @@ family validation, and helper snapshots. The `nat` Apply unit has its own baseli
 projects the deprecated NAT settings field through that owner; it never persists a second switch. The normalized
 OpenAPI and route inventory include the canonical Traffic Publishing browser and API routes plus legacy NAT bridges.
 
+The Routes/WAN registries also include `port_forwards` transport modules for the Traffic Publishing destination-NAT
+collection. `services/port_forwarding.py` owns complete desired-state validation and atomic CRUD/audit persistence;
+`port_forward_schemas.py` owns its explicit API contract. The global Apply facade captures and commits Firewall/NAT
+baselines together while the privileged helper independently validates and publishes the complete runtime pair.
+
 Atlaso is moving its monolithic UI and API v1 route implementations into product-domain modules in staged work under
 issue #317. The application-facing modules `atlaso/app/ui.py` and `atlaso/app/api/v1.py` remain stable compatibility and
 aggregation facades throughout that migration. Phase 1 established the registries and contract baselines. Phase 2

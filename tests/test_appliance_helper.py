@@ -1639,13 +1639,15 @@ def test_management_handoff_rollback_continues_after_missing_snapshot(monkeypatc
 
 
 @pytest.mark.parametrize("prior_firewall", [False, True])
-def test_management_handoff_rollback_preserves_nat_after_firewall(monkeypatch, tmp_path, prior_firewall):
+@pytest.mark.parametrize("publication", ["before", "unchanged", "changed", "legacy"])
+def test_management_handoff_rollback_preserves_nat_after_firewall(monkeypatch, tmp_path, prior_firewall, publication):
     """Keep both NAT families after rollback replaces or clears the firewall.
 
     Args:
         monkeypatch: Fixture isolating host services and simulated kernel state.
         tmp_path: Directory holding the prior canonical NAT snapshot.
         prior_firewall: Whether rollback restores a prior firewall program.
+        publication: Durable publication progress and effective mapping change.
     """
     helper = load_helper_module()
     runtime = tmp_path / "nat.conf"
@@ -1689,7 +1691,15 @@ def test_management_handoff_rollback_preserves_nat_after_firewall(monkeypatch, t
     monkeypatch.setattr(helper, "_run", lambda command: subprocess.CompletedProcess(command, 0))
     monkeypatch.setattr(helper, "_management_handoff_readiness", lambda *_args: {"stable_samples": 3})
 
-    helper._restore_management_handoff({"snapshots": []})
+    retired = []
+    monkeypatch.setattr(helper, "_retire_port_forward_connections", lambda ids=None: retired.append(ids))
+    state = {"snapshots": [], "publishing_included": True}
+    if publication != "legacy":
+        state.update(publishing_started=publication != "before",
+                     publishing_retire_rule_ids=[1] if publication == "changed" else [])
+    helper._restore_management_handoff(state)
+
+    assert retired == {"before": [], "unchanged": [[]], "changed": [[1]], "legacy": [None]}[publication]
 
     assert tables == {"ip atlaso_nat", "ip6 atlaso_nat"} | ({"firewall"} if prior_firewall else set())
 
@@ -2748,11 +2758,15 @@ def test_management_handoff_keeps_previous_https_identity(monkeypatch, tmp_path,
 
 
 @pytest.mark.parametrize("candidate_sync_error", [False, True], ids=["durable", "sync-failure"])
+@pytest.mark.parametrize("paired_publishing", [False, True], ids=["source-only", "port-forward-pair"])
+@pytest.mark.parametrize("mapping_change", ["unchanged", "target", "removed"])
 def test_management_handoff_candidate_durability_gates_ack(
     monkeypatch,
     tmp_path,
     capsys,
     candidate_sync_error,
+    paired_publishing,
+    mapping_change,
 ):
     """Acknowledge only a durable candidate and roll back a sync failure.
 
@@ -2761,6 +2775,8 @@ def test_management_handoff_candidate_durability_gates_ack(
         tmp_path: Temporary directory provided for staged firewall state.
         capsys: Pytest fixture used to inspect bounded helper output.
         candidate_sync_error: Whether to inject the final durability failure.
+        paired_publishing: Include captured Firewall/NAT in the wider handoff.
+        mapping_change: Effective forwarding difference in the candidate handoff.
     """
     helper = load_helper_module()
     state = {
@@ -2882,6 +2898,56 @@ def test_management_handoff_candidate_durability_gates_ack(
     candidate = tmp_path / "candidate-firewall.nft"
     candidate.write_text("table inet atlaso {\n  chain input {\n  }\n}\n", encoding="utf-8")
 
+    paired_calls = []
+    nat = tmp_path / "candidate-nat.conf"
+    nat.write_text("captured destination intent", encoding="utf-8")
+    if paired_publishing:
+        from contextlib import nullcontext
+
+        from atlaso.app.models import PortForward
+        from atlaso.app.services.port_forwarding import render_port_forward_records
+        from atlaso.app.services.traffic_publishing import (
+            TrafficPublishingSettings,
+            nat_targets,
+            render_nat_config,
+        )
+        from tests.services.test_port_forwarding import interfaces, payload
+
+        monkeypatch.setattr(helper, "NAT_RUNTIME_CONFIG_PATH", tmp_path / "runtime-nat.conf")
+        prefix = render_nat_config([], nat_targets(interfaces(), []), [], TrafficPublishingSettings(False, True))
+        first = PortForward(id=1, **payload())
+        second = PortForward(id=2, **payload(name="other", external_port_start=14000, external_port_end=14002))
+        helper.NAT_RUNTIME_CONFIG_PATH.write_text(prefix + render_port_forward_records([first, second], []))
+        if mapping_change == "target":
+            first.target_address = "198.51.100.11"
+        candidate_rows = [second] if mapping_change == "removed" else [first, second]
+        nat.write_text(prefix + render_port_forward_records(candidate_rows, []))
+        monkeypatch.setattr(helper, "_nat_transaction_lock", nullcontext)
+        monkeypatch.setattr(helper, "_publishing_program", lambda intent, firewall, **_kwargs: (firewall, "captured nat", True))
+        monkeypatch.setattr(helper, "_validate_wan_nat_config", lambda _program: subprocess.CompletedProcess([], 0, "", ""))
+
+        def install_pair(intent, firewall, program, *, retire_connections, retire_rule_ids):
+            """Record pair publication after Network/WAN and before durable ACK.
+
+            Args:
+                intent: Captured destination intent.
+                firewall: Final Firewall after management holdover retirement.
+                program: Validated translation program.
+                retire_connections: Required removal of old owned sessions.
+                retire_rule_ids: Exact changed mapping identities to retire.
+            """
+            assert retirement_operations[-1] == "wan"
+            assert not durability_calls
+            assert retire_connections is (mapping_change != "unchanged")
+            assert retire_rule_ids == ([] if mapping_change == "unchanged" else [1])
+            assert state["publishing_started"] is True
+            assert state["publishing_retire_rule_ids"] == retire_rule_ids
+            assert phases[-1] == "publishing"
+            paired_calls.append((intent, program))
+            applied_firewalls.append(firewall)
+
+        monkeypatch.setattr(helper, "_publishing_install", install_pair)
+
     result = helper._apply_management_handoff(
         {
             "network_config_path": "candidate-network",
@@ -2889,10 +2955,12 @@ def test_management_handoff_candidate_durability_gates_ack(
             "appliance_settings_config_path": "candidate-settings",
             "public_services_config_path": "candidate-public",
             "wan_config_path": "candidate-wan",
+            **({"nat_config_path": str(nat)} if paired_publishing else {}),
         }
     )
 
     assert durability_calls == [True]
+    assert paired_calls == ([(nat.read_text(), "captured nat")] if paired_publishing else [])
     if candidate_sync_error:
         assert result == 1
         assert "awaiting-application-commit" not in phases

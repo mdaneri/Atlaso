@@ -524,6 +524,63 @@ def test_apply_rejects_partial_native_evidence_before_install(tmp_path, monkeypa
         assert "native networkd evidence is unavailable" in capsys.readouterr().err
 
 
+@pytest.mark.parametrize("failure", ["backup", "marker"])
+def test_network_acknowledgement_retries_terminal_cleanup(tmp_path, monkeypatch, failure):
+    """Report incomplete disposal without rolling back an application-committed candidate.
+
+    Args:
+        tmp_path: Isolated root-owned transaction simulation.
+        monkeypatch: Inject backup or durable marker removal failure.
+        failure: Cleanup stage which must remain retryable.
+    """
+    from tests.test_appliance_helper import load_helper_module
+
+    helper = load_helper_module()
+    root = tmp_path / "transaction"
+    root.mkdir()
+    backup = root / "backup-test"
+    backup.mkdir()
+    (backup / "snapshot").write_text("old configuration", encoding="utf-8")
+    marker = root / "state.json"
+    monkeypatch.setattr(helper, "NETWORK_TRANSACTION_DIR", root)
+    monkeypatch.setattr(helper, "fcntl", None)
+    helper._durable_management_handoff_state_write({"phase": "awaiting-commit", "job_id": "job-test",
+                                                    "backup_root": str(backup), "snapshots": []}, marker)
+    original_remove = helper.shutil.rmtree
+    original_unlink = helper._durable_management_handoff_unlink
+
+    def failed_cleanup(_path):
+        """Interrupt the selected cleanup stage.
+
+        Args:
+            _path: Transaction-owned cleanup target.
+        """
+        raise OSError("injected cleanup failure")
+
+    def forbidden_restore(_state):
+        """Detect any attempt to roll back the committed candidate.
+
+        Args:
+            _state: Persisted committed state.
+        """
+        pytest.fail("committed candidate must never roll back for a cleanup failure")
+
+    monkeypatch.setattr(helper, "_restore_network_transaction", forbidden_restore)
+    if failure == "backup":
+        monkeypatch.setattr(helper.shutil, "rmtree", failed_cleanup)
+    else:
+        monkeypatch.setattr(helper, "_durable_management_handoff_unlink", failed_cleanup)
+    assert helper._handle_network("acknowledge", ["job-test"]) == 2
+    assert helper._network_transaction_state()["phase"] == "committed"
+    assert helper._handle_network("recover", ["job-test"]) == 2
+    monkeypatch.setattr(helper.shutil, "rmtree", original_remove)
+    monkeypatch.setattr(helper, "_durable_management_handoff_unlink", original_unlink)
+    assert helper._handle_network("recover", ["job-test"]) == 0
+    assert not marker.exists()
+    assert not backup.exists()
+    assert helper._handle_network("acknowledge", ["job-test"]) == 0
+
+
 def test_network_transaction_excludes_a_live_helper(tmp_path, monkeypatch):
     """Use real POSIX locking to refuse recovery until the owning helper exits.
 
