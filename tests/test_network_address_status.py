@@ -345,3 +345,59 @@ def test_dhcp_decline_remains_conflict_until_a_replacement_lease_activates():
     recovered = project_status(native, rejected, [desired])["rows"]["physical:1"]
     assert recovered["state"] == "assigned"
     assert recovered["last_conflict"] == event
+
+
+def test_resolved_dhcp_conflict_does_not_reappear_after_lease_loss():
+    """A later outage remains unavailable until a genuinely new decline is observed."""
+    event = {"name": "eth0", "address": "192.0.2.20", "detected_at": "2026-09-12T00:00:00+00:00", "mac": ""}
+    desired = resource()
+    desired.update(desired=[], dhcp4=True)
+    native = observation(conflicts=[event])
+    native["links"][0]["addresses"][0]["source"] = "DHCPv4"
+    recovered = project_status(native, {}, [desired])
+    assert recovered["rows"]["physical:1"]["conflict_resolved"] is True
+    native["links"][0]["addresses"] = []
+    lost = project_status(native, recovered, [desired])
+    assert lost["rows"]["physical:1"]["state"] == "unknown"
+    assert lost["rows"]["physical:1"]["last_conflict"] == event
+    native["conflicts"] = [dict(event, detected_at="2026-09-12T01:00:00+00:00")]
+    again = project_status(native, lost, [desired])["rows"]["physical:1"]
+    assert again["state"] == "conflict"
+    assert again["conflict_resolved"] is False
+
+
+def test_apply_rejects_partial_native_evidence_before_install(tmp_path, monkeypatch, capsys):
+    """Missing native evidence blocks mutation even when IPv4 checking was opted out.
+
+    Args:
+        tmp_path: Isolated staged intent.
+        monkeypatch: Supply failed native observation and trap any installer entry.
+        capsys: Capture the safe diagnostic.
+    """
+    import subprocess
+
+    from tests.test_appliance_helper import load_helper_module, network_config_text
+
+    helper = load_helper_module()
+    path = tmp_path / "network.conf"
+    monkeypatch.setattr(helper, "_validate_network_config_path", lambda _value: path)
+    monkeypatch.setattr(helper, "_run", lambda args, **_kwargs: subprocess.CompletedProcess(args, 0, "systemd 257", ""))
+    native = observation(complete=False)
+    monkeypatch.setattr(helper, "_network_address_observation", lambda: native)
+
+    def forbidden_install(_path):
+        """Detect unintended mutation.
+
+        Args:
+            _path: Candidate intent that must never reach installation.
+        """
+        raise AssertionError("installation must not run")
+
+    monkeypatch.setattr(helper, "_install_systemd_networkd_files", forbidden_install)
+    for enabled in (True, False):
+        config = network_config_text(include_vlan=False)
+        if not enabled:
+            config = config.replace("  role=", "  check_duplicate_ip_addresses=false\n  role=")
+        path.write_text(config, encoding="utf-8")
+        assert helper._handle_network("apply", [str(path)]) == 2
+        assert "native networkd evidence is unavailable" in capsys.readouterr().err

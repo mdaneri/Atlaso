@@ -256,7 +256,9 @@ The **Address status** column refreshes while the page is visible. The VLAN wiza
 selected row's evidence. **Checking**, **IP conflict**, **Addresses active**, and **Unable to check**
 distinguish tentative addresses, confirmed rejection, observed activation, and missing/stale evidence.
 A declined DHCPv4 offer stays a confirmed conflict until a replacement DHCP lease becomes active;
-a retained static address does not count as that replacement.
+a retained static address does not count as that replacement. Once resolved, the historical decline
+does not become a current conflict again merely because a lease later disappears. Missing native
+networkd evidence blocks Apply before configuration installation, including with IPv4 checking disabled.
 The retained failure names the attempted address, link, and detection time; a conflicting MAC appears
 only when the native evidence supplies one. Native networkd rejection messages do not normally include
 that MAC, so Atlaso does not infer it from stale neighbor entries.

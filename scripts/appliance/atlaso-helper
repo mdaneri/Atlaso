@@ -8716,6 +8716,7 @@ def _network_address_observation() -> dict:
                 "mac": mac if re.fullmatch(r"(?:[0-9a-f]{2}:){5}[0-9a-f]{2}", mac) else "",
                 "ethernet": row.get("link_type") == "ether", "configured": native_link.get("AdministrativeState") == "configured",
                 "configuring": native_link.get("AdministrativeState") == "configuring",
+                "native_observed": bool(native_link.get("AdministrativeState")),
                 "up": "UP" in row.get("flags", []),
                 "carrier": "LOWER_UP" in row.get("flags", []), "addresses": records,
             })
@@ -8769,14 +8770,23 @@ def _network_detection_preflight(path: Path) -> None:
                if row.get("check_duplicate_ip_addresses", "true") != "false"
                and row.get("admin_state", "up") != "down"
                and (row.get("ip_cidr") or row.get("ipv4_method") == "dhcp")]
-    if not checked:
+    active = [row for row in physical + vlans if row.get("admin_state", "up") != "down"
+              and (row.get("ip_cidr") or row.get("ipv6_cidr") or row.get("ipv4_method") == "dhcp"
+                   or row.get("ipv6_enabled") == "true")]
+    if not active and not vlans:
         return
     version = _run(["networkctl", "--version"], timeout=4)
     match = re.search(r"systemd (\d+)", version.stdout)
     if version.returncode or not match or int(match[1]) < 252:
         raise ValueError("Unable to check IPv4 addresses: systemd-networkd 252 or newer is required")
     observation = _network_address_observation()
+    if not observation.get("complete"):
+        raise ValueError("Unable to verify addresses: required native networkd evidence is unavailable")
     links = {row["name"]: row for row in observation["links"]}
+    for row in active:
+        name = row.get("parent", row["name"])
+        if not links.get(name, {}).get("native_observed"):
+            raise ValueError(f"Unable to verify addresses on {name}: native networkd evidence is unavailable")
     for row in vlans:
         if row["name"] in links and not _native_vlan_matches(row, links):
             raise ValueError(f"Unable to check VLAN {row['name']}: native tag or parent identity differs")

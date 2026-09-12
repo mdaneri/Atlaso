@@ -66,9 +66,11 @@ def project_status(
         events.extend({"name": resource["name"], "address": item["address"], "detected_at": now, "mac": ""}
                       for item in records if item["state"] == "conflict")
         last_conflict = prior.get("last_conflict")
+        conflict_resolved = bool(prior.get("conflict_resolved"))
         for event in events:
             if not last_conflict or event["detected_at"] > last_conflict["detected_at"]:
                 last_conflict = event
+                conflict_resolved = False
         state = "unknown"
         detail = "Unable to check: native evidence is unavailable."
         if link and observation.get("complete"):
@@ -86,8 +88,12 @@ def project_status(
             address = last_conflict["address"]
             replacement_lease = bool(link.get("configured") and observation.get("complete") and any(
                 item["state"] == "assigned" and item.get("source") == "DHCPv4" for item in records))
-            declined_offer = resource.get("dhcp4") and ip_address(address).version == 4 and not replacement_lease
-            if (address in resource["desired"] and address not in assigned) or declined_offer:
+            if replacement_lease and resource.get("dhcp4") and ip_address(address).version == 4:
+                conflict_resolved = True
+            elif address in assigned and resource["checking"] and link.get("configured") and observation.get("complete"):
+                conflict_resolved = True
+            declined_offer = resource.get("dhcp4") and ip_address(address).version == 4
+            if not conflict_resolved and ((address in resource["desired"] and address not in assigned) or declined_offer):
                 state = "conflict"
                 detail = f"IP conflict: {address}. The failed attempted address is not active."
                 if assigned:
@@ -100,7 +106,7 @@ def project_status(
             detail += " IPv4 checking is disabled in desired state; Apply is required to activate edits. IPv6 DAD is retained."
         result["rows"][key] = {
             "identity": identity, "name": resource["name"], "state": state, "detail": detail,
-            "active_addresses": assigned, "last_conflict": last_conflict, "observed_at": now,
+            "active_addresses": assigned, "last_conflict": last_conflict, "conflict_resolved": conflict_resolved, "observed_at": now,
         }
     return result
 
