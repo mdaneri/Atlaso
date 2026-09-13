@@ -780,7 +780,8 @@ def test_tasks_page_lists_redacts_logs_and_cancels(client):
     assert "rowContextMenu" in tasks_table_js
     assert 'label: "Details"' in tasks_table_js
     assert 'label: "Log"' in tasks_table_js
-    assert 'label: "Cancel task"' in tasks_table_js
+    assert 'component.getData().can_cancel ? "Cancel task"' in tasks_table_js
+    assert "Cancellation unavailable:" in tasks_table_js
     assert 'filterMode: "remote"' in tasks_table_js
     assert "ajaxRequestFunc: requestTasksTableData" in tasks_table_js
     assert 'query.set("task_type", page.dataset.taskType);' in app_js
@@ -1033,7 +1034,7 @@ def test_pwa_manifest_service_worker_and_offline_shell(client):
     assert "ATLASO_CACHE" in service_worker.text
     assert "atlaso-management-pwa-v" in service_worker.text
     assert "ATLASO_CACHE_PREFIX" in service_worker.text
-    assert 'const ATLASO_CACHE = `${ATLASO_CACHE_PREFIX}327`;' in service_worker.text
+    assert 'const ATLASO_CACHE = `${ATLASO_CACHE_PREFIX}331`;' in service_worker.text
     assert 'fetch(asset, { cache: "reload" })' in service_worker.text
     assert "Required precache request failed" in service_worker.text
     assert "key.startsWith(ATLASO_CACHE_PREFIX)" in service_worker.text
@@ -1053,7 +1054,7 @@ def test_pwa_manifest_service_worker_and_offline_shell(client):
     assert "/static/ui-patterns.js?v=atlaso-ui-foundation-20260726-10" in service_worker.text
     assert "/static/appliance-apply-polling.js?v=issue-420-6" in service_worker.text
     assert "/static/ui-routes.js?v=issue-287-1" in service_worker.text
-    assert "/static/app.js?v=issue-722-3" in service_worker.text
+    assert "/static/app.js?v=task-cancellation-823-5" in service_worker.text
     assert "/static/terminal.js?v=issue-287-2" in service_worker.text
     assert "/static/pwa.js?v=issue-287-2" in service_worker.text
     assert "vcfdt-configuration-248-20260807-14" not in service_worker.text
@@ -1107,8 +1108,8 @@ def test_shared_ui_pattern_shell_and_wizard_contracts(client):
     base = (templates / "base.html").read_text(encoding="utf-8")
     public_base = (templates / "public_portal_base.html").read_text(encoding="utf-8")
     for shell, app_asset in (
-        (base, "/static/app.js?v=issue-722-3"),
-        (public_base, "/static/app.js?v=issues-515-519-12-513-328-1-595-6-605-1-606-607-1-660-4-662-663-3-682-1"),
+        (base, "/static/app.js?v=task-cancellation-823-5"),
+        (public_base, "/static/app.js?v=task-cancellation-823-5"),
         (base, "/static/appliance-apply-polling.js?v=issue-420-6"),
     ):
         assert shell.index("/static/vendor/tabulator/tabulator.min.js") < shell.index(
@@ -1776,7 +1777,7 @@ def test_monitor_page_renders_template_and_browser_assets(client):
     assert "swagger-link-icon" in page.text
     assert "/static/app.css?v=issues-803-807-799-1" in page.text
     assert "/static/ui-patterns.js?v=atlaso-ui-foundation-20260726-10" in page.text
-    assert "/static/app.js?v=issue-722-3" in page.text
+    assert "/static/app.js?v=task-cancellation-823-5" in page.text
     app_css = client.get("/static/app.css")
     assert app_css.status_code == 200
     assert ".split-workspace > .wide-panel" in app_css.text

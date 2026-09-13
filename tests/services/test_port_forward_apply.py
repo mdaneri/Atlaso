@@ -196,6 +196,14 @@ def test_global_submission_publishes_captured_port_forward_pair(client, monkeypa
 
         execute_pair = ui.execute_traffic_publishing_pair
         def execute_and_request(db, job, *args, **kwargs):
+            """Request cancellation immediately after paired publication completes.
+
+            Args:
+                db: Database session holding the paired Apply transaction.
+                job: Task whose completion boundary receives the cancellation request.
+                *args: Forwarded positional arguments.
+                **kwargs: Forwarded keyword arguments.
+            """
             results = execute_pair(db, job, *args, **kwargs)
             task_cancellation.request(db, job, Identity("operator", "admin", {"admin:all"}))
             return results

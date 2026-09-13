@@ -93,6 +93,11 @@ def test_request_reservation_prevents_claim_and_retries_cleanup(db, monkeypatch)
 
     job = make_job(db, "pxe-media-sync", source="upload")
     def fail(_job_id):
+        """Simulate the failure at the cancellation cleanup boundary.
+
+        Args:
+            _job_id: Task identity supplied to the failing cleanup hook.
+        """
         raise OSError("synthetic cleanup denial")
     monkeypatch.setattr(network_boot, "cleanup_network_boot_upload", fail)
     with pytest.raises(cancellation.CancellationError):
@@ -183,6 +188,13 @@ def test_claim_winning_at_request_update_rejects_stale_capability(db, monkeypatc
     original = db.execute
     claimed = False
     def execute(statement, *args, **kwargs):
+        """Inject the requested ownership race before forwarding the statement.
+
+        Args:
+            statement: SQL statement intercepted at the ownership race boundary.
+            *args: Forwarded positional arguments.
+            **kwargs: Forwarded keyword arguments.
+        """
         nonlocal claimed
         if not claimed and "cancel_requested_at=" in str(statement):
             claimed = True
@@ -247,6 +259,13 @@ def test_staged_download_cancellation_rolls_back_before_confirmation(db, monkeyp
     (backup_dir / "image").write_bytes(b"original")
     staged = network_boot.DeferredNetworkBootMediaSync(media=None, final_dir=final_dir, backup_dir=backup_dir)
     def download(*_args, cancelled, **_kwargs):
+        """Stage media and observe cancellation before publication.
+
+        Args:
+            cancelled: Callback reporting the persisted cancellation request.
+            *_args: Unused positional arguments from the replaced operation.
+            **_kwargs: Unused keyword arguments from the replaced operation.
+        """
         cancellation.request(db, job, ADMIN)
         assert job.status == "running"
         assert cancelled()
@@ -255,6 +274,11 @@ def test_staged_download_cancellation_rolls_back_before_confirmation(db, monkeyp
     monkeypatch.setattr(worker, "cleanup_network_boot_upload", lambda _job_id: None)
     if cleanup_fails:
         def fail_rollback(_self):
+            """Simulate failure while restoring staged media.
+
+            Args:
+                _self: Staged media transaction whose rollback fails.
+            """
             raise OSError("synthetic rollback failure")
         monkeypatch.setattr(network_boot.DeferredNetworkBootMediaSync, "rollback_filesystem", fail_rollback)
         with pytest.raises(OSError):
@@ -287,6 +311,12 @@ def test_download_request_is_rechecked_before_connection_retry(monkeypatch, tmp_
     requested, attempts = [], []
     class Opener:
         def open(self, *_args, **_kwargs):
+            """Raise a connection failure after requesting cancellation.
+
+            Args:
+                *_args: Unused positional arguments from the replaced operation.
+                **_kwargs: Unused keyword arguments from the replaced operation.
+            """
             attempts.append(True)
             requested.append(True)
             raise urllib.error.URLError("synthetic connection failure")
@@ -321,6 +351,12 @@ def test_media_error_racing_cancellation_releases_clean_ownership(db, monkeypatc
     staged = network_boot.DeferredNetworkBootMediaSync(media=None, final_dir=final_dir, backup_dir=backup_dir)
     cleaned = []
     def fail(*_args, **_kwargs):
+        """Simulate the failure at the cancellation cleanup boundary.
+
+        Args:
+            *_args: Unused positional arguments from the replaced operation.
+            **_kwargs: Unused keyword arguments from the replaced operation.
+        """
         cancellation.request(db, job, ADMIN)
         raise ValueError("synthetic media validation failure")
     monkeypatch.setattr(network_boot, "sync_network_boot_media", (lambda *_args, **_kwargs: staged) if after_staging else fail)
@@ -425,6 +461,11 @@ def test_pending_apply_cancellation_releases_lock_without_execution(db, monkeypa
     db.add(JobStep(id=job.id + ":unit", job_id=job.id, component_key="test", label="Test", position=0, status="pending"))
     db.commit()
     def unexpected_units(_db):
+        """Reject execution preparation after queued cancellation.
+
+        Args:
+            _db: Unused preparation session; reaching this hook is a failure.
+        """
         pytest.fail("A cancelled queued apply reached execution preparation")
     monkeypatch.setattr(ui, "appliance_apply_units", unexpected_units)
     @contextmanager
@@ -433,6 +474,13 @@ def test_pending_apply_cancellation_releases_lock_without_execution(db, monkeypa
             original = execution_db.execute
             raced = False
             def execute(statement, *args, **kwargs):
+                """Inject the requested ownership race before forwarding the statement.
+
+                Args:
+                    statement: SQL statement intercepted at the ownership race boundary.
+                    *args: Forwarded positional arguments.
+                    **kwargs: Forwarded keyword arguments.
+                """
                 nonlocal raced
                 if boundary == "claim_race" and not raced and str(statement).startswith("UPDATE jobs SET"):
                     raced = True
