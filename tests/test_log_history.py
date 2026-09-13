@@ -2289,3 +2289,105 @@ def test_file_cursor_revalidates_state_after_interior_prefix_rewrite(tmp_path):
     assert not page.get("pending")
     assert "synthetic-body" not in page["text"]
     assert "[redacted private key]" in page["text"]
+
+
+@pytest.mark.parametrize("source", ["nginx", "dnsmasq-dhcp"])
+@pytest.mark.parametrize("backward", [False, True])
+def test_expired_journal_cursor_reopens_retained_history(monkeypatch, capsys, source, backward):
+    """A seek failure resets stale cursor boundaries within the original deadline.
+
+    Args:
+        monkeypatch: Supply actual process-shaped journal responses.
+        capsys: Capture helper responses for the source adapter.
+        source: Classified or unclassified allowlisted journal source.
+        backward: Expire an inclusive Previous cursor instead of a forward cursor.
+    """
+    import io
+    from types import SimpleNamespace
+    from unittest.mock import MagicMock
+
+    from tests.test_appliance_helper import load_helper_module
+
+    helper = load_helper_module()
+    commands, deadlines = [], []
+    original_reader = helper._journal_history_entries
+    entry = {"__CURSOR": "retained", "__REALTIME_TIMESTAMP": "1000000", "SYSLOG_IDENTIFIER": "dnsmasq-dhcp",
+             "MESSAGE": "visible retained output"}
+
+    def launch(command, **options):
+        """Return the seek failure or the remaining journal record.
+
+        Args:
+            command: Journal cursor and direction invocation.
+            **options: Process options including the stable diagnostic locale.
+        """
+        commands.append(command)
+        assert options["env"]["LC_ALL"] == "C"
+        expired = any(arg.endswith("=expired") for arg in command)
+        process = MagicMock()
+        process.__enter__.return_value = process
+        process.wait.return_value = process.poll.return_value = int(expired)
+        process.stdout = io.BytesIO(b"" if expired else (json.dumps(entry) + "\n").encode())
+        process.stderr = io.BytesIO(b"Failed to seek to cursor: Cannot assign requested address\n" if expired else b"")
+        return process
+
+    def reader(command, **options):
+        """Record the shared request deadline while preserving the real reader.
+
+        Args:
+            command: Allowlisted helper invocation.
+            **options: Reader bounds and classification state.
+        """
+        deadlines.append(options["deadline"])
+        return original_reader(command, **options)
+
+    def adapter(_self, selected_source, position):
+        """Route signed source requests through the real helper.
+
+        Args:
+            _self: Adapter instance.
+            selected_source: Allowlisted source identity.
+            position: Decoded history position.
+        """
+        assert helper._read_log_history([selected_source, json.dumps(position)]) == 0
+        return SimpleNamespace(returncode=0, stdout=capsys.readouterr().out)
+
+    monkeypatch.setattr(helper.subprocess, "Popen", launch)
+    monkeypatch.setattr(helper, "_journal_history_entries", reader)
+    monkeypatch.setattr(log_viewer.SystemAdapter, "read_log_history", adapter)
+    position = {"journal_start_cursor": "expired", "before": True, "journal_text_offset": 9} if backward else {"journal_cursor": "expired"}
+    cursor = log_viewer.encode_cursor(source, **position, private_key=True, journal_end_cursor="old-end", journal_end_offset=10)
+    page = log_viewer.source_page(source, cursor=cursor)
+    assert page["reset"] and "oldest available entries" in page["notice"]
+    assert "visible retained output" in page["text"]
+    assert not page["previous_cursor"]
+    assert len(commands) == 2 and deadlines[0] == deadlines[1]
+    assert not any(arg.startswith(("--cursor=", "--after-cursor=")) or arg == "--reverse" for arg in commands[1])
+    assert "--lines=+5001" in commands[1] if source == "dnsmasq-dhcp" else "--lines=+501" in commands[1]
+    assert "expired" not in json.dumps(log_viewer.decode_cursor(page["cursor"], source))
+    again = log_viewer.source_page(source, cursor=page["cursor"])
+    assert not again["reset"]
+    assert again["text"] == page["text"]
+
+
+def test_journal_permission_failure_does_not_reset_cursor(monkeypatch):
+    """Other journal failures remain errors rather than silently discarding history.
+
+    Args:
+        monkeypatch: Supply an unsuccessful process with a permission diagnostic.
+    """
+    import io
+    from unittest.mock import MagicMock
+
+    from tests.test_appliance_helper import load_helper_module
+
+    helper = load_helper_module()
+    process = MagicMock()
+    process.__enter__.return_value = process
+    process.wait.return_value = process.poll.return_value = 1
+    process.stdout = io.BytesIO()
+    process.stderr = io.BytesIO(b"Permission denied\n")
+    monkeypatch.setattr(helper.subprocess, "Popen", lambda *args, **kwargs: process)
+    with pytest.raises(ValueError, match="unavailable") as error:
+        helper._journal_history_entries(["journalctl", "--after-cursor=valid"], deadline=helper.time.monotonic() + 10)
+    assert not isinstance(error.value, helper._JournalCursorExpired)

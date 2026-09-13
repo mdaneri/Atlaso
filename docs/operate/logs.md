@@ -40,6 +40,8 @@ the displayed snapshot or accepted page visible. When the initially selected sou
 its live viewer starts automatically.
 File, task, and journal pages include JSON escaping and response metadata in their byte limit.
 Omitted oversized journal lines retain private-key redaction state for the following lines and pages.
+If journal retention removes an open cursor, the viewer reopens the oldest available entries and reports the reset.
+Permission and other journal errors preserve the current page for a later retry.
 File pages retain complete-line boundaries; task and multiline journal cursors retain character-safe continuation.
 Numbered file rotations, including compressed archives, are
 included and keep nginx sources available even when their current file is absent. Journal history remains subject

@@ -334,7 +334,7 @@ def source_page(source: str, *, cursor: str = "", tail: bool = False, limit: int
     return {"source": source, "available": payload.get("available", True), "text": "\n".join(lines), "cursor": current,
             "next_cursor": encode_cursor(source, **next_position, private_key=private_key),
             "previous_cursor": encode_cursor(source, **previous_position) if previous_position else "",
-            "has_more": payload["has_more"], "notice": "Retained history changed; reopened the oldest available file." if payload.get("reset") else "",
+            "has_more": payload["has_more"], "notice": "Retained history changed; reopened the oldest available entries." if payload.get("reset") else "",
             "reset": payload.get("reset", False)}
 
 

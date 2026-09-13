@@ -2106,6 +2106,10 @@ def _fixed_log_available(path: Path) -> bool:
     return False
 
 
+class _JournalCursorExpired(ValueError):
+    """Identify a journal position removed by retention without hiding other errors."""
+
+
 def _journal_history_entries(command, *, deadline, category=None, initial_private_key=False):
     """Read complete bounded representations from one deadline-owned journal process.
 
@@ -2122,7 +2126,7 @@ def _journal_history_entries(command, *, deadline, category=None, initial_privat
     pending_state = []
     reverse = "--reverse" in command
     key_state = initial_private_key
-    with subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE) as process:
+    with subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE, env={**os.environ, "LC_ALL": "C"}) as process:
         timer = threading.Timer(max(.001, deadline - time.monotonic()), process.kill)
         timer.start()
         try:
@@ -2160,6 +2164,9 @@ def _journal_history_entries(command, *, deadline, category=None, initial_privat
                 code = process.wait(timeout=2)
                 diagnostic = process.stderr.read(8193)
                 no_match = code == 1 and not selected and not diagnostic and any(arg.startswith("--grep=") for arg in command)
+                if (code == 1 and not selected and diagnostic.startswith(b"Failed to seek to cursor") and
+                        any(arg.startswith(("--cursor=", "--after-cursor=")) for arg in command)):
+                    raise _JournalCursorExpired("Journal history position expired.")
                 if code != 0 and not no_match:
                     raise ValueError("journal history is unavailable")
         finally:
@@ -2316,7 +2323,17 @@ def _read_log_history(args: list[str]) -> int:
         if cursor:
             command.append(f"--cursor={cursor}" if position.get("journal_start_cursor") else f"--after-cursor={cursor}")
         deadline = time.monotonic() + 10
-        selected, more = _journal_history_entries(command, deadline=deadline, category=category, initial_private_key=position.get("private_key") is True)
+        reset = False
+        try:
+            selected, more = _journal_history_entries(command, deadline=deadline, category=category, initial_private_key=position.get("private_key") is True)
+        except _JournalCursorExpired:
+            # Reopen once within the original deadline, clearing all obsolete boundaries.
+            position, cursor, text_offset = {}, "", 0
+            backward = tail = False
+            reset = True
+            command = [arg for arg in command if not arg.startswith(("--cursor=", "--after-cursor=", "--lines=")) and arg != "--reverse"]
+            command.append("--lines=+5001" if category is not None else "--lines=+501")
+            selected, more = _journal_history_entries(command, deadline=deadline, category=category)
         if backward and selected and selected[0]["__CURSOR"] == cursor:
             if text_offset:
                 selected[0] = {**selected[0], "MESSAGE": selected[0]["MESSAGE"][:text_offset]}
@@ -2409,7 +2426,7 @@ def _read_log_history(args: list[str]) -> int:
         previous_position = {**current_position, "before": True} if has_previous and selected else None
         if page_end_cursor is not None:
             current_position.update(journal_end_cursor=page_end_cursor, journal_end_offset=page_end_offset)
-        print(json.dumps({"lines": lines, "journal_cursor": next_position.get("journal_cursor", cursor),
+        print(json.dumps({"lines": lines, "reset": reset, "journal_cursor": next_position.get("journal_cursor", cursor),
                           "journal_position": next_position, "previous_position": previous_position, "has_more": more,
                           "line_private_keys": line_private_keys if category is not None else None,
                           "final_private_key": final_private_key if category is not None and not paused else None,
