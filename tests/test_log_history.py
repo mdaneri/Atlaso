@@ -1781,3 +1781,77 @@ def test_oversized_journal_preserves_long_fragmented_pem_marker():
     assert entry["__CURSOR"] == "cursor-one"
     assert entry["MESSAGE"].endswith("-----BEGIN PRIVATE KEY-----")
     assert "LABEL-" not in entry["MESSAGE"]
+
+
+@pytest.mark.parametrize("backward", [False, True])
+def test_compressed_page_preparation_resumes_without_gzip_seeks(tmp_path, monkeypatch, backward):
+    """Actual tail and Previous reads finish across bounded archive preparation passes.
+
+    Args:
+        tmp_path: Test-owned retained archive directory.
+        monkeypatch: Force many preparation passes and reject replay-based gzip seeks.
+        backward: Enter the archive from a newer file's Previous cursor.
+    """
+    import itertools
+
+    path = tmp_path / "live.log"
+    archive = tmp_path / "live.log.1.gz"
+    content = b"old retained entry\n" * 120000 + b"-----BEGIN PRIVATE KEY-----\n" + b"synthetic-body\n" * 600 + b"-----END PRIVATE KEY-----\nsafe after\n"
+    archive.write_bytes(gzip.compress(content[:1000000]) + b"\x00" * 17000 + gzip.compress(content[1000000:]))
+    cursor = ""
+    if backward:
+        path.write_bytes(b"new current entry\n")
+        info = path.stat()
+        cursor = log_viewer.encode_cursor("slow-gzip", generation=f"{info.st_dev}:{info.st_ino}", offset=0, before=True)
+    log_viewer._GZIP_WINDOW_CACHE.clear()
+    log_viewer._COMPRESSED_REDACTION_CACHE.clear()
+    ticks = itertools.count()
+    monkeypatch.setattr(log_viewer.time, "monotonic", lambda: next(ticks))
+    def reject_replay(*args, **kwargs):
+        """Reject the old seek-based archive path.
+
+        Args:
+            *args: Unused gzip constructor arguments.
+            **kwargs: Unused gzip constructor keyword arguments.
+        """
+        raise AssertionError("compressed page must use its prepared window")
+    monkeypatch.setattr(log_viewer.gzip, "GzipFile", reject_replay)
+    pending = 0
+    for _ in range(150):
+        page = log_viewer.file_page(path, source="slow-gzip", cursor=cursor, tail=not backward)
+        if page.get("pending"):
+            pending += 1
+            assert len(log_viewer._GZIP_WINDOW_CACHE) <= 8
+            assert all(len(value[1]) <= log_viewer._GZIP_WINDOW_BYTES and len(value[2]) <= 4096
+                       and len(value[5]) <= 16384 for value in log_viewer._GZIP_WINDOW_CACHE.values())
+            continue
+        break
+    else:
+        pytest.fail("compressed page never completed")
+    assert pending > 2
+    assert "synthetic-body" not in page["text"]
+    assert "safe after" in page["text"]
+    assert page["previous_cursor"]
+    refreshed = log_viewer.file_page(path, source="slow-gzip", cursor=page["cursor"])
+    assert not refreshed.get("pending")
+    assert refreshed["text"] == page["text"]
+
+
+def test_prepared_gzip_window_invalidates_replaced_archive(tmp_path):
+    """A changed archive cannot reuse cached bytes or skip its replacement prefix.
+
+    Args:
+        tmp_path: Test-owned archive directory.
+    """
+    path = tmp_path / "replace.log"
+    archive = tmp_path / "replace.log.1.gz"
+    archive.write_bytes(gzip.compress(b"old source entry\n" * 150000))
+    first = log_viewer.file_page(path, source="replace-gzip", tail=True)
+    archive.write_bytes(gzip.compress(b"replacement entry\n" * 180000))
+    page = log_viewer.file_page(path, source="replace-gzip", cursor=first["cursor"])
+    assert page["reset"] is True
+    assert log_viewer.decode_cursor(page["cursor"], "replace-gzip")["offset"] == 0
+    assert "replacement entry" in page["text"] and "old source" not in page["text"]
+    log_viewer._GZIP_WINDOW_CACHE.clear()
+    refreshed = log_viewer.file_page(path, source="replace-gzip", cursor=page["cursor"])
+    assert refreshed["text"] == page["text"]

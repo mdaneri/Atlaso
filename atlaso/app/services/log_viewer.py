@@ -546,6 +546,134 @@ def _history_anchor(handle: Any, offset: int, *, compressed: bool, deadline: flo
     return {"anchor_length": min(offset, 4096), "anchor": hashlib.sha256(window).hexdigest()}
 
 
+_GZIP_WINDOW_BYTES = PAGE_BYTES + LINE_BYTES + 8192
+_GZIP_WINDOW_CACHE: OrderedDict[tuple[Any, ...], tuple[int, bytes, bytes, Any, int, bytes, bool]] = OrderedDict()
+
+
+class _GzipHistoryWindow:
+    """Expose the prepared prefix and bounded page window at absolute offsets."""
+
+    def __init__(self, expanded: int, window: bytes, prefix: bytes) -> None:
+        """Bind immutable decompressed bytes for one page request.
+
+        Args:
+            expanded: Absolute end of the prepared window.
+            window: Bounded bytes ending at the prepared boundary.
+            prefix: First source bytes used for cursor authentication.
+        """
+        self.expanded = expanded
+        self.window = window
+        self.prefix = prefix
+        self.position = 0
+
+    def tell(self) -> int:
+        """Return the absolute uncompressed position."""
+        return self.position
+
+    def seek(self, offset: int, whence: int = os.SEEK_SET) -> int:
+        """Select an absolute position without replaying compressed bytes.
+
+        Args:
+            offset: Byte displacement from the selected origin.
+            whence: Start, current position, or prepared end.
+        """
+        self.position = offset + (self.expanded if whence == os.SEEK_END else self.position if whence == os.SEEK_CUR else 0)
+        if self.position < 0:
+            raise ValueError("Invalid retained history position.")
+        return self.position
+
+    def read(self, count: int) -> bytes:
+        """Read a bounded range from the prefix or prepared page window.
+
+        Args:
+            count: Maximum requested uncompressed byte count.
+        """
+        start = self.expanded - len(self.window)
+        if self.position >= self.expanded:
+            return b""
+        if self.position >= start:
+            data = self.window[self.position - start:self.position - start + count]
+        elif self.position + count <= len(self.prefix):
+            data = self.prefix[self.position:self.position + count]
+        else:
+            raise ValueError("Retained history range is outside its prepared window.")
+        self.position += len(data)
+        return data
+
+    def readline(self, count: int) -> bytes:
+        """Read one bounded physical entry from the prepared page.
+
+        Args:
+            count: Maximum physical-entry fragment size.
+        """
+        data = self.read(count)
+        boundary = data.find(b"\n")
+        if boundary >= 0:
+            self.position -= len(data) - boundary - 1
+            data = data[:boundary + 1]
+        return data
+
+
+def _prepare_gzip_window(raw: Any, path: Path, *, end: int | None, deadline: float) -> _GzipHistoryWindow:
+    """Resume decompression to an immutable archive boundary within a time budget.
+
+    Args:
+        raw: Verified open regular archive descriptor owned by this request.
+        path: Server-selected source path binding the cache identity.
+        end: Exclusive uncompressed target, or None for the archive end.
+        deadline: Shared request deadline, with time reserved for page rendering.
+    """
+    info = os.fstat(raw.fileno())
+    identity = (str(path), info.st_dev, info.st_ino, info.st_size, info.st_mtime_ns)
+    stop = min(deadline - 0.25, time.monotonic() + 2)
+    with _TAIL_REDACTION_LOCK:
+        candidates = [key for key in _GZIP_WINDOW_CACHE if key[:5] == identity and (end is None or key[5] <= end)]
+        key = max(candidates, key=lambda item: item[5]) if candidates else None
+        saved = _GZIP_WINDOW_CACHE.get(key) if key else None
+        if saved:
+            expanded, window, prefix, saved_decoder, raw_offset, pending, finished = saved
+            decoder = saved_decoder.copy()
+        else:
+            expanded, window, prefix, raw_offset, pending, finished = 0, b"", b"", 0, b"", False
+            decoder = zlib.decompressobj(31)
+    raw.seek(raw_offset)
+    while not finished and (end is None or expanded < end):
+        if not pending:
+            pending = raw.read(16384)
+            raw_offset += len(pending)
+        if not pending:
+            if not decoder.eof:
+                raise ValueError("Retained gzip history is incomplete.")
+            finished = True
+        else:
+            if decoder.eof:
+                pending = pending.lstrip(b"\x00")
+                if pending:
+                    decoder = zlib.decompressobj(31)
+            if pending:
+                try:
+                    chunk = decoder.decompress(pending, min(65536, end - expanded) if end is not None else 65536)
+                except zlib.error as exc:
+                    raise ValueError("Retained gzip history is invalid.") from exc
+                pending = decoder.unused_data if decoder.eof else decoder.unconsumed_tail
+                expanded += len(chunk)
+                window = (window + chunk)[-_GZIP_WINDOW_BYTES:]
+                prefix = (prefix + chunk[:max(0, 4096 - len(prefix))])[:4096]
+        if time.monotonic() > stop:
+            break
+    after = os.fstat(raw.fileno())
+    if (after.st_dev, after.st_ino, after.st_size, after.st_mtime_ns) != identity[1:]:
+        raise _TailScanPending("Retained archive changed during preparation; retrying.")
+    with _TAIL_REDACTION_LOCK:
+        key = (*identity, expanded)
+        _GZIP_WINDOW_CACHE[key] = (expanded, window, prefix, decoder.copy(), raw_offset, pending, finished)
+        _GZIP_WINDOW_CACHE.move_to_end(key)
+        while len(_GZIP_WINDOW_CACHE) > 8:
+            _GZIP_WINDOW_CACHE.popitem(last=False)
+    if not finished and (end is None or expanded < end):
+        raise _TailScanPending("Preparing archived history; the next request resumes this scan.")
+    return _GzipHistoryWindow(expanded, window, prefix)
+
 def file_page(path: Path, *, source: str, cursor: str = "", limit: int = PAGE_LINES,
               complete: bool = False, tail: bool = False) -> dict[str, Any]:
     """Read current and numbered retained rotations without a total-history cap.
@@ -596,11 +724,24 @@ def file_page(path: Path, *, source: str, cursor: str = "", limit: int = PAGE_LI
         if not stat.S_ISREG(metadata.st_mode):
             raise ValueError("Log source is not a regular retained file.")
         compressed = selected.suffix == ".gz"
-        with (gzip.GzipFile(fileobj=raw) if compressed else nullcontext(raw)) as handle:
+        offset = position.get("offset", 0)
+        if type(offset) is not int or offset < 0:
+            raise ValueError("Invalid log history position.")
+        prepared: Any
+        if compressed:
+            target = (None if before_end is None else before_end + 1) if ((tail and not cursor) or backward) else offset + PAGE_BYTES + LINE_BYTES + 1
+            try:
+                prepared = _prepare_gzip_window(raw, selected, end=target, deadline=deadline)
+            except _TailScanPending:
+                return {"source": source, "text": "", "available": True, "has_more": False,
+                        "cursor": cursor, "next_cursor": cursor, "pending": True,
+                        "notice": "Preparing retained history; this continues automatically."}
+        else:
+            prepared = raw
+        with nullcontext(prepared) as handle:
             generation = f"{metadata.st_dev}:{metadata.st_ino}"
-            offset = position.get("offset", 0)
             if (tail and not cursor) or backward:
-                offset, oversized = _tail_offset(handle, compressed=compressed, deadline=deadline, end=before_end, limit=max(1, min(PAGE_LINES, limit)))
+                offset, oversized = _tail_offset(handle, compressed=False, deadline=deadline, end=before_end, limit=max(1, min(PAGE_LINES, limit)))
                 try:
                     private_key, pem_state = _tail_marker_state(paths[:index + 1], offset, deadline=deadline)
                 except _TailScanPending:
@@ -618,21 +759,20 @@ def file_page(path: Path, *, source: str, cursor: str = "", limit: int = PAGE_LI
             anchor_length = position.get("anchor_length", 0)
             if type(anchor_length) is not int or not 0 <= anchor_length <= min(offset, 4096):
                 raise ValueError("Invalid log history anchor.")
-            anchor = _history_anchor(handle, offset, compressed=compressed, deadline=deadline) if anchor_length else {}
+            anchor = _history_anchor(handle, offset, compressed=False, deadline=deadline) if anchor_length else {}
             if ((not compressed and offset > metadata.st_size) or
                     (prefix_length and hashlib.sha256(prefix).hexdigest() != position.get("prefix")) or
                     (anchor_length and anchor.get("anchor") != position.get("anchor"))):
                 offset, position, reset = 0, {}, True
-            anchor = _history_anchor(handle, offset, compressed=compressed, deadline=deadline)
-            handle.seek(0)
-            remaining = offset if compressed else 0
-            if not compressed:
-                handle.seek(offset)
-            while remaining:
-                skipped = handle.read(min(65536, remaining))
-                if not skipped or time.monotonic() > deadline:
-                    raise ValueError("Retained history position is unavailable; reopen from the beginning.")
-                remaining -= len(skipped)
+                if compressed:
+                    try:
+                        handle = _prepare_gzip_window(raw, selected, end=PAGE_BYTES + LINE_BYTES + 1, deadline=deadline)
+                    except _TailScanPending:
+                        return {"source": source, "text": "", "available": True, "has_more": False,
+                                "cursor": cursor, "next_cursor": cursor, "pending": True,
+                                "notice": "Preparing retained history; this continues automatically."}
+            anchor = _history_anchor(handle, offset, compressed=False, deadline=deadline)
+            handle.seek(offset)
             private_key = position.get("private_key") is True
             current = encode_cursor(source, generation=generation, offset=offset, private_key=private_key,
                                     oversized=position.get("oversized") is True, pem_state=position.get("pem_state", ""),
@@ -681,7 +821,7 @@ def file_page(path: Path, *, source: str, cursor: str = "", limit: int = PAGE_LI
             next_position = {"generation": generation, "offset": next_offset, "oversized": oversized,
                              "pem_state": marker_prefix.decode("ascii"),
                              "prefix_length": len(prefix), "prefix": hashlib.sha256(prefix).hexdigest(),
-                             **_history_anchor(handle, next_offset, compressed=compressed, deadline=deadline)}
+                             **_history_anchor(handle, next_offset, compressed=False, deadline=deadline)}
     if not more and index + 1 < len(paths):
         following = paths[index + 1].lstat()
         next_position = {"generation": f"{following.st_dev}:{following.st_ino}", "offset": 0}
