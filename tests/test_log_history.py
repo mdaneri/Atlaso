@@ -477,6 +477,12 @@ def test_journal_tail_recovers_prior_key_state(monkeypatch, capsys):
     helper = load_helper_module()
     commands = []
     def launch(command, **_kwargs):
+        """Return a journal subprocess fixture for the requested history window.
+
+        Args:
+            command: Fixed journal command whose cursor and direction select fixture rows.
+            **_kwargs: Unused arguments from the replaced transport.
+        """
         commands.append(command)
         message, cursor = ("-----BEGIN PRIVATE KEY-----", "prior") if any(arg.startswith("--grep=") for arg in command) else ("hidden", "latest")
         process = MagicMock()
@@ -548,6 +554,12 @@ def test_expanded_journal_message_pages_without_loss_and_tail_skips_history(monk
     messages = [f"row-{index}" for index in range(1501)]
     entry = {"MESSAGE": "\n".join(messages), "__CURSOR": "multiline", "__REALTIME_TIMESTAMP": "1000000"}
     def entries(command, **_kwargs):
+        """Select retained fixture records for the journal command.
+
+        Args:
+            command: Fixed journal command whose cursor and direction select fixture rows.
+            **_kwargs: Unused arguments from the replaced transport.
+        """
         return ([], False) if any(arg.startswith("--grep=") for arg in command) else ([entry], False)
     monkeypatch.setattr(helper, "_journal_history_entries", entries)
     position, actual = {}, []
@@ -740,6 +752,12 @@ def test_logs_controls_preserve_availability_and_selected_page_limit(client, mon
     assert 'data-log-lines aria-label="Log lines per page"' in response.text
     selected = []
     def page(source, **kwargs):
+        """Record the selected source and page size.
+
+        Args:
+            source: Allowlisted source selected by the reader.
+            **kwargs: Page options inspected by this fixture.
+        """
         selected.append((source, kwargs["limit"]))
         return {"text": "", "available": True, "has_more": False}
     monkeypatch.setattr(log_viewer, "source_page", page)
@@ -767,6 +785,12 @@ def test_journal_selected_tail_size(monkeypatch, capsys, limit):
     helper = load_helper_module()
     entry = {"MESSAGE": "\n".join(f"row-{i}" for i in range(1501)), "__CURSOR": "selected", "__REALTIME_TIMESTAMP": "1000000"}
     def entries(command, **_kwargs):
+        """Select retained fixture records for the journal command.
+
+        Args:
+            command: Fixed journal command whose cursor and direction select fixture rows.
+            **_kwargs: Unused arguments from the replaced transport.
+        """
         return ([], False) if any(arg.startswith("--grep=") for arg in command) else ([entry], False)
     monkeypatch.setattr(helper, "_journal_history_entries", entries)
     assert helper._read_log_history(["nginx", json.dumps({"tail": True, "limit": limit})]) == 0
@@ -838,6 +862,12 @@ def test_sparse_dnsmasq_tail_classifies_before_limit_and_preserves_redaction(mon
                 "SYSLOG_IDENTIFIER": identifier, "MESSAGE": message} for index, (identifier, message) in enumerate(pairs)]
     commands = []
     def launch(command, **_kwargs):
+        """Return a journal subprocess fixture for the requested history window.
+
+        Args:
+            command: Fixed journal command whose cursor and direction select fixture rows.
+            **_kwargs: Unused arguments from the replaced transport.
+        """
         commands.append(command)
         rows = list(records)
         reverse = "--reverse" in command
@@ -885,6 +915,13 @@ def test_local_log_availability_recovers_without_reading_contents(tmp_path, monk
     monkeypatch.setattr(log_viewer, "get_settings", lambda: SimpleNamespace(app_log_path=path))
     calls = []
     def metadata(_self, source, position):
+        """Return source metadata without reading log contents.
+
+        Args:
+            _self: Unused adapter instance supplied by method binding.
+            source: Allowlisted source selected by the reader.
+            position: Continuation state passed to the fixture reader.
+        """
         calls.append((source, position))
         return SimpleNamespace(returncode=0, stdout='{"sources":[]}')
     monkeypatch.setattr(log_viewer.SystemAdapter, "read_log_history", metadata)
@@ -915,6 +952,12 @@ def test_helper_availability_reads_metadata_without_launching_journal(monkeypatc
     monkeypatch.setattr(helper, "NGINX_ERROR_LOG_PATH", error)
     monkeypatch.setattr(helper.shutil, "which", lambda _name: "/usr/bin/journalctl")
     def unexpected(*_args, **_kwargs):
+        """Fail if the metadata probe attempts to read source contents.
+
+        Args:
+            *_args: Unused arguments from the replaced transport.
+            **_kwargs: Unused arguments from the replaced transport.
+        """
         pytest.fail("Availability launched a journal process")
     monkeypatch.setattr(helper.subprocess, "Popen", unexpected)
     assert helper._read_log_history(["availability", "{}"]) == 0
@@ -939,6 +982,12 @@ def test_quiet_journal_previous_requires_retained_older_rows(monkeypatch, capsys
     helper = load_helper_module()
     entries = [{"MESSAGE": f"row-{i}", "__CURSOR": str(i), "__REALTIME_TIMESTAMP": "1000000"} for i in range(count)]
     def read(command, **_kwargs):
+        """Read the bounded fixture page or journal window.
+
+        Args:
+            command: Fixed journal command whose cursor and direction select fixture rows.
+            **_kwargs: Unused arguments from the replaced transport.
+        """
         if any(arg.startswith("--grep=") for arg in command):
             return [], False
         selected = list(entries)
@@ -984,6 +1033,11 @@ def test_audit_backward_short_page_keeps_boundary_on_refresh_and_next(client):
         db.commit()
     headers = {"X-Atlaso-Task-Log": "1"}
     def read(cursor):
+        """Read the bounded fixture page or journal window.
+
+        Args:
+            cursor: Signed position identifying the requested fixture page.
+        """
         return client.get("/ui/management/audit-log", params={"cursor": cursor}, headers=headers).json()
     page = client.get("/ui/management/audit-log", params={"tail": "1"}, headers=headers).json()
     groups = [page]
@@ -1017,6 +1071,12 @@ def test_helper_availability_includes_retained_nginx_rotations(tmp_path, monkeyp
     monkeypatch.setattr(helper, "NGINX_ACCESS_LOG_PATH", path)
     monkeypatch.setattr(helper, "NGINX_ERROR_LOG_PATH", tmp_path / "error.log")
     def reject_read(*_args, **_kwargs):
+        """Reject log-content access during a metadata-only probe.
+
+        Args:
+            *_args: Unused arguments from the replaced transport.
+            **_kwargs: Unused arguments from the replaced transport.
+        """
         raise AssertionError("availability must not read log contents")
     monkeypatch.setattr(Path, "read_bytes", reject_read)
     assert helper._read_log_history(["availability", "{}"]) == 0
@@ -1046,6 +1106,12 @@ def test_sparse_journal_windows_advance_and_preserve_filtered_key_state(monkeypa
     records[10003].update(SYSLOG_IDENTIFIER="dnsmasq-dhcp", MESSAGE="visible-dhcp")
     raw_counts = []
     def launch(command, **_kwargs):
+        """Return a journal subprocess fixture for the requested history window.
+
+        Args:
+            command: Fixed journal command whose cursor and direction select fixture rows.
+            **_kwargs: Unused arguments from the replaced transport.
+        """
         rows = list(records)
         reverse = "--reverse" in command
         for argument in command:
@@ -1064,6 +1130,11 @@ def test_sparse_journal_windows_advance_and_preserve_filtered_key_state(monkeypa
         process.wait.return_value = process.poll.return_value = 0
         class Stream(io.BytesIO):
             def readline(self, *args):
+                """Count raw reads before returning the next bounded record.
+
+                Args:
+                    *args: Read bounds forwarded to the in-memory stream.
+                """
                 raw_counts[-1] += 1
                 return super().readline(*args)
         raw_counts.append(0)
@@ -1072,6 +1143,13 @@ def test_sparse_journal_windows_advance_and_preserve_filtered_key_state(monkeypa
         return process
     monkeypatch.setattr(helper.subprocess, "Popen", launch)
     def adapter(_self, source, position):
+        """Route a source-page request through the helper fixture.
+
+        Args:
+            _self: Unused adapter instance supplied by method binding.
+            source: Allowlisted source selected by the reader.
+            position: Continuation state passed to the fixture reader.
+        """
         assert helper._read_log_history([source, json.dumps(position)]) == 0
         return SimpleNamespace(returncode=0, stdout=capsys.readouterr().out)
     monkeypatch.setattr(log_viewer.SystemAdapter, "read_log_history", adapter)
@@ -1129,6 +1207,12 @@ def test_file_pages_bound_json_escaping_without_losing_lines(tmp_path, privilege
     else:
         path.write_bytes(content)
     def read(position=None, tail=False):
+        """Read the bounded fixture page or journal window.
+
+        Args:
+            position: Continuation state passed to the fixture reader.
+            tail: Whether to select the newest retained page.
+        """
         return (helper._read_fixed_log_history(path, {**(position or {}), **({"tail": True} if tail else {})}) if privileged
                 else log_viewer.file_page(path, source="escaping", cursor=position or "", tail=tail))
     position, actual = None, []
@@ -1195,6 +1279,12 @@ def test_journal_transport_budgets_utf8_and_escaped_rows(monkeypatch, capsys, ro
     entry = {"MESSAGE": "\n".join([row] * 500), "__CURSOR": "escaped-journal", "__REALTIME_TIMESTAMP": "1000000"}
     assert len(json.dumps(entry, ensure_ascii=False).encode()) < 1024 * 1024
     def entries(command, **_kwargs):
+        """Select retained fixture records for the journal command.
+
+        Args:
+            command: Fixed journal command whose cursor and direction select fixture rows.
+            **_kwargs: Unused arguments from the replaced transport.
+        """
         return ([], False) if any(arg.startswith("--grep=") for arg in command) else ([entry], False)
     monkeypatch.setattr(helper, "_journal_history_entries", entries)
     position, actual = {}, []
@@ -1232,6 +1322,12 @@ def test_service_log_html_has_readable_fallback(client, monkeypatch, mode):
     monkeypatch.setattr(get_settings(), "dry_run_system_adapters", mode == "dry-run")
     calls = []
     def read(source, **options):
+        """Read the bounded fixture page or journal window.
+
+        Args:
+            source: Allowlisted source selected by the reader.
+            **options: Bounded page options supplied by the route.
+        """
         calls.append((source, options))
         if mode == "unavailable":
             raise OSError("internal transport detail")
