@@ -974,10 +974,12 @@ def test_photon_management_lease_retention(dhcp: str) -> None:
     if dhcp == "true":
         assert parsed["Network"]["DHCP"] == "ipv4"
         assert parsed["DHCPv4"].getboolean("SendRelease") is False
+        assert parsed["DHCPv4"].getboolean("SendDecline") is True
         assert "Address" not in parsed["Network"]
     else:
         assert "DHCPv4" not in parsed
-        assert parsed["Network"]["Address"] == "192.0.2.10/24"
+        assert parsed["Address"]["Address"] == "192.0.2.10/24"
+        assert parsed["Address"]["DuplicateAddressDetection"] == "ipv4"
         assert parsed["Network"]["Gateway"] == "192.0.2.1"
         assert parsed["Network"]["DNS"] == "192.0.2.53"
 

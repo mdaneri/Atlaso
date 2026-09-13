@@ -26,6 +26,7 @@ import subprocess
 import sys
 import tarfile
 import tempfile
+import threading
 import time
 import uuid
 from collections.abc import Callable
@@ -83,7 +84,7 @@ COMMANDS: dict[str, set[str]] = {
     "local-users": {"validate", "apply", "status", "authenticate"},
     "appliance-settings": {"validate", "preflight", "apply"},
     "web-terminal": {"status", "sign"},
-    "network": {"validate", "apply", "dhcp-dns"},
+    "network": {"validate", "apply", "dhcp-dns", "address-status", "prepare-observation", "recover", "acknowledge"},
     "management-front-door": {"recover"},
     "management-handoff": {"validate", "apply", "acknowledge", "recover"},
     "firewall": {"validate", "apply"},
@@ -176,6 +177,8 @@ UPDATE_CHECK_TIMEOUT_SECONDS = 300
 UPDATE_CHECK_STOP_SECONDS = 30
 UPDATE_RELEASE_NOTES_URL_MAX_LENGTH = 2048
 NO_PATH_ACTIONS = {
+    ("network", "prepare-observation"),
+    ("network", "address-status"),
     ("nat", "status"),
     ("wan", "reconcile-nat"),
     ("dnsmasq", "leases"),
@@ -220,6 +223,8 @@ NO_PATH_ACTIONS = {
     ("appliance-update", "quiesce-action"),
 }
 NON_PATH_ARGUMENT_ACTIONS = {
+    ("network", "recover"),
+    ("network", "acknowledge"),
     ("nat", "validate-publishing"),
     ("nat", "apply-publishing"),
     ("nat", "acknowledge-publishing"),
@@ -230,6 +235,7 @@ NON_PATH_ARGUMENT_ACTIONS = {
     ("automation", "run"),
     ("vcf-offline-depot", "apply-ceip"),
     ("network", "dhcp-dns"),
+    ("network", "address-status"),
     ("management-handoff", "acknowledge"),
     ("appliance-update", "status-publish"),
     ("appliance-update", "status-finish"),
@@ -303,6 +309,11 @@ ATLASO_DATA_DISK_UNIT_PATH = Path("/etc/systemd/system/atlaso-data-disks.service
 ATLASO_SERVICE_DATA_DISK_DROPIN_PATH = Path("/etc/systemd/system/atlaso.service.d/atlaso-data-disks.conf")
 ATLASO_BOOTSTRAP_HTTPS_UNIT_PATH = Path("/etc/systemd/system/atlaso-bootstrap-https.service")
 ATLASO_NGINX_DATA_DISK_DROPIN_PATH = Path("/etc/systemd/system/nginx.service.d/atlaso-data-disks.conf")
+NETWORK_OBSERVATION_LOGGING_PATH = Path("/etc/systemd/system/systemd-networkd.service.d/atlaso-address-observation.conf")
+NETWORK_OBSERVATION_LOGGING = (
+    "# Managed by Atlaso: Photon emits static IPv4 ACD conflict evidence at debug level.\n"
+    "[Service]\nEnvironment=SYSTEMD_LOG_LEVEL=debug\n"
+)
 ATLASO_DISK_IDENTITY_UDEV_PATH = Path("/etc/udev/rules.d/99-atlaso-disk-identity.rules")
 ATLASO_VMWARE_OVF_UNIT_PATH = Path("/etc/systemd/system/atlaso-vmware-ovf-customize.service")
 ATLASO_HYPERV_GENERATOR_PATH = Path("/etc/systemd/system-generators/systemd-ssh-generator")
@@ -426,6 +437,7 @@ NTP_DRIFT_PATH = NTP_STATE_DIR / "ntp.drift"
 NTP_NTS_COOKIE_PATH = NTP_STATE_DIR / "nts-keys"
 NTP_CERT_DIR = Path("/etc/atlaso/ntp/certs")
 NETWORK_APPLY_DIR = Path("/var/lib/atlaso/apply/network")
+NETWORK_TRANSACTION_DIR = ATLASO_STATE_DIR / "network-transaction"
 MANAGEMENT_HANDOFF_APPLY_DIR = Path("/var/lib/atlaso/apply/management-handoff")
 MANAGEMENT_HANDOFF_STATE_DIR = ATLASO_STATE_DIR / "management-handoff"
 MANAGEMENT_HANDOFF_STATE_PATH = MANAGEMENT_HANDOFF_STATE_DIR / "state.json"
@@ -8146,13 +8158,12 @@ def _systemd_networkd_files(path: Path) -> tuple[dict[str, str], list[str], list
         ]
         if ipv4_method == "dhcp":
             lines.append("DHCP=ipv4")
-        elif interface.get("ip_cidr"):
-            lines.append(f"Address={interface['ip_cidr']}")
+
         if not ipv6_enabled:
             lines.extend(["IPv6AcceptRA=no", "LinkLocalAddressing=no"])
         elif interface.get("ipv6_cidr"):
             lines.extend(["IPv6AcceptRA=no", "LinkLocalAddressing=ipv6"])
-            lines.append(f"Address={interface['ipv6_cidr']}")
+
         else:
             lines.extend(["IPv6AcceptRA=yes", "LinkLocalAddressing=ipv6"])
         if name == management_name:
@@ -8208,9 +8219,14 @@ def _systemd_networkd_files(path: Path) -> tuple[dict[str, str], list[str], list
                         f"Table={MANAGEMENT_ROUTE_TABLE_ID}",
                     ]
                 )
-        if name == management_name and ipv4_method == "dhcp":
+        if ipv4_method == "dhcp":
             # Preserve the image's lease-retention policy when Network Apply rewrites this file.
-            lines.extend(["", "[DHCPv4]", "SendRelease=no"])
+            lines.extend(["", "[DHCPv4]", "SendRelease=no",
+                          "SendDecline=" + ("no" if interface.get("check_duplicate_ip_addresses") == "false" else "yes")])
+        for key, family in (("ip_cidr", "ipv4"), ("ipv6_cidr", "ipv6")):
+            if interface.get(key) and (family != "ipv4" or ipv4_method != "dhcp") and (family != "ipv6" or ipv6_enabled):
+                detection = "none" if family == "ipv4" and interface.get("check_duplicate_ip_addresses") == "false" else family
+                lines.extend(["", "[Address]", f"Address={interface[key]}", f"DuplicateAddressDetection={detection}"])
         filename = "00-atlaso-mgmt.network" if name == management_name else _networkd_managed_filename(name, "network")
         files[filename] = "\n".join(lines).strip() + "\n"
         if name != management_name:
@@ -8239,10 +8255,10 @@ def _systemd_networkd_files(path: Path) -> tuple[dict[str, str], list[str], list
             "[Network]",
             "IPv6AcceptRA=no",
         ]
-        if vlan.get("ip_cidr"):
-            network_lines.append(f"Address={vlan['ip_cidr']}")
-        if vlan.get("ipv6_cidr"):
-            network_lines.append(f"Address={vlan['ipv6_cidr']}")
+        for key, family in (("ip_cidr", "ipv4"), ("ipv6_cidr", "ipv6")):
+            if vlan.get(key):
+                detection = "none" if family == "ipv4" and vlan.get("check_duplicate_ip_addresses") == "false" else family
+                network_lines.extend(["", "[Address]", f"Address={vlan[key]}", f"DuplicateAddressDetection={detection}"])
         if not vlan.get("ip_cidr") and not vlan.get("ipv6_cidr"):
             network_lines.append("LinkLocalAddressing=no")
         files[_networkd_managed_filename(name, "network")] = "\n".join(network_lines).strip() + "\n"
@@ -8278,6 +8294,9 @@ def _network_config_errors(path: Path) -> list[str]:
     """
     physical_interfaces, vlan_interfaces, removed_vlan_interfaces = _parse_network_config(path)
     errors: list[str] = []
+    for row in physical_interfaces + vlan_interfaces:
+        if row.get("check_duplicate_ip_addresses", "true") not in {"true", "false"}:
+            errors.append("check_duplicate_ip_addresses must be true or false.")
     physical_modes = {row.get("name", ""): row.get("mode", "") for row in physical_interfaces}
     physical_names = set(physical_modes)
     management_entries = [row for row in physical_interfaces if row.get("role") == "management"]
@@ -8504,6 +8523,7 @@ def _apply_vlan_interfaces(
     *,
     preserve_address_links: set[str] | None = None,
     defer_removed: bool = False,
+    removed_only: bool = False,
 ) -> int:
     """Perform apply VLAN interfaces.
 
@@ -8511,6 +8531,7 @@ def _apply_vlan_interfaces(
         path: Filesystem path read, validated, or updated by the operation.
         preserve_address_links: VLAN links whose current global addresses remain during a transition.
         defer_removed: Whether removed VLAN deletion waits for transaction commit.
+        removed_only: Retire removed VLANs without restarting the ready candidate links.
     """
     if shutil.which("ip") is None:
         print("ip command not found", file=sys.stderr)
@@ -8521,6 +8542,8 @@ def _apply_vlan_interfaces(
             print(error, file=sys.stderr)
         return 2
     _physical_interfaces, vlan_interfaces, removed_vlan_interfaces = _parse_network_config(path)
+    if removed_only:
+        vlan_interfaces = []
     preserve_address_links = preserve_address_links or set()
     removed_names: list[str] = []
     for vlan in removed_vlan_interfaces:
@@ -8562,24 +8585,12 @@ def _apply_vlan_interfaces(
         print(link_up.stderr, end="", file=sys.stderr)
         if link_up.returncode != 0:
             return link_up.returncode
-        if name not in preserve_address_links:
-            flush = _run(["ip", "address", "flush", "dev", name, "scope", "global"])
-            print(flush.stdout, end="")
-            print(flush.stderr, end="", file=sys.stderr)
-            if flush.returncode != 0:
-                return flush.returncode
-        if vlan.get("ip_cidr"):
-            address = _run(["ip", "address", "replace", vlan["ip_cidr"], "dev", name])
-            print(address.stdout, end="")
-            print(address.stderr, end="", file=sys.stderr)
-            if address.returncode != 0:
-                return address.returncode
-        if vlan.get("ipv6_cidr"):
-            address = _run(["ip", "address", "replace", vlan["ipv6_cidr"], "dev", name])
-            print(address.stdout, end="")
-            print(address.stderr, end="", file=sys.stderr)
-            if address.returncode != 0:
-                return address.returncode
+        # networkd owns address activation, including ARP ACD and IPv6 DAD.
+        # Direct address replacement would bypass its before-use conflict check.
+        reconfigure = _run(["networkctl", "reconfigure", name])
+        if reconfigure.returncode != 0:
+            print(f"Could not reconfigure VLAN {name}", file=sys.stderr)
+            return reconfigure.returncode
     print(
         json.dumps(
             {"network": "vlan apply complete", "removed_vlans": removed_names, "vlans": [vlan["name"] for vlan in vlan_interfaces]},
@@ -8658,13 +8669,612 @@ def _install_systemd_networkd_files(
     return 0, installed, reconfigure_links, admin_down_links
 
 
+def _network_observation_command(command: list[str], *, timeout: float = 4) -> subprocess.CompletedProcess[str]:
+    """Bound native observation output in memory and reap the child on timeout.
+
+    Args:
+        command: Fixed internal read-only command, never supplied by API callers.
+        timeout: Maximum command runtime in seconds.
+    """
+    buffer = bytearray()
+    overflow = threading.Event()
+    with subprocess.Popen(command, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
+                          stderr=subprocess.DEVNULL, env={"PATH": "/usr/sbin:/usr/bin:/sbin:/bin", "LC_ALL": "C"}) as process:
+        assert process.stdout is not None
+        stdout = process.stdout
+
+        def drain() -> None:
+            """Read no more than the observation cap without retaining raw stderr."""
+            while chunk := stdout.read(4096):
+                if len(buffer) + len(chunk) > 262144:
+                    overflow.set()
+                    return
+                buffer.extend(chunk)
+
+        reader = threading.Thread(target=drain, daemon=True)
+        reader.start()
+        deadline = time.monotonic() + timeout
+        try:
+            while process.poll() is None:
+                if overflow.is_set() or time.monotonic() >= deadline:
+                    raise ValueError("Native address observation exceeded its output or time limit")
+                time.sleep(0.05)
+            reader.join(timeout=1)
+            if overflow.is_set() or reader.is_alive():
+                raise ValueError("Native address observation was incomplete")
+        finally:
+            if process.poll() is None:
+                process.kill()
+            process.wait(timeout=2)
+            reader.join(timeout=2)
+    return subprocess.CompletedProcess(command, process.returncode, buffer.decode("utf-8", errors="strict"), "")
+
+
+def _read_retained_network_conflicts() -> list[dict]:
+    """Read bounded identity-bound failures captured before candidate link removal."""
+    try:
+        path = NETWORK_APPLY_DIR / "address-conflicts.json"
+        if path.is_symlink() or path.stat().st_size > 262144:
+            return []
+        value = json.loads(path.read_text(encoding="utf-8"))
+        if not isinstance(value, list):
+            return []
+        return [item for item in value[-256:] if isinstance(item, dict)
+                and all(isinstance(item.get(key), str) for key in ("name", "address", "detected_at", "identity"))]
+    except (OSError, ValueError):
+        return []
+
+
+def _retain_network_conflicts(path: Path, observation: dict, started_at: str) -> None:
+    """Bind confirmed native failures to actual link identity before rollback.
+
+    Args:
+        path: Validated staged candidate intent.
+        observation: Native evidence sampled while candidate links still exist.
+        started_at: Earliest event timestamp belonging to this activation.
+    """
+    physical, vlans, _removed = _parse_network_config(path)
+    links = {row["name"]: row for row in observation.get("links", [])}
+    captured = []
+    for row in physical + vlans:
+        link = links.get(row["name"], {})
+        if row in vlans:
+            if not _native_vlan_matches(row, links):
+                continue
+            identity = f"{links[row['parent']].get('mac', '')}:{row['vlan_id']}"
+        else:
+            identity = str(link.get("mac") or "")
+        if not re.fullmatch(r"(?:[0-9a-f]{2}:){5}[0-9a-f]{2}(?::[0-9]+)?", identity):
+            continue
+        events = [event for event in observation.get("conflicts", [])
+                  if event["name"] == row["name"] and event["detected_at"] >= started_at
+                  and not event.get("identity")]
+        events.extend({"address": item["address"], "detected_at": observation["observed_at"]}
+                      for item in link.get("addresses", []) if item["state"] == "conflict")
+        for event in events:
+            captured.append({"name": row["name"], "address": str(ip_address(event["address"])),
+                             "detected_at": event["detected_at"], "identity": identity, "mac": ""})
+    if not captured:
+        return
+    retained = {(item["identity"], item["name"], item["address"]): item
+                for item in _read_retained_network_conflicts()}
+    for event in captured:
+        key = (event["identity"], event["name"], event["address"])
+        if key not in retained or retained[key]["detected_at"] < event["detected_at"]:
+            retained[key] = event
+    # The root helper alone writes this sanitized record; a unique temporary file
+    # avoids following a pre-existing temporary-file link in the staging directory.
+    descriptor, temporary_name = tempfile.mkstemp(prefix=".address-conflicts-", dir=NETWORK_APPLY_DIR)
+    temporary = Path(temporary_name)
+    try:
+        with os.fdopen(descriptor, "w", encoding="utf-8") as stream:
+            json.dump(sorted(retained.values(), key=lambda item: item["detected_at"])[-256:], stream)
+            stream.flush()
+            os.fsync(stream.fileno())
+        temporary.replace(NETWORK_APPLY_DIR / "address-conflicts.json")
+        _fsync_directory(NETWORK_APPLY_DIR)
+    finally:
+        temporary.unlink(missing_ok=True)
+
+
+def _network_address_observation() -> dict:
+    """Return bounded, sanitized native address and conflict evidence without probing links."""
+    observed_at = datetime.now(timezone.utc).isoformat()
+    result = {"observed_at": observed_at, "links": [], "conflicts": _read_retained_network_conflicts(), "complete": False}
+    try:
+        addresses = _network_observation_command(["ip", "-j", "-d", "address", "show"], timeout=4)
+        journal = _network_observation_command([
+            "journalctl", "--boot", "--unit=systemd-networkd.service", "--since=-1day",
+            "--no-pager", "--lines=256", "--output=json",
+            "--grep=^[A-Za-z0-9_.-]+: (Dropping address .*address conflict was detected|IPv4ACD: Conflict on )",
+            "--output-fields=MESSAGE,INTERFACE,__REALTIME_TIMESTAMP,_BOOT_ID",
+        ], timeout=4)
+        # In systemd 252 and 257, JSON list calls the manager Describe method,
+        # bypassing the human summary table and returning detailed Interfaces.
+        networkd = _network_observation_command(["networkctl", "--json=short", "list"], timeout=4)
+        native_links = {}
+        if networkd.returncode == 0:
+            native = json.loads(networkd.stdout)
+            for item in native.get("Interfaces", [])[:256]:
+                if isinstance(item, dict):
+                    native_links[item.get("Name", "")] = item
+        if addresses.returncode or len(addresses.stdout) > 262144:
+            return result
+        rows = json.loads(addresses.stdout)
+        if not isinstance(rows, list) or len(rows) > 256:
+            return result
+        for row in rows:
+            if not isinstance(row, dict):
+                continue
+            name = str(row.get("ifname", ""))
+            if not _valid_network_interface_name(name):
+                continue
+            native_link = native_links.get(name, {})
+            sources = {}
+            for item in native_link.get("Addresses", [])[:32]:
+                try:
+                    native_address = str(ip_address(bytes(item["Address"])))
+                    prefix = item.get("PrefixLength")
+                    if isinstance(prefix, int):
+                        cidr = str(ip_interface(f"{native_address}/{prefix}"))
+                        sources[cidr] = item.get("ConfigSource", "")
+                except (ValueError, TypeError, KeyError):
+                    continue
+            records = []
+            for info in row.get("addr_info", [])[:32]:
+                if not isinstance(info, dict):
+                    continue
+                try:
+                    address = str(ip_address(info.get("local", "")))
+                except ValueError:
+                    continue
+                flags = set(info.get("flags", []))
+                flags.update(key for key in ("tentative", "dadfailed") if info.get(key))
+                try:
+                    cidr = str(ip_interface(f"{address}/{info['prefixlen']}"))
+                except (ValueError, KeyError):
+                    cidr = ""
+                records.append({"address": address, "cidr": cidr, "source": sources.get(cidr, ""), "state": "conflict" if "dadfailed" in flags else "checking" if "tentative" in flags else "assigned"})
+            mac = str(row.get("address", "")).lower()
+            link_info = row.get("linkinfo") or {}
+            vlan_data = link_info.get("info_data") or {}
+            result["links"].append({
+                "name": name, "ifindex": row.get("ifindex"),
+                "kind": "vlan" if link_info.get("info_kind") == "vlan" else "",
+                "vlan_id": vlan_data.get("id") if isinstance(vlan_data.get("id"), int) else None,
+                "parent_index": row.get("link_index") if isinstance(row.get("link_index"), int) else None,
+                "parent": row.get("link", "") if _valid_network_interface_name(str(row.get("link", ""))) else "",
+                "mac": mac if re.fullmatch(r"(?:[0-9a-f]{2}:){5}[0-9a-f]{2}", mac) else "",
+                "ethernet": row.get("link_type") == "ether", "configured": native_link.get("AdministrativeState") == "configured",
+                "configuring": native_link.get("AdministrativeState") == "configuring",
+                "native_observed": bool(native_link.get("AdministrativeState")),
+                "up": "UP" in row.get("flags", []),
+                "carrier": "LOWER_UP" in row.get("flags", []), "addresses": records,
+            })
+        # journalctl --grep returns 1 when no matching entry exists.
+        if journal.returncode not in (0, 1) or len(journal.stdout) > 262144:
+            return result
+        for line in journal.stdout.splitlines()[-256:]:
+            entry = json.loads(line)
+            if not isinstance(entry, dict):
+                continue
+            message = entry.get("MESSAGE", "")
+            if not isinstance(message, str) or len(message) > 2048:
+                continue
+            match = re.fullmatch(r"([A-Za-z0-9_.-]+): Dropping address ([0-9.]+), as an address conflict was detected\.", message)
+            if not match:
+                match = re.fullmatch(r"([A-Za-z0-9_.-]+): IPv4ACD: Conflict on ([0-9.]+) \([0-9]+\)", message)
+            if not match or entry.get("INTERFACE", match[1]) != match[1]:
+                continue
+            try:
+                address = str(ip_address(match[2]))
+                detected_at = datetime.fromtimestamp(int(entry["__REALTIME_TIMESTAMP"]) / 1000000, timezone.utc).isoformat()
+            except (ValueError, KeyError, OverflowError, OSError):
+                continue
+            result["conflicts"].append({"name": match[1], "address": address, "detected_at": detected_at, "mac": ""})
+        result["complete"] = networkd.returncode == 0 and bool(native_links)
+    except (OSError, ValueError, TypeError, subprocess.TimeoutExpired):
+        return result
+    return result
+
+
+def _native_vlan_matches(row: dict, links: dict) -> bool:
+    """Require the configured VLAN tag and actual parent link to match.
+
+    Args:
+        row: Validated staged VLAN identity.
+        links: Sanitized native link observations indexed by name.
+    """
+    link = links.get(row["name"], {})
+    parent = links.get(row["parent"], {})
+    return bool(link and parent and link.get("kind") == "vlan"
+                and str(link.get("vlan_id")) == str(row["vlan_id"])
+                and (link.get("parent") == row["parent"]
+                     or (link.get("parent_index") and link.get("parent_index") == parent.get("ifindex"))))
+
+
+def _network_detection_preflight(path: Path) -> None:
+    """Require native IPv4 ACD support before installing any candidate files.
+
+    Args:
+        path: Validated staged network intent.
+    """
+    physical, vlans, _removed = _parse_network_config(path)
+    checked = [row for row in physical + vlans
+               if row.get("check_duplicate_ip_addresses", "true") != "false"
+               and row.get("admin_state", "up") != "down"
+               and (row.get("ip_cidr") or row.get("ipv4_method") == "dhcp")]
+    active = [row for row in physical + vlans if row.get("admin_state", "up") != "down"
+              and (row.get("ip_cidr") or row.get("ipv6_cidr") or row.get("ipv4_method") == "dhcp"
+                   or row.get("ipv6_enabled") == "true")]
+    if not active and not vlans:
+        return
+    version = _run(["networkctl", "--version"], timeout=4)
+    match = re.search(r"systemd (\d+)", version.stdout)
+    if version.returncode or not match or int(match[1]) < 252:
+        raise ValueError("Unable to check IPv4 addresses: systemd-networkd 252 or newer is required")
+    observation = _network_address_observation()
+    if not observation.get("complete"):
+        raise ValueError("Unable to verify addresses: required native networkd evidence is unavailable")
+    links = {row["name"]: row for row in observation["links"]}
+    for row in active:
+        name = row.get("parent", row["name"])
+        if not links.get(name, {}).get("native_observed"):
+            raise ValueError(f"Unable to verify addresses on {name}: native networkd evidence is unavailable")
+    for row in vlans:
+        if row["name"] in links and not _native_vlan_matches(row, links):
+            raise ValueError(f"Unable to check VLAN {row['name']}: native tag or parent identity differs")
+    for row in checked:
+        name = row.get("parent", row.get("name", ""))
+        link = links.get(name)
+        if not link or not link["ethernet"] or not link["mac"]:
+            raise ValueError(f"Unable to check IPv4 addresses on {name}: Ethernet link identity unavailable")
+
+
+def _wait_network_addresses(path: Path, *, attempts: int = 31, started_at: str | None = None) -> dict:
+    """Wait for candidate addresses without treating a missing result as a conflict.
+
+    Args:
+        path: Exact staged intent whose activation must be proven.
+        attempts: Sample limit; the default permits the full 30-second readiness window.
+        started_at: Candidate activation start, excluding failures from earlier attempts.
+    """
+    physical, vlans, _removed = _parse_network_config(path)
+    requirements = []
+    for row in physical + vlans:
+        if row.get("admin_state", "up") == "down":
+            continue
+        for key in ("ip_cidr", "ipv6_cidr"):
+            if key == "ipv6_cidr" and row.get("ipv6_enabled") == "false":
+                continue
+            if row.get(key):
+                requirements.append((row["name"], str(ip_interface(row[key]))))
+        if row.get("ipv4_method") == "dhcp":
+            requirements.append((row["name"], "dhcp4"))
+        if row.get("ipv6_enabled") == "true" and not row.get("ipv6_cidr"):
+            requirements.append((row["name"], "auto6"))
+    missing = []
+    started_at = started_at or datetime.now(timezone.utc).isoformat()
+    deadline = time.monotonic() + 30
+    for attempt in range(max(1, attempts)):
+        observation = _network_address_observation()
+        _retain_network_conflicts(path, observation, started_at)
+        links = {row["name"]: row for row in observation["links"]}
+        missing = []
+        for vlan in vlans:
+            if vlan["name"] in links and not _native_vlan_matches(vlan, links):
+                raise ValueError(f"Unable to check VLAN {vlan['name']}: native tag or parent identity differs")
+        for name, address in requirements:
+            records = links.get(name, {}).get("addresses", [])
+            matches = [item for item in records if (
+                item.get("cidr") == address and item.get("source") == "static"
+            ) or (
+                address in {"dhcp4", "auto6"}
+                and ip_address(item["address"]).version == (4 if address == "dhcp4" else 6)
+                and not ip_address(item["address"]).is_link_local
+                and item.get("source") in ({"DHCPv4"} if address == "dhcp4" else {"DHCPv6", "NDisc"}))]
+            candidate_ip = str(ip_interface(address).ip) if "/" in address else ""
+            if any(item["state"] == "conflict" for item in records
+                   if item in matches or item["address"] == candidate_ip):
+                raise ValueError(f"IP conflict on {name}: {address}")
+            if not observation.get("complete") or not links.get(name, {}).get("configured") or not any(item["state"] == "assigned" for item in matches):
+                missing.append((name, address))
+        if not missing:
+            return observation
+        if time.monotonic() >= deadline:
+            break
+        if attempt + 1 < attempts:
+            time.sleep(min(1, max(0, deadline - time.monotonic())))
+    conflicts = {(row["name"], row["address"]) for row in observation["conflicts"] if row["detected_at"] >= started_at}
+    for name, address in missing:
+        candidate_ip = str(ip_interface(address).ip) if "/" in address else address
+        if (name, candidate_ip) in conflicts:
+            raise ValueError(f"IP conflict on {name}: {address}")
+    raise ValueError("Unable to verify candidate addresses: " + ", ".join(f"{name} {address}" for name, address in missing))
+
+
+@contextmanager
+def _network_transaction_lock():
+    """Exclude live Apply helpers while recovering the root-owned transaction."""
+    root = NETWORK_TRANSACTION_DIR
+    if root.is_symlink():
+        raise ValueError("network transaction directory is unsafe")
+    root.mkdir(mode=0o700, parents=True, exist_ok=True)
+    _fsync_directory(root.parent)
+    if fcntl is None:
+        yield
+        return
+    directory_fd = os.open(root, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+    try:
+        metadata = os.fstat(directory_fd)
+        if metadata.st_uid != 0 or metadata.st_mode & 0o077:
+            raise ValueError("network transaction directory is not root-owned and private")
+        descriptor = os.open(".lock", os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW, 0o600, dir_fd=directory_fd)
+        with os.fdopen(descriptor, "a+b") as handle:
+            metadata = os.fstat(handle.fileno())
+            if metadata.st_uid != 0 or not stat.S_ISREG(metadata.st_mode) or metadata.st_nlink != 1:
+                raise ValueError("network transaction lock is unsafe")
+            try:
+                fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except BlockingIOError as exc:
+                raise ValueError("network transaction is still owned by a live helper") from exc
+            try:
+                yield
+            finally:
+                fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+    finally:
+        os.close(directory_fd)
+
+
+def _network_transaction_state() -> dict:
+    """Read the actionable marker without accepting paths outside owned roots."""
+    marker = NETWORK_TRANSACTION_DIR / "state.json"
+    if not marker.exists():
+        return {}
+    if marker.is_symlink() or marker.stat().st_size > 1048576:
+        raise ValueError("network transaction marker is unsafe")
+    state = json.loads(marker.read_text(encoding="utf-8"))
+    if not isinstance(state, dict) or state.get("phase") not in {"applying", "awaiting-commit", "committed", "rolled-back"}:
+        raise ValueError("network transaction marker is invalid")
+    backup = Path(str(state.get("backup_root", "")))
+    if backup.parent != NETWORK_TRANSACTION_DIR or not backup.name.startswith("backup-") or backup.is_symlink():
+        raise ValueError("network transaction backup root is unsafe")
+    for item in state.get("snapshots", []):
+        target = Path(str(item.get("path", "")))
+        if target.parent != NETWORKD_CONFIG_DIR or target.suffix not in {".network", ".netdev"}:
+            raise ValueError("network transaction target is unsafe")
+        if item.get("existed") and Path(str(item.get("backup", ""))).parent != backup:
+            raise ValueError("network transaction backup is outside its root")
+    return state
+
+
+def _finish_network_transaction(state: dict, phase: str) -> bool:
+    """Persist the terminal outcome before disposing backups.
+
+    Args:
+        state: Validated transaction metadata.
+        phase: Committed or rolled-back terminal phase.
+
+    Returns:
+        Whether backup removal and durable marker cleanup both completed.
+    """
+    marker = NETWORK_TRANSACTION_DIR / "state.json"
+    state["phase"] = phase
+    _durable_management_handoff_state_write(state, marker)
+    try:
+        if Path(state["backup_root"]).exists():
+            shutil.rmtree(Path(state["backup_root"]))
+        _durable_management_handoff_unlink(marker)
+    except OSError:
+        print(f"Network rollback backup cleanup incomplete: {state['backup_root']}", file=sys.stderr)
+        return False
+    return True
+
+
+def _restore_network_transaction(state: dict) -> bool:
+    """Restore every file and link, retaining the marker if any stage fails.
+
+    Args:
+        state: Validated pre-mutation snapshot.
+
+    Returns:
+        Whether the restored transaction's durable cleanup also completed.
+    """
+    failures = []
+    for item in state["snapshots"]:
+        try:
+            _restore_management_handoff_snapshot(item)
+        except (OSError, ValueError) as exc:
+            failures.append(str(exc))
+    try:
+        if _run(["networkctl", "reload"]).returncode != 0:
+            raise ValueError("restored networkd configuration reload failed")
+    except (OSError, ValueError, subprocess.TimeoutExpired) as exc:
+        failures.append(str(exc))
+    try:
+        _restore_management_handoff_links(state, [])
+    except (OSError, ValueError, subprocess.TimeoutExpired) as exc:
+        failures.append(str(exc))
+    if failures:
+        raise ValueError("network rollback incomplete: " + "; ".join(failures[:8]))
+    return _finish_network_transaction(state, "rolled-back")
+
+
+def _reconcile_network_transaction(job_id: str, *, committed: bool) -> None:
+    """Reconcile only the transaction owned by the supplied application task.
+
+    Args:
+        job_id: Exact task ID, or manual for an unbound helper invocation.
+        committed: Whether the application durably committed the executed baseline.
+    """
+    state = _network_transaction_state()
+    if not state:
+        return
+    if state["phase"] in {"committed", "rolled-back"}:
+        cleaned = _finish_network_transaction(state, state["phase"])
+    elif state.get("job_id") != job_id:
+        raise ValueError("network transaction belongs to a different task")
+    elif committed:
+        if state["phase"] != "awaiting-commit":
+            raise ValueError("network candidate did not complete readiness")
+        cleaned = _finish_network_transaction(state, "committed")
+    else:
+        cleaned = _restore_network_transaction(state)
+    if not cleaned:
+        raise ValueError("network transaction cleanup is incomplete; its terminal outcome is preserved for retry")
+
+
+@contextmanager
+def _network_apply_transaction(path: Path):
+    """Restore installed files and link state if an ordinary candidate is rejected.
+
+    Args:
+        path: Validated staged Network intent.
+    """
+    existing = _network_transaction_state()
+    if existing:
+        if existing["phase"] in {"committed", "rolled-back"} or existing.get("job_id") == "manual":
+            _reconcile_network_transaction(str(existing["job_id"]), committed=False)
+        if _network_transaction_state():
+            raise ValueError("pending network transaction requires application recovery before another Apply")
+    binding = re.search(r"(?m)^# atlaso-network-task: ([A-Za-z0-9_-]{1,128})$", path.read_text(encoding="utf-8"))
+    job_id = binding[1] if binding else "manual"
+    files, _links, _down = _systemd_networkd_files(path)
+    physical, vlans, link_states = _management_handoff_candidate_links(
+        {"network_config_path": str(path)}, include_removed=True,
+    )
+    paths = {
+        NETWORKD_MGMT_CONFIG_PATH,
+        *(NETWORKD_CONFIG_DIR / name for name in files),
+        *(NETWORKD_CONFIG_DIR / name for name in NETWORKD_DEFAULT_APPLIANCE_FILES),
+        *(item for item in NETWORKD_CONFIG_DIR.glob(f"{NETWORKD_MANAGED_PREFIX}*")
+          if item.suffix in {".network", ".netdev"}),
+    }
+    backup_root = Path(tempfile.mkdtemp(prefix="backup-", dir=NETWORK_TRANSACTION_DIR))
+    snapshots = []
+    published = False
+    try:
+        for index, target in enumerate(sorted(paths)):
+            if target.is_symlink() or (target.exists() and not target.is_file()):
+                raise ValueError(f"network rollback target is not an ordinary file: {target}")
+            item = {"path": str(target), "existed": target.is_file()}
+            if target.is_file():
+                backup = backup_root / f"{index:03d}.bin"
+                shutil.copy2(target, backup)
+                metadata = target.stat()
+                item.update(backup=str(backup), mode=metadata.st_mode & 0o777,
+                            uid=metadata.st_uid, gid=metadata.st_gid)
+                _fsync_file(backup)
+            snapshots.append(item)
+        state = {"snapshots": snapshots, "candidate_physical_interfaces": physical,
+                 "candidate_vlan_interfaces": vlans, "candidate_link_states": link_states,
+                 "backup_root": str(backup_root), "job_id": job_id, "phase": "applying"}
+        _fsync_directory(backup_root)
+        published = True
+        marker = NETWORK_TRANSACTION_DIR / "state.json"
+        try:
+            _durable_management_handoff_state_write(state, marker)
+        finally:
+            # Rename can publish the marker before its parent sync fails. Only
+            # proven absence permits deleting the backups that it references.
+            try:
+                marker.lstat()
+            except FileNotFoundError:
+                published = False
+        try:
+            yield
+            for target in paths:
+                if target.is_file():
+                    _fsync_file(target)
+            _fsync_directory(NETWORKD_CONFIG_DIR)
+            state["phase"] = "awaiting-commit"
+            _durable_management_handoff_state_write(state, NETWORK_TRANSACTION_DIR / "state.json")
+            if job_id == "manual":
+                _finish_network_transaction(state, "committed")
+        except (OSError, ValueError, subprocess.TimeoutExpired) as exc:
+            try:
+                _restore_network_transaction(state)
+            except (OSError, ValueError, subprocess.TimeoutExpired) as restore_exc:
+                raise ValueError(f"{exc}; network rollback incomplete: {restore_exc}") from exc
+            raise ValueError(f"{exc}; previous network configuration restored") from exc
+    finally:
+        if not published:
+            try:
+                shutil.rmtree(backup_root)
+            except OSError:
+                # Backup disposal cannot invalidate an already activated candidate
+                # or replace the original failure after successful restoration.
+                print(f"Network rollback backup cleanup incomplete: {backup_root}", file=sys.stderr)
+
+
+def _prepare_network_observation() -> None:
+    """Persist native ACD logging and enable it without restarting networkd.
+
+    Image provisioning runs this before first boot. Worker startup repeats it for
+    wheel deployments and upgrades, including appliances without the new image.
+    """
+    path = NETWORK_OBSERVATION_LOGGING_PATH
+    if path.parent.is_symlink() or path.is_symlink():
+        raise ValueError("Network observation logging path must not be a symlink")
+    path.parent.mkdir(mode=0o755, parents=True, exist_ok=True)
+    if not path.exists() or path.read_text(encoding="utf-8") != NETWORK_OBSERVATION_LOGGING:
+        temporary = path.with_name(f".{path.name}.{uuid.uuid4().hex}.tmp")
+        try:
+            with temporary.open("x", encoding="utf-8") as stream:
+                stream.write(NETWORK_OBSERVATION_LOGGING)
+                stream.flush()
+                os.fsync(stream.fileno())
+            temporary.chmod(0o644)
+            os.replace(temporary, path)
+            _fsync_directory(path.parent)
+        finally:
+            temporary.unlink(missing_ok=True)
+    if _run(["systemctl", "daemon-reload"], timeout=15).returncode:
+        raise ValueError("Unable to load native address observation logging policy")
+    if _run(["systemctl", "is-active", "--quiet", "systemd-networkd.service"], timeout=15).returncode == 0:
+        if _run(["systemctl", "service-log-level", "systemd-networkd.service", "debug"], timeout=15).returncode:
+            raise ValueError("Unable to enable native address conflict evidence")
+
+
 def _handle_network(action: str, args: list[str]) -> int:
+    """Serialize network mutation and recovery while leaving observation read-only.
+
+    Args:
+        action: Validated network operation.
+        args: Operation arguments.
+    """
+    try:
+        with _network_transaction_lock() if action in {"apply", "recover", "acknowledge"} else nullcontext():
+            return _handle_network_locked(action, args)
+    except (OSError, ValueError, subprocess.TimeoutExpired) as exc:
+        print(str(exc), file=sys.stderr)
+        return 2
+
+
+def _handle_network_locked(action: str, args: list[str]) -> int:
     """Handle network.
 
     Args:
         action: Action consumed by handle network.
         args: Parsed command-line options consumed by the operation.
     """
+    if action == "prepare-observation":
+        if args:
+            raise ValueError("network prepare-observation accepts no arguments")
+        _prepare_network_observation()
+        return 0
+    if action in {"recover", "acknowledge"}:
+        if len(args) != 1 or not re.fullmatch(r"[A-Za-z0-9_-]{1,128}", args[0]):
+            raise ValueError("network reconciliation requires an exact task identity")
+        _reconcile_network_transaction(args[0], committed=action == "acknowledge")
+        print(json.dumps({"network_transaction": "reconciled", "job_id": args[0]}))
+        return 0
+    if action == "address-status":
+        if args:
+            print("network address-status accepts no arguments", file=sys.stderr)
+            return 2
+        print(json.dumps(_network_address_observation(), sort_keys=True))
+        return 0
     if action == "dhcp-dns":
         if len(args) != 1:
             print("network dhcp-dns requires exactly one interface name", file=sys.stderr)
@@ -8708,12 +9318,26 @@ def _handle_network(action: str, args: list[str]) -> int:
             )
         )
         return 0
-    install_returncode, installed, reconfigure_links, admin_down_links = _install_systemd_networkd_files(config_path)
-    if install_returncode != 0:
-        return install_returncode
-    vlan_returncode = _apply_vlan_interfaces(config_path)
-    if vlan_returncode != 0:
-        return vlan_returncode
+    try:
+        _network_detection_preflight(config_path)
+    except (ValueError, OSError, subprocess.TimeoutExpired) as exc:
+        print(str(exc), file=sys.stderr)
+        return 2
+    try:
+        with _network_apply_transaction(config_path):
+            activation_started = datetime.now(timezone.utc).isoformat()
+            install_returncode, installed, reconfigure_links, admin_down_links = _install_systemd_networkd_files(config_path)
+            if install_returncode != 0:
+                raise ValueError(f"network configuration installation failed ({install_returncode})")
+            if _apply_vlan_interfaces(config_path, defer_removed=True) != 0:
+                raise ValueError("candidate VLAN activation failed")
+            _wait_network_addresses(config_path, started_at=activation_started)
+            # Retire old VLANs only after the candidate addresses have activated.
+            if _apply_vlan_interfaces(config_path, removed_only=True) != 0:
+                raise ValueError("previous VLAN retirement failed")
+    except (ValueError, OSError, subprocess.TimeoutExpired) as exc:
+        print(str(exc), file=sys.stderr)
+        return 2
     print(
         json.dumps(
             {
@@ -22381,16 +23005,21 @@ def _sync_management_handoff_candidate(state: dict, payload: dict) -> None:
         _fsync_directory(directory)
 
 
-def _management_handoff_candidate_links(payload: dict) -> tuple[list[str], list[str], dict[str, dict[str, object]]]:
+def _management_handoff_candidate_links(
+    payload: dict, *, include_removed: bool = False,
+) -> tuple[list[str], list[str], dict[str, dict[str, object]]]:
     """Capture candidate link identity and pre-mutation administrative state.
 
     Args:
         payload: Validated handoff payload.
+        include_removed: Capture retired VLANs for ordinary Network rollback.
 
     Returns:
         Candidate physical links, VLAN links, and their pre-mutation state.
     """
-    physical, vlans, _removed = _parse_network_config(Path(str(payload["network_config_path"])))
+    physical, vlans, removed = _parse_network_config(Path(str(payload["network_config_path"])))
+    if include_removed:
+        vlans = [*vlans, *removed]
     physical_names = list(dict.fromkeys(str(row.get("name") or "") for row in physical if row.get("name")))
     vlan_names = list(dict.fromkeys(str(row.get("name") or "") for row in vlans if row.get("name")))
     link_states: dict[str, dict[str, object]] = {}
@@ -22579,9 +23208,16 @@ def _networkd_handoff_text(previous: str, candidate: str) -> str:
     """
     candidate_lines = candidate.rstrip().splitlines()
     previous_lines = previous.rstrip().splitlines()
+    previous_network_lines = []
+    section = ""
+    for line in previous_lines:
+        if line.startswith("["):
+            section = line
+        elif section == "[Network]":
+            previous_network_lines.append(line)
     network_values = [
         line
-        for line in previous_lines
+        for line in previous_network_lines
         if re.match(r"^(Address|DHCP|DNS|Domains|IPv6AcceptRA|LinkLocalAddressing)=", line)
         and line not in candidate_lines
         and not (line == "IPv6AcceptRA=no" and "IPv6AcceptRA=yes" in candidate_lines)
@@ -22599,7 +23235,7 @@ def _networkd_handoff_text(previous: str, candidate: str) -> str:
     previous_blocks: list[list[str]] = []
     index = 0
     while index < len(previous_lines):
-        if previous_lines[index] not in {"[Route]", "[RoutingPolicyRule]"}:
+        if previous_lines[index] not in {"[Address]", "[DHCPv4]", "[Route]", "[RoutingPolicyRule]"}:
             index += 1
             continue
         end = index + 1
@@ -22609,7 +23245,12 @@ def _networkd_handoff_text(previous: str, candidate: str) -> str:
         index = end
     candidate_text = "\n".join(candidate_lines)
     for block in previous_blocks:
+        if block[0] == "[DHCPv4]" and "[DHCPv4]" in candidate_lines:
+            continue
         block_text = "\n".join(block).strip()
+        address_line = next((line for line in block if line.startswith("Address=")), "")
+        if block and block[0] == "[Address]" and address_line in candidate_lines:
+            continue
         if block_text and block_text not in candidate_text:
             candidate_lines.extend(["", *block])
             candidate_text = "\n".join(candidate_lines)
@@ -22911,6 +23552,8 @@ def _management_handoff_addresses(
                 continue
             for entry in entries:
                 for info in entry.get("addr_info", []):
+                    if info.get("tentative") or info.get("dadfailed") or {"tentative", "dadfailed"}.intersection(info.get("flags", [])):
+                        continue
                     local = str(info.get("local") or "")
                     family = str(info.get("family") or "")
                     if info.get("scope") != "global" or not local or family not in families:
@@ -23205,7 +23848,7 @@ def _restore_management_handoff_links(state: dict, commands: list[dict[str, obje
 
     restored_interfaces = previous_interfaces | {
         interface
-        for interface in candidate_vlans
+        for interface in candidate_physical | candidate_vlans
         if bool((link_states.get(interface) or {}).get("existed"))
     }
     for interface in sorted(restored_interfaces):
@@ -23218,7 +23861,7 @@ def _restore_management_handoff_links(state: dict, commands: list[dict[str, obje
             continue
         saved = link_states.get(interface) if isinstance(link_states.get(interface), dict) else {}
         saved_mtu = saved.get("mtu")
-        if interface in candidate_vlans and bool(saved.get("existed")) and saved_mtu is not None:
+        if bool(saved.get("existed")) and saved_mtu is not None:
             if not isinstance(saved_mtu, int) or saved_mtu <= 0:
                 errors.append(f"restored link {interface} MTU evidence is invalid")
             else:
@@ -24085,6 +24728,8 @@ def _apply_management_handoff(payload: dict) -> int:
         return 1
     failing_layer = "snapshot"
     try:
+        failing_layer = "address detection preflight"
+        _network_detection_preflight(Path(str(payload["network_config_path"])))
         failing_layer = "previous-path preflight"
         previous_preflight = _management_handoff_readiness(
             list(state["previous_management_addresses"]),
@@ -24108,7 +24753,10 @@ def _apply_management_handoff(payload: dict) -> int:
             or (443 if candidate_https else 80)
         )
         failing_layer = "network"
+        activation_started = datetime.now(timezone.utc).isoformat()
         _apply_management_candidate_network(Path(str(payload["network_config_path"])), state)
+        failing_layer = "address activation"
+        _wait_network_addresses(Path(str(payload["network_config_path"])), started_at=activation_started)
         previous_firewall = FIREWALL_CONFIG_PATH.read_text(encoding="utf-8") if FIREWALL_CONFIG_PATH.is_file() else ""
         candidate_firewall_path = Path(str(payload["firewall_config_path"]))
         candidate_firewall = candidate_firewall_path.read_text(encoding="utf-8")
@@ -24663,6 +25311,8 @@ def main(argv: list[str]) -> int:
         print(str(exc), file=sys.stderr)
         return 2
 
+    if (group, action) == ("network", "address-status") and real_apply:
+        return _handle_network(action, normalized_args)
     if (group, action) == ("kms", "status"):
         return _handle_kms(action, normalized_args)
     if (group, action) == ("diagnostics", "source"):

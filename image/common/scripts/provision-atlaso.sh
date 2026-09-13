@@ -795,13 +795,18 @@ fi
 if [ "$ATLASO_GUEST_PLATFORM" = "vmware" ]; then
   install -o root -g root -m 0755 "$ATLASO_HOME/scripts/appliance/atlaso-vmware-ovf-customize.py" "$ATLASO_HOME/bin/atlaso-vmware-ovf-customize.py"
   install -o root -g root -m 0644 "$ATLASO_HOME/$ATLASO_IMAGE_ASSET_DIR/systemd/atlaso-vmware-ovf-customize.service" /etc/systemd/system/atlaso-vmware-ovf-customize.service
+  install -o root -g root -m 0644 "$ATLASO_HOME/$ATLASO_IMAGE_ASSET_DIR/systemd/atlaso-vmware-ovf-prepare.service" /etc/systemd/system/atlaso-vmware-ovf-prepare.service
 fi
 install -o root -g root -m 0440 "$ATLASO_HOME/image/common/sudoers.d/atlaso-helper" /etc/sudoers.d/atlaso-helper
 sed -i 's/\r$//' /etc/systemd/system/atlaso.service /etc/systemd/system/atlaso-worker.service /etc/systemd/system/atlaso-console.service /etc/systemd/system/atlaso-guest-agent-select.service /etc/systemd/system.conf.d/atlaso-console.conf "$ATLASO_HOME/bin/atlaso-helper" "$ATLASO_HOME/bin/atlaso-install-boot-branding" "$ATLASO_HOME/bin/atlaso-mount-data-disks" "$ATLASO_HOME/bin/atlaso-select-guest-agent" "$ATLASO_HOME/bin/atlaso-initialize-machine-identity.py" "$ATLASO_HOME/bin/atlaso-bootstrap-https" /etc/sudoers.d/atlaso-helper
 if [ "$ATLASO_GUEST_PLATFORM" = "vmware" ]; then
   sed -i 's/\r$//' "$ATLASO_HOME/bin/atlaso-vmware-ovf-customize.py" /etc/systemd/system/atlaso-vmware-ovf-customize.service
+  sed -i 's/\r$//' /etc/systemd/system/atlaso-vmware-ovf-prepare.service
 fi
 visudo -cf /etc/sudoers.d/atlaso-helper
+
+# Capture static ACD failures from the first networkd start on the deployed guest.
+"$ATLASO_HOME/bin/atlaso-helper" network prepare-observation --real
 
 chown -R root:root "$ATLASO_HOME"
 chmod 0755 /opt "$ATLASO_HOME"
@@ -837,15 +842,15 @@ log_step "configuring final appliance management network"
   if [ "$ATLASO_MGMT_USES_DHCP" = "true" ]; then
     printf 'DHCP=ipv4\n'
     # Keep the server's lease through reboot, matching Photon's DHCP default.
-    printf '\n[DHCPv4]\nSendRelease=no\n'
+    printf '\n[DHCPv4]\nSendRelease=no\nSendDecline=yes\n'
   else
-    printf 'Address=%s\n' "$ATLASO_MGMT_ADDRESS"
     if [ -n "$ATLASO_MGMT_GATEWAY" ]; then
       printf 'Gateway=%s\n' "$ATLASO_MGMT_GATEWAY"
     fi
     for dns_server in $ATLASO_MGMT_DNS; do
       printf 'DNS=%s\n' "$dns_server"
     done
+    printf '\n[Address]\nAddress=%s\nDuplicateAddressDetection=ipv4\n' "$ATLASO_MGMT_ADDRESS"
   fi
 } >/etc/systemd/network/00-atlaso-mgmt.network
 chmod 0644 /etc/systemd/network/00-atlaso-mgmt.network
@@ -907,6 +912,7 @@ if [ "$ATLASO_GUEST_PLATFORM" = "vmware" ]; then
   install -o root -g root -m 0640 /dev/null "$ATLASO_STATE/vmware-ovf-initializing"
   systemctl enable --now vmtoolsd
   systemctl enable atlaso-vmware-ovf-customize.service
+  systemctl enable atlaso-vmware-ovf-prepare.service
 fi
 systemctl enable atlaso-guest-agent-select.service
 systemctl enable atlaso-data-disks.service

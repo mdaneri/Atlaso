@@ -79,6 +79,7 @@ def _create_database_schema(bind: Engine) -> None:
                 Base.metadata.create_all(bind=connection)
                 _reconcile_task_cancellation_columns(connection)
                 _reconcile_nat_ingress_column(connection)
+                _reconcile_interface_address_check_columns(connection)
             except Exception:
                 connection.rollback()
                 raise
@@ -93,11 +94,28 @@ def _create_database_schema(bind: Engine) -> None:
             Base.metadata.create_all(bind=connection)
             _reconcile_task_cancellation_columns(connection)
             _reconcile_nat_ingress_column(connection)
+            _reconcile_interface_address_check_columns(connection)
         return
     with bind.begin() as connection:
         Base.metadata.create_all(bind=connection)
         _reconcile_task_cancellation_columns(connection)
         _reconcile_nat_ingress_column(connection)
+        _reconcile_interface_address_check_columns(connection)
+
+
+def _reconcile_interface_address_check_columns(connection: Connection) -> None:
+    """Add enabled native address checks under the shared startup schema lock.
+
+    Args:
+        connection: Transaction owning schema reconciliation for either database.
+    """
+    for table_name in ("physical_interfaces", "vlan_interfaces"):
+        columns = {column["name"] for column in inspect(connection).get_columns(table_name)}
+        if "check_duplicate_ip_addresses" not in columns:
+            connection.execute(text(
+                f"ALTER TABLE {table_name} ADD COLUMN "
+                "check_duplicate_ip_addresses BOOLEAN NOT NULL DEFAULT TRUE"
+            ))
 
 
 def _reconcile_task_cancellation_columns(connection: Connection) -> None:

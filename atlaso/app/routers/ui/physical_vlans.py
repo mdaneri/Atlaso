@@ -24,6 +24,7 @@ from atlaso.app.services.management_bindings import (
     MANAGEMENT_LISTENER_REQUIRED_DETAIL,
     desired_management_candidate_exists,
 )
+from atlaso.app.services.network_address_status import read_status, row_status
 from atlaso.app.services.networking import sync_host_physical_interfaces
 from atlaso.app.services.physical_interfaces import (
     PhysicalInterfaceMutation,
@@ -79,7 +80,7 @@ def build_router(dependencies: PhysicalVlanUiDependencies) -> PhysicalVlanUiRout
         request: Request,
         identity: Identity = Depends(require_session_identity),
         db: Session = Depends(get_db),
-    ) -> HTMLResponse:
+    ) -> HTMLResponse | JSONResponse:
         """Handle the physical interfaces page endpoint.
 
         Args:
@@ -90,6 +91,11 @@ def build_router(dependencies: PhysicalVlanUiDependencies) -> PhysicalVlanUiRout
         Returns:
             The endpoint response.
         """
+        if request.query_params.get("network_address_status") == "1":
+            saved = read_status(db)
+            rows = [{"id": record_id, "address_status": row_status(saved, "physical", record_id)}
+                    for record_id in db.scalars(select(PhysicalInterface.id))]
+            return JSONResponse({"rows": rows}, headers={"Cache-Control": "no-store"})
         return dependencies.render(
             request,
             "physical_interfaces.html",
@@ -140,6 +146,7 @@ def build_router(dependencies: PhysicalVlanUiDependencies) -> PhysicalVlanUiRout
         ipv6_gateway: str = Form(""),
         mtu: int = Form(1500),
         admin_state: str = Form("up"),
+        check_duplicate_ip_addresses: bool | None = Form(None),
         access_management_ui_enabled: str | None = Form(None),
         csrf: str = Form(...),
         identity: Identity = Depends(require_session_identity),
@@ -160,6 +167,7 @@ def build_router(dependencies: PhysicalVlanUiDependencies) -> PhysicalVlanUiRout
             ipv6_gateway: IPv6 gateway supplied by the caller.
             mtu: Requested interface maximum transmission unit.
             admin_state: Requested administrative link state.
+            check_duplicate_ip_addresses: Optional IPv4 conflict-detection policy; omission preserves saved state.
             access_management_ui_enabled: Whether the access interface exposes management UI.
             csrf: Validated CSRF token authorizing the request.
             identity: Authenticated identity authorizing the request.
@@ -170,6 +178,7 @@ def build_router(dependencies: PhysicalVlanUiDependencies) -> PhysicalVlanUiRout
         if not interface:
             raise HTTPException(status_code=404, detail="Physical interface not found")
         changes = {
+            "check_duplicate_ip_addresses": interface.check_duplicate_ip_addresses is not False if check_duplicate_ip_addresses is None else check_duplicate_ip_addresses,
             "role": role,
             "mode": mode,
             "ipv4_method": ipv4_method,
@@ -281,7 +290,7 @@ def build_router(dependencies: PhysicalVlanUiDependencies) -> PhysicalVlanUiRout
         request: Request,
         identity: Identity = Depends(require_session_identity),
         db: Session = Depends(get_db),
-    ) -> HTMLResponse:
+    ) -> HTMLResponse | JSONResponse:
         """Handle the VLAN interfaces page endpoint.
 
         Args:
@@ -289,6 +298,11 @@ def build_router(dependencies: PhysicalVlanUiDependencies) -> PhysicalVlanUiRout
             identity: Authenticated identity authorizing the request.
             db: Active database session.
         """
+        if request.query_params.get("network_address_status") == "1":
+            saved = read_status(db)
+            rows = [{"id": record_id, "address_status": row_status(saved, "vlan", record_id)}
+                    for record_id in db.scalars(select(VlanInterface.id))]
+            return JSONResponse({"rows": rows}, headers={"Cache-Control": "no-store"})
         return dependencies.render(
             request,
             "vlan_interfaces.html",
@@ -309,6 +323,7 @@ def build_router(dependencies: PhysicalVlanUiDependencies) -> PhysicalVlanUiRout
         mtu: int = Form(1500),
         role: str = Form("access"),
         enabled: str | None = Form(None),
+        check_duplicate_ip_addresses: bool | None = Form(None),
         access_management_ui_enabled: str | None = Form(None),
         csrf: str = Form(...),
         identity: Identity = Depends(require_session_identity),
@@ -325,6 +340,7 @@ def build_router(dependencies: PhysicalVlanUiDependencies) -> PhysicalVlanUiRout
             mtu: Requested interface maximum transmission unit.
             role: Requested VLAN role.
             enabled: Whether the VLAN is administratively enabled.
+            check_duplicate_ip_addresses: Optional IPv4 conflict-detection policy; omission preserves saved state.
             access_management_ui_enabled: Whether the access VLAN exposes management UI.
             csrf: Validated CSRF token authorizing the request.
             identity: Authenticated identity authorizing the request.
@@ -349,6 +365,7 @@ def build_router(dependencies: PhysicalVlanUiDependencies) -> PhysicalVlanUiRout
                 ),
             )
         vlan = VlanInterface(
+            check_duplicate_ip_addresses=True if check_duplicate_ip_addresses is None else check_duplicate_ip_addresses,
             name=f"{parent_name}.{parsed_vlan_id}",
             parent_interface=parent_name,
             vlan_id=parsed_vlan_id,
@@ -400,6 +417,7 @@ def build_router(dependencies: PhysicalVlanUiDependencies) -> PhysicalVlanUiRout
         mtu: int = Form(1500),
         role: str = Form("access"),
         enabled: str | None = Form(None),
+        check_duplicate_ip_addresses: bool | None = Form(None),
         access_management_ui_enabled: str | None = Form(None),
         csrf: str = Form(...),
         identity: Identity = Depends(require_session_identity),
@@ -417,6 +435,7 @@ def build_router(dependencies: PhysicalVlanUiDependencies) -> PhysicalVlanUiRout
             mtu: Requested interface maximum transmission unit.
             role: Requested VLAN role.
             enabled: Whether the VLAN is administratively enabled.
+            check_duplicate_ip_addresses: Optional IPv4 conflict-detection policy; omission preserves saved state.
             access_management_ui_enabled: Whether the access VLAN exposes management UI.
             csrf: Validated CSRF token authorizing the request.
             identity: Authenticated identity authorizing the request.
@@ -462,6 +481,8 @@ def build_router(dependencies: PhysicalVlanUiDependencies) -> PhysicalVlanUiRout
         vlan.mtu = mtu_value
         vlan.role = role_value
         vlan.enabled = requested_enabled and not parent_missing
+        if check_duplicate_ip_addresses is not None:
+            vlan.check_duplicate_ip_addresses = check_duplicate_ip_addresses
         vlan.access_management_ui_enabled = management_ui_value
         try:
             db.flush()

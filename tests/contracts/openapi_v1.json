@@ -6604,7 +6604,7 @@
         "type": "object"
       },
       "PhysicalInterfaceResponse": {
-        "description": "Fields returned by the Atlaso physical interface API.\n\nAttributes:\n    id: Unique database identifier assigned to this resource.\n    name: Stable operator-facing name of this resource.\n    mac_address: Normalized hardware MAC address used to identify the network interface or host.\n    driver: Returned driver value for this physical interface resource.\n    speed: Returned speed value for this physical interface resource.\n    host_ip_cidr: Validated network or address value for host ip cidr in this physical interface\n        resource.\n    host_ipv6_cidr: Validated network or address value for host ipv6 cidr in this physical\n        interface resource.\n    host_mtu: Returned host mtu value for this physical interface resource.\n    host_admin_state: Returned host admin state value for this physical interface resource.\n    ip_cidr: Validated network or address value for ip cidr in this physical interface resource.\n    gateway: Returned gateway value for this physical interface resource.\n    ipv4_method: Returned ipv4 method value for this physical interface resource.\n    ipv6_enabled: Whether ipv6 enabled is enabled for this physical interface resource.\n    ipv6_cidr: Validated network or address value for ipv6 cidr in this physical interface\n        resource.\n    ipv6_gateway: Returned ipv6 gateway value for this physical interface resource.\n    mtu: Returned mtu value for this physical interface resource.\n    admin_state: Returned admin state value for this physical interface resource.\n    oper_state: Returned oper state value for this physical interface resource.\n    role: Canonical purpose assigned to this physical interface.\n    mode: Returned mode value for this physical interface resource.\n    access_management_ui_enabled: Whether this access interface also exposes the management UI.\n    inventory_source: Returned inventory source value for this physical interface resource.\n    desired_state_source: Returned desired state source value for this physical interface\n        resource.\n    last_seen_at: UTC timestamp for last seen at on this physical interface resource.\n    missing_since: Returned missing since value for this physical interface resource.",
+        "description": "Fields returned by the Atlaso physical interface API.\n\nAttributes:\n    check_duplicate_ip_addresses: Native IPv4 conflict-detection policy; Network Apply activates changes.\n    id: Unique database identifier assigned to this resource.\n    name: Stable operator-facing name of this resource.\n    mac_address: Normalized hardware MAC address used to identify the network interface or host.\n    driver: Returned driver value for this physical interface resource.\n    speed: Returned speed value for this physical interface resource.\n    host_ip_cidr: Validated network or address value for host ip cidr in this physical interface\n        resource.\n    host_ipv6_cidr: Validated network or address value for host ipv6 cidr in this physical\n        interface resource.\n    host_mtu: Returned host mtu value for this physical interface resource.\n    host_admin_state: Returned host admin state value for this physical interface resource.\n    ip_cidr: Validated network or address value for ip cidr in this physical interface resource.\n    gateway: Returned gateway value for this physical interface resource.\n    ipv4_method: Returned ipv4 method value for this physical interface resource.\n    ipv6_enabled: Whether ipv6 enabled is enabled for this physical interface resource.\n    ipv6_cidr: Validated network or address value for ipv6 cidr in this physical interface\n        resource.\n    ipv6_gateway: Returned ipv6 gateway value for this physical interface resource.\n    mtu: Returned mtu value for this physical interface resource.\n    admin_state: Returned admin state value for this physical interface resource.\n    oper_state: Returned oper state value for this physical interface resource.\n    role: Canonical purpose assigned to this physical interface.\n    mode: Returned mode value for this physical interface resource.\n    access_management_ui_enabled: Whether this access interface also exposes the management UI.\n    inventory_source: Returned inventory source value for this physical interface resource.\n    desired_state_source: Returned desired state source value for this physical interface\n        resource.\n    last_seen_at: UTC timestamp for last seen at on this physical interface resource.\n    missing_since: Returned missing since value for this physical interface resource.",
         "properties": {
           "access_management_ui_enabled": {
             "default": false,
@@ -6616,6 +6616,12 @@
             "description": "Returned admin state value for this physical interface resource.",
             "title": "Admin State",
             "type": "string"
+          },
+          "check_duplicate_ip_addresses": {
+            "default": true,
+            "description": "Saved IPv4 address-conflict detection policy. Native IPv6 DAD is independent; Network Apply activates edits.",
+            "title": "Check Duplicate Ip Addresses",
+            "type": "boolean"
           },
           "desired_state_source": {
             "description": "Returned desired state source value for this physical interface resource.",
@@ -6885,6 +6891,18 @@
             ],
             "description": "Desired administrative state. The management interface must remain up; omit to retain the current state.",
             "title": "Admin State"
+          },
+          "check_duplicate_ip_addresses": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Check static and DHCP IPv4 addresses on this link before activation. Defaults enabled for new interfaces; omit PATCH to preserve the saved setting. Native IPv6 DAD remains enabled independently. Takes effect through Network Apply.",
+            "title": "Check Duplicate Ip Addresses"
           },
           "gateway": {
             "anyOf": [
@@ -8293,12 +8311,18 @@
         "type": "object"
       },
       "VlanCreate": {
-        "description": "Fields accepted when creating a vlan resource.\n\nAttributes:\n    parent_interface: Requested parent interface value for this vlan resource.\n    vlan_id: Stable identifier of the related vlan resource.\n    ip_cidr: Validated network or address value for ip cidr in this vlan resource.\n    ipv6_cidr: Validated network or address value for ipv6 cidr in this vlan resource.\n    mtu: Requested mtu value for this vlan resource.\n    role: Canonical purpose assigned to this VLAN interface.\n    enabled: Whether the resource is enabled in saved Atlaso state.\n    access_management_ui_enabled: Whether this enabled access VLAN also exposes the management UI.",
+        "description": "Fields accepted when creating a vlan resource.\n\nAttributes:\n    check_duplicate_ip_addresses: Native IPv4 conflict-detection policy; Network Apply activates changes.\n    parent_interface: Requested parent interface value for this vlan resource.\n    vlan_id: Stable identifier of the related vlan resource.\n    ip_cidr: Validated network or address value for ip cidr in this vlan resource.\n    ipv6_cidr: Validated network or address value for ipv6 cidr in this vlan resource.\n    mtu: Requested mtu value for this vlan resource.\n    role: Canonical purpose assigned to this VLAN interface.\n    enabled: Whether the resource is enabled in saved Atlaso state.\n    access_management_ui_enabled: Whether this enabled access VLAN also exposes the management UI.",
         "properties": {
           "access_management_ui_enabled": {
             "default": false,
             "description": "Whether this enabled access-role VLAN also exposes the management UI.",
             "title": "Access Management Ui Enabled",
+            "type": "boolean"
+          },
+          "check_duplicate_ip_addresses": {
+            "default": true,
+            "description": "Enable native IPv4 address-conflict detection on this VLAN. Defaults true when omitted on creation or in legacy archives. Native IPv6 DAD remains enabled. Saving changes desired state only until Network Apply.",
+            "title": "Check Duplicate Ip Addresses",
             "type": "boolean"
           },
           "enabled": {
@@ -8366,6 +8390,12 @@
             "default": false,
             "description": "Whether this enabled access-role VLAN also exposes the management UI.",
             "title": "Access Management Ui Enabled",
+            "type": "boolean"
+          },
+          "check_duplicate_ip_addresses": {
+            "default": true,
+            "description": "Enable native IPv4 address-conflict detection on this VLAN. Defaults true when omitted on creation or in legacy archives. Native IPv6 DAD remains enabled. Saving changes desired state only until Network Apply.",
+            "title": "Check Duplicate Ip Addresses",
             "type": "boolean"
           },
           "enabled": {

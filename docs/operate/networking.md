@@ -232,6 +232,113 @@ with its entered values. Saving refreshes validation and the configuration previ
 global **Appliance Apply** with the `network` unit when the reviewed desired state is ready for enforcement. Delete
 remains a confirmed row-context action.
 
+## Check for duplicate IP addresses
+
+Physical Interfaces and the VLAN addressing wizard expose **Check for duplicate IP addresses**.
+It defaults to enabled, including when an older database or settings archive lacks the field.
+Explicit opt-outs survive edits, upgrades, and backup/restore. Saving changes desired state only;
+use **Appliance Apply** with Network selected to activate the policy. An upgrade does not silently
+reconfigure existing host interfaces.
+
+On Ethernet and tagged VLAN links, static IPv4 uses systemd-networkd ARP address conflict detection
+before activation. Management DHCPv4 uses networkd's `SendDecline=yes`: a rejected offered address
+is declined and the native client retries. Atlaso retains `SendRelease=no` during reconfiguration.
+Turning this setting off disables these IPv4 checks for that interface. It never chooses a replacement
+static address. The helper requires systemd 252 or newer and a usable Ethernet identity before
+installing an enabled IPv4 candidate; unsupported or unavailable evidence produces **Unable to check**.
+Photon logs static IPv4 ACD rejection at debug level. Image provisioning and worker startup prepare
+an Atlaso-owned networkd logging drop-in and enable debug logging on the running service without
+restarting networking. The drop-in persists across reboots. This increases networkd journal volume;
+Atlaso filters conflict messages before taking its bounded evidence sample and does not retain
+unrelated debug messages in address status.
+
+IPv6 is independent: static addresses retain native IPv6 DAD, and existing RA/SLAAC and DHCPv6
+behavior continues to use native IPv6 detection. This switch does not enable DHCPv6, disable IPv6 DAD,
+or change router-advertisement policy. An address on a different link or VLAN is not, by itself,
+evidence of a conflict. Native detection can miss a silent, offline, or isolated peer; an active address
+is not proof of global uniqueness.
+
+The **Address status** column refreshes while the page is visible. The VLAN wizard also shows the
+selected row's evidence. **Checking**, **IP conflict**, **Addresses active**, and **Unable to check**
+distinguish tentative addresses, confirmed rejection, observed activation, and missing/stale evidence.
+A declined DHCPv4 offer stays a confirmed conflict until a replacement DHCP lease becomes active;
+a retained static address does not count as that replacement. Once resolved, the historical decline
+does not become a current conflict again merely because a lease later disappears. Missing native
+networkd evidence blocks Apply before configuration installation, including with IPv4 checking disabled.
+If an ordinary Network Apply fails during installation or address readiness, Atlaso restores the
+previous networkd files and reconfigures the previous links. Address readiness allows a 30-second
+window for DHCP or IPv6 autoconfiguration. Old VLAN deletion waits until candidate
+readiness succeeds. An incomplete rollback reports failure and retains its backup location for
+operator recovery; it never advances the applied baseline.
+Static readiness requires the complete address and prefix with native static-source evidence;
+an old DHCP lease or an address with a different prefix cannot satisfy it.
+Apply retains confirmed native failures with the observed interface or VLAN-parent identity before
+rollback removes a candidate-only VLAN. The next status refresh can therefore show the failed attempt
+even if the worker never sampled that transient link.
+After observing a NIC or VLAN-parent replacement, status ignores name-only journal events from
+before that observation. A bounded history of the 256 most recently observed names preserves identity
+boundaries across polls
+where a resource is absent. The boundary persists across refreshes so old events cannot be reassigned
+to the replacement hardware. Identity-bound Apply evidence and subsequent native events remain usable.
+Backup disposal failure after successful activation is reported as a cleanup warning with the
+retained location; Apply remains successful so the baseline matches the installed configuration.
+Existing SQLite and PostgreSQL databases gain the enabled setting during serialized schema startup;
+later startups preserve saved opt-outs.
+Ordinary Apply writes a durable transaction marker before changing networkd files and retains it
+with its referenced backups if marker publication becomes visible but directory synchronization fails.
+The marker remains until the application commits the exact executed Network baseline. Startup restores interrupted
+uncommitted candidates or acknowledges an already committed baseline. Recovery refuses to race a
+live helper, and an unresolved marker blocks another Apply. Terminal backup cleanup warnings do
+not cause committed configuration to be rolled back on a later restart.
+Acknowledgement remains pending until backup removal and durable marker cleanup succeed;
+cleanup failure preserves the committed baseline and blocks another Apply until recovery completes.
+The worker retries abandoned cleanup once per observation cycle without replaying configuration.
+After cleanup succeeds, the interrupted task ends as failed with its applied baseline preserved;
+review the task and submit any remaining components. Persistent failures keep the lock and recovery
+evidence until a later retry succeeds. Settings restores preserve this appliance's native conflict
+resolution and link identity history; that operational history is never exported or imported.
+The same retry queue handles failures in exception recovery. Incomplete address observations retain
+the last complete lease comparison and its original timestamp, so a later replacement can prove
+recovery without treating an older pre-conflict lease sample as post-conflict evidence.
+VMware OVF first boot prepares configuration and deployment credentials before networkd starts.
+A second customization stage reloads the management link and verifies native address activation
+before recording success or clearing the console review handshake. A conflict or unavailable
+native evidence keeps first boot recoverable through network review; it does not finalize the
+applied marker. Console corrections survive the preparation stage and are revalidated for activation.
+The early VMware preparation service skips appliances with a completed OVF marker on later boots;
+the normal customization stage retains its credential cleanup and test-identity republishing checks.
+The retained failure names the attempted address, link, and detection time; a conflicting MAC appears
+only when the native evidence supplies one. The collector recognizes DHCP rejection and Photon static
+`IPv4ACD: Conflict on` messages, filtering
+journal entries before applying its record limit so unrelated debug traffic cannot displace events.
+Native networkd rejection messages do not normally include
+that MAC, so Atlaso does not infer it from stale neighbor entries.
+
+A rejected management candidate fails Apply and follows the protected management rollback path. The
+last attempted address stays visible separately from currently active addresses, including a restored
+working management address. Correct the desired address and apply again. Later successful activation
+resolves the current warning while retaining the last failure for diagnosis. Runtime observations are
+bounded to 256 interface records, retained separately from desired/applied baselines, and excluded from
+settings archives. Evidence older than 30 seconds is marked stale. The worker observes native outcomes
+at boot and during DHCP/reconfigure activity without issuing extra probes or changing host settings.
+
+A DHCP decline remains a current conflict while an older lease is still active. Recovery requires
+observing a newly appearing DHCP lease after the decline has been observed; a lease already present
+in the first conflict sample does not prove recovery. Polling can miss an intervening lease change,
+so uncertain ordering conservatively retains the warning and the last failed attempt.
+
+Static recovery similarly requires a later activation of the exact attempted CIDR with native static
+source evidence. A rollback holdover with the same IP, a different prefix, or a DHCP source does not
+clear the latest failure. When ordering or the attempted prefix is unknown, the warning is retained.
+
+IPv6 recovery remains enabled when IPv4 checking is disabled. DHCPv6 and SLAAC failures remain visible
+until a later usable automatic IPv6 address appears; an existing address or a new link-local address
+does not clear the failure. A later outage does not reactivate an already resolved conflict.
+
+Early VMware network preparation is skipped after either OVF customization or non-OVF initialization
+has completed. The normal post-network customization service still runs to detect a subsequently
+injected OVF envelope without blocking network startup on unanswered guest-info reads.
+
 ## Verify and roll back
 
 Confirm the management URL, expected routes, and interface state after apply and again after an appliance reboot. For a

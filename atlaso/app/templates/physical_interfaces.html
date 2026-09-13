@@ -17,6 +17,7 @@
       </div>
     </div>
     <div class="inline-help-row">
+      <span class="field-label"><span>Check for duplicate IP addresses</span><button class="help-icon" type="button" data-help="Enabled by default for static IPv4 and DHCPv4. Saving edits changes desired state; Network Apply activates native ARP detection on this link. IPv6 DAD remains enabled independently. The address status retains failed attempts and shows currently active addresses separately; a nonresponse does not prove global uniqueness.">i</button></span>
       <span class="field-label"><span>Host inventory</span><button class="help-icon" type="button" data-help="Reads current Linux network devices through safe host inventory commands, matching NICs by MAC so Linux eth renumbering does not move desired state. Missing NICs are marked for review; refresh does not apply network changes.">i</button></span>
       <span class="field-label"><span>Desired state</span><button class="help-icon" type="button" data-help="Editable access/trunk, IPv4 addressing, IPv6 enablement and CIDR, MTU, and admin state values are stored in Atlaso and enforced only through global appliance apply. Enabled IPv6 with a blank CIDR uses RA/SLAAC.">i</button></span>
       <span class="field-label"><span>Management gateways</span><button class="help-icon" type="button" data-help="Sets optional IPv4 and IPv6 default gateways for static management addresses. DHCP-to-static conversion reviews the observed IPv4 address, prefix, and DHCP-learned gateway together. Clearing the gateway intentionally removes off-subnet connectivity. IPv4 must be on-link; IPv6 may be link-local or on-link.">i</button></span>
@@ -35,16 +36,19 @@
       data-mode-options='{{ interface_modes | tojson }}'
       data-ipv4-method-options='{{ ipv4_methods | tojson }}'
       data-csrf="{{ csrf_token }}"
+      data-can-write="{{ 'true' if identity.can('write:interfaces') else 'false' }}"
       data-fallback-id="physical-interfaces-fallback"
     ></div>
     <table id="physical-interfaces-fallback" class="data-table dns-fallback-table">
       <thead>
-        <tr><th>Name</th><th>MAC</th><th>Driver</th><th>Speed</th><th>Observed IPv4</th><th>Observed gateway</th><th>Observed IPv6</th><th>IPv4 Method</th><th>IPv4 CIDR</th><th>IPv4 Gateway</th><th>IPv6</th><th>IPv6 CIDR</th><th>IPv6 Gateway</th><th>Role</th><th>Management UI</th><th>Link Type</th><th>MTU</th><th>Admin Up</th><th>Oper</th><th>Source</th></tr>
+        <tr><th>Name</th><th>Check duplicate IPs</th><th>Address status</th><th>MAC</th><th>Driver</th><th>Speed</th><th>Observed IPv4</th><th>Observed gateway</th><th>Observed IPv6</th><th>IPv4 Method</th><th>IPv4 CIDR</th><th>IPv4 Gateway</th><th>IPv6</th><th>IPv6 CIDR</th><th>IPv6 Gateway</th><th>Role</th><th>Management UI</th><th>Link Type</th><th>MTU</th><th>Admin Up</th><th>Oper</th><th>Source</th></tr>
       </thead>
       <tbody>
         {% for interface in physical_interface_rows %}
           <tr>
             <td>{{ interface["name"] }}</td>
+            <td>{{ "enabled" if interface.check_duplicate_ip_addresses else "disabled" }}</td>
+            <td>{{ interface.address_status.detail }} {% if interface.address_status.last_conflict %}{{ interface.address_status.last_conflict.address }} — {{ interface.address_status.last_conflict.detected_at }}{% endif %}</td>
             <td>{{ interface["mac_address"] }}</td>
             <td>{{ interface["driver"] or "" }}</td>
             <td>{{ interface["speed"] or "" }}</td>

@@ -143,6 +143,7 @@ def physical_interface_to_dict(
     role = normalize_interface_role(interface.role)
     return {
         "id": interface.id,
+        "check_duplicate_ip_addresses": interface.check_duplicate_ip_addresses is not False,
         "name": interface.name,
         "mac_address": interface.mac_address,
         "driver": interface.driver or "",
@@ -183,6 +184,7 @@ def vlan_interface_to_dict(vlan: VlanInterface, parent_missing: bool = False) ->
     role = normalize_interface_role(vlan.role)
     return {
         "id": vlan.id,
+        "check_duplicate_ip_addresses": vlan.check_duplicate_ip_addresses is not False,
         "name": vlan.name,
         "parent_interface": vlan.parent_interface,
         "vlan_id": vlan.vlan_id,
@@ -1110,6 +1112,7 @@ def render_network_config(
         lines.extend(
             [
                 f"interface={interface.name}",
+                f"  check_duplicate_ip_addresses={'false' if interface.check_duplicate_ip_addresses is False else 'true'}",
                 f"  role={role}",
                 f"  mode={mode}",
                 f"  access_management_ui_enabled={'true' if interface.access_management_ui_enabled else 'false'}",
@@ -1131,6 +1134,7 @@ def render_network_config(
         lines.extend(
             [
                 f"vlan={vlan.name}",
+                f"  check_duplicate_ip_addresses={'false' if vlan.check_duplicate_ip_addresses is False else 'true'}",
                 f"  parent={vlan.parent_interface}",
                 f"  vlan_id={vlan.vlan_id}",
                 f"  ip_cidr={vlan.ip_cidr or ''}",

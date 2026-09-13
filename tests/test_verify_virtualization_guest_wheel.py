@@ -1020,6 +1020,7 @@ def test_deployed_system_sources_exist_in_the_checkout() -> None:
         "image/common/systemd/atlaso-guest-agent-select.service": "/etc/systemd/system/atlaso-guest-agent-select.service",
         "image/common/systemd/atlaso-bootstrap-https.service": "/etc/systemd/system/atlaso-bootstrap-https.service",
         "image/vmware-workstation/systemd/atlaso-vmware-ovf-customize.service": "/etc/systemd/system/atlaso-vmware-ovf-customize.service",
+        "image/vmware-workstation/systemd/atlaso-vmware-ovf-prepare.service": "/etc/systemd/system/atlaso-vmware-ovf-prepare.service",
         "image/common/sudoers.d/atlaso-helper": "/etc/sudoers.d/atlaso-helper",
         "scripts/appliance/atlaso-helper": "/opt-atlaso/bin/atlaso-helper",
         "scripts/appliance/atlaso-install-boot-branding": "/opt-atlaso/bin/atlaso-install-boot-branding",

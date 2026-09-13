@@ -1,0 +1,19 @@
+[Unit]
+Description=Prepare Atlaso VMware OVF configuration before networking
+ConditionPathExists=!/var/lib/atlaso/vmware-ovf-customization.applied
+ConditionPathExists=!/var/lib/atlaso/vmware-no-ovf-initialization.applied
+DefaultDependencies=no
+After=local-fs.target atlaso-console.service atlaso-guest-agent-select.service
+Wants=atlaso-console.service
+Requires=atlaso-guest-agent-select.service
+Before=network-pre.target systemd-networkd.service atlaso-vmware-ovf-customize.service
+
+[Service]
+Type=oneshot
+Environment=PYTHONDONTWRITEBYTECODE=1
+ExecStart=/opt/atlaso/.venv/bin/python /opt/atlaso/bin/atlaso-vmware-ovf-customize.py --prepare-only
+RemainAfterExit=yes
+TimeoutStartSec=infinity
+
+[Install]
+RequiredBy=systemd-networkd.service
