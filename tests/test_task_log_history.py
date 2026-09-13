@@ -480,3 +480,59 @@ def test_result_marker_continues_through_following_task_stream(history_db, desti
         job.result = json.dumps(result)
         db.commit()
         assert "visible-on-next-commit" in _all(db)
+
+
+@pytest.mark.parametrize("boundary_change", ["changed", "removed", "reordered"])
+@pytest.mark.parametrize("structured", [False, True])
+def test_unchanged_opener_replays_when_result_boundaries_change(history_db, boundary_change, structured):
+    """A changed snapshot cannot reuse its formerly closed final parser state.
+
+    Args:
+        history_db: Transactional fixture with production capture hooks.
+        boundary_change: Alter the previously matching result footer or field order.
+        structured: Continue the key in nested list and numeric values.
+    """
+    db = history_db
+    job = _job(db, {})
+    result = {"header": "-----BEGIN RSA PRIVATE KEY-----", "footer": "-----END RSA PRIVATE KEY-----"}
+    job.result = json.dumps(result)
+    db.commit()
+    if boundary_change == "changed":
+        result["footer"] = "-----END EC PRIVATE KEY-----"
+    elif boundary_change == "removed":
+        del result["footer"]
+    else:
+        result = {"footer": result["footer"], "header": result["header"]}
+    result["body"] = {"parts": ["synthetic-replayed-body", 9423109]} if structured else "synthetic-replayed-body"
+    job.result = json.dumps(result)
+    db.commit()
+    stored = "".join(db.execute(select(TaskLogChunk.content)).scalars())
+    stored += "".join(db.execute(select(TaskLogCheckpoint.state_json)).scalars())
+    assert "synthetic-replayed-body" not in stored
+    if structured:
+        assert "9423109" not in stored
+    result["log_lines"] = ["-----END RSA PRIVATE KEY-----", "visible-after-snapshot-close"]
+    job.result = json.dumps(result)
+    db.commit()
+    assert "visible-after-snapshot-close" in _all(db)
+
+
+def test_nested_result_order_changes_recompute_concealment(history_db):
+    """Field fingerprints preserve nested ordering because it determines PEM context.
+
+    Args:
+        history_db: Transactional task fixture.
+    """
+    db = history_db
+    job = _job(db, {})
+    value = {"body": "synthetic-reordered-value", "header": "-----BEGIN RSA PRIVATE KEY-----",
+             "footer": "-----END RSA PRIVATE KEY-----"}
+    job.result = json.dumps({"output": value})
+    db.commit()
+    boundary = db.execute(select(TaskLogCheckpoint.end_offset)).scalar_one()
+    job.result = json.dumps({"output": {"header": value["header"], "body": value["body"], "footer": value["footer"]}})
+    db.commit()
+    new_text = "".join(db.execute(select(TaskLogChunk.content).where(TaskLogChunk.start_offset >= boundary)).scalars())
+    checkpoint = db.execute(select(TaskLogCheckpoint.state_json)).scalar_one()
+    assert "synthetic-reordered-value" not in new_text + checkpoint
+    assert "[redacted private key]" in new_text

@@ -58,12 +58,12 @@ def _safe_lines(lines: list[str], private: bool = False, parser: dict[str, str] 
 
 
 def _log_digest(lines: list[Any]) -> str:
-    """Authenticate a producer prefix without persisting its raw contents.
+    """Authenticate producer values and nested field order without raw copies.
 
     Args:
         lines: Cumulative producer log values.
     """
-    encoded = json.dumps(lines, sort_keys=True, ensure_ascii=False).encode()
+    encoded = json.dumps(lines, ensure_ascii=False).encode()
     return hmac.new(get_settings().secret_key.encode(), encoded, hashlib.sha256).hexdigest()
 
 
@@ -95,6 +95,27 @@ def _safe_value(value: Any, private: bool = False, key: str = "", parser: dict[s
         lines, private = _safe_lines([value], private, parser)
         return "\n".join(lines), private
     return "[redacted private key]" if private else value, private
+
+
+def _merge_private_redaction(current: Any, snapshot: Any) -> Any:
+    """Combine incremental and snapshot concealment without weakening either view.
+
+    Args:
+        current: Value sanitized in the newly appended stream context.
+        snapshot: Same value sanitized by replaying the current result snapshot.
+    """
+    if isinstance(current, dict) and isinstance(snapshot, dict):
+        return {key: _merge_private_redaction(value, snapshot[key]) for key, value in current.items()}
+    if isinstance(current, list) and isinstance(snapshot, list):
+        return [_merge_private_redaction(left, right) for left, right in zip(current, snapshot, strict=True)]
+    if snapshot == "[redacted private key]" or current == "[redacted private key]":
+        return "[redacted private key]"
+    if isinstance(current, str) and isinstance(snapshot, str):
+        left, right = current.splitlines(), snapshot.splitlines()
+        if len(left) == len(right):
+            return "\n".join("[redacted private key]" if "[redacted private key]" in (a, b) else a
+                             for a, b in zip(left, right, strict=True))
+    return current
 
 
 def capture_task_history(
@@ -178,16 +199,21 @@ def capture_task_history(
         result = _payload(job.result)
         old_result = previous.get("result", {})
         old_digests = previous.get("result_digests", {})
-        safe_result, result_digests = {}, {}
-        for key, raw_value in result.items():
-            if key == "state" or (key == "log_lines" and isinstance(raw_value, list)):
-                continue
-            digest = _log_digest([key, raw_value])
-            result_digests[key] = digest
-            if key in old_result and old_digests.get(key) == digest:
-                safe_result[key] = old_result[key]
-                continue
-            value, private = _safe_value(raw_value, private, key, parser)
+        raw_fields = {key: value for key, value in result.items()
+                      if key != "state" and (key != "log_lines" or not isinstance(value, list))}
+        result_digests = {key: _log_digest([key, value]) for key, value in raw_fields.items()}
+        snapshot_parser: dict[str, str] = {}
+        snapshot = None
+        if result_digests != old_digests or list(raw_fields) != previous.get("result_order"):
+            snapshot, _ = _safe_value(raw_fields, parser=snapshot_parser)
+        safe_result = {}
+        for key, raw_value in raw_fields.items():
+            if key in old_result and old_digests.get(key) == result_digests[key]:
+                value = old_result[key]
+            else:
+                value, private = _safe_value(raw_value, private, key, parser)
+            if snapshot is not None:
+                value = _merge_private_redaction(value, snapshot[key])
             safe_result[key] = value
             if key not in old_result or old_result[key] != value:
                 rendered = json.dumps(value, sort_keys=True) if isinstance(value, (dict, list)) else str(value)
@@ -196,6 +222,13 @@ def capture_task_history(
         for key in old_result.keys() - safe_result.keys():
             lines.append(f"{key}: [removed]")
         leave_stream("result", parser)
+        if snapshot_parser.get("carry"):
+            snapshot_fields = json.loads(snapshot_parser["carry"])
+            label = snapshot_fields[4]
+            if label:
+                active_label = label if not active_label or active_label == label else "!"
+            if snapshot_fields[0] != "S" or snapshot_fields[1]:
+                partials["result"] = snapshot_parser["carry"]
         private, parser = enter_stream("log")
         raw_logs = result.get("log_lines", [])
         raw_logs = raw_logs if isinstance(raw_logs, list) else []
@@ -209,7 +242,8 @@ def capture_task_history(
                 safe_logs, private = _safe_lines([value], private, parser)
                 lines.extend(safe_logs)
         leave_stream("log", parser)
-        state.update(result=safe_result, result_digests=result_digests, log_count=len(raw_logs), log_digest=_log_digest(raw_logs))
+        state.update(result=safe_result, result_digests=result_digests, result_order=list(raw_fields),
+                     log_count=len(raw_logs), log_digest=_log_digest(raw_logs))
     error = previous.get("error", "")
     raw_error = job.error or "" if job.status not in {"pending", "running"} else ""
     if raw_error and _log_digest([raw_error]) != previous.get("error_digest"):

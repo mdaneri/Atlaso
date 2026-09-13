@@ -56,7 +56,9 @@ keep subsequent output concealed when a single matching context cannot be establ
 Task capture shares the active private-key label across changed result fields, new log lines, errors, and audit
 details. It preserves bounded partial markers within each source when another source interrupts a split header,
 and conceals intervening output until the context is complete. Unchanged result fields are recognized by keyed
-fingerprints and are not replayed into that state on later log updates.
+fingerprints and are not replayed into that state on later log updates. When result fields or their order change,
+the current result snapshot is also replayed for redaction, so changing a later footer cannot erase an unchanged
+opening marker's protection. Snapshot and incremental concealment are combined before persistence.
 Values hidden by a secret field name still advance this state before they are discarded.
 Progress and audit-only updates reuse the committed task-result checkpoint without rehashing unchanged log output.
 Startup backfill selects only tasks without history checkpoints and rechecks eligibility under the task lock,
