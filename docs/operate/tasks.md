@@ -57,6 +57,53 @@ Read the failed step and sanitized task log, then correlate its identifier with 
 [Audit log](audit-log.md). Correct desired state in the owning page and submit a new task. Do not edit task history or
 fabricate a successful result.
 
+## Cancellation and execution ownership
+
+Tasks and the API expose the same backend-owned `can_cancel`, `cancel_reason`, and `cancel_confirmation` fields.
+The task detail shows the reason even when cancellation is unavailable. Its Cancel action also works for a task
+opened directly outside the current grid page or filters. Cancellation uses the refreshed grid capability when
+available; a closed detail dialog cannot override the current confirmation or eligibility. A stale browser action
+cannot override the backend policy. An accepted request records `cancel_requested_at` and `cancel_requested_by`;
+running work keeps its active status until its owner verifies the stop and cleanup. `cancel_completed_at` and
+`cancel_outcome` record the final disposition. `cleanup-required` remains active and blocks worker admission while
+recovery needs attention. A media failure racing an accepted cancellation confirms the stop once rollback and
+upload cleanup succeed; only unresolved cleanup retains that queue hold. Startup recovery also requires proof that
+no unresolved swap journal, replacement tree, or staging directory remains. Malformed recovery evidence retains the
+request and queue hold until recovery succeeds. Embedded Appliance Update actions use the current caller's
+permissions. Do not interpret a cancellation request as proof that a local process or a remote operation stopped.
+
+| Task owner | Queued cancellation | Running cancellation |
+| --- | --- | --- |
+| Appliance Update check | Reserved before worker claim | Current bounded check finishes and cleans credentials; remaining checks skipped |
+| Appliance Update installation or source synchronization | Reserved before worker claim | Unavailable; existing update/recovery owner must finish |
+| Appliance Apply | Cancelled before its atomic execution claim; apply lock released | Current component and cleanup finish; remaining components skipped; applied changes remain |
+| Network Boot media download/upload | Reserved before claim; owned upload removed | Transfer/extraction checkpoint, then staged filesystem rollback and upload cleanup |
+| Network Boot media deletion | Reserved before worker claim | Unavailable once destructive deletion starts |
+| Managed script | Reserved before worker claim | Unavailable because script side effects have no generic rollback contract |
+| VCF depot download | Reserved before claim; queued profile status restored | Unavailable until the VCFDT owner finishes |
+| Diagnostic bundle | Reserved before worker claim | Unavailable; bounded collector descendant shutdown is not verified |
+| VCF software identity replacement | Unavailable | Unavailable; identity operation owner must finish |
+| Remote SDDC deployment, depot target configuration, or CA trust | Unavailable | Unavailable; stopping a watcher does not stop or undo remote work |
+| Manual placeholder | Cancelled before execution | Unavailable |
+| Other/unregistered task types | Unavailable | Unavailable until an explicit safe owner contract is registered |
+
+An update check request can wait up to six minutes for the current helper's deadline and credential cleanup. Media
+cancellation checks before each transfer attempt and after each 1 MiB read. A network operation can wait up to its
+300-second socket timeout (including each bounded redirect); extraction commands have 60-second deadlines.
+Cancellation does not
+interrupt filesystem publication halfway through. Failed cleanup retains active ownership and the request for
+recovery. Worker restart
+revalidates task-owned update units or restores interrupted media swaps before confirming cancellation.
+Web startup confirms accepted queued Apply cancellations before classifying other interrupted Apply jobs.
+Paired Firewall/NAT publication finishes as one transaction; a request after its final work preserves completion.
+
+Completed child results remain intact. Completed update checks refresh availability before cancellation is confirmed,
+including during restart recovery; skipped streams retain their previous confirmation. A verified parent stop skips
+children that never started. If completion wins
+the race, Atlaso preserves success or failure and records `completion-won`; repeated requests never rewrite that result.
+The API requires `admin:all`; browser administrators can request supported cancellations, while service administrators
+are limited to supported Network Boot media tasks. Child rows cannot independently cancel their parent's operation.
+
 <!-- BEGIN GENERATED ADDITIONAL SCREENSHOTS -->
 ## Additional verified states
 

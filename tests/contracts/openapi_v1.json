@@ -3712,8 +3712,76 @@
         "type": "object"
       },
       "JobResponse": {
-        "description": "Fields returned by the Atlaso job API.\n\nAttributes:\n    id: Unique database identifier assigned to this resource.\n    type: Stable URI identifying the problem or resource type.\n    status: Returned status value for this job resource.\n    created_by: Returned created by value for this job resource.\n    created_at: UTC timestamp when the resource was created.\n    started_at: UTC timestamp for started at on this job resource.\n    finished_at: UTC timestamp for finished at on this job resource.\n    progress_percent: Progress percent, expressed as a percentage from 0 through 100.\n    result: Returned result value for this job resource.\n    error: Returned error value for this job resource.",
+        "description": "Fields returned by the Atlaso job API.\n\nAttributes:\n    id: Unique database identifier assigned to this resource.\n    type: Stable URI identifying the problem or resource type.\n    status: Returned status value for this job resource.\n    created_by: Returned created by value for this job resource.\n    created_at: UTC timestamp when the resource was created.\n    started_at: UTC timestamp for started at on this job resource.\n    finished_at: UTC timestamp for finished at on this job resource.\n    progress_percent: Progress percent, expressed as a percentage from 0 through 100.\n    result: Returned result value for this job resource.\n    error: Returned error value for this job resource.\n    can_cancel: Whether this caller can request the task's audited safe stop now.\n    cancel_reason: Explanation of current cancellation eligibility.\n    cancel_confirmation: Task-specific description of the safe stop contract.\n    cancel_requested_at: Time a cancellation request won its atomic admission check.\n    cancel_requested_by: Authenticated actor responsible for the request.\n    cancel_completed_at: Time the request's final disposition was recorded.\n    cancel_outcome: Request disposition, separate from the task execution status.",
         "properties": {
+          "can_cancel": {
+            "default": false,
+            "description": "Whether the caller can request the audited safe stop at the task's current stage.",
+            "title": "Can Cancel",
+            "type": "boolean"
+          },
+          "cancel_completed_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "UTC time the request received a confirmed stop or completion-won disposition.",
+            "title": "Cancel Completed At"
+          },
+          "cancel_confirmation": {
+            "default": "",
+            "description": "Operator confirmation describing the task's actual safe stop and retained effects.",
+            "title": "Cancel Confirmation",
+            "type": "string"
+          },
+          "cancel_outcome": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Cancellation disposition: requested, confirmed, cleanup-required, or completion-won; execution status remains authoritative.",
+            "title": "Cancel Outcome"
+          },
+          "cancel_reason": {
+            "default": "",
+            "description": "Why cancellation is available or unavailable for this caller and stage.",
+            "title": "Cancel Reason",
+            "type": "string"
+          },
+          "cancel_requested_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "UTC time the durable cancellation request was accepted; not proof of a stopped task.",
+            "title": "Cancel Requested At"
+          },
+          "cancel_requested_by": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Authenticated actor who requested cancellation.",
+            "title": "Cancel Requested By"
+          },
           "created_at": {
             "description": "UTC timestamp when the resource was created.",
             "format": "date-time",
@@ -13520,7 +13588,7 @@
     },
     "/api/v1/jobs/{job_id}/cancel": {
       "post": {
-        "description": "Cancel Job.\n\nRequires the `admin:all` API scope. The operation changes saved Atlaso application state; any\nappliance host enforcement remains subject to the documented apply or task boundary for the\nresource.",
+        "description": "Cancel Job.\n\nRequires `admin:all`. The backend rechecks the returned `can_cancel` capability and rejects\nunsupported running work with HTTP 409 and its `cancel_reason`. Accepted running work remains\nrunning with `cancel_requested_at` until its owner verifies a safe checkpoint and cleanup.\nQueued work is reserved against worker claims before staging cleanup. Repeated requests and\nalready completed tasks preserve the existing result. `cancel_outcome` distinguishes confirmed\nstops, cleanup requiring attention, and completion winning the race.",
         "operationId": "cancelJob",
         "parameters": [
           {

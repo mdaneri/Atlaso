@@ -51,7 +51,7 @@ from fastapi.responses import (
     Response,
 )
 from fastapi.templating import Jinja2Templates
-from sqlalchemy import String, and_, cast, delete, desc, func, or_, select
+from sqlalchemy import String, and_, cast, delete, desc, func, or_, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, selectinload
 
@@ -214,6 +214,7 @@ from atlaso.app.security import (
     start_browser_session,
     user_roles,
 )
+from atlaso.app.services import task_cancellation
 from atlaso.app.services.appliance_settings import (
     APPLIANCE_DNS_RECORD_DESCRIPTION,
     APPLIANCE_SETTINGS_STAGED_CONFIG_PATH,
@@ -3300,6 +3301,11 @@ def recover_interrupted_appliance_apply_jobs(db: Session) -> int:
         .options(selectinload(Job.steps))
         .where(Job.type == "appliance-apply")
     ).all()
+    # Startup must settle durable pre-claim reservations before classifying interruptions.
+    # This owner-scoped pass cannot be starved by the worker's unrelated request batch.
+    for job in candidate_jobs:
+        if job.status == JobStatus.PENDING.value and job.cancel_requested_at is not None:
+            task_cancellation.finish_pending(db, job)
     jobs = [
         job
         for job in candidate_jobs
@@ -8584,28 +8590,7 @@ def _can_cancel_task(job: Job, identity: Identity | None = None) -> bool:
         job: Job being processed.
         identity: Authenticated identity authorizing the request.
     """
-    if job.status not in ACTIVE_JOB_STATUSES:
-        return False
-    if job.type == "pxe-media-sync" and job.status == JobStatus.RUNNING.value:
-        try:
-            config = json.loads(job.task_config_json or "{}")
-        except json.JSONDecodeError:
-            config = {}
-        if config.get("source") == "delete":
-            return False
-    if job.type == "appliance-apply" and _job_payload(job).get("cancel_requested"):
-        return False
-    if job.type == "appliance-update" and job.status == JobStatus.RUNNING.value:
-        return False
-    if job.type == "vcf-depot-software-id":
-        return False
-    if job.type == "vcf-depot-download" and job.status == JobStatus.RUNNING.value:
-        return False
-    if identity is None:
-        return True
-    if identity.has_role(Role.ADMIN.value):
-        return True
-    return identity.has_role(Role.SERVICE_ADMIN.value) and job.type in SERVICE_ADMIN_CANCELLABLE_JOB_TYPES
+    return task_cancellation.capability(job, identity).can_cancel
 
 
 def _job_step_payload(step: JobStep) -> dict[str, Any]:
@@ -8630,10 +8615,13 @@ def _task_row(job: Job, identity: Identity | None = None) -> dict[str, Any]:
         job: Job being processed.
         identity: Authenticated identity authorizing the request.
     """
+    cancellation = task_cancellation.capability(job, identity)
     raw_result = _job_payload(job)
     result = _redact_task_value(raw_result)
     status_value = str(job.status or "")
     state = str(result.get("state") or status_value)
+    if job.cancel_requested_at is not None and status_value in ACTIVE_JOB_STATUSES:
+        state = "cancellation-cleanup-required" if job.cancel_outcome == "cleanup-required" else "cancellation-requested"
     summary = str(result.get("target") or result.get("fqdn") or result.get("vm_name") or result.get("profile_name") or "")
     if not summary and isinstance(result.get("vm"), dict):
         summary = str(result["vm"].get("vm_name") or result["vm"].get("guest_ip") or "")
@@ -8665,7 +8653,14 @@ def _task_row(job: Job, identity: Identity | None = None) -> dict[str, Any]:
         "console_stderr": console_stderr,
         "error": error,
         "error_messages": error_messages,
-        "can_cancel": _can_cancel_task(job, identity),
+        "can_cancel": cancellation.can_cancel,
+        "cancel_reason": cancellation.reason,
+        "cancel_confirmation": cancellation.confirmation,
+        "cancel_requested": job.cancel_requested_at is not None and status_value in ACTIVE_JOB_STATUSES,
+        "cancel_requested_at": _task_time_label(job.cancel_requested_at),
+        "cancel_requested_by": job.cancel_requested_by or "",
+        "cancel_completed_at": _task_time_label(job.cancel_completed_at),
+        "cancel_outcome": job.cancel_outcome or "",
         "can_start": False,
     }
     if job.type == "vcf-depot-download":
@@ -8717,6 +8712,7 @@ def _job_step_row(step: JobStep) -> dict[str, Any]:
         "error": error,
         "error_messages": error_messages,
         "can_cancel": False,
+        "cancel_reason": "Child execution is owned by its parent task.",
         "is_step": True,
         "position": step.position,
     }
@@ -12091,12 +12087,14 @@ def appliance_update_availability_summary(
 def appliance_update_context(
     db: Session,
     *,
+    identity: Identity,
     selected_stream_ids: list[str] | tuple[str, ...] | None = None,
 ) -> dict[str, Any]:
     """Return appliance update context.
 
     Args:
         db: Active database session.
+        identity: Current caller whose task action permissions are displayed.
         selected_stream_ids: Optional submitted stream selection to preserve.
     """
     settings = appliance_update_settings(db)
@@ -12283,7 +12281,7 @@ def appliance_update_context(
         "current_version_info": current_version_info(),
         "appliance_update_manifest_preview": manifest_preview,
         "appliance_update_staged_config_path": APPLIANCE_UPDATE_STAGED_CONFIG_PATH,
-        "recent_update_tasks": [_task_row(job) for job in recent_jobs],
+        "recent_update_tasks": [_task_row(job, identity) for job in recent_jobs],
         "task_component_filter_options": _task_component_filter_options(db),
         "appliance_update_info_path": APPLIANCE_UPDATE_INFO_PATH,
         "update_info_file": appliance_update_evidence_state(
@@ -15282,7 +15280,7 @@ def submit_appliance_update(
             "appliance_update.html",
             {
                 "identity": identity,
-                **appliance_update_context(db, selected_stream_ids=selected),
+                **appliance_update_context(db, identity=identity, selected_stream_ids=selected),
                 "selected_update_stream_ids": selected,
                 "update_error": " ".join(errors),
             },
@@ -15303,7 +15301,7 @@ def submit_appliance_update(
             "appliance_update.html",
             {
                 "identity": identity,
-                **appliance_update_context(db, selected_stream_ids=selected),
+                **appliance_update_context(db, identity=identity, selected_stream_ids=selected),
                 "selected_update_stream_ids": selected,
                 "update_error": detail,
             },
@@ -15368,7 +15366,7 @@ def submit_appliance_update(
         "appliance_update.html",
         {
             "identity": identity,
-            **appliance_update_context(db, selected_stream_ids=selected),
+            **appliance_update_context(db, identity=identity, selected_stream_ids=selected),
             "selected_update_stream_ids": selected,
             "appliance_update_task": job,
             "appliance_update_task_result": update_result,
@@ -15637,10 +15635,15 @@ def run_appliance_apply_job(job_id: str, *, force_real: bool = False) -> None:
             return
         if force_real and job.created_by != "console:root":
             raise ValueError("Forced-real appliance apply is restricted to local console tasks.")
-        job.status = JobStatus.RUNNING.value
-        job.started_at = utcnow()
-        job.progress_percent = 1
+        claimed = db.execute(update(Job).where(
+            Job.id == job_id, Job.type == "appliance-apply", Job.status == JobStatus.PENDING.value,
+            Job.cancel_requested_at.is_(None),
+        ).values(status=JobStatus.RUNNING.value, started_at=utcnow(), progress_percent=1))
+        if getattr(claimed, "rowcount", 0) != 1:
+            db.rollback()
+            return
         db.commit()
+        db.refresh(job)
 
         unit_results: list[dict[str, Any]] = []
         handoff_recovery_adapter: SystemAdapter | None = None
@@ -15687,9 +15690,15 @@ def run_appliance_apply_job(job_id: str, *, force_real: bool = False) -> None:
                 else []
             )
             for index, unit in enumerate(selected_units, start=1):
+                # A bundled transaction already completed these rows. A later request
+                # must not turn their successful final result into cancellation.
+                if (handoff_completed and unit["id"] in handoff_unit_ids) or (
+                    publishing_completed and job_result.get("traffic_publishing_pair") and unit["id"] in {"firewall", "nat"}
+                ):
+                    continue
                 db.refresh(job)
                 current_payload = _job_payload(job)
-                if current_payload.get("cancel_requested"):
+                if job.cancel_requested_at is not None or current_payload.get("cancel_requested"):
                     cancelled = True
                     for remaining_unit in selected_units[index - 1 :]:
                         remaining = steps_by_key.get(remaining_unit["id"])
@@ -16098,7 +16107,7 @@ def run_appliance_apply_job(job_id: str, *, force_real: bool = False) -> None:
                         remaining.finished_at = utcnow()
                         remaining.error = f"Skipped because {unit['label']} failed."
                         remaining.result = json.dumps({"summary": remaining_unit["summary"], "reason": "previous_component_failed"}, indent=2)
-                if current_payload.get("cancel_requested") and not failed:
+                if (job.cancel_requested_at is not None or current_payload.get("cancel_requested")) and not failed and index < len(selected_units):
                     cancelled = True
                     for remaining_unit in selected_units[index:]:
                         remaining = steps_by_key.get(remaining_unit["id"])
@@ -16152,6 +16161,9 @@ def run_appliance_apply_job(job_id: str, *, force_real: bool = False) -> None:
             job.finished_at = utcnow()
             job.progress_percent = 100
             job.result = json.dumps(job_result, indent=2)
+            if job.cancel_requested_at is not None:
+                job.cancel_completed_at = utcnow()
+                job.cancel_outcome = "confirmed" if cancelled else "completion-won"
             db.commit()
             record_audit(
                 db,

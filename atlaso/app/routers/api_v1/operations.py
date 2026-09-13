@@ -1,13 +1,12 @@
 from __future__ import annotations
 
-import json
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Annotated, Any
 from uuid import uuid4
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi import Path as ApiPath
 from sqlalchemy import desc, select
 from sqlalchemy.orm import Session
@@ -15,7 +14,7 @@ from sqlalchemy.orm import Session
 from atlaso.app.adapters.system import SystemAdapter
 from atlaso.app.audit import record_audit
 from atlaso.app.database import get_db
-from atlaso.app.models import AuditEvent, Job, JobStatus, ServiceState, utcnow
+from atlaso.app.models import AuditEvent, Job, ServiceState
 from atlaso.app.openapi import DocumentedAPIRoute
 from atlaso.app.schemas import (
     AuditEventResponse,
@@ -24,7 +23,7 @@ from atlaso.app.schemas import (
     ServiceStateResponse,
 )
 from atlaso.app.security import Identity, require_scope
-from atlaso.app.services.network_boot import cleanup_network_boot_upload
+from atlaso.app.services import task_cancellation
 from atlaso.app.services.network_objects import acquire_network_objects_write_lock
 from atlaso.app.services.routes_wan import save_routing_enabled_state
 from atlaso.app.services.service_registry import SERVICE_STATE_IDS
@@ -44,6 +43,20 @@ class OperationsApiDependencies:
 class OperationsApiRouter:
     router: APIRouter
     endpoints: Mapping[str, Endpoint]
+
+
+def _job_response(job: Job, identity: Identity) -> JobResponse:
+    """Expose the same authoritative capability with API-scope authorization.
+
+    Args:
+        job: Current persisted task.
+        identity: Caller whose token must permit cancellation.
+    """
+    contract = task_cancellation.capability(job, identity, api=True)
+    return JobResponse.model_validate(job).model_copy(update={
+        "can_cancel": contract.can_cancel, "cancel_reason": contract.reason,
+        "cancel_confirmation": contract.confirmation,
+    })
 
 
 def build_router(dependencies: OperationsApiDependencies) -> OperationsApiRouter:
@@ -549,7 +562,7 @@ def build_router(dependencies: OperationsApiDependencies) -> OperationsApiRouter
             db: Active database session used by the operation.
         """
         return [
-            JobResponse.model_validate(row)
+            _job_response(row, identity)
             for row in db.execute(select(Job).order_by(desc(Job.created_at)))
             .scalars()
             .all()
@@ -591,7 +604,7 @@ def build_router(dependencies: OperationsApiDependencies) -> OperationsApiRouter
             resource_type="job",
             resource_id=job.id,
         )
-        return JobResponse.model_validate(job)
+        return _job_response(job, identity)
 
     @router.get(
         "/jobs/{job_id}",
@@ -622,7 +635,7 @@ def build_router(dependencies: OperationsApiDependencies) -> OperationsApiRouter
         job = db.get(Job, job_id)
         if not job:
             raise HTTPException(status_code=404, detail="Job not found")
-        return JobResponse.model_validate(job)
+        return _job_response(job, identity)
 
     @router.post(
         "/jobs/{job_id}/cancel",
@@ -642,9 +655,12 @@ def build_router(dependencies: OperationsApiDependencies) -> OperationsApiRouter
     ) -> JobResponse:
         """Cancel Job.
 
-        Requires the `admin:all` API scope. The operation changes saved Atlaso application state; any
-        appliance host enforcement remains subject to the documented apply or task boundary for the
-        resource.
+        Requires `admin:all`. The backend rechecks the returned `can_cancel` capability and rejects
+        unsupported running work with HTTP 409 and its `cancel_reason`. Accepted running work remains
+        running with `cancel_requested_at` until its owner verifies a safe checkpoint and cleanup.
+        Queued work is reserved against worker claims before staging cleanup. Repeated requests and
+        already completed tasks preserve the existing result. `cancel_outcome` distinguishes confirmed
+        stops, cleanup requiring attention, and completion winning the race.
 
         Args:
             job_id: Stable identifier of the associated job resource.
@@ -652,37 +668,14 @@ def build_router(dependencies: OperationsApiDependencies) -> OperationsApiRouter
             db: Active database session used by the operation.
         """
         job = db.get(Job, job_id)
-        if not job:
+        if job is None:
             raise HTTPException(status_code=404, detail="Job not found")
-        if job.type == "pxe-media-sync" and job.status == JobStatus.RUNNING.value:
-            try:
-                config = json.loads(job.task_config_json or "{}")
-            except json.JSONDecodeError:
-                config = {}
-            if config.get("source") == "delete":
-                raise HTTPException(
-                    status_code=status.HTTP_409_CONFLICT,
-                    detail="A running Network Boot media deletion cannot be cancelled.",
-                )
-        if job.type == "pxe-media-sync" and job.status == "pending":
-            try:
-                config = json.loads(job.task_config_json or "{}")
-            except json.JSONDecodeError:
-                config = {}
-            if config.get("source") == "upload":
-                cleanup_network_boot_upload(job.id)
-        job.status = "cancelled"
-        job.finished_at = utcnow()
-        db.commit()
+        try:
+            task_cancellation.request(db, job, identity, api=True)
+        except task_cancellation.CancellationError as exc:
+            raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
         db.refresh(job)
-        record_audit(
-            db,
-            actor=identity.username,
-            action="cancel_job",
-            resource_type="job",
-            resource_id=job.id,
-        )
-        return JobResponse.model_validate(job)
+        return _job_response(job, identity)
 
     return OperationsApiRouter(
         router=router,
