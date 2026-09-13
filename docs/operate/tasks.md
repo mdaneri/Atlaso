@@ -34,6 +34,12 @@ When you open several task logs in quick succession, the last task selected owns
 older request where possible and ignores any stale success or error that arrives after the newer selection or after the
 dialog was closed.
 
+An open log refreshes automatically while its task is active and reads trailing output after completion. Use
+**From beginning** and the page controls to inspect its complete retained history; **Follow live** advances with new
+output. Reading older entries preserves your position and selection. A stale-connection notice keeps the last useful
+output visible while the viewer retries. These controls also apply to standalone VCF download logs and service logs;
+see [Operational logs](logs.md) for retention and refresh behavior.
+
 Pending and running tasks are not proof that appliance state changed. Treat only a successful terminal result plus the
 service-specific verification as success.
 
@@ -56,6 +62,12 @@ content changed, and neither is replayed automatically.
 Read the failed step and sanitized task log, then correlate its identifier with [Operational logs](logs.md) and the
 [Audit log](audit-log.md). Correct desired state in the owning page and submit a new task. Do not edit task history or
 fabricate a successful result.
+
+Task history pages exclude the changing status and progress summary, which remains in the task detail dialog.
+Updating that summary does not reset an older log page. Result changes and audit events are captured transactionally
+as an ordered history stream. New fields and appended output do not move an existing history cursor; updated or removed
+fields add entries while earlier output stays readable. Existing retained tasks are initialized when the appliance
+starts. Cancelling or rolling back a producer transaction does not publish uncommitted log entries.
 
 ## Cancellation and execution ownership
 

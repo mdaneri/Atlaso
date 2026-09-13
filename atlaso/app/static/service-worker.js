@@ -1,5 +1,5 @@
 const ATLASO_CACHE_PREFIX = "atlaso-management-pwa-v";
-const ATLASO_CACHE = `${ATLASO_CACHE_PREFIX}331`;
+const ATLASO_CACHE = `${ATLASO_CACHE_PREFIX}341`;
 const ATLASO_ASSETS = [
   "/manifest.webmanifest",
   "/favicon.ico",
@@ -8,7 +8,8 @@ const ATLASO_ASSETS = [
   "/static/ui-patterns.js?v=atlaso-ui-foundation-20260726-10",
   "/static/ui-routes.js?v=issue-287-1",
   "/static/appliance-apply-polling.js?v=issue-420-6",
-  "/static/app.js?v=task-cancellation-823-5",
+  "/static/log-viewer.js?v=full-history-822-16",
+  "/static/app.js?v=full-history-822-14",
   "/static/diagnostics.js?v=task-cancellation-823-3",
   "/static/chunk-uploads.js?v=issue-779-7",
   "/static/terminal.js?v=issue-287-2",

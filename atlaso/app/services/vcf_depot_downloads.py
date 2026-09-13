@@ -263,6 +263,9 @@ def cancel_pending_vcf_depot_download(
     )
     if cancelled.rowcount != 1:
         return False
+    from atlaso.app.services.task_log_history import capture_task_history
+
+    capture_task_history(db.connection(), job_id)
     restored_status = (
         profile_status_before_enqueue
         if profile_status_before_enqueue in {"planned", "synced", "blocked"}

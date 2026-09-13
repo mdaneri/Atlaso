@@ -16,9 +16,9 @@ from atlaso.app.adapters.system import SystemAdapter
 from atlaso.app.audit import record_audit
 from atlaso.app.config import get_settings
 from atlaso.app.database import get_db
-from atlaso.app.models import EsxNfsShare, Job, ServiceState, utcnow
+from atlaso.app.models import AuditEvent, EsxNfsShare, Job, ServiceState, utcnow
 from atlaso.app.security import Identity, require_session_identity
-from atlaso.app.services import task_cancellation
+from atlaso.app.services import log_viewer, task_cancellation
 from atlaso.app.services.ca import ca_service_state
 from atlaso.app.services.esx_storage import (
     rpcbind_required as esx_storage_rpcbind_required,
@@ -460,7 +460,7 @@ def build_router(dependencies: OperationsUiDependencies) -> OperationsUiRouter:
         request: Request,
         identity: Identity = Depends(require_session_identity),
         db: Session = Depends(get_db),
-    ) -> HTMLResponse:
+    ) -> HTMLResponse | JSONResponse:
         """Handle the service logs from ui endpoint.
 
         Args:
@@ -482,7 +482,33 @@ def build_router(dependencies: OperationsUiDependencies) -> OperationsUiRouter:
         ).scalar_one_or_none()
         if not row:
             raise HTTPException(status_code=404, detail="Service not found")
-        return render(
+        source = {"dns": "dnsmasq-dns", "dhcp": "dnsmasq-dhcp", "esxi-pxe": "dnsmasq-tftp",
+                  "ntpd": "ntp", "kms": "kms", "ldap": "ldap", "esx-storage": "esx-storage"}.get(service)
+        response_headers = {"Cache-Control": "no-store", "Vary": "X-Atlaso-Task-Log"}
+        if request.headers.get("X-Atlaso-Task-Log") == "1":
+            if get_settings().dry_run_system_adapters:
+                return JSONResponse({"text": "No host journal is read in development mode.",
+                                     "status": "succeeded"}, headers=response_headers)
+            if not source:
+                return JSONResponse({"text": "No dedicated log source is configured for this service.", "status": "succeeded"}, headers=response_headers)
+            try:
+                return JSONResponse(log_viewer.source_page(source, cursor=request.query_params.get("cursor", ""), tail=request.query_params.get("tail") == "1"),
+                                    headers=response_headers)
+            except (ValueError, OSError) as exc:
+                raise HTTPException(status_code=400, detail=str(exc)) from exc
+        if get_settings().dry_run_system_adapters:
+            snapshot = [f"dry-run log source for {service}", "No host journal is read in development mode."]
+        elif not source:
+            snapshot = ["No dedicated log source is configured for this service."]
+        else:
+            try:
+                page = log_viewer.source_page(source, tail=True, limit=100)
+                snapshot = page["text"].splitlines()
+                if not snapshot:
+                    snapshot = [page.get("notice") or "No retained log entries are available."]
+            except (ValueError, OSError):
+                snapshot = ["Log history is temporarily unavailable. Reload this page to retry."]
+        response = render(
             request,
             "services.html",
             {
@@ -490,13 +516,13 @@ def build_router(dependencies: OperationsUiDependencies) -> OperationsUiRouter:
                 **services_template_context(db),
                 "service_logs": {
                     "service": row.display_name,
-                    "lines": [
-                        f"dry-run log source for {service}",
-                        "No host journal is read in development mode.",
-                    ],
+                    "url": str(request.url.path),
+                    "lines": snapshot,
                 },
             },
         )
+        response.headers.update(response_headers)
+        return response
 
     @router.get("/services", response_class=HTMLResponse, response_model=None)
     def services(
@@ -550,17 +576,32 @@ def build_router(dependencies: OperationsUiDependencies) -> OperationsUiRouter:
     @router.get("/logs/data", response_class=JSONResponse, response_model=None)
     def logs_data(
         lines: int = Query(100),
+        availability: bool = Query(False),
+        source: str = Query(""),
+        cursor: str = Query("", max_length=4096),
+        tail: bool = Query(False),
         _identity: Identity = Depends(require_session_identity),
     ) -> JSONResponse:
         """Handle the logs data endpoint.
 
         Args:
             lines: Lines supplied by the caller.
+            availability: Probe fixed-source metadata without loading log history.
+            source: Fixed source whose complete retained history is requested.
+            cursor: Signed history position bound to that source.
+            tail: Open the newest retained group without replaying older pages.
             _identity: Authenticated identity supplied by the dependency layer.
 
         Returns:
             The endpoint response.
         """
+        if availability:
+            return JSONResponse(log_viewer.source_availability(), headers={"Cache-Control": "no-store"})
+        if source:
+            try:
+                return JSONResponse(log_viewer.source_page(source, cursor=cursor, tail=tail, limit=normalized_log_line_count(lines)), headers={"Cache-Control": "no-store"})
+            except (ValueError, OSError) as exc:
+                raise HTTPException(status_code=400, detail=str(exc)) from exc
         line_count = normalized_log_line_count(lines)
         return JSONResponse(
             {
@@ -767,6 +808,8 @@ def build_router(dependencies: OperationsUiDependencies) -> OperationsUiRouter:
     @router.get("/tasks/{job_id}/log", response_class=JSONResponse, response_model=None)
     def task_log(
         job_id: str,
+        cursor: str = Query("", max_length=4096),
+        tail: bool = Query(False),
         identity: Identity = Depends(require_session_identity),
         db: Session = Depends(get_db),
     ) -> JSONResponse:
@@ -774,6 +817,8 @@ def build_router(dependencies: OperationsUiDependencies) -> OperationsUiRouter:
 
         Args:
             job_id: Identifier of the job.
+            cursor: Signed position in the complete retained task projection.
+            tail: Open the newest byte-bounded part of the retained task log.
             identity: Authenticated identity authorizing the request.
             db: Active database session.
 
@@ -787,13 +832,20 @@ def build_router(dependencies: OperationsUiDependencies) -> OperationsUiRouter:
         if not job:
             raise HTTPException(status_code=404, detail="Task not found")
         row = _task_row(job)
+        try:
+            from atlaso.app.services.task_log_history import task_history_page
+
+            history = task_history_page(db, job.id, cursor=cursor, tail=tail)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
         return JSONResponse(
             {
+                **history,
                 "job_id": job.id,
                 "status": job.status,
                 "title": f"{row['type_label']} log",
-                "text": "\n".join(_task_log_lines(job, db)),
-            }
+            },
+            headers={"Cache-Control": "no-store"},
         )
 
     @router.post(
@@ -837,7 +889,7 @@ def build_router(dependencies: OperationsUiDependencies) -> OperationsUiRouter:
         request: Request,
         identity: Identity = Depends(require_session_identity),
         db: Session = Depends(get_db),
-    ) -> HTMLResponse:
+    ) -> HTMLResponse | JSONResponse:
         """Handle the audit log endpoint.
 
         Args:
@@ -848,7 +900,36 @@ def build_router(dependencies: OperationsUiDependencies) -> OperationsUiRouter:
         Returns:
             The endpoint response.
         """
-        return render(
+        response_headers = {"Cache-Control": "no-store", "Vary": "X-Atlaso-Task-Log"}
+        if request.headers.get("X-Atlaso-Task-Log") == "1":
+            try:
+                position = log_viewer.decode_cursor(request.query_params.get("cursor", ""), "audit")
+                after = position.get("after", 0)
+                end = position.get("end")
+                if type(after) is not int or after < 0 or (end is not None and (type(end) is not int or end <= after)):
+                    raise ValueError("Invalid audit history position.")
+                if request.query_params.get("tail") == "1" and not position:
+                    after = db.scalar(select(AuditEvent.id).order_by(AuditEvent.id.desc()).offset(500).limit(1)) or 0
+                if position.get("before") is True:
+                    end = after
+                    after = db.scalar(select(AuditEvent.id).where(AuditEvent.id <= after).order_by(AuditEvent.id.desc()).offset(500).limit(1)) or 0
+                if type(after) is not int or after < 0:
+                    raise ValueError("Invalid audit history position.")
+            except ValueError as exc:
+                raise HTTPException(status_code=400, detail=str(exc)) from exc
+            query = select(AuditEvent).where(AuditEvent.id > after)
+            if end is not None:
+                query = query.where(AuditEvent.id <= end)
+            events = db.execute(query.order_by(AuditEvent.id).limit(501)).scalars().all()
+            rows = [{"id": event.id, "created_at": event.created_at.strftime("%Y-%m-%d %H:%M:%S"),
+                     "actor": event.actor, "action": event.action,
+                     "resource": f"{event.resource_type}:{event.resource_id}" if event.resource_id else event.resource_type,
+                     "success": event.success, "detail": event.detail or ""} for event in events[:500]]
+            return JSONResponse({"rows": rows, "cursor": log_viewer.encode_cursor("audit", after=after, end=end),
+                                 "next_cursor": log_viewer.encode_cursor("audit", after=rows[-1]["id"] if rows else after),
+                                 "previous_cursor": log_viewer.encode_cursor("audit", after=after, before=True) if after else "",
+                                 "has_more": len(events) > 500 or (end is not None and db.scalar(select(AuditEvent.id).where(AuditEvent.id > end).limit(1)) is not None)}, headers=response_headers)
+        response = render(
             request,
             "audit.html",
             {
@@ -856,6 +937,8 @@ def build_router(dependencies: OperationsUiDependencies) -> OperationsUiRouter:
                 "audit_event_rows": audit_event_rows_context(db),
             },
         )
+        response.headers.update(response_headers)
+        return response
 
     return OperationsUiRouter(
         router=router,

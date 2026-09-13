@@ -136,6 +136,7 @@ def test_static_analysis_configuration_is_pinned_and_scoped() -> None:
         "warn_unused_configs": True,
         "follow_imports": "silent",
         "files": [
+            "atlaso/app/services/log_viewer.py",
             "atlaso/app/services/task_cancellation.py",
             "atlaso/diagnostics.py",
             "atlaso/app/services/diagnostics.py",

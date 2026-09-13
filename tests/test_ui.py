@@ -821,7 +821,7 @@ def test_tasks_page_lists_redacts_logs_and_cancels(client):
     assert ".task-row-menu" not in app_css
     assert ".task-result-preview code," in app_css
     assert "highlightConfigPreviewElement(result);" in app_js
-    assert "highlightConfigPreviewElement(content);" in app_js
+    assert "window.highlightConfigPreviewElement(output);" in Path("atlaso/app/static/log-viewer.js").read_text(encoding="utf-8")
     assert 'errorContent.textContent = errorMessages.join("\\n\\n");' in app_js
     assert 'modal.querySelector("[data-task-detail-error]")' not in app_js
 
@@ -901,7 +901,8 @@ def test_tasks_page_lists_redacts_logs_and_cancels(client):
     log_response = client.get("/tasks/job_taskgrid001/log")
     assert log_response.status_code == 200
     log_payload = log_response.json()
-    assert "uploading-disk1.vmdk" in log_payload["text"]
+    assert "uploading-disk1.vmdk" not in log_payload["text"]
+    assert "target: sddcm.atlaso.internal" in log_payload["text"]
     assert "VMware01!" not in log_payload["text"]
     assert "[redacted]" in log_payload["text"]
 
@@ -1034,7 +1035,7 @@ def test_pwa_manifest_service_worker_and_offline_shell(client):
     assert "ATLASO_CACHE" in service_worker.text
     assert "atlaso-management-pwa-v" in service_worker.text
     assert "ATLASO_CACHE_PREFIX" in service_worker.text
-    assert 'const ATLASO_CACHE = `${ATLASO_CACHE_PREFIX}331`;' in service_worker.text
+    assert 'const ATLASO_CACHE = `${ATLASO_CACHE_PREFIX}341`;' in service_worker.text
     assert 'fetch(asset, { cache: "reload" })' in service_worker.text
     assert "Required precache request failed" in service_worker.text
     assert "key.startsWith(ATLASO_CACHE_PREFIX)" in service_worker.text
@@ -1054,7 +1055,7 @@ def test_pwa_manifest_service_worker_and_offline_shell(client):
     assert "/static/ui-patterns.js?v=atlaso-ui-foundation-20260726-10" in service_worker.text
     assert "/static/appliance-apply-polling.js?v=issue-420-6" in service_worker.text
     assert "/static/ui-routes.js?v=issue-287-1" in service_worker.text
-    assert "/static/app.js?v=task-cancellation-823-5" in service_worker.text
+    assert "/static/app.js?v=full-history-822-14" in service_worker.text
     assert "/static/terminal.js?v=issue-287-2" in service_worker.text
     assert "/static/pwa.js?v=issue-287-2" in service_worker.text
     assert "vcfdt-configuration-248-20260807-14" not in service_worker.text
@@ -1108,8 +1109,8 @@ def test_shared_ui_pattern_shell_and_wizard_contracts(client):
     base = (templates / "base.html").read_text(encoding="utf-8")
     public_base = (templates / "public_portal_base.html").read_text(encoding="utf-8")
     for shell, app_asset in (
-        (base, "/static/app.js?v=task-cancellation-823-5"),
-        (public_base, "/static/app.js?v=task-cancellation-823-5"),
+        (base, "/static/app.js?v=full-history-822-14"),
+        (public_base, "/static/app.js?v=full-history-822-14"),
         (base, "/static/appliance-apply-polling.js?v=issue-420-6"),
     ):
         assert shell.index("/static/vendor/tabulator/tabulator.min.js") < shell.index(
@@ -1777,7 +1778,7 @@ def test_monitor_page_renders_template_and_browser_assets(client):
     assert "swagger-link-icon" in page.text
     assert "/static/app.css?v=issues-803-807-799-1" in page.text
     assert "/static/ui-patterns.js?v=atlaso-ui-foundation-20260726-10" in page.text
-    assert "/static/app.js?v=task-cancellation-823-5" in page.text
+    assert "/static/app.js?v=full-history-822-14" in page.text
     app_css = client.get("/static/app.css")
     assert app_css.status_code == 200
     assert ".split-workspace > .wide-panel" in app_css.text
@@ -8906,7 +8907,8 @@ def test_logs_page_shows_unavailable_state_when_every_source_is_unavailable(clie
     app_tab = response.text.split('data-log-source-tab="app"', 1)[1].split("</button>", 1)[0]
     assert 'class="tab-button active"' in response.text.split('data-log-source-tab="app"', 1)[0].rsplit("<button", 1)[1]
     assert 'aria-selected="true"' in app_tab
-    assert 'aria-disabled="true"' in app_tab
+    assert ' disabled aria-disabled="true"' in app_tab
+    assert 'data-log-refresh-status role="status">Snapshot ready</span>' in response.text
     app_panel = response.text.split('id="logs-app-panel"', 1)[1].split('id="logs-kms-panel"', 1)[0]
     assert 'id="logs-app-panel" class="tab-panel active"' in response.text
     assert "Log file has not been written yet." in app_panel
@@ -9027,18 +9029,15 @@ def test_logs_page_renders_refreshable_fixed_source_tabs_and_redacts_logs(client
     assert 'title="/var/log/nginx/error.log · management and service HTTP errors"' in response.text
     assert 'data-log-source-tab="kms"' in response.text
     kms_tab = response.text.split('data-log-source-tab="kms"', 1)[1].split("</button>", 1)[0]
-    assert 'aria-disabled="true"' in kms_tab
-    assert "disabled" in kms_tab
+    assert ' disabled aria-disabled="true"' in kms_tab
     assert "data-log-availability" not in response.text
-    assert 'data-log-lines aria-label="Log lines"' in response.text
-    assert '<option value="100" selected>100</option>' in response.text
-    assert '<option value="200" >200</option>' in response.text
-    assert '<option value="500" >500</option>' in response.text
-    assert "Refresh 5s" in response.text
+    assert 'data-log-history-controls aria-label="Log history"' in response.text
+    assert 'data-log-lines aria-label="Log lines per page"' in response.text
+    assert 'data-log-refresh-status role="status">Snapshot ready</span>' in response.text
     assert 'class="language-atlaso-log" data-log-lines-output' in response.text
     assert response.text.count('data-terminal-note-open="false"') == 11
     toolbar = response.text.split('<div class="logs-toolbar">', 1)[1].split("</div>", 1)[0]
-    assert toolbar.index("data-log-refresh-status") < toolbar.index("data-log-lines")
+    assert toolbar.index("data-log-refresh-status") < toolbar.index("data-log-history-controls")
     assert "logs-refresh-status" in toolbar
     assert "token= [redacted]" in response.text
     assert "https://dl.broadcom.com/[redacted-token]/PROD/file.json" in response.text
@@ -9092,14 +9091,14 @@ def test_logs_page_renders_refreshable_fixed_source_tabs_and_redacts_logs(client
 
     js = client.get("/static/app.js")
     assert "function initializeLogsPage" in js.text
-    assert 'window.setInterval(refresh, 5000)' in js.text
-    assert 'atlaso:logs:line-count' in js.text
-    assert "refreshQueued = true" in js.text
-    assert "tabButton.disabled = !source.available" in js.text
-    assert "activeButton.disabled" in js.text
+    viewer_js = client.get("/static/log-viewer.js").text
+    assert "window.AtlasoLogViewer.create" in js.text
+    assert "schedule(5000)" in viewer_js
+    assert "From beginning" in viewer_js
+    assert "request?.abort()" in viewer_js
     assert 'window.Prism.languages["atlaso-log"]' in js.text
     assert '"level-error"' in js.text
-    assert "highlightConfigPreviewElement(output);" in js.text
+    assert "highlightConfigPreviewElement(output);" in viewer_js
     css = client.get("/static/app.css")
     assert "height: calc(100vh - 120px);" in css.text
     assert "flex: 1 1 0;" in css.text
@@ -12885,6 +12884,8 @@ def test_vcf_offline_depot_manual_profile_download_starts_job(client, tmp_path, 
     monkeypatch.setattr(ui, "VCF_DEPOT_VDT_LOG_PATH", shared_runtime_log)
     task_log_page = client.get(f"/vcf-offline-depot/tasks/{payload['job_id']}/log")
     assert task_log_page.status_code == 200
+    assert task_log_page.headers["cache-control"] == "no-store"
+    assert "X-Atlaso-Task-Log" in task_log_page.headers["vary"].split(", ")
     assert "VCFDT task log" in task_log_page.text
     assert "No task log is available." in task_log_page.text
     assert "another profile is running" not in task_log_page.text
@@ -12893,8 +12894,12 @@ def test_vcf_offline_depot_manual_profile_download_starts_job(client, tmp_path, 
         headers={"X-Atlaso-Task-Log": "1"},
     )
     assert task_log_payload.status_code == 200
+    assert task_log_payload.headers["cache-control"] == "no-store"
+    assert "X-Atlaso-Task-Log" in task_log_payload.headers["vary"].split(", ")
     assert task_log_payload.json()["job_id"] == payload["job_id"]
-    assert task_log_payload.json()["text"] == "No task log is available."
+    assert task_log_payload.json()["text"] == ""
+    assert task_log_payload.json()["available"] is False
+    assert task_log_payload.json()["notice"] == "Log file has not been written yet."
     task_status_payload = client.get("/vcf-offline-depot/tasks/status")
     assert task_status_payload.status_code == 200
     assert task_status_payload.json()["last_row"] >= 1

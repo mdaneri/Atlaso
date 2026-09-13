@@ -96,10 +96,12 @@
         <span class="status-pill muted">adapter</span>
       </div>
       {% if service_logs %}
-        <p class="muted">{{ service_logs.service }} log preview</p>
-        <div class="terminal-note">
-          <strong>{% if system_adapter_dry_run %}dry-run {% endif %}journal boundary</strong>
-          <code>{{ service_logs.lines | join('\n') }}</code>
+        <div data-live-log-url="{{ service_logs.url }}">
+          <p class="muted" data-live-log-status>{{ service_logs.service }} log history</p>
+          <div class="logs-toolbar" data-live-log-controls></div>
+          <div class="terminal-note">
+            <code class="language-atlaso-log" data-live-log-output>{{ service_logs.lines | join('\n') }}</code>
+          </div>
         </div>
       {% else %}
         <p class="muted">Open Logs on a service row to capture a log preview.</p>

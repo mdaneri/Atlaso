@@ -78,6 +78,7 @@ except ModuleNotFoundError:
 
 
 COMMANDS: dict[str, set[str]] = {
+    "logs": {"page"},
     "diagnostics": {"source"},
     "staging": {"prepare"},
     "local-users": {"validate", "apply", "status", "authenticate"},
@@ -1696,6 +1697,859 @@ def _read_dnsmasq_leases() -> int:
         return 2
     print(lease_path.read_text(encoding="utf-8"), end="")
     return 0
+
+
+def _log_wire_size(line: str) -> int:
+    """Measure a displayed line after JSON escaping, including its separator.
+
+    Args:
+        line: Decoded retained line before transport serialization.
+    """
+    return len(json.dumps(line, ensure_ascii=False).encode("utf-8")) + 1
+
+
+def _tail_offset(handle, *, compressed: bool, deadline: float, end: int | None = None, limit: int = 500) -> tuple[int, bool]:
+    """Locate the newest bounded group without replaying pages to the client.
+
+    Args:
+        handle: Verified regular source stream.
+        compressed: Whether seeking requires bounded decompression.
+        deadline: Shared monotonic deadline for the request.
+        end: Optional exclusive boundary for the preceding page.
+        limit: Maximum physical lines in the selected group.
+    """
+    if compressed:
+        data, total = b"", 0
+        handle.seek(0)
+        while end is None or total < end:
+            chunk = handle.read(min(65536, end - total) if end is not None else 65536)
+            if not chunk:
+                break
+            if time.monotonic() > deadline:
+                raise ValueError("Archived tail scan exceeded its deadline; open from the beginning.")
+            total += len(chunk)
+            data = (data + chunk)[-1024 * 1024:]
+    else:
+        total = handle.seek(0, os.SEEK_END)
+        if end is not None:
+            total = min(total, end)
+        handle.seek(max(0, total - 1024 * 1024))
+        data = handle.read(min(total, 1024 * 1024))
+    offset = total - len(data)
+    if offset:
+        boundary = data.find(b"\n")
+        if boundary < 0:
+            return (offset if end is not None else total), True
+        if boundary == len(data) - 1:
+            return offset, True
+        offset += boundary + 1
+        data = data[boundary + 1:]
+    starts = [0] + [match.end() for match in re.finditer(b"\n", data) if match.end() < len(data)]
+    selected_start, wire_bytes, boundary = len(data), 0, len(data)
+    for start in reversed(starts[-limit:]):
+        line = data[start:boundary]
+        size = _log_wire_size(line.decode("utf-8", errors="replace").rstrip("\r\n")) if len(line) <= 65536 else 128
+        if wire_bytes and wire_bytes + size > 1024 * 1024 - 16384:
+            break
+        selected_start = start
+        wire_bytes += size
+        boundary = start
+    return offset + selected_start, False
+
+
+def _scan_pem_markers(chunk: bytes, carry: bytes = b"") -> tuple[bool | None, bytes]:
+    """Track arbitrarily long PEM labels with only fixed-token parser state.
+
+    Args:
+        chunk: Next contiguous source fragment.
+        carry: Prior parser mode and partial fixed token, never arbitrary label bytes.
+    """
+    starts = (b"-----BEGIN ", b"-----END ")
+    endings = (b"PRIVATE KEY-----", b"-----")
+    start_parts = sorted({token[:size] for token in starts for size in range(1, len(token))}, key=len, reverse=True)
+    end_parts = sorted({token[:size] for token in endings for size in range(1, len(token))}, key=len, reverse=True)
+    mode = carry[:1] or b"S"
+    suffix = carry[1:]
+    allowed = start_parts if mode == b"S" else end_parts
+    if mode not in (b"S", b"B", b"E") or (suffix and suffix not in allowed):
+        raise ValueError("Invalid private-key parser state.")
+    data = suffix + chunk
+    position = 0
+    last = None
+    start_pattern = re.compile(rb"-----(BEGIN|END) ")
+    boundary_pattern = re.compile(rb"-----|[^ -~]")
+    while True:
+        if mode == b"S":
+            match = start_pattern.search(data, position)
+            if match is None:
+                suffix = next((part for part in start_parts if data.endswith(part, position)), b"")
+                return last, b"S" + suffix
+            position = match.end()
+            mode = b"B" if match.group(1) == b"BEGIN" else b"E"
+        boundary = boundary_pattern.search(data, position)
+        if boundary is None:
+            suffix = next((part for part in end_parts if data.endswith(part, position)), b"")
+            return last, mode + suffix
+        start = boundary.start()
+        if boundary.group() == b"-----" and data.endswith(b"PRIVATE KEY", position, start):
+            last = mode == b"B"
+            position = boundary.end()
+        else:
+            position = start if boundary.group() == b"-----" else boundary.end()
+        mode = b"S"
+
+
+def _tail_private_key(paths: list[Path], offset: int, *, deadline: float) -> bool:
+    """Return completed private-key state at a retained byte boundary.
+
+    Args:
+        paths: Ordered retained source files.
+        offset: Uncompressed boundary in the last source.
+        deadline: Shared request deadline.
+    """
+    return _tail_marker_state(paths, offset, deadline=deadline)[0]
+
+
+def _tail_marker_state(paths: list[Path], offset: int, *, deadline: float) -> tuple[bool, bytes]:
+    """Recover redaction state before a tail boundary without retaining source contents.
+
+    Args:
+        paths: Fixed retained files through the selected newest source.
+        offset: Uncompressed byte boundary within the selected source.
+        deadline: Shared monotonic deadline for the request.
+    """
+    import contextlib
+    import gzip
+    import stat
+
+    opened = False
+    carry = b""
+    for index, path in enumerate(paths):
+        descriptor = os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_BINARY", 0) | getattr(os, "O_NONBLOCK", 0))
+        with os.fdopen(descriptor, "rb") as raw:
+            if not stat.S_ISREG(os.fstat(raw.fileno()).st_mode):
+                raise ValueError("Retained log is not a regular file.")
+            with (gzip.GzipFile(fileobj=raw) if path.suffix == ".gz" else contextlib.nullcontext(raw)) as stream:
+                remaining = offset if index == len(paths) - 1 else None
+                while remaining is None or remaining > 0:
+                    if time.monotonic() > deadline:
+                        raise ValueError("Tail redaction scan exceeded its deadline; open from the beginning.")
+                    chunk = stream.read(min(65536, remaining) if remaining is not None else 65536)
+                    if not chunk:
+                        break
+                    if remaining is not None:
+                        remaining -= len(chunk)
+                    marker_state, carry = _scan_pem_markers(chunk, carry)
+                    if marker_state is not None:
+                        opened = marker_state
+    return opened, carry
+
+
+def _history_window(handle, offset: int, *, compressed: bool, deadline: float) -> bytes:
+    """Read a bounded content window immediately before a retained byte position.
+
+    Args:
+        handle: Verified regular retained stream.
+        offset: Uncompressed position whose preceding content must remain stable.
+        compressed: Whether seeking needs bounded decompression.
+        deadline: Shared request deadline.
+    """
+    length = min(offset, 4096)
+    start = offset - length
+    handle.seek(0 if compressed else start)
+    remaining = start if compressed else 0
+    while remaining:
+        if time.monotonic() > deadline:
+            raise ValueError("Retained history scan exceeded its deadline.")
+        chunk = handle.read(min(65536, remaining))
+        if not chunk:
+            raise ValueError("Retained history position is unavailable.")
+        remaining -= len(chunk)
+    return handle.read(length)
+
+
+def _history_anchor(handle, offset: int, *, compressed: bool, deadline: float) -> dict:
+    """Fingerprint the content immediately before a retained byte position.
+
+    Args:
+        handle: Verified regular retained stream.
+        offset: Uncompressed position whose preceding content must remain stable.
+        compressed: Whether seeking needs bounded decompression.
+        deadline: Shared request deadline.
+    """
+    window = _history_window(handle, offset, compressed=compressed, deadline=deadline)
+    return {"anchor_length": min(offset, 4096), "anchor": hashlib.sha256(window).hexdigest()}
+
+
+def _read_fixed_log_history(path: Path, position: dict) -> dict:
+    """Read retained numbered rotations and the current fixed log in order.
+
+    Args:
+        path: Server-selected fixed log path.
+        position: File identity and byte offset from the authenticated cursor.
+    """
+    import gzip
+    limit = position.get("limit", 500)
+    if type(limit) is not int or not 1 <= limit <= 500:
+        raise ValueError("invalid log page limit")
+    rotations = []
+    for candidate in path.parent.glob(f"{path.name}.*"):
+        match = re.fullmatch(re.escape(path.name) + r"\.(\d+)(\.gz)?", candidate.name)
+        if match:
+            rotations.append((int(match[1]), candidate))
+    deadline = time.monotonic() + 10
+    paths = [candidate for _, candidate in sorted(rotations, key=lambda item: item[0], reverse=True)]
+    if path.exists():
+        paths.append(path)
+    if not paths:
+        return {"lines": [], "file_position": {}, "has_more": False, "available": False}
+    selected = len(paths) - 1 if position.get("tail") else 0
+    offset = position.get("offset", 0)
+    if type(offset) is not int or offset < 0:
+        raise ValueError("invalid file offset")
+    generation = position.get("generation")
+    reset = False
+    if generation:
+        for index, candidate in enumerate(paths):
+            metadata = candidate.lstat()
+            if f"{metadata.st_dev}:{metadata.st_ino}" == generation:
+                selected = index
+                break
+        else:
+            selected, offset, reset = 0, 0, True
+    backward = position.get("before") is True
+    opening_tail = position.get("tail") is True or backward
+    before_end = offset if backward else None
+    if backward and offset == 0 and selected > 0:
+        selected -= 1
+        before_end = None
+    page_end = before_end if backward else position.get("page_end")
+    candidate = paths[selected]
+    if candidate.is_symlink():
+        raise ValueError("linked log source")
+    descriptor = os.open(candidate, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_BINARY", 0) | getattr(os, "O_NONBLOCK", 0))
+    with os.fdopen(descriptor, "rb") as raw:
+        metadata = os.fstat(raw.fileno())
+        if not stat.S_ISREG(metadata.st_mode):
+            raise ValueError("non-regular log source")
+        generation = f"{metadata.st_dev}:{metadata.st_ino}"
+        handle = gzip.GzipFile(fileobj=raw) if candidate.suffix == ".gz" else raw
+        try:
+            initial_private_key = position.get("private_key") is True
+            if opening_tail:
+                offset, oversized = _tail_offset(handle, compressed=candidate.suffix == ".gz", deadline=deadline, end=before_end, limit=limit)
+                initial_private_key, pem_state = _tail_marker_state(paths[:selected + 1], offset, deadline=deadline)
+                position = {"oversized": oversized, "pem_state": pem_state.decode("ascii")}
+            prefix_length = position.get("prefix_length", 0)
+            if type(prefix_length) is not int or not 0 <= prefix_length <= 4096:
+                raise ValueError("invalid prefix length")
+            handle.seek(0)
+            prefix = handle.read(prefix_length)
+            anchor_length = position.get("anchor_length", 0)
+            if type(anchor_length) is not int or not 0 <= anchor_length <= min(offset, 4096):
+                raise ValueError("Invalid log history anchor.")
+            anchor = _history_anchor(handle, offset, compressed=candidate.suffix == ".gz", deadline=deadline) if anchor_length else {}
+            if ((candidate.suffix != ".gz" and offset > metadata.st_size) or
+                    (prefix_length and hashlib.sha256(prefix).hexdigest() != position.get("prefix")) or
+                    (anchor_length and anchor.get("anchor") != position.get("anchor"))):
+                offset, reset = 0, True
+            anchor = _history_anchor(handle, offset, compressed=candidate.suffix == ".gz", deadline=deadline)
+            current_position = {"generation": generation, "offset": offset,
+                                "oversized": not reset and position.get("oversized") is True,
+                                "pem_state": "" if reset else position.get("pem_state", ""),
+                                "prefix_length": 0 if reset else prefix_length,
+                                "prefix": "" if reset else position.get("prefix", ""), "page_end": page_end, **anchor}
+            if candidate.suffix == ".gz":
+                handle.seek(0)
+                remaining = offset
+                while remaining:
+                    if time.monotonic() > deadline:
+                        raise ValueError("compressed history scan exceeded its deadline")
+                    skipped = handle.read(min(65536, remaining))
+                    if not skipped:
+                        raise ValueError("compressed history position is unavailable")
+                    remaining -= len(skipped)
+            else:
+                handle.seek(offset)
+            parser_state = position.get("pem_state", "") if not reset else ""
+            if not isinstance(parser_state, str) or len(parser_state) > 16 or not parser_state.isascii():
+                raise ValueError("Invalid private-key parser state.")
+            _, marker_prefix = _scan_pem_markers(b"", parser_state.encode("ascii"))
+            lines = []
+            consumed = wire_bytes = 0
+            if opening_tail:
+                if position.get("oversized") is True:
+                    lines.append("[Oversized log entry omitted: reading retained history in bounded groups.]")
+            partial = False
+            oversized = not reset and position.get("oversized") is True
+            while len(lines) < limit and consumed < 1024 * 1024 and (page_end is None or handle.tell() < page_end):
+                start = handle.tell()
+                line = handle.readline(min(65537, page_end - start) if page_end is not None else 65537)
+                if not line:
+                    break
+                if oversized or len(line) > 65536:
+                    consumed += len(line)
+                    if not oversized:
+                        lines.append("[Oversized log entry omitted: exceeds 64 KiB; continuing with the next complete entry.]")
+                    marker_state, marker_prefix = _scan_pem_markers(line, marker_prefix)
+                    if marker_state is not None:
+                        lines.append("-----BEGIN PRIVATE KEY-----" if marker_state else "-----END PRIVATE KEY-----")
+                    oversized = not line.endswith(b"\n")
+                    continue
+                if not line.endswith(b"\n") and candidate == path:
+                    handle.seek(start)
+                    partial = True
+                    break
+                decoded = line.decode("utf-8", errors="replace").rstrip("\r\n")
+                size = _log_wire_size(decoded)
+                if wire_bytes + size > 1024 * 1024 - 16384:
+                    handle.seek(start)
+                    break
+                wire_bytes += size
+                consumed += len(line)
+                marker_state, marker_prefix = _scan_pem_markers(line, marker_prefix)
+                lines.append(("-----BEGIN PRIVATE KEY-----" if marker_state else "-----END PRIVATE KEY-----")
+                             if marker_state is not None else decoded)
+            next_offset = handle.tell()
+            more = bool(handle.read(1)) and not partial
+            handle.seek(0)
+            prefix = handle.read(min(next_offset, 4096))
+            next_position = {"generation": generation, "offset": next_offset, "oversized": oversized,
+                             "pem_state": marker_prefix.decode("ascii"),
+                             "prefix_length": len(prefix), "prefix": hashlib.sha256(prefix).hexdigest(),
+                             **_history_anchor(handle, next_offset, compressed=candidate.suffix == ".gz", deadline=deadline)}
+        finally:
+            if handle is not raw:
+                handle.close()
+    if not more and selected + 1 < len(paths):
+        following = paths[selected + 1].lstat()
+        generation, next_offset = f"{following.st_dev}:{following.st_ino}", 0
+        next_position = {"generation": generation, "offset": next_offset,
+                         "pem_state": marker_prefix.decode("ascii"), "oversized": oversized}
+        more = True
+    return {"lines": lines, "file_position": next_position,
+            "current_position": current_position, "initial_private_key": initial_private_key,
+            "previous_position": {"generation": current_position["generation"], "offset": offset, "before": True} if offset or selected else None,
+            "has_more": more, "available": True, "reset": reset}
+
+
+def _journal_message_bytes(raw, state):
+    """Extract decoded MESSAGE bytes from a bounded oversized JSON fragment.
+
+    Args:
+        raw: Next bounded journal JSON fragment.
+        state: Small mutable string-decoder state for this one record.
+    """
+    if state.get("done"):
+        return b""
+    if not state.get("inside"):
+        raw = state.get("prefix", b"") + raw
+        match = re.search(rb'(?<!\\)"MESSAGE"\s*:\s*"', raw)
+        if match is None:
+            state["prefix"] = raw[-128:]
+            return b""
+        state["inside"] = True
+        state.pop("prefix", None)
+        raw = raw[match.end():]
+    output = bytearray()
+    escapes = {ord("n"): b"\n", ord("r"): b"\r", ord("t"): b"\t", ord("b"): b"\b", ord("f"): b"\f"}
+    for byte in raw:
+        if "unicode" in state:
+            state["unicode"] += chr(byte)
+            if len(state["unicode"]) == 4:
+                output.extend(chr(int(state.pop("unicode"), 16)).encode("utf-8", errors="replace"))
+        elif state.pop("escape", False):
+            if byte == ord("u"):
+                state["unicode"] = ""
+            else:
+                output.extend(escapes.get(byte, bytes([byte])))
+        elif byte == ord("\\"):
+            state["escape"] = True
+        elif byte == ord('"'):
+            state["done"] = True
+            break
+        else:
+            output.append(byte)
+    return bytes(output)
+
+
+def _advance_journal_marker(entry, fragment, private, carry, *, complete=True):
+    """Advance raw-message state without losing an omitted record's boundary state.
+
+    Args:
+        entry: Journal record, including bounded omission metadata when needed.
+        fragment: Consumed decoded message fragment.
+        private: Key state before the fragment.
+        carry: Finite partial marker state before the fragment.
+        complete: Whether this consumes the end of the represented record.
+    """
+    transforms = entry.get("_journal_pem_transforms")
+    if transforms is not None:
+        if not fragment:
+            return private, carry, private
+        marker, final_carry = transforms[carry.decode("ascii") or "S"]
+        conceal = private or marker is not None
+        return ((private if marker is None else marker), final_carry.encode("ascii"), conceal) if complete else (private, carry, conceal)
+    marker, carry = _scan_pem_markers(fragment.encode("utf-8"), carry)
+    conceal = private or marker is not None
+    if marker is not None:
+        private = marker
+    return private, carry, conceal
+
+
+def _oversized_journal_entry(first, stream):
+    """Discard oversized message bytes while retaining trusted cursor metadata.
+
+    Args:
+        first: First bounded fragment of one journalctl JSON record.
+        stream: Owned journalctl output pipe positioned within that record.
+    """
+    metadata = {}
+    carry = b""
+    starts = (b"-----BEGIN ", b"-----END ")
+    endings = (b"PRIVATE KEY-----", b"-----")
+    variants = {b"S"} | {b"S" + token[:size] for token in starts for size in range(1, len(token))}
+    variants |= {mode + token[:size] for mode in (b"B", b"E") for token in endings for size in range(len(token))}
+    transforms = {state: (None, state) for state in variants}
+    message_state = {}
+    raw = first
+    while raw:
+        window = carry + raw
+        for field in ("__CURSOR", "__REALTIME_TIMESTAMP", "SYSLOG_IDENTIFIER", "_PID"):
+            match = re.search(rb'"' + field.encode() + rb'"\s*:\s*("(?:[^"\\]|\\.)*")', window)
+            if match:
+                metadata[field] = json.loads(match.group(1))
+        decoded = _journal_message_bytes(raw, message_state)
+        for initial, (last, carry_state) in transforms.items():
+            found, carry_state = _scan_pem_markers(decoded, carry_state)
+            transforms[initial] = (last if found is None else found, carry_state)
+        if raw.endswith(b"\n"):
+            break
+        carry = window[-4096:]
+        raw = stream.readline(65536)
+    if "__CURSOR" not in metadata or "__REALTIME_TIMESTAMP" not in metadata:
+        raise ValueError("oversized journal metadata is incomplete")
+    message = "[Oversized journal entry omitted: exceeds 1 MiB; continuing with the next entry.]"
+    marker_state = transforms[b"S"][0]
+    if marker_state is not None:
+        message += "\n-----BEGIN PRIVATE KEY-----" if marker_state else "\n-----END PRIVATE KEY-----"
+    return {**metadata, "MESSAGE": message, "_journal_pem_transforms": {initial.decode("ascii"): (marker, final.decode("ascii"))
+                                                                           for initial, (marker, final) in transforms.items()}}
+
+
+def _journal_entry_category(entry):
+    """Classify one dnsmasq record before applying a retained page limit.
+
+    Args:
+        entry: Journal metadata and its bounded message representation.
+    """
+    identifier = entry.get("SYSLOG_IDENTIFIER", "")
+    message = entry["MESSAGE"]
+    if identifier == "dnsmasq-dhcp" or re.search(r"\bdnsmasq-dhcp(?:\[\d+\])?:", message):
+        return "dhcp"
+    if identifier == "dnsmasq-tftp" or re.search(r"\bdnsmasq-tftp(?:\[\d+\])?:", message):
+        return "tftp"
+    return "dns"
+
+
+def _fixed_log_available(path: Path) -> bool:
+    """Probe current and retained numbered logs without reading their contents.
+
+    Args:
+        path: Fixed allowlisted current log path.
+    """
+    candidates = [path]
+    candidates.extend(candidate for candidate in path.parent.glob(f"{path.name}.*")
+                      if re.fullmatch(r"\d+(?:\.gz)?", candidate.name[len(path.name) + 1:]))
+    for candidate in candidates:
+        descriptor = None
+        try:
+            if candidate.is_symlink():
+                continue
+            descriptor = os.open(candidate, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0))
+            if stat.S_ISREG(os.fstat(descriptor).st_mode):
+                return True
+        except OSError:
+            continue
+        finally:
+            if descriptor is not None:
+                os.close(descriptor)
+    return False
+
+
+class _JournalCursorExpired(ValueError):
+    """Identify a journal position removed by retention without hiding other errors."""
+
+
+def _journal_history_entries(command, *, deadline, category=None, context_scan=False):
+    """Read complete bounded representations from one deadline-owned journal process.
+
+    Args:
+        command: Fixed allowlisted journal invocation.
+        deadline: Shared monotonic deadline for this history request.
+        category: Optional classified view of the fixed dnsmasq unit.
+        context_scan: Use the bounded raw window without the selected-row display cap.
+    """
+    import threading
+
+    selected, consumed, more = [], 0, False
+    matched_count = matched_bytes = 0
+    with subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE, env={**os.environ, "LC_ALL": "C"}) as process:
+        timer = threading.Timer(max(.001, deadline - time.monotonic()), process.kill)
+        timer.start()
+        try:
+            while raw := process.stdout.readline(1024 * 1024 + 1):
+                entry = _oversized_journal_entry(raw, process.stdout) if len(raw) > 1024 * 1024 else json.loads(raw)
+                if not isinstance(entry.get("MESSAGE"), str):
+                    entry["MESSAGE"] = "[Binary journal entry omitted.]"
+                # Keep raw scan windows independent of the selected display budget.
+                # Filtered records carry cursor and redaction progress across sparse gaps.
+                matches = category is None or _journal_entry_category(entry) == category
+                if selected and (len(selected) >= 5000 or consumed + len(raw) > 4 * 1024 * 1024 or
+                                 (not context_scan and matches and (matched_count >= 500 or matched_bytes + len(raw) > 1024 * 1024))):
+                    more = True
+                    break
+                if category is not None:
+                    entry["_filtered"] = not matches
+                selected.append(entry)
+                if matches:
+                    matched_count += 1
+                    matched_bytes += len(raw)
+                consumed += len(raw)
+            if not more:
+                code = process.wait(timeout=2)
+                diagnostic = process.stderr.read(8193)
+                no_match = code == 1 and not selected and not diagnostic and any(arg.startswith("--grep=") for arg in command)
+                if (code == 1 and not selected and diagnostic.startswith(b"Failed to seek to cursor") and
+                        any(arg.startswith(("--cursor=", "--after-cursor=")) for arg in command)):
+                    raise _JournalCursorExpired("Journal history position expired.")
+                if code != 0 and not no_match:
+                    raise ValueError("journal history is unavailable")
+        finally:
+            timer.cancel()
+            if process.poll() is None:
+                process.kill()
+                process.wait(timeout=2)
+    return selected, more
+
+
+def _journal_marker_context(executable, unit, target, offset, *, deadline, checkpoint=None):
+    """Resume a bounded forward context scan before an arbitrary journal window.
+
+    Args:
+        executable: Fixed journalctl executable.
+        unit: Allowlisted service unit.
+        target: Immutable cursor at the requested window boundary.
+        offset: Boundary within the target message, or None to consume the whole record.
+        deadline: Original page deadline shared with the selected-record read.
+        checkpoint: Earlier bounded context progress retained by the web process.
+    """
+    checkpoint = checkpoint if isinstance(checkpoint, dict) else {}
+    previous = checkpoint.get("cursor", "")
+    state = checkpoint.get("pem_state", "S")
+    private = checkpoint.get("private") is True
+    if (not isinstance(previous, str) or len(previous) > 2048 or any(ord(char) < 32 for char in previous) or
+            not isinstance(state, str) or len(state) > 32):
+        raise ValueError("invalid journal context checkpoint")
+    _, carry = _scan_pem_markers(b"", state.encode("ascii"))
+    command = [executable, "--unit", unit, "--no-pager", "--output=json", "--lines=+5001",
+               "--output-fields=MESSAGE,__CURSOR,__REALTIME_TIMESTAMP"]
+    if previous:
+        command.append(f"--after-cursor={previous}")
+    for _ in range(8):
+        if time.monotonic() >= deadline - 0.25:
+            break
+        try:
+            entries, more = _journal_history_entries(command, deadline=deadline, context_scan=True)
+        except _JournalCursorExpired:
+            command = [arg for arg in command if not arg.startswith("--after-cursor=")]
+            private, carry = private or carry not in {b"", b"S"}, b"S"
+            entries, more = _journal_history_entries(command, deadline=deadline, context_scan=True)
+        for entry in entries:
+            message = entry["MESSAGE"]
+            if entry["__CURSOR"] == target:
+                if offset is not None:
+                    if not 0 <= offset <= len(message):
+                        raise ValueError("journal context boundary is unavailable")
+                    message = message[:offset]
+                private, carry, _ = _advance_journal_marker(entry, message, private, carry,
+                                                            complete=offset is None or offset == len(entry["MESSAGE"]))
+                return (private, carry), None
+            private, carry, _ = _advance_journal_marker(entry, message, private, carry)
+        if not more or not entries:
+            raise _JournalCursorExpired("Journal context boundary expired.")
+        previous = entries[-1]["__CURSOR"]
+        command = [arg for arg in command if not arg.startswith("--after-cursor=")]
+        command.append(f"--after-cursor={previous}")
+    return None, {"cursor": previous, "pem_state": carry.decode("ascii"), "private": private}
+
+
+def _journal_text_rows(entry, offset=0):
+    """Yield formatted physical rows with resumable character positions.
+
+    Args:
+        entry: Bounded journal representation with trusted timestamp metadata.
+        offset: Character position inside this immutable journal message.
+    """
+    import io
+
+    if entry.get("_filtered"):
+        return
+    message = entry["MESSAGE"]
+    if offset > len(message):
+        raise ValueError("Journal message position is unavailable.")
+    timestamp = datetime.fromtimestamp(int(entry["__REALTIME_TIMESTAMP"]) / 1000000, timezone.utc).isoformat()
+    identifier = entry.get("SYSLOG_IDENTIFIER")
+    prefix = f"{timestamp} {identifier}: " if isinstance(identifier, str) and identifier else f"{timestamp} "
+    stream = io.StringIO(message)
+    stream.seek(offset)
+    while True:
+        start = stream.tell()
+        raw = stream.readline()
+        if not raw:
+            break
+        line = prefix + raw.rstrip(chr(13) + chr(10))
+        if _log_wire_size(line) > 1024 * 1024 - 16384:
+            line = f"{timestamp} [Oversized journal line omitted: exceeds the encoded page byte budget.]"
+            markers = list(re.finditer(r"-----(BEGIN|END) (?:(?!-----)[ -~])*?PRIVATE KEY-----", raw))
+            if markers:
+                line += " -----BEGIN PRIVATE KEY-----" if markers[-1].group(1) == "BEGIN" else " -----END PRIVATE KEY-----"
+        yield start, line
+
+
+
+def _fixed_log_transport(path: Path, position: dict) -> dict:
+    """Supply bounded fixed-file bytes to the application's resumable reader.
+
+    Args:
+        path: Allowlisted current nginx log path, never supplied by the caller.
+        position: Inventory or version-bound raw byte request.
+    """
+    def metadata(info):
+        """Serialize the immutable identity of a verified regular file.
+
+        Args:
+            info: Descriptor metadata after rejecting links and nonregular files.
+        """
+        return {"dev": info.st_dev, "ino": info.st_ino, "size": info.st_size, "mtime_ns": info.st_mtime_ns}
+
+    def open_source(candidate):
+        """Open one selected source without following a final-component link.
+
+        Args:
+            candidate: Fixed current file or validated numeric rotation.
+        """
+        if candidate.is_symlink():
+            raise ValueError("linked fixed log source")
+        descriptor = os.open(candidate, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_BINARY", 0) | getattr(os, "O_NONBLOCK", 0))
+        stream = os.fdopen(descriptor, "rb")
+        if not stat.S_ISREG(os.fstat(stream.fileno()).st_mode):
+            stream.close()
+            raise ValueError("nonregular fixed log source")
+        return stream
+
+    mode = position.get("transport")
+    if mode == "inventory":
+        candidates = [candidate for candidate in path.parent.glob(f"{path.name}.*")
+                      if re.fullmatch(re.escape(path.name) + r"\.\d+(?:\.gz)?", candidate.name)]
+        if path.exists():
+            candidates.append(path)
+        if len(candidates) > 4096:
+            raise ValueError("fixed log inventory exceeds its bounded response")
+        files = []
+        for candidate in candidates:
+            with open_source(candidate) as stream:
+                files.append({"name": candidate.name, **metadata(os.fstat(stream.fileno()))})
+        return {"files": files, "base": path.name}
+    name, offset, count = position.get("file"), position.get("offset"), position.get("count")
+    if (mode != "read" or not isinstance(name, str) or
+            not re.fullmatch(re.escape(path.name) + r"(?:\.\d+(?:\.gz)?)?", name) or
+            type(offset) is not int or not 0 <= offset < 2**63 or type(count) is not int or not 0 <= count <= 1024 * 1024):
+        raise ValueError("invalid fixed log byte request")
+    with open_source(path.parent / name) as stream:
+        before = metadata(os.fstat(stream.fileno()))
+        if before != position.get("version"):
+            return {"changed": True}
+        stream.seek(offset)
+        data = stream.read(count)
+        if metadata(os.fstat(stream.fileno())) != before:
+            return {"changed": True}
+    return {"version": before, "data": base64.b64encode(data).decode("ascii")}
+
+def _read_log_history(args: list[str]) -> int:
+    """Read a bounded page from a fixed journal source without arbitrary commands.
+
+    Args:
+        args: Allowlisted source and JSON journal position from the web adapter.
+    """
+    units = {
+        "dnsmasq-dns": "dnsmasq.service", "dnsmasq-dhcp": "dnsmasq.service",
+        "dnsmasq-tftp": "dnsmasq.service", "ldap": "slapd.service",
+        "ntp": "ntpd.service", "esx-storage": "nfs-server.service", "nginx": "nginx.service",
+    }
+    files = {"nginx-access": NGINX_ACCESS_LOG_PATH, "nginx-error": NGINX_ERROR_LOG_PATH}
+    if len(args) != 2 or args[0] not in (units.keys() | files.keys() | {"availability"}) or len(args[1]) > 4096:
+        print("Invalid log history request.", file=sys.stderr)
+        return 2
+    try:
+        position = json.loads(args[1])
+        if not isinstance(position, dict):
+            raise ValueError("invalid log history position")
+        if args[0] == "availability":
+            journal_available = shutil.which("journalctl") is not None
+            sources = [{"id": source, "available": journal_available} for source in units]
+            sources.extend({"id": source, "available": _fixed_log_available(path)} for source, path in files.items())
+            print(json.dumps({"sources": sources}))
+            return 0
+        if args[0] in files:
+            payload = (_fixed_log_transport(files[args[0]], position) if "transport" in position
+                       else _read_fixed_log_history(files[args[0]], position))
+            print(json.dumps(payload, ensure_ascii=False))
+            return 0
+        limit = position.get("limit", 500)
+        if type(limit) is not int or not 1 <= limit <= 500:
+            raise ValueError("invalid log page limit")
+        cursor = position.get("journal_cursor", position.get("journal_start_cursor", ""))
+        if not isinstance(cursor, str) or len(cursor) > 2048 or any(ord(char) < 32 for char in cursor):
+            raise ValueError("invalid journal cursor")
+        text_offset = position.get("journal_text_offset", 0)
+        if type(text_offset) is not int or not 0 <= text_offset <= 1024 * 1024 or (text_offset and not position.get("journal_start_cursor")):
+            raise ValueError("invalid journal text position")
+        backward = position.get("before") is True
+        tail = (position.get("tail") is True and not cursor) or backward
+        category = args[0].removeprefix("dnsmasq-") if args[0].startswith("dnsmasq-") else None
+        # An inclusive backward boundary is discarded before paging. Reserve its
+        # record separately from the lookahead that proves older history exists.
+        tail_records = limit + 1 + int(backward and bool(position.get("journal_start_cursor")))
+        lines_option = ("--lines=5001" if tail else "--lines=+5001") if category is not None else (f"--lines={tail_records}" if tail else "--lines=+501")
+        command = [shutil.which("journalctl") or "journalctl", "--unit", units[args[0]],
+                   "--no-pager", "--output=json", lines_option,
+                   "--output-fields=MESSAGE,__CURSOR,__REALTIME_TIMESTAMP,SYSLOG_IDENTIFIER,_PID"]
+        if tail:
+            command.append("--reverse")
+        if cursor:
+            command.append(f"--cursor={cursor}" if position.get("journal_start_cursor") else f"--after-cursor={cursor}")
+        deadline = time.monotonic() + 10
+        reset = False
+        try:
+            selected, more = _journal_history_entries(command, deadline=deadline, category=category)
+        except _JournalCursorExpired:
+            # Reopen once within the original deadline, clearing all obsolete boundaries.
+            position, cursor, text_offset = {}, "", 0
+            backward = tail = False
+            reset = True
+            command = [arg for arg in command if not arg.startswith(("--cursor=", "--after-cursor=", "--lines=")) and arg != "--reverse"]
+            command.append("--lines=+5001" if category is not None else "--lines=+501")
+            selected, more = _journal_history_entries(command, deadline=deadline, category=category)
+        if backward and selected and selected[0]["__CURSOR"] == cursor:
+            if text_offset:
+                selected[0] = {**selected[0], "MESSAGE": selected[0]["MESSAGE"][:text_offset]}
+            else:
+                selected = selected[1:]
+        boundary_position = {"journal_start_cursor": cursor, "journal_text_offset": text_offset}
+        page_end_cursor = cursor if backward else position.get("journal_end_cursor")
+        page_end_offset = text_offset if backward else position.get("journal_end_offset", 0)
+        if page_end_cursor is not None:
+            if not isinstance(page_end_cursor, str) or len(page_end_cursor) > 2048 or type(page_end_offset) is not int or not 0 <= page_end_offset <= 1024 * 1024:
+                raise ValueError("invalid journal page boundary")
+            if not backward:
+                for index, entry in enumerate(selected):
+                    if entry["__CURSOR"] == page_end_cursor:
+                        selected = selected[:index] + ([{**entry, "MESSAGE": entry["MESSAGE"][:page_end_offset]}] if page_end_offset else [])
+                        break
+            boundary_position = {"journal_start_cursor": page_end_cursor, "journal_text_offset": page_end_offset}
+        initial_private_key = position.get("private_key") is True
+        current_position = {key: position[key] for key in ("journal_cursor", "journal_start_cursor", "journal_text_offset") if key in position}
+        has_previous = position.get("journal_has_previous", bool(cursor)) or bool(text_offset)
+        if tail and selected:
+            has_previous = more
+            from collections import deque
+
+            # The raw budget is read newest-first; retain only the newest expanded rows.
+            selected.reverse()
+            recent = deque()
+            expanded_bytes = 0
+            for index, entry in enumerate(selected):
+                for start, line in _journal_text_rows(entry):
+                    size = _log_wire_size(line)
+                    recent.append((index, start, size))
+                    expanded_bytes += size
+                    while len(recent) > limit or expanded_bytes > 1024 * 1024 - 16384:
+                        expanded_bytes -= recent.popleft()[2]
+            if recent:
+                first_index, text_offset, _ = recent[0]
+                has_previous = has_previous or any(not entry.get("_filtered") for entry in selected[:first_index]) or text_offset > 0
+                selected = selected[first_index:]
+            more = False
+            first_cursor = selected[0]["__CURSOR"]
+            current_position = {"journal_start_cursor": first_cursor}
+            if text_offset:
+                current_position["journal_text_offset"] = text_offset
+        parser_state = position.get("journal_pem_state", "S") if not tail else "S"
+        if not isinstance(parser_state, str) or len(parser_state) > 32:
+            raise ValueError("invalid journal marker state")
+        _, parser_carry = _scan_pem_markers(b"", parser_state.encode("ascii"))
+        if (tail and selected) or (cursor and "journal_pem_state" not in position):
+            target = current_position.get("journal_start_cursor", current_position.get("journal_cursor", ""))
+            target_offset = current_position.get("journal_text_offset", 0) if "journal_start_cursor" in current_position else None
+            recovered, checkpoint = _journal_marker_context(command[0], units[args[0]], target, target_offset,
+                                                           deadline=deadline, checkpoint=position.get("journal_context"))
+            if recovered is None:
+                preparation = {**current_position, "journal_context": checkpoint, "journal_has_previous": bool(has_previous)}
+                if page_end_cursor is not None:
+                    preparation.update(journal_end_cursor=page_end_cursor, journal_end_offset=page_end_offset)
+                print(json.dumps({"pending": True, "preparation_position": preparation, "lines": [], "has_more": False,
+                                  "notice": "Preparing retained journal redaction context."}))
+                return 0
+            initial_private_key, parser_carry = recovered
+        current_position["journal_pem_state"] = parser_carry.decode("ascii")
+        lines = []
+        line_private_keys = []
+        final_private_key = initial_private_key
+        expanded_bytes = 0
+        next_position = dict(current_position)
+        paused = False
+        for index, entry in enumerate(selected):
+            message = entry.get("MESSAGE")
+            if not isinstance(message, str):
+                raise ValueError("journal entry cannot be displayed completely")
+            paused = False
+            if entry.get("_filtered"):
+                final_private_key, parser_carry, _ = _advance_journal_marker(entry, message, final_private_key, parser_carry)
+            for start, line in _journal_text_rows(entry, text_offset if index == 0 else 0):
+                size = _log_wire_size(line)
+                if len(lines) >= limit or expanded_bytes + size > 1024 * 1024 - 16384:
+                    next_position = {"journal_start_cursor": entry["__CURSOR"], "journal_text_offset": start}
+                    more = paused = True
+                    break
+                lines.append(line)
+                raw_end = message.find("\n", start)
+                raw_end = len(message) if raw_end < 0 else raw_end + 1
+                final_private_key, parser_carry, conceal = _advance_journal_marker(
+                    entry, message[start:raw_end], final_private_key, parser_carry, complete=raw_end == len(message))
+                line_private_keys.append(conceal)
+                expanded_bytes += size
+            if paused:
+                break
+            next_position = {"journal_cursor": entry["__CURSOR"]}
+        if page_end_cursor is not None and not paused:
+            next_position = boundary_position
+            more = True
+        current_position["journal_has_previous"] = bool(has_previous)
+        next_position["journal_has_previous"] = bool(has_previous or lines)
+        next_position["journal_pem_state"] = parser_carry.decode("ascii")
+        previous_position = {**current_position, "before": True} if has_previous and selected else None
+        if page_end_cursor is not None:
+            current_position.update(journal_end_cursor=page_end_cursor, journal_end_offset=page_end_offset)
+        print(json.dumps({"lines": lines, "reset": reset, "journal_cursor": next_position.get("journal_cursor", cursor),
+                          "journal_position": next_position, "previous_position": previous_position, "has_more": more,
+                          "line_private_keys": line_private_keys,
+                          "final_private_key": final_private_key,
+                          "current_position": current_position, "initial_private_key": initial_private_key}, ensure_ascii=False))
+        return 0
+    except (ValueError, TypeError, AttributeError, KeyError, OSError, subprocess.TimeoutExpired):
+        print("Log history page could not be read completely. Reopen the source to retry.", file=sys.stderr)
+        return 1
 
 
 def _systemd_unit_logs(unit: str) -> int:
@@ -24651,6 +25505,9 @@ def main(argv: list[str]) -> int:
 
     if group not in COMMANDS or action not in COMMANDS[group]:
         return _usage()
+
+    if (group, action) == ("logs", "page"):
+        return _read_log_history(args)
 
     if (group, action) not in NO_PATH_ACTIONS and not args:
         print(f"{group} {action} requires a config or artifact path", file=sys.stderr)

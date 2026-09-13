@@ -15445,57 +15445,33 @@ async function openTaskLog(taskOrId) {
   const title = document.querySelector("[data-task-log-title]");
   const meta = document.querySelector("[data-task-log-meta]");
   const content = document.querySelector("[data-task-log-content]");
-  if (!(modal instanceof HTMLDialogElement) || !(content instanceof HTMLElement)) {
-    return;
-  }
+  if (!(modal instanceof HTMLDialogElement) || !(content instanceof HTMLElement)) return;
   atlasoTaskLogRequest?.controller.abort();
-  const controller = new AbortController();
   const requestId = ++atlasoTaskLogRequestSequence;
-  atlasoTaskLogRequest = { controller, requestId };
-  const ownsModal = () => atlasoTaskLogRequest?.requestId === requestId && modal.open;
   content.textContent = "Loading task log…";
-  highlightConfigPreviewElement(content);
-  if (title instanceof HTMLElement) {
-    title.textContent = "Task log";
-  }
-  if (meta instanceof HTMLElement) {
-    meta.textContent = taskId;
-  }
-  if (!modal.open) {
-    modal.showModal();
-  }
-  try {
-    const response = await fetch(logUrl, {
-      credentials: "same-origin",
-      headers: { "X-Atlaso-Task-Log": "1" },
-      signal: controller.signal,
-    });
-    const payload = await response.json();
-    if (!ownsModal()) {
-      return;
-    }
-    if (!response.ok) {
-      throw new Error(payload.detail || "Unable to load task log.");
-    }
-    if (title instanceof HTMLElement) {
-      title.textContent = payload.title || (payload.profile_name ? `${payload.profile_name} task log` : "Task log");
-    }
-    if (meta instanceof HTMLElement) {
-      meta.textContent = `${payload.job_id || taskId} · ${payload.status || "unknown"}`;
-    }
-    content.textContent = payload.text || "No task log is available.";
-    highlightConfigPreviewElement(content);
-  } catch (error) {
-    if (!ownsModal()) {
-      return;
-    }
-    content.textContent = error instanceof Error ? error.message : "Unable to load task log.";
-    highlightConfigPreviewElement(content);
-  } finally {
-    if (atlasoTaskLogRequest?.requestId === requestId) {
-      atlasoTaskLogRequest = null;
-    }
-  }
+  if (title instanceof HTMLElement) title.textContent = "Task log";
+  if (meta instanceof HTMLElement) meta.textContent = taskId;
+  if (!modal.open) modal.showModal();
+  atlasoTaskLogRequest = { controller: { abort() {} }, requestId };
+  const viewer = window.AtlasoLogViewer.create({
+    output: content,
+    initialCursor: "tail",
+    status: meta,
+    controls: modal.querySelector("[data-task-log-history-controls]"),
+    active: () => modal.open && atlasoTaskLogRequest?.requestId === requestId,
+    fetchPage: (cursor, signal) => {
+      const url = new URL(logUrl, window.location.href);
+      if (cursor === "tail") url.searchParams.set("tail", "1");
+      else if (cursor) url.searchParams.set("cursor", cursor);
+      return window.AtlasoLogViewer.fetchJson(url, signal);
+    },
+    onPage: (payload) => {
+      if (title instanceof HTMLElement) title.textContent = payload.title ||
+        (payload.profile_name ? `${payload.profile_name} task log` : "Task log");
+    },
+  });
+  atlasoTaskLogRequest = { controller: { abort: () => viewer.close() }, requestId };
+  await viewer.ready;
 }
 
 function closeTaskLogModal() {
@@ -17965,112 +17941,97 @@ function initializeTabs() {
   });
 }
 
+function applyLogSourceAvailability(root, sources) {
+  if (!Array.isArray(sources)) return;
+  const tabs = Array.from(root.querySelectorAll("[data-log-source-tab]"));
+  const active = root.querySelector("[data-log-source-tab].active");
+  const activeWasDisabled = active?.disabled;
+  sources.forEach((source) => {
+    if (typeof source.available !== "boolean") return;
+    const tab = tabs.find((candidate) => candidate.dataset.logSourceTab === source.id);
+    if (!tab) return;
+    tab.disabled = !source.available;
+    tab.setAttribute("aria-disabled", String(tab.disabled));
+  });
+  if (activeWasDisabled && !active.disabled) active.click();
+  else if (!active || active.disabled) tabs.find((tab) => !tab.disabled)?.click();
+}
+
 function initializeLogsPage() {
   const root = document.querySelector("[data-logs-page]");
-  if (!(root instanceof HTMLElement)) {
-    return;
-  }
-  const lineSelect = root.querySelector("[data-log-lines]");
-  const refreshStatus = root.querySelector("[data-log-refresh-status]");
+  if (!(root instanceof HTMLElement) || !window.AtlasoLogViewer) return;
+  if (root.dataset.logsInitialized === "1") return;
+  root.dataset.logsInitialized = "1";
+  const status = root.querySelector("[data-log-refresh-status]");
+  const controls = root.querySelector("[data-log-history-controls]");
   const refreshUrl = root.dataset.logRefreshUrl || managementUiPath("/logs/data");
-  const allowedLineCounts = new Set(["100", "200", "500"]);
-  if (!(lineSelect instanceof HTMLSelectElement)) {
-    return;
-  }
+  const lineSelector = root.querySelector("[data-log-lines]");
   try {
-    const storedLineCount = window.localStorage.getItem("atlaso:logs:line-count") || "";
-    if (allowedLineCounts.has(storedLineCount)) {
-      lineSelect.value = storedLineCount;
-    }
-  } catch {
-    // Storage is optional; the server-rendered default remains usable.
-  }
-
-  let refreshing = false;
-  let refreshQueued = false;
-  const refresh = async () => {
-    if (refreshing) {
-      refreshQueued = true;
-      return;
-    }
-    refreshing = true;
-    if (refreshStatus instanceof HTMLElement) {
-      refreshStatus.textContent = "Refreshing...";
-    }
-    try {
-      const response = await fetch(`${refreshUrl}?lines=${encodeURIComponent(lineSelect.value)}`, {
-        headers: { Accept: "application/json" },
-      });
-      if (!response.ok) {
-        throw new Error(`Log refresh failed (${response.status})`);
-      }
-      const payload = await response.json();
-      (Array.isArray(payload.sources) ? payload.sources : []).forEach((source) => {
-        const panel = document.getElementById(`logs-${source.id}-panel`);
-        if (!(panel instanceof HTMLElement)) {
+    const savedLines = window.localStorage.getItem("atlaso:logs:line-count");
+    if (lineSelector && ["100", "200", "500"].includes(savedLines)) lineSelector.value = savedLines;
+  } catch (_error) { /* Keep the server default when browser storage is unavailable. */ }
+  let viewer = null;
+  const open = (source) => {
+    viewer?.close();
+    const tab = root.querySelector(`[data-log-source-tab="${source}"]`);
+    if (!tab || tab.disabled) return;
+    const panel = document.getElementById(`logs-${source}-panel`);
+    const output = panel?.querySelector("[data-log-lines-output]");
+    if (!(output instanceof HTMLElement)) return;
+    viewer = window.AtlasoLogViewer.create({
+      output, status, controls, initialCursor: "tail", active: () => !panel.hidden,
+      onPage: (page) => {
+        const meta = panel.querySelector("[data-log-meta]");
+        if (page.available === false) {
+          tab.disabled = true;
+          tab.setAttribute("aria-disabled", "true");
+          viewer?.close();
+          root.querySelector("[data-log-source-tab]:not(:disabled)")?.click();
           return;
         }
-        const tabButton = root.querySelector(`[data-log-source-tab="${CSS.escape(String(source.id || ""))}"]`);
-        if (tabButton instanceof HTMLButtonElement) {
-          tabButton.disabled = !source.available;
-          tabButton.setAttribute("aria-disabled", source.available ? "false" : "true");
-          tabButton.title = `${String(source.path || source.label || "Log source")}${source.available ? "" : " (unavailable)"}`;
-        }
-        const meta = panel.querySelector("[data-log-meta]");
-        if (meta instanceof HTMLElement) {
-          const parts = [`${Number(source.size_bytes || 0)} bytes`];
-          if (source.updated_at) {
-            parts.push(String(source.updated_at));
-          }
-          if (source.truncated) {
-            parts.push("tail view");
-          }
-          meta.textContent = parts.join(" · ");
-        }
-        const output = panel.querySelector("[data-log-lines-output]");
-        if (output instanceof HTMLElement) {
-          output.textContent = source.available
-            ? (Array.isArray(source.lines) ? source.lines.join("\n") : "")
-            : String(source.error || "Log file has not been written yet.");
-          highlightConfigPreviewElement(output);
-        }
-      });
-      const activeButton = root.querySelector("[role='tablist'] .tab-button.active");
-      if (activeButton instanceof HTMLButtonElement && activeButton.disabled) {
-        const nextButton = root.querySelector("[role='tablist'] .tab-button:not(:disabled)");
-        if (nextButton instanceof HTMLButtonElement) {
-          nextButton.click();
-        }
-      }
-      if (refreshStatus instanceof HTMLElement) {
-        refreshStatus.textContent = `Updated ${new Date().toLocaleTimeString()} · 5s`;
-      }
-    } catch {
-      if (refreshStatus instanceof HTMLElement) {
-        refreshStatus.textContent = "Auto-refresh unavailable";
-      }
-    } finally {
-      refreshing = false;
-      if (refreshQueued) {
-        refreshQueued = false;
-        refresh();
-      }
-    }
+        if (meta) meta.textContent = page.available ? `Retained history · up to ${lineSelector?.value || 100} entries per page` : "Waiting for log entries";
+      },
+      fetchPage: (cursor, signal) => {
+        const url = new URL(refreshUrl, window.location.href);
+        url.searchParams.set("source", source);
+        url.searchParams.set("lines", lineSelector?.value || "100");
+        if (cursor === "tail") url.searchParams.set("tail", "1");
+        else if (cursor) url.searchParams.set("cursor", cursor);
+        return window.AtlasoLogViewer.fetchJson(url, signal);
+      },
+    });
   };
-
-  lineSelect.addEventListener("change", () => {
-    if (!allowedLineCounts.has(lineSelect.value)) {
-      lineSelect.value = "100";
-    }
-    try {
-      window.localStorage.setItem("atlaso:logs:line-count", lineSelect.value);
-    } catch {
-      // Storage is optional.
-    }
-    refresh();
+  root.addEventListener("click", (event) => {
+    const tab = event.target.closest("[data-log-source-tab]");
+    if (tab && !tab.disabled) open(tab.dataset.logSourceTab);
   });
-  refresh();
-  window.setInterval(refresh, 5000);
+  lineSelector?.addEventListener("change", () => {
+    try { window.localStorage.setItem("atlaso:logs:line-count", lineSelector.value); }
+    catch (_error) { /* Page-size changes remain usable without browser storage. */ }
+    const active = root.querySelector("[data-log-source-tab].active:not(:disabled)");
+    if (active) open(active.dataset.logSourceTab);
+  });
+  window.AtlasoLogViewer.create({
+    output: document.createElement("span"),
+    active: () => root.isConnected,
+    pageText: (page) => JSON.stringify(page.sources || []),
+    renderPage: () => {},
+    onPage: (page) => applyLogSourceAvailability(root, page.sources),
+    fetchPage: (_cursor, signal) => {
+      const url = new URL(refreshUrl, window.location.href);
+      url.searchParams.set("availability", "1");
+      return window.AtlasoLogViewer.fetchJson(url, signal);
+    },
+  });
+  const selected = root.querySelector("[data-log-source-tab].active");
+  if (selected && !selected.disabled) open(selected.dataset.logSourceTab);
+  else root.querySelector("[data-log-source-tab]:not(:disabled)")?.click();
+}
+
+// Time-descending audit pages place the live edge at the beginning of the grid.
+function auditNewestFirst(table) {
+  const sorter = table.getSorters()[0];
+  return sorter?.field === "created_at" && sorter.dir === "desc";
 }
 
 function initializeAuditEventsTable() {
@@ -18111,6 +18072,36 @@ function initializeAuditEventsTable() {
       options: atlasoGridOptions29,
     }).table;
     if (!table) return;
+    table.on("tableBuilt", () => {
+      window.AtlasoLogViewer.create({
+        output: tableElement,
+        initialCursor: "tail",
+        status: document.querySelector("[data-audit-live-status]"),
+        controls: document.querySelector("[data-audit-history-controls]"),
+        pageText: (page) => JSON.stringify(page.rows),
+        holdPage: () => {
+          const holder = tableElement.querySelector(".tabulator-tableholder");
+          const newestFirst = auditNewestFirst(table);
+          return table.getPage() !== (newestFirst ? 1 : table.getPageMax()) || Boolean(holder &&
+            (newestFirst ? holder.scrollTop >= 32 : holder.scrollHeight - holder.scrollTop - holder.clientHeight >= 32));
+        },
+        fetchPage: (cursor, signal) => {
+          const url = new URL(tableElement.dataset.historyUrl, window.location.href);
+          if (cursor === "tail") url.searchParams.set("tail", "1");
+          else if (cursor) url.searchParams.set("cursor", cursor);
+          return window.AtlasoLogViewer.fetchJson(url, signal);
+        },
+        renderPage: async (page, { following, navigated, isCurrent }) => {
+          const selectedPage = table.getPage();
+          await table.replaceData(page.rows);
+          if (!isCurrent()) return;
+          await table.setPage(following ? (auditNewestFirst(table) ? 1 : "last") : navigated ? 1 : Math.min(selectedPage, table.getPageMax()) || 1);
+          if (!isCurrent()) return;
+          const holder = tableElement.querySelector(".tabulator-tableholder");
+          if (following && holder) holder.scrollTop = auditNewestFirst(table) ? 0 : holder.scrollHeight;
+        },
+      });
+    });
     const resizeObserver = new ResizeObserver(() => {
       const nextPageSize = pageSizeForHeight();
       if (table.getPageSize() !== nextPageSize) {

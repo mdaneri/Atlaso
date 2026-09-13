@@ -5,7 +5,7 @@ from collections.abc import Generator
 from datetime import datetime, timezone
 from pathlib import Path
 
-from sqlalchemy import create_engine, event, inspect, select, text
+from sqlalchemy import create_engine, delete, event, inspect, select, text
 from sqlalchemy.engine import Connection, Engine
 from sqlalchemy.orm import DeclarativeBase, Session, sessionmaker
 
@@ -426,6 +426,45 @@ def _reconcile_authentication_lifetime_columns(connection: Connection) -> None:
                     )
 
 
+@event.listens_for(Session, "before_flush")
+def _collect_task_history(session: Session, _context, _instances) -> None:
+    """Collect producer changes before generated audit IDs become available.
+
+    Args:
+        session: Producer transaction being flushed.
+        _context: SQLAlchemy flush context.
+        _instances: Optional flush targets.
+    """
+    from atlaso.app.models import AuditEvent, Job, TaskLogCheckpoint, TaskLogChunk
+
+    jobs = {item.id for item in session.new | session.dirty if isinstance(item, Job)}
+    results = {item.id for item in session.new | session.dirty
+               if isinstance(item, Job) and (item in session.new or inspect(item).attrs.result.history.has_changes())}
+    audits = [item for item in session.new if isinstance(item, AuditEvent) and item.resource_type == "job"]
+    jobs.update(item.resource_id for item in audits if item.resource_id)
+    deleted = {item.id for item in session.deleted if isinstance(item, Job)}
+    for job_id in deleted:
+        session.connection().execute(delete(TaskLogChunk).where(TaskLogChunk.job_id == job_id))
+        session.connection().execute(delete(TaskLogCheckpoint).where(TaskLogCheckpoint.job_id == job_id))
+    session.info["task_history_flush"] = (jobs - deleted, audits, results)
+
+
+@event.listens_for(Session, "after_flush_postexec")
+def _capture_flushed_task_history(session: Session, _context) -> None:
+    """Capture result and audit output only after all new rows have identities.
+
+    Args:
+        session: Producer transaction whose flush completed.
+        _context: SQLAlchemy flush context.
+    """
+    from atlaso.app.services.task_log_history import capture_task_history
+
+    jobs, audits, results = session.info.pop("task_history_flush", (set(), [], set()))
+    for job_id in sorted(jobs):
+        capture_task_history(session.connection(), job_id, tuple(item.id for item in audits if item.resource_id == job_id),
+                             result_changed=job_id in results)
+
+
 def init_db() -> None:
     """Handle init db."""
     from atlaso.app import (  # noqa: F401 - importing models registers SQLAlchemy metadata.
@@ -573,6 +612,9 @@ def init_db() -> None:
                 )
             )
     _reconcile_vcf_depot_job_queue_schema(engine)
+    from atlaso.app.services.task_log_history import initialize_task_history
+
+    initialize_task_history(engine)
 
 
 def get_db() -> Generator[Session, None, None]:

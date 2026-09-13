@@ -1,0 +1,2477 @@
+"""Verify full retained history and source-bound redaction across pages."""
+
+import gzip
+import json
+from pathlib import Path
+
+import pytest
+
+from atlaso.app.services import log_viewer
+
+
+def test_file_history_reads_every_line_beyond_old_tail(tmp_path):
+    """Walk bounded pages without losing the first or final retained entries.
+
+    Args:
+        tmp_path: Test-owned log directory.
+    """
+    path = tmp_path / "history.log"
+    expected = [f"entry {index}" for index in range(1501)]
+    path.write_text("\n".join(expected) + "\n", encoding="utf-8")
+    cursor = ""
+    actual = []
+    while True:
+        page = log_viewer.file_page(path, source="test", cursor=cursor)
+        actual.extend(page["text"].splitlines())
+        assert len(page["text"].splitlines()) <= 500
+        cursor = page["next_cursor"]
+        if not page["has_more"]:
+            break
+    assert actual == expected
+    path.write_text(path.read_text(encoding="utf-8") + "later entry\n", encoding="utf-8")
+    assert log_viewer.file_page(path, source="test", cursor=cursor)["text"] == "later entry"
+
+
+def test_history_cursor_preserves_private_key_redaction(tmp_path):
+    """A page boundary cannot turn the interior of a key into visible text.
+
+    Args:
+        tmp_path: Test-owned log directory.
+    """
+    path = tmp_path / "history.log"
+    path.write_text("safe\n-----BEGIN PRIVATE KEY-----\nconcealed material\n-----END PRIVATE KEY-----\nlast\n", encoding="utf-8")
+    first = log_viewer.file_page(path, source="test", limit=2)
+    second = log_viewer.file_page(path, source="test", cursor=first["next_cursor"])
+    assert "concealed" not in second["text"]
+    assert second["text"].endswith("last")
+    with pytest.raises(ValueError, match="another source"):
+        log_viewer.file_page(path, source="other", cursor=first["next_cursor"])
+    with pytest.raises(ValueError):
+        log_viewer.file_page(path, source="test", cursor=first["next_cursor"] + "changed")
+
+
+def test_history_rotation_is_reported(tmp_path):
+    """A replaced file never silently continues an old offset.
+
+    Args:
+        tmp_path: Test-owned log directory.
+    """
+    path = tmp_path / "history.log"
+    path.write_text("before\n", encoding="utf-8")
+    first = log_viewer.file_page(path, source="test")
+    path.rename(tmp_path / "old.log")
+    path.write_text("after\n", encoding="utf-8")
+    page = log_viewer.file_page(path, source="test", cursor=first["next_cursor"])
+    assert page["reset"]
+    assert page["text"] == "after"
+
+
+def test_nonregular_log_is_rejected(tmp_path):
+    """No caller can turn a fixed-file viewer into a directory reader.
+
+    Args:
+        tmp_path: Test-owned directory.
+    """
+    with pytest.raises((ValueError, OSError)):
+        log_viewer.file_page(Path(tmp_path), source="test")
+
+
+def test_numbered_and_compressed_rotations_are_complete(tmp_path):
+    """Keep archived entries in chronological order across file boundaries.
+
+    Args:
+        tmp_path: Test-owned retained history directory.
+    """
+    path = tmp_path / "history.log"
+    with gzip.open(tmp_path / "history.log.2.gz", "wb") as archive:
+        archive.write(b"oldest\n")
+    (tmp_path / "history.log.1").write_bytes(b"older\n")
+    path.write_bytes(b"current\n")
+    cursor, entries = "", []
+    while True:
+        page = log_viewer.file_page(path, source="test", cursor=cursor)
+        entries.extend(page["text"].splitlines())
+        cursor = page["next_cursor"]
+        if not page["has_more"]:
+            break
+    assert entries == ["oldest", "older", "current"]
+
+
+def test_partial_line_waits_for_completion(tmp_path):
+    """A writer's incomplete line cannot bypass line-based redaction.
+
+    Args:
+        tmp_path: Test-owned live history directory.
+    """
+    path = tmp_path / "history.log"
+    path.write_bytes(b"safe\n-----BEGIN PRIVATE")
+    first = log_viewer.file_page(path, source="test")
+    assert first["text"] == "safe"
+    assert not first["has_more"]
+    with path.open("ab") as handle:
+        handle.write(b" KEY-----\nsecret material\n-----END PRIVATE KEY-----\n")
+    page = log_viewer.file_page(path, source="test", cursor=first["next_cursor"])
+    assert "secret material" not in page["text"]
+    assert page["text"].count("[redacted private key]") == 3
+
+
+def test_copytruncate_regrowth_resets_position(tmp_path):
+    """A reused inode cannot silently hide a replacement file's first lines.
+
+    Args:
+        tmp_path: Test-owned current log directory.
+    """
+    path = tmp_path / "history.log"
+    path.write_bytes(b"old\n")
+    first = log_viewer.file_page(path, source="test")
+    path.write_bytes(b"replacement is longer\n")
+    page = log_viewer.file_page(path, source="test", cursor=first["next_cursor"])
+    assert page["reset"]
+    assert page["text"] == "replacement is longer"
+
+
+def test_privileged_file_reader_preserves_boundaries(tmp_path):
+    """The fixed privileged source has the same rotation and partial-line contract.
+
+    Args:
+        tmp_path: Test-owned fixed log path.
+    """
+    from tests.test_appliance_helper import load_helper_module
+
+    helper = load_helper_module()
+    path = tmp_path / "access.log"
+    (tmp_path / "access.log.1").write_bytes(b"archived\n")
+    path.write_bytes(b"current\npartial")
+    first = helper._read_fixed_log_history(path, {})
+    assert first["lines"] == ["archived"]
+    current = helper._read_fixed_log_history(path, first["file_position"])
+    assert current["lines"] == ["current"]
+    assert not current["has_more"]
+    with path.open("ab") as handle:
+        handle.write(b" completed\n")
+    assert helper._read_fixed_log_history(path, current["file_position"])["lines"] == ["partial completed"]
+    path.write_bytes(b"replacement entry\n")
+    reset = helper._read_fixed_log_history(path, current["file_position"])
+    assert reset["reset"]
+    assert reset["lines"] == ["replacement entry"]
+
+
+def test_audit_history_pages_and_observes_new_events(client):
+    """Read beyond the former total cap, then observe appended audit events.
+
+    Args:
+        client: Authenticated appliance test transport.
+    """
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import AuditEvent
+    from tests.routers.ui.helpers import login
+
+    login(client)
+    with SessionLocal() as db:
+        db.add_all([AuditEvent(actor="history-test", action="history", resource_type="test", success=True,
+                               detail=f"entry {index}") for index in range(1100)])
+        db.commit()
+    cursor, rows = "", []
+    while True:
+        response = client.get("/ui/management/audit-log", params={"cursor": cursor},
+                              headers={"X-Atlaso-Task-Log": "1"})
+        assert response.status_code == 200
+        page = response.json()
+        assert len(page["rows"]) <= 500
+        rows.extend(row for row in page["rows"] if row["actor"] == "history-test")
+        cursor = page["next_cursor"]
+        if not page["has_more"]:
+            break
+    assert [row["detail"] for row in rows] == [f"entry {index}" for index in range(1100)]
+    with SessionLocal() as db:
+        db.add(AuditEvent(actor="history-test", action="later", resource_type="test", success=True))
+        db.commit()
+    response = client.get("/ui/management/audit-log", params={"cursor": cursor}, headers={"X-Atlaso-Task-Log": "1"})
+    assert [row["action"] for row in response.json()["rows"]] == ["later"]
+    wrong_source = client.get("/ui/management/logs/data", params={"source": "app", "cursor": cursor})
+    assert wrong_source.status_code == 400
+
+
+def test_journal_history_is_bounded_and_uses_fixed_units(monkeypatch, capsys):
+    """Keep opaque positions while preventing arbitrary journal selectors.
+
+    Args:
+        monkeypatch: Substitute only the journal subprocess transport.
+        capsys: Capture the helper's structured response.
+    """
+    import io
+    import json
+    from unittest.mock import MagicMock
+
+    from tests.test_appliance_helper import load_helper_module
+
+    helper = load_helper_module()
+    entries = [{"MESSAGE": f"event {index}", "__CURSOR": f"cursor-{index}", "__REALTIME_TIMESTAMP": "1000000"}
+               for index in range(501)]
+    process = MagicMock()
+    process.__enter__.return_value = process
+    process.stdout = io.BytesIO("\n".join(json.dumps(entry) for entry in entries).encode())
+    process.wait.return_value = 0
+    process.poll.return_value = 0
+    launch = MagicMock(return_value=process)
+    monkeypatch.setattr(helper.subprocess, "Popen", launch)
+    assert helper._read_log_history(["nginx", '{"journal_cursor":"prior","journal_pem_state":"S"}']) == 0
+    page = json.loads(capsys.readouterr().out)
+    assert len(page["lines"]) == 500
+    assert page["has_more"]
+    assert page["journal_cursor"] == "cursor-499"
+    command = launch.call_args.args[0]
+    assert command[command.index("--unit") + 1] == "nginx.service"
+    assert "--lines=+501" in command
+    assert "--after-cursor=prior" in command
+    assert helper._read_log_history(["../../secret", "{}"]) == 2
+    assert launch.call_count == 1
+
+
+def test_journal_large_batch_advances_complete_entries(monkeypatch, capsys):
+    """A batch exceeding the byte budget still returns a usable continuation.
+
+    Args:
+        monkeypatch: Replace the fixed journal transport with retained entries.
+        capsys: Read the helper response.
+    """
+    import io
+    import json
+    from unittest.mock import MagicMock
+
+    from tests.test_appliance_helper import load_helper_module
+
+    helper = load_helper_module()
+    entries = [{"MESSAGE": f"event {index} " + "x" * 10000, "__CURSOR": f"c-{index}",
+                "__REALTIME_TIMESTAMP": "1000000"} for index in range(501)]
+    process = MagicMock()
+    process.__enter__.return_value = process
+    process.wait.return_value = 0
+    process.poll.return_value = 0
+    monkeypatch.setattr(helper.subprocess, "Popen", lambda *args, **kwargs: process)
+    offset, actual, position = 0, [], {"journal_cursor": "c--1", "journal_pem_state": "S"}
+    for _ in range(10):
+        process.stdout = io.BytesIO("\n".join(json.dumps(entry) for entry in entries[offset:]).encode())
+        assert helper._read_log_history(["nginx", json.dumps(position)]) == 0
+        page = json.loads(capsys.readouterr().out)
+        assert page["lines"]
+        actual.extend(page["lines"])
+        position = page["journal_position"]
+        offset = (int(position["journal_start_cursor"].removeprefix("c-"))
+                  if "journal_start_cursor" in position else int(position["journal_cursor"].removeprefix("c-")) + 1)
+        assert page["has_more"] == (offset < len(entries))
+        if not page["has_more"]:
+            break
+    assert len(actual) == 501
+    assert all(f"event {index} " in line for index, line in enumerate(actual))
+
+
+def test_task_progress_does_not_reset_later_history(client, monkeypatch):
+    """Mutable summary fields cannot invalidate an older output page.
+
+    Args:
+        client: Initialized application database.
+        monkeypatch: Use small pages to exercise pagination boundaries.
+    """
+    import json
+
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import Job
+    from atlaso.app.ui import _task_log_lines
+
+    monkeypatch.setattr(log_viewer, "PAGE_BYTES", 100)
+    with SessionLocal() as db:
+        job = Job(id="progress-history", type="managed-script", status="running", created_by="admin",
+                  result=json.dumps({"state": "starting", "log_lines": [f"entry {i}" for i in range(100)]}))
+        db.add(job)
+        db.commit()
+        first = log_viewer.text_page("\n".join(_task_log_lines(job, db, include_metadata=False)), source="task:test")
+        before = log_viewer.text_page("\n".join(_task_log_lines(job, db, include_metadata=False)), source="task:test", cursor=first["next_cursor"])
+        job.progress_percent = 75
+        job.status = "succeeded"
+        job.result = json.dumps({"state": "completed", "log_lines": [f"entry {i}" for i in range(101)]})
+        db.commit()
+        after = log_viewer.text_page("\n".join(_task_log_lines(job, db, include_metadata=False)), source="task:test", cursor=first["next_cursor"])
+        assert not after["reset"]
+        assert after["text"] == before["text"]
+
+
+@pytest.mark.parametrize("privileged", [False, True])
+def test_oversized_file_entry_advances_without_exposing_fragments(tmp_path, privileged):
+    """An oversized physical line cannot hide newer entries or leak discarded pieces.
+
+    Args:
+        tmp_path: Test-owned log source.
+        privileged: Exercise the fixed privileged reader as well as the web reader.
+    """
+    from tests.test_appliance_helper import load_helper_module
+
+    path = tmp_path / "oversized.log"
+    path.write_bytes(b"first\n" + b"private-fragment" * 200000 + b"\nlast\n")
+    cursor, actual, pages = ({} if privileged else ""), [], 0
+    helper = load_helper_module() if privileged else None
+    while True:
+        if privileged:
+            page = helper._read_fixed_log_history(path, cursor)
+            actual.extend(page["lines"])
+            cursor = page["file_position"]
+        else:
+            page = log_viewer.file_page(path, source="oversized", cursor=cursor)
+            actual.extend(page["text"].splitlines())
+            cursor = page["next_cursor"]
+        pages += 1
+        assert pages < 10
+        if not page["has_more"]:
+            break
+    assert actual[0] == "first"
+    assert actual[-1] == "last"
+    assert sum("Oversized log entry omitted" in line for line in actual) == 1
+    assert "private-fragment" not in "\n".join(actual)
+
+
+def test_failed_task_error_survives_paginated_projection(client):
+    """A terminal error remains readable even without result or audit output.
+
+    Args:
+        client: Initialized application database.
+    """
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import Job
+    from atlaso.app.ui import _task_log_lines
+
+    with SessionLocal() as db:
+        job = Job(id="error-history", type="managed-script", status="failed", created_by="admin",
+                  error="Owned script exited with code 7.")
+        db.add(job)
+        db.commit()
+        lines = _task_log_lines(job, db, include_metadata=False)
+        assert lines == ["Error: Owned script exited with code 7."]
+
+
+def test_audit_live_tail_avoids_replaying_old_groups(client):
+    """The initial live request reads only the newest group; history remains explicit.
+
+    Args:
+        client: Authenticated application transport.
+    """
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import AuditEvent
+    from tests.routers.ui.helpers import login
+
+    login(client)
+    with SessionLocal() as db:
+        entries = [AuditEvent(actor="tail-test", action=f"entry-{i}", resource_type="test", success=True) for i in range(1501)]
+        db.add_all(entries)
+        db.commit()
+        first_id, last_id = entries[0].id, entries[-1].id
+    headers = {"X-Atlaso-Task-Log": "1"}
+    tail = client.get("/ui/management/audit-log", params={"tail": "1"}, headers=headers).json()
+    assert len(tail["rows"]) == 500
+    assert tail["rows"][0]["id"] == last_id - 499
+    assert tail["rows"][-1]["id"] == last_id
+    assert not tail["has_more"]
+    previous = client.get("/ui/management/audit-log", params={"cursor": tail["previous_cursor"]}, headers=headers).json()
+    assert len(previous["rows"]) == 500
+    assert previous["rows"][-1]["id"] == tail["rows"][0]["id"] - 1
+    beginning = client.get("/ui/management/audit-log", headers=headers).json()
+    assert beginning["rows"][0]["id"] <= first_id
+    assert beginning["has_more"]
+
+
+def test_task_pages_bound_utf8_bytes_and_tail(monkeypatch):
+    """Multilingual output remains character-safe within the transport byte budget.
+
+    Args:
+        monkeypatch: Reduce the budget to exercise multiple pages cheaply.
+    """
+    monkeypatch.setattr(log_viewer, "PAGE_BYTES", 100)
+    text = ("漢字🙂\n" * 100)
+    cursor, actual = "", ""
+    while True:
+        page = log_viewer.text_page(text, source="utf8", cursor=cursor)
+        assert len(page["text"].encode("utf-8")) <= 100
+        actual += page["text"]
+        cursor = page["next_cursor"]
+        if not page["has_more"]:
+            break
+    assert actual == text
+    tail = log_viewer.text_page(text, source="utf8", tail=True)
+    assert len(tail["text"].encode("utf-8")) <= 100
+    assert text.endswith(tail["text"])
+    assert not tail["has_more"]
+
+
+@pytest.mark.parametrize("privileged", [False, True])
+def test_file_tail_is_bounded_and_preserves_rotated_key_state(tmp_path, privileged):
+    """Jumping to the newest group preserves redaction state from earlier rotations.
+
+    Args:
+        tmp_path: Fixed retained source directory.
+        privileged: Exercise the standalone helper contract too.
+    """
+    from tests.test_appliance_helper import load_helper_module
+
+    path = tmp_path / "history.log"
+    (tmp_path / "history.log.1").write_text("-----BEGIN PRIVATE KEY-----\n", encoding="utf-8")
+    path.write_text("".join(f"hidden-fragment-{i}\n" for i in range(1500)) + "-----END PRIVATE KEY-----\nvisible\n", encoding="utf-8")
+    if privileged:
+        helper = load_helper_module()
+        page = helper._read_fixed_log_history(path, {"tail": True})
+        assert page["initial_private_key"]
+        lines, _ = log_viewer.redact_lines(page["lines"], private_key=page["initial_private_key"])
+    else:
+        page = log_viewer.file_page(path, source="tail", tail=True)
+        assert log_viewer.decode_cursor(page["cursor"], "tail")["private_key"]
+        lines = page["text"].splitlines()
+    assert len(lines) == 500
+    assert lines[-1] == "visible"
+    assert "hidden-fragment" not in "\n".join(lines)
+    assert not page["has_more"]
+
+
+def test_journal_oversized_record_advances_metadata_after_message(monkeypatch, capsys):
+    """A large journal message cannot hide its cursor or any following entries.
+
+    Args:
+        monkeypatch: Replace the owned subprocess transport.
+        capsys: Read the helper's structured response.
+    """
+    import io
+    import json
+    from unittest.mock import MagicMock
+
+    from tests.test_appliance_helper import load_helper_module
+
+    helper = load_helper_module()
+    entry = {"MESSAGE": "private-fragment" * 200000, "__CURSOR": "large-cursor", "__REALTIME_TIMESTAMP": "1000000"}
+    later = {"MESSAGE": "later", "__CURSOR": "later-cursor", "__REALTIME_TIMESTAMP": "1000001"}
+    process = MagicMock()
+    process.__enter__.return_value = process
+    process.wait.return_value = process.poll.return_value = 0
+    process.stdout = io.BytesIO((json.dumps(entry) + "\n" + json.dumps(later) + "\n").encode())
+    monkeypatch.setattr(helper.subprocess, "Popen", lambda *args, **kwargs: process)
+    assert helper._read_log_history(["nginx", "{}"]) == 0
+    page = json.loads(capsys.readouterr().out)
+    assert page["journal_cursor"] == "large-cursor"
+    assert page["has_more"]
+    assert "Oversized journal entry omitted" in page["lines"][0]
+    assert "private-fragment" not in str(page)
+    process.stdout = io.BytesIO((json.dumps(later) + "\n").encode())
+    assert helper._read_log_history(["nginx", json.dumps(page["journal_position"])]) == 0
+    assert json.loads(capsys.readouterr().out)["lines"][0].endswith(" later")
+
+
+def test_journal_tail_recovers_prior_key_state(monkeypatch, capsys):
+    """The latest journal group has a stable start and redaction predecessor.
+
+    Args:
+        monkeypatch: Substitute the owned journal transport.
+        capsys: Read the helper page.
+    """
+    import io
+    import json
+    from unittest.mock import MagicMock
+
+    from tests.test_appliance_helper import load_helper_module
+
+    helper = load_helper_module()
+    commands = []
+    def launch(command, **_kwargs):
+        """Return a journal subprocess fixture for the requested history window.
+
+        Args:
+            command: Fixed journal command whose cursor and direction select fixture rows.
+            **_kwargs: Unused arguments from the replaced transport.
+        """
+        commands.append(command)
+        records = [("hidden", "latest")] if "--reverse" in command else [("-----BEGIN PRIVATE KEY-----", "prior"), ("hidden", "latest")]
+        process = MagicMock()
+        process.__enter__.return_value = process
+        process.wait.return_value = process.poll.return_value = 0
+        process.stdout = io.BytesIO("".join(json.dumps({"MESSAGE": message, "__CURSOR": cursor,
+                                                    "__REALTIME_TIMESTAMP": "1000000"}) + "\n" for message, cursor in records).encode())
+        return process
+    monkeypatch.setattr(helper.subprocess, "Popen", launch)
+    assert helper._read_log_history(["nginx", '{"tail":true}']) == 0
+    page = json.loads(capsys.readouterr().out)
+    assert page["initial_private_key"]
+    assert page["current_position"] == {"journal_start_cursor": "latest", "journal_has_previous": False, "journal_pem_state": "S"}
+    assert "--lines=501" in commands[0]
+    assert "--lines=+5001" in commands[1]
+
+
+def test_tail_of_unfinished_oversized_key_keeps_future_fragments_redacted(tmp_path):
+    """A tail positioned inside a huge unfinished line retains its complete key state.
+
+    Args:
+        tmp_path: Fixed log source owned by the test.
+    """
+    path = tmp_path / "unfinished.log"
+    path.write_bytes(b"prefix" * 200000 + b"-----BEGIN PRIVATE KEY-----" + b"hidden" * 200000)
+    first = log_viewer.file_page(path, source="unfinished", tail=True)
+    assert log_viewer.decode_cursor(first["next_cursor"], "unfinished")["private_key"]
+    with path.open("ab") as handle:
+        handle.write(b"\nprivate-fragment\n-----END PRIVATE KEY-----\nvisible\n")
+    later = log_viewer.file_page(path, source="unfinished", cursor=first["next_cursor"])
+    assert "private-fragment" not in later["text"]
+    assert later["text"].endswith("visible")
+
+
+@pytest.mark.parametrize("privileged", [False, True])
+def test_copytruncate_same_banner_resets_cursor(tmp_path, privileged):
+    """A regrown file with an unchanged banner must not conceal replacement history.
+
+    Args:
+        tmp_path: Owned retained log directory.
+        privileged: Exercise both independent file readers.
+    """
+    from tests.test_appliance_helper import load_helper_module
+
+    path = tmp_path / "replacement.log"
+    banner = b"banner" * 900 + b"\n"
+    path.write_bytes(banner + b"old entry\n" * 600)
+    helper = load_helper_module() if privileged else None
+    first = helper._read_fixed_log_history(path, {}) if privileged else log_viewer.file_page(path, source="replacement")
+    position = first["file_position"] if privileged else first["next_cursor"]
+    path.write_bytes(banner + b"replacement entry\n" * 900)
+    page = helper._read_fixed_log_history(path, position) if privileged else log_viewer.file_page(path, source="replacement", cursor=position)
+    assert page["reset"]
+    text = "\n".join(page["lines"]) if privileged else page["text"]
+    assert text.startswith(banner.decode().rstrip())
+    assert "replacement entry" in text
+
+
+@pytest.mark.parametrize("tail", [False, True])
+@pytest.mark.parametrize("limit", [1, 500])
+@pytest.mark.parametrize("oversized_marker", ["BEGIN", "END"])
+def test_omitted_journal_physical_line_preserves_private_key_state(monkeypatch, capsys, tail, limit, oversized_marker):
+    """Omitting an encoded-large line cannot expose the following key body.
+
+    Args:
+        monkeypatch: Supply one immutable journal message below the raw record cap.
+        capsys: Capture helper output for the source-page transport.
+        tail: Walk backward from the live tail instead of forward from the start.
+        limit: Force either one-row continuations or a complete message page.
+        oversized_marker: Opening or closing marker embedded in the omitted row.
+    """
+    from types import SimpleNamespace
+
+    from tests.test_appliance_helper import load_helper_module
+
+    helper = load_helper_module()
+    opening = ("\x01" * 173000 if oversized_marker == "BEGIN" else "") + "-----BEGIN PRIVATE KEY-----"
+    closing = ("\x01" * 173000 if oversized_marker == "END" else "") + "-----END PRIVATE KEY-----"
+    entry = {"MESSAGE": f"{opening}\nprivate-body\n{closing}\nvisible",
+             "__CURSOR": "omitted-line", "__REALTIME_TIMESTAMP": "1000000"}
+    assert len(json.dumps(entry).encode()) < 1024 * 1024
+
+    def entries(command, **_kwargs):
+        """Return the immutable record except for the predecessor marker query.
+
+        Args:
+            command: Helper journal command.
+            **_kwargs: Unused reader options.
+        """
+        return ([], False) if any(arg.startswith("--grep=") for arg in command) else ([entry], False)
+
+    def adapter(_self, source, position):
+        """Use the real helper formatting and signed redaction continuation.
+
+        Args:
+            _self: Adapter instance.
+            source: Allowlisted journal source.
+            position: Decoded cursor position.
+        """
+        assert helper._read_log_history([source, json.dumps(position)]) == 0
+        return SimpleNamespace(returncode=0, stdout=capsys.readouterr().out)
+
+    monkeypatch.setattr(helper, "_journal_history_entries", entries)
+    monkeypatch.setattr(log_viewer.SystemAdapter, "read_log_history", adapter)
+    page = log_viewer.source_page("nginx", tail=tail, limit=limit)
+    texts = []
+    for _ in range(5):
+        texts.append(page["text"])
+        assert "private-body" not in page["text"]
+        if tail:
+            if not page["previous_cursor"]:
+                break
+            cursor = page["previous_cursor"]
+        else:
+            if not page["has_more"]:
+                break
+            cursor = page["next_cursor"]
+        page = log_viewer.source_page("nginx", cursor=cursor, limit=limit)
+    assert "visible" in "\n".join(texts)
+    assert "[redacted private key]" in "\n".join(texts)
+
+
+def test_expanded_journal_message_pages_without_loss_and_tail_skips_history(monkeypatch, capsys):
+    """One multiline record stays bounded, resumes exactly, and opens at its latest rows.
+
+    Args:
+        monkeypatch: Substitute only the journal process reader.
+        capsys: Capture structured helper pages.
+    """
+    from tests.test_appliance_helper import load_helper_module
+
+    helper = load_helper_module()
+    messages = [f"row-{index}" for index in range(1501)]
+    entry = {"MESSAGE": "\n".join(messages), "__CURSOR": "multiline", "__REALTIME_TIMESTAMP": "1000000"}
+    def entries(command, **_kwargs):
+        """Select retained fixture records for the journal command.
+
+        Args:
+            command: Fixed journal command whose cursor and direction select fixture rows.
+            **_kwargs: Unused arguments from the replaced transport.
+        """
+        return ([], False) if any(arg.startswith("--grep=") for arg in command) else ([entry], False)
+    monkeypatch.setattr(helper, "_journal_history_entries", entries)
+    position, actual = {}, []
+    for _ in range(5):
+        assert helper._read_log_history(["nginx", json.dumps(position)]) == 0
+        page = json.loads(capsys.readouterr().out)
+        assert len(page["lines"]) <= 500
+        assert len("\n".join(page["lines"]).encode("utf-8")) <= 1024 * 1024
+        actual.extend(line.split(" ", 1)[1] for line in page["lines"])
+        position = page["journal_position"]
+        if not page["has_more"]:
+            break
+    assert actual == messages
+    assert helper._read_log_history(["nginx", '{"tail":true}']) == 0
+    tail = json.loads(capsys.readouterr().out)
+    assert [line.split(" ", 1)[1] for line in tail["lines"]] == messages[-500:]
+    assert not tail["has_more"]
+    assert tail["current_position"]["journal_text_offset"] > 0
+    assert helper._read_log_history(["nginx", json.dumps(tail["previous_position"])]) == 0
+    previous = json.loads(capsys.readouterr().out)
+    assert [line.split(" ", 1)[1] for line in previous["lines"]] == messages[-1000:-500]
+    assert previous["journal_position"]["journal_text_offset"] == tail["current_position"]["journal_text_offset"]
+    # The final short predecessor must remain bounded on refresh too.
+    for _ in range(2):
+        assert helper._read_log_history(["nginx", json.dumps(previous["previous_position"])]) == 0
+        previous = json.loads(capsys.readouterr().out)
+    assert len(previous["lines"]) == 1
+    assert helper._read_log_history(["nginx", json.dumps(previous["current_position"])]) == 0
+    assert json.loads(capsys.readouterr().out)["lines"] == previous["lines"]
+    assert helper._read_log_history(["nginx", json.dumps(tail["current_position"])]) == 0
+    assert json.loads(capsys.readouterr().out)["lines"] == tail["lines"]
+
+
+def test_expanded_journal_page_includes_timestamp_byte_budget(monkeypatch, capsys):
+    """Timestamp expansion is included in the byte budget and preserves continuation.
+
+    Args:
+        monkeypatch: Substitute immutable journal entries.
+        capsys: Capture helper output.
+    """
+    from tests.test_appliance_helper import load_helper_module
+
+    helper = load_helper_module()
+    message = ("x" * 2074 + "\n") * 500
+    entry = {"MESSAGE": message, "__CURSOR": "byte-bound", "__REALTIME_TIMESTAMP": "1000000"}
+    monkeypatch.setattr(helper, "_journal_history_entries", lambda *args, **kwargs: ([entry], False))
+    assert helper._read_log_history(["nginx", "{}"]) == 0
+    first = json.loads(capsys.readouterr().out)
+    assert first["has_more"]
+    assert len("\n".join(first["lines"]).encode()) <= 1024 * 1024
+    assert helper._read_log_history(["nginx", json.dumps(first["journal_position"])]) == 0
+    second = json.loads(capsys.readouterr().out)
+    assert len(first["lines"]) + len(second["lines"]) == 500
+    assert not second["has_more"]
+
+
+@pytest.mark.parametrize("privileged", [False, True])
+@pytest.mark.parametrize("padding", [65530, 1048580])
+def test_discarded_file_fragments_preserve_key_state(tmp_path, privileged, padding):
+    """Markers crossing discarded chunk and page boundaries still protect later lines.
+
+    Args:
+        tmp_path: Owned fixed log path.
+        privileged: Exercise the privileged reader and its redaction handoff.
+        padding: Locate a split marker at a chunk or page boundary.
+    """
+    from tests.test_appliance_helper import load_helper_module
+
+    path = tmp_path / "discarded-key.log"
+    path.write_bytes(b"x" * padding + b"-----BEGIN PRIVATE KEY-----" + b"y" * 70000 +
+                     b"\nprivate-fragment\n-----END PRIVATE KEY-----\nvisible\n")
+    helper = load_helper_module() if privileged else None
+    cursor, actual, private_key = ({} if privileged else ""), [], False
+    for _ in range(8):
+        if privileged:
+            page = helper._read_fixed_log_history(path, cursor)
+            lines, private_key = log_viewer.redact_lines(page["lines"], private_key=private_key)
+            cursor = page["file_position"]
+        else:
+            page = log_viewer.file_page(path, source="discarded-key", cursor=cursor)
+            lines = page["text"].splitlines()
+            cursor = page["next_cursor"]
+        actual.extend(lines)
+        if not page["has_more"]:
+            break
+    assert actual[-1] == "visible"
+    assert "private-fragment" not in "\n".join(actual)
+    assert "[redacted private key]" in actual
+
+
+@pytest.mark.parametrize("privileged", [False, True])
+@pytest.mark.parametrize("compressed", [False, True])
+def test_previous_file_page_opens_group_before_tail(tmp_path, privileged, compressed):
+    """Backward paging starts beside the live tail, including compressed rotations.
+
+    Args:
+        tmp_path: Owned retained log directory.
+        privileged: Exercise both independent file readers.
+        compressed: Store the history in an archived gzip file.
+    """
+    from tests.test_appliance_helper import load_helper_module
+
+    path = tmp_path / "backward.log"
+    text = "".join(f"line-{index}\n" for index in range(1501))
+    if compressed:
+        with gzip.open(tmp_path / "backward.log.1.gz", "wb") as handle:
+            handle.write(text.encode())
+    else:
+        path.write_text(text, encoding="utf-8")
+    helper = load_helper_module() if privileged else None
+    page = helper._read_fixed_log_history(path, {"tail": True}) if privileged else log_viewer.file_page(path, source="backward", tail=True)
+    for expected_start, expected_end in [(501, 1000), (1, 500), (0, 0)]:
+        if privileged:
+            page = helper._read_fixed_log_history(path, page["previous_position"])
+            lines = page["lines"]
+        else:
+            page = log_viewer.file_page(path, source="backward", cursor=page["previous_cursor"])
+            lines = page["text"].splitlines()
+        assert lines == [f"line-{index}" for index in range(expected_start, expected_end + 1)]
+    assert not page.get("previous_position" if privileged else "previous_cursor")
+
+
+def test_previous_text_page_is_adjacent_and_refresh_stable(monkeypatch):
+    """A task can inspect the group before its tail without replaying older output.
+
+    Args:
+        monkeypatch: Use a small byte budget for multiple pages.
+    """
+    monkeypatch.setattr(log_viewer, "PAGE_BYTES", 100)
+    text = "".join(f"row-{index}\n" for index in range(100))
+    tail = log_viewer.text_page(text, source="back-text", tail=True)
+    older = log_viewer.text_page(text, source="back-text", cursor=tail["previous_cursor"])
+    assert log_viewer.decode_cursor(older["next_cursor"], "back-text")["offset"] == log_viewer.decode_cursor(tail["cursor"], "back-text")["offset"]
+    assert older["text"] not in tail["text"]
+    assert log_viewer.text_page(text, source="back-text", cursor=older["cursor"])["text"] == older["text"]
+
+
+@pytest.mark.parametrize("limit", [100, 200, 500])
+def test_selected_page_size_preserves_complete_file_history(tmp_path, limit):
+    """Choosing a smaller live tail changes page size without discarding history.
+
+    Args:
+        tmp_path: Owned file source.
+        limit: Established operator page-size choice.
+    """
+    from tests.test_appliance_helper import load_helper_module
+
+    path = tmp_path / "selected-size.log"
+    path.write_text("".join(f"row-{i}\n" for i in range(1501)), encoding="utf-8")
+    tail = log_viewer.file_page(path, source="size", tail=True, limit=limit)
+    assert len(tail["text"].splitlines()) == limit
+    assert tail["text"].splitlines()[0] == f"row-{1501-limit}"
+    helper = load_helper_module()
+    raw = helper._read_fixed_log_history(path, {"tail": True, "limit": limit})
+    assert raw["lines"] == tail["text"].splitlines()
+    cursor, lines = "", []
+    while True:
+        page = log_viewer.file_page(path, source="size", cursor=cursor, limit=limit)
+        lines.extend(page["text"].splitlines())
+        assert len(page["text"].splitlines()) <= limit
+        if not page["has_more"]:
+            break
+        cursor = page["next_cursor"]
+    assert lines == [f"row-{i}" for i in range(1501)]
+
+
+def test_logs_controls_preserve_availability_and_selected_page_limit(client, monkeypatch):
+    """The rendered controls distinguish unavailable sources and pass page-size choices.
+
+    Args:
+        client: Initialized application transport.
+        monkeypatch: Supply fixed availability and capture the reader contract.
+    """
+    import re
+
+    from atlaso.app import ui
+    from tests.routers.ui.helpers import login
+
+    login(client)
+    monkeypatch.setattr(ui, "log_sources_context", lambda **_kwargs: [
+        {"id": "app", "label": "Atlaso App", "available": False, "path": "/missing", "size_bytes": 0, "lines": []},
+        {"id": "nginx", "label": "Nginx", "available": True, "path": "journal", "size_bytes": 0, "lines": []},
+    ])
+    response = client.get("/ui/management/logs")
+    assert response.status_code == 200
+    missing = re.search(r'<button[^>]*data-log-source-tab="app"[^>]*>', response.text).group()
+    available = re.search(r'<button[^>]*data-log-source-tab="nginx"[^>]*>', response.text).group()
+    assert 'disabled aria-disabled="true"' in missing
+    assert 'aria-disabled="false"' in available
+    assert 'data-log-lines aria-label="Log lines per page"' in response.text
+    selected = []
+    def page(source, **kwargs):
+        """Record the selected source and page size.
+
+        Args:
+            source: Allowlisted source selected by the reader.
+            **kwargs: Page options inspected by this fixture.
+        """
+        selected.append((source, kwargs["limit"]))
+        return {"text": "", "available": True, "has_more": False}
+    monkeypatch.setattr(log_viewer, "source_page", page)
+    response = client.get("/ui/management/logs/data", params={"source": "nginx", "lines": 200, "tail": "true"})
+    assert response.status_code == 200
+    assert selected == [("nginx", 200)]
+    monkeypatch.setattr(log_viewer, "source_availability", lambda: {"sources": [{"id": "app", "available": True}]})
+    response = client.get("/ui/management/logs/data", params={"availability": "1"})
+    assert response.status_code == 200
+    assert response.json()["sources"] == [{"id": "app", "available": True}]
+    assert selected == [("nginx", 200)]
+
+
+@pytest.mark.parametrize("limit", [100, 200, 500])
+def test_journal_selected_tail_size(monkeypatch, capsys, limit):
+    """Journal expansion respects the selected line count as well as its byte budget.
+
+    Args:
+        monkeypatch: Provide a bounded immutable journal message.
+        capsys: Capture the helper response.
+        limit: Operator-selected page size.
+    """
+    from tests.test_appliance_helper import load_helper_module
+
+    helper = load_helper_module()
+    entry = {"MESSAGE": "\n".join(f"row-{i}" for i in range(1501)), "__CURSOR": "selected", "__REALTIME_TIMESTAMP": "1000000"}
+    def entries(command, **_kwargs):
+        """Select retained fixture records for the journal command.
+
+        Args:
+            command: Fixed journal command whose cursor and direction select fixture rows.
+            **_kwargs: Unused arguments from the replaced transport.
+        """
+        return ([], False) if any(arg.startswith("--grep=") for arg in command) else ([entry], False)
+    monkeypatch.setattr(helper, "_journal_history_entries", entries)
+    assert helper._read_log_history(["nginx", json.dumps({"tail": True, "limit": limit})]) == 0
+    page = json.loads(capsys.readouterr().out)
+    assert len(page["lines"]) == limit
+    assert page["lines"][0].endswith(f" row-{1501-limit}")
+    assert not page["has_more"]
+
+
+@pytest.mark.parametrize("privileged", [False, True])
+@pytest.mark.parametrize("compressed", [False, True])
+@pytest.mark.parametrize("complete", [False, True])
+def test_previous_page_advances_across_oversized_tail(tmp_path, privileged, compressed, complete):
+    """Every bounded predecessor advances until entries before an oversized tail appear.
+
+    Args:
+        tmp_path: Owned retained source directory.
+        privileged: Exercise both independent file readers.
+        compressed: Exercise bounded gzip seeking too.
+        complete: Whether the oversized physical entry has its final newline.
+    """
+    from tests.test_appliance_helper import load_helper_module
+
+    path = tmp_path / "large-tail.log"
+    contents = b"older retained entry\n" + b"x" * (3 * 1024 * 1024) + (b"\n" if complete else b"")
+    if compressed:
+        with gzip.open(tmp_path / "large-tail.log.1.gz", "wb") as handle:
+            handle.write(contents)
+    else:
+        path.write_bytes(contents)
+    helper = load_helper_module() if privileged else None
+    page = helper._read_fixed_log_history(path, {"tail": True}) if privileged else log_viewer.file_page(path, source="large-tail", tail=True)
+    seen = set()
+    for _ in range(6):
+        text = "\n".join(page["lines"]) if privileged else page["text"]
+        if "older retained entry" in text:
+            break
+        assert "Oversized log entry omitted" in text
+        position = page["previous_position"] if privileged else log_viewer.decode_cursor(page["previous_cursor"], "large-tail")
+        assert position["offset"] not in seen
+        seen.add(position["offset"])
+        page = helper._read_fixed_log_history(path, position) if privileged else log_viewer.file_page(path, source="large-tail", cursor=page["previous_cursor"])
+    else:
+        pytest.fail("Backward paging did not reach the earlier retained entry")
+
+
+@pytest.mark.parametrize("category", ["dhcp", "tftp"])
+def test_sparse_dnsmasq_tail_classifies_before_limit_and_preserves_redaction(monkeypatch, capsys, category):
+    """Other protocols cannot hide retained entries or reset their private-key state.
+
+    Args:
+        monkeypatch: Supply one fixed journal stream and the privileged adapter response.
+        capsys: Capture bounded helper pages.
+        category: Sparse protocol whose newest entries precede many DNS records.
+    """
+    import io
+    from types import SimpleNamespace
+    from unittest.mock import MagicMock
+
+    from tests.test_appliance_helper import load_helper_module
+
+    helper = load_helper_module()
+    pairs = [("dnsmasq", "-----BEGIN PRIVATE KEY-----"),
+             (f"dnsmasq-{category}", "private-fragment"),
+             ("dnsmasq", "-----END PRIVATE KEY-----"),
+             (f"dnsmasq-{category}", "retained protocol entry")]
+    pairs.extend(("dnsmasq", f"newer DNS entry {index}") for index in range(700))
+    records = [{"__CURSOR": str(index), "__REALTIME_TIMESTAMP": str(1000000 + index),
+                "SYSLOG_IDENTIFIER": identifier, "MESSAGE": message} for index, (identifier, message) in enumerate(pairs)]
+    commands = []
+    def launch(command, **_kwargs):
+        """Return a journal subprocess fixture for the requested history window.
+
+        Args:
+            command: Fixed journal command whose cursor and direction select fixture rows.
+            **_kwargs: Unused arguments from the replaced transport.
+        """
+        commands.append(command)
+        rows = list(records)
+        reverse = "--reverse" in command
+        for argument in command:
+            if argument.startswith("--cursor="):
+                index = int(argument.split("=", 1)[1])
+                rows = rows[:index + 1] if reverse else rows[index:]
+        if any(argument.startswith("--grep=") for argument in command):
+            rows = [entry for entry in rows if "PRIVATE KEY-----" in entry["MESSAGE"]]
+        if reverse:
+            rows.reverse()
+        process = MagicMock()
+        process.__enter__.return_value = process
+        process.wait.return_value = process.poll.return_value = 0
+        process.stdout = io.BytesIO("".join(json.dumps(entry) + "\n" for entry in rows).encode())
+        process.stderr = io.BytesIO()
+        return process
+    monkeypatch.setattr(helper.subprocess, "Popen", launch)
+    for position in ({"tail": True, "limit": 100}, {"limit": 100}):
+        assert helper._read_log_history([f"dnsmasq-{category}", json.dumps(position)]) == 0
+        payload = json.loads(capsys.readouterr().out)
+        assert len(payload["lines"]) == 2
+        assert payload["line_private_keys"] == [True, False]
+        assert not payload["has_more"]
+        assert payload["previous_position"] is None
+        monkeypatch.setattr(log_viewer.SystemAdapter, "read_log_history", lambda *_args, payload=payload: SimpleNamespace(returncode=0, stdout=json.dumps(payload)))
+        page = log_viewer.source_page(f"dnsmasq-{category}", tail=True, limit=100)
+        assert "private-fragment" not in page["text"]
+        assert "retained protocol entry" in page["text"]
+        assert "newer DNS" not in page["text"]
+    assert "--lines=5001" in commands[0]
+    assert commands[0][commands[0].index("--unit") + 1] == "dnsmasq.service"
+
+
+def test_local_log_availability_recovers_without_reading_contents(tmp_path, monkeypatch):
+    """A newly created log re-enables its source using metadata rather than a tail read.
+
+    Args:
+        tmp_path: Owned current and rotated log paths.
+        monkeypatch: Replace the fixed privileged metadata transport.
+    """
+    from types import SimpleNamespace
+
+    path = tmp_path / "availability.log"
+    monkeypatch.setattr(log_viewer, "get_settings", lambda: SimpleNamespace(app_log_path=path))
+    calls = []
+    def metadata(_self, source, position):
+        """Return source metadata without reading log contents.
+
+        Args:
+            _self: Unused adapter instance supplied by method binding.
+            source: Allowlisted source selected by the reader.
+            position: Continuation state passed to the fixture reader.
+        """
+        calls.append((source, position))
+        return SimpleNamespace(returncode=0, stdout='{"sources":[]}')
+    monkeypatch.setattr(log_viewer.SystemAdapter, "read_log_history", metadata)
+    def available():
+        return next(source["available"] for source in log_viewer.source_availability()["sources"] if source["id"] == "app")
+    assert not available()
+    path.write_text("retained output", encoding="utf-8")
+    assert available()
+    path.rename(tmp_path / "availability.log.1")
+    assert available()
+    assert calls == [("availability", {})] * 3
+
+
+def test_helper_availability_reads_metadata_without_launching_journal(monkeypatch, tmp_path, capsys):
+    """Source discovery does not read or spawn the privileged journal transport.
+
+    Args:
+        monkeypatch: Fix source paths and reject any subprocess creation.
+        tmp_path: Owned fixed log metadata.
+        capsys: Capture the structured availability response.
+    """
+    from tests.test_appliance_helper import load_helper_module
+
+    helper = load_helper_module()
+    access, error = tmp_path / "access.log", tmp_path / "error.log"
+    access.write_text("", encoding="utf-8")
+    monkeypatch.setattr(helper, "NGINX_ACCESS_LOG_PATH", access)
+    monkeypatch.setattr(helper, "NGINX_ERROR_LOG_PATH", error)
+    monkeypatch.setattr(helper.shutil, "which", lambda _name: "/usr/bin/journalctl")
+    def unexpected(*_args, **_kwargs):
+        """Fail if the metadata probe attempts to read source contents.
+
+        Args:
+            *_args: Unused arguments from the replaced transport.
+            **_kwargs: Unused arguments from the replaced transport.
+        """
+        pytest.fail("Availability launched a journal process")
+    monkeypatch.setattr(helper.subprocess, "Popen", unexpected)
+    assert helper._read_log_history(["availability", "{}"]) == 0
+    payload = json.loads(capsys.readouterr().out)
+    sources = {source["id"]: source["available"] for source in payload["sources"]}
+    assert sources["nginx-access"] and not sources["nginx-error"]
+    assert sources["dnsmasq-dhcp"] and sources["dnsmasq-tftp"]
+    assert "lines" not in payload
+
+
+@pytest.mark.parametrize("count", [10, 100, 101])
+def test_quiet_journal_previous_requires_retained_older_rows(monkeypatch, capsys, count):
+    """Tail and refresh offer Previous only when a row before this page was observed.
+
+    Args:
+        monkeypatch: Replace the journal transport with immutable retained records.
+        capsys: Capture structured helper pages.
+        count: Retained rows around the selected page-size boundary.
+    """
+    from tests.test_appliance_helper import load_helper_module
+
+    helper = load_helper_module()
+    entries = [{"MESSAGE": f"row-{i}", "__CURSOR": str(i), "__REALTIME_TIMESTAMP": "1000000"} for i in range(count)]
+    def read(command, **_kwargs):
+        """Read the bounded fixture page or journal window.
+
+        Args:
+            command: Fixed journal command whose cursor and direction select fixture rows.
+            **_kwargs: Unused arguments from the replaced transport.
+        """
+        if any(arg.startswith("--grep=") for arg in command):
+            return [], False
+        selected = list(entries)
+        cursor = next((arg.split("=", 1)[1] for arg in command if arg.startswith("--cursor=")), None)
+        if cursor is not None:
+            selected = [entry for entry in selected if (int(entry["__CURSOR"]) <= int(cursor) if "--reverse" in command else int(entry["__CURSOR"]) >= int(cursor))]
+        if "--reverse" in command:
+            selected.reverse()
+        return selected, False
+    monkeypatch.setattr(helper, "_journal_history_entries", read)
+    position = {"tail": True, "limit": 100}
+    for _ in range(2):
+        assert helper._read_log_history(["nginx", json.dumps(position)]) == 0
+        page = json.loads(capsys.readouterr().out)
+        assert len(page["lines"]) == min(count, 100)
+        assert bool(page["previous_position"]) == (count > 100)
+        position = {**page["current_position"], "limit": 100}
+    if count > 100:
+        assert helper._read_log_history(["nginx", json.dumps({**page["previous_position"], "limit": 100})]) == 0
+        older = json.loads(capsys.readouterr().out)
+        assert len(older["lines"]) == 1
+        assert older["previous_position"] is None
+        assert helper._read_log_history(["nginx", json.dumps({**older["current_position"], "limit": 100})]) == 0
+        assert json.loads(capsys.readouterr().out)["previous_position"] is None
+
+
+def test_audit_backward_short_page_keeps_boundary_on_refresh_and_next(client):
+    """The oldest partial group never repeats entries from its adjacent page.
+
+    Args:
+        client: Authenticated application transport using the isolated database.
+    """
+    from sqlalchemy import delete
+
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import AuditEvent
+    from tests.routers.ui.helpers import login
+
+    login(client)
+    with SessionLocal() as db:
+        db.execute(delete(AuditEvent))
+        db.add_all([AuditEvent(actor="boundary", action="test", resource_type="test", success=True) for _ in range(1501)])
+        db.commit()
+    headers = {"X-Atlaso-Task-Log": "1"}
+    def read(cursor):
+        """Read the bounded fixture page or journal window.
+
+        Args:
+            cursor: Signed position identifying the requested fixture page.
+        """
+        return client.get("/ui/management/audit-log", params={"cursor": cursor}, headers=headers).json()
+    page = client.get("/ui/management/audit-log", params={"tail": "1"}, headers=headers).json()
+    groups = [page]
+    while page["previous_cursor"]:
+        page = read(page["previous_cursor"])
+        groups.append(page)
+        assert len(groups) <= 4
+    assert [len(group["rows"]) for group in groups] == [500, 500, 500, 1]
+    assert len({row["id"] for group in groups for row in group["rows"]}) == 1501
+    assert read(page["cursor"])["rows"] == page["rows"]
+    assert read(page["next_cursor"])["rows"] == groups[-2]["rows"]
+
+
+@pytest.mark.parametrize("rotation", ["1", "2.gz"])
+def test_helper_availability_includes_retained_nginx_rotations(tmp_path, monkeypatch, capsys, rotation):
+    """Readable rotations keep nginx history available without a current file.
+
+    Args:
+        tmp_path: Owned fixed-source directory.
+        monkeypatch: Bind helper sources and reject content reads.
+        capsys: Capture metadata-only availability.
+        rotation: Plain or compressed retained filename.
+    """
+    from pathlib import Path
+
+    from tests.test_appliance_helper import load_helper_module
+
+    helper = load_helper_module()
+    path = tmp_path / "access.log"
+    (tmp_path / f"access.log.{rotation}").write_bytes(b"retained")
+    monkeypatch.setattr(helper, "NGINX_ACCESS_LOG_PATH", path)
+    monkeypatch.setattr(helper, "NGINX_ERROR_LOG_PATH", tmp_path / "error.log")
+    def reject_read(*_args, **_kwargs):
+        """Reject log-content access during a metadata-only probe.
+
+        Args:
+            *_args: Unused arguments from the replaced transport.
+            **_kwargs: Unused arguments from the replaced transport.
+        """
+        raise AssertionError("availability must not read log contents")
+    monkeypatch.setattr(Path, "read_bytes", reject_read)
+    assert helper._read_log_history(["availability", "{}"]) == 0
+    sources = {item["id"]: item["available"] for item in json.loads(capsys.readouterr().out)["sources"]}
+    assert sources["nginx-access"]
+    assert not sources["nginx-error"]
+
+
+@pytest.mark.parametrize("limit", [100, 200, 500])
+def test_journal_previous_reaches_oldest_with_command_record_cap(monkeypatch, capsys, limit):
+    """Inclusive cursor records cannot consume the older-history lookahead.
+
+    Args:
+        monkeypatch: Replace the journal process with command-capped records.
+        capsys: Capture helper responses for the real source-page adapter.
+        limit: Supported viewer page size.
+    """
+    import io
+    from types import SimpleNamespace
+    from unittest.mock import MagicMock
+
+    from tests.test_appliance_helper import load_helper_module
+
+    helper = load_helper_module()
+    records = [{"__CURSOR": str(index), "__REALTIME_TIMESTAMP": "1000000", "MESSAGE": f"record-{index}"}
+               for index in range(limit * 3 + 17)]
+
+    def launch(command, **_kwargs):
+        """Honor journal direction, inclusive boundaries, and the record count.
+
+        Args:
+            command: Fixed journal invocation from the helper.
+            **_kwargs: Unused process options.
+        """
+        rows = list(records)
+        reverse = "--reverse" in command
+        for argument in command:
+            if argument.startswith(("--cursor=", "--after-cursor=")):
+                boundary = int(argument.split("=", 1)[1])
+                inclusive = argument.startswith("--cursor=")
+                rows = [row for row in rows if (int(row["__CURSOR"]) <= boundary if reverse and inclusive else
+                        int(row["__CURSOR"]) < boundary if reverse else
+                        int(row["__CURSOR"]) >= boundary if inclusive else int(row["__CURSOR"]) > boundary)]
+        if any(argument.startswith("--grep=") for argument in command):
+            rows = []
+        if reverse:
+            rows.reverse()
+        count = int(next(argument.split("=", 1)[1] for argument in command if argument.startswith("--lines=")))
+        rows = rows[:count]
+        process = MagicMock()
+        process.__enter__.return_value = process
+        process.wait.return_value = process.poll.return_value = 0
+        process.stdout = io.BytesIO("".join(json.dumps(row) + "\n" for row in rows).encode())
+        process.stderr = io.BytesIO()
+        return process
+
+    def adapter(_self, source, position):
+        """Pass actual helper output through signed browser-facing cursors.
+
+        Args:
+            _self: Adapter instance.
+            source: Allowlisted source identity.
+            position: Decoded history position.
+        """
+        assert helper._read_log_history([source, json.dumps(position)]) == 0
+        return SimpleNamespace(returncode=0, stdout=capsys.readouterr().out)
+
+    monkeypatch.setattr(helper.subprocess, "Popen", launch)
+    monkeypatch.setattr(log_viewer.SystemAdapter, "read_log_history", adapter)
+    page = log_viewer.source_page("nginx", tail=True, limit=limit)
+    pages = []
+    for _ in range(8):
+        pages.append([int(line.rsplit("record-", 1)[1]) for line in page["text"].splitlines()])
+        assert 0 < len(pages[-1]) <= limit
+        if not page["previous_cursor"]:
+            break
+        page = log_viewer.source_page("nginx", cursor=page["previous_cursor"], limit=limit)
+    assert not page["previous_cursor"]
+    assert [index for rows in reversed(pages) for index in rows] == list(range(len(records)))
+
+
+def test_sparse_journal_windows_advance_and_preserve_filtered_key_state(monkeypatch, capsys):
+    """Bounded empty windows advance in both directions without leaking skipped keys.
+
+    Args:
+        monkeypatch: Supply immutable sparse records through the owned process transport.
+        capsys: Capture each helper page before source-bound cursor encoding.
+    """
+    import io
+    from types import SimpleNamespace
+    from unittest.mock import MagicMock
+
+    from tests.test_appliance_helper import load_helper_module
+
+    helper = load_helper_module()
+    records = [{"__CURSOR": str(index), "__REALTIME_TIMESTAMP": "1000000", "SYSLOG_IDENTIFIER": "dnsmasq", "MESSAGE": "DNS"} for index in range(12005)]
+    records[0]["MESSAGE"] = "-----BEGIN PRIVATE KEY-----"
+    records[5001].update(SYSLOG_IDENTIFIER="dnsmasq-dhcp", MESSAGE="private-fragment")
+    records[10002]["MESSAGE"] = "-----END PRIVATE KEY-----"
+    records[10003].update(SYSLOG_IDENTIFIER="dnsmasq-dhcp", MESSAGE="visible-dhcp")
+    raw_counts = []
+    def launch(command, **_kwargs):
+        """Return a journal subprocess fixture for the requested history window.
+
+        Args:
+            command: Fixed journal command whose cursor and direction select fixture rows.
+            **_kwargs: Unused arguments from the replaced transport.
+        """
+        rows = list(records)
+        reverse = "--reverse" in command
+        for argument in command:
+            if argument.startswith(("--cursor=", "--after-cursor=")):
+                index = int(argument.split("=", 1)[1])
+                inclusive = argument.startswith("--cursor=")
+                rows = [row for row in rows if (int(row["__CURSOR"]) <= index if reverse and inclusive else
+                        int(row["__CURSOR"]) < index if reverse else
+                        int(row["__CURSOR"]) >= index if inclusive else int(row["__CURSOR"]) > index)]
+        if any(arg.startswith("--grep=") for arg in command):
+            rows = [row for row in rows if "PRIVATE KEY-----" in row["MESSAGE"]]
+        if reverse:
+            rows.reverse()
+        process = MagicMock()
+        process.__enter__.return_value = process
+        process.wait.return_value = process.poll.return_value = 0
+        class Stream(io.BytesIO):
+            def readline(self, *args):
+                """Count raw reads before returning the next bounded record.
+
+                Args:
+                    *args: Read bounds forwarded to the in-memory stream.
+                """
+                raw_counts[-1] += 1
+                return super().readline(*args)
+        raw_counts.append(0)
+        process.stdout = Stream("".join(json.dumps(row) + "\n" for row in rows).encode())
+        process.stderr = io.BytesIO()
+        return process
+    monkeypatch.setattr(helper.subprocess, "Popen", launch)
+    def adapter(_self, source, position):
+        """Route a source-page request through the helper fixture.
+
+        Args:
+            _self: Unused adapter instance supplied by method binding.
+            source: Allowlisted source selected by the reader.
+            position: Continuation state passed to the fixture reader.
+        """
+        assert helper._read_log_history([source, json.dumps(position)]) == 0
+        return SimpleNamespace(returncode=0, stdout=capsys.readouterr().out)
+    monkeypatch.setattr(log_viewer.SystemAdapter, "read_log_history", adapter)
+    cursor, texts, positions = "", [], []
+    for _ in range(5):
+        page = log_viewer.source_page("dnsmasq-dhcp", cursor=cursor)
+        texts.append(page["text"])
+        positions.append(page["next_cursor"])
+        cursor = page["next_cursor"]
+        if not page["has_more"]:
+            break
+    assert len(texts) == 3
+    assert texts[0] == ""
+    assert len(set(positions)) == 3
+    assert "private-fragment" not in "\n".join(texts)
+    assert "[redacted private key]" in texts[1]
+    assert "visible-dhcp" in texts[2]
+    def ready_page(*, cursor="", tail=False):
+        """Resume bounded context preparation without adopting an empty pending page.
+
+        Args:
+            cursor: Requested history boundary.
+            tail: Whether this starts a live-tail navigation.
+        """
+        for _ in range(5):
+            page = log_viewer.source_page("dnsmasq-dhcp", cursor=cursor, tail=tail)
+            if not page.get("pending"):
+                return page
+        raise AssertionError("Journal preparation did not advance")
+    page = ready_page(tail=True)
+    reverse_texts = [page["text"]]
+    for _ in range(6):
+        if not page["previous_cursor"]:
+            break
+        page = ready_page(cursor=page["previous_cursor"])
+        reverse_texts.append(page["text"])
+    assert not page["previous_cursor"]
+    assert "visible-dhcp" in reverse_texts[0]
+    assert "private-fragment" not in "\n".join(reverse_texts)
+    assert any("[redacted private key]" in text for text in reverse_texts)
+    assert max(raw_counts) <= 5001
+
+
+@pytest.mark.parametrize("privileged", [False, True])
+@pytest.mark.parametrize("compressed", [False, True])
+def test_file_pages_bound_json_escaping_without_losing_lines(tmp_path, privileged, compressed):
+    """Control bytes cannot expand retained file pages beyond the encoded transport bound.
+
+    Args:
+        tmp_path: Owned retained file directory.
+        privileged: Exercise the fixed-source helper rather than the application reader.
+        compressed: Read a numbered compressed rotation without a current file.
+    """
+    import gzip
+
+    from starlette.responses import JSONResponse
+
+    from tests.test_appliance_helper import load_helper_module
+
+    helper = load_helper_module()
+    path = tmp_path / "escaped.log"
+    lines = [f"line-{index}:" + "\x00" * 60000 + "\\" * 1024 for index in range(30)]
+    content = ("\n".join(lines) + "\n").encode()
+    if compressed:
+        with gzip.open(tmp_path / "escaped.log.1.gz", "wb") as handle:
+            handle.write(content)
+    else:
+        path.write_bytes(content)
+    def read(position=None, tail=False):
+        """Read the bounded fixture page or journal window.
+
+        Args:
+            position: Continuation state passed to the fixture reader.
+            tail: Whether to select the newest retained page.
+        """
+        return (helper._read_fixed_log_history(path, {**(position or {}), **({"tail": True} if tail else {})}) if privileged
+                else log_viewer.file_page(path, source="escaping", cursor=position or "", tail=tail))
+    position, actual = None, []
+    for _ in range(35):
+        page = read(position)
+        assert len(JSONResponse(page).body) <= 1024 * 1024
+        actual.extend(page["lines"] if privileged else page["text"].splitlines())
+        position = page["file_position"] if privileged else page["next_cursor"]
+        if not page["has_more"]:
+            break
+    assert actual == lines
+    tail = read(tail=True)
+    assert len(JSONResponse(tail).body) <= 1024 * 1024
+    assert not tail["has_more"]
+    tail_lines = tail["lines"] if privileged else tail["text"].splitlines()
+    assert tail_lines == lines[-len(tail_lines):]
+    older = read(tail["previous_position"] if privileged else tail["previous_cursor"])
+    assert len(JSONResponse(older).body) <= 1024 * 1024
+    older_lines = older["lines"] if privileged else older["text"].splitlines()
+    assert older_lines == lines[-len(tail_lines)-len(older_lines):-len(tail_lines)]
+
+
+@pytest.mark.parametrize("multiline", [False, True])
+def test_task_pages_bound_escaped_transport_and_preserve_characters(multiline):
+    """Task prefix, tail and predecessor pages share the escaped-byte budget.
+
+    Args:
+        multiline: Include line boundaries or require character-safe slicing inside a long line.
+    """
+    from starlette.responses import JSONResponse
+
+    block = "\x00\t\\漢字🙂" * 20000 + ("\n" if multiline else "")
+    text = block * 8
+    actual, cursor = "", ""
+    for _ in range(30):
+        page = log_viewer.text_page(text, source="escaped-task", cursor=cursor)
+        assert len(JSONResponse(page).body) <= 1024 * 1024
+        actual += page["text"]
+        cursor = page["next_cursor"]
+        if not page["has_more"]:
+            break
+    assert actual == text
+    tail = log_viewer.text_page(text, source="escaped-task", tail=True)
+    assert len(JSONResponse(tail).body) <= 1024 * 1024
+    assert text.endswith(tail["text"])
+    assert not tail["has_more"]
+    older = log_viewer.text_page(text, source="escaped-task", cursor=tail["previous_cursor"])
+    assert len(JSONResponse(older).body) <= 1024 * 1024
+    assert text.endswith(older["text"] + tail["text"])
+
+
+@pytest.mark.parametrize("row", ["漢" * 600, "\x00" * 345, "\\\t" * 300], ids=["unicode", "nul", "escapes"])
+def test_journal_transport_budgets_utf8_and_escaped_rows(monkeypatch, capsys, row):
+    """The actual privileged JSON output stays bounded through prefix and tail expansion.
+
+    Args:
+        monkeypatch: Supply a retained multiline record within the raw JSON record limit.
+        capsys: Capture actual serialized helper transport.
+        row: Non-ASCII or escape-heavy retained content.
+    """
+    from tests.test_appliance_helper import load_helper_module
+
+    helper = load_helper_module()
+    entry = {"MESSAGE": "\n".join([row] * 500), "__CURSOR": "escaped-journal", "__REALTIME_TIMESTAMP": "1000000"}
+    assert len(json.dumps(entry, ensure_ascii=False).encode()) < 1024 * 1024
+    def entries(command, **_kwargs):
+        """Select retained fixture records for the journal command.
+
+        Args:
+            command: Fixed journal command whose cursor and direction select fixture rows.
+            **_kwargs: Unused arguments from the replaced transport.
+        """
+        return ([], False) if any(arg.startswith("--grep=") for arg in command) else ([entry], False)
+    monkeypatch.setattr(helper, "_journal_history_entries", entries)
+    position, actual = {}, []
+    for _ in range(4):
+        assert helper._read_log_history(["nginx", json.dumps(position)]) == 0
+        transport = capsys.readouterr().out
+        assert len(transport.encode()) <= 1024 * 1024
+        page = json.loads(transport)
+        actual.extend(line.split(" ", 1)[1] for line in page["lines"])
+        position = page["journal_position"]
+        if not page["has_more"]:
+            break
+    assert actual == [row] * 500
+    assert helper._read_log_history(["nginx", '{"tail":true}']) == 0
+    transport = capsys.readouterr().out
+    assert len(transport.encode()) <= 1024 * 1024
+    tail = json.loads(transport)
+    assert tail["lines"]
+    assert not tail["has_more"]
+
+
+@pytest.mark.parametrize("mode", ["snapshot", "empty", "unavailable", "dry-run", "preparing"])
+def test_service_log_html_has_readable_fallback(client, monkeypatch, mode):
+    """Direct service-log responses remain useful before client scripting runs.
+
+    Args:
+        client: Initialized authenticated application transport.
+        monkeypatch: Supply bounded source output without a host journal.
+        mode: Available, empty, failed or development source state.
+    """
+    from atlaso.app.config import get_settings
+    from tests.routers.ui.helpers import login
+
+    login(client)
+    monkeypatch.setattr(get_settings(), "dry_run_system_adapters", mode == "dry-run")
+    calls = []
+    def read(source, **options):
+        """Read the bounded fixture page or journal window.
+
+        Args:
+            source: Allowlisted source selected by the reader.
+            **options: Bounded page options supplied by the route.
+        """
+        calls.append((source, options))
+        if mode == "unavailable":
+            raise OSError("internal transport detail")
+        return {"text": "retained service entry\n<script>not executable</script>" if mode == "snapshot" else "",
+                "notice": "Preparing retained history." if mode == "preparing" else ""}
+    monkeypatch.setattr(log_viewer, "source_page", read)
+    response = client.get("/ui/management/services/dns/logs")
+    assert response.status_code == 200
+    assert response.headers["cache-control"] == "no-store"
+    assert "X-Atlaso-Task-Log" in response.headers["vary"].split(", ")
+    assert "Loading retained service history" not in response.text
+    if mode == "dry-run":
+        assert not calls
+        assert "No host journal is read in development mode." in response.text
+        live = client.get("/ui/management/services/dns/logs", headers={"X-Atlaso-Task-Log": "1"})
+        assert live.status_code == 200
+        assert "No host journal is read in development mode." in live.json()["text"]
+        assert live.headers["cache-control"] == "no-store"
+        assert not calls
+    else:
+        assert calls == [("dnsmasq-dns", {"tail": True, "limit": 100})]
+        if mode == "snapshot":
+            assert "retained service entry" in response.text
+            assert "&lt;script&gt;not executable&lt;/script&gt;" in response.text
+        elif mode == "empty":
+            assert "No retained log entries are available." in response.text
+        elif mode == "preparing":
+            assert "Preparing retained history." in response.text
+            assert "No retained log entries are available." not in response.text
+        else:
+            assert "Log history is temporarily unavailable." in response.text
+            assert "internal transport detail" not in response.text
+
+
+def test_local_tail_scan_resumes_and_invalidates_copytruncate(tmp_path, monkeypatch):
+    """Slow scans accumulate bounded progress without reusing replaced key state.
+
+    Args:
+        tmp_path: Task-owned retained log fixture.
+        monkeypatch: Advance scan time deterministically after every chunk.
+    """
+    path = tmp_path / "server.log"
+    text = b"safe prefix\n" + b"x" * 70000 + b"-----BEGIN PRIVATE KEY-----\n" + b"secret\n" * 50000
+    path.write_bytes(text)
+    log_viewer._TAIL_REDACTION_CACHE.clear()
+    tick = 0
+    def clock():
+        nonlocal tick
+        tick += 3
+        return tick
+    monkeypatch.setattr(log_viewer.time, "monotonic", clock)
+    offsets = []
+    for _ in range(12):
+        try:
+            assert log_viewer._tail_private_key([path], len(text), deadline=10000)
+            break
+        except log_viewer._TailScanPending:
+            offsets.append(max(key[2] for key in log_viewer._TAIL_REDACTION_CACHE))
+    else:
+        pytest.fail("checkpointed scan did not finish")
+    assert len(offsets) > 1 and offsets == sorted(set(offsets))
+    assert len(log_viewer._TAIL_REDACTION_CACHE) <= 128
+    path.write_bytes(text.replace(b"BEGIN", b"ENDED"))
+    for _ in range(12):
+        try:
+            assert not log_viewer._tail_private_key([path], len(text), deadline=10000)
+            break
+        except log_viewer._TailScanPending:
+            pass
+    else:
+        pytest.fail("replacement scan did not finish")
+    path.write_bytes(b"safe replacement\n")
+    assert not log_viewer._tail_private_key([path], path.stat().st_size, deadline=10000)
+
+
+def test_local_tail_scan_page_retries_progress_and_reuses_completed_state(tmp_path, monkeypatch):
+    """Initial tail retries finish instead of repeatedly restarting a slow large file.
+
+    Args:
+        tmp_path: Task-owned retained log fixture.
+        monkeypatch: Bound each pass to a small amount of source scanning.
+    """
+    path = tmp_path / "server.log"
+    path.write_bytes(b"normal entry\n" * 30000)
+    log_viewer._TAIL_REDACTION_CACHE.clear()
+    tick = 0
+    def clock():
+        nonlocal tick
+        tick += 3
+        return tick
+    monkeypatch.setattr(log_viewer.time, "monotonic", clock)
+    pending = 0
+    for _ in range(12):
+        page = log_viewer.file_page(path, source="scan-progress", tail=True, limit=100)
+        if page["text"]:
+            break
+        pending += 1
+        assert "continues automatically" in page["notice"]
+        assert page["pending"] is True
+    else:
+        pytest.fail("tail never became readable")
+    assert pending > 1
+    assert page["text"].splitlines() == ["normal entry"] * 100
+    assert log_viewer.file_page(path, source="scan-progress", tail=True, limit=100)["text"] == page["text"]
+
+
+def test_tail_checkpoint_rejects_regrowth_with_unchanged_prefix_and_anchor(tmp_path):
+    """Growth cannot authenticate append-only history after copytruncate.
+
+    Args:
+        tmp_path: Task-owned log with unchanged sampled boundaries after replacement.
+    """
+    import time
+
+    path = tmp_path / "server.log"
+    original = b"normal line\n" * 30000
+    path.write_bytes(original)
+    log_viewer._TAIL_REDACTION_CACHE.clear()
+    assert not log_viewer._tail_private_key([path], len(original), deadline=time.monotonic() + 10)
+    marker = b"-----BEGIN PRIVATE KEY-----\n"
+    replacement = original[:70000] + marker + original[70000 + len(marker):] + b"private body\n" * 100
+    assert replacement[:4096] == original[:4096]
+    assert replacement[len(original)-128:len(original)] == original[-128:]
+    path.write_bytes(replacement)
+    assert log_viewer._tail_private_key([path], len(replacement), deadline=time.monotonic() + 10)
+    page = log_viewer.file_page(path, source="regrown-key", tail=True, limit=100)
+    assert "private body" not in page["text"]
+
+
+@pytest.mark.parametrize("initial", [False, True])
+@pytest.mark.parametrize("kind", ["PRIVATE KEY", "RSA PRIVATE KEY", "EC PRIVATE KEY", "ENCRYPTED PRIVATE KEY", "X25519 PRIVATE KEY", "ML-KEM-768 PRIVATE KEY", "Test.v1 PRIVATE KEY"])
+def test_private_key_markers_follow_text_order_across_pages(tmp_path, initial, kind):
+    """Retain the last marker state when one line closes and reopens a key.
+
+    Args:
+        tmp_path: Test-owned log directory.
+        initial: Redaction state entering the marker line.
+        kind: PEM private-key envelope variant.
+    """
+    boundary = f"-----END {kind}----- -----BEGIN {kind}-----"
+    safe, opened = log_viewer.redact_lines([boundary], private_key=initial)
+    assert safe == ["[redacted private key]"]
+    assert opened is True
+    safe, opened = log_viewer.redact_lines(
+        ["c3ludGhldGljLWtleS1ib2R5", f"-----END {kind}-----", "safe after"], private_key=opened
+    )
+    assert safe == ["[redacted private key]", "[redacted private key]", "safe after"]
+    assert opened is False
+    reverse = f"-----BEGIN {kind}----- -----END {kind}-----"
+    assert log_viewer.redact_lines([reverse, "safe after"], private_key=initial) == (
+        ["[redacted private key]", "safe after"], False
+    )
+    path = tmp_path / "markers.log"
+    path.write_text(boundary + "\nc3ludGhldGljLWtleS1ib2R5\n" + f"-----END {kind}-----\nsafe after\n", encoding="utf-8")
+    first = log_viewer.file_page(path, source="marker-order", limit=1)
+    page = log_viewer.file_page(path, source="marker-order", cursor=first["next_cursor"])
+    assert "c3ludGhldGlj" not in page["text"]
+    assert page["text"].endswith("safe after")
+
+
+@pytest.mark.parametrize("compressed", [False, True])
+def test_extended_private_key_labels_in_tail_scanners(tmp_path, compressed):
+    """Both local and privileged pre-page scans recognize printable PEM labels.
+
+    Args:
+        tmp_path: Test-owned retained file directory.
+        compressed: Exercise gzip as well as regular file preparation.
+    """
+    import time
+
+    from tests.test_appliance_helper import load_helper_module
+
+    helper = load_helper_module()
+    content = b"-----END CERTIFICATE----- -----BEGIN ML-KEM-768 PRIVATE KEY-----\nsynthetic-body\n"
+    path = tmp_path / ("retained.gz" if compressed else "retained.log")
+    path.write_bytes(gzip.compress(content) if compressed else content)
+    assert log_viewer._tail_private_key([path], len(content), deadline=time.monotonic() + 10)
+    assert helper._tail_private_key([path], len(content), deadline=time.monotonic() + 10)
+
+
+def test_service_log_json_disables_representation_caching(client, monkeypatch):
+    """JSON refreshes have the same no-store and Vary contract as HTML.
+
+    Args:
+        client: Initialized authenticated transport.
+        monkeypatch: Supply a fixed retained page without reading the host.
+    """
+    from atlaso.app.config import get_settings
+    from tests.routers.ui.helpers import login
+
+    login(client)
+    monkeypatch.setattr(get_settings(), "dry_run_system_adapters", False)
+    monkeypatch.setattr(log_viewer, "source_page", lambda *args, **kwargs: {"text": "current output"})
+    response = client.get("/ui/management/services/dns/logs", headers={"X-Atlaso-Task-Log": "1"})
+    assert response.status_code == 200
+    assert response.json()["text"] == "current output"
+    assert response.headers["cache-control"] == "no-store"
+    assert "X-Atlaso-Task-Log" in response.headers["vary"].split(", ")
+
+
+@pytest.mark.parametrize("padding", [False, True])
+def test_compressed_preparation_resumes_while_current_file_grows(tmp_path, monkeypatch, padding):
+    """Immutable gzip progress survives retries and appends to the later file.
+
+    Args:
+        tmp_path: Test-owned rotated log directory.
+        monkeypatch: Bound each preparation pass with a deterministic clock.
+        padding: Include legal gzip padding between and after members.
+    """
+    import itertools
+
+    archive = tmp_path / "live.log.1.gz"
+    current = tmp_path / "live.log"
+    marker = b"-----BEGIN X25519 PRIVATE KEY-----\n"
+    first = b"retained entry\n" * 200000
+    second = b"later entry\n" * 200000 + marker
+    zeros = b"\x00" * 20000 if padding else b""
+    archive.write_bytes(gzip.compress(first) + zeros + gzip.compress(second) + zeros)
+    current.write_bytes(b"")
+    log_viewer._COMPRESSED_REDACTION_CACHE.clear()
+    ticks = itertools.count()
+    monkeypatch.setattr(log_viewer.time, "monotonic", lambda: next(ticks))
+    progress = []
+    for attempt in range(200):
+        current.write_bytes(b"growing current file\n" * attempt)
+        try:
+            opened = log_viewer._tail_private_key([archive, current], 0, deadline=100000)
+        except log_viewer._TailScanPending:
+            positions = [key[2] for key in log_viewer._COMPRESSED_REDACTION_CACHE if key[1] == 0]
+            progress.append(max(positions))
+            assert len(log_viewer._COMPRESSED_REDACTION_CACHE) <= 32
+            assert all(len(value[1]) <= 128 and len(value[4]) <= 16384
+                       for value in log_viewer._COMPRESSED_REDACTION_CACHE.values())
+        else:
+            assert opened is True
+            break
+    else:
+        pytest.fail("compressed preparation did not complete")
+    assert len(progress) > 2
+    assert progress == sorted(progress)
+    assert progress[-1] > len(first)
+    archive.write_bytes(gzip.compress(b"replacement without private key\n"))
+    for _ in range(5):
+        try:
+            assert log_viewer._tail_private_key([archive, current], 0, deadline=100000) is False
+            break
+        except log_viewer._TailScanPending:
+            pass
+    else:
+        pytest.fail("replaced archive did not invalidate redaction state")
+
+
+@pytest.mark.parametrize("rewrite", [False, True])
+def test_local_checkpoint_authenticates_all_prior_bytes_after_growth(tmp_path, monkeypatch, rewrite):
+    """Appends retain progress while an interior rewrite invalidates cached state.
+
+    Args:
+        tmp_path: Test-owned actively written log.
+        monkeypatch: Limit each scan pass to one chunk.
+        rewrite: Rewrite an unsampled interior byte range before regrowing.
+    """
+    import itertools
+
+    path = tmp_path / "active.log"
+    original = b"safe line\n" * 50000
+    path.write_bytes(original)
+    log_viewer._TAIL_REDACTION_CACHE.clear()
+    ticks = itertools.count(step=3)
+    monkeypatch.setattr(log_viewer.time, "monotonic", lambda: next(ticks))
+    positions = []
+    for attempt in range(30):
+        if attempt == 2 and rewrite:
+            contents = path.read_bytes()
+            marker = b"-----BEGIN PRIVATE KEY-----\n"
+            path.write_bytes(contents[:10000] + marker + contents[10000 + len(marker):])
+        with path.open("ab") as handle:
+            handle.write(b"new output\n")
+        try:
+            opened = log_viewer._tail_private_key([path], path.stat().st_size, deadline=100000)
+        except log_viewer._TailScanPending:
+            positions.append(max(key[2] for key in log_viewer._TAIL_REDACTION_CACHE))
+        else:
+            assert opened is rewrite
+            break
+    else:
+        pytest.fail("active log preparation did not finish")
+    assert len(positions) > 2
+    if rewrite:
+        assert positions[2] < positions[1]
+    else:
+        assert positions == sorted(set(positions))
+
+
+@pytest.mark.parametrize("empty", [False, True])
+def test_audit_snapshot_status_and_representation_cache_headers(client, empty):
+    """Static audit snapshots are ready and cannot be reused as JSON refreshes.
+
+    Args:
+        client: Initialized authenticated transport.
+        empty: Exercise the no-events fallback as well as populated rows.
+    """
+    from sqlalchemy import delete
+
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import AuditEvent
+    from tests.routers.ui.helpers import login
+
+    login(client)
+    if empty:
+        with SessionLocal() as db:
+            db.execute(delete(AuditEvent))
+            db.commit()
+    response = client.get("/ui/management/audit-log")
+    assert response.status_code == 200
+    assert 'role="status">Snapshot ready</span>' in response.text
+    assert 'role="status">Loading history' not in response.text
+    if empty:
+        assert "No audit events yet." in response.text
+    assert response.headers["cache-control"] == "no-store"
+    assert "X-Atlaso-Task-Log" in response.headers["vary"].split(", ")
+    refresh = client.get("/ui/management/audit-log", headers={"X-Atlaso-Task-Log": "1"})
+    assert refresh.status_code == 200
+    assert isinstance(refresh.json()["rows"], list)
+    assert refresh.headers["cache-control"] == "no-store"
+    assert "X-Atlaso-Task-Log" in refresh.headers["vary"].split(", ")
+
+
+@pytest.mark.parametrize("rewrite", [False, True])
+def test_mixed_archive_chain_authenticates_growing_plain_checkpoint(tmp_path, monkeypatch, rewrite):
+    """A growing plain file resumes safely after its compressed rotation.
+
+    Args:
+        tmp_path: Test-owned mixed-format retained history.
+        monkeypatch: Restrict each preparation pass to one scan chunk.
+        rewrite: Insert a key marker inside an already scanned prefix.
+    """
+    import itertools
+
+    archive = tmp_path / "active.log.1.gz"
+    current = tmp_path / "active.log"
+    archive.write_bytes(gzip.compress(b"older retained history\n"))
+    current.write_bytes(b"normal line\n" * 220000)
+    log_viewer._COMPRESSED_REDACTION_CACHE.clear()
+    ticks = itertools.count(step=3)
+    monkeypatch.setattr(log_viewer.time, "monotonic", lambda: next(ticks))
+    positions = []
+    rewritten = False
+    for _ in range(100):
+        if rewrite and len(positions) == 2 and not rewritten:
+            data = current.read_bytes()
+            marker = b"-----BEGIN PRIVATE KEY-----\n"
+            current.write_bytes(data[:10000] + marker + data[10000 + len(marker):])
+            rewritten = True
+        with current.open("ab") as handle:
+            handle.write(b"new line\n")
+        try:
+            assert log_viewer._tail_private_key([archive, current], current.stat().st_size, deadline=100000) is rewrite
+        except log_viewer._TailScanPending:
+            values = [key[2] for key in log_viewer._COMPRESSED_REDACTION_CACHE if key[1] == 1]
+            if values:
+                positions.append(max(values))
+        else:
+            break
+    else:
+        pytest.fail("mixed-chain active preparation did not complete")
+    assert len(positions) > 32
+    assert len(log_viewer._COMPRESSED_REDACTION_CACHE) <= 32
+    if rewrite:
+        assert any(later < earlier for earlier, later in zip(positions[:-1], positions[1:], strict=True))
+    else:
+        assert positions == sorted(set(positions))
+
+
+@pytest.mark.parametrize("compressed", [False, True])
+def test_long_private_key_label_crosses_tail_scan_chunks(tmp_path, compressed):
+    """Long labels retain their opening marker across raw and gzip scan chunks.
+
+    Args:
+        tmp_path: Test-owned retained source directory.
+        compressed: Exercise the gzip decompression path.
+    """
+    import time
+
+    from tests.test_appliance_helper import load_helper_module
+
+    content = b"x" * 65490 + b"-----BEGIN " + b"LONG-LABEL-" * 15000 + b"PRIVATE KEY-----\nsynthetic-body\n"
+    path = tmp_path / ("retained.gz" if compressed else "retained.log")
+    path.write_bytes(gzip.compress(content) if compressed else content)
+    for reader in (log_viewer, load_helper_module()):
+        assert reader._tail_private_key([path], len(content), deadline=time.monotonic() + 10)
+
+
+@pytest.mark.parametrize("privileged", [False, True])
+def test_pem_parser_preserves_every_fixed_token_split(privileged):
+    """Every marker split preserves semantics with fixed non-source carry bytes.
+
+    Args:
+        privileged: Select the independently installed helper parser.
+    """
+    from tests.test_appliance_helper import load_helper_module
+
+    reader = load_helper_module() if privileged else log_viewer
+    marker = b"-----BEGIN " + b"UNIQUE-LABEL-" * 20 + b"PRIVATE KEY-----"
+    for split in range(1, len(marker)):
+        first, carry = reader._scan_pem_markers(marker[:split])
+        assert len(carry) <= 16 and b"UNIQUE" not in carry
+        last, carry = reader._scan_pem_markers(marker[split:], carry)
+        assert (first if last is None else last) is True
+        last, carry = reader._scan_pem_markers(b"\n-----END PRIVATE KEY-----\n", carry)
+        assert last is False
+    assert reader._scan_pem_markers(b"-----BEGIN CERTIFICATE-----\n")[0] is None
+    assert reader._scan_pem_markers(b"-----BEGIN invalid -----BEGIN PRIVATE KEY-----\n")[0] is True
+
+
+@pytest.mark.parametrize("privileged", [False, True])
+def test_long_pem_marker_survives_oversized_page_cursor(tmp_path, privileged):
+    """An omitted marker spanning pages still redacts the following body.
+
+    Args:
+        tmp_path: Test-owned retained source directory.
+        privileged: Select the independently installed fixed-file reader.
+    """
+    from tests.test_appliance_helper import load_helper_module
+
+    reader = load_helper_module()
+    path = tmp_path / "retained.log"
+    path.write_bytes(b"-----BEGIN " + b"LABEL" * 230000 + b" PRIVATE KEY-----\nsynthetic-body\n-----END PRIVATE KEY-----\nsafe after\n")
+    position = None
+    opened = False
+    texts = []
+    for _ in range(6):
+        if privileged:
+            page = reader._read_fixed_log_history(path, {**(position or {}), "private_key": opened})
+            lines, opened = log_viewer.redact_lines(page["lines"], private_key=page["initial_private_key"])
+            texts.append("\n".join(lines))
+            position = page["file_position"]
+        else:
+            page = log_viewer.file_page(path, source="long-marker", cursor=position)
+            texts.append(page["text"])
+            position = page["next_cursor"]
+        if not page["has_more"]:
+            break
+    assert "synthetic-body" not in "\n".join(texts)
+    assert "safe after" in "\n".join(texts)
+
+
+def test_oversized_journal_preserves_long_fragmented_pem_marker():
+    """Discarded journal fragments retain marker state beyond metadata carry size."""
+    import io
+
+    from tests.test_appliance_helper import load_helper_module
+
+    helper = load_helper_module()
+    prefix = b'{"__CURSOR":"cursor-one","__REALTIME_TIMESTAMP":"123","MESSAGE":"'
+    marker = b"-----BEGIN " + b"LABEL-" * 200000 + b"PRIVATE KEY-----"
+    record = prefix + marker + b'"}\n'
+    entry = helper._oversized_journal_entry(record[:1048577], io.BytesIO(record[1048577:]))
+    assert entry["__CURSOR"] == "cursor-one"
+    assert entry["MESSAGE"].endswith("-----BEGIN PRIVATE KEY-----")
+    assert "LABEL-" not in entry["MESSAGE"]
+
+
+@pytest.mark.parametrize("backward", [False, True])
+def test_compressed_page_preparation_resumes_without_gzip_seeks(tmp_path, monkeypatch, backward):
+    """Actual tail and Previous reads finish across bounded archive preparation passes.
+
+    Args:
+        tmp_path: Test-owned retained archive directory.
+        monkeypatch: Force many preparation passes and reject replay-based gzip seeks.
+        backward: Enter the archive from a newer file's Previous cursor.
+    """
+    import itertools
+
+    path = tmp_path / "live.log"
+    archive = tmp_path / "live.log.1.gz"
+    content = b"old retained entry\n" * 120000 + b"-----BEGIN PRIVATE KEY-----\n" + b"synthetic-body\n" * 600 + b"-----END PRIVATE KEY-----\nsafe after\n"
+    archive.write_bytes(gzip.compress(content[:1000000]) + b"\x00" * 17000 + gzip.compress(content[1000000:]))
+    cursor = ""
+    if backward:
+        path.write_bytes(b"new current entry\n")
+        info = path.stat()
+        cursor = log_viewer.encode_cursor("slow-gzip", generation=f"{info.st_dev}:{info.st_ino}", offset=0, before=True)
+    log_viewer._GZIP_WINDOW_CACHE.clear()
+    log_viewer._COMPRESSED_REDACTION_CACHE.clear()
+    ticks = itertools.count()
+    monkeypatch.setattr(log_viewer.time, "monotonic", lambda: next(ticks))
+    def reject_replay(*args, **kwargs):
+        """Reject the old seek-based archive path.
+
+        Args:
+            *args: Unused gzip constructor arguments.
+            **kwargs: Unused gzip constructor keyword arguments.
+        """
+        raise AssertionError("compressed page must use its prepared window")
+    monkeypatch.setattr(log_viewer.gzip, "GzipFile", reject_replay)
+    pending = 0
+    for _ in range(150):
+        page = log_viewer.file_page(path, source="slow-gzip", cursor=cursor, tail=not backward)
+        if page.get("pending"):
+            pending += 1
+            assert len(log_viewer._GZIP_WINDOW_CACHE) <= 8
+            assert all(len(value[1]) <= log_viewer._GZIP_WINDOW_BYTES and len(value[2]) <= 4096
+                       and len(value[5]) <= 16384 for value in log_viewer._GZIP_WINDOW_CACHE.values())
+            continue
+        break
+    else:
+        pytest.fail("compressed page never completed")
+    assert pending > 2
+    assert "synthetic-body" not in page["text"]
+    assert "safe after" in page["text"]
+    assert page["previous_cursor"]
+    refreshed = log_viewer.file_page(path, source="slow-gzip", cursor=page["cursor"])
+    assert not refreshed.get("pending")
+    assert refreshed["text"] == page["text"]
+
+
+def test_prepared_gzip_window_invalidates_replaced_archive(tmp_path):
+    """A changed archive cannot reuse cached bytes or skip its replacement prefix.
+
+    Args:
+        tmp_path: Test-owned archive directory.
+    """
+    path = tmp_path / "replace.log"
+    archive = tmp_path / "replace.log.1.gz"
+    archive.write_bytes(gzip.compress(b"old source entry\n" * 150000))
+    first = log_viewer.file_page(path, source="replace-gzip", tail=True)
+    archive.write_bytes(gzip.compress(b"replacement entry\n" * 180000))
+    page = log_viewer.file_page(path, source="replace-gzip", cursor=first["cursor"])
+    assert page["reset"] is True
+    assert log_viewer.decode_cursor(page["cursor"], "replace-gzip")["offset"] == 0
+    assert "replacement entry" in page["text"] and "old source" not in page["text"]
+    log_viewer._GZIP_WINDOW_CACHE.clear()
+    refreshed = log_viewer.file_page(path, source="replace-gzip", cursor=page["cursor"])
+    assert refreshed["text"] == page["text"]
+
+
+@pytest.mark.parametrize("mixed", [False, True])
+@pytest.mark.parametrize("rewrite", [False, True])
+def test_prefix_verification_resumes_and_rejects_changed_versions(tmp_path, monkeypatch, mixed, rewrite):
+    """Slow verification resumes after growth and rejects a later interior rewrite.
+
+    Args:
+        tmp_path: Test-owned retained source directory.
+        monkeypatch: Force hash verification across multiple bounded requests.
+        mixed: Exercise a plain current file following a gzip archive.
+        rewrite: Change previously verified bytes during the retry sequence.
+    """
+    import itertools
+    import time
+
+    path = tmp_path / "verify.log"
+    archive = tmp_path / "verify.log.1.gz"
+    original = b"ordinary retained entry\n" * 90000
+    path.write_bytes(original)
+    archive.write_bytes(gzip.compress(b"old archive\n"))
+    paths = [archive, path] if mixed else [path]
+    log_viewer._PREFIX_VERIFICATION_CACHE.clear()
+    assert not log_viewer._tail_private_key(paths, len(original), deadline=time.monotonic() + 10)
+    path.write_bytes(original + b"new entry\n")
+    ticks = itertools.count()
+    monkeypatch.setattr(log_viewer.time, "monotonic", lambda: next(ticks))
+    progress = []
+    changed = False
+    for attempt in range(180):
+        try:
+            opened = log_viewer._tail_private_key(paths, path.stat().st_size, deadline=next(ticks) + 7)
+        except log_viewer._TailScanPending:
+            states = list(log_viewer._PREFIX_VERIFICATION_CACHE.items())
+            assert len(states) <= 32
+            if states:
+                progress.append(states[-1][1][0])
+            if rewrite and not changed and attempt == 2:
+                marker = b"-----BEGIN PRIVATE KEY-----\n"
+                replacement = original[:70000] + marker + original[70000 + len(marker):] + b"synthetic-body\n"
+                path.write_bytes(replacement)
+                changed = True
+        else:
+            assert opened is rewrite
+            break
+    else:
+        pytest.fail("prefix verification repeatedly restarted without completing")
+    assert len(progress) > 2
+    if not rewrite:
+        assert progress == sorted(progress)
+        assert len(set(progress)) > 2
+
+
+@pytest.mark.parametrize("privileged", [False, True])
+@pytest.mark.parametrize("compressed", [False, True])
+@pytest.mark.parametrize("split", [8, 30])
+def test_private_key_parser_crosses_retained_file_generations(tmp_path, privileged, compressed, split):
+    """Split opening and closing markers preserve redaction across rotations.
+
+    Args:
+        tmp_path: Test-owned retained log directory.
+        privileged: Exercise the privileged fixed-file reader.
+        compressed: Compress the oldest retained fragment.
+        split: Boundary inside the fixed opening token or arbitrary label.
+    """
+    from tests.test_appliance_helper import load_helper_module
+
+    helper = load_helper_module()
+    path = tmp_path / "split.log"
+    marker = b"-----BEGIN LONG-LABEL-" + b"LABEL-" * 40 + b"PRIVATE KEY-----\n"
+    end = b"-----END PRIVATE KEY-----\n"
+    first = tmp_path / ("split.log.2.gz" if compressed else "split.log.2")
+    first.write_bytes(gzip.compress(marker[:split]) if compressed else marker[:split])
+    (tmp_path / "split.log.1").write_bytes(marker[split:] + b"synthetic-body\n" + end[:7])
+    path.write_bytes(end[7:] + b"safe after\n")
+    position = None
+    opened = False
+    texts = []
+    for _ in range(8):
+        if privileged:
+            page = helper._read_fixed_log_history(path, {**(position or {}), "private_key": opened})
+            lines, opened = log_viewer.redact_lines(page["lines"], private_key=page["initial_private_key"])
+            texts.append("\n".join(lines))
+            position = page["file_position"]
+        else:
+            page = log_viewer.file_page(path, source="split-rotation", cursor=position)
+            texts.append(page["text"])
+            position = page["next_cursor"]
+        if not page["has_more"]:
+            break
+    assert "synthetic-body" not in "\n".join(texts)
+    assert "safe after" in "\n".join(texts)
+
+
+@pytest.mark.parametrize("compressed", [False, True])
+@pytest.mark.parametrize("backward", [False, True])
+def test_privileged_file_pages_resume_through_real_helper_transport(tmp_path, monkeypatch, capsys, compressed, backward):
+    """Actual source pages resume without invoking the helper's stateless scanner.
+
+    Args:
+        tmp_path: Test-owned allowlisted nginx file directory.
+        monkeypatch: Bind helper paths, transport, and deterministic request budgets.
+        capsys: Capture serialized helper output at the adapter boundary.
+        compressed: Exercise retained gzip decoding in the backend.
+        backward: Enter the archive using Previous from the current generation.
+    """
+    import itertools
+
+    from atlaso.app.adapters.system import AdapterResult, SystemAdapter
+    from tests.test_appliance_helper import load_helper_module
+
+    helper = load_helper_module()
+    path = tmp_path / "access.log"
+    content = b"retained entry\n" * 180000 + b"-----BEGIN PRIVATE KEY-----\n" + b"synthetic-body\n" * 700 + b"-----END PRIVATE KEY-----\nsafe after\n"
+    archive = tmp_path / ("access.log.1.gz" if compressed else "access.log.1")
+    archive.write_bytes(gzip.compress(content) if compressed else content)
+    if backward:
+        path.write_bytes(b"current entry\n")
+    monkeypatch.setattr(helper, "NGINX_ACCESS_LOG_PATH", path)
+    def reject_stateless(*args, **kwargs):
+        """Reject the old helper-side replay path.
+
+        Args:
+            *args: Unused legacy reader arguments.
+            **kwargs: Unused legacy reader keyword arguments.
+        """
+        raise AssertionError("fixed-file UI must use resumable backend state")
+    monkeypatch.setattr(helper, "_read_fixed_log_history", reject_stateless)
+    calls = []
+    def transport(_self, source, position, *, timeout_seconds):
+        """Run the actual allowlisted helper entry point for each bounded chunk.
+
+        Args:
+            _self: Adapter instance at the privileged transport boundary.
+            source: Fixed nginx source identifier.
+            position: Inventory or raw byte request generated by the backend.
+            timeout_seconds: Remaining request budget assigned to this invocation.
+        """
+        assert 0 < timeout_seconds <= 3
+        calls.append(position.copy())
+        code = helper._read_log_history([source, json.dumps(position)])
+        captured = capsys.readouterr()
+        return AdapterResult(command=["helper-fixture"], dry_run=False, stdout=captured.out, stderr=captured.err, returncode=code)
+    monkeypatch.setattr(SystemAdapter, "read_log_file", transport)
+    log_viewer._TAIL_REDACTION_CACHE.clear()
+    log_viewer._COMPRESSED_REDACTION_CACHE.clear()
+    log_viewer._GZIP_WINDOW_CACHE.clear()
+    ticks = itertools.count()
+    monkeypatch.setattr(log_viewer.time, "monotonic", lambda: next(ticks) / 5)
+    cursor = ""
+    if backward:
+        info = path.stat()
+        cursor = log_viewer.encode_cursor("nginx-access", generation=f"{info.st_dev}:{info.st_ino}", offset=0, before=True)
+    pending = 0
+    for _ in range(160):
+        page = log_viewer.source_page("nginx-access", cursor=cursor, tail=not backward)
+        if page.get("pending"):
+            pending += 1
+            continue
+        break
+    else:
+        pytest.fail("privileged retained history never completed")
+    assert pending > 1
+    assert "synthetic-body" not in page["text"] and "safe after" in page["text"]
+    assert page["previous_cursor"]
+    assert all(call.get("count", 0) <= log_viewer.PAGE_BYTES for call in calls)
+    assert {call["transport"] for call in calls} == {"inventory", "read"}
+    refreshed = log_viewer.source_page("nginx-access", cursor=page["cursor"])
+    assert not refreshed.get("pending")
+    assert refreshed["text"] == page["text"]
+
+
+def test_fixed_log_transport_rejects_paths_sizes_and_changed_versions(tmp_path):
+    """The helper accepts only bounded version-bound reads of its fixed files.
+
+    Args:
+        tmp_path: Test-owned fixed source directory.
+    """
+    from tests.test_appliance_helper import load_helper_module
+
+    helper = load_helper_module()
+    path = tmp_path / "access.log"
+    path.write_bytes(b"retained entry\n")
+    inventory = helper._fixed_log_transport(path, {"transport": "inventory"})
+    version = {key: value for key, value in inventory["files"][0].items() if key != "name"}
+    request = {"transport": "read", "file": "access.log", "offset": 0, "count": 8, "version": version}
+    assert helper._fixed_log_transport(path, request)["data"]
+    for name in ("../access.log", "/etc/passwd", "access.log.1/../access.log", "error.log"):
+        with pytest.raises(ValueError, match="invalid fixed log byte request"):
+            helper._fixed_log_transport(path, {**request, "file": name})
+    for count in (-1, True, 1024 * 1024 + 1):
+        with pytest.raises(ValueError, match="invalid fixed log byte request"):
+            helper._fixed_log_transport(path, {**request, "count": count})
+    path.write_bytes(b"changed retained entry\n")
+    assert helper._fixed_log_transport(path, request) == {"changed": True}
+
+
+def test_fixed_log_transport_rejects_nonregular_sources(tmp_path):
+    """A fixed basename cannot authorize reading a directory as a log file.
+
+    Args:
+        tmp_path: Test-owned fixed-source directory.
+    """
+    from tests.test_appliance_helper import load_helper_module
+
+    helper = load_helper_module()
+    path = tmp_path / "access.log"
+    path.mkdir()
+    with pytest.raises((OSError, ValueError)):
+        helper._fixed_log_transport(path, {"transport": "inventory"})
+
+
+def test_fixed_log_transport_rejects_linked_sources(tmp_path):
+    """A linked current file cannot escape the fixed-source boundary.
+
+    Args:
+        tmp_path: Test-owned fixed-source directory.
+    """
+    from tests.test_appliance_helper import load_helper_module
+
+    helper = load_helper_module()
+    target = tmp_path / "unrelated.txt"
+    target.write_text("unrelated content", encoding="utf-8")
+    path = tmp_path / "access.log"
+    try:
+        path.symlink_to(target)
+    except OSError:
+        pytest.skip("Host does not permit creating a symlink fixture")
+    with pytest.raises(ValueError, match="linked fixed log source"):
+        helper._fixed_log_transport(path, {"transport": "inventory"})
+
+
+@pytest.mark.parametrize("compressed", [False, True])
+@pytest.mark.parametrize("predecessor", [False, True])
+def test_file_page_revalidates_sources_after_tail_redaction_scan(tmp_path, monkeypatch, compressed, predecessor):
+    """A rewrite between state preparation and page reading never exposes key body.
+
+    Args:
+        tmp_path: Test-owned retained log directory.
+        monkeypatch: Rewrite a source immediately after redaction-state preparation.
+        compressed: Rewrite a compressed archive rather than a plain source.
+        predecessor: Rewrite an earlier rotation while the selected file stays unchanged.
+    """
+    path = tmp_path / "atomic.log"
+    selected = tmp_path / ("atomic.log.1.gz" if compressed else "atomic.log.1") if predecessor or compressed else path
+    body = b"synthetic-body\n" * 1000
+    original = b"ordinary entry\n" if predecessor else body
+    selected.write_bytes(gzip.compress(original) if compressed else original)
+    if predecessor:
+        path.write_bytes(body)
+    original_scan = log_viewer._tail_marker_state
+    changed = False
+    def scan_then_rewrite(paths, offset, *, deadline):
+        """Inject the same-inode rewrite into the reviewed race interval.
+
+        Args:
+            paths: Retained sources selected by the real reader.
+            offset: Requested redaction boundary.
+            deadline: Shared request deadline.
+        """
+        nonlocal changed
+        result = original_scan(paths, offset, deadline=deadline)
+        if not changed:
+            replacement = b"-----BEGIN PRIVATE KEY-----\n" + original
+            selected.write_bytes(gzip.compress(replacement) if compressed else replacement)
+            changed = True
+        return result
+    monkeypatch.setattr(log_viewer, "_tail_marker_state", scan_then_rewrite)
+    first = log_viewer.file_page(path, source="atomic-history", tail=True)
+    assert first["pending"] is True
+    assert first["text"] == ""
+    second = log_viewer.file_page(path, source="atomic-history", tail=True)
+    assert not second.get("pending")
+    assert "synthetic-body" not in second["text"]
+    assert "[redacted private key]" in second["text"]
+
+
+def test_file_cursor_revalidates_state_after_interior_prefix_rewrite(tmp_path):
+    """A cursor's old redaction flag cannot survive an unsampled prefix rewrite.
+
+    Args:
+        tmp_path: Test-owned retained source directory.
+    """
+    path = tmp_path / "cursor-state.log"
+    original = b"synthetic-body\n" * 2000
+    path.write_bytes(original)
+    first = log_viewer.file_page(path, source="cursor-state", tail=True)
+    offset = log_viewer.decode_cursor(first["cursor"], "cursor-state")["offset"]
+    marker = b"-----BEGIN PRIVATE KEY-----\n"
+    replacement = original[:7000] + marker + original[7000 + len(marker):] + b"more body\n"
+    assert original[:4096] == replacement[:4096]
+    assert original[offset - 4096:offset] == replacement[offset - 4096:offset]
+    path.write_bytes(replacement)
+    page = log_viewer.file_page(path, source="cursor-state", cursor=first["cursor"])
+    assert not page.get("pending")
+    assert "synthetic-body" not in page["text"]
+    assert "[redacted private key]" in page["text"]
+
+
+@pytest.mark.parametrize("source", ["nginx", "dnsmasq-dhcp"])
+@pytest.mark.parametrize("backward", [False, True])
+def test_expired_journal_cursor_reopens_retained_history(monkeypatch, capsys, source, backward):
+    """A seek failure resets stale cursor boundaries within the original deadline.
+
+    Args:
+        monkeypatch: Supply actual process-shaped journal responses.
+        capsys: Capture helper responses for the source adapter.
+        source: Classified or unclassified allowlisted journal source.
+        backward: Expire an inclusive Previous cursor instead of a forward cursor.
+    """
+    import io
+    from types import SimpleNamespace
+    from unittest.mock import MagicMock
+
+    from tests.test_appliance_helper import load_helper_module
+
+    helper = load_helper_module()
+    commands, deadlines = [], []
+    original_reader = helper._journal_history_entries
+    entry = {"__CURSOR": "retained", "__REALTIME_TIMESTAMP": "1000000", "SYSLOG_IDENTIFIER": "dnsmasq-dhcp",
+             "MESSAGE": "visible retained output"}
+
+    def launch(command, **options):
+        """Return the seek failure or the remaining journal record.
+
+        Args:
+            command: Journal cursor and direction invocation.
+            **options: Process options including the stable diagnostic locale.
+        """
+        commands.append(command)
+        assert options["env"]["LC_ALL"] == "C"
+        expired = any(arg.endswith("=expired") for arg in command)
+        process = MagicMock()
+        process.__enter__.return_value = process
+        process.wait.return_value = process.poll.return_value = int(expired)
+        process.stdout = io.BytesIO(b"" if expired else (json.dumps(entry) + "\n").encode())
+        process.stderr = io.BytesIO(b"Failed to seek to cursor: Cannot assign requested address\n" if expired else b"")
+        return process
+
+    def reader(command, **options):
+        """Record the shared request deadline while preserving the real reader.
+
+        Args:
+            command: Allowlisted helper invocation.
+            **options: Reader bounds and classification state.
+        """
+        deadlines.append(options["deadline"])
+        return original_reader(command, **options)
+
+    def adapter(_self, selected_source, position):
+        """Route signed source requests through the real helper.
+
+        Args:
+            _self: Adapter instance.
+            selected_source: Allowlisted source identity.
+            position: Decoded history position.
+        """
+        assert helper._read_log_history([selected_source, json.dumps(position)]) == 0
+        return SimpleNamespace(returncode=0, stdout=capsys.readouterr().out)
+
+    monkeypatch.setattr(helper.subprocess, "Popen", launch)
+    monkeypatch.setattr(helper, "_journal_history_entries", reader)
+    monkeypatch.setattr(log_viewer.SystemAdapter, "read_log_history", adapter)
+    position = {"journal_start_cursor": "expired", "before": True, "journal_text_offset": 9} if backward else {"journal_cursor": "expired"}
+    cursor = log_viewer.encode_cursor(source, **position, private_key=True, journal_end_cursor="old-end", journal_end_offset=10)
+    page = log_viewer.source_page(source, cursor=cursor)
+    assert page["reset"] and "oldest available entries" in page["notice"]
+    assert "visible retained output" in page["text"]
+    assert not page["previous_cursor"]
+    assert len(commands) == 2 and deadlines[0] == deadlines[1]
+    assert not any(arg.startswith(("--cursor=", "--after-cursor=")) or arg == "--reverse" for arg in commands[1])
+    assert "--lines=+5001" in commands[1] if source == "dnsmasq-dhcp" else "--lines=+501" in commands[1]
+    assert "expired" not in json.dumps(log_viewer.decode_cursor(page["cursor"], source))
+    again = log_viewer.source_page(source, cursor=page["cursor"])
+    assert not again["reset"]
+    assert again["text"] == page["text"]
+
+
+def test_journal_permission_failure_does_not_reset_cursor(monkeypatch):
+    """Other journal failures remain errors rather than silently discarding history.
+
+    Args:
+        monkeypatch: Supply an unsuccessful process with a permission diagnostic.
+    """
+    import io
+    from unittest.mock import MagicMock
+
+    from tests.test_appliance_helper import load_helper_module
+
+    helper = load_helper_module()
+    process = MagicMock()
+    process.__enter__.return_value = process
+    process.wait.return_value = process.poll.return_value = 1
+    process.stdout = io.BytesIO()
+    process.stderr = io.BytesIO(b"Permission denied\n")
+    monkeypatch.setattr(helper.subprocess, "Popen", lambda *args, **kwargs: process)
+    with pytest.raises(ValueError, match="unavailable") as error:
+        helper._journal_history_entries(["journalctl", "--after-cursor=valid"], deadline=helper.time.monotonic() + 10)
+    assert not isinstance(error.value, helper._JournalCursorExpired)
+
+
+@pytest.mark.parametrize("changed", ["older", "selected", "newer"])
+@pytest.mark.parametrize("privileged", [False, True])
+@pytest.mark.parametrize("compressed", [False, True])
+def test_archive_validation_ignores_only_unrelated_newer_writes(tmp_path, monkeypatch, capsys, changed, privileged, compressed):
+    """Archive browsing survives newer writes while retaining dependency validation.
+
+    Args:
+        tmp_path: Isolated retained source directory.
+        monkeypatch: Inject a write after redaction and bind the real helper transport.
+        capsys: Capture helper JSON at the adapter boundary.
+        changed: File changed after the selected page has been read.
+        privileged: Exercise the full fixed-source helper inventory validation.
+        compressed: Exercise a gzip selected archive.
+    """
+    from atlaso.app.adapters.system import AdapterResult, SystemAdapter
+    from tests.test_appliance_helper import load_helper_module
+
+    path = tmp_path / "access.log"
+    older = tmp_path / "access.log.2"
+    selected = tmp_path / ("access.log.1.gz" if compressed else "access.log.1")
+    path.write_bytes(b"current\n")
+    older.write_bytes(b"older\n")
+    content = b"archive entry\n"
+    selected.write_bytes(gzip.compress(content) if compressed else content)
+    helper = load_helper_module()
+    monkeypatch.setattr(helper, "NGINX_ACCESS_LOG_PATH", path)
+
+    def transport(_self, source, position, *, timeout_seconds):
+        """Exercise actual bounded helper reads and both metadata inventories.
+
+        Args:
+            _self: Adapter instance.
+            source: Fixed log source.
+            position: Inventory or bounded read request.
+            timeout_seconds: Shared transport deadline allowance.
+        """
+        code = helper._read_log_history([source, json.dumps(position)])
+        captured = capsys.readouterr()
+        return AdapterResult(command=["fixture"], dry_run=False, stdout=captured.out, stderr=captured.err, returncode=code)
+
+    monkeypatch.setattr(SystemAdapter, "read_log_file", transport)
+    original = log_viewer.redact_lines
+
+    def redact(lines, **options):
+        """Change one dependency after content preparation but before validation.
+
+        Args:
+            lines: Prepared page content.
+            **options: Incoming redaction context.
+        """
+        result = original(lines, **options)
+        target = {"older": older, "selected": selected, "newer": path}[changed]
+        with target.open("ab") as stream:
+            stream.write(gzip.compress(b"appended\n") if compressed and changed == "selected" else b"appended\n")
+        return result
+
+    monkeypatch.setattr(log_viewer, "redact_lines", redact)
+    source = "nginx-access" if privileged else "archive-dependencies"
+    info = selected.stat()
+    cursor = log_viewer.encode_cursor(source, generation=f"{info.st_dev}:{info.st_ino}", offset=0)
+    page = log_viewer.source_page(source, cursor=cursor) if privileged else log_viewer.file_page(path, source=source, cursor=cursor)
+    assert bool(page.get("pending")) == (changed != "newer")
+    assert page["text"] == ("archive entry" if changed == "newer" else "")
