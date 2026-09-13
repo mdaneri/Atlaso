@@ -237,6 +237,33 @@ def test_expired_preparation_cursor_preserves_known_private_context(monkeypatch)
     assert len(calls) == 2 and calls[0][1] == calls[1][1]
 
 
+@pytest.mark.parametrize("protocol", ["dhcp", "tftp"])
+@pytest.mark.parametrize("has_match", [False, True])
+def test_sparse_initial_tail_resumes_past_multiple_raw_windows(journal_transport, protocol, has_match):
+    """Initial tails reach matching retained events behind large unrelated gaps.
+
+    Args:
+        journal_transport: Actual helper with command-capped journal transport.
+        protocol: Classified dnsmasq protocol view.
+        has_match: Whether retained history includes any matching event.
+    """
+    records, requests = journal_transport
+    records.extend(_records(["older matching event"] + ["unrelated service entry"] * 12000))
+    if has_match:
+        records[0]["SYSLOG_IDENTIFIER"] = f"dnsmasq-{protocol}"
+    for _attempt in range(10):
+        page = log_viewer.source_page(f"dnsmasq-{protocol}", tail=True)
+        if not page.get("pending"):
+            break
+        assert page["text"] == "" and page["cursor"] == ""
+    else:
+        raise AssertionError("Sparse tail did not exhaust or find a match")
+    assert _attempt >= 2
+    assert ("older matching event" in page["text"]) is has_match
+    progress = [int(request["journal_reverse_search"]) for request in requests if "journal_reverse_search" in request]
+    assert progress == sorted(progress, reverse=True) and len(set(progress)) == len(progress)
+
+
 def test_concurrent_preparation_does_not_overwrite_newer_checkpoint(monkeypatch):
     """A slower viewer cannot replace context progress another viewer published.
 

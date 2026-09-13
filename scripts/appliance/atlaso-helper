@@ -2417,6 +2417,10 @@ def _read_log_history(args: list[str]) -> int:
             raise ValueError("invalid journal text position")
         backward = position.get("before") is True
         tail = (position.get("tail") is True and not cursor) or backward
+        reverse_search = position.get("journal_reverse_search", "")
+        if (not isinstance(reverse_search, str) or len(reverse_search) > 2048 or
+                any(ord(char) < 32 for char in reverse_search) or (reverse_search and (not tail or cursor))):
+            raise ValueError("invalid journal reverse preparation cursor")
         category = args[0].removeprefix("dnsmasq-") if args[0].startswith("dnsmasq-") else None
         # An inclusive backward boundary is discarded before paging. Reserve its
         # record separately from the lookahead that proves older history exists.
@@ -2429,18 +2433,28 @@ def _read_log_history(args: list[str]) -> int:
             command.append("--reverse")
         if cursor:
             command.append(f"--cursor={cursor}" if position.get("journal_start_cursor") else f"--after-cursor={cursor}")
+        elif reverse_search:
+            command.append(f"--cursor={reverse_search}")
         deadline = time.monotonic() + 10
         reset = False
         try:
             selected, more = _journal_history_entries(command, deadline=deadline, category=category)
         except _JournalCursorExpired:
             # Reopen once within the original deadline, clearing all obsolete boundaries.
-            position, cursor, text_offset = {}, "", 0
+            position, cursor, text_offset, reverse_search = {}, "", 0, ""
             backward = tail = False
             reset = True
             command = [arg for arg in command if not arg.startswith(("--cursor=", "--after-cursor=", "--lines=")) and arg != "--reverse"]
             command.append("--lines=+5001" if category is not None else "--lines=+501")
             selected, more = _journal_history_entries(command, deadline=deadline, category=category)
+        if reverse_search and selected and selected[0]["__CURSOR"] == reverse_search:
+            selected = selected[1:]
+        if tail and not backward and category is not None and more and selected and all(entry.get("_filtered") for entry in selected):
+            # Pin reverse progress rather than retrying the same newest raw window.
+            preparation = {"tail": True, "journal_reverse_search": selected[-1]["__CURSOR"]}
+            print(json.dumps({"pending": True, "preparation_position": preparation, "lines": [], "has_more": False,
+                              "notice": "Preparing older matching journal history."}))
+            return 0
         if backward and selected and selected[0]["__CURSOR"] == cursor:
             if text_offset:
                 selected[0] = {**selected[0], "MESSAGE": selected[0]["MESSAGE"][:text_offset]}

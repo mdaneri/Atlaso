@@ -344,7 +344,7 @@ def source_page(source: str, *, cursor: str = "", tail: bool = False, limit: int
                     _JOURNAL_PREPARATION.popitem(last=False)
         return {"source": source, "available": True, "pending": True, "text": "", "cursor": cursor,
                 "next_cursor": cursor, "previous_cursor": "", "has_more": False, "reset": False,
-                "notice": "Preparing retained journal redaction context; displayed output is preserved."}
+                "notice": "Preparing retained journal history; displayed output is preserved."}
     with _JOURNAL_PREPARATION_LOCK:
         if _JOURNAL_PREPARATION.get(preparation_key) is prepared:
             _JOURNAL_PREPARATION.pop(preparation_key, None)

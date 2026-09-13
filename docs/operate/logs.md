@@ -42,6 +42,8 @@ File, task, and journal pages include JSON escaping and response metadata in the
 Private-key headers split between journal records retain redaction state across pages, including filtered views
 and oversized-record omissions. Tail and Previous navigation prepare older context in bounded, resumable scans;
 the displayed output stays visible while preparation continues.
+Sparse DHCP and TFTP tails continue through older bounded journal windows until matching records are found or
+retained history is exhausted, even when thousands of unrelated service records follow the latest match.
 Writes to newer files do not interrupt a page from an unchanged archive; the reader still verifies the selected
 file and older files that determine its redaction state.
 If journal retention removes an open cursor, the viewer reopens the oldest available entries and reports the reset.
