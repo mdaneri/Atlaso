@@ -152,14 +152,11 @@ def redact_lines(lines: list[str], *, private_key: bool = False) -> tuple[list[s
     """
     output = []
     for line in lines:
-        if "-----BEGIN " in line and "PRIVATE KEY-----" in line:
-            private_key = True
-        if private_key:
-            output.append("[redacted private key]")
-            if "-----END " in line and "PRIVATE KEY-----" in line:
-                private_key = False
-        else:
-            output.append(redact_operational_text(line))
+        conceal = private_key
+        for marker in re.finditer(r"-----(BEGIN|END) [A-Z ]*PRIVATE KEY-----", line):
+            conceal = True
+            private_key = marker.group(1) == "BEGIN"
+        output.append("[redacted private key]" if conceal else redact_operational_text(line))
     return output, private_key
 
 

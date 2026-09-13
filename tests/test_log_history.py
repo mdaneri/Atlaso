@@ -1448,3 +1448,34 @@ def test_tail_checkpoint_rejects_regrowth_with_unchanged_prefix_and_anchor(tmp_p
     assert log_viewer._tail_private_key([path], len(replacement), deadline=time.monotonic() + 10)
     page = log_viewer.file_page(path, source="regrown-key", tail=True, limit=100)
     assert "private body" not in page["text"]
+
+
+@pytest.mark.parametrize("initial", [False, True])
+@pytest.mark.parametrize("kind", ["PRIVATE KEY", "RSA PRIVATE KEY", "EC PRIVATE KEY", "ENCRYPTED PRIVATE KEY"])
+def test_private_key_markers_follow_text_order_across_pages(tmp_path, initial, kind):
+    """Retain the last marker state when one line closes and reopens a key.
+
+    Args:
+        tmp_path: Test-owned log directory.
+        initial: Redaction state entering the marker line.
+        kind: PEM private-key envelope variant.
+    """
+    boundary = f"-----END {kind}----- -----BEGIN {kind}-----"
+    safe, opened = log_viewer.redact_lines([boundary], private_key=initial)
+    assert safe == ["[redacted private key]"]
+    assert opened is True
+    safe, opened = log_viewer.redact_lines(
+        ["c3ludGhldGljLWtleS1ib2R5", f"-----END {kind}-----", "safe after"], private_key=opened
+    )
+    assert safe == ["[redacted private key]", "[redacted private key]", "safe after"]
+    assert opened is False
+    reverse = f"-----BEGIN {kind}----- -----END {kind}-----"
+    assert log_viewer.redact_lines([reverse, "safe after"], private_key=initial) == (
+        ["[redacted private key]", "safe after"], False
+    )
+    path = tmp_path / "markers.log"
+    path.write_text(boundary + "\nc3ludGhldGljLWtleS1ib2R5\n" + f"-----END {kind}-----\nsafe after\n", encoding="utf-8")
+    first = log_viewer.file_page(path, source="marker-order", limit=1)
+    page = log_viewer.file_page(path, source="marker-order", cursor=first["next_cursor"])
+    assert "c3ludGhldGlj" not in page["text"]
+    assert page["text"].endswith("safe after")

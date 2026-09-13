@@ -82,13 +82,14 @@ Physical file entries larger than 64 KiB are represented by an explicit omission
 them in bounded pages so later entries remain reachable; omitted entry contents are not exposed. Private-key markers
 inside discarded fragments still update redaction state for following lines and pages.
 
-Live viewers open at the newest retained group. **From beginning** reads earlier history, and **Follow live** returns
-to recent output. Tail reads preserve private-key redaction across older entries. If a retained archive cannot be
-scanned within the read deadline, use **From beginning** to read it in pages. Journal records larger than 1 MiB use
-an explicit omission marker and preserve continuation to newer entries. Backward navigation also advances across
-oversized entries, including an unfinished final entry. Multiline journal messages are paged within
-the record so each response remains within 500 displayed lines and 1 MiB, including timestamps. Replacing a file
-behind an unchanged opening banner invalidates its previous position and reopens retained history.
+Live viewers open at the newest retained group. **From beginning** reads earlier history, and **Follow live**
+returns to recent output. Tail reads preserve private-key redaction across older entries. Multiple private-key
+markers on one line are processed in text order, including when a line closes one block and opens another. If a
+retained archive cannot be scanned within the read deadline, use **From beginning** to read it in pages. Journal
+records larger than 1 MiB use an explicit omission marker and preserve continuation to newer entries. Backward
+navigation also advances across oversized entries, including an unfinished final entry. Multiline journal messages
+are paged within the record so each response remains within 500 displayed lines and 1 MiB, including timestamps.
+Replacing a file behind an unchanged opening banner invalidates its previous position and reopens retained history.
 
 Standalone VCFDT task-log pages and their live JSON responses disable HTTP caching so refreshes read current output.
 
