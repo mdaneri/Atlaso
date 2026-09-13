@@ -94,6 +94,10 @@ Direct service-log pages include a bounded, redacted snapshot before JavaScript 
 reload the page to refresh that snapshot. Development mode explains that no host journal was read; an empty or
 unavailable source displays its current condition. Full history navigation and live updates require JavaScript.
 
+Local uncompressed log files retain bounded redaction checkpoints in memory. Large initial scans may show a
+preparation notice; refreshes resume saved progress instead of restarting. File identity and content fingerprints
+validate each reused checkpoint. Process restarts or cache eviction can require preparation again.
+
 <!-- BEGIN GENERATED ADDITIONAL SCREENSHOTS -->
 ## Additional verified states
 

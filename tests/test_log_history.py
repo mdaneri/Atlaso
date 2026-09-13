@@ -1216,7 +1216,7 @@ def test_journal_transport_budgets_utf8_and_escaped_rows(monkeypatch, capsys, ro
     assert not tail["has_more"]
 
 
-@pytest.mark.parametrize("mode", ["snapshot", "empty", "unavailable", "dry-run"])
+@pytest.mark.parametrize("mode", ["snapshot", "empty", "unavailable", "dry-run", "preparing"])
 def test_service_log_html_has_readable_fallback(client, monkeypatch, mode):
     """Direct service-log responses remain useful before client scripting runs.
 
@@ -1235,7 +1235,8 @@ def test_service_log_html_has_readable_fallback(client, monkeypatch, mode):
         calls.append((source, options))
         if mode == "unavailable":
             raise OSError("internal transport detail")
-        return {"text": "retained service entry\n<script>not executable</script>" if mode == "snapshot" else ""}
+        return {"text": "retained service entry\n<script>not executable</script>" if mode == "snapshot" else "",
+                "notice": "Preparing retained history." if mode == "preparing" else ""}
     monkeypatch.setattr(log_viewer, "source_page", read)
     response = client.get("/ui/management/services/dns/logs")
     assert response.status_code == 200
@@ -1250,6 +1251,80 @@ def test_service_log_html_has_readable_fallback(client, monkeypatch, mode):
             assert "&lt;script&gt;not executable&lt;/script&gt;" in response.text
         elif mode == "empty":
             assert "No retained log entries are available." in response.text
+        elif mode == "preparing":
+            assert "Preparing retained history." in response.text
+            assert "No retained log entries are available." not in response.text
         else:
             assert "Log history is temporarily unavailable." in response.text
             assert "internal transport detail" not in response.text
+
+
+def test_local_tail_scan_resumes_and_invalidates_copytruncate(tmp_path, monkeypatch):
+    """Slow scans accumulate bounded progress without reusing replaced key state.
+
+    Args:
+        tmp_path: Task-owned retained log fixture.
+        monkeypatch: Advance scan time deterministically after every chunk.
+    """
+    path = tmp_path / "server.log"
+    text = b"safe prefix\n" + b"x" * 70000 + b"-----BEGIN PRIVATE KEY-----\n" + b"secret\n" * 50000
+    path.write_bytes(text)
+    log_viewer._TAIL_REDACTION_CACHE.clear()
+    tick = 0
+    def clock():
+        nonlocal tick
+        tick += 3
+        return tick
+    monkeypatch.setattr(log_viewer.time, "monotonic", clock)
+    offsets = []
+    for _ in range(12):
+        try:
+            assert log_viewer._tail_private_key([path], len(text), deadline=10000)
+            break
+        except log_viewer._TailScanPending:
+            offsets.append(max(key[2] for key in log_viewer._TAIL_REDACTION_CACHE))
+    else:
+        pytest.fail("checkpointed scan did not finish")
+    assert len(offsets) > 1 and offsets == sorted(set(offsets))
+    assert len(log_viewer._TAIL_REDACTION_CACHE) <= 128
+    path.write_bytes(text.replace(b"BEGIN", b"ENDED"))
+    for _ in range(12):
+        try:
+            assert not log_viewer._tail_private_key([path], len(text), deadline=10000)
+            break
+        except log_viewer._TailScanPending:
+            pass
+    else:
+        pytest.fail("replacement scan did not finish")
+    path.write_bytes(b"safe replacement\n")
+    assert not log_viewer._tail_private_key([path], path.stat().st_size, deadline=10000)
+
+
+def test_local_tail_scan_page_retries_progress_and_reuses_completed_state(tmp_path, monkeypatch):
+    """Initial tail retries finish instead of repeatedly restarting a slow large file.
+
+    Args:
+        tmp_path: Task-owned retained log fixture.
+        monkeypatch: Bound each pass to a small amount of source scanning.
+    """
+    path = tmp_path / "server.log"
+    path.write_bytes(b"normal entry\n" * 30000)
+    log_viewer._TAIL_REDACTION_CACHE.clear()
+    tick = 0
+    def clock():
+        nonlocal tick
+        tick += 3
+        return tick
+    monkeypatch.setattr(log_viewer.time, "monotonic", clock)
+    pending = 0
+    for _ in range(12):
+        page = log_viewer.file_page(path, source="scan-progress", tail=True, limit=100)
+        if page["text"]:
+            break
+        pending += 1
+        assert "continues automatically" in page["notice"]
+    else:
+        pytest.fail("tail never became readable")
+    assert pending > 1
+    assert page["text"].splitlines() == ["normal entry"] * 100
+    assert log_viewer.file_page(path, source="scan-progress", tail=True, limit=100)["text"] == page["text"]

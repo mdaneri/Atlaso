@@ -9,8 +9,10 @@ import os
 import re
 import stat
 import time
+from collections import OrderedDict
 from contextlib import nullcontext
 from pathlib import Path
+from threading import RLock
 from typing import Any
 
 from itsdangerous import BadSignature, URLSafeSerializer
@@ -219,7 +221,89 @@ def _tail_offset(handle: Any, *, compressed: bool, deadline: float, end: int | N
     return offset + selected_start, False
 
 
+class _TailScanPending(ValueError):
+    """Signal that a bounded redaction scan saved progress for the next request."""
+
+
+_TAIL_REDACTION_CACHE: OrderedDict[tuple[str, int, int], tuple[bool, bytes, bytes, int, int]] = OrderedDict()
+_TAIL_REDACTION_LOCK = RLock()
+
+
 def _tail_private_key(paths: list[Path], offset: int, *, deadline: float) -> bool:
+    """Recover redaction state using bounded, verified in-process checkpoints.
+
+    Args:
+        paths: Fixed retained files through the selected newest source.
+        offset: Uncompressed byte boundary within the selected source.
+        deadline: Shared monotonic deadline for the request.
+    """
+    if any(path.suffix == ".gz" for path in paths):
+        return _compressed_tail_private_key(paths, offset, deadline=deadline)
+    identities = [path.lstat() for path in paths]
+    context = hashlib.sha256(repr([
+        (str(path), info.st_dev, info.st_ino,
+         info.st_size if index < len(paths) - 1 else None,
+         info.st_mtime_ns if index < len(paths) - 1 else None)
+        for index, (path, info) in enumerate(zip(paths, identities, strict=True))
+    ]).encode()).hexdigest()
+    stop = min(deadline - 0.25, time.monotonic() + 2)
+    with _TAIL_REDACTION_LOCK:
+        candidates = [key for key in _TAIL_REDACTION_CACHE if key[0] == context
+                      and (key[1] < len(paths) - 1 or key[2] <= offset)]
+        checkpoint = max(candidates, key=lambda key: key[1:]) if candidates else None
+        cached = _TAIL_REDACTION_CACHE.get(checkpoint) if checkpoint else None
+    opened, carry, start_index, start_offset = False, b"", 0, 0
+    if checkpoint and cached:
+        start_index, start_offset = checkpoint[1:]
+        opened, carry, fingerprint, saved_size, saved_mtime = cached
+        path = paths[start_index]
+        descriptor = os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_BINARY", 0) | getattr(os, "O_NONBLOCK", 0))
+        with os.fdopen(descriptor, "rb") as raw:
+            if not stat.S_ISREG(os.fstat(raw.fileno()).st_mode):
+                raise ValueError("Retained log is not a regular file.")
+            with (gzip.GzipFile(fileobj=raw) if path.suffix == ".gz" else nullcontext(raw)) as stream:
+                prefix = stream.read(min(start_offset, 4096))
+                stream.seek(max(0, start_offset - 128))
+                anchor = stream.read(min(start_offset, 128))
+        if (hashlib.sha256(prefix + anchor).digest() != fingerprint or
+                (identities[start_index].st_mtime_ns != saved_mtime and identities[start_index].st_size <= saved_size)):
+            with _TAIL_REDACTION_LOCK:
+                for key in candidates:
+                    _TAIL_REDACTION_CACHE.pop(key, None)
+            opened, carry, start_index, start_offset = False, b"", 0, 0
+    for index in range(start_index, len(paths)):
+        path = paths[index]
+        descriptor = os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_BINARY", 0) | getattr(os, "O_NONBLOCK", 0))
+        with os.fdopen(descriptor, "rb") as raw:
+            if not stat.S_ISREG(os.fstat(raw.fileno()).st_mode):
+                raise ValueError("Retained log is not a regular file.")
+            with (gzip.GzipFile(fileobj=raw) if path.suffix == ".gz" else nullcontext(raw)) as stream:
+                prefix = stream.read(4096)
+                stream.seek(start_offset if index == start_index else 0)
+                while index < len(paths) - 1 or stream.tell() < offset:
+                    chunk = stream.read(min(65536, offset - stream.tell()) if index == len(paths) - 1 else 65536)
+                    if not chunk:
+                        break
+                    window = carry + chunk
+                    for match in re.finditer(rb"-----(BEGIN|END) [A-Z ]*PRIVATE KEY-----", window):
+                        opened = match.group(1) == b"BEGIN"
+                    carry = window[-128:]
+                    scanned = stream.tell()
+                    # Only source fingerprints and bounded state remain in process memory.
+                    anchor = chunk[-128:] if len(chunk) >= 128 else window[-min(scanned, 128):]
+                    key = (context, index, scanned)
+                    with _TAIL_REDACTION_LOCK:
+                        _TAIL_REDACTION_CACHE[key] = (opened, carry, hashlib.sha256(prefix[:min(scanned, 4096)] + anchor).digest(),
+                                                      identities[index].st_size, identities[index].st_mtime_ns)
+                        _TAIL_REDACTION_CACHE.move_to_end(key)
+                        while len(_TAIL_REDACTION_CACHE) > 128:
+                            _TAIL_REDACTION_CACHE.popitem(last=False)
+                    if time.monotonic() > stop and (index < len(paths) - 1 or scanned < offset):
+                        raise _TailScanPending("Preparing retained history; the next request resumes this scan.")
+    return opened
+
+
+def _compressed_tail_private_key(paths: list[Path], offset: int, *, deadline: float) -> bool:
     """Recover redaction state before a tail boundary without retaining source contents.
 
     Args:
@@ -342,7 +426,12 @@ def file_page(path: Path, *, source: str, cursor: str = "", limit: int = PAGE_LI
             offset = position.get("offset", 0)
             if (tail and not cursor) or backward:
                 offset, oversized = _tail_offset(handle, compressed=compressed, deadline=deadline, end=before_end, limit=max(1, min(PAGE_LINES, limit)))
-                position = {"oversized": oversized, "private_key": _tail_private_key(paths[:index + 1], offset, deadline=deadline)}
+                try:
+                    private_key = _tail_private_key(paths[:index + 1], offset, deadline=deadline)
+                except _TailScanPending:
+                    return {"source": source, "text": "", "available": True, "has_more": False,
+                            "cursor": cursor, "next_cursor": cursor, "notice": "Preparing retained history; this continues automatically."}
+                position = {"oversized": oversized, "private_key": private_key}
             if type(offset) is not int or offset < 0:
                 raise ValueError("Invalid log history position.")
             prefix_length = position.get("prefix_length", 0)

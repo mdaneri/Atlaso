@@ -511,9 +511,10 @@ def build_router(dependencies: OperationsUiDependencies) -> OperationsUiRouter:
             snapshot = ["No dedicated log source is configured for this service."]
         else:
             try:
-                snapshot = log_viewer.source_page(source, tail=True, limit=100)["text"].splitlines()
+                page = log_viewer.source_page(source, tail=True, limit=100)
+                snapshot = page["text"].splitlines()
                 if not snapshot:
-                    snapshot = ["No retained log entries are available."]
+                    snapshot = [page.get("notice") or "No retained log entries are available."]
             except (ValueError, OSError):
                 snapshot = ["Log history is temporarily unavailable. Reload this page to retry."]
         return render(
