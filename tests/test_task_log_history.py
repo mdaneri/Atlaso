@@ -181,6 +181,21 @@ def test_task_marker_fragments_survive_commits(history_db, stream, split):
     assert "visible-after-split-close" in _all(db)
 
 
+@pytest.mark.parametrize("structured", [False, True])
+def test_numeric_log_value_inside_private_block_is_concealed(history_db, structured):
+    """Non-string output retains concealment without replaying rendered structures.
+
+    Args:
+        history_db: Transactional task fixture.
+        structured: Place the numeric value inside a structured producer record.
+    """
+    db = history_db
+    body = {"output": 9876543210123456789} if structured else 9876543210123456789
+    _job(db, {"log_lines": ["-----BEGIN PRIVATE KEY-----", body, "-----END PRIVATE KEY-----", "visible"]})
+    assert "9876543210123456789" not in _all(db)
+    assert "visible" in _all(db)
+
+
 def test_legacy_initialization_restart_and_deletion(history_db):
     """Legacy capture is idempotent and task deletion removes all owned history.
 

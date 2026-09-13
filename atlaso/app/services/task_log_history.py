@@ -90,7 +90,7 @@ def _safe_value(value: Any, private: bool = False, key: str = "", parser: dict[s
     if isinstance(value, str):
         lines, private = _safe_lines([value], private, parser)
         return "\n".join(lines), private
-    return value, private
+    return "[redacted private key]" if private else value, private
 
 
 def capture_task_history(connection: Connection, job_id: str, audit_ids: tuple[int, ...] = ()) -> None:
