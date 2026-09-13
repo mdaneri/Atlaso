@@ -2162,8 +2162,14 @@ def run_worker_once() -> str | None:
 def _observe_network_addresses() -> None:
     """Keep native address evidence fresh while the worker executes longer jobs."""
     from atlaso.app.services.network_address_status import refresh_status
+    from atlaso.app.ui import retry_network_transaction_cleanup
 
     while not _stop_requested:
+        try:
+            with SessionLocal() as recovery_db:
+                retry_network_transaction_cleanup(recovery_db)
+        except Exception:  # noqa: BLE001 - retry on the next bounded worker pass.
+            LOGGER.warning("Network transaction cleanup remains pending; worker will retry.")
         try:
             with SessionLocal() as observation_db:
                 refresh_status(observation_db)

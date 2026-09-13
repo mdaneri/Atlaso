@@ -3290,6 +3290,62 @@ def recover_interrupted_vcf_depot_software_id_jobs(db: Session) -> int:
     return len(jobs)
 
 
+def retry_network_transaction_cleanup(db: Session) -> int:
+    """Retry one abandoned Network cleanup without replaying Apply components.
+
+    Args:
+        db: Worker session for an isolated, bounded recovery pass.
+
+    Returns:
+        Number of transactions reconciled successfully in this pass.
+    """
+    jobs = db.scalars(select(Job).where(
+        Job.type == "appliance-apply",
+        Job.result.like('%"state": "cleanup-required"%'),
+        Job.result.like('%"network_runtime_commit_pending": true%'),
+    ).limit(1)).all()
+    for job in jobs:
+        original = job.result
+        payload = _job_payload(job)
+        if not payload.get("network_runtime_commit_pending"):
+            continue
+        # The runner publishes cleanup-required only after abandoning execution.
+        # Never infer commit authority from step status or current desired state.
+        recovery = SystemAdapter(dry_run=False).reconcile_network_transaction(
+            job.id, committed=payload.get("network_application_committed") is True,
+        )
+        payload["network_transaction_recovery"] = adapter_result_to_payload(recovery)
+        payload["network_cleanup_attempted_at"] = utcnow().isoformat()
+        if recovery.returncode == 0:
+            payload["network_runtime_commit_pending"] = False
+            payload["state"] = JobStatus.FAILED.value
+        # A cancellation or another recovery writer must not be overwritten.
+        claimed = db.execute(update(Job).where(Job.id == job.id, Job.result == original).values(
+            result=json.dumps(payload, indent=2),
+        ).execution_options(synchronize_session=False)).rowcount
+        if claimed != 1:
+            db.rollback()
+            continue
+        db.refresh(job)
+        if recovery.returncode == 0:
+            finished = utcnow()
+            for step in job.steps:
+                if step.status in {JobStatus.PENDING.value, JobStatus.RUNNING.value}:
+                    step.status = "skipped"
+                    step.error = "Skipped after Network transaction cleanup interrupted Apply."
+                    step.finished_at = finished
+                    step.progress_percent = 100
+            job.status = JobStatus.FAILED.value
+            job.finished_at = finished
+            job.error = (
+                "Network transaction cleanup completed. Review applied state and submit any remaining components."
+            )
+            job.progress_percent = 100
+        db.commit()
+        return int(recovery.returncode == 0)
+    return 0
+
+
 def recover_interrupted_appliance_apply_jobs(db: Session) -> int:
     """Return recover interrupted appliance apply jobs.
 

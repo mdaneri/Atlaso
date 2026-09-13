@@ -37,6 +37,46 @@ def resource(*, key="physical:1", name="eth0", desired="192.0.2.20", identity="0
             "desired": [desired], "checking": True}
 
 
+@pytest.mark.parametrize("resolved", [False, True])
+def test_settings_restore_preserves_local_conflict_resolution(client, resolved):
+    """Keep helper history and local resolution in agreement across a real restore.
+
+    Args:
+        client: Application database fixture.
+        resolved: Whether a new lease already resolved the retained conflict.
+    """
+    import json
+
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import Setting
+    from atlaso.app.services.network_address_status import STATUS_KEY, read_status
+    from atlaso.app.services.settings_archive import (
+        export_settings_archive,
+        restore_settings_archive,
+    )
+
+    desired = {**resource(desired=""), "desired": [], "dhcp4": True}
+    event = {"name": "eth0", "address": "192.0.2.20", "detected_at": "2026-09-12T00:00:00+00:00"}
+    sample = observation(conflicts=[event])
+    sample["links"][0]["addresses"][0]["source"] = "DHCPv4"
+    previous = project_status(sample, {}, [desired])
+    if resolved:
+        sample["links"][0]["addresses"][0]["address"] = "192.0.2.30"
+        previous = project_status(sample, previous, [desired])
+    assert previous["rows"]["physical:1"]["conflict_resolved"] is resolved
+    with SessionLocal() as db:
+        db.add(Setting(key=STATUS_KEY, value=json.dumps(previous)))
+        db.commit()
+        archive = export_settings_archive(db, actor="test")
+        assert all(row["key"] != STATUS_KEY for row in archive["data"]["settings"])
+        restore_settings_archive(db, archive)
+        retained = read_status(db)
+        assert retained == previous
+        for _ in range(3):
+            retained = project_status(sample, retained, [desired])
+            assert retained["rows"]["physical:1"]["state"] == ("assigned" if resolved else "conflict")
+
+
 def test_failed_candidate_remains_distinct_from_restored_address():
     """Retain a rejected candidate while displaying the healthy rollback address separately."""
     event = {"name": "eth0", "address": "192.0.2.20", "detected_at": "2026-09-12T00:00:00+00:00", "mac": ""}

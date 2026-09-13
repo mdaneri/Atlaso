@@ -10,13 +10,15 @@ from tests.routers.ui.helpers import login
 
 
 @pytest.mark.parametrize("commit_fails", [False, True])
-def test_network_apply_acknowledges_only_durable_executed_baseline(client, monkeypatch, commit_fails):
+@pytest.mark.parametrize("cleanup_fails", [False, True])
+def test_network_apply_acknowledges_only_durable_executed_baseline(client, monkeypatch, commit_fails, cleanup_fails):
     """Bind runtime acknowledgement to the executed snapshot and database commit.
 
     Args:
         client: Isolated application database fixture.
         monkeypatch: Replace host operations and inject the commit failure.
         commit_fails: Fail the baseline transaction after its flag was assigned.
+        cleanup_fails: Inject a transient post-commit helper failure.
     """
     from sqlalchemy.orm import Session
 
@@ -67,7 +69,9 @@ def test_network_apply_acknowledges_only_durable_executed_baseline(client, monke
                 assert payload["network_application_committed"] is committed
                 assert (baseline.get("snapshot_hash") == "executed") is committed
             acknowledgements.append(committed)
-            return AdapterResult(command=["network", "reconcile"], returncode=0, dry_run=False)
+            return AdapterResult(command=["network", "reconcile"],
+                                 returncode=2 if cleanup_fails and committed and len(acknowledgements) == 1 else 0,
+                                 dry_run=False)
 
     def execute(candidate, **_kwargs):
         """Verify pending ownership was persisted before host mutation.
@@ -114,7 +118,14 @@ def test_network_apply_acknowledges_only_durable_executed_baseline(client, monke
     assert injected is commit_fails
     with SessionLocal() as db:
         completed = db.get(Job, "network-commit-test")
-        assert completed.status == (JobStatus.FAILED.value if commit_fails else JobStatus.SUCCEEDED.value)
+        if cleanup_fails and not commit_fails:
+            assert completed.status == JobStatus.RUNNING.value
+            assert ui.active_appliance_apply_job(db).id == completed.id
+            assert ui.retry_network_transaction_cleanup(db) == 1
+            assert acknowledgements == [True, True]
+            assert ui.load_appliance_apply_baselines(db)["network"]["snapshot_hash"] == "executed"
+            assert ui.active_appliance_apply_job(db) is None
+        assert completed.status == (JobStatus.FAILED.value if commit_fails or cleanup_fails else JobStatus.SUCCEEDED.value)
         assert json.loads(completed.result)["network_runtime_commit_pending"] is False
 
 
@@ -169,6 +180,73 @@ def test_interrupted_network_apply_uses_durable_application_commit(client, monke
         assert busy.status == JobStatus.RUNNING.value
         assert json.loads(busy.result)["network_runtime_commit_pending"] is True
         assert ui.active_appliance_apply_job(db).id == "network-busy"
+
+
+@pytest.mark.parametrize("committed", [False, True])
+def test_network_cleanup_worker_retries_without_restart(client, monkeypatch, committed):
+    """Release abandoned ownership only after helper recovery succeeds.
+
+    Args:
+        client: Application database fixture.
+        monkeypatch: Substitute a transiently unavailable helper.
+        committed: Durable candidate commit authority, independent of step status.
+    """
+    from atlaso.app import ui
+    from atlaso.app.adapters.system import AdapterResult
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import Job, JobStatus, JobStep
+
+    calls = []
+
+    class Adapter:
+        """Fail the first cleanup pass and succeed on the next worker cycle."""
+
+        def __init__(self, **_kwargs):
+            """Accept production options.
+
+            Args:
+                **_kwargs: Unused host options.
+            """
+
+        def reconcile_network_transaction(self, job_id, *, committed=False):
+            """Record exact persisted disposition on every retry.
+
+            Args:
+                job_id: Transaction owner.
+                committed: Durable application commit flag.
+            """
+            calls.append((job_id, committed))
+            return AdapterResult(command=["network", "reconcile"], dry_run=False,
+                                 returncode=2 if len(calls) == 1 else 0)
+
+    monkeypatch.setattr(ui, "SystemAdapter", Adapter)
+    with SessionLocal() as db:
+        job = Job(id="cleanup-retry", type="appliance-apply", status=JobStatus.RUNNING.value, created_by="admin",
+                  result=json.dumps({"state": "running", "network_runtime_commit_pending": True,
+                                     "network_application_committed": committed}))
+        db.add(job)
+        db.add(JobStep(id="cleanup-retry:remaining", job=job, component_key="dns", label="DNS",
+                       position=2, status=JobStatus.PENDING.value, result="{}"))
+        db.commit()
+        assert ui.retry_network_transaction_cleanup(db) == 0
+        assert calls == []  # The worker must never reconcile a live Apply runner.
+        payload = json.loads(job.result)
+        payload["state"] = "cleanup-required"
+        job.result = json.dumps(payload)
+        db.commit()
+        assert ui.retry_network_transaction_cleanup(db) == 0
+        assert ui.active_appliance_apply_job(db).id == job.id
+        assert json.loads(job.result)["network_runtime_commit_pending"] is True
+        assert job.finished_at is None
+        assert ui.retry_network_transaction_cleanup(db) == 1
+        assert calls == [(job.id, committed), (job.id, committed)]
+        assert json.loads(job.result)["network_runtime_commit_pending"] is False
+        assert json.loads(job.result)["network_application_committed"] is committed
+        assert job.status == JobStatus.FAILED.value
+        assert job.steps[0].status == "skipped"
+        assert ui.active_appliance_apply_job(db) is None
+        assert ui.retry_network_transaction_cleanup(db) == 0
+        assert len(calls) == 2
 
 
 def test_management_path_signature_covers_dedicated_and_flagged_access_transitions():

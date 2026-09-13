@@ -287,6 +287,11 @@ live helper, and an unresolved marker blocks another Apply. Terminal backup clea
 not cause committed configuration to be rolled back on a later restart.
 Acknowledgement remains pending until backup removal and durable marker cleanup succeed;
 cleanup failure preserves the committed baseline and blocks another Apply until recovery completes.
+The worker retries abandoned cleanup once per observation cycle without replaying configuration.
+After cleanup succeeds, the interrupted task ends as failed with its applied baseline preserved;
+review the task and submit any remaining components. Persistent failures keep the lock and recovery
+evidence until a later retry succeeds. Settings restores preserve this appliance's native conflict
+resolution and link identity history; that operational history is never exported or imported.
 VMware OVF first boot prepares configuration and deployment credentials before networkd starts.
 A second customization stage reloads the management link and verifies native address activation
 before recording success or clearing the console review handshake. A conflict or unavailable
