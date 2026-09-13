@@ -396,6 +396,8 @@ def build_router(dependencies: PhysicalVlanApiDependencies) -> PhysicalVlanApiRo
             raise HTTPException(status_code=404, detail="VLAN not found")
         had_management_candidate = desired_management_candidate_exists(db)
         values = dependencies.validate_vlan_api_payload(payload, db)
+        if "check_duplicate_ip_addresses" not in payload.model_fields_set:
+            values["check_duplicate_ip_addresses"] = vlan.check_duplicate_ip_addresses
         for key, value in values.items():
             setattr(vlan, key, value)
         vlan.name = f"{vlan.parent_interface}.{vlan.vlan_id}"

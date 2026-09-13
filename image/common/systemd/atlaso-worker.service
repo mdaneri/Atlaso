@@ -17,6 +17,7 @@ UMask=0027
 RuntimeDirectory=atlaso-automation-vaults
 RuntimeDirectoryMode=0700
 ExecStartPre=+/opt/atlaso/bin/atlaso-helper appliance-update recover-release --real
+ExecStartPre=+/opt/atlaso/bin/atlaso-helper network prepare-observation --real
 ExecStart=/opt/atlaso/.venv/bin/python -m atlaso.app.worker
 Restart=on-failure
 RestartSec=5

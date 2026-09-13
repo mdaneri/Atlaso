@@ -7,6 +7,7 @@ import logging
 import os
 import re
 import signal
+import threading
 import time
 from datetime import datetime, timezone
 from functools import partial
@@ -2158,6 +2159,25 @@ def run_worker_once() -> str | None:
     return job_id
 
 
+def _observe_network_addresses() -> None:
+    """Keep native address evidence fresh while the worker executes longer jobs."""
+    from atlaso.app.services.network_address_status import refresh_status
+    from atlaso.app.ui import retry_network_transaction_cleanup
+
+    while not _stop_requested:
+        try:
+            with SessionLocal() as recovery_db:
+                retry_network_transaction_cleanup(recovery_db)
+        except Exception:  # noqa: BLE001 - retry on the next bounded worker pass.
+            LOGGER.warning("Network transaction cleanup remains pending; worker will retry.")
+        try:
+            with SessionLocal() as observation_db:
+                refresh_status(observation_db)
+        except Exception:  # noqa: BLE001 - observation failure cannot interrupt other jobs.
+            LOGGER.warning("Native address evidence unavailable; previous observation retained.")
+        time.sleep(POLL_SECONDS)
+
+
 def main() -> int:
     """Run the command-line entry point.
 
@@ -2194,6 +2214,7 @@ def main() -> int:
         return 1
     if not ensure_vcf_depot_running_operation_index():
         LOGGER.warning("Deferred the VCFDT runtime guard until identity-task startup recovery completes")
+    threading.Thread(target=_observe_network_addresses, name="network-address-observer", daemon=True).start()
     LOGGER.info("Atlaso worker started")
     while not _stop_requested:
         handled = run_worker_once()

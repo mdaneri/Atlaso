@@ -278,7 +278,8 @@ def test_physical_and_vlan_pages_render(client):
     assert 'label: "Edit VLAN"' in vlan_table_js
     assert "onOpenRow: canWrite" in vlan_table_js
     assert 'markNewRecordRow(row, "name")' in vlan_table_js
-    assert "atlasoGridWizardRequest(form.action, new FormData(form))" in vlan_table_js
+    assert 'submitted.set("check_duplicate_ip_addresses"' in vlan_table_js
+    assert "atlasoGridWizardRequest(form.action, submitted)" in vlan_table_js
     assert "const updateVlanCount = () =>" in vlan_table_js
     assert "table.getData().filter((row) => !row.is_new).length" in vlan_table_js
     assert "updateVlanCount();" in vlan_table_js
@@ -1161,6 +1162,7 @@ def test_vlan_interface_create_edit_delete_and_apply(client):
             "mtu": "1500",
             "role": "access",
             "enabled": "on",
+            "check_duplicate_ip_addresses": "false",
             "csrf": csrf,
         },
         headers={"X-Atlaso-Grid": "1", "Accept": "application/json"},
@@ -1169,6 +1171,7 @@ def test_vlan_interface_create_edit_delete_and_apply(client):
     created_row = created.json()["vlan"]
     assert created_row["name"] == "eth1.50"
     assert created_row["enabled"] is True
+    assert created_row["check_duplicate_ip_addresses"] is False
 
     updated = client.post(
         f"/vlan-interfaces/{created_row['id']}/edit",
@@ -1186,6 +1189,7 @@ def test_vlan_interface_create_edit_delete_and_apply(client):
     )
     assert updated.status_code == 200
     assert updated.json()["vlan"] == {
+        "check_duplicate_ip_addresses": False,
         "id": created_row["id"],
         "name": "eth1.50",
         "parent_interface": "eth1",

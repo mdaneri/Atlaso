@@ -344,6 +344,13 @@ class SystemAdapter:
         """Return esx storage logs."""
         return self._helper_result("esx-storage", "logs", dry_run_message="dry-run: ESX Storage log read command recorded", timeout_seconds=5)
 
+    def read_network_address_status(self) -> AdapterResult:
+        """Read sanitized native network outcomes without sending packets or changing configuration."""
+        return self._helper_result(
+            "network", "address-status", timeout_seconds=15,
+            dry_run_message='{"complete":false,"links":[],"conflicts":[]}',
+        )
+
     def read_dhcp_leases(self) -> AdapterResult:
         """Return dhcp leases."""
         if self.dry_run:
@@ -638,6 +645,21 @@ class SystemAdapter:
             The validate network config result.
         """
         return self._helper_result("network", "validate", config_path, dry_run_message="dry-run: network validation command recorded")
+
+    def reconcile_network_transaction(self, job_id: str, *, committed: bool = False) -> AdapterResult:
+        """Acknowledge a committed Network baseline or recover its interrupted helper.
+
+        Args:
+            job_id: Exact owning application task, or manual for standalone helper work.
+            committed: Whether the executed baseline and task result are durably committed.
+
+        Returns:
+            Bounded helper reconciliation result.
+        """
+        return self._helper_result(
+            "network", "acknowledge" if committed else "recover", job_id,
+            dry_run_message="dry-run: network transaction reconciliation recorded", timeout_seconds=180,
+        )
 
     def validate_management_handoff(self, manifest_path: str) -> AdapterResult:
         """Validate a staged management-plane handoff.

@@ -9041,6 +9041,7 @@ async function postNetworkAction(url, data, csrf, options = {}) {
       key === "oper_state" ||
       key === "vlan_count" ||
       key === "parent_missing" ||
+      key === "address_status" ||
       key === "admin_up"
     ) {
       continue;
@@ -9517,6 +9518,64 @@ async function deleteVlanInterfaceFromMenu(row, csrf) {
   }
 }
 
+function networkAddressStatusFormatter(cell) {
+  if (cell.getRow().getData().is_new) return "";
+  return networkAddressStatusHtml(cell.getValue());
+}
+
+function networkAddressStatusHtml(value) {
+  const status = value || {};
+  const labels = { conflict: "IP conflict", checking: "Checking", assigned: "Addresses active", unknown: "Unable to check" };
+  const tone = { conflict: "error", checking: "warn", assigned: "good", unknown: "muted" }[status.state] || "muted";
+  const active = (status.active_addresses || []).join(", ");
+  const failure = status.last_conflict;
+  return `<strong class="status-pill ${tone}">${escapeHtml(labels[status.state] || "Unable to check")}</strong><br><small>${escapeHtml(status.detail || "Native address evidence has not been collected.")}${active ? `<br>Active: ${escapeHtml(active)}` : ""}${failure ? `<br>Detected: ${escapeHtml(failure.detected_at)}${failure.mac ? ` ; MAC: ${escapeHtml(failure.mac)}` : ""}` : ""}</small>`;
+}
+
+function initializeNetworkAddressStatusRefresh() {
+  const element = document.querySelector("#physical-interfaces-table, #vlan-interfaces-table");
+  if (!(element instanceof HTMLElement)) return;
+  let pending = false;
+  let timer;
+  const refresh = async () => {
+    if (pending || document.visibilityState === "hidden") return;
+    pending = true;
+    try {
+      const url = new URL(window.location.href);
+      url.searchParams.set("network_address_status", "1");
+      const response = await fetch(url, { credentials: "same-origin", headers: { Accept: "application/json" }, cache: "no-store" });
+      if (!response.ok) throw new Error("Address evidence unavailable");
+      const payload = await response.json();
+      const table = element.atlasoTabulator;
+      if (table && Array.isArray(payload.rows)) {
+        for (const item of payload.rows) {
+          const row = table.getRow(item.id);
+          if (row) await row.update({ address_status: item.address_status });
+          const form = document.getElementById("vlan-interface-form");
+          if (form?.elements.record_id?.value === String(item.id)) {
+            const detail = form.querySelector("[data-network-address-detail]");
+            const html = networkAddressStatusHtml(item.address_status);
+            if (detail && detail.innerHTML !== html) detail.innerHTML = html;
+          }
+        }
+      }
+    } catch (_error) {
+      element.atlasoTabulator?.getRows().forEach((row) => {
+        if (!row.getData().is_new) row.update({ address_status: { ...(row.getData().address_status || {}), state: "unknown", detail: "Live refresh unavailable; previous evidence retained." } });
+      });
+    } finally {
+      pending = false;
+      window.clearTimeout(timer);
+      if (document.visibilityState !== "hidden") timer = window.setTimeout(refresh, 5000);
+    }
+  };
+  document.addEventListener("visibilitychange", () => {
+    window.clearTimeout(timer);
+    if (document.visibilityState !== "hidden") refresh();
+  });
+  refresh();
+}
+
 function initializePhysicalInterfacesTable() {
   const tableElement = document.getElementById("physical-interfaces-table");
   if (!(tableElement instanceof HTMLElement)) {
@@ -9528,6 +9587,7 @@ function initializePhysicalInterfacesTable() {
     return;
   }
   const csrf = tableElement.dataset.csrf || "";
+  const canWrite = tableElement.dataset.canWrite === "true";
   const roleOptions = roleValues(JSON.parse(tableElement.dataset.roleOptions || "[]"));
   const ipv4MethodOptions = labeledValues(JSON.parse(tableElement.dataset.ipv4MethodOptions || "[]"), {
     static: "Static",
@@ -9545,7 +9605,6 @@ function initializePhysicalInterfacesTable() {
       index: "id",
       layout: "fitColumns",
       height: "420px",
-      rowHeight: 28,
       placeholder: "No physical interfaces discovered.",
       reactiveData: false,
       rowContextMenu: [
@@ -9749,6 +9808,14 @@ function initializePhysicalInterfacesTable() {
           },
         },
         {
+          title: "Check duplicate IPs", field: "check_duplicate_ip_addresses",
+          formatter: atlasoBooleanFormatter, editor: "tickCross",
+          editable: (cell) => canWrite && cell.getRow().getData().oper_state !== "missing",
+          cellEdited: (cell) => autoSavePhysicalInterface(cell, csrf),
+          minWidth: 155, headerTooltip: "Check IPv4 addresses before activation. Enabled by default; Network Apply is required. Native IPv6 DAD remains enabled.",
+        },
+        { title: "Address status", field: "address_status", formatter: networkAddressStatusFormatter, width: 320, minWidth: 270, variableHeight: true },
+        {
           title: "Management UI",
           field: "access_management_ui_enabled",
           formatter: (cell) => cell.getRow().getData().role === "management"
@@ -9815,7 +9882,7 @@ function initializePhysicalInterfacesTable() {
         { title: "Source", field: "inventory_source", width: 100, headerSort: false },
       ],
     };
-    window.AtlasoUiPatterns.createGrid({
+    tableElement.atlasoTabulator = window.AtlasoUiPatterns.createGrid({
       element: tableElement,
       pattern: "direct-edit",
       options: atlasoGridOptions17,
@@ -10773,7 +10840,6 @@ function initializeVlanInterfacesTable() {
         index: "id",
         layout: "fitColumns",
         height: "420px",
-        rowHeight: 30,
         placeholder: "No VLAN interfaces configured.",
         reactiveData: false,
         columns: [
@@ -10826,6 +10892,11 @@ function initializeVlanInterfacesTable() {
           formatter: (cell) => cell.getRow().getData().is_new ? "" : escapeHtml(cell.getValue()),
           minWidth: 130,
         },
+        {
+          title: "Check duplicate IPs", field: "check_duplicate_ip_addresses",
+          formatter: (cell) => cell.getRow().getData().is_new ? "" : atlasoBooleanFormatter(cell), minWidth: 155,
+        },
+        { title: "Address status", field: "address_status", formatter: networkAddressStatusFormatter, width: 320, minWidth: 270, variableHeight: true },
         {
           title: "Management UI",
           field: "access_management_ui_enabled",
@@ -10912,10 +10983,16 @@ function initializeVlanInterfacesTable() {
           role: context?.role || "access",
           access_management_ui_enabled: context ? Boolean(context.access_management_ui_enabled) : false,
           enabled: context ? Boolean(context.enabled) : true,
+          check_duplicate_ip_addresses: context?.check_duplicate_ip_addresses !== false,
         });
         form.action = context
           ? managementUiPath(`/vlan-interfaces/${context.id}/edit`)
           : managementUiPath("/vlan-interfaces");
+        const addressDetail = form.querySelector("[data-network-address-detail]");
+        if (addressDetail) {
+          addressDetail.hidden = !context;
+          addressDetail.innerHTML = context ? networkAddressStatusHtml(context.address_status) : "";
+        }
         submitButton.textContent = context ? "Update VLAN interface" : "Create VLAN interface";
         updateDerivedName();
       },
@@ -10972,6 +11049,7 @@ function initializeVlanInterfacesTable() {
         { label: "Interface", field: "derived_name" },
         { label: "Trunk parent", field: "parent_interface" },
         { label: "VLAN ID", field: "vlan_id" },
+        { label: "Check duplicate IPs", field: "check_duplicate_ip_addresses" },
         { label: "IPv4 CIDR", field: "ip_cidr" },
         { label: "IPv6 CIDR", field: "ipv6_cidr" },
         { label: "MTU", field: "mtu" },
@@ -10981,7 +11059,9 @@ function initializeVlanInterfacesTable() {
       ]),
       onSubmit: async () => {
         const recordId = String(form.elements.record_id.value || "");
-        const response = await atlasoGridWizardRequest(form.action, new FormData(form));
+        const submitted = new FormData(form);
+        submitted.set("check_duplicate_ip_addresses", form.elements.check_duplicate_ip_addresses.checked ? "true" : "false");
+        const response = await atlasoGridWizardRequest(form.action, submitted);
         const payload = response?.vlan;
         if (!payload) {
           return { valid: false, message: "Atlaso saved the request without returning the VLAN row." };
@@ -24287,3 +24367,5 @@ document.addEventListener("DOMContentLoaded", () => {
   registerAtlasoPrismLanguages();
   highlightConfigPreviews();
 });
+
+initializeNetworkAddressStatusRefresh();
