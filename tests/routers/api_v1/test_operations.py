@@ -66,3 +66,39 @@ def test_operational_api_transports_reject_wrong_scope(client):
     assert client.get("/api/v1/logs", headers=headers).status_code == 403
     assert client.get("/api/v1/audit", headers=headers).status_code == 403
     assert client.get("/api/v1/jobs", headers=headers).status_code == 403
+
+
+def test_cancellation_api_matches_backend_capability_and_preserves_running(client):
+    """API callers receive the same reasons and durable request semantics as Tasks.
+
+    Args:
+        client: Initialized authenticated test application.
+    """
+    import json
+
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import Job
+
+    raw_token, _ = create_token(client, ["admin:all", "read:dashboard"])
+    headers = {"Authorization": f"Bearer {raw_token}"}
+    with SessionLocal() as db:
+        db.add_all([
+            Job(id="api-cancel-unsafe", type="managed-script", status="running", created_by="admin"),
+            Job(id="api-cancel-check", type="appliance-update", status="running", created_by="admin",
+                task_config_json=json.dumps({"mode": "check", "selected_streams": ["atlaso_release"]})),
+        ])
+        db.commit()
+    unsafe = client.get("/api/v1/jobs/api-cancel-unsafe", headers=headers).json()
+    assert not unsafe["can_cancel"]
+    rejected = client.post("/api/v1/jobs/api-cancel-unsafe/cancel", headers=headers)
+    assert rejected.status_code == 409
+    assert rejected.json()["detail"] == unsafe["cancel_reason"]
+    accepted = client.post("/api/v1/jobs/api-cancel-check/cancel", headers=headers)
+    assert accepted.status_code == 200
+    assert accepted.json()["status"] == "running"
+    assert accepted.json()["cancel_requested_at"]
+    assert accepted.json()["cancel_requested_by"] == "admin"
+    assert accepted.json()["cancel_completed_at"] is None
+    assert not accepted.json()["can_cancel"]
+    repeated = client.post("/api/v1/jobs/api-cancel-check/cancel", headers=headers)
+    assert repeated.json()["cancel_requested_at"] == accepted.json()["cancel_requested_at"]

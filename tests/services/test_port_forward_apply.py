@@ -159,15 +159,18 @@ def test_listener_only_apply_does_not_infer_forwarding_from_unreadable_snapshot(
             assert not result["traffic_publishing_pair"]
 
 
-@pytest.mark.parametrize("management_move", [False, True])
-@pytest.mark.parametrize("release_listener", [False, True])
-@pytest.mark.parametrize("enable_nts", [False, True])
-def test_global_submission_publishes_captured_port_forward_pair(client, management_move, release_listener, enable_nts):
+@pytest.mark.parametrize("management_move,release_listener,enable_nts,cancel_after_pair", [
+    (management, listener, nts, False)
+    for management in (False, True) for listener in (False, True) for nts in (False, True)
+] + [(False, False, False, True)])
+def test_global_submission_publishes_captured_port_forward_pair(client, monkeypatch, management_move, release_listener, enable_nts, cancel_after_pair):
     """The real submission and task runner keep Firewall/NAT baselines together.
 
     Args:
         client: Isolated application with dry-run host adapters.
+        monkeypatch: Request cancellation at the completed paired-publication boundary.
         management_move: Include the pair in a protected management handoff.
+        cancel_after_pair: Verify completion wins when the pair was the final work.
         release_listener: Disable KMS while assigning its previous endpoint to forwarding.
         enable_nts: Preserve CA deployment before first NTS enablement.
     """
@@ -187,6 +190,24 @@ def test_global_submission_publishes_captured_port_forward_pair(client, manageme
     from tests.services.test_port_forwarding import payload
     from tests.test_vsphere_key_providers import _public_client_certificate
 
+    if cancel_after_pair:
+        from atlaso.app.security import Identity
+        from atlaso.app.services import task_cancellation
+
+        execute_pair = ui.execute_traffic_publishing_pair
+        def execute_and_request(db, job, *args, **kwargs):
+            """Request cancellation immediately after paired publication completes.
+
+            Args:
+                db: Database session holding the paired Apply transaction.
+                job: Task whose completion boundary receives the cancellation request.
+                *args: Forwarded positional arguments.
+                **kwargs: Forwarded keyword arguments.
+            """
+            results = execute_pair(db, job, *args, **kwargs)
+            task_cancellation.request(db, job, Identity("operator", "admin", {"admin:all"}))
+            return results
+        monkeypatch.setattr(ui, "execute_traffic_publishing_pair", execute_and_request)
     login(client)
     page = client.get("/dashboard")
     csrf = page.text.split('name="csrf" value="', 1)[1].split('"', 1)[0]
@@ -245,6 +266,9 @@ def test_global_submission_publishes_captured_port_forward_pair(client, manageme
         job = db.get(Job, response.json()["job_id"])
         result = json.loads(job.result)
         assert job.status == "succeeded", result
+        if cancel_after_pair:
+            assert job.cancel_outcome == "completion-won"
+            assert job.cancel_completed_at is not None
         if enable_nts:
             assert result["selected_units"].index("ca") < result["selected_units"].index("ntpd")
             if not release_listener:

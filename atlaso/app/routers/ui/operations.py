@@ -7,7 +7,7 @@ from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from typing import Any
 
-from fastapi import APIRouter, Depends, Form, HTTPException, Query, Request, status
+from fastapi import APIRouter, Depends, Form, HTTPException, Query, Request
 from fastapi.responses import HTMLResponse, JSONResponse
 from sqlalchemy import desc, func, select
 from sqlalchemy.orm import Session, selectinload
@@ -16,18 +16,9 @@ from atlaso.app.adapters.system import SystemAdapter
 from atlaso.app.audit import record_audit
 from atlaso.app.config import get_settings
 from atlaso.app.database import get_db
-from atlaso.app.models import (
-    AuditEvent,
-    EsxNfsShare,
-    Job,
-    JobStatus,
-    Role,
-    ServiceState,
-    utcnow,
-)
+from atlaso.app.models import AuditEvent, EsxNfsShare, Job, ServiceState, utcnow
 from atlaso.app.security import Identity, require_session_identity
-from atlaso.app.services import log_viewer
-from atlaso.app.services.appliance_update import cancel_pending_appliance_update
+from atlaso.app.services import log_viewer, task_cancellation
 from atlaso.app.services.ca import ca_service_state
 from atlaso.app.services.esx_storage import (
     rpcbind_required as esx_storage_rpcbind_required,
@@ -46,7 +37,6 @@ from atlaso.app.services.vcf_backups import vcf_backup_service_state
 from atlaso.app.services.vcf_depot_downloads import (
     active_vcf_depot_download_jobs,
     active_vcf_depot_exclusive_job,
-    cancel_pending_vcf_depot_download,
     vcf_depot_job_profile_id,
 )
 from atlaso.app.services.vcf_offline_depot import vcf_depot_service_state
@@ -107,9 +97,6 @@ def build_router(dependencies: OperationsUiDependencies) -> OperationsUiRouter:
         dependencies=[Depends(dependencies.require_management_ui_request)],
     )
     ACTIVE_JOB_STATUSES = dependencies.active_job_statuses
-    SERVICE_ADMIN_CANCELLABLE_JOB_TYPES = (
-        dependencies.service_admin_cancellable_job_types
-    )
     _job_payload = dependencies.job_payload
     _redact_task_value = dependencies.redact_task_value
     _task_component_filter_options = dependencies.task_component_filter_options
@@ -880,221 +867,14 @@ def build_router(dependencies: OperationsUiDependencies) -> OperationsUiRouter:
         """
         verify_csrf(request, csrf)
         job = db.get(Job, job_id)
-        if not job:
+        if job is None:
             raise HTTPException(status_code=404, detail="Task not found")
-        if not (
-            identity.has_role(Role.ADMIN.value)
-            or (
-                identity.has_role(Role.SERVICE_ADMIN.value)
-                and job.type in SERVICE_ADMIN_CANCELLABLE_JOB_TYPES
-            )
-        ):
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="Administrator role required for this task type",
-            )
-        if job.status not in ACTIVE_JOB_STATUSES:
-            return JSONResponse(
-                {
-                    "task": _task_row(job, identity),
-                    "message": "Task is already finished.",
-                }
-            )
-        if job.type == "pxe-media-sync" and job.status == JobStatus.RUNNING.value:
-            try:
-                config = json.loads(job.task_config_json or "{}")
-            except json.JSONDecodeError:
-                config = {}
-            if config.get("source") == "delete":
-                raise HTTPException(
-                    status_code=status.HTTP_409_CONFLICT,
-                    detail="A running Network Boot media deletion cannot be cancelled.",
-                )
-        if job.type == "appliance-update" and job.status == JobStatus.RUNNING.value:
-            raise HTTPException(
-                status_code=status.HTTP_409_CONFLICT,
-                detail=(
-                    "A running Appliance Update cannot be cancelled because host mutation "
-                    "and update-only status recovery may already be in progress."
-                ),
-            )
-        if job.type == "appliance-update" and job.status == JobStatus.PENDING.value:
-            finished_at = utcnow()
-            payload = _job_payload(job)
-            payload["state"] = "cancelled"
-            payload["cancelled_by"] = identity.username
-            payload["cancelled_at"] = finished_at.isoformat()
-            cancelled = cancel_pending_appliance_update(
-                db,
-                job.id,
-                finished_at=finished_at,
-                error="Task cancelled by operator.",
-                result=json.dumps(_redact_task_value(payload), sort_keys=True),
-            )
-            if not cancelled:
-                db.rollback()
-                db.expire_all()
-                current = db.get(Job, job.id)
-                if current is None:
-                    raise HTTPException(status_code=404, detail="Task not found")
-                if current.status == JobStatus.RUNNING.value:
-                    raise HTTPException(
-                        status_code=status.HTTP_409_CONFLICT,
-                        detail=(
-                            "A running Appliance Update cannot be cancelled because host mutation "
-                            "and update-only status recovery may already be in progress."
-                        ),
-                    )
-                return JSONResponse(
-                    {
-                        "task": _task_row(current, identity),
-                        "message": "Task is already finished.",
-                    }
-                )
-            db.commit()
-            record_audit(
-                db,
-                actor=identity.username,
-                action="cancel_task",
-                resource_type="job",
-                resource_id=job.id,
-                detail=f"type={job.type}",
-            )
-            db.refresh(job)
-            return JSONResponse(
-                {
-                    "task": _task_row(job, identity),
-                    "message": "Task cancellation requested.",
-                }
-            )
-        if job.type == "vcf-depot-software-id":
-            raise HTTPException(
-                status_code=status.HTTP_409_CONFLICT,
-                detail=(
-                    "A queued or running VCFDT Software Depot ID task cannot be cancelled because identity "
-                    "replacement may already be in progress."
-                ),
-            )
-        if job.type == "vcf-depot-download" and job.status == JobStatus.RUNNING.value:
-            raise HTTPException(
-                status_code=status.HTTP_409_CONFLICT,
-                detail=(
-                    "A running VCFDT profile download cannot be cancelled because the VCFDT process is still executing."
-                ),
-            )
-        if job.type == "vcf-depot-download" and job.status == JobStatus.PENDING.value:
-            finished_at = utcnow()
-            payload = _job_payload(job)
-            payload["state"] = "cancelled"
-            payload["cancelled_by"] = identity.username
-            payload["cancelled_at"] = finished_at.isoformat()
-            cancelled = cancel_pending_vcf_depot_download(
-                db,
-                job.id,
-                profile_id=int(
-                    job.vcf_depot_profile_id or payload.get("profile_id") or 0
-                ),
-                profile_status_before_enqueue=str(
-                    payload.get("profile_status_before_enqueue") or "planned"
-                ),
-                finished_at=finished_at,
-                error="Task cancelled by operator.",
-                result=json.dumps(_redact_task_value(payload), sort_keys=True),
-            )
-            if not cancelled:
-                db.rollback()
-                db.expire_all()
-                current = db.get(Job, job.id)
-                if current is None:
-                    raise HTTPException(status_code=404, detail="Task not found")
-                if current.status == JobStatus.RUNNING.value:
-                    raise HTTPException(
-                        status_code=status.HTTP_409_CONFLICT,
-                        detail=(
-                            "A running VCFDT profile download cannot be cancelled because the VCFDT process "
-                            "is still executing."
-                        ),
-                    )
-                return JSONResponse(
-                    {
-                        "task": _task_row(current, identity),
-                        "message": "Task is already finished.",
-                    }
-                )
-            db.commit()
-            record_audit(
-                db,
-                actor=identity.username,
-                action="cancel_task",
-                resource_type="job",
-                resource_id=job.id,
-                detail=f"type={job.type}",
-            )
-            db.refresh(job)
-            return JSONResponse(
-                {
-                    "task": _task_row(job, identity),
-                    "message": "Task cancellation requested.",
-                }
-            )
-        if job.type == "appliance-apply":
-            payload = _job_payload(job)
-            if not payload.get("cancel_requested"):
-                payload["state"] = "cancellation-requested"
-                payload["cancel_requested"] = True
-                payload["cancelled_by"] = identity.username
-                payload["cancel_requested_at"] = utcnow().isoformat()
-                job.result = json.dumps(_redact_task_value(payload), sort_keys=True)
-                db.commit()
-                record_audit(
-                    db,
-                    actor=identity.username,
-                    action="request_cancel_task",
-                    resource_type="job",
-                    resource_id=job.id,
-                    detail=f"type={job.type}",
-                )
-                db.refresh(job)
-            return JSONResponse(
-                {
-                    "task": _task_row(job, identity),
-                    "message": "Cancellation requested. The running component will finish before remaining components are skipped.",
-                }
-            )
-        if job.type == "pxe-media-sync" and job.status == JobStatus.PENDING.value:
-            try:
-                config = json.loads(job.task_config_json or "{}")
-            except json.JSONDecodeError:
-                config = {}
-            if config.get("source") == "upload":
-                from atlaso.app.services.network_boot import cleanup_network_boot_upload
-
-                cleanup_network_boot_upload(job.id)
-        job.status = JobStatus.CANCELLED.value
-        job.finished_at = utcnow()
-        job.error = "Task cancelled by operator."
-        payload = _job_payload(job)
-        payload["state"] = "cancelled"
-        payload["cancelled_by"] = identity.username
-        payload["cancelled_at"] = job.finished_at.isoformat()
-        job.result = json.dumps(_redact_task_value(payload), sort_keys=True)
-        job.progress_percent = 100
-        db.commit()
-        record_audit(
-            db,
-            actor=identity.username,
-            action="cancel_task",
-            resource_type="job",
-            resource_id=job.id,
-            detail=f"type={job.type}",
-        )
+        try:
+            message = task_cancellation.request(db, job, identity)
+        except task_cancellation.CancellationError as exc:
+            raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
         db.refresh(job)
-        return JSONResponse(
-            {
-                "task": _task_row(job, identity),
-                "message": "Task cancellation requested.",
-            }
-        )
+        return JSONResponse({"task": _task_row(job, identity), "message": message})
 
     @router.get("/audit-log", response_class=HTMLResponse, response_model=None)
     def audit_log(

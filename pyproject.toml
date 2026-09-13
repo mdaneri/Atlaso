@@ -1,6 +1,6 @@
 [project]
 name = "atlaso"
-version = "0.9.355"
+version = "0.9.356"
 description = "Atlaso supports POC, lab, and test environments by simplifying deployment, maintenance, and validation."
 readme = "README.md"
 license = "MIT"
@@ -89,6 +89,7 @@ warn_unused_configs = true
 follow_imports = "silent"
 files = [
   "atlaso/app/services/log_viewer.py",
+  "atlaso/app/services/task_cancellation.py",
   "atlaso/diagnostics.py",
   "atlaso/app/services/diagnostics.py",
   "atlaso/app/routers/ui/diagnostics.py",

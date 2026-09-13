@@ -103,6 +103,9 @@ def row(job: Job) -> dict[str, Any]:
     Args:
         job: Diagnostic job whose current lifecycle is being inspected.
     """
+    from atlaso.app.services.task_cancellation import capability
+
+    contract = capability(job)
     config = json.loads(job.task_config_json or "{}")
     state = result(job)
     status = state.get("bundle_status", job.status)
@@ -115,7 +118,7 @@ def row(job: Job) -> dict[str, Any]:
             "scope": config.get("scopes", []), "anonymize": config.get("anonymize", False),
             "size_bytes": state.get("size_bytes"), "summary": state.get("summary", ""),
             "omissions": state.get("omissions", []), "progress_percent": job.progress_percent,
-            "selection": config}
+            "selection": config, "can_cancel": contract.can_cancel, "cancel_reason": contract.reason}
 
 
 def create(db: Session, options: Options, actor: str) -> Job:
