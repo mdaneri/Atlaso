@@ -16374,6 +16374,11 @@ def run_appliance_apply_job(job_id: str, *, force_real: bool = False) -> None:
             job.status = JobStatus.FAILED.value
             job.finished_at = finished
             job.progress_percent = 100
+            if job_result.get("network_runtime_commit_pending"):
+                job.status = JobStatus.RUNNING.value
+                job.finished_at = None
+                job_result["state"] = "cleanup-required"
+                safe_error += " Network recovery remains pending; the worker will retry."
             job.result = json.dumps({**job_result, "units": unit_results}, indent=2)
             job.error = safe_error
             db.commit()

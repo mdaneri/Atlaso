@@ -70,7 +70,7 @@ def test_network_apply_acknowledges_only_durable_executed_baseline(client, monke
                 assert (baseline.get("snapshot_hash") == "executed") is committed
             acknowledgements.append(committed)
             return AdapterResult(command=["network", "reconcile"],
-                                 returncode=2 if cleanup_fails and committed and len(acknowledgements) == 1 else 0,
+                                 returncode=2 if cleanup_fails and len(acknowledgements) == 1 else 0,
                                  dry_run=False)
 
     def execute(candidate, **_kwargs):
@@ -118,12 +118,13 @@ def test_network_apply_acknowledges_only_durable_executed_baseline(client, monke
     assert injected is commit_fails
     with SessionLocal() as db:
         completed = db.get(Job, "network-commit-test")
-        if cleanup_fails and not commit_fails:
+        if cleanup_fails:
             assert completed.status == JobStatus.RUNNING.value
             assert ui.active_appliance_apply_job(db).id == completed.id
             assert ui.retry_network_transaction_cleanup(db) == 1
-            assert acknowledgements == [True, True]
-            assert ui.load_appliance_apply_baselines(db)["network"]["snapshot_hash"] == "executed"
+            assert acknowledgements == [not commit_fails, not commit_fails]
+            baseline = ui.load_appliance_apply_baselines(db).get("network", {})
+            assert (baseline.get("snapshot_hash") == "executed") is (not commit_fails)
             assert ui.active_appliance_apply_job(db) is None
         assert completed.status == (JobStatus.FAILED.value if commit_fails or cleanup_fails else JobStatus.SUCCEEDED.value)
         assert json.loads(completed.result)["network_runtime_commit_pending"] is False

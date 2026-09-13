@@ -94,6 +94,7 @@ def project_status(
                            and ip_address(row["address"]).version == 6
                            and not ip_address(row["address"]).is_link_local]
         lease_evidence = bool(link and observation.get("complete"))
+        prior_lease_observed_at = prior.get("lease_observed_at", prior.get("observed_at"))
         static_cidrs = [row["cidr"] for row in records if row["state"] == "assigned"
                         and row.get("source") == "static" and row.get("cidr")]
         desired_cidrs = resource.get("desired_cidrs", {})
@@ -135,7 +136,7 @@ def project_status(
             current_leases = auto6_addresses if dynamic6_conflict else dhcp4_addresses
             replacement_lease = bool(
                 lease_evidence and link.get("configured") and isinstance(prior_leases, list)
-                and _event_after_identity_change({"detected_at": prior.get("observed_at")},
+                and _event_after_identity_change({"detected_at": prior_lease_observed_at},
                                                  last_conflict["detected_at"])
                 and any(address not in prior_leases for address in current_leases))
             if replacement_lease and (declined_offer or dynamic6_conflict):
@@ -143,7 +144,7 @@ def project_status(
             elif (not declined_offer and not dynamic6_conflict and checking and lease_evidence and link.get("configured")
                   and conflict_cidr and conflict_cidr in static_cidrs
                   and isinstance(prior.get("static_cidrs"), list) and conflict_cidr not in prior["static_cidrs"]
-                  and _event_after_identity_change({"detected_at": prior.get("observed_at")},
+                  and _event_after_identity_change({"detected_at": prior_lease_observed_at},
                                                    last_conflict["detected_at"])):
                 conflict_resolved = True
             if not conflict_resolved and (address in resource["desired"] or declined_offer or dynamic6_conflict):
@@ -160,9 +161,12 @@ def project_status(
         if not resource["checking"]:
             detail += " IPv4 checking is disabled in desired state; Apply is required to activate edits. IPv6 DAD is retained."
         result["rows"][key] = {
-            "static_cidrs": static_cidrs if lease_evidence else None, "conflict_cidr": conflict_cidr,
-            "auto6_addresses": auto6_addresses if lease_evidence else None,
-            "dhcp4_addresses": dhcp4_addresses if lease_evidence else None,
+            # An observation outage must not erase the last complete comparison
+            # point or advance its timestamp past a newer conflict event.
+            "lease_observed_at": now if lease_evidence else prior_lease_observed_at,
+            "static_cidrs": static_cidrs if lease_evidence else prior.get("static_cidrs"), "conflict_cidr": conflict_cidr,
+            "auto6_addresses": auto6_addresses if lease_evidence else prior.get("auto6_addresses"),
+            "dhcp4_addresses": dhcp4_addresses if lease_evidence else prior.get("dhcp4_addresses"),
             "identity": identity, "identity_since": identity_since,
             "name": resource["name"], "state": state, "detail": detail,
             "active_addresses": assigned, "last_conflict": last_conflict, "conflict_resolved": conflict_resolved, "observed_at": now,

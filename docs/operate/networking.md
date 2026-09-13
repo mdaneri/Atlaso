@@ -297,6 +297,9 @@ After cleanup succeeds, the interrupted task ends as failed with its applied bas
 review the task and submit any remaining components. Persistent failures keep the lock and recovery
 evidence until a later retry succeeds. Settings restores preserve this appliance's native conflict
 resolution and link identity history; that operational history is never exported or imported.
+The same retry queue handles failures in exception recovery. Incomplete address observations retain
+the last complete lease comparison and its original timestamp, so a later replacement can prove
+recovery without treating an older pre-conflict lease sample as post-conflict evidence.
 VMware OVF first boot prepares configuration and deployment credentials before networkd starts.
 A second customization stage reloads the management link and verifies native address activation
 before recording success or clearing the console review handshake. A conflict or unavailable

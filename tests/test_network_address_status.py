@@ -146,6 +146,40 @@ def test_prepare_observation_reports_missing_logging(tmp_path, monkeypatch, fail
     assert helper.main(["atlaso-helper", "network", "prepare-observation", "--real"]) == 2
 
 
+@pytest.mark.parametrize("source", ["DHCPv4", "DHCPv6", "NDisc", "static"])
+@pytest.mark.parametrize("post_conflict_sample", [False, True])
+def test_replacement_after_observation_outage_preserves_order(source, post_conflict_sample):
+    """Retain complete history without laundering its timestamp through a failed poll.
+
+    Args:
+        source: Native dynamic or static address source.
+        post_conflict_sample: Whether complete comparison evidence postdates the event.
+    """
+    ipv6 = source in {"DHCPv6", "NDisc"}
+    old = "2001:db8::10" if ipv6 else "192.0.2.10"
+    rejected = "2001:db8::20" if ipv6 else "192.0.2.20"
+    replacement = "2001:db8::30" if ipv6 else "192.0.2.30"
+    desired = {**resource(desired=rejected), "dhcp4": source == "DHCPv4", "auto6": ipv6,
+               "desired_cidrs": {rejected: rejected + "/24"}}
+    if source != "static":
+        desired["desired"] = []
+    else:
+        replacement = rejected
+    event = {"name": "eth0", "address": rejected, "detected_at": "2026-09-12T00:00:01+00:00"}
+    native = observation(address=old, conflicts=[event] if post_conflict_sample else [])
+    native["observed_at"] = "2026-09-12T00:00:02+00:00" if post_conflict_sample else "2026-09-12T00:00:00+00:00"
+    native["links"][0]["addresses"][0].update(source=source, cidr=old + "/24")
+    prior = project_status(native, {}, [desired])
+    comparison_time = prior["rows"]["physical:1"]["lease_observed_at"]
+    native.update(complete=False, observed_at="2026-09-12T00:00:03+00:00", conflicts=[event])
+    outage = project_status(native, prior, [desired])
+    assert outage["rows"]["physical:1"]["lease_observed_at"] == comparison_time
+    native.update(complete=True, observed_at="2026-09-12T00:00:04+00:00")
+    native["links"][0]["addresses"][0].update(address=replacement, cidr=replacement + "/24")
+    recovered = project_status(native, outage, [desired])
+    assert recovered["rows"]["physical:1"]["conflict_resolved"] is post_conflict_sample
+
+
 def test_failed_candidate_remains_distinct_from_restored_address():
     """Retain a rejected candidate while displaying the healthy rollback address separately."""
     event = {"name": "eth0", "address": "192.0.2.20", "detected_at": "2026-09-12T00:00:00+00:00", "mac": ""}
