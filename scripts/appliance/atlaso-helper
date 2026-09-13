@@ -2033,6 +2033,70 @@ def _read_fixed_log_history(path: Path, position: dict) -> dict:
             "has_more": more, "available": True, "reset": reset}
 
 
+def _journal_message_bytes(raw, state):
+    """Extract decoded MESSAGE bytes from a bounded oversized JSON fragment.
+
+    Args:
+        raw: Next bounded journal JSON fragment.
+        state: Small mutable string-decoder state for this one record.
+    """
+    if state.get("done"):
+        return b""
+    if not state.get("inside"):
+        raw = state.get("prefix", b"") + raw
+        match = re.search(rb'(?<!\\)"MESSAGE"\s*:\s*"', raw)
+        if match is None:
+            state["prefix"] = raw[-128:]
+            return b""
+        state["inside"] = True
+        state.pop("prefix", None)
+        raw = raw[match.end():]
+    output = bytearray()
+    escapes = {ord("n"): b"\n", ord("r"): b"\r", ord("t"): b"\t", ord("b"): b"\b", ord("f"): b"\f"}
+    for byte in raw:
+        if "unicode" in state:
+            state["unicode"] += chr(byte)
+            if len(state["unicode"]) == 4:
+                output.extend(chr(int(state.pop("unicode"), 16)).encode("utf-8", errors="replace"))
+        elif state.pop("escape", False):
+            if byte == ord("u"):
+                state["unicode"] = ""
+            else:
+                output.extend(escapes.get(byte, bytes([byte])))
+        elif byte == ord("\\"):
+            state["escape"] = True
+        elif byte == ord('"'):
+            state["done"] = True
+            break
+        else:
+            output.append(byte)
+    return bytes(output)
+
+
+def _advance_journal_marker(entry, fragment, private, carry, *, complete=True):
+    """Advance raw-message state without losing an omitted record's boundary state.
+
+    Args:
+        entry: Journal record, including bounded omission metadata when needed.
+        fragment: Consumed decoded message fragment.
+        private: Key state before the fragment.
+        carry: Finite partial marker state before the fragment.
+        complete: Whether this consumes the end of the represented record.
+    """
+    transforms = entry.get("_journal_pem_transforms")
+    if transforms is not None:
+        if not fragment:
+            return private, carry, private
+        marker, final_carry = transforms[carry.decode("ascii") or "S"]
+        conceal = private or marker is not None
+        return ((private if marker is None else marker), final_carry.encode("ascii"), conceal) if complete else (private, carry, conceal)
+    marker, carry = _scan_pem_markers(fragment.encode("utf-8"), carry)
+    conceal = private or marker is not None
+    if marker is not None:
+        private = marker
+    return private, carry, conceal
+
+
 def _oversized_journal_entry(first, stream):
     """Discard oversized message bytes while retaining trusted cursor metadata.
 
@@ -2042,8 +2106,12 @@ def _oversized_journal_entry(first, stream):
     """
     metadata = {}
     carry = b""
-    marker_state = None
-    pem_state = b""
+    starts = (b"-----BEGIN ", b"-----END ")
+    endings = (b"PRIVATE KEY-----", b"-----")
+    variants = {b"S"} | {b"S" + token[:size] for token in starts for size in range(1, len(token))}
+    variants |= {mode + token[:size] for mode in (b"B", b"E") for token in endings for size in range(len(token))}
+    transforms = {state: (None, state) for state in variants}
+    message_state = {}
     raw = first
     while raw:
         window = carry + raw
@@ -2051,9 +2119,10 @@ def _oversized_journal_entry(first, stream):
             match = re.search(rb'"' + field.encode() + rb'"\s*:\s*("(?:[^"\\]|\\.)*")', window)
             if match:
                 metadata[field] = json.loads(match.group(1))
-        found, pem_state = _scan_pem_markers(raw, pem_state)
-        if found is not None:
-            marker_state = found
+        decoded = _journal_message_bytes(raw, message_state)
+        for initial, (last, carry_state) in transforms.items():
+            found, carry_state = _scan_pem_markers(decoded, carry_state)
+            transforms[initial] = (last if found is None else found, carry_state)
         if raw.endswith(b"\n"):
             break
         carry = window[-4096:]
@@ -2061,9 +2130,11 @@ def _oversized_journal_entry(first, stream):
     if "__CURSOR" not in metadata or "__REALTIME_TIMESTAMP" not in metadata:
         raise ValueError("oversized journal metadata is incomplete")
     message = "[Oversized journal entry omitted: exceeds 1 MiB; continuing with the next entry.]"
+    marker_state = transforms[b"S"][0]
     if marker_state is not None:
         message += "\n-----BEGIN PRIVATE KEY-----" if marker_state else "\n-----END PRIVATE KEY-----"
-    return {**metadata, "MESSAGE": message}
+    return {**metadata, "MESSAGE": message, "_journal_pem_transforms": {initial.decode("ascii"): (marker, final.decode("ascii"))
+                                                                           for initial, (marker, final) in transforms.items()}}
 
 
 def _journal_entry_category(entry):
@@ -2110,22 +2181,19 @@ class _JournalCursorExpired(ValueError):
     """Identify a journal position removed by retention without hiding other errors."""
 
 
-def _journal_history_entries(command, *, deadline, category=None, initial_private_key=False):
+def _journal_history_entries(command, *, deadline, category=None, context_scan=False):
     """Read complete bounded representations from one deadline-owned journal process.
 
     Args:
         command: Fixed allowlisted journal invocation.
         deadline: Shared monotonic deadline for this history request.
         category: Optional classified view of the fixed dnsmasq unit.
-        initial_private_key: Redaction state preceding a forward cursor.
+        context_scan: Use the bounded raw window without the selected-row display cap.
     """
     import threading
 
     selected, consumed, more = [], 0, False
     matched_count = matched_bytes = 0
-    pending_state = []
-    reverse = "--reverse" in command
-    key_state = initial_private_key
     with subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE, env={**os.environ, "LC_ALL": "C"}) as process:
         timer = threading.Timer(max(.001, deadline - time.monotonic()), process.kill)
         timer.start()
@@ -2138,27 +2206,15 @@ def _journal_history_entries(command, *, deadline, category=None, initial_privat
                 # Filtered records carry cursor and redaction progress across sparse gaps.
                 matches = category is None or _journal_entry_category(entry) == category
                 if selected and (len(selected) >= 5000 or consumed + len(raw) > 4 * 1024 * 1024 or
-                                 (matches and (matched_count >= 500 or matched_bytes + len(raw) > 1024 * 1024))):
+                                 (not context_scan and matches and (matched_count >= 500 or matched_bytes + len(raw) > 1024 * 1024))):
                     more = True
                     break
                 if category is not None:
                     entry["_filtered"] = not matches
-                    markers = list(re.finditer(r"-----(BEGIN|END) (?:(?!-----)[ -~])*?PRIVATE KEY-----", entry["MESSAGE"]))
-                    if reverse:
-                        if markers:
-                            for newer in pending_state:
-                                newer["_private_key_before"] = markers[-1].group(1) == "BEGIN"
-                            pending_state.clear()
-                    else:
-                        entry["_private_key_before"] = key_state
-                        if markers:
-                            key_state = markers[-1].group(1) == "BEGIN"
                 selected.append(entry)
                 if matches:
                     matched_count += 1
                     matched_bytes += len(raw)
-                if category is not None and reverse:
-                    pending_state.append(entry)
                 consumed += len(raw)
             if not more:
                 code = process.wait(timeout=2)
@@ -2175,6 +2231,57 @@ def _journal_history_entries(command, *, deadline, category=None, initial_privat
                 process.kill()
                 process.wait(timeout=2)
     return selected, more
+
+
+def _journal_marker_context(executable, unit, target, offset, *, deadline, checkpoint=None):
+    """Resume a bounded forward context scan before an arbitrary journal window.
+
+    Args:
+        executable: Fixed journalctl executable.
+        unit: Allowlisted service unit.
+        target: Immutable cursor at the requested window boundary.
+        offset: Boundary within the target message, or None to consume the whole record.
+        deadline: Original page deadline shared with the selected-record read.
+        checkpoint: Earlier bounded context progress retained by the web process.
+    """
+    checkpoint = checkpoint if isinstance(checkpoint, dict) else {}
+    previous = checkpoint.get("cursor", "")
+    state = checkpoint.get("pem_state", "S")
+    private = checkpoint.get("private") is True
+    if (not isinstance(previous, str) or len(previous) > 2048 or any(ord(char) < 32 for char in previous) or
+            not isinstance(state, str) or len(state) > 32):
+        raise ValueError("invalid journal context checkpoint")
+    _, carry = _scan_pem_markers(b"", state.encode("ascii"))
+    command = [executable, "--unit", unit, "--no-pager", "--output=json", "--lines=+5001",
+               "--output-fields=MESSAGE,__CURSOR,__REALTIME_TIMESTAMP"]
+    if previous:
+        command.append(f"--after-cursor={previous}")
+    for _ in range(8):
+        if time.monotonic() >= deadline - 0.25:
+            break
+        try:
+            entries, more = _journal_history_entries(command, deadline=deadline, context_scan=True)
+        except _JournalCursorExpired:
+            command = [arg for arg in command if not arg.startswith("--after-cursor=")]
+            private, carry = private or carry not in {b"", b"S"}, b"S"
+            entries, more = _journal_history_entries(command, deadline=deadline, context_scan=True)
+        for entry in entries:
+            message = entry["MESSAGE"]
+            if entry["__CURSOR"] == target:
+                if offset is not None:
+                    if not 0 <= offset <= len(message):
+                        raise ValueError("journal context boundary is unavailable")
+                    message = message[:offset]
+                private, carry, _ = _advance_journal_marker(entry, message, private, carry,
+                                                            complete=offset is None or offset == len(entry["MESSAGE"]))
+                return (private, carry), None
+            private, carry, _ = _advance_journal_marker(entry, message, private, carry)
+        if not more or not entries:
+            raise _JournalCursorExpired("Journal context boundary expired.")
+        previous = entries[-1]["__CURSOR"]
+        command = [arg for arg in command if not arg.startswith("--after-cursor=")]
+        command.append(f"--after-cursor={previous}")
+    return None, {"cursor": previous, "pem_state": carry.decode("ascii"), "private": private}
 
 
 def _journal_text_rows(entry, offset=0):
@@ -2325,7 +2432,7 @@ def _read_log_history(args: list[str]) -> int:
         deadline = time.monotonic() + 10
         reset = False
         try:
-            selected, more = _journal_history_entries(command, deadline=deadline, category=category, initial_private_key=position.get("private_key") is True)
+            selected, more = _journal_history_entries(command, deadline=deadline, category=category)
         except _JournalCursorExpired:
             # Reopen once within the original deadline, clearing all obsolete boundaries.
             position, cursor, text_offset = {}, "", 0
@@ -2378,17 +2485,24 @@ def _read_log_history(args: list[str]) -> int:
             current_position = {"journal_start_cursor": first_cursor}
             if text_offset:
                 current_position["journal_text_offset"] = text_offset
-            # Recover cross-record PEM state before jumping into retained history.
-            prefix_command = [command[0], "--unit", units[args[0]], "--no-pager", "--output=json",
-                              "--output-fields=MESSAGE,__CURSOR,__REALTIME_TIMESTAMP", "--reverse",
-                              f"--cursor={first_cursor}", "--lines=2", "--grep=-----(BEGIN|END) (?:(?!-----)[ -~])*?PRIVATE KEY-----"]
-            predecessors, _ = _journal_history_entries(prefix_command, deadline=deadline)
-            predecessor = next((entry for entry in predecessors if entry["__CURSOR"] != first_cursor), None)
-            if predecessor is not None:
-                markers = list(re.finditer(r"-----(BEGIN|END) (?:(?!-----)[ -~])*?PRIVATE KEY-----", predecessor["MESSAGE"]))
-                initial_private_key = bool(markers and markers[-1].group(1) == "BEGIN")
-            for match in re.finditer(r"-----(BEGIN|END) (?:(?!-----)[ -~])*?PRIVATE KEY-----", selected[0]["MESSAGE"][:text_offset]):
-                initial_private_key = match.group(1) == "BEGIN"
+        parser_state = position.get("journal_pem_state", "S") if not tail else "S"
+        if not isinstance(parser_state, str) or len(parser_state) > 32:
+            raise ValueError("invalid journal marker state")
+        _, parser_carry = _scan_pem_markers(b"", parser_state.encode("ascii"))
+        if (tail and selected) or (cursor and "journal_pem_state" not in position):
+            target = current_position.get("journal_start_cursor", current_position.get("journal_cursor", ""))
+            target_offset = current_position.get("journal_text_offset", 0) if "journal_start_cursor" in current_position else None
+            recovered, checkpoint = _journal_marker_context(command[0], units[args[0]], target, target_offset,
+                                                           deadline=deadline, checkpoint=position.get("journal_context"))
+            if recovered is None:
+                preparation = {**current_position, "journal_context": checkpoint, "journal_has_previous": bool(has_previous)}
+                if page_end_cursor is not None:
+                    preparation.update(journal_end_cursor=page_end_cursor, journal_end_offset=page_end_offset)
+                print(json.dumps({"pending": True, "preparation_position": preparation, "lines": [], "has_more": False,
+                                  "notice": "Preparing retained journal redaction context."}))
+                return 0
+            initial_private_key, parser_carry = recovered
+        current_position["journal_pem_state"] = parser_carry.decode("ascii")
         lines = []
         line_private_keys = []
         final_private_key = initial_private_key
@@ -2400,7 +2514,8 @@ def _read_log_history(args: list[str]) -> int:
             if not isinstance(message, str):
                 raise ValueError("journal entry cannot be displayed completely")
             paused = False
-            row_key_state = initial_private_key if index == 0 and text_offset else entry.get("_private_key_before", initial_private_key)
+            if entry.get("_filtered"):
+                final_private_key, parser_carry, _ = _advance_journal_marker(entry, message, final_private_key, parser_carry)
             for start, line in _journal_text_rows(entry, text_offset if index == 0 else 0):
                 size = _log_wire_size(line)
                 if len(lines) >= limit or expanded_bytes + size > 1024 * 1024 - 16384:
@@ -2408,28 +2523,28 @@ def _read_log_history(args: list[str]) -> int:
                     more = paused = True
                     break
                 lines.append(line)
-                line_private_keys.append(row_key_state)
-                for match in re.finditer(r"-----(BEGIN|END) (?:(?!-----)[ -~])*?PRIVATE KEY-----", line):
-                    row_key_state = match.group(1) == "BEGIN"
+                raw_end = message.find("\n", start)
+                raw_end = len(message) if raw_end < 0 else raw_end + 1
+                final_private_key, parser_carry, conceal = _advance_journal_marker(
+                    entry, message[start:raw_end], final_private_key, parser_carry, complete=raw_end == len(message))
+                line_private_keys.append(conceal)
                 expanded_bytes += size
             if paused:
                 break
-            final_private_key = row_key_state
-            for match in re.finditer(r"-----(BEGIN|END) (?:(?!-----)[ -~])*?PRIVATE KEY-----", message):
-                final_private_key = match.group(1) == "BEGIN"
             next_position = {"journal_cursor": entry["__CURSOR"]}
         if page_end_cursor is not None and not paused:
             next_position = boundary_position
             more = True
         current_position["journal_has_previous"] = bool(has_previous)
         next_position["journal_has_previous"] = bool(has_previous or lines)
+        next_position["journal_pem_state"] = parser_carry.decode("ascii")
         previous_position = {**current_position, "before": True} if has_previous and selected else None
         if page_end_cursor is not None:
             current_position.update(journal_end_cursor=page_end_cursor, journal_end_offset=page_end_offset)
         print(json.dumps({"lines": lines, "reset": reset, "journal_cursor": next_position.get("journal_cursor", cursor),
                           "journal_position": next_position, "previous_position": previous_position, "has_more": more,
-                          "line_private_keys": line_private_keys if category is not None else None,
-                          "final_private_key": final_private_key if category is not None and not paused else None,
+                          "line_private_keys": line_private_keys,
+                          "final_private_key": final_private_key,
                           "current_position": current_position, "initial_private_key": initial_private_key}, ensure_ascii=False))
         return 0
     except (ValueError, TypeError, AttributeError, KeyError, OSError, subprocess.TimeoutExpired):

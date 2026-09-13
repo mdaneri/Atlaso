@@ -39,7 +39,9 @@ at every supported page size, and becomes unavailable at the oldest retained jou
 the displayed snapshot or accepted page visible. When the initially selected source recovers from an unavailable state,
 its live viewer starts automatically.
 File, task, and journal pages include JSON escaping and response metadata in their byte limit.
-Omitted oversized journal lines retain private-key redaction state for the following lines and pages.
+Private-key headers split between journal records retain redaction state across pages, including filtered views
+and oversized-record omissions. Tail and Previous navigation prepare older context in bounded, resumable scans;
+the displayed output stays visible while preparation continues.
 If journal retention removes an open cursor, the viewer reopens the oldest available entries and reports the reset.
 Permission and other journal errors preserve the current page for a later retry.
 File pages retain complete-line boundaries; task and multiline journal cursors retain character-safe continuation.

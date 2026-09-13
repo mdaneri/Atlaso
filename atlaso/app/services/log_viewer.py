@@ -291,6 +291,10 @@ def source_availability() -> dict[str, Any]:
     return {"sources": sources}
 
 
+_JOURNAL_PREPARATION: OrderedDict[tuple[str, str, bool, int], tuple[dict[str, Any], float]] = OrderedDict()
+_JOURNAL_PREPARATION_LOCK = RLock()
+
+
 def source_page(source: str, *, cursor: str = "", tail: bool = False, limit: int = PAGE_LINES) -> dict[str, Any]:
     """Read one authorized fixed-source page and redact before transport.
 
@@ -309,6 +313,14 @@ def source_page(source: str, *, cursor: str = "", tail: bool = False, limit: int
     if source not in {"dnsmasq-dns", "dnsmasq-dhcp", "dnsmasq-tftp", "ldap", "ntp", "esx-storage", "nginx", "nginx-access", "nginx-error"}:
         raise ValueError("Unknown log source.")
     position = decode_cursor(cursor, source)
+    preparation_key = (source, cursor, tail, limit)
+    with _JOURNAL_PREPARATION_LOCK:
+        prepared = _JOURNAL_PREPARATION.get(preparation_key)
+        if prepared is not None and time.monotonic() - prepared[1] < 90:
+            position = dict(prepared[0])
+        else:
+            _JOURNAL_PREPARATION.pop(preparation_key, None)
+            prepared = None
     if tail and not cursor:
         position["tail"] = True
     position["limit"] = max(1, min(PAGE_LINES, limit))
@@ -316,6 +328,22 @@ def source_page(source: str, *, cursor: str = "", tail: bool = False, limit: int
     if result.returncode:
         raise ValueError("Log history is temporarily unavailable. Your displayed page is preserved.")
     payload = json.loads(result.stdout)
+    if payload.get("pending") is True:
+        preparation = payload.get("preparation_position")
+        if not isinstance(preparation, dict) or len(json.dumps(preparation)) > 4096:
+            raise ValueError("Invalid journal preparation checkpoint.")
+        with _JOURNAL_PREPARATION_LOCK:
+            if _JOURNAL_PREPARATION.get(preparation_key) is prepared:
+                _JOURNAL_PREPARATION[preparation_key] = (preparation, time.monotonic())
+                _JOURNAL_PREPARATION.move_to_end(preparation_key)
+                while len(_JOURNAL_PREPARATION) > 64:
+                    _JOURNAL_PREPARATION.popitem(last=False)
+        return {"source": source, "available": True, "pending": True, "text": "", "cursor": cursor,
+                "next_cursor": cursor, "previous_cursor": "", "has_more": False, "reset": False,
+                "notice": "Preparing retained journal redaction context; displayed output is preserved."}
+    with _JOURNAL_PREPARATION_LOCK:
+        if _JOURNAL_PREPARATION.get(preparation_key) is prepared:
+            _JOURNAL_PREPARATION.pop(preparation_key, None)
     initial_private_key = not payload.get("reset") and payload.get("initial_private_key", position.get("private_key")) is True
     lines, private_key = redact_lines(payload["lines"], private_key=initial_private_key)
     if payload.get("line_private_keys") is not None:

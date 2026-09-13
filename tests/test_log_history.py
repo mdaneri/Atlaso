@@ -215,7 +215,7 @@ def test_journal_history_is_bounded_and_uses_fixed_units(monkeypatch, capsys):
     process.poll.return_value = 0
     launch = MagicMock(return_value=process)
     monkeypatch.setattr(helper.subprocess, "Popen", launch)
-    assert helper._read_log_history(["nginx", '{"journal_cursor":"prior"}']) == 0
+    assert helper._read_log_history(["nginx", '{"journal_cursor":"prior","journal_pem_state":"S"}']) == 0
     page = json.loads(capsys.readouterr().out)
     assert len(page["lines"]) == 500
     assert page["has_more"]
@@ -249,7 +249,7 @@ def test_journal_large_batch_advances_complete_entries(monkeypatch, capsys):
     process.wait.return_value = 0
     process.poll.return_value = 0
     monkeypatch.setattr(helper.subprocess, "Popen", lambda *args, **kwargs: process)
-    offset, actual, position = 0, [], {"journal_cursor": "c--1"}
+    offset, actual, position = 0, [], {"journal_cursor": "c--1", "journal_pem_state": "S"}
     for _ in range(10):
         process.stdout = io.BytesIO("\n".join(json.dumps(entry) for entry in entries[offset:]).encode())
         assert helper._read_log_history(["nginx", json.dumps(position)]) == 0
@@ -457,7 +457,7 @@ def test_journal_oversized_record_advances_metadata_after_message(monkeypatch, c
     assert "Oversized journal entry omitted" in page["lines"][0]
     assert "private-fragment" not in str(page)
     process.stdout = io.BytesIO((json.dumps(later) + "\n").encode())
-    assert helper._read_log_history(["nginx", json.dumps({"journal_cursor": page["journal_cursor"]})]) == 0
+    assert helper._read_log_history(["nginx", json.dumps(page["journal_position"])]) == 0
     assert json.loads(capsys.readouterr().out)["lines"][0].endswith(" later")
 
 
@@ -484,20 +484,20 @@ def test_journal_tail_recovers_prior_key_state(monkeypatch, capsys):
             **_kwargs: Unused arguments from the replaced transport.
         """
         commands.append(command)
-        message, cursor = ("-----BEGIN PRIVATE KEY-----", "prior") if any(arg.startswith("--grep=") for arg in command) else ("hidden", "latest")
+        records = [("hidden", "latest")] if "--reverse" in command else [("-----BEGIN PRIVATE KEY-----", "prior"), ("hidden", "latest")]
         process = MagicMock()
         process.__enter__.return_value = process
         process.wait.return_value = process.poll.return_value = 0
-        process.stdout = io.BytesIO((json.dumps({"MESSAGE": message, "__CURSOR": cursor,
-                                               "__REALTIME_TIMESTAMP": "1000000"}) + "\n").encode())
+        process.stdout = io.BytesIO("".join(json.dumps({"MESSAGE": message, "__CURSOR": cursor,
+                                                    "__REALTIME_TIMESTAMP": "1000000"}) + "\n" for message, cursor in records).encode())
         return process
     monkeypatch.setattr(helper.subprocess, "Popen", launch)
     assert helper._read_log_history(["nginx", '{"tail":true}']) == 0
     page = json.loads(capsys.readouterr().out)
     assert page["initial_private_key"]
-    assert page["current_position"] == {"journal_start_cursor": "latest", "journal_has_previous": False}
+    assert page["current_position"] == {"journal_start_cursor": "latest", "journal_has_previous": False, "journal_pem_state": "S"}
     assert "--lines=501" in commands[0]
-    assert "--cursor=latest" in commands[1]
+    assert "--lines=+5001" in commands[1]
 
 
 def test_tail_of_unfinished_oversized_key_keeps_future_fragments_redacted(tmp_path):
@@ -1304,12 +1304,24 @@ def test_sparse_journal_windows_advance_and_preserve_filtered_key_state(monkeypa
     assert "private-fragment" not in "\n".join(texts)
     assert "[redacted private key]" in texts[1]
     assert "visible-dhcp" in texts[2]
-    page = log_viewer.source_page("dnsmasq-dhcp", tail=True)
+    def ready_page(*, cursor="", tail=False):
+        """Resume bounded context preparation without adopting an empty pending page.
+
+        Args:
+            cursor: Requested history boundary.
+            tail: Whether this starts a live-tail navigation.
+        """
+        for _ in range(5):
+            page = log_viewer.source_page("dnsmasq-dhcp", cursor=cursor, tail=tail)
+            if not page.get("pending"):
+                return page
+        raise AssertionError("Journal preparation did not advance")
+    page = ready_page(tail=True)
     reverse_texts = [page["text"]]
     for _ in range(6):
         if not page["previous_cursor"]:
             break
-        page = log_viewer.source_page("dnsmasq-dhcp", cursor=page["previous_cursor"])
+        page = ready_page(cursor=page["previous_cursor"])
         reverse_texts.append(page["text"])
     assert not page["previous_cursor"]
     assert "visible-dhcp" in reverse_texts[0]
