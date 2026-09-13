@@ -120,7 +120,12 @@ def test_replacement_link_does_not_replay_name_only_journal_history(vlan, recrea
 def test_successful_reverification_retains_history():
     """A newly active formerly rejected address resolves current conflict without losing history."""
     event = {"name": "eth0", "address": "192.0.2.20", "detected_at": "2026-09-12T00:00:00+00:00", "mac": ""}
-    result = project_status(observation(address="192.0.2.20", conflicts=[event]), {}, [resource()])
+    desired = resource()
+    desired["desired_cidrs"] = {"192.0.2.20": "192.0.2.20/24"}
+    prior = project_status(observation(conflicts=[event]), {}, [desired])
+    native = observation(address="192.0.2.20")
+    native["links"][0]["addresses"][0].update(cidr="192.0.2.20/24", source="static")
+    result = project_status(native, prior, [desired])
     assert result["rows"]["physical:1"]["state"] == "assigned"
     assert result["rows"]["physical:1"]["last_conflict"] == event
 
@@ -920,3 +925,29 @@ def test_address_readiness_uses_full_thirty_second_window(tmp_path, monkeypatch,
         helper._wait_network_addresses(tmp_path / "intent.conf")
         assert elapsed[0] == ready_at
     assert samples[-1] == elapsed[0]
+
+
+@pytest.mark.parametrize("source,prefix", [("static", 24), ("DHCPv4", 25), ("static", 25)])
+def test_static_prefix_failure_requires_later_exact_candidate_activation(source, prefix):
+    """Rollback holdovers and leases cannot resolve a failed static prefix change.
+
+    Args:
+        source: Native source of the retained address.
+        prefix: Prefix on the pre-existing address record.
+    """
+    desired = resource(desired="192.0.2.20")
+    desired["desired_cidrs"] = {"192.0.2.20": "192.0.2.20/25"}
+    event = {"name": "eth0", "address": "192.0.2.20", "detected_at": "2026-09-12T00:00:00+00:00"}
+    native = observation(address="192.0.2.20", conflicts=[event])
+    native["links"][0]["addresses"][0].update(source=source, cidr=f"192.0.2.20/{prefix}")
+    rejected = project_status(native, {}, [desired])
+    retained = project_status(native, rejected, [desired])
+    assert retained["rows"]["physical:1"]["state"] == "conflict"
+    assert retained["rows"]["physical:1"]["conflict_resolved"] is False
+    native["links"][0]["addresses"] = []
+    absent = project_status(native, retained, [desired])
+    native["links"][0]["addresses"] = [{"address": "192.0.2.20", "cidr": "192.0.2.20/25",
+                                        "source": "static", "state": "assigned"}]
+    recovered = project_status(native, absent, [desired])
+    assert recovered["rows"]["physical:1"]["state"] == "assigned"
+    assert recovered["rows"]["physical:1"]["conflict_resolved"] is True

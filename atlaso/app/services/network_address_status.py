@@ -86,6 +86,9 @@ def project_status(
         dhcp4_addresses = [row["address"] for row in records
                            if row["state"] == "assigned" and row.get("source") == "DHCPv4"]
         lease_evidence = bool(link and observation.get("complete"))
+        static_cidrs = [row["cidr"] for row in records if row["state"] == "assigned"
+                        and row.get("source") == "static" and row.get("cidr")]
+        desired_cidrs = resource.get("desired_cidrs", {})
         events = [item for item in observation.get("conflicts", []) if item["name"] == resource["name"]
                   and (item.get("identity") == identity or (
                       link and not item.get("identity") and _event_after_identity_change(item, identity_since)))]
@@ -93,10 +96,12 @@ def project_status(
                       for item in records if item["state"] == "conflict")
         last_conflict = prior.get("last_conflict")
         conflict_resolved = bool(prior.get("conflict_resolved"))
+        conflict_cidr = prior.get("conflict_cidr", "")
         for event in events:
             if not last_conflict or event["detected_at"] > last_conflict["detected_at"]:
                 last_conflict = event
                 conflict_resolved = False
+                conflict_cidr = desired_cidrs.get(event["address"], "")
         state = "unknown"
         detail = "Unable to check: native evidence is unavailable."
         if link and observation.get("complete"):
@@ -123,12 +128,17 @@ def project_status(
                 and any(address not in prior_leases for address in dhcp4_addresses))
             if replacement_lease and declined_offer:
                 conflict_resolved = True
-            elif (not declined_offer and address in assigned and resource["checking"]
-                  and link.get("configured") and observation.get("complete")):
+            elif (not declined_offer and resource["checking"] and lease_evidence and link.get("configured")
+                  and conflict_cidr and conflict_cidr in static_cidrs
+                  and isinstance(prior.get("static_cidrs"), list) and conflict_cidr not in prior["static_cidrs"]
+                  and _event_after_identity_change({"detected_at": prior.get("observed_at")},
+                                                   last_conflict["detected_at"])):
                 conflict_resolved = True
-            if not conflict_resolved and ((address in resource["desired"] and address not in assigned) or declined_offer):
+            if not conflict_resolved and (address in resource["desired"] or declined_offer):
                 state = "conflict"
-                detail = f"IP conflict: {address}. The failed attempted address is not active."
+                detail = f"IP conflict: {address}. "
+                detail += ("The failed attempted address is not active." if address not in assigned
+                           else "The latest attempted configuration has not been observed recovering.")
                 if assigned:
                     detail += " Other active addresses are shown separately; the working path may have been restored."
             elif address in assigned and resource["checking"] and observation.get("complete"):
@@ -138,6 +148,7 @@ def project_status(
         if not resource["checking"]:
             detail += " IPv4 checking is disabled in desired state; Apply is required to activate edits. IPv6 DAD is retained."
         result["rows"][key] = {
+            "static_cidrs": static_cidrs if lease_evidence else None, "conflict_cidr": conflict_cidr,
             "dhcp4_addresses": dhcp4_addresses if lease_evidence else None,
             "identity": identity, "identity_since": identity_since,
             "name": resource["name"], "state": state, "detail": detail,
@@ -174,15 +185,18 @@ def refresh_status(db: Session) -> None:
                 parent = parents.get(row.parent_interface)
                 identity = f"{parent.mac_address.lower() if parent else ''}:{row.vlan_id}"
             desired = []
+            desired_cidrs = {}
             for cidr in (row.ip_cidr, row.ipv6_cidr):
                 if not cidr:
                     continue
                 try:
-                    desired.append(str(ip_interface(cidr).ip))
+                    parsed = ip_interface(cidr)
+                    desired.append(str(parsed.ip))
+                    desired_cidrs[str(parsed.ip)] = str(parsed)
                 except (ValueError, TypeError):
                     continue
             resources.append({"key": f"{kind}:{row.id}", "name": row.name, "identity": identity,
-                              "desired": desired, "physical": kind == "physical",
+                              "desired": desired, "desired_cidrs": desired_cidrs, "physical": kind == "physical",
                               "dhcp4": isinstance(row, PhysicalInterface) and row.ipv4_method == "dhcp",
                               "parent": row.parent_interface if isinstance(row, VlanInterface) else "",
                               "checking": row.check_duplicate_ip_addresses is not False})

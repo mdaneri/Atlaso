@@ -309,6 +309,10 @@ observing a newly appearing DHCP lease after the decline has been observed; a le
 in the first conflict sample does not prove recovery. Polling can miss an intervening lease change,
 so uncertain ordering conservatively retains the warning and the last failed attempt.
 
+Static recovery similarly requires a later activation of the exact attempted CIDR with native static
+source evidence. A rollback holdover with the same IP, a different prefix, or a DHCP source does not
+clear the latest failure. When ordering or the attempted prefix is unknown, the warning is retained.
+
 ## Verify and roll back
 
 Confirm the management URL, expected routes, and interface state after apply and again after an appliance reboot. For a
