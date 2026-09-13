@@ -2301,7 +2301,10 @@ def _read_log_history(args: list[str]) -> int:
         backward = position.get("before") is True
         tail = (position.get("tail") is True and not cursor) or backward
         category = args[0].removeprefix("dnsmasq-") if args[0].startswith("dnsmasq-") else None
-        lines_option = ("--lines=5001" if tail else "--lines=+5001") if category is not None else (f"--lines={limit + 1}" if tail else "--lines=+501")
+        # An inclusive backward boundary is discarded before paging. Reserve its
+        # record separately from the lookahead that proves older history exists.
+        tail_records = limit + 1 + int(backward and bool(position.get("journal_start_cursor")))
+        lines_option = ("--lines=5001" if tail else "--lines=+5001") if category is not None else (f"--lines={tail_records}" if tail else "--lines=+501")
         command = [shutil.which("journalctl") or "journalctl", "--unit", units[args[0]],
                    "--no-pager", "--output=json", lines_option,
                    "--output-fields=MESSAGE,__CURSOR,__REALTIME_TIMESTAMP,SYSLOG_IDENTIFIER,_PID"]

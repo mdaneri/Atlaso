@@ -1085,6 +1085,79 @@ def test_helper_availability_includes_retained_nginx_rotations(tmp_path, monkeyp
     assert not sources["nginx-error"]
 
 
+@pytest.mark.parametrize("limit", [100, 200, 500])
+def test_journal_previous_reaches_oldest_with_command_record_cap(monkeypatch, capsys, limit):
+    """Inclusive cursor records cannot consume the older-history lookahead.
+
+    Args:
+        monkeypatch: Replace the journal process with command-capped records.
+        capsys: Capture helper responses for the real source-page adapter.
+        limit: Supported viewer page size.
+    """
+    import io
+    from types import SimpleNamespace
+    from unittest.mock import MagicMock
+
+    from tests.test_appliance_helper import load_helper_module
+
+    helper = load_helper_module()
+    records = [{"__CURSOR": str(index), "__REALTIME_TIMESTAMP": "1000000", "MESSAGE": f"record-{index}"}
+               for index in range(limit * 3 + 17)]
+
+    def launch(command, **_kwargs):
+        """Honor journal direction, inclusive boundaries, and the record count.
+
+        Args:
+            command: Fixed journal invocation from the helper.
+            **_kwargs: Unused process options.
+        """
+        rows = list(records)
+        reverse = "--reverse" in command
+        for argument in command:
+            if argument.startswith(("--cursor=", "--after-cursor=")):
+                boundary = int(argument.split("=", 1)[1])
+                inclusive = argument.startswith("--cursor=")
+                rows = [row for row in rows if (int(row["__CURSOR"]) <= boundary if reverse and inclusive else
+                        int(row["__CURSOR"]) < boundary if reverse else
+                        int(row["__CURSOR"]) >= boundary if inclusive else int(row["__CURSOR"]) > boundary)]
+        if any(argument.startswith("--grep=") for argument in command):
+            rows = []
+        if reverse:
+            rows.reverse()
+        count = int(next(argument.split("=", 1)[1] for argument in command if argument.startswith("--lines=")))
+        rows = rows[:count]
+        process = MagicMock()
+        process.__enter__.return_value = process
+        process.wait.return_value = process.poll.return_value = 0
+        process.stdout = io.BytesIO("".join(json.dumps(row) + "\n" for row in rows).encode())
+        process.stderr = io.BytesIO()
+        return process
+
+    def adapter(_self, source, position):
+        """Pass actual helper output through signed browser-facing cursors.
+
+        Args:
+            _self: Adapter instance.
+            source: Allowlisted source identity.
+            position: Decoded history position.
+        """
+        assert helper._read_log_history([source, json.dumps(position)]) == 0
+        return SimpleNamespace(returncode=0, stdout=capsys.readouterr().out)
+
+    monkeypatch.setattr(helper.subprocess, "Popen", launch)
+    monkeypatch.setattr(log_viewer.SystemAdapter, "read_log_history", adapter)
+    page = log_viewer.source_page("nginx", tail=True, limit=limit)
+    pages = []
+    for _ in range(8):
+        pages.append([int(line.rsplit("record-", 1)[1]) for line in page["text"].splitlines()])
+        assert 0 < len(pages[-1]) <= limit
+        if not page["previous_cursor"]:
+            break
+        page = log_viewer.source_page("nginx", cursor=page["previous_cursor"], limit=limit)
+    assert not page["previous_cursor"]
+    assert [index for rows in reversed(pages) for index in rows] == list(range(len(records)))
+
+
 def test_sparse_journal_windows_advance_and_preserve_filtered_key_state(monkeypatch, capsys):
     """Bounded empty windows advance in both directions without leaking skipped keys.
 

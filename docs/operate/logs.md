@@ -34,7 +34,8 @@ when their log files appear, without loading inactive log contents. These checks
 **Next page** and **Previous page** move through the complete retained history in bounded pages. From the live tail,
 **Previous page** opens the preceding group directly, including within a multiline journal record. The page size limits
 each response, not the total history you can inspect. History controls pause until the requested page arrives,
-so repeated activation cannot skip or duplicate pages. Previous is unavailable at the oldest retained journal page.
+so repeated activation cannot skip or duplicate pages. Previous remains available while older journal records exist
+at every supported page size, and becomes unavailable at the oldest retained journal page.
 File, task, and journal pages include JSON escaping and response metadata in their byte limit.
 File pages retain complete-line boundaries; task and multiline journal cursors retain character-safe continuation.
 Numbered file rotations, including compressed archives, are
