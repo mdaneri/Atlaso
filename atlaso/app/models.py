@@ -6,6 +6,7 @@ from uuid import uuid4
 
 from sqlalchemy import (
     JSON,
+    BigInteger,
     Boolean,
     CheckConstraint,
     DateTime,
@@ -2900,6 +2901,39 @@ class Job(Base):
         cascade="all, delete-orphan",
         order_by="JobStep.position",
     )
+
+
+class TaskLogCheckpoint(Base):
+    """Track sanitized producer state and the immutable history character boundary.
+
+    Attributes:
+        job_id: Task owning this checkpoint.
+        state_json: Safe comparison values and keyed log-prefix digest.
+        end_offset: Exclusive character boundary of captured history.
+    """
+    __tablename__ = "task_log_checkpoints"
+
+    job_id: Mapped[str] = mapped_column(ForeignKey("jobs.id", ondelete="CASCADE"), primary_key=True)
+    state_json: Mapped[str] = mapped_column(Text, default="{}")
+    end_offset: Mapped[int] = mapped_column(BigInteger, default=0)
+
+
+class TaskLogChunk(Base):
+    """Retain one immutable, bounded portion of a task's sanitized output.
+
+    Attributes:
+        job_id: Task owning this history.
+        start_offset: Inclusive character boundary, ordered within the task.
+        end_offset: Exclusive character boundary.
+        content: Sanitized text containing at most 16,384 characters.
+    """
+    __tablename__ = "task_log_chunks"
+    __table_args__ = (Index("ix_task_log_chunks_job_end", "job_id", "end_offset"),)
+
+    job_id: Mapped[str] = mapped_column(ForeignKey("jobs.id", ondelete="CASCADE"), primary_key=True)
+    start_offset: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    end_offset: Mapped[int] = mapped_column(BigInteger)
+    content: Mapped[str] = mapped_column(Text)
 
 
 class VcfDepotAdmissionGate(Base):

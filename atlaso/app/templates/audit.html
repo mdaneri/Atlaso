@@ -7,9 +7,10 @@
       <h2>Audit Events</h2>
       <p class="muted">Read-only API and UI history.</p>
     </div>
-    <span class="status-pill muted">{{ audit_event_rows|length }} events</span>
+    <span class="status-pill muted" data-audit-live-status role="status">Snapshot ready</span>
+    <div data-audit-history-controls aria-label="Audit history"></div>
   </div>
-  <div id="audit-events-table" class="tabulator-shell audit-events-grid hidden" data-audit-events='{{ audit_event_rows | tojson }}' data-fallback-id="audit-events-fallback"></div>
+  <div id="audit-events-table" class="tabulator-shell audit-events-grid hidden" data-history-url="{{ management_ui_root }}/audit-log" data-audit-events='{{ audit_event_rows | tojson }}' data-fallback-id="audit-events-fallback"></div>
   <div id="audit-events-fallback" class="audit-events-fallback-shell">
     <table class="data-table compact dns-fallback-table">
       <thead>

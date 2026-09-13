@@ -48,6 +48,7 @@ from atlaso.app.operational_logging import log_audit_event
 from atlaso.app.routers.chunk_uploads import ChunkedUploadRoute
 from atlaso.app.secrets import decrypt_secret
 from atlaso.app.security import Identity, require_session_identity
+from atlaso.app.services import log_viewer
 from atlaso.app.services.dnsmasq import split_addresses, split_interfaces
 from atlaso.app.services.local_users import has_pending_os_password
 from atlaso.app.services.vaults import (
@@ -2264,21 +2265,29 @@ def build_router(dependencies: VcfWorkflowsUiDependencies) -> VcfWorkflowsUiRout
                     )
                 )
             )
+        response_headers = {"Cache-Control": "no-store", "Vary": "X-Atlaso-Task-Log"}
         if request.headers.get("X-Atlaso-Task-Log") == "1":
+            try:
+                history = log_viewer.file_page(Path(task_log["path"]), source=f"task:{job.id}",
+                                               tail=request.query_params.get("tail") == "1",
+                                               cursor=request.query_params.get("cursor", ""),
+                                               complete=job.status not in {JobStatus.RUNNING.value, JobStatus.PENDING.value})
+            except (ValueError, OSError) as exc:
+                raise HTTPException(status_code=400, detail=str(exc)) from exc
             return JSONResponse(
                 {
+                    **history,
                     "job_id": job.id,
                     "profile_name": profile_name,
                     "status": job.status,
                     "path": task_log["path"],
                     "updated_at": task_log.get("updated_at", ""),
                     "available": task_log["available"],
-                    "text": "\n".join(task_log["lines"])
-                    if task_log["available"]
-                    else "No task log is available.",
-                }
+                    "text": history["text"],
+                },
+                headers=response_headers,
             )
-        return render(
+        response = render(
             request,
             "vcf_offline_depot_task_log.html",
             {
@@ -2288,6 +2297,8 @@ def build_router(dependencies: VcfWorkflowsUiDependencies) -> VcfWorkflowsUiRout
                 "task_log": task_log,
             },
         )
+        response.headers.update(response_headers)
+        return response
 
     @router.get("/vcf-offline-depot/tasks/status", response_model=None)
     def vcf_offline_depot_task_status(
