@@ -1067,6 +1067,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#cancellation-and-execution-ownership" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Cancellation and execution ownership
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#additional-verified-states" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
@@ -3634,6 +3645,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#cancellation-and-execution-ownership" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Cancellation and execution ownership
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#additional-verified-states" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
@@ -3827,6 +3849,105 @@ content changed, and neither is replayed automatically.</p>
 <p>Read the failed step and sanitized task log, then correlate its identifier with <a href="../logs/">Operational logs</a> and the
 <a href="../audit-log/">Audit log</a>. Correct desired state in the owning page and submit a new task. Do not edit task history or
 fabricate a successful result.</p>
+<h2 id="cancellation-and-execution-ownership">Cancellation and execution ownership<a class="headerlink" href="#cancellation-and-execution-ownership" title="Permanent link">&para;</a></h2>
+<p>Tasks and the API expose the same backend-owned <code>can_cancel</code>, <code>cancel_reason</code>, and <code>cancel_confirmation</code> fields.
+The task detail shows the reason even when cancellation is unavailable. Its Cancel action also works for a task
+opened directly outside the current grid page or filters. Cancellation uses the refreshed grid capability when
+available; a closed detail dialog cannot override the current confirmation or eligibility. A stale browser action
+cannot override the backend policy. An accepted request records <code>cancel_requested_at</code> and <code>cancel_requested_by</code>;
+running work keeps its active status until its owner verifies the stop and cleanup. <code>cancel_completed_at</code> and
+<code>cancel_outcome</code> record the final disposition. <code>cleanup-required</code> remains active and blocks worker admission while
+recovery needs attention. A media failure racing an accepted cancellation confirms the stop once rollback and
+upload cleanup succeed; only unresolved cleanup retains that queue hold. Startup recovery also requires proof that
+no unresolved swap journal, replacement tree, or staging directory remains. Malformed recovery evidence retains the
+request and queue hold until recovery succeeds. Embedded Appliance Update actions use the current caller's
+permissions. Do not interpret a cancellation request as proof that a local process or a remote operation stopped.</p>
+<table>
+<thead>
+<tr>
+<th>Task owner</th>
+<th>Queued cancellation</th>
+<th>Running cancellation</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Appliance Update check</td>
+<td>Reserved before worker claim</td>
+<td>Current bounded check finishes and cleans credentials; remaining checks skipped</td>
+</tr>
+<tr>
+<td>Appliance Update installation or source synchronization</td>
+<td>Reserved before worker claim</td>
+<td>Unavailable; existing update/recovery owner must finish</td>
+</tr>
+<tr>
+<td>Appliance Apply</td>
+<td>Cancelled before its atomic execution claim; apply lock released</td>
+<td>Current component and cleanup finish; remaining components skipped; applied changes remain</td>
+</tr>
+<tr>
+<td>Network Boot media download/upload</td>
+<td>Reserved before claim; owned upload removed</td>
+<td>Transfer/extraction checkpoint, then staged filesystem rollback and upload cleanup</td>
+</tr>
+<tr>
+<td>Network Boot media deletion</td>
+<td>Reserved before worker claim</td>
+<td>Unavailable once destructive deletion starts</td>
+</tr>
+<tr>
+<td>Managed script</td>
+<td>Reserved before worker claim</td>
+<td>Unavailable because script side effects have no generic rollback contract</td>
+</tr>
+<tr>
+<td>VCF depot download</td>
+<td>Reserved before claim; queued profile status restored</td>
+<td>Unavailable until the VCFDT owner finishes</td>
+</tr>
+<tr>
+<td>Diagnostic bundle</td>
+<td>Reserved before worker claim</td>
+<td>Unavailable; bounded collector descendant shutdown is not verified</td>
+</tr>
+<tr>
+<td>VCF software identity replacement</td>
+<td>Unavailable</td>
+<td>Unavailable; identity operation owner must finish</td>
+</tr>
+<tr>
+<td>Remote SDDC deployment, depot target configuration, or CA trust</td>
+<td>Unavailable</td>
+<td>Unavailable; stopping a watcher does not stop or undo remote work</td>
+</tr>
+<tr>
+<td>Manual placeholder</td>
+<td>Cancelled before execution</td>
+<td>Unavailable</td>
+</tr>
+<tr>
+<td>Other/unregistered task types</td>
+<td>Unavailable</td>
+<td>Unavailable until an explicit safe owner contract is registered</td>
+</tr>
+</tbody>
+</table>
+<p>An update check request can wait up to six minutes for the current helper's deadline and credential cleanup. Media
+cancellation checks before each transfer attempt and after each 1 MiB read. A network operation can wait up to its
+300-second socket timeout (including each bounded redirect); extraction commands have 60-second deadlines.
+Cancellation does not
+interrupt filesystem publication halfway through. Failed cleanup retains active ownership and the request for
+recovery. Worker restart
+revalidates task-owned update units or restores interrupted media swaps before confirming cancellation.
+Web startup confirms accepted queued Apply cancellations before classifying other interrupted Apply jobs.
+Paired Firewall/NAT publication finishes as one transaction; a request after its final work preserves completion.</p>
+<p>Completed child results remain intact. Completed update checks refresh availability before cancellation is confirmed,
+including during restart recovery; skipped streams retain their previous confirmation. A verified parent stop skips
+children that never started. If completion wins
+the race, Atlaso preserves success or failure and records <code>completion-won</code>; repeated requests never rewrite that result.
+The API requires <code>admin:all</code>; browser administrators can request supported cancellations, while service administrators
+are limited to supported Network Boot media tasks. Child rows cannot independently cancel their parent's operation.</p>
 <!-- BEGIN GENERATED ADDITIONAL SCREENSHOTS -->
 <h2 id="additional-verified-states">Additional verified states<a class="headerlink" href="#additional-verified-states" title="Permanent link">&para;</a></h2>
 <p>These captures show responsive layouts and useful operational states referenced by this page.</p>
