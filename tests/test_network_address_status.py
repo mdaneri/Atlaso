@@ -354,6 +354,9 @@ def test_postgresql_startup_adds_address_checks_under_schema_lock(monkeypatch):
 
     calls = []
     columns = {table: [{"name": "id"}] for table in ("physical_interfaces", "vlan_interfaces")}
+    columns["jobs"] = [{"name": name} for name in (
+        "id", "cancel_requested_at", "cancel_requested_by", "cancel_completed_at", "cancel_outcome",
+    )]
 
     def execute(statement, _parameters=None):
         """Record the advisory lock and apply additive metadata changes.
@@ -369,7 +372,7 @@ def test_postgresql_startup_adds_address_checks_under_schema_lock(monkeypatch):
             assert sql.endswith("BOOLEAN NOT NULL DEFAULT TRUE")
             columns[sql.split()[2]].append({"name": "check_duplicate_ip_addresses"})
 
-    connection = SimpleNamespace(execute=execute)
+    connection = SimpleNamespace(execute=execute, dialect=SimpleNamespace(name="postgresql"))
     engine = SimpleNamespace(dialect=SimpleNamespace(name="postgresql"), begin=lambda: nullcontext(connection))
     monkeypatch.setattr(database, "inspect", lambda _connection: SimpleNamespace(get_columns=columns.__getitem__))
     monkeypatch.setattr(database.Base.metadata, "create_all", lambda **_kwargs: None)
