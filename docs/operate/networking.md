@@ -304,6 +304,11 @@ bounded to 256 interface records, retained separately from desired/applied basel
 settings archives. Evidence older than 30 seconds is marked stale. The worker observes native outcomes
 at boot and during DHCP/reconfigure activity without issuing extra probes or changing host settings.
 
+A DHCP decline remains a current conflict while an older lease is still active. Recovery requires
+observing a newly appearing DHCP lease after the decline has been observed; a lease already present
+in the first conflict sample does not prove recovery. Polling can miss an intervening lease change,
+so uncertain ordering conservatively retains the warning and the last failed attempt.
+
 ## Verify and roll back
 
 Confirm the management URL, expected routes, and interface state after apply and again after an appliance reboot. For a

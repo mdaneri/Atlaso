@@ -520,7 +520,12 @@ def test_resolved_dhcp_conflict_does_not_reappear_after_lease_loss():
     desired.update(desired=[], dhcp4=True)
     native = observation(conflicts=[event])
     native["links"][0]["addresses"][0]["source"] = "DHCPv4"
-    recovered = project_status(native, {}, [desired])
+    rejected = project_status(native, {}, [desired])
+    assert rejected["rows"]["physical:1"]["state"] == "conflict"
+    repeated = project_status(native, rejected, [desired])
+    assert repeated["rows"]["physical:1"]["conflict_resolved"] is False
+    native["links"][0]["addresses"][0]["address"] = "192.0.2.11"
+    recovered = project_status(native, repeated, [desired])
     assert recovered["rows"]["physical:1"]["conflict_resolved"] is True
     native["links"][0]["addresses"] = []
     lost = project_status(native, recovered, [desired])
@@ -530,6 +535,34 @@ def test_resolved_dhcp_conflict_does_not_reappear_after_lease_loss():
     again = project_status(native, lost, [desired])["rows"]["physical:1"]
     assert again["state"] == "conflict"
     assert again["conflict_resolved"] is False
+
+
+@pytest.mark.parametrize("old_address", ["192.0.2.10", "192.0.2.20"])
+def test_dhcp_decline_requires_lease_appearance_after_conflict(old_address):
+    """Old or simultaneously discovered leases cannot resolve a fresh decline.
+
+    Args:
+        old_address: A retained lease, including the declined address itself.
+    """
+    desired = resource()
+    desired.update(desired=[], dhcp4=True)
+    native = observation(address=old_address)
+    native["observed_at"] = "2026-09-12T00:00:00+00:00"
+    native["links"][0]["addresses"][0]["source"] = "DHCPv4"
+    prior = project_status(native, {}, [desired])
+    event = {"name": "eth0", "address": "192.0.2.20", "detected_at": "2026-09-12T00:00:01+00:00"}
+    native["conflicts"] = [event]
+    native["observed_at"] = "2026-09-12T00:00:02+00:00"
+    # Even a different lease in the first post-decline sample has no proven ordering.
+    native["links"][0]["addresses"][0]["address"] = "192.0.2.11"
+    rejected = project_status(native, prior, [desired])
+    assert rejected["rows"]["physical:1"]["conflict_resolved"] is False
+    retained = project_status(native, rejected, [desired])
+    assert retained["rows"]["physical:1"]["state"] == "conflict"
+    native["observed_at"] = "2026-09-12T00:00:03+00:00"
+    native["links"][0]["addresses"][0]["address"] = "192.0.2.12"
+    recovered = project_status(native, retained, [desired])
+    assert recovered["rows"]["physical:1"]["conflict_resolved"] is True
 
 
 def test_apply_rejects_partial_native_evidence_before_install(tmp_path, monkeypatch, capsys):

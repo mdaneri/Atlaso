@@ -83,6 +83,9 @@ def project_status(
             prior = {}
         records = link.get("addresses", [])
         assigned = [row["address"] for row in records if row["state"] == "assigned"]
+        dhcp4_addresses = [row["address"] for row in records
+                           if row["state"] == "assigned" and row.get("source") == "DHCPv4"]
+        lease_evidence = bool(link and observation.get("complete"))
         events = [item for item in observation.get("conflicts", []) if item["name"] == resource["name"]
                   and (item.get("identity") == identity or (
                       link and not item.get("identity") and _event_after_identity_change(item, identity_since)))]
@@ -109,13 +112,20 @@ def project_status(
                 detail = "Unable to check: no usable address has been observed."
         if last_conflict:
             address = last_conflict["address"]
-            replacement_lease = bool(link.get("configured") and observation.get("complete") and any(
-                item["state"] == "assigned" and item.get("source") == "DHCPv4" for item in records))
-            if replacement_lease and resource.get("dhcp4") and ip_address(address).version == 4:
-                conflict_resolved = True
-            elif address in assigned and resource["checking"] and link.get("configured") and observation.get("complete"):
-                conflict_resolved = True
             declined_offer = resource.get("dhcp4") and ip_address(address).version == 4
+            # A lease already present when the decline is first observed cannot
+            # prove recovery. Require a newly appearing lease after that evidence.
+            prior_leases = prior.get("dhcp4_addresses")
+            replacement_lease = bool(
+                lease_evidence and link.get("configured") and isinstance(prior_leases, list)
+                and _event_after_identity_change({"detected_at": prior.get("observed_at")},
+                                                 last_conflict["detected_at"])
+                and any(address not in prior_leases for address in dhcp4_addresses))
+            if replacement_lease and declined_offer:
+                conflict_resolved = True
+            elif (not declined_offer and address in assigned and resource["checking"]
+                  and link.get("configured") and observation.get("complete")):
+                conflict_resolved = True
             if not conflict_resolved and ((address in resource["desired"] and address not in assigned) or declined_offer):
                 state = "conflict"
                 detail = f"IP conflict: {address}. The failed attempted address is not active."
@@ -128,6 +138,7 @@ def project_status(
         if not resource["checking"]:
             detail += " IPv4 checking is disabled in desired state; Apply is required to activate edits. IPv6 DAD is retained."
         result["rows"][key] = {
+            "dhcp4_addresses": dhcp4_addresses if lease_evidence else None,
             "identity": identity, "identity_since": identity_since,
             "name": resource["name"], "state": state, "detail": detail,
             "active_addresses": assigned, "last_conflict": last_conflict, "conflict_resolved": conflict_resolved, "observed_at": now,
