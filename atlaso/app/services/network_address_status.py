@@ -59,6 +59,11 @@ def project_status(
     now = observation.get("observed_at", "")
     links = {item["name"]: item for item in observation.get("links", [])}
     result: dict[str, Any] = {"observed_at": now, "rows": {}}
+    identity_history = dict(previous.get("identity_history", {}))
+    for old_row in previous.get("rows", {}).values():
+        if old_row.get("name"):
+            identity_history[old_row["name"]] = {
+                field: old_row.get(field, "") for field in ("identity", "identity_since", "observed_at")}
     for resource in resources[:MAX_RECORDS]:
         key = resource["key"]
         link = links.get(resource["name"], {})
@@ -74,8 +79,7 @@ def project_status(
                 link = {}
         previous_rows = previous.get("rows", {})
         prior = previous_rows.get(key, {})
-        same_name: dict[str, Any] = next((row for row in previous_rows.values()
-                                          if row.get("name") == resource["name"]), {})
+        same_name: dict[str, Any] = identity_history.get(resource["name"], {})
         identity_since = prior.get("identity_since", same_name.get("identity_since", ""))
         if any(row and row.get("identity") != identity for row in (prior, same_name)):
             identity_since = now
@@ -163,6 +167,10 @@ def project_status(
             "name": resource["name"], "state": state, "detail": detail,
             "active_addresses": assigned, "last_conflict": last_conflict, "conflict_resolved": conflict_resolved, "observed_at": now,
         }
+        identity_history[resource["name"]] = {
+            "identity": identity, "identity_since": identity_since, "observed_at": now}
+    result["identity_history"] = dict(sorted(
+        identity_history.items(), key=lambda item: (item[1].get("observed_at", ""), item[0]))[-MAX_RECORDS:])
     return result
 
 

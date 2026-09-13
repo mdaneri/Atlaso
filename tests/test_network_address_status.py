@@ -75,12 +75,14 @@ def test_unavailable_and_tentative_are_not_conflicts_or_success():
 
 @pytest.mark.parametrize("vlan", [False, True])
 @pytest.mark.parametrize("recreated", [False, True])
-def test_replacement_link_does_not_replay_name_only_journal_history(vlan, recreated):
+@pytest.mark.parametrize("absent_poll", [False, True])
+def test_replacement_link_does_not_replay_name_only_journal_history(vlan, recreated, absent_poll):
     """Keep old journal events out of a replacement NIC or VLAN parent's identity.
 
     Args:
         vlan: Exercise parent-MAC identity as well as a physical NIC replacement.
         recreated: Recreate the database row while retaining its link name.
+        absent_poll: Omit the resource for intervening observer polls before replacement.
     """
     name = "eth0.20" if vlan else "eth0"
     key = "vlan:1" if vlan else "physical:1"
@@ -98,6 +100,10 @@ def test_replacement_link_does_not_replay_name_only_journal_history(vlan, recrea
     native["conflicts"] = [event]
     old = project_status(native, {}, [desired])
     assert old["rows"][key]["state"] == "conflict"
+    if absent_poll:
+        old = project_status(native, old, [])
+        old = project_status(native, old, [])
+        assert old["rows"] == {}
     desired["identity"] = "00:11:22:33:44:66" + suffix
     if recreated:
         key = key.replace(":1", ":2")

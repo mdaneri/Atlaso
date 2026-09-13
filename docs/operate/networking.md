@@ -271,7 +271,9 @@ Apply retains confirmed native failures with the observed interface or VLAN-pare
 rollback removes a candidate-only VLAN. The next status refresh can therefore show the failed attempt
 even if the worker never sampled that transient link.
 After observing a NIC or VLAN-parent replacement, status ignores name-only journal events from
-before that observation. The boundary persists across refreshes so old events cannot be reassigned
+before that observation. A bounded history of the 256 most recently observed names preserves identity
+boundaries across polls
+where a resource is absent. The boundary persists across refreshes so old events cannot be reassigned
 to the replacement hardware. Identity-bound Apply evidence and subsequent native events remain usable.
 Backup disposal failure after successful activation is reported as a cleanup warning with the
 retained location; Apply remains successful so the baseline matches the installed configuration.
