@@ -15154,6 +15154,13 @@ def test_vcf_depot_software_id_runner_persists_raw_metadata_before_task_redactio
         assert "Software Depot ID generated and saved." in completed.result
         assert "generated-id" in completed.result
         assert [step.status for step in completed.steps] == ["succeeded"] * 4
+        from atlaso.app.services.task_log_history import task_history_page
+
+        history = task_history_page(db, completed.id)["text"]
+        assert "VCF Download Tool package staged." in history
+        assert "Software Depot ID generated and read back: generated-id" in history
+        assert "credential-value" not in history
+        assert "log_lines" not in json.loads(completed.result)
 
 
 def test_vcf_depot_software_id_runner_fails_when_id_is_not_persisted(client, monkeypatch):
@@ -15202,7 +15209,9 @@ def test_vcf_depot_software_id_runner_fails_when_id_is_not_persisted(client, mon
     with SessionLocal() as db:
         completed = db.get(Job, "job_vcfdt_missing_id")
         assert completed.status == JobStatus.FAILED.value
-        assert "without a new persisted Software Depot ID" in completed.result
+        from atlaso.app.services.task_log_history import task_history_page
+
+        assert "without a new persisted Software Depot ID" in task_history_page(db, completed.id)["text"]
         assert completed.steps[-1].status == JobStatus.FAILED.value
 
 

@@ -61,6 +61,10 @@ the current result snapshot is also replayed for redaction, so changing a later 
 opening marker's protection. Snapshot and incremental concealment are combined before persistence.
 Values hidden by a secret field name still advance this state before they are discarded.
 Progress and audit-only updates reuse the committed task-result checkpoint without rehashing unchanged log output.
+Streaming task producers use `append_task_log_lines` with new lines only (up to 500 lines or 64 KiB per call).
+The append shares the producer transaction and redaction state; it does not read or hash earlier cumulative output.
+The producer commits or rolls back its task changes and output together. Legacy `result.log_lines` snapshots
+remain supported, but changing them requires validating the old prefix; they are unsuitable for repeated streaming updates.
 Startup backfill selects only tasks without history checkpoints and rechecks eligibility under the task lock,
 so ordinary web and worker restarts do not reprocess retained task output.
 File pages retain complete-line boundaries; task and multiline journal cursors retain character-safe continuation.

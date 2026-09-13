@@ -5,7 +5,7 @@ import hmac
 import json
 from typing import Any
 
-from sqlalchemy import select, update
+from sqlalchemy import literal, select, update
 from sqlalchemy.engine import Connection, Engine
 from sqlalchemy.orm import Session
 
@@ -120,7 +120,7 @@ def _merge_private_redaction(current: Any, snapshot: Any) -> Any:
 
 def capture_task_history(
     connection: Connection, job_id: str, audit_ids: tuple[int, ...] = (), *,
-    result_changed: bool = True, only_if_missing: bool = False,
+    result_changed: bool = True, only_if_missing: bool = False, appended_lines: tuple[str, ...] = (),
 ) -> None:
     """Append result deltas and audit records inside the producer transaction.
 
@@ -130,15 +130,19 @@ def capture_task_history(
         audit_ids: Newly flushed audit records; existing records are captured at initialization.
         result_changed: ORM result-change evidence; direct and Core callers default to full validation.
         only_if_missing: Recheck startup migration eligibility under the producer row lock.
+        appended_lines: New producer output in this transaction, never a cumulative snapshot.
     """
     jobs, checkpoints, chunks = Job.__table__, TaskLogCheckpoint.__table__, TaskLogChunk.__table__
     locked = connection.execute(update(jobs).where(jobs.c.id == job_id).values(progress_percent=jobs.c.progress_percent))
     if locked.rowcount != 1:
+        if appended_lines:
+            raise ValueError("Cannot append output to a missing task.")
         return
     checkpoint = connection.execute(select(checkpoints).where(checkpoints.c.job_id == job_id)).mappings().first()
     if only_if_missing and checkpoint is not None:
         return
-    job = connection.execute(select(jobs.c.result, jobs.c.error, jobs.c.status).where(jobs.c.id == job_id)).one()
+    result_column = jobs.c.result if result_changed or checkpoint is None else literal(None).label("result")
+    job = connection.execute(select(result_column, jobs.c.error, jobs.c.status).where(jobs.c.id == job_id)).one()
     previous = _payload(checkpoint["state_json"]) if checkpoint else {}
     end = int(checkpoint["end_offset"]) if checkpoint else 0
     state = dict(previous)
@@ -244,6 +248,11 @@ def capture_task_history(
         leave_stream("log", parser)
         state.update(result=safe_result, result_digests=result_digests, result_order=list(raw_fields),
                      log_count=len(raw_logs), log_digest=_log_digest(raw_logs))
+    if appended_lines:
+        private, parser = enter_stream("log")
+        safe_logs, private = _safe_lines(list(appended_lines), private, parser)
+        lines.extend(safe_logs)
+        leave_stream("log", parser)
     error = previous.get("error", "")
     raw_error = job.error or "" if job.status not in {"pending", "running"} else ""
     if raw_error and _log_digest([raw_error]) != previous.get("error_digest"):
@@ -281,6 +290,28 @@ def capture_task_history(
         connection.execute(update(checkpoints).where(checkpoints.c.job_id == job_id).values(state_json=state_json, end_offset=end))
     else:
         connection.execute(checkpoints.insert().values(job_id=job_id, state_json=state_json, end_offset=end))
+
+
+def append_task_log_lines(db: Session, job_id: str, lines: tuple[str, ...]) -> None:
+    """Append only new task output in the caller's transaction.
+
+    Flush result and audit changes first so their redaction context precedes the
+    new lines. The caller owns commit/rollback; repeated calls append repeated
+    events. Legacy cumulative result snapshots remain supported by capture.
+
+    Args:
+        db: Producer session owning both the task update and these new events.
+        job_id: Existing task receiving output.
+        lines: New complete logical lines, with at most 64 KiB of UTF-8 per call.
+    """
+    if not isinstance(lines, tuple) or not all(isinstance(line, str) for line in lines):
+        raise ValueError("Task log append requires a tuple of strings.")
+    if len(lines) > 500 or sum(len(line.encode("utf-8")) for line in lines) > 65536:
+        raise ValueError("Task log append exceeds the 500-line or 64 KiB batch limit.")
+    if not lines:
+        return
+    db.flush()
+    capture_task_history(db.connection(), job_id, result_changed=False, appended_lines=lines)
 
 
 def initialize_task_history(engine: Engine) -> None:

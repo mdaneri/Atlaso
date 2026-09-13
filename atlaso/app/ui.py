@@ -16383,11 +16383,13 @@ def run_vcf_depot_software_id_job(job_id: str) -> None:
                     **payload,
                     "state": job.status,
                     "software_depot_id": software_depot_id if succeeded else "",
-                    "log_lines": log_lines,
                     "units": [safe_result],
                 },
                 indent=2,
             )
+            from atlaso.app.services.task_log_history import append_task_log_lines
+
+            append_task_log_lines(db, job.id, tuple(log_lines))
             db.commit()
             record_audit(
                 db,

@@ -9,6 +9,7 @@ from sqlalchemy.orm import Session
 from atlaso.app.database import Base
 from atlaso.app.models import AuditEvent, Job, TaskLogCheckpoint, TaskLogChunk
 from atlaso.app.services.task_log_history import (
+    append_task_log_lines,
     capture_task_history,
     initialize_task_history,
     task_history_page,
@@ -536,3 +537,82 @@ def test_nested_result_order_changes_recompute_concealment(history_db):
     checkpoint = db.execute(select(TaskLogCheckpoint.state_json)).scalar_one()
     assert "synthetic-reordered-value" not in new_text + checkpoint
     assert "[redacted private key]" in new_text
+
+
+def test_incremental_appends_do_not_rehash_or_select_cumulative_result(history_db, monkeypatch):
+    """Repeated bounded appends do no work proportional to retained producer output.
+
+    Args:
+        history_db: Transactional history fixture.
+        monkeypatch: Guards old-result transfer and authentication work.
+    """
+    from sqlalchemy import event
+
+    from atlaso.app.services import task_log_history
+
+    db = history_db
+    job = _job(db, {"log_lines": ["legacy " + str(i) for i in range(1000)]})
+    job_id = job.id
+    def reject_digest(_values):
+        """Reject any old-result authentication during delta-only commits."""
+        raise AssertionError("incremental append hashed a cumulative result")
+    monkeypatch.setattr(task_log_history, "_log_digest", reject_digest)
+    queries = []
+    def record_query(_connection, _cursor, statement, _parameters, _context, _many):
+        """Record SQL so retained raw output transfer is detected."""
+        queries.append(statement)
+    event.listen(db.get_bind(), "before_cursor_execute", record_query)
+    try:
+        for i in range(200):
+            append_task_log_lines(db, job_id, (f"delta {i}",))
+            db.commit()
+    finally:
+        event.remove(db.get_bind(), "before_cursor_execute", record_query)
+    assert not any("jobs.result" in query for query in queries)
+    text = _all(db)
+    assert text.count("legacy 0\n") == 1
+    assert text.count("delta 0\n") == 1
+    assert text.endswith("delta 199\n")
+
+
+def test_incremental_append_shares_redaction_and_rolls_back(history_db):
+    """Result headers conceal delta bodies, and aborted writes retain no state.
+
+    Args:
+        history_db: Transactional history fixture.
+    """
+    db = history_db
+    job = _job(db, {})
+    job.result = json.dumps({"header": "-----BEGIN RSA PRIVATE KEY-----"})
+    append_task_log_lines(db, job.id, ("synthetic-delta-secret",))
+    db.commit()
+    before = _all(db)
+    append_task_log_lines(db, job.id, ("-----END RSA PRIVATE KEY-----", "aborted"))
+    db.rollback()
+    assert _all(db) == before
+    append_task_log_lines(db, job.id, ("still-secret", "-----END RSA PRIVATE KEY-----", "visible-delta"))
+    db.commit()
+    text = _all(db)
+    assert "synthetic-delta-secret" not in text and "still-secret" not in text and "aborted" not in text
+    assert text.endswith("visible-delta\n")
+    checkpoint = db.get(TaskLogCheckpoint, job.id).state_json
+    assert "synthetic-delta-secret" not in checkpoint and "still-secret" not in checkpoint
+
+
+@pytest.mark.parametrize("lines", [("x" * 65537,), tuple("x" for _ in range(501)), (1,)])
+def test_incremental_append_rejects_invalid_batch_before_flush(history_db, lines):
+    """Invalid producer batches do not flush unrelated pending task updates.
+
+    Args:
+        history_db: Transactional history fixture.
+        lines: Oversized or non-string batch.
+    """
+    db = history_db
+    job = _job(db, {})
+    job_id = job.id
+    job.result = json.dumps({"output": "not flushed"})
+    with pytest.raises(ValueError):
+        append_task_log_lines(db, job_id, lines)
+    assert job in db.dirty
+    db.rollback()
+    assert "not flushed" not in _all(db)
