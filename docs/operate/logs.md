@@ -46,7 +46,8 @@ with no matching rows can still advance to the next retained window while preser
 your reading position and shows when
 new output is available. Empty sources remain selectable and populate when their first entries arrive. A connection
 failure preserves the displayed page and retries with a bounded delay; the freshness indicator identifies stale output.
-Closing a viewer, switching sources or hiding the browser suspends its requests. Retention changes are reported rather
+Closing a viewer, switching sources or hiding the browser suspends its requests. Without JavaScript, the initial
+redacted view remains available as a completed snapshot. Retention changes are reported rather
 than silently continuing a position in a different file.
 
 Task Log dialogs and standalone download logs use the same controls. Completed tasks receive a final trailing read
@@ -97,7 +98,9 @@ navigation also advances across oversized entries, including an unfinished final
 are paged within the record so each response remains within 500 displayed lines and 1 MiB, including timestamps.
 Replacing a file behind an unchanged opening banner invalidates its previous position and reopens retained history.
 Slow prefix verification resumes across refreshes while the file version remains unchanged. A further write invalidates
-that verification progress so an interior rewrite cannot reuse an earlier redaction decision.
+that verification progress so an interior rewrite cannot reuse an earlier redaction decision. Source versions are
+checked again after page preparation; a concurrent rewrite discards the candidate page and retries. Reused cursors
+also revalidate their redaction state when the retained source version changes.
 
 Standalone VCFDT task-log pages and their live JSON responses disable HTTP caching so refreshes read current output.
 

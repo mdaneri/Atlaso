@@ -8908,6 +8908,7 @@ def test_logs_page_shows_unavailable_state_when_every_source_is_unavailable(clie
     assert 'class="tab-button active"' in response.text.split('data-log-source-tab="app"', 1)[0].rsplit("<button", 1)[1]
     assert 'aria-selected="true"' in app_tab
     assert ' disabled aria-disabled="true"' in app_tab
+    assert 'data-log-refresh-status role="status">Snapshot ready</span>' in response.text
     app_panel = response.text.split('id="logs-app-panel"', 1)[1].split('id="logs-kms-panel"', 1)[0]
     assert 'id="logs-app-panel" class="tab-panel active"' in response.text
     assert "Log file has not been written yet." in app_panel
@@ -9032,7 +9033,7 @@ def test_logs_page_renders_refreshable_fixed_source_tabs_and_redacts_logs(client
     assert "data-log-availability" not in response.text
     assert 'data-log-history-controls aria-label="Log history"' in response.text
     assert 'data-log-lines aria-label="Log lines per page"' in response.text
-    assert "Loading history" in response.text
+    assert 'data-log-refresh-status role="status">Snapshot ready</span>' in response.text
     assert 'class="language-atlaso-log" data-log-lines-output' in response.text
     assert response.text.count('data-terminal-note-open="false"') == 11
     toolbar = response.text.split('<div class="logs-toolbar">', 1)[1].split("</div>", 1)[0]

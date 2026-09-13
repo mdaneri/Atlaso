@@ -2085,3 +2085,70 @@ def test_fixed_log_transport_rejects_linked_sources(tmp_path):
         pytest.skip("Host does not permit creating a symlink fixture")
     with pytest.raises(ValueError, match="linked fixed log source"):
         helper._fixed_log_transport(path, {"transport": "inventory"})
+
+
+@pytest.mark.parametrize("compressed", [False, True])
+@pytest.mark.parametrize("predecessor", [False, True])
+def test_file_page_revalidates_sources_after_tail_redaction_scan(tmp_path, monkeypatch, compressed, predecessor):
+    """A rewrite between state preparation and page reading never exposes key body.
+
+    Args:
+        tmp_path: Test-owned retained log directory.
+        monkeypatch: Rewrite a source immediately after redaction-state preparation.
+        compressed: Rewrite a compressed archive rather than a plain source.
+        predecessor: Rewrite an earlier rotation while the selected file stays unchanged.
+    """
+    path = tmp_path / "atomic.log"
+    selected = tmp_path / ("atomic.log.1.gz" if compressed else "atomic.log.1") if predecessor or compressed else path
+    body = b"synthetic-body\n" * 1000
+    original = b"ordinary entry\n" if predecessor else body
+    selected.write_bytes(gzip.compress(original) if compressed else original)
+    if predecessor:
+        path.write_bytes(body)
+    original_scan = log_viewer._tail_marker_state
+    changed = False
+    def scan_then_rewrite(paths, offset, *, deadline):
+        """Inject the same-inode rewrite into the reviewed race interval.
+
+        Args:
+            paths: Retained sources selected by the real reader.
+            offset: Requested redaction boundary.
+            deadline: Shared request deadline.
+        """
+        nonlocal changed
+        result = original_scan(paths, offset, deadline=deadline)
+        if not changed:
+            replacement = b"-----BEGIN PRIVATE KEY-----\n" + original
+            selected.write_bytes(gzip.compress(replacement) if compressed else replacement)
+            changed = True
+        return result
+    monkeypatch.setattr(log_viewer, "_tail_marker_state", scan_then_rewrite)
+    first = log_viewer.file_page(path, source="atomic-history", tail=True)
+    assert first["pending"] is True
+    assert first["text"] == ""
+    second = log_viewer.file_page(path, source="atomic-history", tail=True)
+    assert not second.get("pending")
+    assert "synthetic-body" not in second["text"]
+    assert "[redacted private key]" in second["text"]
+
+
+def test_file_cursor_revalidates_state_after_interior_prefix_rewrite(tmp_path):
+    """A cursor's old redaction flag cannot survive an unsampled prefix rewrite.
+
+    Args:
+        tmp_path: Test-owned retained source directory.
+    """
+    path = tmp_path / "cursor-state.log"
+    original = b"synthetic-body\n" * 2000
+    path.write_bytes(original)
+    first = log_viewer.file_page(path, source="cursor-state", tail=True)
+    offset = log_viewer.decode_cursor(first["cursor"], "cursor-state")["offset"]
+    marker = b"-----BEGIN PRIVATE KEY-----\n"
+    replacement = original[:7000] + marker + original[7000 + len(marker):] + b"more body\n"
+    assert original[:4096] == replacement[:4096]
+    assert original[offset - 4096:offset] == replacement[offset - 4096:offset]
+    path.write_bytes(replacement)
+    page = log_viewer.file_page(path, source="cursor-state", cursor=first["cursor"])
+    assert not page.get("pending")
+    assert "synthetic-body" not in page["text"]
+    assert "[redacted private key]" in page["text"]

@@ -926,6 +926,15 @@ def _prepare_gzip_window(raw: Any, path: _HistoryPath, *, end: int | None, deadl
         raise _TailScanPending("Preparing archived history; the next request resumes this scan.")
     return _GzipHistoryWindow(expanded, window, prefix)
 
+
+def _file_version(info: Any) -> tuple[int, int, int, int]:
+    """Bind a rendered page to the source version used for redaction preparation.
+
+    Args:
+        info: Descriptor or retained-path metadata from the current read.
+    """
+    return info.st_dev, info.st_ino, info.st_size, info.st_mtime_ns
+
 def file_page(path: _HistoryPath, *, source: str, cursor: str = "", limit: int = PAGE_LINES,
               complete: bool = False, tail: bool = False, _deadline: float | None = None) -> dict[str, Any]:
     """Read current and numbered retained rotations without a total-history cap.
@@ -969,6 +978,13 @@ def file_page(path: _HistoryPath, *, source: str, cursor: str = "", limit: int =
         before_end = None
     page_end = before_end if backward else position.get("page_end")
     selected = paths[index]
+    try:
+        versions = [_file_version(candidate.lstat()) for candidate in paths]
+    except FileNotFoundError:
+        return {"source": source, "text": "", "available": True, "has_more": False,
+                "cursor": cursor, "next_cursor": cursor, "pending": True,
+                "notice": "Retained history changed while reading; retrying from verified state."}
+    state_version = hashlib.sha256(repr(versions[:index + 1]).encode()).hexdigest()
     if selected.is_symlink():
         raise ValueError("Linked log files are not supported.")
     with _open_history_file(selected) as raw:
@@ -1000,7 +1016,8 @@ def file_page(path: _HistoryPath, *, source: str, cursor: str = "", limit: int =
                     return {"source": source, "text": "", "available": True, "has_more": False,
                             "cursor": cursor, "next_cursor": cursor, "pending": True,
                             "notice": "Preparing retained history; this continues automatically."}
-                position = {"oversized": oversized, "private_key": private_key, "pem_state": pem_state.decode("ascii")}
+                position = {"oversized": oversized, "private_key": private_key, "pem_state": pem_state.decode("ascii"),
+                            "state_version": state_version}
             if type(offset) is not int or offset < 0:
                 raise ValueError("Invalid log history position.")
             prefix_length = position.get("prefix_length", 0)
@@ -1016,6 +1033,7 @@ def file_page(path: _HistoryPath, *, source: str, cursor: str = "", limit: int =
                     (prefix_length and hashlib.sha256(prefix).hexdigest() != position.get("prefix")) or
                     (anchor_length and anchor.get("anchor") != position.get("anchor"))):
                 offset, position, reset = 0, {}, True
+                prefix_length = 0
                 if compressed:
                     try:
                         handle = _prepare_gzip_window(raw, selected, end=PAGE_BYTES + LINE_BYTES + 1, deadline=deadline)
@@ -1023,14 +1041,22 @@ def file_page(path: _HistoryPath, *, source: str, cursor: str = "", limit: int =
                         return {"source": source, "text": "", "available": True, "has_more": False,
                                 "cursor": cursor, "next_cursor": cursor, "pending": True,
                                 "notice": "Preparing retained history; this continues automatically."}
+            if position.get("state_version") != state_version and (offset or index):
+                try:
+                    private_key, pem_state = _tail_marker_state(paths[:index + 1], offset, deadline=deadline)
+                except _TailScanPending:
+                    return {"source": source, "text": "", "available": True, "has_more": False,
+                            "cursor": cursor, "next_cursor": cursor, "pending": True,
+                            "notice": "Preparing retained history; this continues automatically."}
+                position.update(private_key=private_key, pem_state=pem_state.decode("ascii"))
             anchor = _history_anchor(handle, offset, compressed=False, deadline=deadline)
             handle.seek(offset)
             private_key = position.get("private_key") is True
-            current = encode_cursor(source, generation=generation, offset=offset, private_key=private_key,
+            current = encode_cursor(source, generation=generation, offset=offset, private_key=private_key, state_version=state_version,
                                     oversized=position.get("oversized") is True, pem_state=position.get("pem_state", ""),
                                     prefix_length=prefix_length if position else 0,
                                     prefix=position.get("prefix", ""), page_end=page_end, **anchor)
-            parser_state = position.get("pem_state", "") if not reset else ""
+            parser_state = position.get("pem_state", "")
             if not isinstance(parser_state, str) or len(parser_state) > 16 or not parser_state.isascii():
                 raise ValueError("Invalid private-key parser state.")
             _, marker_prefix = _scan_pem_markers(b"", parser_state.encode("ascii"))
@@ -1071,16 +1097,27 @@ def file_page(path: _HistoryPath, *, source: str, cursor: str = "", limit: int =
             more = bool(handle.read(1)) and not partial
             handle.seek(0)
             prefix = handle.read(min(next_offset, 4096))
-            next_position = {"generation": generation, "offset": next_offset, "oversized": oversized,
+            next_position = {"generation": generation, "offset": next_offset, "oversized": oversized, "state_version": state_version,
                              "pem_state": marker_prefix.decode("ascii"),
                              "prefix_length": len(prefix), "prefix": hashlib.sha256(prefix).hexdigest(),
                              **_history_anchor(handle, next_offset, compressed=False, deadline=deadline)}
+        rendered_version = _file_version(_history_stat(raw))
     if not more and index + 1 < len(paths):
         following = paths[index + 1].lstat()
         next_position = {"generation": f"{following.st_dev}:{following.st_ino}", "offset": 0,
-                         "pem_state": marker_prefix.decode("ascii"), "oversized": oversized}
+                         "pem_state": marker_prefix.decode("ascii"), "oversized": oversized,
+                         "state_version": hashlib.sha256(repr(versions[:index + 2]).encode()).hexdigest()}
         more = True
     safe_lines, private_key = redact_lines(lines, private_key=private_key)
+    try:
+        unchanged = (_file_version(metadata) == rendered_version == versions[index] and
+                     [_file_version(candidate.lstat()) for candidate in paths] == versions)
+    except OSError:
+        unchanged = False
+    if not unchanged:
+        return {"source": source, "text": "", "available": True, "has_more": False,
+                "cursor": cursor, "next_cursor": cursor, "pending": True,
+                "notice": "Retained history changed while reading; retrying from verified state."}
     return {"source": source, "text": "\n".join(safe_lines), "available": True,
             "cursor": current, "next_cursor": encode_cursor(source, **next_position, private_key=private_key),
             "previous_cursor": encode_cursor(source, generation=generation, offset=offset, before=True) if offset or index else "",
