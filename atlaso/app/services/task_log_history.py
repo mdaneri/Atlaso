@@ -45,12 +45,13 @@ def _safe_lines(lines: list[str], private: bool = False, parser: dict[str, str] 
         carry = json.dumps(["S", "", bytes(32).hex(), "", "!"]).encode("ascii")
     for value in lines:
         for line in str(value).splitlines() or [""]:
+            private = private or parser.get("hold") == "1"
             marker, carry = log_viewer._scan_pem_markers(line.encode("utf-8"), carry)
             concealed = private or marker is not None or (json.loads(carry)[0] != "S" or bool(json.loads(carry)[1]))
             output.append("[redacted private key]" if concealed else str(redact_task_value(line)))
             if marker is not None:
                 private = marker
-            if carry.startswith((b"B", b'["B",')):
+            if carry.startswith((b"B", b'["B",')) or parser.get("hold") == "1":
                 private = True
     parser["carry"] = carry.decode("ascii")
     return output, private
@@ -120,61 +121,127 @@ def capture_task_history(
     previous = _payload(checkpoint["state_json"]) if checkpoint else {}
     end = int(checkpoint["end_offset"]) if checkpoint else 0
     state = dict(previous)
+    parser = {"carry": previous.get("stream_pem_state", "")}
+    private = bool(previous.get("stream_private"))
+    if "stream_pem_state" not in previous:
+        active = [(previous.get(flag), previous.get(key, "")) for flag, key in (
+            ("result_private", "result_pem_state"), ("private", "log_pem_state"), ("audit_private", "audit_pem_state"))]
+        contexts = {carry for opened, carry in active if opened or (carry and carry not in {"S", ""} and
+                    (not carry.startswith("[") or json.loads(carry)[0] != "S" or json.loads(carry)[1]))}
+        if contexts:
+            parser["carry"] = next(iter(contexts)) if len(contexts) == 1 else json.dumps(["S", "", bytes(32).hex(), "", "!"])
+            private = any(opened for opened, _ in active) or len(contexts) > 1
+    _, common_carry = log_viewer._scan_pem_markers(b"", parser["carry"].encode("ascii"))
+    fields = json.loads(common_carry)
+    active_label = fields[4] or ("!" if private and fields[0] == "S" and not fields[1] else "")
+    common_carry = json.dumps(["S", "", bytes(32).hex(), "", active_label]).encode("ascii")
+    partials = dict(previous.get("partial_pem_states", {}))
+    if "partial_pem_states" not in previous:
+        for channel, key in (("result", "result_pem_state"), ("log", "log_pem_state"), ("audit", "audit_pem_state")):
+            carry = previous.get(key, "")
+            if carry:
+                _, normalized = log_viewer._scan_pem_markers(b"", carry.encode("ascii"))
+                fields = json.loads(normalized)
+                if fields[0] != "S" or fields[1]:
+                    partials[channel] = normalized.decode("ascii")
+
+    def enter_stream(channel: str) -> tuple[bool, dict[str, str]]:
+        """Share completed key identity while preserving interrupted source fragments.
+
+        Args:
+            channel: Producer stream about to append changed output.
+        """
+        fields = json.loads(partials.get(channel, common_carry.decode("ascii")))
+        fields[4] = active_label
+        held = any(name != channel for name in partials)
+        return bool(active_label) or held or fields[0] == "B", {
+            "carry": json.dumps(fields, separators=(",", ":")), "hold": "1" if held else "0"}
+
+    def leave_stream(channel: str, current: dict[str, str]) -> None:
+        """Publish completed label identity and retain only bounded partial tokens.
+
+        Args:
+            channel: Producer stream just consumed.
+            current: Parser state after its new values.
+        """
+        nonlocal active_label
+        fields = json.loads(current["carry"])
+        active_label = fields[4]
+        if fields[0] != "S" or fields[1]:
+            partials[channel] = current["carry"]
+        else:
+            partials.pop(channel, None)
+
     lines = []
     if result_changed or checkpoint is None:
+        private, parser = enter_stream("result")
         result = _payload(job.result)
-        result_parser = {"carry": previous.get("result_pem_state", "")}
-        safe_result, result_private = _safe_value(
-            {key: value for key, value in result.items() if key != "state" and (key != "log_lines" or not isinstance(value, list))},
-            bool(previous.get("result_private")), parser=result_parser
-        )
         old_result = previous.get("result", {})
-        for key, value in safe_result.items():
+        old_digests = previous.get("result_digests", {})
+        safe_result, result_digests = {}, {}
+        for key, raw_value in result.items():
+            if key == "state" or (key == "log_lines" and isinstance(raw_value, list)):
+                continue
+            digest = _log_digest([key, raw_value])
+            result_digests[key] = digest
+            if key in old_result and old_digests.get(key) == digest:
+                safe_result[key] = old_result[key]
+                continue
+            value, private = _safe_value(raw_value, private, key, parser)
+            safe_result[key] = value
             if key not in old_result or old_result[key] != value:
                 rendered = json.dumps(value, sort_keys=True) if isinstance(value, (dict, list)) else str(value)
                 safe, _ = _safe_lines([f"{key}: {rendered}"])
                 lines.extend(safe)
         for key in old_result.keys() - safe_result.keys():
             lines.append(f"{key}: [removed]")
+        leave_stream("result", parser)
+        private, parser = enter_stream("log")
         raw_logs = result.get("log_lines", [])
         raw_logs = raw_logs if isinstance(raw_logs, list) else []
         count = int(previous.get("log_count", 0))
         appending = count <= len(raw_logs) and _log_digest(raw_logs[:count]) == previous.get("log_digest")
-        private = bool(previous.get("private"))
-        log_parser = {"carry": previous.get("log_pem_state", "")}
         for value in raw_logs[count if appending else 0:]:
             if not isinstance(value, str):
-                value, private = _safe_value(value, private, parser=log_parser)
+                value, private = _safe_value(value, private, parser=parser)
                 lines.append(str(value))
             else:
-                safe_logs, private = _safe_lines([value], private, log_parser)
+                safe_logs, private = _safe_lines([value], private, parser)
                 lines.extend(safe_logs)
-        state.update(result=safe_result, log_count=len(raw_logs), log_digest=_log_digest(raw_logs),
-                     log_pem_state=log_parser.get("carry", ""), result_pem_state=result_parser.get("carry", ""),
-                     private=private, result_private=result_private)
-    error = _safe_value(job.error or "")[0] if job.status not in {"pending", "running"} else ""
-    if error and error != previous.get("error"):
+        leave_stream("log", parser)
+        state.update(result=safe_result, result_digests=result_digests, log_count=len(raw_logs), log_digest=_log_digest(raw_logs))
+    error = previous.get("error", "")
+    raw_error = job.error or "" if job.status not in {"pending", "running"} else ""
+    if raw_error and _log_digest([raw_error]) != previous.get("error_digest"):
+        private, parser = enter_stream("error")
+        error, private = _safe_value(raw_error, private, parser=parser)
         safe, _ = _safe_lines([f"Error: {error}"])
         lines.extend(safe)
+        state["error_digest"] = _log_digest([raw_error])
+        leave_stream("error", parser)
     audit = AuditEvent.__table__
     query = select(audit).where(audit.c.resource_type == "job", audit.c.resource_id == job_id)
     if checkpoint:
         query = query.where(audit.c.id.in_(audit_ids))
-    audit_private = bool(previous.get("audit_private"))
-    audit_parser = {"carry": previous.get("audit_pem_state", "")}
+    private, parser = enter_stream("audit")
     for event in connection.execute(query.order_by(audit.c.id)).mappings():
         outcome = "success" if event["success"] else "failed"
-        safe, audit_private = _safe_lines(
-            [event["detail"] or ""], audit_private, audit_parser
-        )
+        safe, private = _safe_lines([event["detail"] or ""], private, parser)
         prefix = str(redact_task_value(f"{event['created_at'].isoformat()} {event['action']} {outcome}"))
         lines.extend(f"{prefix} {line}" for line in safe)
+    leave_stream("audit", parser)
+    parser["carry"] = json.dumps(["S", "", bytes(32).hex(), "", active_label], separators=(",", ":"))
+    private = bool(active_label)
+    state["partial_pem_states"] = partials
     text = "".join(line + "\n" for line in lines)
     for start in range(0, len(text), CHUNK_CHARS):
         content = text[start:start + CHUNK_CHARS]
         connection.execute(chunks.insert().values(job_id=job_id, start_offset=end, end_offset=end + len(content), content=content))
         end += len(content)
-    state.update(audit_pem_state=audit_parser.get("carry", ""), audit_private=audit_private, error=error)
+    state.update(stream_pem_state=parser.get("carry", ""), stream_private=private, error=error)
+    for key in ("log_pem_state", "result_pem_state", "audit_pem_state"):
+        state[key] = partials.get(key.split("_")[0], parser.get("carry", ""))
+    state.update(private=private, result_private=private, audit_private=private)
     state_json = json.dumps(state, sort_keys=True)
     if checkpoint:
         connection.execute(update(checkpoints).where(checkpoints.c.job_id == job_id).values(state_json=state_json, end_offset=end))

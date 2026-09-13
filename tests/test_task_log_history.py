@@ -114,7 +114,7 @@ def test_capture_never_persists_private_key_body_or_secret_value(history_db):
         history_db: Transactional history fixture.
     """
     db = history_db
-    job = _job(db, {"password": "password-secret", "nested": ["-----BEGIN PRIVATE KEY-----", "nested-secret"],
+    job = _job(db, {"password": "password-secret", "nested": ["-----BEGIN PRIVATE KEY-----", "nested-secret", "-----END PRIVATE KEY-----"],
                     "log_lines": ["-----BEGIN PRIVATE KEY-----"]})
     job.result = json.dumps({"password": "password-secret", "log_lines": ["-----BEGIN PRIVATE KEY-----", "body-secret"]})
     db.commit()
@@ -227,7 +227,8 @@ def test_non_result_updates_do_not_rehash_task_log(history_db, monkeypatch):
     monkeypatch.setattr(task_log_history, "_log_digest", original)
     job.result = json.dumps({"log_lines": ["-----BEG", "IN PRIVATE KEY-----", "synthetic-unchanged-body"]})
     db.commit()
-    assert "audit-only" in _all(db)
+    assert "progress success" in _all(db)
+    assert "audit-only" not in _all(db)
     assert "synthetic-unchanged-body" not in _all(db)
 
 
@@ -444,3 +445,38 @@ def test_secret_named_field_preserves_following_key_context(history_db, structur
     stored += "".join(db.execute(select(TaskLogCheckpoint.state_json)).scalars())
     assert "synthetic-secret-key-body" not in stored
     assert "after-matching-close" in _all(db)
+
+
+@pytest.mark.parametrize("destination", ["log", "audit", "error"])
+@pytest.mark.parametrize("same_commit", [False, True])
+def test_result_marker_continues_through_following_task_stream(history_db, destination, same_commit):
+    """One state protects result-to-output boundaries without replaying old fields.
+
+    Args:
+        history_db: Transactional fixture with the production flush hooks.
+        destination: Subsequent displayed stream containing the key body.
+        same_commit: Open the result marker in the same transaction as the following stream.
+    """
+    db = history_db
+    result = {"header": "-----BEGIN RSA PRIVATE KEY-----"}
+    job = _job(db, {} if same_commit else result)
+    job.result = json.dumps(result)
+    if destination == "log":
+        result["log_lines"] = ["synthetic-cross-stream-body", "-----END RSA PRIVATE KEY-----", "visible-after-close"]
+        job.result = json.dumps(result)
+    elif destination == "audit":
+        db.add(AuditEvent(actor="test", action="output", resource_type="job", resource_id=job.id,
+                          detail="synthetic-cross-stream-body\n-----END RSA PRIVATE KEY-----\nvisible-after-close"))
+    else:
+        job.status = "failed"
+        job.error = "synthetic-cross-stream-body\n-----END RSA PRIVATE KEY-----\nvisible-after-close"
+    db.commit()
+    stored = "".join(db.execute(select(TaskLogChunk.content)).scalars())
+    stored += "".join(db.execute(select(TaskLogCheckpoint.state_json)).scalars())
+    assert "synthetic-cross-stream-body" not in stored
+    assert "visible-after-close" in _all(db)
+    if destination == "log":
+        result["log_lines"].append("visible-on-next-commit")
+        job.result = json.dumps(result)
+        db.commit()
+        assert "visible-on-next-commit" in _all(db)

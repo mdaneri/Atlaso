@@ -53,7 +53,10 @@ Task history keeps unfinished private-key content concealed until a complete clo
 unrelated PEM endings, including another private-key type, do not end that redaction state.
 File, journal, and task readers retain bounded label fingerprints across fragments. Interleaved opening markers
 keep subsequent output concealed when a single matching context cannot be established.
-Task capture retains bounded marker state across committed output fragments, nested values, and audit details.
+Task capture shares the active private-key label across changed result fields, new log lines, errors, and audit
+details. It preserves bounded partial markers within each source when another source interrupts a split header,
+and conceals intervening output until the context is complete. Unchanged result fields are recognized by keyed
+fingerprints and are not replayed into that state on later log updates.
 Values hidden by a secret field name still advance this state before they are discarded.
 Progress and audit-only updates reuse the committed task-result checkpoint without rehashing unchanged log output.
 Startup backfill selects only tasks without history checkpoints and rechecks eligibility under the task lock,
