@@ -266,7 +266,7 @@ def _tail_private_key(paths: list[Path], offset: int, *, deadline: float) -> boo
                 stream.seek(max(0, start_offset - 128))
                 anchor = stream.read(min(start_offset, 128))
         if (hashlib.sha256(prefix + anchor).digest() != fingerprint or
-                (identities[start_index].st_mtime_ns != saved_mtime and identities[start_index].st_size <= saved_size)):
+                (identities[start_index].st_mtime_ns != saved_mtime or identities[start_index].st_size != saved_size)):
             with _TAIL_REDACTION_LOCK:
                 for key in candidates:
                     _TAIL_REDACTION_CACHE.pop(key, None)
@@ -300,6 +300,11 @@ def _tail_private_key(paths: list[Path], offset: int, *, deadline: float) -> boo
                             _TAIL_REDACTION_CACHE.popitem(last=False)
                     if time.monotonic() > stop and (index < len(paths) - 1 or scanned < offset):
                         raise _TailScanPending("Preparing retained history; the next request resumes this scan.")
+    for path, before in zip(paths, identities, strict=True):
+        after = path.lstat()
+        if ((after.st_dev, after.st_ino, after.st_size, after.st_mtime_ns) !=
+                (before.st_dev, before.st_ino, before.st_size, before.st_mtime_ns)):
+            raise _TailScanPending("Retained history changed during preparation; retrying from verified state.")
     return opened
 
 
@@ -430,7 +435,8 @@ def file_page(path: Path, *, source: str, cursor: str = "", limit: int = PAGE_LI
                     private_key = _tail_private_key(paths[:index + 1], offset, deadline=deadline)
                 except _TailScanPending:
                     return {"source": source, "text": "", "available": True, "has_more": False,
-                            "cursor": cursor, "next_cursor": cursor, "notice": "Preparing retained history; this continues automatically."}
+                            "cursor": cursor, "next_cursor": cursor, "pending": True,
+                            "notice": "Preparing retained history; this continues automatically."}
                 position = {"oversized": oversized, "private_key": private_key}
             if type(offset) is not int or offset < 0:
                 raise ValueError("Invalid log history position.")

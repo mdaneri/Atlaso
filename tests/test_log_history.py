@@ -1323,8 +1323,32 @@ def test_local_tail_scan_page_retries_progress_and_reuses_completed_state(tmp_pa
             break
         pending += 1
         assert "continues automatically" in page["notice"]
+        assert page["pending"] is True
     else:
         pytest.fail("tail never became readable")
     assert pending > 1
     assert page["text"].splitlines() == ["normal entry"] * 100
     assert log_viewer.file_page(path, source="scan-progress", tail=True, limit=100)["text"] == page["text"]
+
+
+def test_tail_checkpoint_rejects_regrowth_with_unchanged_prefix_and_anchor(tmp_path):
+    """Growth cannot authenticate append-only history after copytruncate.
+
+    Args:
+        tmp_path: Task-owned log with unchanged sampled boundaries after replacement.
+    """
+    import time
+
+    path = tmp_path / "server.log"
+    original = b"normal line\n" * 30000
+    path.write_bytes(original)
+    log_viewer._TAIL_REDACTION_CACHE.clear()
+    assert not log_viewer._tail_private_key([path], len(original), deadline=time.monotonic() + 10)
+    marker = b"-----BEGIN PRIVATE KEY-----\n"
+    replacement = original[:70000] + marker + original[70000 + len(marker):] + b"private body\n" * 100
+    assert replacement[:4096] == original[:4096]
+    assert replacement[len(original)-128:len(original)] == original[-128:]
+    path.write_bytes(replacement)
+    assert log_viewer._tail_private_key([path], len(replacement), deadline=time.monotonic() + 10)
+    page = log_viewer.file_page(path, source="regrown-key", tail=True, limit=100)
+    assert "private body" not in page["text"]

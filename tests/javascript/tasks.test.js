@@ -519,3 +519,22 @@ for (const stored of ["200", "500", "invalid", null, "unavailable"]) {
     assert.deepEqual(writes, stored === "unavailable" ? [] : [["atlaso:logs:line-count", "500"]]);
   });
 }
+
+
+test("completed task keeps retrying pending tail preparation before trailing stop", async () => {
+  const harness = taskLogHarness();
+  let request = harness.context.openTaskLog({ id: "A" });
+  for (let index = 0; index < 4; index += 1) {
+    harness.complete(index, { status: "succeeded", text: "", pending: true, has_more: false });
+    await request;
+    request = fireTimer(harness, 5000);
+  }
+  harness.complete(4, { status: "succeeded", text: "prepared output" });
+  await request;
+  const trailing = fireTimer(harness, 5000);
+  harness.complete(5, { status: "succeeded", text: "prepared output" });
+  await trailing;
+  assert.equal(harness.content.textContent, "prepared output");
+  assert.equal(harness.timers.size, 0);
+  harness.context.closeTaskLogModal();
+});

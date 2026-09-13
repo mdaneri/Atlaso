@@ -96,7 +96,9 @@ unavailable source displays its current condition. Full history navigation and l
 
 Local uncompressed log files retain bounded redaction checkpoints in memory. Large initial scans may show a
 preparation notice; refreshes resume saved progress instead of restarting. File identity and content fingerprints
-validate each reused checkpoint. Process restarts or cache eviction can require preparation again.
+validate each reused checkpoint. Any size or modification-time change discards cached state, including apparent
+appends, because growth alone cannot prove that earlier bytes were preserved. Process restarts or cache eviction
+can require preparation again. Completed task logs keep refreshing while preparation is pending.
 
 <!-- BEGIN GENERATED ADDITIONAL SCREENSHOTS -->
 ## Additional verified states
