@@ -49,6 +49,7 @@ Permission and other journal errors preserve the current page for a later retry.
 Development-mode service refreshes retain the explanation that no host journal is read.
 Task history keeps unfinished private-key content concealed until a complete private-key closing marker arrives;
 unrelated PEM endings do not end that redaction state.
+Task capture retains bounded marker state across committed output fragments, nested values, and audit details.
 File pages retain complete-line boundaries; task and multiline journal cursors retain character-safe continuation.
 Numbered file rotations, including compressed archives, are
 included and keep nginx sources available even when their current file is absent. Journal history remains subject

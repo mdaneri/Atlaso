@@ -148,6 +148,39 @@ def test_unrelated_task_pem_end_preserves_redaction_across_commits(history_db, e
     assert "visible-after-close" in _all(db)
 
 
+@pytest.mark.parametrize("stream", ["log", "structured-log", "result", "audit"])
+@pytest.mark.parametrize("split", [3, 8, 20000])
+def test_task_marker_fragments_survive_commits(history_db, stream, split):
+    """Persist finite parser state without copying a split key body into history.
+
+    Args:
+        history_db: Transactional task fixture.
+        stream: Independently persisted producer stream.
+        split: Header boundary, including within an oversized arbitrary label.
+    """
+    db = history_db
+    job = _job(db, {})
+    header = "-----BEGIN " + "LONG-LABEL-" * 3000 + "PRIVATE KEY-----"
+    fragments = [header[:split], header[split:], "synthetic-split-body", "-----END CERTIFICATE-----",
+                 "another-private-body", "-----END PRI", "VATE KEY-----", "visible-after-split-close"]
+    logs = []
+    for fragment in fragments:
+        if stream == "audit":
+            db.add(AuditEvent(actor="test", action="output", resource_type="job", resource_id=job.id, detail=fragment))
+        elif stream == "result":
+            job.result = json.dumps({"output": {"value": fragment}})
+        else:
+            logs.append({"output": fragment} if stream == "structured-log" else fragment)
+            job.result = json.dumps({"log_lines": logs})
+        db.commit()
+        checkpoint = db.execute(select(TaskLogCheckpoint.state_json)).scalar_one()
+        state = json.loads(checkpoint)
+        assert all(len(state[key]) <= 16 for key in ("log_pem_state", "result_pem_state", "audit_pem_state"))
+        stored = "".join(db.execute(select(TaskLogChunk.content)).scalars()) + checkpoint
+        assert "synthetic-split-body" not in stored and "another-private-body" not in stored
+    assert "visible-after-split-close" in _all(db)
+
+
 def test_legacy_initialization_restart_and_deletion(history_db):
     """Legacy capture is idempotent and task deletion removes all owned history.
 

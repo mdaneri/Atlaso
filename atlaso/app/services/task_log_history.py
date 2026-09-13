@@ -3,7 +3,6 @@
 import hashlib
 import hmac
 import json
-import re
 from typing import Any
 
 from sqlalchemy import select, update
@@ -31,22 +30,27 @@ def _payload(value: str | None) -> dict[str, Any]:
     return result if isinstance(result, dict) else {}
 
 
-def _safe_lines(lines: list[str], private: bool = False) -> tuple[list[str], bool]:
+def _safe_lines(lines: list[str], private: bool = False, parser: dict[str, str] | None = None) -> tuple[list[str], bool]:
     """Sanitize complete lines while carrying an unfinished private key.
 
     Args:
         lines: Newly observed producer lines, before scalar sanitization.
         private: Whether an earlier committed fragment opened a key.
+        parser: Finite marker state retained between committed fragments.
     """
     output = []
+    parser = parser if parser is not None else {}
+    carry = parser.get("carry", "").encode("ascii")
     for value in lines:
         for line in str(value).splitlines() or [""]:
-            # Conceal incomplete headers too; a later producer update may finish them.
-            markers = list(re.finditer(r"-----(BEGIN)|-----(END) (?:(?!-----)[ -~])*?PRIVATE KEY-----", line))
-            concealed = private or bool(markers)
+            marker, carry = log_viewer._scan_pem_markers(line.encode("utf-8"), carry)
+            concealed = private or marker is not None or carry not in {b"", b"S"}
             output.append("[redacted private key]" if concealed else str(redact_task_value(line)))
-            if markers:
-                private = markers[-1].group(1) is not None
+            if marker is not None:
+                private = marker
+            if carry.startswith(b"B"):
+                private = True
+    parser["carry"] = carry.decode("ascii")
     return output, private
 
 
@@ -60,29 +64,31 @@ def _log_digest(lines: list[Any]) -> str:
     return hmac.new(get_settings().secret_key.encode(), encoded, hashlib.sha256).hexdigest()
 
 
-def _safe_value(value: Any, private: bool = False, key: str = "") -> tuple[Any, bool]:
+def _safe_value(value: Any, private: bool = False, key: str = "", parser: dict[str, str] | None = None) -> tuple[Any, bool]:
     """Sanitize nested result values before any checkpoint copy is persisted.
 
     Args:
         value: Original producer value.
         private: Unfinished key state within the result structure.
         key: Mapping key used by the established scalar secret policy.
+        parser: Finite raw-value marker state shared by nested values.
     """
+    parser = parser if parser is not None else {}
     if key and redact_task_value("", key=key) == "[redacted]":
         return "[redacted]", private
     if isinstance(value, dict):
         output = {}
         for item_key, item in value.items():
-            output[str(item_key)], private = _safe_value(item, private, str(item_key))
+            output[str(item_key)], private = _safe_value(item, private, str(item_key), parser)
         return output, private
     if isinstance(value, list):
         items = []
         for item in value:
-            safe, private = _safe_value(item, private)
+            safe, private = _safe_value(item, private, parser=parser)
             items.append(safe)
         return items, private
     if isinstance(value, str):
-        lines, private = _safe_lines([value], private)
+        lines, private = _safe_lines([value], private, parser)
         return "\n".join(lines), private
     return value, private
 
@@ -104,9 +110,10 @@ def capture_task_history(connection: Connection, job_id: str, audit_ids: tuple[i
     previous = _payload(checkpoint["state_json"]) if checkpoint else {}
     end = int(checkpoint["end_offset"]) if checkpoint else 0
     result = _payload(job.result)
+    result_parser = {"carry": previous.get("result_pem_state", "")}
     safe_result, result_private = _safe_value(
         {key: value for key, value in result.items() if key != "state" and (key != "log_lines" or not isinstance(value, list))},
-        bool(previous.get("result_private"))
+        bool(previous.get("result_private")), parser=result_parser
     )
     old_result = previous.get("result", {})
     lines = []
@@ -122,11 +129,14 @@ def capture_task_history(connection: Connection, job_id: str, audit_ids: tuple[i
     count = int(previous.get("log_count", 0))
     appending = count <= len(raw_logs) and _log_digest(raw_logs[:count]) == previous.get("log_digest")
     private = bool(previous.get("private"))
+    log_parser = {"carry": previous.get("log_pem_state", "")}
     for value in raw_logs[count if appending else 0:]:
         if not isinstance(value, str):
-            value, private = _safe_value(value, private)
-        safe_logs, private = _safe_lines([str(value)], private)
-        lines.extend(safe_logs)
+            value, private = _safe_value(value, private, parser=log_parser)
+            lines.append(str(value))
+        else:
+            safe_logs, private = _safe_lines([value], private, log_parser)
+            lines.extend(safe_logs)
     error = _safe_value(job.error or "")[0] if job.status not in {"pending", "running"} else ""
     if error and error != previous.get("error"):
         safe, _ = _safe_lines([f"Error: {error}"])
@@ -136,18 +146,22 @@ def capture_task_history(connection: Connection, job_id: str, audit_ids: tuple[i
     if checkpoint:
         query = query.where(audit.c.id.in_(audit_ids))
     audit_private = bool(previous.get("audit_private"))
+    audit_parser = {"carry": previous.get("audit_pem_state", "")}
     for event in connection.execute(query.order_by(audit.c.id)).mappings():
         outcome = "success" if event["success"] else "failed"
         safe, audit_private = _safe_lines(
-            [f"{event['created_at'].isoformat()} {event['action']} {outcome} {event['detail'] or ''}"], audit_private
+            [event["detail"] or ""], audit_private, audit_parser
         )
-        lines.extend(safe)
+        prefix = str(redact_task_value(f"{event['created_at'].isoformat()} {event['action']} {outcome}"))
+        lines.extend(f"{prefix} {line}" for line in safe)
     text = "".join(line + "\n" for line in lines)
     for start in range(0, len(text), CHUNK_CHARS):
         content = text[start:start + CHUNK_CHARS]
         connection.execute(chunks.insert().values(job_id=job_id, start_offset=end, end_offset=end + len(content), content=content))
         end += len(content)
     state = json.dumps({"result": safe_result, "log_count": len(raw_logs), "log_digest": _log_digest(raw_logs),
+                        "log_pem_state": log_parser.get("carry", ""), "result_pem_state": result_parser.get("carry", ""),
+                        "audit_pem_state": audit_parser.get("carry", ""),
                         "private": private, "result_private": result_private, "audit_private": audit_private, "error": error}, sort_keys=True)
     if checkpoint:
         connection.execute(update(checkpoints).where(checkpoints.c.job_id == job_id).values(state_json=state, end_offset=end))
