@@ -12,6 +12,8 @@
     let previousCursor = "";
     let hasMore = false;
     let following = true;
+    let navigating = false;
+    let advancing = false;
     let failures = 0;
     let terminalReads = 0;
     let previous = [];
@@ -25,7 +27,7 @@
       element.type = "button";
       element.className = "button ghost";
       element.textContent = label;
-      element.addEventListener("click", action);
+      element.addEventListener("click", () => { if (!element.disabled) action(); });
       controls?.append(element);
       buttons[name] = element;
     };
@@ -41,11 +43,16 @@
     const atBottom = () => !scroll || scroll.scrollHeight - scroll.scrollTop - scroll.clientHeight < 32;
     const message = (text) => { if (status) status.textContent = text; };
     const updateButtons = () => {
-      if (buttons.previous) buttons.previous.disabled = previous.length === 0 && !previousCursor;
-      if (buttons.next) buttons.next.disabled = !hasMore;
+      if (buttons.first) buttons.first.disabled = navigating;
+      if (buttons.previous) buttons.previous.disabled = navigating || advancing || (previous.length === 0 && !previousCursor);
+      if (buttons.next) buttons.next.disabled = navigating || advancing || !hasMore;
+      if (buttons.follow) buttons.follow.disabled = navigating;
       if (buttons.follow) buttons.follow.setAttribute("aria-pressed", String(following));
     };
     const navigate = (position, reset = false) => {
+      navigating = true;
+      advancing = false;
+      updateButtons();
       generation += 1;
       request?.abort();
       request = null;
@@ -109,6 +116,7 @@
         }
         const accepted = !held || text === rendered;
         if (accepted) {
+          if (!page.pending) { navigating = false; advancing = false; }
           hasMore = Boolean(page.has_more);
           nextCursor = page.next_cursor || "";
           previousCursor = page.previous_cursor || "";
@@ -127,6 +135,8 @@
           cursor = nextCursor;
           terminalReads = 0;
           rendered = null;
+          advancing = true;
+          updateButtons();
           schedule(250);
         } else if (terminalReads < 2) {
           schedule(5000);

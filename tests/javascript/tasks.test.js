@@ -576,3 +576,84 @@ for (const reason of ["selection", "scroll"]) {
     harness.context.closeTaskLogModal();
   });
 }
+
+
+for (const direction of ["Next page", "Previous page"]) {
+  test(`repeated ${direction} activation cannot mutate pending navigation`, async () => {
+    const harness = taskLogHarness();
+    const initial = harness.context.openTaskLog({ id: "A" });
+    harness.complete(0, { text: "tail", cursor: "tail" });
+    await initial;
+    const button = (label) => harness.buttons.find((element) => element.textContent === label);
+    button("From beginning").click();
+    let loading = fireTimer(harness, 0);
+    harness.complete(1, { text: "page 0", cursor: "page-0", next_cursor: "page-1", has_more: true });
+    await loading;
+    for (let page = 1; page <= 2; page += 1) {
+      button("Next page").click();
+      loading = fireTimer(harness, 0);
+      harness.complete(page + 1, { text: `page ${page}`, cursor: `page-${page}`, next_cursor: `page-${page + 1}`, has_more: true });
+      await loading;
+    }
+    const target = direction === "Next page" ? 3 : 1;
+    button(direction).click();
+    assert.equal(button(direction).disabled, true);
+    button(direction).click();
+    loading = fireTimer(harness, 0);
+    button(direction).click();
+    assert.equal(harness.requests.length, 5);
+    assert.equal(new URL(harness.requests[4].url).searchParams.get("cursor"), `page-${target}`);
+    harness.complete(4, { text: `page ${target}`, cursor: `page-${target}`, next_cursor: `page-${target + 1}`, has_more: true });
+    await loading;
+    assert.equal(button(direction).disabled, false);
+    button("Previous page").click();
+    loading = fireTimer(harness, 0);
+    const adjacent = direction === "Next page" ? 2 : 0;
+    assert.equal(new URL(harness.requests[5].url).searchParams.get("cursor"), `page-${adjacent}`);
+    harness.complete(5, { text: `page ${adjacent}`, cursor: `page-${adjacent}` });
+    await loading;
+    harness.context.closeTaskLogModal();
+  });
+}
+
+test("history controls remain serialized through preparation and retry", async () => {
+  const harness = taskLogHarness();
+  const initial = harness.context.openTaskLog({ id: "A" });
+  harness.complete(0, { text: "tail", cursor: "tail", previous_cursor: "older" });
+  await initial;
+  const previous = harness.buttons.find((button) => button.textContent === "Previous page");
+  previous.click();
+  let loading = fireTimer(harness, 0);
+  harness.complete(1, { text: "", pending: true });
+  await loading;
+  assert.ok(harness.buttons.every((button) => button.disabled));
+  loading = fireTimer(harness, 5000);
+  harness.requests[2].reject(new Error("temporary connection failure"));
+  await loading;
+  assert.ok(harness.buttons.every((button) => button.disabled));
+  loading = fireTimer(harness, 5000);
+  harness.complete(3, { text: "older page", cursor: "older", previous_cursor: "oldest" });
+  await loading;
+  assert.equal(previous.disabled, false);
+  assert.equal(harness.content.textContent, "older page");
+  harness.context.closeTaskLogModal();
+});
+
+
+test("automatic live catch-up blocks stale adjacent cursors but allows From beginning", async () => {
+  const harness = taskLogHarness();
+  const initial = harness.context.openTaskLog({ id: "A" });
+  harness.complete(0, { text: "first", cursor: "first", next_cursor: "next", previous_cursor: "old", has_more: true });
+  await initial;
+  const button = (label) => harness.buttons.find((element) => element.textContent === label);
+  assert.equal(button("Next page").disabled, true);
+  assert.equal(button("Previous page").disabled, true);
+  assert.equal(button("From beginning").disabled, false);
+  button("From beginning").click();
+  const loading = fireTimer(harness, 0);
+  assert.equal(new URL(harness.requests[1].url).searchParams.get("cursor"), null);
+  harness.complete(1, { text: "oldest", cursor: "oldest" });
+  await loading;
+  assert.equal(harness.content.textContent, "oldest");
+  harness.context.closeTaskLogModal();
+});
