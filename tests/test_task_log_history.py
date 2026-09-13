@@ -196,6 +196,41 @@ def test_numeric_log_value_inside_private_block_is_concealed(history_db, structu
     assert "visible" in _all(db)
 
 
+def test_non_result_updates_do_not_rehash_task_log(history_db, monkeypatch):
+    """Progress and audit commits preserve parser state without replaying old logs.
+
+    Args:
+        history_db: Transactional task fixture.
+        monkeypatch: Reject any unexpected cumulative log hashing.
+    """
+    from atlaso.app.services import task_log_history
+
+    db = history_db
+    job = _job(db, {"log_lines": ["-----BEG"]})
+    before = db.execute(select(TaskLogCheckpoint.state_json)).scalar_one()
+    original = task_log_history._log_digest
+
+    def reject(_lines):
+        """Fail if an unchanged producer result enters cumulative hashing.
+
+        Args:
+            _lines: Unexpected raw log prefix.
+        """
+        raise AssertionError("unchanged result rehashed")
+
+    monkeypatch.setattr(task_log_history, "_log_digest", reject)
+    job.progress_percent = 30
+    db.commit()
+    assert db.execute(select(TaskLogCheckpoint.state_json)).scalar_one() == before
+    db.add(AuditEvent(actor="test", action="progress", resource_type="job", resource_id=job.id, detail="audit-only"))
+    db.commit()
+    monkeypatch.setattr(task_log_history, "_log_digest", original)
+    job.result = json.dumps({"log_lines": ["-----BEG", "IN PRIVATE KEY-----", "synthetic-unchanged-body"]})
+    db.commit()
+    assert "audit-only" in _all(db)
+    assert "synthetic-unchanged-body" not in _all(db)
+
+
 def test_legacy_initialization_restart_and_deletion(history_db):
     """Legacy capture is idempotent and task deletion removes all owned history.
 

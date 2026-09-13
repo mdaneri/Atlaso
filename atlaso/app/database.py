@@ -438,13 +438,15 @@ def _collect_task_history(session: Session, _context, _instances) -> None:
     from atlaso.app.models import AuditEvent, Job, TaskLogCheckpoint, TaskLogChunk
 
     jobs = {item.id for item in session.new | session.dirty if isinstance(item, Job)}
+    results = {item.id for item in session.new | session.dirty
+               if isinstance(item, Job) and (item in session.new or inspect(item).attrs.result.history.has_changes())}
     audits = [item for item in session.new if isinstance(item, AuditEvent) and item.resource_type == "job"]
     jobs.update(item.resource_id for item in audits if item.resource_id)
     deleted = {item.id for item in session.deleted if isinstance(item, Job)}
     for job_id in deleted:
         session.connection().execute(delete(TaskLogChunk).where(TaskLogChunk.job_id == job_id))
         session.connection().execute(delete(TaskLogCheckpoint).where(TaskLogCheckpoint.job_id == job_id))
-    session.info["task_history_flush"] = (jobs - deleted, audits)
+    session.info["task_history_flush"] = (jobs - deleted, audits, results)
 
 
 @event.listens_for(Session, "after_flush_postexec")
@@ -457,9 +459,10 @@ def _capture_flushed_task_history(session: Session, _context) -> None:
     """
     from atlaso.app.services.task_log_history import capture_task_history
 
-    jobs, audits = session.info.pop("task_history_flush", (set(), []))
+    jobs, audits, results = session.info.pop("task_history_flush", (set(), [], set()))
     for job_id in sorted(jobs):
-        capture_task_history(session.connection(), job_id, tuple(item.id for item in audits if item.resource_id == job_id))
+        capture_task_history(session.connection(), job_id, tuple(item.id for item in audits if item.resource_id == job_id),
+                             result_changed=job_id in results)
 
 
 def init_db() -> None:
