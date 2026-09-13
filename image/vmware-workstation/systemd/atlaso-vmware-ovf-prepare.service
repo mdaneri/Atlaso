@@ -1,6 +1,7 @@
 [Unit]
 Description=Prepare Atlaso VMware OVF configuration before networking
 ConditionPathExists=!/var/lib/atlaso/vmware-ovf-customization.applied
+ConditionPathExists=!/var/lib/atlaso/vmware-no-ovf-initialization.applied
 DefaultDependencies=no
 After=local-fs.target atlaso-console.service atlaso-guest-agent-select.service
 Wants=atlaso-console.service

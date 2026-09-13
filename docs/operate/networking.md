@@ -317,6 +317,10 @@ IPv6 recovery remains enabled when IPv4 checking is disabled. DHCPv6 and SLAAC f
 until a later usable automatic IPv6 address appears; an existing address or a new link-local address
 does not clear the failure. A later outage does not reactivate an already resolved conflict.
 
+Early VMware network preparation is skipped after either OVF customization or non-OVF initialization
+has completed. The normal post-network customization service still runs to detect a subsequently
+injected OVF envelope without blocking network startup on unanswered guest-info reads.
+
 ## Verify and roll back
 
 Confirm the management URL, expected routes, and interface state after apply and again after an appliance reboot. For a
