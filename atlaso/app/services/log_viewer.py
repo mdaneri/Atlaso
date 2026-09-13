@@ -328,7 +328,7 @@ def _tail_private_key(paths: list[Path], offset: int, *, deadline: float) -> boo
     return opened
 
 
-_COMPRESSED_REDACTION_CACHE: OrderedDict[tuple[str, int, int], tuple[bool, bytes, Any, int, bytes, bool]] = OrderedDict()
+_COMPRESSED_REDACTION_CACHE: OrderedDict[tuple[str, int, int], tuple[bool, bytes, Any, int, bytes, bool, Any, int, int]] = OrderedDict()
 
 
 def _compressed_tail_private_key(paths: list[Path], offset: int, *, deadline: float) -> bool:
@@ -342,24 +342,56 @@ def _compressed_tail_private_key(paths: list[Path], offset: int, *, deadline: fl
     identities = [path.lstat() for path in paths]
     versions = [(str(path), info.st_dev, info.st_ino, info.st_size, info.st_mtime_ns)
                 for path, info in zip(paths, identities, strict=True)]
-    contexts = [hashlib.sha256(repr(versions[:index + 1]).encode()).hexdigest() for index in range(len(paths))]
+    context_versions: list[tuple[str, int, int, int | None, int | None]] = list(versions)
+    if paths and paths[-1].suffix != ".gz":
+        context_versions[-1] = (*versions[-1][:3], None, None)
+    contexts = [hashlib.sha256(repr(context_versions[:index + 1]).encode()).hexdigest() for index in range(len(paths))]
     stop = min(deadline - 0.25, time.monotonic() + 2)
     opened, carry, start_index, expanded = False, b"", 0, 0
     decoder, raw_offset, pending, finished = None, 0, b"", False
+    prefix_digest = hashlib.sha256()
+    saved_size, saved_mtime = 0, 0
     with _TAIL_REDACTION_LOCK:
         candidates = [key for key in _COMPRESSED_REDACTION_CACHE
                       if key[1] < len(paths) and key[0] == contexts[key[1]]
                       and (key[1] < len(paths) - 1 or key[2] <= offset)]
         if candidates:
             key = max(candidates, key=lambda item: item[1:])
-            opened, carry, saved_decoder, raw_offset, pending, finished = _COMPRESSED_REDACTION_CACHE[key]
+            opened, carry, saved_decoder, raw_offset, pending, finished, saved_digest, saved_size, saved_mtime = _COMPRESSED_REDACTION_CACHE[key]
+            prefix_digest = saved_digest.copy()
             decoder = saved_decoder.copy() if saved_decoder is not None else None
             start_index, expanded = key[1:]
             _COMPRESSED_REDACTION_CACHE.move_to_end(key)
+    if candidates and start_index == len(paths) - 1 and paths[-1].suffix != ".gz" and (
+            identities[-1].st_size != saved_size or identities[-1].st_mtime_ns != saved_mtime):
+        verification = hashlib.sha256()
+        remaining = expanded
+        descriptor = os.open(paths[-1], os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_BINARY", 0) | getattr(os, "O_NONBLOCK", 0))
+        with os.fdopen(descriptor, "rb") as raw:
+            if not stat.S_ISREG(os.fstat(raw.fileno()).st_mode):
+                raise ValueError("Retained log is not a regular file.")
+            while remaining:
+                if time.monotonic() > deadline - 0.25:
+                    raise _TailScanPending("Verifying retained history before resuming preparation.")
+                chunk = raw.read(min(65536, remaining))
+                if not chunk:
+                    break
+                verification.update(chunk)
+                remaining -= len(chunk)
+        if remaining or verification.digest() != prefix_digest.digest():
+            with _TAIL_REDACTION_LOCK:
+                for candidate in candidates:
+                    if candidate[1] == len(paths) - 1:
+                        _COMPRESSED_REDACTION_CACHE.pop(candidate, None)
+            opened, carry, start_index, expanded = False, b"", 0, 0
+            decoder, raw_offset, pending = None, 0, b""
+            prefix_digest = hashlib.sha256()
+        finished = False
     for index in range(start_index, len(paths)):
         path = paths[index]
         if index != start_index:
             decoder, raw_offset, pending, finished, expanded = None, 0, b"", False, 0
+            prefix_digest = hashlib.sha256()
         compressed = path.suffix == ".gz"
         if compressed and decoder is None:
             decoder = zlib.decompressobj(31)
@@ -399,6 +431,7 @@ def _compressed_tail_private_key(paths: list[Path], offset: int, *, deadline: fl
                     raw_offset += len(chunk)
                     finished = not chunk
                 expanded += len(chunk)
+                prefix_digest.update(chunk)
                 window = carry + chunk
                 for marker in re.finditer(rb"-----(BEGIN|END) (?:(?!-----)[ -~])*?PRIVATE KEY-----", window):
                     opened = marker.group(1) == b"BEGIN"
@@ -406,11 +439,12 @@ def _compressed_tail_private_key(paths: list[Path], offset: int, *, deadline: fl
                 key = (contexts[index], index, expanded)
                 with _TAIL_REDACTION_LOCK:
                     _COMPRESSED_REDACTION_CACHE[key] = (opened, carry, decoder.copy() if decoder is not None else None,
-                                                       raw_offset, pending, finished)
+                                                       raw_offset, pending, finished, prefix_digest.copy(),
+                                                       identities[index].st_size, identities[index].st_mtime_ns)
                     _COMPRESSED_REDACTION_CACHE.move_to_end(key)
                     while len(_COMPRESSED_REDACTION_CACHE) > 32:
                         _COMPRESSED_REDACTION_CACHE.popitem(last=False)
-                if time.monotonic() > stop and (not finished or index < len(paths) - 1):
+                if time.monotonic() > stop and (index < len(paths) - 1 or (not finished and expanded < offset)):
                     raise _TailScanPending("Preparing retained history; the next request resumes this scan.")
     for path, before in zip(paths, identities, strict=True):
         after = path.lstat()

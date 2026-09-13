@@ -111,7 +111,9 @@ Service-log HTML snapshots and JSON refreshes both disable caching and vary on t
 Local compressed-history preparation retains at most 32 bounded decompressor checkpoints in process memory.
 Each step reads at most 16 KiB of compressed input and expands at most 64 KiB. Later requests resume immutable
 archives, including concatenated gzip members, while a newer file grows. Archive identity, size, or modification-time
-changes invalidate that progress. This does not change the privileged helper's compressed-file reader.
+changes invalidate that progress. A growing plain file after those archives uses full-prefix authentication to
+retain its own progress, including after older checkpoints leave the bounded cache. This does not change the
+privileged helper's compressed-file reader.
 
 <!-- BEGIN GENERATED ADDITIONAL SCREENSHOTS -->
 ## Additional verified states

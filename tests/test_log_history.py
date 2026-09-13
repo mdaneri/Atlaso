@@ -1646,3 +1646,49 @@ def test_audit_snapshot_status_and_representation_cache_headers(client, empty):
     assert isinstance(refresh.json()["rows"], list)
     assert refresh.headers["cache-control"] == "no-store"
     assert "X-Atlaso-Task-Log" in refresh.headers["vary"].split(", ")
+
+
+@pytest.mark.parametrize("rewrite", [False, True])
+def test_mixed_archive_chain_authenticates_growing_plain_checkpoint(tmp_path, monkeypatch, rewrite):
+    """A growing plain file resumes safely after its compressed rotation.
+
+    Args:
+        tmp_path: Test-owned mixed-format retained history.
+        monkeypatch: Restrict each preparation pass to one scan chunk.
+        rewrite: Insert a key marker inside an already scanned prefix.
+    """
+    import itertools
+
+    archive = tmp_path / "active.log.1.gz"
+    current = tmp_path / "active.log"
+    archive.write_bytes(gzip.compress(b"older retained history\n"))
+    current.write_bytes(b"normal line\n" * 220000)
+    log_viewer._COMPRESSED_REDACTION_CACHE.clear()
+    ticks = itertools.count(step=3)
+    monkeypatch.setattr(log_viewer.time, "monotonic", lambda: next(ticks))
+    positions = []
+    rewritten = False
+    for _ in range(100):
+        if rewrite and len(positions) == 2 and not rewritten:
+            data = current.read_bytes()
+            marker = b"-----BEGIN PRIVATE KEY-----\n"
+            current.write_bytes(data[:10000] + marker + data[10000 + len(marker):])
+            rewritten = True
+        with current.open("ab") as handle:
+            handle.write(b"new line\n")
+        try:
+            assert log_viewer._tail_private_key([archive, current], current.stat().st_size, deadline=100000) is rewrite
+        except log_viewer._TailScanPending:
+            values = [key[2] for key in log_viewer._COMPRESSED_REDACTION_CACHE if key[1] == 1]
+            if values:
+                positions.append(max(values))
+        else:
+            break
+    else:
+        pytest.fail("mixed-chain active preparation did not complete")
+    assert len(positions) > 32
+    assert len(log_viewer._COMPRESSED_REDACTION_CACHE) <= 32
+    if rewrite:
+        assert any(later < earlier for earlier, later in zip(positions[:-1], positions[1:], strict=True))
+    else:
+        assert positions == sorted(set(positions))
