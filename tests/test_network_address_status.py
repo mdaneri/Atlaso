@@ -77,6 +77,75 @@ def test_settings_restore_preserves_local_conflict_resolution(client, resolved):
             assert retained["rows"]["physical:1"]["state"] == ("assigned" if resolved else "conflict")
 
 
+@pytest.mark.parametrize("active", [False, True])
+def test_prepare_observation_persists_logging_without_network_restart(tmp_path, monkeypatch, active):
+    """Provision logging before first boot and activate it for existing appliances.
+
+    Args:
+        tmp_path: Isolated generated systemd configuration root.
+        monkeypatch: Replace fixed systemctl calls and directory durability for Windows.
+        active: Whether networkd is already running.
+    """
+    import subprocess
+    from pathlib import Path
+
+    from tests.test_appliance_helper import load_helper_module
+
+    helper = load_helper_module()
+    destination = tmp_path / "systemd-networkd.service.d" / "atlaso-address-observation.conf"
+    monkeypatch.setattr(helper, "NETWORK_OBSERVATION_LOGGING_PATH", destination)
+    monkeypatch.setattr(helper, "_fsync_directory", lambda _path: None)
+    calls = []
+
+    def run(command, **_kwargs):
+        """Record bounded service controls without mutating host services.
+
+        Args:
+            command: Fixed helper command.
+            **_kwargs: Bounded subprocess options.
+        """
+        calls.append(command)
+        assert _kwargs["timeout"] == 15
+        return subprocess.CompletedProcess(command, int(not active) if "is-active" in command else 0, "", "")
+
+    monkeypatch.setattr(helper, "_run", run)
+    command = ["atlaso-helper", "network", "prepare-observation"]
+    assert helper.main(command) == 0
+    assert not destination.exists()
+    assert helper.main([*command, "--real"]) == 0
+    original_time = destination.stat().st_mtime_ns
+    assert destination.read_text() == helper.NETWORK_OBSERVATION_LOGGING
+    assert helper.main([*command, "--real"]) == 0
+    assert destination.stat().st_mtime_ns == original_time
+    assert all("restart" not in item for item in calls)
+    assert sum("service-log-level" in item for item in calls) == (2 if active else 0)
+    root = Path(__file__).resolve().parents[1]
+    assert "network prepare-observation --real" in (root / "image/common/scripts/provision-atlaso.sh").read_text()
+    assert "ExecStartPre=+/opt/atlaso/bin/atlaso-helper network prepare-observation --real" in (
+        root / "image/common/systemd/atlaso-worker.service").read_text()
+
+
+@pytest.mark.parametrize("failed_command", ["daemon-reload", "service-log-level"])
+def test_prepare_observation_reports_missing_logging(tmp_path, monkeypatch, failed_command):
+    """Do not claim that ACD evidence is available after service control fails.
+
+    Args:
+        tmp_path: Isolated generated policy directory.
+        monkeypatch: Inject the failed service control.
+        failed_command: Native operation that cannot complete.
+    """
+    import subprocess
+
+    from tests.test_appliance_helper import load_helper_module
+
+    helper = load_helper_module()
+    monkeypatch.setattr(helper, "NETWORK_OBSERVATION_LOGGING_PATH", tmp_path / "logging.conf")
+    monkeypatch.setattr(helper, "_fsync_directory", lambda _path: None)
+    monkeypatch.setattr(helper, "_run", lambda command, **_kwargs: subprocess.CompletedProcess(
+        command, int(failed_command in command), "", ""))
+    assert helper.main(["atlaso-helper", "network", "prepare-observation", "--real"]) == 2
+
+
 def test_failed_candidate_remains_distinct_from_restored_address():
     """Retain a rejected candidate while displaying the healthy rollback address separately."""
     event = {"name": "eth0", "address": "192.0.2.20", "detected_at": "2026-09-12T00:00:00+00:00", "mac": ""}

@@ -805,6 +805,9 @@ if [ "$ATLASO_GUEST_PLATFORM" = "vmware" ]; then
 fi
 visudo -cf /etc/sudoers.d/atlaso-helper
 
+# Capture static ACD failures from the first networkd start on the deployed guest.
+"$ATLASO_HOME/bin/atlaso-helper" network prepare-observation --real
+
 chown -R root:root "$ATLASO_HOME"
 chmod 0755 /opt "$ATLASO_HOME"
 find "$ATLASO_HOME/atlaso" "$ATLASO_HOME/scripts" "$ATLASO_HOME/image" -type d -exec chmod 0755 {} +

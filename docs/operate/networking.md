@@ -246,6 +246,11 @@ is declined and the native client retries. Atlaso retains `SendRelease=no` durin
 Turning this setting off disables these IPv4 checks for that interface. It never chooses a replacement
 static address. The helper requires systemd 252 or newer and a usable Ethernet identity before
 installing an enabled IPv4 candidate; unsupported or unavailable evidence produces **Unable to check**.
+Photon logs static IPv4 ACD rejection at debug level. Image provisioning and worker startup prepare
+an Atlaso-owned networkd logging drop-in and enable debug logging on the running service without
+restarting networking. The drop-in persists across reboots. This increases networkd journal volume;
+Atlaso filters conflict messages before taking its bounded evidence sample and does not retain
+unrelated debug messages in address status.
 
 IPv6 is independent: static addresses retain native IPv6 DAD, and existing RA/SLAAC and DHCPv6
 behavior continues to use native IPv6 detection. This switch does not enable DHCPv6, disable IPv6 DAD,

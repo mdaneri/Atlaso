@@ -84,7 +84,7 @@ COMMANDS: dict[str, set[str]] = {
     "local-users": {"validate", "apply", "status", "authenticate"},
     "appliance-settings": {"validate", "preflight", "apply"},
     "web-terminal": {"status", "sign"},
-    "network": {"validate", "apply", "dhcp-dns", "address-status", "recover", "acknowledge"},
+    "network": {"validate", "apply", "dhcp-dns", "address-status", "prepare-observation", "recover", "acknowledge"},
     "management-front-door": {"recover"},
     "management-handoff": {"validate", "apply", "acknowledge", "recover"},
     "firewall": {"validate", "apply"},
@@ -177,6 +177,7 @@ UPDATE_CHECK_TIMEOUT_SECONDS = 300
 UPDATE_CHECK_STOP_SECONDS = 30
 UPDATE_RELEASE_NOTES_URL_MAX_LENGTH = 2048
 NO_PATH_ACTIONS = {
+    ("network", "prepare-observation"),
     ("network", "address-status"),
     ("nat", "status"),
     ("wan", "reconcile-nat"),
@@ -308,6 +309,11 @@ ATLASO_DATA_DISK_UNIT_PATH = Path("/etc/systemd/system/atlaso-data-disks.service
 ATLASO_SERVICE_DATA_DISK_DROPIN_PATH = Path("/etc/systemd/system/atlaso.service.d/atlaso-data-disks.conf")
 ATLASO_BOOTSTRAP_HTTPS_UNIT_PATH = Path("/etc/systemd/system/atlaso-bootstrap-https.service")
 ATLASO_NGINX_DATA_DISK_DROPIN_PATH = Path("/etc/systemd/system/nginx.service.d/atlaso-data-disks.conf")
+NETWORK_OBSERVATION_LOGGING_PATH = Path("/etc/systemd/system/systemd-networkd.service.d/atlaso-address-observation.conf")
+NETWORK_OBSERVATION_LOGGING = (
+    "# Managed by Atlaso: Photon emits static IPv4 ACD conflict evidence at debug level.\n"
+    "[Service]\nEnvironment=SYSTEMD_LOG_LEVEL=debug\n"
+)
 ATLASO_DISK_IDENTITY_UDEV_PATH = Path("/etc/udev/rules.d/99-atlaso-disk-identity.rules")
 ATLASO_VMWARE_OVF_UNIT_PATH = Path("/etc/systemd/system/atlaso-vmware-ovf-customize.service")
 ATLASO_HYPERV_GENERATOR_PATH = Path("/etc/systemd/system-generators/systemd-ssh-generator")
@@ -9201,6 +9207,35 @@ def _network_apply_transaction(path: Path):
                 print(f"Network rollback backup cleanup incomplete: {backup_root}", file=sys.stderr)
 
 
+def _prepare_network_observation() -> None:
+    """Persist native ACD logging and enable it without restarting networkd.
+
+    Image provisioning runs this before first boot. Worker startup repeats it for
+    wheel deployments and upgrades, including appliances without the new image.
+    """
+    path = NETWORK_OBSERVATION_LOGGING_PATH
+    if path.parent.is_symlink() or path.is_symlink():
+        raise ValueError("Network observation logging path must not be a symlink")
+    path.parent.mkdir(mode=0o755, parents=True, exist_ok=True)
+    if not path.exists() or path.read_text(encoding="utf-8") != NETWORK_OBSERVATION_LOGGING:
+        temporary = path.with_name(f".{path.name}.{uuid.uuid4().hex}.tmp")
+        try:
+            with temporary.open("x", encoding="utf-8") as stream:
+                stream.write(NETWORK_OBSERVATION_LOGGING)
+                stream.flush()
+                os.fsync(stream.fileno())
+            temporary.chmod(0o644)
+            os.replace(temporary, path)
+            _fsync_directory(path.parent)
+        finally:
+            temporary.unlink(missing_ok=True)
+    if _run(["systemctl", "daemon-reload"], timeout=15).returncode:
+        raise ValueError("Unable to load native address observation logging policy")
+    if _run(["systemctl", "is-active", "--quiet", "systemd-networkd.service"], timeout=15).returncode == 0:
+        if _run(["systemctl", "service-log-level", "systemd-networkd.service", "debug"], timeout=15).returncode:
+            raise ValueError("Unable to enable native address conflict evidence")
+
+
 def _handle_network(action: str, args: list[str]) -> int:
     """Serialize network mutation and recovery while leaving observation read-only.
 
@@ -9223,6 +9258,11 @@ def _handle_network_locked(action: str, args: list[str]) -> int:
         action: Action consumed by handle network.
         args: Parsed command-line options consumed by the operation.
     """
+    if action == "prepare-observation":
+        if args:
+            raise ValueError("network prepare-observation accepts no arguments")
+        _prepare_network_observation()
+        return 0
     if action in {"recover", "acknowledge"}:
         if len(args) != 1 or not re.fullmatch(r"[A-Za-z0-9_-]{1,128}", args[0]):
             raise ValueError("network reconciliation requires an exact task identity")
