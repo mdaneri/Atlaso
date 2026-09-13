@@ -42,11 +42,11 @@ def _safe_lines(lines: list[str], private: bool = False) -> tuple[list[str], boo
     for value in lines:
         for line in str(value).splitlines() or [""]:
             # Conceal incomplete headers too; a later producer update may finish them.
-            markers = list(re.finditer(r"-----(BEGIN|END)", line))
+            markers = list(re.finditer(r"-----(BEGIN)|-----(END) (?:(?!-----)[ -~])*?PRIVATE KEY-----", line))
             concealed = private or bool(markers)
             output.append("[redacted private key]" if concealed else str(redact_task_value(line)))
             if markers:
-                private = markers[-1].group(1) == "BEGIN"
+                private = markers[-1].group(1) is not None
     return output, private
 
 

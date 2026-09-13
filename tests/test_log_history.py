@@ -1491,6 +1491,11 @@ def test_service_log_html_has_readable_fallback(client, monkeypatch, mode):
     if mode == "dry-run":
         assert not calls
         assert "No host journal is read in development mode." in response.text
+        live = client.get("/ui/management/services/dns/logs", headers={"X-Atlaso-Task-Log": "1"})
+        assert live.status_code == 200
+        assert "No host journal is read in development mode." in live.json()["text"]
+        assert live.headers["cache-control"] == "no-store"
+        assert not calls
     else:
         assert calls == [("dnsmasq-dns", {"tail": True, "limit": 100})]
         if mode == "snapshot":
@@ -1659,9 +1664,11 @@ def test_service_log_json_disables_representation_caching(client, monkeypatch):
         client: Initialized authenticated transport.
         monkeypatch: Supply a fixed retained page without reading the host.
     """
+    from atlaso.app.config import get_settings
     from tests.routers.ui.helpers import login
 
     login(client)
+    monkeypatch.setattr(get_settings(), "dry_run_system_adapters", False)
     monkeypatch.setattr(log_viewer, "source_page", lambda *args, **kwargs: {"text": "current output"})
     response = client.get("/ui/management/services/dns/logs", headers={"X-Atlaso-Task-Log": "1"})
     assert response.status_code == 200

@@ -127,6 +127,27 @@ def test_capture_never_persists_private_key_body_or_secret_value(history_db):
     assert "visible" in _all(db)
 
 
+@pytest.mark.parametrize("ending", ["-----END CERTIFICATE-----", "-----END", "-----END PUBLIC KEY-----"])
+def test_unrelated_task_pem_end_preserves_redaction_across_commits(history_db, ending):
+    """Only a complete private-key closing marker releases persisted concealment.
+
+    Args:
+        history_db: Transactional history fixture.
+        ending: Unrelated or incomplete marker interleaved into task output.
+    """
+    db = history_db
+    lines = ["-----BEGIN RSA PRIVATE KEY-----"]
+    job = _job(db, {"log_lines": lines})
+    for line in [ending, "synthetic-private-body", "-----END RSA PRIVATE KEY-----", "visible-after-close"]:
+        lines.append(line)
+        job.result = json.dumps({"log_lines": lines})
+        db.commit()
+    stored = "".join(db.execute(select(TaskLogChunk.content)).scalars())
+    stored += "".join(db.execute(select(TaskLogCheckpoint.state_json)).scalars())
+    assert "synthetic-private-body" not in stored
+    assert "visible-after-close" in _all(db)
+
+
 def test_legacy_initialization_restart_and_deletion(history_db):
     """Legacy capture is idempotent and task deletion removes all owned history.
 
