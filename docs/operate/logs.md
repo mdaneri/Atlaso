@@ -92,6 +92,8 @@ records larger than 1 MiB use an explicit omission marker and preserve continuat
 navigation also advances across oversized entries, including an unfinished final entry. Multiline journal messages
 are paged within the record so each response remains within 500 displayed lines and 1 MiB, including timestamps.
 Replacing a file behind an unchanged opening banner invalidates its previous position and reopens retained history.
+Slow prefix verification resumes across refreshes while the file version remains unchanged. A further write invalidates
+that verification progress so an interior rewrite cannot reuse an earlier redaction decision.
 
 Standalone VCFDT task-log pages and their live JSON responses disable HTTP caching so refreshes read current output.
 

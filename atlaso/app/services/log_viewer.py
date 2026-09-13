@@ -227,6 +227,47 @@ _TAIL_REDACTION_CACHE: OrderedDict[tuple[str, int, int], tuple[bool, bytes, byte
 _TAIL_REDACTION_LOCK = RLock()
 
 
+
+_PREFIX_VERIFICATION_CACHE: OrderedDict[tuple[Any, ...], tuple[int, Any]] = OrderedDict()
+
+
+def _verify_retained_prefix(raw: Any, path: Path, offset: int, expected: bytes, *, deadline: float) -> bool:
+    """Resume hashing a prefix only while its complete source version is unchanged.
+
+    Args:
+        raw: Verified regular file descriptor owned by the caller.
+        path: Server-selected path binding this verification to its source.
+        offset: Exclusive prefix boundary requiring authentication.
+        expected: SHA-256 digest captured with the redaction checkpoint.
+        deadline: Shared request deadline with rendering time reserved.
+    """
+    info = os.fstat(raw.fileno())
+    version = (info.st_dev, info.st_ino, info.st_size, info.st_mtime_ns)
+    if info.st_size < offset:
+        return False
+    key = (str(path), *version, offset, expected)
+    with _TAIL_REDACTION_LOCK:
+        saved = _PREFIX_VERIFICATION_CACHE.get(key)
+        checked, verification = (saved[0], saved[1].copy()) if saved else (0, hashlib.sha256())
+    raw.seek(checked)
+    while checked < offset and time.monotonic() < deadline - 0.25:
+        chunk = raw.read(min(65536, offset - checked))
+        if not chunk:
+            return False
+        verification.update(chunk)
+        checked += len(chunk)
+    after = os.fstat(raw.fileno())
+    if (after.st_dev, after.st_ino, after.st_size, after.st_mtime_ns) != version:
+        raise _TailScanPending("Retained history changed during verification; retrying against its new version.")
+    with _TAIL_REDACTION_LOCK:
+        _PREFIX_VERIFICATION_CACHE[key] = (checked, verification.copy())
+        _PREFIX_VERIFICATION_CACHE.move_to_end(key)
+        while len(_PREFIX_VERIFICATION_CACHE) > 32:
+            _PREFIX_VERIFICATION_CACHE.popitem(last=False)
+    if checked < offset:
+        raise _TailScanPending("Verifying retained history; the next request resumes the saved hash.")
+    return verification.digest() == expected
+
 def _scan_pem_markers(chunk: bytes, carry: bytes = b"") -> tuple[bool | None, bytes]:
     """Track arbitrarily long PEM labels with only fixed-token parser state.
 
@@ -323,18 +364,7 @@ def _tail_marker_state(paths: list[Path], offset: int, *, deadline: float) -> tu
                     if (identities[start_index].st_mtime_ns == saved_mtime and identities[start_index].st_size == saved_size):
                         authenticated = True
                     else:
-                        verification = hashlib.sha256()
-                        stream.seek(0)
-                        remaining = start_offset
-                        while remaining:
-                            if time.monotonic() > deadline - 0.25:
-                                raise _TailScanPending("Verifying retained history before resuming preparation.")
-                            chunk = stream.read(min(65536, remaining))
-                            if not chunk:
-                                break
-                            verification.update(chunk)
-                            remaining -= len(chunk)
-                        authenticated = remaining == 0 and verification.digest() == saved_digest.digest()
+                        authenticated = _verify_retained_prefix(raw, path, start_offset, saved_digest.digest(), deadline=deadline)
         if hashlib.sha256(prefix + anchor).digest() != fingerprint or not authenticated:
             with _TAIL_REDACTION_LOCK:
                 for key in candidates:
@@ -421,21 +451,12 @@ def _compressed_tail_private_key(paths: list[Path], offset: int, *, deadline: fl
             _COMPRESSED_REDACTION_CACHE.move_to_end(key)
     if candidates and start_index == len(paths) - 1 and paths[-1].suffix != ".gz" and (
             identities[-1].st_size != saved_size or identities[-1].st_mtime_ns != saved_mtime):
-        verification = hashlib.sha256()
-        remaining = expanded
         descriptor = os.open(paths[-1], os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_BINARY", 0) | getattr(os, "O_NONBLOCK", 0))
         with os.fdopen(descriptor, "rb") as raw:
             if not stat.S_ISREG(os.fstat(raw.fileno()).st_mode):
                 raise ValueError("Retained log is not a regular file.")
-            while remaining:
-                if time.monotonic() > deadline - 0.25:
-                    raise _TailScanPending("Verifying retained history before resuming preparation.")
-                chunk = raw.read(min(65536, remaining))
-                if not chunk:
-                    break
-                verification.update(chunk)
-                remaining -= len(chunk)
-        if remaining or verification.digest() != prefix_digest.digest():
+            authenticated = _verify_retained_prefix(raw, paths[-1], expanded, prefix_digest.digest(), deadline=deadline)
+        if not authenticated:
             with _TAIL_REDACTION_LOCK:
                 for candidate in candidates:
                     if candidate[1] == len(paths) - 1:

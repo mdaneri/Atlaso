@@ -1855,3 +1855,54 @@ def test_prepared_gzip_window_invalidates_replaced_archive(tmp_path):
     log_viewer._GZIP_WINDOW_CACHE.clear()
     refreshed = log_viewer.file_page(path, source="replace-gzip", cursor=page["cursor"])
     assert refreshed["text"] == page["text"]
+
+
+@pytest.mark.parametrize("mixed", [False, True])
+@pytest.mark.parametrize("rewrite", [False, True])
+def test_prefix_verification_resumes_and_rejects_changed_versions(tmp_path, monkeypatch, mixed, rewrite):
+    """Slow verification resumes after growth and rejects a later interior rewrite.
+
+    Args:
+        tmp_path: Test-owned retained source directory.
+        monkeypatch: Force hash verification across multiple bounded requests.
+        mixed: Exercise a plain current file following a gzip archive.
+        rewrite: Change previously verified bytes during the retry sequence.
+    """
+    import itertools
+    import time
+
+    path = tmp_path / "verify.log"
+    archive = tmp_path / "verify.log.1.gz"
+    original = b"ordinary retained entry\n" * 90000
+    path.write_bytes(original)
+    archive.write_bytes(gzip.compress(b"old archive\n"))
+    paths = [archive, path] if mixed else [path]
+    log_viewer._PREFIX_VERIFICATION_CACHE.clear()
+    assert not log_viewer._tail_private_key(paths, len(original), deadline=time.monotonic() + 10)
+    path.write_bytes(original + b"new entry\n")
+    ticks = itertools.count()
+    monkeypatch.setattr(log_viewer.time, "monotonic", lambda: next(ticks))
+    progress = []
+    changed = False
+    for attempt in range(180):
+        try:
+            opened = log_viewer._tail_private_key(paths, path.stat().st_size, deadline=next(ticks) + 7)
+        except log_viewer._TailScanPending:
+            states = list(log_viewer._PREFIX_VERIFICATION_CACHE.items())
+            assert len(states) <= 32
+            if states:
+                progress.append(states[-1][1][0])
+            if rewrite and not changed and attempt == 2:
+                marker = b"-----BEGIN PRIVATE KEY-----\n"
+                replacement = original[:70000] + marker + original[70000 + len(marker):] + b"synthetic-body\n"
+                path.write_bytes(replacement)
+                changed = True
+        else:
+            assert opened is rewrite
+            break
+    else:
+        pytest.fail("prefix verification repeatedly restarted without completing")
+    assert len(progress) > 2
+    if not rewrite:
+        assert progress == sorted(progress)
+        assert len(set(progress)) > 2
