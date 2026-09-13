@@ -42,6 +42,8 @@ File, task, and journal pages include JSON escaping and response metadata in the
 Private-key headers split between journal records retain redaction state across pages, including filtered views
 and oversized-record omissions. Tail and Previous navigation prepare older context in bounded, resumable scans;
 the displayed output stays visible while preparation continues.
+Writes to newer files do not interrupt a page from an unchanged archive; the reader still verifies the selected
+file and older files that determine its redaction state.
 If journal retention removes an open cursor, the viewer reopens the oldest available entries and reports the reset.
 Permission and other journal errors preserve the current page for a later retry.
 Development-mode service refreshes retain the explanation that no host journal is read.

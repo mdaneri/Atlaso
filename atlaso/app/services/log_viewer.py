@@ -245,9 +245,13 @@ def _remote_file_page(source: str, *, cursor: str, tail: bool, limit: int) -> di
     deadline = time.monotonic() + 10
     try:
         base, records = _remote_inventory(source, deadline)
-        page = file_page(_RemoteLogPath(source, base, records, base, deadline), source=source, cursor=cursor, tail=tail, limit=limit, _deadline=deadline)
-        if not page.get("pending") and _remote_inventory(source, deadline)[1] != records:
-            raise _TailScanPending("Privileged history changed while preparing the page; retrying.")
+        dependencies: set[str] = set()
+        page = file_page(_RemoteLogPath(source, base, records, base, deadline), source=source, cursor=cursor,
+                         tail=tail, limit=limit, _deadline=deadline, _dependencies=dependencies)
+        if not page.get("pending"):
+            current = _remote_inventory(source, deadline)[1]
+            if any(current.get(name) != records[name] for name in dependencies):
+                raise _TailScanPending("Privileged history changed while preparing the page; retrying.")
         return page
     except _TailScanPending:
         return {"source": source, "text": "", "available": True, "has_more": False,
@@ -964,7 +968,8 @@ def _file_version(info: Any) -> tuple[int, int, int, int]:
     return info.st_dev, info.st_ino, info.st_size, info.st_mtime_ns
 
 def file_page(path: _HistoryPath, *, source: str, cursor: str = "", limit: int = PAGE_LINES,
-              complete: bool = False, tail: bool = False, _deadline: float | None = None) -> dict[str, Any]:
+              complete: bool = False, tail: bool = False, _deadline: float | None = None,
+              _dependencies: set[str] | None = None) -> dict[str, Any]:
     """Read current and numbered retained rotations without a total-history cap.
 
     Args:
@@ -975,6 +980,7 @@ def file_page(path: _HistoryPath, *, source: str, cursor: str = "", limit: int =
         complete: Include a terminal task's final line without a newline.
         tail: Start at the newest bounded group while preserving earlier navigation.
         _deadline: Optional enclosing transport deadline shared with privileged reads.
+        _dependencies: Internal collector for selected and preceding source basenames.
     """
     deadline = _deadline if _deadline is not None else time.monotonic() + 10
     position = decode_cursor(cursor, source)
@@ -1139,13 +1145,15 @@ def file_page(path: _HistoryPath, *, source: str, cursor: str = "", limit: int =
     safe_lines, private_key = redact_lines(lines, private_key=private_key)
     try:
         unchanged = (_file_version(metadata) == rendered_version == versions[index] and
-                     [_file_version(candidate.lstat()) for candidate in paths] == versions)
+                     [_file_version(candidate.lstat()) for candidate in paths[:index + 1]] == versions[:index + 1])
     except OSError:
         unchanged = False
     if not unchanged:
         return {"source": source, "text": "", "available": True, "has_more": False,
                 "cursor": cursor, "next_cursor": cursor, "pending": True,
                 "notice": "Retained history changed while reading; retrying from verified state."}
+    if _dependencies is not None:
+        _dependencies.update(candidate.name for candidate in paths[:index + 1])
     return {"source": source, "text": "\n".join(safe_lines), "available": True,
             "cursor": current, "next_cursor": encode_cursor(source, **next_position, private_key=private_key),
             "previous_cursor": encode_cursor(source, generation=generation, offset=offset, before=True) if offset or index else "",

@@ -2410,3 +2410,68 @@ def test_journal_permission_failure_does_not_reset_cursor(monkeypatch):
     with pytest.raises(ValueError, match="unavailable") as error:
         helper._journal_history_entries(["journalctl", "--after-cursor=valid"], deadline=helper.time.monotonic() + 10)
     assert not isinstance(error.value, helper._JournalCursorExpired)
+
+
+@pytest.mark.parametrize("changed", ["older", "selected", "newer"])
+@pytest.mark.parametrize("privileged", [False, True])
+@pytest.mark.parametrize("compressed", [False, True])
+def test_archive_validation_ignores_only_unrelated_newer_writes(tmp_path, monkeypatch, capsys, changed, privileged, compressed):
+    """Archive browsing survives newer writes while retaining dependency validation.
+
+    Args:
+        tmp_path: Isolated retained source directory.
+        monkeypatch: Inject a write after redaction and bind the real helper transport.
+        capsys: Capture helper JSON at the adapter boundary.
+        changed: File changed after the selected page has been read.
+        privileged: Exercise the full fixed-source helper inventory validation.
+        compressed: Exercise a gzip selected archive.
+    """
+    from atlaso.app.adapters.system import AdapterResult, SystemAdapter
+    from tests.test_appliance_helper import load_helper_module
+
+    path = tmp_path / "access.log"
+    older = tmp_path / "access.log.2"
+    selected = tmp_path / ("access.log.1.gz" if compressed else "access.log.1")
+    path.write_bytes(b"current\n")
+    older.write_bytes(b"older\n")
+    content = b"archive entry\n"
+    selected.write_bytes(gzip.compress(content) if compressed else content)
+    helper = load_helper_module()
+    monkeypatch.setattr(helper, "NGINX_ACCESS_LOG_PATH", path)
+
+    def transport(_self, source, position, *, timeout_seconds):
+        """Exercise actual bounded helper reads and both metadata inventories.
+
+        Args:
+            _self: Adapter instance.
+            source: Fixed log source.
+            position: Inventory or bounded read request.
+            timeout_seconds: Shared transport deadline allowance.
+        """
+        code = helper._read_log_history([source, json.dumps(position)])
+        captured = capsys.readouterr()
+        return AdapterResult(command=["fixture"], dry_run=False, stdout=captured.out, stderr=captured.err, returncode=code)
+
+    monkeypatch.setattr(SystemAdapter, "read_log_file", transport)
+    original = log_viewer.redact_lines
+
+    def redact(lines, **options):
+        """Change one dependency after content preparation but before validation.
+
+        Args:
+            lines: Prepared page content.
+            **options: Incoming redaction context.
+        """
+        result = original(lines, **options)
+        target = {"older": older, "selected": selected, "newer": path}[changed]
+        with target.open("ab") as stream:
+            stream.write(gzip.compress(b"appended\n") if compressed and changed == "selected" else b"appended\n")
+        return result
+
+    monkeypatch.setattr(log_viewer, "redact_lines", redact)
+    source = "nginx-access" if privileged else "archive-dependencies"
+    info = selected.stat()
+    cursor = log_viewer.encode_cursor(source, generation=f"{info.st_dev}:{info.st_ino}", offset=0)
+    page = log_viewer.source_page(source, cursor=cursor) if privileged else log_viewer.file_page(path, source=source, cursor=cursor)
+    assert bool(page.get("pending")) == (changed != "newer")
+    assert page["text"] == ("archive entry" if changed == "newer" else "")
