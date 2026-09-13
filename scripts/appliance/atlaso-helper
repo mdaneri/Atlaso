@@ -12235,11 +12235,23 @@ def _apply_vcf_depot_site(text: str, *, disabled: bool) -> int:
                     _replace_vcf_depot_file(path, content, stat.S_IMODE(metadata.st_mode), (metadata.st_uid, metadata.st_gid))
             except (OSError, ValueError):
                 rollback_errors.append(f"{path.name} restoration failed")
+        reload_restored = active
+        if activation_attempted and not active:
+            # Failed cleanup may leave the candidate live despite restored files.
+            # Only verified inactivity permits skipping the restored-config reload.
+            reload_restored = True
+            try:
+                current_state = _run(["systemctl", "is-active", "--quiet", "nginx"], timeout=5).returncode
+                reload_restored = current_state != 3
+                if current_state not in {0, 3}:
+                    rollback_errors.append("nginx post-cleanup state is unknown")
+            except (OSError, ValueError, subprocess.TimeoutExpired):
+                rollback_errors.append("nginx post-cleanup state could not be read")
         try:
-            if _nginx_test_command().returncode != 0 or (active and _run(["systemctl", "reload", "nginx"], timeout=30).returncode != 0):
+            if _nginx_test_command().returncode != 0 or (reload_restored and _run(["systemctl", "reload", "nginx"], timeout=30).returncode != 0):
                 raise ValueError("Previous nginx configuration could not be reloaded.")
             previous = snapshots[VCF_DEPOT_SITE_PATH]
-            if active and previous is not None and not _vcf_depot_endpoint_ready(previous[0].decode("utf-8")):
+            if reload_restored and previous is not None and not _vcf_depot_endpoint_ready(previous[0].decode("utf-8")):
                 raise ValueError("Previous depot endpoint readiness could not be verified.")
         except (OSError, ValueError, subprocess.TimeoutExpired) as rollback_error:
             rollback_errors.append(str(rollback_error))

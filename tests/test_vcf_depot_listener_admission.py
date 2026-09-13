@@ -506,6 +506,7 @@ def test_depot_activation_restores_previous_files(monkeypatch, tmp_path, capsys,
     (False, False, "cleanup-stop", "disabled"),
     (False, False, "cleanup-timeout", "disabled"),
     (False, False, "cleanup-is-active", "disabled"),
+    (False, False, "cleanup-state-timeout", "disabled"),
     (False, False, "cleanup-disable", "disabled"),
     (False, False, "cleanup-is-enabled", "disabled"),
 ])
@@ -547,6 +548,13 @@ def test_depot_first_activation_and_disable(monkeypatch, tmp_path, capsys, disab
             **_kwargs: Bounded execution options.
         """
         commands.append(command)
+        if failure in {"cleanup-stop", "cleanup-timeout"} and command[1] == "is-active" and sum(item[1] == "is-active" for item in commands) > 1:
+            return subprocess.CompletedProcess(command, 0, "", "")
+        if cleanup_failure and command[1] == "reload":
+            assert site.read_text() == "previous depot"
+            assert auth.read_text() == "synthetic authentication"
+        if failure == "cleanup-state-timeout" and command[1] == "is-active" and sum(item[1] == "is-active" for item in commands) > 2:
+            raise subprocess.TimeoutExpired(command, 5)
         if cleanup_failure and command[1] == failure.removeprefix("cleanup-"):
             if command[1] not in {"is-active", "is-enabled"} or sum(item[1] == command[1] for item in commands) > 1:
                 return subprocess.CompletedProcess(command, 2, "unknown", "")
@@ -571,6 +579,9 @@ def test_depot_first_activation_and_disable(monkeypatch, tmp_path, capsys, disab
         expected.append(["systemctl", "stop", "nginx"])
         if enablement == "disabled":
             expected.append(["systemctl", "disable", "nginx"])
+    reload_after_cleanup = failure in {"cleanup-stop", "cleanup-timeout", "cleanup-is-active", "cleanup-state-timeout"}
+    if reload_after_cleanup:
+        expected.append(["systemctl", "reload", "nginx"])
     assert mutations == expected
     assert site.exists() == (cleanup_failure or (not disabled and failure == "none"))
     if cleanup_failure:
@@ -579,4 +590,4 @@ def test_depot_first_activation_and_disable(monkeypatch, tmp_path, capsys, disab
         assert "Depot rollback needs attention" in capsys.readouterr().err
     else:
         assert not auth.exists()
-    assert ready.call_count == int(not disabled and failure not in {"partial-start", "timeout"})
+    assert ready.call_count == int(not disabled and failure not in {"partial-start", "timeout"}) + int(reload_after_cleanup)
