@@ -263,6 +263,80 @@ def test_vmware_ovf_customizer_stages_and_scrubs_development_root_key(
     assert private_key_pem not in str(summary)
 
 
+@pytest.mark.parametrize("verified", [True, False])
+def test_vmware_ovf_customizer_verifies_consumed_ca_before_scrubbing(tmp_path, monkeypatch, verified):
+    """Recover consumed staging only after the bounded encrypted-state verifier succeeds.
+
+    Args:
+        tmp_path: Isolated import proof and environment paths.
+        monkeypatch: Process and guest-info replacements.
+        verified: Whether encrypted material matches the deployment certificate.
+    """
+    customizer = load_customizer()
+    customizer.DEVELOPMENT_ROOT_CA_STAGING_PATH = tmp_path / "absent-staging"
+    customizer.DEVELOPMENT_ROOT_CA_IMPORTED_MARKER_PATH = tmp_path / "imported"
+    customizer.DEVELOPMENT_ROOT_CA_IMPORTED_MARKER_PATH.write_text("proof")
+    customizer.ENV_PATH = tmp_path / "atlaso.env"
+    customizer.ENV_PATH.write_text('ATLASO_DATABASE_URL="sqlite:///existing.db"\n')
+    clears = []
+
+    def run(command, **kwargs):
+        """Inspect the bounded verifier invocation.
+
+        Args:
+            command: Fixed helper action.
+            **kwargs: Public input and private process environment.
+        """
+        assert command[-1] == "--verify-imported-development-root"
+        assert kwargs["input"] == "public-certificate"
+        assert kwargs["env"]["ATLASO_DATABASE_URL"] == "sqlite:///existing.db"
+        assert kwargs["timeout"] == 30 and kwargs["capture_output"]
+        return subprocess.CompletedProcess(command, 0 if verified else 2, "", "")
+
+    monkeypatch.setattr(customizer.subprocess, "run", run)
+    monkeypatch.setattr(customizer, "clear_guestinfo_value", clears.append)
+    if verified:
+        customizer.stage_development_root_ca({"development_root_ca_certificate_pem": "public-certificate"})
+        assert clears == [customizer.DEVELOPMENT_ROOT_CA_PRIVATE_KEY_GUESTINFO]
+    else:
+        with pytest.raises(customizer.OvfCustomizationError, match="could not be verified"):
+            customizer.stage_development_root_ca({"development_root_ca_certificate_pem": "public-certificate"})
+        assert not clears
+    assert not customizer.DEVELOPMENT_ROOT_CA_STAGING_PATH.exists()
+
+
+@pytest.mark.parametrize("deployment_id", ["", "05829b41-69e8-4357-b339-4d8861f9af09"])
+def test_vmware_ovf_secret_generation_survives_activation_and_retry(tmp_path, monkeypatch, deployment_id):
+    """Rotate baked secrets once, retaining the deployed keys through correction and reboot.
+
+    Args:
+        tmp_path: Isolated appliance environment.
+        monkeypatch: Secret generation replacement.
+        deployment_id: Explicit or legacy deployment identity.
+    """
+    customizer = load_customizer()
+    customizer.ENV_PATH = tmp_path / "atlaso.env"
+    customizer.DEVELOPMENT_ROOT_CA_IMPORTED_MARKER_PATH = tmp_path / "imported"
+    customizer.ENV_PATH.write_text('ATLASO_SECRET_KEY="baked"\nATLASO_SECRETS_KEY="baked"\n')
+    generated = iter(["deployed-session-key", "deployed-encryption-key"])
+    monkeypatch.setattr(customizer, "generate_secret_key", lambda: next(generated))
+    properties = customizer.parse_ovf_environment(OVF_ENV)
+    properties[customizer.PROPERTY_DEPLOYMENT_ID] = deployment_id
+    config = customizer.validate_properties(properties)
+    first = customizer.appliance_environment_values(config)
+    customizer.write_env_file(customizer.ENV_PATH, first)
+    # A separate process sees only the persisted environment, as on reboot.
+    resumed = load_customizer()
+    resumed.ENV_PATH = customizer.ENV_PATH
+    resumed.DEVELOPMENT_ROOT_CA_IMPORTED_MARKER_PATH = customizer.DEVELOPMENT_ROOT_CA_IMPORTED_MARKER_PATH
+    monkeypatch.setattr(resumed, "generate_secret_key", lambda: pytest.fail("retry rotated encryption keys"))
+    config["cidr"] = "192.168.10.22/24"
+    retried = resumed.appliance_environment_values(config)
+    assert first["ATLASO_SECRET_KEY"] == retried["ATLASO_SECRET_KEY"] == "deployed-session-key"
+    assert first["ATLASO_SECRETS_KEY"] == retried["ATLASO_SECRETS_KEY"] == "deployed-encryption-key"
+    assert retried["ATLASO_APPLIANCE_MANAGEMENT_CIDR"] == "192.168.10.22/24"
+
+
 def test_vmware_ovf_customizer_reports_only_bounded_first_boot_stages(monkeypatch):
     """Publish allowlisted stage syntax and preserve a sanitized failure layer.
 
@@ -1058,6 +1132,8 @@ def test_vmware_ovf_customizer_keeps_waiter_after_corrected_apply_failure(tmp_pa
             _seconds: Requested polling delay, unused by the test.
         """
         if apply_attempts:
+            assert customizer.NETWORK_CORRECTION_PATH.exists()
+            assert len(apply_attempts) == 1
             retry_review.append(
                 json.loads(customizer.NETWORK_REVIEW_PATH.read_text(encoding="utf-8"))
             )

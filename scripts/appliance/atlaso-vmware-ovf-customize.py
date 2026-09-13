@@ -76,6 +76,10 @@ NETWORK_CORRECTION_PATH = Path("/var/lib/atlaso/vmware-ovf-network-correction.js
 DEVELOPMENT_ROOT_CA_STAGING_PATH = Path(
     "/var/lib/atlaso/apply/ca/first-boot-development-root-ca.json"
 )
+DEVELOPMENT_ROOT_CA_IMPORTED_MARKER_PATH = Path(
+    "/var/lib/atlaso/first-boot-development-root-ca-imported"
+)
+BOOTSTRAP_HTTPS_PATH = Path("/opt/atlaso/bin/atlaso-bootstrap-https")
 LOG_PATH = Path("/var/log/atlaso/vmware-ovf-customize.log")
 DEFAULT_INTERFACE = "eth0"
 HELPER_PATH = Path("/opt/atlaso/bin/atlaso-helper")
@@ -903,7 +907,18 @@ def wait_for_network_review(properties: dict[str, str], error: str, *, prepare_o
     """
     write_network_review(properties, error)
     log("VMware OVF management network requires review on the Atlaso tty1 console.")
+    failed_revision: tuple[int, int, int] | None = None
     while True:
+        try:
+            correction_stat = NETWORK_CORRECTION_PATH.stat()
+            revision = (correction_stat.st_ino, correction_stat.st_mtime_ns, correction_stat.st_size)
+        except FileNotFoundError:
+            revision = None
+        # Keep valid input durable across reboot, but retry a failed operation
+        # only when the console submits a new file (including identical values).
+        if revision is not None and revision == failed_revision:
+            time.sleep(NETWORK_REVIEW_POLL_SECONDS)
+            continue
         try:
             correction = read_network_correction()
         except OvfManagementNetworkError as exc:
@@ -945,7 +960,7 @@ def wait_for_network_review(properties: dict[str, str], error: str, *, prepare_o
                 "The corrected management network validated, but first-time initialization did not finish. "
                 "Resolve the condition reported in the customization log, then submit the network review again.",
             )
-            NETWORK_CORRECTION_PATH.unlink(missing_ok=True)
+            failed_revision = revision
             log(f"VMware OVF customization could not finish after console correction: {exc}")
             continue
         except (OSError, subprocess.CalledProcessError) as exc:
@@ -953,7 +968,7 @@ def wait_for_network_review(properties: dict[str, str], error: str, *, prepare_o
                 corrected_properties,
                 "The corrected management network could not be applied. Review the values and retry.",
             )
-            NETWORK_CORRECTION_PATH.unlink(missing_ok=True)
+            failed_revision = revision
             log(f"VMware OVF customization could not apply the console correction: {type(exc).__name__}")
             continue
         if not prepare_only:
@@ -1229,6 +1244,24 @@ def stage_development_root_ca(config: dict[str, object]) -> None:
             raise OvfCustomizationError(
                 "The staged development root CA material is unsafe or inconsistent"
             ) from exc
+    elif DEVELOPMENT_ROOT_CA_IMPORTED_MARKER_PATH.exists():
+        # HTTPS bootstrap may have consumed staging before an interrupted OVF
+        # activation. The marker only admits verification; encrypted database
+        # material must still match the deployment's public certificate.
+        try:
+            result = subprocess.run(
+                [sys.executable, str(BOOTSTRAP_HTTPS_PATH), "--verify-imported-development-root"],
+                input=certificate_pem,
+                env={**os.environ, **read_env_file(ENV_PATH)},
+                check=False,
+                text=True,
+                capture_output=True,
+                timeout=30,
+            )
+        except (OSError, subprocess.TimeoutExpired) as exc:
+            raise OvfCustomizationError("The imported development root CA could not be verified") from exc
+        if result.returncode != 0:
+            raise OvfCustomizationError("The imported development root CA could not be verified")
     else:
         answered, encoded_private_key = try_read_guestinfo_value(
             DEVELOPMENT_ROOT_CA_PRIVATE_KEY_GUESTINFO
@@ -1416,12 +1449,24 @@ def write_env_file(path: Path, updates: dict[str, object]) -> None:
     values.update({key: str(value) for key, value in updates.items()})
     path.parent.mkdir(parents=True, exist_ok=True)
     lines = [f"{key}={quote_env_value(values[key])}" for key in sorted(values)]
-    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
-    os.chmod(path, 0o640)
+    descriptor, name = tempfile.mkstemp(dir=path.parent, prefix=f".{path.name}.")
+    temporary = Path(name)
     try:
-        shutil.chown(path, user="root", group="atlaso")
-    except (LookupError, PermissionError):
-        pass
+        with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
+            handle.write("\n".join(lines) + "\n")
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.chmod(temporary, 0o640)
+        try:
+            shutil.chown(temporary, user="root", group="atlaso")
+        except (LookupError, PermissionError):
+            pass
+        # Commit keys and their generation identity together, so a reboot can
+        # never observe a new identity paired with partially written old keys.
+        os.replace(temporary, path)
+        fsync_parent_directory(path)
+    finally:
+        temporary.unlink(missing_ok=True)
 
 
 def write_networkd_config(config: dict[str, object]) -> None:
@@ -1945,10 +1990,20 @@ def appliance_environment_values(config: dict[str, object]) -> dict[str, object]
     Returns:
         Environment values that seed the first Atlaso desired state.
     """
+    existing = read_env_file(ENV_PATH)
+    generation = str(config.get("deployment_id") or "legacy-first-boot")
+    previous_generation = existing.get("ATLASO_OVF_SECRET_DEPLOYMENT", "")
+    preserve = previous_generation == generation or (
+        not previous_generation and DEVELOPMENT_ROOT_CA_IMPORTED_MARKER_PATH.exists()
+    )
+    keys = ("ATLASO_SECRET_KEY", "ATLASO_SECRETS_KEY")
+    if preserve and any(not existing.get(key) for key in keys):
+        raise OvfCustomizationError("The initialized appliance encryption environment is incomplete")
     return {
         "ATLASO_BOOTSTRAP_ADMIN_PASSWORD": config["admin_password"],
-        "ATLASO_SECRET_KEY": generate_secret_key(),
-        "ATLASO_SECRETS_KEY": generate_secret_key(),
+        "ATLASO_SECRET_KEY": existing[keys[0]] if preserve else generate_secret_key(),
+        "ATLASO_SECRETS_KEY": existing[keys[1]] if preserve else generate_secret_key(),
+        "ATLASO_OVF_SECRET_DEPLOYMENT": generation,
         "ATLASO_APPLIANCE_FQDN": config["fqdn"],
         "ATLASO_APPLIANCE_MANAGEMENT_CIDR": config["cidr"],
         "ATLASO_APPLIANCE_MANAGEMENT_GATEWAY": config["gateway"],

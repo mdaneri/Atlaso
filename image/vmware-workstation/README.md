@@ -798,6 +798,15 @@ Atlaso `tty1` console displays **First-time initialization — Network configura
 non-secret OVF values, and accepts a corrected network configuration. Networkd, data-disk initialization, HTTPS
 bootstrap, and Atlaso remain held until the correction passes the same shared validation and applies successfully. The
 applied marker is absent until success, so another console correction remains possible without redeploying the OVA.
+Preparation writes firewall policy before `network-pre.target`; final OVF activation waits for networkd and does not
+order itself before the firewall. This avoids a boot ordering cycle while preserving firewall protection before links
+start. If a later initialization step fails, a valid console correction remains on disk across reboot. Resubmitting
+the review retries it without continuously replaying the failed operation. If HTTPS bootstrap already imported and
+scrubbed development CA staging, recovery verifies the deployment certificate against the encrypted database signing
+key and import proof before proceeding; a marker alone never substitutes for that verification.
+Session and encryption keys rotate once for the deployment and are retained during preparation, activation, correction,
+and reboot retries. Their deployment identity is committed atomically with the environment. This prevents a later
+network correction from making previously encrypted CA material unreadable.
 A root-owned lock staged in the VMware image disables ordinary privileged tty1 actions until the deployment root
 password applies. Non-network properties validate before network recovery is offered, and a later boot clears stale
 handshake files when the applied marker proves customization finished.

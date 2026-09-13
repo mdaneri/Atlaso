@@ -9,16 +9,22 @@ import re
 import shlex
 import shutil
 import subprocess
+import sys
 import tempfile
 from pathlib import Path
 
+from cryptography import x509
+from cryptography.exceptions import UnsupportedAlgorithm
+from cryptography.hazmat.primitives import hashes, serialization
 from sqlalchemy import select
+from sqlalchemy.exc import SQLAlchemyError
 
 from atlaso.app.database import SessionLocal, init_db
 from atlaso.app.models import ApplianceSettings, CaCertificate, CaSettings
 from atlaso.app.seed import seed_initial_data
 from atlaso.app.services.ca import (
     CA_STAGED_CONFIG_PATH,
+    _load_root,
     import_root_ca_material,
     render_ca_apply_payload,
 )
@@ -223,6 +229,34 @@ def import_staged_development_root_ca(
         certificates=certificates,
     )
     return True
+
+
+def verify_imported_development_root(certificate_pem: str) -> bool:
+    """Verify consumed staging against the encrypted CA without initializing state.
+
+    Args:
+        certificate_pem: Public root certificate from the current deployment.
+
+    Returns:
+        Whether the proof, stored certificate, and decrypted signing key agree.
+    """
+    expected = x509.load_pem_x509_certificate(certificate_pem.encode("ascii"))
+    fingerprint = expected.fingerprint(hashes.SHA256())
+    if read_regular_text(DEVELOPMENT_ROOT_CA_IMPORTED_MARKER_PATH, maximum_size=64) != fingerprint.hex().upper():
+        return False
+    with SessionLocal() as db:
+        settings = db.scalars(select(CaSettings)).one_or_none()
+        if settings is None:
+            return False
+        certificate, private_key = _load_root(settings)
+        return (
+            certificate.fingerprint(hashes.SHA256()) == fingerprint
+            and private_key.public_key().public_bytes(
+                serialization.Encoding.DER, serialization.PublicFormat.SubjectPublicKeyInfo
+            ) == certificate.public_key().public_bytes(
+                serialization.Encoding.DER, serialization.PublicFormat.SubjectPublicKeyInfo
+            )
+        )
 
 
 def remove_staged_development_root_ca() -> None:
@@ -661,4 +695,11 @@ def main() -> int:
 
 
 if __name__ == "__main__":
+    if sys.argv[1:] == ["--verify-imported-development-root"]:
+        try:
+            verified = verify_imported_development_root(sys.stdin.read(32769))
+        except (OSError, ValueError, TypeError, SQLAlchemyError, UnsupportedAlgorithm):
+            # Never disclose database connection details or decrypted material.
+            verified = False
+        raise SystemExit(0 if verified else 2)
     raise SystemExit(main())

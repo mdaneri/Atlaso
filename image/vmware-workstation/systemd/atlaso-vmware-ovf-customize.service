@@ -4,7 +4,7 @@ DefaultDependencies=no
 After=local-fs.target atlaso-console.service atlaso-guest-agent-select.service atlaso-vmware-ovf-prepare.service systemd-networkd.service
 Wants=atlaso-console.service
 Requires=atlaso-guest-agent-select.service atlaso-vmware-ovf-prepare.service systemd-networkd.service
-Before=atlaso-data-disks.service atlaso-firewall.service atlaso-bootstrap-https.service nginx.service atlaso.service
+Before=atlaso-data-disks.service atlaso-bootstrap-https.service nginx.service atlaso.service
 
 [Service]
 Type=oneshot

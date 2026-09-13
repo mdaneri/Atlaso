@@ -6,7 +6,7 @@ DefaultDependencies=no
 After=local-fs.target atlaso-console.service atlaso-guest-agent-select.service
 Wants=atlaso-console.service
 Requires=atlaso-guest-agent-select.service
-Before=network-pre.target systemd-networkd.service atlaso-vmware-ovf-customize.service
+Before=network-pre.target systemd-networkd.service atlaso-vmware-ovf-customize.service atlaso-firewall.service
 
 [Service]
 Type=oneshot
