@@ -262,6 +262,14 @@ def test_sparse_initial_tail_resumes_past_multiple_raw_windows(journal_transport
     assert ("older matching event" in page["text"]) is has_match
     progress = [int(request["journal_reverse_search"]) for request in requests if "journal_reverse_search" in request]
     assert progress == sorted(progress, reverse=True) and len(set(progress)) == len(progress)
+    if not has_match:
+        for position in (page["cursor"], page["next_cursor"]):
+            assert log_viewer.decode_cursor(position, f"dnsmasq-{protocol}")["journal_cursor"] == "12000"
+        assert not page["has_more"] and not page["previous_cursor"]
+        records.append({"__CURSOR": "12001", "__REALTIME_TIMESTAMP": "1000001", "MESSAGE": "new matching event",
+                        "SYSLOG_IDENTIFIER": f"dnsmasq-{protocol}"})
+        refreshed = log_viewer.source_page(f"dnsmasq-{protocol}", cursor=page["cursor"])
+        assert not refreshed.get("pending") and "new matching event" in refreshed["text"]
 
 
 def test_concurrent_preparation_does_not_overwrite_newer_checkpoint(monkeypatch):
@@ -347,3 +355,27 @@ def test_legacy_journal_cursor_rebuilds_label_context(journal_transport):
     cursor = log_viewer.encode_cursor("nginx", journal_cursor="1", journal_pem_state="S", private_key=False)
     page = log_viewer.source_page("nginx", cursor=cursor)
     assert "private-body" not in page["text"] and "visible" in page["text"]
+
+
+@pytest.mark.parametrize("protocol", ["dhcp", "tftp"])
+def test_empty_tail_keeps_redaction_context_at_original_live_edge(journal_transport, protocol):
+    """An empty classified tail protects a newly appended body without replaying history.
+
+    Args:
+        journal_transport: Immutable fake journal behind the production readers.
+        protocol: Classified view whose retained matching history is empty.
+    """
+    records, _ = journal_transport
+    records.extend(_records(["-----BEGIN RSA PRIVATE KEY-----"] + ["unrelated service entry"] * 12000))
+    for _attempt in range(10):
+        page = log_viewer.source_page(f"dnsmasq-{protocol}", tail=True)
+        if not page.get("pending"):
+            break
+    else:
+        raise AssertionError("Empty tail preparation did not finish")
+    records.extend([{"__CURSOR": str(12001 + index), "__REALTIME_TIMESTAMP": "1000001", "MESSAGE": message,
+                     "SYSLOG_IDENTIFIER": f"dnsmasq-{protocol}"}
+                    for index, message in enumerate(["private-body", "-----END RSA PRIVATE KEY-----", "visible"])])
+    refreshed = log_viewer.source_page(f"dnsmasq-{protocol}", cursor=page["next_cursor"])
+    assert not refreshed.get("pending")
+    assert "private-body" not in refreshed["text"] and "visible" in refreshed["text"]

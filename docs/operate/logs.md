@@ -68,6 +68,8 @@ Numbered file rotations, including compressed archives, are
 included and keep nginx sources available even when their current file is absent. Journal history remains subject
 to the appliance's journal retention policy. Classified DNS/DHCP/TFTP history also bounds raw scan windows; a window
 with no matching rows can still advance to the next retained window while preserving redaction state.
+If the initial classified tail has no retained matches, it keeps the original newest cursor and its redaction
+context, so a new matching event can appear on the next refresh without replaying the older journal.
 
 **Follow live** resumes new output with one click, including after scrolling up. Scrolling up or selecting text preserves
 your reading position and shows when
