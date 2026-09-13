@@ -96,7 +96,10 @@ def _safe_value(value: Any, private: bool = False, key: str = "", parser: dict[s
     return "[redacted private key]" if private else value, private
 
 
-def capture_task_history(connection: Connection, job_id: str, audit_ids: tuple[int, ...] = (), *, result_changed: bool = True) -> None:
+def capture_task_history(
+    connection: Connection, job_id: str, audit_ids: tuple[int, ...] = (), *,
+    result_changed: bool = True, only_if_missing: bool = False,
+) -> None:
     """Append result deltas and audit records inside the producer transaction.
 
     Args:
@@ -104,13 +107,16 @@ def capture_task_history(connection: Connection, job_id: str, audit_ids: tuple[i
         job_id: Task whose row serializes history writers.
         audit_ids: Newly flushed audit records; existing records are captured at initialization.
         result_changed: ORM result-change evidence; direct and Core callers default to full validation.
+        only_if_missing: Recheck startup migration eligibility under the producer row lock.
     """
     jobs, checkpoints, chunks = Job.__table__, TaskLogCheckpoint.__table__, TaskLogChunk.__table__
     locked = connection.execute(update(jobs).where(jobs.c.id == job_id).values(progress_percent=jobs.c.progress_percent))
     if locked.rowcount != 1:
         return
-    job = connection.execute(select(jobs.c.result, jobs.c.error, jobs.c.status).where(jobs.c.id == job_id)).one()
     checkpoint = connection.execute(select(checkpoints).where(checkpoints.c.job_id == job_id)).mappings().first()
+    if only_if_missing and checkpoint is not None:
+        return
+    job = connection.execute(select(jobs.c.result, jobs.c.error, jobs.c.status).where(jobs.c.id == job_id)).one()
     previous = _payload(checkpoint["state_json"]) if checkpoint else {}
     end = int(checkpoint["end_offset"]) if checkpoint else 0
     state = dict(previous)
@@ -185,9 +191,11 @@ def initialize_task_history(engine: Engine) -> None:
     after = ""
     while True:
         with engine.begin() as connection:
-            ids = connection.execute(select(Job.id).where(Job.id > after).order_by(Job.id).limit(100)).scalars().all()
+            ids = connection.execute(select(Job.id).where(
+                Job.id > after, ~select(TaskLogCheckpoint.job_id).where(TaskLogCheckpoint.job_id == Job.id).exists()
+            ).order_by(Job.id).limit(100)).scalars().all()
             for job_id in ids:
-                capture_task_history(connection, job_id)
+                capture_task_history(connection, job_id, only_if_missing=True)
         if len(ids) < 100:
             break
         after = ids[-1]

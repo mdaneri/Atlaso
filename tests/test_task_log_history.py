@@ -231,11 +231,12 @@ def test_non_result_updates_do_not_rehash_task_log(history_db, monkeypatch):
     assert "synthetic-unchanged-body" not in _all(db)
 
 
-def test_legacy_initialization_restart_and_deletion(history_db):
-    """Legacy capture is idempotent and task deletion removes all owned history.
+def test_legacy_initialization_restart_and_deletion(history_db, monkeypatch):
+    """Restarts skip initialized payloads, including a competing initializer.
 
     Args:
         history_db: Transactional history fixture.
+        monkeypatch: Reject any repeated result decoding during initialization.
     """
     db = history_db
     db.connection().execute(Job.__table__.insert().values(id="task", type="test", created_by="test", result='{"vm":"legacy"}'))
@@ -245,7 +246,21 @@ def test_legacy_initialization_restart_and_deletion(history_db):
     before = _all(db)
     assert "vm: legacy" in before and " old success" in before
     db.rollback()
-    initialize_task_history(db.get_bind())
+    from atlaso.app.services import task_log_history
+
+    def reject_payload(_value):
+        """Reject parsing an already initialized task result or checkpoint.
+
+        Args:
+            _value: Existing payload that startup must leave untouched.
+        """
+        raise AssertionError("Startup reparsed existing history")
+
+    with monkeypatch.context() as patch:
+        patch.setattr(task_log_history, "_payload", reject_payload)
+        initialize_task_history(db.get_bind())
+        with db.get_bind().begin() as connection:
+            capture_task_history(connection, "task", only_if_missing=True)
     assert _all(db) == before
     db.delete(db.get(Job, "task"))
     db.commit()

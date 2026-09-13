@@ -56,6 +56,8 @@ keep subsequent output concealed when a single matching context cannot be establ
 Task capture retains bounded marker state across committed output fragments, nested values, and audit details.
 Values hidden by a secret field name still advance this state before they are discarded.
 Progress and audit-only updates reuse the committed task-result checkpoint without rehashing unchanged log output.
+Startup backfill selects only tasks without history checkpoints and rechecks eligibility under the task lock,
+so ordinary web and worker restarts do not reprocess retained task output.
 File pages retain complete-line boundaries; task and multiline journal cursors retain character-safe continuation.
 Numbered file rotations, including compressed archives, are
 included and keep nginx sources available even when their current file is absent. Journal history remains subject
