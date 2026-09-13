@@ -1612,3 +1612,37 @@ def test_local_checkpoint_authenticates_all_prior_bytes_after_growth(tmp_path, m
         assert positions[2] < positions[1]
     else:
         assert positions == sorted(set(positions))
+
+
+@pytest.mark.parametrize("empty", [False, True])
+def test_audit_snapshot_status_and_representation_cache_headers(client, empty):
+    """Static audit snapshots are ready and cannot be reused as JSON refreshes.
+
+    Args:
+        client: Initialized authenticated transport.
+        empty: Exercise the no-events fallback as well as populated rows.
+    """
+    from sqlalchemy import delete
+
+    from atlaso.app.database import SessionLocal
+    from atlaso.app.models import AuditEvent
+    from tests.routers.ui.helpers import login
+
+    login(client)
+    if empty:
+        with SessionLocal() as db:
+            db.execute(delete(AuditEvent))
+            db.commit()
+    response = client.get("/ui/management/audit-log")
+    assert response.status_code == 200
+    assert 'role="status">Snapshot ready</span>' in response.text
+    assert 'role="status">Loading history' not in response.text
+    if empty:
+        assert "No audit events yet." in response.text
+    assert response.headers["cache-control"] == "no-store"
+    assert "X-Atlaso-Task-Log" in response.headers["vary"].split(", ")
+    refresh = client.get("/ui/management/audit-log", headers={"X-Atlaso-Task-Log": "1"})
+    assert refresh.status_code == 200
+    assert isinstance(refresh.json()["rows"], list)
+    assert refresh.headers["cache-control"] == "no-store"
+    assert "X-Atlaso-Task-Log" in refresh.headers["vary"].split(", ")

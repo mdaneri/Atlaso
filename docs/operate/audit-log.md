@@ -55,6 +55,9 @@ audit history public or override site handling policy.
 The live view opens at the newest retained group. **From beginning** reads the oldest retained entries; **Follow live**
 returns directly to the newest group.
 
+The initial audit table is a ready snapshot even when JavaScript is unavailable. HTML and JSON history responses
+disable caching and distinguish their representation header so live refreshes cannot receive cached HTML.
+
 <!-- BEGIN GENERATED ADDITIONAL SCREENSHOTS -->
 ## Additional verified states
 

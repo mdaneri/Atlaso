@@ -895,6 +895,7 @@ def build_router(dependencies: OperationsUiDependencies) -> OperationsUiRouter:
         Returns:
             The endpoint response.
         """
+        response_headers = {"Cache-Control": "no-store", "Vary": "X-Atlaso-Task-Log"}
         if request.headers.get("X-Atlaso-Task-Log") == "1":
             try:
                 position = log_viewer.decode_cursor(request.query_params.get("cursor", ""), "audit")
@@ -922,8 +923,8 @@ def build_router(dependencies: OperationsUiDependencies) -> OperationsUiRouter:
             return JSONResponse({"rows": rows, "cursor": log_viewer.encode_cursor("audit", after=after, end=end),
                                  "next_cursor": log_viewer.encode_cursor("audit", after=rows[-1]["id"] if rows else after),
                                  "previous_cursor": log_viewer.encode_cursor("audit", after=after, before=True) if after else "",
-                                 "has_more": len(events) > 500 or (end is not None and db.scalar(select(AuditEvent.id).where(AuditEvent.id > end).limit(1)) is not None)}, headers={"Cache-Control": "no-store"})
-        return render(
+                                 "has_more": len(events) > 500 or (end is not None and db.scalar(select(AuditEvent.id).where(AuditEvent.id > end).limit(1)) is not None)}, headers=response_headers)
+        response = render(
             request,
             "audit.html",
             {
@@ -931,6 +932,8 @@ def build_router(dependencies: OperationsUiDependencies) -> OperationsUiRouter:
                 "audit_event_rows": audit_event_rows_context(db),
             },
         )
+        response.headers.update(response_headers)
+        return response
 
     return OperationsUiRouter(
         router=router,
