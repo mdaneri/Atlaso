@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import base64
 import gzip
 import hashlib
 import json
@@ -14,6 +15,7 @@ from collections import OrderedDict
 from contextlib import nullcontext
 from pathlib import Path
 from threading import RLock
+from types import SimpleNamespace
 from typing import Any
 
 from itsdangerous import BadSignature, URLSafeSerializer
@@ -26,6 +28,231 @@ PAGE_LINES = 500
 PAGE_BYTES = 1024 * 1024
 LINE_BYTES = 64 * 1024
 
+
+
+def _remote_log_request(source: str, position: dict[str, object], deadline: float) -> dict[str, Any]:
+    """Read a bounded helper response within the shared request deadline.
+
+    Args:
+        source: Fixed nginx file source authorized by the route.
+        position: Server-built inventory or byte request.
+        deadline: Absolute deadline shared by every helper invocation.
+    """
+    remaining = deadline - time.monotonic()
+    if remaining <= 0.25:
+        raise _TailScanPending("Preparing privileged history; the next request resumes this scan.")
+    result = SystemAdapter().read_log_file(source, position, timeout_seconds=min(3, remaining))
+    if result.returncode or len(result.stdout) > 2 * PAGE_BYTES:
+        raise ValueError("Privileged log history is temporarily unavailable.")
+    payload = json.loads(result.stdout)
+    if not isinstance(payload, dict):
+        raise ValueError("Invalid privileged log response.")
+    if payload.get("changed"):
+        raise _TailScanPending("Retained history changed during preparation; retrying.")
+    return payload
+
+
+class _RemoteLogPath:
+    """Represent only an inventoried member of a fixed helper-owned log source."""
+
+    def __init__(self, source: str, name: str, records: dict[str, dict[str, int]], base: str, deadline: float) -> None:
+        """Bind a server-selected source to an immutable request inventory.
+
+        Args:
+            source: Fixed nginx source identifier.
+            name: Current basename or validated numeric rotation.
+            records: Version metadata from the verified helper inventory.
+            base: Fixed current source basename.
+            deadline: Shared request deadline.
+        """
+        self.source, self.name, self.records, self.base, self.deadline = source, name, records, base, deadline
+
+    def __str__(self) -> str:
+        """Return a cache identity that cannot be mistaken for a local pathname."""
+        return f"helper:{self.source}/{self.name}"
+
+    @property
+    def parent(self) -> _RemoteLogPath:
+        """Expose the fixed source inventory for retained-file discovery."""
+        return self
+
+    @property
+    def suffix(self) -> str:
+        """Return the validated basename's compression suffix."""
+        return Path(self.name).suffix
+
+    def glob(self, pattern: str) -> list[_RemoteLogPath]:
+        """List only the numeric rotations belonging to this fixed source.
+
+        Args:
+            pattern: Exact current-basename rotation pattern from the reader.
+        """
+        if pattern != f"{self.base}.*":
+            raise ValueError("Invalid fixed source inventory query.")
+        return [_RemoteLogPath(self.source, name, self.records, self.base, self.deadline)
+                for name in self.records if name != self.base]
+
+    def exists(self) -> bool:
+        """Report whether the current source was present in the inventory."""
+        return self.name in self.records
+
+    def is_symlink(self) -> bool:
+        """Reflect the helper's mandatory no-follow regular-file validation."""
+        return False
+
+    def lstat(self) -> Any:
+        """Return this request's version metadata; the response revalidates inventory."""
+        version = self.records[self.name]
+        return SimpleNamespace(st_dev=version["dev"], st_ino=version["ino"], st_size=version["size"],
+                               st_mtime_ns=version["mtime_ns"], st_mtime=version["mtime_ns"] / 1e9, st_mode=stat.S_IFREG)
+
+
+_HistoryPath = Path | _RemoteLogPath
+
+
+class _RemoteLogStream:
+    """Read bounded helper chunks with absolute offsets and one local byte buffer."""
+
+    def __init__(self, path: _RemoteLogPath) -> None:
+        """Open a logical stream without retaining a privileged file descriptor.
+
+        Args:
+            path: Verified fixed-source inventory member.
+        """
+        self.path, self.position, self.buffer_start, self.buffer = path, 0, 0, b""
+
+    def __enter__(self) -> _RemoteLogStream:
+        """Return the request-owned logical stream."""
+        return self
+
+    def __exit__(self, *_args: Any) -> None:
+        """Release the request-owned byte buffer.
+
+        Args:
+            *_args: Context manager exception metadata, unused by this reader.
+        """
+        self.buffer = b""
+
+    def tell(self) -> int:
+        """Return the raw fixed-file position."""
+        return self.position
+
+    def seek(self, offset: int, whence: int = os.SEEK_SET) -> int:
+        """Move within the immutable file version without reading skipped bytes.
+
+        Args:
+            offset: Requested displacement.
+            whence: Start, current position, or inventoried file end.
+        """
+        self.position = offset + (self.path.lstat().st_size if whence == os.SEEK_END else self.position if whence == os.SEEK_CUR else 0)
+        if self.position < 0:
+            raise ValueError("Invalid privileged log position.")
+        return self.position
+
+    def read(self, count: int) -> bytes:
+        """Read at most one bounded chunk, reusing bytes already fetched.
+
+        Args:
+            count: Maximum byte count requested by the retained reader.
+        """
+        if not 0 <= count <= PAGE_BYTES:
+            raise ValueError("Invalid privileged log read size.")
+        available = max(0, self.path.lstat().st_size - self.position)
+        count = min(count, available)
+        if not count:
+            return b""
+        if not (self.buffer_start <= self.position and self.position + count <= self.buffer_start + len(self.buffer)):
+            payload = _remote_log_request(self.path.source, {"transport": "read", "file": self.path.name,
+                                          "version": self.path.records[self.path.name], "offset": self.position,
+                                          "count": min(available, max(count, 131072))}, self.path.deadline)
+            if payload.get("version") != self.path.records[self.path.name] or not isinstance(payload.get("data"), str):
+                raise ValueError("Invalid privileged log chunk identity.")
+            data = base64.b64decode(payload["data"], validate=True)
+            if len(data) != min(available, max(count, 131072)):
+                raise ValueError("Invalid privileged log chunk length.")
+            self.buffer_start, self.buffer = self.position, data
+        offset = self.position - self.buffer_start
+        self.position += count
+        return self.buffer[offset:offset + count]
+
+    def readline(self, count: int) -> bytes:
+        """Read a bounded physical-line fragment from the buffered helper bytes.
+
+        Args:
+            count: Maximum physical fragment size.
+        """
+        data = self.read(count)
+        boundary = data.find(b"\n")
+        if boundary >= 0:
+            self.position -= len(data) - boundary - 1
+            data = data[:boundary + 1]
+        return data
+
+
+def _open_history_file(path: _HistoryPath) -> Any:
+    """Open a local or explicitly helper-owned retained source.
+
+    Args:
+        path: Local path or validated remote inventory member.
+    """
+    if isinstance(path, _RemoteLogPath):
+        return _RemoteLogStream(path)
+    descriptor = os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_BINARY", 0) | getattr(os, "O_NONBLOCK", 0))
+    return os.fdopen(descriptor, "rb")
+
+
+def _history_stat(raw: Any) -> Any:
+    """Read descriptor metadata or the request's version-bound helper identity.
+
+    Args:
+        raw: Local open file or explicit fixed-source remote stream.
+    """
+    return raw.path.lstat() if isinstance(raw, _RemoteLogStream) else os.fstat(raw.fileno())
+
+
+def _remote_inventory(source: str, deadline: float) -> tuple[str, dict[str, dict[str, int]]]:
+    """Validate the fixed source's bounded inventory before constructing paths.
+
+    Args:
+        source: Fixed nginx access or error source.
+        deadline: Shared request deadline.
+    """
+    payload = _remote_log_request(source, {"transport": "inventory"}, deadline)
+    base = "access.log" if source == "nginx-access" else "error.log"
+    files = payload.get("files")
+    if payload.get("base") != base or not isinstance(files, list) or len(files) > 4096:
+        raise ValueError("Invalid privileged log inventory.")
+    records = {}
+    for item in files:
+        if not isinstance(item, dict) or not isinstance(item.get("name"), str) or not re.fullmatch(re.escape(base) + r"(?:\.\d+(?:\.gz)?)?", item["name"]):
+            raise ValueError("Invalid privileged log source name.")
+        version = {key: item.get(key) for key in ("dev", "ino", "size", "mtime_ns")}
+        if any(type(value) is not int or value < 0 for value in version.values()) or item["name"] in records:
+            raise ValueError("Invalid privileged log source version.")
+        records[item["name"]] = {key: int(item[key]) for key in version}
+    return base, records
+
+
+def _remote_file_page(source: str, *, cursor: str, tail: bool, limit: int) -> dict[str, Any]:
+    """Use shared resumable paging for the fixed privileged file sources.
+
+    Args:
+        source: Authorized fixed nginx source identifier.
+        cursor: Signed retained position for that source.
+        tail: Open the newest bounded group.
+        limit: Requested bounded line count.
+    """
+    deadline = time.monotonic() + 10
+    try:
+        base, records = _remote_inventory(source, deadline)
+        page = file_page(_RemoteLogPath(source, base, records, base, deadline), source=source, cursor=cursor, tail=tail, limit=limit, _deadline=deadline)
+        if not page.get("pending") and _remote_inventory(source, deadline)[1] != records:
+            raise _TailScanPending("Privileged history changed while preparing the page; retrying.")
+        return page
+    except _TailScanPending:
+        return {"source": source, "text": "", "available": True, "has_more": False,
+                "cursor": cursor, "next_cursor": cursor, "pending": True,
+                "notice": "Preparing retained history; this continues automatically."}
 
 def _file_available(path: Path) -> bool:
     """Probe readable retained-file metadata without loading log contents.
@@ -77,6 +304,8 @@ def source_page(source: str, *, cursor: str = "", tail: bool = False, limit: int
         return file_page(get_settings().app_log_path, source=source, cursor=cursor, tail=tail, limit=limit)
     if source == "kms":
         return file_page(Path("/var/log/atlaso/kmip/server.log"), source=source, cursor=cursor, tail=tail, limit=limit)
+    if source in {"nginx-access", "nginx-error"}:
+        return _remote_file_page(source, cursor=cursor, tail=tail, limit=limit)
     if source not in {"dnsmasq-dns", "dnsmasq-dhcp", "dnsmasq-tftp", "ldap", "ntp", "esx-storage", "nginx", "nginx-access", "nginx-error"}:
         raise ValueError("Unknown log source.")
     position = decode_cursor(cursor, source)
@@ -231,7 +460,7 @@ _TAIL_REDACTION_LOCK = RLock()
 _PREFIX_VERIFICATION_CACHE: OrderedDict[tuple[Any, ...], tuple[int, Any]] = OrderedDict()
 
 
-def _verify_retained_prefix(raw: Any, path: Path, offset: int, expected: bytes, *, deadline: float) -> bool:
+def _verify_retained_prefix(raw: Any, path: _HistoryPath, offset: int, expected: bytes, *, deadline: float) -> bool:
     """Resume hashing a prefix only while its complete source version is unchanged.
 
     Args:
@@ -241,7 +470,7 @@ def _verify_retained_prefix(raw: Any, path: Path, offset: int, expected: bytes, 
         expected: SHA-256 digest captured with the redaction checkpoint.
         deadline: Shared request deadline with rendering time reserved.
     """
-    info = os.fstat(raw.fileno())
+    info = _history_stat(raw)
     version = (info.st_dev, info.st_ino, info.st_size, info.st_mtime_ns)
     if info.st_size < offset:
         return False
@@ -251,12 +480,15 @@ def _verify_retained_prefix(raw: Any, path: Path, offset: int, expected: bytes, 
         checked, verification = (saved[0], saved[1].copy()) if saved else (0, hashlib.sha256())
     raw.seek(checked)
     while checked < offset and time.monotonic() < deadline - 0.25:
-        chunk = raw.read(min(65536, offset - checked))
+        try:
+            chunk = raw.read(min(65536, offset - checked))
+        except _TailScanPending:
+            break
         if not chunk:
             return False
         verification.update(chunk)
         checked += len(chunk)
-    after = os.fstat(raw.fileno())
+    after = _history_stat(raw)
     if (after.st_dev, after.st_ino, after.st_size, after.st_mtime_ns) != version:
         raise _TailScanPending("Retained history changed during verification; retrying against its new version.")
     with _TAIL_REDACTION_LOCK:
@@ -310,7 +542,7 @@ def _scan_pem_markers(chunk: bytes, carry: bytes = b"") -> tuple[bool | None, by
         mode = b"S"
 
 
-def _tail_private_key(paths: list[Path], offset: int, *, deadline: float) -> bool:
+def _tail_private_key(paths: list[_HistoryPath], offset: int, *, deadline: float) -> bool:
     """Return completed private-key state at a retained byte boundary.
 
     Args:
@@ -321,7 +553,7 @@ def _tail_private_key(paths: list[Path], offset: int, *, deadline: float) -> boo
     return _tail_marker_state(paths, offset, deadline=deadline)[0]
 
 
-def _tail_marker_state(paths: list[Path], offset: int, *, deadline: float) -> tuple[bool, bytes]:
+def _tail_marker_state(paths: list[_HistoryPath], offset: int, *, deadline: float) -> tuple[bool, bytes]:
     """Recover redaction state using bounded, verified in-process checkpoints.
 
     Args:
@@ -352,9 +584,8 @@ def _tail_marker_state(paths: list[Path], offset: int, *, deadline: float) -> tu
         prefix_digest = saved_digest.copy()
         authenticated = False
         path = paths[start_index]
-        descriptor = os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_BINARY", 0) | getattr(os, "O_NONBLOCK", 0))
-        with os.fdopen(descriptor, "rb") as raw:
-            if not stat.S_ISREG(os.fstat(raw.fileno()).st_mode):
+        with _open_history_file(path) as raw:
+            if not stat.S_ISREG(_history_stat(raw).st_mode):
                 raise ValueError("Retained log is not a regular file.")
             with (gzip.GzipFile(fileobj=raw) if path.suffix == ".gz" else nullcontext(raw)) as stream:
                 prefix = stream.read(min(start_offset, 4096))
@@ -375,9 +606,8 @@ def _tail_marker_state(paths: list[Path], offset: int, *, deadline: float) -> tu
         if index != start_index:
             prefix_digest = hashlib.sha256()
         path = paths[index]
-        descriptor = os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_BINARY", 0) | getattr(os, "O_NONBLOCK", 0))
-        with os.fdopen(descriptor, "rb") as raw:
-            if not stat.S_ISREG(os.fstat(raw.fileno()).st_mode):
+        with _open_history_file(path) as raw:
+            if not stat.S_ISREG(_history_stat(raw).st_mode):
                 raise ValueError("Retained log is not a regular file.")
             with (gzip.GzipFile(fileobj=raw) if path.suffix == ".gz" else nullcontext(raw)) as stream:
                 prefix = stream.read(4096)
@@ -418,7 +648,7 @@ def _tail_marker_state(paths: list[Path], offset: int, *, deadline: float) -> tu
 _COMPRESSED_REDACTION_CACHE: OrderedDict[tuple[str, int, int], tuple[bool, bytes, Any, int, bytes, bool, Any, int, int]] = OrderedDict()
 
 
-def _compressed_tail_private_key(paths: list[Path], offset: int, *, deadline: float) -> tuple[bool, bytes]:
+def _compressed_tail_private_key(paths: list[_HistoryPath], offset: int, *, deadline: float) -> tuple[bool, bytes]:
     """Resume bounded decompression using immutable source-version checkpoints.
 
     Args:
@@ -451,9 +681,8 @@ def _compressed_tail_private_key(paths: list[Path], offset: int, *, deadline: fl
             _COMPRESSED_REDACTION_CACHE.move_to_end(key)
     if candidates and start_index == len(paths) - 1 and paths[-1].suffix != ".gz" and (
             identities[-1].st_size != saved_size or identities[-1].st_mtime_ns != saved_mtime):
-        descriptor = os.open(paths[-1], os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_BINARY", 0) | getattr(os, "O_NONBLOCK", 0))
-        with os.fdopen(descriptor, "rb") as raw:
-            if not stat.S_ISREG(os.fstat(raw.fileno()).st_mode):
+        with _open_history_file(paths[-1]) as raw:
+            if not stat.S_ISREG(_history_stat(raw).st_mode):
                 raise ValueError("Retained log is not a regular file.")
             authenticated = _verify_retained_prefix(raw, paths[-1], expanded, prefix_digest.digest(), deadline=deadline)
         if not authenticated:
@@ -473,9 +702,8 @@ def _compressed_tail_private_key(paths: list[Path], offset: int, *, deadline: fl
         compressed = path.suffix == ".gz"
         if compressed and decoder is None:
             decoder = zlib.decompressobj(31)
-        descriptor = os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_BINARY", 0) | getattr(os, "O_NONBLOCK", 0))
-        with os.fdopen(descriptor, "rb") as raw:
-            info = os.fstat(raw.fileno())
+        with _open_history_file(path) as raw:
+            info = _history_stat(raw)
             if (not stat.S_ISREG(info.st_mode) or
                     (info.st_dev, info.st_ino, info.st_size, info.st_mtime_ns) != versions[index][1:]):
                 raise _TailScanPending("Retained history changed during preparation; retrying from verified state.")
@@ -635,7 +863,7 @@ class _GzipHistoryWindow:
         return data
 
 
-def _prepare_gzip_window(raw: Any, path: Path, *, end: int | None, deadline: float) -> _GzipHistoryWindow:
+def _prepare_gzip_window(raw: Any, path: _HistoryPath, *, end: int | None, deadline: float) -> _GzipHistoryWindow:
     """Resume decompression to an immutable archive boundary within a time budget.
 
     Args:
@@ -644,7 +872,7 @@ def _prepare_gzip_window(raw: Any, path: Path, *, end: int | None, deadline: flo
         end: Exclusive uncompressed target, or None for the archive end.
         deadline: Shared request deadline, with time reserved for page rendering.
     """
-    info = os.fstat(raw.fileno())
+    info = _history_stat(raw)
     identity = (str(path), info.st_dev, info.st_ino, info.st_size, info.st_mtime_ns)
     stop = min(deadline - 0.25, time.monotonic() + 2)
     with _TAIL_REDACTION_LOCK:
@@ -660,7 +888,10 @@ def _prepare_gzip_window(raw: Any, path: Path, *, end: int | None, deadline: flo
     raw.seek(raw_offset)
     while not finished and (end is None or expanded < end):
         if not pending:
-            pending = raw.read(16384)
+            try:
+                pending = raw.read(16384)
+            except _TailScanPending:
+                break
             raw_offset += len(pending)
         if not pending:
             if not decoder.eof:
@@ -682,7 +913,7 @@ def _prepare_gzip_window(raw: Any, path: Path, *, end: int | None, deadline: flo
                 prefix = (prefix + chunk[:max(0, 4096 - len(prefix))])[:4096]
         if time.monotonic() > stop:
             break
-    after = os.fstat(raw.fileno())
+    after = _history_stat(raw)
     if (after.st_dev, after.st_ino, after.st_size, after.st_mtime_ns) != identity[1:]:
         raise _TailScanPending("Retained archive changed during preparation; retrying.")
     with _TAIL_REDACTION_LOCK:
@@ -695,8 +926,8 @@ def _prepare_gzip_window(raw: Any, path: Path, *, end: int | None, deadline: flo
         raise _TailScanPending("Preparing archived history; the next request resumes this scan.")
     return _GzipHistoryWindow(expanded, window, prefix)
 
-def file_page(path: Path, *, source: str, cursor: str = "", limit: int = PAGE_LINES,
-              complete: bool = False, tail: bool = False) -> dict[str, Any]:
+def file_page(path: _HistoryPath, *, source: str, cursor: str = "", limit: int = PAGE_LINES,
+              complete: bool = False, tail: bool = False, _deadline: float | None = None) -> dict[str, Any]:
     """Read current and numbered retained rotations without a total-history cap.
 
     Args:
@@ -706,8 +937,9 @@ def file_page(path: Path, *, source: str, cursor: str = "", limit: int = PAGE_LI
         limit: Per-page line count, bounded independently of total history.
         complete: Include a terminal task's final line without a newline.
         tail: Start at the newest bounded group while preserving earlier navigation.
+        _deadline: Optional enclosing transport deadline shared with privileged reads.
     """
-    deadline = time.monotonic() + 10
+    deadline = _deadline if _deadline is not None else time.monotonic() + 10
     position = decode_cursor(cursor, source)
     rotations = []
     for candidate in path.parent.glob(f"{path.name}.*"):
@@ -739,9 +971,8 @@ def file_page(path: Path, *, source: str, cursor: str = "", limit: int = PAGE_LI
     selected = paths[index]
     if selected.is_symlink():
         raise ValueError("Linked log files are not supported.")
-    descriptor = os.open(selected, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_BINARY", 0) | getattr(os, "O_NONBLOCK", 0))
-    with os.fdopen(descriptor, "rb") as raw:
-        metadata = os.fstat(raw.fileno())
+    with _open_history_file(selected) as raw:
+        metadata = _history_stat(raw)
         if not stat.S_ISREG(metadata.st_mode):
             raise ValueError("Log source is not a regular retained file.")
         compressed = selected.suffix == ".gz"

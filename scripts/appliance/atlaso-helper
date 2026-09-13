@@ -2200,6 +2200,65 @@ def _journal_text_rows(entry, offset=0):
         yield start, line
 
 
+
+def _fixed_log_transport(path: Path, position: dict) -> dict:
+    """Supply bounded fixed-file bytes to the application's resumable reader.
+
+    Args:
+        path: Allowlisted current nginx log path, never supplied by the caller.
+        position: Inventory or version-bound raw byte request.
+    """
+    def metadata(info):
+        """Serialize the immutable identity of a verified regular file.
+
+        Args:
+            info: Descriptor metadata after rejecting links and nonregular files.
+        """
+        return {"dev": info.st_dev, "ino": info.st_ino, "size": info.st_size, "mtime_ns": info.st_mtime_ns}
+
+    def open_source(candidate):
+        """Open one selected source without following a final-component link.
+
+        Args:
+            candidate: Fixed current file or validated numeric rotation.
+        """
+        if candidate.is_symlink():
+            raise ValueError("linked fixed log source")
+        descriptor = os.open(candidate, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_BINARY", 0) | getattr(os, "O_NONBLOCK", 0))
+        stream = os.fdopen(descriptor, "rb")
+        if not stat.S_ISREG(os.fstat(stream.fileno()).st_mode):
+            stream.close()
+            raise ValueError("nonregular fixed log source")
+        return stream
+
+    mode = position.get("transport")
+    if mode == "inventory":
+        candidates = [candidate for candidate in path.parent.glob(f"{path.name}.*")
+                      if re.fullmatch(re.escape(path.name) + r"\.\d+(?:\.gz)?", candidate.name)]
+        if path.exists():
+            candidates.append(path)
+        if len(candidates) > 4096:
+            raise ValueError("fixed log inventory exceeds its bounded response")
+        files = []
+        for candidate in candidates:
+            with open_source(candidate) as stream:
+                files.append({"name": candidate.name, **metadata(os.fstat(stream.fileno()))})
+        return {"files": files, "base": path.name}
+    name, offset, count = position.get("file"), position.get("offset"), position.get("count")
+    if (mode != "read" or not isinstance(name, str) or
+            not re.fullmatch(re.escape(path.name) + r"(?:\.\d+(?:\.gz)?)?", name) or
+            type(offset) is not int or not 0 <= offset < 2**63 or type(count) is not int or not 0 <= count <= 1024 * 1024):
+        raise ValueError("invalid fixed log byte request")
+    with open_source(path.parent / name) as stream:
+        before = metadata(os.fstat(stream.fileno()))
+        if before != position.get("version"):
+            return {"changed": True}
+        stream.seek(offset)
+        data = stream.read(count)
+        if metadata(os.fstat(stream.fileno())) != before:
+            return {"changed": True}
+    return {"version": before, "data": base64.b64encode(data).decode("ascii")}
+
 def _read_log_history(args: list[str]) -> int:
     """Read a bounded page from a fixed journal source without arbitrary commands.
 
@@ -2217,6 +2276,8 @@ def _read_log_history(args: list[str]) -> int:
         return 2
     try:
         position = json.loads(args[1])
+        if not isinstance(position, dict):
+            raise ValueError("invalid log history position")
         if args[0] == "availability":
             journal_available = shutil.which("journalctl") is not None
             sources = [{"id": source, "available": journal_available} for source in units]
@@ -2224,7 +2285,9 @@ def _read_log_history(args: list[str]) -> int:
             print(json.dumps({"sources": sources}))
             return 0
         if args[0] in files:
-            print(json.dumps(_read_fixed_log_history(files[args[0]], position), ensure_ascii=False))
+            payload = (_fixed_log_transport(files[args[0]], position) if "transport" in position
+                       else _read_fixed_log_history(files[args[0]], position))
+            print(json.dumps(payload, ensure_ascii=False))
             return 0
         limit = position.get("limit", 500)
         if type(limit) is not int or not 1 <= limit <= 500:

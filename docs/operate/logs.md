@@ -88,8 +88,10 @@ label text. Opening and closing headers split between files still govern redacti
 Live viewers open at the newest retained group. **From beginning** reads earlier history, and **Follow live**
 returns to recent output. Tail reads preserve private-key redaction across older entries. Multiple private-key
 markers on one line are processed in text order, including when a line closes one block and opens another. If a
-local Atlaso App or KMS archive needs several read windows, preparation resumes automatically until the selected
-page is ready. Tail discovery and page reads share that prepared archive window. Journal
+retained Atlaso App, KMS, HTTP Access, or HTTP Errors archive needs several read windows, preparation resumes
+automatically until the selected
+page is ready. Tail discovery and page reads share that prepared archive window. Fixed nginx files use bounded,
+version-checked helper reads so preparation survives separate helper invocations. Journal
 records larger than 1 MiB use an explicit omission marker and preserve continuation to newer entries. Backward
 navigation also advances across oversized entries, including an unfinished final entry. Multiline journal messages
 are paged within the record so each response remains within 500 displayed lines and 1 MiB, including timestamps.
