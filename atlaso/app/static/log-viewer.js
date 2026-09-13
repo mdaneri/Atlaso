@@ -90,6 +90,12 @@
         if (rendering) await rendering.catch(() => {});
         if (closed || generation !== sequence || !active()) return;
         failures = 0;
+        if (page.pending) {
+          message(page.notice || "Preparing retained history · displayed output preserved");
+          updateButtons();
+          schedule(5000);
+          return;
+        }
         const text = pageText(page);
         const bottom = atBottom();
         const held = rendered !== null && (selected() || !bottom || holdPage());

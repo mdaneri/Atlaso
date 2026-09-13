@@ -410,6 +410,51 @@ for (const status of ["no-op", "partial-failure"]) {
   });
 }
 
+test("pending preparation preserves initial and previously accepted output", async () => {
+  const harness = taskLogHarness();
+  const pages = [];
+  harness.content.textContent = "server snapshot";
+  const viewer = harness.context.window.AtlasoLogViewer.create({
+    output: harness.content, status: harness.meta, initialCursor: "tail",
+    fetchPage: (cursor, signal) => harness.context.window.AtlasoLogViewer.fetchJson(`https://atlaso.test/logs?cursor=${cursor}`, signal),
+    onPage: (page) => pages.push(page.text),
+  });
+  harness.complete(0, { text: "", pending: true, cursor: "discard" });
+  await viewer.ready;
+  assert.equal(harness.content.textContent, "server snapshot");
+  assert.deepEqual(pages, []);
+  let loading = fireTimer(harness, 5000);
+  assert.equal(new URL(harness.requests[1].url).searchParams.get("cursor"), "tail");
+  harness.complete(1, { text: "accepted output", cursor: "stable" });
+  await loading;
+  loading = fireTimer(harness, 5000);
+  harness.complete(2, { text: "", pending: true, cursor: "discard" });
+  await loading;
+  assert.equal(harness.content.textContent, "accepted output");
+  assert.deepEqual(pages, ["accepted output"]);
+  loading = fireTimer(harness, 5000);
+  assert.equal(new URL(harness.requests[3].url).searchParams.get("cursor"), "stable");
+  harness.complete(3, { text: "accepted output\nnew", cursor: "stable" });
+  await loading;
+  assert.equal(harness.content.textContent, "accepted output\nnew");
+  viewer.close();
+});
+
+test("log availability starts the initially disabled active source once it recovers", () => {
+  let clicks = 0;
+  const active = { dataset: { logSourceTab: "app" }, disabled: true,
+    setAttribute() {}, click() { clicks += 1; } };
+  const root = { querySelectorAll: () => [active], querySelector: () => active };
+  const context = vm.createContext({});
+  vm.runInContext(functionSource("applyLogSourceAvailability"), context);
+  context.applyLogSourceAvailability(root, [{ id: "app", available: false }]);
+  assert.equal(clicks, 0);
+  context.applyLogSourceAvailability(root, [{ id: "app", available: true }]);
+  assert.equal(clicks, 1);
+  context.applyLogSourceAvailability(root, [{ id: "app", available: true }]);
+  assert.equal(clicks, 1);
+});
+
 test("log availability re-enables new sources without stealing an available selection", () => {
   let active = null;
   const clicks = [];
@@ -626,6 +671,7 @@ test("history controls remain serialized through preparation and retry", async (
   let loading = fireTimer(harness, 0);
   harness.complete(1, { text: "", pending: true });
   await loading;
+  assert.equal(harness.content.textContent, "tail");
   assert.ok(harness.buttons.every((button) => button.disabled));
   loading = fireTimer(harness, 5000);
   harness.requests[2].reject(new Error("temporary connection failure"));

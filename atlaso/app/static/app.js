@@ -17944,6 +17944,8 @@ function initializeTabs() {
 function applyLogSourceAvailability(root, sources) {
   if (!Array.isArray(sources)) return;
   const tabs = Array.from(root.querySelectorAll("[data-log-source-tab]"));
+  const active = root.querySelector("[data-log-source-tab].active");
+  const activeWasDisabled = active?.disabled;
   sources.forEach((source) => {
     if (typeof source.available !== "boolean") return;
     const tab = tabs.find((candidate) => candidate.dataset.logSourceTab === source.id);
@@ -17951,8 +17953,8 @@ function applyLogSourceAvailability(root, sources) {
     tab.disabled = !source.available;
     tab.setAttribute("aria-disabled", String(tab.disabled));
   });
-  const active = root.querySelector("[data-log-source-tab].active");
-  if (!active || active.disabled) tabs.find((tab) => !tab.disabled)?.click();
+  if (activeWasDisabled && !active.disabled) active.click();
+  else if (!active || active.disabled) tabs.find((tab) => !tab.disabled)?.click();
 }
 
 function initializeLogsPage() {
