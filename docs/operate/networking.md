@@ -241,8 +241,11 @@ use **Appliance Apply** with Network selected to activate the policy. An upgrade
 reconfigure existing host interfaces.
 
 On Ethernet and tagged VLAN links, static IPv4 uses systemd-networkd ARP address conflict detection
-before activation. Management DHCPv4 uses networkd's `SendDecline=yes`: a rejected offered address
-is declined and the native client retries. Atlaso retains `SendRelease=no` during reconfiguration.
+before activation. Management DHCPv4 sets networkd's `SendDecline=yes` to request decline and retry
+of a rejected offered address. Photon systemd 257.13 native testing confirmed conflict rejection
+and rollback, but did not observe DHCPDECLINE or a replacement lease. This known limitation is
+tracked in [#840](https://github.com/mdaneri/Atlaso/issues/840); do not rely on automatic lease
+replacement on that build. Atlaso retains `SendRelease=no` during reconfiguration.
 Turning this setting off disables these IPv4 checks for that interface. It never chooses a replacement
 static address. The helper requires systemd 252 or newer and a usable Ethernet identity before
 installing an enabled IPv4 candidate; unsupported or unavailable evidence produces **Unable to check**.
@@ -297,6 +300,8 @@ After cleanup succeeds, the interrupted task ends as failed with its applied bas
 review the task and submit any remaining components. Persistent failures keep the lock and recovery
 evidence until a later retry succeeds. Settings restores preserve this appliance's native conflict
 resolution and link identity history; that operational history is never exported or imported.
+Factory reset durably removes retained native conflict evidence before activating factory defaults,
+so an old declined lease cannot reappear as a new conflict after reset.
 The same retry queue handles failures in exception recovery. Incomplete address observations retain
 the last complete lease comparison and its original timestamp, so a later replacement can prove
 recovery without treating an older pre-conflict lease sample as post-conflict evidence.

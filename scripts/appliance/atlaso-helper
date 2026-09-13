@@ -22444,8 +22444,31 @@ def _reset_factory_port_forward_runtime() -> None:
         _fsync_directory(NAT_RUNTIME_CONFIG_PATH.parent)
 
 
+def _clear_factory_network_conflicts() -> None:
+    """Durably discard pre-reset conflict evidence without following its file link."""
+    directory = NETWORK_APPLY_DIR
+    if directory.is_symlink() or directory.resolve() != directory:
+        raise ValueError("factory-reset network evidence directory is unsafe")
+    if not directory.exists():
+        return
+    if os.name != "posix":
+        (directory / "address-conflicts.json").unlink(missing_ok=True)
+        _fsync_factory_reset_directory(directory)
+        return
+    descriptor = os.open(directory, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+    try:
+        try:
+            os.unlink("address-conflicts.json", dir_fd=descriptor)
+        except FileNotFoundError:
+            pass
+        # Retry the sync even when an interrupted attempt already removed it.
+        os.fsync(descriptor)
+    finally:
+        os.close(descriptor)
+
+
 def _reset_factory_network_runtime() -> int:
-    """Clear bounded live VLAN, route-table, and WAN impairment state during reset."""
+    """Clear bounded VLAN, route, WAN impairment, and retained conflict state."""
     if not _factory_reset_runtime_cleanup_is_admitted():
         print("factory-reset network runtime cleanup requires an active applying marker", file=sys.stderr)
         return 2
@@ -22460,6 +22483,7 @@ def _reset_factory_network_runtime() -> int:
         wan_route_interfaces = _factory_reset_wan_route_interfaces()
         netem_interfaces = _factory_reset_root_netem_interfaces(wan_route_interfaces)
         _reset_factory_port_forward_runtime()
+        _clear_factory_network_conflicts()
     except (OSError, ValueError) as exc:
         print(str(exc), file=sys.stderr)
         return 2
