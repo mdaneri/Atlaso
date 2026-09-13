@@ -99,9 +99,10 @@ unavailable source displays its current condition. Full history navigation and l
 
 Local uncompressed log files retain bounded redaction checkpoints in memory. Large initial scans may show a
 preparation notice; refreshes resume saved progress instead of restarting. File identity and content fingerprints
-validate each reused checkpoint. Any size or modification-time change discards cached state, including apparent
-appends, because growth alone cannot prove that earlier bytes were preserved. Process restarts or cache eviction
-can require preparation again. Completed task logs keep refreshing while preparation is pending.
+validate each reused checkpoint. After size or modification-time changes, the reader hashes every previously
+scanned byte before resuming. Matching prefixes preserve progress across appends; interior rewrites invalidate it
+even when sampled boundaries are unchanged. Verification remains subject to the request deadline. Process restarts
+or cache eviction can require preparation again. Completed task logs keep refreshing while preparation is pending.
 
 While selection or scrolling holds a displayed page, its navigation controls retain the displayed positions.
 New lines become navigable only after their page is displayed. Private-key labels may include digits and punctuation.

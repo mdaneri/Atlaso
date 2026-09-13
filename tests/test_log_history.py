@@ -1571,3 +1571,44 @@ def test_compressed_preparation_resumes_while_current_file_grows(tmp_path, monke
             pass
     else:
         pytest.fail("replaced archive did not invalidate redaction state")
+
+
+@pytest.mark.parametrize("rewrite", [False, True])
+def test_local_checkpoint_authenticates_all_prior_bytes_after_growth(tmp_path, monkeypatch, rewrite):
+    """Appends retain progress while an interior rewrite invalidates cached state.
+
+    Args:
+        tmp_path: Test-owned actively written log.
+        monkeypatch: Limit each scan pass to one chunk.
+        rewrite: Rewrite an unsampled interior byte range before regrowing.
+    """
+    import itertools
+
+    path = tmp_path / "active.log"
+    original = b"safe line\n" * 50000
+    path.write_bytes(original)
+    log_viewer._TAIL_REDACTION_CACHE.clear()
+    ticks = itertools.count(step=3)
+    monkeypatch.setattr(log_viewer.time, "monotonic", lambda: next(ticks))
+    positions = []
+    for attempt in range(30):
+        if attempt == 2 and rewrite:
+            contents = path.read_bytes()
+            marker = b"-----BEGIN PRIVATE KEY-----\n"
+            path.write_bytes(contents[:10000] + marker + contents[10000 + len(marker):])
+        with path.open("ab") as handle:
+            handle.write(b"new output\n")
+        try:
+            opened = log_viewer._tail_private_key([path], path.stat().st_size, deadline=100000)
+        except log_viewer._TailScanPending:
+            positions.append(max(key[2] for key in log_viewer._TAIL_REDACTION_CACHE))
+        else:
+            assert opened is rewrite
+            break
+    else:
+        pytest.fail("active log preparation did not finish")
+    assert len(positions) > 2
+    if rewrite:
+        assert positions[2] < positions[1]
+    else:
+        assert positions == sorted(set(positions))

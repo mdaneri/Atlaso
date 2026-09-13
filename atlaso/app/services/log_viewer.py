@@ -223,7 +223,7 @@ class _TailScanPending(ValueError):
     """Signal that a bounded redaction scan saved progress for the next request."""
 
 
-_TAIL_REDACTION_CACHE: OrderedDict[tuple[str, int, int], tuple[bool, bytes, bytes, int, int]] = OrderedDict()
+_TAIL_REDACTION_CACHE: OrderedDict[tuple[str, int, int], tuple[bool, bytes, bytes, int, int, Any]] = OrderedDict()
 _TAIL_REDACTION_LOCK = RLock()
 
 
@@ -251,9 +251,12 @@ def _tail_private_key(paths: list[Path], offset: int, *, deadline: float) -> boo
         checkpoint = max(candidates, key=lambda key: key[1:]) if candidates else None
         cached = _TAIL_REDACTION_CACHE.get(checkpoint) if checkpoint else None
     opened, carry, start_index, start_offset = False, b"", 0, 0
+    prefix_digest = hashlib.sha256()
     if checkpoint and cached:
         start_index, start_offset = checkpoint[1:]
-        opened, carry, fingerprint, saved_size, saved_mtime = cached
+        opened, carry, fingerprint, saved_size, saved_mtime, saved_digest = cached
+        prefix_digest = saved_digest.copy()
+        authenticated = False
         path = paths[start_index]
         descriptor = os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_BINARY", 0) | getattr(os, "O_NONBLOCK", 0))
         with os.fdopen(descriptor, "rb") as raw:
@@ -263,13 +266,31 @@ def _tail_private_key(paths: list[Path], offset: int, *, deadline: float) -> boo
                 prefix = stream.read(min(start_offset, 4096))
                 stream.seek(max(0, start_offset - 128))
                 anchor = stream.read(min(start_offset, 128))
-        if (hashlib.sha256(prefix + anchor).digest() != fingerprint or
-                (identities[start_index].st_mtime_ns != saved_mtime or identities[start_index].st_size != saved_size)):
+                if identities[start_index].st_size >= start_offset:
+                    if (identities[start_index].st_mtime_ns == saved_mtime and identities[start_index].st_size == saved_size):
+                        authenticated = True
+                    else:
+                        verification = hashlib.sha256()
+                        stream.seek(0)
+                        remaining = start_offset
+                        while remaining:
+                            if time.monotonic() > deadline - 0.25:
+                                raise _TailScanPending("Verifying retained history before resuming preparation.")
+                            chunk = stream.read(min(65536, remaining))
+                            if not chunk:
+                                break
+                            verification.update(chunk)
+                            remaining -= len(chunk)
+                        authenticated = remaining == 0 and verification.digest() == saved_digest.digest()
+        if hashlib.sha256(prefix + anchor).digest() != fingerprint or not authenticated:
             with _TAIL_REDACTION_LOCK:
                 for key in candidates:
                     _TAIL_REDACTION_CACHE.pop(key, None)
             opened, carry, start_index, start_offset = False, b"", 0, 0
+            prefix_digest = hashlib.sha256()
     for index in range(start_index, len(paths)):
+        if index != start_index:
+            prefix_digest = hashlib.sha256()
         path = paths[index]
         descriptor = os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_BINARY", 0) | getattr(os, "O_NONBLOCK", 0))
         with os.fdopen(descriptor, "rb") as raw:
@@ -282,6 +303,7 @@ def _tail_private_key(paths: list[Path], offset: int, *, deadline: float) -> boo
                     chunk = stream.read(min(65536, offset - stream.tell()) if index == len(paths) - 1 else 65536)
                     if not chunk:
                         break
+                    prefix_digest.update(chunk)
                     window = carry + chunk
                     for match in re.finditer(rb"-----(BEGIN|END) (?:(?!-----)[ -~])*?PRIVATE KEY-----", window):
                         opened = match.group(1) == b"BEGIN"
@@ -292,7 +314,7 @@ def _tail_private_key(paths: list[Path], offset: int, *, deadline: float) -> boo
                     key = (context, index, scanned)
                     with _TAIL_REDACTION_LOCK:
                         _TAIL_REDACTION_CACHE[key] = (opened, carry, hashlib.sha256(prefix[:min(scanned, 4096)] + anchor).digest(),
-                                                      identities[index].st_size, identities[index].st_mtime_ns)
+                                                      identities[index].st_size, identities[index].st_mtime_ns, prefix_digest.copy())
                         _TAIL_REDACTION_CACHE.move_to_end(key)
                         while len(_TAIL_REDACTION_CACHE) > 128:
                             _TAIL_REDACTION_CACHE.popitem(last=False)
