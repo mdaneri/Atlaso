@@ -103,6 +103,10 @@ validate each reused checkpoint. Any size or modification-time change discards c
 appends, because growth alone cannot prove that earlier bytes were preserved. Process restarts or cache eviction
 can require preparation again. Completed task logs keep refreshing while preparation is pending.
 
+While selection or scrolling holds a displayed page, its navigation controls retain the displayed positions.
+New lines become navigable only after their page is displayed. Private-key labels may include digits and punctuation.
+Service-log HTML snapshots and JSON refreshes both disable caching and vary on the representation header.
+
 <!-- BEGIN GENERATED ADDITIONAL SCREENSHOTS -->
 ## Additional verified states
 
@@ -115,7 +119,3 @@ These captures show responsive layouts and useful operational states referenced 
 *Figure: Logs in the verified clean-appliance responsive state.*
 
 <!-- END GENERATED ADDITIONAL SCREENSHOTS -->
-
-While selection or scrolling holds a displayed page, its navigation controls retain the displayed positions.
-New lines become navigable only after their page is displayed. Private-key labels may include digits and punctuation.
-Service-log HTML snapshots and JSON refreshes both disable caching and vary on the representation header.
