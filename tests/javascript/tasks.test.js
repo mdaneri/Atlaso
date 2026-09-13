@@ -538,3 +538,41 @@ test("completed task keeps retrying pending tail preparation before trailing sto
   assert.equal(harness.timers.size, 0);
   harness.context.closeTaskLogModal();
 });
+
+
+for (const reason of ["selection", "scroll"]) {
+  test(`held ${reason} does not advance beyond unseen log lines`, async () => {
+    const harness = taskLogHarness();
+    const scroll = { scrollTop: 900, scrollHeight: 1000, clientHeight: 100 };
+    harness.content.parentElement = scroll;
+    const initial = harness.context.openTaskLog({ id: "A" });
+    const oldText = Array.from({ length: 80 }, (_, i) => `line ${i}`).join("\n");
+    const newText = Array.from({ length: 100 }, (_, i) => `line ${i}`).join("\n");
+    harness.complete(0, { status: "running", text: oldText, cursor: "shown", next_cursor: "after80" });
+    await initial;
+    if (reason === "scroll") scroll.scrollTop = 100;
+    else harness.context.window.getSelection = () => ({ isCollapsed: false, anchorNode: harness.content });
+    for (let index = 1; index <= 2; index += 1) {
+      const refresh = fireTimer(harness, 5000);
+      assert.match(String(harness.requests[index].url), /cursor=shown/);
+      harness.complete(index, { status: "succeeded", text: newText, cursor: "unseen", next_cursor: "after100",
+        previous_cursor: "unseenPrevious", has_more: true });
+      await refresh;
+      assert.equal(harness.content.textContent, oldText);
+      assert.equal(harness.buttons.find((button) => button.textContent === "Next page").disabled, true);
+      assert.equal(harness.buttons.find((button) => button.textContent === "Previous page").disabled, true);
+    }
+    scroll.scrollTop = 900;
+    harness.context.window.getSelection = () => ({ isCollapsed: true });
+    const accepted = fireTimer(harness, 5000);
+    assert.match(String(harness.requests[3].url), /cursor=shown/);
+    harness.complete(3, { status: "succeeded", text: newText, cursor: "shown", next_cursor: "after100", has_more: true });
+    await accepted;
+    assert.equal(harness.content.textContent, newText);
+    const advance = fireTimer(harness, 250);
+    assert.match(String(harness.requests[4].url), /cursor=after100/);
+    harness.complete(4, { status: "succeeded", text: "line 100" });
+    await advance;
+    harness.context.closeTaskLogModal();
+  });
+}

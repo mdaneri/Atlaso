@@ -153,7 +153,7 @@ def redact_lines(lines: list[str], *, private_key: bool = False) -> tuple[list[s
     output = []
     for line in lines:
         conceal = private_key
-        for marker in re.finditer(r"-----(BEGIN|END) [A-Z ]*PRIVATE KEY-----", line):
+        for marker in re.finditer(r"-----(BEGIN|END) (?:(?!-----)[ -~])*?PRIVATE KEY-----", line):
             conceal = True
             private_key = marker.group(1) == "BEGIN"
         output.append("[redacted private key]" if conceal else redact_operational_text(line))
@@ -282,7 +282,7 @@ def _tail_private_key(paths: list[Path], offset: int, *, deadline: float) -> boo
                     if not chunk:
                         break
                     window = carry + chunk
-                    for match in re.finditer(rb"-----(BEGIN|END) [A-Z ]*PRIVATE KEY-----", window):
+                    for match in re.finditer(rb"-----(BEGIN|END) (?:(?!-----)[ -~])*?PRIVATE KEY-----", window):
                         opened = match.group(1) == b"BEGIN"
                     carry = window[-128:]
                     scanned = stream.tell()
@@ -331,7 +331,7 @@ def _compressed_tail_private_key(paths: list[Path], offset: int, *, deadline: fl
                     if remaining is not None:
                         remaining -= len(chunk)
                     window = carry + chunk
-                    for match in re.finditer(rb"-----(BEGIN|END) [A-Z ]*PRIVATE KEY-----", window):
+                    for match in re.finditer(rb"-----(BEGIN|END) (?:(?!-----)[ -~])*?PRIVATE KEY-----", window):
                         opened = match.group(1) == b"BEGIN"
                     carry = window[-128:]
     return opened
@@ -482,7 +482,7 @@ def file_page(path: Path, *, source: str, cursor: str = "", limit: int = PAGE_LI
                     if not oversized:
                         lines.append("[Oversized log entry omitted: exceeds 64 KiB; continuing with the next complete entry.]")
                     window = marker_prefix + line
-                    markers = list(re.finditer(rb"-----(BEGIN|END) [A-Z ]*PRIVATE KEY-----", window))
+                    markers = list(re.finditer(rb"-----(BEGIN|END) (?:(?!-----)[ -~])*?PRIVATE KEY-----", window))
                     if markers:
                         lines.append(markers[-1].group().decode("ascii"))
                     marker_prefix = window[-128:]

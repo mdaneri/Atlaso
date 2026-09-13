@@ -484,12 +484,13 @@ def build_router(dependencies: OperationsUiDependencies) -> OperationsUiRouter:
             raise HTTPException(status_code=404, detail="Service not found")
         source = {"dns": "dnsmasq-dns", "dhcp": "dnsmasq-dhcp", "esxi-pxe": "dnsmasq-tftp",
                   "ntpd": "ntp", "kms": "kms", "ldap": "ldap", "esx-storage": "esx-storage"}.get(service)
+        response_headers = {"Cache-Control": "no-store", "Vary": "X-Atlaso-Task-Log"}
         if request.headers.get("X-Atlaso-Task-Log") == "1":
             if not source:
-                return JSONResponse({"text": "No dedicated log source is configured for this service.", "status": "succeeded"})
+                return JSONResponse({"text": "No dedicated log source is configured for this service.", "status": "succeeded"}, headers=response_headers)
             try:
                 return JSONResponse(log_viewer.source_page(source, cursor=request.query_params.get("cursor", ""), tail=request.query_params.get("tail") == "1"),
-                                    headers={"Cache-Control": "no-store"})
+                                    headers=response_headers)
             except (ValueError, OSError) as exc:
                 raise HTTPException(status_code=400, detail=str(exc)) from exc
         if get_settings().dry_run_system_adapters:
@@ -504,7 +505,7 @@ def build_router(dependencies: OperationsUiDependencies) -> OperationsUiRouter:
                     snapshot = [page.get("notice") or "No retained log entries are available."]
             except (ValueError, OSError):
                 snapshot = ["Log history is temporarily unavailable. Reload this page to retry."]
-        return render(
+        response = render(
             request,
             "services.html",
             {
@@ -517,6 +518,8 @@ def build_router(dependencies: OperationsUiDependencies) -> OperationsUiRouter:
                 },
             },
         )
+        response.headers.update(response_headers)
+        return response
 
     @router.get("/services", response_class=HTMLResponse, response_model=None)
     def services(

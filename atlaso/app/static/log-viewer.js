@@ -83,10 +83,6 @@
         if (rendering) await rendering.catch(() => {});
         if (closed || generation !== sequence || !active()) return;
         failures = 0;
-        hasMore = Boolean(page.has_more);
-        nextCursor = page.next_cursor || "";
-        previousCursor = page.previous_cursor || "";
-        cursor = page.cursor || cursor;
         const text = pageText(page);
         const bottom = atBottom();
         const held = rendered !== null && (selected() || !bottom || holdPage());
@@ -111,14 +107,21 @@
           }
           if (scroll) scroll.scrollTop = following && (bottom || navigated) ? scroll.scrollHeight : offset;
         }
-        onPage(page);
+        const accepted = !held || text === rendered;
+        if (accepted) {
+          hasMore = Boolean(page.has_more);
+          nextCursor = page.next_cursor || "";
+          previousCursor = page.previous_cursor || "";
+          cursor = page.cursor || cursor;
+          onPage(page);
+        }
         if (closed || generation !== sequence || !active()) return;
         message(held && text !== rendered ? "New output available · reading position preserved" :
           `${page.job_id ? `${page.job_id} · ` : ""}${page.status || "Updated"} · ${new Date().toLocaleTimeString()}${page.notice ? ` · ${page.notice}` : ""}`);
         updateButtons();
-        const terminal = !page.pending && ["succeeded", "failed", "cancelled", "skipped", "no-op", "partial-failure"].includes(page.status);
+        const terminal = accepted && !page.pending && ["succeeded", "failed", "cancelled", "skipped", "no-op", "partial-failure"].includes(page.status);
         terminalReads = terminal ? terminalReads + 1 : 0;
-        if (page.reset) previous = [];
+        if (accepted && page.reset) previous = [];
         if (following && hasMore && !held && nextCursor !== cursor) {
           previous.push(cursor);
           cursor = nextCursor;

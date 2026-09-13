@@ -115,3 +115,7 @@ These captures show responsive layouts and useful operational states referenced 
 *Figure: Logs in the verified clean-appliance responsive state.*
 
 <!-- END GENERATED ADDITIONAL SCREENSHOTS -->
+
+While selection or scrolling holds a displayed page, its navigation controls retain the displayed positions.
+New lines become navigable only after their page is displayed. Private-key labels may include digits and punctuation.
+Service-log HTML snapshots and JSON refreshes both disable caching and vary on the representation header.

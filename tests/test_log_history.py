@@ -1336,6 +1336,8 @@ def test_service_log_html_has_readable_fallback(client, monkeypatch, mode):
     monkeypatch.setattr(log_viewer, "source_page", read)
     response = client.get("/ui/management/services/dns/logs")
     assert response.status_code == 200
+    assert response.headers["cache-control"] == "no-store"
+    assert "X-Atlaso-Task-Log" in response.headers["vary"].split(", ")
     assert "Loading retained service history" not in response.text
     if mode == "dry-run":
         assert not calls
@@ -1451,7 +1453,7 @@ def test_tail_checkpoint_rejects_regrowth_with_unchanged_prefix_and_anchor(tmp_p
 
 
 @pytest.mark.parametrize("initial", [False, True])
-@pytest.mark.parametrize("kind", ["PRIVATE KEY", "RSA PRIVATE KEY", "EC PRIVATE KEY", "ENCRYPTED PRIVATE KEY"])
+@pytest.mark.parametrize("kind", ["PRIVATE KEY", "RSA PRIVATE KEY", "EC PRIVATE KEY", "ENCRYPTED PRIVATE KEY", "X25519 PRIVATE KEY", "ML-KEM-768 PRIVATE KEY", "Test.v1 PRIVATE KEY"])
 def test_private_key_markers_follow_text_order_across_pages(tmp_path, initial, kind):
     """Retain the last marker state when one line closes and reopens a key.
 
@@ -1479,3 +1481,41 @@ def test_private_key_markers_follow_text_order_across_pages(tmp_path, initial, k
     page = log_viewer.file_page(path, source="marker-order", cursor=first["next_cursor"])
     assert "c3ludGhldGlj" not in page["text"]
     assert page["text"].endswith("safe after")
+
+
+@pytest.mark.parametrize("compressed", [False, True])
+def test_extended_private_key_labels_in_tail_scanners(tmp_path, compressed):
+    """Both local and privileged pre-page scans recognize printable PEM labels.
+
+    Args:
+        tmp_path: Test-owned retained file directory.
+        compressed: Exercise gzip as well as regular file preparation.
+    """
+    import time
+
+    from tests.test_appliance_helper import load_helper_module
+
+    helper = load_helper_module()
+    content = b"-----END CERTIFICATE----- -----BEGIN ML-KEM-768 PRIVATE KEY-----\nsynthetic-body\n"
+    path = tmp_path / ("retained.gz" if compressed else "retained.log")
+    path.write_bytes(gzip.compress(content) if compressed else content)
+    assert log_viewer._tail_private_key([path], len(content), deadline=time.monotonic() + 10)
+    assert helper._tail_private_key([path], len(content), deadline=time.monotonic() + 10)
+
+
+def test_service_log_json_disables_representation_caching(client, monkeypatch):
+    """JSON refreshes have the same no-store and Vary contract as HTML.
+
+    Args:
+        client: Initialized authenticated transport.
+        monkeypatch: Supply a fixed retained page without reading the host.
+    """
+    from tests.routers.ui.helpers import login
+
+    login(client)
+    monkeypatch.setattr(log_viewer, "source_page", lambda *args, **kwargs: {"text": "current output"})
+    response = client.get("/ui/management/services/dns/logs", headers={"X-Atlaso-Task-Log": "1"})
+    assert response.status_code == 200
+    assert response.json()["text"] == "current output"
+    assert response.headers["cache-control"] == "no-store"
+    assert "X-Atlaso-Task-Log" in response.headers["vary"].split(", ")

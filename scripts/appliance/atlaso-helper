@@ -1787,7 +1787,7 @@ def _tail_private_key(paths: list[Path], offset: int, *, deadline: float) -> boo
                     if remaining is not None:
                         remaining -= len(chunk)
                     window = carry + chunk
-                    for match in re.finditer(rb"-----(BEGIN|END) [A-Z ]*PRIVATE KEY-----", window):
+                    for match in re.finditer(rb"-----(BEGIN|END) (?:(?!-----)[ -~])*?PRIVATE KEY-----", window):
                         opened = match.group(1) == b"BEGIN"
                     carry = window[-128:]
     return opened
@@ -1936,7 +1936,7 @@ def _read_fixed_log_history(path: Path, position: dict) -> dict:
                     if not oversized:
                         lines.append("[Oversized log entry omitted: exceeds 64 KiB; continuing with the next complete entry.]")
                     window = marker_prefix + line
-                    markers = list(re.finditer(rb"-----(BEGIN|END) [A-Z ]*PRIVATE KEY-----", window))
+                    markers = list(re.finditer(rb"-----(BEGIN|END) (?:(?!-----)[ -~])*?PRIVATE KEY-----", window))
                     if markers:
                         lines.append(markers[-1].group().decode("ascii"))
                     marker_prefix = window[-128:]
@@ -1993,7 +1993,7 @@ def _oversized_journal_entry(first, stream):
             match = re.search(rb'"' + field.encode() + rb'"\s*:\s*("(?:[^"\\]|\\.)*")', window)
             if match:
                 metadata[field] = json.loads(match.group(1))
-        for match in re.finditer(rb"-----(BEGIN|END) [A-Z ]*PRIVATE KEY-----", window):
+        for match in re.finditer(rb"-----(BEGIN|END) (?:(?!-----)[ -~])*?PRIVATE KEY-----", window):
             marker_state = match.group(1) == b"BEGIN"
         if raw.endswith(b"\n"):
             break
@@ -2080,7 +2080,7 @@ def _journal_history_entries(command, *, deadline, category=None, initial_privat
                     break
                 if category is not None:
                     entry["_filtered"] = not matches
-                    markers = list(re.finditer(r"-----(BEGIN|END) [A-Z ]*PRIVATE KEY-----", entry["MESSAGE"]))
+                    markers = list(re.finditer(r"-----(BEGIN|END) (?:(?!-----)[ -~])*?PRIVATE KEY-----", entry["MESSAGE"]))
                     if reverse:
                         if markers:
                             for newer in pending_state:
@@ -2236,13 +2236,13 @@ def _read_log_history(args: list[str]) -> int:
             # Recover cross-record PEM state before jumping into retained history.
             prefix_command = [command[0], "--unit", units[args[0]], "--no-pager", "--output=json",
                               "--output-fields=MESSAGE,__CURSOR,__REALTIME_TIMESTAMP", "--reverse",
-                              f"--cursor={first_cursor}", "--lines=2", "--grep=-----(BEGIN|END) [A-Z ]*PRIVATE KEY-----"]
+                              f"--cursor={first_cursor}", "--lines=2", "--grep=-----(BEGIN|END) (?:(?!-----)[ -~])*?PRIVATE KEY-----"]
             predecessors, _ = _journal_history_entries(prefix_command, deadline=deadline)
             predecessor = next((entry for entry in predecessors if entry["__CURSOR"] != first_cursor), None)
             if predecessor is not None:
-                markers = list(re.finditer(r"-----(BEGIN|END) [A-Z ]*PRIVATE KEY-----", predecessor["MESSAGE"]))
+                markers = list(re.finditer(r"-----(BEGIN|END) (?:(?!-----)[ -~])*?PRIVATE KEY-----", predecessor["MESSAGE"]))
                 initial_private_key = bool(markers and markers[-1].group(1) == "BEGIN")
-            for match in re.finditer(r"-----(BEGIN|END) [A-Z ]*PRIVATE KEY-----", selected[0]["MESSAGE"][:text_offset]):
+            for match in re.finditer(r"-----(BEGIN|END) (?:(?!-----)[ -~])*?PRIVATE KEY-----", selected[0]["MESSAGE"][:text_offset]):
                 initial_private_key = match.group(1) == "BEGIN"
         lines = []
         line_private_keys = []
@@ -2264,13 +2264,13 @@ def _read_log_history(args: list[str]) -> int:
                     break
                 lines.append(line)
                 line_private_keys.append(row_key_state)
-                for match in re.finditer(r"-----(BEGIN|END) [A-Z ]*PRIVATE KEY-----", line):
+                for match in re.finditer(r"-----(BEGIN|END) (?:(?!-----)[ -~])*?PRIVATE KEY-----", line):
                     row_key_state = match.group(1) == "BEGIN"
                 expanded_bytes += size
             if paused:
                 break
             final_private_key = row_key_state
-            for match in re.finditer(r"-----(BEGIN|END) [A-Z ]*PRIVATE KEY-----", message):
+            for match in re.finditer(r"-----(BEGIN|END) (?:(?!-----)[ -~])*?PRIVATE KEY-----", message):
                 final_private_key = match.group(1) == "BEGIN"
             next_position = {"journal_cursor": entry["__CURSOR"]}
         if page_end_cursor is not None and not paused:
