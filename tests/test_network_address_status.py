@@ -215,11 +215,16 @@ def test_handoff_keeps_address_sections_and_previous_dhcp_policy():
     assert helper._networkd_handoff_text(candidate, candidate).count("Address=192.0.2.20/24") == 1
 
 
-def test_native_observation_sanitizes_and_attributes_structured_sources(monkeypatch):
+@pytest.mark.parametrize("native_message", [
+    "eth0: Dropping address 192.0.2.20, as an address conflict was detected.",
+    "eth0: IPv4ACD: Conflict on 192.0.2.20 (1)",
+])
+def test_native_observation_sanitizes_and_attributes_structured_sources(monkeypatch, native_message):
     """Read IPv4 rejection and DHCP source without retaining unrelated journal content.
 
     Args:
         monkeypatch: Replace only fixed native observation commands.
+        native_message: DHCP rejection or the shipped Photon's static IPv4 ACD event.
     """
     import json
     import subprocess
@@ -232,7 +237,7 @@ def test_native_observation_sanitizes_and_attributes_structured_sources(monkeypa
     networkd["Interfaces"][0]["Addresses"].append(
         {"Address": [192, 0, 2, 10], "PrefixLength": 25, "ConfigSource": "static"},
     )
-    journal = [{"MESSAGE": "eth0: Dropping address 192.0.2.20, as an address conflict was detected.", "INTERFACE": "eth0", "__REALTIME_TIMESTAMP": "1789171200000000"}, {"MESSAGE": "unrelated-sensitive-text"}]
+    journal = [{"MESSAGE": native_message, "INTERFACE": "eth0", "__REALTIME_TIMESTAMP": "1789171200000000"}, {"MESSAGE": "unrelated-sensitive-text"}]
 
     def command(args, **_kwargs):
         """Provide the command-specific bounded fixture.
@@ -241,6 +246,8 @@ def test_native_observation_sanitizes_and_attributes_structured_sources(monkeypa
             args: Fixed command under test.
             **_kwargs: Runtime bound retained by the caller.
         """
+        if args[0] == "journalctl":
+            assert any(value.startswith("--grep=") for value in args)
         value = json.dumps(ip_rows) if args[0] == "ip" else json.dumps(networkd) if args[0] == "networkctl" else "\n".join(json.dumps(item) for item in journal)
         return subprocess.CompletedProcess(args, 0, value, "")
 

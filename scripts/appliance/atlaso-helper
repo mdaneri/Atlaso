@@ -8780,6 +8780,7 @@ def _network_address_observation() -> dict:
         journal = _network_observation_command([
             "journalctl", "--boot", "--unit=systemd-networkd.service", "--since=-1day",
             "--no-pager", "--lines=256", "--output=json",
+            "--grep=^[A-Za-z0-9_.-]+: (Dropping address .*address conflict was detected|IPv4ACD: Conflict on )",
             "--output-fields=MESSAGE,INTERFACE,__REALTIME_TIMESTAMP,_BOOT_ID",
         ], timeout=4)
         # In systemd 252 and 257, JSON list calls the manager Describe method,
@@ -8844,7 +8845,8 @@ def _network_address_observation() -> dict:
                 "up": "UP" in row.get("flags", []),
                 "carrier": "LOWER_UP" in row.get("flags", []), "addresses": records,
             })
-        if journal.returncode or len(journal.stdout) > 262144:
+        # journalctl --grep returns 1 when no matching entry exists.
+        if journal.returncode not in (0, 1) or len(journal.stdout) > 262144:
             return result
         for line in journal.stdout.splitlines()[-256:]:
             entry = json.loads(line)
@@ -8854,6 +8856,8 @@ def _network_address_observation() -> dict:
             if not isinstance(message, str) or len(message) > 2048:
                 continue
             match = re.fullmatch(r"([A-Za-z0-9_.-]+): Dropping address ([0-9.]+), as an address conflict was detected\.", message)
+            if not match:
+                match = re.fullmatch(r"([A-Za-z0-9_.-]+): IPv4ACD: Conflict on ([0-9.]+) \([0-9]+\)", message)
             if not match or entry.get("INTERFACE", match[1]) != match[1]:
                 continue
             try:

@@ -295,7 +295,10 @@ applied marker. Console corrections survive the preparation stage and are revali
 The early VMware preparation service skips appliances with a completed OVF marker on later boots;
 the normal customization stage retains its credential cleanup and test-identity republishing checks.
 The retained failure names the attempted address, link, and detection time; a conflicting MAC appears
-only when the native evidence supplies one. Native networkd rejection messages do not normally include
+only when the native evidence supplies one. The collector recognizes DHCP rejection and Photon static
+`IPv4ACD: Conflict on` messages, filtering
+journal entries before applying its record limit so unrelated debug traffic cannot displace events.
+Native networkd rejection messages do not normally include
 that MAC, so Atlaso does not infer it from stale neighbor entries.
 
 A rejected management candidate fails Apply and follows the protected management rollback path. The
