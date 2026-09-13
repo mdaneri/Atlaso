@@ -3841,7 +3841,23 @@ unauthenticated browsing do not extend a browser session.</p>
 <h2 id="configure-the-depot">Configure the depot<a class="headerlink" href="#configure-the-depot" title="Permanent link">&para;</a></h2>
 <ol>
 <li>Confirm the fixed depot mount is present and has sufficient working space.</li>
-<li>Configure the service listener and the HTTP user used by approved VCF targets.</li>
+<li>Configure the service listener and the HTTP user used by approved VCF targets. New configurations default to HTTPS
+   port <strong>8443</strong>, for example <code>https://depot.example.test:8443/PROD/</code>. Existing saved ports, including <strong>443</strong> and custom
+   values, remain unchanged. Older settings archives that omit the port retain the historical <strong>443</strong> default.
+   Validation checks active TCP listener ownership before activation. Overlapping listeners must belong to the nginx
+   executable in <code>nginx.service</code>; otherwise choose another address or port. Unavailable ownership evidence blocks
+   activation. An existing IPv6 wildcard listener is conservatively treated as potentially dual-stack.
+   Activation verifies the selected listeners with TLS 1.2 or newer, the configured TLS identity and nginx-owned
+   <code>/PROD</code> redirect.
+   This check uses the submitted configuration, so newer pending settings do not affect listener readiness.
+   On failure,
+   Atlaso restores the previous depot site and authentication file and reports failure; it does not restart the shared
+   nginx service. Candidate site and rollback files use complete, flushed sibling files and atomic replacement.
+   If first activation started a previously inactive nginx service, rollback stops that service and restores its
+   previous enablement; nginx that was already running remains running.
+   File restoration is attempted even if service cleanup fails, and incomplete rollback is reported in the task log.
+   If nginx cannot be verified inactive after cleanup, Atlaso attempts to reload the restored configuration.
+   A successful listener check does not establish VCF target authentication or metadata synchronization.</li>
 <li>Select <strong>Add</strong> or <strong>Update</strong> for the VCF Download Tool package. The two-step package wizard reviews the archive name,
    size, and desired-state boundary before upload. During upload, Review remains visible and reports transferred bytes
    and upload percentage. Then select <strong>Configure</strong> under <strong>VCFDT configuration</strong>. Atlaso
@@ -3862,7 +3878,11 @@ its visible editor is not nested in the source textarea's label.</li>
 <li>Review certificate readiness and the generated software depot identity. Atlaso reads the persisted identity back
    from VCFDT after generation and displays only that canonical value.</li>
 <li>Validate the desired state and submit the VCF Offline Depot unit through
-   <a href="../../operate/appliance-apply/">Appliance Apply</a>.</li>
+   <a href="../../operate/appliance-apply/">Appliance Apply</a>. Changed firewall configuration is included automatically so its
+   generated depot admission uses the selected port. Review the included firewall changes before submitting.
+   Apply records each component separately: a later depot failure keeps its previous applied baseline and restores its
+   nginx site, but does not undo an earlier successful firewall component. Inspect the component results and correct or
+   reapply the desired configuration before retrying external downloads; the previous port might no longer be admitted.</li>
 <li>When the apply task succeeds, the page refreshes automatically so the authoritative applied VCF Download Tool
    version and generated Software Depot ID replace the previously staged values.</li>
 <li>Run downloads as tasks and follow their terminal result in the page's <strong>Profile download tasks</strong> grid. This is the
