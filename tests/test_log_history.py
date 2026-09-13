@@ -1519,3 +1519,55 @@ def test_service_log_json_disables_representation_caching(client, monkeypatch):
     assert response.json()["text"] == "current output"
     assert response.headers["cache-control"] == "no-store"
     assert "X-Atlaso-Task-Log" in response.headers["vary"].split(", ")
+
+
+@pytest.mark.parametrize("padding", [False, True])
+def test_compressed_preparation_resumes_while_current_file_grows(tmp_path, monkeypatch, padding):
+    """Immutable gzip progress survives retries and appends to the later file.
+
+    Args:
+        tmp_path: Test-owned rotated log directory.
+        monkeypatch: Bound each preparation pass with a deterministic clock.
+        padding: Include legal gzip padding between and after members.
+    """
+    import itertools
+
+    archive = tmp_path / "live.log.1.gz"
+    current = tmp_path / "live.log"
+    marker = b"-----BEGIN X25519 PRIVATE KEY-----\n"
+    first = b"retained entry\n" * 200000
+    second = b"later entry\n" * 200000 + marker
+    zeros = b"\x00" * 20000 if padding else b""
+    archive.write_bytes(gzip.compress(first) + zeros + gzip.compress(second) + zeros)
+    current.write_bytes(b"")
+    log_viewer._COMPRESSED_REDACTION_CACHE.clear()
+    ticks = itertools.count()
+    monkeypatch.setattr(log_viewer.time, "monotonic", lambda: next(ticks))
+    progress = []
+    for attempt in range(200):
+        current.write_bytes(b"growing current file\n" * attempt)
+        try:
+            opened = log_viewer._tail_private_key([archive, current], 0, deadline=100000)
+        except log_viewer._TailScanPending:
+            positions = [key[2] for key in log_viewer._COMPRESSED_REDACTION_CACHE if key[1] == 0]
+            progress.append(max(positions))
+            assert len(log_viewer._COMPRESSED_REDACTION_CACHE) <= 32
+            assert all(len(value[1]) <= 128 and len(value[4]) <= 16384
+                       for value in log_viewer._COMPRESSED_REDACTION_CACHE.values())
+        else:
+            assert opened is True
+            break
+    else:
+        pytest.fail("compressed preparation did not complete")
+    assert len(progress) > 2
+    assert progress == sorted(progress)
+    assert progress[-1] > len(first)
+    archive.write_bytes(gzip.compress(b"replacement without private key\n"))
+    for _ in range(5):
+        try:
+            assert log_viewer._tail_private_key([archive, current], 0, deadline=100000) is False
+            break
+        except log_viewer._TailScanPending:
+            pass
+    else:
+        pytest.fail("replaced archive did not invalidate redaction state")

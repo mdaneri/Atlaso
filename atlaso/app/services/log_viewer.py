@@ -9,6 +9,7 @@ import os
 import re
 import stat
 import time
+import zlib
 from collections import OrderedDict
 from contextlib import nullcontext
 from pathlib import Path
@@ -305,35 +306,95 @@ def _tail_private_key(paths: list[Path], offset: int, *, deadline: float) -> boo
     return opened
 
 
+_COMPRESSED_REDACTION_CACHE: OrderedDict[tuple[str, int, int], tuple[bool, bytes, Any, int, bytes, bool]] = OrderedDict()
+
+
 def _compressed_tail_private_key(paths: list[Path], offset: int, *, deadline: float) -> bool:
-    """Recover redaction state before a tail boundary without retaining source contents.
+    """Resume bounded decompression using immutable source-version checkpoints.
 
     Args:
         paths: Fixed retained files through the selected newest source.
         offset: Uncompressed byte boundary within the selected source.
         deadline: Shared monotonic deadline for the request.
     """
-    opened = False
-    carry = b""
-    for index, path in enumerate(paths):
+    identities = [path.lstat() for path in paths]
+    versions = [(str(path), info.st_dev, info.st_ino, info.st_size, info.st_mtime_ns)
+                for path, info in zip(paths, identities, strict=True)]
+    contexts = [hashlib.sha256(repr(versions[:index + 1]).encode()).hexdigest() for index in range(len(paths))]
+    stop = min(deadline - 0.25, time.monotonic() + 2)
+    opened, carry, start_index, expanded = False, b"", 0, 0
+    decoder, raw_offset, pending, finished = None, 0, b"", False
+    with _TAIL_REDACTION_LOCK:
+        candidates = [key for key in _COMPRESSED_REDACTION_CACHE
+                      if key[1] < len(paths) and key[0] == contexts[key[1]]
+                      and (key[1] < len(paths) - 1 or key[2] <= offset)]
+        if candidates:
+            key = max(candidates, key=lambda item: item[1:])
+            opened, carry, saved_decoder, raw_offset, pending, finished = _COMPRESSED_REDACTION_CACHE[key]
+            decoder = saved_decoder.copy() if saved_decoder is not None else None
+            start_index, expanded = key[1:]
+            _COMPRESSED_REDACTION_CACHE.move_to_end(key)
+    for index in range(start_index, len(paths)):
+        path = paths[index]
+        if index != start_index:
+            decoder, raw_offset, pending, finished, expanded = None, 0, b"", False, 0
+        compressed = path.suffix == ".gz"
+        if compressed and decoder is None:
+            decoder = zlib.decompressobj(31)
         descriptor = os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_BINARY", 0) | getattr(os, "O_NONBLOCK", 0))
         with os.fdopen(descriptor, "rb") as raw:
-            if not stat.S_ISREG(os.fstat(raw.fileno()).st_mode):
-                raise ValueError("Retained log is not a regular file.")
-            with (gzip.GzipFile(fileobj=raw) if path.suffix == ".gz" else nullcontext(raw)) as stream:
-                remaining = offset if index == len(paths) - 1 else None
-                while remaining is None or remaining > 0:
-                    if time.monotonic() > deadline:
-                        raise ValueError("Tail redaction scan exceeded its deadline; open from the beginning.")
-                    chunk = stream.read(min(65536, remaining) if remaining is not None else 65536)
-                    if not chunk:
-                        break
-                    if remaining is not None:
-                        remaining -= len(chunk)
-                    window = carry + chunk
-                    for match in re.finditer(rb"-----(BEGIN|END) (?:(?!-----)[ -~])*?PRIVATE KEY-----", window):
-                        opened = match.group(1) == b"BEGIN"
-                    carry = window[-128:]
+            info = os.fstat(raw.fileno())
+            if (not stat.S_ISREG(info.st_mode) or
+                    (info.st_dev, info.st_ino, info.st_size, info.st_mtime_ns) != versions[index][1:]):
+                raise _TailScanPending("Retained history changed during preparation; retrying from verified state.")
+            raw.seek(raw_offset)
+            while not finished and (index < len(paths) - 1 or expanded < offset):
+                count = min(65536, offset - expanded) if index == len(paths) - 1 else 65536
+                if compressed:
+                    assert decoder is not None
+                    if not pending:
+                        pending = raw.read(16384)
+                        raw_offset += len(pending)
+                    if not pending:
+                        if not decoder.eof:
+                            raise ValueError("Retained gzip history is incomplete.")
+                        finished, chunk = True, b""
+                    else:
+                        if decoder.eof:
+                            pending = pending.lstrip(b"\x00")
+                            if pending:
+                                decoder = zlib.decompressobj(31)
+                        if pending:
+                            try:
+                                chunk = decoder.decompress(pending, count)
+                            except zlib.error as exc:
+                                raise ValueError("Retained gzip history is invalid.") from exc
+                            pending = decoder.unused_data if decoder.eof else decoder.unconsumed_tail
+                        else:
+                            chunk = b""
+                else:
+                    chunk = raw.read(count)
+                    raw_offset += len(chunk)
+                    finished = not chunk
+                expanded += len(chunk)
+                window = carry + chunk
+                for marker in re.finditer(rb"-----(BEGIN|END) (?:(?!-----)[ -~])*?PRIVATE KEY-----", window):
+                    opened = marker.group(1) == b"BEGIN"
+                carry = window[-128:]
+                key = (contexts[index], index, expanded)
+                with _TAIL_REDACTION_LOCK:
+                    _COMPRESSED_REDACTION_CACHE[key] = (opened, carry, decoder.copy() if decoder is not None else None,
+                                                       raw_offset, pending, finished)
+                    _COMPRESSED_REDACTION_CACHE.move_to_end(key)
+                    while len(_COMPRESSED_REDACTION_CACHE) > 32:
+                        _COMPRESSED_REDACTION_CACHE.popitem(last=False)
+                if time.monotonic() > stop and (not finished or index < len(paths) - 1):
+                    raise _TailScanPending("Preparing retained history; the next request resumes this scan.")
+    for path, before in zip(paths, identities, strict=True):
+        after = path.lstat()
+        if ((after.st_dev, after.st_ino, after.st_size, after.st_mtime_ns) !=
+                (before.st_dev, before.st_ino, before.st_size, before.st_mtime_ns)):
+            raise _TailScanPending("Retained history changed during preparation; retrying from verified state.")
     return opened
 
 
