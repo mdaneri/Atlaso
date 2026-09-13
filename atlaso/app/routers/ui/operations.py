@@ -830,7 +830,9 @@ def build_router(dependencies: OperationsUiDependencies) -> OperationsUiRouter:
             raise HTTPException(status_code=404, detail="Task not found")
         row = _task_row(job)
         try:
-            history = log_viewer.text_page("\n".join(_task_log_lines(job, db, include_metadata=False)), source=f"task:{job.id}", cursor=cursor, tail=tail)
+            from atlaso.app.services.task_log_history import task_history_page
+
+            history = task_history_page(db, job.id, cursor=cursor, tail=tail)
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
         return JSONResponse(

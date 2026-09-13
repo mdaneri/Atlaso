@@ -64,7 +64,10 @@ Read the failed step and sanitized task log, then correlate its identifier with 
 fabricate a successful result.
 
 Task history pages exclude the changing status and progress summary, which remains in the task detail dialog.
-Updating that summary does not reset an older log page.
+Updating that summary does not reset an older log page. Result changes and audit events are captured transactionally
+as an ordered history stream. New fields and appended output do not move an existing history cursor; updated or removed
+fields add entries while earlier output stays readable. Existing retained tasks are initialized when the appliance
+starts. Cancelling or rolling back a producer transaction does not publish uncommitted log entries.
 
 ## Cancellation and execution ownership
 
