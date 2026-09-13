@@ -487,7 +487,7 @@ def build_router(dependencies: OperationsUiDependencies) -> OperationsUiRouter:
         response_headers = {"Cache-Control": "no-store", "Vary": "X-Atlaso-Task-Log"}
         if request.headers.get("X-Atlaso-Task-Log") == "1":
             if get_settings().dry_run_system_adapters:
-                return JSONResponse({"text": f"dry-run log source for {service}\nNo host journal is read in development mode.",
+                return JSONResponse({"text": "No host journal is read in development mode.",
                                      "status": "succeeded"}, headers=response_headers)
             if not source:
                 return JSONResponse({"text": "No dedicated log source is configured for this service.", "status": "succeeded"}, headers=response_headers)
