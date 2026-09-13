@@ -2197,6 +2197,9 @@ def _journal_text_rows(entry, offset=0):
         line = prefix + raw.rstrip(chr(13) + chr(10))
         if _log_wire_size(line) > 1024 * 1024 - 16384:
             line = f"{timestamp} [Oversized journal line omitted: exceeds the encoded page byte budget.]"
+            markers = list(re.finditer(r"-----(BEGIN|END) (?:(?!-----)[ -~])*?PRIVATE KEY-----", raw))
+            if markers:
+                line += " -----BEGIN PRIVATE KEY-----" if markers[-1].group(1) == "BEGIN" else " -----END PRIVATE KEY-----"
         yield start, line
 
 

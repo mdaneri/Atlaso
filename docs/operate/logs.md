@@ -39,6 +39,7 @@ at every supported page size, and becomes unavailable at the oldest retained jou
 the displayed snapshot or accepted page visible. When the initially selected source recovers from an unavailable state,
 its live viewer starts automatically.
 File, task, and journal pages include JSON escaping and response metadata in their byte limit.
+Omitted oversized journal lines retain private-key redaction state for the following lines and pages.
 File pages retain complete-line boundaries; task and multiline journal cursors retain character-safe continuation.
 Numbered file rotations, including compressed archives, are
 included and keep nginx sources available even when their current file is absent. Journal history remains subject

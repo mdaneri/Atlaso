@@ -541,6 +541,70 @@ def test_copytruncate_same_banner_resets_cursor(tmp_path, privileged):
     assert "replacement entry" in text
 
 
+@pytest.mark.parametrize("tail", [False, True])
+@pytest.mark.parametrize("limit", [1, 500])
+@pytest.mark.parametrize("oversized_marker", ["BEGIN", "END"])
+def test_omitted_journal_physical_line_preserves_private_key_state(monkeypatch, capsys, tail, limit, oversized_marker):
+    """Omitting an encoded-large line cannot expose the following key body.
+
+    Args:
+        monkeypatch: Supply one immutable journal message below the raw record cap.
+        capsys: Capture helper output for the source-page transport.
+        tail: Walk backward from the live tail instead of forward from the start.
+        limit: Force either one-row continuations or a complete message page.
+        oversized_marker: Opening or closing marker embedded in the omitted row.
+    """
+    from types import SimpleNamespace
+
+    from tests.test_appliance_helper import load_helper_module
+
+    helper = load_helper_module()
+    opening = ("\x01" * 173000 if oversized_marker == "BEGIN" else "") + "-----BEGIN PRIVATE KEY-----"
+    closing = ("\x01" * 173000 if oversized_marker == "END" else "") + "-----END PRIVATE KEY-----"
+    entry = {"MESSAGE": f"{opening}\nprivate-body\n{closing}\nvisible",
+             "__CURSOR": "omitted-line", "__REALTIME_TIMESTAMP": "1000000"}
+    assert len(json.dumps(entry).encode()) < 1024 * 1024
+
+    def entries(command, **_kwargs):
+        """Return the immutable record except for the predecessor marker query.
+
+        Args:
+            command: Helper journal command.
+            **_kwargs: Unused reader options.
+        """
+        return ([], False) if any(arg.startswith("--grep=") for arg in command) else ([entry], False)
+
+    def adapter(_self, source, position):
+        """Use the real helper formatting and signed redaction continuation.
+
+        Args:
+            _self: Adapter instance.
+            source: Allowlisted journal source.
+            position: Decoded cursor position.
+        """
+        assert helper._read_log_history([source, json.dumps(position)]) == 0
+        return SimpleNamespace(returncode=0, stdout=capsys.readouterr().out)
+
+    monkeypatch.setattr(helper, "_journal_history_entries", entries)
+    monkeypatch.setattr(log_viewer.SystemAdapter, "read_log_history", adapter)
+    page = log_viewer.source_page("nginx", tail=tail, limit=limit)
+    texts = []
+    for _ in range(5):
+        texts.append(page["text"])
+        assert "private-body" not in page["text"]
+        if tail:
+            if not page["previous_cursor"]:
+                break
+            cursor = page["previous_cursor"]
+        else:
+            if not page["has_more"]:
+                break
+            cursor = page["next_cursor"]
+        page = log_viewer.source_page("nginx", cursor=cursor, limit=limit)
+    assert "visible" in "\n".join(texts)
+    assert "[redacted private key]" in "\n".join(texts)
+
+
 def test_expanded_journal_message_pages_without_loss_and_tail_skips_history(monkeypatch, capsys):
     """One multiline record stays bounded, resumes exactly, and opens at its latest rows.
 
