@@ -6,6 +6,7 @@ from ipaddress import ip_address
 from typing import Any
 
 from atlaso.app.models import (
+    VCF_OFFLINE_DEPOT_DEFAULT_PORT,
     CaSettings,
     OidcProviderSettings,
     PhysicalInterface,
@@ -141,7 +142,7 @@ def public_services_for_address(
                 "status": "enabled",
                 "pill": "good",
                 "scheme": "https",
-                "port": int(vcf_depot_settings.port or 443),
+                "port": int(vcf_depot_settings.port if vcf_depot_settings.port is not None else VCF_OFFLINE_DEPOT_DEFAULT_PORT),
                 "allow_unauthenticated_access": bool(vcf_depot_settings.allow_unauthenticated_access),
                 "http_username": vcf_depot_settings.http_user.username if vcf_depot_settings.http_user else "",
                 "dns_names": _service_dns_names(vcf_depot_settings.hostname or VCF_DEPOT_DEFAULT_HOSTNAME),
