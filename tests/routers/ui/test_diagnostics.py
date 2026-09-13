@@ -297,8 +297,8 @@ def test_disk_admission_does_not_queue_a_job(client, monkeypatch, tmp_path):
     assert client.get(ROOT + "/data").json()["bundles"] == []
 
 
-def test_cancel_during_publication_removes_only_new_bundle(client, monkeypatch, tmp_path):
-    """A cancellation arriving after the write still prevents artifact publication.
+def test_running_collection_rejects_cancel_and_preserves_publication(client, monkeypatch, tmp_path):
+    """An unsupported running cancellation leaves collection and its publication owned.
 
     Args:
         client: Authenticated test application client fixture.
@@ -326,12 +326,13 @@ def test_cancel_during_publication_removes_only_new_bundle(client, monkeypatch, 
             content: Already sanitized archive bytes.
         """
         original(path, content)
-        assert client.post(ROOT + "/" + bundle_id + "/cancel", data={"csrf": csrf}).status_code == 200
+        assert client.post(ROOT + "/" + bundle_id + "/cancel", data={"csrf": csrf}).status_code == 409
 
     monkeypatch.setattr(diagnostics, "write_new", write_and_cancel)
     diagnostics.run(bundle_id)
-    assert client.get(ROOT + "/" + bundle_id).json()["status"] == "cancelled"
-    assert not diagnostics.artifact_path(bundle_id).exists()
+    with SessionLocal() as db:
+        assert diagnostics.find_job(db, bundle_id).status == "succeeded"
+    assert diagnostics.artifact_path(bundle_id).exists()
     with SessionLocal() as db:
         assert diagnostics.find_job(db, bundle_id).progress_percent == 100
 
@@ -493,7 +494,7 @@ def test_publication_flush_precedes_ready_state(client, monkeypatch, tmp_path, f
 
 
 @pytest.mark.parametrize("terminal_status", ["succeeded", "failed", "cancelled"])
-def test_terminal_cancellation_conflicts_without_audit(client, monkeypatch, tmp_path, terminal_status):
+def test_terminal_cancellation_is_idempotent_without_audit(client, monkeypatch, tmp_path, terminal_status):
     """A stale cancel action must not claim or audit a cancellation that did not occur.
 
     Args:
@@ -503,8 +504,8 @@ def test_terminal_cancellation_conflicts_without_audit(client, monkeypatch, tmp_
         terminal_status: Completed job state reached before the cancellation request.
     """
     from atlaso.app.database import SessionLocal
-    from atlaso.app.routers.ui import diagnostics as routes
     from atlaso.app.services import diagnostics
+    from atlaso.app.services import task_cancellation as cancellation
 
     csrf = prepare(client, monkeypatch, tmp_path)
     bundle_id = client.post(ROOT + "/create", data={"csrf": csrf}).json()["id"]
@@ -514,10 +515,9 @@ def test_terminal_cancellation_conflicts_without_audit(client, monkeypatch, tmp_
         original_result = job.result
         db.commit()
     audits = []
-    monkeypatch.setattr(routes, "record_audit", lambda *args, **kwargs: audits.append(kwargs))
+    monkeypatch.setattr(cancellation, "_audit", lambda *args, **kwargs: audits.append(kwargs))
     response = client.post(ROOT + "/" + bundle_id + "/cancel", data={"csrf": csrf})
-    assert response.status_code == 409
-    assert response.json()["detail"] == "Collection has already stopped. Refresh the bundle status."
+    assert response.status_code == 200
     assert audits == []
     with SessionLocal() as db:
         job = diagnostics.find_job(db, bundle_id)

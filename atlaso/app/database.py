@@ -77,6 +77,7 @@ def _create_database_schema(bind: Engine) -> None:
             connection.exec_driver_sql("BEGIN IMMEDIATE")
             try:
                 Base.metadata.create_all(bind=connection)
+                _reconcile_task_cancellation_columns(connection)
                 _reconcile_nat_ingress_column(connection)
                 _reconcile_interface_address_check_columns(connection)
             except Exception:
@@ -91,11 +92,13 @@ def _create_database_schema(bind: Engine) -> None:
                 {"lock_id": ATLASO_SCHEMA_LOCK_ID},
             )
             Base.metadata.create_all(bind=connection)
+            _reconcile_task_cancellation_columns(connection)
             _reconcile_nat_ingress_column(connection)
             _reconcile_interface_address_check_columns(connection)
         return
     with bind.begin() as connection:
         Base.metadata.create_all(bind=connection)
+        _reconcile_task_cancellation_columns(connection)
         _reconcile_nat_ingress_column(connection)
         _reconcile_interface_address_check_columns(connection)
 
@@ -113,6 +116,20 @@ def _reconcile_interface_address_check_columns(connection: Connection) -> None:
                 f"ALTER TABLE {table_name} ADD COLUMN "
                 "check_duplicate_ip_addresses BOOLEAN NOT NULL DEFAULT TRUE"
             ))
+
+
+def _reconcile_task_cancellation_columns(connection: Connection) -> None:
+    """Add durable request metadata under the existing serialized schema gate.
+
+    Args:
+        connection: Connection holding the appliance startup schema lock.
+    """
+    columns = {column["name"] for column in inspect(connection).get_columns("jobs")}
+    timestamp = "TIMESTAMP WITH TIME ZONE" if connection.dialect.name == "postgresql" else "DATETIME"
+    for name, data_type in (("cancel_requested_at", timestamp), ("cancel_requested_by", "VARCHAR(100)"),
+                            ("cancel_completed_at", timestamp), ("cancel_outcome", "VARCHAR(40)")):
+        if name not in columns:
+            connection.execute(text(f"ALTER TABLE jobs ADD COLUMN {name} {data_type}"))
 
 
 def _reconcile_nat_ingress_column(connection: Connection) -> None:

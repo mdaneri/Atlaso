@@ -2436,6 +2436,13 @@ class JobResponse(BaseModel):
         progress_percent: Progress percent, expressed as a percentage from 0 through 100.
         result: Returned result value for this job resource.
         error: Returned error value for this job resource.
+        can_cancel: Whether this caller can request the task's audited safe stop now.
+        cancel_reason: Explanation of current cancellation eligibility.
+        cancel_confirmation: Task-specific description of the safe stop contract.
+        cancel_requested_at: Time a cancellation request won its atomic admission check.
+        cancel_requested_by: Authenticated actor responsible for the request.
+        cancel_completed_at: Time the request's final disposition was recorded.
+        cancel_outcome: Request disposition, separate from the task execution status.
     """
 
     model_config = ConfigDict(from_attributes=True)
@@ -2450,6 +2457,13 @@ class JobResponse(BaseModel):
     progress_percent: Annotated[int, Field(description='Progress percent, expressed as a percentage from 0 through 100.')]
     result: Annotated[str | None, Field(description='Returned result value for this job resource.')]
     error: Annotated[str | None, Field(description='Returned error value for this job resource.')]
+    can_cancel: Annotated[bool, Field(description="Whether the caller can request the audited safe stop at the task's current stage.")] = False
+    cancel_reason: Annotated[str, Field(description="Why cancellation is available or unavailable for this caller and stage.")] = ""
+    cancel_confirmation: Annotated[str, Field(description="Operator confirmation describing the task's actual safe stop and retained effects.")] = ""
+    cancel_requested_at: Annotated[datetime | None, Field(description="UTC time the durable cancellation request was accepted; not proof of a stopped task.")] = None
+    cancel_requested_by: Annotated[str | None, Field(description="Authenticated actor who requested cancellation.")] = None
+    cancel_completed_at: Annotated[datetime | None, Field(description="UTC time the request received a confirmed stop or completion-won disposition.")] = None
+    cancel_outcome: Annotated[str | None, Field(description="Cancellation disposition: requested, confirmed, cleanup-required, or completion-won; execution status remains authoritative.")] = None
 
 
 class ServiceActionResponse(BaseModel):

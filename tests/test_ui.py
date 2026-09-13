@@ -780,7 +780,8 @@ def test_tasks_page_lists_redacts_logs_and_cancels(client):
     assert "rowContextMenu" in tasks_table_js
     assert 'label: "Details"' in tasks_table_js
     assert 'label: "Log"' in tasks_table_js
-    assert 'label: "Cancel task"' in tasks_table_js
+    assert 'component.getData().can_cancel ? "Cancel task"' in tasks_table_js
+    assert "Cancellation unavailable:" in tasks_table_js
     assert 'filterMode: "remote"' in tasks_table_js
     assert "ajaxRequestFunc: requestTasksTableData" in tasks_table_js
     assert 'query.set("task_type", page.dataset.taskType);' in app_js
@@ -829,7 +830,7 @@ def test_tasks_page_lists_redacts_logs_and_cancels(client):
     payload = status_response.json()
     selected = payload["selected_task"]
     assert selected["id"] == "job_taskgrid001"
-    assert selected["can_cancel"] is True
+    assert selected["can_cancel"] is False
     assert selected["result"]["api_password"] == "[redacted]"
     failed_step = selected["_children"][0]
     assert failed_step["error_messages"][0] == "LDAP validation failed without exposing bind_password=[redacted]"
@@ -906,15 +907,15 @@ def test_tasks_page_lists_redacts_logs_and_cancels(client):
 
     csrf = page.text.split('data-csrf="', 1)[1].split('"', 1)[0]
     cancel_response = client.post("/tasks/job_taskgrid001/cancel", data={"csrf": csrf})
-    assert cancel_response.status_code == 200
-    assert cancel_response.json()["task"]["status"] == "cancelled"
+    assert cancel_response.status_code == 409
+    assert cancel_response.json()["detail"] == selected["cancel_reason"]
 
     status_response = client.get("/tasks/status?job_id=job_taskgrid001")
     assert status_response.json()["selected_task"]["can_cancel"] is False
 
 
-def test_service_admin_task_cancellation_is_limited_to_vcf_helpers(client):
-    """Verify that service admin task cancellation is limited to vcf helpers.
+def test_service_admin_cannot_cancel_unowned_remote_work(client):
+    """Service admins cannot stop remote work by cancelling its local watcher.
 
     Args:
         client: HTTP test client used to exercise the Atlaso application.
@@ -956,11 +957,12 @@ def test_service_admin_task_cancellation_is_limited_to_vcf_helpers(client):
 
     denied = client.post("/tasks/job_admin_only_cancel/cancel", data={"csrf": csrf})
     assert denied.status_code == 403
-    assert "Administrator role required for this task type" in denied.text
+    assert "Administrator permission is required for this task type" in denied.text
 
-    allowed = client.post("/tasks/job_vcf_helper_cancel/cancel", data={"csrf": csrf})
-    assert allowed.status_code == 200
-    assert allowed.json()["task"]["status"] == "cancelled"
+    denied_remote = client.post("/tasks/job_vcf_helper_cancel/cancel", data={"csrf": csrf})
+    assert denied_remote.status_code == 403
+    with SessionLocal() as db:
+        assert db.get(Job, "job_vcf_helper_cancel").status == "running"
 
 
 def test_running_appliance_update_rejects_operator_cancellation(client):
@@ -994,66 +996,10 @@ def test_running_appliance_update_rejects_operator_cancellation(client):
 
     assert status_response.json()["task"]["can_cancel"] is False
     assert cancel_response.status_code == 409
-    assert "running Appliance Update cannot be cancelled" in cancel_response.json()["detail"]
+    assert cancel_response.json()["detail"] == status_response.json()["task"]["cancel_reason"]
     with SessionLocal() as db:
         assert db.get(Job, job_id).status == JobStatus.RUNNING.value
 
-
-def test_pending_appliance_update_cancellation_losing_claim_race_fails_closed(
-    client,
-    monkeypatch,
-):
-    """Reject a stale pending cancellation after the worker atomically claims it.
-
-    Args:
-        client: Test client providing an authenticated management session.
-        monkeypatch: Pytest fixture used to inject the concurrent claim boundary.
-    """
-    from sqlalchemy import update
-
-    from atlaso.app.database import SessionLocal
-    from atlaso.app.models import Job, JobStatus
-    from atlaso.app.routers.ui import operations
-
-    job_id = "job_update_cancel_race"
-    with SessionLocal() as db:
-        db.add(
-            Job(
-                id=job_id,
-                type="appliance-update",
-                status=JobStatus.PENDING.value,
-                created_by="admin",
-            )
-        )
-        db.commit()
-
-    def lose_claim_race(db, observed_job_id, **_kwargs):
-        """Commit the worker claim after the endpoint cached pending state.
-
-        Args:
-            db: Endpoint database session.
-            observed_job_id: Exact task identifier supplied to cancellation.
-            **_kwargs: Durable cancellation values that must not be applied.
-        """
-        db.execute(
-            update(Job)
-            .where(Job.id == observed_job_id, Job.status == JobStatus.PENDING.value)
-            .values(status=JobStatus.RUNNING.value)
-        )
-        db.commit()
-        return False
-
-    monkeypatch.setattr(operations, "cancel_pending_appliance_update", lose_claim_race)
-    login(client)
-    page = client.get("/tasks")
-    csrf = page.text.split('data-csrf="', 1)[1].split('"', 1)[0]
-
-    response = client.post(f"/tasks/{job_id}/cancel", data={"csrf": csrf})
-
-    assert response.status_code == 409
-    assert "running Appliance Update cannot be cancelled" in response.json()["detail"]
-    with SessionLocal() as db:
-        assert db.get(Job, job_id).status == JobStatus.RUNNING.value
 
 
 def test_pwa_manifest_service_worker_and_offline_shell(client):
@@ -1088,7 +1034,7 @@ def test_pwa_manifest_service_worker_and_offline_shell(client):
     assert "ATLASO_CACHE" in service_worker.text
     assert "atlaso-management-pwa-v" in service_worker.text
     assert "ATLASO_CACHE_PREFIX" in service_worker.text
-    assert 'const ATLASO_CACHE = `${ATLASO_CACHE_PREFIX}330`;' in service_worker.text
+    assert 'const ATLASO_CACHE = `${ATLASO_CACHE_PREFIX}332`;' in service_worker.text
     assert 'fetch(asset, { cache: "reload" })' in service_worker.text
     assert "Required precache request failed" in service_worker.text
     assert "key.startsWith(ATLASO_CACHE_PREFIX)" in service_worker.text
@@ -1108,7 +1054,7 @@ def test_pwa_manifest_service_worker_and_offline_shell(client):
     assert "/static/ui-patterns.js?v=atlaso-ui-foundation-20260726-10" in service_worker.text
     assert "/static/appliance-apply-polling.js?v=issue-420-6" in service_worker.text
     assert "/static/ui-routes.js?v=issue-287-1" in service_worker.text
-    assert "/static/app.js?v=issue-818-4" in service_worker.text
+    assert "/static/app.js?v=issue-818-5" in service_worker.text
     assert "/static/terminal.js?v=issue-287-2" in service_worker.text
     assert "/static/pwa.js?v=issue-287-2" in service_worker.text
     assert "vcfdt-configuration-248-20260807-14" not in service_worker.text
@@ -1162,8 +1108,8 @@ def test_shared_ui_pattern_shell_and_wizard_contracts(client):
     base = (templates / "base.html").read_text(encoding="utf-8")
     public_base = (templates / "public_portal_base.html").read_text(encoding="utf-8")
     for shell, app_asset in (
-        (base, "/static/app.js?v=issue-818-4"),
-        (public_base, "/static/app.js?v=issues-515-519-12-513-328-1-595-6-605-1-606-607-1-660-4-662-663-3-682-1"),
+        (base, "/static/app.js?v=issue-818-5"),
+        (public_base, "/static/app.js?v=issue-818-5"),
         (base, "/static/appliance-apply-polling.js?v=issue-420-6"),
     ):
         assert shell.index("/static/vendor/tabulator/tabulator.min.js") < shell.index(
@@ -1831,7 +1777,7 @@ def test_monitor_page_renders_template_and_browser_assets(client):
     assert "swagger-link-icon" in page.text
     assert "/static/app.css?v=issue-818-1" in page.text
     assert "/static/ui-patterns.js?v=atlaso-ui-foundation-20260726-10" in page.text
-    assert "/static/app.js?v=issue-818-4" in page.text
+    assert "/static/app.js?v=issue-818-5" in page.text
     app_css = client.get("/static/app.css")
     assert app_css.status_code == 200
     assert ".split-workspace > .wide-panel" in app_css.text
@@ -14979,7 +14925,7 @@ def test_queued_vcf_depot_software_id_task_rejects_cancellation(client, monkeypa
     response = client.post(f"/tasks/{queued['id']}/cancel", data={"csrf": csrf})
 
     assert response.status_code == 409
-    assert "cannot be cancelled" in response.json()["detail"]
+    assert "identity replacement must finish" in response.json()["detail"]
     service_guide = Path("docs/services/vcf-offline-depot.md").read_text(encoding="utf-8")
     agent_policy = Path("docs/contribute/agent-policies.md").read_text(encoding="utf-8")
     assert "Software Depot ID tasks are non-cancellable" in service_guide
@@ -15026,7 +14972,7 @@ def test_running_vcf_depot_software_id_task_rejects_cancellation(client, monkeyp
     assert status_response.status_code == 200
     assert status_response.json()["task"]["can_cancel"] is False
     assert cancel_response.status_code == 409
-    assert "cannot be cancelled" in cancel_response.json()["detail"]
+    assert cancel_response.json()["detail"] == status_response.json()["task"]["cancel_reason"]
     with SessionLocal() as db:
         assert db.get(Job, queued["id"]).status == JobStatus.RUNNING.value
 
@@ -15069,7 +15015,7 @@ def test_running_vcf_depot_download_rejects_cancellation(client):
     assert status_response.status_code == 200
     assert status_response.json()["task"]["can_cancel"] is False
     assert cancel_response.status_code == 409
-    assert "cannot be cancelled" in cancel_response.json()["detail"]
+    assert cancel_response.json()["detail"] == status_response.json()["task"]["cancel_reason"]
     with SessionLocal() as db:
         assert db.get(Job, job_id).status == JobStatus.RUNNING.value
 

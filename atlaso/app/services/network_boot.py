@@ -3403,6 +3403,8 @@ class BoundedHttpsDownloader:
         digest = hashlib.sha256()
         response = None
         for attempt in range(1, self.open_attempts + 1):
+            if cancelled and cancelled():
+                raise NetworkBootMediaSyncCancelled("Network Boot media task was cancelled before a transfer retry.")
             request = urllib.request.Request(
                 url,
                 headers={"User-Agent": "Atlaso-Network-Boot/1"},
@@ -4616,20 +4618,45 @@ def recover_interrupted_network_boot_media_swaps(
     db: Session,
     *,
     media_root: Path = NETWORK_BOOT_MEDIA_ROOT,
+    require_complete: bool = False,
 ) -> int:
     """Return recover interrupted network boot media swaps.
 
     Args:
         db: Active database session.
         media_root: Media root supplied by the caller.
+        require_complete: Require absence of unresolved recovery evidence before confirming cancellation.
     """
-    if media_root.is_symlink() or not media_root.is_dir():
+    try:
+        metadata = media_root.lstat()
+    except FileNotFoundError:
+        return 0
+    if not stat.S_ISDIR(metadata.st_mode) or media_root.is_symlink():
+        if require_complete:
+            raise ValueError("Media recovery root cannot be verified.")
         return 0
     with _MediaSwapRecoveryLock(media_root):
-        return _recover_interrupted_network_boot_media_swaps(
+        recovered = _recover_interrupted_network_boot_media_swaps(
             db,
             media_root=media_root,
         )
+
+        if require_complete:
+            for entry in ENVIRONMENT_CATALOG:
+                environment_root = media_root / entry.key
+                try:
+                    metadata = environment_root.lstat()
+                except FileNotFoundError:
+                    continue
+                if not stat.S_ISDIR(metadata.st_mode) or environment_root.is_symlink():
+                    raise ValueError("Media recovery environment cannot be verified.")
+                for index, candidate in enumerate(environment_root.iterdir()):
+                    if index >= 4096:
+                        raise ValueError("Media recovery inventory exceeded its bound.")
+                    if (candidate.name.startswith((".atlaso-media-sync-", f".atlaso-{entry.key}-"))
+                            or ".replacement-" in candidate.name):
+                        raise ValueError("Unresolved media recovery evidence remains.")
+        return recovered
 
 
 def _recover_interrupted_network_boot_media_swaps(
