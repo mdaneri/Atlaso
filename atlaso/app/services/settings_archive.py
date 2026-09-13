@@ -226,6 +226,7 @@ from atlaso.app.services.vsphere_key_providers import (
 
 ARCHIVE_SCHEMA_VERSION = 2
 ARCHIVE_KIND = "atlaso-settings-archive"
+VCF_OFFLINE_DEPOT_ARCHIVE_DEFAULT_PORT = 443
 SAFE_SETTING_KEYS = {
     DNS_CONDITIONAL_FORWARDERS_SETTING_KEY,
     ESXI_PXE_CUSTOM_VARIABLES_KEY,
@@ -4174,7 +4175,9 @@ def _validate_archive_database_relationships(db: Session, data: dict[str, list[d
             f"The settings archive VCF Private Registry state is invalid: {registry_errors[0]}"
         )
 
-    depot_row = data["vcf_offline_depot_settings"][0]
+    depot_row = dict(data["vcf_offline_depot_settings"][0])
+    if "port" not in depot_row:
+        depot_row["port"] = VCF_OFFLINE_DEPOT_ARCHIVE_DEFAULT_PORT
     depot_username = str(depot_row.get("http_username") or "")
     depot_errors, _depot_warnings = validate_vcf_depot_state(
         VcfOfflineDepotSettings(
@@ -5008,6 +5011,8 @@ def _restore_vcf_offline_depot_settings(db: Session, rows: list[dict[str, Any]])
     users = {user.username: user.id for user in db.execute(select(User)).scalars().all()}
     for row in rows:
         payload = _model_kwargs(VcfOfflineDepotSettings, row, exclude={"http_user_id"})
+        if "port" not in payload:
+            payload["port"] = VCF_OFFLINE_DEPOT_ARCHIVE_DEFAULT_PORT
         username = str(row.get("http_username") or "")
         payload["http_user_id"] = users.get(username) if username else None
         db.add(VcfOfflineDepotSettings(**payload))

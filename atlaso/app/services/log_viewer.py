@@ -227,7 +227,60 @@ _TAIL_REDACTION_CACHE: OrderedDict[tuple[str, int, int], tuple[bool, bytes, byte
 _TAIL_REDACTION_LOCK = RLock()
 
 
+def _scan_pem_markers(chunk: bytes, carry: bytes = b"") -> tuple[bool | None, bytes]:
+    """Track arbitrarily long PEM labels with only fixed-token parser state.
+
+    Args:
+        chunk: Next contiguous source fragment.
+        carry: Prior parser mode and partial fixed token, never arbitrary label bytes.
+    """
+    starts = (b"-----BEGIN ", b"-----END ")
+    endings = (b"PRIVATE KEY-----", b"-----")
+    start_parts = sorted({token[:size] for token in starts for size in range(1, len(token))}, key=len, reverse=True)
+    end_parts = sorted({token[:size] for token in endings for size in range(1, len(token))}, key=len, reverse=True)
+    mode = carry[:1] or b"S"
+    suffix = carry[1:]
+    allowed = start_parts if mode == b"S" else end_parts
+    if mode not in (b"S", b"B", b"E") or (suffix and suffix not in allowed):
+        raise ValueError("Invalid private-key parser state.")
+    data = suffix + chunk
+    position = 0
+    last = None
+    start_pattern = re.compile(rb"-----(BEGIN|END) ")
+    boundary_pattern = re.compile(rb"-----|[^ -~]")
+    while True:
+        if mode == b"S":
+            match = start_pattern.search(data, position)
+            if match is None:
+                suffix = next((part for part in start_parts if data.endswith(part, position)), b"")
+                return last, b"S" + suffix
+            position = match.end()
+            mode = b"B" if match.group(1) == b"BEGIN" else b"E"
+        boundary = boundary_pattern.search(data, position)
+        if boundary is None:
+            suffix = next((part for part in end_parts if data.endswith(part, position)), b"")
+            return last, mode + suffix
+        start = boundary.start()
+        if boundary.group() == b"-----" and data.endswith(b"PRIVATE KEY", position, start):
+            last = mode == b"B"
+            position = boundary.end()
+        else:
+            position = start if boundary.group() == b"-----" else boundary.end()
+        mode = b"S"
+
+
 def _tail_private_key(paths: list[Path], offset: int, *, deadline: float) -> bool:
+    """Return completed private-key state at a retained byte boundary.
+
+    Args:
+        paths: Ordered retained source files.
+        offset: Uncompressed boundary in the last source.
+        deadline: Shared request deadline.
+    """
+    return _tail_marker_state(paths, offset, deadline=deadline)[0]
+
+
+def _tail_marker_state(paths: list[Path], offset: int, *, deadline: float) -> tuple[bool, bytes]:
     """Recover redaction state using bounded, verified in-process checkpoints.
 
     Args:
@@ -304,13 +357,17 @@ def _tail_private_key(paths: list[Path], offset: int, *, deadline: float) -> boo
                     if not chunk:
                         break
                     prefix_digest.update(chunk)
-                    window = carry + chunk
-                    for match in re.finditer(rb"-----(BEGIN|END) (?:(?!-----)[ -~])*?PRIVATE KEY-----", window):
-                        opened = match.group(1) == b"BEGIN"
-                    carry = window[-128:]
+                    marker_state, carry = _scan_pem_markers(chunk, carry)
+                    if marker_state is not None:
+                        opened = marker_state
                     scanned = stream.tell()
                     # Only source fingerprints and bounded state remain in process memory.
-                    anchor = chunk[-128:] if len(chunk) >= 128 else window[-min(scanned, 128):]
+                    if len(chunk) >= 128:
+                        anchor = chunk[-128:]
+                    else:
+                        stream.seek(max(0, scanned - 128))
+                        anchor = stream.read(min(scanned, 128))
+                        stream.seek(scanned)
                     key = (context, index, scanned)
                     with _TAIL_REDACTION_LOCK:
                         _TAIL_REDACTION_CACHE[key] = (opened, carry, hashlib.sha256(prefix[:min(scanned, 4096)] + anchor).digest(),
@@ -325,13 +382,13 @@ def _tail_private_key(paths: list[Path], offset: int, *, deadline: float) -> boo
         if ((after.st_dev, after.st_ino, after.st_size, after.st_mtime_ns) !=
                 (before.st_dev, before.st_ino, before.st_size, before.st_mtime_ns)):
             raise _TailScanPending("Retained history changed during preparation; retrying from verified state.")
-    return opened
+    return opened, carry
 
 
 _COMPRESSED_REDACTION_CACHE: OrderedDict[tuple[str, int, int], tuple[bool, bytes, Any, int, bytes, bool, Any, int, int]] = OrderedDict()
 
 
-def _compressed_tail_private_key(paths: list[Path], offset: int, *, deadline: float) -> bool:
+def _compressed_tail_private_key(paths: list[Path], offset: int, *, deadline: float) -> tuple[bool, bytes]:
     """Resume bounded decompression using immutable source-version checkpoints.
 
     Args:
@@ -432,10 +489,9 @@ def _compressed_tail_private_key(paths: list[Path], offset: int, *, deadline: fl
                     finished = not chunk
                 expanded += len(chunk)
                 prefix_digest.update(chunk)
-                window = carry + chunk
-                for marker in re.finditer(rb"-----(BEGIN|END) (?:(?!-----)[ -~])*?PRIVATE KEY-----", window):
-                    opened = marker.group(1) == b"BEGIN"
-                carry = window[-128:]
+                marker_state, carry = _scan_pem_markers(chunk, carry)
+                if marker_state is not None:
+                    opened = marker_state
                 key = (contexts[index], index, expanded)
                 with _TAIL_REDACTION_LOCK:
                     _COMPRESSED_REDACTION_CACHE[key] = (opened, carry, decoder.copy() if decoder is not None else None,
@@ -451,7 +507,7 @@ def _compressed_tail_private_key(paths: list[Path], offset: int, *, deadline: fl
         if ((after.st_dev, after.st_ino, after.st_size, after.st_mtime_ns) !=
                 (before.st_dev, before.st_ino, before.st_size, before.st_mtime_ns)):
             raise _TailScanPending("Retained history changed during preparation; retrying from verified state.")
-    return opened
+    return opened, carry
 
 
 def _history_window(handle: Any, offset: int, *, compressed: bool, deadline: float) -> bytes:
@@ -546,12 +602,12 @@ def file_page(path: Path, *, source: str, cursor: str = "", limit: int = PAGE_LI
             if (tail and not cursor) or backward:
                 offset, oversized = _tail_offset(handle, compressed=compressed, deadline=deadline, end=before_end, limit=max(1, min(PAGE_LINES, limit)))
                 try:
-                    private_key = _tail_private_key(paths[:index + 1], offset, deadline=deadline)
+                    private_key, pem_state = _tail_marker_state(paths[:index + 1], offset, deadline=deadline)
                 except _TailScanPending:
                     return {"source": source, "text": "", "available": True, "has_more": False,
                             "cursor": cursor, "next_cursor": cursor, "pending": True,
                             "notice": "Preparing retained history; this continues automatically."}
-                position = {"oversized": oversized, "private_key": private_key}
+                position = {"oversized": oversized, "private_key": private_key, "pem_state": pem_state.decode("ascii")}
             if type(offset) is not int or offset < 0:
                 raise ValueError("Invalid log history position.")
             prefix_length = position.get("prefix_length", 0)
@@ -579,10 +635,13 @@ def file_page(path: Path, *, source: str, cursor: str = "", limit: int = PAGE_LI
                 remaining -= len(skipped)
             private_key = position.get("private_key") is True
             current = encode_cursor(source, generation=generation, offset=offset, private_key=private_key,
-                                    oversized=position.get("oversized") is True,
+                                    oversized=position.get("oversized") is True, pem_state=position.get("pem_state", ""),
                                     prefix_length=prefix_length if position else 0,
                                     prefix=position.get("prefix", ""), page_end=page_end, **anchor)
-            marker_prefix = _history_window(handle, offset, compressed=compressed, deadline=deadline)[-128:]
+            parser_state = position.get("pem_state", "") if not reset else ""
+            if not isinstance(parser_state, str) or len(parser_state) > 16 or not parser_state.isascii():
+                raise ValueError("Invalid private-key parser state.")
+            _, marker_prefix = _scan_pem_markers(b"", parser_state.encode("ascii"))
             lines: list[str] = []
             if (tail and not cursor) or backward:
                 if position.get("oversized") is True:
@@ -598,11 +657,9 @@ def file_page(path: Path, *, source: str, cursor: str = "", limit: int = PAGE_LI
                 if oversized or len(line) > LINE_BYTES:
                     if not oversized:
                         lines.append("[Oversized log entry omitted: exceeds 64 KiB; continuing with the next complete entry.]")
-                    window = marker_prefix + line
-                    markers = list(re.finditer(rb"-----(BEGIN|END) (?:(?!-----)[ -~])*?PRIVATE KEY-----", window))
-                    if markers:
-                        lines.append(markers[-1].group().decode("ascii"))
-                    marker_prefix = window[-128:]
+                    marker_state, marker_prefix = _scan_pem_markers(line, marker_prefix)
+                    if marker_state is not None:
+                        lines.append("-----BEGIN PRIVATE KEY-----" if marker_state else "-----END PRIVATE KEY-----")
                     oversized = not line.endswith(b"\n")
                     continue
                 if not line.endswith(b"\n") and not (complete or selected != path):
@@ -622,6 +679,7 @@ def file_page(path: Path, *, source: str, cursor: str = "", limit: int = PAGE_LI
             handle.seek(0)
             prefix = handle.read(min(next_offset, 4096))
             next_position = {"generation": generation, "offset": next_offset, "oversized": oversized,
+                             "pem_state": marker_prefix.decode("ascii"),
                              "prefix_length": len(prefix), "prefix": hashlib.sha256(prefix).hexdigest(),
                              **_history_anchor(handle, next_offset, compressed=compressed, deadline=deadline)}
     if not more and index + 1 < len(paths):

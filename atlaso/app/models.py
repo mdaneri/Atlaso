@@ -22,6 +22,8 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from atlaso.app.database import Base
 
+VCF_OFFLINE_DEPOT_DEFAULT_PORT = 8443
+
 
 def utcnow() -> datetime:
     """Return the current timezone-aware UTC time."""
@@ -2135,7 +2137,7 @@ class VcfOfflineDepotSettings(Base):
     hostname: Mapped[str] = mapped_column(String(180), default="depot.atlaso.internal")
     listen_interface: Mapped[str] = mapped_column(String(240), default="")
     listen_address: Mapped[str] = mapped_column(String(240), default="")
-    port: Mapped[int] = mapped_column(Integer, default=443)
+    port: Mapped[int] = mapped_column(Integer, default=VCF_OFFLINE_DEPOT_DEFAULT_PORT)
     http_user_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
     allow_unauthenticated_access: Mapped[bool] = mapped_column(Boolean, default=False)
     server_certificate: Mapped[str] = mapped_column(String(180), default="depot.atlaso.internal")

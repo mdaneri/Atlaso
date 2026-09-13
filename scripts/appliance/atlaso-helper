@@ -1757,7 +1757,60 @@ def _tail_offset(handle, *, compressed: bool, deadline: float, end: int | None =
     return offset + selected_start, False
 
 
+def _scan_pem_markers(chunk: bytes, carry: bytes = b"") -> tuple[bool | None, bytes]:
+    """Track arbitrarily long PEM labels with only fixed-token parser state.
+
+    Args:
+        chunk: Next contiguous source fragment.
+        carry: Prior parser mode and partial fixed token, never arbitrary label bytes.
+    """
+    starts = (b"-----BEGIN ", b"-----END ")
+    endings = (b"PRIVATE KEY-----", b"-----")
+    start_parts = sorted({token[:size] for token in starts for size in range(1, len(token))}, key=len, reverse=True)
+    end_parts = sorted({token[:size] for token in endings for size in range(1, len(token))}, key=len, reverse=True)
+    mode = carry[:1] or b"S"
+    suffix = carry[1:]
+    allowed = start_parts if mode == b"S" else end_parts
+    if mode not in (b"S", b"B", b"E") or (suffix and suffix not in allowed):
+        raise ValueError("Invalid private-key parser state.")
+    data = suffix + chunk
+    position = 0
+    last = None
+    start_pattern = re.compile(rb"-----(BEGIN|END) ")
+    boundary_pattern = re.compile(rb"-----|[^ -~]")
+    while True:
+        if mode == b"S":
+            match = start_pattern.search(data, position)
+            if match is None:
+                suffix = next((part for part in start_parts if data.endswith(part, position)), b"")
+                return last, b"S" + suffix
+            position = match.end()
+            mode = b"B" if match.group(1) == b"BEGIN" else b"E"
+        boundary = boundary_pattern.search(data, position)
+        if boundary is None:
+            suffix = next((part for part in end_parts if data.endswith(part, position)), b"")
+            return last, mode + suffix
+        start = boundary.start()
+        if boundary.group() == b"-----" and data.endswith(b"PRIVATE KEY", position, start):
+            last = mode == b"B"
+            position = boundary.end()
+        else:
+            position = start if boundary.group() == b"-----" else boundary.end()
+        mode = b"S"
+
+
 def _tail_private_key(paths: list[Path], offset: int, *, deadline: float) -> bool:
+    """Return completed private-key state at a retained byte boundary.
+
+    Args:
+        paths: Ordered retained source files.
+        offset: Uncompressed boundary in the last source.
+        deadline: Shared request deadline.
+    """
+    return _tail_marker_state(paths, offset, deadline=deadline)[0]
+
+
+def _tail_marker_state(paths: list[Path], offset: int, *, deadline: float) -> tuple[bool, bytes]:
     """Recover redaction state before a tail boundary without retaining source contents.
 
     Args:
@@ -1786,11 +1839,10 @@ def _tail_private_key(paths: list[Path], offset: int, *, deadline: float) -> boo
                         break
                     if remaining is not None:
                         remaining -= len(chunk)
-                    window = carry + chunk
-                    for match in re.finditer(rb"-----(BEGIN|END) (?:(?!-----)[ -~])*?PRIVATE KEY-----", window):
-                        opened = match.group(1) == b"BEGIN"
-                    carry = window[-128:]
-    return opened
+                    marker_state, carry = _scan_pem_markers(chunk, carry)
+                    if marker_state is not None:
+                        opened = marker_state
+    return opened, carry
 
 
 def _history_window(handle, offset: int, *, compressed: bool, deadline: float) -> bytes:
@@ -1886,8 +1938,8 @@ def _read_fixed_log_history(path: Path, position: dict) -> dict:
             initial_private_key = position.get("private_key") is True
             if opening_tail:
                 offset, oversized = _tail_offset(handle, compressed=candidate.suffix == ".gz", deadline=deadline, end=before_end, limit=limit)
-                initial_private_key = _tail_private_key(paths[:selected + 1], offset, deadline=deadline)
-                position = {"oversized": oversized}
+                initial_private_key, pem_state = _tail_marker_state(paths[:selected + 1], offset, deadline=deadline)
+                position = {"oversized": oversized, "pem_state": pem_state.decode("ascii")}
             prefix_length = position.get("prefix_length", 0)
             if type(prefix_length) is not int or not 0 <= prefix_length <= 4096:
                 raise ValueError("invalid prefix length")
@@ -1904,6 +1956,7 @@ def _read_fixed_log_history(path: Path, position: dict) -> dict:
             anchor = _history_anchor(handle, offset, compressed=candidate.suffix == ".gz", deadline=deadline)
             current_position = {"generation": generation, "offset": offset,
                                 "oversized": not reset and position.get("oversized") is True,
+                                "pem_state": "" if reset else position.get("pem_state", ""),
                                 "prefix_length": 0 if reset else prefix_length,
                                 "prefix": "" if reset else position.get("prefix", ""), "page_end": page_end, **anchor}
             if candidate.suffix == ".gz":
@@ -1918,7 +1971,10 @@ def _read_fixed_log_history(path: Path, position: dict) -> dict:
                     remaining -= len(skipped)
             else:
                 handle.seek(offset)
-            marker_prefix = _history_window(handle, offset, compressed=candidate.suffix == ".gz", deadline=deadline)[-128:]
+            parser_state = position.get("pem_state", "") if not reset else ""
+            if not isinstance(parser_state, str) or len(parser_state) > 16 or not parser_state.isascii():
+                raise ValueError("Invalid private-key parser state.")
+            _, marker_prefix = _scan_pem_markers(b"", parser_state.encode("ascii"))
             lines = []
             consumed = wire_bytes = 0
             if opening_tail:
@@ -1935,11 +1991,9 @@ def _read_fixed_log_history(path: Path, position: dict) -> dict:
                     consumed += len(line)
                     if not oversized:
                         lines.append("[Oversized log entry omitted: exceeds 64 KiB; continuing with the next complete entry.]")
-                    window = marker_prefix + line
-                    markers = list(re.finditer(rb"-----(BEGIN|END) (?:(?!-----)[ -~])*?PRIVATE KEY-----", window))
-                    if markers:
-                        lines.append(markers[-1].group().decode("ascii"))
-                    marker_prefix = window[-128:]
+                    marker_state, marker_prefix = _scan_pem_markers(line, marker_prefix)
+                    if marker_state is not None:
+                        lines.append("-----BEGIN PRIVATE KEY-----" if marker_state else "-----END PRIVATE KEY-----")
                     oversized = not line.endswith(b"\n")
                     continue
                 if not line.endswith(b"\n") and candidate == path:
@@ -1960,6 +2014,7 @@ def _read_fixed_log_history(path: Path, position: dict) -> dict:
             handle.seek(0)
             prefix = handle.read(min(next_offset, 4096))
             next_position = {"generation": generation, "offset": next_offset, "oversized": oversized,
+                             "pem_state": marker_prefix.decode("ascii"),
                              "prefix_length": len(prefix), "prefix": hashlib.sha256(prefix).hexdigest(),
                              **_history_anchor(handle, next_offset, compressed=candidate.suffix == ".gz", deadline=deadline)}
         finally:
@@ -1986,6 +2041,7 @@ def _oversized_journal_entry(first, stream):
     metadata = {}
     carry = b""
     marker_state = None
+    pem_state = b""
     raw = first
     while raw:
         window = carry + raw
@@ -1993,8 +2049,9 @@ def _oversized_journal_entry(first, stream):
             match = re.search(rb'"' + field.encode() + rb'"\s*:\s*("(?:[^"\\]|\\.)*")', window)
             if match:
                 metadata[field] = json.loads(match.group(1))
-        for match in re.finditer(rb"-----(BEGIN|END) (?:(?!-----)[ -~])*?PRIVATE KEY-----", window):
-            marker_state = match.group(1) == b"BEGIN"
+        found, pem_state = _scan_pem_markers(raw, pem_state)
+        if found is not None:
+            marker_state = found
         if raw.endswith(b"\n"):
             break
         carry = window[-4096:]
@@ -12559,6 +12616,301 @@ def _listen_address_and_port(value: str) -> tuple[str, int]:
     return host, port
 
 
+def _vcf_depot_listener_overlap(candidate: tuple[str, int], occupied: tuple[str, int]) -> bool:
+    """Identify TCP address overlap, conservatively treating IPv6 wildcard as dual-stack.
+
+    Args:
+        candidate: Desired nginx address and port.
+        occupied: Observed listener address and port.
+    """
+    if candidate[1] != occupied[1]:
+        return False
+    desired = ip_address(candidate[0].split("%", 1)[0])
+    current = ip_address(occupied[0].split("%", 1)[0])
+    desired = getattr(desired, "ipv4_mapped", None) or desired
+    current = getattr(current, "ipv4_mapped", None) or current
+    if current.version == 6 and current.is_unspecified:
+        return True
+    if desired.version != current.version:
+        return False
+    return desired.is_unspecified or current.is_unspecified or desired == current
+
+
+def _vcf_depot_listener_is_nginx(pid: int, nginx_path: Path) -> bool:
+    """Require the listener process to be nginx inside the nginx systemd service.
+
+    Args:
+        pid: Listener owner reported by the kernel socket inventory.
+        nginx_path: Verified local nginx executable.
+    """
+    if pid <= 0:
+        return False
+    process = Path("/proc") / str(pid)
+    try:
+        if (process / "exe").resolve(strict=True) != nginx_path.resolve(strict=True):
+            return False
+        cgroups = (process / "cgroup").read_text(encoding="utf-8")
+    except OSError:
+        return False
+    return any(
+        line.split(":", 2)[-1].rstrip("/").endswith("/nginx.service")
+        for line in cgroups.splitlines()
+    )
+
+
+def _vcf_depot_listener_admission(text: str) -> str:
+    """Reject overlapping TCP listeners unless every observed owner is service nginx.
+
+    Args:
+        text: Validated candidate depot nginx configuration.
+    """
+    candidates = [_listen_address_and_port(value) for value in _nginx_directive(text, "listen")]
+    nginx = _nginx_binary()
+    if not nginx:
+        return "Cannot verify depot listener ownership: nginx is unavailable."
+    for family, wildcard in (("-4", "0.0.0.0"), ("-6", "::")):
+        try:
+            inventory = _run(["ss", "-H", "-lntp", family], timeout=5)
+        except (OSError, subprocess.TimeoutExpired):
+            return "Cannot verify depot listener ownership: TCP inventory is unavailable."
+        if inventory.returncode != 0:
+            return "Cannot verify depot listener ownership: TCP inventory failed."
+        for line in inventory.stdout.splitlines():
+            fields = line.split()
+            if len(fields) < 5 or fields[0] != "LISTEN":
+                return "Cannot verify depot listener ownership: unexpected TCP inventory."
+            try:
+                host, port = fields[3].rsplit(":", 1)
+                host = host.strip("[]")
+                occupied = (wildcard if host == "*" else host, int(port))
+                overlaps = any(_vcf_depot_listener_overlap(candidate, occupied) for candidate in candidates)
+            except ValueError:
+                return "Cannot verify depot listener ownership: invalid TCP endpoint."
+            if not overlaps:
+                continue
+            owners = {int(value) for value in re.findall(r"\bpid=(\d+)", line)}
+            if not owners or not all(_vcf_depot_listener_is_nginx(pid, Path(nginx)) for pid in owners):
+                return (
+                    f"VCF Offline Depot TCP port {occupied[1]} overlaps a listener outside nginx.service "
+                    "or with unverifiable ownership. Choose another port or address; no listener was stopped."
+                )
+    return ""
+
+
+def _vcf_depot_endpoint_ready(text: str) -> bool:
+    """Verify each configured listener serves the expected TLS identity and static depot redirect.
+
+    Args:
+        text: Validated candidate depot nginx configuration.
+    """
+    try:
+        hostname = _nginx_directive(text, "server_name")[0].split()[0]
+        certificate = _nginx_directive(text, "ssl_certificate")[0]
+        context = ssl.create_default_context(cafile=certificate)
+        context.minimum_version = ssl.TLSVersion.TLSv1_2
+        # Trust the exact installed leaf as an anchor, including private CA leaves,
+        # while retaining certificate validity and hostname verification.
+        context.verify_flags |= ssl.VERIFY_X509_PARTIAL_CHAIN
+        listeners = {_listen_address_and_port(value) for value in _nginx_directive(text, "listen")}
+        deadline = time.monotonic() + 30
+        for address, port in sorted(listeners):
+            destination = "127.0.0.1" if address == "0.0.0.0" else "::1" if address == "::" else address
+            ready = False
+            for _attempt in range(3):
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    return False
+                try:
+                    with socket.create_connection((destination, port), timeout=min(5, remaining)) as connection:
+                        remaining = deadline - time.monotonic()
+                        if remaining <= 0:
+                            return False
+                        connection.settimeout(min(5, remaining))
+                        with context.wrap_socket(connection, server_hostname=hostname.strip("[]")) as secured:
+                            remaining = deadline - time.monotonic()
+                            if remaining <= 0:
+                                return False
+                            secured.settimeout(min(5, remaining))
+                            host = f"[{hostname.strip('[]')}]" if ":" in hostname else hostname
+                            # This nginx-owned redirect uses the submitted configuration;
+                            # application login authorization reads mutable desired settings.
+                            secured.sendall(
+                                f"GET /PROD HTTP/1.1\r\nHost: {host}:{port}\r\nConnection: close\r\n\r\n".encode("ascii")
+                            )
+                            status_line = bytearray()
+                            while len(status_line) < 256 and not status_line.endswith(b"\n"):
+                                remaining = deadline - time.monotonic()
+                                if remaining <= 0:
+                                    return False
+                                secured.settimeout(min(5, remaining))
+                                chunk = secured.recv(1)
+                                if not chunk:
+                                    break
+                                status_line.extend(chunk)
+                            ready = time.monotonic() < deadline and bool(
+                                re.fullmatch(rb"HTTP/1\.[01] 301 [^\r\n]*\r\n", bytes(status_line))
+                            )
+                    if ready:
+                        break
+                except (OSError, ValueError):
+                    pass
+                # A successful reload can return before new workers accept sockets.
+                remaining = deadline - time.monotonic()
+                if _attempt < 2 and remaining > 0:
+                    time.sleep(min(0.25, remaining))
+            if not ready:
+                return False
+        return bool(listeners)
+    except (OSError, ValueError, IndexError, UnicodeError):
+        return False
+
+
+def _replace_vcf_depot_file(path: Path, content: bytes, mode: int, owner: tuple[int, int] | None = None) -> None:
+    """Publish complete depot configuration bytes through a durable sibling replacement.
+
+    Args:
+        path: Managed destination path.
+        content: Complete candidate or rollback bytes.
+        mode: Permissions applied before publication.
+        owner: Previous POSIX owner and group when restoring a snapshot.
+    """
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = None
+    try:
+        with tempfile.NamedTemporaryFile("wb", prefix=f".{path.name}.", suffix=".tmp", dir=path.parent, delete=False) as handle:
+            temporary = Path(handle.name)
+            handle.write(content)
+        os.chmod(temporary, mode)
+        if owner is not None and os.name == "posix":
+            os.chown(temporary, *owner)
+        _fsync_file(temporary)
+        temporary.replace(path)
+        _fsync_directory(path.parent)
+    finally:
+        if temporary is not None:
+            temporary.unlink(missing_ok=True)
+
+
+def _apply_vcf_depot_site(text: str, *, disabled: bool) -> int:
+    """Apply one depot site and restore its previous files if activation fails.
+
+    Args:
+        text: Validated candidate nginx configuration.
+        disabled: Whether the candidate removes the depot listener.
+    """
+    snapshots = {}
+    activation_attempted = False
+    try:
+        active_result = _run(["systemctl", "is-active", "--quiet", "nginx"], timeout=5)
+        if active_result.returncode not in {0, 3}:
+            raise ValueError("Cannot determine the previous nginx service state.")
+        active = active_result.returncode == 0
+        previous_enablement = ""
+        if not active and not disabled:
+            enabled_result = _run(["systemctl", "is-enabled", "nginx"], timeout=5)
+            previous_enablement = enabled_result.stdout.strip()
+            if previous_enablement not in {"enabled", "enabled-runtime", "disabled", "static", "indirect"}:
+                raise ValueError("Cannot safely preserve nginx enablement for first activation.")
+        for path in (VCF_DEPOT_SITE_PATH, VCF_DEPOT_HTPASSWD_PATH):
+            if path.is_symlink():
+                raise ValueError("Depot activation refuses linked managed files.")
+            if path.exists():
+                metadata = path.stat()
+                if not stat.S_ISREG(metadata.st_mode) or metadata.st_nlink != 1:
+                    raise ValueError("Depot activation requires ordinary managed files.")
+                snapshots[path] = (path.read_bytes(), metadata)
+            else:
+                snapshots[path] = None
+        conflict = "" if disabled else _nginx_site_conflict(VCF_DEPOT_SITE_PATH, text)
+        if conflict:
+            print(conflict, file=sys.stderr)
+            return 2
+    except (OSError, ValueError, subprocess.TimeoutExpired) as exc:
+        print(str(exc), file=sys.stderr)
+        return 2
+
+    try:
+        _install_nginx_include()
+        if disabled:
+            _remove_vcf_depot_htpasswd()
+            VCF_DEPOT_SITE_PATH.unlink(missing_ok=True)
+        else:
+            if _vcf_depot_auth_required(text):
+                if _write_vcf_depot_htpasswd(_vcf_depot_auth_username(text)) != 0:
+                    raise ValueError("Depot authentication preparation failed.")
+            else:
+                _remove_vcf_depot_htpasswd()
+            _prepare_vcf_depot_web_tree(text)
+            _replace_vcf_depot_file(VCF_DEPOT_SITE_PATH, text.encode("utf-8"), 0o644)
+        if _nginx_test_command().returncode != 0:
+            raise ValueError("Depot nginx configuration validation failed.")
+        if active or not disabled:
+            command = ["systemctl", "reload", "nginx"] if active else (
+                ["systemctl", "enable", "--now", "nginx"] if previous_enablement == "disabled" else ["systemctl", "start", "nginx"]
+            )
+            activation_attempted = True
+            if _run(command, timeout=30).returncode != 0:
+                raise ValueError("Depot nginx activation failed.")
+        if not disabled and not _vcf_depot_endpoint_ready(text):
+            raise ValueError("Depot TLS/HTTP readiness failed.")
+        return 0
+    except (OSError, ValueError, subprocess.TimeoutExpired) as exc:
+        print(str(exc), file=sys.stderr)
+        rollback_errors = []
+        if activation_attempted and not active:
+            checks = [
+                (["systemctl", "stop", "nginx"], 30, 0, None),
+                (["systemctl", "is-active", "--quiet", "nginx"], 5, 3, None),
+            ]
+            if previous_enablement == "disabled":
+                checks.extend([
+                    (["systemctl", "disable", "nginx"], 30, 0, None),
+                    (["systemctl", "is-enabled", "nginx"], 5, 1, "disabled"),
+                ])
+            for command, timeout, expected_code, expected_output in checks:
+                try:
+                    result = _run(command, timeout=timeout)
+                    if result.returncode != expected_code or (expected_output is not None and result.stdout.strip() != expected_output):
+                        raise ValueError("Service state was not restored.")
+                except (OSError, ValueError, subprocess.TimeoutExpired):
+                    rollback_errors.append(f"nginx {command[1]} rollback failed")
+        # Every independent restore must run even when service cleanup or another
+        # file fails; a later reload must not inherit the rejected candidate.
+        for path, snapshot in snapshots.items():
+            try:
+                if snapshot is None:
+                    path.unlink(missing_ok=True)
+                    _fsync_directory(path.parent)
+                else:
+                    content, metadata = snapshot
+                    _replace_vcf_depot_file(path, content, stat.S_IMODE(metadata.st_mode), (metadata.st_uid, metadata.st_gid))
+            except (OSError, ValueError):
+                rollback_errors.append(f"{path.name} restoration failed")
+        reload_restored = active
+        if activation_attempted and not active:
+            # Failed cleanup may leave the candidate live despite restored files.
+            # Only verified inactivity permits skipping the restored-config reload.
+            reload_restored = True
+            try:
+                current_state = _run(["systemctl", "is-active", "--quiet", "nginx"], timeout=5).returncode
+                reload_restored = current_state != 3
+                if current_state not in {0, 3}:
+                    rollback_errors.append("nginx post-cleanup state is unknown")
+            except (OSError, ValueError, subprocess.TimeoutExpired):
+                rollback_errors.append("nginx post-cleanup state could not be read")
+        try:
+            if _nginx_test_command().returncode != 0 or (reload_restored and _run(["systemctl", "reload", "nginx"], timeout=30).returncode != 0):
+                raise ValueError("Previous nginx configuration could not be reloaded.")
+            previous = snapshots[VCF_DEPOT_SITE_PATH]
+            if reload_restored and previous is not None and not _vcf_depot_endpoint_ready(previous[0].decode("utf-8")):
+                raise ValueError("Previous depot endpoint readiness could not be verified.")
+        except (OSError, ValueError, subprocess.TimeoutExpired) as rollback_error:
+            rollback_errors.append(str(rollback_error))
+        if rollback_errors:
+            print(f"Depot rollback needs attention: {'; '.join(rollback_errors)}", file=sys.stderr)
+        return 2
+
+
 def _vcf_depot_config_errors(path: Path) -> list[str]:
     """Perform VCF depot config errors.
 
@@ -13376,6 +13728,11 @@ def _handle_vcf_offline_depot(action: str, args: list[str]) -> int:
         return 2
     text = config_path.read_text(encoding="utf-8")
     disabled = "VCF Offline Depot HTTPS endpoint is disabled" in text
+    if not disabled and action in {"validate", "apply-https"}:
+        admission_error = _vcf_depot_listener_admission(text)
+        if admission_error:
+            print(admission_error, file=sys.stderr)
+            return 2
 
     if action == "validate":
         print(
@@ -13393,18 +13750,7 @@ def _handle_vcf_offline_depot(action: str, args: list[str]) -> int:
         print(json.dumps({"vcf_offline_depot": "sync command intent recorded", "enabled": not disabled}, sort_keys=True))
         return 0
     if action == "apply-https":
-        if disabled:
-            _remove_vcf_depot_htpasswd()
-            result = _remove_nginx_site(VCF_DEPOT_SITE_PATH)
-        else:
-            if _vcf_depot_auth_required(text):
-                username = _vcf_depot_auth_username(text)
-                if username and _write_vcf_depot_htpasswd(username) != 0:
-                    return 2
-            else:
-                _remove_vcf_depot_htpasswd()
-            _prepare_vcf_depot_web_tree(text)
-            result = _install_nginx_site(VCF_DEPOT_SITE_PATH, text)
+        result = _apply_vcf_depot_site(text, disabled=disabled)
         if result != 0:
             return result
         print(

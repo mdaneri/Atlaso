@@ -1692,3 +1692,92 @@ def test_mixed_archive_chain_authenticates_growing_plain_checkpoint(tmp_path, mo
         assert any(later < earlier for earlier, later in zip(positions[:-1], positions[1:], strict=True))
     else:
         assert positions == sorted(set(positions))
+
+
+@pytest.mark.parametrize("compressed", [False, True])
+def test_long_private_key_label_crosses_tail_scan_chunks(tmp_path, compressed):
+    """Long labels retain their opening marker across raw and gzip scan chunks.
+
+    Args:
+        tmp_path: Test-owned retained source directory.
+        compressed: Exercise the gzip decompression path.
+    """
+    import time
+
+    from tests.test_appliance_helper import load_helper_module
+
+    content = b"x" * 65490 + b"-----BEGIN " + b"LONG-LABEL-" * 15000 + b"PRIVATE KEY-----\nsynthetic-body\n"
+    path = tmp_path / ("retained.gz" if compressed else "retained.log")
+    path.write_bytes(gzip.compress(content) if compressed else content)
+    for reader in (log_viewer, load_helper_module()):
+        assert reader._tail_private_key([path], len(content), deadline=time.monotonic() + 10)
+
+
+@pytest.mark.parametrize("privileged", [False, True])
+def test_pem_parser_preserves_every_fixed_token_split(privileged):
+    """Every marker split preserves semantics with fixed non-source carry bytes.
+
+    Args:
+        privileged: Select the independently installed helper parser.
+    """
+    from tests.test_appliance_helper import load_helper_module
+
+    reader = load_helper_module() if privileged else log_viewer
+    marker = b"-----BEGIN " + b"UNIQUE-LABEL-" * 20 + b"PRIVATE KEY-----"
+    for split in range(1, len(marker)):
+        first, carry = reader._scan_pem_markers(marker[:split])
+        assert len(carry) <= 16 and b"UNIQUE" not in carry
+        last, carry = reader._scan_pem_markers(marker[split:], carry)
+        assert (first if last is None else last) is True
+        last, carry = reader._scan_pem_markers(b"\n-----END PRIVATE KEY-----\n", carry)
+        assert last is False
+    assert reader._scan_pem_markers(b"-----BEGIN CERTIFICATE-----\n")[0] is None
+    assert reader._scan_pem_markers(b"-----BEGIN invalid -----BEGIN PRIVATE KEY-----\n")[0] is True
+
+
+@pytest.mark.parametrize("privileged", [False, True])
+def test_long_pem_marker_survives_oversized_page_cursor(tmp_path, privileged):
+    """An omitted marker spanning pages still redacts the following body.
+
+    Args:
+        tmp_path: Test-owned retained source directory.
+        privileged: Select the independently installed fixed-file reader.
+    """
+    from tests.test_appliance_helper import load_helper_module
+
+    reader = load_helper_module()
+    path = tmp_path / "retained.log"
+    path.write_bytes(b"-----BEGIN " + b"LABEL" * 230000 + b" PRIVATE KEY-----\nsynthetic-body\n-----END PRIVATE KEY-----\nsafe after\n")
+    position = None
+    opened = False
+    texts = []
+    for _ in range(6):
+        if privileged:
+            page = reader._read_fixed_log_history(path, {**(position or {}), "private_key": opened})
+            lines, opened = log_viewer.redact_lines(page["lines"], private_key=page["initial_private_key"])
+            texts.append("\n".join(lines))
+            position = page["file_position"]
+        else:
+            page = log_viewer.file_page(path, source="long-marker", cursor=position)
+            texts.append(page["text"])
+            position = page["next_cursor"]
+        if not page["has_more"]:
+            break
+    assert "synthetic-body" not in "\n".join(texts)
+    assert "safe after" in "\n".join(texts)
+
+
+def test_oversized_journal_preserves_long_fragmented_pem_marker():
+    """Discarded journal fragments retain marker state beyond metadata carry size."""
+    import io
+
+    from tests.test_appliance_helper import load_helper_module
+
+    helper = load_helper_module()
+    prefix = b'{"__CURSOR":"cursor-one","__REALTIME_TIMESTAMP":"123","MESSAGE":"'
+    marker = b"-----BEGIN " + b"LABEL-" * 200000 + b"PRIVATE KEY-----"
+    record = prefix + marker + b'"}\n'
+    entry = helper._oversized_journal_entry(record[:1048577], io.BytesIO(record[1048577:]))
+    assert entry["__CURSOR"] == "cursor-one"
+    assert entry["MESSAGE"].endswith("-----BEGIN PRIVATE KEY-----")
+    assert "LABEL-" not in entry["MESSAGE"]
