@@ -11562,7 +11562,10 @@ def test_vcf_offline_depot_page_redirect_and_uploads_are_sanitized(client, tmp_p
     assert "openTaskLog" in app_js.text
     open_task_log_js = app_js.text.split("async function openTaskLog", 1)[1].split("async function cancelTask", 1)[0]
     assert "task?.log_url" in open_task_log_js
-    assert 'headers: { "X-Atlaso-Task-Log": "1" }' in open_task_log_js
+    assert "window.AtlasoLogViewer.fetchJson(url, signal)" in open_task_log_js
+    viewer_js = client.get("/static/log-viewer.js")
+    assert viewer_js.status_code == 200
+    assert 'headers: { Accept: "application/json", "X-Atlaso-Task-Log": "1" }' in viewer_js.text
     assert "payload.profile_name" in open_task_log_js
     assert 'window.Prism.languages["atlaso-log"]' in app_js.text
     new_profile_js = app_js.text.split("function newVcfDepotProfileRow", 1)[1].split("function ", 1)[0]
