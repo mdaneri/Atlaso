@@ -313,6 +313,10 @@ Static recovery similarly requires a later activation of the exact attempted CID
 source evidence. A rollback holdover with the same IP, a different prefix, or a DHCP source does not
 clear the latest failure. When ordering or the attempted prefix is unknown, the warning is retained.
 
+IPv6 recovery remains enabled when IPv4 checking is disabled. DHCPv6 and SLAAC failures remain visible
+until a later usable automatic IPv6 address appears; an existing address or a new link-local address
+does not clear the failure. A later outage does not reactivate an already resolved conflict.
+
 ## Verify and roll back
 
 Confirm the management URL, expected routes, and interface state after apply and again after an appliance reboot. For a

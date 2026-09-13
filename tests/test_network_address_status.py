@@ -951,3 +951,36 @@ def test_static_prefix_failure_requires_later_exact_candidate_activation(source,
     recovered = project_status(native, absent, [desired])
     assert recovered["rows"]["physical:1"]["state"] == "assigned"
     assert recovered["rows"]["physical:1"]["conflict_resolved"] is True
+
+
+@pytest.mark.parametrize("source", ["static", "DHCPv6", "NDisc"])
+def test_ipv6_conflict_recovery_ignores_ipv4_opt_out(source):
+    """Retain rejected IPv6 attempts until a later matching replacement activates.
+
+    Args:
+        source: Static or automatic native IPv6 configuration source.
+    """
+    desired = resource(desired="2001:db8::20")
+    desired.update(checking=False, auto6=source != "static")
+    desired["desired_cidrs"] = {"2001:db8::20": "2001:db8::20/64"}
+    if source != "static":
+        desired.update(desired=[], desired_cidrs={})
+    event = {"name": "eth0", "address": "2001:db8::20", "detected_at": "2026-09-12T00:00:00+00:00"}
+    native = observation(conflicts=[event])
+    native["links"][0]["addresses"].append({"address": "2001:db8::10", "cidr": "2001:db8::10/64",
+                                           "source": source, "state": "assigned"})
+    rejected = project_status(native, {}, [desired])
+    native["conflicts"] = []
+    retained = project_status(native, rejected, [desired])
+    assert retained["rows"]["physical:1"]["state"] == "conflict"
+    native["links"][0]["addresses"].append({"address": "fe80::1", "source": source, "state": "assigned"})
+    link_local = project_status(native, retained, [desired])
+    assert link_local["rows"]["physical:1"]["conflict_resolved"] is False
+    native["links"][0]["addresses"].append({"address": "2001:db8::20", "cidr": "2001:db8::20/64",
+                                           "source": source, "state": "assigned"})
+    recovered = project_status(native, link_local, [desired])
+    assert recovered["rows"]["physical:1"]["state"] == "assigned"
+    assert recovered["rows"]["physical:1"]["conflict_resolved"] is True
+    native["links"][0]["addresses"] = []
+    lost = project_status(native, recovered, [desired])
+    assert lost["rows"]["physical:1"]["state"] == "unknown"

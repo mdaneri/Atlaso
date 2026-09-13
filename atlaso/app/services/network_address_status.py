@@ -85,6 +85,10 @@ def project_status(
         assigned = [row["address"] for row in records if row["state"] == "assigned"]
         dhcp4_addresses = [row["address"] for row in records
                            if row["state"] == "assigned" and row.get("source") == "DHCPv4"]
+        auto6_addresses = [row["address"] for row in records if row["state"] == "assigned"
+                           and row.get("source") in {"DHCPv6", "NDisc"}
+                           and ip_address(row["address"]).version == 6
+                           and not ip_address(row["address"]).is_link_local]
         lease_evidence = bool(link and observation.get("complete"))
         static_cidrs = [row["cidr"] for row in records if row["state"] == "assigned"
                         and row.get("source") == "static" and row.get("cidr")]
@@ -117,31 +121,35 @@ def project_status(
                 detail = "Unable to check: no usable address has been observed."
         if last_conflict:
             address = last_conflict["address"]
-            declined_offer = resource.get("dhcp4") and ip_address(address).version == 4
+            ipv6_conflict = ip_address(address).version == 6
+            declined_offer = resource.get("dhcp4") and not ipv6_conflict
+            dynamic6_conflict = resource.get("auto6") and ipv6_conflict
+            checking = ipv6_conflict or resource["checking"]
             # A lease already present when the decline is first observed cannot
             # prove recovery. Require a newly appearing lease after that evidence.
-            prior_leases = prior.get("dhcp4_addresses")
+            prior_leases = prior.get("auto6_addresses" if dynamic6_conflict else "dhcp4_addresses")
+            current_leases = auto6_addresses if dynamic6_conflict else dhcp4_addresses
             replacement_lease = bool(
                 lease_evidence and link.get("configured") and isinstance(prior_leases, list)
                 and _event_after_identity_change({"detected_at": prior.get("observed_at")},
                                                  last_conflict["detected_at"])
-                and any(address not in prior_leases for address in dhcp4_addresses))
-            if replacement_lease and declined_offer:
+                and any(address not in prior_leases for address in current_leases))
+            if replacement_lease and (declined_offer or dynamic6_conflict):
                 conflict_resolved = True
-            elif (not declined_offer and resource["checking"] and lease_evidence and link.get("configured")
+            elif (not declined_offer and not dynamic6_conflict and checking and lease_evidence and link.get("configured")
                   and conflict_cidr and conflict_cidr in static_cidrs
                   and isinstance(prior.get("static_cidrs"), list) and conflict_cidr not in prior["static_cidrs"]
                   and _event_after_identity_change({"detected_at": prior.get("observed_at")},
                                                    last_conflict["detected_at"])):
                 conflict_resolved = True
-            if not conflict_resolved and (address in resource["desired"] or declined_offer):
+            if not conflict_resolved and (address in resource["desired"] or declined_offer or dynamic6_conflict):
                 state = "conflict"
                 detail = f"IP conflict: {address}. "
                 detail += ("The failed attempted address is not active." if address not in assigned
                            else "The latest attempted configuration has not been observed recovering.")
                 if assigned:
                     detail += " Other active addresses are shown separately; the working path may have been restored."
-            elif address in assigned and resource["checking"] and observation.get("complete"):
+            elif address in assigned and checking and observation.get("complete"):
                 detail += f" Previous conflict for {address}; the address is now assigned."
             else:
                 detail += f" Last failed attempt: {address}."
@@ -149,6 +157,7 @@ def project_status(
             detail += " IPv4 checking is disabled in desired state; Apply is required to activate edits. IPv6 DAD is retained."
         result["rows"][key] = {
             "static_cidrs": static_cidrs if lease_evidence else None, "conflict_cidr": conflict_cidr,
+            "auto6_addresses": auto6_addresses if lease_evidence else None,
             "dhcp4_addresses": dhcp4_addresses if lease_evidence else None,
             "identity": identity, "identity_since": identity_since,
             "name": resource["name"], "state": state, "detail": detail,
@@ -198,6 +207,7 @@ def refresh_status(db: Session) -> None:
             resources.append({"key": f"{kind}:{row.id}", "name": row.name, "identity": identity,
                               "desired": desired, "desired_cidrs": desired_cidrs, "physical": kind == "physical",
                               "dhcp4": isinstance(row, PhysicalInterface) and row.ipv4_method == "dhcp",
+                              "auto6": isinstance(row, PhysicalInterface) and row.ipv6_enabled and not row.ipv6_cidr,
                               "parent": row.parent_interface if isinstance(row, VlanInterface) else "",
                               "checking": row.check_duplicate_ip_addresses is not False})
     projection = project_status(observation, read_status(db), resources)
