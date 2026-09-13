@@ -7,12 +7,11 @@ from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import JSONResponse, Response
-from sqlalchemy import select, text
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from atlaso.app.audit import record_audit
 from atlaso.app.database import get_db
-from atlaso.app.models import Job, utcnow
+from atlaso.app.models import Job
 from atlaso.app.security import Identity, require_session_identity
 from atlaso.app.services import diagnostics
 from atlaso.app.ui_routes import MANAGEMENT_UI_ROOT
@@ -150,25 +149,15 @@ def build_router(*, management: Callable[..., Any], admin: Callable[..., Any],
             identity: Currently authenticated session identity.
             db: Request or worker database session.
         """
-        import json
+        from atlaso.app.services import task_cancellation
 
         form = await request.form()
         csrf(request, str(form.get("csrf", "")))
-        db.execute(text("UPDATE jobs SET progress_percent=progress_percent WHERE 1=0"))
         job = lookup(db, bundle_id)
-        state = diagnostics.result(job)
-        if job.status == "pending":
-            job.status = "cancelled"
-            job.finished_at = utcnow()
-            job.progress_percent = 100
-            state["bundle_status"] = "cancelled"
-        elif job.status == "running":
-            state["cancel_requested"] = True
-        else:
-            raise HTTPException(409, "Collection has already stopped. Refresh the bundle status.")
-        job.result = json.dumps(state)
-        db.commit()
-        record_audit(db, actor=identity.username, action="diagnostics.cancel", resource_type="diagnostic_bundle", resource_id=job.id)
+        try:
+            task_cancellation.request(db, job, identity)
+        except task_cancellation.CancellationError as exc:
+            raise HTTPException(exc.status_code, str(exc)) from exc
         return JSONResponse(diagnostics.row(job), headers=NO_STORE)
 
     return router
