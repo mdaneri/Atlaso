@@ -14736,7 +14736,7 @@ def test_appliance_apply_carries_explicit_vcf_depot_id_refresh_intent_to_executi
         submitted_job = db.get(Job, job_id)
         assert json.loads(submitted_job.result)["refresh_vcf_depot_software_depot_id"] is True
 
-    received_refresh_intent: list[bool] = []
+    received_refresh_intent: dict[str, bool] = {}
 
     def execute(unit, *, adapter=None, db=None):
         """Run operation.
@@ -14750,7 +14750,7 @@ def test_appliance_apply_carries_explicit_vcf_depot_id_refresh_intent_to_executi
         Returns:
             The execute result.
         """
-        received_refresh_intent.append(bool(unit.get("refresh_vcf_depot_software_depot_id")))
+        received_refresh_intent[unit["id"]] = bool(unit.get("refresh_vcf_depot_software_depot_id"))
         return {
             "unit_id": unit["id"],
             "label": unit["label"],
@@ -14769,7 +14769,8 @@ def test_appliance_apply_carries_explicit_vcf_depot_id_refresh_intent_to_executi
     monkeypatch.setattr(ui, "execute_appliance_apply_unit", execute)
     run_appliance_apply_job(job_id)
 
-    assert received_refresh_intent == [True]
+    assert received_refresh_intent.pop("vcf_offline_depot") is True
+    assert not any(received_refresh_intent.values())
     with SessionLocal() as db:
         completed_job = db.get(Job, job_id)
         assert completed_job.status == "succeeded"

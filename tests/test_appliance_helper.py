@@ -11609,6 +11609,7 @@ def test_vcf_offline_depot_helper_applies_nginx_site(monkeypatch, tmp_path):
         tmp_path: Temporary directory provided by pytest for isolated filesystem state.
     """
     helper = load_helper_module()
+    monkeypatch.setattr(helper, "_vcf_depot_endpoint_ready", lambda _text: True)
     apply_dir = tmp_path / "apply" / "vcf-offline-depot"
     managed_root = tmp_path / "etc" / "atlaso"
     site_dir = managed_root / "nginx" / "sites.d"
@@ -11679,11 +11680,12 @@ def test_vcf_offline_depot_helper_applies_nginx_site(monkeypatch, tmp_path):
     )
     commands: list[list[str]] = []
 
-    def fake_run(command: list[str]) -> subprocess.CompletedProcess[str]:
+    def fake_run(command: list[str], **kwargs) -> subprocess.CompletedProcess[str]:
         """Return fake run.
 
         Args:
             command: Command and arguments to execute.
+            **kwargs: Bounded command options.
         """
         commands.append(command)
         return subprocess.CompletedProcess(command, 0, "", "")
@@ -11708,7 +11710,7 @@ def test_vcf_offline_depot_helper_applies_nginx_site(monkeypatch, tmp_path):
     assert "sendfile on;" in site_text
     assert nginx_include.read_text(encoding="utf-8").strip().endswith(f"include {site_dir}/*.conf;")
     assert ["/usr/sbin/nginx", "-t"] in commands
-    assert ["systemctl", "enable", "--now", "nginx"] in commands
+    assert ["systemctl", "reload", "nginx"] in commands
 
 
 def test_vcf_offline_depot_helper_uses_browser_session_or_basic_auth_for_authenticated_site(monkeypatch, tmp_path):
@@ -11719,6 +11721,7 @@ def test_vcf_offline_depot_helper_uses_browser_session_or_basic_auth_for_authent
         tmp_path: Temporary directory provided by pytest for isolated filesystem state.
     """
     helper = load_helper_module()
+    monkeypatch.setattr(helper, "_vcf_depot_endpoint_ready", lambda _text: True)
     apply_dir = tmp_path / "apply" / "vcf-offline-depot"
     managed_root = tmp_path / "etc" / "atlaso"
     site_dir = managed_root / "nginx" / "sites.d"
@@ -11839,7 +11842,7 @@ def test_vcf_offline_depot_helper_uses_browser_session_or_basic_auth_for_authent
     monkeypatch.setattr(helper.shutil, "chown", lambda *args, **kwargs: None)
     monkeypatch.setattr(helper.pwd, "getpwnam", lambda username: object())
     monkeypatch.setattr(helper.grp, "getgrnam", lambda group: (_ for _ in ()).throw(KeyError(group)))
-    monkeypatch.setattr(helper, "_run", lambda command: subprocess.CompletedProcess(command, 0, "", ""))
+    monkeypatch.setattr(helper, "_run", lambda command, **kwargs: subprocess.CompletedProcess(command, 0, "", ""))
     monkeypatch.setattr(
         helper,
         "_write_vcf_depot_htpasswd",
@@ -12459,21 +12462,24 @@ def test_vcf_offline_depot_helper_removes_disabled_nginx_site(monkeypatch, tmp_p
         tmp_path: Temporary directory provided by pytest for isolated filesystem state.
     """
     helper = load_helper_module()
+    monkeypatch.setattr(helper, "_vcf_depot_endpoint_ready", lambda _text: True)
     apply_dir = tmp_path / "apply" / "vcf-offline-depot"
     site_dir = tmp_path / "sites.d"
     config_path = apply_dir / "atlaso-vcf-offline-depot.conf"
     site_path = site_dir / "vcf-offline-depot.conf"
+    monkeypatch.setattr(helper, "VCF_DEPOT_HTPASSWD_PATH", tmp_path / "depot.htpasswd")
     apply_dir.mkdir(parents=True)
     site_dir.mkdir(parents=True)
     config_path.write_text("# VCF Offline Depot HTTPS endpoint is disabled.\n", encoding="utf-8")
     site_path.write_text("server { listen 443 ssl; }\n", encoding="utf-8")
     commands: list[list[str]] = []
 
-    def fake_run(command: list[str]) -> subprocess.CompletedProcess[str]:
+    def fake_run(command: list[str], **kwargs) -> subprocess.CompletedProcess[str]:
         """Return fake run.
 
         Args:
             command: Command and arguments to execute.
+            **kwargs: Bounded execution options.
         """
         commands.append(command)
         return subprocess.CompletedProcess(command, 0, "", "")

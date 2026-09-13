@@ -9,10 +9,11 @@ import shutil
 import subprocess
 import tarfile
 from dataclasses import dataclass
-from ipaddress import ip_address
+from ipaddress import IPv6Address, ip_address
 from pathlib import Path
 
 from atlaso.app.models import (
+    VCF_OFFLINE_DEPOT_DEFAULT_PORT,
     Setting,
     User,
     VcfDepotDownloadProfile,
@@ -469,8 +470,14 @@ def vcf_depot_endpoint(settings: VcfOfflineDepotSettings) -> str:
     Args:
         settings: Current Atlaso settings used to configure the operation.
     """
-    port = settings.port or 443
+    port = settings.port if settings.port is not None else VCF_OFFLINE_DEPOT_DEFAULT_PORT
     host = settings.hostname.strip()
+    try:
+        address = ip_address(host.strip("[]"))
+    except ValueError:
+        address = None
+    if isinstance(address, IPv6Address):
+        host = f"[{address}]"
     return host if port == 443 else f"{host}:{port}"
 
 
