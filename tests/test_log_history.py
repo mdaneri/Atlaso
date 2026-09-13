@@ -1906,3 +1906,44 @@ def test_prefix_verification_resumes_and_rejects_changed_versions(tmp_path, monk
     if not rewrite:
         assert progress == sorted(progress)
         assert len(set(progress)) > 2
+
+
+@pytest.mark.parametrize("privileged", [False, True])
+@pytest.mark.parametrize("compressed", [False, True])
+@pytest.mark.parametrize("split", [8, 30])
+def test_private_key_parser_crosses_retained_file_generations(tmp_path, privileged, compressed, split):
+    """Split opening and closing markers preserve redaction across rotations.
+
+    Args:
+        tmp_path: Test-owned retained log directory.
+        privileged: Exercise the privileged fixed-file reader.
+        compressed: Compress the oldest retained fragment.
+        split: Boundary inside the fixed opening token or arbitrary label.
+    """
+    from tests.test_appliance_helper import load_helper_module
+
+    helper = load_helper_module()
+    path = tmp_path / "split.log"
+    marker = b"-----BEGIN LONG-LABEL-" + b"LABEL-" * 40 + b"PRIVATE KEY-----\n"
+    end = b"-----END PRIVATE KEY-----\n"
+    first = tmp_path / ("split.log.2.gz" if compressed else "split.log.2")
+    first.write_bytes(gzip.compress(marker[:split]) if compressed else marker[:split])
+    (tmp_path / "split.log.1").write_bytes(marker[split:] + b"synthetic-body\n" + end[:7])
+    path.write_bytes(end[7:] + b"safe after\n")
+    position = None
+    opened = False
+    texts = []
+    for _ in range(8):
+        if privileged:
+            page = helper._read_fixed_log_history(path, {**(position or {}), "private_key": opened})
+            lines, opened = log_viewer.redact_lines(page["lines"], private_key=page["initial_private_key"])
+            texts.append("\n".join(lines))
+            position = page["file_position"]
+        else:
+            page = log_viewer.file_page(path, source="split-rotation", cursor=position)
+            texts.append(page["text"])
+            position = page["next_cursor"]
+        if not page["has_more"]:
+            break
+    assert "synthetic-body" not in "\n".join(texts)
+    assert "safe after" in "\n".join(texts)

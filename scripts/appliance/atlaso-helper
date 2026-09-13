@@ -2007,8 +2007,9 @@ def _read_fixed_log_history(path: Path, position: dict) -> dict:
                     break
                 wire_bytes += size
                 consumed += len(line)
-                marker_prefix = b""
-                lines.append(decoded)
+                marker_state, marker_prefix = _scan_pem_markers(line, marker_prefix)
+                lines.append(("-----BEGIN PRIVATE KEY-----" if marker_state else "-----END PRIVATE KEY-----")
+                             if marker_state is not None else decoded)
             next_offset = handle.tell()
             more = bool(handle.read(1)) and not partial
             handle.seek(0)
@@ -2023,7 +2024,8 @@ def _read_fixed_log_history(path: Path, position: dict) -> dict:
     if not more and selected + 1 < len(paths):
         following = paths[selected + 1].lstat()
         generation, next_offset = f"{following.st_dev}:{following.st_ino}", 0
-        next_position = {"generation": generation, "offset": next_offset}
+        next_position = {"generation": generation, "offset": next_offset,
+                         "pem_state": marker_prefix.decode("ascii"), "oversized": oversized}
         more = True
     return {"lines": lines, "file_position": next_position,
             "current_position": current_position, "initial_private_key": initial_private_key,

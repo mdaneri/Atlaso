@@ -833,8 +833,9 @@ def file_page(path: Path, *, source: str, cursor: str = "", limit: int = PAGE_LI
                     handle.seek(start)
                     break
                 wire_bytes += size
-                marker_prefix = b""
-                lines.append(decoded)
+                marker_state, marker_prefix = _scan_pem_markers(line, marker_prefix)
+                lines.append(("-----BEGIN PRIVATE KEY-----" if marker_state else "-----END PRIVATE KEY-----")
+                             if marker_state is not None else decoded)
             next_offset = handle.tell()
             more = bool(handle.read(1)) and not partial
             handle.seek(0)
@@ -845,7 +846,8 @@ def file_page(path: Path, *, source: str, cursor: str = "", limit: int = PAGE_LI
                              **_history_anchor(handle, next_offset, compressed=False, deadline=deadline)}
     if not more and index + 1 < len(paths):
         following = paths[index + 1].lstat()
-        next_position = {"generation": f"{following.st_dev}:{following.st_ino}", "offset": 0}
+        next_position = {"generation": f"{following.st_dev}:{following.st_ino}", "offset": 0,
+                         "pem_state": marker_prefix.decode("ascii"), "oversized": oversized}
         more = True
     safe_lines, private_key = redact_lines(lines, private_key=private_key)
     return {"source": source, "text": "\n".join(safe_lines), "available": True,

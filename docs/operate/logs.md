@@ -82,7 +82,8 @@ Logs are evidence, not an enforcement surface. Correct desired state in the owni
 Physical file entries larger than 64 KiB are represented by an explicit omission marker. The reader advances through
 them in bounded pages so later entries remain reachable; omitted entry contents are not exposed. Private-key markers
 inside discarded fragments still update redaction state for following lines and pages. Long marker labels retain
-their parser state across read chunks and page boundaries without retaining the discarded label text.
+their parser state across read chunks, page boundaries, and retained file rotations without retaining the discarded
+label text. Opening and closing headers split between files still govern redaction of subsequent entries.
 
 Live viewers open at the newest retained group. **From beginning** reads earlier history, and **Follow live**
 returns to recent output. Tail reads preserve private-key redaction across older entries. Multiple private-key
