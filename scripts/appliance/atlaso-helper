@@ -1758,45 +1758,78 @@ def _tail_offset(handle, *, compressed: bool, deadline: float, end: int | None =
 
 
 def _scan_pem_markers(chunk: bytes, carry: bytes = b"") -> tuple[bool | None, bytes]:
-    """Track arbitrarily long PEM labels with only fixed-token parser state.
+    """Match private-key labels with bounded resumable label fingerprints.
 
     Args:
         chunk: Next contiguous source fragment.
-        carry: Prior parser mode and partial fixed token, never arbitrary label bytes.
+        carry: Parser tokens and fixed-size label fingerprints from the prior fragment.
     """
     starts = (b"-----BEGIN ", b"-----END ")
     endings = (b"PRIVATE KEY-----", b"-----")
     start_parts = sorted({token[:size] for token in starts for size in range(1, len(token))}, key=len, reverse=True)
     end_parts = sorted({token[:size] for token in endings for size in range(1, len(token))}, key=len, reverse=True)
-    mode = carry[:1] or b"S"
-    suffix = carry[1:]
-    allowed = start_parts if mode == b"S" else end_parts
-    if mode not in (b"S", b"B", b"E") or (suffix and suffix not in allowed):
+    if carry.startswith(b"["):
+        fields = json.loads(carry)
+        if not isinstance(fields, list) or len(fields) != 5 or not all(isinstance(item, str) for item in fields):
+            raise ValueError("Invalid private-key parser state.")
+        mode, suffix_hex, digest_hex, pending_hex, active = fields
+        suffix, digest, pending = bytes.fromhex(suffix_hex), bytes.fromhex(digest_hex), bytes.fromhex(pending_hex)
+    else:
+        mode, suffix = (carry[:1] or b"S").decode("ascii"), carry[1:]
+        digest, pending, active = bytes(32), b"", ""
+    allowed = start_parts if mode == "S" else end_parts
+    if (mode not in ("S", "B", "E") or (suffix and suffix not in allowed) or len(digest) != 32 or len(pending) >= 16 or
+            (active not in ("", "!") and (len(active) != 64 or any(char not in "0123456789abcdef" for char in active)))):
         raise ValueError("Invalid private-key parser state.")
-    data = suffix + chunk
-    position = 0
-    last = None
+
+    def absorb(value: bytes) -> None:
+        """Hash canonical blocks independently of transport fragmentation.
+
+        Args:
+            value: Confirmed label bytes, excluding an unconsumed fixed-token suffix.
+        """
+        nonlocal digest, pending
+        value = pending + value
+        boundary = len(value) // 16 * 16
+        for index in range(0, boundary, 16):
+            digest = hashlib.sha256(b"pem-label-block" + digest + value[index:index + 16]).digest()
+        pending = value[boundary:]
+
+    data, position, last = suffix + chunk, 0, None
     start_pattern = re.compile(rb"-----(BEGIN|END) ")
     boundary_pattern = re.compile(rb"-----|[^ -~]")
     while True:
-        if mode == b"S":
+        if mode == "S":
             match = start_pattern.search(data, position)
             if match is None:
                 suffix = next((part for part in start_parts if data.endswith(part, position)), b"")
-                return last, b"S" + suffix
+                break
             position = match.end()
-            mode = b"B" if match.group(1) == b"BEGIN" else b"E"
+            mode = "B" if match.group(1) == b"BEGIN" else "E"
+            digest, pending = bytes(32), b""
         boundary = boundary_pattern.search(data, position)
         if boundary is None:
             suffix = next((part for part in end_parts if data.endswith(part, position)), b"")
-            return last, mode + suffix
+            absorb(data[position:len(data) - len(suffix)] if suffix else data[position:])
+            break
         start = boundary.start()
         if boundary.group() == b"-----" and data.endswith(b"PRIVATE KEY", position, start):
-            last = mode == b"B"
+            absorb(data[position:boundary.end()])
+            label = hashlib.sha256(b"pem-label-final" + digest + pending).hexdigest()
+            if mode == "B":
+                active = label if not active else "!"
+                last = True
+            elif active == label:
+                active, last = "", False
+            elif active:
+                last = True
+            else:
+                last = False
             position = boundary.end()
         else:
             position = start if boundary.group() == b"-----" else boundary.end()
-        mode = b"S"
+        mode, digest, pending = "S", bytes(32), b""
+    return last, json.dumps([mode, suffix.hex(), digest.hex(), pending.hex(), active], separators=(",", ":")).encode("ascii")
 
 
 def _tail_private_key(paths: list[Path], offset: int, *, deadline: float) -> bool:
@@ -1953,6 +1986,9 @@ def _read_fixed_log_history(path: Path, position: dict) -> dict:
                     (prefix_length and hashlib.sha256(prefix).hexdigest() != position.get("prefix")) or
                     (anchor_length and anchor.get("anchor") != position.get("anchor"))):
                 offset, reset = 0, True
+            if not reset and (offset or selected) and not str(position.get("pem_state", "")).startswith("["):
+                initial_private_key, pem_state = _tail_marker_state(paths[:selected + 1], offset, deadline=deadline)
+                position = {**position, "pem_state": pem_state.decode("ascii")}
             anchor = _history_anchor(handle, offset, compressed=candidate.suffix == ".gz", deadline=deadline)
             current_position = {"generation": generation, "offset": offset,
                                 "oversized": not reset and position.get("oversized") is True,
@@ -1972,8 +2008,10 @@ def _read_fixed_log_history(path: Path, position: dict) -> dict:
             else:
                 handle.seek(offset)
             parser_state = position.get("pem_state", "") if not reset else ""
-            if not isinstance(parser_state, str) or len(parser_state) > 16 or not parser_state.isascii():
+            if not isinstance(parser_state, str) or len(parser_state) > 512 or not parser_state.isascii():
                 raise ValueError("Invalid private-key parser state.")
+            if initial_private_key and not parser_state.startswith("["):
+                parser_state = json.dumps(["S", "", bytes(32).hex(), "", "!"])
             _, marker_prefix = _scan_pem_markers(b"", parser_state.encode("ascii"))
             lines = []
             consumed = wire_bytes = 0
@@ -2083,11 +2121,21 @@ def _advance_journal_marker(entry, fragment, private, carry, *, complete=True):
         carry: Finite partial marker state before the fragment.
         complete: Whether this consumes the end of the represented record.
     """
-    transforms = entry.get("_journal_pem_transforms")
-    if transforms is not None:
+    if private and not carry.startswith(b"["):
+        carry = json.dumps(["S", "", bytes(32).hex(), "", "!"]).encode("ascii")
+    if "_journal_pem_result" in entry:
         if not fragment:
             return private, carry, private
-        marker, final_carry = transforms[carry.decode("ascii") or "S"]
+        initial = carry.decode("ascii")
+        if entry["_journal_pem_initial"] != initial:
+            command = [arg for arg in entry["_journal_command"]
+                       if not arg.startswith(("--cursor=", "--after-cursor=", "--lines=")) and arg != "--reverse"]
+            command.extend([f"--cursor={entry['__CURSOR']}", "--lines=+1"])
+            records, _ = _journal_history_entries(command, deadline=entry["_journal_deadline"], marker_carry=carry)
+            if len(records) != 1 or records[0]["__CURSOR"] != entry["__CURSOR"] or "_journal_pem_result" not in records[0]:
+                raise ValueError("Journal omission context is unavailable.")
+            entry.update(_journal_pem_initial=initial, _journal_pem_result=records[0]["_journal_pem_result"])
+        marker, final_carry = entry["_journal_pem_result"]
         conceal = private or marker is not None
         return ((private if marker is None else marker), final_carry.encode("ascii"), conceal) if complete else (private, carry, conceal)
     marker, carry = _scan_pem_markers(fragment.encode("utf-8"), carry)
@@ -2097,32 +2145,27 @@ def _advance_journal_marker(entry, fragment, private, carry, *, complete=True):
     return private, carry, conceal
 
 
-def _oversized_journal_entry(first, stream):
-    """Discard oversized message bytes while retaining trusted cursor metadata.
+def _oversized_journal_entry(first, stream, marker_carry=b""):
+    """Discard oversized bytes while preserving the exact incoming marker state.
 
     Args:
         first: First bounded fragment of one journalctl JSON record.
-        stream: Owned journalctl output pipe positioned within that record.
+        stream: Owned journalctl pipe positioned within that record.
+        marker_carry: Bounded label identity at the start of this immutable record.
     """
-    metadata = {}
-    carry = b""
-    starts = (b"-----BEGIN ", b"-----END ")
-    endings = (b"PRIVATE KEY-----", b"-----")
-    variants = {b"S"} | {b"S" + token[:size] for token in starts for size in range(1, len(token))}
-    variants |= {mode + token[:size] for mode in (b"B", b"E") for token in endings for size in range(len(token))}
-    transforms = {state: (None, state) for state in variants}
-    message_state = {}
-    raw = first
+    metadata, message_state = {}, {}
+    carry, raw, last = b"", first, None
+    _, marker_carry = _scan_pem_markers(b"", marker_carry)
+    initial = marker_carry.decode("ascii")
     while raw:
         window = carry + raw
         for field in ("__CURSOR", "__REALTIME_TIMESTAMP", "SYSLOG_IDENTIFIER", "_PID"):
             match = re.search(rb'"' + field.encode() + rb'"\s*:\s*("(?:[^"\\]|\\.)*")', window)
             if match:
                 metadata[field] = json.loads(match.group(1))
-        decoded = _journal_message_bytes(raw, message_state)
-        for initial, (last, carry_state) in transforms.items():
-            found, carry_state = _scan_pem_markers(decoded, carry_state)
-            transforms[initial] = (last if found is None else found, carry_state)
+        found, marker_carry = _scan_pem_markers(_journal_message_bytes(raw, message_state), marker_carry)
+        if found is not None:
+            last = found
         if raw.endswith(b"\n"):
             break
         carry = window[-4096:]
@@ -2130,11 +2173,8 @@ def _oversized_journal_entry(first, stream):
     if "__CURSOR" not in metadata or "__REALTIME_TIMESTAMP" not in metadata:
         raise ValueError("oversized journal metadata is incomplete")
     message = "[Oversized journal entry omitted: exceeds 1 MiB; continuing with the next entry.]"
-    marker_state = transforms[b"S"][0]
-    if marker_state is not None:
-        message += "\n-----BEGIN PRIVATE KEY-----" if marker_state else "\n-----END PRIVATE KEY-----"
-    return {**metadata, "MESSAGE": message, "_journal_pem_transforms": {initial.decode("ascii"): (marker, final.decode("ascii"))
-                                                                           for initial, (marker, final) in transforms.items()}}
+    return {**metadata, "MESSAGE": message, "_journal_pem_initial": initial,
+            "_journal_pem_result": (last, marker_carry.decode("ascii"))}
 
 
 def _journal_entry_category(entry):
@@ -2181,7 +2221,7 @@ class _JournalCursorExpired(ValueError):
     """Identify a journal position removed by retention without hiding other errors."""
 
 
-def _journal_history_entries(command, *, deadline, category=None, context_scan=False):
+def _journal_history_entries(command, *, deadline, category=None, context_scan=False, marker_carry=b""):
     """Read complete bounded representations from one deadline-owned journal process.
 
     Args:
@@ -2189,6 +2229,7 @@ def _journal_history_entries(command, *, deadline, category=None, context_scan=F
         deadline: Shared monotonic deadline for this history request.
         category: Optional classified view of the fixed dnsmasq unit.
         context_scan: Use the bounded raw window without the selected-row display cap.
+        marker_carry: Exact incoming marker state when rereading one omitted record.
     """
     import threading
 
@@ -2199,7 +2240,9 @@ def _journal_history_entries(command, *, deadline, category=None, context_scan=F
         timer.start()
         try:
             while raw := process.stdout.readline(1024 * 1024 + 1):
-                entry = _oversized_journal_entry(raw, process.stdout) if len(raw) > 1024 * 1024 else json.loads(raw)
+                entry = _oversized_journal_entry(raw, process.stdout, marker_carry) if len(raw) > 1024 * 1024 else json.loads(raw)
+                if "_journal_pem_result" in entry:
+                    entry.update(_journal_command=command, _journal_deadline=deadline)
                 if not isinstance(entry.get("MESSAGE"), str):
                     entry["MESSAGE"] = "[Binary journal entry omitted.]"
                 # Keep raw scan windows independent of the selected display budget.
@@ -2249,8 +2292,10 @@ def _journal_marker_context(executable, unit, target, offset, *, deadline, check
     state = checkpoint.get("pem_state", "S")
     private = checkpoint.get("private") is True
     if (not isinstance(previous, str) or len(previous) > 2048 or any(ord(char) < 32 for char in previous) or
-            not isinstance(state, str) or len(state) > 32):
+            not isinstance(state, str) or len(state) > 512):
         raise ValueError("invalid journal context checkpoint")
+    if private and not state.startswith("["):
+        state = json.dumps(["S", "", bytes(32).hex(), "", "!"])
     _, carry = _scan_pem_markers(b"", state.encode("ascii"))
     command = [executable, "--unit", unit, "--no-pager", "--output=json", "--lines=+5001",
                "--output-fields=MESSAGE,__CURSOR,__REALTIME_TIMESTAMP"]
@@ -2500,10 +2545,10 @@ def _read_log_history(args: list[str]) -> int:
             if text_offset:
                 current_position["journal_text_offset"] = text_offset
         parser_state = position.get("journal_pem_state", "S") if not tail else "S"
-        if not isinstance(parser_state, str) or len(parser_state) > 32:
+        if not isinstance(parser_state, str) or len(parser_state) > 512:
             raise ValueError("invalid journal marker state")
         _, parser_carry = _scan_pem_markers(b"", parser_state.encode("ascii"))
-        if (tail and selected) or (cursor and "journal_pem_state" not in position):
+        if (tail and selected) or (cursor and ("journal_pem_state" not in position or not parser_state.startswith("["))):
             target = current_position.get("journal_start_cursor", current_position.get("journal_cursor", ""))
             target_offset = current_position.get("journal_text_offset", 0) if "journal_start_cursor" in current_position else None
             recovered, checkpoint = _journal_marker_context(command[0], units[args[0]], target, target_offset,

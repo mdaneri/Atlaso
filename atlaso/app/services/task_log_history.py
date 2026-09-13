@@ -41,14 +41,16 @@ def _safe_lines(lines: list[str], private: bool = False, parser: dict[str, str] 
     output = []
     parser = parser if parser is not None else {}
     carry = parser.get("carry", "").encode("ascii")
+    if private and not carry.startswith(b"["):
+        carry = json.dumps(["S", "", bytes(32).hex(), "", "!"]).encode("ascii")
     for value in lines:
         for line in str(value).splitlines() or [""]:
             marker, carry = log_viewer._scan_pem_markers(line.encode("utf-8"), carry)
-            concealed = private or marker is not None or carry not in {b"", b"S"}
+            concealed = private or marker is not None or (json.loads(carry)[0] != "S" or bool(json.loads(carry)[1]))
             output.append("[redacted private key]" if concealed else str(redact_task_value(line)))
             if marker is not None:
                 private = marker
-            if carry.startswith(b"B"):
+            if carry.startswith((b"B", b'["B",')):
                 private = True
     parser["carry"] = carry.decode("ascii")
     return output, private
@@ -75,6 +77,7 @@ def _safe_value(value: Any, private: bool = False, key: str = "", parser: dict[s
     """
     parser = parser if parser is not None else {}
     if key and redact_task_value("", key=key) == "[redacted]":
+        _, private = _safe_value(value, private, parser=parser)
         return "[redacted]", private
     if isinstance(value, dict):
         output = {}

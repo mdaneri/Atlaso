@@ -94,7 +94,7 @@ def test_split_header_and_footer_survive_journal_navigation(journal_transport, s
         limit: Selected page size, including boundaries between every record.
     """
     records, _ = journal_transport
-    records.extend(_records(["-----BEG", "IN " + "R" * 70000 + " PRIVATE KE", "Y-----", "private-body", "-----E", "ND PRIVATE KEY-----", "visible"]))
+    records.extend(_records(["-----BEG", "IN " + "R" * 70000 + " PRIVATE KE", "Y-----", "private-body", "-----E", "ND " + "R" * 70000 + " PRIVATE KEY-----", "visible"]))
     cursor, texts = "", []
     for _ in range(30):
         page = log_viewer.source_page(source, cursor=cursor, tail=tail and not cursor, limit=limit)
@@ -103,7 +103,7 @@ def test_split_header_and_footer_survive_journal_navigation(journal_transport, s
         texts.append(page["text"])
         assert "private-body" not in page["text"]
         state = log_viewer.decode_cursor(page["next_cursor"], source)
-        assert len(state.get("journal_pem_state", "")) <= 16
+        assert len(state.get("journal_pem_state", "")) <= 512
         if tail:
             if not page["previous_cursor"]:
                 break
@@ -153,7 +153,7 @@ def test_oversized_record_retains_split_marker_edges(journal_transport, tail, ov
     records, _ = journal_transport
     fragments = (["x" * 1100000 + "-----BEG", "IN PRIVATE KEY-----"] if oversized_first else
                  ["-----BEG", "IN " + "R" * 1100000 + " PRIVATE KEY-----"])
-    records.extend(_records(fragments + ["private-body", "-----END PRIVATE KEY-----", "visible"]))
+    records.extend(_records(fragments + ["private-body", "-----END " + ("" if oversized_first else "R" * 1100000 + " ") + "PRIVATE KEY-----", "visible"]))
     cursor, texts = "", []
     for _ in range(20):
         page = log_viewer.source_page("nginx", cursor=cursor, tail=tail and not cursor, limit=1)
@@ -179,7 +179,7 @@ def test_oversized_closing_fragment_restores_visible_output(journal_transport, t
         tail: Traverse from the live tail instead of the beginning.
     """
     records, _ = journal_transport
-    records.extend(_records(["-----BEGIN PRIVATE KEY-----", "private-body", "-----E", "ND " + "R" * 1100000 + " PRIVATE KEY-----", "visible"]))
+    records.extend(_records(["-----BEGIN " + "R" * 1100000 + " PRIVATE KEY-----", "private-body", "-----E", "ND " + "R" * 1100000 + " PRIVATE KEY-----", "visible"]))
     cursor, texts = "", []
     for _ in range(20):
         page = log_viewer.source_page("nginx", cursor=cursor, tail=tail and not cursor, limit=1)
@@ -233,7 +233,7 @@ def test_expired_preparation_cursor_preserves_known_private_context(monkeypatch)
     monkeypatch.setattr(helper, "_journal_history_entries", entries)
     recovered, checkpoint = helper._journal_marker_context("journalctl", "nginx.service", "target", 0,
         deadline=helper.time.monotonic() + 10, checkpoint={"cursor": "retired", "private": True, "pem_state": "S"})
-    assert recovered == (True, b"S") and checkpoint is None
+    assert recovered[0] is True and len(recovered[1]) <= 512 and checkpoint is None
     assert len(calls) == 2 and calls[0][1] == calls[1][1]
 
 
@@ -307,3 +307,43 @@ def test_concurrent_preparation_does_not_overwrite_newer_checkpoint(monkeypatch)
         assert first.result(timeout=10)["pending"]
     checkpoint, _ = next(iter(log_viewer._JOURNAL_PREPARATION.values()))
     assert checkpoint["journal_start_cursor"] == "target-2"
+
+
+@pytest.mark.parametrize("tail", [False, True])
+@pytest.mark.parametrize("source", ["nginx", "dnsmasq-dhcp"])
+def test_mismatched_key_footer_keeps_journal_body_private(journal_transport, tail, source):
+    """An unrelated footer cannot clear a split opening label.
+
+    Args:
+        journal_transport: Actual helper and adapter with immutable journal records.
+        tail: Traverse backwards instead of forwards.
+        source: Classified or complete service history.
+    """
+    records, _ = journal_transport
+    records.extend(_records(["-----BEGIN RSA PRIVATE KEY-----", "-----END EC PRIVATE KEY-----",
+                             "private-body", "-----END R", "SA PRIVATE KEY-----", "visible"]))
+    cursor, texts = "", []
+    for _ in range(20):
+        page = log_viewer.source_page(source, cursor=cursor, tail=tail and not cursor, limit=1)
+        if page.get("pending"):
+            continue
+        assert "private-body" not in page["text"]
+        texts.append(page["text"])
+        cursor = page["previous_cursor"] if tail else page["next_cursor"] if page["has_more"] else ""
+        if not cursor:
+            break
+    assert "visible" in "\n".join(texts)
+
+
+def test_legacy_journal_cursor_rebuilds_label_context(journal_transport):
+    """An older boolean-only cursor cannot bypass label matching after upgrade.
+
+    Args:
+        journal_transport: Actual helper and adapter with retained opening context.
+    """
+    records, _ = journal_transport
+    records.extend(_records(["-----BEGIN RSA PRIVATE KEY-----", "-----END EC PRIVATE KEY-----", "private-body",
+                             "-----END RSA PRIVATE KEY-----", "visible"]))
+    cursor = log_viewer.encode_cursor("nginx", journal_cursor="1", journal_pem_state="S", private_key=False)
+    page = log_viewer.source_page("nginx", cursor=cursor)
+    assert "private-body" not in page["text"] and "visible" in page["text"]

@@ -127,7 +127,7 @@ def test_capture_never_persists_private_key_body_or_secret_value(history_db):
     assert "visible" in _all(db)
 
 
-@pytest.mark.parametrize("ending", ["-----END CERTIFICATE-----", "-----END", "-----END PUBLIC KEY-----"])
+@pytest.mark.parametrize("ending", ["-----END EC PRIVATE KEY-----", "-----END CERTIFICATE-----", "-----END", "-----END PUBLIC KEY-----"])
 def test_unrelated_task_pem_end_preserves_redaction_across_commits(history_db, ending):
     """Only a complete private-key closing marker releases persisted concealment.
 
@@ -162,7 +162,7 @@ def test_task_marker_fragments_survive_commits(history_db, stream, split):
     job = _job(db, {})
     header = "-----BEGIN " + "LONG-LABEL-" * 3000 + "PRIVATE KEY-----"
     fragments = [header[:split], header[split:], "synthetic-split-body", "-----END CERTIFICATE-----",
-                 "another-private-body", "-----END PRI", "VATE KEY-----", "visible-after-split-close"]
+                 "another-private-body", "-----END " + "LONG-LABEL-" * 3000 + "PRI", "VATE KEY-----", "visible-after-split-close"]
     logs = []
     for fragment in fragments:
         if stream == "audit":
@@ -175,7 +175,7 @@ def test_task_marker_fragments_survive_commits(history_db, stream, split):
         db.commit()
         checkpoint = db.execute(select(TaskLogCheckpoint.state_json)).scalar_one()
         state = json.loads(checkpoint)
-        assert all(len(state[key]) <= 16 for key in ("log_pem_state", "result_pem_state", "audit_pem_state"))
+        assert all(len(state[key]) <= 512 for key in ("log_pem_state", "result_pem_state", "audit_pem_state"))
         stored = "".join(db.execute(select(TaskLogChunk.content)).scalars()) + checkpoint
         assert "synthetic-split-body" not in stored and "another-private-body" not in stored
     assert "visible-after-split-close" in _all(db)
@@ -409,3 +409,23 @@ def test_nonstandard_log_values_preserve_output_without_nested_secrets(history_d
     assert "visible item" in text
     assert "hidden-value" not in text
     assert "hidden-value" not in "".join(db.execute(select(TaskLogCheckpoint.state_json)).scalars())
+
+
+@pytest.mark.parametrize("structured_log", [False, True])
+def test_secret_named_field_preserves_following_key_context(history_db, structured_log):
+    """Discarded secret fields still govern the following structured values.
+
+    Args:
+        history_db: Transactional task database.
+        structured_log: Capture a nested log item instead of a result field.
+    """
+    db = history_db
+    job = _job(db, {})
+    value = {"private_key_header": "-----BEGIN RSA PRIVATE KEY-----", "body": "synthetic-secret-key-body",
+             "end": "-----END RSA PRIVATE KEY-----", "visible": "after-matching-close"}
+    job.result = json.dumps({"log_lines": [value]} if structured_log else {"output": value})
+    db.commit()
+    stored = "".join(db.execute(select(TaskLogChunk.content)).scalars())
+    stored += "".join(db.execute(select(TaskLogCheckpoint.state_json)).scalars())
+    assert "synthetic-secret-key-body" not in stored
+    assert "after-matching-close" in _all(db)

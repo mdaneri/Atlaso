@@ -533,45 +533,78 @@ def _verify_retained_prefix(raw: Any, path: _HistoryPath, offset: int, expected:
     return verification.digest() == expected
 
 def _scan_pem_markers(chunk: bytes, carry: bytes = b"") -> tuple[bool | None, bytes]:
-    """Track arbitrarily long PEM labels with only fixed-token parser state.
+    """Match private-key labels with bounded resumable label fingerprints.
 
     Args:
         chunk: Next contiguous source fragment.
-        carry: Prior parser mode and partial fixed token, never arbitrary label bytes.
+        carry: Parser tokens and fixed-size label fingerprints from the prior fragment.
     """
     starts = (b"-----BEGIN ", b"-----END ")
     endings = (b"PRIVATE KEY-----", b"-----")
     start_parts = sorted({token[:size] for token in starts for size in range(1, len(token))}, key=len, reverse=True)
     end_parts = sorted({token[:size] for token in endings for size in range(1, len(token))}, key=len, reverse=True)
-    mode = carry[:1] or b"S"
-    suffix = carry[1:]
-    allowed = start_parts if mode == b"S" else end_parts
-    if mode not in (b"S", b"B", b"E") or (suffix and suffix not in allowed):
+    if carry.startswith(b"["):
+        fields = json.loads(carry)
+        if not isinstance(fields, list) or len(fields) != 5 or not all(isinstance(item, str) for item in fields):
+            raise ValueError("Invalid private-key parser state.")
+        mode, suffix_hex, digest_hex, pending_hex, active = fields
+        suffix, digest, pending = bytes.fromhex(suffix_hex), bytes.fromhex(digest_hex), bytes.fromhex(pending_hex)
+    else:
+        mode, suffix = (carry[:1] or b"S").decode("ascii"), carry[1:]
+        digest, pending, active = bytes(32), b"", ""
+    allowed = start_parts if mode == "S" else end_parts
+    if (mode not in ("S", "B", "E") or (suffix and suffix not in allowed) or len(digest) != 32 or len(pending) >= 16 or
+            (active not in ("", "!") and (len(active) != 64 or any(char not in "0123456789abcdef" for char in active)))):
         raise ValueError("Invalid private-key parser state.")
-    data = suffix + chunk
-    position = 0
-    last = None
+
+    def absorb(value: bytes) -> None:
+        """Hash canonical blocks independently of transport fragmentation.
+
+        Args:
+            value: Confirmed label bytes, excluding an unconsumed fixed-token suffix.
+        """
+        nonlocal digest, pending
+        value = pending + value
+        boundary = len(value) // 16 * 16
+        for index in range(0, boundary, 16):
+            digest = hashlib.sha256(b"pem-label-block" + digest + value[index:index + 16]).digest()
+        pending = value[boundary:]
+
+    data, position, last = suffix + chunk, 0, None
     start_pattern = re.compile(rb"-----(BEGIN|END) ")
     boundary_pattern = re.compile(rb"-----|[^ -~]")
     while True:
-        if mode == b"S":
+        if mode == "S":
             match = start_pattern.search(data, position)
             if match is None:
                 suffix = next((part for part in start_parts if data.endswith(part, position)), b"")
-                return last, b"S" + suffix
+                break
             position = match.end()
-            mode = b"B" if match.group(1) == b"BEGIN" else b"E"
+            mode = "B" if match.group(1) == b"BEGIN" else "E"
+            digest, pending = bytes(32), b""
         boundary = boundary_pattern.search(data, position)
         if boundary is None:
             suffix = next((part for part in end_parts if data.endswith(part, position)), b"")
-            return last, mode + suffix
+            absorb(data[position:len(data) - len(suffix)] if suffix else data[position:])
+            break
         start = boundary.start()
         if boundary.group() == b"-----" and data.endswith(b"PRIVATE KEY", position, start):
-            last = mode == b"B"
+            absorb(data[position:boundary.end()])
+            label = hashlib.sha256(b"pem-label-final" + digest + pending).hexdigest()
+            if mode == "B":
+                active = label if not active else "!"
+                last = True
+            elif active == label:
+                active, last = "", False
+            elif active:
+                last = True
+            else:
+                last = False
             position = boundary.end()
         else:
             position = start if boundary.group() == b"-----" else boundary.end()
-        mode = b"S"
+        mode, digest, pending = "S", bytes(32), b""
+    return last, json.dumps([mode, suffix.hex(), digest.hex(), pending.hex(), active], separators=(",", ":")).encode("ascii")
 
 
 def _tail_private_key(paths: list[_HistoryPath], offset: int, *, deadline: float) -> bool:
@@ -1075,7 +1108,7 @@ def file_page(path: _HistoryPath, *, source: str, cursor: str = "", limit: int =
                         return {"source": source, "text": "", "available": True, "has_more": False,
                                 "cursor": cursor, "next_cursor": cursor, "pending": True,
                                 "notice": "Preparing retained history; this continues automatically."}
-            if position.get("state_version") != state_version and (offset or index):
+            if (position.get("state_version") != state_version or not str(position.get("pem_state", "")).startswith("[")) and (offset or index):
                 try:
                     private_key, pem_state = _tail_marker_state(paths[:index + 1], offset, deadline=deadline)
                 except _TailScanPending:
@@ -1091,7 +1124,7 @@ def file_page(path: _HistoryPath, *, source: str, cursor: str = "", limit: int =
                                     prefix_length=prefix_length if position else 0,
                                     prefix=position.get("prefix", ""), page_end=page_end, **anchor)
             parser_state = position.get("pem_state", "")
-            if not isinstance(parser_state, str) or len(parser_state) > 16 or not parser_state.isascii():
+            if not isinstance(parser_state, str) or len(parser_state) > 512 or not parser_state.isascii():
                 raise ValueError("Invalid private-key parser state.")
             _, marker_prefix = _scan_pem_markers(b"", parser_state.encode("ascii"))
             lines: list[str] = []

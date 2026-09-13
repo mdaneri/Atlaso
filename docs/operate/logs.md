@@ -49,9 +49,12 @@ file and older files that determine its redaction state.
 If journal retention removes an open cursor, the viewer reopens the oldest available entries and reports the reset.
 Permission and other journal errors preserve the current page for a later retry.
 Development-mode service refreshes retain the explanation that no host journal is read.
-Task history keeps unfinished private-key content concealed until a complete private-key closing marker arrives;
-unrelated PEM endings do not end that redaction state.
+Task history keeps unfinished private-key content concealed until a complete closing marker with the same key label arrives;
+unrelated PEM endings, including another private-key type, do not end that redaction state.
+File, journal, and task readers retain bounded label fingerprints across fragments. Interleaved opening markers
+keep subsequent output concealed when a single matching context cannot be established.
 Task capture retains bounded marker state across committed output fragments, nested values, and audit details.
+Values hidden by a secret field name still advance this state before they are discarded.
 Progress and audit-only updates reuse the committed task-result checkpoint without rehashing unchanged log output.
 File pages retain complete-line boundaries; task and multiline journal cursors retain character-safe continuation.
 Numbered file rotations, including compressed archives, are
@@ -100,8 +103,9 @@ Logs are evidence, not an enforcement surface. Correct desired state in the owni
 Physical file entries larger than 64 KiB are represented by an explicit omission marker. The reader advances through
 them in bounded pages so later entries remain reachable; omitted entry contents are not exposed. Private-key markers
 inside discarded fragments still update redaction state for following lines and pages. Long marker labels retain
-their parser state across read chunks, page boundaries, and retained file rotations without retaining the discarded
-label text. Opening and closing headers split between files still govern redaction of subsequent entries.
+their parser state across read chunks, page boundaries, and retained file rotations using a fixed-size fingerprint
+and a bounded partial label block. Opening and closing headers split between files still govern redaction of
+subsequent entries.
 
 Live viewers open at the newest retained group. **From beginning** reads earlier history, and **Follow live**
 returns to recent output. Tail reads preserve private-key redaction across older entries. Multiple private-key
@@ -110,7 +114,9 @@ retained Atlaso App, KMS, HTTP Access, or HTTP Errors archive needs several read
 automatically until the selected
 page is ready. Tail discovery and page reads share that prepared archive window. Fixed nginx files use bounded,
 version-checked helper reads so preparation survives separate helper invocations. Journal
-records larger than 1 MiB use an explicit omission marker and preserve continuation to newer entries. Backward
+records larger than 1 MiB use an explicit omission marker and preserve continuation to newer entries.
+When an omitted record needs an earlier opening-label context, the reader streams that immutable record again
+under the original request deadline; it retains only bounded parser metadata. Backward
 navigation also advances across oversized entries, including an unfinished final entry. Multiline journal messages
 are paged within the record so each response remains within 500 displayed lines and 1 MiB, including timestamps.
 Replacing a file behind an unchanged opening banner invalidates its previous position and reopens retained history.

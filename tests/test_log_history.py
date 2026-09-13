@@ -215,7 +215,7 @@ def test_journal_history_is_bounded_and_uses_fixed_units(monkeypatch, capsys):
     process.poll.return_value = 0
     launch = MagicMock(return_value=process)
     monkeypatch.setattr(helper.subprocess, "Popen", launch)
-    assert helper._read_log_history(["nginx", '{"journal_cursor":"prior","journal_pem_state":"S"}']) == 0
+    assert helper._read_log_history(["nginx", json.dumps({"journal_cursor": "prior", "journal_pem_state": helper._scan_pem_markers(b"")[1].decode("ascii")})]) == 0
     page = json.loads(capsys.readouterr().out)
     assert len(page["lines"]) == 500
     assert page["has_more"]
@@ -249,7 +249,7 @@ def test_journal_large_batch_advances_complete_entries(monkeypatch, capsys):
     process.wait.return_value = 0
     process.poll.return_value = 0
     monkeypatch.setattr(helper.subprocess, "Popen", lambda *args, **kwargs: process)
-    offset, actual, position = 0, [], {"journal_cursor": "c--1", "journal_pem_state": "S"}
+    offset, actual, position = 0, [], {"journal_cursor": "c--1", "journal_pem_state": helper._scan_pem_markers(b"")[1].decode("ascii")}
     for _ in range(10):
         process.stdout = io.BytesIO("\n".join(json.dumps(entry) for entry in entries[offset:]).encode())
         assert helper._read_log_history(["nginx", json.dumps(position)]) == 0
@@ -495,7 +495,7 @@ def test_journal_tail_recovers_prior_key_state(monkeypatch, capsys):
     assert helper._read_log_history(["nginx", '{"tail":true}']) == 0
     page = json.loads(capsys.readouterr().out)
     assert page["initial_private_key"]
-    assert page["current_position"] == {"journal_start_cursor": "latest", "journal_has_previous": False, "journal_pem_state": "S"}
+    assert page["current_position"] == {"journal_start_cursor": "latest", "journal_has_previous": False, "journal_pem_state": helper._scan_pem_markers(b"-----BEGIN PRIVATE KEY-----")[1].decode("ascii")}
     assert "--lines=501" in commands[0]
     assert "--lines=+5001" in commands[1]
 
@@ -1708,7 +1708,7 @@ def test_compressed_preparation_resumes_while_current_file_grows(tmp_path, monke
             positions = [key[2] for key in log_viewer._COMPRESSED_REDACTION_CACHE if key[1] == 0]
             progress.append(max(positions))
             assert len(log_viewer._COMPRESSED_REDACTION_CACHE) <= 32
-            assert all(len(value[1]) <= 128 and len(value[4]) <= 16384
+            assert all(len(value[1]) <= 512 and len(value[4]) <= 16384
                        for value in log_viewer._COMPRESSED_REDACTION_CACHE.values())
         else:
             assert opened is True
@@ -1882,10 +1882,10 @@ def test_pem_parser_preserves_every_fixed_token_split(privileged):
     marker = b"-----BEGIN " + b"UNIQUE-LABEL-" * 20 + b"PRIVATE KEY-----"
     for split in range(1, len(marker)):
         first, carry = reader._scan_pem_markers(marker[:split])
-        assert len(carry) <= 16 and b"UNIQUE" not in carry
+        assert len(carry) <= 512 and b"UNIQUE" not in carry
         last, carry = reader._scan_pem_markers(marker[split:], carry)
         assert (first if last is None else last) is True
-        last, carry = reader._scan_pem_markers(b"\n-----END PRIVATE KEY-----\n", carry)
+        last, carry = reader._scan_pem_markers(b"\n-----END " + b"UNIQUE-LABEL-" * 20 + b"PRIVATE KEY-----\n", carry)
         assert last is False
     assert reader._scan_pem_markers(b"-----BEGIN CERTIFICATE-----\n")[0] is None
     assert reader._scan_pem_markers(b"-----BEGIN invalid -----BEGIN PRIVATE KEY-----\n")[0] is True
@@ -1903,7 +1903,7 @@ def test_long_pem_marker_survives_oversized_page_cursor(tmp_path, privileged):
 
     reader = load_helper_module()
     path = tmp_path / "retained.log"
-    path.write_bytes(b"-----BEGIN " + b"LABEL" * 230000 + b" PRIVATE KEY-----\nsynthetic-body\n-----END PRIVATE KEY-----\nsafe after\n")
+    path.write_bytes(b"-----BEGIN " + b"LABEL" * 230000 + b" PRIVATE KEY-----\nsynthetic-body\n-----END " + b"LABEL" * 230000 + b" PRIVATE KEY-----\nsafe after\n")
     position = None
     opened = False
     texts = []
@@ -1935,7 +1935,7 @@ def test_oversized_journal_preserves_long_fragmented_pem_marker():
     record = prefix + marker + b'"}\n'
     entry = helper._oversized_journal_entry(record[:1048577], io.BytesIO(record[1048577:]))
     assert entry["__CURSOR"] == "cursor-one"
-    assert entry["MESSAGE"].endswith("-----BEGIN PRIVATE KEY-----")
+    assert entry["_journal_pem_result"][0] is True
     assert "LABEL-" not in entry["MESSAGE"]
 
 
@@ -2081,7 +2081,7 @@ def test_private_key_parser_crosses_retained_file_generations(tmp_path, privileg
     helper = load_helper_module()
     path = tmp_path / "split.log"
     marker = b"-----BEGIN LONG-LABEL-" + b"LABEL-" * 40 + b"PRIVATE KEY-----\n"
-    end = b"-----END PRIVATE KEY-----\n"
+    end = marker.replace(b"BEGIN", b"END", 1)
     first = tmp_path / ("split.log.2.gz" if compressed else "split.log.2")
     first.write_bytes(gzip.compress(marker[:split]) if compressed else marker[:split])
     (tmp_path / "split.log.1").write_bytes(marker[split:] + b"synthetic-body\n" + end[:7])
@@ -2475,3 +2475,53 @@ def test_archive_validation_ignores_only_unrelated_newer_writes(tmp_path, monkey
     page = log_viewer.source_page(source, cursor=cursor) if privileged else log_viewer.file_page(path, source=source, cursor=cursor)
     assert bool(page.get("pending")) == (changed != "newer")
     assert page["text"] == ("archive entry" if changed == "newer" else "")
+
+
+@pytest.mark.parametrize("privileged", [False, True])
+@pytest.mark.parametrize("compressed", [False, True])
+@pytest.mark.parametrize("legacy", [False, True])
+def test_mismatched_key_footer_keeps_file_body_private(tmp_path, privileged, compressed, legacy):
+    """Plain and compressed pages require the opening key's actual label.
+
+    Args:
+        tmp_path: Retained log fixture directory.
+        privileged: Exercise the independently installed helper implementation.
+        compressed: Read a retained gzip generation.
+        legacy: Replace a continuation with an older boolean-only parser state.
+    """
+    import gzip
+
+    from tests.test_appliance_helper import load_helper_module
+
+    path = tmp_path / "history.log"
+    content = b"-----BEGIN RSA PRIVATE KEY-----\n-----END EC PRIVATE KEY-----\nprivate-body\n-----END RSA PRIVATE KEY-----\nvisible\n"
+    if compressed:
+        (tmp_path / "history.log.1.gz").write_bytes(gzip.compress(content))
+    else:
+        path.write_bytes(content)
+    if privileged:
+        helper = load_helper_module()
+        position, texts, private = {}, [], False
+        for _ in range(10):
+            page = helper._read_fixed_log_history(path, {**position, "limit": 1})
+            safe, private = log_viewer.redact_lines(page["lines"], private_key=page["initial_private_key"])
+            texts.extend(safe)
+            position = {**page["file_position"], "private_key": private}
+            if legacy:
+                position.update(pem_state="S", private_key=False)
+            if not page["has_more"]:
+                break
+    else:
+        cursor, texts = "", []
+        for _ in range(10):
+            page = log_viewer.file_page(path, source="test", cursor=cursor, limit=1)
+            texts.append(page["text"])
+            cursor = page["next_cursor"]
+            if legacy:
+                position = log_viewer.decode_cursor(cursor, "test")
+                position.update(pem_state="S", private_key=False)
+                cursor = log_viewer.encode_cursor(**position)
+            if not page["has_more"]:
+                break
+    assert "private-body" not in "\n".join(texts)
+    assert "visible" in "\n".join(texts)
