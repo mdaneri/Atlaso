@@ -335,6 +335,8 @@ so uncertain ordering conservatively retains the warning and the last failed att
 Static recovery similarly requires a later activation of the exact attempted CIDR with native static
 source evidence. A rollback holdover with the same IP, a different prefix, or a DHCP source does not
 clear the latest failure. When ordering or the attempted prefix is unknown, the warning is retained.
+This recovery also applies after disabling IPv4 checking: saving the opt-out alone does not clear
+the warning, but a later observed activation of the exact static CIDR does.
 
 IPv6 recovery remains enabled when IPv4 checking is disabled. DHCPv6 and SLAAC failures remain visible
 until a later usable automatic IPv6 address appears; an existing address or a new link-local address

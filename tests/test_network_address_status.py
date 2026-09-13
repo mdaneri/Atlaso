@@ -1084,12 +1084,14 @@ def test_address_readiness_uses_full_thirty_second_window(tmp_path, monkeypatch,
 
 
 @pytest.mark.parametrize("source,prefix", [("static", 24), ("DHCPv4", 25), ("static", 25)])
-def test_static_prefix_failure_requires_later_exact_candidate_activation(source, prefix):
+@pytest.mark.parametrize("opt_out", [False, True])
+def test_static_prefix_failure_requires_later_exact_candidate_activation(source, prefix, opt_out):
     """Rollback holdovers and leases cannot resolve a failed static prefix change.
 
     Args:
         source: Native source of the retained address.
         prefix: Prefix on the pre-existing address record.
+        opt_out: Disable IPv4 checking after the failed activation.
     """
     desired = resource(desired="192.0.2.20")
     desired["desired_cidrs"] = {"192.0.2.20": "192.0.2.20/25"}
@@ -1097,6 +1099,7 @@ def test_static_prefix_failure_requires_later_exact_candidate_activation(source,
     native = observation(address="192.0.2.20", conflicts=[event])
     native["links"][0]["addresses"][0].update(source=source, cidr=f"192.0.2.20/{prefix}")
     rejected = project_status(native, {}, [desired])
+    desired["checking"] = not opt_out
     retained = project_status(native, rejected, [desired])
     assert retained["rows"]["physical:1"]["state"] == "conflict"
     assert retained["rows"]["physical:1"]["conflict_resolved"] is False

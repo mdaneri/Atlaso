@@ -141,7 +141,7 @@ def project_status(
                 and any(address not in prior_leases for address in current_leases))
             if replacement_lease and (declined_offer or dynamic6_conflict):
                 conflict_resolved = True
-            elif (not declined_offer and not dynamic6_conflict and checking and lease_evidence and link.get("configured")
+            elif (not declined_offer and not dynamic6_conflict and lease_evidence and link.get("configured")
                   and conflict_cidr and conflict_cidr in static_cidrs
                   and isinstance(prior.get("static_cidrs"), list) and conflict_cidr not in prior["static_cidrs"]
                   and _event_after_identity_change({"detected_at": prior_lease_observed_at},
