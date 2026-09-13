@@ -2265,6 +2265,7 @@ def build_router(dependencies: VcfWorkflowsUiDependencies) -> VcfWorkflowsUiRout
                     )
                 )
             )
+        response_headers = {"Cache-Control": "no-store", "Vary": "X-Atlaso-Task-Log"}
         if request.headers.get("X-Atlaso-Task-Log") == "1":
             try:
                 history = log_viewer.file_page(Path(task_log["path"]), source=f"task:{job.id}",
@@ -2283,9 +2284,10 @@ def build_router(dependencies: VcfWorkflowsUiDependencies) -> VcfWorkflowsUiRout
                     "updated_at": task_log.get("updated_at", ""),
                     "available": task_log["available"],
                     "text": history["text"],
-                }
+                },
+                headers=response_headers,
             )
-        return render(
+        response = render(
             request,
             "vcf_offline_depot_task_log.html",
             {
@@ -2295,6 +2297,8 @@ def build_router(dependencies: VcfWorkflowsUiDependencies) -> VcfWorkflowsUiRout
                 "task_log": task_log,
             },
         )
+        response.headers.update(response_headers)
+        return response
 
     @router.get("/vcf-offline-depot/tasks/status", response_model=None)
     def vcf_offline_depot_task_status(

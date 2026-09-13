@@ -12937,6 +12937,8 @@ def test_vcf_offline_depot_manual_profile_download_starts_job(client, tmp_path, 
     monkeypatch.setattr(ui, "VCF_DEPOT_VDT_LOG_PATH", shared_runtime_log)
     task_log_page = client.get(f"/vcf-offline-depot/tasks/{payload['job_id']}/log")
     assert task_log_page.status_code == 200
+    assert task_log_page.headers["cache-control"] == "no-store"
+    assert "X-Atlaso-Task-Log" in task_log_page.headers["vary"].split(", ")
     assert "VCFDT task log" in task_log_page.text
     assert "No task log is available." in task_log_page.text
     assert "another profile is running" not in task_log_page.text
@@ -12945,8 +12947,12 @@ def test_vcf_offline_depot_manual_profile_download_starts_job(client, tmp_path, 
         headers={"X-Atlaso-Task-Log": "1"},
     )
     assert task_log_payload.status_code == 200
+    assert task_log_payload.headers["cache-control"] == "no-store"
+    assert "X-Atlaso-Task-Log" in task_log_payload.headers["vary"].split(", ")
     assert task_log_payload.json()["job_id"] == payload["job_id"]
-    assert task_log_payload.json()["text"] == "No task log is available."
+    assert task_log_payload.json()["text"] == ""
+    assert task_log_payload.json()["available"] is False
+    assert task_log_payload.json()["notice"] == "Log file has not been written yet."
     task_status_payload = client.get("/vcf-offline-depot/tasks/status")
     assert task_status_payload.status_code == 200
     assert task_status_payload.json()["last_row"] >= 1

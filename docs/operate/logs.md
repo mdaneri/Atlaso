@@ -90,6 +90,8 @@ oversized entries, including an unfinished final entry. Multiline journal messag
 the record so each response remains within 500 displayed lines and 1 MiB, including timestamps. Replacing a file
 behind an unchanged opening banner invalidates its previous position and reopens retained history.
 
+Standalone VCFDT task-log pages and their live JSON responses disable HTTP caching so refreshes read current output.
+
 Direct service-log pages include a bounded, redacted snapshot before JavaScript starts. If scripting is unavailable,
 reload the page to refresh that snapshot. Development mode explains that no host journal was read; an empty or
 unavailable source displays its current condition. Full history navigation and live updates require JavaScript.
