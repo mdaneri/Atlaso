@@ -9,6 +9,11 @@ status: current
 
 # Router architecture
 
+Task-value sanitization is shared through `services/task_log_redaction.py`. The UI keeps its established
+`_redact_task_value` facade, while non-UI consumers can reuse the sanitizer without importing route registration
+and orchestration. This recursive value sanitizer does not replace the log reader's stateful cross-line private-key
+redaction.
+
 Traffic Publishing settings and NAT transports remain registered by the `routes_wan` domain routers to preserve the
 existing NAT operation IDs and facades. `services/traffic_publishing.py` owns canonical NAT settings, eligibility,
 family validation, and helper snapshots. The `nat` Apply unit has its own baseline and helper transaction. Routing/WAN

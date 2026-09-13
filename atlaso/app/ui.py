@@ -544,6 +544,9 @@ from atlaso.app.services.settings_archive import (
     export_settings_archive,
     restore_settings_archive,
 )
+from atlaso.app.services.task_log_redaction import (
+    redact_task_value as _redact_task_value,
+)
 from atlaso.app.services.traffic_publishing import (
     NAT_CONFIG_PATH,
     ensure_traffic_publishing_settings,
@@ -8311,13 +8314,6 @@ SERVICE_ADMIN_CANCELLABLE_JOB_TYPES = {
     "vcf-ca-trust",
     "pxe-media-sync",
 }
-TASK_SECRET_KEY_RE = re.compile(r"(password|passwd|secret|token|credential|authorization|activation|private[_-]?key|api[_-]?key|payload[_-]?b64)", re.IGNORECASE)
-TASK_SECRET_VALUE_RE = re.compile(r"(-----BEGIN [A-Z ]*PRIVATE KEY-----|sk-[A-Za-z0-9_-]{16,}|Bearer\s+[A-Za-z0-9._-]{12,})", re.IGNORECASE)
-TASK_INLINE_SECRET_RE = re.compile(
-    r"(?P<label>\b[a-z0-9_-]*(?:password|passwd|secret|token|credential|authorization|activation|private[_-]?key|api[_-]?key|payload[_-]?b64)\b)"
-    r"(?P<separator>\s*(?:=|:)\s*)(?P<value>\"[^\"]*\"|'[^']*'|[^\s,;]+)",
-    re.IGNORECASE,
-)
 
 
 def _raise_if_job_cancelled(job: Job, db: Session) -> None:
@@ -8367,24 +8363,6 @@ def _update_cancelable_job(job: Job, db: Session, percent: int, state: str, **va
     _update_job(job, db, percent, state, **values)
 
 
-def _redact_task_value(value: Any, *, key: str = "") -> Any:
-    """Return redact task value.
-
-    Args:
-        value: Candidate value consumed by redact task value.
-        key: Stable key identifying the setting, secret, or mapping entry.
-    """
-    if key and TASK_SECRET_KEY_RE.search(key):
-        return "[redacted]"
-    if isinstance(value, dict):
-        return {str(item_key): _redact_task_value(item_value, key=str(item_key)) for item_key, item_value in value.items()}
-    if isinstance(value, list):
-        return [_redact_task_value(item) for item in value]
-    if isinstance(value, str):
-        if TASK_SECRET_VALUE_RE.search(value):
-            return "[redacted]"
-        return TASK_INLINE_SECRET_RE.sub(lambda match: f"{match.group('label')}{match.group('separator')}[redacted]", value)
-    return value
 
 
 def _task_failure_messages(value: Any) -> list[str]:
