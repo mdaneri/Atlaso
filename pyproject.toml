@@ -1,6 +1,6 @@
 [project]
 name = "atlaso"
-version = "0.9.357"
+version = "0.9.358"
 description = "Atlaso supports POC, lab, and test environments by simplifying deployment, maintenance, and validation."
 readme = "README.md"
 license = "MIT"
@@ -21,7 +21,7 @@ dependencies = [
   "python-multipart>=0.0.12",
   "sqlalchemy>=2.0.36",
   "uvicorn[standard]>=0.32.0",
-  "vcf-sdk==9.1.0.0",
+  "vcf-sdk==9.1.1.0",
 ]
 
 [project.scripts]
