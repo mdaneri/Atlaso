@@ -13,7 +13,7 @@ import pytest
 def test_powershell_help_policy_is_wired_to_exact_base_ci() -> None:
     """Keep the incremental checker and documented authoring contract in canonical CI."""
     workflow = Path(".github/workflows/ci.yml").read_text(encoding="utf-8")
-    contributing = Path("CONTRIBUTING.md").read_text(encoding="utf-8")
+    authoring = Path("docs/contribute/powershell-authoring.md").read_text(encoding="utf-8")
     agent_policies = Path("docs/contribute/agent-policies.md").read_text(encoding="utf-8")
 
     assert "path: .powershell-base" in workflow
@@ -34,8 +34,8 @@ def test_powershell_help_policy_is_wired_to_exact_base_ci() -> None:
     ):
         assert repository_job.index(whole_tree_check) < base_checkout
     assert base_checkout < powershell_check
-    assert "Every new or changed `.ps1` or `.psm1` file" in contributing
-    assert "exactly one canonical help block" in contributing
+    assert "Every new or changed `.ps1` or `.psm1` file" in authoring
+    assert "exactly one canonical help block" in authoring
     assert "comment-based help and rationale-focused comments" in agent_policies
     assert "exactly one canonical help block" in agent_policies
 

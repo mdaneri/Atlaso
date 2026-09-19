@@ -19,6 +19,12 @@ status: current
 - [Windows image-build WSL environment](windows-image-build-wsl.md)
 - [Atlaso UI Design Guide](ui-design-guide.md)
 - [Detailed agent policies](agent-policies.md)
+- [Progressive policy and ownership](progressive-policy.md)
+- [Worktree and delegation workflow](agent-workflow.md)
+- [Pull-request review and delivery](pr-workflow.md)
+- [Credential policy](credential-policy.md)
+- [Release and publication policy](release-policy.md)
+- [PowerShell authoring](powershell-authoring.md)
 - [Security policy](https://github.com/mdaneri/Atlaso/blob/main/SECURITY.md)
 - [Code of conduct](https://github.com/mdaneri/Atlaso/blob/main/CODE_OF_CONDUCT.md)
 

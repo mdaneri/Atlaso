@@ -141,7 +141,7 @@ PROTECTED_PUBLICATION_WORKFLOWS = (
 
 SCHEDULED_PR_MONITORING_SHARED_MARKERS = (
     "current-task heartbeat",
-    "four minutes",
+    "fifteen minutes",
     "persistent GitHub polling loops",
     "exclusive routine PR monitoring mechanism",
     "finite-but-delayed shell polling",
@@ -207,20 +207,29 @@ CODEX_WORKTREE_ROOT_SHARED_MARKERS = (
 )
 
 PRIMARY_CHECKOUT_BEFORE_ROOT_MARKERS = {
-    path: (
-        "First identify and verify whether the task uses the repository's primary checkout",
+    Path("docs/contribute/completed-task-cleanup.md"): (
+        "First identify and verify whether the "
+        "task uses the repository's primary "
+        "checkout",
         "`git-worktree-root`",
-    )
-    for path in (
-        Path("AGENTS.md"),
-        Path("CONTRIBUTING.md"),
-        Path("docs/contribute/agent-policies.md"),
     )
 }
 
 REQUIRED_POLICY_MARKERS = {
     Path("AGENTS.md"): (
         "## Mandatory Agent Startup Gate",
+        "CONTRIBUTING.md",
+        "## Conditional policy routes",
+        "delegating agent",
+    ),
+    Path("CONTRIBUTING.md"): (
+        "### Maintainer override / break-glass",
+        "canonical maintainer override policy",
+        "human-maintainer break-glass authority",
+        "automation must never use or request a ruleset or administrative bypass",
+        "cannot be delegated to automation",
+    ),
+    Path("docs/contribute/agent-workflow.md"): (
         "## Codex Task Title Traceability",
         "### Supported title controls",
         "Short description · Issue #<issue> · PR #<pr>",
@@ -230,129 +239,93 @@ REQUIRED_POLICY_MARKERS = {
         "`spark_worker`",
         "`gpt-5.3-codex-spark`",
         "never substitutes another model",
-        "## Mandatory UI Design Guide Gate",
-        "CONTRIBUTING.md",
-        "CODE_OF_CONDUCT.md",
-        "SECURITY.md",
-        "docs/contribute/ui-design-guide.md",
-        "first progress update",
-        "delegating agent",
-        *CODEX_WORKTREE_ROOT_SHARED_MARKERS,
-        "direct-edit Tabulator",
-        "custom/other",
-        "explicit maintainer approval",
-        "private vulnerability remediation",
-        "advisory-side maintainer review",
-        "test suite locally when required",
+        "### Unrelated issue discoveries",
+        "supported Codex configuration",
+        "`git-worktree-root`",
+        "Never guess, infer, synthesize, or silently fall back",
+        "explicit maintainer-configured permitted root",
+        "preserve its state",
+        "## Validation resource preparation",
+        "record the original identity and task/source binding at creation",
+        "Never retrofit missing creation evidence at cleanup time",
+    ),
+    Path("docs/contribute/pr-workflow.md"): (
         "### Focused local validation and pull-request follow-through",
         "Python test suite locally",
         "ready for review",
         "@codex review",
         "exact head",
         "reviewThreads",
-        *SCHEDULED_PR_MONITORING_SHARED_MARKERS,
+        "current-task heartbeat",
+        "fifteen minutes",
+        "persistent GitHub polling loops",
+        "exclusive routine PR monitoring mechanism",
+        "finite-but-delayed shell polling",
+        "Start-Sleep -Seconds 55; gh pr checks",
+        "sleep 55; gh pr view",
+        "one immediate bounded reconciliation",
+        "must not schedule its own next check with a shell delay",
+        "explicit maintainer request",
+        "must not duplicate an active heartbeat",
+        "seen comment and review IDs",
+        "delivery-complete merge-ready",
+        "final bounded readback",
+        "delete the exact current-task heartbeat",
+        "linked-issue closure",
+        "current `origin/main` reachability",
+        "applicable post-merge workflow verification",
+        "unmerged closed",
+        "delivery-complete",
+        "never delete unrelated",
+        "already absent",
+        "terminal evidence",
+        "resumable holds",
+        "`wait for approval` remains resumable",
+        "ambiguous ownership",
+        "exact retry condition",
+        "never merely paused",
         "top-level pull-request comments",
         "inline review comments",
         "review submissions",
-        "### Unrelated issue discoveries",
         "### Default merge authorization",
         "default merge authority",
         "explicit merge hold",
-        *MAINTAINER_BREAK_GLASS_SHARED_MARKERS,
+        "human-maintainer break-glass authority",
+        "automation must never use or request a ruleset or administrative bypass",
+        "cannot be delegated to automation",
         "strict up-to-date required checks",
         "no merge queue is required",
         "--match-head-commit <head-sha>",
         "### Extended merge descriptions",
+    ),
+    Path("docs/contribute/completed-task-cleanup.md"): (
         "## Completed Task Cleanup",
         "`cleanup-ready`",
+        "`validation_resources_released`",
         "`remote_branch_absent`",
         "`worktree_removed`",
         "`task_title_done`",
+        '" · Done"',
+        "`primary_checkout_restored`",
+        "`primary_checkout_resume`",
+        "`local_task_branch_absent`",
+        "`--force-with-lease=refs/heads/BRANCH:HEAD_SHA`",
+        "`worktree_removal_resume`",
+        "worktree removal remote branch gate "
+        "is either verified absent or recorded "
+        "not applicable",
+        "primary checkout remote branch gate "
+        "is either verified absent or recorded "
+        "not applicable",
+        "`task_title_done` as verified not applicable",
         "`non_task_owned_remote_branch_preserved`",
         "`non_task_owned_checkout_preserved`",
-        '" · Done"',
-        "AtlasoUiPatterns.createGrid",
-        "AtlasoUiPatterns.createWizard",
-    ),
-    Path("CONTRIBUTING.md"): (
-        "## Automated contributors and coding agents",
-        "## User-interface contributions",
-        "Mandatory Agent Startup Gate",
-        "Mandatory UI Design Guide Gate",
-        "docs/contribute/ui-design-guide.md",
-        "custom/other",
-        "delegated agent",
-        *CODEX_WORKTREE_ROOT_SHARED_MARKERS,
-        "### Automated pull-request follow-through",
-        "Python test suite locally",
-        "ready for review",
-        "@codex review",
-        "exact head",
-        "review threads",
-        *SCHEDULED_PR_MONITORING_SHARED_MARKERS,
-        "top-level pull-request comments",
-        "inline review comments",
-        "review submissions",
-        "### Unrelated issue discoveries",
-        "### Default merge authorization",
-        "default merge authority",
-        "explicit merge hold",
-        "### Maintainer override / break-glass",
-        "canonical maintainer override policy",
-        *MAINTAINER_BREAK_GLASS_SHARED_MARKERS,
-        "strict up-to-date required checks",
-        "no required merge queue",
-        "AtlasoUiPatterns.createGrid",
-        "AtlasoUiPatterns.createWizard",
-        "private vulnerability remediation",
-        "advisory-side maintainer review",
-        "complete Python test suite locally",
-        "### Completed task cleanup",
-        "`cleanup-ready`",
-        "`remote_branch_absent`",
-        "`worktree_removed`",
-        "`task_title_done`",
-        "`non_task_owned_remote_branch_preserved`",
-        "`non_task_owned_checkout_preserved`",
-        '" · Done"',
-    ),
-    Path(".github/copilot-instructions.md"): (
-        "Mandatory Agent Startup Gate",
-        "Mandatory UI Design Guide Gate",
-        "CONTRIBUTING.md",
-        "CODE_OF_CONDUCT.md",
-        "SECURITY.md",
-        "docs/contribute/ui-design-guide.md",
-        "custom/other",
-        "linked GitHub issue",
-        "complete Python test suite belongs to GitHub CI",
-        "ready for review",
-        "@codex review",
-        "exact head",
-        "review threads",
-        *SCHEDULED_PR_MONITORING_SHARED_MARKERS,
-        "top-level pull-request comments",
-        "inline review comments",
-        "review submissions",
-        "Default merge authorization",
-        "default merge authority",
-        "explicit merge hold",
-        *MAINTAINER_BREAK_GLASS_SHARED_MARKERS,
-        "strict up-to-date required checks",
-        "when a merge queue is required",
-        "evidence-backed unrelated problem",
-        "AtlasoUiPatterns.createGrid",
-        "AtlasoUiPatterns.createWizard",
-        "private vulnerability remediation",
-        "advisory-side maintainer review",
-        "complete Python test suite locally",
-        "`cleanup-ready`",
-        "`remote_branch_absent`",
-        "`worktree_removed`",
-        "`task_title_done`",
-        "`non_task_owned_remote_branch_preserved`",
-        "`non_task_owned_checkout_preserved`",
-        '" · Done"',
+        "`advisory_cleanup_ready`",
+        "`advisory_remote_branch_absent`",
+        "First identify and verify whether the "
+        "task uses the repository's primary "
+        "checkout",
+        "`git-worktree-root`",
     ),
     Path("SECURITY.md"): (
         "## Privately fixing a validated vulnerability",
@@ -369,87 +342,13 @@ REQUIRED_POLICY_MARKERS = {
         "coordinated disclosure",
         "advisory-side maintainer review",
         "complete Python test suite locally",
-        *MAINTAINER_BREAK_GLASS_SHARED_MARKERS,
-    ),
-    Path("docs/contribute/agent-policies.md"): (
-        "# Detailed agent policies",
-        "## Mandatory Agent Startup Gate",
-        "## Sol and Spark Delegation",
-        "`spark_worker`",
-        "`gpt-5.3-codex-spark`",
-        "Do not silently",
-        *CODEX_WORKTREE_ROOT_SHARED_MARKERS,
-        "## Repository Delivery Workflow",
-        "private vulnerability remediation",
-        "temporary private fork",
-        "`gh pr merge`",
-        "Publishing is a separate explicit action",
-        "explicit maintainer authorization",
-        "Advisory-side maintainer review",
-        "complete Python test suite locally",
-        "### Focused local validation and pull-request follow-through",
-        "Python test suite locally",
-        "ready for review",
-        "@codex review",
-        "exact head",
-        "reviewThreads",
-        *SCHEDULED_PR_MONITORING_SHARED_MARKERS,
-        "top-level pull-request comments",
-        "inline review comments",
-        "review submissions",
-        "outside that scope is discovered",
-        "### Default merge authorization",
-        "default merge authority",
-        "explicit merge hold",
-        *MAINTAINER_BREAK_GLASS_SHARED_MARKERS,
-        "strict up-to-date required checks",
-        "no required merge queue",
-        "### Completed task cleanup",
-        "`cleanup-ready`",
-        "`remote_branch_absent`",
-        "`worktree_removed`",
-        "`task_title_done`",
-        "`non_task_owned_remote_branch_preserved`",
-        "`non_task_owned_checkout_preserved`",
-        '" · Done"',
-    ),
-    Path(".github/pull_request_template.md"): (
-        "Closes #",
-        "Mandatory Agent Startup Gate",
-        "For an ordinary pull request, focused local tests/checks passed",
-        "complete Python test suite",
-        "ready for review",
-        "each post-opening pushed commit received one `@codex review` request",
-        "request as the exact",
-        "authoritative review threads",
-        *SCHEDULED_PR_MONITORING_SHARED_MARKERS,
-        "top-level pull-request comment",
-        "inline review comment",
-        "review submission",
-        "Default merge authorization",
-        "default merge authority",
-        "explicit merge hold",
-        *MAINTAINER_BREAK_GLASS_SHARED_MARKERS,
-        "strict up-to-date required checks",
-        "no merge queue is required",
-        "Evidence-backed issues discovered outside",
-        "docs/contribute/ui-design-guide.md",
-        "custom/other",
-        "AtlasoUiPatterns.createGrid",
-        "AtlasoUiPatterns.createWizard",
-        "private vulnerability-remediation pull request",
-        "advisory-side maintainer review",
-        "complete Python test suite ran locally",
-        "`cleanup-ready`",
-        "`remote_branch_absent`",
-        "`worktree_removed`",
-        "`task_title_done`",
-        "`non_task_owned_remote_branch_preserved`",
-        "`non_task_owned_checkout_preserved`",
-        '" · Done"',
+        "human-maintainer break-glass authority",
+        "automation must never use or request a ruleset or administrative bypass",
+        "cannot be delegated to automation",
     ),
     Path("docs/contribute/ui-design-guide.md"): (
         "# Atlaso UI Design Guide",
+        "## Mandatory contributor gate",
         "Tabulator is the only data-grid implementation",
         "Physical Interfaces",
         "ESX Storage",
@@ -462,16 +361,19 @@ REQUIRED_POLICY_MARKERS = {
         "AtlasoUiPatterns.createGrid",
         "AtlasoUiPatterns.createWizard",
     ),
+    Path("docs/contribute/agent-policies.md"): ("# Detailed agent policies",),
+    Path(".github/copilot-instructions.md"): (
+        "Mandatory Agent Startup Gate",
+        "consolidated actionable review",
+    ),
+    Path(".github/pull_request_template.md"): (
+        "Closes #",
+        "current-head checks",
+        "canonical CI owns the ordinary complete Python suite",
+    ),
     Path("docs/reference/full-technical-reference.md"): (
-        "default merge authority",
-        "explicit merge hold",
-        *MAINTAINER_BREAK_GLASS_SHARED_MARKERS,
-        "strict up-to-date required checks",
-        "when a merge queue is required",
-        "`non_task_owned_remote_branch_preserved`",
-        "`non_task_owned_checkout_preserved`",
-        "worktree removal remote branch gate is either verified absent or recorded not applicable",
-        "primary checkout remote branch gate is either verified absent or recorded not applicable",
+        "PR workflow",
+        "completed-task policy",
     ),
 }
 
@@ -485,73 +387,51 @@ COMPLETED_TASK_COMMAND_MARKERS = (
 )
 
 SCHEDULED_PR_MONITORING_SECTION_ANCHORS = {
-    Path("AGENTS.md"): "### Focused local validation and pull-request follow-through",
-    Path("CONTRIBUTING.md"): "### Automated pull-request follow-through",
-    Path(".github/copilot-instructions.md"): (
-        "- keep the task active with exactly one current-task heartbeat"
-    ),
-    Path(".github/pull_request_template.md"): (
-        "- [ ] For an ordinary pull request, exactly one current-task heartbeat"
-    ),
-    Path("docs/contribute/agent-policies.md"): (
-        "### Focused local validation and pull-request follow-through"
-    ),
+    Path(
+        "docs/contribute/pr-workflow.md"
+    ): "### Focused local validation and pull-request follow-through"
 }
 
-SCHEDULED_PR_MONITORING_SECTION_END_ANCHORS = {
-    Path(".github/copilot-instructions.md"): (
-        "- apply the **Default merge authorization** policy"
-    ),
-    Path(".github/pull_request_template.md"): (
-        "- [ ] For an ordinary same-repository pull request within the active "
-        "task's scope, the Default merge authorization"
-    ),
-}
+SCHEDULED_PR_MONITORING_SECTION_END_ANCHORS: dict[Path, str] = {}
 
 SCHEDULED_PR_MONITORING_SECTION_MARKERS = {
-    Path("AGENTS.md"): (
-        *SCHEDULED_PR_MONITORING_SHARED_MARKERS,
+    Path("docs/contribute/pr-workflow.md"): (
+        "current-task heartbeat",
+        "fifteen minutes",
+        "persistent GitHub polling loops",
+        "exclusive routine PR monitoring mechanism",
+        "finite-but-delayed shell polling",
+        "Start-Sleep -Seconds 55; gh pr checks",
+        "sleep 55; gh pr view",
+        "one immediate bounded reconciliation",
+        "must not schedule its own next check with a shell delay",
+        "explicit maintainer request",
+        "must not duplicate an active heartbeat",
+        "seen comment and review IDs",
+        "delivery-complete merge-ready",
+        "final bounded readback",
+        "delete the exact current-task heartbeat",
+        "linked-issue closure",
+        "current `origin/main` reachability",
+        "applicable post-merge workflow verification",
+        "unmerged closed",
+        "delivery-complete",
+        "never delete unrelated",
+        "already absent",
+        "terminal evidence",
+        "resumable holds",
+        "`wait for approval` remains resumable",
+        "ambiguous ownership",
+        "exact retry condition",
+        "never merely paused",
         "top-level pull-request comments",
         "inline review comments",
         "review submissions",
-    ),
-    Path("CONTRIBUTING.md"): (
-        *SCHEDULED_PR_MONITORING_SHARED_MARKERS,
-        "top-level pull-request comments",
-        "inline review comments",
-        "review submissions",
-    ),
-    Path(".github/copilot-instructions.md"): (
-        *SCHEDULED_PR_MONITORING_SHARED_MARKERS,
-        "top-level pull-request comments",
-        "inline review comments",
-        "review submissions",
-    ),
-    Path(".github/pull_request_template.md"): (
-        *SCHEDULED_PR_MONITORING_SHARED_MARKERS,
-        "top-level pull-request comment",
-        "inline review comment",
-        "review submission",
-    ),
-    Path("docs/contribute/agent-policies.md"): (
-        *SCHEDULED_PR_MONITORING_SHARED_MARKERS,
-        "top-level pull-request comments",
-        "inline review comments",
-        "review submissions",
-    ),
+    )
 }
 
 DEFAULT_MERGE_AUTHORITY_SECTION_ANCHORS = {
-    Path("AGENTS.md"): "### Default merge authorization",
-    Path("CONTRIBUTING.md"): "### Default merge authorization",
-    Path(".github/copilot-instructions.md"): (
-        "- apply the **Default merge authorization** policy"
-    ),
-    Path(".github/pull_request_template.md"): (
-        "- [ ] For an ordinary same-repository pull request within the active "
-        "task's scope, the Default merge authorization"
-    ),
-    Path("docs/contribute/agent-policies.md"): "### Default merge authorization",
+    Path("docs/contribute/pr-workflow.md"): "### Default merge authorization"
 }
 
 DEFAULT_MERGE_AUTHORITY_SECTION_MARKERS = {
@@ -1326,31 +1206,16 @@ MERGE_HOLD_WITHDRAWAL_AFTER_HOLD = re.compile(
 )
 
 ORDERED_TERMINAL_CLEANUP_MARKERS = {
-    path: (
+    Path("docs/contribute/completed-task-cleanup.md"): (
         "`validation_resources_released`",
         "`remote_branch_absent`",
         "`worktree_removed`",
         "`task_title_done`",
     )
-    for path in (
-        Path("AGENTS.md"),
-        Path("CONTRIBUTING.md"),
-        Path(".github/copilot-instructions.md"),
-        Path(".github/pull_request_template.md"),
-        Path("docs/contribute/agent-policies.md"),
-    )
 }
 
 TERMINAL_CLEANUP_SECTION_ANCHORS = {
-    Path("AGENTS.md"): "## Completed Task Cleanup",
-    Path("CONTRIBUTING.md"): "### Completed task cleanup",
-    Path(".github/copilot-instructions.md"): (
-        "- after an authorized merge and all remaining activity,"
-    ),
-    Path(".github/pull_request_template.md"): (
-        "- [ ] After any authorized merge and remaining post-merge activity,"
-    ),
-    Path("docs/contribute/agent-policies.md"): "### Completed task cleanup",
+    Path("docs/contribute/completed-task-cleanup.md"): "## Completed Task Cleanup"
 }
 
 PRIVATE_REMEDIATION_CLEANUP_MARKER = "`advisory_cleanup_ready`"
@@ -3329,24 +3194,43 @@ def check_completed_task_command_policy(root: Path) -> list[Finding]:
         root: Repository root containing implementation and controller documentation.
     """
     findings: list[Finding] = []
-    for relative in ("scripts/cleanup-completed-task.ps1", "scripts/completed_task_cleanup.py",
-                     "scripts/completed_task_files.py", "docs/contribute/completed-task-cleanup.md"):
+    for relative in (
+        "scripts/cleanup-completed-task.ps1",
+        "scripts/completed_task_cleanup.py",
+        "scripts/completed_task_files.py",
+        "docs/contribute/completed-task-cleanup.md",
+    ):
         if not (root / relative).is_file():
-            findings.append(Finding(root / relative, "supported cleanup command dependency is missing"))
-    for relative in (Path("AGENTS.md"), Path("CONTRIBUTING.md"), Path("docs/contribute/agent-policies.md")):
+            findings.append(
+                Finding(
+                    root / relative, "supported cleanup command dependency is missing"
+                )
+            )
+    for relative in TERMINAL_CLEANUP_SECTION_ANCHORS:
         text, error = read_text(root / relative)
         if error is not None or text is None:
-            findings.append(Finding(root / relative, "cleanup command policy is missing"))
+            findings.append(
+                Finding(root / relative, "cleanup command policy is missing")
+            )
             continue
-        anchor = "## Completed Task Cleanup" if relative.name == "AGENTS.md" else "### Completed task cleanup"
+        anchor = TERMINAL_CLEANUP_SECTION_ANCHORS[relative]
         count, section = extract_required_policy_section(text, anchor)
         if count != 1 or section is None:
-            findings.append(Finding(root / relative, "cleanup command section must appear exactly once"))
+            findings.append(
+                Finding(
+                    root / relative, "cleanup command section must appear exactly once"
+                )
+            )
             continue
         visible = " ".join(render_markdown_operative_text(section).split())
         for marker in COMPLETED_TASK_COMMAND_MARKERS:
             if marker.replace("`", "") not in visible:
-                findings.append(Finding(root / relative, f"cleanup command policy marker is missing: {marker}"))
+                findings.append(
+                    Finding(
+                        root / relative,
+                        f"cleanup command policy marker is missing: {marker}",
+                    )
+                )
     return findings
 
 
@@ -5786,6 +5670,229 @@ def check_protected_workflow_caches(root: Path) -> list[Finding]:
     return findings
 
 
+POLICY_BASELINE_BYTES = 162_976
+PROGRESSIVE_CORE_REQUIREMENTS = (
+    "Load each applicable route below before planning or performing its operation",
+    "Reuse unchanged policy already read in this task",
+    "Never commit directly to main",
+    "routine synchronized version bumps follow CONTRIBUTING only",
+    "suspected sensitive vulnerabilities require the security route before any public issue or finding",
+    "Automation must never use or request a ruleset or administrative bypass",
+    "Resolve unknown applicability before mutation rather than treating it as an exemption",
+)
+POLICY_CORE_FILES = ("AGENTS.md", "CONTRIBUTING.md")
+# Count the complete ordinary Python + documentation path, including the brand guide
+# required by documentation-authoring. Conditional links are not unconditional reads.
+POLICY_ORDINARY_FILES = (
+    *POLICY_CORE_FILES,
+    "docs/contribute/agent-workflow.md",
+    "docs/contribute/python-static-analysis.md",
+    "docs/contribute/documentation-authoring.md",
+    "docs/assets/brand/BRAND_GUIDE.md",
+)
+POLICY_REVIEW_FILES = (
+    *POLICY_ORDINARY_FILES,
+    "docs/contribute/pr-workflow.md",
+    "CODE_OF_CONDUCT.md",
+)
+POLICY_ROUTE_TARGETS = {
+    "implementation": ("docs/contribute/agent-workflow.md",),
+    "review": ("docs/contribute/pr-workflow.md",),
+    "security": ("SECURITY.md",),
+    "credentials": ("docs/contribute/credential-policy.md",),
+    "ui": ("docs/contribute/ui-design-guide.md",),
+    "api": (
+        "docs/contribute/api-authoring.md",
+        "docs/contribute/router-architecture.md",
+    ),
+    "python": ("docs/contribute/python-static-analysis.md",),
+    "powershell": ("docs/contribute/powershell-authoring.md",),
+    "documentation": ("docs/contribute/documentation-authoring.md",),
+    "dependencies": ("docs/contribute/dependency-management.md",),
+    "release": ("docs/contribute/release-policy.md",),
+    "subsystem": ("docs/contribute/agent-policies.md",),
+    "infrastructure": (
+        "docs/reference/vmware-workstation-lifecycle-testing.md",
+        "docs/contribute/agent-policies.md",
+    ),
+    "cleanup": ("docs/contribute/completed-task-cleanup.md",),
+    "community": ("CODE_OF_CONDUCT.md",),
+}
+COMPLETE_REVIEW_REQUIREMENTS = (
+    "exact base SHA and head SHA",
+    "complete PR diff and all changed files",
+    "surrounding code and trace affected call paths",
+    "Finish analysis before publishing findings",
+    "one internal verification pass over the complete change",
+    "correctness, regressions, edge cases, security, error handling, concurrency, API compatibility, and missing tests",
+    "one consolidated actionable review per run",
+    "Do not intentionally publish partial successive reviews",
+    "incomplete inspection must be reported as incomplete",
+    "Do not start another full review of the same unchanged head merely to search for more findings",
+    "Re-review after relevant commits or materially new evidence",
+    "not a guarantee that every possible defect is found",
+)
+AUTO_MERGE_UPDATE_REQUIREMENTS = (
+    "separate explicit maintainer choice per pull request",
+    "only open, non-draft, conflict-free, same-repository pull requests",
+    "auto-merge enabled and a BEHIND state",
+    "observed head SHA as expected_head_sha",
+    "concurrent contributor push rejects the stale update",
+    "pull requests without auto-merge are never updated",
+)
+
+
+def policy_context_sizes(root: Path) -> dict[str, int]:
+    """Measure complete route documents, not estimated or billed model tokens.
+
+    Args:
+        root: Repository whose LF-normalized policy documents are measured.
+    """
+    return {
+        name: sum(
+            len((root / file).read_text(encoding="utf-8").encode("utf-8"))
+            for file in files
+        )
+        for name, files in (
+            ("core", POLICY_CORE_FILES),
+            ("ordinary", POLICY_ORDINARY_FILES),
+            ("review", POLICY_REVIEW_FILES),
+        )
+    }
+
+
+def check_progressive_policy(root: Path) -> list[Finding]:
+    """Validate reachable canonical routes, bounded context, and complete review.
+
+    Args:
+        root: Repository or isolated fixture containing the policy documents.
+    """
+    findings: list[Finding] = []
+    agents = root / "AGENTS.md"
+    text, error = read_text(agents)
+    if error is not None or text is None:
+        return [Finding(agents, "progressive policy core is missing or unreadable")]
+    if len(text.encode("utf-8")) > 10_240:
+        findings.append(
+            Finding(agents, "root policy exceeds the 10 KiB context budget")
+        )
+    core_visible = " ".join(render_markdown_operative_text(text).split())
+    for requirement in PROGRESSIVE_CORE_REQUIREMENTS:
+        if requirement not in core_visible:
+            findings.append(Finding(agents, f"progressive core requirement is missing: {requirement}"))
+    count, routes = extract_required_policy_section(
+        text, "## Conditional policy routes"
+    )
+    if count != 1 or routes is None:
+        findings.append(
+            Finding(agents, "conditional policy routes must appear exactly once")
+        )
+    else:
+        # Read actual Markdown links within each operative route row; a path in a
+        # comment, example, link title, or a different row must not satisfy routing.
+        parser = MarkdownIt("commonmark").enable("table")
+        visible_cells = {
+            token.content for token in parser.parse(routes) if token.type == "inline"
+        }
+        raw_section = extract_markdown_policy_section(
+            text, "## Conditional policy routes"
+        )
+        tokens = parser.parse(raw_section or "")
+        rows: dict[str, tuple[str, ...]] = {}
+        for index, token in enumerate(tokens):
+            if token.type != "tr_open":
+                continue
+            row = tokens[index + 1 :]
+            row = row[
+                : next(i for i, value in enumerate(row) if value.type == "tr_close")
+            ]
+            cells = [value for value in row if value.type == "inline"]
+            if (
+                len(cells) != 3
+                or cells[0].content not in POLICY_ROUTE_TARGETS
+                or cells[0].content not in visible_cells
+                or cells[1].content not in visible_cells
+            ):
+                continue
+            key = cells[0].content
+            if key in rows or not cells[1].content.strip():
+                findings.append(
+                    Finding(agents, f"ambiguous or empty policy route: {key}")
+                )
+            rows[key] = tuple(
+                str(child.attrGet("href"))
+                for child in cells[2].children or ()
+                if child.type == "link_open"
+            )
+        for route, expected in POLICY_ROUTE_TARGETS.items():
+            if rows.get(route) != expected:
+                findings.append(
+                    Finding(
+                        agents,
+                        f"canonical policy route is missing or redirected: {route}",
+                    )
+                )
+            for target in expected:
+                if not (root / target).is_file():
+                    findings.append(
+                        Finding(
+                            root / target, f"required policy target is missing: {route}"
+                        )
+                    )
+    try:
+        sizes = policy_context_sizes(root)
+    except OSError, UnicodeError:
+        findings.append(
+            Finding(
+                agents,
+                "context measurement requires every ordinary and review route document",
+            )
+        )
+    else:
+        if sizes["ordinary"] * 5 > POLICY_BASELINE_BYTES:
+            findings.append(
+                Finding(
+                    agents,
+                    "ordinary policy context must remain at least 80% below baseline",
+                )
+            )
+    pr_path = root / "docs/contribute/pr-workflow.md"
+    pr_text, pr_error = read_text(pr_path)
+    if pr_error is not None or pr_text is None:
+        findings.append(
+            Finding(pr_path, "complete-review policy is missing or unreadable")
+        )
+    else:
+        count, review = extract_required_policy_section(
+            pr_text, "## Complete review before publication"
+        )
+        if count != 1 or review is None:
+            findings.append(
+                Finding(pr_path, "complete-review section must appear exactly once")
+            )
+        else:
+            visible = " ".join(render_markdown_operative_text(review).split())
+            for requirement in COMPLETE_REVIEW_REQUIREMENTS:
+                if requirement not in visible:
+                    findings.append(
+                        Finding(
+                            pr_path,
+                            f"complete-review requirement is missing: {requirement}",
+                        )
+                    )
+        count, updates = extract_required_policy_section(
+            pr_text, "## Maintainer-selected automatic branch updates"
+        )
+        if count != 1 or updates is None:
+            findings.append(Finding(pr_path, "automatic branch-update section must appear exactly once"))
+        else:
+            visible = " ".join(render_markdown_operative_text(updates).split())
+            for requirement in AUTO_MERGE_UPDATE_REQUIREMENTS:
+                if requirement not in visible:
+                    findings.append(Finding(pr_path, f"automatic branch-update requirement is missing: {requirement}"))
+    return findings
+
+
 def main(argv: list[str] | None = None) -> int:
     """Run the command-line entry point.
 
@@ -5797,7 +5904,9 @@ def main(argv: list[str] | None = None) -> int:
         The main result.
     """
     parser = argparse.ArgumentParser(description="Run Atlaso repository checks.")
-    parser.add_argument("paths", nargs="*", help="Optional files or directories to check.")
+    parser.add_argument(
+        "paths", nargs="*", help="Optional files or directories to check."
+    )
     args = parser.parse_args(argv)
 
     files = collect_files(args.paths)
@@ -5805,6 +5914,7 @@ def main(argv: list[str] | None = None) -> int:
     for path in files:
         findings.extend(check_file(path))
     findings.extend(check_agent_policy_gate(ROOT))
+    findings.extend(check_progressive_policy(ROOT))
     findings.extend(check_validation_resource_policy(ROOT))
     findings.extend(check_completed_task_command_policy(ROOT))
     findings.extend(check_merge_authority_transfer_fixtures(ROOT))
@@ -5814,7 +5924,9 @@ def main(argv: list[str] | None = None) -> int:
     findings.extend(check_protected_workflow_caches(ROOT))
 
     if findings:
-        print(f"Repository checks failed with {len(findings)} issue(s):", file=sys.stderr)
+        print(
+            f"Repository checks failed with {len(findings)} issue(s):", file=sys.stderr
+        )
         for finding in findings:
             print(f"  - {finding.render()}", file=sys.stderr)
         return 1
