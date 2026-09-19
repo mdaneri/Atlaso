@@ -15,11 +15,11 @@ source, and message before moving to a service-specific verification step.
 <!-- BEGIN GENERATED INTERFACE OVERVIEW -->
 ## Interface overview
 
-This verified appliance view provides visual orientation before you begin.
+This interface capture uses synthetic test data for visual orientation.
 
-![Atlaso Logs page in the clean-appliance desktop viewport.](../assets/screenshots/logs-clean-desktop.webp)
+![Atlaso Logs desktop layout showing retained-history navigation with synthetic data.](../assets/screenshots/logs-clean-desktop.webp)
 
-*Figure: Logs in the verified clean-appliance desktop state.*
+*Figure: Logs history controls in the desktop layout with synthetic test data.*
 
 <!-- END GENERATED INTERFACE OVERVIEW -->
 
@@ -174,8 +174,8 @@ These captures show responsive layouts and useful operational states referenced 
 
 ### Logs
 
-![Atlaso Logs page in the clean-appliance responsive viewport.](../assets/screenshots/logs-clean-responsive.webp)
+![Atlaso Logs responsive layout showing retained-history navigation with synthetic data.](../assets/screenshots/logs-clean-responsive.webp)
 
-*Figure: Logs in the verified clean-appliance responsive state.*
+*Figure: Logs history controls in the responsive layout with synthetic test data.*
 
 <!-- END GENERATED ADDITIONAL SCREENSHOTS -->

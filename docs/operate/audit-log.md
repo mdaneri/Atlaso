@@ -15,11 +15,11 @@ intended for investigation and change review.
 <!-- BEGIN GENERATED INTERFACE OVERVIEW -->
 ## Interface overview
 
-This verified appliance view provides visual orientation before you begin.
+This interface capture uses synthetic test data for visual orientation.
 
-![Atlaso Audit Events page in the clean-appliance desktop viewport.](../assets/screenshots/audit-log-clean-desktop.webp)
+![Atlaso Audit Events desktop layout showing retained-history navigation with synthetic data.](../assets/screenshots/audit-log-clean-desktop.webp)
 
-*Figure: Audit Events in the verified clean-appliance desktop state.*
+*Figure: Audit Events history controls in the desktop layout with synthetic test data.*
 
 <!-- END GENERATED INTERFACE OVERVIEW -->
 
@@ -65,8 +65,8 @@ These captures show responsive layouts and useful operational states referenced 
 
 ### Audit events
 
-![Atlaso Audit Events page in the clean-appliance responsive viewport.](../assets/screenshots/audit-log-clean-responsive.webp)
+![Atlaso Audit Events responsive layout showing retained-history navigation with synthetic data.](../assets/screenshots/audit-log-clean-responsive.webp)
 
-*Figure: Audit Events in the verified clean-appliance responsive state.*
+*Figure: Audit Events history controls in the responsive layout with synthetic test data.*
 
 <!-- END GENERATED ADDITIONAL SCREENSHOTS -->

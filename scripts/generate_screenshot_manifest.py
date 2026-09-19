@@ -20,6 +20,18 @@ CANONICAL_BROWSER_ROOTS = {
 
 CAPTURE_OVERRIDES = {
     **{
+        f"{slug}-clean-{viewport}": {
+            "source_commit": "0e529c0426542b83d145a7524c69f49bd1c2f596",
+            "atlaso_version": "0.9.358",
+            "capture_method": "edge-browser",
+            "state": "retained-history-synthetic-fixture",
+            "caption": f"{title} history controls in the {viewport} layout with synthetic test data.",
+            "alt": f"Atlaso {title} {viewport} layout showing retained-history navigation with synthetic data.",
+        }
+        for slug, title in (("logs", "Logs"), ("audit-log", "Audit Events"))
+        for viewport in ("desktop", "responsive")
+    },
+    **{
         f"traffic-publishing-{stem}": {
             "source_commit": "17771e868071812d41fcfa2c783cd646d0c44132",
             "atlaso_version": "0.9.351",
