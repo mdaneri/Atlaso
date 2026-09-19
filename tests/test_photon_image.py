@@ -2053,7 +2053,7 @@ def test_vmware_packer_requires_proven_builder_identity() -> None:
     release = Path(
         "scripts/windows/virtualization/Atlaso.VirtualizationRelease.psm1"
     ).read_text(encoding="utf-8")
-    policy = Path("AGENTS.md").read_text(encoding="utf-8")
+    policy = Path("docs/reference/vmware-workstation-lifecycle-testing.md").read_text(encoding="utf-8")
     detailed_policy = Path("docs/contribute/agent-policies.md").read_text(
         encoding="utf-8"
     )
@@ -3270,7 +3270,6 @@ def test_vmware_test_identity_is_bound_to_the_exact_owner():
         "scripts/windows/vmware/remove-lifecycle-vms.ps1"
     ).read_text(encoding="utf-8")
     policy_sources = (
-        Path("AGENTS.md"),
         Path("docs/contribute/agent-policies.md"),
         Path("docs/reference/vmware-workstation-lifecycle-testing.md"),
     )

@@ -82,6 +82,12 @@ nav = [
     { "Windows image-build WSL environment" = "contribute/windows-image-build-wsl.md" },
     { "UI design guide" = "contribute/ui-design-guide.md" },
     { "Detailed agent policies" = "contribute/agent-policies.md" },
+    { "Progressive agent policy" = "contribute/progressive-policy.md" },
+    { "Agent worktree and delegation workflow" = "contribute/agent-workflow.md" },
+    { "PR review and delivery" = "contribute/pr-workflow.md" },
+    { "Agent credential policy" = "contribute/credential-policy.md" },
+    { "Release and publication policy" = "contribute/release-policy.md" },
+    { "PowerShell authoring" = "contribute/powershell-authoring.md" },
     { "Completed task cleanup command" = "contribute/completed-task-cleanup.md" },
   ] },
   { "Project" = [

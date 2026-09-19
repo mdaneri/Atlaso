@@ -667,7 +667,7 @@ Terminal order:
 3. `worktree_removed`
 4. `task_title_done`
 
-The [completed-task controller policy](../contribute/agent-policies.md#completed-task-cleanup) owns the remaining
+The [completed-task controller policy](../contribute/completed-task-cleanup.md#completed-task-cleanup) owns the remaining
 branch, worktree, and title transitions. Resource release also applies to a terminal closed-unmerged or retained-open
 PR once its environment is no longer needed; it does not authorize branch/worktree deletion or Done for that task.
 

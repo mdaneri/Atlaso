@@ -1,6 +1,7 @@
 """Test check repo policies behavior."""
 
 import json
+import re
 from pathlib import Path
 
 from scripts.check_repo import (
@@ -2191,11 +2192,7 @@ def test_agent_policy_gate_rejects_unconfigured_worktree_fallback(
     Args:
         tmp_path: Temporary directory provided by pytest for isolated filesystem state.
     """
-    relative_paths = (
-        Path("AGENTS.md"),
-        Path("CONTRIBUTING.md"),
-        Path("docs/contribute/agent-policies.md"),
-    )
+    relative_paths = (Path("docs/contribute/agent-workflow.md"),)
     for index, relative_path in enumerate(relative_paths):
         case_root = tmp_path / str(index)
         write_policy_files(case_root)
@@ -2228,11 +2225,7 @@ def test_agent_policy_gate_rejects_hidden_worktree_root_policy(
     """
     hidden_marker = "Never guess, infer, synthesize, or silently fall back"
     assert hidden_marker in CODEX_WORKTREE_ROOT_SHARED_MARKERS
-    relative_paths = (
-        Path("AGENTS.md"),
-        Path("CONTRIBUTING.md"),
-        Path("docs/contribute/agent-policies.md"),
-    )
+    relative_paths = (Path("docs/contribute/agent-workflow.md"),)
     for index, relative_path in enumerate(relative_paths):
         case_root = tmp_path / str(index)
         write_policy_files(case_root)
@@ -2264,11 +2257,7 @@ def test_agent_policy_gate_rejects_worktree_policy_in_link_title(
     """
     hidden_marker = "Never guess, infer, synthesize, or silently fall back"
     assert hidden_marker in CODEX_WORKTREE_ROOT_SHARED_MARKERS
-    relative_paths = (
-        Path("AGENTS.md"),
-        Path("CONTRIBUTING.md"),
-        Path("docs/contribute/agent-policies.md"),
-    )
+    relative_paths = (Path("docs/contribute/agent-workflow.md"),)
     for index, relative_path in enumerate(relative_paths):
         case_root = tmp_path / str(index)
         write_policy_files(case_root)
@@ -2298,14 +2287,8 @@ def test_agent_policy_gate_requires_primary_checkout_before_root_resolution(
     Args:
         tmp_path: Temporary directory provided by pytest for isolated filesystem state.
     """
-    relative_paths = (
-        Path("AGENTS.md"),
-        Path("CONTRIBUTING.md"),
-        Path("docs/contribute/agent-policies.md"),
-    )
-    missing_marker = (
-        "First identify and verify whether the task uses the repository's primary checkout"
-    )
+    relative_paths = (Path("docs/contribute/completed-task-cleanup.md"),)
+    missing_marker = "First identify and verify whether the task uses the repository's primary checkout"
     for index, relative_path in enumerate(relative_paths):
         case_root = tmp_path / str(index)
         write_policy_files(case_root)
@@ -2394,8 +2377,7 @@ def test_agent_policy_gate_rejects_cleanup_root_in_link_title(
         assert len(findings) == 1
         assert findings[0].path == policy_path
         assert findings[0].message == (
-            "completed-task cleanup must identify the primary checkout before "
-            "resolving `git-worktree-root`"
+            "required agent policy marker is missing: `git-worktree-root`"
         )
 
 
@@ -2408,7 +2390,7 @@ def test_agent_policy_gate_rejects_missing_spark_delegation_policy(
         tmp_path: Temporary directory provided by pytest for isolated filesystem state.
     """
     write_policy_files(tmp_path)
-    agents_path = tmp_path / "AGENTS.md"
+    agents_path = tmp_path / "docs/contribute/agent-workflow.md"
     agents_path.write_text(
         agents_path.read_text(encoding="utf-8").replace(
             "## Sol and Spark Delegation", ""
@@ -2434,7 +2416,7 @@ def test_agent_policy_gate_rejects_missing_spark_model_substitution_policy(
         tmp_path: Temporary directory provided by pytest for isolated filesystem state.
     """
     write_policy_files(tmp_path)
-    agents_path = tmp_path / "AGENTS.md"
+    agents_path = tmp_path / "docs/contribute/agent-workflow.md"
     agents_path.write_text(
         agents_path.read_text(encoding="utf-8").replace(
             "never substitutes another model", ""
@@ -2460,7 +2442,7 @@ def test_agent_policy_gate_rejects_missing_task_title_traceability(
         tmp_path: Temporary directory provided by pytest for isolated filesystem state.
     """
     write_policy_files(tmp_path)
-    agents_path = tmp_path / "AGENTS.md"
+    agents_path = tmp_path / "docs/contribute/agent-workflow.md"
     agents_path.write_text(
         agents_path.read_text(encoding="utf-8").replace(
             "## Codex Task Title Traceability", ""
@@ -2473,8 +2455,7 @@ def test_agent_policy_gate_rejects_missing_task_title_traceability(
     assert len(findings) == 1
     assert findings[0].path == agents_path
     assert findings[0].message == (
-        "required agent policy marker is missing: "
-        "## Codex Task Title Traceability"
+        "required agent policy marker is missing: ## Codex Task Title Traceability"
     )
 
 
@@ -2487,7 +2468,7 @@ def test_agent_policy_gate_rejects_missing_task_title_capability_fallback(
         tmp_path: Temporary directory provided by pytest for isolated filesystem state.
     """
     write_policy_files(tmp_path)
-    agents_path = tmp_path / "AGENTS.md"
+    agents_path = tmp_path / "docs/contribute/agent-workflow.md"
     agents_path.write_text(
         agents_path.read_text(encoding="utf-8").replace(
             "### Unsupported title controls", ""
@@ -2500,8 +2481,7 @@ def test_agent_policy_gate_rejects_missing_task_title_capability_fallback(
     assert len(findings) == 1
     assert findings[0].path == agents_path
     assert findings[0].message == (
-        "required agent policy marker is missing: "
-        "### Unsupported title controls"
+        "required agent policy marker is missing: ### Unsupported title controls"
     )
 
 
@@ -2514,7 +2494,7 @@ def test_agent_policy_gate_rejects_missing_task_title_capability_guard(
         tmp_path: Temporary directory provided by pytest for isolated filesystem state.
     """
     write_policy_files(tmp_path)
-    agents_path = tmp_path / "AGENTS.md"
+    agents_path = tmp_path / "docs/contribute/agent-workflow.md"
     agents_path.write_text(
         agents_path.read_text(encoding="utf-8").replace(
             "### Supported title controls", ""
@@ -2527,8 +2507,7 @@ def test_agent_policy_gate_rejects_missing_task_title_capability_guard(
     assert len(findings) == 1
     assert findings[0].path == agents_path
     assert findings[0].message == (
-        "required agent policy marker is missing: "
-        "### Supported title controls"
+        "required agent policy marker is missing: ### Supported title controls"
     )
 
 
@@ -2541,7 +2520,7 @@ def test_agent_policy_gate_rejects_missing_schema_constrained_reporting(
         tmp_path: Temporary directory provided by pytest for isolated filesystem state.
     """
     write_policy_files(tmp_path)
-    agents_path = tmp_path / "AGENTS.md"
+    agents_path = tmp_path / "docs/contribute/agent-workflow.md"
     agents_path.write_text(
         agents_path.read_text(encoding="utf-8").replace(
             "### Schema-constrained reporting", ""
@@ -2554,8 +2533,7 @@ def test_agent_policy_gate_rejects_missing_schema_constrained_reporting(
     assert len(findings) == 1
     assert findings[0].path == agents_path
     assert findings[0].message == (
-        "required agent policy marker is missing: "
-        "### Schema-constrained reporting"
+        "required agent policy marker is missing: ### Schema-constrained reporting"
     )
 
 
@@ -2568,7 +2546,7 @@ def test_agent_policy_gate_rejects_missing_extended_merge_description(
         tmp_path: Temporary directory provided by pytest for isolated filesystem state.
     """
     write_policy_files(tmp_path)
-    agents_path = tmp_path / "AGENTS.md"
+    agents_path = tmp_path / "docs/contribute/pr-workflow.md"
     agents_path.write_text(
         agents_path.read_text(encoding="utf-8").replace(
             "### Extended merge descriptions", ""
@@ -2581,8 +2559,7 @@ def test_agent_policy_gate_rejects_missing_extended_merge_description(
     assert len(findings) == 1
     assert findings[0].path == agents_path
     assert findings[0].message == (
-        "required agent policy marker is missing: "
-        "### Extended merge descriptions"
+        "required agent policy marker is missing: ### Extended merge descriptions"
     )
 
 
@@ -2595,17 +2572,9 @@ def test_agent_policy_gate_rejects_missing_pr_follow_through_contract(
         tmp_path: Temporary directory provided by pytest for isolated filesystem state.
     """
     required_entry_markers = {
-        Path("AGENTS.md"): "### Focused local validation and pull-request follow-through",
-        Path("CONTRIBUTING.md"): "### Automated pull-request follow-through",
-        Path(".github/copilot-instructions.md"): (
-            "complete Python test suite belongs to GitHub CI"
-        ),
-        Path(".github/pull_request_template.md"): (
-            "each post-opening pushed commit received one `@codex review` request"
-        ),
-        Path("docs/contribute/agent-policies.md"): (
-            "### Focused local validation and pull-request follow-through"
-        ),
+        Path(
+            "docs/contribute/pr-workflow.md"
+        ): "### Focused local validation and pull-request follow-through"
     }
 
     for relative_path, marker in required_entry_markers.items():
@@ -2635,7 +2604,7 @@ def test_agent_policy_gate_rejects_missing_scheduled_pr_monitoring_contract(
     """
     shared_markers = (
         "current-task heartbeat",
-        "four minutes",
+        "fifteen minutes",
         "persistent GitHub polling loops",
         "exclusive routine PR monitoring mechanism",
         "finite-but-delayed shell polling",
@@ -2663,36 +2632,12 @@ def test_agent_policy_gate_rejects_missing_scheduled_pr_monitoring_contract(
         "never merely paused",
     )
     required_entry_markers = {
-        Path("AGENTS.md"): (
+        Path("docs/contribute/pr-workflow.md"): (
             *shared_markers,
             "top-level pull-request comments",
             "inline review comments",
             "review submissions",
-        ),
-        Path("CONTRIBUTING.md"): (
-            *shared_markers,
-            "top-level pull-request comments",
-            "inline review comments",
-            "review submissions",
-        ),
-        Path(".github/copilot-instructions.md"): (
-            *shared_markers,
-            "top-level pull-request comments",
-            "inline review comments",
-            "review submissions",
-        ),
-        Path(".github/pull_request_template.md"): (
-            *shared_markers,
-            "top-level pull-request comment",
-            "inline review comment",
-            "review submission",
-        ),
-        Path("docs/contribute/agent-policies.md"): (
-            *shared_markers,
-            "top-level pull-request comments",
-            "inline review comments",
-            "review submissions",
-        ),
+        )
     }
 
     for relative_path, markers in required_entry_markers.items():
@@ -2750,13 +2695,7 @@ def test_agent_policy_gate_rejects_missing_default_merge_authorization(
         tmp_path: Temporary directory provided by pytest for isolated filesystem state.
     """
     required_entry_markers = {
-        Path("AGENTS.md"): "### Default merge authorization",
-        Path("CONTRIBUTING.md"): "### Default merge authorization",
-        Path(".github/copilot-instructions.md"): "Default merge authorization",
-        Path(".github/pull_request_template.md"): "Default merge authorization",
-        Path("docs/contribute/agent-policies.md"): (
-            "### Default merge authorization"
-        ),
+        Path("docs/contribute/pr-workflow.md"): "### Default merge authorization"
     }
 
     for relative_path, marker in required_entry_markers.items():
@@ -5909,14 +5848,7 @@ def test_agent_policy_gate_rejects_missing_default_merge_authority_contract(
     Args:
         tmp_path: Temporary directory provided by pytest for isolated filesystem state.
     """
-    required_entry_points = (
-        Path("AGENTS.md"),
-        Path("CONTRIBUTING.md"),
-        Path(".github/copilot-instructions.md"),
-        Path(".github/pull_request_template.md"),
-        Path("docs/contribute/agent-policies.md"),
-        Path("docs/reference/full-technical-reference.md"),
-    )
+    required_entry_points = (Path("docs/contribute/pr-workflow.md"),)
     marker = "default merge authority"
 
     for relative_path in required_entry_points:
@@ -5945,13 +5877,9 @@ def test_agent_policy_gate_rejects_missing_maintainer_break_glass_contract(
         tmp_path: Temporary directory provided by pytest for isolated filesystem state.
     """
     required_entry_points = (
-        Path("AGENTS.md"),
         Path("CONTRIBUTING.md"),
-        Path(".github/copilot-instructions.md"),
-        Path(".github/pull_request_template.md"),
         Path("SECURITY.md"),
-        Path("docs/contribute/agent-policies.md"),
-        Path("docs/reference/full-technical-reference.md"),
+        Path("CONTRIBUTING.md"),
     )
 
     for marker in MAINTAINER_BREAK_GLASS_SHARED_MARKERS:
@@ -6097,7 +6025,7 @@ def test_agent_policy_gate_rejects_missing_maintainer_break_glass_contract(
         f'<span style="display&#58;none">{prohibition}</span>',
         f"<title>{prohibition}</title>",
         f'<span style="display:n\\6f ne">{prohibition}</span>',
-        f'<span style="display:none; --x:\'; display:block;\'">{prohibition}</span>',
+        f"<span style=\"display:none; --x:'; display:block;'\">{prohibition}</span>",
         f'<span style="display&#58none">{prohibition}</span>',
         f'<span style="display:none;--x:foo\\;display:block">{prohibition}</span>',
         f'<span style="display:none" style="display:block">{prohibition}</span>',
@@ -6132,7 +6060,7 @@ def test_agent_policy_gate_rejects_missing_maintainer_break_glass_contract(
         f'<span style="display:none;display\\:block">{prohibition}</span>',
         f"<iframe>{prohibition}</iframe>",
         f"<div popover>{prohibition}</div>",
-        f'<style>.retired {{ display: none }}</style>'
+        f"<style>.retired {{ display: none }}</style>"
         f'<span class="retired">{prohibition}</span>',
         f"<datalist>{prohibition}</datalist>",
         f"<noscript>{prohibition}</noscript>",
@@ -6146,17 +6074,15 @@ def test_agent_policy_gate_rejects_missing_maintainer_break_glass_contract(
         f'<span style="--state:var(--state);display:var(--state,none)">'
         f"{prohibition}</span>",
         f'<span style="--state:none"><span style="display:var(--state)">'
-        f'{prohibition}</span></span>',
-        f'<span hidden>retired<!-- </span> -->{prohibition}</span>',
-        f'<span style="--state:initial;display:var(--state,none)">'
-        f'{prohibition}</span>',
+        f"{prohibition}</span></span>",
+        f"<span hidden>retired<!-- </span> -->{prohibition}</span>",
+        f'<span style="--state:initial;display:var(--state,none)">{prohibition}</span>',
         f'<span style="color:transparent">{prohibition}</span>',
         f'<span style="color:#0000">{prohibition}</span>',
         f'<span style="color:#00000000">{prohibition}</span>',
         f"<dialog>{prohibition}</dialog>",
         f"<details><summary>Example</summary>{prohibition}</details>",
-        f'<details title=" open "><summary>Example</summary>'
-        f"{prohibition}</details>",
+        f'<details title=" open "><summary>Example</summary>{prohibition}</details>',
         f'<span style="color:transparent"><span style="color:#00000">'
         f"{prohibition}</span></span>",
         f'<span style="color:transparent"><span style="color:rgb(foo)">'
@@ -6172,13 +6098,12 @@ def test_agent_policy_gate_rejects_missing_maintainer_break_glass_contract(
         f"{prohibition}</span>",
         f'<span style="color:color-mix(in srgb, transparent, transparent)">'
         f"{prohibition}</span>",
-        f"<svg><foreignObject><span hidden/>{prohibition}</span>"
-        "</foreignObject></svg>",
+        f"<svg><foreignObject><span hidden/>{prohibition}</span></foreignObject></svg>",
         f'<svg><text display="none">{prohibition}</text></svg>',
         f'<svg><text visibility="hidden">{prohibition}</text></svg>',
         f'<svg><text opacity="0">{prohibition}</text></svg>',
-        f'<svg><defs><text>{prohibition}</text></defs></svg>',
-        f'<svg><symbol><text>{prohibition}</text></symbol></svg>',
+        f"<svg><defs><text>{prohibition}</text></defs></svg>",
+        f"<svg><symbol><text>{prohibition}</text></symbol></svg>",
         f'<svg><text fill="none">{prohibition}</text></svg>',
         f'<svg><text fill-opacity="0">{prohibition}</text></svg>',
         f'<svg><text fill="none" stroke="red" stroke-opacity="0">'
@@ -6292,9 +6217,7 @@ def test_agent_policy_gate_rejects_missing_maintainer_break_glass_contract(
 
         assert check_agent_policy_gate(tmp_path) == []
 
-    visible_unclosed_inline_replacement = (
-        f"<span hidden>retired\n\n{prohibition}"
-    )
+    visible_unclosed_inline_replacement = f"<span hidden>retired\n\n{prohibition}"
     for relative_path in required_entry_points:
         write_policy_files(tmp_path)
         path = tmp_path / relative_path
@@ -6329,7 +6252,7 @@ def test_agent_policy_gate_rejects_missing_maintainer_break_glass_contract(
         assert check_agent_policy_gate(tmp_path) == []
 
     visible_nested_html_replacements = (
-        f'<span style="display:none; --x:\"/*\"; display:block; --y:\"*/\"">'
+        f'<span style="display:none; --x:"/*"; display:block; --y:"*/"">'
         f"{prohibition}</span>",
         f'<span style="visibility:hidden"><span style="visibility:visible">'
         f"{prohibition}</span></span>",
@@ -6355,8 +6278,7 @@ def test_agent_policy_gate_rejects_missing_maintainer_break_glass_contract(
         f'<span style="font-size:0"><span style="font-size:initial">'
         f"{prohibition}</span></span>",
         f'<span style="display:none;display:table-cell">{prohibition}</span>',
-        f'<span style="display:none;display:inline flow-root">'
-        f"{prohibition}</span>",
+        f'<span style="display:none;display:inline flow-root">{prohibition}</span>',
         f'<span style="transform:scale(0);transform:scale(calc(1))">'
         f"{prohibition}</span>",
         f'<span style="transform:scale(0);transform:translate(1px)">'
@@ -6365,13 +6287,12 @@ def test_agent_policy_gate_rejects_missing_maintainer_break_glass_contract(
         f"{prohibition}</span>",
         f'<span style="filter:opacity(0);filter:none">{prohibition}</span>',
         f'<span style="filter:opacity(0);filter:blur(1px)">{prohibition}</span>',
-        f'<span style="clip-path:circle(0);clip-path:circle(50%)">'
-        f"{prohibition}</span>",
+        f'<span style="clip-path:circle(0);clip-path:circle(50%)">{prohibition}</span>',
         f'<span style="--hide:none;filter:var(--hide)">{prohibition}</span>',
         f'<span style="display:n/**/one">{prohibition}</span>',
         f'<span style="display:none;display:initial">{prohibition}</span>',
         f'<span style="display:none;display:unset">{prohibition}</span>',
-        f'<svg hidden/>{prohibition}',
+        f"<svg hidden/>{prohibition}",
         f'<svg><text visibility="hidden" style="visibility:visible">'
         f"{prohibition}</text></svg>",
         f'<svg><text opacity="0" style="opacity:1">{prohibition}</text></svg>',
@@ -6506,8 +6427,8 @@ def test_agent_policy_gate_rejects_missing_maintainer_break_glass_contract(
             )
 
     visible_optional_end_tag_replacements = (
-        f'<p hidden>retired<p>{prohibition}</p>',
-        f'<p hidden>retired<div>{prohibition}</div>',
+        f"<p hidden>retired<p>{prohibition}</p>",
+        f"<p hidden>retired<div>{prohibition}</div>",
     )
     for replacement in visible_optional_end_tag_replacements:
         for relative_path in required_entry_points:
@@ -6538,17 +6459,7 @@ def test_agent_policy_gate_rejects_missing_unrelated_issue_tracking(
         tmp_path: Temporary directory provided by pytest for isolated filesystem state.
     """
     required_entry_markers = {
-        Path("AGENTS.md"): "### Unrelated issue discoveries",
-        Path("CONTRIBUTING.md"): "### Unrelated issue discoveries",
-        Path(".github/copilot-instructions.md"): (
-            "evidence-backed unrelated problem"
-        ),
-        Path(".github/pull_request_template.md"): (
-            "Evidence-backed issues discovered outside"
-        ),
-        Path("docs/contribute/agent-policies.md"): (
-            "outside that scope is discovered"
-        ),
+        Path("docs/contribute/agent-workflow.md"): "### Unrelated issue discoveries"
     }
 
     for relative_path, marker in required_entry_markers.items():
@@ -6574,14 +6485,7 @@ def test_agent_policy_gate_rejects_missing_merge_base_guard(tmp_path: Path) -> N
     Args:
         tmp_path: Temporary directory provided by pytest for isolated filesystem state.
     """
-    required_entry_points = (
-        Path("AGENTS.md"),
-        Path("CONTRIBUTING.md"),
-        Path(".github/copilot-instructions.md"),
-        Path(".github/pull_request_template.md"),
-        Path("docs/contribute/agent-policies.md"),
-        Path("docs/reference/full-technical-reference.md"),
-    )
+    required_entry_points = (Path("docs/contribute/pr-workflow.md"),)
     marker = "strict up-to-date required checks"
 
     for relative_path in required_entry_points:
@@ -6609,14 +6513,7 @@ def test_agent_policy_gate_rejects_missing_explicit_merge_hold(
     Args:
         tmp_path: Temporary directory provided by pytest for isolated filesystem state.
     """
-    required_entry_points = (
-        Path("AGENTS.md"),
-        Path("CONTRIBUTING.md"),
-        Path(".github/copilot-instructions.md"),
-        Path(".github/pull_request_template.md"),
-        Path("docs/contribute/agent-policies.md"),
-        Path("docs/reference/full-technical-reference.md"),
-    )
+    required_entry_points = (Path("docs/contribute/pr-workflow.md"),)
     marker = "explicit merge hold"
 
     for relative_path in required_entry_points:
@@ -6644,14 +6541,7 @@ def test_agent_policy_gate_rejects_missing_non_task_owned_cleanup_contract(
     Args:
         tmp_path: Temporary directory provided by pytest for isolated filesystem state.
     """
-    required_entry_points = (
-        Path("AGENTS.md"),
-        Path("CONTRIBUTING.md"),
-        Path(".github/copilot-instructions.md"),
-        Path(".github/pull_request_template.md"),
-        Path("docs/contribute/agent-policies.md"),
-        Path("docs/reference/full-technical-reference.md"),
-    )
+    required_entry_points = (Path("docs/contribute/completed-task-cleanup.md"),)
 
     markers = (
         NON_TASK_OWNED_REMOTE_BRANCH_PRESERVED_MARKER,
@@ -6684,14 +6574,7 @@ def test_agent_policy_gate_rejects_missing_preserved_remote_resume_contract(
     Args:
         tmp_path: Temporary directory provided by pytest for isolated filesystem state.
     """
-    required_entry_points = (
-        Path("AGENTS.md"),
-        Path("CONTRIBUTING.md"),
-        Path(".github/copilot-instructions.md"),
-        Path(".github/pull_request_template.md"),
-        Path("docs/contribute/agent-policies.md"),
-        Path("docs/reference/full-technical-reference.md"),
-    )
+    required_entry_points = (Path("docs/contribute/completed-task-cleanup.md"),)
 
     resume_markers = (
         WORKTREE_REMOVAL_REMOTE_GATE_MARKER,
@@ -6711,11 +6594,7 @@ def test_agent_policy_gate_rejects_missing_preserved_remote_resume_contract(
 
             assert len(findings) == 1
             assert findings[0].path == path
-            expected_prefix = (
-                "completed-task cleanup section marker is missing: "
-                if relative_path in TERMINAL_CLEANUP_SECTION_MARKERS
-                else "required agent policy marker is missing: "
-            )
+            expected_prefix = "required agent policy marker is missing: "
             assert findings[0].message == expected_prefix + marker
 
 
@@ -6726,11 +6605,7 @@ def test_agent_policy_gate_rejects_missing_merge_queue_guard(tmp_path: Path) -> 
         tmp_path: Temporary directory provided by pytest for isolated filesystem state.
     """
     required_entry_markers = {
-        Path("AGENTS.md"): "no merge queue is required",
-        Path("CONTRIBUTING.md"): "no required merge queue",
-        Path(".github/copilot-instructions.md"): "when a merge queue is required",
-        Path(".github/pull_request_template.md"): "no merge queue is required",
-        Path("docs/contribute/agent-policies.md"): "no required merge queue",
+        Path("docs/contribute/pr-workflow.md"): "no merge queue is required"
     }
 
     for relative_path, marker in required_entry_markers.items():
@@ -8537,25 +8412,23 @@ def test_agent_policy_gate_preserves_word_boundary_at_rendered_break(
     """
     marker = "automation must never use or request a ruleset or administrative bypass"
     required_entry_points = (
-        Path("AGENTS.md"),
-        Path("CONTRIBUTING.md"),
-        Path(".github/copilot-instructions.md"),
-        Path(".github/pull_request_template.md"),
+        Path("docs/contribute/pr-workflow.md"),
         Path("SECURITY.md"),
-        Path("docs/contribute/agent-policies.md"),
-        Path("docs/reference/full-technical-reference.md"),
     )
     replacement = marker.replace("ruleset or", "ruleset<br>or", 1)
+    pattern = r"\s+".join(re.escape(word) for word in marker.split())
     for relative_path in required_entry_points:
         write_policy_files(tmp_path)
         path = tmp_path / relative_path
         text = path.read_text(encoding="utf-8")
-        path.write_text(
-            text.replace(marker, replacement, 1),
-            encoding="utf-8",
-        )
+        mutated, count = re.subn(pattern, replacement, text, count=1)
+        assert count == 1
+        assert mutated != text
+        path.write_text(mutated, encoding="utf-8")
 
         assert check_agent_policy_gate(tmp_path) == []
+        path.write_text(mutated.replace("ruleset<br>or", "rulesetor", 1), encoding="utf-8")
+        assert any(finding.path == path for finding in check_agent_policy_gate(tmp_path))
 
 
 def test_agent_policy_gate_ignores_indented_cleanup_markers(tmp_path: Path) -> None:
@@ -9185,11 +9058,9 @@ def test_agent_policy_gate_rejects_missing_detailed_private_remediation_marker(
         tmp_path: Temporary directory provided by pytest for isolated filesystem state.
     """
     write_policy_files(tmp_path)
-    policy_path = tmp_path / "docs" / "contribute" / "agent-policies.md"
+    policy_path = tmp_path / "SECURITY.md"
     policy_path.write_text(
-        policy_path.read_text(encoding="utf-8").replace(
-            "temporary private fork", ""
-        ),
+        policy_path.read_text(encoding="utf-8").replace("temporary private fork", ""),
         encoding="utf-8",
     )
 
@@ -9210,14 +9081,7 @@ def test_agent_policy_gate_requires_private_follow_through_replacement(
     Args:
         tmp_path: Temporary directory provided by pytest for isolated filesystem state.
     """
-    required_entry_markers = {
-        Path("AGENTS.md"): "advisory-side maintainer review",
-        Path("CONTRIBUTING.md"): "advisory-side maintainer review",
-        Path(".github/copilot-instructions.md"): "advisory-side maintainer review",
-        Path(".github/pull_request_template.md"): "advisory-side maintainer review",
-        Path("SECURITY.md"): "advisory-side maintainer review",
-        Path("docs/contribute/agent-policies.md"): "Advisory-side maintainer review",
-    }
+    required_entry_markers = {Path("SECURITY.md"): "advisory-side maintainer review"}
 
     for relative_path, marker in required_entry_markers.items():
         write_policy_files(tmp_path)
@@ -9244,18 +9108,7 @@ def test_agent_policy_gate_requires_private_complete_python_validation(
     Args:
         tmp_path: Temporary directory provided by pytest for isolated filesystem state.
     """
-    required_entry_markers = {
-        Path("AGENTS.md"): "test suite locally when required",
-        Path("CONTRIBUTING.md"): "complete Python test suite locally",
-        Path(".github/copilot-instructions.md"): "complete Python test suite locally",
-        Path(".github/pull_request_template.md"): (
-            "complete Python test suite ran locally"
-        ),
-        Path("SECURITY.md"): "complete Python test suite locally",
-        Path("docs/contribute/agent-policies.md"): (
-            "complete Python test suite locally"
-        ),
-    }
+    required_entry_markers = {Path("SECURITY.md"): "complete Python test suite locally"}
 
     for relative_path, marker in required_entry_markers.items():
         write_policy_files(tmp_path)
@@ -9284,7 +9137,7 @@ def test_pr_template_scopes_ci_owned_python_suite_to_ordinary_prs(
     """
     write_policy_files(tmp_path)
     template_path = tmp_path / ".github/pull_request_template.md"
-    marker = "For an ordinary pull request, focused local tests/checks passed"
+    marker = "canonical CI owns the ordinary complete Python suite"
     template_path.write_text(
         template_path.read_text(encoding="utf-8").replace(marker, ""),
         encoding="utf-8",
@@ -9294,9 +9147,7 @@ def test_pr_template_scopes_ci_owned_python_suite_to_ordinary_prs(
 
     assert len(findings) == 1
     assert findings[0].path == template_path
-    assert findings[0].message == (
-        f"required agent policy marker is missing: {marker}"
-    )
+    assert findings[0].message == (f"required agent policy marker is missing: {marker}")
 
 
 def test_agent_policy_gate_rejects_missing_ui_guide(tmp_path: Path) -> None:
@@ -9325,10 +9176,10 @@ def test_agent_policy_gate_rejects_missing_ui_gate(tmp_path: Path) -> None:
         tmp_path: Temporary directory provided by pytest for isolated filesystem state.
     """
     write_policy_files(tmp_path)
-    agents_path = tmp_path / "AGENTS.md"
+    agents_path = tmp_path / "docs/contribute/ui-design-guide.md"
     agents_path.write_text(
         agents_path.read_text(encoding="utf-8").replace(
-            "## Mandatory UI Design Guide Gate", ""
+            "## Mandatory contributor gate", ""
         ),
         encoding="utf-8",
     )
@@ -9338,8 +9189,7 @@ def test_agent_policy_gate_rejects_missing_ui_gate(tmp_path: Path) -> None:
     assert len(findings) == 1
     assert findings[0].path == agents_path
     assert findings[0].message == (
-        "required agent policy marker is missing: "
-        "## Mandatory UI Design Guide Gate"
+        "required agent policy marker is missing: ## Mandatory contributor gate"
     )
 
 
