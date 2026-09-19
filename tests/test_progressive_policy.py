@@ -6,6 +6,7 @@ from pathlib import Path
 import pytest
 
 from scripts.check_repo import (
+    AUTO_MERGE_UPDATE_REQUIREMENTS,
     COMPLETE_REVIEW_REQUIREMENTS,
     POLICY_BASELINE_BYTES,
     POLICY_ORDINARY_FILES,
@@ -157,6 +158,22 @@ def test_conditional_policy_cannot_become_optional(policy_root: Path, requiremen
         requirement: Core obligation hidden in a Markdown comment.
     """
     path = policy_root / "AGENTS.md"
+    text = path.read_text(encoding="utf-8").replace("`", "")
+    text = "\n\n".join(" ".join(paragraph.split()) for paragraph in text.split("\n\n"))
+    assert requirement in text
+    path.write_text(text.replace(requirement, f"<!-- {requirement} -->"), encoding="utf-8")
+    assert any(requirement in finding.message for finding in check_progressive_policy(policy_root))
+
+
+@pytest.mark.parametrize("requirement", AUTO_MERGE_UPDATE_REQUIREMENTS)
+def test_automatic_branch_update_contract_survives_consolidation(policy_root: Path, requirement: str) -> None:
+    """Conditional policy keeps the explicit opt-in, eligibility, and concurrency guard.
+
+    Args:
+        policy_root: Isolated complete policy fixture.
+        requirement: Branch-update safety condition hidden from the operative contract.
+    """
+    path = policy_root / "docs/contribute/pr-workflow.md"
     text = path.read_text(encoding="utf-8").replace("`", "")
     text = "\n\n".join(" ".join(paragraph.split()) for paragraph in text.split("\n\n"))
     assert requirement in text

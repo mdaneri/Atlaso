@@ -5731,6 +5731,14 @@ COMPLETE_REVIEW_REQUIREMENTS = (
     "Re-review after relevant commits or materially new evidence",
     "not a guarantee that every possible defect is found",
 )
+AUTO_MERGE_UPDATE_REQUIREMENTS = (
+    "separate explicit maintainer choice per pull request",
+    "only open, non-draft, conflict-free, same-repository pull requests",
+    "auto-merge enabled and a BEHIND state",
+    "observed head SHA as expected_head_sha",
+    "concurrent contributor push rejects the stale update",
+    "pull requests without auto-merge are never updated",
+)
 
 
 def policy_context_sizes(root: Path) -> dict[str, int]:
@@ -5871,6 +5879,16 @@ def check_progressive_policy(root: Path) -> list[Finding]:
                             f"complete-review requirement is missing: {requirement}",
                         )
                     )
+        count, updates = extract_required_policy_section(
+            pr_text, "## Maintainer-selected automatic branch updates"
+        )
+        if count != 1 or updates is None:
+            findings.append(Finding(pr_path, "automatic branch-update section must appear exactly once"))
+        else:
+            visible = " ".join(render_markdown_operative_text(updates).split())
+            for requirement in AUTO_MERGE_UPDATE_REQUIREMENTS:
+                if requirement not in visible:
+                    findings.append(Finding(pr_path, f"automatic branch-update requirement is missing: {requirement}"))
     return findings
 
 
