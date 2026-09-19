@@ -163,6 +163,8 @@ changes invalidate that progress. A growing plain file after those archives uses
 retain its own progress, including after older checkpoints leave the bounded cache. This does not change the
 privileged helper's compressed-file reader.
 
+Task history also retains Network cleanup retry diagnostics in the same transaction as the task result update.
+
 <!-- BEGIN GENERATED ADDITIONAL SCREENSHOTS -->
 ## Additional verified states
 
@@ -175,5 +177,3 @@ These captures show responsive layouts and useful operational states referenced 
 *Figure: Logs in the verified clean-appliance responsive state.*
 
 <!-- END GENERATED ADDITIONAL SCREENSHOTS -->
-
-Task history also retains Network cleanup retry diagnostics in the same transaction as the task result update.
