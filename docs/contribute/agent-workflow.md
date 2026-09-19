@@ -36,6 +36,15 @@ Credential access is conditional: before copying or using worktree credentials, 
 [credential reuse procedure](../reference/vmware-workstation-lifecycle-testing.md#reuse-primary-checkout-configuration-in-a-task-worktree).
 An ordinary task that does not use credentials need not seed credential files.
 
+## Validation resource preparation
+
+Before creating disposable test, dependency, cache, build, or log roots, read the
+[ownership evidence section](completed-task-cleanup.md#prepare-durable-ownership-evidence), record the original
+identity and task/source binding at creation, and preserve the manifest outside every removal root. Choose only roots
+supported by an existing owning cleanup tool; the generated-tree command requires a strict descendant of the task
+worktree. A permitted root alone does not prove cleanup support. Keep durable handoff/evidence outside disposable
+roots. Load the full cleanup procedure before release. Never retrofit missing creation evidence at cleanup time.
+
 ## Codex Task Title Traceability
 
 ### Supported title controls

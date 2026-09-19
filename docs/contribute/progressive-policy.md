@@ -40,7 +40,8 @@ available; moving it out of the root does not relax its requirements.
 - A reviewer loads the complete-review contract even without implementation. Analyze the whole change before
   publishing; an unchanged head is not a reason to run another speculative review.
 - A deployment loads infrastructure, credentials, and relevant subsystem procedures before retrieving credentials or
-  mutating a VM. Record disposable resources when created; load cleanup before releasing them.
+  mutating a VM. Before creating disposable resources, load the ownership evidence section and record original
+  identities; load the full cleanup procedure before releasing them.
 - Suspected sensitive findings route to SECURITY before a public issue, review, or report. Private authorization and
   local-validation exceptions remain intact.
 - Ordinary PR waiting uses one fifteen-minute heartbeat only while asynchronous work remains. Reconcile immediately

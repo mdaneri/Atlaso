@@ -245,6 +245,9 @@ REQUIRED_POLICY_MARKERS = {
         "Never guess, infer, synthesize, or silently fall back",
         "explicit maintainer-configured permitted root",
         "preserve its state",
+        "## Validation resource preparation",
+        "record the original identity and task/source binding at creation",
+        "Never retrofit missing creation evidence at cleanup time",
     ),
     Path("docs/contribute/pr-workflow.md"): (
         "### Focused local validation and pull-request follow-through",

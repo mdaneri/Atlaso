@@ -49,20 +49,10 @@ explains ownership and measurement. Private vulnerability remediation follows [S
 
 ### Conditional contribution standards
 
-| Operation | Read before doing it |
-| --- | --- |
-| Worktree preparation, delegation, unrelated discoveries | [Agent workflow](docs/contribute/agent-workflow.md) |
-| Review, PR follow-through, merge | [PR workflow](docs/contribute/pr-workflow.md) |
-| Resource release or completed-task cleanup | [Cleanup](docs/contribute/completed-task-cleanup.md) |
-| UI changes | [UI design guide](docs/contribute/ui-design-guide.md) |
-| API or route changes | [API authoring](docs/contribute/api-authoring.md) and [router architecture](docs/contribute/router-architecture.md) |
-| Python changes | [Static analysis](docs/contribute/python-static-analysis.md) |
-| PowerShell changes | [PowerShell authoring](docs/contribute/powershell-authoring.md) |
-| Documentation or media | [Documentation authoring](docs/contribute/documentation-authoring.md) |
-| Dependency updates, including Dependabot | [Dependency management](docs/contribute/dependency-management.md) |
-| Release, trusted CI, signing, publishing, Pages | [Release policy](docs/contribute/release-policy.md) |
-| Sensitive information or suspected vulnerabilities | [Security policy](SECURITY.md) |
-| Community participation | [Code of conduct](CODE_OF_CONDUCT.md) |
+Use the [root route table](AGENTS.md#conditional-policy-routes) to select UI, API, Python, PowerShell, documentation,
+dependency, release, security, and community standards. It is the single routing index for human and automated
+contributors; follow the linked standard before its operation. The
+[progressive policy guide](docs/contribute/progressive-policy.md) explains examples and canonical ownership.
 
 ### Maintainer override / break-glass
 
