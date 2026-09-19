@@ -131,6 +131,14 @@ async def lifespan(app: FastAPI):
         register_bundled_inventory_media(db)
         db.commit()
         recover_interrupted_appliance_apply_jobs(db)
+        if appliance_mode:
+            from atlaso.app.adapters.system import SystemAdapter
+
+            network_adapter = SystemAdapter()
+            if not network_adapter.dry_run:
+                network_recovery = network_adapter.reconcile_network_transaction("manual")
+                if network_recovery.returncode != 0:
+                    raise RuntimeError("Network transaction recovery is unresolved; startup cannot admit another Apply.")
         recover_interrupted_vcf_depot_software_id_jobs(db)
         if not ensure_vcf_depot_running_operation_index():
             REQUEST_LOGGER.warning(

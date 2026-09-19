@@ -3065,15 +3065,19 @@ def test_management_handoff_does_not_schedule_precommit_atlaso_restart(monkeypat
     )
 
 
-def test_management_handoff_failure_rolls_back_with_truthful_layer(monkeypatch, tmp_path, capsys):
+@pytest.mark.parametrize("failing_layer", ["firewall", "address activation"])
+def test_management_handoff_failure_rolls_back_with_truthful_layer(monkeypatch, tmp_path, capsys, failing_layer):
     """Rollback every snapshot when candidate firewall activation fails.
 
     Args:
         monkeypatch: Pytest fixture used to replace dependencies for the test.
         tmp_path: Temporary directory provided for staged test files.
         capsys: Pytest fixture used to capture bounded helper output.
+        failing_layer: Network activation or downstream firewall failure under test.
     """
     helper = load_helper_module()
+    monkeypatch.setattr(helper, "_network_detection_preflight", lambda _path: None)
+    monkeypatch.setattr(helper, "_wait_network_addresses", lambda _path, **_kwargs: (_ for _ in ()).throw(ValueError("IP conflict on eth0: 192.0.2.20")) if failing_layer == "address activation" else {})
     state = {
         "previous_management_interfaces": ["eth0"],
         "previous_management_addresses": ["192.0.2.10"],
@@ -3100,7 +3104,8 @@ def test_management_handoff_failure_rolls_back_with_truthful_layer(monkeypatch, 
         },
     )
     monkeypatch.setattr(helper, "_handle_network", lambda *_args: 0)
-    monkeypatch.setattr(helper, "_handle_firewall", lambda *_args: 1)
+    firewall_calls = []
+    monkeypatch.setattr(helper, "_handle_firewall", lambda *_args: firewall_calls.append(True) or 1)
     monkeypatch.setattr(helper, "_restore_management_handoff", lambda value: restored.append(value) or {"readiness": "old-ready"})
     monkeypatch.setattr(helper, "_clear_management_handoff_state", lambda: None)
     monkeypatch.setattr(helper, "FIREWALL_CONFIG_PATH", tmp_path / "missing-previous-firewall")
@@ -3124,7 +3129,8 @@ def test_management_handoff_failure_rolls_back_with_truthful_layer(monkeypatch, 
     assert restored == [state]
     payload = json.loads(capsys.readouterr().err.splitlines()[-1])
     assert payload["management_handoff"] == "rolled back"
-    assert payload["failing_layer"] == "firewall"
+    assert payload["failing_layer"] == failing_layer
+    assert bool(firewall_calls) is (failing_layer == "firewall")
     assert payload["rollback"]["readiness"] == "old-ready"
 
 
@@ -3141,6 +3147,8 @@ def test_management_handoff_resolver_failure_rolls_back_before_nginx(
         capsys: Pytest fixture used to inspect bounded helper output.
     """
     helper = load_helper_module()
+    monkeypatch.setattr(helper, "_network_detection_preflight", lambda _path: None)
+    monkeypatch.setattr(helper, "_wait_network_addresses", lambda _path, **_kwargs: {})
     state = {
         "previous_management_interfaces": ["eth0"],
         "previous_management_addresses": ["192.0.2.10"],
@@ -3219,6 +3227,8 @@ def test_management_handoff_never_activates_nginx_with_unhealthy_upstream(monkey
         capsys: Pytest fixture used to capture bounded helper output.
     """
     helper = load_helper_module()
+    monkeypatch.setattr(helper, "_network_detection_preflight", lambda _path: None)
+    monkeypatch.setattr(helper, "_wait_network_addresses", lambda _path, **_kwargs: {})
     state = {
         "previous_management_interfaces": ["eth0"],
         "previous_management_addresses": ["192.0.2.10"],
@@ -4406,6 +4416,10 @@ def test_factory_reset_network_runtime_cleanup_uses_live_owned_state(monkeypatch
     networkd_directory = tmp_path / "networkd"
     state_directory.mkdir()
     networkd_directory.mkdir()
+    conflict_path = state_directory / "address-conflicts.json"
+    conflict_path.write_text('[{"name":"eth0","address":"192.0.2.10",'
+                             '"detected_at":"2026-09-13T00:00:00Z","identity":"00:11:22:33:44:55"}]',
+                             encoding="utf-8")
     request_path = state_directory / "request.json"
     request_path.write_text(json.dumps({"schema_version": 1, "state": "applying"}), encoding="utf-8")
     (networkd_directory / "10-atlaso-eth1.120.netdev").write_text(
@@ -4458,6 +4472,7 @@ def test_factory_reset_network_runtime_cleanup_uses_live_owned_state(monkeypatch
     monkeypatch.setattr(helper, "ATLASO_FACTORY_RESET_DIR", state_directory)
     monkeypatch.setattr(helper, "ATLASO_FACTORY_RESET_REQUEST_PATH", request_path)
     monkeypatch.setattr(helper, "NETWORKD_CONFIG_DIR", networkd_directory)
+    monkeypatch.setattr(helper, "NETWORK_APPLY_DIR", state_directory)
     monkeypatch.setattr(helper.shutil, "which", lambda command: f"/usr/sbin/{command}")
     monkeypatch.setattr(helper, "_run", fake_run)
 
@@ -4497,6 +4512,8 @@ def test_factory_reset_network_runtime_cleanup_uses_live_owned_state(monkeypatch
             os.close(admitted_descriptor)
     payload = json.loads(capsys.readouterr().out.splitlines()[-1])
     assert payload["qdisc_interfaces"] == ["eth1", "eth1.120"]
+    assert not conflict_path.exists()
+    assert helper._read_retained_network_conflicts() == []
     assert payload["removed_vlans"] == ["eth1.120"]
     assert ["ip", "route", "flush", "table", "100"] in commands
     assert ["ip", "route", "flush", "table", "200"] in commands
@@ -4517,13 +4534,54 @@ def test_factory_reset_network_runtime_cleanup_requires_applying_marker(monkeypa
     """
     helper = load_helper_module()
     request_path = tmp_path / "missing-request.json"
+    conflict_path = tmp_path / "address-conflicts.json"
+    conflict_path.write_text("[]", encoding="utf-8")
+    monkeypatch.setattr(helper, "NETWORK_APPLY_DIR", tmp_path)
     commands: list[list[str]] = []
     monkeypatch.setattr(helper, "ATLASO_FACTORY_RESET_REQUEST_PATH", request_path)
     monkeypatch.setattr(helper, "_run", lambda command: commands.append(command))
 
     assert helper._handle_factory_reset("reset-network-runtime", []) == 2
     assert commands == []
+    assert conflict_path.exists()
     assert "active applying marker" in capsys.readouterr().err
+
+
+def test_factory_reset_conflict_cleanup_retries_directory_sync(monkeypatch, tmp_path):
+    """A retry completes durability even if the previous attempt removed the file.
+
+    Args:
+        monkeypatch: Replace platform synchronization with a controlled failure.
+        tmp_path: Isolated network evidence directory.
+    """
+    helper = load_helper_module()
+    monkeypatch.setattr(helper, "NETWORK_APPLY_DIR", tmp_path)
+    path = tmp_path / "address-conflicts.json"
+    path.write_text("[]", encoding="utf-8")
+    sibling = tmp_path / "transaction.json"
+    sibling.write_text("{}", encoding="utf-8")
+    syncs = []
+
+    def sync(_descriptor):
+        """Fail the first directory synchronization to model interrupted cleanup.
+
+        Args:
+            _descriptor: Directory descriptor or path supplied by the helper.
+        """
+        syncs.append(True)
+        if len(syncs) == 1:
+            raise OSError("directory sync failed")
+
+    if os.name == "posix":
+        monkeypatch.setattr(helper.os, "fsync", sync)
+    else:
+        monkeypatch.setattr(helper, "_fsync_factory_reset_directory", sync)
+    with pytest.raises(OSError, match="directory sync failed"):
+        helper._clear_factory_network_conflicts()
+    assert not path.exists()
+    helper._clear_factory_network_conflicts()
+    assert len(syncs) == 2
+    assert sibling.read_text(encoding="utf-8") == "{}"
 
 
 @pytest.mark.parametrize(
@@ -9657,8 +9715,8 @@ def test_network_helper_sets_admin_down_links_down_after_reload(monkeypatch, tmp
     assert ["ip", "link", "set", "dev", "eth2", "down"] in commands
 
 
-def test_network_helper_sets_vlan_ip_after_link_up_and_flush(monkeypatch, tmp_path):
-    """Verify that network helper sets vlan ip after link up and flush.
+def test_network_helper_uses_networkd_address_detection_after_link_up(monkeypatch, tmp_path):
+    """Keep VLAN activation inside native networkd address detection after link creation.
 
     Args:
         monkeypatch: Pytest fixture used to replace dependencies for the test.
@@ -9684,13 +9742,10 @@ def test_network_helper_sets_vlan_ip_after_link_up_and_flush(monkeypatch, tmp_pa
     assert helper._apply_vlan_interfaces(config_path) == 0
 
     assert ["ip", "link", "set", "dev", "eth2.20", "up"] in commands
-    assert ["ip", "address", "flush", "dev", "eth2.20", "scope", "global"] in commands
-    assert ["ip", "address", "replace", "192.168.20.1/24", "dev", "eth2.20"] in commands
+    assert ["networkctl", "reconfigure", "eth2.20"] in commands
+    assert not any(command[:2] == ["ip", "address"] for command in commands)
     assert commands.index(["ip", "link", "set", "dev", "eth2.20", "up"]) < commands.index(
-        ["ip", "address", "flush", "dev", "eth2.20", "scope", "global"]
-    )
-    assert commands.index(["ip", "address", "flush", "dev", "eth2.20", "scope", "global"]) < commands.index(
-        ["ip", "address", "replace", "192.168.20.1/24", "dev", "eth2.20"]
+        ["networkctl", "reconfigure", "eth2.20"]
     )
 
 

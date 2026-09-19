@@ -39,12 +39,14 @@
     ></div>
     <table id="vlan-interfaces-fallback" class="data-table dns-fallback-table">
       <thead>
-        <tr><th>Name</th><th>Parent</th><th>VLAN ID</th><th>IPv4 CIDR</th><th>IPv6 CIDR</th><th>MTU</th><th>Role</th><th>Management UI</th><th>Admin Up</th><th>Actions</th></tr>
+        <tr><th>Name</th><th>Check duplicate IPs</th><th>Address status</th><th>Parent</th><th>VLAN ID</th><th>IPv4 CIDR</th><th>IPv6 CIDR</th><th>MTU</th><th>Role</th><th>Management UI</th><th>Admin Up</th><th>Actions</th></tr>
       </thead>
       <tbody>
         {% for vlan in vlan_interfaces %}
           <tr>
             <td>{{ vlan.name }}</td>
+            <td>{{ "enabled" if vlan.check_duplicate_ip_addresses else "disabled" }}</td>
+            <td>{{ vlan_interface_rows[loop.index0].address_status.detail }} {% if vlan_interface_rows[loop.index0].address_status.last_conflict %}{{ vlan_interface_rows[loop.index0].address_status.last_conflict.address }} — {{ vlan_interface_rows[loop.index0].address_status.last_conflict.detected_at }}{% endif %}</td>
             <td>{{ vlan.parent_interface }}</td>
             <td>{{ vlan.vlan_id }}</td>
             <td>{{ vlan.ip_cidr or "" }}</td>
@@ -156,6 +158,7 @@
   </section>
   <section class="hidden" data-atlaso-wizard-step="addressing">
     <div class="form-stack">
+      <div class="alert info" data-network-address-detail aria-live="polite" hidden></div>
       <div class="form-grid">
         <label>
           <span class="field-label"><span>IPv4 CIDR</span><button class="help-icon" type="button" data-help="Optional IPv4 interface address and prefix. Provide IPv4, IPv6, or both.">i</button></span>
@@ -166,6 +169,11 @@
           <input name="ipv6_cidr" placeholder="fd00:50::1/64" autocomplete="off" spellcheck="false">
         </label>
       </div>
+      <label class="switch-field">
+        <span class="field-label"><span>Check for duplicate IP addresses</span><button class="help-icon" type="button" data-help="Checks static IPv4 addresses on this VLAN before activation. Enabled by default; edits require Network Apply. IPv6 native DAD remains enabled even when this switch is off. A nonresponse does not prove global uniqueness.">i</button></span>
+        <input class="switch-input" type="checkbox" name="check_duplicate_ip_addresses" checked>
+        <span class="switch-track" aria-hidden="true"></span>
+      </label>
       <label>
         <span class="field-label"><span>MTU</span><button class="help-icon" type="button" data-help="Desired interface maximum transmission unit from 576 through 9000 bytes. New VLANs start with the selected parent MTU.">i</button></span>
         <input type="number" name="mtu" min="576" max="9000" step="1" required>

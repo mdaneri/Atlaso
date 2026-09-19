@@ -1238,6 +1238,7 @@ def update_physical_interface_desired_state(
             audit and other transaction-owned rows are persisted atomically.
     """
     supported_fields = {
+        "check_duplicate_ip_addresses",
         "role",
         "mode",
         "ipv4_method",
@@ -1458,6 +1459,10 @@ def update_physical_interface_desired_state(
         interface.ipv6_gateway = ipv6_gateway_value or None
         interface.mtu = mtu_value
         interface.admin_state = admin_state_value
+        check_addresses = changes.get("check_duplicate_ip_addresses", interface.check_duplicate_ip_addresses is not False)
+        if not isinstance(check_addresses, bool):
+            raise PhysicalInterfaceUpdateError("check_duplicate_ip_addresses must be a boolean.")
+        interface.check_duplicate_ip_addresses = check_addresses
         interface.access_management_ui_enabled = management_ui_value
         interface.desired_state_source = "user"
         db.add(interface)

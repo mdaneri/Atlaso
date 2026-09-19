@@ -175,3 +175,5 @@ These captures show responsive layouts and useful operational states referenced 
 *Figure: Logs in the verified clean-appliance responsive state.*
 
 <!-- END GENERATED ADDITIONAL SCREENSHOTS -->
+
+Task history also retains Network cleanup retry diagnostics in the same transaction as the task result update.

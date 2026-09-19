@@ -1525,6 +1525,7 @@ class PhysicalInterfaceUpdate(BaseModel):
             )
         ),
     ] = None
+    check_duplicate_ip_addresses: Annotated[StrictBool | None, Field(description="Check static and DHCP IPv4 addresses on this link before activation. Defaults enabled for new interfaces; omit PATCH to preserve the saved setting. Native IPv6 DAD remains enabled independently. Takes effect through Network Apply.")] = None
     access_management_ui_enabled: Annotated[
         StrictBool | None,
         Field(
@@ -1540,6 +1541,7 @@ class PhysicalInterfaceUpdate(BaseModel):
     def reject_explicit_null_for_non_nullable_fields(self) -> "PhysicalInterfaceUpdate":
         """Reject null where omission, rather than clearing, is the supported PATCH meaning."""
         non_nullable = {
+            "check_duplicate_ip_addresses",
             "role",
             "mode",
             "ipv4_method",
@@ -1564,6 +1566,7 @@ class PhysicalInterfaceResponse(BaseModel):
     """Fields returned by the Atlaso physical interface API.
 
     Attributes:
+        check_duplicate_ip_addresses: Native IPv4 conflict-detection policy; Network Apply activates changes.
         id: Unique database identifier assigned to this resource.
         name: Stable operator-facing name of this resource.
         mac_address: Normalized hardware MAC address used to identify the network interface or host.
@@ -1594,6 +1597,8 @@ class PhysicalInterfaceResponse(BaseModel):
         last_seen_at: UTC timestamp for last seen at on this physical interface resource.
         missing_since: Returned missing since value for this physical interface resource.
     """
+
+    check_duplicate_ip_addresses: Annotated[bool, Field(description="Saved IPv4 address-conflict detection policy. Native IPv6 DAD is independent; Network Apply activates edits.")] = True
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -1628,6 +1633,7 @@ class VlanCreate(BaseModel):
     """Fields accepted when creating a vlan resource.
 
     Attributes:
+        check_duplicate_ip_addresses: Native IPv4 conflict-detection policy; Network Apply activates changes.
         parent_interface: Requested parent interface value for this vlan resource.
         vlan_id: Stable identifier of the related vlan resource.
         ip_cidr: Validated network or address value for ip cidr in this vlan resource.
@@ -1638,6 +1644,7 @@ class VlanCreate(BaseModel):
         access_management_ui_enabled: Whether this enabled access VLAN also exposes the management UI.
     """
 
+    check_duplicate_ip_addresses: Annotated[StrictBool, Field(description="Enable native IPv4 address-conflict detection on this VLAN. Defaults true when omitted on creation or in legacy archives. Native IPv6 DAD remains enabled. Saving changes desired state only until Network Apply.")] = True
     parent_interface: Annotated[str, Field(description='Requested parent interface value for this vlan resource.')]
     vlan_id: Annotated[int, Field(description='Stable identifier of the related vlan resource.')] = Field(ge=1, le=4094)
     ip_cidr: Annotated[str, Field(description='Validated network or address value for ip cidr in this vlan resource.')] = ""

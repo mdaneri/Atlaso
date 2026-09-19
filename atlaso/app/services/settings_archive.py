@@ -1720,8 +1720,15 @@ def _clear_desired_state(db: Session) -> None:
         job.schedule_id = None
         db.add(job)
     db.flush()
+    from atlaso.app.services.network_address_status import STATUS_KEY
+
     for model in RESTORE_DELETE_MODELS:
-        db.execute(delete(model))
+        statement = delete(model)
+        if model is Setting:
+            # Native helper history survives restore too. Keep this appliance's
+            # resolution and identity evidence; it is never exported or imported.
+            statement = statement.where(Setting.key != STATUS_KEY)
+        db.execute(statement)
     db.flush()
 
 
@@ -2078,6 +2085,10 @@ def _validate_archive_relationships(data: dict[str, list[dict[str, Any]]]) -> No
         str(row["name"]): row
         for row in data.get("vlan_interfaces", [])
     }
+    for interface_kind in ("physical_interfaces", "vlan_interfaces"):
+        for row in data.get(interface_kind, []):
+            if not isinstance(row.get("check_duplicate_ip_addresses", True), bool):
+                raise ValueError("check_duplicate_ip_addresses must be a boolean in interface archives.")
     archived_interfaces = [
         PhysicalInterface(**_model_kwargs_with_scalar_defaults(PhysicalInterface, row))
         for row in data.get("physical_interfaces", [])

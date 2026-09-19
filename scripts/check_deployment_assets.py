@@ -37,6 +37,7 @@ SYSTEMD_ASSETS = (
     Path("image/common/systemd/nginx-atlaso-data-disks.conf"),
     Path("image/common/systemd/atlaso.service"),
     Path("image/vmware-workstation/systemd/atlaso-vmware-ovf-customize.service"),
+    Path("image/vmware-workstation/systemd/atlaso-vmware-ovf-prepare.service"),
 )
 SUDOERS_DIRECTORIES = (
     Path("image/common/sudoers.d"),

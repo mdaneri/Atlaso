@@ -40,6 +40,7 @@ class PhysicalInterfaceMutation:
     mtu: int | None | _UnsetValue = UNSET
     admin_state: str | None | _UnsetValue = UNSET
     access_management_ui_enabled: bool | None | _UnsetValue = UNSET
+    check_duplicate_ip_addresses: bool | _UnsetValue = UNSET
 
     @classmethod
     def from_mapping(cls, changes: Mapping[str, Any]) -> PhysicalInterfaceMutation:
@@ -49,6 +50,7 @@ class PhysicalInterfaceMutation:
             changes: Partial physical-interface fields supplied by a transport.
         """
         supported_fields = {
+            "check_duplicate_ip_addresses",
             "role",
             "mode",
             "ipv4_method",
@@ -73,6 +75,7 @@ class PhysicalInterfaceMutation:
         """Return only fields explicitly supplied by the transport."""
         changes: dict[str, Any] = {}
         for field_name in (
+            "check_duplicate_ip_addresses",
             "role",
             "mode",
             "ipv4_method",
