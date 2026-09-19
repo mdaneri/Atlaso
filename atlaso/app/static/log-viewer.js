@@ -13,6 +13,7 @@
     let hasMore = false;
     let following = true;
     let navigating = false;
+    let navigationFailed = false;
     let advancing = false;
     let failures = 0;
     let terminalReads = 0;
@@ -43,14 +44,15 @@
     const atBottom = () => !scroll || scroll.scrollHeight - scroll.scrollTop - scroll.clientHeight < 32;
     const message = (text) => { if (status) status.textContent = text; };
     const updateButtons = () => {
-      if (buttons.first) buttons.first.disabled = navigating;
+      if (buttons.first) buttons.first.disabled = navigating && !navigationFailed;
       if (buttons.previous) buttons.previous.disabled = navigating || advancing || (previous.length === 0 && !previousCursor);
       if (buttons.next) buttons.next.disabled = navigating || advancing || !hasMore;
-      if (buttons.follow) buttons.follow.disabled = navigating;
+      if (buttons.follow) buttons.follow.disabled = navigating && !navigationFailed;
       if (buttons.follow) buttons.follow.setAttribute("aria-pressed", String(following));
     };
     const navigate = (position, reset = false) => {
       navigating = true;
+      navigationFailed = false;
       advancing = false;
       updateButtons();
       generation += 1;
@@ -72,7 +74,7 @@
     button("follow", "Follow live", () => {
       following = true;
       terminalReads = 0;
-      if (following && initialCursor) navigate(initialCursor, true);
+      navigate(initialCursor, true);
       if (following && scroll) scroll.scrollTop = scroll.scrollHeight;
       updateButtons();
       schedule(0);
@@ -149,6 +151,8 @@
         }
       } catch (error) {
         if (closed || generation !== sequence) return;
+        navigationFailed = true;
+        updateButtons();
         const revoked = error?.status === 401 || error?.status === 403;
         message(revoked ? "Access expired · reopen after signing in" : "Connection interrupted · retrying; displayed log may be stale");
         if (!revoked) schedule(Math.min(30000, 5000 * (2 ** failures++)));

@@ -554,12 +554,25 @@ def test_incremental_appends_do_not_rehash_or_select_cumulative_result(history_d
     job = _job(db, {"log_lines": ["legacy " + str(i) for i in range(1000)]})
     job_id = job.id
     def reject_digest(_values):
-        """Reject any old-result authentication during delta-only commits."""
+        """Reject any old-result authentication during delta-only commits.
+
+        Args:
+            _values: Unexpected cumulative result submitted for authentication.
+        """
         raise AssertionError("incremental append hashed a cumulative result")
     monkeypatch.setattr(task_log_history, "_log_digest", reject_digest)
     queries = []
     def record_query(_connection, _cursor, statement, _parameters, _context, _many):
-        """Record SQL so retained raw output transfer is detected."""
+        """Record SQL so retained raw output transfer is detected.
+
+        Args:
+            _connection: SQLAlchemy connection emitting the statement.
+            _cursor: Driver cursor executing the statement.
+            statement: SQL text inspected for cumulative result reads.
+            _parameters: Bound SQL values, unused by this assertion.
+            _context: SQLAlchemy execution context.
+            _many: Whether the driver executes multiple parameter sets.
+        """
         queries.append(statement)
     event.listen(db.get_bind(), "before_cursor_execute", record_query)
     try:

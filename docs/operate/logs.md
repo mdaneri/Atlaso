@@ -78,7 +78,8 @@ context, so a new matching event can appear on the next refresh without replayin
 **Follow live** resumes new output with one click, including after scrolling up. Scrolling up or selecting text preserves
 your reading position and shows when
 new output is available. Empty sources remain selectable and populate when their first entries arrive. A connection
-failure preserves the displayed page and retries with a bounded delay; the freshness indicator identifies stale output.
+failure preserves the displayed page and retries with a bounded delay. After a failed navigation, **From beginning**
+and **Follow live** let you abandon the failing position; the freshness indicator identifies stale output.
 Closing a viewer, switching sources or hiding the browser suspends its requests. Without JavaScript, the initial
 redacted view remains available as a completed snapshot. Retention changes are reported rather
 than silently continuing a position in a different file.

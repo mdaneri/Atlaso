@@ -676,7 +676,9 @@ test("history controls remain serialized through preparation and retry", async (
   loading = fireTimer(harness, 5000);
   harness.requests[2].reject(new Error("temporary connection failure"));
   await loading;
-  assert.ok(harness.buttons.every((button) => button.disabled));
+  assert.equal(previous.disabled, true);
+  assert.equal(harness.buttons.find((button) => button.textContent === "From beginning").disabled, false);
+  assert.equal(harness.buttons.find((button) => button.textContent === "Follow live").disabled, false);
   loading = fireTimer(harness, 5000);
   harness.complete(3, { text: "older page", cursor: "older", previous_cursor: "oldest" });
   await loading;
@@ -703,3 +705,29 @@ test("automatic live catch-up blocks stale adjacent cursors but allows From begi
   assert.equal(harness.content.textContent, "oldest");
   harness.context.closeTaskLogModal();
 });
+
+
+for (const escape of ["From beginning", "Follow live"]) {
+  test(`failed history navigation can be abandoned with ${escape}`, async () => {
+    const harness = taskLogHarness();
+    const initial = harness.context.openTaskLog({ id: "A" });
+    harness.complete(0, { text: "accepted tail", cursor: "accepted", previous_cursor: "corrupt" });
+    await initial;
+    const button = (label) => harness.buttons.find((element) => element.textContent === label);
+    button("Previous page").click();
+    let loading = fireTimer(harness, 0);
+    harness.requests[1].reject(new Error("corrupt archive"));
+    await loading;
+    assert.equal(harness.content.textContent, "accepted tail");
+    assert.equal(button(escape).disabled, false);
+    button(escape).click();
+    loading = fireTimer(harness, 0);
+    const url = new URL(harness.requests[2].url);
+    assert.equal(url.searchParams.get("cursor"), null);
+    assert.equal(url.searchParams.get("tail"), escape === "Follow live" ? "1" : null);
+    harness.complete(2, { text: "recovered", cursor: "safe" });
+    await loading;
+    assert.equal(harness.content.textContent, "recovered");
+    harness.context.closeTaskLogModal();
+  });
+}
