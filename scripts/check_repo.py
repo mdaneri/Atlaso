@@ -5675,6 +5675,7 @@ PROGRESSIVE_CORE_REQUIREMENTS = (
     "Load each applicable route below before planning or performing its operation",
     "Reuse unchanged policy already read in this task",
     "Never commit directly to main",
+    "routine synchronized version bumps follow CONTRIBUTING only",
     "suspected sensitive vulnerabilities require the security route before any public issue or finding",
     "Automation must never use or request a ruleset or administrative bypass",
     "Resolve unknown applicability before mutation rather than treating it as an exemption",

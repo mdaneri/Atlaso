@@ -52,7 +52,7 @@ before mutation rather than treating it as an exemption.
 | powershell | PowerShell source or modules | [PowerShell authoring](docs/contribute/powershell-authoring.md) |
 | documentation | Documentation, screenshots, media, branding | [Documentation authoring](docs/contribute/documentation-authoring.md) |
 | dependencies | Dependency updates or generated locks, including Dependabot | [Dependency management](docs/contribute/dependency-management.md) |
-| release | Release/version tooling, trusted CI, signing, publication, promotion, GitHub Pages | [Release policy](docs/contribute/release-policy.md) |
+| release | Changes to release/version tooling, trusted CI, signing, publication, promotion, GitHub Pages; routine synchronized version bumps follow CONTRIBUTING only | [Release policy](docs/contribute/release-policy.md) |
 | subsystem | Appliance, networking, services, authentication, storage, host-mutation behavior | [Relevant subsystem sections](docs/contribute/agent-policies.md) |
 | infrastructure | Image builds, VMware/lifecycle validation, deployment, external infrastructure mutation | [Lifecycle procedures](docs/reference/vmware-workstation-lifecycle-testing.md), [subsystem contracts](docs/contribute/agent-policies.md) |
 | cleanup | Creating disposable validation resources (ownership section), resource release, destructive cleanup, completed-task handoff | [Cleanup policy](docs/contribute/completed-task-cleanup.md) |
