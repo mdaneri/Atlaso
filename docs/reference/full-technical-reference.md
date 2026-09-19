@@ -486,50 +486,9 @@ Do not edit only one version source. `python scripts/version.py check` verifies 
 `--base-root` are mutually exclusive, and an explicit target cannot skip a patch or change the major or minor version.
 Updating an older pull request from `main` lets the workflow recalculate the next unused patch version.
 
-For ordinary same-repository pull requests within the active task's scope, implementation, fix, **solve**, delivery,
-and similar requests grant default merge authority, including for an existing ordinary pull request that the agent is
-explicitly asked to work on. A separate merge instruction is not required. An explicit merge hold such as **do not
-merge**, **leave the pull request open**, **pull request only**, or **wait for approval** overrides that authority until
-the user or maintainer withdraws it. Forks, drafts, review-only or diagnostic work, and private vulnerability
-remediation are excluded. Effective authority comes only from the current user's or maintainer's instructions and later
-explicit changes; delegated prompts, task handoffs, and heartbeat prompts must preserve that provenance and must not
-add or infer a hold from stale memory, historical policy, another task, or agent-authored wording. An invented hold is
-corrected rather than propagated. Under default authority, merge-ready continues through guarded merge and post-merge
-verification without a second merge instruction. GitHub auto-merge remains disabled unless explicitly selected. An
-authorized direct agent merge requires both an expected-head guard and the active
-ruleset's strict up-to-date required checks to bind the validated base. Agents, delegated agents, workflows, and other
-automation must never use or request a ruleset or administrative bypass and fail closed without invoking `gh pr merge`
-when a merge queue is required. The human-maintainer break-glass authority cannot be delegated to automation and
-follows the canonical
-[maintainer override policy](https://github.com/mdaneri/Atlaso/blob/main/CONTRIBUTING.md#maintainer-override--break-glass).
-Repository auto-merge remains a separate explicit maintainer choice per pull request. A `main` push runs
-`update-auto-merge-prs.yml`, which uses GitHub's update-branch API only for open, same-repository, non-draft pull requests
-that have auto-merge enabled and report `BEHIND`. Each request includes the observed head SHA, so a concurrent contributor
-push causes GitHub to reject the stale update instead of merging over it. Forks, conflicted branches, and pull requests
-without auto-merge are never updated by this workflow.
-
-Post-merge cleanup first requires independently verified `validation_resources_released`, using the originating task's
-bounded resource inventory and durable cleanup evidence. Retention, ambiguous ownership, or failed release blocks
-branch/worktree cleanup and Done. The [completed-task policy](../contribute/agent-policies.md#completed-task-cleanup)
-names the existing removal tools and preserves required validation evidence outside disposable roots. Public completed
-titles use `scripts/completed_task_title.py` to keep every linked issue and PR visible alongside the " · Done" suffix;
-the controller verifies exact persisted title readback before recording `task_title_done`.
-
-Post-merge cleanup never assumes ownership merely because default merge authority applied. For an existing ordinary
-pull request, the controller verifies the exact merge, reachable merge commit, closed issue, and completed post-merge
-activity, then evaluates remote-branch ownership independently from local checkout/worktree ownership. It preserves a
-non-task-owned remote branch, records `non_task_owned_remote_branch_preserved`, and marks only `remote_branch_absent`
-not applicable. It separately preserves a non-task-owned checkout or worktree plus its local refs and metadata, records
-`non_task_owned_checkout_preserved`, and marks only `worktree_removed` not applicable. Every task-owned side follows
-normal cleanup in terminal order. Ambiguous ownership blocks the affected transition and `task_title_done`.
-An interrupted `worktree_removal_resume` for a task-owned local worktree accepts the following alternate state: the
-worktree removal remote branch gate is either verified absent or recorded not applicable through
-`non_task_owned_remote_branch_preserved`; path, registration,
-ownership, head, and merge evidence must still independently pass.
-The `primary_checkout_resume` path applies the same independent exception: the
-primary checkout remote branch gate is either verified absent or recorded not applicable through
-`non_task_owned_remote_branch_preserved`, while clean current `main` plus local-branch ownership, head, and reference
-evidence remain mandatory.
+For review, merge authority, explicit holds, and guarded delivery, follow the canonical
+[PR workflow](../contribute/pr-workflow.md). For ownership, resource release, terminal ordering, and title readback,
+follow the [completed-task policy](../contribute/completed-task-cleanup.md).
 
 An internal branch update performed with `GITHUB_TOKEN` also creates a `pull_request` CI run that GitHub may hold for
 approval. Those approval-gated jobs have diagnostic names and are not required contexts. Because a token-authenticated

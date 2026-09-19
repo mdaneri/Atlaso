@@ -1915,11 +1915,11 @@ def test_supported_script_policy_cannot_disappear(tmp_path: Path) -> None:
         check_completed_task_command_policy,
     )
 
-    for relative in ("AGENTS.md", "CONTRIBUTING.md", "docs/contribute/agent-policies.md"):
+    for relative in ("docs/contribute/completed-task-cleanup.md",):
         for marker in COMPLETED_TASK_COMMAND_MARKERS:
             path = tmp_path / relative
             path.parent.mkdir(parents=True, exist_ok=True)
-            heading = "## Completed Task Cleanup" if relative == "AGENTS.md" else "### Completed task cleanup"
+            heading = "## Completed Task Cleanup"
             text = heading + "\n\n" + "\n\n".join(COMPLETED_TASK_COMMAND_MARKERS)
             path.write_text(text.replace(marker, "<!-- " + marker + " -->"), encoding="utf-8")
             assert any(marker in finding.message for finding in check_completed_task_command_policy(tmp_path))

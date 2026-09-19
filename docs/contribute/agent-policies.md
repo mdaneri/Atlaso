@@ -1,6 +1,6 @@
 ---
 title: Detailed agent policies
-description: Canonical subsystem contracts and implementation constraints for automated contributors.
+description: Conditional subsystem contracts and implementation constraints for automated contributors.
 audience:
   - contributor
   - maintainer
@@ -9,380 +9,13 @@ status: current
 
 # Detailed agent policies
 
-## Mandatory Agent Startup Gate
+Load only the named sections relevant to the task and its affected call paths. This is a conditional subsystem
+reference, not a startup prerequisite. Cross-domain changes load every affected section. When scope is unclear,
+inspect the section headings first and resolve applicability before changing behavior.
 
-- These instructions apply to every agent, subagent, delegated agent, automated contributor, and resumed task.
-- Before planning implementation or changing repository or external state, read the root `AGENTS.md` completely, then
-  read [CONTRIBUTING.md](https://github.com/mdaneri/Atlaso/blob/main/CONTRIBUTING.md),
-  [CODE_OF_CONDUCT.md](https://github.com/mdaneri/Atlaso/blob/main/CODE_OF_CONDUCT.md), and
-  [SECURITY.md](https://github.com/mdaneri/Atlaso/blob/main/SECURITY.md). Treat all four documents as mandatory
-  instructions, not optional reference material.
-- In the first progress update, confirm that the policy files were read, classify the work as `bug`, `enhancement`,
-  `documentation`, or security-sensitive work, and identify the linked GitHub issue. For private vulnerability
-  remediation, confirm that a private advisory is linked without disclosing its identifier or finding details on public
-  surfaces. Read-only inspection needed to identify the repository, applicable instructions, issue, or private tracking
-  record is allowed before that confirmation.
-- Repeat this startup gate whenever the repository, worktree, or working directory changes, or when any of the policy
-  files changes during the task.
-- A delegating agent must include this startup gate in every delegated prompt and verify that the delegated agent
-  completed it before accepting or using its work. Delegation never bypasses repository policy.
-- If a policy is unavailable, conflicting, or unclear, stop before implementation and ask for maintainer direction.
-  Never silently bypass a policy.
-
-## Sol and Spark Delegation
-
-Atlaso's project-scoped custom agent is `spark_worker`, defined in `.codex/agents/spark-worker.toml` with
-`gpt-5.3-codex-spark` and medium reasoning effort. Codex loads project agents from `.codex/agents/`; each agent requires
-a name, description, and developer instructions, and can pin its model and reasoning effort. The Atlaso agent omits
-sandbox and tool overrides so it inherits the primary session's permissions. See the official
-[Codex subagent configuration](https://learn.chatgpt.com/docs/agent-configuration/subagents) and
-[Codex model guide](https://learn.chatgpt.com/docs/models). Spark availability depends on the current account and
-runtime.
-
-- Sol should delegate small, fully specified work when it improves speed or context isolation: localized edits,
-  repository searches, mechanical refactoring, isolated unit tests, Ruff or mypy cleanup, documentation and docstrings,
-  and narrowly scoped UI tweaks whose interaction and reference are already decided.
-- Sol owns architecture and design, ambiguous or difficult debugging, cross-component and integration decisions,
-  security-sensitive work, task decomposition, review and integration of every delegated result, final validation, and
-  repository delivery.
-- Every Spark prompt must name exact scope, owned files, expected output, relevant checks, the Mandatory Agent Startup
-  Gate, and the exact resolved Codex worktree root and permitted task-state roots. The delegating agent must verify the
-  delegated worktree and task-owned mutable paths against those roots before relying on the result. UI prompts must also
-  include the Mandatory UI Design Guide Gate, interaction classification, and reused Atlaso reference. The worker must
-  not commit, push, change GitHub state, or spawn another agent.
-- Parallel Spark work is permitted only for independent tasks with non-overlapping file ownership. Sol reviews every
-  returned diff before using it.
-- If Spark is unavailable, Sol performs the work directly and reports the unavailable delegation. Do not silently
-  substitute another model.
-
-## Mandatory UI Design Guide Gate
-
-- Any change affecting templates, authored CSS, browser JavaScript, controls, layouts, data grids, dialogs, wizards, or
-  visible copy must read the [Atlaso UI Design Guide](ui-design-guide.md) before planning implementation.
-- In the first progress update for UI work, confirm that the guide was read, classify the interaction as
-  `direct-edit Tabulator`, `wizard-backed Tabulator`, `read-only Tabulator`, `non-grid settings`, or approval-only
-  `custom/other`, and name the existing Atlaso reference being reused. For `custom/other`, cite the explicit maintainer
-  approval and name the closest related Atlaso reference.
-- Tabulator is the only data-grid implementation. Custom data grids and interaction patterns not defined by the guide
-  require explicit maintainer approval before implementation.
-- Construct every Tabulator through `window.AtlasoUiPatterns.createGrid(...)`. Build every new or changed wizard
-  through `window.AtlasoUiPatterns.createWizard(...)` and the generic `data-atlaso-wizard-*` DOM contract. Raw
-  Tabulator constructors outside the shared foundation are forbidden.
-- A delegating agent must include this UI gate in every UI-related delegated prompt and verify that the delegated agent
-  read the guide, classified the interaction, identified the reused or closest related reference, and cited maintainer
-  approval for `custom/other` before accepting or using its work.
-- Repeat this gate when the guide changes during a task. If the guide is unavailable, conflicting, or unclear, stop
-  before UI implementation and ask for maintainer direction.
-
-## Repository Delivery Workflow
-
-- Before creating, selecting, delegating into, or reporting an agent-owned implementation worktree, read the supported
-  Codex configuration and resolve the exact configured `git-worktree-root`. Use only that configured root for the
-  worktree. Never guess, infer, synthesize, or silently fall back to a repository sibling, user profile, temporary
-  directory, drive, or other conventional path. Do not hard-code a host drive in portable repository policy; the
-  supported Codex setting is authoritative. If it is missing, ambiguous, inaccessible, unsafe, or unavailable through
-  a supported interface, stop before repository, build, or external mutation and request maintainer direction.
-- Agent-authored implementation work must run from a dedicated clean worktree beneath that root on its task-owned
-  branch. Keep the repository's primary checkout for synchronization, coordination, and completed-task cleanup; do not
-  apply implementation edits there. Keep task-owned temporary roots, staging, build outputs, logs, reservation state,
-  and generated artifacts beneath the configured worktree root or another explicit maintainer-configured permitted
-  root. Do not silently inherit `GetTempPath()`, `LocalAppData`, or another OS-default location. If no supported
-  permitted location exists, stop before mutation. If an existing task or required mutable path is outside every
-  permitted root, preserve its state, report the exact conflict, and obtain maintainer direction instead of moving or
-  deleting it automatically. Establish the worktree and repeat the Mandatory Agent Startup Gate in its directory
-  before planning or mutation. If a safe dedicated worktree cannot be established, stop for maintainer direction.
-- [CONTRIBUTING.md](https://github.com/mdaneri/Atlaso/blob/main/CONTRIBUTING.md) is the canonical delivery workflow.
-  Every repository change requires a GitHub
-  issue created or linked before implementation begins, exactly one applicable type label, relevant documentation
-  updated in the same change, and a pull request linked with `Closes #<issue>`. Do not commit changes directly to
-  `main`.
-- Keep every pull request within its linked issue scope. When a reproducible or otherwise evidence-backed actionable
-  problem outside that scope is discovered, search open and closed issues for an existing record. If none exists, open
-  a separate issue with exactly one appropriate type label and sanitized evidence. Link it when useful, but do not add
-  `Closes` unless the active pull request resolves it, and do not expand the pull request without explicit maintainer
-  approval. Route suspected sensitive vulnerabilities through `SECURITY.md`, never a public issue.
-- The private vulnerability remediation workflow in
-  [SECURITY.md](https://github.com/mdaneri/Atlaso/blob/main/SECURITY.md) is the only exception to the public issue,
-  repository branch, and `Closes #<issue>` requirements. Use the draft advisory as the private tracking record, create
-  the fix branch from the current default branch, push only to the advisory's temporary private fork, and open the
-  private pull request there. Keep advisory identifiers, cross-references, finding details, and patch discussion on
-  private surfaces. Complete and record every required validation locally because integrations and status checks cannot
-  access temporary private forks. Treat the temporary private fork as a GitHub workspace repository where ordinary
-  Issues cannot be enabled and pull-request labels or comments may be unavailable or forbidden. An otherwise mergeable
-  pull request may show `UNSTABLE` solely because checks are absent; never substitute that state for local validation.
-  Advisory-side maintainer review and recorded local validation replace ordinary Codex review, `@codex review`,
-  exact-head CI/status, comment, label, and review-thread follow-through. Do not request, wait for, or claim unavailable
-  integrations. Run the complete Python test suite locally when the change affects Python or `SECURITY.md` otherwise
-  requires it. This overrides the ordinary automated-contributor prohibition, and missing full-suite evidence blocks
-  advisory merge.
-  Do not use ordinary pull-request merge controls or `gh pr merge`. An explicitly authorized advisory administrator
-  must use **Security > Advisories > This advisory is ready to be merged > Merge pull request(s)**. GitHub merges all
-  open pull requests in the temporary fork together, permits only one pull request targeting `main`, and applies the
-  patch to the public `main` branch while the advisory may remain draft. Publishing is a separate explicit action.
-  Merge only for an authorized coordinated release and disclosure, and do not otherwise change advisory state without
-  explicit maintainer authorization. `SECURITY.md` is canonical for the complete security-specific workflow.
-- Trusted version refresh must dispatch the CI definition from protected `main` with the exact pull-request number, base
-  SHA, and head SHA. Keep candidate validation jobs read-only. Publish the canonical `Version policy`, `Repository
-  checks`, and `Python tests` commit statuses only from bot-gated jobs that never check out candidate code and that
-  revalidate the open same-repository PR plus exact head/base before publishing pending or final results. Keep every
-  status linked to its trusted run, retain diagnostic names for bot-triggered `pull_request` jobs, and keep trusted and
-  diagnostic events in separate concurrency groups so diagnostic work cannot cancel trusted publication. Never grant
-  candidate workflow revisions status-write permission.
-
-### Worktree 1Password configuration
-
-- During same-Windows-host, same-user task-worktree setup, resolve the primary checkout from Git's common-directory
-  and worktree inventory, and use the already verified task worktree beneath the configured Codex root as destination.
-  Follow the canonical
-  [worktree configuration procedure](../reference/vmware-workstation-lifecycle-testing.md#reuse-primary-checkout-configuration-in-a-task-worktree).
-- Seed only missing `.atlaso-local/onepassword-environment-id` and
-  `.atlaso-local/onepassword-service-account-token.dpapi` files from validated primary-checkout originals. Require
-  containment, ordinary single-link files, no reparse points, the pinned Atlaso Environment, and the existing token
-  owner/ACL contract. Establish current-user-and-SYSTEM destination permissions before copying without replacement;
-  preserve source bytes and ciphertext, and verify the destination with the existing helpers before use.
-- Reuse valid destination configuration and preserve explicit authentication choices. Conflicting or invalid state
-  requires maintainer direction, never automatic overwrite, ACL repair of existing files, or token rotation. Local
-  validation does not prove decryption or authorization: the supported bounded child must authenticate and verify the
-  exact Environment before the consuming workflow mutates VMware or network state. Unavailable unattended credentials
-  require a precise non-secret prerequisite, never an implicit desktop switch or a plaintext chat prompt.
-- Never copy the remaining `.atlaso-local` tree, including runtime caches, secrets staging, logs, cleanup markers, or
-  reservations. Never decrypt/re-encrypt for copying or print selector/token contents. Keep the copies Git-ignored and
-  out of commits, PRs, release artifacts, and logs. Task cleanup owns only the copied files and must preserve the
-  primary checkout's originals. This procedure reuses the supported authentication path; it adds no runtime fallback.
-
-### Focused local validation and pull-request follow-through
-
-- This section governs ordinary pull requests. Temporary-private-fork remediation uses the security-specific
-  replacement in the Repository Delivery Workflow above.
-
-- Run locally only tests focused on the changed behavior, plus every applicable repository, documentation,
-  static-analysis, deployment, and `git diff --check` validation. Do not run the complete Python test suite locally;
-  GitHub CI's canonical `Python tests` context owns that complete suite.
-- Open every agent-authored pull request ready for review. The ready event triggers the initial Codex review, so do not
-  post a duplicate opening `@codex review` comment.
-- After the pull request is open, use a separate commit-push-review cycle for every later branch change. Push one
-  commit, verify that it is the pull request's exact head, post one `@codex review` request, and only then begin another
-  commit.
-- Keep the originating task active while GitHub evaluates the pull request and create or update exactly one
-  current-task heartbeat. Run it every four minutes. Each run performs one bounded reconciliation pass and exits
-  cleanly. Never vary the cadence or create a duplicate automation. Once created, the current-task heartbeat is the
-  exclusive routine PR monitoring mechanism. Do not run persistent GitHub polling loops or finite-but-delayed shell
-  polling such as `Start-Sleep -Seconds 55; gh pr checks <pr>` or `sleep 55; gh pr view <pr>`, timeout wrappers, or
-  equivalent delayed workflow or status reads alongside it, and do not occupy a terminal merely to wait for CI, review,
-  mergeability, or post-merge state. When the task is already awake for real work, after a push, after user input, or
-  immediately before a guarded state transition, it may perform one immediate bounded reconciliation; it must not
-  schedule its own next check with a shell delay. The short-lived local-debugging exception requires an explicit
-  maintainer request and must not duplicate an active heartbeat.
-- Retain the current exact-head SHA and seen comment and review IDs in the task context. Every run inspects pull-request
-  state, exact-head checks, mergeability and conflicts, top-level pull-request comments, and inline review comments.
-  Inspect review submissions and requested changes plus authoritative `reviewThreads`. Read each newly discovered item,
-  then record informational items as seen.
-- Address actionable feedback, reply and resolve each handled thread, rerun focused local validation, then commit,
-  push, verify the new exact head, request `@codex review`, and continue the same heartbeat.
-- Treat merged, closed, or delivery-complete merge-ready with a permanent-disposition hold such as **do not merge**,
-  **leave open**, or **pull request only**, or with a policy exclusion, as terminal pull-request states. A merge-ready
-  ordinary pull request with default merge authority continues through guarded merge and post-merge verification
-  instead of pausing for a second merge instruction. An active **wait for approval** hold is an unresolved maintainer
-  decision: `wait for approval` remains resumable until explicitly withdrawn. After a merge, continue the same heartbeat
-  through linked-issue closure, current `origin/main` reachability, and applicable post-merge workflow verification.
-  Then perform one final bounded readback and delete the exact current-task heartbeat. For an unmerged closed pull
-  request, perform the same final bounded readback and deletion. Do likewise for a delivery-complete merge-ready pull
-  request that cannot be merged because a permanent-disposition hold or policy exclusion applies, with a successful
-  current head,
-  every comment and review seen, no requested changes or actionable feedback, and no unresolved non-outdated review
-  thread. Terminal heartbeats are deleted, never merely paused.
-- Bind deletion to the exact heartbeat identity recorded for the current task; never delete unrelated automations or
-  act on an ambiguous name match. An already absent heartbeat satisfies terminal cleanup only after ownership and
-  terminal evidence are revalidated. Pause only for resumable holds, such as unresolved maintainer decisions or
-  external failures. A deletion failure or ambiguous ownership leaves the task actionable and must report the
-  exact retry condition. Merge-ready status does not grant merge authority, and unchanged runs must not repeat prior
-  reports.
-
-### Default merge authorization
-
-- Preparing a change and merging it remain separate delivery stages. An implementation, fix, **solve**, pull-request
-  delivery, or similar request grants default merge authority for the ordinary same-repository pull request within the
-  active task's scope, including an existing ordinary pull request that the agent is explicitly asked to work on.
-- Default merge authority permits merging only after every eligibility and safety gate below passes. It does not grant
-  authority over forks, drafts, review-only or diagnostic tasks, or private vulnerability remediation. Do not require a
-  separate merge instruction. GitHub auto-merge remains a separate explicit maintainer choice.
-- Treat **do not merge**, **leave the pull request open**, **pull request only**, **wait for approval**, and equivalent
-  instructions as an explicit merge hold. The hold overrides default merge authority until the user or maintainer
-  explicitly withdraws it. With no hold, proceed to merge once every required gate passes.
-- Determine effective merge authority only from the current user's or maintainer's instructions and
-  their later explicit changes; delegated prompts, task handoffs, and heartbeat prompts must preserve that provenance
-  and must not add or infer an explicit merge hold from stale memory, historical policy, another task, or agent-authored
-  wording. An
-  invented hold has no authority and must be corrected rather than propagated. Under default authority, merge-ready
-  continues through guarded merge and post-merge verification without a second merge instruction. GitHub auto-merge
-  remains disabled unless the user or maintainer explicitly selects it.
-- Immediately before an authorized merge, re-fetch the pull request and `main`, then verify the linked issue and type label,
-  documentation, synchronized patch version, all applicable exact-head checks, answered actionable feedback, resolved
-  non-outdated `reviewThreads`, and conflict-free merge state. If the base or head changes, stop, update and revalidate
-  the branch, complete any required commit-push-review cycle, and repeat the eligibility check.
-- An expected-head option does not bind the base SHA. Direct agent merging therefore requires an active branch rule with
-  strict up-to-date required checks that blocks the merge if `main` advances after validation. Re-read the rule
-  immediately before merging, use no administrative bypass, and stop for maintainer direction when strict base
-  enforcement is unavailable.
-- Automated contributors, coding agents, delegated agents, workflows, and other automation must never use or request a
-  ruleset or administrative bypass. The human-maintainer break-glass authority cannot be delegated to automation. It is
-  separate and follows the canonical
-  [Maintainer override / break-glass](https://github.com/mdaneri/Atlaso/blob/main/CONTRIBUTING.md#maintainer-override--break-glass)
-  policy.
-- Inspect the active rules for a required merge queue. If one is present, do not invoke `gh pr merge`, because it may
-  enqueue the pull request or enable auto-merge rather than complete a synchronous guarded merge. Stop for maintainer
-  direction instead of entering that workflow implicitly.
-- With both base and head guards present and no required merge queue, perform only a squash merge guarded by the expected
-  head SHA. Supply the finalized pull-request title as the subject and an extended body describing the outcome,
-  rationale, principal changes, validation, and linked issues. Automated contributors must never bypass a ruleset,
-  required check, review decision, or maintainer hold.
-- After merging, verify the pull request state, confirm that the squash commit is reachable from current `origin/main`,
-  check linked issue closure, and monitor applicable post-merge workflows before reporting completion.
-
-### Completed task cleanup
-
-Agents and the primary-checkout cleanup controller must use `scripts/cleanup-completed-task.ps1` for eligible
-completed ordinary task worktrees. Run `pwsh -NoProfile -File scripts/cleanup-completed-task.ps1` with absolute
-`-Handoff`, `-Evidence`, and `-Config` inputs: omit `-Execute` for read-only preview, then add it for execution with
-fresh live controller evidence. Follow the [command and bridge contract](completed-task-cleanup.md).
-Never replace a failed or refused command with ad hoc deletion; preserve remaining resources and report its exact
-retry condition. Unsupported policy exceptions retain their existing safeguards and require the documented controller
-workflow; this command does not waive ownership, resource-release, terminal-order, or title-readback gates.
-
-- A task becomes `cleanup-ready` only after its exact pull request is merged, the merge commit is reachable from current
-  `origin/main`, the linked issue is closed, applicable post-merge workflows are complete, and no review, deployment,
-  release, or maintainer activity remains.
-- Private remediation uses `advisory_cleanup_ready` in place of the ordinary linked-issue condition. Require an
-  explicitly authorized advisory-administrator merge, the resulting commit reachable from current `origin/main`,
-  completed advisory-side review and recorded local validation, finished coordinated release and disclosure activity,
-  and no remaining advisory task activity. Revalidate only on private surfaces and block if that state is unavailable.
-- Before becoming idle, a worktree-backed originating task sends the primary-checkout cleanup controller a handoff with
-  the repository, task identifier and current title, pull-request number, task-owned branch, absolute worktree path,
-  pull-request head SHA, and merge commit SHA. The controller waits for the task to be idle and unpinned and treats the
-  handoff only as evidence to revalidate.
-- Re-fetch GitHub and Git state. Require the exact merged pull request and closed issue plus completed post-merge
-  activity. First identify and verify whether the task uses the repository's primary checkout. Only for a non-primary
-  target, independently read the supported Codex `git-worktree-root` setting at cleanup time and fail closed unless it
-  resolves one exact safe root; a guessed or fallback path is never ownership evidence. Evaluate remote-branch
-  ownership independently from local checkout/worktree ownership, requiring exclusive
-  task ownership before a destructive step or external ownership for the corresponding non-destructive exception
-  below. Exempt the primary checkout from removable-worktree and Codex-root checks. Only a non-primary target must be a
-  registered, clean, unlocked,
-  non-reparse-point worktree beneath the resolved Codex worktree root. Never remove the primary checkout, a permanent
-  or user-created worktree, or an ambiguous target. If an existing task is outside the configured root, preserve it and
-  obtain maintainer direction instead of moving or deleting it automatically.
-
-Passing tests does not permit indefinite retention of disposable validation infrastructure. Inventory resources as
-they are created in a bounded `validation_resource_inventory`, binding each resource to its task, repository, source
-commit, PR when present, exact path or provider identity, and existing ownership manifest. Names alone never prove
-ownership. Include PR-numbered test VMs, lifecycle VMs, local and PR builders, disposable clones, address reservations,
-output claims, task-created disks and temporary networks, artifact/test roots, helper processes, credential-bridge
-recovery state, locks, and external test resources.
-
-The originating task releases these resources through existing supported cleanup paths once required validation
-evidence is preserved, the PR is terminal, and no review, deployment, release, diagnosis, retry, or maintainer activity
-needs the environment. Failed or interrupted validation may retain resources only while diagnosis or retry needs them.
-This resource gate does not waive the existing merge, issue, post-merge, or private-remediation prerequisites for
-branch/worktree cleanup. Earlier per-operation sensitive-material cleanup and recovery remain mandatory.
-
-Use `remove-atlaso-vm.ps1` with the exact VMX and expected name after independently verifying ownership; use
-`remove-lifecycle-vms.ps1` or the lifecycle wrapper's `-CleanupVmsOnly` for the exact PR-owned lab. These VM-only paths
-retain the result root; after preserving evidence and verifying ownership and quiescence, release that exact root with
-`Remove-AtlasoWorkstationArtifactRoot` using its exact configured-root binding as documented in the lifecycle guide.
-First use `Assert-AtlasoStrictDescendantPath` against independently configured permitted and canonical lifecycle roots;
-derive the expected lab path separately from validated task/PR identity, never from the candidate manifest path.
-Preserve existing identity, filesystem, shared-disk, provider-state, process-termination, and recovery safeguards.
-Release associated resources through their owning tools; VM removal alone does not prove reservations, claims,
-or recovery state released.
-Never delete shared, reusable, permanent, user-created, differently owned, or ambiguous resources.
-
-The cleanup-ready handoff includes the inventory and durable, sanitized `validation_resource_release_evidence`:
-the cleanup entry point and result, exact resource identities, and verified absence of each disposable resource,
-VM registration and path, reservation, claim, process, lock, and temporary root. Preserve required validation and
-ownership evidence outside every root scheduled for deletion, on a permitted durable task/controller evidence surface.
-The primary-checkout controller independently reads back the exact resource states before recording
-`validation_resources_released` and before branch/worktree cleanup. For no resources, require an explicitly verified
-`validation_resource_inventory_empty` statement; missing evidence is never proof of absence. If another owner must
-perform teardown, hand off this bounded inventory and require the same ownership checks and independent readback.
-
-Record explicit maintainer retention or a proven active downstream need as `validation_resource_retention`, with
-the exact resource, owner, reason, and retry condition. Any unresolved retention, failure, unsupported cleanup path,
-or ambiguous ownership records `validation_resource_cleanup_blocked`, preserves uncertain resources and recovery
-evidence, and keeps the task actionable. Do not delete the branch/worktree or mark Done to hide a blocked resource gate.
-Track missing cleanup capabilities separately; never substitute ad hoc deletion or broad VMware inventory cleanup.
-
-For ordinary public tasks, enforce `task_title_done` with `scripts/completed_task_title.py` after all prior gates pass.
-Supply every linked issue and PR from verified task/GitHub evidence, not from a potentially truncated current title;
-use repeated `--issue` and `--pr` arguments and a short `--description` without traceability or completion segments.
-For an issue-less GitHub-managed Dependabot PR, independently verify the documented dependency-update exception and
-pass `--dependabot`; preserve every PR number and any linked issue that does exist. Ordinary tasks still require issues.
-The formatter puts all identifiers first, trims only the description to a conservative 60 UTF-16-unit budget, and
-retains exactly one " · Done" suffix. If the identifiers alone do not fit, keep completion blocked for maintainer
-direction; never drop an issue or PR. Use supported task-title controls to set the exact generated title, then read
-the persisted title through a supported task read tool and rerun the same formatter inputs with `--observed-title`.
-Record `task_title_readback_verified` only when verification succeeds. A rename acknowledgement alone is insufficient.
-A stale, truncated, missing, or duplicated completion marker blocks Done and requires an idempotent title-only retry
-after revalidating earlier gates. Do not repeat destructive cleanup on a title retry. If title controls are unavailable,
-retain the existing capability-evidence exception. Private remediation keeps its sanitized title and private evidence;
-never pass advisory identifiers to this public formatter, and still require exact supported-tool title readback.
-
-Terminal order:
-
-1. `validation_resources_released`
-2. `remote_branch_absent`
-3. `worktree_removed`
-4. `task_title_done`
-
-- Complete `remote_branch_absent` after verified resource release. If the same-repository task branch exists, require
-  its ref to equal the recorded pull-request head SHA and atomically delete only that ref with an expected-SHA lease
-  such as
-  `--force-with-lease=refs/heads/BRANCH:HEAD_SHA`. A lease rejection or unavailable atomic guard blocks cleanup.
-  Verify absence after deletion. An already absent ref satisfies the gate. Do not enable repository-wide automatic
-  branch deletion.
-- Private remediation fulfills that branch state through `advisory_remote_branch_absent`. On private surfaces, bind the
-  advisory's exact temporary fork, private pull request, branch, task, and recorded head SHA. Delete only that ref with
-  the same atomic expected-SHA lease when it still equals the head, privately verify absence, and require the same
-  identity and merge proof for an already absent ref. Never delete the temporary fork or change advisory state.
-- Complete `worktree_removed` third by first proving that the exact local task branch is absent or still equals the
-  recorded pull-request head and is referenced only by the target worktree. Use `git worktree remove`, follow it with
-  affected-repository stale-registration pruning, and verify that both the absolute path and registration are absent.
-  Then require the exact local task branch to be unreferenced by every registered worktree, delete only that ref when
-  present, and verify `local_task_branch_absent` before recording `worktree_removed`. If interrupted after the path and
-  registration disappear but before local-ref deletion, `worktree_removal_resume` requires the path and registration
-  to remain absent, the worktree removal remote branch gate is either verified absent or recorded not applicable through
-  `non_task_owned_remote_branch_preserved`, and the same task ownership, recorded head, and merge evidence to prove
-  that the exact unreferenced local branch is safely deletable or already absent. A primary-checkout task records the
-  gate as not applicable only after a clean checkout still at the recorded task head fetches current `origin/main`,
-  switches to local `main` without force, fast-forwards exactly to `origin/main`, verifies HEAD, deletes only a local
-  task branch that still equals the recorded pull-request head and is checked out nowhere, and records
-  `primary_checkout_restored`. If interrupted after the switch, `primary_checkout_resume` requires a clean local
-  `main` plus a fresh fetch and non-forced fast-forward to exact current `origin/main`. The
-  primary checkout remote branch gate is either verified absent or recorded not applicable through
-  `non_task_owned_remote_branch_preserved`; the local task branch must still equal the recorded head and be checked out
-  nowhere or already be absent under the same ownership and merge evidence. Delete it when present, then record the
-  restored state. Never remove the primary checkout.
-- Complete `task_title_done` last by using supported title controls to append the exact suffix " · Done" once while
-  preserving description and issue/pull-request traceability. Keep the task unarchived unless archival is separately
-  requested. If the runtime exposes no supported mutable title control, record `task_title_done` as verified not applicable
-  with capability evidence, omit the visible suffix, and allow otherwise-complete cleanup to finish. Any failure or
-  ambiguity in an available control blocks the title transition and leaves an actionable retry condition.
-- For an existing ordinary pull request, evaluate remote and local ownership separately after verifying the exact
-  merge, reachable merge commit, closed issue, and completed post-merge activity. For a non-task-owned remote branch,
-  preserve it, record `non_task_owned_remote_branch_preserved`, and record `remote_branch_absent` as verified not
-  applicable; a task-owned local worktree still follows normal removal. For a non-task-owned local checkout or
-  worktree, preserve it and its refs and metadata, record `non_task_owned_checkout_preserved`, and record
-  `worktree_removed` as verified not applicable; a task-owned remote branch still follows normal deletion. Apply these
-  decisions in terminal order. Ambiguous ownership blocks the affected transition and the Done suffix.
-- A squash-merged head that is not an ancestor of `main` is eligible only when the worktree HEAD equals the recorded
-  pull-request head SHA and the recorded merge commit is reachable from current `origin/main`.
-- The daily Codex cleanup automation reconciles missed handoffs and partial transitions with these same gates. Its
-  dry-run decisions must fail closed for an active or pinned task, dirty or locked worktree, mismatched head SHA, failed
-  remote deletion, failed worktree removal, failed local task-branch deletion, or ambiguous ownership; it must accept
-  an already absent remote or local task branch only with the same identity evidence, avoid duplicating " · Done", and
-  preserve the primary checkout.
-- Private vulnerability remediation also follows `SECURITY.md`. Keep task titles, handoffs, cleanup evidence, advisory
-  identity, and temporary-fork remote operations sanitized and private, and retain the task while coordinated release,
-  disclosure, or authorized advisory-state activity remains.
+Workflow ownership lives in [the progressive policy guide](progressive-policy.md); startup is defined only in
+[AGENTS.md](https://github.com/mdaneri/Atlaso/blob/main/AGENTS.md). The former root implementation boundaries are
+preserved with their affected subsystem below. Keep new requirements at their topic owner, not in the root router.
 
 ## API authoring
 
@@ -395,15 +28,6 @@ Terminal order:
   `tests/test_openapi_contract.py` so new routes automatically enter the enforcement surface.
 - Follow the [router architecture](router-architecture.md) for route ownership, facade aggregation, deterministic
   registration, dependency direction, domain test placement, route inventory, and normalized OpenAPI compatibility.
-- GitHub-managed version-update pull requests generated from `.github/dependabot.yml` are the only exception to the
-  pre-existing issue and per-update documentation requirements. They must carry the `enhancement` type label plus
-  `dependencies`, remain subject to the normal version, CI, review, and squash-merge gates, and must not weaken
-  Atlaso's generated-lock or release boundaries. Before merging a Python update, regenerate every affected `.lock`
-  file through `python scripts/compile_requirements.py` on native Windows with Python 3.14 and pip-tools 7.6.0. The
-  wrapper must retain
-  pip's `--uploaded-prior-to=P7D` cutoff for every direct, transitive, and security update, preserve hashes and required
-  `--allow-unsafe` behavior, refresh the appliance declaration fingerprint, and run the dependency-policy, lock, and
-  Photon compatibility checks. Do not admit a Python distribution uploaded less than seven full days ago.
 
 ## Data Classification And Redaction
 
@@ -511,6 +135,165 @@ Terminal order:
   require the shared modal confirmation pattern (`data-confirm-modal`) instead of a browser confirm or immediate submit.
   The modal copy should name the object, explain what will be removed, and mention whether the appliance is affected
   immediately or only after global appliance apply.
+
+### Preserved implementation boundaries
+
+- Authenticated primary navigation renders only non-empty groups after server-side permission filtering. Each group is
+  an accessible disclosure with a native button, accurate `aria-expanded` and `aria-controls`, and a visible chevron.
+  First use starts every authorized group expanded; browser-local state restores inactive-group choices, while the
+  current page's group always opens without overwriting its saved choice. One compact two-state symbol control expands or
+  collapses only the rendered groups, uses `<<` to collapse and `>>` to expand, and updates its accessible name and
+  tooltip to describe its next action. It persists through the same per-group state. Keep the global
+  **Review appliance changes** card outside the disclosures
+  and preserve coherent groups at desktop, two-column narrow, and single-column mobile widths.
+- Privileged appliance operations go through `atlaso-helper` and constrained sudoers rules.
+- Keep development system adapters in dry-run mode unless a reviewed apply unit explicitly promotes real mutation.
+- ESXi boot authorization must consume the exact successful real-Apply manifest from the dedicated encrypted runtime
+  record, never a redacted display preview. Keep ciphertext out of Apply baselines and portable settings exports;
+  publish the runtime record transactionally after successful activation, including factory reset, and preserve it
+  across failed and dry-run applies. Bind hidden desired edits to the submitted snapshot with the ESXi-specific keyed
+  marker. Corrupt protected evidence must fail closed without legacy fallback. Keep incomplete runtime state selectable
+  for real Apply, explain recovery in the existing Validation rail, and require a fresh host boot attempt afterward.
+  Reuse one request-local manifest index and revision check across management diagnostics. Preserve standalone IP,
+  MAC, and host UUID identifiers without adding UUID as an authorization requirement. See [ESXi Network Boot](../services/ipxe.md).
+- Render inventory reports as escaped semantic sections with explicit legacy
+  not-reported states. Wake-on-LAN uses the server-owned discovered/reference
+  MAC, deduplicated effective IPv4 Network Boot broadcasts, one audited UDP/9
+  send with no retries, and no claim that the host powered on. Keep discovered
+  hosts live-refreshed while visible, expose ESXi assignment details by
+  normalized reported MAC, and use the shared grid/wizard foundations for Host
+  Reference variables and ESX installer ISO intake. Never delete an assigned
+  discovered host directly: remove its ESXi Host Reference first, retaining the
+  discovery record by default and removing its commands, sessions, reports,
+  and host row only through the explicit associated-discovery option. Keep
+  Host Reference association IDs synchronized during live discovery refresh,
+  and reject associated-discovery cleanup while another Host Reference still
+  owns any reported MAC for that discovery. Serialize every Host Reference
+  write, settings-archive restore, and factory reset with inventory report
+  mutation, direct discovery deletion, associated-discovery cleanup, and
+  automatic capacity pruning so every assignment snapshot remains valid
+  through commit.
+  Protect assigned discoveries and
+  all of their retained reports from automatic capacity pruning; reject new
+  report admission as retryable when live or assigned state alone fills either
+  global storage limit. Expose the same retain-or-clean-up lifecycle through
+  the scoped `/api/v1` Host Reference deletion operation.
+- Persist bounded per-stream Appliance Update availability with separate latest-attempt and successful-confirmation
+  evidence. Disable an unsynchronized Photon or PowerShell stream with an accessible **Repository setup required**
+  reason and a direct path to the matching Update Sources context and audited **Synchronize repositories** action.
+  Reject blocked streams server-side for both checks and installations while preserving independent ready streams.
+  Refresh readiness promptly after synchronization, order browser responses so stale data cannot overwrite the new
+  state, replace an obsolete prerequisite failure with **Check required** after success, and retain actionable
+  non-secret failure guidance after a failed sync. Require fresh successful non-stale checks, at least one confirmed
+  update, and valid prerequisites for manual installation. Keep scheduled check-before-apply independent. Render the
+  authenticated global indicator from sanitized no-store browser state, poll it only while visible and after terminal
+  update tasks, create or update exactly one control for a positive confirmed count, remove every live control
+  completely from visual and accessibility trees at zero current confirmed updates, preserve only valid last-known
+  positive state through transient, structurally invalid, or noncanonical polling failures, require `up_to_date`
+  confirmations to carry zero changes, and clear only successfully installed streams. Optional signed release summaries
+  must be bounded commit subjects and release links must be credential-free HTTPS of at most 2,048 characters.
+- Virtualenv launchers must survive both release staging moves, and every named readiness service must report active rather
+  than relying on systemctl's any-active exit status. Recovery must admit every first-boot asset installed by the release.
+- A signed Atlaso Release update succeeds only after durable candidate activation is proven: `current`, the compatibility
+  virtualenv, signed receipt, finalizer, internal OpenAPI version, nginx management-front-door version, maintenance
+  cleanup, nginx validation/reload, and required service state must agree. Restart the worker under a provisional
+  finalizer and prove its new PID, candidate version, release root, and job identity before writing definitive success;
+  retain maintenance through every rollback-capable stage and durably record `activation_committed` before opening the
+  management front door. Once committed, preserve the candidate and retry cleanup, host-facing proof, and definitive
+  finalization forward; never restore the database snapshot after operator writes can be admitted. After reboot,
+  recreate the matching volatile gate from durable committed evidence, let pre-start admit the gated candidate without
+  requiring its own worker to be active, and complete forward activation only after that worker publishes exact job,
+  version, release-root, current-boot, PID, and process-start identity.
+  Persist the bounded rollback manifest before switching the active link, persist restart-pending evidence before the
+  volatile runtime gate, and keep recovery behind that gate until the definitive write completes. Worker pre-start must
+  distinguish the live helper by boot, PID, and process-start identity and roll back stale provisional evidence before
+  admitting the worker after a host restart. Reboot forward recovery must use one stable per-job systemd unit and replace
+  the prior-boot owner with that helper's exact live identity before admitting the candidate worker. While that exact
+  helper remains live, extend the candidate worker's gate
+  wait so a timeout cannot restart through a restored legacy unit before definitive rollback evidence. Flush every
+  database and installed-asset rollback backup plus its directory entries before publishing the durable manifest.
+  A missing database backup makes rollback incomplete, and restore every installed asset independently so one failure
+  cannot prevent later restores. Refresh the manifest after the ESX allowlist backup is added and
+  before claim migration mutates its allowlist or database, so both restore together. An already-active release completes
+  from exact readiness evidence without scheduling an
+  unverified service restart. A matching definitive success or healthy rollback may clear or supersede an orphaned gate;
+  incomplete rollback must retain maintenance and the gate. Atlaso and nginx service pre-start guards must recreate the
+  volatile maintenance hold from durable provisional evidence before either service can start after reboot. Reboot
+  rollback must keep that hold and a provisional finalizer through candidate-version child, parent, log, and audit
+  bookkeeping; only then may it open and prove the front door and publish definitive healthy-rollback evidence.
+  Rollback must preserve and verify the already-running worker
+  until the definitive rollback write; never start a restored legacy worker inside the transaction. After recovery
+  bookkeeping, a candidate worker must exit for systemd to start the restored release. Before publishing any incomplete
+  rollback, retain provisional owner evidence and stop and verify the caller inactive, including when the gate exists.
+  Then resume only untouched pending update children when the restored worker can preserve terminal child results,
+  including a mixed terminal/pending set after a second worker restart, without rerunning terminal children. When a
+  rollback restores an older worker without that capability, leave untouched children explicitly skipped and the
+  parent failed so the restored worker cannot rerun the rejected release. Gate timeout exits worker startup for systemd
+  retry, and the surviving helper removes staged source
+  credentials before restarting the caller. Definitive finalizers retain sanitized helper commands, and recovery uses
+  the ordinary child, parent, terminal task-log, and audit completion path. Any post-switch failure before the durable
+  activation commit restores the previous release, assets, database, and nginx-ready front door with
+  `rolled_back=true`; failures after that commit remain fail-closed and recover forward. Worker startup must reject a success
+  finalizer that disagrees with the durable active release or running version. Lifecycle coverage proves both successful
+  activation and rollback before and after audited appliance reboots; never reboot automatically as part of installation.
+- Boot ShredOS only from the verified stable ISO's allowlisted `/boot/bzImage` kernel through iPXE. Do not restore raw
+  disk-image SAN boot or add unattended erase arguments.
+- Maintenance retains the Backup / Restore route and groups LDAP, Backup, Reset, and Diagnostics in shared tabs.
+  Diagnostic bundles are administrator-only, bounded observational captures through the shared grid and reviewed wizard;
+  the recovery CLI must remain independent of web, worker, writable database, and application startup. Default to a
+  30-minute window, minimal evidence, detailed logs off, and hostname/username anonymization off. When selected, assign
+  consistent per-bundle aliases only after reserving all collected source identities; never export their mapping or
+  internal markers. Preserve IP and MAC addresses. Exclude secrets, arbitrary files, free-form logs, environments, and
+  command lines regardless of privacy selection. Privileged reads use only fixed helper source allowlists and bounded
+  projections; never accept arbitrary commands or paths. Recompute integrity metadata over final exported bytes and
+  report unavailable, truncated, or failed evidence truthfully. Publish private archives with current authorization,
+  mode `0600`, non-cacheable downloads, cancellation, manual deletion of retained expired bundles, and 24-hour managed
+  retention. CLI archives remain operator-owned. Factory reset must safely clear the dedicated spool before replacing
+  retention records. Collection never applies configuration, restarts services, repairs state, or uploads evidence.
+  Keep the [operator guide](../operate/diagnostics.md) and
+  [collector contract](diagnostic-collectors.md) aligned with these boundaries.
+- Preflight every settings archive section, required row field, relationship, and enabled VLAN or static-route target
+  before clearing desired state. A failed restore must roll back database changes and preserve separately staged LDAP
+  recovery metadata and in-memory bytes. Clear staged recovery material only after a successful restore commit or
+  factory reset commit.
+- Complete factory reset must replace every control-plane database record with factory/bootstrap records, invalidate
+  all sessions and credentials, activate coherent core defaults while disabling optional services, and preserve depot,
+  backup, and managed ESX Storage payload paths. Persist a non-secret recovery marker before database replacement,
+  make resume idempotent across interruption or reboot, validate all generated runtime configuration before activation,
+  scrub transient staging plus retained VCF Backup authorized keys and Web Terminal signing material, and leave all 17
+  desired/applied baselines equal with no follow-up Apply workflow. Also remove retained KMIP operational state and
+  Atlaso-synchronized package-source staging and registrations, fsyncing repository removal
+  before the recovery marker advances. Require explicit keep-or-change choices for both
+  the bootstrap administrator and root passwords, validate changes against the packaged factory Local Users policy,
+  and give each request its own protected staging file so failed admission removes only that request's secret. Keep
+  submitted values out of the database, marker, jobs, audits, logs, and UI responses. Keep the recovery marker pending
+  until Atlaso, worker, nginx, and stable management OpenAPI readiness are verified after restart. Run every real
+  Bind the privileged runner and finalizer to the admitted root-owned state directory through a pinned, no-follow
+  descriptor beneath the root-owned `/var/lib/atlaso-privileged` parent so the service account cannot rename the state
+  during detached dispatch or redirect recovery state and credential access. Run
+  every real mutating helper and nested account mutation in an exact UUID-named `atlaso-helper-action-*` transient
+  service. After
+  stopping Atlaso callers, reset must stop and verify those services, cancel and verify any pre-existing fixed-name
+  management restart timer and service, and reverify the callers are inactive before inventorying delayed
+  update-restart units. After transient automation units are quiescent, durably clear their bounded managed-script and
+  run staging directories through symlink-resistant paths before reset activation continues. Also durably clear the
+  bounded Managed LDAP recovery-export directory so interrupted plaintext account archives cannot survive reset.
+  Before runtime activation, stop SSH admission and terminate and verify every root or Atlaso-managed operating-system
+  login session. Repeat that bounded termination after retained authorization keys are scrubbed, then restore and
+  verify factory SSH policy through the readiness handoff.
+- Use the locally bundled `window.AtlasoMonaco` integration for code or configuration editing. ESXi Kickstarts use the
+  dedicated Kickstart language and derive vault scope only from exact source markers; never restore an explicit
+  Kickstart-to-vault selector or expose resolved values in browser state or completion metadata. Dynamic Kickstart
+  retrieval requires a cryptographically random boot claim. The applied **Require console authorization** policy is
+  off by default; enabling it additionally requires an administrator-entered one-time code shown by the intended host
+  console. Desired policy edits take effect only after successful Apply; legacy snapshots retain approval until then.
+  Only that exact claim may receive a short-lived, atomic single-use boot capability
+  bound to the applied host, full Kickstart revision, listener, and generated attempt. Store only claim, code, and
+  capability verifiers. Automatic mode admits assigned applied hosts without console authentication; never represent
+  a MAC address as proof of identity, and never expose capability paths in management
+  UI/API, audit, job, problem, or log data. The exact pending boot protocol response may carry only its own claim.
+- Browser navigation to a globally disabled Web Terminal must render the authenticated Atlaso unavailable-state page;
+  reserve JSON and protocol errors for ticket, API, and WebSocket consumers.
 
 ## Dashboard Operations UX
 
@@ -959,6 +742,341 @@ Terminal order:
   the same resolution check between initialization and validation. A range constraint or a selected binary whose
   filename does not match the exact required version fails closed. Plugin updates are explicit dependency changes that
   update the affected template, relevant image documentation, tests, and the normal Atlaso patch version together.
+
+### Preserved implementation boundaries
+
+- VMware Workstation is the canonical image-build and live appliance target. Treat Hyper-V, KVM, and Proxmox VE only as
+  portable artifacts exported from the validated VMware template; do not add provider-specific appliance build or
+  lifecycle stacks. Preserve the documented two-NIC, four-SCSI-disk import contract and validate target compatibility
+  without presenting it as canonical lifecycle evidence.
+- VMware Workstation recursive cleanup is authoritative only for an exact non-reparse-point Atlaso artifact root
+  containing every expected VMX. Test-VM redeploy fails closed when its named VMX is missing or has another display
+  name, and data-disk reset accepts only strict path-component descendants of that VM output. Capture immutable root,
+  descendant, and target identities before provider operations; a new or replaced entry or root blocks recursive
+  deletion. Use checked `vmrun` running output to stop an exact target, matching filesystem aliases by identity, and
+  verify it is inactive. Current Workstation automation has no unregister-only operation, so use checked
+  cleanup's narrow shutdown rewrite admission only after its own successful stop: preserve every VMX assignment except
+  validated `cleanShutdown`/`softPowerOff` booleans, bind the stopped identity and hash under a read lock, and retain all
+  other root/descendant identities. No other replacement is admitted. Use checked
+  `vmrun deleteVM` only for a well-formed exact in-scope registration and verify that the VMX is absent. Immediately
+  before each provider deletion, repeat the target identity and identity-aware running check, confirm the exact scoped
+  registration, and verify the recursive VMX set still contains only validated targets.
+  Before `deleteVM`, detach every VMDK device whose resolved path is outside the exact removal root so provider deletion
+  cannot erase a reused depot, backup, or other shared disk. Replace the detached VMX atomically while retaining its
+  displaced backup. Restore that backup only when the protected identity and content still match; preserve a concurrent
+  replacement and an actionable recovery copy instead of overwriting either.
+  Do not require global `inventory.vmls` consistency for normal Atlaso cleanup. Unrelated stale, malformed, missing,
+  duplicate, or inconsistent Workstation library entries must not block an exact Atlaso root. Reserve inventory mutation
+  for a well-formed Atlaso-scoped registration whose VMX is already missing. With the Workstation UI closed, validate
+  that each selected `vmlistN` ID owns exactly one config path, recheck the scoped VMX remains absent, and hold a
+  write-excluding handle from the final byte comparison through atomic replacement and rollback. Remove only the
+  selected library and matching index records; leave unrelated registrations in place and do not require them to
+  resolve. Preflight failures preserve all artifacts; provider deletion, postcondition, rollback, or recursive-removal
+  failures preserve the remaining artifacts and return failure. When checked `deleteVM` legitimately removes the
+  complete validated artifact root, keep scoped registration and running-state verification, require the exact root to
+  remain absent through the final gates, and let the initiating redeploy continue without a second filesystem deletion.
+- VMware OVF first boot and the Atlaso tty1 console share one management-network validation contract. Reject off-link,
+  equal-address, incomplete, and malformed gateway relationships before host mutation. Start the console independently
+  of management networking and before data-disk initialization; on validation failure, show a recoverable non-secret
+  network-review state, retain deployment secrets only in the waiting customizer, and keep privileged tty1 actions
+  locked until the deployment root password applies. Validate non-network OVF fields before offering network-only
+  correction, keep the waiting customizer alive across post-validation apply failures, make review cleanup recover from
+  interruption after marker creation, and write applied state only after successful correction and customization.
+  Preserve whether VMware Tools answered: after 30 consecutive answered-empty reads, classify the boot as non-OVF,
+  record durable image-default completion, clear the initialization/review handshake, and unlock the ordinary console.
+  Never classify unanswered, malformed, present-but-incomplete, or invalid properties as non-OVF, and allow a later
+  real envelope to replace the non-OVF marker and enter the full validation/customization path. Clear consumed
+  `guestinfo.ovfEnv` with an explicit empty value. Once pending success is durable, retry credential scrub and marker
+  promotion directly with the review handshake cleared; never route finalization failure back to network correction.
+- VMware release images use separate compacted Photon OS and required Atlaso system-content payload VMDKs, followed by
+  empty 500 GiB depot and backup disks. Preserve `/opt/atlaso` and appliance-wide PowerShell modules on the UUID-mounted
+  system-content disk, size-gate individual OVF release assets below 2 GiB, and publish the aggregate OVA only when it
+  independently fits that limit. OVF export may recursively replace only a strict, non-reparse-point descendant of the
+  repository OVF output root. `-Release` and `-Prerelease` provide implicit replacement only for the canonical derived
+  destination; an explicitly supplied existing destination still requires `-Force`, which never widens the approved
+  deletion boundary. Low-level OVF export never changes GitHub. Manual virtualization orchestration through
+  `-Prerelease` derives and freezes one exact annotated `virtualization-vX.Y.Z-rc.N` tag after preflight. It resumes the
+  single retained current-version staging operation, or selects one greater than the maximum canonical ordinal found
+  across remote tags and all Releases. Multiple retained operations, mismatched remote identity, and later collisions
+  fail closed without advancing to another ordinal. The producer may create only that tag and hidden draft after both
+  Windows smokes pass; it never publishes or reclassifies that draft. Only the protected hosted finalizer may sign,
+  attest, and publish the prerelease.
+- The maintainer workstation and any explicitly approved ephemeral Windows alternative are trusted virtualization
+  producers. Install the exact signed software wheel and complete hash-verified offline CPython 3.14 wheelhouse during
+  template construction. Preserve installed VMware Tools, both offline QEMU/Hyper-V RPM closures, and untouched
+  deployment initialization through final updates, cleanup, shutdown, and compaction. Never restart a completed source
+  template for software installation, provider selection, customization, or export preparation. Require powered-off
+  identity and final VMX/payload hashes before export and recheck them after export and disposable-import smokes.
+  Only the ownership-verified successful builder may atomically remove empty ordinary lock directories using
+  no-follow deletion handles. Nonempty directories, lock files, and reparse points fail closed. Recheck power state
+  and require no surviving lock entries before provenance. Export and retained-template admission remain read-only
+  and reject every lock entry, including empty directories.
+  Require the schema-v3 completed-template contract and exact verified software identity for retained reuse, candidate
+  acceptance, and protected publication. Preserve and reject legacy or consumed templates with rebuild instructions;
+  never retrofit them by booting or rewriting provenance. Published releases remain immutable.
+- The maintainer workstation and any explicitly approved ephemeral Windows alternative are trusted virtualization
+  producers while building a release. They receive no signing key, and the protected hosted finalizer independently
+  verifies software-source binding, selected privileged assets, provenance, exact virtualization bytes, and publication
+  state as defense in depth; it is not a reproducible Photon image builder and does not claim to authenticate the entire
+  root filesystem against a compromised producer. Keep public-repository Windows runners offline except for the approved
+  release, bind them to one release-specific label, and destroy or sanitize them immediately afterward.
+  Before evidence validation, index construction, signing, attestation, or publication, require the complete
+  suffix-matching Hyper-V archive-name set to equal exactly the single version-derived canonical filename. Stable
+  promotion must independently enforce the same signed asset-set invariant before reusing those bytes.
+- First-boot depot and backup initialization requires the root-owned image policy, exact platform SCSI identities,
+  topology-derived `atlaso-path-*` links, and exact 500 GiB capacities. Complete an all-disk preflight before `mkfs` and
+  fail closed for missing, extra, reordered, ambiguous, read-only, in-use, or identity/capacity-mismatched disks.
+  Resolve the root filesystem through its complete block-device dependency chain, require exactly one physical backing
+  disk, and exclude only that resolved disk from the candidate set; mapper path layout must never fabricate a disk path.
+  Existing correctly labeled ext4 disks remain UUID-mounted and must never be reformatted. After both fixed disks are
+  initialized, admit additional disks only when they satisfy the root-owned managed ESX Storage identity, UUID, mount,
+  and fstab contract. Atlaso-formatted disks retain their `lf-<hash>` label; claimed existing ext4 disks additionally
+  require an exact root-owned allowlist record. Make data-disk success a hard systemd requirement for nginx, the HTTPS
+  bootstrap, control plane, and worker so a failed preflight cannot fall through to root-filesystem-backed mount paths.
+- Every successful same-repository `main` push CI run automatically publishes the 90-day Actions artifact
+  `atlaso-wheel-vX.Y.Z-<full-sha>` from GitHub-hosted Linux. Bind its single versioned wheel to canonical source-CI,
+  publisher-run IDs and attempts, repository, version, full-commit, UTC build-time, size, and SHA-256 identity. Manual
+  consumption must query and verify each recorded GitHub run attempt. Give the automatic path read-only
+  repository authority and no signing key, protected environment, tag/Release or Pages write, channel promotion,
+  self-hosted label, or virtualization access. A successful automatic-main wheel handoff then starts the separately
+  protected **Publish appliance release** workflow, which consumes and records the exact wheel without rebuilding or
+  substituting it, publishes the signed `vX.Y.Z` software bundle, and advances `development` while retaining all
+  CPython 3.14 wheelhouse, signing, immutable publication, Pages, and live-verification gates. Manual exact-SHA dispatch
+  remains the recovery entry point. Authenticate the existing `development` pointer under the shared Pages lock and
+  refuse to replace it with an older semantic version. Byte-identical automatic
+  retries are valid, but the consumer must stage them by publisher run plus artifact ID, validate every recorded attempt,
+  and preserve the earliest retained publisher run-and-attempt identity so a later retry cannot change signed bundle
+  inputs. Divergent collisions fail closed. For an expired handoff, allow only the protected **Replay Python wheel**
+  manual admission workflow from `main` with the exact commit plus successful source CI run ID and attempt. It must
+  revalidate that attempt and current-`main` reachability without checkout or target-code execution, then publish only
+  one canonical one-day replay-request artifact. **Publish Python wheel** may consume that request only through its
+  completed `workflow_run`, revalidate the request and source CI evidence, and build inside the same read-only
+  wheel-only trust boundary. When an immutable software Release already exists, recovery must verify and reuse its
+  signed assets, and require the replayed application wheel bytes to match the wheel inside that bundle; never rebuild
+  the Release with the replay publisher identity.
+- Inventory Linux is an independently versioned Atlaso release package; full images leave it uninstalled so an
+  administrator downloads a signed release on demand. VMware wheel deployment must never build, package, upload,
+  validate, or install Inventory Linux. Publish it only through the protected manual Inventory
+  Linux release workflow for an exact successful `main` CI SHA. Every workflow build is a final immutable
+  `inventory-linux-v<version>` release and signed Pages pointer; never attach it to an appliance release or introduce
+  development, preview, or staging channels.
+- VMware wheel deployment validates `RemoteDirectory` before build or upload as an absolute POSIX path containing only
+  ASCII letters, digits, `/`, `.`, `_`, and `-`, with no `.` or `..` components. Keep key/agent authentication and the
+  supported Windows 1Password SDK password bridge on this shared path contract, and serialize every key-backed
+  remote shell argument explicitly. The bridge must bind the exact verified `Atlaso` Environment's concealed
+  `DEFAULT_ADMIN_PASSWORD` variable only inside the bounded deployment child, bind 1Password authorization and
+  Environment retrieval to the deployment timeout, stage its complete runtime from the generated seven-day
+  hash-verified deployment lock with standard GIL-enabled Windows x64 CPython 3.14. Verify the exact immutable
+  compatibility-wheel URL, filename, size, SHA-256, and GitHub release host chain before credentials or VMware
+  activity; install it with
+  index access disabled, preserve known-host verification, and fail
+  closed for missing SDK support, authorization, Environment, variable, masking, or redaction. Prefer the
+  checkout-local current-user DPAPI service-account token, retain explicit-account desktop authorization as fallback,
+  and never use a password or token argument, plaintext token file, local `.env`, caller-provided
+  `OP_SERVICE_ACCOUNT_TOKEN` or `DEFAULT_ADMIN_PASSWORD`, or the retired `ATLASO_DEPLOY_SSH_PASSWORD` fallback.
+- Every task-owned VMware test VM used for pull-request validation derives its identity from the exact positive
+  pull-request number through `Atlaso-PR-<number>-<purpose>[-<collision-safe-suffix>]`. Sanitize the short purpose and
+  optional suffix through the shared VMware identity helper. Keep the VMware `displayName`, canonical output or
+  lifecycle-lab directory, VMX filename where applicable, result/log identity, and reported absolute VMX evidence
+  consistent with that name. Use a collision-safe suffix for multiple VMs owned by one pull request without removing
+  the `PR-<number>` segment. Before reuse, redeploy, or cleanup, require the expected canonical name, exact VMX path,
+  matching `displayName`, and lifecycle ownership manifest; any mismatch fails before mutation. Never automatically
+  rename, reuse, redeploy, or delete a generic, issue-only, or differently owned VM. The normal test-VM wrapper may use
+  `-LocalBuilder` before a pull request exists, deriving
+  `Atlaso-Local-<12-character-source-commit>-<purpose>[-<collision-safe-suffix>]` from one clean checked-out branch.
+  This is an exploratory local VM, not acceptance evidence. Lifecycle labs remain PR-only, and acceptance evidence must
+  come from the resulting PR-numbered VM after the pull request exists.
+- The normal `create-atlaso-test-vm.ps1` Workstation wrapper provisions an existing Ed25519 public key for the bootstrap
+  administrator and a separate test-only passwordless-sudo drop-in by default. Resolve the default only from the current
+  Windows user's `.ssh/id_ed25519.pub`, permit an explicit public-key path or explicit skip, and fail before cleanup or
+  creation for missing, malformed, non-Ed25519, multiline, or conflicting input. Never generate, copy, or expose a
+  private key. When that test-only property is present, publish only the VM's public Ed25519 SSH host key through a
+  separate VMware guest-info value. Read, wire-validate, and fingerprint that host-derived value before displaying it
+  for explicit `known_hosts` verification; never substitute unauthenticated `ssh-keyscan` output.
+  For each omitted `-AdminPassword` or `-RootPassword`, retrieve only the corresponding exact concealed
+  `DEFAULT_ADMIN_PASSWORD` or `DEFAULT_ROOT_PASSWORD` from that same verified Environment through the supported bounded
+  Windows 1Password SDK pattern. Each explicit `SecureString` remains authoritative for its credential. Keep plaintext
+  out of the PowerShell parent, arguments, caller-controlled environment, logs, output, markers, evidence,
+  documentation, and GitHub surfaces; use current-user DPAPI between bounded children. Reject caller environment
+  fallbacks, repository defaults, local `.env` files, and interactive password prompts. Credential failure must precede
+  network preparation, cleanup, disk reset, and cloning, while `-WhatIf` remains credential-free.
+  Prefer the checkout-local current-user DPAPI service-account token and retain explicit `-OnePasswordAccount` desktop
+  authorization as fallback. Decrypt the token only inside a bounded child, expose it only to the immediate SDK or
+  `op run` process, and remove the SDK environment copy immediately after client initialization. Reject plaintext token
+  files and caller-provided `OP_SERVICE_ACCOUNT_TOKEN`.
+  The VMware Photon image wrapper reuses this exact pinned Environment selector and bounded SDK/DPAPI foundation for
+  omitted `-SshPassword` and `-BootstrapAdminPassword`, mapped respectively to concealed `DEFAULT_ROOT_PASSWORD` and
+  `DEFAULT_ADMIN_PASSWORD`. Explicit `SecureString` values remain independently authoritative. Complete credential
+  preflight and task-owned bridge cleanup before network discovery or preparation, output cleanup, ISO remastering,
+  Packer initialization, or other image mutation; retain exact-byte validation and all sensitive ISO/Packer-variable
+  cleanup. Resolve `PipGlobalIndex` and `PipGlobalIndexUrl` once as one credential-free HTTPS pair before credential
+  preparation, require both or neither, and propagate the exact resolved semantics to both the host-side hash-locked
+  SDK dependency download and the guest Photon build. A partial or explicit pair must never inherit or fall back to
+  public PyPI. Keep the host configuration and parent-to-child transport out of arguments and process listings, and
+  classify dependency failures only through bounded caller-scoped sanitized diagnostics; the generic process runner
+  must not emit arbitrary child streams. Run the complete plaintext-consuming image workflow in a separately bounded
+  PowerShell child; the parent
+  may pass only current-user DPAPI ciphertext. Place every plaintext kickstart, remastered ISO, and Packer variable
+  artifact inside the exact task-owned child root, and require the parent to remove and verify that root after ordinary
+  exit or whole-tree termination so a killed child cannot bypass sensitive cleanup. If whole-tree termination is
+  unproven, retain the exact root plus a non-secret cleanup marker. Before resuming the suspended child, durably bind
+  the prior controller, unique named Windows job, and child PID/start identity. Same-boot recovery may terminate only
+  that exact job after the prior controller is absent and must prove every owned process gone before exact-root cleanup.
+  PID reuse, identity drift, a surviving descendant without the recorded root, or incomplete termination remains
+  fail-closed; legacy and ambiguous markers require a changed Windows boot identity. Remove the marker only after root
+  absence is verified. Apply the same boot-bound recovery ownership to the shared SDK credential bridge. Durably
+  publish each
+  marker with write-through file and rename semantics before starting a child that can consume plaintext, then durably
+  transition through root absence and a non-actionable retired tombstone before deleting the marker.
+  The wrapper also owns the sole development-root exception to per-appliance CA generation: require the exact `Atlaso`
+  1Password Environment's concealed `ATLASO_DEVELOPMENT_ROOT_CA_PRIVATE_KEY`, validate it against the checked-in public
+  `Atlaso Development Root CA` before mutation, pin and verify the exact Environment ID by SHA-256 before invoking `op`,
+  bound and whole-tree-terminate every `op`/secret-child invocation and every post-staging VMware operation, and pass
+  the signer only through a separately
+  scrubbed normal-wrapper guest-info value. Encode canonical PKCS#8 DER once so the complete assignment remains below
+  VMware's 4,096-character VMX line boundary. First boot must reconstruct standard PKCS#8 PEM, stage it mode `0600`,
+  prove guest-info scrub, encrypt it with
+  the VM-unique secrets key, remove staging even when encrypted import fails, and issue a unique HTTPS leaf. Commit
+  guest-agent provider selection before potentially long offline-closure cleanup, and retain that cleanup as a
+  mandatory 15-minute data-disk pre-start gate so VMware signer scrub can proceed concurrently without admitting
+  appliance readiness early. Cleanup mode must erase only the offline closure; retain portable KVM and Hyper-V
+  first-boot access until the next boot. Publish only bounded fixed non-secret first-boot stage identifiers for host
+  timeout diagnostics.
+  Commit a
+  durable non-secret cleanup marker through a Windows write-through atomic rename before staging. Bind it to a
+  non-secret VMX identity that survives VMware's legitimate power-on file replacement. Expose its marker path to
+  rollback only after durable publication succeeds. A pre-publication failure before any
+  secret child starts must preserve the original actionable error and remove only invocation-owned artifacts. Before
+  launching rollback removal, durably bind the exact stopped VMX identity, quarantine path, and boot-bound child phase;
+  first reconcile any exact identity-bound destination left by a completed rename whose caller reference was not
+  published. If reconciliation is ambiguous or fallback publication fails, preserve the VM artifacts and do not start
+  a removal child. Actual child-active or unproven state remains fail-closed across same-boot reruns.
+  After encrypted import proof,
+  gracefully stop the exact VM within a bounded deadline, prove the powered-off VMX signer assignment absent, restart
+  it, and prove runtime guest-info remains empty before retiring the marker. Never substitute a hard power-off on this
+  successful-import path; preserve the retryable marker if graceful shutdown cannot be proven. Later normal-wrapper
+  invocations must retry its exact identity-bound stop, VMX
+  scrub, artifact removal, and data-disk restoration before
+  1Password preflight or any new mutation. Persist
+  boot-bound child-active phases before staging, VM start, and artifact removal. An unproven child-tree termination must
+  preserve the VM and VMX, or keep reused disks quarantined during removal, until a Windows host restart makes cleanup
+  safe. Persist the stopped/scrubbed phase before artifact removal so a retry can resume restoration from an absent
+  artifact root. Before persisting rollback state, reject configured data disks that repeat the same descriptor,
+  hard-linked alias, or shared extent by filesystem identity. Before deleting a completed marker, write-through
+  transition it to a non-actionable tombstone so a
+  post-crash directory-entry resurrection cannot trigger cleanup of a successful VM.
+  Default waiting must verify the
+  exact
+  checked-in fingerprint; Windows trust
+  remains explicit and idempotent. Reject `-NoStart`, preserve root SSH as disabled, and do not extend either development
+  authority to lifecycle VMs, Hyper-V, reusable images, or exported OVF/OVA deployments. Rotate the repository PEM and
+  concealed Environment key together after compromise of any in-scope test VM.
+  Before reporting a started clone ready or printing connection endpoints, bind VMware Tools' management IPv4 result to
+  the exact running VMX, its `ethernet0` MAC, the injected hostname, and a Windows neighbor entry for that MAC. Compare
+  the address with every running Workstation VM and fail closed with the conflicting VMX, MAC, and address when another
+  guest reports it or the host-facing neighbor maps elsewhere. Never continue SSH or HTTPS validation through an
+  ambiguous address and never modify the user's SSH `known_hosts` automatically during recovery.
+- Inventory Linux reports use bounded schema v2 while accepting and normalizing legacy v1. Keep sysfs authoritative for
+  device enumeration, use metadata tools only for structured enrichment/readable names, retain JSON in the existing
+  report column, enforce the 256 KiB boundary, and never submit raw command output. Its five-minute local console
+  countdown starts only after successful submission; pause/resume must preserve
+  the remaining time and audited remote reboot remains authoritative.
+- Windows Inventory Linux and Photon builds select the dedicated `Atlaso-Build` WSL distribution by default. WSL is a
+  pre-existing host prerequisite: ordinary builds must never install or configure WSL, create a missing distribution,
+  change the default distribution, elevate, reboot, or remove a distribution. Keep the pinned setup contract, explicit
+  distribution selection, native-Linux cache, Linux-only child `PATH`, per-repository `flock`, and checkout-wide output
+  serialization described in the canonical contributor guide.
+- Image download caches accept only checksum-verified payloads. Validate existing entries before reuse, remove only the
+  exact expected corrupt payload and checksum metadata, download into unique same-directory partial files, and promote
+  them only after pinned verification. Failed or interrupted downloads must not become accepted durable cache entries,
+  and an ordinary rerun must recover without a force flag or manual cache surgery.
+- Before the VMware Photon wrapper performs any Workstation, ISO, Packer, output, or image mutation,
+  require a completely clean source checkout and admit one exact commit. Archive that commit into the invocation-owned
+  build root, remove the build identity's write access for the complete child lifetime, launch the bounded child from
+  the snapshot, and make every Packer file and shell source plus the exact HCL template consume only that tree through
+  a separate disposable Packer working directory. Bind schema-v3 VMX provenance to the commit plus a
+  deterministic full-snapshot file-count and SHA-256 inventory, and revalidate it before Packer and provenance
+  emission. Reject dirty, ambiguous, changed, legacy-unbound, or unreproducible source state. Hyper-V and protected
+  virtualization publication inherit this boundary only through the validated OVA; their downstream signature and
+  software-source checks remain mandatory defense in depth.
+- Atlaso does not support cloud-init metadata. Remove Photon's incidental `cloud-init` package immediately after the
+  initial OS update, before any later systemd daemon reload, and fail final image verification if the package or its
+  generator, service, or configuration paths remain. Keep first-boot ownership in Atlaso's platform services.
+- Treat Packer HCL, systemd units/manager drop-ins, and sudoers fragments as protected deployment assets. Keep them in
+  the checked-in inventory, run `scripts/check_deployment_assets.py` through pre-commit where native tools are
+  available, pin every required Packer plugin to one reviewed exact version, and run `packer init` plus
+  `scripts/check_packer_plugins.py` before either supported wrapper validates or builds. Canonical CI must perform the
+  same exact-resolution check before full Packer validation and require native Linux systemd/sudoers validation. Pass
+  the read-only GitHub Actions token to Packer only through `PACKER_GITHUB_API_TOKEN` on the canonical validation step
+  for protected events and same-repository pull requests. Keep fork validation tokenless, checkout credentials
+  unpersisted, and token material out of output, files, caches, and artifacts.
+- Default VMware Workstation GUI image builds must repair only exact missing Atlaso registrations inside the configured
+  output scope while the Workstation UI is closed, then start or reuse a responsive Workstation UI in a process separate
+  from Packer before the synchronous `vmrun` start transition. Keep full artifact cleanup after network preflight, and
+  retain the exact close-the-UI refusal when scoped repair is required. Bind bounded sanitized startup diagnostics to
+  the expected
+  VMX filesystem identity, provider inventory, exact running state, and configured builder TCP/22 endpoint until SSH
+  provisioning begins. Remove raw Packer debug-log environment variables from the monitored child because they bypass
+  redaction. On timeout, terminate only the Packer process tree and honor `-PackerOnError cleanup` through the checked
+  exact-root cleanup; preserve exact artifacts for other failure selections. Never print connection credentials or VMX
+  contents, and do not mask a start-handoff failure with an arbitrary delay.
+- Before new credential retrieval, enforce the shared 240-character generated VMware path budget, including UUID memory
+  files and lock directories. Prerelease preflight must check before source downloads; use the compact
+  direct-under-operation builder layout for new outputs, preserve retained legacy layout and ownership state, and
+  reject ambiguous layouts without moving or deleting artifacts.
+- Before any canonical VMware Photon builder starts, atomically reserve one temporary static IPv4 address from the
+  configured per-host pool. Parse the selected vmnet's exact `vmnetdhcp.conf` subnet, reject a pool or explicit address
+  that overlaps a VMware DHCP range or fixed address, and exclude observed non-ICMP use. Serialize the durable ledger
+  across Atlaso worktrees, bind each entry to the exact task worktree, source commit, branch, owner process, Windows
+  boot identity, output root, VM name, and VMX path, and retain it while that exact VM remains active or recovery
+  evidence is ambiguous. A dead owner alone cannot release its reservation during the same Windows boot because a surviving
+  descendant could still start the VM. Permit stale recovery after either a valid controlling-parent termination
+  receipt or a changed host-boot identity proves that tree gone, and the exact VM and address are inactive. Keep the
+  non-secret release handoff outside temporary credential
+  storage, never recover it while its exact owner process remains active, retry it after a preserved VM stops, and
+  delete it only after exact ledger release succeeds. Never replay a dead same-boot owner's handoff unless the
+  controlling parent proved complete process-tree termination, either in the current invocation or through its
+  durable exact-allocation termination receipt. A later caller must verify that receipt and the original controller
+  is inactive before rechecking VM and address state. Missing legacy proof still requires a host-restart boundary. Publish
+  recoverable release intent before ledger admission, then publish both records with write-through replacement plus
+  directory metadata synchronization. Release
+  normally only after inactive-VM completion. Exclude every IPv4 address on the selected bridged host interface, and never
+  let skipped topology preparation bypass read-only DHCP-state discovery. The completed appliance still uses management
+  DHCP by default.
+- Every task-owned Photon/Packer VMware builder requires the exact open same-repository pull request whose head branch
+  and commit equal the checkout. Derive one canonical
+  `Atlaso-PR-<number>-Photon-Builder-VMware[-<collision-safe-suffix>]` identity through the shared builder helper and
+  keep it identical across Packer `vm_name`, Workstation `displayName`, output directory, VMX filename/path, address
+  reservation, startup diagnostics, ownership manifest, provenance, cleanup scope, and reported evidence. Multiple
+  builders for one pull request retain the PR segment and use sanitized suffixes. Explicit local/test builds use
+  `-LocalBuilder` without a pull request and derive
+  `Atlaso-Local-<12-character-source-commit>-Photon-Builder-VMware[-<collision-safe-suffix>]` from one clean checked-out
+  branch. They retain the same snapshot, output, ownership, cleanup, reservation, and schema-v3 provenance controls;
+  provenance records `builder_identity.kind` as `local`. Protected release and publication paths must reject local/test
+  provenance. Protected release builders instead
+  use the deterministic version-and-commit identity produced by that helper, optionally extended by workflow run ID,
+  only after independently proving the exact reachable protected-main commit, immutable software-release tag, complete
+  non-draft release asset set, and successful main push CI.
+  Require the sibling ownership manifest before replacing a retained output. A task manifest may advance to a newer
+  exact head only when repository, pull request, branch, canonical name, and suffix still match; retained reuse requires
+  the exact commit. Require schema-v3 builder provenance before clone or export. Never rename, adopt, reuse, redeploy,
+  or delete a legacy generic or differently owned builder.
+  OVF export requires an explicit proven source VMX; exported product identity, deployed-appliance names, and immutable
+  release asset names remain canonical and never inherit a transient pull-request number.
+- Validate live appliance readiness through `/openapi.json`, not VMware Tools IP discovery or service color alone.
+- A successful tty1 management-network correction must explicitly apply Network and Firewall from the corrected state,
+  retry unfinished first-boot HTTPS before applying Appliance Settings, validate nginx before reload, ensure nginx and
+  Atlaso are enabled/running, and require stable loopback readiness matching the applied HTTP-only or HTTPS management
+  mode before the console reports success. Keep this recovery idempotent and preserve an actionable failing-layer
+  message.
+- Keep configured Appliance Update source tabs read-only. Create and edit Photon, PowerShell, and signed Atlaso sources
+  through the shared reviewed source wizard, with **Edit repository** beside the destructive action. Wizard submission
+  saves desired runtime-maintenance state only; package-client changes still require the explicit audited
+  **Synchronize repositories** task.
+- Keep synchronized managed Photon repository files credential-free. For authenticated TDNF checks and installations,
+  construct a root-only repository view in volatile `/run` storage, pass only its non-secret path to TDNF, and remove
+  that view when each command exits. Never place Photon repository credentials in durable package-client configuration
+  or command arguments.
 
 ## Photon VM Debugging Notes
 
@@ -1582,6 +1700,136 @@ Terminal order:
   present in the last-applied WAN baseline selects WAN into the existing protected management handoff with a validated
   rollback config; it does not create another host-mutation path.
 
+### Preserved implementation boundaries
+
+- Canonical human browser surfaces belong to `/ui/management` or `/ui/public`; `/` is only the requested-interface
+  dispatcher. Keep API, OpenAPI, OIDC, CA-download, PXE, `/PROD/`, registry, static, and other machine/protocol routes at
+  their stable paths. A URL prefix never replaces listener, authentication, authorization, CSRF, or session enforcement.
+  Resolve management requested-interface eligibility from the last-applied Network binding plus observed addresses,
+  never from unapplied desired role, address, or exposure edits. Reject a desired-state mutation that removes the final
+  complete management candidate, while admitting a complete explicit access-management replacement to the protected
+  management handoff. Keep `/ui/public` independently governed throughout pending, failed, and reverted edits.
+  Safe legacy `GET`/`HEAD` bookmarks may redirect only after destination eligibility is proven; bridge legacy mutations
+  internally and never replay them through `307`/`308`. Route-inventory coverage must fail for an undeclared human UI
+  route. Scope management browser caching to `/ui/management/` and keep public UI caching disabled.
+- `/ui/management/appliance-apply` is the only ordinary desired-state host-mutation workflow. The dedicated confirmed
+  factory-reset transaction is the sole exception: it preflights and activates every factory apply unit, atomically
+  replaces the database, records durable recovery state, invalidates sessions, and must finish with zero pending units.
+- A management address, gateway, role, interface, VLAN, management VLAN MTU, or flagged-access listener change must
+  use one recoverable
+  handoff across Certificate Authority, Network, Firewall, Appliance Settings, and Public Services. Submitting any one
+  of those dependent units while such a Network change is pending must force all five into the handoff. Evaluate this
+  after every cross-unit dependency expands so an indirectly selected protected unit cannot bypass it. Keep the previous
+  known-good configured and observed global addresses, public port, protocol, and snapshotted TLS identity active until
+  consecutive bounded Atlaso loopback,
+  candidate nginx, and host-facing `/openapi.json` checks pass. Never expose a candidate nginx front door before its
+  Atlaso upstream is healthy. Validate management and Public Services TLS references against the bundled Certificate
+  Authority payload before relying on deployed files. Move the persistent and runtime management resolver to the
+  candidate interface inside the transaction, persist its directives in the effective dedicated or flagged-access
+  networkd file both before readiness and after the final Network regeneration, and restore the
+  previous resolver state with the network snapshot on rollback. On success, include the applied resolver mode,
+  servers, and local-DNS state in the Appliance Settings baseline completion so those executed changes do not remain
+  falsely pending. Persist every static dedicated-management connected prefix as an on-link route in table `100`
+  beside its source rule and default route; an address and working outbound gateway do not prove that same-subnet
+  host-facing replies will survive reboot. Derive loopback/local-DNS resolver mode only from the
+  last-applied DNS/DHCP baseline; leave an unapplied DNS enablement pending instead of activating loopback early. When
+  disabling applied local DNS, force Appliance Settings ahead of DNS/DHCP so the resolver leaves loopback before the
+  listener stops. Retire the old path only
+  after readiness succeeds; retain the durable rollback marker until Atlaso commits the bundled task state and baselines
+  and explicitly acknowledges that commit. Record separate durable application-commit proof before selecting
+  acknowledgement during startup; an incomplete pre-commit rollback must retry recovery instead. A matching durable
+  commit receipt must retry rollback-marker and backup cleanup before acknowledgement succeeds. Sync every backup file
+  and its backup directory before publishing the marker. Sync every final candidate runtime file and affected directory
+  before entering the application-commit phase. Retain the global apply lock while recovery or acknowledgement
+  is pending, including when startup cannot prove either outcome from a legacy or incomplete task payload. A pending
+  task plus explicit successful no-transaction recovery proves the privileged handoff never began and releases the
+  lock. On failure,
+  timeout, indeterminate helper return, interruption, or startup recovery, first stop and verify any surviving
+  fixed-identity apply helper; serialize every retry under a separate fixed-identity recovery unit and stop and verify
+  any surviving recovery unit before starting another. Then restore every captured runtime
+  file and link, durably sync every restored file and affected parent directory before clearing rollback state,
+  reconfigure pre-existing candidate links, remove candidate-only VLANs, fail closed without host
+  mutation when an active appliance has no known-good Network baseline, restore a previously absent firewall by
+  disabling its candidate service and flushing the candidate ruleset, keep the old path reachable, and record a
+  truthful non-secret failing layer. Probe old and candidate listeners on their configured public ports. Require every
+  dynamic candidate listener to acquire and probe each requested DHCP
+  or SLAAC address family before retirement. Preserve the previous firewall policy plus minimal candidate admission when
+  firewall state changes in either direction; include the configured management public port in both transitional and
+  final filtered rulesets without dropping the candidate rule's source predicates, and apply the enabled or disabled
+  candidate ruleset only after readiness. Commit
+  baselines only from the exact staged snapshots, and leave desired-state edits made during readiness pending. A
+  flagged-access candidate must remove a stale dedicated `00-atlaso-mgmt.network` file when that file is not part of the
+  candidate configuration. Retain a flagged-management VLAN's trunk parent for link rollback without treating the
+  parent's addresses as management listeners or readiness targets.
+- Every effective management listener admits ordinary bootstrap-administrator SSH on TCP/22 as well as the management
+  HTTP/HTTPS ports. This includes flagged access physical interfaces and VLANs, with the same Source Group predicate in
+  desired previews and old/candidate/final handoff rules. Never infer root SSH enablement from firewall admission, and
+  never open TCP/22 merely because an unflagged access network exists.
+- Physical-interface desired-state updates from the API and UI use one atomic domain service. Capture the previous
+  IPv4 and IPv6 CIDRs before mutation, refresh dependent service, ESX Storage, Web Terminal, DHCP, and Network Boot
+  bindings before one commit, include child VLAN dependencies when their parent becomes unavailable, roll back every
+  row when reconciliation fails, rebase reservations and their app-owned DNS records only when one updated DHCP scope
+  is unambiguous, ignore inactive legacy DHCP binding fields when real scopes exist, and audit the dependent units that
+  changed.
+- When a static physical interface changes from management to access, capture valid IPv4 and IPv6 gateways before
+  clearing the management-only fields and stage enabled canonical family defaults on the converted target in the same
+  transaction. Reuse an equivalent route, reject a conflicting family default with complete rollback, never invent a
+  missing gateway, mark and audit Network, Routes & WAN Simulation, and Appliance Settings, and keep host mutation in
+  the protected handoff. If the migrated route is absent from the applied WAN baseline, select WAN into that handoff,
+  validate candidate and rollback configs, and restore prior WAN runtime before old-path recovery succeeds.
+- Converting the dedicated management interface from DHCP to static must discover a usable DHCP-protocol IPv4 default
+  route on that exact interface, review its observed address/prefix and on-link gateway together, and preserve the
+  gateway in desired state. An absent or intentionally cleared gateway must warn that off-subnet connectivity will be
+  unavailable; shared gateway validation, global Apply, baseline commit, and rollback remain authoritative.
+- Keep **Static Routes** separate from **Routing Permissions** in operator language. Static Routes choose destination,
+  gateway, target interface/VLAN, and metric in the lab route table; Routing Permissions authorize forwarding between
+  interface/VLAN networks, with route-role paths generated automatically and Access networks requiring explicit rules.
+  The Static Route wizard must make **Default route** mutually exclusive with **Destination CIDR**, require an explicit
+  IPv4 or IPv6 family plus a same-family next-hop gateway for defaults, persist canonical `0.0.0.0/0` or `::/0`, and
+  allow only one default per family. Destination-specific routes keep a required CIDR and optional gateway for directly
+  connected paths; API callers may continue to submit canonical `/0` CIDRs.
+  Static Routes, Routing Permissions, and WAN Policies belong to Routing & WAN; source NAT and port forwarding belong to
+  Traffic Publishing. Source NAT supports IPv4/IPv6 masquerade or fixed SNAT. Port forwarding owns exact dual-stack
+  listener mappings and read-only generated Firewall admissions; its Firewall/NAT publication and baselines are paired.
+  All five are
+  wizard-backed Tabulator collections. Add launches
+  from the bottom row; edit launches from row double-click or the context menu; generated routing permissions remain
+  read-only; and ordinary persisted **Enabled** state remains directly editable without host mutation.
+- Network Objects Source Groups use a full-height compact wizard-backed Tabulator. The add-row native button opens on
+  one click or native keyboard activation, while row double-click remains edit-only. The Entries step exposes an
+  exclusive **Any source** switch that persists canonical `entries: ["any"]`; explicit addresses, CIDRs, and stable
+  nested-group references use the shared tag editor with server-owned per-entry validation, non-color status text,
+  canonical submission, and a truthful line-separated textarea fallback. Keep built-in **Any** read-only.
+- Physical and VLAN interfaces share exactly `management`, `access`, `route`, and `unused` roles. Reject retired or
+  unknown values on new UI, API, desired-state, and helper inputs. Upgrade and settings-archive compatibility may map
+  only retired `services` and `storage` values to `access` while preserving every other interface field.
+- Keep ordinary `/ui/management/appliance-apply/status` polling on the non-reconciling desired-state projection.
+  Prevent overlapping browser polls, suspend them while hidden, back off when idle, and refresh promptly after successful
+  mutations and Apply completion. Retain the tracked master task until a valid terminal task response is rendered, retry
+  transient status and terminal-reconciliation failures at the active cadence, and never let an older active response
+  replace a terminal result. Current real Appliance Settings apply must prove the desired Atlaso loopback upstream before
+  publishing nginx, reload nginx without restarting the active Atlaso worker, require consecutive guest-local front-door
+  readiness, and restore the previous nginx/systemd files on activation or readiness failure. Retain bounded reconnect
+  handling only for server-marked legacy task records; unexpected or out-of-window failures must show the observable
+  availability warning. Reconcile a retained task and run its completion refresh before accepting a different session's
+  newer active task. Full review, validation, and submission must still reconcile current host observations.
+- VLAN Interfaces use the shared wizard-backed Tabulator with the ESX Storage interaction. Keep every persisted field,
+  including Admin Up, out of inline editing and review the complete VLAN record in the add/edit wizard. New VLANs
+  default to Admin Up; edits preserve saved state; a missing-parent VLAN may remain saved only while disabled. Saving
+  changes desired state only, and global Appliance Apply owns host enforcement.
+- Classify Web Terminal management page, ticket, and WebSocket eligibility from the last-applied Network binding,
+  including flagged access physical and VLAN listeners. Pending desired edits must not reclassify the applied listener;
+  handoff commit moves all three surfaces, rollback retains the old listener, and explicit extra listeners stay public.
+- When local DNS points the management resolver to loopback, recover empty DNS service upstreams from the exact
+  management interface's systemd-networkd DHCP lease. Reject loopback, unscoped IPv6 link-local, duplicate, malformed,
+  and other-interface lease values, preserve explicit upstream precedence, and fail both desired-state and helper
+  validation when DHCP fallback is required but unavailable.
+- Derive every factory-owned service hostname from the domain portion of the canonical appliance FQDN. Reconcile fresh
+  seed, OVF first boot, appliance-domain changes, settings restore, factory reset, and existing development state through
+  one registry. Migrate only the packaged default or the exact prior factory domain, preserve customized hostnames and
+  operator-owned DNS rows, remove stale exact-marker app-owned A/AAAA/CNAME aliases on conflict, and keep coupled issuer,
+  certificate, endpoint, and Appliance Apply desired state coherent.
+
 ## Public Services Front Door
 
 - Management-role interface addresses dispatch `/` to `/ui/management`; all authenticated management pages and their
@@ -1724,6 +1972,63 @@ Terminal order:
 - Never expose secrets in final responses, logs, widgets, or rendered previews beyond intentionally generated one-time
   credentials already displayed by the app.
 
+### Preserved implementation boundaries
+
+- OIDC clients use explicit validated identity sources and emit only granted, explicitly mapped claims; see the detailed
+  agent policies and canonical OIDC service guide. Administration keeps generated client IDs immutable, shows secrets
+  once, validates the issuer against the applied Management HTTPS certificate, preserves retired-key overlap, and
+  exports only public relying-party metadata.
+- IP addresses, MAC addresses, hostnames, and account names are non-sensitive operational identifiers by themselves.
+  Passwords, tokens, authenticated URLs, session material, private keys, password hashes, credential verifiers, and
+  other secret-bearing data remain sensitive; content-integrity hashes of non-secret material and one-way
+  change-detection hashes of encrypted-at-rest ciphertext do not. Treat an identifier as sensitive when it is embedded
+  in or paired with authentication or cryptographic material.
+- Use the installed 1Password plugin and the exact `Atlaso` Environment as the required agent-facing integration for
+  every user password and for every newly created user or key secret, including passwords, tokens, API keys, and private
+  keys. Authenticate through the plugin, verify the named Environment before access, and store secret values there as
+  concealed variables. For supported Windows
+  subprocess use, bind that exact Environment by its opaque ID through the supported 1Password SDK inside the bounded
+  child process; never read the value into agent-visible output. A service-account token may be stored only as
+  current-user DPAPI ciphertext in the Git-ignored checkout-local path, with current-user-and-SYSTEM access, and may be
+  decrypted only inside a bounded child. Never fall back to chat, plaintext repository files, local `.env` files,
+  shell arguments, jobs,
+  audits, logs, screenshots, or documentation; if the 1Password plugin or the `Atlaso` Environment is unavailable, stop
+  and request maintainer direction.
+  DEFAULT_ROOT_PASSWORD contains the default root password for any new deployed environment.
+  DEFAULT_ADMIN_PASSWORD contains the default admin password for any new deployed environment.
+- Never expose credentials, authenticated URLs, private keys, raw secrets, or secret-bearing commands in UI, jobs,
+  audits, logs, documentation, screenshots, or video.
+- The appliance-native vSphere Key Provider targets only VCF 9.1 and implements the checked-in bounded KMIP contract.
+  Keep it experimental until the live acceptance and recovery gate promotes that contract to observed. Provider UUIDs
+  are isolated key namespaces; multiple provider-scoped vCenters use canonical public certificates and appliance-wide
+  unique exact fingerprints. Never generate or expose vCenter client private keys or management key CRUD. Authenticated
+  status exposes nullable redacted lifecycle counts and unavailable evidence is never zero. LDAP organizations never
+  select a provider. Do not restore a general-purpose KMIP backend.
+- Keep secret-bearing Local Users, Certificate Authority, and Managed LDAP apply inputs mode `0600` and present only
+  for the constrained helper execution window. Remove them on success, validation or apply failure, and startup
+  recovery; read-only Local Users status must use a separate short-lived file.
+- Keep internal CA custody and managed service-certificate deployment available without a public CA listen interface.
+  Interface selection owns portal publication only. Every selected NTS server apply includes the CA unit and executes
+  it before NTP/NTS validation so runtime certificate material is present even when the CA baseline is current. Turning
+  NTS server mode off removes its `ntp:nts` CA record and deployed certificate, key, and cookie material during apply
+  without changing per-upstream NTS client flags. The one-time `ntp_nts_restoration_v1` reconciliation may re-enable
+  only the canonical Cloudflare and Netnod default rows; it must not change operator-created sources or enable server
+  mode.
+- Require TLS 1.2 or newer for the KMS compatibility listener and pre-authentication certificate-fingerprint probes.
+  Preserve explicit certificate-fingerprint confirmation as the trust decision for VCF Automation and vSphere probes.
+- Vault passwords are the narrow exception for an explicit administrator eye reveal: keep them masked by default,
+  CSRF-protect and audit reveals without values, disable caching, and automatically hide the value again.
+- Browser inactivity is server-authoritative across management, public, and protocol browser planes. Evaluate the
+  configured 5-to-1,440-minute timeout before protected handlers; refresh only for deliberate navigation, submitted
+  actions, or the CSRF-protected activity heartbeat, never static assets or passive polling. Terminal expiry clears
+  identity and CSRF state, emits only sanitized account/session-class/reason audit context, returns `401` to fetch/API
+  consumers, and routes human navigation to the same-plane login notice. A later policy increase must never resurrect
+  an expired session.
+- New API-token issuance uses the current 1-to-365-day maximum from Appliance Settings. Omitted expiry means exactly
+  that lifetime from server issuance time; explicit expiry must be timezone-aware, future, and no later than the
+  maximum. Preserve every existing token's absolute expiry when policy changes, and show the configured lifetime plus
+  absolute expiry in the shared token wizard review.
+
 ## VCF Backups
 
 - VCF Backups is an SFTP endpoint backed by local Atlaso users. The selected SFTP user must come from Users.
@@ -1793,6 +2098,17 @@ Terminal order:
 - Maintain the operator contract in `docs/services/vcf-helper.md` and focused `tests/test_ui.py` coverage whenever
   catalogs, allocation, ownership, deletion, modal state, or API responses change.
 
+### Preserved implementation boundaries
+
+- VCF Helper VCF Installer imports use the destination `OvfManager.ParseDescriptor` contract and a complete reviewed
+  property mapping. Direct standalone ESXi imports bind deterministically to the endpoint's single host. Before power-on
+  or DNS, trust, and depot follow-up, verify every reviewed value through the target's OVF transport. Direct ESXi
+  requires a bounded, escaped `guestinfo.ovfEnv` document using the generated import specification's qualified
+  class/id/instance keys and appliance defaults, followed by fresh exact-value readback. Do not require ESXi to retain
+  `vAppConfig`, which it discards during import. Preserve vCenter's vApp property and declared-transport verification.
+  Remove only that task-created VM if installation or verification fails, and report cleanup failure as a partial
+  deployment. Never log the environment XML or values. Sanitize parser and import warnings against all submitted values.
+
 ## VCF Offline Depot
 
 - VCF Offline Depot is a static HTTP(S) depot endpoint backed by nginx and the fixed appliance volume mount
@@ -1810,6 +2126,28 @@ Terminal order:
 - Successful browser login may return only to `/PROD` or a validated path beneath `/PROD/`. Reconstruct the destination
   from the server-owned depot prefix, reject scheme, authority, traversal, control-character, fragment, repeated-slash,
   and browser-equivalent backslash forms, and fall back to `/PROD/` for every unsupported target.
+
+### Preserved implementation boundaries
+
+- VCF Offline Depot settings and download-profile applies preserve the registered VCFDT software depot ID. Generate an
+  ID only when none exists or an administrator explicitly confirms **Refresh software depot ID** through global apply;
+  preserve the old ID when generation itself fails, but invalidate it if generation succeeds and canonical readback
+  fails because VCFDT may already have replaced its runtime identity. Once generation succeeds, remove both staged and
+  runtime Broadcom credentials because neither remains valid for the replacement identity. Keep Broadcom credential replacement,
+  application properties, Software Depot ID review, and the explicit refresh handoff in the shared VCFDT configuration
+  wizard; its ordinary transactional save never refreshes an existing ID. Stage VCFDT package add/update through its
+  shared two-step package wizard. Resetting VCFDT staging always clears the package, credentials, application properties,
+  generated metadata, and profile enablement together.
+- VCF Offline Depot download admission deduplicates the same profile atomically while allowing distinct profiles to
+  queue in FIFO order. Exactly one VCFDT operation may execute at a time. Software Depot ID replacement and Appliance
+  Apply containing VCF Offline Depot remain exclusive across the entire queued/running download set and may start only
+  after it drains. Revalidate mutable prerequisites when each queued download is claimed. Manual Start feedback uses the
+  shared accessible transient grid status/error pattern. The selected profile's Schedule action opens the shared
+  four-step contextual Automation wizard (Schedule, Timing, State, Review) in place with task type and profile bound
+  server-side; preserve Automation's generic five-step wizard.
+- VCF Offline Depot login return targets must be reconstructed beneath the server-owned `/PROD` prefix after strict
+  relative-path validation. Unsupported or malformed destinations fall back to `/PROD/`; never redirect a successful
+  depot login to an authority, scheme, traversal path, or browser-equivalent backslash form supplied by the request.
 
 ## VCF Private Registry
 
