@@ -15,7 +15,7 @@
         <link rel="canonical" href="https://mdaneri.github.io/Atlaso/docs/contribute/completed-task-cleanup/">
       
       
-        <link rel="prev" href="../agent-policies/">
+        <link rel="prev" href="../powershell-authoring/">
       
       
         <link rel="next" href="../../project/">
@@ -426,6 +426,18 @@
       
         
           
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
         
       
         
@@ -2599,6 +2611,18 @@
       
         
       
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
     
     
     
@@ -3005,6 +3029,210 @@
                 
   
   
+  
+  
+    <li class="md-nav__item">
+      <a href="../progressive-policy/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Progressive agent policy
+
+    
+  </span>
+  
+  
+    
+  
+  
+    <span class="md-status md-status--current"></span>
+  
+
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../agent-workflow/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Agent worktree and delegation workflow
+
+    
+  </span>
+  
+  
+    
+  
+  
+    <span class="md-status md-status--current"></span>
+  
+
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../pr-workflow/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  PR review and delivery
+
+    
+  </span>
+  
+  
+    
+  
+  
+    <span class="md-status md-status--current"></span>
+  
+
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../credential-policy/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Agent credential policy
+
+    
+  </span>
+  
+  
+    
+  
+  
+    <span class="md-status md-status--current"></span>
+  
+
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../release-policy/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Release and publication policy
+
+    
+  </span>
+  
+  
+    
+  
+  
+    <span class="md-status md-status--current"></span>
+  
+
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../powershell-authoring/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  PowerShell authoring
+
+    
+  </span>
+  
+  
+    
+  
+  
+    <span class="md-status md-status--current"></span>
+  
+
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
     
   
   
@@ -3157,6 +3385,17 @@
     <span class="md-ellipsis">
       <span class="md-typeset">
         Failure and interrupted recovery
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#completed-task-cleanup" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Completed Task Cleanup
       </span>
     </span>
   </a>
@@ -3705,6 +3944,17 @@
   
 </li>
       
+        <li class="md-nav__item">
+  <a href="#completed-task-cleanup" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Completed Task Cleanup
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
     </ul>
   
 </nav>
@@ -3751,6 +4001,18 @@
       
         
           
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
         
       
         
@@ -4084,6 +4346,143 @@ of a specific Atlaso policy breach. Record the exact rejected operation on the c
 preserve remaining resources, and report the stated reason without inventing one. Do not retry through a different
 shell, bypass flag, or ad hoc deletion. A refusal that prevents the command from starting cannot be caught by its code;
 the controller must record it. Never mark Done after a failed or ambiguous gate.</p>
+<h2 id="completed-task-cleanup">Completed Task Cleanup<a class="headerlink" href="#completed-task-cleanup" title="Permanent link">&para;</a></h2>
+<p>Agents and the primary-checkout cleanup controller must use <code>scripts/cleanup-completed-task.ps1</code> for eligible
+completed ordinary task worktrees. Run <code>pwsh -NoProfile -File scripts/cleanup-completed-task.ps1</code> with absolute
+<code>-Handoff</code>, <code>-Evidence</code>, and <code>-Config</code> inputs: omit <code>-Execute</code> for read-only preview, then add it for execution with
+fresh live controller evidence. Follow the <a href="../completed-task-cleanup/">command and bridge contract</a>.
+Never replace a failed or refused command with ad hoc deletion; preserve remaining resources and report its exact
+retry condition. Unsupported policy exceptions retain their existing safeguards and require the documented controller
+workflow; this command does not waive ownership, resource-release, terminal-order, or title-readback gates.</p>
+<p>An ordinary implementation task becomes cleanup-ready only after its pull request is merged, the merge commit is
+reachable from current <code>origin/main</code>, the linked issue is closed, applicable post-merge workflows are complete, and no
+review, deployment, release, or maintainer activity remains. Private remediation uses <code>advisory_cleanup_ready</code> instead
+of the nonexistent public-issue gate: an explicitly authorized advisory administrator must have merged the private
+pull request through its draft advisory, the resulting commit must be reachable from current <code>origin/main</code>, required
+advisory-side review and recorded local validation must be complete, coordinated release and disclosure activity must
+be finished, and the advisory must require no further task activity. Before becoming idle, a worktree-backed
+originating task must send a <code>cleanup-ready</code> handoff to a cleanup controller running from the repository's primary
+checkout. The handoff must name
+the repository, task identifier and current title, pull-request number, task-owned branch, absolute worktree path,
+pull-request head SHA, and merge commit SHA. A handoff is evidence to revalidate, never authority to skip a gate.</p>
+<p>The primary-checkout controller must wait until the originating task is idle and unpinned, then independently re-fetch
+task, GitHub, and Git worktree state. First identify and verify whether the task uses the repository's primary checkout.
+Only for a non-primary target, independently read the supported Codex <code>git-worktree-root</code> setting at cleanup time and
+fail closed if it cannot resolve one exact safe root; a guessed or fallback path is never ownership evidence. It must
+verify the exact merged pull request and completed post-merge activity, then determine remote-branch ownership and local
+checkout/worktree ownership independently. Require exclusive task
+ownership before a destructive step or establish the external ownership required by the corresponding non-destructive
+exception below. Require a closed linked issue for ordinary work or privately revalidate every
+<code>advisory_cleanup_ready</code> criterion against the corresponding advisory record. Only a non-primary target must be
+a registered, clean, unlocked, non-reparse-point worktree beneath the resolved Codex worktree root. Never remove the primary
+checkout, a user-created or permanent worktree, or a worktree whose ownership or state is ambiguous. A squash-merged
+pull-request head need not be an ancestor of <code>main</code> only when the worktree HEAD equals the recorded pull-request head
+SHA and the recorded merge commit is reachable from current <code>origin/main</code>.</p>
+<p>If cleanup discovers a task worktree outside the configured root, preserve its state and obtain maintainer direction;
+never move or delete it automatically.</p>
+<p>Passing tests does not permit indefinite retention of disposable validation infrastructure. Inventory resources as
+they are created in a bounded <code>validation_resource_inventory</code>, binding each resource to its task, repository, source
+commit, PR when present, exact path or provider identity, and existing ownership manifest. Names alone never prove
+ownership. Include PR-numbered test VMs, lifecycle VMs, local and PR builders, disposable clones, address reservations,
+output claims, task-created disks and temporary networks, artifact/test roots, helper processes, credential-bridge
+recovery state, locks, and external test resources.</p>
+<p>The originating task releases these resources through existing supported cleanup paths once required validation
+evidence is preserved, the PR is terminal, and no review, deployment, release, diagnosis, retry, or maintainer activity
+needs the environment. Failed or interrupted validation may retain resources only while diagnosis or retry needs them.
+This resource gate does not waive the existing merge, issue, post-merge, or private-remediation prerequisites for
+branch/worktree cleanup. Earlier per-operation sensitive-material cleanup and recovery remain mandatory.</p>
+<p>Use <code>remove-atlaso-vm.ps1</code> with the exact VMX and expected name after independently verifying ownership; use
+<code>remove-lifecycle-vms.ps1</code> or the lifecycle wrapper's <code>-CleanupVmsOnly</code> for the exact PR-owned lab. These VM-only paths
+retain the result root; after preserving evidence and verifying ownership and quiescence, release that exact root with
+<code>Remove-AtlasoWorkstationArtifactRoot</code> using its exact configured-root binding as documented in the lifecycle guide.
+First use <code>Assert-AtlasoStrictDescendantPath</code> against independently configured permitted and canonical lifecycle roots;
+derive the expected lab path separately from validated task/PR identity, never from the candidate manifest path.
+Preserve existing identity, filesystem, shared-disk, provider-state, process-termination, and recovery safeguards.
+Release associated resources through their owning tools; VM removal alone does not prove reservations, claims,
+or recovery state released.
+Never delete shared, reusable, permanent, user-created, differently owned, or ambiguous resources.</p>
+<p>The cleanup-ready handoff includes the inventory and durable, sanitized <code>validation_resource_release_evidence</code>:
+the cleanup entry point and result, exact resource identities, and verified absence of each disposable resource,
+VM registration and path, reservation, claim, process, lock, and temporary root. Preserve required validation and
+ownership evidence outside every root scheduled for deletion, on a permitted durable task/controller evidence surface.
+The primary-checkout controller independently reads back the exact resource states before recording
+<code>validation_resources_released</code> and before branch/worktree cleanup. For no resources, require an explicitly verified
+<code>validation_resource_inventory_empty</code> statement; missing evidence is never proof of absence. If another owner must
+perform teardown, hand off this bounded inventory and require the same ownership checks and independent readback.</p>
+<p>Record explicit maintainer retention or a proven active downstream need as <code>validation_resource_retention</code>, with
+the exact resource, owner, reason, and retry condition. Any unresolved retention, failure, unsupported cleanup path,
+or ambiguous ownership records <code>validation_resource_cleanup_blocked</code>, preserves uncertain resources and recovery
+evidence, and keeps the task actionable. Do not delete the branch/worktree or mark Done to hide a blocked resource gate.
+Track missing cleanup capabilities separately; never substitute ad hoc deletion or broad VMware inventory cleanup.</p>
+<p>For ordinary public tasks, enforce <code>task_title_done</code> with <code>scripts/completed_task_title.py</code> after all prior gates pass.
+Supply every linked issue and PR from verified task/GitHub evidence, not from a potentially truncated current title;
+use repeated <code>--issue</code> and <code>--pr</code> arguments and a short <code>--description</code> without traceability or completion segments.
+For an issue-less GitHub-managed Dependabot PR, independently verify the documented dependency-update exception and
+pass <code>--dependabot</code>; preserve every PR number and any linked issue that does exist. Ordinary tasks still require issues.
+The formatter puts all identifiers first, trims only the description to a conservative 60 UTF-16-unit budget, and
+retains exactly one " · Done" suffix. If the identifiers alone do not fit, keep completion blocked for maintainer
+direction; never drop an issue or PR. Use supported task-title controls to set the exact generated title, then read
+the persisted title through a supported task read tool and rerun the same formatter inputs with <code>--observed-title</code>.
+Record <code>task_title_readback_verified</code> only when verification succeeds. A rename acknowledgement alone is insufficient.
+A stale, truncated, missing, or duplicated completion marker blocks Done and requires an idempotent title-only retry
+after revalidating earlier gates. Do not repeat destructive cleanup on a title retry. If title controls are unavailable,
+retain the existing capability-evidence exception. Private remediation keeps its sanitized title and private evidence;
+never pass advisory identifiers to this public formatter, and still require exact supported-tool title readback.</p>
+<p>Terminal order:</p>
+<ol>
+<li><code>validation_resources_released</code></li>
+<li><code>remote_branch_absent</code></li>
+<li><code>worktree_removed</code></li>
+<li><code>task_title_done</code></li>
+</ol>
+<p>For ordinary <code>remote_branch_absent</code>, delete only the exact task-owned branch from its same-repository GitHub remote.
+If the ref exists, require it to equal the pull-request head SHA and delete it with an atomic expected-SHA lease such as
+<code>--force-with-lease=refs/heads/BRANCH:HEAD_SHA</code>; a lease rejection or unsupported atomic guard blocks cleanup. Then
+verify the remote ref is absent.
+For private remediation, satisfy <code>advisory_remote_branch_absent</code> only on private surfaces: bind the exact temporary
+private fork, private pull request, branch, task, and recorded head SHA through the advisory; if the ref exists, require
+it to equal that head and use the same atomic expected-SHA lease before deleting only the ref and privately verifying
+absence. An already absent ref satisfies the gate only after the same private identity and merge evidence are verified.
+Never delete the temporary fork, change
+advisory state, or enable repository-wide automatic branch deletion. For <code>worktree_removed</code>, first verify that the exact
+local task branch is absent or still equals the recorded pull-request head and is referenced only by the target
+worktree. Use <code>git worktree remove</code>, prune only stale worktree metadata for the affected repository, and verify both the
+path and registration are absent. Then require the local branch to be unreferenced by every registered worktree, delete
+only that exact ref when present, and verify <code>local_task_branch_absent</code> before recording <code>worktree_removed</code>. A retry
+interrupted after the path and registration disappeared but before local-ref deletion may enter
+<code>worktree_removal_resume</code> only when the path and registration remain absent. The
+worktree removal remote branch gate is either verified absent or recorded not applicable through
+<code>non_task_owned_remote_branch_preserved</code>, and the same task ownership,
+pull-request head, and merge evidence prove that the exact unreferenced local branch is safely deletable or already
+absent.
+For a task running in the primary checkout, the initial path requires a clean checkout still at the recorded task head;
+fetch current <code>origin/main</code>, switch to local <code>main</code> without force, fast-forward it exactly to <code>origin/main</code>, and verify
+the resulting HEAD. A retry interrupted after that switch may enter <code>primary_checkout_resume</code> only when the checkout is
+clean on local <code>main</code> and a fresh fetch and non-forced fast-forward makes it equal current <code>origin/main</code>. The
+primary checkout remote branch gate is either verified absent or recorded not applicable through
+<code>non_task_owned_remote_branch_preserved</code>; the local task branch must still equal the recorded pull-request head while
+checked out nowhere or already be absent under the same task ownership and merge evidence. Delete the exact local task
+branch when it remains, record <code>primary_checkout_restored</code>, then record worktree removal as not applicable and never
+remove the checkout.
+For <code>task_title_done</code>, use supported task-title controls to append the exact suffix " · Done" once, preserving the
+description and issue/pull-request traceability. Keep the completed task unarchived unless a maintainer separately
+requests archival. Only when the runtime exposes no supported mutable task-title control,
+record <code>task_title_done</code> as verified not applicable with the capability evidence; do not append or claim a visible Done
+suffix, and do not block otherwise-complete cleanup on the unavailable control.</p>
+<p>For an existing ordinary pull request, evaluate remote and local ownership separately after independently verifying the
+exact merge, reachable merge commit, closed linked issue, and completed post-merge activity. When the remote branch is
+non-task-owned, preserve it, record <code>non_task_owned_remote_branch_preserved</code>, and record <code>remote_branch_absent</code> as
+verified not applicable; this does not exempt a task-owned local worktree from normal removal. When the local checkout
+or worktree is non-task-owned, preserve it and its local refs and metadata, record
+<code>non_task_owned_checkout_preserved</code>, and record <code>worktree_removed</code> as verified not applicable; this does not exempt a
+task-owned remote branch from normal deletion. Apply these decisions in terminal order. Ambiguous ownership blocks the
+affected transition and the Done suffix.</p>
+<p>Any failed or ambiguous gate blocks <code>task_title_done</code>; leave the task actionable and report the exact retry condition.
+The daily Codex cleanup automation is the reconciliation backstop for missed handoffs and partially completed terminal
+transitions, but it must apply the same checks and ordering. Private vulnerability remediation additionally follows
+<code>SECURITY.md</code>: keep titles, handoffs, controller output, advisory identity, and temporary-fork remote operations
+sanitized and private; block rather than expose or guess when private state cannot be verified; and do not treat an
+advisory merge as lifecycle completion while coordinated release, disclosure, or authorized advisory-state work remains.</p>
 
 
 
@@ -4124,7 +4523,7 @@ the controller must record it. Never mark Done after a failed or ambiguous gate.
       <nav class="md-footer__inner md-grid" aria-label="Footer" >
         
           
-          <a href="../agent-policies/" class="md-footer__link md-footer__link--prev" aria-label="Previous: Detailed agent policies">
+          <a href="../powershell-authoring/" class="md-footer__link md-footer__link--prev" aria-label="Previous: PowerShell authoring">
             <div class="md-footer__button md-icon">
               
               <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-arrow-left" viewBox="0 0 24 24"><path d="m12 19-7-7 7-7M19 12H5"/></svg>
@@ -4134,7 +4533,7 @@ the controller must record it. Never mark Done after a failed or ambiguous gate.
                 Previous
               </span>
               <div class="md-ellipsis">
-                Detailed agent policies
+                PowerShell authoring
               </div>
             </div>
           </a>

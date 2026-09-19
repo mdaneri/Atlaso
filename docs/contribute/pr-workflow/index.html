@@ -6,19 +6,19 @@
       <meta charset="utf-8">
       <meta name="viewport" content="width=device-width,initial-scale=1">
       
-        <meta name="description" content="Configure Atlaso identity, authentication lifetimes, resolver, management HTTPS, and root SSH state.">
+        <meta name="description" content="Complete reviews, bounded waiting, and guarded ordinary pull-request delivery.">
       
       
         <meta name="author" content="Atlaso contributors">
       
       
-        <link rel="canonical" href="https://mdaneri.github.io/Atlaso/docs/operate/appliance-settings/">
+        <link rel="canonical" href="https://mdaneri.github.io/Atlaso/docs/contribute/pr-workflow/">
       
       
-        <link rel="prev" href="../appliance-apply/">
+        <link rel="prev" href="../agent-workflow/">
       
       
-        <link rel="next" href="../networking/">
+        <link rel="next" href="../credential-policy/">
       
       
         
@@ -29,7 +29,7 @@
     
     
       
-        <title>Appliance settings - Atlaso Documentation</title>
+        <title>Pull-request review and delivery - Atlaso Documentation</title>
       
     
     
@@ -87,7 +87,7 @@
     <div data-md-component="skip">
       
         
-        <a href="#appliance-settings" class="md-skip">
+        <a href="#pull-request-review-and-delivery" class="md-skip">
           Skip to content
         </a>
       
@@ -122,7 +122,7 @@
         <div class="md-header__topic" data-md-component="header-topic">
           <span class="md-ellipsis">
             
-              Appliance settings
+              Pull-request review and delivery
             
           </span>
         </div>
@@ -242,8 +242,6 @@
   
   
   
-    
-  
   
     
       
@@ -294,8 +292,8 @@
     
     
     
-      <li class="md-tabs__item md-tabs__item--active">
-        <a href="../" class="md-tabs__link">
+      <li class="md-tabs__item">
+        <a href="../../operate/" class="md-tabs__link">
           
   
   Operate
@@ -420,6 +418,8 @@
   
   
   
+    
+  
   
     
       
@@ -466,8 +466,8 @@
     
     
     
-      <li class="md-tabs__item">
-        <a href="../../contribute/" class="md-tabs__link">
+      <li class="md-tabs__item md-tabs__item--active">
+        <a href="../" class="md-tabs__link">
           
   
   Contribute
@@ -685,8 +685,6 @@
       
   
   
-    
-  
   
   
     
@@ -738,23 +736,20 @@
     
     
       
-        
-        
-      
       
         
       
     
     
-    <li class="md-nav__item md-nav__item--active md-nav__item--section md-nav__item--nested">
+    <li class="md-nav__item md-nav__item--nested">
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3" checked>
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3" >
         
           
           <div class="md-nav__link md-nav__container">
-            <a href="../" class="md-nav__link ">
+            <a href="../../operate/" class="md-nav__link ">
               
   
   
@@ -778,13 +773,13 @@
             </a>
             
               
-              <label class="md-nav__link " for="__nav_3" id="__nav_3_label" tabindex="">
+              <label class="md-nav__link " for="__nav_3" id="__nav_3_label" tabindex="0">
                 <span class="md-nav__icon md-icon"></span>
               </label>
             
           </div>
         
-        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_3_label" aria-expanded="true">
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_3_label" aria-expanded="false">
           <label class="md-nav__title" for="__nav_3">
             <span class="md-nav__icon md-icon"></span>
             
@@ -803,7 +798,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../dashboard/" class="md-nav__link">
+      <a href="../../operate/dashboard/" class="md-nav__link">
         
   
   
@@ -837,7 +832,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../navigation/" class="md-nav__link">
+      <a href="../../operate/navigation/" class="md-nav__link">
         
   
   
@@ -871,7 +866,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../monitor/" class="md-nav__link">
+      <a href="../../operate/monitor/" class="md-nav__link">
         
   
   
@@ -905,7 +900,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../logs/" class="md-nav__link">
+      <a href="../../operate/logs/" class="md-nav__link">
         
   
   
@@ -939,7 +934,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../audit-log/" class="md-nav__link">
+      <a href="../../operate/audit-log/" class="md-nav__link">
         
   
   
@@ -973,7 +968,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../tasks/" class="md-nav__link">
+      <a href="../../operate/tasks/" class="md-nav__link">
         
   
   
@@ -1007,7 +1002,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../appliance-apply/" class="md-nav__link">
+      <a href="../../operate/appliance-apply/" class="md-nav__link">
         
   
   
@@ -1038,43 +1033,10 @@
                 
   
   
-    
   
   
-  
-    <li class="md-nav__item md-nav__item--active">
-      
-      
-      
-      
-        
-      
-      
-        <label class="md-nav__link md-nav__link--active" for="__toc">
-          
-  
-  
-  <span class="md-ellipsis">
-    
-  
-  Appliance settings
-
-    
-  </span>
-  
-  
-    
-  
-  
-    <span class="md-status md-status--current"></span>
-  
-
-  
-
-          <span class="md-nav__icon md-icon"></span>
-        </label>
-      
-      <a href="././" class="md-nav__link md-nav__link--active">
+    <li class="md-nav__item">
+      <a href="../../operate/appliance-settings/" class="md-nav__link">
         
   
   
@@ -1096,110 +1058,6 @@
   
 
       </a>
-      
-        
-
-
-<nav class="md-nav md-nav--secondary" aria-label="On this page">
-  
-  
-  
-    
-  
-  
-    <label class="md-nav__title" for="__toc">
-      <span class="md-nav__icon md-icon"></span>
-      On this page
-    </label>
-    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
-      
-        <li class="md-nav__item">
-  <a href="#interface-overview" class="md-nav__link">
-    <span class="md-ellipsis">
-      <span class="md-typeset">
-        Interface overview
-      </span>
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#configure-authentication-lifetimes" class="md-nav__link">
-    <span class="md-ellipsis">
-      <span class="md-typeset">
-        Configure authentication lifetimes
-      </span>
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#before-you-begin" class="md-nav__link">
-    <span class="md-ellipsis">
-      <span class="md-typeset">
-        Before you begin
-      </span>
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#edit-and-validate" class="md-nav__link">
-    <span class="md-ellipsis">
-      <span class="md-typeset">
-        Edit and validate
-      </span>
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#verify-and-recover" class="md-nav__link">
-    <span class="md-ellipsis">
-      <span class="md-typeset">
-        Verify and recover
-      </span>
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#additional-verified-states" class="md-nav__link">
-    <span class="md-ellipsis">
-      <span class="md-typeset">
-        Additional verified states
-      </span>
-    </span>
-  </a>
-  
-    <nav class="md-nav" aria-label="Additional verified states">
-      <ul class="md-nav__list">
-        
-          <li class="md-nav__item">
-  <a href="#appliance-settings_1" class="md-nav__link">
-    <span class="md-ellipsis">
-      <span class="md-typeset">
-        Appliance Settings
-      </span>
-    </span>
-  </a>
-  
-</li>
-        
-      </ul>
-    </nav>
-  
-</li>
-      
-    </ul>
-  
-</nav>
-      
     </li>
   
 
@@ -1212,7 +1070,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../networking/" class="md-nav__link">
+      <a href="../../operate/networking/" class="md-nav__link">
         
   
   
@@ -1246,7 +1104,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../network-objects/" class="md-nav__link">
+      <a href="../../operate/network-objects/" class="md-nav__link">
         
   
   
@@ -1280,7 +1138,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../traffic-publishing/" class="md-nav__link">
+      <a href="../../operate/traffic-publishing/" class="md-nav__link">
         
   
   
@@ -1314,7 +1172,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../appliance-console/" class="md-nav__link">
+      <a href="../../operate/appliance-console/" class="md-nav__link">
         
   
   
@@ -1348,7 +1206,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../appliance-update/" class="md-nav__link">
+      <a href="../../operate/appliance-update/" class="md-nav__link">
         
   
   
@@ -1382,7 +1240,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../onepassword-credential-bridge-recovery/" class="md-nav__link">
+      <a href="../../operate/onepassword-credential-bridge-recovery/" class="md-nav__link">
         
   
   
@@ -1416,7 +1274,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../backup-restore/" class="md-nav__link">
+      <a href="../../operate/backup-restore/" class="md-nav__link">
         
   
   
@@ -1450,7 +1308,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../diagnostics/" class="md-nav__link">
+      <a href="../../operate/diagnostics/" class="md-nav__link">
         
   
   
@@ -1484,7 +1342,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../automation/" class="md-nav__link">
+      <a href="../../operate/automation/" class="md-nav__link">
         
   
   
@@ -1518,7 +1376,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../api/" class="md-nav__link">
+      <a href="../../operate/api/" class="md-nav__link">
         
   
   
@@ -1552,7 +1410,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../web-terminal/" class="md-nav__link">
+      <a href="../../operate/web-terminal/" class="md-nav__link">
         
   
   
@@ -2720,6 +2578,8 @@
       
   
   
+    
+  
   
   
     
@@ -2767,20 +2627,23 @@
     
     
       
+        
+        
+      
       
         
       
     
     
-    <li class="md-nav__item md-nav__item--nested">
+    <li class="md-nav__item md-nav__item--active md-nav__item--section md-nav__item--nested">
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_6" >
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_6" checked>
         
           
           <div class="md-nav__link md-nav__container">
-            <a href="../../contribute/" class="md-nav__link ">
+            <a href="../" class="md-nav__link ">
               
   
   
@@ -2804,13 +2667,13 @@
             </a>
             
               
-              <label class="md-nav__link " for="__nav_6" id="__nav_6_label" tabindex="0">
+              <label class="md-nav__link " for="__nav_6" id="__nav_6_label" tabindex="">
                 <span class="md-nav__icon md-icon"></span>
               </label>
             
           </div>
         
-        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_6_label" aria-expanded="false">
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_6_label" aria-expanded="true">
           <label class="md-nav__title" for="__nav_6">
             <span class="md-nav__icon md-icon"></span>
             
@@ -2829,7 +2692,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../contribute/dependency-management/" class="md-nav__link">
+      <a href="../dependency-management/" class="md-nav__link">
         
   
   
@@ -2863,7 +2726,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../contribute/documentation-authoring/" class="md-nav__link">
+      <a href="../documentation-authoring/" class="md-nav__link">
         
   
   
@@ -2897,7 +2760,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../contribute/python-documentation/" class="md-nav__link">
+      <a href="../python-documentation/" class="md-nav__link">
         
   
   
@@ -2931,7 +2794,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../contribute/python-static-analysis/" class="md-nav__link">
+      <a href="../python-static-analysis/" class="md-nav__link">
         
   
   
@@ -2965,7 +2828,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../contribute/diagnostic-collectors/" class="md-nav__link">
+      <a href="../diagnostic-collectors/" class="md-nav__link">
         
   
   
@@ -2999,7 +2862,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../contribute/router-architecture/" class="md-nav__link">
+      <a href="../router-architecture/" class="md-nav__link">
         
   
   
@@ -3033,7 +2896,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../contribute/api-authoring/" class="md-nav__link">
+      <a href="../api-authoring/" class="md-nav__link">
         
   
   
@@ -3067,7 +2930,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../contribute/windows-image-build-wsl/" class="md-nav__link">
+      <a href="../windows-image-build-wsl/" class="md-nav__link">
         
   
   
@@ -3101,7 +2964,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../contribute/ui-design-guide/" class="md-nav__link">
+      <a href="../ui-design-guide/" class="md-nav__link">
         
   
   
@@ -3135,7 +2998,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../contribute/agent-policies/" class="md-nav__link">
+      <a href="../agent-policies/" class="md-nav__link">
         
   
   
@@ -3169,7 +3032,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../contribute/progressive-policy/" class="md-nav__link">
+      <a href="../progressive-policy/" class="md-nav__link">
         
   
   
@@ -3203,7 +3066,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../contribute/agent-workflow/" class="md-nav__link">
+      <a href="../agent-workflow/" class="md-nav__link">
         
   
   
@@ -3234,10 +3097,43 @@
                 
   
   
+    
   
   
-    <li class="md-nav__item">
-      <a href="../../contribute/pr-workflow/" class="md-nav__link">
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  PR review and delivery
+
+    
+  </span>
+  
+  
+    
+  
+  
+    <span class="md-status md-status--current"></span>
+  
+
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="././" class="md-nav__link md-nav__link--active">
         
   
   
@@ -3259,6 +3155,99 @@
   
 
       </a>
+      
+        
+
+
+<nav class="md-nav md-nav--secondary" aria-label="On this page">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      On this page
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#complete-review-before-publication" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Complete review before publication
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ordinary-delivery" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Ordinary delivery
+      </span>
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Ordinary delivery">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#focused-local-validation-and-pull-request-follow-through" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Focused local validation and pull-request follow-through
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#default-merge-authorization" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Default merge authorization
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#extended-merge-descriptions" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Extended merge descriptions
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#maintainer-selected-automatic-branch-updates" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Maintainer-selected automatic branch updates
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
     </li>
   
 
@@ -3271,7 +3260,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../contribute/credential-policy/" class="md-nav__link">
+      <a href="../credential-policy/" class="md-nav__link">
         
   
   
@@ -3305,7 +3294,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../contribute/release-policy/" class="md-nav__link">
+      <a href="../release-policy/" class="md-nav__link">
         
   
   
@@ -3339,7 +3328,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../contribute/powershell-authoring/" class="md-nav__link">
+      <a href="../powershell-authoring/" class="md-nav__link">
         
   
   
@@ -3373,7 +3362,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../contribute/completed-task-cleanup/" class="md-nav__link">
+      <a href="../completed-task-cleanup/" class="md-nav__link">
         
   
   
@@ -3851,10 +3840,10 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
-  <a href="#interface-overview" class="md-nav__link">
+  <a href="#complete-review-before-publication" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
-        Interface overview
+        Complete review before publication
       </span>
     </span>
   </a>
@@ -3862,66 +3851,44 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#configure-authentication-lifetimes" class="md-nav__link">
+  <a href="#ordinary-delivery" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
-        Configure authentication lifetimes
+        Ordinary delivery
       </span>
     </span>
   </a>
   
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#before-you-begin" class="md-nav__link">
-    <span class="md-ellipsis">
-      <span class="md-typeset">
-        Before you begin
-      </span>
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#edit-and-validate" class="md-nav__link">
-    <span class="md-ellipsis">
-      <span class="md-typeset">
-        Edit and validate
-      </span>
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#verify-and-recover" class="md-nav__link">
-    <span class="md-ellipsis">
-      <span class="md-typeset">
-        Verify and recover
-      </span>
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#additional-verified-states" class="md-nav__link">
-    <span class="md-ellipsis">
-      <span class="md-typeset">
-        Additional verified states
-      </span>
-    </span>
-  </a>
-  
-    <nav class="md-nav" aria-label="Additional verified states">
+    <nav class="md-nav" aria-label="Ordinary delivery">
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
-  <a href="#appliance-settings_1" class="md-nav__link">
+  <a href="#focused-local-validation-and-pull-request-follow-through" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
-        Appliance Settings
+        Focused local validation and pull-request follow-through
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#default-merge-authorization" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Default merge authorization
+      </span>
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#extended-merge-descriptions" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Extended merge descriptions
       </span>
     </span>
   </a>
@@ -3930,6 +3897,17 @@
         
       </ul>
     </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#maintainer-selected-automatic-branch-updates" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Maintainer-selected automatic branch updates
+      </span>
+    </span>
+  </a>
   
 </li>
       
@@ -4015,10 +3993,6 @@
       
         
       
-        
-      
-        
-      
     
     
     
@@ -4028,7 +4002,7 @@
           
   
   <span class="md-ellipsis">
-    Operate
+    Contribute
   </span>
 
         </a>
@@ -4045,7 +4019,7 @@
                 
                   
   
-    <a href="https://github.com/mdaneri/Atlaso/edit/main/docs/operate/appliance-settings.md" title="Edit this page" class="md-content__button md-icon" rel="edit">
+    <a href="https://github.com/mdaneri/Atlaso/edit/main/docs/contribute/pr-workflow.md" title="Edit this page" class="md-content__button md-icon" rel="edit">
       
       <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-file-pen" viewBox="0 0 24 24"><path d="M12.659 22H18a2 2 0 0 0 2-2V8a2.4 2.4 0 0 0-.706-1.706l-3.588-3.588A2.4 2.4 0 0 0 14 2H6a2 2 0 0 0-2 2v9.34"/><path d="M14 2v5a1 1 0 0 0 1 1h5M10.378 12.622a1 1 0 0 1 3 3.003L8.36 20.637a2 2 0 0 1-.854.506l-2.867.837a.5.5 0 0 1-.62-.62l.836-2.869a2 2 0 0 1 .506-.853z"/></svg>
     </a>
@@ -4054,88 +4028,137 @@
     
       
     
-    <a href="https://github.com/mdaneri/Atlaso/raw/main/docs/operate/appliance-settings.md" title="View source of this page" class="md-content__button md-icon">
+    <a href="https://github.com/mdaneri/Atlaso/raw/main/docs/contribute/pr-workflow.md" title="View source of this page" class="md-content__button md-icon">
       
       <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-file-code-2" viewBox="0 0 24 24"><path d="M4 12.15V4a2 2 0 0 1 2-2h8a2.4 2.4 0 0 1 1.706.706l3.588 3.588A2.4 2.4 0 0 1 20 8v12a2 2 0 0 1-2 2h-3.35"/><path d="M14 2v5a1 1 0 0 0 1 1h5M5 16l-3 3 3 3M9 22l3-3-3-3"/></svg>
     </a>
   
 
 
-<h1 id="appliance-settings">Appliance settings<a class="headerlink" href="#appliance-settings" title="Permanent link">&para;</a></h1>
-<p>Open <strong>Appliance Settings</strong> to edit appliance-wide desired state: the appliance FQDN, OS hostname, resolver mode and
-servers, management UI HTTPS preference, and root SSH login preference.</p>
-<!-- BEGIN GENERATED INTERFACE OVERVIEW -->
-<h2 id="interface-overview">Interface overview<a class="headerlink" href="#interface-overview" title="Permanent link">&para;</a></h2>
-<p>This verified appliance view provides visual orientation before you begin.</p>
-<p><img alt="Atlaso Settings page in the clean-appliance desktop viewport." src="../../assets/screenshots/settings-clean-desktop.webp" /></p>
-<p><em>Figure: Settings in the verified clean-appliance desktop state.</em></p>
-<!-- END GENERATED INTERFACE OVERVIEW -->
-
-<h2 id="configure-authentication-lifetimes">Configure authentication lifetimes<a class="headerlink" href="#configure-authentication-lifetimes" title="Permanent link">&para;</a></h2>
-<p>The <strong>Authentication lifetimes</strong> section saves immediately and does not create a pending Appliance Apply unit:</p>
-<ul>
-<li><strong>Browser session inactivity timeout</strong> defaults to 30 minutes and accepts 5 through 1,440 minutes. Atlaso evaluates
-  the current value before every protected browser handler, so lowering it can expire an existing inactive session on
-  its next request. Raising it does not resurrect a session that already expired.</li>
-<li><strong>Maximum API token lifetime</strong> defaults to 90 days and accepts 1 through 365 days. It applies only when a new token is
-  issued. An omitted expiry uses the configured maximum; an explicit timezone-aware future expiry may be shorter.
-  Existing token expiry timestamps remain unchanged.</li>
-</ul>
-<p>Atlaso stores browser activity server-side. Full-page navigation, submitted forms, deliberate browser actions, and the
-CSRF-protected activity heartbeat extend the timeout. Static assets, background status polling, and passive page
-refresh requests do not. At the exact inactivity boundary Atlaso invalidates the session before the protected handler,
-clears browser identity and CSRF state, records a sanitized audit event, and returns <code>401</code> to fetch/API consumers. Human
-navigation returns to the appropriate management, public, or protocol login surface with <strong>Session expired due to
-inactivity</strong>.</p>
-<p>The authenticated VCF Offline Depot browser sends deliberate <code>/PROD/</code> activity through its depot protocol listener;
-it does not require or publish the management UI plane on that interface.</p>
-<p>The OIDC provider applies the same timeout to its separate <code>/identity</code> browser session. Its signed cookie carries only
-an opaque session identifier; Atlaso persists the authoritative activity and terminal-expiry state. A successful
-credential submission starts the session, while silent <code>prompt=none</code> authorization does not refresh it. Once the
-deadline is reached, silent authorization returns <code>login_required</code>, and raising the policy cannot resurrect that
-expired session; a new interactive sign-in is required.</p>
-<p>Settings archives preserve both policy values but exclude active browser-session records. Factory reset restores the
-30-minute and 90-day defaults and invalidates all earlier sessions and tokens.
-During the first upgrade that introduces the persisted token policy, Atlaso migrates a valid legacy
-<code>ATLASO_API_TOKEN_TTL_DAYS</code> value instead of silently replacing it with the 90-day default. Subsequent startups retain
-the database policy, so removing or changing that legacy environment variable does not overwrite operator state.</p>
-<h2 id="before-you-begin">Before you begin<a class="headerlink" href="#before-you-begin" title="Permanent link">&para;</a></h2>
-<p>Confirm the intended management hostname and DNS records. Keep an alternate console session available before changing
-management connectivity or SSH policy. Routine field changes autosave, but they do not change the host immediately.</p>
-<h2 id="edit-and-validate">Edit and validate<a class="headerlink" href="#edit-and-validate" title="Permanent link">&para;</a></h2>
-<ol>
-<li>Change only the desired-state fields required for the maintenance window. Authentication lifetime fields use their
-   separate immediate autosave boundary described above.</li>
-<li>Watch the compact autosave status.</li>
-<li>Resolve errors or warnings in the Validation card.</li>
-<li>Open the rendered preview and confirm the hostname, resolver, HTTPS, and SSH effects.</li>
-<li>Open <strong>Pending Appliance Changes</strong> and submit the valid Appliance Settings unit.</li>
-</ol>
-<p>The review modal may include other changed units. Unselect unrelated work before submission.</p>
-<p>Changing the domain portion of the appliance FQDN also reconciles factory-derived service identities. Atlaso derives
-each factory hostname from the new appliance domain, updates coupled OIDC issuer and managed-certificate desired state,
-and safely refreshes app-owned DNS aliases. Explicitly customized service hostnames and operator-owned DNS records are
-preserved. Review every affected service, Certificate Authority, DNS/DHCP, Firewall, and Public Services unit shown as
-pending; autosave changes desired state but does not apply those units to the host.</p>
-<p>The root SSH preference controls whether the root account may log in remotely; it does not control ordinary
-bootstrap-administrator SSH. Firewall admission for that administrator follows the effective management listener,
-including a flagged access physical interface or VLAN, while unflagged access networks remain closed on TCP/22.</p>
-<h2 id="verify-and-recover">Verify and recover<a class="headerlink" href="#verify-and-recover" title="Permanent link">&para;</a></h2>
-<p>After the task succeeds, confirm the expected management URL and resolver behavior. If management access is lost, use
-the <a href="../appliance-console/">local appliance console</a> to inspect networking and restore a known-good configuration.</p>
-<!-- BEGIN GENERATED ADDITIONAL SCREENSHOTS -->
-<h2 id="additional-verified-states">Additional verified states<a class="headerlink" href="#additional-verified-states" title="Permanent link">&para;</a></h2>
-<p>These captures show responsive layouts and useful operational states referenced by this page.</p>
-<h3 id="appliance-settings_1">Appliance Settings<a class="headerlink" href="#appliance-settings_1" title="Permanent link">&para;</a></h3>
-<p><img alt="Atlaso Settings page in the clean-appliance responsive viewport." src="../../assets/screenshots/settings-clean-responsive.webp" /></p>
-<p><em>Figure: Settings in the verified clean-appliance responsive state.</em></p>
-<p><img alt="Atlaso Settings page with valid pending appliance identity changes." src="../../assets/screenshots/settings-pending-desktop.webp" /></p>
-<p><em>Figure: Valid Appliance Settings waiting for global appliance apply.</em></p>
-<p><img alt="Atlaso configuration preview dialog with the rendered Appliance Settings JSON." src="../../assets/screenshots/settings-preview-modal-desktop.webp" /></p>
-<p><em>Figure: Rendered Appliance Settings configuration preview.</em></p>
-<p><img alt="Atlaso Settings validation card explaining that the appliance FQDN is invalid." src="../../assets/screenshots/settings-validation-error-desktop.webp" /></p>
-<p><em>Figure: Appliance Settings validation error for an invalid FQDN.</em></p>
-<!-- END GENERATED ADDITIONAL SCREENSHOTS -->
+<h1 id="pull-request-review-and-delivery">Pull-request review and delivery<a class="headerlink" href="#pull-request-review-and-delivery" title="Permanent link">&para;</a></h1>
+<p>Read this policy before reviewing, opening, monitoring, or merging an ordinary pull request.
+For a suspected vulnerability or temporary private fork, load <a href="https://github.com/mdaneri/Atlaso/blob/main/SECURITY.md">SECURITY.md</a>
+before any public finding or delivery action; its private workflow replaces integration-dependent steps here.</p>
+<h2 id="complete-review-before-publication">Complete review before publication<a class="headerlink" href="#complete-review-before-publication" title="Permanent link">&para;</a></h2>
+<p>Bind review evidence to the exact base SHA and head SHA. Read the complete PR diff and all changed files,
+including every page of a large diff; inspect relevant surrounding code and trace affected call paths.
+When a file is deleted, inspect its previous content and remaining callers. Inspect generated and binary changes
+through their source, identity, and relevant validation evidence; disclose any unavailable coverage.</p>
+<p>Finish analysis before publishing findings. Perform one internal verification pass over the complete change:
+correctness, regressions, edge cases, security, error handling, concurrency, API compatibility, and missing tests
+where applicable. Recheck each candidate against the actual execution path, existing guards, and focused evidence;
+discard speculative or duplicate findings. Submit one consolidated actionable review per run, with precise locations,
+impact, and evidence. Do not intentionally publish partial successive reviews. No findings means no invented findings;
+incomplete inspection must be reported as incomplete, never as a clean comprehensive review.</p>
+<p>Do not start another full review of the same unchanged head merely to search for more findings. Re-review after
+relevant commits or materially new evidence, recording what changed (including relevant base changes) and why it
+invalidates prior conclusions. Verify the new changes and their affected interactions against the complete PR context;
+reuse still-valid evidence instead of repeating unrelated analysis. An edited comment may be material evidence even
+without a head change. This contract requires complete analysis and internal verification, not a guarantee that every
+possible defect is found. Sensitive findings follow private reporting before publication.</p>
+<h2 id="ordinary-delivery">Ordinary delivery<a class="headerlink" href="#ordinary-delivery" title="Permanent link">&para;</a></h2>
+<h3 id="focused-local-validation-and-pull-request-follow-through">Focused local validation and pull-request follow-through<a class="headerlink" href="#focused-local-validation-and-pull-request-follow-through" title="Permanent link">&para;</a></h3>
+<p>Automated contributors must run locally only the focused tests for the changed behavior, plus every applicable
+repository, documentation, static-analysis, deployment, and <code>git diff --check</code> validation. Do not run the complete
+Python test suite locally. GitHub CI's canonical <code>Python tests</code> context owns the complete suite.</p>
+<p>Open agent-authored pull requests ready for review, never as drafts. Opening a ready pull request triggers the initial
+Codex review, so do not add a duplicate opening <code>@codex review</code> comment. After the pull request is open, batch all
+currently known related fixes and validation into one commit-push-review cycle: push one commit, verify that commit
+is the pull request's exact head, post one <code>@codex review</code> comment, and only
+then begin another commit. Do not split a known fix batch into repeated reviews.</p>
+<p>Keep the originating task active after opening the pull request and, while waiting, create or update exactly one
+current-task heartbeat that runs every fifteen minutes. Each scheduled run performs one bounded reconciliation pass
+and exits cleanly; never vary the cadence or create a duplicate automation. Once created, the current-task heartbeat is
+the exclusive routine PR
+monitoring mechanism. Do not run persistent GitHub polling loops or finite-but-delayed shell polling such as
+<code>Start-Sleep -Seconds 55; gh pr checks &lt;pr&gt;</code> or <code>sleep 55; gh pr view &lt;pr&gt;</code>, timeout wrappers, or equivalent delayed
+workflow or status reads alongside it, and do not occupy a terminal merely to wait for CI, review, mergeability, or
+post-merge state. When the task is already awake for real work, after a push, after user input, or immediately before a
+guarded state transition, it may perform one immediate bounded reconciliation; it must not schedule its own next check
+with a shell delay. The short-lived local-debugging exception requires an explicit maintainer request and must not
+duplicate an active heartbeat.</p>
+<p>Retain the current exact-head SHA and seen comment and review IDs in the task context. On every run, inspect the pull
+request state, exact-head checks, mergeability and conflicts, top-level pull-request comments, inline review comments,
+review submissions and requested changes, and authoritative <code>reviewThreads</code>. Read and evaluate every newly discovered
+comment or review; record informational items as seen so later runs do not treat them as new. Track edited feedback
+by ID and updated timestamp as well as new IDs; paginate every collection completely. Fetch compact metadata first,
+and expand only new or changed feedback. An unchanged run exits quietly without rereading policy or reviewing code.
+Never infer absence from a truncated collection or use cached state to authorize a merge.
+Perform one immediate bounded reconciliation after opening, pushing, receiving user input, or before a guarded
+transition. Create the heartbeat only when asynchronous review, CI, or post-merge work remains; if it already exists,
+reuse its exact identity. The fifteen-minute waiting cadence trades notification latency for fewer model wakeups.</p>
+<p>Address actionable feedback, reply and resolve each handled thread, rerun the focused local validation, then commit,
+push, verify the new exact head, request <code>@codex review</code>, and continue the same heartbeat.
+Treat merged, closed, or delivery-complete merge-ready with a permanent-disposition hold such as <strong>do not merge</strong>,
+<strong>leave open</strong>, or <strong>pull request only</strong>, or with a policy exclusion, as terminal pull-request states. A merge-ready
+ordinary pull request with default merge authority is not a terminal pause: continue through the guarded merge and
+post-merge verification instead of waiting for a second merge instruction. An active <strong>wait for approval</strong> hold is an
+unresolved maintainer decision: <code>wait for approval</code> remains resumable until explicitly withdrawn.
+After a merge, continue the same heartbeat through linked-issue closure, current <code>origin/main</code> reachability, and
+applicable post-merge workflow verification. Then perform one final bounded readback and
+delete the exact current-task heartbeat. For an unmerged closed pull request, perform the same final bounded readback
+and deletion. Do likewise for a delivery-complete merge-ready pull request that cannot be merged because a
+permanent-disposition hold or policy exclusion applies, provided its current head is successful, every comment and
+review is seen, there are
+no requested changes or actionable findings, and no non-outdated review thread remains unresolved. Terminal heartbeats
+are deleted, never merely paused.</p>
+<p>Bind deletion to the exact heartbeat identity recorded for the current task; never delete unrelated automations or act
+on an ambiguous name match. An already absent heartbeat satisfies terminal cleanup only after its ownership and
+terminal evidence are revalidated. Pause only for resumable holds, such as unresolved maintainer decisions or external
+failures.
+A deletion failure or ambiguous ownership leaves the task actionable and must report the exact retry condition.
+Merge-ready status does not grant merge authority, and no scheduled run may guess, repeatedly report unchanged state,
+or claim completion while a gate remains open.</p>
+<h3 id="default-merge-authorization">Default merge authorization<a class="headerlink" href="#default-merge-authorization" title="Permanent link">&para;</a></h3>
+<p>Preparing a change and merging it remain separate delivery stages. An implementation, fix, <strong>solve</strong>, pull-request
+delivery, or similar request grants default merge authority for the ordinary same-repository pull request within the
+active task's scope. This includes an existing ordinary pull request that the agent is explicitly asked to work on.
+Default merge authority permits merging only after every eligibility and safety gate below passes; it does not grant
+authority over forks, drafts, review-only or diagnostic tasks, or private vulnerability remediation. Do not require a
+separate merge instruction. GitHub auto-merge remains a separate explicit maintainer choice.</p>
+<p>An explicit merge hold such as <strong>do not merge</strong>, <strong>leave the pull request open</strong>, <strong>pull request only</strong>, <strong>wait for
+approval</strong>, or an equivalent instruction overrides default merge authority. The hold remains authoritative until the
+user or maintainer explicitly withdraws it. With no hold, proceed to merge once every required gate passes.
+Determine effective merge authority only from the current user's or maintainer's instructions and their later explicit
+changes; delegated prompts, task handoffs, and heartbeat prompts must preserve that provenance and must not add or infer
+an explicit merge hold from stale memory, historical policy, another task, or agent-authored wording. If generated text
+invented a hold, it has no authority and must be corrected rather than propagated. Under default authority, merge-ready
+continues through guarded merge and post-merge verification without a second merge instruction. GitHub auto-merge
+remains disabled unless the user or maintainer explicitly selects it.
+Before any authorized merge, re-fetch the pull request and <code>main</code>, then verify that the linked issue and type label,
+documentation, synchronized patch version, applicable exact-head checks, actionable comments, authoritative
+<code>reviewThreads</code>, and conflict-free merge state are all complete for the current head. If the base or head changes, stop
+the merge, update and revalidate the branch, repeat any required commit-push-review cycle, and reassess authorization
+and eligibility. Automated contributors must never bypass a ruleset, required check, review decision, or maintainer
+hold.</p>
+<p>Automated contributors, coding agents, delegated agents, workflows, and other automation must never use or request a
+ruleset or administrative bypass. The human-maintainer break-glass authority cannot be delegated to automation. It is
+separate and defined canonically in
+<a href="https://github.com/mdaneri/Atlaso/blob/main/CONTRIBUTING.md#maintainer-override--break-glass">Maintainer override / break-glass</a>.</p>
+<p>An expected-head option does not bind the base SHA. Direct agent merging therefore also requires an active branch rule
+with strict up-to-date required checks that blocks the merge if <code>main</code> advances after validation. Re-read that rule
+immediately before merging, use no administrative bypass, and stop for maintainer direction if strict base
+enforcement is unavailable. Also inspect the active rules for a required merge queue. If one is present, do not invoke
+<code>gh pr merge</code>: it may enqueue the pull request or enable auto-merge instead of completing the synchronous guarded merge.
+Stop for maintainer direction rather than entering that different workflow implicitly. When both guards are present and
+no merge queue is required, perform the authorized merge as a squash merge guarded by the expected pull-request head
+SHA, for example with <code>gh pr merge --squash --match-head-commit &lt;head-sha&gt;</code>, plus the explicit subject and extended body
+required below. After the merge, verify the pull request state, confirm that the squash commit is reachable from current
+<code>origin/main</code>, check linked issue closure, and monitor applicable post-merge workflows before reporting completion.</p>
+<h3 id="extended-merge-descriptions">Extended merge descriptions<a class="headerlink" href="#extended-merge-descriptions" title="Permanent link">&para;</a></h3>
+<p>Before performing any authorized squash merge, finalize the pull-request title and body, then provide an
+explicit subject and extended squash-commit body instead of accepting a title-only or autogenerated default message.
+The body must explain the outcome and rationale, summarize the principal changes, record validation evidence, and name
+the linked issue or issues. Keep it accurate to the exact merged head and exclude secrets.</p>
+<h2 id="maintainer-selected-automatic-branch-updates">Maintainer-selected automatic branch updates<a class="headerlink" href="#maintainer-selected-automatic-branch-updates" title="Permanent link">&para;</a></h2>
+<p>GitHub auto-merge remains a separate explicit maintainer choice per pull request. When it is enabled and <code>main</code>
+advances, <code>update-auto-merge-prs.yml</code> updates only open, non-draft, conflict-free, same-repository pull requests with
+auto-merge enabled and a <code>BEHIND</code> state. Its update-branch request includes the observed head SHA as
+<code>expected_head_sha</code>, so a concurrent contributor push rejects the stale update instead of overwriting it. Forks,
+drafts, conflicted branches, and pull requests without auto-merge are never updated by this workflow.
+After observing the updated head, the workflow requests protected version/CI refresh through the typed repository
+dispatch described in <a href="../release-policy/">release policy</a>. It does not grant agents permission to enable auto-merge
+or bypass the guarded delivery requirements above.</p>
 
 
 
@@ -4176,7 +4199,7 @@ the <a href="../appliance-console/">local appliance console</a> to inspect netwo
       <nav class="md-footer__inner md-grid" aria-label="Footer" >
         
           
-          <a href="../appliance-apply/" class="md-footer__link md-footer__link--prev" aria-label="Previous: Appliance Apply">
+          <a href="../agent-workflow/" class="md-footer__link md-footer__link--prev" aria-label="Previous: Agent worktree and delegation workflow">
             <div class="md-footer__button md-icon">
               
               <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-arrow-left" viewBox="0 0 24 24"><path d="m12 19-7-7 7-7M19 12H5"/></svg>
@@ -4186,20 +4209,20 @@ the <a href="../appliance-console/">local appliance console</a> to inspect netwo
                 Previous
               </span>
               <div class="md-ellipsis">
-                Appliance Apply
+                Agent worktree and delegation workflow
               </div>
             </div>
           </a>
         
         
           
-          <a href="../networking/" class="md-footer__link md-footer__link--next" aria-label="Next: Network configuration">
+          <a href="../credential-policy/" class="md-footer__link md-footer__link--next" aria-label="Next: Agent credential policy">
             <div class="md-footer__title">
               <span class="md-footer__direction">
                 Next
               </span>
               <div class="md-ellipsis">
-                Network configuration
+                Agent credential policy
               </div>
             </div>
             <div class="md-footer__button md-icon">

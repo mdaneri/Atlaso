@@ -6,19 +6,19 @@
       <meta charset="utf-8">
       <meta name="viewport" content="width=device-width,initial-scale=1">
       
-        <meta name="description" content="Configure Atlaso identity, authentication lifetimes, resolver, management HTTPS, and root SSH state.">
+        <meta name="description" content="Load a small core and operation-specific safety contracts with measurable context budgets.">
       
       
         <meta name="author" content="Atlaso contributors">
       
       
-        <link rel="canonical" href="https://mdaneri.github.io/Atlaso/docs/operate/appliance-settings/">
+        <link rel="canonical" href="https://mdaneri.github.io/Atlaso/docs/contribute/progressive-policy/">
       
       
-        <link rel="prev" href="../appliance-apply/">
+        <link rel="prev" href="../agent-policies/">
       
       
-        <link rel="next" href="../networking/">
+        <link rel="next" href="../agent-workflow/">
       
       
         
@@ -29,7 +29,7 @@
     
     
       
-        <title>Appliance settings - Atlaso Documentation</title>
+        <title>Progressive agent policy - Atlaso Documentation</title>
       
     
     
@@ -87,7 +87,7 @@
     <div data-md-component="skip">
       
         
-        <a href="#appliance-settings" class="md-skip">
+        <a href="#progressive-agent-policy" class="md-skip">
           Skip to content
         </a>
       
@@ -122,7 +122,7 @@
         <div class="md-header__topic" data-md-component="header-topic">
           <span class="md-ellipsis">
             
-              Appliance settings
+              Progressive agent policy
             
           </span>
         </div>
@@ -242,8 +242,6 @@
   
   
   
-    
-  
   
     
       
@@ -294,8 +292,8 @@
     
     
     
-      <li class="md-tabs__item md-tabs__item--active">
-        <a href="../" class="md-tabs__link">
+      <li class="md-tabs__item">
+        <a href="../../operate/" class="md-tabs__link">
           
   
   Operate
@@ -420,6 +418,8 @@
   
   
   
+    
+  
   
     
       
@@ -466,8 +466,8 @@
     
     
     
-      <li class="md-tabs__item">
-        <a href="../../contribute/" class="md-tabs__link">
+      <li class="md-tabs__item md-tabs__item--active">
+        <a href="../" class="md-tabs__link">
           
   
   Contribute
@@ -685,8 +685,6 @@
       
   
   
-    
-  
   
   
     
@@ -738,23 +736,20 @@
     
     
       
-        
-        
-      
       
         
       
     
     
-    <li class="md-nav__item md-nav__item--active md-nav__item--section md-nav__item--nested">
+    <li class="md-nav__item md-nav__item--nested">
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3" checked>
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3" >
         
           
           <div class="md-nav__link md-nav__container">
-            <a href="../" class="md-nav__link ">
+            <a href="../../operate/" class="md-nav__link ">
               
   
   
@@ -778,13 +773,13 @@
             </a>
             
               
-              <label class="md-nav__link " for="__nav_3" id="__nav_3_label" tabindex="">
+              <label class="md-nav__link " for="__nav_3" id="__nav_3_label" tabindex="0">
                 <span class="md-nav__icon md-icon"></span>
               </label>
             
           </div>
         
-        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_3_label" aria-expanded="true">
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_3_label" aria-expanded="false">
           <label class="md-nav__title" for="__nav_3">
             <span class="md-nav__icon md-icon"></span>
             
@@ -803,7 +798,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../dashboard/" class="md-nav__link">
+      <a href="../../operate/dashboard/" class="md-nav__link">
         
   
   
@@ -837,7 +832,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../navigation/" class="md-nav__link">
+      <a href="../../operate/navigation/" class="md-nav__link">
         
   
   
@@ -871,7 +866,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../monitor/" class="md-nav__link">
+      <a href="../../operate/monitor/" class="md-nav__link">
         
   
   
@@ -905,7 +900,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../logs/" class="md-nav__link">
+      <a href="../../operate/logs/" class="md-nav__link">
         
   
   
@@ -939,7 +934,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../audit-log/" class="md-nav__link">
+      <a href="../../operate/audit-log/" class="md-nav__link">
         
   
   
@@ -973,7 +968,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../tasks/" class="md-nav__link">
+      <a href="../../operate/tasks/" class="md-nav__link">
         
   
   
@@ -1007,7 +1002,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../appliance-apply/" class="md-nav__link">
+      <a href="../../operate/appliance-apply/" class="md-nav__link">
         
   
   
@@ -1038,43 +1033,10 @@
                 
   
   
-    
   
   
-  
-    <li class="md-nav__item md-nav__item--active">
-      
-      
-      
-      
-        
-      
-      
-        <label class="md-nav__link md-nav__link--active" for="__toc">
-          
-  
-  
-  <span class="md-ellipsis">
-    
-  
-  Appliance settings
-
-    
-  </span>
-  
-  
-    
-  
-  
-    <span class="md-status md-status--current"></span>
-  
-
-  
-
-          <span class="md-nav__icon md-icon"></span>
-        </label>
-      
-      <a href="././" class="md-nav__link md-nav__link--active">
+    <li class="md-nav__item">
+      <a href="../../operate/appliance-settings/" class="md-nav__link">
         
   
   
@@ -1096,110 +1058,6 @@
   
 
       </a>
-      
-        
-
-
-<nav class="md-nav md-nav--secondary" aria-label="On this page">
-  
-  
-  
-    
-  
-  
-    <label class="md-nav__title" for="__toc">
-      <span class="md-nav__icon md-icon"></span>
-      On this page
-    </label>
-    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
-      
-        <li class="md-nav__item">
-  <a href="#interface-overview" class="md-nav__link">
-    <span class="md-ellipsis">
-      <span class="md-typeset">
-        Interface overview
-      </span>
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#configure-authentication-lifetimes" class="md-nav__link">
-    <span class="md-ellipsis">
-      <span class="md-typeset">
-        Configure authentication lifetimes
-      </span>
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#before-you-begin" class="md-nav__link">
-    <span class="md-ellipsis">
-      <span class="md-typeset">
-        Before you begin
-      </span>
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#edit-and-validate" class="md-nav__link">
-    <span class="md-ellipsis">
-      <span class="md-typeset">
-        Edit and validate
-      </span>
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#verify-and-recover" class="md-nav__link">
-    <span class="md-ellipsis">
-      <span class="md-typeset">
-        Verify and recover
-      </span>
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#additional-verified-states" class="md-nav__link">
-    <span class="md-ellipsis">
-      <span class="md-typeset">
-        Additional verified states
-      </span>
-    </span>
-  </a>
-  
-    <nav class="md-nav" aria-label="Additional verified states">
-      <ul class="md-nav__list">
-        
-          <li class="md-nav__item">
-  <a href="#appliance-settings_1" class="md-nav__link">
-    <span class="md-ellipsis">
-      <span class="md-typeset">
-        Appliance Settings
-      </span>
-    </span>
-  </a>
-  
-</li>
-        
-      </ul>
-    </nav>
-  
-</li>
-      
-    </ul>
-  
-</nav>
-      
     </li>
   
 
@@ -1212,7 +1070,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../networking/" class="md-nav__link">
+      <a href="../../operate/networking/" class="md-nav__link">
         
   
   
@@ -1246,7 +1104,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../network-objects/" class="md-nav__link">
+      <a href="../../operate/network-objects/" class="md-nav__link">
         
   
   
@@ -1280,7 +1138,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../traffic-publishing/" class="md-nav__link">
+      <a href="../../operate/traffic-publishing/" class="md-nav__link">
         
   
   
@@ -1314,7 +1172,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../appliance-console/" class="md-nav__link">
+      <a href="../../operate/appliance-console/" class="md-nav__link">
         
   
   
@@ -1348,7 +1206,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../appliance-update/" class="md-nav__link">
+      <a href="../../operate/appliance-update/" class="md-nav__link">
         
   
   
@@ -1382,7 +1240,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../onepassword-credential-bridge-recovery/" class="md-nav__link">
+      <a href="../../operate/onepassword-credential-bridge-recovery/" class="md-nav__link">
         
   
   
@@ -1416,7 +1274,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../backup-restore/" class="md-nav__link">
+      <a href="../../operate/backup-restore/" class="md-nav__link">
         
   
   
@@ -1450,7 +1308,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../diagnostics/" class="md-nav__link">
+      <a href="../../operate/diagnostics/" class="md-nav__link">
         
   
   
@@ -1484,7 +1342,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../automation/" class="md-nav__link">
+      <a href="../../operate/automation/" class="md-nav__link">
         
   
   
@@ -1518,7 +1376,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../api/" class="md-nav__link">
+      <a href="../../operate/api/" class="md-nav__link">
         
   
   
@@ -1552,7 +1410,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../web-terminal/" class="md-nav__link">
+      <a href="../../operate/web-terminal/" class="md-nav__link">
         
   
   
@@ -2720,6 +2578,8 @@
       
   
   
+    
+  
   
   
     
@@ -2767,20 +2627,23 @@
     
     
       
+        
+        
+      
       
         
       
     
     
-    <li class="md-nav__item md-nav__item--nested">
+    <li class="md-nav__item md-nav__item--active md-nav__item--section md-nav__item--nested">
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_6" >
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_6" checked>
         
           
           <div class="md-nav__link md-nav__container">
-            <a href="../../contribute/" class="md-nav__link ">
+            <a href="../" class="md-nav__link ">
               
   
   
@@ -2804,13 +2667,13 @@
             </a>
             
               
-              <label class="md-nav__link " for="__nav_6" id="__nav_6_label" tabindex="0">
+              <label class="md-nav__link " for="__nav_6" id="__nav_6_label" tabindex="">
                 <span class="md-nav__icon md-icon"></span>
               </label>
             
           </div>
         
-        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_6_label" aria-expanded="false">
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_6_label" aria-expanded="true">
           <label class="md-nav__title" for="__nav_6">
             <span class="md-nav__icon md-icon"></span>
             
@@ -2829,7 +2692,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../contribute/dependency-management/" class="md-nav__link">
+      <a href="../dependency-management/" class="md-nav__link">
         
   
   
@@ -2863,7 +2726,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../contribute/documentation-authoring/" class="md-nav__link">
+      <a href="../documentation-authoring/" class="md-nav__link">
         
   
   
@@ -2897,7 +2760,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../contribute/python-documentation/" class="md-nav__link">
+      <a href="../python-documentation/" class="md-nav__link">
         
   
   
@@ -2931,7 +2794,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../contribute/python-static-analysis/" class="md-nav__link">
+      <a href="../python-static-analysis/" class="md-nav__link">
         
   
   
@@ -2965,7 +2828,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../contribute/diagnostic-collectors/" class="md-nav__link">
+      <a href="../diagnostic-collectors/" class="md-nav__link">
         
   
   
@@ -2999,7 +2862,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../contribute/router-architecture/" class="md-nav__link">
+      <a href="../router-architecture/" class="md-nav__link">
         
   
   
@@ -3033,7 +2896,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../contribute/api-authoring/" class="md-nav__link">
+      <a href="../api-authoring/" class="md-nav__link">
         
   
   
@@ -3067,7 +2930,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../contribute/windows-image-build-wsl/" class="md-nav__link">
+      <a href="../windows-image-build-wsl/" class="md-nav__link">
         
   
   
@@ -3101,7 +2964,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../contribute/ui-design-guide/" class="md-nav__link">
+      <a href="../ui-design-guide/" class="md-nav__link">
         
   
   
@@ -3135,7 +2998,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../contribute/agent-policies/" class="md-nav__link">
+      <a href="../agent-policies/" class="md-nav__link">
         
   
   
@@ -3166,10 +3029,43 @@
                 
   
   
+    
   
   
-    <li class="md-nav__item">
-      <a href="../../contribute/progressive-policy/" class="md-nav__link">
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+  Progressive agent policy
+
+    
+  </span>
+  
+  
+    
+  
+  
+    <span class="md-status md-status--current"></span>
+  
+
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="././" class="md-nav__link md-nav__link--active">
         
   
   
@@ -3191,6 +3087,71 @@
   
 
       </a>
+      
+        
+
+
+<nav class="md-nav md-nav--secondary" aria-label="On this page">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      On this page
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#canonical-ownership" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Canonical ownership
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#selecting-routes" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Selecting routes
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#preserved-safety" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Preserved safety
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#measurement-and-validation" class="md-nav__link">
+    <span class="md-ellipsis">
+      <span class="md-typeset">
+        Measurement and validation
+      </span>
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
     </li>
   
 
@@ -3203,7 +3164,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../contribute/agent-workflow/" class="md-nav__link">
+      <a href="../agent-workflow/" class="md-nav__link">
         
   
   
@@ -3237,7 +3198,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../contribute/pr-workflow/" class="md-nav__link">
+      <a href="../pr-workflow/" class="md-nav__link">
         
   
   
@@ -3271,7 +3232,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../contribute/credential-policy/" class="md-nav__link">
+      <a href="../credential-policy/" class="md-nav__link">
         
   
   
@@ -3305,7 +3266,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../contribute/release-policy/" class="md-nav__link">
+      <a href="../release-policy/" class="md-nav__link">
         
   
   
@@ -3339,7 +3300,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../contribute/powershell-authoring/" class="md-nav__link">
+      <a href="../powershell-authoring/" class="md-nav__link">
         
   
   
@@ -3373,7 +3334,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../contribute/completed-task-cleanup/" class="md-nav__link">
+      <a href="../completed-task-cleanup/" class="md-nav__link">
         
   
   
@@ -3851,10 +3812,10 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
-  <a href="#interface-overview" class="md-nav__link">
+  <a href="#canonical-ownership" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
-        Interface overview
+        Canonical ownership
       </span>
     </span>
   </a>
@@ -3862,10 +3823,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#configure-authentication-lifetimes" class="md-nav__link">
+  <a href="#selecting-routes" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
-        Configure authentication lifetimes
+        Selecting routes
       </span>
     </span>
   </a>
@@ -3873,10 +3834,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#before-you-begin" class="md-nav__link">
+  <a href="#preserved-safety" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
-        Before you begin
+        Preserved safety
       </span>
     </span>
   </a>
@@ -3884,52 +3845,13 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#edit-and-validate" class="md-nav__link">
+  <a href="#measurement-and-validation" class="md-nav__link">
     <span class="md-ellipsis">
       <span class="md-typeset">
-        Edit and validate
+        Measurement and validation
       </span>
     </span>
   </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#verify-and-recover" class="md-nav__link">
-    <span class="md-ellipsis">
-      <span class="md-typeset">
-        Verify and recover
-      </span>
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#additional-verified-states" class="md-nav__link">
-    <span class="md-ellipsis">
-      <span class="md-typeset">
-        Additional verified states
-      </span>
-    </span>
-  </a>
-  
-    <nav class="md-nav" aria-label="Additional verified states">
-      <ul class="md-nav__list">
-        
-          <li class="md-nav__item">
-  <a href="#appliance-settings_1" class="md-nav__link">
-    <span class="md-ellipsis">
-      <span class="md-typeset">
-        Appliance Settings
-      </span>
-    </span>
-  </a>
-  
-</li>
-        
-      </ul>
-    </nav>
   
 </li>
       
@@ -4015,10 +3937,6 @@
       
         
       
-        
-      
-        
-      
     
     
     
@@ -4028,7 +3946,7 @@
           
   
   <span class="md-ellipsis">
-    Operate
+    Contribute
   </span>
 
         </a>
@@ -4045,7 +3963,7 @@
                 
                   
   
-    <a href="https://github.com/mdaneri/Atlaso/edit/main/docs/operate/appliance-settings.md" title="Edit this page" class="md-content__button md-icon" rel="edit">
+    <a href="https://github.com/mdaneri/Atlaso/edit/main/docs/contribute/progressive-policy.md" title="Edit this page" class="md-content__button md-icon" rel="edit">
       
       <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-file-pen" viewBox="0 0 24 24"><path d="M12.659 22H18a2 2 0 0 0 2-2V8a2.4 2.4 0 0 0-.706-1.706l-3.588-3.588A2.4 2.4 0 0 0 14 2H6a2 2 0 0 0-2 2v9.34"/><path d="M14 2v5a1 1 0 0 0 1 1h5M10.378 12.622a1 1 0 0 1 3 3.003L8.36 20.637a2 2 0 0 1-.854.506l-2.867.837a.5.5 0 0 1-.62-.62l.836-2.869a2 2 0 0 1 .506-.853z"/></svg>
     </a>
@@ -4054,88 +3972,139 @@
     
       
     
-    <a href="https://github.com/mdaneri/Atlaso/raw/main/docs/operate/appliance-settings.md" title="View source of this page" class="md-content__button md-icon">
+    <a href="https://github.com/mdaneri/Atlaso/raw/main/docs/contribute/progressive-policy.md" title="View source of this page" class="md-content__button md-icon">
       
       <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-file-code-2" viewBox="0 0 24 24"><path d="M4 12.15V4a2 2 0 0 1 2-2h8a2.4 2.4 0 0 1 1.706.706l3.588 3.588A2.4 2.4 0 0 1 20 8v12a2 2 0 0 1-2 2h-3.35"/><path d="M14 2v5a1 1 0 0 0 1 1h5M5 16l-3 3 3 3M9 22l3-3-3-3"/></svg>
     </a>
   
 
 
-<h1 id="appliance-settings">Appliance settings<a class="headerlink" href="#appliance-settings" title="Permanent link">&para;</a></h1>
-<p>Open <strong>Appliance Settings</strong> to edit appliance-wide desired state: the appliance FQDN, OS hostname, resolver mode and
-servers, management UI HTTPS preference, and root SSH login preference.</p>
-<!-- BEGIN GENERATED INTERFACE OVERVIEW -->
-<h2 id="interface-overview">Interface overview<a class="headerlink" href="#interface-overview" title="Permanent link">&para;</a></h2>
-<p>This verified appliance view provides visual orientation before you begin.</p>
-<p><img alt="Atlaso Settings page in the clean-appliance desktop viewport." src="../../assets/screenshots/settings-clean-desktop.webp" /></p>
-<p><em>Figure: Settings in the verified clean-appliance desktop state.</em></p>
-<!-- END GENERATED INTERFACE OVERVIEW -->
-
-<h2 id="configure-authentication-lifetimes">Configure authentication lifetimes<a class="headerlink" href="#configure-authentication-lifetimes" title="Permanent link">&para;</a></h2>
-<p>The <strong>Authentication lifetimes</strong> section saves immediately and does not create a pending Appliance Apply unit:</p>
+<h1 id="progressive-agent-policy">Progressive agent policy<a class="headerlink" href="#progressive-agent-policy" title="Permanent link">&para;</a></h1>
+<p>The mandatory core is <code>AGENTS.md</code> plus <code>CONTRIBUTING.md</code>. The root route table selects additional policy before the
+relevant operation; it does not require traversing every link. Policy remains mandatory when its trigger applies.
+Re-evaluate routes when scope, worktree, or policy changes, but reuse unchanged instructions already read in the task.</p>
+<h2 id="canonical-ownership">Canonical ownership<a class="headerlink" href="#canonical-ownership" title="Permanent link">&para;</a></h2>
+<table>
+<thead>
+<tr>
+<th>Contract</th>
+<th>Owner</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Startup, always-applicable boundaries, route triggers</td>
+<td>Root <code>AGENTS.md</code></td>
+</tr>
+<tr>
+<td>Issue/type relationship, normal patch workflow, human break-glass</td>
+<td>Root <code>CONTRIBUTING.md</code></td>
+</tr>
+<tr>
+<td>Worktree/state roots, titles, delegation, unrelated discovery</td>
+<td><a href="../agent-workflow/">Agent workflow</a></td>
+</tr>
+<tr>
+<td>Comprehensive review, waiting, authority, guarded merge, post-merge verification</td>
+<td><a href="../pr-workflow/">PR workflow</a></td>
+</tr>
+<tr>
+<td>Secret custody and worktree reuse entry point</td>
+<td><a href="../credential-policy/">Credential policy</a></td>
+</tr>
+<tr>
+<td>Classification and private remediation</td>
+<td>Root <code>SECURITY.md</code></td>
+</tr>
+<tr>
+<td>Resource ownership, release, terminal ordering, cleanup command</td>
+<td><a href="../completed-task-cleanup/">Completed-task cleanup</a></td>
+</tr>
+<tr>
+<td>Trusted CI, Pages, signing and release publication</td>
+<td><a href="../release-policy/">Release policy</a></td>
+</tr>
+<tr>
+<td>Domain-specific implementation constraints</td>
+<td>Matching section of <a href="../agent-policies/">subsystem policies</a> and linked operator procedure</td>
+</tr>
+</tbody>
+</table>
+<p>The PR template and Copilot instructions link to these contracts. Do not copy their normative workflow into more
+entry points. Extend the owning section and focused checks instead. Existing specialized subsystem detail remains
+available; moving it out of the root does not relax its requirements.</p>
+<h2 id="selecting-routes">Selecting routes<a class="headerlink" href="#selecting-routes" title="Permanent link">&para;</a></h2>
 <ul>
-<li><strong>Browser session inactivity timeout</strong> defaults to 30 minutes and accepts 5 through 1,440 minutes. Atlaso evaluates
-  the current value before every protected browser handler, so lowering it can expire an existing inactive session on
-  its next request. Raising it does not resurrect a session that already expired.</li>
-<li><strong>Maximum API token lifetime</strong> defaults to 90 days and accepts 1 through 365 days. It applies only when a new token is
-  issued. An omitted expiry uses the configured maximum; an explicit timezone-aware future expiry may be shorter.
-  Existing token expiry timestamps remain unchanged.</li>
+<li>An ordinary Python fix reads the core, implementation route, and Python standard; load subsystem sections affected
+  by its behavior. Documentation changes also load the documentation standard. A routine patch-version bump follows
+  CONTRIBUTING and does not require every release/publication procedure.</li>
+<li>A UI fix additionally loads the UI guide before planning, classifies the interaction, and names the reused reference.</li>
+<li>A reviewer loads the complete-review contract even without implementation. Analyze the whole change before
+  publishing; an unchanged head is not a reason to run another speculative review.</li>
+<li>A deployment loads infrastructure, credentials, and relevant subsystem procedures before retrieving credentials or
+  mutating a VM. Before creating disposable resources, load the ownership evidence section and record original
+  identities; load the full cleanup procedure before releasing them.</li>
+<li>Suspected sensitive findings route to SECURITY before a public issue, review, or report. Private authorization and
+  local-validation exceptions remain intact.</li>
+<li>Ordinary PR waiting uses one fifteen-minute heartbeat only while asynchronous work remains. Reconcile immediately
+  when already awake for a push, user input, or guarded transition. Read changed feedback, not unchanged code.</li>
 </ul>
-<p>Atlaso stores browser activity server-side. Full-page navigation, submitted forms, deliberate browser actions, and the
-CSRF-protected activity heartbeat extend the timeout. Static assets, background status polling, and passive page
-refresh requests do not. At the exact inactivity boundary Atlaso invalidates the session before the protected handler,
-clears browser identity and CSRF state, records a sanitized audit event, and returns <code>401</code> to fetch/API consumers. Human
-navigation returns to the appropriate management, public, or protocol login surface with <strong>Session expired due to
-inactivity</strong>.</p>
-<p>The authenticated VCF Offline Depot browser sends deliberate <code>/PROD/</code> activity through its depot protocol listener;
-it does not require or publish the management UI plane on that interface.</p>
-<p>The OIDC provider applies the same timeout to its separate <code>/identity</code> browser session. Its signed cookie carries only
-an opaque session identifier; Atlaso persists the authoritative activity and terminal-expiry state. A successful
-credential submission starts the session, while silent <code>prompt=none</code> authorization does not refresh it. Once the
-deadline is reached, silent authorization returns <code>login_required</code>, and raising the policy cannot resurrect that
-expired session; a new interactive sign-in is required.</p>
-<p>Settings archives preserve both policy values but exclude active browser-session records. Factory reset restores the
-30-minute and 90-day defaults and invalidates all earlier sessions and tokens.
-During the first upgrade that introduces the persisted token policy, Atlaso migrates a valid legacy
-<code>ATLASO_API_TOKEN_TTL_DAYS</code> value instead of silently replacing it with the 90-day default. Subsequent startups retain
-the database policy, so removing or changing that legacy environment variable does not overwrite operator state.</p>
-<h2 id="before-you-begin">Before you begin<a class="headerlink" href="#before-you-begin" title="Permanent link">&para;</a></h2>
-<p>Confirm the intended management hostname and DNS records. Keep an alternate console session available before changing
-management connectivity or SSH policy. Routine field changes autosave, but they do not change the host immediately.</p>
-<h2 id="edit-and-validate">Edit and validate<a class="headerlink" href="#edit-and-validate" title="Permanent link">&para;</a></h2>
-<ol>
-<li>Change only the desired-state fields required for the maintenance window. Authentication lifetime fields use their
-   separate immediate autosave boundary described above.</li>
-<li>Watch the compact autosave status.</li>
-<li>Resolve errors or warnings in the Validation card.</li>
-<li>Open the rendered preview and confirm the hostname, resolver, HTTPS, and SSH effects.</li>
-<li>Open <strong>Pending Appliance Changes</strong> and submit the valid Appliance Settings unit.</li>
-</ol>
-<p>The review modal may include other changed units. Unselect unrelated work before submission.</p>
-<p>Changing the domain portion of the appliance FQDN also reconciles factory-derived service identities. Atlaso derives
-each factory hostname from the new appliance domain, updates coupled OIDC issuer and managed-certificate desired state,
-and safely refreshes app-owned DNS aliases. Explicitly customized service hostnames and operator-owned DNS records are
-preserved. Review every affected service, Certificate Authority, DNS/DHCP, Firewall, and Public Services unit shown as
-pending; autosave changes desired state but does not apply those units to the host.</p>
-<p>The root SSH preference controls whether the root account may log in remotely; it does not control ordinary
-bootstrap-administrator SSH. Firewall admission for that administrator follows the effective management listener,
-including a flagged access physical interface or VLAN, while unflagged access networks remain closed on TCP/22.</p>
-<h2 id="verify-and-recover">Verify and recover<a class="headerlink" href="#verify-and-recover" title="Permanent link">&para;</a></h2>
-<p>After the task succeeds, confirm the expected management URL and resolver behavior. If management access is lost, use
-the <a href="../appliance-console/">local appliance console</a> to inspect networking and restore a known-good configuration.</p>
-<!-- BEGIN GENERATED ADDITIONAL SCREENSHOTS -->
-<h2 id="additional-verified-states">Additional verified states<a class="headerlink" href="#additional-verified-states" title="Permanent link">&para;</a></h2>
-<p>These captures show responsive layouts and useful operational states referenced by this page.</p>
-<h3 id="appliance-settings_1">Appliance Settings<a class="headerlink" href="#appliance-settings_1" title="Permanent link">&para;</a></h3>
-<p><img alt="Atlaso Settings page in the clean-appliance responsive viewport." src="../../assets/screenshots/settings-clean-responsive.webp" /></p>
-<p><em>Figure: Settings in the verified clean-appliance responsive state.</em></p>
-<p><img alt="Atlaso Settings page with valid pending appliance identity changes." src="../../assets/screenshots/settings-pending-desktop.webp" /></p>
-<p><em>Figure: Valid Appliance Settings waiting for global appliance apply.</em></p>
-<p><img alt="Atlaso configuration preview dialog with the rendered Appliance Settings JSON." src="../../assets/screenshots/settings-preview-modal-desktop.webp" /></p>
-<p><em>Figure: Rendered Appliance Settings configuration preview.</em></p>
-<p><img alt="Atlaso Settings validation card explaining that the appliance FQDN is invalid." src="../../assets/screenshots/settings-validation-error-desktop.webp" /></p>
-<p><em>Figure: Appliance Settings validation error for an invalid FQDN.</em></p>
-<!-- END GENERATED ADDITIONAL SCREENSHOTS -->
+<h2 id="preserved-safety">Preserved safety<a class="headerlink" href="#preserved-safety" title="Permanent link">&para;</a></h2>
+<p>The loading boundary does not change secret custody, private advisory authorization, exact worktree/resource
+ownership, credential containment, release signatures/provenance, immutable publication, protected status publishing,
+or infrastructure rollback requirements. Guarded merges still require current evidence, strict base enforcement,
+expected-head protection, no bypass and no implicit merge queue or auto-merge. Explicit holds remain authoritative.
+Cleanup retains independent evidence and resource release before branch, worktree, and completion-title transitions.</p>
+<h2 id="measurement-and-validation">Measurement and validation<a class="headerlink" href="#measurement-and-validation" title="Permanent link">&para;</a></h2>
+<p>Baseline commit <code>a21d9fd64a6df545d48fc3b600a8edf0ab6e8894</code> required four complete startup files:</p>
+<table>
+<thead>
+<tr>
+<th>File</th>
+<th style="text-align: right;">Words</th>
+<th style="text-align: right;">UTF-8 bytes, LF normalized</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>AGENTS.md</td>
+<td style="text-align: right;">14,953</td>
+<td style="text-align: right;">112,906</td>
+</tr>
+<tr>
+<td>CONTRIBUTING.md</td>
+<td style="text-align: right;">5,209</td>
+<td style="text-align: right;">39,617</td>
+</tr>
+<tr>
+<td>CODE_OF_CONDUCT.md</td>
+<td style="text-align: right;">612</td>
+<td style="text-align: right;">4,456</td>
+</tr>
+<tr>
+<td>SECURITY.md</td>
+<td style="text-align: right;">815</td>
+<td style="text-align: right;">5,997</td>
+</tr>
+<tr>
+<td>Total</td>
+<td style="text-align: right;">21,589</td>
+<td style="text-align: right;">162,976</td>
+</tr>
+</tbody>
+</table>
+<p><code>scripts/check_repo.py</code> enforces the root budget and combined ordinary pre-implementation route budget against this
+fixed baseline. Measure actual LF-normalized UTF-8 bytes and whitespace-separated words; these are not billed tokens.
+Count core and required route documents, including transitive required reads, once each. Keep ordinary
+pre-implementation policy at or below 20% of baseline. Report review/delivery and high-risk route costs separately;
+never hide mandatory reads behind a new filename to claim savings.</p>
+<p>Focused tests check routing and canonical ownership, missing/hidden operative requirements, terminal ordering,
+merge-authority provenance, and the comprehensive-review contract. Markers and structured checks detect policy
+regressions; they do not prove arbitrary natural-language equivalence or actual agent compliance. Retain existing
+runtime safety tests rather than replacing them with prose checks.</p>
+<p>The fifteen-minute cadence reduces unchanged waiting wakeups from fifteen to four per hour (about 73%). Startup
+reduction is not an equal promise of total credit savings: implementation, verification, specialized work, caching,
+and model reasoning still affect usage. No local-model worker or provider change is part of this change.</p>
 
 
 
@@ -4176,7 +4145,7 @@ the <a href="../appliance-console/">local appliance console</a> to inspect netwo
       <nav class="md-footer__inner md-grid" aria-label="Footer" >
         
           
-          <a href="../appliance-apply/" class="md-footer__link md-footer__link--prev" aria-label="Previous: Appliance Apply">
+          <a href="../agent-policies/" class="md-footer__link md-footer__link--prev" aria-label="Previous: Detailed agent policies">
             <div class="md-footer__button md-icon">
               
               <svg xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" class="lucide lucide-arrow-left" viewBox="0 0 24 24"><path d="m12 19-7-7 7-7M19 12H5"/></svg>
@@ -4186,20 +4155,20 @@ the <a href="../appliance-console/">local appliance console</a> to inspect netwo
                 Previous
               </span>
               <div class="md-ellipsis">
-                Appliance Apply
+                Detailed agent policies
               </div>
             </div>
           </a>
         
         
           
-          <a href="../networking/" class="md-footer__link md-footer__link--next" aria-label="Next: Network configuration">
+          <a href="../agent-workflow/" class="md-footer__link md-footer__link--next" aria-label="Next: Agent worktree and delegation workflow">
             <div class="md-footer__title">
               <span class="md-footer__direction">
                 Next
               </span>
               <div class="md-ellipsis">
-                Network configuration
+                Agent worktree and delegation workflow
               </div>
             </div>
             <div class="md-footer__button md-icon">
