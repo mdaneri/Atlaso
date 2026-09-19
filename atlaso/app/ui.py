@@ -124,6 +124,7 @@ from atlaso.app.models import (
     utcnow,
 )
 from atlaso.app.operational_logging import (
+    SECRET_LINE_PATTERN,
     configure_operational_logging,
     logging_preferences_from_db,
     logging_preferences_to_dict,
@@ -9659,10 +9660,6 @@ def appliance_settings_management_status_transition(results: list[Any]) -> dict[
     return None
 
 
-SECRET_LINE_PATTERN = re.compile(
-    r"(rootpw|password|passwd|token|secret|credential|private[_.-]?key|robot[_.-]?account|ca[_.-]?bundle[_.-]?pem|activation[_.-]?code|license|ipxe[_.-]?script|payload[_.-]?b64)",
-    re.IGNORECASE,
-)
 PRIVATE_KEY_BEGIN_PATTERN = re.compile(r"-----BEGIN .*PRIVATE KEY-----")
 PRIVATE_KEY_END_PATTERN = re.compile(r"-----END .*PRIVATE KEY-----")
 JWT_PATH_SEGMENT_PATTERN = re.compile(r"(?<=/)[A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]{20,}(?=/|$)")

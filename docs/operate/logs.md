@@ -163,6 +163,8 @@ changes invalidate that progress. A growing plain file after those archives uses
 retain its own progress, including after older checkpoints leave the bounded cache. This does not change the
 privileged helper's compressed-file reader.
 
+Live pages and initial snapshots share the same sensitive configuration-key vocabulary, including dotted key names.
+
 Task history also retains Network cleanup retry diagnostics in the same transaction as the task result update.
 
 <!-- BEGIN GENERATED ADDITIONAL SCREENSHOTS -->

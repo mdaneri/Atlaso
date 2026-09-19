@@ -2525,3 +2525,29 @@ def test_mismatched_key_footer_keeps_file_body_private(tmp_path, privileged, com
                 break
     assert "private-body" not in "\n".join(texts)
     assert "visible" in "\n".join(texts)
+
+
+@pytest.mark.parametrize("key", ["private.key", "robot.account", "ca.bundle.pem", "activation.code", "ipxe.script", "payload.b64"])
+@pytest.mark.parametrize("syntax", ["equals", "colon", "json"])
+def test_live_history_redacts_dotted_configuration_keys(tmp_path, key, syntax):
+    """Keep fallback, file pages, and journal line sanitization consistent.
+
+    Args:
+        tmp_path: Test-owned retained log directory.
+        key: Supported dotted configuration key.
+        syntax: Assignment representation used by the log producer.
+    """
+    from atlaso.app.operational_logging import redact_operational_text
+    from atlaso.app.ui import redact_config_preview
+
+    value = "synthetic-concealed-value"
+    line = json.dumps({key: value}) if syntax == "json" else f"{key}{'=' if syntax == 'equals' else ':'}{value}"
+    path = tmp_path / "dotted.log"
+    path.write_text(line + "\nordinary event\n", encoding="utf-8")
+    page = log_viewer.file_page(path, source="test", limit=1)
+    journal_lines, _ = log_viewer.redact_lines([line, "ordinary event"])
+    for rendered in [page["text"], *journal_lines, redact_operational_text(line), redact_config_preview(line)]:
+        assert value not in rendered
+    assert "[redacted]" in page["text"]
+    assert journal_lines[-1] == "ordinary event"
+    assert log_viewer.file_page(path, source="test", cursor=page["next_cursor"])["text"] == "ordinary event"

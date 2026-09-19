@@ -33,7 +33,7 @@ LOGGER = logging.getLogger("atlaso.operational")
 FORMATTER = logging.Formatter("%(asctime)s %(levelname)s [%(name)s] %(message)s")
 
 SECRET_LINE_PATTERN = re.compile(
-    r"(rootpw|password|passwd|token|secret|credential|private[_-]?key|robot[_-]?account|ca[_-]?bundle[_-]?pem|activation[_-]?code|license|ipxe[_-]?script|payload[_-]?b64)",
+    r"(rootpw|password|passwd|token|secret|credential|private[_.-]?key|robot[_.-]?account|ca[_.-]?bundle[_.-]?pem|activation[_.-]?code|license|ipxe[_.-]?script|payload[_.-]?b64)",
     re.IGNORECASE,
 )
 PRIVATE_KEY_BEGIN_PATTERN = re.compile(r"-----BEGIN .*PRIVATE KEY-----")
