@@ -1,6 +1,7 @@
 """Test check repo policies behavior."""
 
 import json
+import re
 from pathlib import Path
 
 from scripts.check_repo import (
@@ -8411,21 +8412,23 @@ def test_agent_policy_gate_preserves_word_boundary_at_rendered_break(
     """
     marker = "automation must never use or request a ruleset or administrative bypass"
     required_entry_points = (
-        Path("docs/contribute/completed-task-cleanup.md"),
+        Path("docs/contribute/pr-workflow.md"),
         Path("SECURITY.md"),
-        Path("docs/contribute/completed-task-cleanup.md"),
     )
     replacement = marker.replace("ruleset or", "ruleset<br>or", 1)
+    pattern = r"\s+".join(re.escape(word) for word in marker.split())
     for relative_path in required_entry_points:
         write_policy_files(tmp_path)
         path = tmp_path / relative_path
         text = path.read_text(encoding="utf-8")
-        path.write_text(
-            text.replace(marker, replacement, 1),
-            encoding="utf-8",
-        )
+        mutated, count = re.subn(pattern, replacement, text, count=1)
+        assert count == 1
+        assert mutated != text
+        path.write_text(mutated, encoding="utf-8")
 
         assert check_agent_policy_gate(tmp_path) == []
+        path.write_text(mutated.replace("ruleset<br>or", "rulesetor", 1), encoding="utf-8")
+        assert any(finding.path == path for finding in check_agent_policy_gate(tmp_path))
 
 
 def test_agent_policy_gate_ignores_indented_cleanup_markers(tmp_path: Path) -> None:
