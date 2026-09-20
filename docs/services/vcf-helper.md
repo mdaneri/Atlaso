@@ -92,8 +92,10 @@ original operation's verified role/version, explicitly labelled in review; it do
 successful API inspection. If TLS probing fails, only recovery remains available. API readiness is checked after
 restoration using the original TLS fingerprint and reported separately from property verification.
 
-A verified property change remains revertible if service/API recovery failed. A no-op task or a task without verified
-write evidence cannot be automatically reverted. If connectivity failed during mutation, inspect the target using
+History retains current property-owner operations alongside the 50 most recent tasks so older recovery baselines
+remain selectable. A verified property change remains revertible if service/API recovery failed. A no-op task or a task
+without verified write evidence cannot be automatically reverted. If connectivity failed during mutation, inspect
+the target using
 the retained previous/desired values and recover manually before submitting another operation. An interrupted Atlaso
 worker retains its target reservation: reconcile the task and remote state before clearing that reservation through
 maintainer recovery. Interrupted tasks record a sanitized failed audit outcome, distinguishing undispatched tasks

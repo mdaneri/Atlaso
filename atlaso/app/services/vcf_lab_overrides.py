@@ -17,7 +17,7 @@ from uuid import uuid4
 
 import paramiko  # type: ignore[import-untyped]  # Paramiko has no bundled typing stubs.
 from itsdangerous import BadData, URLSafeTimedSerializer
-from sqlalchemy import delete, select, update
+from sqlalchemy import delete, or_, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -621,12 +621,18 @@ def run_job(job_id: str) -> None:
 
 
 def history(db: Session) -> list[dict[str, str]]:
-    """List bounded operation history without credentials or configuration."""
+    """List recent history plus every retained property owner for recovery."""
+    recent = (
+        select(Job.id)
+        .where(Job.type == JOB_TYPE)
+        .order_by(Job.created_at.desc(), Job.id.desc())
+        .limit(50)
+    )
+    owners = select(Setting.value).where(Setting.key.like("vcf_lab_owner:%"))
     jobs = db.scalars(
         select(Job)
-        .where(Job.type == JOB_TYPE)
-        .order_by(Job.created_at.desc())
-        .limit(50)
+        .where(Job.type == JOB_TYPE, or_(Job.id.in_(recent), Job.id.in_(owners)))
+        .order_by(Job.created_at.desc(), Job.id.desc())
     )
     return [
         {

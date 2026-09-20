@@ -670,3 +670,42 @@ def test_revert_rejects_superseded_property_with_matching_values(
     lab.run_job(recovery.id)
     assert recovery.status == "failed"
     assert "superseded" in recovery.error
+
+
+def test_history_retains_old_property_owners_beyond_recent_limit(db, values, state):
+    from datetime import timedelta
+
+    from atlaso.app.models import Job, utcnow
+
+    target = lab.target_from_values(db, values)
+    baseline = lab.enqueue(
+        db, "admin", lab.review(db, "admin", target, values)["token"]
+    )
+    baseline.created_at = utcnow() - timedelta(days=10)
+    baseline.status = "succeeded"
+    for key in ("esa", "nic"):
+        db.add(
+            Setting(
+                key=lab._property_owner_key(values["ssh_fingerprint"], key),
+                value=baseline.id,
+            )
+        )
+    for index in range(55):
+        db.add(
+            Job(
+                id=f"recent-{index:02}",
+                type=lab.JOB_TYPE,
+                status="failed",
+                created_by="admin",
+                task_config_json=baseline.task_config_json,
+                created_at=utcnow() + timedelta(seconds=index),
+            )
+        )
+    db.commit()
+    history = lab.history(db)
+    identifiers = [job["id"] for job in history]
+    assert len(identifiers) == 51
+    assert identifiers.count(baseline.id) == 1
+    assert identifiers[-1] == baseline.id
+    assert "recent-00" not in identifiers
+    assert "recent-54" in identifiers
