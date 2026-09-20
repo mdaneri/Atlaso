@@ -120,8 +120,8 @@ def target_from_values(db: Session, values: dict[str, Any]) -> Target:
             raise LabOverrideError(
                 "API and SSH credentials must identify the same hostname or IP."
             )
-        # The API always uses TLS. An HTTP URI contributes its hostname only.
-        api_port = (api_uri.port or 443) if api_uri.scheme == "https" else 443
+        # The API always uses TLS, preserving any explicitly selected port.
+        api_port = api_uri.port or 443
         return Target(
             host.lower().rstrip("."),
             api_port,

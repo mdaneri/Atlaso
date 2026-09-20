@@ -55,7 +55,8 @@ the operator; it does not substitute a different path or claim that this covers 
 ### Review and apply
 
 1. Save the target API credential with an HTTP/HTTPS URI and SSH credential with an SSH/SFTP URI in an existing
-   Atlaso Vault. Both must identify the same hostname or IP. The API connection always uses HTTPS. The SSH account
+   Atlaso Vault. Both must identify the same hostname or IP. The API connection always uses HTTPS and preserves an
+   explicit URI port (default 443). The SSH account
    must be root or have passwordless sudo permission to run the bounded editor; Python 3.10 or newer and `systemctl`
    are required.
    Atlaso does not enable root SSH, change sudo policy, or attempt password-based privilege escalation.

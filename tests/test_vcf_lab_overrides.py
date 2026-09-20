@@ -709,3 +709,13 @@ def test_history_retains_old_property_owners_beyond_recent_limit(db, values, sta
     assert identifiers[-1] == baseline.id
     assert "recent-00" not in identifiers
     assert "recent-54" in identifiers
+
+
+@pytest.mark.parametrize("scheme", ["http", "https"])
+@pytest.mark.parametrize("port", [None, 8443])
+def test_vault_api_uri_preserves_explicit_port(db, values, scheme, port):
+    uri = f"{scheme}://vcf.example.test" + (f":{port}" if port else "")
+    db.get(VaultEntry, 1).uris_json = json.dumps([uri])
+    target = lab.target_from_values(db, values)
+    assert target.host == "vcf.example.test"
+    assert target.api_port == (port or 443)
