@@ -873,3 +873,31 @@ def test_cloned_ssh_keys_do_not_share_property_ownership(db, values):
         lab._require_property_owner(
             db, "same-host-key", ["esa"], f"job-{index}", target
         )
+
+
+@pytest.mark.parametrize("changed_key", ["esa", "nic"])
+def test_revert_ignores_later_edits_to_original_noop_selection(
+    db, values, state, changed_key
+):
+    target = lab.target_from_values(db, values)
+    desired = {"esa": "true", "nic": "false"}
+    state["values"] = {**desired, changed_key: None}
+    job = lab.enqueue(db, "admin", lab.review(db, "admin", target, values)["token"])
+    job.status = "succeeded"
+    job.result = json.dumps({"changed": True, "property_verified": True})
+    db.add(
+        Setting(
+            key=lab._property_owner_key(values["ssh_fingerprint"], changed_key, target),
+            value=job.id,
+        )
+    )
+    db.commit()
+    noop_key = "nic" if changed_key == "esa" else "esa"
+    state["values"] = {**desired, noop_key: None}
+    reviewed = lab.review(db, "admin", target, {**values, "source_job_id": job.id})
+    assert [(change["id"], change["value"]) for change in reviewed["changes"]] == [
+        (changed_key, None)
+    ]
+    state["values"][changed_key] = "false" if changed_key == "esa" else "true"
+    with pytest.raises(lab.LabOverrideError, match="overwrite another edit"):
+        lab.review(db, "admin", target, {**values, "source_job_id": job.id})

@@ -360,17 +360,15 @@ def review(
             "identity_source": "original verified operation; recovery uses pinned SSH",
         }
         tls = previous["tls_fingerprint"]
-        if any(
-            state["values"][key] != value for key, value in previous["desired"].items()
-        ):
-            raise LabOverrideError(
-                "Managed properties changed since the operation; revert would overwrite another edit."
-            )
         desired = {
             key: value
             for key, value in previous["previous"].items()
             if value != previous["desired"][key]
         }
+        if any(state["values"][key] != previous["desired"][key] for key in desired):
+            raise LabOverrideError(
+                "Managed properties changed since the operation; revert would overwrite another edit."
+            )
         _require_property_owner(db, ssh, desired, source.id, target)
     else:
         state = inspect_target(db, target, tls, ssh)
